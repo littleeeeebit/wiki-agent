@@ -148,12 +148,13 @@ def _texts(value, what: str) -> list[str]:
 
 
 def _at(root: Path, value, what: str) -> str:
-    """A repository-relative path that exists in the base commit's tree."""
+    """A repository-relative path that exists in the base commit's tree, written
+    as Git writes it: `./a` or `b/../a` would never match a changed file."""
     rel = _text(value, what).replace("\\", "/").strip("/")
     target, top = (root / rel).resolve(), root.resolve()
     if top not in target.parents or target.relative_to(top).parts[0].casefold() == ".git" or not target.exists():
         raise ValueError(f"`{what}`: `{rel}` 이 기준 커밋에 없다")
-    return rel
+    return target.relative_to(top).as_posix()
 
 
 def _evidence(root: Path, value, what: str, least: int = 1) -> list[dict]:
@@ -379,6 +380,10 @@ def baselined(w, run: dict) -> dict:
         run = w.note(baseline={"cmd": cmd, "ok": verdict["ok"], "code": verdict["code"], "reason": verdict["reason"],
                                "tail": verdict["tail"], "failures": found or [], "parsed": found is not None,
                                "head": verdict["head"]})
+        seen = specs.status(path)
+        if seen.returncode or seen.stdout.strip() or refactor.git(path, "rev-parse", "HEAD") != run["base"]:
+            removed(w.repo, w.rid)   # the gate wrote into its tree: the survey reads the base commit as it was
+            checkout(w, run)
     return w.note(phase="map")
 
 

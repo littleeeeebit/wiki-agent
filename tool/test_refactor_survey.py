@@ -186,6 +186,28 @@ def test_specs_that_only_look_or_cross_pipelines_are_refused(surveyed, bad, why)
         refactor_survey.spec_shape(spec("x", **bad), "preserve", MAP, surveyed)
 
 
+def test_a_path_is_kept_as_git_writes_it(surveyed):
+    made = refactor_survey.spec_shape(spec("x", files=["./src/orders.py"],
+                                           evidence=[{"path": "src/../src/orders.py", "symbol": "place"}]),
+                                      "preserve", MAP, surveyed)
+    assert made["files"] == ["src/orders.py"] and made["evidence"][0]["path"] == "src/orders.py"
+
+
+def test_a_gate_that_writes_into_the_survey_tree_leaves_the_base_to_read(surveyed, monkeypatch):
+    api, seen = client(), []
+    def dirty(path, cmds, halt, *rest, **kw):
+        (path / "src/orders.py").write_text("VALUE = 999\n", encoding="utf-8")
+        return {"ok": False, "code": 0, "reason": "the command changed the tree", "tail": "", "head": ""}
+    monkeypatch.setattr(specs, "judge", dirty)
+    original = refactor.PHASES["map"]
+    monkeypatch.setitem(refactor.PHASES, "map", lambda w, run: (
+        seen.append((refactor_survey.place(w.repo, w.rid) / "src/orders.py").read_text(encoding="utf-8")),
+        original(w, run))[1])
+    run = settled(api, start(api).json()["id"])
+    assert run["state"] == "done", run["stopped"]
+    assert seen == [FILES["src/orders.py"]], "the map turn reads the base commit, not what the gate wrote"
+
+
 def test_dependency_cycles_and_unknown_dependencies_are_refused(surveyed):
     loop = {"coverage": {"scope": "s"}, "specs": [spec("a", depends=["b"]), spec("b", depends=["a"])]}
     with pytest.raises(ValueError, match="돌아온다"):
