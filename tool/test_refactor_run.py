@@ -230,6 +230,13 @@ def test_a_pytest_count_line_is_explained_by_no_more_failures_than_the_baseline(
     assert refactor_survey.unexplained(tail(), base, (tmp_path,)) == [], "one more warning is no failure"
     for grown in ("91 failed, 1 passed in 1.08s", "==== 1 failed, 2 passed, 1 error in 1.20s ===="):
         assert refactor_survey.unexplained(grown, base.replace("1 failed", "90 failed"), ()) == [grown]
+    old = "FAILED t.py::a - x\nFAILED docs/case1 notes\nERROR conda.cli.main_run:execute(127): failed.\n"
+    assert refactor_survey.unexplained(old, old, ()) == []
+    # A FAILED line that names no node is compared digit for digit.
+    assert refactor_survey.unexplained(old + "FAILED docs/case2 notes\n", old, ()) == ["FAILED docs/case2 notes"]
+    # An indented ERROR line names its node, so the name comparison sees it as new.
+    indented = old + "    ERROR checks/bootstrap.py - FATAL cache initialization failed\n"
+    assert refactor_survey.failures({"code": 1, "tail": indented}) == ["checks/bootstrap.py", "t.py::a"]
     for sentence in ("1 passed health check, ERROR cache initialization in 0.05s",
                      "1 failed health check: FATAL database unavailable in 0.05s"):   # counts, but not pytest's list
         assert not refactor_survey.SUMMARY.match(sentence)

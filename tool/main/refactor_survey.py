@@ -375,11 +375,13 @@ SIGNAL = re.compile(r"\b(error|errors|fatal|fail|failed|failure|failures|excepti
 
 def unexplained(tail: str, baseline: str, trees: tuple) -> list[str]:
     """The failure-looking lines of a failing run that no failure name covers and the
-    baseline run did not print, compared with digits and both worktree paths blanked."""
+    baseline run did not print, compared with both worktree paths blanked and, but on a `FAILED`/`ERROR`
+    line that names no node (`docs/case1.txt` is not `docs/case2.txt`), digits too."""
     def plain(line: str) -> str:
+        line = line.strip()
         for tree in trees:
             line = line.replace(str(tree), "<tree>").replace(Path(tree).as_posix(), "<tree>")
-        return re.sub(r"\d+", "#", line.strip())
+        return line if line.startswith(("FAILED", "ERROR")) else re.sub(r"\d+", "#", line)
     printed = {plain(line) for line in baseline.splitlines()}
     # pytest's closing count line is judged by its counts alone, before any digit-blind match: passed,
     # skipped and warning counts move with any added test, failed and error counts may not grow.
