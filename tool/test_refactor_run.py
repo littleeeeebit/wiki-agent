@@ -230,6 +230,10 @@ def test_a_pytest_count_line_is_explained_by_no_more_failures_than_the_baseline(
     assert refactor_survey.unexplained(tail(), base, (tmp_path,)) == [], "one more warning is no failure"
     for grown in ("91 failed, 1 passed in 1.08s", "==== 1 failed, 2 passed, 1 error in 1.20s ===="):
         assert refactor_survey.unexplained(grown, base.replace("1 failed", "90 failed"), ()) == [grown]
+    for sentence in ("1 passed health check, ERROR cache initialization in 0.05s",
+                     "1 failed health check: FATAL database unavailable in 0.05s"):   # counts, but not pytest's list
+        assert not refactor_survey.SUMMARY.match(sentence)
+        assert refactor_survey.unexplained(sentence, base, ()) == [sentence]
 
 
 def test_every_round_holds_a_survey_spec_to_its_test_contract(surveyed):

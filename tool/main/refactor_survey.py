@@ -395,9 +395,10 @@ def unexplained(tail: str, baseline: str, trees: tuple) -> list[str]:
     return odd
 
 
-# With `-q` the count line has no `=` rule around it.
-SUMMARY = re.compile(r"^=*\s*\d+ (passed|failed|errors?|skipped|warnings?|xfailed|xpassed|deselected|rerun)\b"
-                     r".* in [\d.]+s\b.*$")
+# Exactly pytest's count list, its time and its rule (none with `-q`): any other sentence that mentions
+# counts stays an ordinary line for the failure-looking comparison.
+_COUNT = r"\d+ (?:failed|passed|skipped|deselected|xfailed|xpassed|warnings?|errors?|rerun)"
+SUMMARY = re.compile(rf"^(?:=+ )?{_COUNT}(?:, {_COUNT})* in [\d.]+s(?: \(\d+:\d\d:\d\d\))?(?: =+)?$")
 
 
 def _counted(line: str) -> dict:
