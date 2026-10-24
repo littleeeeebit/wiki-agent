@@ -259,3 +259,7 @@ def test_failures_are_named_or_unparsed():
     assert refactor_survey.failures({"code": 1, "tail": "FAILED tool/test_a.py::test_x - boom\n"}) == \
         ["tool/test_a.py::test_x"]
     assert refactor_survey.failures({"code": 1, "tail": "something broke\n"}) is None
+    spaced = "FAILED t.py::test_case[case one] - boom\nFAILED t.py::test_case[a] b] - x\nFAILED t.py::test_case[case two]\n"
+    assert refactor_survey.failures({"code": 1, "tail": spaced}) == \
+        ["t.py::test_case[a] b]", "t.py::test_case[case one]", "t.py::test_case[case two]"]
+    assert refactor_survey.failures({"code": 1, "tail": "FAILED t.py::test_case[case\n"}) is None

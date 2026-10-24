@@ -30,7 +30,9 @@ ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 LOOKING = re.compile(r"^\s*(survey|investigate|audit|explore|map|analy[sz]e|document|diagram|study|inspect)\b"
                      r"|조사|구조도|파악", re.I)
 # Failure identifiers in the tail of common runners' output: pytest, vitest/jest, go test, cargo test.
-FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+)|^\s*FAIL\s+(\S+)|^--- FAIL: (\S+)|^test (\S+) \.\.\. FAILED", re.M)
+# A pytest parameter id may hold spaces: `name[case one]` is read to its closing bracket before ` - `.
+FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+?\[.*?\](?= - |\s*$)|\S+)|^\s*FAIL\s+(\S+)|^--- FAIL: (\S+)"
+                    r"|^test (\S+) \.\.\. FAILED", re.M)
 
 
 def _sections(text: str) -> tuple[str, dict[str, str]]:
@@ -338,6 +340,8 @@ def failures(verdict: dict) -> list[str] | None:
     if verdict.get("code") == 0:
         return []
     found = sorted({next(g for g in m.groups() if g) for m in FAILED.finditer(verdict.get("tail") or "")})
+    if any("[" in name and not name.endswith("]") for name in found):
+        return None   # a parameter id cut short could be any of its cases
     return found or None
 
 
