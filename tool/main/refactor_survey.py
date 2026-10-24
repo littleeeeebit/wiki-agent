@@ -161,6 +161,18 @@ def _at(root: Path, value, what: str) -> str:
     return target.relative_to(top).as_posix()
 
 
+def _owned(root: Path, value, what: str) -> list[str]:
+    """A pipeline's path, or the base commit's files a glob in it matches: a map writes a family that way."""
+    rel = _text(value, what).replace("\\", "/").strip("/")
+    if not any(c in rel for c in "*?["):
+        return [_at(root, rel, what)]
+    found = [_at(root, p.relative_to(root).as_posix(), what) for p in sorted(root.glob(rel))
+             if p.relative_to(root).parts[0].casefold() != ".git"]
+    if not found:
+        raise ValueError(f"`{what}`: `{rel}` 에 맞는 파일이 기준 커밋에 없다")
+    return found
+
+
 def _evidence(root: Path, value, what: str, least: int = 1) -> list[dict]:
     rows = _list(value, what)
     if len(rows) < least:
@@ -186,7 +198,8 @@ def mapped_shape(value, root: Path) -> dict:
         if p["id"] in seen:
             raise ValueError(f"파이프라인 `{p['id']}` 이 두 번 나왔다")
         seen.add(p["id"])
-        paths = [_at(root, x, f"{what}.paths[{k}]") for k, x in enumerate(_list(p.get("paths"), f"{what}.paths"))]
+        paths = list(dict.fromkeys(rel for k, x in enumerate(_list(p.get("paths"), f"{what}.paths"))
+                                   for rel in _owned(root, x, f"{what}.paths[{k}]")))
         if not paths:
             raise ValueError(f"`{what}.paths` 가 비었다")
         pipelines.append({"id": p["id"], "name": _text(p.get("name"), f"{what}.name"),
