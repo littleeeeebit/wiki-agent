@@ -31,7 +31,7 @@ from agent import ChatSession
 from common import errorlog, worktree_home
 from common.budget import Budget, Cancelled
 
-from . import loop, planning, refactor_continuation, refactor_finish, runtime, specs, work
+from . import loop, planning, refactor_continuation, refactor_finish, refactor_survey, runtime, specs, work
 from .query import ROOT, _lock, current_repo, hold
 from .refactor_continuation import recover as recover
 
@@ -776,7 +776,7 @@ def competed(w: Worker, run: dict, step: dict, sid: str, where: Path) -> dict:
 
 
 PHASES = {"scan": scan, "audit": audited, "plan": staged, "tests": frozen, "steps": stepped,
-          "test_cleanup": stepped, "ratchet": stepped}
+          "test_cleanup": stepped, "ratchet": stepped, **refactor_survey.PHASES}
 
 
 def drive(w: Worker) -> None:
