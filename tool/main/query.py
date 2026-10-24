@@ -633,11 +633,11 @@ def configure(cid: str, body: Config) -> dict:
         else:
             cfg = config(cid)
             # A survey fixed the conversation's model for its mode; only another mode lets it go.
-            if cfg.get("refactor_pinned") and body.refactor_mode in (None, cfg.get("refactor_mode")) \
-                    and (body.model, body.effort) != (cfg["model"], cfg["effort"]):
+            held = cfg.get("refactor_pinned") and body.refactor_mode in (None, cfg.get("refactor_mode"))
+            if held and (body.model, body.effort) != (cfg["model"], cfg["effort"]):
                 raise HTTPException(409, f"리팩터링 대화는 조사 모델 `{cfg['model']}` 로 고정됐다 — 모드를 바꾸거나 새로 조사해라")
         moved = not switched and body.model.startswith("codex:") != cfg["model"].startswith("codex:")
-        if not switched:
+        if not switched and not held:   # a pinned one keeps its survey's effort, an empty one too
             cfg.update(model=body.model, effort=body.effort or selected.get("default_effort", ""))
         if cid == "refactor" and body.refactor_mode is not None:
             if cfg.get("refactor_mode", "preserve") != body.refactor_mode:

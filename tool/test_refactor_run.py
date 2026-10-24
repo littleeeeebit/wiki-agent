@@ -463,6 +463,22 @@ def test_a_card_is_refined_only_on_its_own_survey_model(surveyed):
     assert specs.load("proj", sid)["rev"] == 1
 
 
+def test_saving_the_pinned_settings_again_keeps_an_empty_effort(surveyed):
+    from main import channels
+    run = surveyed_in("preserve", spec("orders-split"))
+    sid, codex = run["specs"][0], {"model": "codex:test-model", "effort": ""}
+    card = specs.load("proj", sid)
+    specs.save({**card, "refactor": {**card["refactor"], "roles": {**ROLES, "survey": codex}}})
+    query.config("refactor", "proj").update(codex)   # what a Codex survey with no effort picked pins
+    models = [{"id": "codex:test-model", "default_effort": "high", "efforts": [{"id": e} for e in ("", "high")]}]
+    with patch.object(channels, "codex_models", return_value=models):
+        saved = client().post("/api/config/refactor", json={"repo": "proj", **codex, "refactor_mode": "preserve"})
+    assert saved.status_code == 200 and saved.json()["effort"] == "", "the default effort does not replace the pin's"
+    source = {"focus": "refactor", "turn": 3, "session": "talk", "refactor_mode": "preserve",
+              "refactor_generation": query.config("refactor", "proj").get("refactor_generation", 0)}
+    assert specs.answered(surveyed, [{"name": "spec", "value": {**spec("x"), "id": sid}}], source)[0].get("id") == sid
+
+
 def test_recheck_rewrites_a_stale_card_or_sets_it_aside(surveyed):
     run = surveyed_in("preserve", spec("orders-split"))
     sid = run["specs"][0]
