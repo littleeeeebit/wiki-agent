@@ -66,6 +66,7 @@ class Host:
     made: list = []
     answers: dict = {}
     model = "claude-test-1"
+    afterword = ""
 
     def __init__(self, path, **rest):
         self.path, self.rest, self.id, self.parent_id = Path(path), rest, uuid.uuid4().hex, None
@@ -82,7 +83,11 @@ class Host:
         else:
             tag, value = "refactor-survey", Host.answers.get("survey", SURVEY)
         block = value if isinstance(value, str) else json.dumps(value)
-        yield Event("done", f"Read.\n\n```{tag}\n{block}\n```", {"tokens": {"in": 3, "out": 2}}, self.id)
+        answer = f"Read.\n\n```{tag}\n{block}\n```"
+        if Host.afterword:   # a hook had the model go on after its report
+            yield Event("progress", answer)
+            answer = Host.afterword
+        yield Event("done", answer, {"tokens": {"in": 3, "out": 2}}, self.id)
 
     stop = close = lambda *_: None
 
@@ -96,7 +101,7 @@ def surveyed(repo, tmp_path, monkeypatch):
     _git(repo, "commit", "-qm", "src")
     monkeypatch.setattr(refactor, "RUNS", tmp_path / "runs")
     monkeypatch.setattr(refactor, "ChatSession", Host)
-    Host.made, Host.answers, Host.model = [], {}, "claude-test-1"
+    Host.made, Host.answers, Host.model, Host.afterword = [], {}, "claude-test-1", ""
     query.config("refactor", "proj")["refactor_mode"] = "preserve"
     return repo
 
@@ -167,6 +172,13 @@ def test_a_malformed_pipeline_stops_and_resume_skips_what_finished(surveyed):
     assert run["state"] == "done"
     assert [m["phase"] for m in run["models"]][-2:] == ["pipeline:billing", "integrate"]
     assert len(Host.made) == 2, "orders was not asked again"
+
+
+def test_a_block_before_a_hooks_afterword_still_counts(surveyed):
+    api = client()
+    Host.afterword = "That sentence describes the pipeline; it is not a promise."
+    run = settled(api, start(api).json()["id"])
+    assert run["state"] == "done", run["stopped"]
 
 
 def test_another_model_answering_stops_the_survey(surveyed):
