@@ -274,7 +274,7 @@ def pipeline_shape(value, pid: str, ids: set[str], root: Path) -> dict:
 
 def spec_shape(s, mode: str, map_: dict, root: Path) -> dict:
     if not isinstance(s, dict) or not isinstance(s.get("key"), str) or not ID.fullmatch(s["key"]):
-        raise ValueError("명세의 `key` 는 소문자·숫자·- 40자까지다")
+        raise ValueError(f"명세의 `key` `{s.get('key') if isinstance(s, dict) else s}` — 소문자·숫자·- 40자까지다")
     what = f"specs[{s['key']}]"
     title = _text(s.get("title"), f"{what}.title")
     if LOOKING.search(title):

@@ -265,8 +265,9 @@ def test_a_spec_names_the_files_it_creates_and_every_refused_spec_is_named(surve
     for bad, why in ((["src/orders.py"], "이미 있다"), (["src/new/intake.py"], "폴더가"), (["../out.py"], "저장소 안")):
         with pytest.raises(ValueError, match=why):
             refactor_survey.spec_shape(spec("x", creates=bad), "preserve", MAP, surveyed)
-    both = {"coverage": {"scope": "s"}, "specs": [spec("a", files=["src/a.py"]), spec("b", files=["src/b.py"])]}
-    with pytest.raises(ValueError, match=r"(?s)specs\[a\].*specs\[b\]"):
+    both = {"coverage": {"scope": "s"}, "specs": [spec("a", files=["src/a.py"]), spec("b", files=["src/b.py"]),
+                                                  spec("c" * 41)]}
+    with pytest.raises(ValueError, match=r"(?s)specs\[a\].*specs\[b\].*`c{41}`"):
         refactor_survey.survey_shape(both, "preserve", MAP, surveyed)
 
 
