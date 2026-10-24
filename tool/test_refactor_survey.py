@@ -259,6 +259,17 @@ def test_a_survey_tree_that_cannot_be_rebuilt_stops_the_survey(surveyed, monkeyp
     assert not seen, "no turn reads what the gate wrote"
 
 
+def test_a_spec_names_the_files_it_creates_and_every_refused_spec_is_named(surveyed):
+    made = refactor_survey.spec_shape(spec("x", creates=["src/intake.py"]), "preserve", MAP, surveyed)
+    assert made["creates"] == ["src/intake.py"] and made["files"] == ["src/orders.py"]
+    for bad, why in ((["src/orders.py"], "이미 있다"), (["src/new/intake.py"], "폴더가"), (["../out.py"], "저장소 안")):
+        with pytest.raises(ValueError, match=why):
+            refactor_survey.spec_shape(spec("x", creates=bad), "preserve", MAP, surveyed)
+    both = {"coverage": {"scope": "s"}, "specs": [spec("a", files=["src/a.py"]), spec("b", files=["src/b.py"])]}
+    with pytest.raises(ValueError, match=r"(?s)specs\[a\].*specs\[b\]"):
+        refactor_survey.survey_shape(both, "preserve", MAP, surveyed)
+
+
 def test_a_map_path_glob_becomes_the_files_it_matches(surveyed):
     owned = {**MAP["pipelines"][0], "paths": ["src/orders.py", "src/*.py"]}
     shaped = refactor_survey.mapped_shape({**MAP, "pipelines": [owned, MAP["pipelines"][1]]}, surveyed)

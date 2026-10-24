@@ -100,7 +100,7 @@ def startable(repo: Path, spec: dict, source: str) -> list[str]:
     if listed.returncode:
         raise HTTPException(409, f"조사 기준 커밋과 비교하지 못했다 — {specs.said(listed)}")
     changed = listed.stdout.splitlines()
-    if hit := under(changed, [*r["files"], *r["evidence"]]):
+    if hit := under(changed, [*r["files"], *r["detail"].get("creates", []), *r["evidence"]]):
         raise HTTPException(409, f"조사 뒤 대상·근거 파일이 바뀌었다: {', '.join(hit[:10])} — [다시 확인] 으로 "
                                  "이 명세를 지금 코드에서 다시 조사해라")
     return changed

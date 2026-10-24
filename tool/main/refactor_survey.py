@@ -74,7 +74,8 @@ PIPELINE_SCHEMA = {
 SPEC_SCHEMA = {
     "key": "<kebab-case id, unique in this survey>", "title": "<the one improvement>",
     "pipeline": "<one pipeline id, or shared:<path> for a shared boundary change>",
-    "files": ["<repository-relative files the change touches>"],
+    "files": ["<repository-relative files in the base commit the change touches>"],
+    "creates": ["<repository-relative files the change creates, in folders that exist; omit when none>"],
     "boundary": "<the responsibility boundary this spec works inside>",
     "problem": "<the confirmed problem>", "evidence": [{"path": "...", "symbol": "..."}],
     "change": "<exactly what changes>", "keep": ["<behaviour and scope that stay unchanged>"],
@@ -157,6 +158,19 @@ def _at(root: Path, value, what: str) -> str:
     if top not in target.parents or target.relative_to(top).parts[0].casefold() == ".git" or not target.exists():
         raise ValueError(f"`{what}`: `{rel}` 이 기준 커밋에 없다")
     return target.relative_to(top).as_posix()
+
+
+def _new(root: Path, value, what: str) -> str:
+    """A repository-relative path a spec creates: absent from the base commit, in a folder that is there."""
+    rel = _text(value, what).replace("\\", "/").strip("/")
+    target, top = (root / rel).resolve(), root.resolve()
+    if top not in target.parents or target.relative_to(top).parts[0].casefold() == ".git":
+        raise ValueError(f"`{what}`: `{rel}` 은 저장소 안의 경로가 아니다")
+    if target.exists():
+        raise ValueError(f"`{what}`: `{rel}` 은 기준 커밋에 이미 있다 — `files` 에 둔다")
+    if not target.parent.is_dir():
+        raise ValueError(f"`{what}`: `{rel}` 의 폴더가 기준 커밋에 없다")
+    return rel
 
 
 def _owned(root: Path, value, what: str) -> list[str]:
@@ -273,6 +287,8 @@ def spec_shape(s, mode: str, map_: dict, root: Path) -> dict:
     shaped = {
         "key": s["key"], "mode": mode, "title": title, "pipeline": pipeline,
         "files": [_at(root, f, f"{what}.files[{i}]") for i, f in enumerate(_list(s.get("files"), f"{what}.files"))],
+        "creates": [_new(root, f, f"{what}.creates[{i}]")
+                    for i, f in enumerate(_list(s.get("creates") or [], f"{what}.creates"))],
         **{k: _text(s.get(k), f"{what}.{k}") for k in ("boundary", "problem", "change", "impact", "rollback")},
         "evidence": _evidence(root, s.get("evidence"), f"{what}.evidence"),
         "keep": _texts(s.get("keep"), f"{what}.keep"),
@@ -337,7 +353,14 @@ def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = fr
     """An integration (or recheck) block; `known` are keys outside it a spec may still depend on."""
     if not isinstance(value, dict) or not isinstance(value.get("coverage"), dict):
         raise ValueError("refactor-survey 는 coverage 가 있는 JSON 객체여야 한다")
-    shaped = [spec_shape(s, mode, map_, root) for s in _list(value.get("specs") or [], "specs")]
+    shaped, refused = [], []
+    for s in _list(value.get("specs") or [], "specs"):   # every refused spec at once: one repair fixes them all
+        try:
+            shaped.append(spec_shape(s, mode, map_, root))
+        except ValueError as exc:
+            refused.append(str(exc))
+    if refused:
+        raise ValueError("\n".join(refused))
     keys = [s["key"] for s in shaped]
     if len(set(keys)) != len(keys):
         raise ValueError("명세 `key` 가 겹친다")
