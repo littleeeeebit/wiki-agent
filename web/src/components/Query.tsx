@@ -454,7 +454,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
                 && !messages.some((m) => m.blocks?.some((b) => b.name === 'spec' && 'id' in b && b.id === s.id)))
                 .map((s) => <Blocks key={s.id} blocks={[{ name: 'spec', id: s.id }]}
                   specs={specs} korean={on} busy={busy} refactorMode={here.refactor_mode ?? 'preserve'}
-                  refactorGeneration={here.refactor_generation}
+                  refactorGeneration={here.refactor_generation} options={options}
                   onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} />)}
             </div>}
             messages={active === 'next' && selectedSpec && !selectedSpec.refactor?.mode && !messages.some((m) => m.blocks?.some((b) => b.name === 'spec' && 'id' in b && b.id === selectedSpec.id))
@@ -471,7 +471,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
               <Blocks blocks={(m.blocks ?? []).filter((b) => active !== 'refactor' || b.name !== 'spec'
                 || !('id' in b) || latestSpec.get(b.id) === m)} specs={specs} korean={on} busy={busy}
                 refactorMode={active === 'refactor' ? here?.refactor_mode ?? 'preserve' : undefined}
-                refactorGeneration={here?.refactor_generation}
+                refactorGeneration={here?.refactor_generation} options={options}
                 onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} />
             ) : undefined}
             empty={active === 'next' ? (

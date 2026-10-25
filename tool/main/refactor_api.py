@@ -46,6 +46,13 @@ class Start(BaseModel):
     roles: Roles | None = None
 
 
+class CardRoles(BaseModel):
+    """An unstarted card's implementation and review models; its survey model stays."""
+
+    worker: Role
+    reviewer: Role
+
+
 def mine(repo: Path, rid: str) -> dict:
     run = refactor.load(repo.name, rid) if refactor.REQUEST.fullmatch(rid) else None
     if run is None:
@@ -150,7 +157,8 @@ def start(body: Start) -> dict:
 
 def surveyed(repo: Path, body: Start, roles: Roles, recheck: str | None = None) -> dict:
     """A survey in the focus's current mode; one live survey per repository.
-    Starting one retires every stopped older survey, so only the newest resumes.
+    Starting one retires every stopped older survey, so only the newest resumes,
+    and deletes the unstarted cards of older surveys of its mode (`replaced`).
     A `recheck` reads one stale card's pipeline again and leaves the rest alone."""
 
     from .query import _busy, config
@@ -180,10 +188,48 @@ def surveyed(repo: Path, body: Start, roles: Roles, recheck: str | None = None) 
                    "spent": {"seconds": 0, "calls": 0, "tokens": 0}, "phase": "baseline", "state": "running",
                    "stopped": None, "models": [], "specs": [], "recheck": recheck, "created": now, "updated": now}
             improvement.atomic(refactor.file_of(repo.name, rid), run)
+        if recheck is None:
+            replaced(repo, body.mode, rid)
         started(repo, run, recheck is None)
     finally:
         release()
     return refactor.load(repo.name, rid)
+
+
+def replaced(repo: Path, mode: str, rid: str) -> None:
+    """A new survey of `mode` deletes the unstarted cards of every earlier one (user's choice): it reads the
+    code again, and two sets of cards for the same debt would both stay startable. A started card goes on."""
+
+    with specs._files:
+        for spec in specs.listing(repo.name):
+            r = spec.get("refactor") or {}
+            if spec["state"] == "정리됨" and r.get("survey") not in (None, rid) and r.get("mode") == mode:
+                specs.file_of(repo.name, spec["id"]).unlink(missing_ok=True)
+    work.feed.put({"kind": "sync"})
+
+
+@router.post("/api/refactors/specs/{sid}/roles")
+def roles_of(sid: str, body: CardRoles) -> dict:
+    """An unstarted card's implementation and review models, chosen again — a quota running low on one
+    model (user's choice). Its survey model stays: rechecks and the conversation run on it."""
+
+    repo = current_repo()
+    with specs._files:
+        spec = specs.load(repo.name, sid)
+        if spec is None or not (spec.get("refactor") or {}).get("survey"):
+            raise HTTPException(404, "그런 조사 명세가 없다")
+        if spec["state"] != "정리됨":
+            raise HTTPException(409, "시작한 명세의 모델은 바꾸지 않는다 — 끝까지 같은 모델로 간다")
+        was = fixed(spec)
+        now = named(Roles(survey=was.survey, worker=body.worker, reviewer=body.reviewer)).model_dump()
+        spec["refactor"]["roles"] = now
+        spec["refactor"].setdefault("role_changes", []).append(
+            {"ts": time.time(), "from": {k: was.model_dump()[k] for k in ("worker", "reviewer")},
+             "to": {k: now[k] for k in ("worker", "reviewer")}})
+        spec.update(cell={**now["worker"], "fast": False}, reviewer=now["reviewer"])
+        specs.save(spec)
+    work.feed.put({"kind": "sync"})
+    return spec
 
 
 @router.post("/api/refactors/specs/{sid}/recheck")

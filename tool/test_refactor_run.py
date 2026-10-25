@@ -122,6 +122,39 @@ def test_a_restart_keeps_the_mode_and_generation_its_cards_were_made_in(running,
         refactor_run.startable(running[0], specs.load("proj", run["specs"][0]), "")
 
 
+def test_an_unstarted_card_takes_new_work_and_review_models_and_a_started_one_keeps_its_own(running):
+    # User's choice: a quota running low on one model moves the cards still to start, one by one.
+    first, second = surveyed_in("preserve", spec("orders-split"), spec("orders-names"))["specs"]
+    api = client()
+    cheap = {"worker": {"model": "claude-cheap", "effort": "low"}, "reviewer": {"model": "codex:gpt-cheap", "effort": ""}}
+    empty = api.post(f"/api/refactors/specs/{first}/roles", json={**cheap, "worker": {"model": " ", "effort": ""}})
+    assert empty.status_code == 400 and "구현 모델" in empty.json()["detail"]
+    card = api.post(f"/api/refactors/specs/{first}/roles", json=cheap).json()
+    assert card["refactor"]["roles"] == {"survey": ROLES["survey"], **cheap}, "the survey model stays"
+    assert card["cell"] == {**cheap["worker"], "fast": False} and card["reviewer"] == cheap["reviewer"]
+    assert card["refactor"]["role_changes"][0]["from"] == {k: ROLES[k] for k in ("worker", "reviewer")}
+    assert specs.load("proj", second)["cell"] == {**ROLES["worker"], "fast": False}, "only the card asked"
+    Worker.replies = [edited("src/orders.py", "def place(order):\n    return order  # split\n")]
+    started(api, first)
+    assert Worker.made[0].model == "claude-cheap", "the work cell runs on the model chosen again"
+    refused = api.post(f"/api/refactors/specs/{first}/roles", json=cheap)
+    assert refused.status_code == 409 and "끝까지" in refused.json()["detail"]
+
+
+def test_a_new_survey_deletes_the_unstarted_cards_of_an_earlier_one_at_its_start(running):
+    # User's choice: at the new survey's start, not at its end (which sets every older card aside, `carded`),
+    # and deleted, not set aside — even when the new survey then stops without cards.
+    first, second = surveyed_in("preserve", spec("orders-split"), spec("orders-names"))["specs"]
+    Worker.replies = [edited("src/orders.py", "def place(order):\n    return order  # split\n")]
+    started(client(), first)
+    Host.answers = {"survey": {**ONE, "specs": [{"key": "broken"}]}}
+    api = client()
+    stopped = settled(api, start(api, "survey-preserve-0002").json()["id"])
+    assert stopped["state"] == "stopped" and not stopped["specs"]
+    assert specs.load("proj", second) is None and not list(specs.SPECS.glob(f"proj/dropped/{second}.*")), "deleted"
+    assert specs.load("proj", first)["state"] != "정리됨", "a started card goes on"
+
+
 class Talk:
     """The refactoring conversation's session: only its model is looked at."""
 
@@ -451,10 +484,12 @@ def test_the_conversation_refines_the_same_card_and_splits_off_only_the_new_part
 def test_a_card_is_refined_only_on_its_own_survey_model(surveyed):
     run = surveyed_in("preserve", spec("orders-split"))
     sid = run["specs"][0]
+    card = specs.load("proj", sid)
     api = client()
     later = {**ROLES, "survey": {"model": "haiku", "effort": "low"}}
     second = settled(api, start(api, "survey-later-0001", roles=later).json()["id"])
-    assert second["state"] == "stopped" and specs.load("proj", sid)["state"] == "정리됨", "the first card is still there"
+    assert second["state"] == "stopped" and specs.load("proj", sid) is None, "the later start deleted it"
+    specs.save(card)   # one left from before a start deleted the earlier survey's unstarted cards
     assert query.config("refactor", "proj")["model"] == "haiku", "the conversation now runs on the later survey"
     source = {"focus": "refactor", "turn": 3, "session": "talk", "refactor_mode": "preserve",
               "refactor_generation": query.config("refactor", "proj").get("refactor_generation", 0)}
