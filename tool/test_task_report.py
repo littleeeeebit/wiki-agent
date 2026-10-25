@@ -96,5 +96,3 @@ def test_a_report_request_a_person_kept_from_going_out_is_not_counted_as_asked(r
         saved = specs.load(repo.name, sid)
         assert saved["report_asked"] and not saved["fault"]
     work.close_all()
-
-
