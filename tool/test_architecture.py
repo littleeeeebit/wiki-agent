@@ -260,6 +260,12 @@ def test_a_merge_refresh_reads_only_what_the_pull_request_changed(tmp_path, cli,
         return answers.pop(0)
     monkeypatch.setattr(architecture, "answered", answered)
     assert not architecture.changed(root, base, model="m") and not asked, "nothing changed: no turn"
+    (root / ".wiki").mkdir()
+    for index in ("corpus.json", "graph.json"):
+        (root / ".wiki" / index).write_text('{"INDEX_SENTINEL": 1}\n', encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-qm", "the wiki's indexes")
+    assert not architecture.changed(root, base, model="m") and not asked, "the wiki's indexes are no code change"
     (root / ".env").write_text("API_KEY=PRIVATE_SENTINEL\n", encoding="utf-8")
     (root / "server/task handler.py").write_text("def run():\n    pass\n", encoding="utf-8")
     git("add", "-A")
@@ -268,6 +274,7 @@ def test_a_merge_refresh_reads_only_what_the_pull_request_changed(tmp_path, cli,
     (root / ".env").unlink()
     (root / "server/task handler.py").write_text("def run():\n    return 3\n", encoding="utf-8")
     (root / "server/api.py").write_text("def handle():\n    return 2\n", encoding="utf-8")
+    (root / ".wiki/graph.json").write_text('{"INDEX_SENTINEL": 2}\n', encoding="utf-8")
     git("commit", "-qam", "change")
     assert not architecture.changed(root, base, model="m", effort="low"), "an empty answer writes nothing"
     model, effort, ask, system = asked[0]
@@ -275,6 +282,7 @@ def test_a_merge_refresh_reads_only_what_the_pull_request_changed(tmp_path, cli,
     assert "\nserver/task handler.py\n" in ask, "one changed file, one line"
     # Review of #237: a deleted `.env` reached the model as removed lines.
     assert "PRIVATE_SENTINEL" not in ask and ".env" not in ask, "a file the source tools refuse stays out"
+    assert "INDEX_SENTINEL" not in ask and "corpus.json" not in ask
     # The overall element names server/api.py; its `server` component is the one its diagram labels with it.
     assert NODES[0]["description"] in ask and "Handles HTTP and persists replies." in ask
     server = root / ".omm/overall-architecture/server/description.md"
