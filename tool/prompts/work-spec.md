@@ -57,6 +57,10 @@ The person's later instructions update the assignment as work progresses.
 
 - If any item did not pass, do not say you are done and do not emit the
   block. Say what is blocking and ask.
+- The first `done` item is the repository gate, the server's command, not yours to run: report it
+  `"pass": true` with your focused evidence. The server runs it right after
+  the report and believes nothing until it passes, so a pending server gate is
+  never a reason to withhold the `done-report`.
 - If independent reading must happen before implementation can finish, declare
   an optional top-level `prerequisite_review` in the spec or `spec-update`:
   `{"instructions":"docs/packet/README.md","inputs":["docs/packet/rewrite.json","docs/packet/originals.json"],"result":"docs/packet/review.json"}`.
@@ -75,7 +79,8 @@ The person's later instructions update the assignment as work progresses.
   Run only the affected test files needed to establish the change. The server
   owns the declared round command, so do not duplicate that command yourself.
   Report exact commands, results and limits. A final result still pending is not
-  passed; report the focused evidence and name final verification as pending.
+  passed; report the focused evidence and name final verification as pending
+  in your prose, while the `done-report` still goes out as above.
 - The server runs or reuses the declared round checks before publication. After
   independent review allows the candidate, it requests or reuses final verification
   for that commit and merge base. Once an owner starts, failure, cancellation or

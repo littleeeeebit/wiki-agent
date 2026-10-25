@@ -260,6 +260,53 @@ def test_spec_update_without_done_report_asks_for_one_then_stops_with_a_fault(re
     work.close_all()
 
 
+def committed(text: str):
+    """A worker turn that commits its work, leaves the tree clean and says `text`."""
+
+    def reply(path, halt):
+        (path / "a.txt").write_text("done\n", encoding="utf-8")
+        git(path, "commit", "-qam", "work")
+        return text
+    return reply
+
+
+def test_a_turn_without_a_report_or_a_question_asks_for_the_report_once(repo):
+    # Live (ai-companion-voice-agent): a Codex worker read the pending server gate as a failed item,
+    # withheld its `done-report`, and the task sat in `작업 중` with nothing running.
+    web, remote = client(), Remote()
+    report = [{"item": PASS, "pass": True}, {"item": "돌아오는 테스트가 있다", "pass": True}]
+    Worker.replies = [committed("The server gate is pending, so I cannot emit a done-report yet."),
+                      SWEPT + "```done-report\n" + json.dumps(report) + "\n```"]
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote), \
+         patch.object(specs, "korean", side_effect=lambda spec: spec):
+        sid = made(repo, spec_block())[0]["id"]
+        started(web, sid)
+        saved = until(lambda: (s := specs.load(repo.name, sid)).get("pr") and s)
+        assert saved["pr"]["number"] == 7 and not saved["report_asked"]
+        assert "pending server gate is not a failed item" in work._sessions[str(repo)].heard[-1]
+    work.close_all()
+
+
+def test_a_second_turn_without_a_report_stops_with_the_reason_and_a_persons_turn_is_not_chased(repo):
+    web = client()
+    Worker.replies = [committed("Still pending."), "Still pending."]
+    with patch.object(work, "ChatSession", Worker):
+        sid = made(repo, spec_block())[0]["id"]
+        started(web, sid)
+        saved = until(lambda: (s := specs.load(repo.name, sid)).get("fault") and s)
+        assert saved["state"] == "작업 중" and "다시 빠졌다" in saved["fault"] and not saved["report_asked"]
+        assert not Worker.replies, "asked once, then stopped instead of waiting silently"
+        # A person's own turn may end in plain talk: no report request follows it.
+        Worker.replies = ["Here is what the helper does.", "unsent"]
+        specs.update(repo.name, sid, fault=None)
+        settled(str(repo))
+        assert web.post("/api/work/say", json={"path": str(repo), "text": "What does it do?"}).status_code == 200
+        settled(str(repo))
+        saved = specs.load(repo.name, sid)
+        assert Worker.replies == ["unsent"] and not saved["fault"] and not saved["report_asked"]
+    work.close_all()
+
+
 def test_saved_permission_switch_cannot_downgrade_agent_and_fix_prompts_allow_push(repo):
     loop.store(bypass=False)
     assert work.settings()["bypass"]

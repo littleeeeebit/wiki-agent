@@ -72,6 +72,11 @@ REPORT_AGAIN = ("The specification is now revision {rev}, and your last answer h
                 "Check every completion condition of revision {rev} against the current "
                 "code, finish and push what is missing, then end with the `test-cleanup` block if tests changed "
                 "and the `done-report` block for revision {rev}.")
+REPORT_MISSING = ("Your last answer had neither a `done-report` nor a `choices` question, so the task cannot move. "
+                  "The server runs its gate command right after your report and believes nothing until it passes: "
+                  "a pending server gate is not a failed item. If the work is finished, end with the "
+                  "`test-cleanup` block and the `done-report` block now. If something you own still fails, say "
+                  "what blocks it and ask with a `choices` block.")
 
 # `path:line` or `path:line-line` as an answer cites it.
 LINE =re.compile(r":\d+(?:[-–]\d+)?$")
@@ -1561,10 +1566,21 @@ def _check(path: Path, run, final: str):
         return first
     report = next((b for b in blocks(final)[1] if b["name"] == "done-report"), None)
     if report is None:
-        if spec.get("report_asked") and not asks(final):
+        if asks(final):
+            return None
+        if spec.get("report_asked"):
             update(spec["repo"], spec["id"], report_asked=False)
             return failed(run, spec, f"명세 판 {spec['rev']} 의 완료 보고가 다시 빠졌다 — 에이전트에게 완료 보고를 요청해라")
-        return None
+        if spec.get("prerequisite_review") or run.halt.is_set() or getattr(run, "person", False):
+            return None
+        # Committed work in a clean tree, with neither a report nor a question, left the task in `작업 중`
+        # with nothing to move it (a worker read a pending server gate as a failed item): ask once, and a
+        # second miss stops with the reason. A turn that only talked or left edits is still working.
+        if sh(["git", "rev-parse", "HEAD"], path).stdout.strip() == spec.get("start_head") or dirty(path):
+            return None
+        spec = update(spec["repo"], spec["id"], report_asked=True)
+        note(run, "완료 보고도 질문도 없는 답이다 — 완료 보고를 한 번 요청한다")
+        return lambda: again(path, run.chat, REPORT_MISSING, spec)
     if "error" in report or not valid(report.get("value")):
         return failed(run, spec, f"완료 보고를 읽지 못했다 — {report.get('error') or '항목마다 item 과 pass 가 있어야 한다'}")
     items = report["value"]

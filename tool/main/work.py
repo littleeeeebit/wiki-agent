@@ -917,7 +917,10 @@ def say(body: Order) -> StreamingResponse:
         release = hold(_busy, _lock, body.path, "이 작업트리의 에이전트가 아직 돌고 있다", kind="turn")
     try:
         path = ours(body.path, repo)
-        run = begin(path, session(path, body.model, body.effort, body.fast), text, release)
+        chat = session(path, body.model, body.effort, body.fast)
+        run = Run(chat)
+        run.person = True   # a person's turn may end in plain talk; the task check does not chase its report
+        run = begin(path, chat, text, release, run)
     except BaseException:
         release()
         raise
