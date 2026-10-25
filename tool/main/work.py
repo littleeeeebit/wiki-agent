@@ -619,8 +619,12 @@ class Run:
     a screen that reattaches still knows how long the last step has run.
     """
 
-    def __init__(self, chat: ChatSession) -> None:
+    def __init__(self, chat: ChatSession, person: bool = False, task: bool = False) -> None:
         self.turn = uuid.uuid4().hex
+        # A person's instruction, not the server's: its turn may end in plain talk, and the task check
+        # neither chases its report nor counts it as the answer to a report request. `task`: the task's
+        # own work turn (its start, a follow-up `specs.again` sent), the only kind chased for a report.
+        self.person, self.task = person, task
         self.started_at = time.time()
         self.chat = chat
         self.session_id = chat.id
@@ -867,7 +871,8 @@ def dispatch(path: Path, ended: Run) -> None:
         del _queued[key]
         release = hold(_busy, _lock, key, "", kind="turn")
     try:
-        begin(path, session(path, order.model, order.effort, order.fast), order.text, release)
+        chat = session(path, order.model, order.effort, order.fast)
+        begin(path, chat, order.text, release, Run(chat, person=True))   # a queued order is a person's
     except Exception as exc:
         # Nobody's request is waiting on this thread: the failure and the
         # instruction itself go on record, and screens read it again.
@@ -917,7 +922,8 @@ def say(body: Order) -> StreamingResponse:
         release = hold(_busy, _lock, body.path, "이 작업트리의 에이전트가 아직 돌고 있다", kind="turn")
     try:
         path = ours(body.path, repo)
-        run = begin(path, session(path, body.model, body.effort, body.fast), text, release)
+        chat = session(path, body.model, body.effort, body.fast)
+        run = begin(path, chat, text, release, Run(chat, person=True))
     except BaseException:
         release()
         raise

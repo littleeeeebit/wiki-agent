@@ -72,6 +72,11 @@ REPORT_AGAIN = ("The specification is now revision {rev}, and your last answer h
                 "Check every completion condition of revision {rev} against the current "
                 "code, finish and push what is missing, then end with the `test-cleanup` block if tests changed "
                 "and the `done-report` block for revision {rev}.")
+REPORT_MISSING = ("Your last answer had neither a `done-report` nor a `choices` question, so the task cannot move. "
+                  "The server runs its gate command right after your report and believes nothing until it passes: "
+                  "a pending server gate is not a failed item. If the work is finished, end with the "
+                  "`test-cleanup` block and the `done-report` block now. If something you own still fails, say "
+                  "what blocks it and ask with a `choices` block.")
 
 # `path:line` or `path:line-line` as an answer cites it.
 LINE =re.compile(r":\d+(?:[-–]\d+)?$")
@@ -1000,8 +1005,8 @@ def start(sid: str, body: Start) -> dict:
         # Made: from here it is a turn, and a switch no longer waits for it.
         release.held.kind = "turn"
         # The server's own turn: Jev may gather evidence first, or ask the person instead.
-        run = work.begin(path, work.session(path, cell["model"], cell["effort"], cell.get("fast", False)), "Start.",
-                         release, decide=True)
+        chat = work.session(path, cell["model"], cell["effort"], cell.get("fast", False))
+        run = work.begin(path, chat, "Start.", release, work.Run(chat, task=True), decide=True)
     except BaseException:
         release()
         raise
@@ -1466,20 +1471,21 @@ def failed(run, spec: dict, reason: str) -> None:
     return None
 
 
-def again(path: Path, chat, text: str, spec: dict) -> None:
+def again(path: Path, chat, text: str, spec: dict) -> bool:
     """The plan row's turn, once the turn that opened the pull request has let
-    go of the worktree. A person who got there first keeps it."""
+    go of the worktree. A person who got there first keeps it; then False."""
 
     try:
         release = hold(work._busy, _lock, str(path), "", kind="turn")
     except HTTPException:
         update(spec["repo"], spec["id"], fault="계획 행을 고칠 턴을 보내지 못했다 — 작업트리가 쓰이고 있다")
-        return
+        return False
     try:
-        work.begin(path, chat, text, release)
+        work.begin(path, chat, text, release, work.Run(chat, task=True))
     except BaseException:
         release()
         raise
+    return True
 
 
 def check(path: Path, run, final: str):
@@ -1561,10 +1567,25 @@ def _check(path: Path, run, final: str):
         return first
     report = next((b for b in blocks(final)[1] if b["name"] == "done-report"), None)
     if report is None:
-        if spec.get("report_asked") and not asks(final):
+        # A person's turn may end in plain talk, and it is no answer to the server's request either.
+        if asks(final) or getattr(run, "person", False):
+            return None
+        if spec.get("report_asked"):
             update(spec["repo"], spec["id"], report_asked=False)
             return failed(run, spec, f"명세 판 {spec['rev']} 의 완료 보고가 다시 빠졌다 — 에이전트에게 완료 보고를 요청해라")
-        return None
+        # Only the task's own work turns are chased: a survey, a loop or a plan drives its next turn itself.
+        if not getattr(run, "task", False) or spec.get("prerequisite_review") or run.halt.is_set():
+            return None
+        # Committed work in a clean tree, with neither a report nor a question, left the task in `작업 중`
+        # with nothing to move it (a worker read a pending server gate as a failed item): ask once, and a
+        # second miss stops with the reason. A turn that only talked or left edits is still working.
+        if sh(["git", "rev-parse", "HEAD"], path).stdout.strip() == spec.get("start_head") or dirty(path):
+            return None
+        spec = update(spec["repo"], spec["id"], report_asked=True)
+        note(run, "완료 보고도 질문도 없는 답이다 — 완료 보고를 한 번 요청한다")
+        # A request a person's turn kept from being sent was never asked: the next miss is a first one.
+        return lambda: again(path, run.chat, REPORT_MISSING, spec) or update(spec["repo"], spec["id"],
+                                                                              report_asked=False)
     if "error" in report or not valid(report.get("value")):
         return failed(run, spec, f"완료 보고를 읽지 못했다 — {report.get('error') or '항목마다 item 과 pass 가 있어야 한다'}")
     items = report["value"]
