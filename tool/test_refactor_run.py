@@ -126,11 +126,13 @@ def test_an_unstarted_card_takes_new_work_and_review_models_and_a_started_one_ke
     # User's choice: a quota running low on one model moves the cards still to start, one by one.
     first, second = surveyed_in("preserve", spec("orders-split"), spec("orders-names"))["specs"]
     api = client()
-    cheap = {"worker": {"model": "claude-cheap", "effort": "low"}, "reviewer": {"model": "codex:gpt-cheap", "effort": ""}}
+    cheap = {"worker": {"model": "claude-cheap", "effort": "low"}, "reviewer": {"model": "codex:gpt-cheap", "effort": ""},
+             "was": {k: ROLES[k] for k in ("worker", "reviewer")}}
     empty = api.post(f"/api/refactors/specs/{first}/roles", json={**cheap, "worker": {"model": " ", "effort": ""}})
     assert empty.status_code == 400 and "구현 모델" in empty.json()["detail"]
     card = api.post(f"/api/refactors/specs/{first}/roles", json=cheap).json()
-    assert card["refactor"]["roles"] == {"survey": ROLES["survey"], **cheap}, "the survey model stays"
+    assert card["refactor"]["roles"] == {"survey": ROLES["survey"], "worker": cheap["worker"],
+                                         "reviewer": cheap["reviewer"]}, "the survey model stays"
     assert card["cell"] == {**cheap["worker"], "fast": False} and card["reviewer"] == cheap["reviewer"]
     assert card["refactor"]["role_changes"][0]["from"] == {k: ROLES[k] for k in ("worker", "reviewer")}
     assert specs.load("proj", second)["cell"] == {**ROLES["worker"], "fast": False}, "only the card asked"
@@ -139,6 +141,41 @@ def test_an_unstarted_card_takes_new_work_and_review_models_and_a_started_one_ke
     assert Worker.made[0].model == "claude-cheap", "the work cell runs on the model chosen again"
     refused = api.post(f"/api/refactors/specs/{first}/roles", json=cheap)
     assert refused.status_code == 409 and "끝까지" in refused.json()["detail"]
+
+
+def test_a_card_keeps_its_chosen_models_through_a_refinement_a_recheck_and_another_screen(surveyed, monkeypatch):
+    # Review of #236: a refinement and a recheck remade the card from its survey record, back on the
+    # models it started with; an editor opened before another screen's change saved over it.
+    sid = surveyed_in("preserve", spec("orders-split"))["specs"][0]
+    api, path = client(), f"/api/refactors/specs/{sid}/roles"
+    cheap = {"worker": {"model": "claude-cheap", "effort": "low"}, "reviewer": {"model": "codex:gpt-cheap", "effort": ""}}
+    assert api.post(path, json={**cheap, "was": {k: ROLES[k] for k in ("worker", "reviewer")}}).status_code == 200
+    source = {"focus": "refactor", "turn": 2, "session": "talk", "refactor_mode": "preserve",
+              "refactor_generation": query.config("refactor", "proj").get("refactor_generation", 0)}
+    assert refactor_survey.refined(surveyed, {**spec("ignored", title="Split intake"), "id": sid}, source) == sid
+    card = specs.load("proj", sid)
+    assert card["rev"] == 2 and card["cell"] == {**cheap["worker"], "fast": False} and card["reviewer"] == cheap["reviewer"]
+    assert len(card["refactor"]["role_changes"]) == 1
+    later = {"worker": {"model": "claude-later", "effort": ""}, "reviewer": cheap["reviewer"]}
+    real = refactor_survey.asked
+
+    def asked(*args, **kwargs):   # another screen's change lands while the recheck reads the code
+        if args[2] == "recheck":
+            assert api.post(path, json={**later, "was": cheap}).status_code == 200
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(refactor_survey, "asked", asked)
+    (surveyed / "src/orders.py").write_text("def place(order):\n    return [order]\n", encoding="utf-8")
+    _git(surveyed, "commit", "-qam", "the target moved")
+    Host.answers = {"survey": {**ONE, "specs": [spec("orders-split", title="Split place again")]}}
+    again = settled(api, api.post(f"/api/refactors/specs/{sid}/recheck",
+                                  json={"request_id": "recheck-roles-0001", "mode": "preserve"}).json()["id"])
+    card = specs.load("proj", sid)
+    assert again["state"] == "done" and card["refactor"]["survey"] == again["id"]
+    assert card["cell"]["model"] == "claude-later" and card["refactor"]["roles"]["survey"] == ROLES["survey"]
+    assert [c["to"]["worker"]["model"] for c in card["refactor"]["role_changes"]] == ["claude-cheap", "claude-later"]
+    stale = api.post(path, json={**cheap, "was": cheap})
+    assert stale.status_code == 409 and "다른 화면" in stale.json()["detail"]
 
 
 def test_a_new_survey_deletes_the_unstarted_cards_of_an_earlier_one_at_its_start(running):

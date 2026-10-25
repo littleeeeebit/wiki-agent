@@ -46,11 +46,15 @@ class Start(BaseModel):
     roles: Roles | None = None
 
 
-class CardRoles(BaseModel):
-    """An unstarted card's implementation and review models; its survey model stays."""
-
+class Pair(BaseModel):
     worker: Role
     reviewer: Role
+
+
+class CardRoles(Pair):
+    """An unstarted card's implementation and review models; its survey model stays."""
+
+    was: Pair   # what the editor opened on: a change made since on another screen is not overwritten
 
 
 def mine(repo: Path, rid: str) -> dict:
@@ -221,6 +225,8 @@ def roles_of(sid: str, body: CardRoles) -> dict:
         if spec["state"] != "정리됨":
             raise HTTPException(409, "시작한 명세의 모델은 바꾸지 않는다 — 끝까지 같은 모델로 간다")
         was = fixed(spec)
+        if body.was.model_dump() != was.model_dump(include={"worker", "reviewer"}):
+            raise HTTPException(409, "다른 화면에서 이 명세의 모델을 바꿨다 — 다시 열어 골라라")
         now = named(Roles(survey=was.survey, worker=body.worker, reviewer=body.reviewer)).model_dump()
         spec["refactor"]["roles"] = now
         spec["refactor"].setdefault("role_changes", []).append(

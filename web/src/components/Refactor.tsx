@@ -301,22 +301,28 @@ export function RolesEditor({ spec, roles, options, busy, onSaved }: {
   spec: api.Spec; roles: api.RefactorRoles; options: api.Options | null; busy: boolean; onSaved: () => void
 }) {
   const [open, setOpen] = useState(false)
+  // Opened on the card's current models and sent back as `was`: a change made since on another screen is refused.
+  const [was, setWas] = useState({ worker: roles.worker, reviewer: roles.reviewer })
   const [worker, setWorker] = useState(roles.worker)
   const [reviewer, setReviewer] = useState(roles.reviewer)
   const [saving, setSaving] = useState(false)
   const [fault, setFault] = useState('')
-  const unchanged = worker.model === roles.worker.model && worker.effort === roles.worker.effort
-    && reviewer.model === roles.reviewer.model && reviewer.effort === roles.reviewer.effort
+  const unchanged = worker.model === was.worker.model && worker.effort === was.worker.effort
+    && reviewer.model === was.reviewer.model && reviewer.effort === was.reviewer.effort
+  function opened() {
+    setWas({ worker: roles.worker, reviewer: roles.reviewer }); setWorker(roles.worker); setReviewer(roles.reviewer)
+    setFault(''); setOpen(true)
+  }
   async function save() {
     setSaving(true); setFault('')
     try {
-      await api.post(`/api/refactors/specs/${spec.id}/roles`, { worker, reviewer }, 'POST', spec.repo)
+      await api.post(`/api/refactors/specs/${spec.id}/roles`, { worker, reviewer, was }, 'POST', spec.repo)
         .then((r) => api.json(r, '모델 바꾸기'))
       setOpen(false); onSaved()
     } catch (err) { setFault(String(err instanceof Error ? err.message : err)) }
     finally { setSaving(false) }
   }
-  if (!open) return <Btn disabled={busy} onClick={() => setOpen(true)}
+  if (!open) return <Btn disabled={busy} onClick={opened}
     title="이 명세의 구현·리뷰 모델만 바꾼다 — 조사 모델과 이미 시작한 명세는 그대로">모델 바꾸기</Btn>
   return <div aria-label="모델 바꾸기" className="basis-full space-y-1.5 rounded-md border border-border p-2 text-[12.5px]">
     {([['구현', worker, setWorker], ['리뷰', reviewer, setReviewer]] as const).map(([label, value, set]) =>
@@ -330,7 +336,7 @@ export function RolesEditor({ spec, roles, options, busy, onSaved }: {
     <div className="flex gap-1.5">
       <Btn tone="primary" disabled={saving || unchanged || !worker.model || !reviewer.model} onClick={() => void save()}>
         {saving ? '…' : '저장'}</Btn>
-      <Btn tone="ghost" disabled={saving} onClick={() => { setOpen(false); setWorker(roles.worker); setReviewer(roles.reviewer) }}>취소</Btn>
+      <Btn tone="ghost" disabled={saving} onClick={() => setOpen(false)}>취소</Btn>
     </div>
     {fault && <p role="alert" className="text-destructive">{fault}</p>}
   </div>
