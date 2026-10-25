@@ -801,6 +801,13 @@ def test_every_other_reader_of_the_checkout_leaves_the_harvested_record_out_too(
     offline = patch.object(verify, "run", side_effect=lambda a, r: "" if a[1] in ("fetch", "merge-base") else real_run(a, r))
     with offline:
         assert verify.identity(repo, "main")[0] == head
+        # Review round 1: a check may read the records, so a changed one never reuses the earlier pass.
+        proof = verify.final(repo, "main", local_command="check", local_only=True, judge=lambda *_: {"ok": True, "head": head})
+        verify.confirm(repo, repo, "main", "check", proof, local_only=True)
+        (repo / record).write_text("# fix x, as a check reads it\n", encoding="utf-8")
+        with pytest.raises(verify.Pending, match="결과가 없습니다"):
+            verify.confirm(repo, repo, "main", "check", proof, local_only=True)
+        (repo / record).write_text("# fix x\n", encoding="utf-8")
     assert maintenance.indexes(repo) == [], "nor index what it leaves out"
     specs.sh(["git", "add", "-f", "--", record], repo)
     assert maintenance.changes(repo) == {record} and specs.dirty(repo), "a staged record is a change"

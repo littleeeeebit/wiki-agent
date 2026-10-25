@@ -140,10 +140,14 @@ def identity(repo, base):
     # v2: `run` strips the leading space of a v1 row. The start hook's rebuilt indexes and harvested
     # records are not changes; untracked files one by one, so a folded folder hides nothing beside them.
     rows = run(["git", "status", "--porcelain=v2", "--untracked-files=all", "-z"], repo).split("\0")
-    if any(r and not (r.startswith("? ") and r[2:].startswith(HARVESTED)) and not indexes.hook_row(repo, r) for r in rows):
+    records = sorted(r[2:] for r in rows if r.startswith("? ") and r[2:].startswith(HARVESTED))
+    if any(r and r[2:] not in records and not indexes.hook_row(repo, r) for r in rows):
         raise RuntimeError("커밋하지 않은 변경이 있어 최종 검증 결과를 사용할 수 없습니다")
+    # Yet a check may read them (`lint.py` lists untracked files): the evidence is bound to their bytes.
+    held = hashlib.sha256(json.dumps({r: hashlib.sha256((Path(repo) / r).read_bytes()).hexdigest()
+                                      for r in records}).encode()).hexdigest()
     run(["git", "fetch", "--quiet", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], repo)
-    return head, run(["git", "merge-base", "HEAD", f"origin/{base}"], repo)
+    return head, run(["git", "merge-base", "HEAD", f"origin/{base}"], repo), held
 
 
 def backend(repo, cfg):
@@ -313,12 +317,12 @@ def final(repo, base, *, project=None, local_command="", dispatch=True, seconds=
         local_command = " && ".join(filter(None, [gate, debt.command(base)])) if gate else ""
     halt = halt or threading.Event()
     deadline = time.monotonic() + seconds
-    head, base_oid = identity(repo, base)
+    head, base_oid, records = identity(repo, base)
     common = Path(run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], repo))
     inputs = environment_digest(project, Path(repo), local_command,
                                 ("requirements*.txt", "pyproject.toml", "pytest.ini", "web/package-lock.json"))
     signature = hashlib.sha256(json.dumps({"policy": cfg, "command": local_command, "local_only": local_only,
-                                          "inputs": inputs, "python": [sys.version, sys.executable]}, sort_keys=True).encode()).hexdigest()
+                                          "inputs": inputs, "records": records, "python": [sys.version, sys.executable]}, sort_keys=True).encode()).hexdigest()
     receipt = common / f"wiki-verification-{head}-{base_oid}-{signature}.json"
     with locked(common / "wiki-verification.lock"):
         record = json.loads(receipt.read_text(encoding="utf-8")) if receipt.is_file() else {
@@ -356,8 +360,8 @@ def final(repo, base, *, project=None, local_command="", dispatch=True, seconds=
         ) or record["backend"] == "local" and proof.get("environment_digest") != signature:
             raise Pending("저장된 통과 증거가 현재 커밋·검사 조건과 다릅니다")
         try:
-            if identity(repo, base) != (head, base_oid):
-                raise Pending("검증 대기 중 커밋·base가 바뀌었습니다")
+            if identity(repo, base) != (head, base_oid, records):
+                raise Pending("검증 대기 중 커밋·base·결정 기록이 바뀌었습니다")
         except (RuntimeError, OSError, subprocess.SubprocessError):
             if dispatch and record["backend"] == "local":
                 record.update(status="incomplete", reason="검증 뒤 커밋·base를 확인하지 못했습니다")
