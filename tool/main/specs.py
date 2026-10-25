@@ -1125,7 +1125,7 @@ def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text:
 # These can reach every consumer; broad execution belongs to the final owner.
 SHARED = ("conftest.py", "requirements*.txt", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini",
           "package.json", "package-lock.json", ".wiki/adapter.toml")
-HARVESTED = ".wiki/decisions/"   # where the start hook writes records: never the task's work
+HARVESTED = verify.HARVESTED
 LOCKS =("requirements*.txt", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini", "package-lock.json",
          "web/package-lock.json", "uv.lock", "poetry.lock")
 

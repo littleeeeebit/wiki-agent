@@ -785,6 +785,7 @@ def test_every_other_reader_of_the_checkout_leaves_the_harvested_record_out_too(
     from types import SimpleNamespace
     from unittest.mock import Mock
 
+    import verify
     from main import maintenance, refactor, verification
 
     (repo / ".git/info/exclude").write_text(".wiki/*\n!.wiki/decisions/\n", encoding="utf-8")
@@ -794,12 +795,27 @@ def test_every_other_reader_of_the_checkout_leaves_the_harvested_record_out_too(
     head = specs.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
     # Merge preparation and refactor finishing never take a person's record into their own commit.
     assert maintenance.changes(repo) == set() and verification.checkout_proven(repo, head) == ""
+    # Live (ai-companion-voice-agent #257): records harvested from merged PRs stopped merge preparation's
+    # final gate with `커밋하지 않은 변경이 있어 최종 검증 결과를 사용할 수 없습니다`.
+    real_run = verify.run
+    offline = patch.object(verify, "run", side_effect=lambda a, r: "" if a[1] in ("fetch", "merge-base") else real_run(a, r))
+    with offline:
+        assert verify.identity(repo, "main")[0] == head
+        # Review round 1: a check may read the records, so a changed one never reuses the earlier pass.
+        proof = verify.final(repo, "main", local_command="check", local_only=True, judge=lambda *_: {"ok": True, "head": head})
+        verify.confirm(repo, repo, "main", "check", proof, local_only=True)
+        (repo / record).write_text("# fix x, as a check reads it\n", encoding="utf-8")
+        with pytest.raises(verify.Pending, match="결과가 없습니다"):
+            verify.confirm(repo, repo, "main", "check", proof, local_only=True)
+        (repo / record).write_text("# fix x\n", encoding="utf-8")
     assert maintenance.indexes(repo) == [], "nor index what it leaves out"
     specs.sh(["git", "add", "-f", "--", record], repo)
     assert maintenance.changes(repo) == {record} and specs.dirty(repo), "a staged record is a change"
     specs.sh(["git", "reset", "-q", "--", record], repo)
     (repo / "left.txt").write_text("x", encoding="utf-8")
     assert verification.checkout_proven(repo, head), "anything else still is"
+    with offline, pytest.raises(RuntimeError, match="커밋하지 않은 변경"):
+        verify.identity(repo, "main")
 
     # A read-only turn whose status Git cannot read stops; two failed reads are not "unchanged".
     real = specs.sh

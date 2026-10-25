@@ -15,6 +15,7 @@ import time
 import tomllib
 
 POLICY = "verification.toml"
+HARVESTED = ".wiki/decisions/"   # where the start hook writes records (`tool/sync.py`): never the task's work
 
 
 class Pending(RuntimeError):
@@ -136,11 +137,17 @@ def identity(repo, base):
     from common import indexes   # here: `conftest` imports this file as `tool.verify`, before `tool` is a path
 
     head = run(["git", "rev-parse", "HEAD"], repo)
-    # v2: `run` strips the leading space of a v1 row. The start hook's rebuilt indexes are not changes.
-    if any(r and not indexes.hook_row(repo, r) for r in run(["git", "status", "--porcelain=v2", "-z"], repo).split("\0")):
+    # v2: `run` strips the leading space of a v1 row. The start hook's rebuilt indexes and harvested
+    # records are not changes; untracked files one by one, so a folded folder hides nothing beside them.
+    rows = run(["git", "status", "--porcelain=v2", "--untracked-files=all", "-z"], repo).split("\0")
+    records = sorted(r[2:] for r in rows if r.startswith("? ") and r[2:].startswith(HARVESTED))
+    if any(r and r[2:] not in records and not indexes.hook_row(repo, r) for r in rows):
         raise RuntimeError("커밋하지 않은 변경이 있어 최종 검증 결과를 사용할 수 없습니다")
+    # Yet a check may read them (`lint.py` lists untracked files): the evidence is bound to their bytes.
+    held = hashlib.sha256(json.dumps({r: hashlib.sha256((Path(repo) / r).read_bytes()).hexdigest()
+                                      for r in records}).encode()).hexdigest()
     run(["git", "fetch", "--quiet", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], repo)
-    return head, run(["git", "merge-base", "HEAD", f"origin/{base}"], repo)
+    return head, run(["git", "merge-base", "HEAD", f"origin/{base}"], repo), held
 
 
 def backend(repo, cfg):
@@ -219,6 +226,20 @@ def ci_result(repo, cfg, head, base_oid, record, receipt, dispatch, deadline, ha
         raise Pending(f"CI 통신이 중단됐습니다. 로컬로 전환하지 않습니다 — {exc}") from exc
 
 
+def requested(common, head, base_oid):
+    """A CI request for this head and base is on any receipt: the dispatch names neither the local
+    command nor the harvested records, so a receipt that differs only in those is the same request.
+    One that cannot be read may hold a request too: it stops, named, never read as no request."""
+    for path in common.glob(f"wiki-verification-{head}-{base_oid}-*.json"):
+        try:
+            if json.loads(path.read_text(encoding="utf-8")).get("requested"):
+                return True
+        except (OSError, ValueError, AttributeError) as exc:
+            raise Pending(f"같은 커밋·base의 최종 검증 영수증을 읽지 못해 CI 요청 여부를 알 수 없습니다. "
+                          f"영수증을 확인하거나 지운 뒤 다시 시도하세요 — {path} — {exc}") from exc
+    return False
+
+
 def _ci_result(repo, cfg, head, base_oid, record, receipt, dispatch, deadline, halt):
     try:
         row = latest(repo, cfg["workflow"], head, base_oid)
@@ -227,7 +248,7 @@ def _ci_result(repo, cfg, head, base_oid, record, receipt, dispatch, deadline, h
     if row is None:
         if not dispatch:
             raise Pending("현재 커밋·base의 CI 결과가 없습니다")
-        if record.get("requested"):
+        if record.get("requested") or requested(receipt.parent, head, base_oid):
             raise Pending("CI 요청이 이미 기록돼 있습니다. GitHub에서 기존 요청을 확인하세요")
         branch = run(["git", "symbolic-ref", "--short", "HEAD"], repo)
         remote = run(["git", "ls-remote", "origin", f"refs/heads/{branch}"], repo).split()
@@ -310,12 +331,12 @@ def final(repo, base, *, project=None, local_command="", dispatch=True, seconds=
         local_command = " && ".join(filter(None, [gate, debt.command(base)])) if gate else ""
     halt = halt or threading.Event()
     deadline = time.monotonic() + seconds
-    head, base_oid = identity(repo, base)
+    head, base_oid, records = identity(repo, base)
     common = Path(run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], repo))
     inputs = environment_digest(project, Path(repo), local_command,
                                 ("requirements*.txt", "pyproject.toml", "pytest.ini", "web/package-lock.json"))
     signature = hashlib.sha256(json.dumps({"policy": cfg, "command": local_command, "local_only": local_only,
-                                          "inputs": inputs, "python": [sys.version, sys.executable]}, sort_keys=True).encode()).hexdigest()
+                                          "inputs": inputs, "records": records, "python": [sys.version, sys.executable]}, sort_keys=True).encode()).hexdigest()
     receipt = common / f"wiki-verification-{head}-{base_oid}-{signature}.json"
     with locked(common / "wiki-verification.lock"):
         record = json.loads(receipt.read_text(encoding="utf-8")) if receipt.is_file() else {
@@ -353,8 +374,8 @@ def final(repo, base, *, project=None, local_command="", dispatch=True, seconds=
         ) or record["backend"] == "local" and proof.get("environment_digest") != signature:
             raise Pending("저장된 통과 증거가 현재 커밋·검사 조건과 다릅니다")
         try:
-            if identity(repo, base) != (head, base_oid):
-                raise Pending("검증 대기 중 커밋·base가 바뀌었습니다")
+            if identity(repo, base) != (head, base_oid, records):
+                raise Pending("검증 대기 중 커밋·base·결정 기록이 바뀌었습니다")
         except (RuntimeError, OSError, subprocess.SubprocessError):
             if dispatch and record["backend"] == "local":
                 record.update(status="incomplete", reason="검증 뒤 커밋·base를 확인하지 못했습니다")

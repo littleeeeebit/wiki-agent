@@ -26,7 +26,7 @@ def hosted_repo(tmp_path, monkeypatch):
     (tmp_path / ci.POLICY).write_text(
         '[verification]\nmode = "auto"\nworkflow = "verify.yml"\nround = "focused-check"\nlocal = "complete-check"\n',
         encoding="utf-8")
-    monkeypatch.setattr(ci, "identity", lambda *_: (HEAD, BASE))
+    monkeypatch.setattr(ci, "identity", lambda *_: (HEAD, BASE, ""))
     monkeypatch.setattr(ci, "locked", lambda *_: nullcontext())
     monkeypatch.setattr(ci, "backend", lambda *_: "ci")
     monkeypatch.setattr(ci, "attested", lambda repo, cfg, row, head, base_oid: {
@@ -116,6 +116,18 @@ def test_interrupted_dispatch_does_not_submit_twice(hosted_repo, monkeypatch):
     with pytest.raises(RuntimeError, match="이미 기록"):
         ci.final(hosted_repo, "main")
     assert len(dispatches) == 1
+    # Review round 2: a harvested record changed the receipt's name, not the request it would send.
+    monkeypatch.setattr(ci, "identity", lambda *_: (HEAD, BASE, "a record changed"))
+    with pytest.raises(RuntimeError, match="이미 기록"):
+        ci.final(hosted_repo, "main")
+    assert len(dispatches) == 1
+    # Review round 3: an unreadable receipt is named as such, not sent to GitHub to look for a request.
+    for path in hosted_repo.glob("wiki-verification-*.json"):
+        path.write_text("{", encoding="utf-8")
+    monkeypatch.setattr(ci, "identity", lambda *_: (HEAD, BASE, "another record"))
+    with pytest.raises(ci.Pending, match="영수증을 읽지 못해") as stopped:
+        ci.final(hosted_repo, "main")
+    assert "wiki-verification-" in str(stopped.value) and len(dispatches) == 1
 
 
 def test_one_dispatch_waits_then_reuses_the_completed_run(hosted_repo, monkeypatch):
@@ -140,11 +152,11 @@ def test_one_dispatch_waits_then_reuses_the_completed_run(hosted_repo, monkeypat
 def test_changed_identity_and_unfinished_status_cannot_pass(hosted_repo, monkeypatch):
     monkeypatch.setattr(ci, "latest", lambda *_: completed())
     monkeypatch.setattr(ci, "run", lambda args, repo: str(repo))
-    identities = iter([(HEAD, BASE), (HEAD, "c" * 40)])
+    identities = iter([(HEAD, BASE, ""), (HEAD, "c" * 40, "")])
     monkeypatch.setattr(ci, "identity", lambda *_: next(identities))
     with pytest.raises(RuntimeError, match="바뀌었습니다"):
         ci.final(hosted_repo, "main")
-    monkeypatch.setattr(ci, "identity", lambda *_: (HEAD, BASE))
+    monkeypatch.setattr(ci, "identity", lambda *_: (HEAD, BASE, ""))
     monkeypatch.setattr(ci, "latest", lambda *_: completed(status="in_progress", conclusion=""))
     with pytest.raises(RuntimeError, match="아직 완료"):
         ci.final(hosted_repo, "main", dispatch=False)
@@ -419,7 +431,7 @@ def test_frozen_local_contract_never_dispatches_ci(hosted_repo, monkeypatch):
 def test_existing_private_project_without_a_policy_uses_its_adapter(tmp_path, monkeypatch):
     import wiki
 
-    monkeypatch.setattr(ci, "identity", lambda *_: (HEAD, BASE))
+    monkeypatch.setattr(ci, "identity", lambda *_: (HEAD, BASE, ""))
     monkeypatch.setattr(ci, "locked", lambda *_: nullcontext())
     monkeypatch.setattr(ci, "run", lambda args, repo: str(repo))
     monkeypatch.setattr(wiki, "slots_for", lambda *_: {"gate_cmd": "legacy-complete-check"})
@@ -512,7 +524,7 @@ def test_worktree_policy_and_project_local_override_have_separate_owners(tmp_pat
     assert specs.local_required(project, spec) == "reviewed-full"
     assert "reviewed-full" in specs.required(project, spec)
     assert specs.for_round(project, worktree, spec, "main")["commands"] == ["reviewed-round"]
-    monkeypatch.setattr(ci, "identity", lambda *_: (HEAD, BASE))
+    monkeypatch.setattr(ci, "identity", lambda *_: (HEAD, BASE, ""))
     monkeypatch.setattr(ci, "run", lambda *_: str(worktree))
     commands = []
 
@@ -531,13 +543,13 @@ def test_a_head_race_never_leaves_a_reusable_local_pass(hosted_repo, monkeypatch
     monkeypatch.setattr(ci, "backend", lambda *_: "local")
     monkeypatch.setattr(ci, "run", lambda args, repo: str(repo))
     if move_after_judge:
-        identities = iter([(HEAD, BASE), ("c" * 40, BASE)])
+        identities = iter([(HEAD, BASE, ""), ("c" * 40, BASE, "")])
         monkeypatch.setattr(ci, "identity", lambda *_: next(identities))
     with pytest.raises(ci.Pending):
         ci.final(hosted_repo, "main", judge=lambda *_: {"ok": True, "head": HEAD if move_after_judge else "c" * 40})
     receipt = json.loads(next(hosted_repo.glob("wiki-verification-*.json")).read_text(encoding="utf-8"))
     assert receipt["status"] == "incomplete" and "proof" not in receipt
-    monkeypatch.setattr(ci, "identity", lambda *_: (HEAD, BASE))
+    monkeypatch.setattr(ci, "identity", lambda *_: (HEAD, BASE, ""))
     with pytest.raises(ci.Pending, match="자동 재실행하지"):
         ci.final(hosted_repo, "main", judge=lambda *_: pytest.fail("The untested head cannot reuse or rerun"))
 
