@@ -229,13 +229,14 @@ def ci_result(repo, cfg, head, base_oid, record, receipt, dispatch, deadline, ha
 def requested(common, head, base_oid):
     """A CI request for this head and base is on any receipt: the dispatch names neither the local
     command nor the harvested records, so a receipt that differs only in those is the same request.
-    One that cannot be read may hold a request too."""
+    One that cannot be read may hold a request too: it stops, named, never read as no request."""
     for path in common.glob(f"wiki-verification-{head}-{base_oid}-*.json"):
         try:
             if json.loads(path.read_text(encoding="utf-8")).get("requested"):
                 return True
-        except (OSError, ValueError, AttributeError):
-            return True
+        except (OSError, ValueError, AttributeError) as exc:
+            raise Pending(f"같은 커밋·base의 최종 검증 영수증을 읽지 못해 CI 요청 여부를 알 수 없습니다. "
+                          f"영수증을 확인하거나 지운 뒤 다시 시도하세요 — {path} — {exc}") from exc
     return False
 
 

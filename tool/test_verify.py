@@ -121,6 +121,13 @@ def test_interrupted_dispatch_does_not_submit_twice(hosted_repo, monkeypatch):
     with pytest.raises(RuntimeError, match="이미 기록"):
         ci.final(hosted_repo, "main")
     assert len(dispatches) == 1
+    # Review round 3: an unreadable receipt is named as such, not sent to GitHub to look for a request.
+    for path in hosted_repo.glob("wiki-verification-*.json"):
+        path.write_text("{", encoding="utf-8")
+    monkeypatch.setattr(ci, "identity", lambda *_: (HEAD, BASE, "another record"))
+    with pytest.raises(ci.Pending, match="영수증을 읽지 못해") as stopped:
+        ci.final(hosted_repo, "main")
+    assert "wiki-verification-" in str(stopped.value) and len(dispatches) == 1
 
 
 def test_one_dispatch_waits_then_reuses_the_completed_run(hosted_repo, monkeypatch):
