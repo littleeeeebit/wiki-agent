@@ -281,9 +281,11 @@ DIFF_CHARS = 60_000   # the model reads a file itself where the diff is cut
 def touched(nodes: list[dict], files: list[str]) -> set[str]:
     """The elements that name a changed file or its folder, and each component a diagram labels with one.
     A folder counts only named as itself: `tool/main/` followed by another file's name is that file."""
-    start = r"(?:(?<![\w/.-])|(?<=\\n))"   # a diagram label writes its path after a literal `\n`
-    named = re.compile("|".join([*(rf"{start}{re.escape(f)}(?![\w/-])" for f in files),
-                                 *(rf"{start}{re.escape(f.rsplit('/', 1)[0])}/(?![\w-])" for f in files if "/" in f)]))
+    # A diagram label writes its path after a literal `\n`; `./` is the same path; a dot ends it only
+    # as punctuation (`.py.bak`, `main/.hidden` are other files).
+    start, end = r"(?:(?<![\w/.-])|(?<=\\n)|(?<=(?<![\w/.])\./))", r"(?![\w/-]|\.[\w-])"
+    named = re.compile("|".join([*(rf"{start}{re.escape(f)}{end}" for f in files),
+                                 *(rf"{start}{re.escape(f.rsplit('/', 1)[0])}/(?![\w-]|\.[\w-])" for f in files if "/" in f)]))
     found = set()
     for node in nodes:
         if any(named.search(node.get(field, "")) for field in FIELDS):

@@ -305,6 +305,11 @@ def test_a_merge_refresh_shows_in_full_only_the_elements_naming_a_changed_file()
     siblings = [{"path": "a", "description": "Uses tool/main/architecture.py."},
                 {"path": "b", "description": "Uses tool/main/loop.py and mytool/main/architecture.py."}]
     assert architecture.touched(siblings, ["tool/main/architecture.py"]) == {"a"}
+    edges = [{"path": "dot", "description": "See ./tool/main/architecture.py."},
+             {"path": "bak", "description": "Old copy tool/main/architecture.py.bak"},
+             {"path": "hidden", "description": "Reads tool/main/.hidden.py"},
+             {"path": "folder", "description": "Everything under `tool/main/`."}]
+    assert architecture.touched(edges, ["tool/main/architecture.py"]) == {"dot", "folder"}
 
 
 def test_the_refresh_model_is_chosen_in_the_settings(tmp_path, monkeypatch):
