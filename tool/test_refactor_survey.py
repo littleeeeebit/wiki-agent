@@ -338,6 +338,11 @@ def test_a_spec_names_the_files_it_creates_and_every_refused_spec_is_named(surve
         refactor_survey.survey_shape(both, "preserve", MAP, surveyed)
     assert refactor_survey.spec_shape(spec("x", creates=["./src/intake.py"]), "preserve", MAP, surveyed)["creates"] \
         == ["src/intake.py"], "kept as Git writes it"
+    # Live (ai-companion-voice-agent): a spec extracting a new shared owner named it `shared:<the file it creates>`.
+    owner = spec("x", "shared:src/rules.py", creates=["src/rules.py"])
+    assert refactor_survey.spec_shape(owner, "preserve", MAP, surveyed)["pipeline"] == "shared:src/rules.py"
+    with pytest.raises(ValueError, match=r"파이프라인: orders, billing; shared: src/shared.py$"):
+        refactor_survey.spec_shape(spec("x", "shared:src/rules.py"), "preserve", MAP, surveyed)
     # Review round 1: a dependency refusal came only after the field refusal had been repaired.
     mixed = {"coverage": {"scope": "s"}, "specs": [spec("a", files=["src/no.py"]), spec("b", depends=["unknown", "a"]),
                                                    spec("b")]}
