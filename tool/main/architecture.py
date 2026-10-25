@@ -309,16 +309,17 @@ def changed(root: Path, since: str, *, model: str, effort: str = "", halt: threa
     def git(*args: str) -> str:
         return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=60, check=True, **background_options()).stdout
-    changes = [f for f in git("diff", "--no-renames", "--name-only", "-z", since, "HEAD", "--", ".",
-                              ":(exclude).omm").split("\0") if f]
+    # The wiki's generated indexes describe documents, not code, and run to hundreds of thousands of
+    # characters: in the diff they pushed the code past the cut (ai-companion-voice-agent #257).
+    scope = ("--", ".", ":(exclude).omm", ":(exclude).wiki/corpus.json", ":(exclude).wiki/graph.json")
+    changes = [f for f in git("diff", "--no-renames", "--name-only", "-z", since, "HEAD", *scope).split("\0") if f]
     # A file the source tools refuse (`.env`, keys) never reaches the model, not even as removed lines.
     files = [f for f in changes if not read_tools.private(Path(f))]
     manifest = root / ".omm" / "analysis.json"
     owned = set(json.loads(manifest.read_text(encoding="utf-8"))) if manifest.is_file() else set()
     if not files or not owned:
         return False   # nothing changed, or nothing generated to keep current: a full scan is `[구조 문서]`
-    text = git("diff", "--no-renames", since, "HEAD", "--", ".", ":(exclude).omm",
-               *(f":(exclude,literal){f}" for f in changes if f not in files))
+    text = git("diff", "--no-renames", since, "HEAD", *scope, *(f":(exclude,literal){f}" for f in changes if f not in files))
     with _lock:
         everything = [{k: n[k] for k in ("path", *FIELDS) if n[k]}
                       for n in read_existing(root)["nodes"] if n["path"] in owned]
