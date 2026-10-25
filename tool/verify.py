@@ -226,6 +226,19 @@ def ci_result(repo, cfg, head, base_oid, record, receipt, dispatch, deadline, ha
         raise Pending(f"CI 통신이 중단됐습니다. 로컬로 전환하지 않습니다 — {exc}") from exc
 
 
+def requested(common, head, base_oid):
+    """A CI request for this head and base is on any receipt: the dispatch names neither the local
+    command nor the harvested records, so a receipt that differs only in those is the same request.
+    One that cannot be read may hold a request too."""
+    for path in common.glob(f"wiki-verification-{head}-{base_oid}-*.json"):
+        try:
+            if json.loads(path.read_text(encoding="utf-8")).get("requested"):
+                return True
+        except (OSError, ValueError, AttributeError):
+            return True
+    return False
+
+
 def _ci_result(repo, cfg, head, base_oid, record, receipt, dispatch, deadline, halt):
     try:
         row = latest(repo, cfg["workflow"], head, base_oid)
@@ -234,7 +247,7 @@ def _ci_result(repo, cfg, head, base_oid, record, receipt, dispatch, deadline, h
     if row is None:
         if not dispatch:
             raise Pending("현재 커밋·base의 CI 결과가 없습니다")
-        if record.get("requested"):
+        if record.get("requested") or requested(receipt.parent, head, base_oid):
             raise Pending("CI 요청이 이미 기록돼 있습니다. GitHub에서 기존 요청을 확인하세요")
         branch = run(["git", "symbolic-ref", "--short", "HEAD"], repo)
         remote = run(["git", "ls-remote", "origin", f"refs/heads/{branch}"], repo).split()
