@@ -273,6 +273,7 @@ def world(tmp_path, template):
          patch.object(loop, "_cells", {}), patch.object(loop, "_loops", {}), patch.object(loop, "_review_runs", {}), \
          patch.object(loop, "_seated", 0):
         loop.store(auto_merge=False)  # Legacy round tests inspect the manual merge boundary.
+        loop.store(omm_model="claude-test", omm_effort="")   # a merge refreshes the structure documents
         yield SimpleNamespace(repo=repo, hub=hub, origin=origin, tmp=tmp_path)
         for running in list(loop._loops.values()):
             running.stop()
@@ -418,10 +419,10 @@ def test_merge_click_commits_wiki_indexes_and_omm_then_reviews_that_head(world):
     ready = looped(spec["id"])
     original = specs.approved(ready)["head"]
     calls = []
-    def scan(root, **kwargs):
+    def scan(root, since, **kwargs):
         calls.append((root, kwargs.get("model")))
         (root / ".omm/description.md").write_text("# Architecture\n\nCurrent architecture.\n", encoding="utf-8")
-    with patch.object(maintenance.architecture, "scan", scan):
+    with patch.object(maintenance.architecture, "changed", scan):
         response = client().post(f"/api/specs/{spec['id']}/merge", json={"head": original})
         response.raise_for_status()
         waited(lambda: not loop._loops)
@@ -433,7 +434,7 @@ def test_merge_click_commits_wiki_indexes_and_omm_then_reviews_that_head(world):
     assert fresh["validation"]["final"]["head"] == prepared
     command = next(c for c in world.hub.calls if c[:3] == ["gh", "pr", "merge"])
     assert command[-1] == prepared
-    assert len(calls) == 1 and calls[0][0] == path
+    assert calls == [(path, "claude-test")], "once, on the model the settings chose"
     files = git(world.repo, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
     assert {".wiki/corpus.json", ".wiki/graph.json", ".omm/description.md"}.issubset(files)
     assert git(world.repo, "rev-parse", "main") == git(world.origin, "rev-parse", "main")
@@ -469,21 +470,21 @@ def test_merge_progress_is_readable_while_the_merge_request_is_waiting(world):
     reached, release = threading.Event(), threading.Event()
     responses = []
 
-    def scan(root, **kwargs):
+    def scan(root, since, **kwargs):
         reached.set()
         assert release.wait(120)
 
     def merge():
         responses.append(client().post(f"/api/specs/{spec['id']}/merge", json={"head": specs.approved(ready)["head"]}))
 
-    with patch.object(maintenance.architecture, "scan", scan):
+    with patch.object(maintenance.architecture, "changed", scan):
         worker = threading.Thread(target=merge)
         worker.start()
         try:
             assert reached.wait(120), [response.text for response in responses]
             rows = client().get("/api/specs").json()["specs"]
             visible = next(row for row in rows if row["id"] == spec["id"])["merge_progress"]
-            assert visible["state"] == "running" and ".omm" in visible["stage"]
+            assert visible["state"] == "running" and "구조 문서 새로 고침" in visible["stage"]
             assert any("색인" in step["text"] for step in visible["steps"])
             assert not any(c[:3] == ["gh", "pr", "merge"] for c in world.hub.calls)
         finally:
@@ -504,7 +505,7 @@ def test_failed_merge_preparation_preserves_files_and_never_merges(world, failur
         (path / "personal.txt").write_text("Preserve this", encoding="utf-8")
     if failure == "scan":
         (path / ".omm").mkdir()
-    with patch.object(maintenance.architecture, "scan", side_effect=ValueError("Scan failed")), \
+    with patch.object(maintenance.architecture, "changed", side_effect=ValueError("Scan failed")), \
          patch.object(maintenance, "findings", return_value=[("lint", "Unresolved")] if failure == "lint" else []), \
          patch.object(maintenance, "repair"):
         response = client().post(f"/api/specs/{spec['id']}/merge", json={"head": spec["pr"]["head"]})
@@ -560,13 +561,30 @@ def test_an_invalid_architecture_answer_keeps_the_documents_and_merges(world):
     git(path, "push", "origin", spec["id"])
     ready = looped(spec["id"])
     failed = maintenance.architecture.Invalid("Every diagram component requires a described child")
-    with patch.object(maintenance.architecture, "scan", side_effect=failed):
+    with patch.object(maintenance.architecture, "changed", side_effect=failed):
         client().post(f"/api/specs/{spec['id']}/merge", json={"head": specs.approved(ready)["head"]}).raise_for_status()
         waited(lambda: not loop._loops)
     done = specs.load("proj", spec["id"])
     assert done["state"] == "머지됨", done
     assert (world.repo / ".omm/description.md").read_text(encoding="utf-8") == "# Architecture\n\nReviewed.\n"
     assert any(".omm 구조 문서는 그대로" in step["text"] for step in done["merge_progress"]["steps"])
+
+
+def test_a_merge_with_no_structure_model_chosen_skips_the_refresh(world):
+    # User's choice: no model in the settings spends nothing and does not hold the merge.
+    spec = pr_spec(world, "no-omm-model", 12, file="docs/feature.md")
+    path = Path(spec["worktree"])
+    (path / ".omm").mkdir()
+    commit(path, ".omm/description.md", "# Architecture\n\nReviewed.\n")
+    git(path, "push", "origin", spec["id"])
+    ready = looped(spec["id"])
+    loop.store(omm_model="")
+    with patch.object(maintenance.architecture, "changed") as changed:
+        client().post(f"/api/specs/{spec['id']}/merge", json={"head": specs.approved(ready)["head"]}).raise_for_status()
+        waited(lambda: not loop._loops)
+    done = specs.load("proj", spec["id"])
+    assert done["state"] == "머지됨" and not changed.called, done
+    assert any("모델을 고르지 않아 건너뛴다" in step["text"] for step in done["merge_progress"]["steps"])
 
 
 @pytest.mark.parametrize("stage", ["scan", "lint"])
@@ -586,7 +604,7 @@ def test_interrupted_maintenance_retries_saved_outputs_after_a_new_click(world, 
 
     with patch.object(maintenance, "findings", return_value=[("lint", "Bad prose")] if stage == "lint" else []), \
          patch.object(maintenance, "repair", interrupt), \
-         patch.object(maintenance.architecture, "scan", interrupt):
+         patch.object(maintenance.architecture, "changed", interrupt):
         response = client().post(f"/api/specs/{spec['id']}/merge", json={"head": head})
     assert response.status_code == 409
     saved = specs.load("proj", spec["id"])
@@ -594,7 +612,7 @@ def test_interrupted_maintenance_retries_saved_outputs_after_a_new_click(world, 
     assert (path / ".wiki/corpus.json").exists()
     loop.requested_merge(world.repo, saved)
     assert not any(c[:3] == ["gh", "pr", "merge"] for c in world.hub.calls)
-    with patch.object(maintenance, "findings", return_value=[]), patch.object(maintenance.architecture, "scan"):
+    with patch.object(maintenance, "findings", return_value=[]), patch.object(maintenance.architecture, "changed"):
         client().post(f"/api/specs/{spec['id']}/merge", json={"head": head}).raise_for_status()
         waited(lambda: not loop._loops)
     done = specs.load("proj", spec["id"])
@@ -613,7 +631,7 @@ def test_interrupted_maintenance_never_adopts_changed_outputs_or_identity(world,
     git(path, "push", "origin", spec["id"])
     ready = looped(spec["id"])
     head = specs.approved(ready)["head"]
-    with patch.object(maintenance.architecture, "scan", side_effect=ValueError("Scan interrupted")):
+    with patch.object(maintenance.architecture, "changed", side_effect=ValueError("Scan interrupted")):
         with pytest.raises(ValueError, match="Scan interrupted"):
             maintenance.prepare(world.repo, path, ready, head, "main")
     saved = specs.load("proj", spec["id"])
@@ -642,7 +660,7 @@ def test_completed_preparation_is_reused_and_ignored_documents_stay_private(worl
     git(path, "push", "origin", spec["id"])
     ready = looped(spec["id"])
     (path / "docs/private.md").write_text("# Private\n\nPRIVATE_SENTINEL", encoding="utf-8")
-    with patch.object(maintenance.architecture, "scan") as scan:
+    with patch.object(maintenance.architecture, "changed") as scan:
         prepared = maintenance.prepare(world.repo, path, ready, specs.approved(ready)["head"], "main")
         saved = specs.load("proj", spec["id"])
         assert maintenance.prepare(world.repo, path, saved, prepared, "main") == prepared
@@ -677,7 +695,7 @@ def test_preparation_commits_what_it_wrote_under_hiding_index_flags(world, flags
 
     def scan(*_a, **_k):
         (path / ".omm/description.md").write_text("After scan.\n", encoding="utf-8")
-    with patch.object(maintenance.architecture, "scan", scan):
+    with patch.object(maintenance.architecture, "changed", scan):
         prepared = maintenance.prepare(world.repo, path, ready, specs.approved(ready)["head"], "main")
     assert "docs/feature.md" in git(path, "show", f"{prepared}:.wiki/corpus.json")
     assert "After scan." in git(path, "show", f"{prepared}:.omm/description.md")
@@ -694,7 +712,7 @@ def test_an_edit_a_hiding_index_flag_covers_stops_preparation_before_anything_is
     personal = '{"personal": "keep"}'
     (path / ".wiki/graph.json").write_text(personal, encoding="utf-8")
     (path / "docs/NOTES.MD").write_text("# Mine\n", encoding="utf-8")
-    with patch.object(maintenance.architecture, "scan"), \
+    with patch.object(maintenance.architecture, "changed"), \
          pytest.raises(ValueError, match="숨긴 변경.*graph.json, docs/NOTES.MD"):
         maintenance.prepare(world.repo, path, ready, specs.approved(ready)["head"], "main")
     assert (path / ".wiki/graph.json").read_text(encoding="utf-8") == personal
@@ -709,11 +727,11 @@ def test_hidden_outputs_written_before_an_interruption_are_retried(world):
     def interrupted(*_a, **_k):
         (path / ".omm/description.md").write_text("After scan.\n", encoding="utf-8")
         raise ValueError("scan interrupted")
-    with patch.object(maintenance.architecture, "scan", interrupted), pytest.raises(ValueError, match="interrupted"):
+    with patch.object(maintenance.architecture, "changed", interrupted), pytest.raises(ValueError, match="interrupted"):
         maintenance.prepare(world.repo, path, ready, head, "main")
     saved = specs.load("proj", ready["id"])
     assert {".wiki/ratchet.json", ".omm/description.md"} <= set(saved["maintenance"]["outputs"]["files"])
-    with patch.object(maintenance.architecture, "scan"):
+    with patch.object(maintenance.architecture, "changed"):
         prepared = maintenance.prepare(world.repo, path, saved, head, "main")
     assert "After scan." in git(path, "show", f"{prepared}:.omm/description.md")
     assert "gone.py" not in git(path, "show", f"{prepared}:.wiki/ratchet.json")
@@ -728,12 +746,12 @@ def test_a_failure_while_clearing_hiding_flags_is_retried(world):
         if "--no-assume-unchanged" in args:
             raise ValueError("update-index failed")
         return real(where, *args)
-    with patch.object(maintenance, "git", second_fails), patch.object(maintenance.architecture, "scan"), \
+    with patch.object(maintenance, "git", second_fails), patch.object(maintenance.architecture, "changed"), \
          pytest.raises(ValueError, match="update-index failed"):
         maintenance.prepare(world.repo, path, ready, head, "main")
     saved = specs.load("proj", ready["id"])
     assert saved["maintenance"]["state"] == "interrupted" and saved["maintenance"]["outputs"] == maintenance.outputs(path)
-    with patch.object(maintenance.architecture, "scan"):
+    with patch.object(maintenance.architecture, "changed"):
         prepared = maintenance.prepare(world.repo, path, saved, head, "main")
     assert "docs/feature.md" in git(path, "show", f"{prepared}:.wiki/corpus.json")
 
@@ -752,7 +770,7 @@ def interrupted_with_staged_outputs(world, name: str):
     def scan(*_a, **_k):
         (path / ".omm/description.md").write_text("After scan.\n", encoding="utf-8")
         (path / ".omm/new.md").write_text("New.\n", encoding="utf-8")
-    with patch.object(maintenance, "git", commit_fails), patch.object(maintenance.architecture, "scan", scan), \
+    with patch.object(maintenance, "git", commit_fails), patch.object(maintenance.architecture, "changed", scan), \
          pytest.raises(ValueError, match="commit interrupted"):
         maintenance.prepare(world.repo, path, ready, specs.approved(ready)["head"], "main")
     git(path, "update-index", "--skip-worktree", ".wiki/corpus.json", ".wiki/graph.json")
@@ -777,7 +795,7 @@ def test_a_stale_final_proof_regates_around_an_interrupted_preparation(world):
     assert not git(path, "status", "--porcelain") and not (path / ".omm/new.md").exists()
     assert "interrupted merge preparation" in git(path, "stash", "list")
     assert all(line[:2] == "H " for line in git(path, "ls-files", "-v", ".wiki").splitlines())
-    with patch.object(maintenance.architecture, "scan"):
+    with patch.object(maintenance.architecture, "changed"):
         prepared = maintenance.prepare(world.repo, path, regated, head, "main")
     assert "docs/feature.md" in git(path, "show", f"{prepared}:.wiki/corpus.json")
 
@@ -809,7 +827,7 @@ def test_code_edited_while_preparation_ran_is_never_set_aside(world):
     def person_edits(*_a, **_k):
         (path / "gate.py").write_text(before + "# A person's fix.\n", encoding="utf-8")
         (path / "personal.txt").write_text("Notes.\n", encoding="utf-8")
-    with patch.object(maintenance.architecture, "scan", person_edits), pytest.raises(ValueError, match="코드까지"):
+    with patch.object(maintenance.architecture, "changed", person_edits), pytest.raises(ValueError, match="코드까지"):
         maintenance.prepare(world.repo, path, ready, specs.approved(ready)["head"], "main")
     assert not maintenance.set_aside(path, specs.load("proj", ready["id"]))
     assert "A person's fix." in (path / "gate.py").read_text(encoding="utf-8") and (path / "personal.txt").exists()

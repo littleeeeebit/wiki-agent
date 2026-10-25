@@ -26,6 +26,8 @@ const field = 'h-7 rounded-md border border-input bg-background px-2 font-mono t
 export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, onClose, onProjects }: Props) {
   const [survey, setSurvey] = useState<SurveySettings | null>(null)
   const [savedSurvey, setSavedSurvey] = useState<SurveySettings | null>(null)
+  const [structure, setStructure] = useState<api.StructureSettings | null>(null)
+  const [savedStructure, setSavedStructure] = useState<api.StructureSettings | null>(null)
   const [hub, setHub] = useState<Hub | null>(null)
   const [rounds, setRounds] = useState(0)
   const [seats, setSeats] = useState(0)
@@ -40,6 +42,9 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
         setSavedSurvey(settings)
         setHub(hub)
       })
+      .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
+    api.getStructureSettings()
+      .then((s) => { setStructure(s); setSavedStructure(s) })
       .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
   }, [])
 
@@ -173,6 +178,26 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
           <p className="text-faint">리뷰 허용 후 [머지]를 눌러야 진행한다. 위키·색인·앱 구조를 PR에 반영하고 필요한 재검토를 거친 뒤 머지·정리한다.</p>
           <Save edited={loopEdited} busy={working === 'loop'}
             onSave={() => act('loop', () => onLoop({ ...loop, rounds, concurrent: seats }))} />
+          </>)}
+          {structure && (<>
+          <Row label="구조 문서 새로 고침 모델" note="머지 때 PR 이 바꾼 부분만 읽어 .omm 을 고친다. 고르지 않으면 건너뛴다">
+            <span className="flex gap-1.5">
+              <select value={structure.omm_model} aria-label="구조 문서 새로 고침 모델" className={`${field} w-32 font-sans`}
+                onChange={(e) => setStructure({ omm_model: e.target.value, omm_effort: '' })}>
+                <option value="">고르지 않음</option>
+                {structure.omm_model && !models.some((m) => m.id === structure.omm_model) &&
+                  <option value={structure.omm_model}>{structure.omm_model}</option>}
+                {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              </select>
+              {structure.omm_model && effortPicker(structure.omm_model, structure.omm_effort,
+                (v) => setStructure({ ...structure, omm_effort: v }))}
+            </span>
+          </Row>
+          <Save edited={JSON.stringify(structure) !== JSON.stringify(savedStructure)} busy={working === 'structure'}
+            onSave={() => act('structure', async () => {
+              const saved = await api.setStructureSettings(structure)
+              setStructure(saved); setSavedStructure(saved)
+            })} />
           </>)}
         </Part>
 

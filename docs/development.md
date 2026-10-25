@@ -185,7 +185,10 @@ viewport. The Korean overlay translates human node/edge labels before Mermaid
 layout, perspective names and prose; source paths, node IDs and the Mermaid
 original retain their source text. Frontend builds never run the scanner.
 When the person clicks Merge, the server refreshes existing `.omm` documents
-on the clean PR checkout using the task's saved model. Wiki lint repairs and
+on the clean PR checkout (structure refresh, 구조 문서 새로 고침). It reads only
+what the PR changed since its merge base, and only the nodes that own those
+paths, on the model chosen in Settings; with no model chosen the refresh is
+skipped, and an answer of no change leaves `.omm` as it is. Wiki lint repairs and
 document indexes enter the same maintenance commit and PR. A changed head
 receives another independent review and final gate before the clicked request
 continues. Failure blocks merge and preserves the edits. Completed preparation

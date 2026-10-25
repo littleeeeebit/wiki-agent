@@ -235,3 +235,53 @@ def test_selected_repository_add_is_explicit_and_reads_are_passive(tmp_path, cli
     monkeypatch.setattr(query, "_project", "second")
     assert web.post("/api/architecture", headers=headers).status_code == 409
     assert web.get("/api/architecture", headers=headers).status_code == 409
+
+
+def test_a_merge_refresh_reads_only_what_the_pull_request_changed(tmp_path, cli, monkeypatch):
+    # User's choice: a whole-repository analysis on every merge cost too much.
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@example.test")
+    git("config", "user.name", "t")
+    (root / "server").mkdir()
+    (root / "server/api.py").write_text("def handle():\n    return 1\n", encoding="utf-8")
+    architecture.scan(root)
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    base = git("rev-parse", "HEAD")
+    asked, answers = [], [{"nodes": [], "removed": []}]
+
+    def answered(where, model, effort, halt, ask):
+        asked.append((model, effort, ask))
+        return answers.pop(0)
+    monkeypatch.setattr(architecture, "answered", answered)
+    assert not architecture.changed(root, base, model="m") and not asked, "nothing changed: no turn"
+    (root / "server/api.py").write_text("def handle():\n    return 2\n", encoding="utf-8")
+    git("commit", "-qam", "change")
+    assert not architecture.changed(root, base, model="m", effort="low"), "an empty answer writes nothing"
+    assert asked[0][:2] == ("m", "low") and "server/api.py" in asked[0][2] and "return 2" in asked[0][2]
+    assert "Handles HTTP and persists replies." in asked[0][2], "the elements it wrote before"
+    server = root / ".omm/overall-architecture/server/description.md"
+    answers[:] = [{"nodes": [{"path": "overall-architecture/server"}], "removed": "server"},
+                  {"nodes": [{"path": "overall-architecture/server", "description": "Handles HTTP; returns 2."}],
+                   "removed": []}]
+    assert architecture.changed(root, base, model="m")
+    assert server.read_text(encoding="utf-8") == "Handles HTTP; returns 2." and "rejected" in asked[-1][2], "told why"
+    overall = (root / ".omm/overall-architecture/description.md").read_text(encoding="utf-8")
+    assert overall == NODES[0]["description"], "what the answer left out stays"
+
+
+def test_the_refresh_model_is_chosen_in_the_settings(tmp_path, monkeypatch):
+    from main import loop
+    from test_main import client
+    monkeypatch.setattr(query, "LOGS", tmp_path)
+    web = client()
+    assert web.get("/api/architecture/settings").json() == {"omm_model": "", "omm_effort": ""}, "none: skipped"
+    assert web.post("/api/architecture/settings", json={"omm_model": "bad name!"}).status_code == 400
+    saved = web.post("/api/architecture/settings", json={"omm_model": " haiku ", "omm_effort": "low"}).json()
+    assert saved == {"omm_model": "haiku", "omm_effort": "low"} == architecture.settings()
+    assert loop.settings({"omm_model": ""})["omm_model"] == "haiku"
