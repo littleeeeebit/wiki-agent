@@ -307,6 +307,44 @@ def test_a_second_turn_without_a_report_stops_with_the_reason_and_a_persons_turn
     work.close_all()
 
 
+def test_a_queued_order_is_a_persons_turn(repo):
+    # Review round 1: an instruction sent through the queue ran without the person mark and was chased.
+    seen = []
+    with patch.dict(work._queued, {str(repo): work.Order(path=str(repo), text="Explain")}), \
+         patch.object(work, "ChatSession", Worker), \
+         patch.object(work, "begin", side_effect=lambda path, chat, text, release, run: seen.append(run) or release()):
+        work.dispatch(repo, work.Run(Worker(repo)))
+    assert [r.person for r in seen] == [True]
+    work.close_all()
+
+
+def test_a_report_request_a_person_kept_from_going_out_is_not_counted_as_asked(repo):
+    # Review round 1: a person took the worktree before the request went out; it stayed marked as asked,
+    # and that person's own plain answer was then failed as the second miss.
+    web = client()
+    Worker.replies = ["Working"]
+    with patch.object(work, "ChatSession", Worker):
+        sid = made(repo, spec_block())[0]["id"]
+        started(web, sid)
+        committed("")(repo, None)
+        run = work.Run(Worker(repo))
+        follow = specs.check(repo, run, "The gate is pending.")
+        assert specs.load(repo.name, sid)["report_asked"]
+        release = specs.hold(work._busy, specs._lock, str(repo), "", kind="turn")   # the person's turn
+        try:
+            follow()
+        finally:
+            release()
+        saved = specs.load(repo.name, sid)
+        assert not saved["report_asked"] and "보내지 못했다" in saved["fault"], "never sent, so never asked"
+        # Even with a request out, a person's plain answer is not the answer to it.
+        specs.update(repo.name, sid, report_asked=True, fault=None)
+        assert specs.check(repo, work.Run(Worker(repo), person=True), "Here is the explanation.") is None
+        saved = specs.load(repo.name, sid)
+        assert saved["report_asked"] and not saved["fault"]
+    work.close_all()
+
+
 def test_saved_permission_switch_cannot_downgrade_agent_and_fix_prompts_allow_push(repo):
     loop.store(bypass=False)
     assert work.settings()["bypass"]

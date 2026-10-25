@@ -1471,20 +1471,21 @@ def failed(run, spec: dict, reason: str) -> None:
     return None
 
 
-def again(path: Path, chat, text: str, spec: dict) -> None:
+def again(path: Path, chat, text: str, spec: dict) -> bool:
     """The plan row's turn, once the turn that opened the pull request has let
-    go of the worktree. A person who got there first keeps it."""
+    go of the worktree. A person who got there first keeps it; then False."""
 
     try:
         release = hold(work._busy, _lock, str(path), "", kind="turn")
     except HTTPException:
         update(spec["repo"], spec["id"], fault="계획 행을 고칠 턴을 보내지 못했다 — 작업트리가 쓰이고 있다")
-        return
+        return False
     try:
         work.begin(path, chat, text, release)
     except BaseException:
         release()
         raise
+    return True
 
 
 def check(path: Path, run, final: str):
@@ -1566,12 +1567,13 @@ def _check(path: Path, run, final: str):
         return first
     report = next((b for b in blocks(final)[1] if b["name"] == "done-report"), None)
     if report is None:
-        if asks(final):
+        # A person's turn may end in plain talk, and it is no answer to the server's request either.
+        if asks(final) or getattr(run, "person", False):
             return None
         if spec.get("report_asked"):
             update(spec["repo"], spec["id"], report_asked=False)
             return failed(run, spec, f"명세 판 {spec['rev']} 의 완료 보고가 다시 빠졌다 — 에이전트에게 완료 보고를 요청해라")
-        if spec.get("prerequisite_review") or run.halt.is_set() or getattr(run, "person", False):
+        if spec.get("prerequisite_review") or run.halt.is_set():
             return None
         # Committed work in a clean tree, with neither a report nor a question, left the task in `작업 중`
         # with nothing to move it (a worker read a pending server gate as a failed item): ask once, and a
@@ -1580,7 +1582,9 @@ def _check(path: Path, run, final: str):
             return None
         spec = update(spec["repo"], spec["id"], report_asked=True)
         note(run, "완료 보고도 질문도 없는 답이다 — 완료 보고를 한 번 요청한다")
-        return lambda: again(path, run.chat, REPORT_MISSING, spec)
+        # A request a person's turn kept from being sent was never asked: the next miss is a first one.
+        return lambda: again(path, run.chat, REPORT_MISSING, spec) or update(spec["repo"], spec["id"],
+                                                                              report_asked=False)
     if "error" in report or not valid(report.get("value")):
         return failed(run, spec, f"완료 보고를 읽지 못했다 — {report.get('error') or '항목마다 item 과 pass 가 있어야 한다'}")
     items = report["value"]
