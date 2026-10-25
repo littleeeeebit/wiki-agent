@@ -1005,8 +1005,8 @@ def start(sid: str, body: Start) -> dict:
         # Made: from here it is a turn, and a switch no longer waits for it.
         release.held.kind = "turn"
         # The server's own turn: Jev may gather evidence first, or ask the person instead.
-        run = work.begin(path, work.session(path, cell["model"], cell["effort"], cell.get("fast", False)), "Start.",
-                         release, decide=True)
+        chat = work.session(path, cell["model"], cell["effort"], cell.get("fast", False))
+        run = work.begin(path, chat, "Start.", release, work.Run(chat, task=True), decide=True)
     except BaseException:
         release()
         raise
@@ -1481,7 +1481,7 @@ def again(path: Path, chat, text: str, spec: dict) -> bool:
         update(spec["repo"], spec["id"], fault="계획 행을 고칠 턴을 보내지 못했다 — 작업트리가 쓰이고 있다")
         return False
     try:
-        work.begin(path, chat, text, release)
+        work.begin(path, chat, text, release, work.Run(chat, task=True))
     except BaseException:
         release()
         raise
@@ -1573,7 +1573,8 @@ def _check(path: Path, run, final: str):
         if spec.get("report_asked"):
             update(spec["repo"], spec["id"], report_asked=False)
             return failed(run, spec, f"명세 판 {spec['rev']} 의 완료 보고가 다시 빠졌다 — 에이전트에게 완료 보고를 요청해라")
-        if spec.get("prerequisite_review") or run.halt.is_set():
+        # Only the task's own work turns are chased: a survey, a loop or a plan drives its next turn itself.
+        if not getattr(run, "task", False) or spec.get("prerequisite_review") or run.halt.is_set():
             return None
         # Committed work in a clean tree, with neither a report nor a question, left the task in `작업 중`
         # with nothing to move it (a worker read a pending server gate as a failed item): ask once, and a

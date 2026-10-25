@@ -80,8 +80,8 @@ def test_a_report_request_a_person_kept_from_going_out_is_not_counted_as_asked(r
         sid = made(repo, spec_block())[0]["id"]
         started(web, sid)
         committed("")(repo, None)
-        run = work.Run(Worker(repo))
-        follow = specs.check(repo, run, "The gate is pending.")
+        assert specs.check(repo, work.Run(Worker(repo)), "The gate is pending.") is None, "a driver's turn"
+        follow = specs.check(repo, work.Run(Worker(repo), task=True), "The gate is pending.")
         assert specs.load(repo.name, sid)["report_asked"]
         release = specs.hold(work._busy, specs._lock, str(repo), "", kind="turn")   # the person's turn
         try:

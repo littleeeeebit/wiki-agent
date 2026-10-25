@@ -619,11 +619,12 @@ class Run:
     a screen that reattaches still knows how long the last step has run.
     """
 
-    def __init__(self, chat: ChatSession, person: bool = False) -> None:
+    def __init__(self, chat: ChatSession, person: bool = False, task: bool = False) -> None:
         self.turn = uuid.uuid4().hex
         # A person's instruction, not the server's: its turn may end in plain talk, and the task check
-        # neither chases its report nor counts it as the answer to a report request.
-        self.person = person
+        # neither chases its report nor counts it as the answer to a report request. `task`: the task's
+        # own work turn (its start, a follow-up `specs.again` sent), the only kind chased for a report.
+        self.person, self.task = person, task
         self.started_at = time.time()
         self.chat = chat
         self.session_id = chat.id
