@@ -15,6 +15,7 @@ import time
 import tomllib
 
 POLICY = "verification.toml"
+HARVESTED = ".wiki/decisions/"   # where the start hook writes records (`tool/sync.py`): never the task's work
 
 
 class Pending(RuntimeError):
@@ -136,8 +137,10 @@ def identity(repo, base):
     from common import indexes   # here: `conftest` imports this file as `tool.verify`, before `tool` is a path
 
     head = run(["git", "rev-parse", "HEAD"], repo)
-    # v2: `run` strips the leading space of a v1 row. The start hook's rebuilt indexes are not changes.
-    if any(r and not indexes.hook_row(repo, r) for r in run(["git", "status", "--porcelain=v2", "-z"], repo).split("\0")):
+    # v2: `run` strips the leading space of a v1 row. The start hook's rebuilt indexes and harvested
+    # records are not changes; untracked files one by one, so a folded folder hides nothing beside them.
+    rows = run(["git", "status", "--porcelain=v2", "--untracked-files=all", "-z"], repo).split("\0")
+    if any(r and not (r.startswith("? ") and r[2:].startswith(HARVESTED)) and not indexes.hook_row(repo, r) for r in rows):
         raise RuntimeError("커밋하지 않은 변경이 있어 최종 검증 결과를 사용할 수 없습니다")
     run(["git", "fetch", "--quiet", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], repo)
     return head, run(["git", "merge-base", "HEAD", f"origin/{base}"], repo)
