@@ -75,7 +75,8 @@ PIPELINE_SCHEMA = {
     "proposals": [{"title": "...", "problem": "...", "change": "...", "files": ["..."]}]}
 SPEC_SCHEMA = {
     "key": "<kebab-case id of at most 40 characters, unique in this survey>", "title": "<the one improvement>",
-    "pipeline": "<one pipeline id, or shared:<path> for a shared boundary change>",
+    "pipeline": "<one pipeline id, or shared:<path> for a shared boundary change: a path from the map's `shared` "
+                "or one this spec `creates`>",
     "files": ["<repository-relative files in the base commit the change touches>"],
     "creates": ["<repository-relative files the change creates, in folders that exist; omit when none>"],
     "boundary": "<the responsibility boundary this spec works inside>",
@@ -284,17 +285,23 @@ def spec_shape(s, mode: str, map_: dict, root: Path) -> dict:
     if LOOKING.search(title):
         raise ValueError(f"`{what}` 은 조사·구조 파악만 하는 명세다 — 조사는 이미 끝났고, 명세는 실제 개선만 담는다")
     pipeline = _text(s.get("pipeline"), f"{what}.pipeline")
-    shared = {x["path"] for x in map_["shared"]}
-    if pipeline not in {p["id"] for p in map_["pipelines"]} and pipeline.removeprefix("shared:") not in shared:
-        raise ValueError(f"`{what}.pipeline` `{pipeline}` 은 지도의 파이프라인 하나나 shared:<경로> 여야 한다")
+    creates = [_new(root, f, f"{what}.creates[{i}]")
+               for i, f in enumerate(_list(s.get("creates") or [], f"{what}.creates"))]
+    # A shared owner the spec extracts is new, so the map could not list it; its own `creates` vouches for it.
+    shared = [x["path"] for x in map_["shared"]] + creates
+    ids = [p["id"] for p in map_["pipelines"]]
+    if pipeline not in ids and pipeline.removeprefix("shared:") not in shared:
+        # The repair turn reads this; without the accepted values it only guesses again.
+        raise ValueError(f"`{what}.pipeline` `{pipeline}` 은 지도의 파이프라인 하나나, 지도의 shared 또는 이 명세의 "
+                         f"`creates` 경로를 담은 shared:<경로> 여야 한다 — 파이프라인: {', '.join(ids)}; "
+                         f"shared: {', '.join(shared)}")
     tests = s.get("tests") or {}
     if not isinstance(tests, dict):
         raise ValueError(f"`{what}.tests` 는 객체여야 한다")
     shaped = {
         "key": s["key"], "mode": mode, "title": title, "pipeline": pipeline,
         "files": [_at(root, f, f"{what}.files[{i}]") for i, f in enumerate(_list(s.get("files"), f"{what}.files"))],
-        "creates": [_new(root, f, f"{what}.creates[{i}]")
-                    for i, f in enumerate(_list(s.get("creates") or [], f"{what}.creates"))],
+        "creates": creates,
         **{k: _text(s.get(k), f"{what}.{k}") for k in ("boundary", "problem", "change", "impact", "rollback")},
         "evidence": _evidence(root, s.get("evidence"), f"{what}.evidence"),
         "keep": _texts(s.get("keep"), f"{what}.keep"),
