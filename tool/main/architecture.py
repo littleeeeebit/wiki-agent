@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import yaml
 
-from agent import ChatSession, cli_command
+from agent import ChatSession, cli_command, read_tools
 from common.process import background_options
 from .channels import WIKI
 from . import query
@@ -76,9 +76,10 @@ def analyze(root: Path, model: str | None, halt: threading.Event, rejected: str 
         raise Invalid(f"Architecture answer is not the requested JSON — {exc}") from exc
 
 
-def answered(root: Path, model: str | None, effort: str | None, halt: threading.Event, ask: str) -> dict:
-    """One read-only turn on the architecture prompt, its JSON answer parsed."""
-    prompt = (WIKI / "tool/prompts/architecture-scan.md").read_text(encoding="utf-8")
+def answered(root: Path, model: str | None, effort: str | None, halt: threading.Event, ask: str,
+             system: str = "architecture-scan") -> dict:
+    """One read-only turn on an architecture prompt, its JSON answer parsed."""
+    prompt = (WIKI / f"tool/prompts/{system}.md").read_text(encoding="utf-8")
     chat = ChatSession(root, tools="Read,Glob,Grep", system=prompt, model=model, effort=effort)
     ended = threading.Event()
 
@@ -277,47 +278,73 @@ def scan(root: Path, *, model: str | None = None, halt: threading.Event | None =
 DIFF_CHARS = 60_000   # the model reads a file itself where the diff is cut
 
 
+def touched(nodes: list[dict], files: list[str]) -> set[str]:
+    """The elements that name a changed file or its folder, and each component a diagram labels with one."""
+    names = {*files, *(f.rsplit("/", 1)[0] + "/" for f in files if "/" in f)}
+    found = set()
+    for node in nodes:
+        if any(name in node.get(field, "") for field in FIELDS for name in names):
+            found.add(node["path"])
+        for line in node.get("diagram", "").splitlines():
+            if (child := re.match(r"\s*([a-z][a-z0-9-]*)\s*\[", line)) and any(name in line for name in names):
+                found.add(f"{node['path']}/{child.group(1)}")
+    # ponytail: matches source paths as written in the text; an element naming none is shown by path only
+    return found
+
+
 def changed(root: Path, since: str, *, model: str, effort: str = "", halt: threading.Event | None = None) -> bool:
     """`[구조 문서 새로 고침]` at a merge: only what the pull request changed since `since`. The model
-    gets the changed files, their diff and the elements this analysis wrote (`analysis.json`), and
-    answers the ones to rewrite and to remove; what it leaves out stays as it is, and an empty answer
+    gets the changed files, their diff, every element this analysis wrote (`analysis.json`) by path and
+    in full only those naming a changed file (`touched`), and answers the ones to rewrite and to
+    remove; what it leaves out stays as it is, and an empty answer
     writes nothing (user's choice: a whole-repository analysis on every merge cost too much). An answer
     breaking the contract gets one more turn, told why, as `scan` does. True when it wrote."""
     root, halt = root.resolve(), halt or threading.Event()
-    diff = ["git", "diff", "--no-renames", since, "HEAD", "--", ".", ":(exclude).omm"]
-    files = subprocess.run([*diff[:3], "--name-only", *diff[3:]], cwd=root, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=60, check=True, **background_options()).stdout.split()
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60, check=True, **background_options()).stdout
+    changes = [f for f in git("diff", "--no-renames", "--name-only", "-z", since, "HEAD", "--", ".",
+                              ":(exclude).omm").split("\0") if f]
+    # A file the source tools refuse (`.env`, keys) never reaches the model, not even as removed lines.
+    files = [f for f in changes if not read_tools.private(Path(f))]
     manifest = root / ".omm" / "analysis.json"
     owned = set(json.loads(manifest.read_text(encoding="utf-8"))) if manifest.is_file() else set()
     if not files or not owned:
         return False   # nothing changed, or nothing generated to keep current: a full scan is `[구조 문서]`
-    text = subprocess.run(diff, cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          timeout=60, check=True, **background_options()).stdout
+    text = git("diff", "--no-renames", since, "HEAD", "--", ".", ":(exclude).omm",
+               *(f":(exclude,literal){f}" for f in changes if f not in files))
     with _lock:
-        current = [{k: n[k] for k in ("path", "description", "diagram") if n[k]}
-                   for n in read_existing(root)["nodes"] if n["path"] in owned]
+        everything = [{k: n[k] for k in ("path", *FIELDS) if n[k]}
+                      for n in read_existing(root)["nodes"] if n["path"] in owned]
+        named = touched(everything, files)
+        shown = [n for n in everything if n["path"] in named]
         ask = ("This pull request changed these files since commit " + since + ":\n" + "\n".join(files)
                + "\n\nIts diff" + (f", cut at {DIFF_CHARS} characters — read the files for the rest" if len(text) > DIFF_CHARS
-                                   else "") + ":\n```diff\n" + text[:DIFF_CHARS] + "\n```\n\nThe architecture elements "
-               "this analysis wrote before:\n```json\n" + json.dumps(current, ensure_ascii=False, indent=1) + "\n```\n\n"
-               "Read the changed code where the diff is not enough. Return only a JSON object "
-               '{"nodes": [...], "removed": [...]}: in `nodes`, each element whose text the change makes wrong or '
-               "incomplete, rewritten in full, and each new element the change needs under a described parent; in "
-               "`removed`, the paths of elements the change made obsolete. Leave every other element out. When the "
-               'change alters nothing an element says, return {"nodes": [], "removed": []}.')
+                                   else "") + ":\n```diff\n" + text[:DIFF_CHARS] + "\n```\n\nEvery element of the "
+               "analysis, by path:\n" + "\n".join(n["path"] for n in everything) + "\n\nThe elements that name a "
+               "changed file, in full:\n```json\n" + json.dumps(shown, ensure_ascii=False, indent=1) + "\n```")
 
         def merged(rejected: str = "") -> list[dict] | None:
             found = answered(root, model, effort or None, halt,
-                             ask + (f" A previous answer was rejected; do not repeat this: {rejected}" if rejected else ""))
-            nodes, removed = found.get("nodes", []), found.get("removed", [])
+                             ask + (f"\n\nA previous answer was rejected; do not repeat this: {rejected}" if rejected else ""),
+                             "architecture-update")
+            nodes, removed = found.get("nodes"), found.get("removed")
             if not isinstance(nodes, list) or not isinstance(removed, list) or any(
-                    not isinstance(n, dict) or not isinstance(n.get("path"), str) for n in nodes) \
+                    not isinstance(n, dict) or not isinstance(n.get("path"), str)
+                    or not isinstance(n.get("description"), str) or not n["description"].strip() for n in nodes) \
                     or any(not isinstance(p, str) for p in removed):
-                raise Invalid("Architecture update needs `nodes` as elements with a path and `removed` as paths")
+                raise Invalid("Architecture update needs `nodes` as elements with a path and a description, "
+                              "and `removed` as paths")
+            paths = [n["path"] for n in nodes]
+            if len(set(paths)) != len(paths):
+                raise Invalid("Architecture update returned an element path more than once")
             if not nodes and not removed:
                 return None
             gone = lambda path: any(path == p or path.startswith(p + "/") for p in removed)  # noqa: E731
-            kept = {n["path"]: n for n in current if not gone(n["path"])}
+            if any(gone(p) for p in paths):
+                raise Invalid("Architecture update both rewrites and removes an element")
+            kept = {n["path"]: n for n in everything if not gone(n["path"])}
             return list({**kept, **{n["path"]: n for n in nodes}}.values())
 
         try:

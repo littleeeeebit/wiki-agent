@@ -255,17 +255,35 @@ def test_a_merge_refresh_reads_only_what_the_pull_request_changed(tmp_path, cli,
     base = git("rev-parse", "HEAD")
     asked, answers = [], [{"nodes": [], "removed": []}]
 
-    def answered(where, model, effort, halt, ask):
-        asked.append((model, effort, ask))
+    def answered(where, model, effort, halt, ask, system="architecture-scan"):
+        asked.append((model, effort, ask, system))
         return answers.pop(0)
     monkeypatch.setattr(architecture, "answered", answered)
     assert not architecture.changed(root, base, model="m") and not asked, "nothing changed: no turn"
+    (root / ".env").write_text("API_KEY=PRIVATE_SENTINEL\n", encoding="utf-8")
+    (root / "server/task handler.py").write_text("def run():\n    pass\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-qm", "a secret and a spaced name")
+    base = git("rev-parse", "HEAD")
+    (root / ".env").unlink()
+    (root / "server/task handler.py").write_text("def run():\n    return 3\n", encoding="utf-8")
     (root / "server/api.py").write_text("def handle():\n    return 2\n", encoding="utf-8")
     git("commit", "-qam", "change")
     assert not architecture.changed(root, base, model="m", effort="low"), "an empty answer writes nothing"
-    assert asked[0][:2] == ("m", "low") and "server/api.py" in asked[0][2] and "return 2" in asked[0][2]
-    assert "Handles HTTP and persists replies." in asked[0][2], "the elements it wrote before"
+    model, effort, ask, system = asked[0]
+    assert (model, effort, system) == ("m", "low", "architecture-update") and "return 2" in ask
+    assert "\nserver/task handler.py\n" in ask, "one changed file, one line"
+    # Review of #237: a deleted `.env` reached the model as removed lines.
+    assert "PRIVATE_SENTINEL" not in ask and ".env" not in ask, "a file the source tools refuse stays out"
+    # The overall element names server/api.py; its `server` component is the one its diagram labels with it.
+    assert NODES[0]["description"] in ask and "Handles HTTP and persists replies." in ask
     server = root / ".omm/overall-architecture/server/description.md"
+    for wrong in ({"nodes": []}, {"nodes": [{"path": "overall-architecture/server", "description": "A."},
+                                            {"path": "overall-architecture/server", "description": "B."}], "removed": []}):
+        answers[:] = [wrong, wrong]
+        with pytest.raises(architecture.Invalid):
+            architecture.changed(root, base, model="m")
+        assert "rejected" in asked[-1][2], "a missing key or a repeated element is asked again, told why"
     answers[:] = [{"nodes": [{"path": "overall-architecture/server"}], "removed": "server"},
                   {"nodes": [{"path": "overall-architecture/server", "description": "Handles HTTP; returns 2."}],
                    "removed": []}]
@@ -273,6 +291,16 @@ def test_a_merge_refresh_reads_only_what_the_pull_request_changed(tmp_path, cli,
     assert server.read_text(encoding="utf-8") == "Handles HTTP; returns 2." and "rejected" in asked[-1][2], "told why"
     overall = (root / ".omm/overall-architecture/description.md").read_text(encoding="utf-8")
     assert overall == NODES[0]["description"], "what the answer left out stays"
+
+
+def test_a_merge_refresh_shows_in_full_only_the_elements_naming_a_changed_file():
+    nodes = [{"path": "overall-architecture", "description": "Requests enter server/api.py.",
+              "diagram": 'graph TD\n    server["Server\\nserver/api.py"]\n    billing["Billing\\nbilling/charge.py"]\n'},
+             {"path": "overall-architecture/server", "description": "Handles HTTP."},
+             {"path": "overall-architecture/billing", "description": "Charges cards."},
+             {"path": "overall-architecture/tools", "description": "Helpers under tools/."}]
+    assert architecture.touched(nodes, ["server/api.py"]) == {"overall-architecture", "overall-architecture/server"}
+    assert architecture.touched(nodes, ["tools/new.py"]) == {"overall-architecture/tools"}, "its folder named"
 
 
 def test_the_refresh_model_is_chosen_in_the_settings(tmp_path, monkeypatch):
