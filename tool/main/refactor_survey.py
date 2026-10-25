@@ -655,6 +655,17 @@ def made(repo: Path, survey: str, base: str, s: dict, depends: list[str]) -> dic
                          "depends": depends, "detail": s, "roles": roles}}
 
 
+def kept(spec: dict, fields: dict) -> dict:
+    """A card remade from its survey (refined, split or rechecked) keeps the work and review models
+    chosen on it since, and their history: the survey record holds only the models it started with."""
+
+    was = spec["refactor"]
+    roles = {**fields["refactor"]["roles"], "worker": was["roles"]["worker"], "reviewer": was["roles"]["reviewer"]}
+    return {**fields, "cell": {**roles["worker"], "fast": False}, "reviewer": roles["reviewer"],
+            "refactor": {**fields["refactor"], "roles": roles,
+                         **({"role_changes": was["role_changes"]} if was.get("role_changes") else {})}}
+
+
 def fresh(repo: Path, sid: str, fields: dict, source: dict) -> None:
     specs.save({"id": sid, "repo": repo.name, "rev": 1, **fields, "source": source, "state": "정리됨",
                 "stopped": None, "worktree": None, "pr": None, "report": None, "gate": None, "fault": None,
@@ -692,7 +703,7 @@ def refined(repo: Path, block, source: dict) -> str:
         for dep in detail["depends"]:
             if not ((specs.load(repo.name, dep) or {}).get("refactor") or {}).get("survey") or dep == block.get("id"):
                 raise ValueError(f"`depends` 의 `{dep}` 은 다른 조사 명세의 id 여야 한다")
-        fields = made(repo, r["survey"], r["base"], detail, detail["depends"])
+        fields = kept(spec, made(repo, r["survey"], r["base"], detail, detail["depends"]))
         sid = target if block.get("id") else f"{detail['key']}-{r['survey']}"
         # Every survey card, whatever survey it came from: a recheck gives a card a new survey id, not new edges.
         graph = {s["id"]: s["refactor"]["depends"] for s in specs.listing(repo.name)
@@ -748,7 +759,7 @@ def rechecked(w, run: dict) -> dict:
         if spec is None or spec["state"] != "정리됨":
             raise refactor.Stop("spec_gone", f"`{run['recheck']}` 명세가 없거나 이미 시작했다")
         if survey["specs"]:
-            specs.save({**spec, **made(w.repo, w.rid, run["base"], survey["specs"][0], old["depends"]),
+            specs.save({**spec, **kept(spec, made(w.repo, w.rid, run["base"], survey["specs"][0], old["depends"])),
                         "rev": spec["rev"] + 1})
         else:
             specs.aside(w.repo.name, spec["id"])

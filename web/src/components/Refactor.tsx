@@ -126,12 +126,12 @@ export function RefactorSurvey({ repo, mode, generation, options, korean, busy, 
           <Toolbar value={roles[r.key]} options={options} busy={busy || working}
             onChange={(next) => setRoles((prev) => ({ ...prev, [r.key]: { model: next.model, effort: next.effort } }))} />
         </div>)}
-        <p className="text-[11.5px] text-muted-foreground">이 조사에서 나온 모든 명세가 이 모델로 조사·구현·리뷰된다. 시작한 뒤에는 바뀌지 않는다.</p>
+        <p className="text-[11.5px] text-muted-foreground">이 조사에서 나온 모든 명세가 이 모델로 조사·구현·리뷰된다. 시작 전 명세는 [모델 바꾸기]로 구현·리뷰 모델만 바꿀 수 있고, 시작한 명세는 끝까지 같은 모델로 간다.</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Btn tone="primary" disabled={busy || working || !runs || !!live || !!unpicked.length}
           title={live ? `조사 ${live.id} 가 끝나거나 멈춘 뒤 시작한다` : unpicked.length ? `${unpicked.join('·')} 모델을 먼저 고른다`
-            : '코드를 읽기만 한다 — 바꾸기·커밋·푸시·PR 없음'}
+            : '코드를 읽기만 한다 — 바꾸기·커밋·푸시·PR 없음. 이 모드의 예전 조사에서 나와 아직 시작하지 않은 명세는 지운다'}
           onClick={() => void act('/api/refactors', { request_id: crypto.randomUUID(), mode, roles })}>
           리팩터링 시작
         </Btn>
@@ -293,6 +293,53 @@ export function locks(spec: api.Spec, specs: api.Spec[], mode?: RefactorMode, ge
   }
   if (r.detail?.hypothesis && !r.detail.measure) out.push('측정 명령이 없는 성능 가설이다 — [다시 확인]으로 측정할 수 있게 고친다')
   return out
+}
+
+/** An unstarted survey card's implementation and review models, chosen again — a quota running low on one
+ *  model. The survey model stays; a started card keeps its models to the end. */
+export function RolesEditor({ spec, roles, options, busy, onSaved }: {
+  spec: api.Spec; roles: api.RefactorRoles; options: api.Options | null; busy: boolean; onSaved: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  // Opened on the card's current models and sent back as `was`: a change made since on another screen is refused.
+  const [was, setWas] = useState({ worker: roles.worker, reviewer: roles.reviewer })
+  const [worker, setWorker] = useState(roles.worker)
+  const [reviewer, setReviewer] = useState(roles.reviewer)
+  const [saving, setSaving] = useState(false)
+  const [fault, setFault] = useState('')
+  const unchanged = worker.model === was.worker.model && worker.effort === was.worker.effort
+    && reviewer.model === was.reviewer.model && reviewer.effort === was.reviewer.effort
+  function opened() {
+    setWas({ worker: roles.worker, reviewer: roles.reviewer }); setWorker(roles.worker); setReviewer(roles.reviewer)
+    setFault(''); setOpen(true)
+  }
+  async function save() {
+    setSaving(true); setFault('')
+    try {
+      await api.post(`/api/refactors/specs/${spec.id}/roles`, { worker, reviewer, was }, 'POST', spec.repo)
+        .then((r) => api.json(r, '모델 바꾸기'))
+      setOpen(false); onSaved()
+    } catch (err) { setFault(String(err instanceof Error ? err.message : err)) }
+    finally { setSaving(false) }
+  }
+  if (!open) return <Btn disabled={busy} onClick={opened}
+    title="이 명세의 구현·리뷰 모델만 바꾼다 — 조사 모델과 이미 시작한 명세는 그대로">모델 바꾸기</Btn>
+  return <div aria-label="모델 바꾸기" className="basis-full space-y-1.5 rounded-md border border-border p-2 text-[12.5px]">
+    {([['구현', worker, setWorker], ['리뷰', reviewer, setReviewer]] as const).map(([label, value, set]) =>
+      <div key={label} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="w-10 shrink-0 font-heading text-[11px] font-semibold">{label}</span>
+        <Toolbar value={value} options={options} busy={saving}
+          onChange={(next) => set({ model: next.model, effort: next.effort })} />
+      </div>)}
+    {worker.model && worker.model === reviewer.model &&
+      <p className="text-wait">구현과 리뷰가 같은 모델이다 — 자기 코드를 자기가 리뷰하게 된다</p>}
+    <div className="flex gap-1.5">
+      <Btn tone="primary" disabled={saving || unchanged || !worker.model || !reviewer.model} onClick={() => void save()}>
+        {saving ? '…' : '저장'}</Btn>
+      <Btn tone="ghost" disabled={saving} onClick={() => setOpen(false)}>취소</Btn>
+    </div>
+    {fault && <p role="alert" className="text-destructive">{fault}</p>}
+  </div>
 }
 
 /** Tell the survey panel a run began elsewhere on the screen (a card's `[다시 확인]`). */

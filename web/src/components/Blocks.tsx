@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Questions } from '@/components/Questions'
 import { PlanStatus } from '@/components/Plan'
-import { locks, RefactorCheck, REFACTOR_MODE, rolesText, SurveyDetail, surveyStarted } from '@/components/Refactor'
+import { locks, RefactorCheck, REFACTOR_MODE, RolesEditor, rolesText, SurveyDetail, surveyStarted } from '@/components/Refactor'
 import type { RefactorMode } from '@/components/Refactor'
 import { Btn } from '@/components/Modal'
 import type { Choice } from '@/components/Toolbar'
@@ -21,6 +21,7 @@ export type BlockProps = {
   onStart: (id: string, choice?: Choice) => Promise<void>
   refactorMode?: RefactorMode
   refactorGeneration?: number
+  options?: api.Options | null   // what a survey card's implementation and review models are chosen again from
 }
 
 /** The named blocks at the end of a `next` answer, drawn as what they ask for. */
@@ -186,9 +187,9 @@ function SpecDetails({ spec, korean }: { spec: Spec; korean: boolean }) {
   </div>
 }
 
-export function SpecForm({ spec, specs = [], busy, onSpecs, onStart, onRenamed, korean = false, refactorMode, refactorGeneration }:
+export function SpecForm({ spec, specs = [], busy, onSpecs, onStart, onRenamed, korean = false, refactorMode, refactorGeneration, options }:
   { spec: Spec; specs?: Spec[]; onRenamed: (id: string) => void; korean?: boolean; refactorMode?: RefactorMode; refactorGeneration?: number
-  } & Pick<BlockProps, 'busy' | 'onSpecs' | 'onStart'>) {
+  } & Pick<BlockProps, 'busy' | 'onSpecs' | 'onStart' | 'options'>) {
   // A survey spec is refined in the conversation, never typed over, and runs on the roles its survey fixed.
   const surveyed = !!spec.refactor?.survey
   const roles = spec.refactor?.roles
@@ -287,6 +288,8 @@ export function SpecForm({ spec, specs = [], busy, onSpecs, onStart, onRenamed, 
         </Btn>}
         {roles && <span aria-label="고정 모델" title="리팩터링을 시작할 때 고른 모델 — 이 명세의 모든 세션이 쓴다"
           className="basis-full text-[12.5px] text-muted-foreground">{rolesText(roles)}</span>}
+        {roles && spec.state === '정리됨' && <RolesEditor spec={spec} roles={roles} options={options ?? null}
+          busy={busy || !!working} onSaved={onSpecs} />}
         {spec.state === '정리됨' && <Btn tone="primary" disabled={edited || busy || !!working || !!locked.length}
           title={edited ? '고친 것을 먼저 저장한다' : surveyed
             ? '작업트리에서 이 명세 하나를 실행한다 — 리뷰·검증 뒤 PR 까지, 머지는 직접' : '저장소에 작업 브랜치를 만들고 첫 턴을 보낸다'}
