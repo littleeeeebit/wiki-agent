@@ -279,14 +279,17 @@ DIFF_CHARS = 60_000   # the model reads a file itself where the diff is cut
 
 
 def touched(nodes: list[dict], files: list[str]) -> set[str]:
-    """The elements that name a changed file or its folder, and each component a diagram labels with one."""
-    names = {*files, *(f.rsplit("/", 1)[0] + "/" for f in files if "/" in f)}
+    """The elements that name a changed file or its folder, and each component a diagram labels with one.
+    A folder counts only named as itself: `tool/main/` followed by another file's name is that file."""
+    start = r"(?:(?<![\w/.-])|(?<=\\n))"   # a diagram label writes its path after a literal `\n`
+    named = re.compile("|".join([*(rf"{start}{re.escape(f)}(?![\w/-])" for f in files),
+                                 *(rf"{start}{re.escape(f.rsplit('/', 1)[0])}/(?![\w-])" for f in files if "/" in f)]))
     found = set()
     for node in nodes:
-        if any(name in node.get(field, "") for field in FIELDS for name in names):
+        if any(named.search(node.get(field, "")) for field in FIELDS):
             found.add(node["path"])
         for line in node.get("diagram", "").splitlines():
-            if (child := re.match(r"\s*([a-z][a-z0-9-]*)\s*\[", line)) and any(name in line for name in names):
+            if (child := re.match(r"\s*([a-z][a-z0-9-]*)\s*\[", line)) and named.search(line):
                 found.add(f"{node['path']}/{child.group(1)}")
     # ponytail: matches source paths as written in the text; an element naming none is shown by path only
     return found

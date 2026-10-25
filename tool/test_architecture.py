@@ -301,6 +301,10 @@ def test_a_merge_refresh_shows_in_full_only_the_elements_naming_a_changed_file()
              {"path": "overall-architecture/tools", "description": "Helpers under tools/."}]
     assert architecture.touched(nodes, ["server/api.py"]) == {"overall-architecture", "overall-architecture/server"}
     assert architecture.touched(nodes, ["tools/new.py"]) == {"overall-architecture/tools"}, "its folder named"
+    # Review of #237: a folder prefix picked every element naming a sibling file (51 of 86 on this repo).
+    siblings = [{"path": "a", "description": "Uses tool/main/architecture.py."},
+                {"path": "b", "description": "Uses tool/main/loop.py and mytool/main/architecture.py."}]
+    assert architecture.touched(siblings, ["tool/main/architecture.py"]) == {"a"}
 
 
 def test_the_refresh_model_is_chosen_in_the_settings(tmp_path, monkeypatch):
