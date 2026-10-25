@@ -789,6 +789,13 @@ export const reprobe = (name: string) =>
 export const setSurveySettings = (body: SurveySettings) =>
   post('/api/connect/settings', body).then((r) => json<SurveySettings>(r, '조사 설정'))
 
+/** The model `[구조 문서 새로 고침]` runs on at a merge; an empty one skips the refresh. */
+export type StructureSettings = { omm_model: string; omm_effort: string }
+export const getStructureSettings = () =>
+  get('/api/architecture/settings').then((r) => json<StructureSettings>(r, '구조 문서 새로 고침 설정'))
+export const setStructureSettings = (body: StructureSettings) =>
+  post('/api/architecture/settings', body).then((r) => json<StructureSettings>(r, '구조 문서 새로 고침 설정'))
+
 /** What the server changed on its own: a spec moved, it started a turn, or a
  *  repository's connection changed. */
 export type FeedEv =

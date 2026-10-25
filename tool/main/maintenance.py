@@ -228,10 +228,15 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
             remaining = findings(repo, path)
             if remaining:
                 raise ValueError("위키 lint 수정이 끝나지 않았다 — " + json.dumps(remaining, ensure_ascii=False))
-        if (path / ".omm").is_dir():
-            specs.merge_progress(spec["repo"], spec["id"], ".omm 구조 문서 새로 고치는 중")
+        chosen = architecture.settings()
+        if (path / ".omm").is_dir() and not chosen["omm_model"]:
+            specs.merge_progress(spec["repo"], spec["id"], "구조 문서 새로 고침 모델을 고르지 않아 건너뛴다 — 설정에서 고른다")
+        elif (path / ".omm").is_dir():
+            specs.merge_progress(spec["repo"], spec["id"], "구조 문서 새로 고침 — PR 이 바꾼 부분 분석 중")
             try:
-                architecture.scan(path, model=(spec.get("cell") or {}).get("model") or None, halt=runtime.stopping)
+                if not architecture.changed(path, git(path, "merge-base", "HEAD", f"origin/{base}"),
+                                            model=chosen["omm_model"], effort=chosen["omm_effort"], halt=runtime.stopping):
+                    specs.merge_progress(spec["repo"], spec["id"], "구조 문서 새로 고침 — 바뀔 것이 없다")
             except architecture.Invalid as exc:
                 # A model that cannot honour the contract leaves the reviewed
                 # documents as they are; it never holds the merge hostage.

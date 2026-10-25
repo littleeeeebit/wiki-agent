@@ -235,3 +235,90 @@ def test_selected_repository_add_is_explicit_and_reads_are_passive(tmp_path, cli
     monkeypatch.setattr(query, "_project", "second")
     assert web.post("/api/architecture", headers=headers).status_code == 409
     assert web.get("/api/architecture", headers=headers).status_code == 409
+
+
+def test_a_merge_refresh_reads_only_what_the_pull_request_changed(tmp_path, cli, monkeypatch):
+    # User's choice: a whole-repository analysis on every merge cost too much.
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@example.test")
+    git("config", "user.name", "t")
+    (root / "server").mkdir()
+    (root / "server/api.py").write_text("def handle():\n    return 1\n", encoding="utf-8")
+    architecture.scan(root)
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    base = git("rev-parse", "HEAD")
+    asked, answers = [], [{"nodes": [], "removed": []}]
+
+    def answered(where, model, effort, halt, ask, system="architecture-scan"):
+        asked.append((model, effort, ask, system))
+        return answers.pop(0)
+    monkeypatch.setattr(architecture, "answered", answered)
+    assert not architecture.changed(root, base, model="m") and not asked, "nothing changed: no turn"
+    (root / ".env").write_text("API_KEY=PRIVATE_SENTINEL\n", encoding="utf-8")
+    (root / "server/task handler.py").write_text("def run():\n    pass\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-qm", "a secret and a spaced name")
+    base = git("rev-parse", "HEAD")
+    (root / ".env").unlink()
+    (root / "server/task handler.py").write_text("def run():\n    return 3\n", encoding="utf-8")
+    (root / "server/api.py").write_text("def handle():\n    return 2\n", encoding="utf-8")
+    git("commit", "-qam", "change")
+    assert not architecture.changed(root, base, model="m", effort="low"), "an empty answer writes nothing"
+    model, effort, ask, system = asked[0]
+    assert (model, effort, system) == ("m", "low", "architecture-update") and "return 2" in ask
+    assert "\nserver/task handler.py\n" in ask, "one changed file, one line"
+    # Review of #237: a deleted `.env` reached the model as removed lines.
+    assert "PRIVATE_SENTINEL" not in ask and ".env" not in ask, "a file the source tools refuse stays out"
+    # The overall element names server/api.py; its `server` component is the one its diagram labels with it.
+    assert NODES[0]["description"] in ask and "Handles HTTP and persists replies." in ask
+    server = root / ".omm/overall-architecture/server/description.md"
+    for wrong in ({"nodes": []}, {"nodes": [{"path": "overall-architecture/server", "description": "A."},
+                                            {"path": "overall-architecture/server", "description": "B."}], "removed": []}):
+        answers[:] = [wrong, wrong]
+        with pytest.raises(architecture.Invalid):
+            architecture.changed(root, base, model="m")
+        assert "rejected" in asked[-1][2], "a missing key or a repeated element is asked again, told why"
+    answers[:] = [{"nodes": [{"path": "overall-architecture/server"}], "removed": "server"},
+                  {"nodes": [{"path": "overall-architecture/server", "description": "Handles HTTP; returns 2."}],
+                   "removed": []}]
+    assert architecture.changed(root, base, model="m")
+    assert server.read_text(encoding="utf-8") == "Handles HTTP; returns 2." and "rejected" in asked[-1][2], "told why"
+    overall = (root / ".omm/overall-architecture/description.md").read_text(encoding="utf-8")
+    assert overall == NODES[0]["description"], "what the answer left out stays"
+
+
+def test_a_merge_refresh_shows_in_full_only_the_elements_naming_a_changed_file():
+    nodes = [{"path": "overall-architecture", "description": "Requests enter server/api.py.",
+              "diagram": 'graph TD\n    server["Server\\nserver/api.py"]\n    billing["Billing\\nbilling/charge.py"]\n'},
+             {"path": "overall-architecture/server", "description": "Handles HTTP."},
+             {"path": "overall-architecture/billing", "description": "Charges cards."},
+             {"path": "overall-architecture/tools", "description": "Helpers under tools/."}]
+    assert architecture.touched(nodes, ["server/api.py"]) == {"overall-architecture", "overall-architecture/server"}
+    assert architecture.touched(nodes, ["tools/new.py"]) == {"overall-architecture/tools"}, "its folder named"
+    # Review of #237: a folder prefix picked every element naming a sibling file (51 of 86 on this repo).
+    siblings = [{"path": "a", "description": "Uses tool/main/architecture.py."},
+                {"path": "b", "description": "Uses tool/main/loop.py and mytool/main/architecture.py."}]
+    assert architecture.touched(siblings, ["tool/main/architecture.py"]) == {"a"}
+    edges = [{"path": "dot", "description": "See ./tool/main/architecture.py."},
+             {"path": "bak", "description": "Old copy tool/main/architecture.py.bak"},
+             {"path": "hidden", "description": "Reads tool/main/.hidden.py"},
+             {"path": "folder", "description": "Everything under `tool/main/`."}]
+    assert architecture.touched(edges, ["tool/main/architecture.py"]) == {"dot", "folder"}
+
+
+def test_the_refresh_model_is_chosen_in_the_settings(tmp_path, monkeypatch):
+    from main import loop
+    from test_main import client
+    monkeypatch.setattr(query, "LOGS", tmp_path)
+    web = client()
+    assert web.get("/api/architecture/settings").json() == {"omm_model": "", "omm_effort": ""}, "none: skipped"
+    assert web.post("/api/architecture/settings", json={"omm_model": "bad name!"}).status_code == 400
+    saved = web.post("/api/architecture/settings", json={"omm_model": " haiku ", "omm_effort": "low"}).json()
+    assert saved == {"omm_model": "haiku", "omm_effort": "low"} == architecture.settings()
+    assert loop.settings({"omm_model": ""})["omm_model"] == "haiku"

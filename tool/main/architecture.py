@@ -13,9 +13,10 @@ import threading
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 import yaml
 
-from agent import ChatSession, cli_command
+from agent import ChatSession, cli_command, read_tools
 from common.process import background_options
 from .channels import WIKI
 from . import query
@@ -66,8 +67,20 @@ def read_existing(root: Path) -> dict:
 
 def analyze(root: Path, model: str | None, halt: threading.Event, rejected: str = "") -> list[dict]:
     """The model reads source; only our OMM writer may change architecture files."""
-    prompt = (WIKI / "tool/prompts/architecture-scan.md").read_text(encoding="utf-8")
-    chat = ChatSession(root, tools="Read,Glob,Grep", system=prompt, model=model)
+    ask = "Analyze this repository and return the architecture JSON. Read the actual execution paths."
+    if rejected:
+        ask += f" A previous answer was rejected; do not repeat this: {rejected}"
+    try:
+        return answered(root, model, None, halt, ask)["nodes"]
+    except (KeyError, TypeError) as exc:
+        raise Invalid(f"Architecture answer is not the requested JSON — {exc}") from exc
+
+
+def answered(root: Path, model: str | None, effort: str | None, halt: threading.Event, ask: str,
+             system: str = "architecture-scan") -> dict:
+    """One read-only turn on an architecture prompt, its JSON answer parsed."""
+    prompt = (WIKI / f"tool/prompts/{system}.md").read_text(encoding="utf-8")
+    chat = ChatSession(root, tools="Read,Glob,Grep", system=prompt, model=model, effort=effort)
     ended = threading.Event()
 
     def cancel():
@@ -80,9 +93,6 @@ def analyze(root: Path, model: str | None, halt: threading.Event, rejected: str 
     watcher.start()
     final = ""
     try:
-        ask = "Analyze this repository and return the architecture JSON. Read the actual execution paths."
-        if rejected:
-            ask += f" A previous answer was rejected; do not repeat this: {rejected}"
         for event in chat.say(ask, halt):
             if event.kind == "error" or (event.kind == "done" and event.meta.get("error")):
                 raise ValueError(event.text or "Architecture analysis failed")
@@ -92,9 +102,12 @@ def analyze(root: Path, model: str | None, halt: threading.Event, rejected: str 
             raise ValueError("Architecture analysis cancelled")
         match = re.fullmatch(r"\s*```(?:json)?\s*\n(.*?)\n```\s*", final, re.S)
         try:
-            return json.loads(match.group(1) if match else final)["nodes"]
-        except (ValueError, KeyError, TypeError) as exc:
+            found = json.loads(match.group(1) if match else final)
+        except ValueError as exc:
             raise Invalid(f"Architecture answer is not the requested JSON — {exc}") from exc
+        if not isinstance(found, dict):
+            raise Invalid("Architecture answer is not the requested JSON object")
+        return found
     finally:
         ended.set()
         chat.close()
@@ -260,6 +273,129 @@ def scan(root: Path, *, model: str | None = None, halt: threading.Event | None =
             # The model often slips on the contract; one fresh answer, told why.
             write_nodes(root, analyze(root, model, halt, str(exc)), halt)
         return read_existing(root)
+
+
+DIFF_CHARS = 60_000   # the model reads a file itself where the diff is cut
+
+
+def touched(nodes: list[dict], files: list[str]) -> set[str]:
+    """The elements that name a changed file or its folder, and each component a diagram labels with one.
+    A folder counts only named as itself: `tool/main/` followed by another file's name is that file."""
+    # A diagram label writes its path after a literal `\n`; `./` is the same path; a dot ends it only
+    # as punctuation (`.py.bak`, `main/.hidden` are other files).
+    start, end = r"(?:(?<![\w/.-])|(?<=\\n)|(?<=(?<![\w/.])\./))", r"(?![\w/-]|\.[\w-])"
+    named = re.compile("|".join([*(rf"{start}{re.escape(f)}{end}" for f in files),
+                                 *(rf"{start}{re.escape(f.rsplit('/', 1)[0])}/(?![\w-]|\.[\w-])" for f in files if "/" in f)]))
+    found = set()
+    for node in nodes:
+        if any(named.search(node.get(field, "")) for field in FIELDS):
+            found.add(node["path"])
+        for line in node.get("diagram", "").splitlines():
+            if (child := re.match(r"\s*([a-z][a-z0-9-]*)\s*\[", line)) and named.search(line):
+                found.add(f"{node['path']}/{child.group(1)}")
+    # ponytail: matches source paths as written in the text; an element naming none is shown by path only
+    return found
+
+
+def changed(root: Path, since: str, *, model: str, effort: str = "", halt: threading.Event | None = None) -> bool:
+    """`[구조 문서 새로 고침]` at a merge: only what the pull request changed since `since`. The model
+    gets the changed files, their diff, every element this analysis wrote (`analysis.json`) by path and
+    in full only those naming a changed file (`touched`), and answers the ones to rewrite and to
+    remove; what it leaves out stays as it is, and an empty answer
+    writes nothing (user's choice: a whole-repository analysis on every merge cost too much). An answer
+    breaking the contract gets one more turn, told why, as `scan` does. True when it wrote."""
+    root, halt = root.resolve(), halt or threading.Event()
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60, check=True, **background_options()).stdout
+    changes = [f for f in git("diff", "--no-renames", "--name-only", "-z", since, "HEAD", "--", ".",
+                              ":(exclude).omm").split("\0") if f]
+    # A file the source tools refuse (`.env`, keys) never reaches the model, not even as removed lines.
+    files = [f for f in changes if not read_tools.private(Path(f))]
+    manifest = root / ".omm" / "analysis.json"
+    owned = set(json.loads(manifest.read_text(encoding="utf-8"))) if manifest.is_file() else set()
+    if not files or not owned:
+        return False   # nothing changed, or nothing generated to keep current: a full scan is `[구조 문서]`
+    text = git("diff", "--no-renames", since, "HEAD", "--", ".", ":(exclude).omm",
+               *(f":(exclude,literal){f}" for f in changes if f not in files))
+    with _lock:
+        everything = [{k: n[k] for k in ("path", *FIELDS) if n[k]}
+                      for n in read_existing(root)["nodes"] if n["path"] in owned]
+        named = touched(everything, files)
+        shown = [n for n in everything if n["path"] in named]
+        ask = ("This pull request changed these files since commit " + since + ":\n" + "\n".join(files)
+               + "\n\nIts diff" + (f", cut at {DIFF_CHARS} characters — read the files for the rest" if len(text) > DIFF_CHARS
+                                   else "") + ":\n```diff\n" + text[:DIFF_CHARS] + "\n```\n\nEvery element of the "
+               "analysis, by path:\n" + "\n".join(n["path"] for n in everything) + "\n\nThe elements that name a "
+               "changed file, in full:\n```json\n" + json.dumps(shown, ensure_ascii=False, indent=1) + "\n```")
+
+        def merged(rejected: str = "") -> list[dict] | None:
+            found = answered(root, model, effort or None, halt,
+                             ask + (f"\n\nA previous answer was rejected; do not repeat this: {rejected}" if rejected else ""),
+                             "architecture-update")
+            nodes, removed = found.get("nodes"), found.get("removed")
+            if not isinstance(nodes, list) or not isinstance(removed, list) or any(
+                    not isinstance(n, dict) or not isinstance(n.get("path"), str)
+                    or not isinstance(n.get("description"), str) or not n["description"].strip() for n in nodes) \
+                    or any(not isinstance(p, str) for p in removed):
+                raise Invalid("Architecture update needs `nodes` as elements with a path and a description, "
+                              "and `removed` as paths")
+            paths = [n["path"] for n in nodes]
+            if len(set(paths)) != len(paths):
+                raise Invalid("Architecture update returned an element path more than once")
+            if not nodes and not removed:
+                return None
+            gone = lambda path: any(path == p or path.startswith(p + "/") for p in removed)  # noqa: E731
+            if any(gone(p) for p in paths):
+                raise Invalid("Architecture update both rewrites and removes an element")
+            kept = {n["path"]: n for n in everything if not gone(n["path"])}
+            return list({**kept, **{n["path"]: n for n in nodes}}.values())
+
+        try:
+            nodes = merged()
+            if nodes is not None:
+                write_nodes(root, nodes, halt)
+        except Invalid as exc:
+            nodes = merged(str(exc))
+            if nodes is not None:
+                write_nodes(root, nodes, halt)
+        return nodes is not None
+
+
+SETTINGS = {"omm_model": "", "omm_effort": ""}   # beside the loop's, in `raw/chat/main.json`
+
+
+def settings() -> dict:
+    """The model `[구조 문서 새로 고침]` runs on at a merge; none chosen skips it (user's choice)."""
+    from . import loop   # `loop` reaches this module through `maintenance`
+
+    return loop.settings(SETTINGS)
+
+
+class Settings(BaseModel):
+    omm_model: str = ""
+    omm_effort: str = ""
+
+
+@router.get("/api/architecture/settings")
+def get_settings() -> dict:
+    return settings()
+
+
+@router.post("/api/architecture/settings")
+def set_settings(body: Settings) -> dict:
+    from . import loop, planning
+    from .channels import CLAUDE_MODEL
+    from .refactor_api import CODEX_MODEL
+
+    model, effort = body.omm_model.strip(), body.omm_effort.strip()
+    if model and not (CODEX_MODEL.fullmatch(model[6:]) if model.startswith("codex:") else CLAUDE_MODEL.fullmatch(model)):
+        raise HTTPException(400, "구조 문서 새로 고침 모델 이름을 받지 않는다")
+    if effort and not planning.EFFORT.fullmatch(effort):
+        raise HTTPException(400, "추론 강도를 받지 않는다")
+    loop.store(omm_model=model, omm_effort=effort if model else "")
+    return settings()
 
 
 def refresh(root: Path = WIKI, *, create: bool = False):
