@@ -308,9 +308,12 @@ nothing be tuned for 4:3 or 5:4. Below 761px a phone layout remains.
   row, and the five-step flow becomes five rows, because five columns shrink
   to 150px at 1280. Jev's six-step flow is always rows: six columns measured
   146px at 1440 and 175px at 1920.
-- The page opens with a three-layer map (hook wiki, desktop app, judgement and
-  improvement) whose cards link to their sections, so the whole project is
-  explained, not only the screen.
+- Five tabs — 소개, 훅 위키, 앱, Jev·개선, 시작하기 — because one long page of
+  every feature read as scattered (user, 2026-10-26). 소개 fits one screen at
+  every PC target: the hero, a three-layer map whose cards open the layer
+  tabs, and the three start commands. Each other tab shows its own section
+  links in the bar. A hash to any section opens its tab, and the old
+  `#overview` and `#usage` still land.
 - Hangul wraps by word (`word-break: keep-all`).
 
 It reuses the app's palette and type families; no colour was added. Measured
