@@ -1385,6 +1385,8 @@ def pull_request(path: Path, branch: str, base: str, title: str, body: str) -> t
     Never retry a failed/timed-out create: re-list because its reply may be lost.
     Raise `RuntimeError` when publication cannot complete."""
 
+    # GitHub refuses a title over 256 characters; a spec's goal can run longer, and the body carries it whole.
+    title = title if len(title) <= 256 else title[:255] + "…"
     found = existing_pr(path, branch, base)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
         fh.write(body)

@@ -88,7 +88,7 @@ SPEC_SCHEMA = {
     "risk": LEVEL, "rollback": "<how to undo it>",
     "together": "<only when one spec must change several pipelines' shared code at once: why splitting breaks "
                 "the intermediate state>",
-    "tests": {"add": ["<tests to add>"], "remove": [{"test": "<path or path::name>", "reason": "<exact duplicate, "
+    "tests": {"add": ["<new tests to add, never an edit of an existing test>"], "remove": [{"test": "<path or path::name>", "reason": "<exact duplicate, "
               "one-off script or temporary instrumentation>"}],
               "contract": [{"test": "<path or path::name>", "old": "<stale contract>", "new": "<current contract>",
                             "why": "<the current requirement or public contract it follows>"}]},
@@ -125,6 +125,8 @@ INTEGRATE_PROMPT = (
     "one worth doing into a spec, largest payoff first; leave one out only for a reason you state in "
     "`coverage.unchecked`. Missing test coverage is not such a reason: in `preserve` the spec names the "
     "characterization tests to add in `tests.add`, and they are written and frozen before any code moves."
+    " Each one is a new test: the run refuses any edit inside an existing test, so a check that would extend "
+    "one is a new test beside it."
     " A spec covers one improvement inside one pipeline; never bundle unrelated features. Never write a spec "
     "that only surveys, maps or documents structure. When a shared module change serves several pipelines, make "
     "it its own spec (`pipeline`: `shared:<path>`) that the pipeline specs depend on, unless splitting it would "

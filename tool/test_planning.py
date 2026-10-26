@@ -772,6 +772,16 @@ def test_a_pr_that_is_already_open_is_used_not_made_again(checkout):
     assert remote.creates() == 1, "never a second PR from a branch already open into another base"
 
 
+def test_a_goal_longer_than_github_allows_goes_up_as_a_clipped_title(checkout):
+    # A refactoring spec's goal is its title plus the whole change: GitHub refused one
+    # over 256 characters and the task stopped after every gate had passed.
+    remote = GitHub()
+    with patch.object(specs, "sh", remote):
+        assert specs.pull_request(checkout, "b", "main", "가" * 300, "body")[0] == 7
+    made = next(c for c in remote.calls if c[:3] == ["gh", "pr", "create"])
+    assert made[made.index("--title") + 1] == "가" * 255 + "…"
+
+
 def test_only_refactoring_plans_can_omit_limits_and_unknown_usage_is_informational(checkout):
     # A stored plan of the earlier refactoring workflow keeps running without ceilings.
     roles = planning.Roles(**{k: {"model": "opus", "effort": "high"} for k in ("planner", "reviser", "reviewer")})
