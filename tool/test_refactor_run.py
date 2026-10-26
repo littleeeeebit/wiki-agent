@@ -23,6 +23,7 @@ import refactor_profile
 from main import query, refactor, refactor_run, refactor_survey, specs, work
 from test_main import client, no_machine_settings, parse, until  # noqa: F401 — the fixture is autouse
 from test_main import settled as settled_task
+from test_task_workflow import until
 from test_refactor_survey import ROLES, Host, _git, settled, spec, start, surveyed  # noqa: F401 — `surveyed` is a fixture
 from test_specs import Remote, Worker, _adapter, fresh_workers, report, repo, started  # noqa: F401
 
@@ -54,6 +55,12 @@ def surveyed_in(mode: str, *specs_: dict) -> dict:
     return run
 
 
+def landed(sid: str) -> dict:
+    """The card once the turn after its gate, the PR text's, published it or a fault stopped it."""
+
+    return until(lambda: (c := specs.load("proj", sid))["state"].startswith("PR #") or c["fault"]) and specs.load("proj", sid)
+
+
 def edited(rel: str, text: str, message: str = "change"):
     def turn(path, halt):
         (path / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -70,7 +77,7 @@ def test_a_card_runs_as_a_task_and_its_pr_carries_the_measured_check(running):
     run = surveyed_in("rework", spec("orders-fast", measure=measure))
     Worker.replies = [edited("src/orders.py", "def place(order):\n    return order  # faster\n")]
     started(client(), run["specs"][0])
-    card = specs.load("proj", run["specs"][0])
+    card = landed(run["specs"][0])
     assert card["state"] == "PR #7", card["fault"]
     check = card["refactor_check"]
     assert check["final"] == "local" and check["ok"] and check["new"] == [] and check["changed"] == []
@@ -407,7 +414,7 @@ def test_only_a_failure_the_baseline_did_not_have_stops_the_pr(running, extra, w
     Worker.replies = [edited("failing.txt", "t.py::a\n" + extra) if extra else
                       edited("src/orders.py", "def place(order):\n    return order  # named\n")]
     started(client(), run["specs"][0])
-    card = specs.load("proj", run["specs"][0])
+    card = landed(run["specs"][0])
     if not why:
         assert card["state"] == "PR #7" and "시작 전부터 있던 실패 1건" in remote.body
         return
@@ -478,7 +485,7 @@ def test_a_clone_without_origin_head_asks_github_and_a_rerun_keeps_no_old_verdic
     assert "가리지 못해" in card["fault"] and card["refactor_check"]["unparsed"], "the command ran and failed"
     parse(client().post("/api/work/say", json={"path": path, "text": "again"}).text)
     settled_task(path)
-    card = specs.load("proj", run["specs"][0])
+    card = until(lambda: (c := specs.load("proj", run["specs"][0]))["state"].startswith("PR #") and c)   # the first fault stays
     assert card["state"] == "PR #7", card["fault"]
     assert card["refactor_check"]["ok"] and "unparsed" not in card["refactor_check"], "no verdict of the first run"
     assert ["gh", "repo", "view"] in [c[:3] for c in remote.calls]

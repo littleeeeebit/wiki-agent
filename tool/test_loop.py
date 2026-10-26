@@ -210,8 +210,8 @@ def deny(*findings):
     return lambda first, _text: f"{first}\n" + "\n".join(findings) + "\n머지 불가 — 고칠 것이 있다"
 
 
-def keep(*kept):
-    return "고른 것.\n\n```p2-keep\n" + json.dumps(list(kept), ensure_ascii=False) + "\n```"
+def keep(*kept, korean=None):
+    return "고른 것.\n\n```p2-keep\n" + json.dumps(list(kept), ensure_ascii=False) + "\n```" + ("" if korean is None else "\n\n```p2-korean\n" + json.dumps(korean, ensure_ascii=False) + "\n```")
 
 
 CLEANED = '```test-cleanup\n{"audited": ["test_fix.py"], "removed": []}\n```\n\n'
@@ -1108,11 +1108,11 @@ def test_the_reviewer_is_its_own_read_only_session_and_a_setting_applies_next_ro
 def test_an_allow_ends_at_mergeable_and_keeps_the_p2_worth_doing(world):
     spec = pr_spec(world, "fix-a", 7)
     Reviewer.replies = [lambda first, _: f"{first}\n[P2] a.txt:1 — 이름이 모호하다\n머지 허용",
-                        keep("a.txt:1 — 이름을 바꾼다")]
+                        keep("a.txt:1 — rename the vague name", korean=["`a.txt` 1행의 이름이 모호해 읽는 사람이 헷갈린다"])]
     spec = looped("fix-a")
     assert spec["state"] == "머지 가능" and spec["rounds"][0]["verdict"] == "allow"
     assert spec["rounds"][0]["findings"] == {"P0": 0, "P1": 0, "P2": 1}
-    assert spec["p2"] == ["a.txt:1 — 이름을 바꾼다"] and "- a.txt:1 — 이름을 바꾼다" in spec["p2_comment"]
+    assert spec["p2"] == ["a.txt:1 — rename the vague name"] and "- `a.txt` 1행의 이름이 모호해 읽는 사람이 헷갈린다" in spec["p2_comment"]
     first = order(world, 7, 1)
     assert first.startswith(f"Round 1 · PR #7 · {spec['pr']['head'][:7]}")
     assert "(first round)" in first and "1 file changed" in first and "passed" in first

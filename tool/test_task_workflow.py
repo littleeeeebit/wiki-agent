@@ -164,7 +164,7 @@ def test_active_spec_revision_records_old_requirements_and_refreshes_agent(repo)
             {"item": PASS, "pass": True}, {"item": "Check the edge case", "pass": True}]) + "\n```"]
         with patch.object(specs, "sh", Remote()):
             assert web.post("/api/work/say", json={"path": str(repo), "text": "Finish the revised task"}).status_code == 200
-            settled(str(repo))
+            until(lambda: specs.load(repo.name, sid).get("pr"))   # after the PR text's turn
         assert specs.load(repo.name, sid)["pr"]["number"] == 7
     work.close_all()
 
@@ -179,11 +179,11 @@ def test_agent_spec_update_and_completion_open_or_reuse_pr(repo):
     with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote):
         sid = made(repo, spec_block())[0]["id"]
         started(web, sid)
-        saved = specs.load(repo.name, sid)
+        saved = until(lambda: (s := specs.load(repo.name, sid)).get("pr") and s)
         assert saved["rev"] == 2 and saved["pr"]["number"] == 7
         assert remote.pushes() == 1 and remote.created()
         # The revised goal is the worker's plan; the PR says what the worker's summary says.
-        assert "Handle an edge case" not in remote.body and "- 로그인이 원래 페이지로 보낸다" in remote.body
+        assert "Handle an edge case" not in remote.body and "- 로그인 뒤 원래 열려던 페이지로 돌려보낸다." in remote.body
         run = work._runs[str(repo)]
         with patch.object(specs, "existing_pr", return_value=(7, "https://github.com/o/proj/pull/7")):
             remote.calls.clear()
@@ -242,7 +242,7 @@ def test_spec_update_without_done_report_asks_for_one_then_stops_with_a_fault(re
         started(web, sid)
         saved = until(lambda: (s := specs.load(repo.name, sid)).get("pr") and s)
         assert saved["rev"] == 2 and saved["pr"]["number"] == 7 and not saved["report_asked"]
-        assert "revision 2" in work._sessions[str(repo)].heard[-1]
+        assert "revision 2" in work._sessions[str(repo)].heard[-2]   # then the PR text's turn
         Worker.replies = ["```spec-update\n" + json.dumps({**change, "rev": 2}) + "\n```", "Still working"]
         specs.update(repo.name, sid, state="작업 중")
         settled(str(repo))

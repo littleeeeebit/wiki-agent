@@ -65,6 +65,12 @@ the spec's English, translated on the way up, and on 2026-10-26
 ai-companion-voice-agent #262 read as orders to the worker ("헬퍼를
 추가하십시오"), its constraint list and its risk forecast — never what the
 change did. Translating a plan cannot produce a description of a result.
+The worker's own first summary of #262 then passed every format check and
+still read as a list of function names, so the text is now asked for in its
+own turn right before the pull request, with a guide and spec → PR examples
+(`tool/prompts/pr-write.md`), for a reader who knows neither the spec nor the
+code. The review loop's P2 comment is the review cell's own Korean for the
+same reason: a light translator blurs a finding the cell understood.
 Documents are English even where a person is the main reader: a person opens
 a cited source through the overlay, and an agent searches it with a question
 already rendered in English — a Korean document is one that search misses.
