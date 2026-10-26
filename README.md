@@ -48,7 +48,6 @@ AI 코딩 에이전트는 세션이 끝나면 배운 것을 잊습니다. 지난
 git clone https://github.com/littleeeeebit/wiki-agent.git
 cd wiki-agent
 python tool/setup_chat.py install --agent codex   # 또는 claude, both
-.venv/Scripts/python tool/graph.py               # 지도 파일. macOS·Linux: .venv/bin/python
 .\tool\app.cmd                                    # macOS·Linux: tool/app.command
 ```
 

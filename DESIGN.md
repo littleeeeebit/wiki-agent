@@ -301,11 +301,15 @@ together, the install guide buried — and chose this shape:
   for each), five pipeline pages (① rule hooks, ② specs and delegation,
   ③ review loop and merge, ④ asking the wiki and Jev, ⑤ retrospective and
   self-improvement) and one usage guide. Every page shares `overview/site.css`.
-- A long-form magazine layout: a left margin column for the chapter number
-  and date, a 38rem body (about 40 Hangul characters a line), sidenotes on
-  the right. Figures, flows and the terminal blocks span the columns. Under
-  1280px the sidenotes drop below the body; under 960px everything is one
-  column.
+- A two-column PC layout: prose on the left, the capture, terminal output,
+  table or note it talks about on the right (`--split: 1fr 1.25fr`, one
+  shared gap). Every block starts on the same left edge as the top bar, and
+  every pair splits on the same line, so the eye never hunts for where the
+  text went. Step flows and capture strips run the full width below. A
+  section with no picture sets its paragraphs side by side on the same
+  split. Under 1280px flows turn vertical; under 960px everything is one
+  column. The earlier single 38rem centred column was dropped on 2026-10-26:
+  the user read it as a phone layout stretched across a PC screen.
 - Polite plain Korean (해요체). Jargon is explained where it first appears.
 - Real material only: app captures from a demo server seeded with this
   repository's own conversations (translation on, no other repository
@@ -319,7 +323,7 @@ chapter numbers, IBM Plex Mono for code and English event names, with
 Pretendard as the Hangul fallback inside the mono stack so Korean in a
 terminal block is not set full-width. Eight levels — chapter number, h1, h2,
 h3, lead, body, caption, label. The root follows the width,
-`clamp(16px, 11.5px + .34vw, 19px)`; body is 1.0625rem at 1.85 line height.
+`clamp(16px, 11.5px + .34vw, 19px)`; body is 1.0625rem at 1.8 line height.
 
 Colour reuses the app's paper ground and ink. The accent stays the app's calm
 blue `#3f6b8f` (dark `#8fb6d6`); the user picked it over vermilion and deep

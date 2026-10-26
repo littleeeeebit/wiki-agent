@@ -75,6 +75,9 @@ def install(agents, workspace):
     npm = cli_command("npm")
     subprocess.run([*npm, "ci"], cwd=ROOT / "web", check=True)
     subprocess.run([*npm, "run", "build"], cwd=ROOT / "web", check=True)
+    # The hub's own map tab reads graph.json, which is not in git. Other
+    # repositories' maps are drawn on request and need nothing here.
+    subprocess.run([str(python), str(ROOT / "tool" / "graph.py")], cwd=ROOT, check=True)
     print("3/3: 선택한 CLI에서 이 PC 사용자의 로그인을 확인합니다.", flush=True)
     for agent in agents:
         login(agent)

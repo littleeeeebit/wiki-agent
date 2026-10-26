@@ -138,8 +138,8 @@ def test_install_preserves_settings_on_failure_and_saves_no_credentials(tmp_path
         with patch.object(setup_chat, "login"):
             setup_chat.install(["codex"], tmp_path)
     assert json.loads(config.read_text(encoding="utf-8")) == {"workspace": "..", "model": "codex:available-model"}
-    assert calls[1:4] == [[sys.executable, "-m", "pip", "install", "-r", str(root / "requirements-chat.txt")],
-                         ["npm", "ci"], ["npm", "run", "build"]]
+    assert calls[1:5] == [[sys.executable, "-m", "pip", "install", "-r", str(root / "requirements-chat.txt")],
+                         ["npm", "ci"], ["npm", "run", "build"], [sys.executable, str(root / "tool" / "graph.py")]]
 
 
 def test_codex_only_install_defaults_to_actual_model():

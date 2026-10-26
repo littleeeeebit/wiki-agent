@@ -1,5 +1,6 @@
 /* wiki-agent 소개 사이트 — 이야기 한 장, 파이프라인 다섯 장, 사용법 한 장이 함께 쓴다.
-   기준 화면은 PC 16:10 · 16:9 · 21:9. 960px 아래에서 한 단으로 접힌다. 값의 이유는 DESIGN.md "Overview site" */
+   기준 화면은 PC 16:10 · 16:9 · 21:9. 판은 왼쪽 글 · 오른쪽 그림의 두 단이고, 모든 블록이 같은 왼쪽 선과
+   같은 단 경계선을 쓴다. 960px 아래에서 한 단으로 접힌다. 값의 이유는 DESIGN.md "Overview site" */
 
 :root{
   color-scheme:light;
@@ -12,6 +13,9 @@
   --serif:"Noto Serif KR",serif;
   --mono:"IBM Plex Mono",ui-monospace,"Pretendard Variable",Pretendard,monospace;
   --r:.375rem;--r-lg:.625rem;
+  /* 판 — 왼쪽 글 단 : 오른쪽 그림 단. 두 단 사이 간격은 사이트 전체가 같은 값을 쓴다 */
+  --split:minmax(0,1fr) minmax(0,1.25fr);
+  --gap:clamp(2.5rem,4.5vw,5.5rem);
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   color-scheme:dark;--ground:#14161a;--panel:#1c1f25;--chip:#242930;--rule:#272c33;--edge:#323841;
@@ -27,26 +31,25 @@
 *{box-sizing:border-box}
 /* 본문 16px(1280) → 약 18px(1920) → 19px(2560 이상) */
 html{-webkit-text-size-adjust:100%;font-size:clamp(16px,calc(11.5px + .34vw),19px);scroll-padding-top:5rem}
-body{margin:0;background:var(--ground);color:var(--ink);font:400 1.0625rem/1.85 var(--sans);
+body{margin:0;background:var(--ground);color:var(--ink);font:400 1.0625rem/1.8 var(--sans);
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;word-break:keep-all;overflow-wrap:break-word}
 a{color:var(--accent);text-underline-offset:.2em;text-decoration-thickness:from-font}
 a:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
 code{font:500 .85em var(--mono);background:var(--chip);padding:.08em .35em;border-radius:.25rem;word-break:keep-all;overflow-wrap:break-word}
 img{max-width:100%;display:block}
 p{margin:0}
-p + p{margin-top:1.15em}
+p + p{margin-top:1.1em}
 b,strong{font-weight:650;color:var(--ink)}
 
-/* 타입 단계 여덟 — 장 번호 · 장 제목 · 절 제목 · 소제목 · 리드 · 본문 · 캡션 · 라벨 */
-.num{font:700 clamp(3.2rem,4.6vw,5.5rem)/1 var(--serif);color:var(--accent);letter-spacing:-.02em}
-h1,.h1{font:700 clamp(2.1rem,3.3vw,3.6rem)/1.28 var(--serif);letter-spacing:-.015em;margin:0;text-wrap:balance}
-h2{font:700 clamp(1.6rem,2.2vw,2.3rem)/1.35 var(--serif);letter-spacing:-.01em;margin:0;text-wrap:balance}
+/* 타입 단계 — 페이지 제목 · 절 제목 · 소제목 · 리드 · 본문 · 캡션 · 라벨 */
+h1{font:700 clamp(2.1rem,3vw,3.4rem)/1.28 var(--serif);letter-spacing:-.015em;margin:0;text-wrap:balance}
+h2{font:700 clamp(1.6rem,2vw,2.2rem)/1.35 var(--serif);letter-spacing:-.01em;margin:0;text-wrap:balance}
 h3{font:700 1.1875rem/1.5 var(--sans);margin:0}
-.lead{font-size:1.25rem;line-height:1.8;color:var(--soft)}
+.lead{font-size:1.1875rem;line-height:1.8;color:var(--soft)}
 .cap{font-size:.875rem;line-height:1.6;color:var(--faint)}
 .lab{font:500 .8125rem/1.4 var(--sans);letter-spacing:.01em;color:var(--faint);font-variant-numeric:tabular-nums}
 
-/* 상단 바 — 사이트 안 일곱 장으로 가는 길 */
+/* 상단 바 */
 .bar{position:sticky;top:0;z-index:5;background:var(--bar);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--rule)}
 .bar-in{max-width:88rem;margin:0 auto;padding:0 clamp(16px,3vw,48px);height:3.5rem;display:flex;align-items:center;gap:2rem}
 .brand{font:600 .9375rem var(--mono);color:var(--ink);text-decoration:none;white-space:nowrap}
@@ -57,72 +60,82 @@ h3{font:700 1.1875rem/1.5 var(--sans);margin:0}
 .nav a[aria-current="page"]{color:var(--ink);background:var(--panel);box-shadow:0 0 0 1px var(--edge)}
 .gh{margin-left:auto;font:500 .8125rem var(--mono);color:var(--soft);text-decoration:none;white-space:nowrap}
 
-/* 판 짜기 — 넓은 화면에선 왼쪽 여백 칸(장 번호 · 날짜), 가운데 본문(약 40자), 오른쪽 곁주석. 그림은 세 칸을 다 쓴다 */
+/* 판 — 바와 같은 폭, 같은 왼쪽 선 */
 .sheet{max-width:88rem;margin:0 auto;padding:0 clamp(16px,3vw,48px)}
-.grid{display:grid;grid-template-columns:minmax(9rem,1fr) minmax(0,38rem) minmax(13rem,1fr);column-gap:clamp(2rem,4vw,5rem)}
-.grid > *{grid-column:2}
-.grid > .side{grid-column:1;grid-row:span 3;align-self:start;text-align:end}
-.grid > .note{grid-column:3;align-self:start;font-size:.875rem;line-height:1.65;color:var(--faint);border-inline-start:2px solid var(--rule);padding-inline-start:1rem}
-.grid > .wide{grid-column:1 / -1}
-.grid > .mid{grid-column:2 / 4}
+
+/* 두 단 — 왼쪽 .txt 글, 오른쪽 .vis 그림 · 표 · 출력. .cols는 글끼리 나란히 */
+.split,.cols{display:grid;grid-template-columns:var(--split);column-gap:var(--gap);align-items:start}
+/* 나란한 두 단은 같은 높이에서 시작한다 */
+.split > *,.cols > *{margin-top:0}
+/* 세로로 긴 그림은 단 폭을 다 채우지 않는다 */
+figure.tall{max-width:34rem}
+.split + .split,.split + .cols,.cols + .split,.cols + .cols,.full + .split,.full + .cols,.split + .full,.cols + .full,.full + .full{margin-top:3rem}
+.vis > * + *{margin-top:2rem}
 
 /* 첫 화면 */
-.hero{padding-block:clamp(4rem,11vh,9rem) clamp(3rem,8vh,6rem)}
-.hero .kicker{margin-bottom:1.5rem}
-.hero h1{max-width:22ch}
-.hero .lead{max-width:40rem;margin-top:1.75rem}
-.hero .go{display:flex;flex-wrap:wrap;gap:.75rem;margin-top:2.25rem}
+.hero{padding-block:clamp(3.5rem,9vh,7rem) clamp(3rem,7vh,5.5rem);align-items:center}
+.hero .lab{display:block;margin-bottom:1.25rem}
+.hero .lead{margin-top:1.5rem}
+.hero .go{margin-top:2rem}
+.toc{list-style:none;margin:0;padding:.5rem 0;background:var(--panel);border:1px solid var(--edge);border-radius:var(--r-lg)}
+.toc li + li{border-top:1px solid var(--rule)}
+.toc a{display:grid;grid-template-columns:2rem 7.5rem minmax(0,1fr);gap:1rem;align-items:baseline;padding:.85rem 1.5rem;text-decoration:none;color:var(--ink)}
+.toc a:hover .t{color:var(--accent)}
+.toc .n{font:700 1.125rem/1 var(--serif);color:var(--accent)}
+.toc .d{font-size:.875rem;color:var(--faint);font-variant-numeric:tabular-nums}
+.toc .t{font-weight:600}
+.toc-head{display:block;padding:.6rem 1.5rem .4rem}
 
 .btn{display:inline-flex;align-items:center;gap:.5rem;font-weight:600;font-size:1rem;text-decoration:none;padding:.7rem 1.15rem;border-radius:var(--r);border:1px solid var(--edge);color:var(--ink);background:var(--panel)}
 .btn.primary{background:var(--ink);color:var(--ground);border-color:var(--ink)}
 .btn:hover{border-color:var(--accent)}
+.go{display:flex;flex-wrap:wrap;gap:.75rem}
 
-/* 장 */
-.chapter{padding-block:clamp(3.5rem,9vh,6.5rem);border-top:1px solid var(--rule)}
-.chapter .side .num{display:block}
-.chapter .side .lab{display:block;margin-top:.75rem}
-.chapter h2{margin-bottom:1.75rem}
-.chapter > p,.chapter > ul,.chapter > ol:not(.flow):not(.rounds):not(.mid),.chapter > h3{max-width:38rem}
-.chapter > h3{margin-top:2.75rem;margin-bottom:.75rem}
-.chapter > ul{padding-inline-start:1.2em;margin:1em 0 0}
-.chapter > ul li + li{margin-top:.4em}
+/* 절 — 머리(번호 · 라벨, 제목)는 왼쪽 선에서 시작한다 */
+.chapter{padding-block:clamp(3.5rem,8vh,6rem);border-top:1px solid var(--rule)}
+.kick{display:flex;align-items:baseline;gap:.75rem;margin-bottom:.9rem}
+.kick .n{font:700 1.75rem/1 var(--serif);color:var(--accent)}
+.chapter h2{max-width:44rem;margin-bottom:2.25rem}
+.chapter > h3{margin-bottom:1.25rem}
+.chapter > h3.full + .full{margin-top:0}
+.txt h3{margin:2.25rem 0 .6rem}
+.txt h3:first-child{margin-top:0}
+.txt ul{padding-inline-start:1.2em;margin:1em 0 0}
 
 /* 끌어낸 한 줄 */
-.pull{margin:2.5rem 0;padding-inline-start:1.25rem;border-inline-start:3px solid var(--accent);font:600 clamp(1.25rem,1.6vw,1.6rem)/1.6 var(--serif);color:var(--ink)}
+.pull{margin:2rem 0;padding-inline-start:1.25rem;border-inline-start:3px solid var(--accent);font:600 clamp(1.2rem,1.4vw,1.45rem)/1.6 var(--serif);color:var(--ink)}
+.vis > .pull:first-child{margin-top:0}
+
+/* 곁주석 — 오른쪽 단에 둔다 */
+.note{font-size:.9rem;line-height:1.7;color:var(--soft);padding:1rem 1.25rem;background:var(--panel);border:1px solid var(--edge);border-radius:var(--r-lg)}
+.note .lab{display:block;margin-bottom:.25rem}
 
 /* 그림 — 앱 캡처는 어두운 화면 그대로, 테두리만 둘러 종이 위에 놓는다 */
-figure{margin:3rem 0 0}
+figure{margin:0}
 figure.shot img{border-radius:var(--r-lg);border:1px solid var(--edge);box-shadow:0 1px 2px rgba(0,0,0,.06),0 12px 32px -12px rgba(0,0,0,.18);width:100%;height:auto}
-figure.shot.fit img{width:auto;max-width:100%}
-figure.shot.narrow img,figure.shot.narrow figcaption{max-width:44rem;margin-inline:auto}
-/* 캡처를 누르면 원본 크기로 연다 */
 a.zoom{display:block;cursor:zoom-in;text-decoration:none}
 a.zoom::after{content:"원본 크게 보기 ↗";display:block;margin-top:.5rem;font-size:.8125rem;color:var(--accent)}
-figure.shot.narrow a.zoom::after{max-width:44rem;margin-inline:auto}
-figcaption{margin-top:.9rem;max-width:38rem;font-size:.875rem;line-height:1.65;color:var(--faint)}
+figcaption{margin-top:.75rem;font-size:.875rem;line-height:1.65;color:var(--faint)}
 figcaption b{color:var(--soft)}
-.shots{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1.5rem;align-items:start}
-.shots figure{margin:0}
+.shots{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--gap);align-items:start}
 .shots .step{display:block;margin-bottom:.6rem}
 
 /* 터미널 — 실제 출력은 이 상자 안에만 둔다 */
-.term{background:var(--term);color:var(--term-ink);border-radius:var(--r-lg);padding:1.25rem 1.5rem;font:400 .8125rem/1.75 var(--mono);overflow-x:auto;white-space:pre;margin:0}
+.term{background:var(--term);color:var(--term-ink);border-radius:var(--r-lg);padding:1.1rem 1.35rem;font:400 .8125rem/1.75 var(--mono);overflow-x:auto;white-space:pre;margin:0}
 .term .c{color:var(--term-faint)}
 .term .a{color:var(--term-accent)}
 .term-head{display:flex;justify-content:space-between;gap:1rem;font:500 .8125rem var(--sans);color:var(--faint);margin-bottom:.5rem}
 
-/* 흐름 — 왼쪽에서 오른쪽으로 읽는 단계. 좁으면 위에서 아래로 */
-.flow{list-style:none;margin:2.5rem 0 0;padding:0;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:0;counter-reset:f}
-.flow li{counter-increment:f;position:relative;padding:1.1rem 1.1rem 1.2rem;border-top:2px solid var(--ink);display:grid;gap:.35rem;align-content:start}
+/* 흐름 — 전폭에선 왼쪽에서 오른쪽으로, 좁으면 위에서 아래로 */
+.flow{list-style:none;margin:0;padding:0;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);counter-reset:f}
+.flow li{counter-increment:f;padding:1.1rem 1.1rem 1.2rem;border-top:2px solid var(--ink);display:grid;gap:.35rem;align-content:start}
+.flow li:first-child{padding-inline-start:0}
 .flow li::before{content:counter(f);font:600 .8125rem/1 var(--mono);color:var(--accent)}
 .flow li + li{border-inline-start:1px solid var(--rule)}
 .flow li.end{border-top-color:var(--accent)}
 .flow b{font-size:1rem;line-height:1.45}
 .flow span{font-size:.9rem;line-height:1.6;color:var(--soft)}
 .flow .who{font:500 .75rem/1.3 var(--mono);color:var(--faint)}
-
-.after{margin-top:3rem}
-.go{display:flex;flex-wrap:wrap;gap:.75rem}
 
 /* 줄 수 막대 — 실제 숫자만, 상한선은 옅게 */
 .bars{display:grid;gap:.6rem;padding:1.25rem 1.5rem;background:var(--panel);border:1px solid var(--edge);border-radius:var(--r-lg)}
@@ -132,52 +145,62 @@ figcaption b{color:var(--soft)}
 .bar-row span:last-child{font:500 .8125rem var(--mono);text-align:end;font-variant-numeric:tabular-nums;color:var(--soft)}
 .bar-row.cap-row i{background:none;border:1px dashed var(--accent);height:.7rem}
 
-/* 다섯 칸 사다리, 결정 표 */
-.ladder{list-style:none;margin:2rem 0 0;padding:0;border:1px solid var(--edge);border-radius:var(--r-lg);background:var(--panel);overflow:hidden}
-.ladder li{display:grid;grid-template-columns:2.5rem minmax(0,1fr) auto;gap:1rem;align-items:baseline;padding:1rem 1.25rem;border-top:1px solid var(--rule)}
+/* 다섯 칸 사다리 */
+.ladder{list-style:none;margin:0;padding:0;border:1px solid var(--edge);border-radius:var(--r-lg);background:var(--panel);overflow:hidden}
+.ladder li{display:grid;grid-template-columns:2rem minmax(0,1fr) auto;gap:1rem;align-items:baseline;padding:1rem 1.25rem;border-top:1px solid var(--rule)}
 .ladder li:first-child{border-top:0}
 .ladder .n{font:600 .875rem var(--mono);color:var(--accent)}
 .ladder .cost{font-size:.875rem;color:var(--faint);white-space:nowrap}
 .ladder .what{display:grid;gap:.15rem}
 .ladder .what span{font-size:.9rem;color:var(--soft);line-height:1.6}
 
-table.plain{border-collapse:collapse;width:100%;margin-top:2rem;font-size:.95rem}
+table.plain{border-collapse:collapse;width:100%;font-size:.95rem}
 table.plain th{text-align:start;font:500 .8125rem var(--sans);color:var(--faint);padding:.6rem .9rem;border-bottom:1px solid var(--edge)}
 table.plain td{padding:.85rem .9rem;border-bottom:1px solid var(--rule);vertical-align:top;line-height:1.65}
+table.plain th:first-child,table.plain td:first-child{padding-inline-start:0}
 table.plain td:first-child{font-weight:600;white-space:nowrap}
 
 /* 리뷰 라운드 — 실제 기록을 한 줄씩 */
-.rounds{list-style:none;margin:2.5rem 0 0;padding:0;display:grid;gap:0}
-.rounds li{display:grid;grid-template-columns:6rem 8.5rem minmax(0,1fr);gap:1.25rem;padding:1.1rem 0;border-top:1px solid var(--rule);align-items:baseline}
-.rounds .r{font-weight:600;font-size:.9375rem}
-.rounds .v{font-weight:600;font-size:.9375rem}
+.rounds{list-style:none;margin:0;padding:0}
+.rounds li{display:grid;grid-template-columns:5.5rem 7.5rem minmax(0,1fr);gap:1.25rem;padding:1rem 0;border-top:1px solid var(--rule);align-items:baseline}
+.rounds li:last-child{border-bottom:1px solid var(--rule)}
+.rounds .r,.rounds .v{font-weight:600;font-size:.9375rem}
 .rounds .v.no{color:var(--alarm)}
 .rounds .v.yes{color:var(--ok)}
 .rounds .d{font-size:.95rem;color:var(--soft);line-height:1.65}
 
-/* 파이프라인 색인 — 이야기 끝, 다섯 장으로 가는 목차 */
-.index{list-style:none;margin:2.5rem 0 0;padding:0;border-top:2px solid var(--ink)}
-.index a{display:grid;grid-template-columns:4.5rem minmax(0,1fr) auto;gap:1.5rem;align-items:baseline;padding:1.5rem 0;border-bottom:1px solid var(--rule);text-decoration:none;color:var(--ink)}
-.index a:hover .t{color:var(--accent)}
-.index .n{font:700 2rem/1 var(--serif);color:var(--accent)}
-.index .t{font:700 1.375rem/1.4 var(--serif)}
-.index .d{display:block;margin-top:.35rem;font-size:.95rem;color:var(--soft);line-height:1.65}
-.index .go{font-size:.875rem;color:var(--faint)}
+/* 갈래 색인 — 다섯 장으로 가는 카드 */
+.index{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:1rem}
+.index a{display:grid;gap:.6rem;align-content:start;height:100%;padding:1.35rem 1.35rem 1.5rem;background:var(--panel);border:1px solid var(--edge);border-radius:var(--r-lg);text-decoration:none;color:var(--ink)}
+.index a:hover{border-color:var(--accent)}
+.index .n{font:700 1.75rem/1 var(--serif);color:var(--accent)}
+.index .t{font:700 1.125rem/1.45 var(--serif)}
+.index .d{font-size:.9rem;color:var(--soft);line-height:1.65}
+.index .go{font-size:.8125rem;color:var(--faint);margin-top:auto}
+/* 한 단 안에 세로로 쌓는 색인 (사용법 첫머리) */
+.index.stack{grid-template-columns:minmax(0,1fr)}
+.index.stack a{grid-template-columns:2.5rem minmax(0,1fr) auto;align-items:baseline;column-gap:1rem;padding:1.1rem 1.35rem}
+.index.stack .t{font-size:1.0625rem}
+.index.stack .d{display:block;margin-top:.25rem}
+.index.stack .go{margin:0}
 
-/* 파이프라인 장 첫머리 */
-.pagehead{padding-block:clamp(3.5rem,9vh,7rem) clamp(2.5rem,6vh,4.5rem)}
-.pagehead .num{margin-bottom:1.25rem}
-.pagehead .lead{max-width:40rem;margin-top:1.5rem}
-.pagehead .solves{margin-top:2rem;max-width:40rem;padding:1.1rem 1.35rem;background:var(--panel);border:1px solid var(--edge);border-radius:var(--r-lg)}
-.pagehead .solves .lab{display:block;margin-bottom:.35rem}
+/* 파이프라인 장 첫머리 — 왼쪽 제목과 리드, 오른쪽 “푸는 문제” */
+.pagehead{padding-block:clamp(3.5rem,8vh,6rem) clamp(3rem,7vh,5rem);align-items:end}
+.pagehead .num{display:block;font:700 clamp(2.6rem,3.6vw,4rem)/1 var(--serif);color:var(--accent);margin-bottom:1rem}
+.pagehead .lab{display:block;margin-bottom:1rem}
+.pagehead .lead{margin-top:1.5rem}
+.solves{padding:1.25rem 1.5rem;background:var(--panel);border:1px solid var(--edge);border-radius:var(--r-lg);color:var(--soft)}
+.solves .lab{display:block;margin-bottom:.4rem}
 
-/* 사용법 단계 */
-.steps{list-style:none;margin:2rem 0 0;padding:0;counter-reset:s;display:grid;gap:2.25rem}
-.steps > li{counter-increment:s;display:grid;grid-template-columns:2.5rem minmax(0,1fr);gap:1rem}
-.steps > li::before{content:counter(s);font:700 1.25rem/1.4 var(--serif);color:var(--accent)}
-.steps > li > div{display:grid;gap:.75rem;min-width:0}
-.steps > li > div > span{max-width:38rem}
-.warn{margin-top:2rem;padding:1rem 1.25rem;border-radius:var(--r-lg);background:var(--alarm-wash);color:var(--ink);font-size:.95rem;line-height:1.7}
+/* 사용법 단계 — 왼쪽 설명, 오른쪽 명령. 경계선은 판의 두 단과 같다 */
+.steps{list-style:none;margin:0;padding:0;counter-reset:s}
+.steps > li{counter-increment:s;display:grid;grid-template-columns:var(--split);column-gap:var(--gap);align-items:start;padding-block:1.5rem;border-top:1px solid var(--rule)}
+.steps > li:last-child{border-bottom:1px solid var(--rule)}
+.steps .s-txt{display:grid;grid-template-columns:2.25rem minmax(0,1fr);row-gap:.4rem}
+.steps .s-txt::before{content:counter(s);grid-row:span 3;font:700 1.25rem/1.4 var(--serif);color:var(--accent)}
+.steps .s-txt > *{grid-column:2}
+.steps .s-code{display:grid;gap:.6rem;min-width:0}
+.warn{padding:1rem 1.25rem;border-radius:var(--r-lg);background:var(--alarm-wash);color:var(--ink);font-size:.95rem;line-height:1.7}
 
 /* 앞뒤 장 */
 .pager{display:grid;grid-template-columns:1fr 1fr;gap:1rem;padding-block:3rem 5rem;border-top:1px solid var(--rule)}
@@ -188,32 +211,34 @@ table.plain td:first-child{font-weight:600;white-space:nowrap}
 
 .foot{padding-block:2rem 4rem;border-top:1px solid var(--rule);font-size:.875rem;color:var(--faint)}
 
-/* 1280 미만 PC — 곁주석을 본문 아래로 내린다 */
+/* 1280 미만 — 전폭 흐름을 세로로, 색인 카드는 석 줄로 */
 @media (max-width:1279px){
-  .grid{grid-template-columns:minmax(7rem,10rem) minmax(0,1fr)}
-  .grid > .note{grid-column:2;margin-top:1.5rem}
-  .grid > .mid{grid-column:2}
   .flow{grid-auto-flow:row;grid-auto-columns:auto}
   .flow li{grid-template-columns:2rem 11rem minmax(0,1fr);border-top:1px solid var(--rule);border-inline-start:0;padding:.9rem 0}
+  .flow li + li{border-inline-start:0}
   .flow li::before{grid-row:span 2}
   .flow li.end{border-top-color:var(--accent)}
   .flow li .who{grid-column:2}
   .flow li span:not(.who){grid-column:3;grid-row:1 / span 2}
+  .index{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .index.stack{grid-template-columns:minmax(0,1fr)}
 }
 
 /* 휴대폰 · 좁은 창 — 한 단 */
 @media (max-width:960px){
-  .grid{display:block}
-  .grid > .side{text-align:start;margin-bottom:1rem}
-  .grid > .side .lab{display:inline;margin:0 0 0 .75rem}
-  .chapter .side .num{display:inline}
-  .shots{grid-template-columns:minmax(0,1fr)}
+  .split,.cols,.steps > li{grid-template-columns:minmax(0,1fr)}
+  .split > * + *,.cols > * + *{margin-top:2rem}
+  .steps .s-code{margin-top:.9rem}
+  .hero,.pagehead{align-items:start}
+  .shots{grid-template-columns:minmax(0,1fr);gap:2.5rem}
   .flow li{grid-template-columns:2rem minmax(0,1fr)}
   .flow li span:not(.who),.flow li .who{grid-column:2;grid-row:auto}
   .rounds li{grid-template-columns:5rem minmax(0,1fr)}
   .rounds .d{grid-column:1 / -1}
-  .index a{grid-template-columns:3rem minmax(0,1fr)}
-  .index .go{display:none}
+  .index{grid-template-columns:minmax(0,1fr)}
+  .toc a{grid-template-columns:1.75rem minmax(0,1fr);padding:.8rem 1.1rem}
+  .toc .t{grid-column:2}
+  .toc-head{padding-inline:1.1rem}
   .ladder li{grid-template-columns:2rem minmax(0,1fr)}
   .ladder .cost{grid-column:2}
   .gh{display:none}
@@ -226,9 +251,7 @@ table.plain td:first-child{font-weight:600;white-space:nowrap}
   table.plain tr{padding:.9rem 0;border-bottom:1px solid var(--rule)}
   table.plain td{border:0;padding:.1rem 0}
   table.plain td:first-child{margin-bottom:.25rem}
-  /* 비교 표는 쌓인 설명마다 원래 열 이름을 앞에 붙인다 */
   table.plain td[data-label]::before{content:attr(data-label) " · ";font-weight:600;color:var(--soft)}
   table.plain td[data-label] + td[data-label]{margin-top:.35rem}
-  /* 좁은 화면에선 명령을 접어 끝까지 보이게 한다 */
   .term{white-space:pre-wrap;overflow-wrap:anywhere}
 }
