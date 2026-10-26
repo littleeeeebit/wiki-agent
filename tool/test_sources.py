@@ -680,7 +680,6 @@ def test_a_promotion_goes_up_as_a_spec_s_pull_request_after_the_gate(repo, monke
 
     monkeypatch.setattr(specs, "sh", remote)
     monkeypatch.setattr(specs, "gate_of", lambda repo, path=None: "git --version")
-    monkeypatch.setattr(specs.pr_text.translate, "translate", lambda texts, direction, deadline: list(texts))
     out = knowledge.promote(path, paper["source_id"])
     spec = specs.load(path.name, out["spec"])
     # The spec owns the checkout and publishes only its scoped-check evidence.

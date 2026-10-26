@@ -153,12 +153,17 @@ class Remote:
         return any(c[:3] == ["gh", "pr", "create"] for c in self.calls)
 
 
-SWEPT = "```test-cleanup\n" + json.dumps({"audited": ["test_a.py"], "removed": []}) + "\n```\n\n"
+# A finished answer carries the PR's summary; without it the server asks once more.
+SUMMARIZED = "```pr-summary\n" + json.dumps({"title": "로그인 뒤 원래 페이지로 돌아간다", "changes": ["로그인이 원래 페이지로 보낸다"],
+                                              "why": "로그인 뒤 첫 화면으로 떨어졌다.", "review": []},
+                                             ensure_ascii=False) + "\n```\n\n"
+SWEPT = "```test-cleanup\n" + json.dumps({"audited": ["test_a.py"], "removed": []}) + "\n```\n\n" + SUMMARIZED
 
 
 def report(*passes: bool, sweep: str = SWEPT) -> str:
     items = [{"item": f"항목 {i}", "pass": p, "evidence": f"ran {i} · ok"} for i, p in enumerate(passes)]
-    return "다 했다.\n\n" + sweep + "```done-report\n" + json.dumps(items, ensure_ascii=False) + "\n```"
+    told = "" if "```pr-summary" in sweep else SUMMARIZED
+    return "다 했다.\n\n" + sweep + told + "```done-report\n" + json.dumps(items, ensure_ascii=False) + "\n```"
 
 
 class Worker:
@@ -470,8 +475,7 @@ def test_a_code_task_is_asked_once_for_its_test_cleanup_then_stopped(repo):
     remote = Remote()
     removed = {"audited": ["test_a.py"], "removed": [{"test": "test_a.py::test_v1", "reason": "v1 route is gone"}]}
     Worker.replies = [report(True, True, sweep=""), report(True, True, sweep="```test-cleanup\n" + json.dumps(removed) + "\n```\n")]
-    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote), \
-            patch.object(specs, "korean", side_effect=lambda spec: spec):
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote):
         sid = made(repo, spec_block(slug="swept"))[0]["id"]
         path = started(web, sid)
         until(lambda: specs.load("proj", sid)["state"].startswith("PR #"))
@@ -559,14 +563,6 @@ def test_a_stop_publishes_nothing_even_after_a_fast_gate_passed(repo):
         sid = made(repo, spec_block(slug="stop-late"))[0]["id"]
         started(web, sid)
         assert remote.pushes() == 1 and not remote.created()
-        assert "PR 은 만들지 않았다" in specs.load("proj", sid)["fault"]
-
-        # The stop comes while the PR text is translated: still no pull request.
-        remote.on_push, real, Worker.replies = (lambda: None), specs.korean, [passing]
-        with patch.object(specs, "korean", lambda spec: (halts[-1].set(), real(spec))[1]):
-            sid = made(repo, spec_block(slug="stop-translating"))[0]["id"]
-            started(web, sid)
-        assert remote.pushes() == 2 and not remote.created()
         assert "PR 은 만들지 않았다" in specs.load("proj", sid)["fault"]
 
 
@@ -1008,69 +1004,64 @@ def test_a_code_only_commit_after_the_hook_rebuilt_the_indexes_leaves_them_the_h
 
 
 def test_the_pr_body_gives_harvest_its_what_and_why():
-    spec = {"id": "fix-login", "repo": "proj", "goal": "로그인 뒤 원래 페이지로 돌아간다",
-            "decisions": [{"what": "서버에서 돌린다", "why": "화면은 기록을 모른다", "rejected": "history"}],
+    spec = {"id": "fix-login", "repo": "proj", "goal": "Return to the page after login",
+            "summary": {"title": "로그인 뒤 원래 페이지로", "changes": ["로그인 뒤 원래 페이지로 돌아간다"],
+                        "why": "화면은 기록을 모른다.", "review": []},
+            "decisions": [{"what": "Run it on the server", "why": "The screen has no history", "rejected": "history"}],
             "report": [{"item": PASS, "pass": True, "evidence": "git version 2"}],
             "gate": {"cmd": PASS, "tail": "git version 2"},
             "grounds": {"pages": ["craft/x"], "files": ["a.txt:1"], "rules": []}}
-    _, text = harvest.record({"number": 7, "title": spec["goal"], "body": specs.body_of(spec),
+    _, text = harvest.record({"number": 7, "title": "로그인 뒤 원래 페이지로", "body": specs.body_of(spec),
                               "headRefName": "fix-login", "mergedAt": "2026-09-25"}, 0)
-    assert "What. 로그인 뒤 원래 페이지로 돌아간다" in text
-    assert "Why. 서버에서 돌린다 — 화면은 기록을 모른다 (버린 것: history)" in text
+    assert "What. 로그인 뒤 원래 페이지로 돌아간다" in text and "Why. 화면은 기록을 모른다." in text
 
 
-def test_the_pr_goes_up_in_korean_and_the_spec_stays_english(repo):
-    """GitHub is read by a person; the spec is read by the agents."""
+def test_the_pr_goes_up_as_the_worker_wrote_it_and_never_in_the_specs_words(repo):
+    """#262 went up with its spec's goal as the summary, translated: orders to
+    the worker (`헬퍼를 추가하십시오`), its `keep` list and its risk forecast,
+    none of it what the change did. The worker's Korean `pr-summary`, read
+    from the diff, is the only prose; nothing is translated; a summary that
+    fails its checks goes back once with the reasons."""
 
-    def korean(texts, direction, deadline):
-        assert direction == "en->ko"
-        return [f"KO({t})" if t else t for t in texts]
+    goal = "Add one private helper. Replace both duplicated sequences."
+    told = {"title": "로그인 리다이렉트를 서버로 옮김", "changes": ["`code.py`가 원래 페이지를 기억한다"],
+            "why": "화면은 기록을 모른다.", "review": ["`code.py`의 저장 시점"]}
+    # The first answer shaped its summary its own way, as #262's worker did, and cited a name the diff lacks.
+    misshapen = SWEPT.replace(SUMMARIZED, "```pr-summary\n" + json.dumps({"title": "x", "body": "y"}) + "\n```\n")
+    reply = report(True, True, sweep=SWEPT.replace(SUMMARIZED, "```pr-summary\n"
+                                                    + json.dumps(told, ensure_ascii=False) + "\n```\n"))
 
-    web, remote = client(), Remote()
-    Worker.replies = [report(True, True)]
-    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote), \
-         patch.object(pr_text.translate, "translate", korean):
-        sid = made(repo, spec_block(goal="Return to the page after login"))[0]["id"]
-        started(web, sid)
-    create = next(c for c in remote.calls if c[:3] == ["gh", "pr", "create"])
-    assert create[create.index("--title") + 1] == "KO(Return to the page after login)"
-    assert "## 변경 요약\n\nKO(Return to the page after login)" in remote.body
-    assert "- KO(서버에서 돌린다) — KO(화면은 기록을 모른다) (버린 것: KO(history))" in remote.body
-    assert "- [x] KO(항목 1) — ran 1 · ok" in remote.body, "명령과 그 출력은 옮기지 않는다"
-    assert specs.load("proj", sid)["goal"] == "Return to the page after login"
-    assert KICKED == [], "An ordinary done report opens the PR, then waits for explicit review"
+    def committed(path, halt):
+        (path / "code.py").write_text("back = True\n", encoding="utf-8")
+        _git(path, "add", "code.py")
+        _git(path, "commit", "-qm", "redirect")
+        return report(True, True, sweep=misshapen)
 
-
-def test_the_pr_says_what_changed_in_the_workers_words_not_the_specs_plan(repo):
-    """A refactoring PR went up titled with its spec's whole goal, a plan in
-    spec jargon: nobody could tell what it did, and one over 256 characters
-    GitHub refused. The worker's `pr-summary` is the title and the summary;
-    the checks fold away."""
-
-    told = {"title": "Merge the duplicated eligibility checks", "changes": ["Both routes call one helper"],
-            "review": ["`record_check` stays outside"]}
-    reply = report(True, True).replace("```done-report", "```pr-summary\n" + json.dumps(told) + "\n```\n```done-report")
     remote = Remote()
-    Worker.replies = [reply]
-    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote), \
-         patch.object(pr_text.translate, "translate", lambda texts, direction, deadline: list(texts)):
-        started(client(), made(repo, spec_block(goal="Add one private helper. " * 20))[0]["id"])
+    Worker.replies = [committed, reply]
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote):
+        sid = made(repo, spec_block(goal=goal))[0]["id"]
+        started(client(), sid)
+        until(lambda: specs.load("proj", sid)["state"].startswith("PR #") or specs.load("proj", sid)["fault"])
+    assert not specs.load("proj", sid)["fault"]
     create = next(c for c in remote.calls if c[:3] == ["gh", "pr", "create"])
-    assert create[create.index("--title") + 1] == "Merge the duplicated eligibility checks"
-    assert "## 변경 요약\n\n- Both routes call one helper\n" in remote.body
-    assert "## 리뷰 포인트\n\n- `record_check` stays outside" in remote.body
-    assert "## 확인\n\n<details><summary>확인 기록 " in remote.body and "Add one private helper" not in remote.body
+    assert "keys title, changes, why, review" in Worker.made[-1].heard[-1] and not Worker.replies
+    assert create[create.index("--title") + 1] == "로그인 리다이렉트를 서버로 옮김"
+    assert "## 변경 요약\n\n- `code.py`가 원래 페이지를 기억한다\n\n## 변경 이유\n\n화면은 기록을 모른다." in remote.body
+    assert "## 리뷰 포인트\n\n- `code.py`의 저장 시점" in remote.body and "## 확인\n\n<details>" in remote.body
+    assert "Add one private helper" not in remote.body and "서버에서 돌린다" not in remote.body, "no spec sentence"
+    assert specs.load("proj", sid)["goal"] == goal and KICKED == []
 
-    detail = {"title": "Share wiring", "problem": "Both endpoints repeat it.", "keep": ["Gate order"],
-              "risk": {"level": "medium", "why": "It mutates diagnostics."}, "rollback": "Inline it back."}
-    spec = {"id": "x", "repo": "proj", "goal": "Share wiring. Add a helper.", "decisions": [], "report": [],
+    assert pr_text.problems(dict(told, changes=["`nope.py`를 고쳤다"], review=["헬퍼를 추가하십시오"]), "code.py") == [
+        "an order, not a description: 헬퍼를 추가하십시오", "`nope.py` is not in this branch's diff"]
+    assert pr_text.problems(dict(told, title="Share wiring"), "code.py") == ["not Korean: Share wiring"]
+    spec = {"id": "x", "repo": "proj", "goal": goal, "decisions": [], "report": [],
             "gate": {"cmd": "pytest", "tail": "1 passed"}, "grounds": {"pages": [], "files": []},
-            "refactor": {"detail": detail}}
+            "refactor": {"detail": {"title": "Share wiring", "problem": "Both repeat it.", "keep": ["Gate order"]}}}
     body = specs.body_of(spec, "3\t1\tsrc/a.py\n-\t-\tlogo.png\n")
-    assert "## 변경 요약\n\nShare wiring. Add a helper.\n" in body, "no summary: the goal, as before"
-    assert "## 변경 이유\n\nBoth endpoints repeat it." in body and "## 그대로 지킨 것\n\n- Gate order" in body
+    assert "확인된 사실만" in body and goal not in body and "Both repeat it." not in body and "Gate order" not in body
     assert "2개 파일 · +3 −1\n\n- `src/a.py` +3 −1\n- `logo.png` 바이너리" in body
-    assert "- 위험도 중간 — It mutates diagnostics.\n- 되돌리기 — Inline it back." in body
+    assert pr_text.title_of(spec) == "x — PR 요약이 검사를 통과하지 못했습니다"
     with patch.object(specs, "sh", remote):
         specs.pull_request(repo, "b", "main", "가" * 300, "body")
     assert remote.calls[-1][remote.calls[-1].index("--title") + 1] == "가" * 255 + "…", "GitHub caps titles at 256"

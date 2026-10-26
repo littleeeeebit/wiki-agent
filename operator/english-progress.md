@@ -19,7 +19,8 @@ docstrings, test names, commit messages, and every document — wiki pages,
 `docs/`, plans; only `triggers` keep the person's language, and the person
 reads documents through the translation overlay. What a person reads as it
 is stays Korean — a hook's refusal, `systemMessage`, UI labels, a pull
-request (translated on the way up). Korean
+request (its prose is the worker's `pr-summary`, written in Korean from the
+diff; never a translated spec). Korean
 survives in English text only where it names a Korean thing — the glossary
 holds that list, and a word the translator refuses to render is exactly a word
 this rule may not deny.
@@ -59,6 +60,11 @@ hand. A boundary nobody can state in a sentence is not a boundary.
 
 The line that does hold is about the reader. Anything a person reads as it is
 stays Korean: the refusal above, `systemMessage`, UI labels, a pull request.
+A pull request is the one text a worker writes in Korean itself. It used to be
+the spec's English, translated on the way up, and on 2026-10-26
+ai-companion-voice-agent #262 read as orders to the worker ("헬퍼를
+추가하십시오"), its constraint list and its risk forecast — never what the
+change did. Translating a plan cannot produce a description of a result.
 Documents are English even where a person is the main reader: a person opens
 a cited source through the overlay, and an agent searches it with a question
 already rendered in English — a Korean document is one that search misses.

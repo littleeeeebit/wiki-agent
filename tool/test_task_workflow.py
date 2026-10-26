@@ -162,7 +162,7 @@ def test_active_spec_revision_records_old_requirements_and_refreshes_agent(repo)
         specs.update(repo.name, sid, planning={"phase": "handoff"})
         Worker.replies = [SWEPT + "```done-report\n" + json.dumps([
             {"item": PASS, "pass": True}, {"item": "Check the edge case", "pass": True}]) + "\n```"]
-        with patch.object(specs, "sh", Remote()), patch.object(specs, "korean", side_effect=lambda value: value):
+        with patch.object(specs, "sh", Remote()):
             assert web.post("/api/work/say", json={"path": str(repo), "text": "Finish the revised task"}).status_code == 200
             settled(str(repo))
         assert specs.load(repo.name, sid)["pr"]["number"] == 7
@@ -176,22 +176,22 @@ def test_agent_spec_update_and_completion_open_or_reuse_pr(repo):
     report = [{"item": PASS, "pass": True}, {"item": "Edge case passes", "pass": True}]
     Worker.replies = ["```spec-update\n" + json.dumps(change) + "\n```\n\n" + SWEPT + "```done-report\n"
                       + json.dumps(report) + "\n```"]
-    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote), \
-         patch.object(specs, "korean", side_effect=lambda spec: spec):
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote):
         sid = made(repo, spec_block())[0]["id"]
         started(web, sid)
         saved = specs.load(repo.name, sid)
         assert saved["rev"] == 2 and saved["pr"]["number"] == 7
         assert remote.pushes() == 1 and remote.created()
-        assert "Handle an edge case" in remote.body
+        # The revised goal is the worker's plan; the PR says what the worker's summary says.
+        assert "Handle an edge case" not in remote.body and "- 로그인이 원래 페이지로 보낸다" in remote.body
         run = work._runs[str(repo)]
         with patch.object(specs, "existing_pr", return_value=(7, "https://github.com/o/proj/pull/7")):
             remote.calls.clear()
             specs.opened(repo, repo, run, saved)
             assert remote.pushes() == 1 and not remote.created()
             edit = next(call for call in remote.calls if call[:3] == ["gh", "pr", "edit"])
-            assert edit[edit.index("--title") + 1] == "Handle an edge case"
-            assert "Handle an edge case" in remote.body and "Edge case passes" in remote.body
+            assert edit[edit.index("--title") + 1] == "로그인 뒤 원래 페이지로 돌아간다"
+            assert "Handle an edge case" not in remote.body and "Edge case passes" in remote.body, "the record stays"
     work.close_all()
 
 
@@ -237,8 +237,7 @@ def test_spec_update_without_done_report_asks_for_one_then_stops_with_a_fault(re
     change = {"rev": 1, "reason": "Explicit roles", "goal": "Handle an edge case", "out": [], "done": ["Edge case passes"]}
     report = [{"item": PASS, "pass": True}, {"item": "Edge case passes", "pass": True}]
     Worker.replies = ["```spec-update\n" + json.dumps(change) + "\n```", SWEPT + "```done-report\n" + json.dumps(report) + "\n```"]
-    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote), \
-         patch.object(specs, "korean", side_effect=lambda spec: spec):
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote):
         sid = made(repo, spec_block())[0]["id"]
         started(web, sid)
         saved = until(lambda: (s := specs.load(repo.name, sid)).get("pr") and s)
@@ -505,8 +504,7 @@ def test_failed_reused_pr_update_does_not_record_new_requirements_as_published(r
         return real(args, cwd, timeout)
 
     with patch.object(specs, "sh", side_effect=refused), \
-         patch.object(specs, "existing_pr", return_value=(7, "https://github.com/o/proj/pull/7")), \
-         patch.object(specs, "korean", side_effect=lambda value: value):
+         patch.object(specs, "existing_pr", return_value=(7, "https://github.com/o/proj/pull/7")):
         assert specs.opened(repo, repo, run, spec) is None
     saved = specs.load(repo.name, sid)
     assert "metadata edit refused" in saved["fault"] and not saved.get("pr")
