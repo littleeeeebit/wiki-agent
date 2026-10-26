@@ -82,7 +82,7 @@ h3{font:700 1.1875rem/1.5 var(--sans);margin:0}
 .chapter .side .num{display:block}
 .chapter .side .lab{display:block;margin-top:.75rem}
 .chapter h2{margin-bottom:1.75rem}
-.chapter > p,.chapter > ul,.chapter > ol:not(.flow):not(.rounds),.chapter > h3{max-width:38rem}
+.chapter > p,.chapter > ul,.chapter > ol:not(.flow):not(.rounds):not(.mid),.chapter > h3{max-width:38rem}
 .chapter > h3{margin-top:2.75rem;margin-bottom:.75rem}
 .chapter > ul{padding-inline-start:1.2em;margin:1em 0 0}
 .chapter > ul li + li{margin-top:.4em}
@@ -226,4 +226,9 @@ table.plain td:first-child{font-weight:600;white-space:nowrap}
   table.plain tr{padding:.9rem 0;border-bottom:1px solid var(--rule)}
   table.plain td{border:0;padding:.1rem 0}
   table.plain td:first-child{margin-bottom:.25rem}
+  /* 비교 표는 쌓인 설명마다 원래 열 이름을 앞에 붙인다 */
+  table.plain td[data-label]::before{content:attr(data-label) " · ";font-weight:600;color:var(--soft)}
+  table.plain td[data-label] + td[data-label]{margin-top:.35rem}
+  /* 좁은 화면에선 명령을 접어 끝까지 보이게 한다 */
+  .term{white-space:pre-wrap;overflow-wrap:anywhere}
 }
