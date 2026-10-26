@@ -25,6 +25,7 @@ KINDS = ("duplication", "coupling", "mixed_responsibility", "defensive", "test_c
          "naming", "dead_code")
 LEVELS = ("high", "medium", "low")
 ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
+WHOLE = "all"   # the one `preserve` spec's pipeline: it holds every pipeline's debts
 # A spec is a change to make. One that only looks, maps or writes the structure down is the survey's own work.
 LOOKING = re.compile(r"^\s*(survey|investigate|audit|explore|map|analy[sz]e|document|diagram|study|inspect)\b"
                      r"|조사|구조도|파악", re.I)
@@ -75,9 +76,9 @@ PIPELINE_SCHEMA = {
     "proposals": [{"title": "...", "problem": "...", "change": "...", "files": ["..."]}]}
 SPEC_SCHEMA = {
     "key": "<kebab-case id of at most 40 characters, unique in this survey>",
-    "title": "<the pipeline's cleanup, or in rework the one root cause fixed>",
-    "pipeline": "<one pipeline id, or shared:<path> for a shared boundary change: a path from the map's `shared` "
-                "or one this spec `creates`>",
+    "title": "<in preserve the repository's cleanup, in simplify the pipeline's, in rework the one root cause fixed>",
+    "pipeline": f"<`{WHOLE}` for the one preserve spec; else one pipeline id, or shared:<path> for a shared boundary "
+                "change: a path from the map's `shared` or one this spec `creates`>",
     "files": ["<repository-relative files in the base commit the change touches>"],
     "creates": ["<repository-relative files the change creates, in folders that exist; omit when none>"],
     "boundary": "<the responsibility boundary this spec works inside>",
@@ -128,13 +129,17 @@ INTEGRATE_PROMPT = (
     "characterization tests to add in `tests.add`, and they are written and frozen before any code moves."
     " Each one is a new test: the run refuses any edit inside an existing test, so a check that would extend "
     "one is a new test beside it."
-    " The unit depends on the mode. In `preserve` and `simplify` a spec is a whole pipeline: every debt worth "
-    "doing in that pipeline goes into its one spec, so each pipeline and each `shared:<path>` has at most one. "
+    " The unit depends on the mode. In `preserve` there is exactly one spec for the whole repository: every "
+    f"debt worth doing in every pipeline and shared module goes into it, `pipeline` is `{WHOLE}`, `files` and "
+    "`creates` list every file it touches, and its `change`, `keep`, `verify` and `tests.add` cover each debt by "
+    "name. In `simplify` a spec is a whole pipeline: every debt worth doing in that pipeline goes into its one "
+    "spec, so each pipeline and each `shared:<path>` has at most one. "
     "In `rework` a spec is one root cause (one cycle, one misplaced responsibility, one measured bottleneck): "
     "`pipeline` names where the cause lives, `files` lists every file the fix touches whichever pipeline owns "
     "it, `impact` names the other pipelines, and two causes are two specs so each measurement stands alone. "
-    "Never bundle unrelated features. Never write a spec "
-    "that only surveys, maps or documents structure. When a shared module change serves several pipelines, make "
+    "Outside `preserve`, never bundle unrelated features. Never write a spec "
+    "that only surveys, maps or documents structure. In `simplify` and `rework`, when a shared module change "
+    "serves several pipelines, make "
     "it its own spec (`pipeline`: `shared:<path>`) that the pipeline specs depend on, unless splitting it would "
     "break the intermediate state; then keep it together and say why in `together`. A prerequisite another mode "
     "owns is not folded in: name it in `impact`. Test removals in `preserve` need an exact-duplicate, one-off or "
@@ -298,7 +303,8 @@ def spec_shape(s, mode: str, map_: dict, root: Path) -> dict:
     # A shared owner the spec extracts is new, so the map could not list it; its own `creates` vouches for it.
     shared = [x["path"] for x in map_["shared"]] + creates
     ids = [p["id"] for p in map_["pipelines"]]
-    if pipeline not in ids and pipeline.removeprefix("shared:") not in shared:
+    if not (mode == "preserve" and pipeline == WHOLE) and pipeline not in ids \
+            and pipeline.removeprefix("shared:") not in shared:
         # The repair turn reads this; without the accepted values it only guesses again.
         raise ValueError(f"`{what}.pipeline` `{pipeline}` 은 지도의 파이프라인 하나나, 지도의 shared 또는 이 명세의 "
                          f"`creates` 경로를 담은 shared:<경로> 여야 한다 — 파이프라인: {', '.join(ids)}; "
@@ -388,7 +394,10 @@ def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = fr
     keys = [k for k, _ in graph]
     if duplicated := sorted({k for k in keys if keys.count(k) > 1}):
         refused.append(f"명세 `key` 가 겹친다: {duplicated}")
-    if mode != "rework":   # preserve and simplify: one card per pipeline, its debts together
+    if mode == "preserve" and len(raw) > 1:   # one card for the repository: its debts are narrow, one run pays less
+        refused.append(f"preserve 는 저장소 전체가 명세 하나다 — 명세가 {len(raw)}개다. 모든 부채를 "
+                       f"`pipeline`: `{WHOLE}` 인 명세 하나로 합쳐라")
+    if mode == "simplify":   # one card per pipeline, its debts together
         owners, ids = {}, {p["id"] for p in map_["pipelines"]}
         for s in raw:
             if isinstance(s, dict) and isinstance(s.get("pipeline"), str):
@@ -757,8 +766,10 @@ def rechecked(w, run: dict) -> dict:
     parent = refactor.load(w.repo.name, old["survey"]) or {}
     changed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", old["base"],
                         run["base"]], w.repo).stdout.splitlines()
+    reports = parent.get("pipelines") or {}
+    reports = list(reports.values()) if old["pipeline"] == WHOLE else reports.get(old["pipeline"])
     text = (f"The repository map:\n{json.dumps(parent['map'], ensure_ascii=False)}\n\nThe pipeline report from the "
-            f"older survey:\n{json.dumps((parent.get('pipelines') or {}).get(old['pipeline']), ensure_ascii=False)}"
+            f"older survey:\n{json.dumps(reports, ensure_ascii=False)}"
             f"\n\nThe spec:\n{json.dumps(old['detail'], ensure_ascii=False)}\n\nFiles changed since its base "
             f"{old['base']}: {', '.join(changed[:300]) or 'none'}")
     # The card's prerequisites are other specs of its survey, not in this one-spec answer.
@@ -785,7 +796,7 @@ def rechecked(w, run: dict) -> dict:
             specs.aside(w.repo.name, spec["id"])
     removed(w.repo, w.rid)
     return w.note(map=parent["map"], pipelines={k: v for k, v in (parent.get("pipelines") or {}).items()
-                                                if k == old["pipeline"]},
+                                                if old["pipeline"] in (k, WHOLE)},
                   survey=survey, phase="done", state="done", specs=[spec["id"]] if survey["specs"] else [])
 
 
