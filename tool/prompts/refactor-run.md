@@ -3,7 +3,9 @@
 This task is one spec of a read-only refactoring survey. Its `refactor` object
 below names the mode, the pipeline, the files, the evidence, the behaviour that
 stays, the test contract and, for performance, the measurement. Do only this
-spec: no change another mode owns, no other pipeline, no unrelated cleanup.
+spec: no change another mode owns, no file outside its pipeline except those
+its `files` and `creates` list (a `rework` root cause may span pipelines; its
+`impact` names them), no unrelated cleanup.
 When the spec turns out wrong, stop and ask instead of widening it.
 
 - Test contract. Add the tests `tests.add` names and any test you need to

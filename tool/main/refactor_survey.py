@@ -391,8 +391,8 @@ def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = fr
     if mode != "rework":   # preserve and simplify: one card per pipeline, its debts together
         owners = {}
         for s in raw:
-            if isinstance(s, dict) and isinstance(s.get("pipeline"), str):
-                owners.setdefault(s["pipeline"].strip(), []).append(s.get("key"))
+            if isinstance(s, dict) and isinstance(s.get("pipeline"), str):   # `shared:<path>` and `<path>` are one owner
+                owners.setdefault(s["pipeline"].strip().removeprefix("shared:"), []).append(s.get("key"))
         for pipeline, held in owners.items():
             if len(held) > 1:
                 refused.append(f"`{pipeline}` 에 명세가 {len(held)}개다 {held} — {mode} 에서는 파이프라인 하나가 "
