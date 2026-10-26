@@ -401,7 +401,7 @@ def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = fr
                        f"`pipeline`: `{WHOLE}` 인 명세 하나로 합쳐라")
     if mode == "preserve" and whole:
         for s in raw:
-            if isinstance(s, dict) and s.get("pipeline") != WHOLE:
+            if isinstance(s, dict) and (s["pipeline"].strip() if isinstance(s.get("pipeline"), str) else None) != WHOLE:
                 refused.append(f"`specs[{s.get('key')}].pipeline` 은 `{WHOLE}` 여야 한다 — preserve 명세 하나가 "
                                "저장소 전체의 부채를 담는다")
     if mode == "simplify":   # one card per pipeline, its debts together
@@ -736,6 +736,8 @@ def refined(repo: Path, block, source: dict) -> str:
         if block.get("id"):
             given["key"] = r["detail"]["key"]   # refining keeps the card's key
         detail = spec_shape(given, r["mode"], refactor.load(repo.name, r["survey"])["map"], repo)
+        if r["pipeline"] == WHOLE and detail["pipeline"] != WHOLE:   # review of #244: a recheck would lose reports
+            raise ValueError(f"`{target}` 은 저장소 전체 명세다 — `pipeline` 은 `{WHOLE}` 로 둔다")
         for dep in detail["depends"]:
             if not ((specs.load(repo.name, dep) or {}).get("refactor") or {}).get("survey") or dep == block.get("id"):
                 raise ValueError(f"`depends` 의 `{dep}` 은 다른 조사 명세의 id 여야 한다")
@@ -803,7 +805,8 @@ def rechecked(w, run: dict) -> dict:
             specs.aside(w.repo.name, spec["id"])
     removed(w.repo, w.rid)
     return w.note(map=parent["map"], pipelines={k: v for k, v in (parent.get("pipelines") or {}).items()
-                                                if old["pipeline"] in (k, WHOLE)},
+                                                if WHOLE in (old["pipeline"], *(s["pipeline"] for s in survey["specs"]))
+                                                or k == old["pipeline"]},
                   survey=survey, phase="done", state="done", specs=[spec["id"]] if survey["specs"] else [])
 
 

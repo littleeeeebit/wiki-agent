@@ -159,7 +159,10 @@ def test_a_card_keeps_its_chosen_models_through_a_refinement_a_recheck_and_anoth
     assert api.post(path, json={**cheap, "was": {k: ROLES[k] for k in ("worker", "reviewer")}}).status_code == 200
     source = {"focus": "refactor", "turn": 2, "session": "talk", "refactor_mode": "preserve",
               "refactor_generation": query.config("refactor", "proj").get("refactor_generation", 0)}
-    assert refactor_survey.refined(surveyed, {**spec("ignored", title="Split intake"), "id": sid}, source) == sid
+    # Review round 2 of #244: narrowed here, its recheck back to `all` kept one pipeline's report.
+    with pytest.raises(ValueError, match="저장소 전체 명세"):
+        refactor_survey.refined(surveyed, {**spec("ignored", title="Split intake"), "id": sid}, source)
+    assert refactor_survey.refined(surveyed, {**spec("ignored", "all", title="Split intake"), "id": sid}, source) == sid
     card = specs.load("proj", sid)
     assert card["rev"] == 2 and card["cell"] == {**cheap["worker"], "fast": False} and card["reviewer"] == cheap["reviewer"]
     assert len(card["refactor"]["role_changes"]) == 1
@@ -179,6 +182,7 @@ def test_a_card_keeps_its_chosen_models_through_a_refinement_a_recheck_and_anoth
                                   json={"request_id": "recheck-roles-0001", "mode": "preserve"}).json()["id"])
     card = specs.load("proj", sid)
     assert again["state"] == "done" and card["refactor"]["survey"] == again["id"]
+    assert set(again["pipelines"]) == {"orders", "billing"}, "a whole card's recheck keeps every report"
     assert card["cell"]["model"] == "claude-later" and card["refactor"]["roles"]["survey"] == ROLES["survey"]
     assert [c["to"]["worker"]["model"] for c in card["refactor"]["role_changes"]] == ["claude-cheap", "claude-later"]
     stale = api.post(path, json={**cheap, "was": cheap})
@@ -504,8 +508,8 @@ def test_the_conversation_refines_the_same_card_and_splits_off_only_the_new_part
     sid = run["specs"][0]
     source = {"focus": "refactor", "turn": 2, "session": "talk", "refactor_mode": "preserve",
               "refactor_generation": query.config("refactor", "proj").get("refactor_generation", 0)}
-    narrowed = {**spec("ignored", title="Split the intake out of place"), "id": sid}
-    split = {**spec("orders-check", title="Move the order check beside place", depends=[sid]), "split_from": sid}
+    narrowed = {**spec("ignored", "all", title="Split the intake out of place"), "id": sid}
+    split = {**spec("orders-check", "all", title="Move the order check beside place", depends=[sid]), "split_from": sid}
     shown = specs.answered(surveyed, [{"name": "spec", "value": [narrowed, split]}], source)
     assert [s.get("id") for s in shown] == [sid, f"orders-check-{run['id']}"], shown
     card = specs.load("proj", sid)
@@ -513,12 +517,13 @@ def test_the_conversation_refines_the_same_card_and_splits_off_only_the_new_part
     assert card["refactor"]["detail"]["title"] == "Split the intake out of place"
     assert specs.load("proj", shown[1]["id"])["refactor"]["depends"] == [sid]
     for block, why in (({**spec("free")}, "조사 없이"), ({**spec("x", files=["src/missing.py"]), "id": sid}, "없다"),
-                       ({**spec("x"), "id": sid}, "모드"), ({**spec("x", depends=[shown[1]["id"]]), "id": sid}, "돌아온다")):
+                       ({**spec("x"), "id": sid}, "모드"), ({**spec("x", "all", depends=[shown[1]["id"]]), "id": sid}, "돌아온다"),
+                       ({**spec("x"), "id": sid}, "저장소 전체 명세")):
         given = {**source, "refactor_mode": "simplify"} if why == "모드" else source
         assert why in specs.answered(surveyed, [{"name": "spec", "value": block}], given)[0]["error"]
     other = specs.load("proj", shown[1]["id"])
     specs.save({**other, "refactor": {**other["refactor"], "survey": "recheck-two"}})   # what a recheck gives it
-    looped = {**spec("x", depends=[other["id"]]), "id": sid}
+    looped = {**spec("x", "all", depends=[other["id"]]), "id": sid}
     assert "돌아온다" in specs.answered(surveyed, [{"name": "spec", "value": looped}], source)[0]["error"]
     assert specs.load("proj", sid)["rev"] == 2
 
@@ -553,7 +558,7 @@ def test_saving_the_pinned_settings_again_keeps_an_empty_effort(surveyed):
     assert saved.status_code == 200 and saved.json()["effort"] == "", "the default effort does not replace the pin's"
     source = {"focus": "refactor", "turn": 3, "session": "talk", "refactor_mode": "preserve",
               "refactor_generation": query.config("refactor", "proj").get("refactor_generation", 0)}
-    assert specs.answered(surveyed, [{"name": "spec", "value": {**spec("x"), "id": sid}}], source)[0].get("id") == sid
+    assert specs.answered(surveyed, [{"name": "spec", "value": {**spec("x", "all"), "id": sid}}], source)[0].get("id") == sid
 
 
 def test_recheck_rewrites_a_stale_card_or_sets_it_aside(surveyed):

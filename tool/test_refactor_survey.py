@@ -395,6 +395,8 @@ def test_preserve_makes_one_spec_simplify_one_per_pipeline_and_rework_one_per_ca
     with pytest.raises(ValueError, match=r"`specs\[n\]\.pipeline` 은 `all` 여야 한다"):
         refactor_survey.survey_shape(narrow, "preserve", MAP, surveyed, whole=True)
     assert refactor_survey.survey_shape(narrow, "preserve", MAP, surveyed)["specs"][0]["pipeline"] == "orders"
+    padded = {"coverage": {"scope": "s"}, "specs": [spec("p", " all ")]}   # review round 2: trimmed as `spec_shape` does
+    assert refactor_survey.survey_shape(padded, "preserve", MAP, surveyed, whole=True)["specs"][0]["pipeline"] == "all"
     # Review round 2: a pipeline and a shared path with the same name are two owners.
     named = {**MAP, "shared": [{"path": "orders", "used_by": ["orders", "billing"]}]}
     pair = {"coverage": {"scope": "s"}, "specs": [spec("p"), spec("s", "shared:orders")]}
