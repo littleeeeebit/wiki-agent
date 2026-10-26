@@ -42,7 +42,7 @@
     <div class="side"><span class="lab">묻기</span></div>
     <h2>답에는 근거가 붙어요</h2>
     <figure class="shot mid">
-      <img src="img/ask-answer.webp" width="1374" height="428" alt="destructive-git-guards 규칙이 뭐라고 하나라는 질문과, craft/destructive-git-guards.md 16번째 줄을 근거로 단 답" loading="lazy">
+      <a class="zoom" href="img/ask-answer.webp"><img src="img/ask-answer.webp" width="1374" height="428" alt="destructive-git-guards 규칙이 뭐라고 하나라는 질문과, craft/destructive-git-guards.md 16번째 줄을 근거로 단 답" loading="lazy"></a>
       <figcaption>“destructive-git-guards 규칙이 뭐라고 하나?”라는 질문에 규칙 페이지의 16번째 줄을 근거로 답했어요. 에이전트는 영어로 쓰고, 화면에는 한국어 번역이 덮여요.</figcaption>
     </figure>
     <p class="after">“왜 안 되지?”라고 물으면 코드보다 실제로 돌아간 기록(로그, 추적, 구조 문서)을 먼저 봐요. 코드는 일어날 수 있는 일을, 기록은 실제로 일어난 일을 보여 주니까요. 확인하지 못한 추측은 추측이라고 표시해요.</p>
@@ -52,7 +52,7 @@
   <section class="chapter grid" id="jev">
     <div class="side"><span class="lab">Jev</span></div>
     <h2>Jev는 고르기만 해요</h2>
-    <p>Jev는 TypeSafe가 만든 결정 모델(<code>jev-1.13.0</code>)이에요. 글을 쓰는 모델이 아니라, 코드가 미리 내놓은 후보 중에서 하나를 고르는 모델이에요. 원래는 작업 흐름의 갈림길이 많아지면서 어떤 분기를 언제 불러야 할지가 흐려져서 들였어요. 위키 질문의 검색 판단부터 맡기고, 다음 날 작업 흐름으로 넓혔어요.</p>
+    <p>Jev(<code>jev-1.13.0</code>)는 TypeSafe의 결정 모델이에요. 글을 쓰는 대신, 코드가 정한 후보 중에서 검색 경로와 다음 동작을 골라요. 왜 들였는지는 <a href="../overview.html#ch5">이야기 5장</a>에 있어요.</p>
     <table class="plain mid">
       <thead><tr><th>자리</th><th>Jev가 고르는 것</th><th>코드가 쥐고 있는 것</th></tr></thead>
       <tbody>

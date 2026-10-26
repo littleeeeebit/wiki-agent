@@ -31,7 +31,7 @@ body{margin:0;background:var(--ground);color:var(--ink);font:400 1.0625rem/1.85 
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;word-break:keep-all;overflow-wrap:break-word}
 a{color:var(--accent);text-underline-offset:.2em;text-decoration-thickness:from-font}
 a:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
-code{font:500 .85em var(--mono);background:var(--chip);padding:.08em .35em;border-radius:.25rem;word-break:keep-all;overflow-wrap:anywhere}
+code{font:500 .85em var(--mono);background:var(--chip);padding:.08em .35em;border-radius:.25rem;word-break:keep-all;overflow-wrap:break-word}
 img{max-width:100%;display:block}
 p{margin:0}
 p + p{margin-top:1.15em}
@@ -95,6 +95,10 @@ figure{margin:3rem 0 0}
 figure.shot img{border-radius:var(--r-lg);border:1px solid var(--edge);box-shadow:0 1px 2px rgba(0,0,0,.06),0 12px 32px -12px rgba(0,0,0,.18);width:100%;height:auto}
 figure.shot.fit img{width:auto;max-width:100%}
 figure.shot.narrow img,figure.shot.narrow figcaption{max-width:44rem;margin-inline:auto}
+/* 캡처를 누르면 원본 크기로 연다 */
+a.zoom{display:block;cursor:zoom-in;text-decoration:none}
+a.zoom::after{content:"원본 크게 보기 ↗";display:block;margin-top:.5rem;font-size:.8125rem;color:var(--accent)}
+figure.shot.narrow a.zoom::after{max-width:44rem;margin-inline:auto}
 figcaption{margin-top:.9rem;max-width:38rem;font-size:.875rem;line-height:1.65;color:var(--faint)}
 figcaption b{color:var(--soft)}
 .shots{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1.5rem;align-items:start}
@@ -216,5 +220,10 @@ table.plain td:first-child{font-weight:600;white-space:nowrap}
   .bar-in{gap:1rem}
   .pager{grid-template-columns:1fr}
   .pager .next{grid-column:1}
-  table.plain td:first-child{white-space:normal}
+  /* 표는 한 줄씩 쌓는다 — 이름을 먼저 온전히, 설명은 그 아래 */
+  table.plain thead{display:none}
+  table.plain,table.plain tbody,table.plain tr,table.plain td{display:block}
+  table.plain tr{padding:.9rem 0;border-bottom:1px solid var(--rule)}
+  table.plain td{border:0;padding:.1rem 0}
+  table.plain td:first-child{margin-bottom:.25rem}
 }
