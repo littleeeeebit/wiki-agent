@@ -304,8 +304,13 @@ nothing be tuned for 4:3 or 5:4. Below 761px a phone layout remains.
 - From 761px each section puts its heading in a sticky left column
   (15–20rem) and its content in the right one. The bar carries section links
   with the current one marked.
-- Under 1440px the four focus cards wrap to two per row, and the five-step
-  flow becomes five rows, because five columns shrink to 150px at 1280.
+- Under 1440px the four focus cards and the four hook moments wrap to two per
+  row, and the five-step flow becomes five rows, because five columns shrink
+  to 150px at 1280. Jev's six-step flow is always rows: six columns measured
+  146px at 1440 and 175px at 1920.
+- The page opens with a three-layer map (hook wiki, desktop app, judgement and
+  improvement) whose cards link to their sections, so the whole project is
+  explained, not only the screen.
 - Hangul wraps by word (`word-break: keep-all`).
 
 It reuses the app's palette and type families; no colour was added. Measured

@@ -114,7 +114,7 @@ section{display:grid;gap:20px}
 .tag{font:500 .75rem/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;margin-left:8px}
 
 /* ── 훅이 끼어드는 세 순간 ── */
-.day{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:1px solid var(--edge);border-radius:var(--r-lg);background:var(--panel);overflow:hidden}
+.day{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--edge);border-radius:var(--r-lg);background:var(--panel);overflow:hidden}
 .moment{padding:20px;display:grid;gap:8px;align-content:start;border-left:1px solid var(--rule)}
 .moment:first-child{border-left:0}
 .moment .when{font:500 .8125rem/1.4 var(--mono);color:var(--accent)}
@@ -152,7 +152,17 @@ section{display:grid;gap:20px}
 .flow li{counter-increment:flow;display:grid;gap:6px;align-content:start;padding-top:14px;border-top:2px solid var(--ink)}
 .flow li::before{content:counter(flow);font:500 .8125rem/1 var(--mono);color:var(--accent)}
 .flow li:last-child{border-top-color:var(--accent)}
+/* 여섯 단계는 1920에서도 칸이 175px까지 좁아져, 늘 번호 · 이름 · 설명의 줄로 */
+.flow.six{grid-template-columns:minmax(0,1fr);gap:0;border:1px solid var(--edge);border-radius:var(--r-lg);background:var(--panel)}
+.flow.six li{grid-template-columns:2rem 9rem minmax(0,1fr);align-items:baseline;gap:12px;padding:12px 20px;border-top:1px solid var(--rule)}
+.flow.six li:first-child{border-top:0}
+.flow.six li:last-child{border-top-color:var(--rule)}
 .flow b{font-weight:600;line-height:1.4}
+/* 짧은 단계 사슬: 계획 세우기처럼 단계가 많고 설명이 필요 없을 때 */
+.chain{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.chain li{font:500 .8125rem/1.4 var(--mono);color:var(--ink);background:var(--panel);border:1px solid var(--edge);border-radius:var(--r);padding:8px 12px}
+.chain li + li::before{content:"→";color:var(--faint);margin:0 10px 0 -2px}
+.chain li:last-child{border-color:var(--accent);color:var(--accent)}
 .flow span{font-size:.9375rem;line-height:1.6;color:var(--soft)}
 
 /* ── 사용법 ── */
@@ -213,6 +223,10 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
   .flow li{grid-template-columns:2rem 8rem minmax(0,1fr);align-items:baseline;gap:12px;padding:12px 20px;border-top:1px solid var(--rule)}
   .flow li:first-child{border-top:0}
   .flow li:last-child{border-top-color:var(--rule)}
+  .flow.six{grid-template-columns:minmax(0,1fr)}
+  .day{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .moment:nth-child(3){border-left:0}
+  .moment:nth-child(n+3){border-top:1px solid var(--rule)}
 }
 /* 낮은 화면(1366×768, 1280×800): 히어로를 화면 높이에 억지로 맞추지 않는다 */
 @media (max-height:820px){ .hero{min-height:0} }
@@ -221,7 +235,7 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
 @media (max-width:760px){
   .jump{display:none}
   .page{gap:72px;padding-block:36px 72px}
-  .hero,.sessions,.drawers,.steps,.readfirst,.two,.day,.chooser,.lanes,.focuses,.flow{grid-template-columns:minmax(0,1fr)}
+  .hero,.sessions,.drawers,.steps,.readfirst,.two,.day,.chooser,.lanes,.focuses,.flow,.flow.six{grid-template-columns:minmax(0,1fr)}
   .hero{gap:28px}
   .moment{border-left:0;border-top:1px solid var(--rule)}
   .moment:first-child{border-top:0}
@@ -230,6 +244,8 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
   .toggle button{padding:9px 12px}
   .gh{display:none}
   .toggle{margin-left:auto}
+  .flow.six li{grid-template-columns:2rem minmax(0,1fr)}
+  .flow.six li span{grid-column:2}
   .ladder li{grid-template-columns:2rem minmax(0,1fr);padding:14px 16px}
   .ladder .cost{grid-column:2;text-align:left}
   .map{grid-template-columns:minmax(0,1fr)}
@@ -244,7 +260,7 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
   <div class="bar-in">
     <span class="brand">wiki-agent</span>
     <nav class="jump" data-for="overview" aria-label="개요 바로가기">
-      <a href="#problem">문제</a><a href="#drawers">서랍</a><a href="#hooks">훅</a><a href="#ladder">사다리</a><a href="#app">앱</a><a href="#english">두 언어</a><a href="#attach">붙이기</a><a href="#folders">폴더</a>
+      <a href="#whole">전체</a><a href="#drawers">훅 위키</a><a href="#app">앱</a><a href="#review">리뷰</a><a href="#jev">Jev</a><a href="#improve">자가 개선</a><a href="#english">두 언어</a><a href="#attach">연결</a><a href="#status">진행 중</a>
     </nav>
     <nav class="jump" data-for="usage" aria-label="사용법 바로가기" hidden>
       <a href="#use-app">A · 데스크톱 앱</a><a href="#use-hooks">B · 규칙 연결</a><a href="#use-mobile">C · 휴대폰 연결</a>
@@ -274,6 +290,19 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
       <div class="bubble agent"><span class="who">에이전트</span><span>규칙을 이미 읽은 채로 시작</span></div>
     </div>
   </header>
+
+  <section id="whole">
+    <div class="head">
+      <div class="label">전체 지도</div>
+      <h2>한 저장소, 세 층</h2>
+    </div>
+    <p>wiki-agent는 세 층으로 되어 있습니다. 아래 층은 혼자서도 쓸 수 있고, 위 층은 아래 층 위에서 돕니다. 카드를 누르면 그 설명으로 갑니다.</p>
+    <nav class="chooser" aria-label="세 층">
+      <a class="card" href="#drawers"><span class="label">1층 · 훅 위키</span><span class="q">에이전트가 규칙을 읽게 한다</span><span class="small">operator · craft 규칙 페이지 · 훅 네 종류 · 다섯 칸 사다리 · 대화 기록을 세어 규칙 만들기. Claude Code와 Codex 어느 저장소에나 붙습니다</span></a>
+      <a class="card" href="#app"><span class="label">2층 · 데스크톱 앱</span><span class="q">묻고, 맡기고, 돌려받는다</span><span class="small">포커스 넷 · 명세 → 작업 브랜치 → 게이트 → 리뷰 루프 → 머지 → 결정 기록 · 계획 세우기 · 리팩터링 · 연결과 전수조사 · 휴대폰</span></a>
+      <a class="card" href="#jev"><span class="label">3층 · 판단과 개선</span><span class="q">더 잘 찾고, 재서 나아진다</span><span class="small">Jev 결정 모델과 그래프 검색 · 측정해서 고르는 자가 개선 · Jev를 로컬 모델로 바꾸려던 Laya 실험(중지) · 호출 기록과 추적</span></a>
+    </nav>
+  </section>
 
   <section id="problem">
     <div class="head">
@@ -309,9 +338,10 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
     <div class="day">
       <div class="moment"><span class="when">SessionStart</span><span class="name">세션을 열 때</span><ul><li>현재 브랜치와 작업트리 상태</li><li>하다 만 계획의 남은 단계</li><li>최근 결정과 그 이유</li><li>모든 문서의 목록</li></ul></div>
       <div class="moment"><span class="when">UserPromptSubmit</span><span class="name">말을 걸 때마다</span><ul><li>말에 걸린 규칙 페이지</li><li>한국어 말의 영어 번역</li><li>매번 붙는 짧은 계약 몇 개</li></ul></div>
-      <div class="moment"><span class="when">PreToolUse</span><span class="name">도구를 쓰기 직전</span><ul><li>계산해야 보이는 위반만 검사</li><li>예: 진행 설명에 한글이 남았나, 파일을 통째로 되쓰나</li></ul></div>
+      <div class="moment"><span class="when">PreToolUse</span><span class="name">도구를 쓰기 직전</span><ul><li>계산해야 보이는 위반만 검사</li><li>예: 진행 설명의 언어, 파일을 통째로 되쓰기, 테스트 출력을 파이프로 가리기</li></ul></div>
+      <div class="moment"><span class="when">Stop</span><span class="name">턴이 끝날 때</span><ul><li>위키를 저장소의 실제 상태에 맞춤</li><li>“이어서 하겠다”고 적고 도구 없이 끝낸 턴을 되돌려 다시 시킴</li></ul></div>
     </div>
-    <p>“뭘 하던 중이었지”는 어떤 말에도 걸리지 않으니, 세션 시작 때 따로 한 번 넣습니다. 그리고 훅은 <b>고장 나도 막지 않습니다.</b> 번역 키가 없거나 스크립트가 터져도 작업은 그대로 갑니다. 일을 멈추는 강제는 결국 사람이 꺼 버리기 때문입니다.</p>
+    <p>“뭘 하던 중이었지”는 어떤 말에도 걸리지 않으니, 세션 시작 때 따로 한 번 넣습니다. 같은 세션에서 이미 통째로 받은 규칙은 다음부터 <b>핵심 문단만</b> 보내 토큰을 아낍니다. 그리고 훅은 <b>고장 나도 막지 않습니다.</b> 번역 키가 없거나 스크립트가 터져도 작업은 그대로 갑니다. 일을 멈추는 강제는 결국 사람이 꺼 버리기 때문입니다.</p>
   </section>
 
   <section id="ladder">
@@ -349,7 +379,138 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
       <li><b>[머지]</b><span>리뷰가 허용한 바로 그 커밋에 묶어 스쿼시 머지하고, 브랜치를 정리합니다</span></li>
       <li><b>결정 기록</b><span>명세의 결정과 이유가 <code>.wiki/decisions/</code>로. 다음 세션 시작 때 다시 실립니다</span></li>
     </ol>
-    <p>가운데 탭에서는 규칙이 이어진 <b>지도</b>, <b>앱 구조</b> 그림, 작업과 리뷰의 실행 기록(<b>스위트</b>)도 봅니다. 휴대폰을 연결하면 밖에서도 작업을 보고 지시나 승인을 보낼 수 있습니다.</p>
+    <p>작업 세션은 끝내기 전에 TDD가 남긴 중간 테스트를 정리하고 보고합니다. 빠뜨리면 서버가 한 번 더 요청하고, 그래도 없으면 작업을 멈춥니다. 대화의 <b>문맥 비우기</b>는 원문과 요약을 그 저장소의 <code>.wiki/memory/</code>에 남겨, 다음 질문의 근거가 되게 합니다.</p>
+    <p>가운데 탭에서는 규칙이 이어진 <b>지도</b>, 저장소의 <b>앱 구조</b> 그림(<code>.omm</code>), 살아 있는 셀과 최근 100번의 실행을 모은 <b>스위트</b>를 봅니다. 휴대폰을 연결하면 밖에서도 작업을 보고 지시나 승인을 보낼 수 있고, 새 버전이 나오면 왼쪽 아래 카드가 받아서 다시 빌드합니다.</p>
+  </section>
+
+  <section id="review">
+    <div class="head">
+      <div class="label">리뷰와 머지</div>
+      <h2>“통과했다”는 말보다 증거를 믿는다</h2>
+    </div>
+    <p>리뷰 루프는 작업 셀과 분리된 <b>읽기 전용 리뷰 셀</b>이 돌립니다. 여러 PR을 동시에 돌릴 수 있고, 동시 실행 수는 설정에서 제한합니다. 루프 안에는 다음 장치가 있습니다.</p>
+    <div class="drawers">
+      <div class="drawer"><span class="follows">작업에 맞는 리뷰 기준</span><span class="small">계획 문서 · 코드 · 둘 다인 PR은 서로 다른 기준으로 읽습니다. 리팩터링은 동결한 동작 보존 검사를 라운드마다 다시 돌리고, 의무나 영수증이 바뀌면 승인을 무효로 합니다</span></div>
+      <div class="drawer"><span class="follows">반복되는 지적엔 조사부터</span><span class="small">고쳤다던 심각한 지적이 다시 나오거나(A-A, A-B-A) 7라운드부터도 거절되면, 다음 수정 전에 웹 조사를 먼저 합니다. 같은 문제에 조사와 수정을 두 번 하고도 안 되면 멈춥니다</span></div>
+      <div class="drawer"><span class="follows">선행 리뷰</span><span class="small">구현을 계속하기 전에 독립 판단이 필요한 작업은 읽기 전용 셀의 판정을 먼저 받습니다. 판정은 구현을 풀어 줄 뿐, 최종 승인을 대신하지 않습니다</span></div>
+      <div class="drawer"><span class="follows">최종 게이트는 한 번, 한 주인</span><span class="small">수정 라운드는 관련 검사만 돌리고, 리뷰가 허용한 커밋에서 전체 게이트를 한 번 돌립니다. 공개 저장소에 CI가 있으면 CI가, 아니면 제한된 로컬 실행이 맡습니다</span></div>
+      <div class="drawer"><span class="follows">부채 래칫</span><span class="small">게이트 끝에서 파일 크기와 중복을 봅니다. 파일은 기록보다 커질 수 없고 새 파일은 800줄 상한입니다. 머지할 때 줄어든 만큼 기록을 낮춥니다</span></div>
+      <div class="drawer"><span class="follows">머지 준비</span><span class="small">[머지]를 누르면 PR 브랜치에서 위키 lint 수리, 문서 인덱스, <code>.omm</code> 구조 문서 갱신을 커밋합니다. 그래서 커밋이 바뀌면 다시 리뷰와 게이트를 거칩니다. 남은 P2 지적은 PR 댓글로 남깁니다</span></div>
+    </div>
+    <p>Claude Code Cloud에서 구현한 작업은 이 PC의 <code>.env</code>와 데이터로 검증 영수증을 먼저 받습니다. 저장소가 등록한 사용자 흐름 중 필요한 검사는 Jev가 고르고, 실패하면 로컬 구현으로 넘기지 않고 Cloud로 돌려보냅니다.</p>
+  </section>
+
+  <section id="plan">
+    <div class="head">
+      <div class="label">계획 세우기</div>
+      <h2>큰 일은 계획 PR부터</h2>
+    </div>
+    <ol class="chain">
+      <li>맥락 수집</li><li>웹 조사</li><li>개요</li><li>단계 문서</li><li>문서 검사</li><li>PR</li><li>수정자 · 리뷰어</li><li>사람이 머지</li>
+    </ol>
+    <p>대화창 위의 <b>[계획 세우기]</b>는 세 역할로 돕니다. 계획자는 저장소의 계획과 결정을 읽고, 범위를 바꾸는 결정은 선택지로 묻습니다. 그다음 웹을 조사해 출처가 붙은 새 계획 폴더(개요와 단계 문서)를 쓰고 PR을 올립니다. 그 뒤 수정자가 지적을 고치고, 별도의 리뷰어가 계획 기준으로 읽습니다. 시작 전에 시간 · 호출 · 토큰 한도를 정하며, 계획이 승인돼도 구현이나 머지는 저절로 시작하지 않습니다.</p>
+  </section>
+
+  <section id="refactor">
+    <div class="head">
+      <div class="label">리팩터링</div>
+      <h2>빨리 쓴 코드의 빚을, 동작은 그대로 두고 갚는다</h2>
+    </div>
+    <p>에이전트가 빠르게 쓴 코드는 한 번에 리뷰하기 어려울 만큼 커집니다. 이 저장소도 도입 당시 핵심 파일 하나가 3,800줄이었습니다. 리팩터링 포커스는 <b>목적 하나</b>를 골라 저장소를 읽기 전용으로 조사합니다.</p>
+    <div class="drawers">
+      <div class="drawer"><span class="name">preserve</span><span class="follows">동작 보존 정리</span><span class="small">특성 테스트를 먼저 쓰고, 큰 함수와 모듈을 책임에 따라 나눕니다. 동작도, 알려진 버그도 바꾸지 않습니다</span></div>
+      <div class="drawer"><span class="name">simplify</span><span class="follows">불필요한 복잡도 정리</span><span class="small">이미 보장된 곳의 중복 검사, 쓰이지 않는 호환 분기, 낡은 테스트 계약을 걷어 냅니다. 인증 · 입력 · 동시성 경계의 방어는 남깁니다</span></div>
+      <div class="drawer"><span class="name">rework</span><span class="follows">구조 · 성능 근본 수정</span><span class="small">의존 순환과 측정된 병목을 고칩니다. 같은 조건에서 잰 개선 없이 캐시나 계층을 덧붙이지 않습니다</span></div>
+    </div>
+    <p>조사는 기준 커밋을 따로 꺼낸 작업트리에서 게이트를 기록하고, 파이프라인 지도와 파이프라인별 보고, 실행할 명세 카드를 만듭니다. 카드는 보통 작업처럼 시작하되 테스트 계약이 붙습니다. 기존 테스트 파일은 구문 트리가 같거나 줄만 늘어야 하고, 마지막 검사 결과는 조사 때의 기준선과 비교된 뒤에야 PR이 열립니다.</p>
+  </section>
+
+  <section id="jev">
+    <div class="head">
+      <div class="label">Jev와 검색</div>
+      <h2>고르는 건 Jev, 권한은 코드</h2>
+    </div>
+    <p><b>Jev</b>는 TypeSafe가 제공하는 결정 모델(<code>jev-1.13.0</code>)입니다. 답을 쓰는 모델이 아니라, 코드가 내놓은 후보 중에서 <b>고르는</b> 모델입니다. 위키에 질문하면 이 순서로 돕니다.</p>
+    <ol class="flow six">
+      <li><b>영어로 정규화</b><span>질문과 근거를 영어로 맞추고, 원문 위치는 그대로 둡니다</span></li>
+      <li><b>Jev · 경로</b><span>검색할지 바로 답할지, 어느 출처 묶음에서 찾을지</span></li>
+      <li><b>하이브리드 검색</b><span>키워드(BM25) · 다국어 임베딩 · 순위 합치기(RRF)에 지식 그래프의 제한된 탐색</span></li>
+      <li><b>Jev · 판정</b><span>찾은 조각이 쓸모 있는지, 서로 충돌하는지</span></li>
+      <li><b>Jev · 충분성</b><span>충분한지, 아니면 어떤 보강이 필요한지. 다시 찾기는 최대 3라운드</span></li>
+      <li><b>답 작성</b><span>답하는 모델이 근거로 쓰고, <code>미검증</code>으로 기록합니다. 근거와 판단은 따로 열어 봅니다</span></li>
+    </ol>
+    <div class="scroll">
+      <table class="paths">
+        <thead><tr><th>자리</th><th>Jev가 고르는 것</th><th>코드가 쥐는 것</th></tr></thead>
+        <tbody>
+          <tr><td>검색 경로</td><td>검색할지, 바로 답할지, 어느 출처 묶음인지</td><td>내놓는 출처, 바로 답하기의 제한</td></tr>
+          <tr><td>근거 판정</td><td>쓸모 · 충돌 · 다른 출처로 넘길지</td><td>후보 id, 허용량</td></tr>
+          <tr><td>충분성</td><td>충분한지, 어떤 보강인지</td><td>보강 순서, 라운드 수, 호출 예비분</td></tr>
+          <tr><td>작업 행동</td><td>작업을 바로 시작할지 · 근거부터 모을지 · 되물을지, 추가 검사, 리뷰 지적을 고칠지 · 맥락부터 모을지, 다음 작업 추천</td><td>허용 동작 목록, 권한, 낡은 요청 거절</td></tr>
+          <tr><td>리뷰 검사 선택</td><td>Cloud 작업의 등록된 검사 중 무엇이 필요한지, 측정 영수증이 맞는지</td><td>필수 의무, 실제 측정, 독립 리뷰</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="two">
+      <div class="keeps card">
+        <span class="label">지켜지는 약속</span>
+        <ul>
+          <li><b>권한은 늘 코드에</b><span>Jev는 훅 규칙을 끄거나 도구 권한을 줄 수 없고, 출처 · 기능 · 명령을 지어낼 수 없습니다</span></li>
+          <li><b>모름은 “아니다”가 아니다</b><span>불확실 · HTTP 실패 · 예산 소진은 각각 따로 처리하고, 부정 답으로 바꾸지 않습니다</span></li>
+          <li><b>장애에도 검색은 돈다</b><span>Jev가 안 되면 기본 검색으로 답하고, 의미 판정을 못 했다고 밝힙니다</span></li>
+          <li><b>예산은 하나</b><span>모든 고리가 마감 시각 · 호출 수 · 토큰을 함께 씁니다. 단계마다 따로 늘어나지 않습니다</span></li>
+        </ul>
+      </div>
+      <div class="guard card">
+        <span class="label">켜고 끄기와 평가</span>
+        <div class="row"><b>모드</b><span>키(<code>TYPESAFE_API_KEY</code>)가 없으면 off, 있으면 기본 shadow(판단을 기록만 함), active는 설정에서 켭니다</span></div>
+        <div class="row"><b>되돌리기</b><span><code>tool/eval/rollout.py off</code>로 바로 끄고, 그래프 탐색만 <code>WIKI_GRAPH_RETRIEVAL=off</code>로 끕니다</span></div>
+        <div class="row"><b>평가</b><span>고정 데이터셋의 영어 보류 세트에서 게이트 7개를 모두 통과했습니다. Jev 문서대로 질문 문구를 바꾼 안을 2026-10-19 채택했습니다</span></div>
+        <div class="row"><b>재생</b><span>기록된 실행을 지금 코드가 같게 결정하는지 돈 없이 다시 돌려 봅니다</span></div>
+      </div>
+    </div>
+    <p>검색의 재료는 저장소의 문서 · 결정 기록 · 대화 메모리, 공통 규칙, arXiv 논문, 채택한 웹 문서입니다. 이것들을 조각으로 나눠 근거 저장소(SQLite)에 넣고, 한국어는 미리 영어로 정규화해 둡니다. 지식 그래프의 관계는 후보를 찾을 뿐, 내용이 참이라는 증거가 아닙니다. 다른 저장소의 조각은 절대 섞이지 않습니다.</p>
+  </section>
+
+  <section id="improve">
+    <div class="head">
+      <div class="label">자가 개선</div>
+      <h2>고친 게 정말 나아졌는지, 재고 나서 고른다</h2>
+    </div>
+    <p>개선 고리는 둘입니다. 사람이 도는 고리는 <b>회고</b>입니다. 오늘 어긋난 자리를 세어 규칙 후보를 내고, 사람이 골라 규칙 페이지나 검사로 만듭니다. 측정으로 도는 고리가 <b>자가 개선</b>입니다. 대화 중에 저절로 돌지 않고, 사람이 실험 설정을 주고 <code>tool/improve.py</code>로 명시적으로 돌립니다. Google Research의 RRSI 방법을 따릅니다.</p>
+    <div class="two">
+      <div class="drawer"><span class="name">hub</span><span class="follows">이 저장소</span><span class="small">wiki-agent의 하네스, 공통 워크플로, 규칙을 개선합니다. 결과는 기존 리뷰와 게이트를 거칩니다</span></div>
+      <div class="drawer"><span class="name">project</span><span class="follows">연결한 저장소 하나</span><span class="small">그 저장소의 코드 · 하네스 · 문서를 개선합니다. 결과가 공통 규칙이 되려면 따로 제안하고 일반성을 증명해야 합니다</span></div>
+    </div>
+    <ol class="ladder">
+      <li><span class="n">1</span><span class="what"><b>동결</b><span class="small">실험 계약, 정책 모델, 실행 명령, 평가 의존성, 과제 스냅샷, 전체 예산(시간 · 호출 · 토큰)</span></span><span class="cost">바꾸면 새 실험</span></li>
+      <li><span class="n">2</span><span class="what"><b>기준선</b><span class="small">분리된 체크아웃에서 지금 코드를 평가합니다</span></span><span class="cost">현직</span></li>
+      <li><span class="n">3</span><span class="what"><b>후보 제안</b><span class="small">현직에서 출발한 독립 패치 여러 개. 앞선 가설과 측정 결과를 함께 줍니다</span></span><span class="cost">편집 수 담금질</span></li>
+      <li><span class="n">4</span><span class="what"><b>검사와 비평</b><span class="small">편집 소유권 · 보호 경로 · 누설 패턴을 보고, 독립 비평가가 과제 맞춤 · 답 누설 · 채점 조작을 걸러 냅니다</span></span><span class="cost">평가 전에</span></li>
+      <li><span class="n">5</span><span class="what"><b>측정과 선택</b><span class="small">모든 시행을 잽니다. 잡음 범위를 넘어 나아진 후보 중 비용과 새로움까지 따져 고르고, 없으면 현직을 지킵니다</span></span><span class="cost">비용 모름 = 멈춤</span></li>
+      <li><span class="n">6</span><span class="what"><b>반복</b><span class="small">정해 둔 라운드와 한도 안에서 3~5를 되풀이합니다. 막히면 안 건드린 부분을 탐색하고, 덜어 내기 실험도 제안합니다</span></span><span class="cost">한도 안에서</span></li>
+      <li class="heart"><span class="n">7</span><span class="what"><b>보류 과제 공개<span class="tag">한 번만</span></b><span class="small">처음 보는 과제로 원래 기준선과 비교합니다. 통과해야 로컬 브랜치를 넘기고, 그 브랜치도 리뷰 루프와 게이트를 그대로 거칩니다</span></span><span class="cost">더 다듬으려면 새 과제</span></li>
+    </ol>
+    <p>리팩터링 실행기도 이 장치를 씁니다. 후보 패치를 경쟁시키고, 동결한 특성 테스트와 부채 래칫이 비평가 역할을 합니다. 실험 기록은 <code>raw/improvement/</code>에만 남고 공유 지식에는 들어가지 않습니다.</p>
+  </section>
+
+  <section id="laya">
+    <div class="head">
+      <div class="label">Laya 실험</div>
+      <h2>Jev를 로컬 모델로 바꿀 수 있을까 — 중지</h2>
+    </div>
+    <p>Jev가 내리는 결정 14종류를 종류마다 하나씩, 이 저장소의 실제 결정으로 미세조정한 로컬 모델(Apache-2.0 Laya)로 바꾸려던 실험입니다. 라벨은 두 LLM이 따로 붙여 일치한 것만 썼고, 학습은 Colab, 서빙은 RTX 3080을 썼습니다. 생성한 상태로는 검증 점수가 높았지만, 실제 운영 상태로 만든 게이트에서는 Jev보다 약 16점 낮았습니다.</p>
+    <div class="scroll">
+      <table class="paths">
+        <thead><tr><th>결정 종류</th><th>게이트 Laya / Jev</th><th>판정</th></tr></thead>
+        <tbody>
+          <tr><td>coverage</td><td class="dir">0.800 / 0.961</td><td>보류 — 94단위로 기준 100 미만</td></tr>
+          <tr><td>useful</td><td class="dir">0.783 / 0.945</td><td>탈락</td></tr>
+          <tr><td>redirect</td><td class="dir">0.773 / 0.941</td><td>탈락 — 생성한 검증 세트에서는 0.990</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>2026-10-22 유료 작업을 멈추고 Jev를 유지했습니다. 운영 상태가 쌓이면 새 게이트로 한 번 더 읽고, 그 결과에 따라 운영 데이터로 학습할지 끝낼지 정합니다. <code>laya/</code> 코드와 기록은 그대로 있습니다.</p>
   </section>
 
   <section id="english">
@@ -421,6 +582,42 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
       <div class="step"><span class="cmd">apply --write</span><p>훅과 금지 목록을 <code>.claude/settings.json</code>에 병합합니다. 기존 설정은 덮지 않습니다.</p></div>
     </div>
     <p>프로젝트는 <code>.wiki/wiki-revision</code>에 위키 커밋 번호를 적어 고정합니다. 위키가 바뀌어도 팀 전원이 같은, 검증된 버전을 씁니다. 앱의 프로젝트 화면에서 <b>[연결]</b>을 누르면 어댑터 작성, 훅 설치, 실제 세션 시험까지 안내합니다. 명령은 오른쪽 위 <b>사용법</b> 탭에 있습니다.</p>
+    <p>설정에서 <b>전수조사</b>를 켜면 [연결]이 거기서 멈추지 않습니다. 견적을 보여 주고 확인을 받은 뒤, 그 저장소의 첫 위키를 씁니다. 구조 개요와 모듈 페이지, 주입할 규칙 후보, 결정 기록, 어댑터 값 추정이 들어가고, 별도 작업트리에서 PR로 올라와 리뷰 루프를 거칩니다. 이미 있는 문서는 빈 곳만 채우고, 설정한 한도에서 멈춥니다.</p>
+  </section>
+
+  <section id="observe">
+    <div class="head">
+      <div class="label">측정과 관찰</div>
+      <h2>얼마나 썼고 무엇을 했는지 남긴다</h2>
+    </div>
+    <div class="drawers">
+      <div class="drawer"><span class="follows">호출 기록</span><span class="small">Jev · 번역 · 질문 분할 · 답 초안 · 설명처럼 비용이 들 수 있는 호출마다 목적 · 모델 · 토큰 · 시간 · 결과를 남깁니다. 제공자가 비용을 알려 주지 않으면 0이 아니라 “모름”입니다</span></div>
+      <div class="drawer"><span class="follows">Langfuse 추적</span><span class="small">질문 하나가 추적 하나입니다. Jev와 번역기에 보낸 것과 받은 것, 초안, 출처를 전문으로 남깁니다. 직접 띄운 Langfuse 주소와 키를 <code>.env</code>에 넣었을 때만 보냅니다</span></div>
+      <div class="drawer"><span class="follows">훅이 드는 비용</span><span class="small">지난 발화에 오늘의 페이지를 다시 넣어 보는 replay, 훅 자체 시간, 사람 발화당 가중 토큰, 두 훅을 같은 과제로 비교하는 A/B</span></div>
+      <div class="drawer"><span class="follows">census</span><span class="small">대화 기록에서 반복 지시 · 정정 · 재촉 · 부분 완료를 셉니다. 퍼센트를 내지 않고, 사람이 비교할 문장을 뽑습니다. 어느 표시에도 안 걸린 표본도 함께 보여 줍니다</span></div>
+      <div class="drawer"><span class="follows">스위트</span><span class="small">살아 있는 작업 · 계획 · 리뷰 셀과 최근 100번의 실행. 실패와 답이 없는 승인도 빠뜨리지 않습니다</span></div>
+      <div class="drawer"><span class="follows">훅 자가 진단</span><span class="small">Codex 훅이 시간 초과로 끊기기 전에 실행 스택과 프로세스 정보를 로컬에 자동으로 모읍니다</span></div>
+    </div>
+  </section>
+
+  <section id="status">
+    <div class="head">
+      <div class="label">진행 중</div>
+      <h2>아직 끝나지 않은 것</h2>
+    </div>
+    <div class="scroll">
+      <table class="paths">
+        <thead><tr><th>계획</th><th>상태</th><th>남은 것</th></tr></thead>
+        <tbody>
+          <tr><td>Jev 평가와 적용</td><td class="dir">진행 중</td><td>영어 보류 세트의 게이트 7개는 통과했습니다. 앱 창에서의 확인이 남았습니다</td></tr>
+          <tr><td>리뷰 라우팅</td><td class="dir">진행 중</td><td>Jev의 추가 기준 추천은 아직 기록만 합니다(shadow). 사람 라벨, 실제 프롬프트 검증, 로컬 · 네이티브 증거 수집이 남았습니다</td></tr>
+          <tr><td>창마다 프로젝트</td><td class="dir">시작 전</td><td>창 두 개로 저장소 두 개를 동시에 다루기. 지금은 서버가 프로젝트 하나를 고릅니다</td></tr>
+          <tr><td>신뢰성 9 · 10</td><td class="dir">진행 중</td><td>한국어 번역이 결과에 주는 영향 비교, 실제 데스크톱과 호스트 시나리오 검증</td></tr>
+          <tr><td>Laya</td><td class="dir">중지</td><td>운영 상태가 쌓이면 새 게이트로 한 번 더 판단</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>계획 문서는 <code>docs/plans/</code>에 시리즈마다 폴더 하나로 있고, 남은 단계는 세션을 열 때 에이전트에게 자동으로 실립니다.</p>
   </section>
 
   <section id="folders">
@@ -433,7 +630,11 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
       <dt>skills/</dt><dd>절차서 — 리뷰 루프, 머지 후 정리, 회고, 디자인 한 바퀴, 마크다운 쓰기</dd>
       <dt>tool/</dt><dd>파이썬 도구 — inject(주입) · apply · setup_agents(설치) · census(세기) · lint(검사) · harvest(결정 기록)</dd>
       <dt>tool/main/</dt><dd>앱 서버 — 위키 질문, 명세, 작업 브랜치, 리뷰 루프, 리팩터링, 휴대폰 연결</dd>
-      <dt>tool/translate/ · search/</dt><dd>한국어 번역 오버레이 · 문서 검색과 지식 그래프</dd>
+      <dt>tool/translate/ · search/</dt><dd>한국어 번역 오버레이 · 근거 저장소, 검색, 지식 그래프</dd>
+      <dt>tool/decision/ · tool/eval/</dt><dd>Jev 전송 · 결정 · 정책 · 주장 검사 · 평가 게이트와 적용(rollout)</dd>
+      <dt>tool/improve.py</dt><dd>자가 개선 실험 실행기(hub · project)</dd>
+      <dt>laya/ · eval/</dt><dd>Laya 실험의 데이터 · 게이트 코드와 평가 데이터셋</dd>
+      <dt>docs/research/</dt><dd>설계마다 남긴 조사 기록 — 채택한 출처와 버린 대안</dd>
       <dt>adapters/</dt><dd>프로젝트별 설정 예시</dd>
       <dt>raw/</dt><dd>대화 · 리뷰 · 측정 기록. git에 올리지 않는다</dd>
       <dt>web/</dt><dd>앱 화면과 위키 지도. <code>web/src-tauri/</code>는 그 화면을 감싼 데스크톱 창</dd>
@@ -444,7 +645,7 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
   </section>
 
   <section class="closing">
-    <p class="lead">한 줄로: <b>에이전트의 실수 노트</b>와 그 노트를 <b>훅으로 강제로 읽히는 장치</b>, 그리고 그 위에서 <b>명세부터 머지까지</b> 돌리는 앱. 에이전트는 영어로 일하고, 사람은 한국어로 봅니다.</p>
+    <p class="lead">한 줄로: <b>에이전트의 실수 노트</b>와 그 노트를 <b>훅으로 강제로 읽히는 장치</b>, 그 위에서 <b>명세부터 머지까지</b> 돌리는 앱, 그리고 <b>Jev의 판단과 측정으로 고르는 개선</b>. 에이전트는 영어로 일하고, 사람은 한국어로 봅니다.</p>
     <div class="label">고치기 전에 먼저 읽을 세 장</div>
     <div class="readfirst">
       <a href="SCHEMA.md"><b>SCHEMA.md</b><span class="small">무엇을 어디에 적는가</span></a>
