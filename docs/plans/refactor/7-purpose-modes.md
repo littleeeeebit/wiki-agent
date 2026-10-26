@@ -46,6 +46,7 @@ Chosen by the owner on 2026-10-24 from offered options.
 | Survey output | Structured JSON blocks the server validates; a refused block goes back to the same model once with the reason (user's choice after a live 23-pipeline survey lost its integration turn to one 49-character key); a second refusal, or no block, stops the survey with what was wrong. An integration block names every refused spec at once, with the duplicate keys, unknown dependencies and cycles beside them, so one repair can fix them all (review round 1); a refused spec's text key and dependencies still make the graph, and a key that is not text is one more refusal (review round 2). A spec lists base-commit files it touches in `files` and files it creates in `creates` (absent at base, in a folder that exists): the live repair turn fixed the one new module named and stopped on the next |
 | Large repositories | A map turn, one read-only turn per pipeline, then one integration turn; finished pipeline turns are kept and skipped on retry |
 | Pipeline count | No ceiling; the map turn groups small helpers and says why |
+| Spec unit | `preserve` and `simplify`: one spec per pipeline (or `shared:<path>`) holding every debt worth doing there. `rework`: one spec per root cause, its files in whichever pipelines the fix touches and the others named in `impact`, so each measurement stands alone. User's choice on 2026-10-26, after a survey turned 22 pipelines into 45 cards of one function each, most under 70 lines of code |
 | Survey tools | Read, Glob and Grep only; the server runs the gate once on the base commit for the baseline |
 | Baseline gate | In a temporary detached linked worktree of the base commit, removed afterwards |
 | `.omm` | Read in every mode when present and cross-checked against code: its node list and the files changed since its last commit go to the map turn; divergences are recorded; `.omm` is never written by a survey |
@@ -108,7 +109,8 @@ Validation refuses a spec that covers more than one pipeline, names a file
 absent at `base`, has another mode, depends on an unknown or cyclic id,
 declares a contract update outside `simplify` (or `rework` marked as a
 separate contract change with migration and rollback), or only investigates or
-documents structure. Every turn checks that HEAD and the working tree did not
+documents structure. In `preserve` and `simplify` it also refuses a second
+spec on the same pipeline or `shared:<path>`. Every turn checks that HEAD and the working tree did not
 move. The turn's reported model is compared with the requested one.
 
 ## Execution

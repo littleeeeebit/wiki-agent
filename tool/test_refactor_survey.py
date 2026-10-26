@@ -368,6 +368,24 @@ def test_a_map_path_glob_becomes_the_files_it_matches(surveyed):
                                      surveyed)
 
 
+def test_preserve_and_simplify_make_one_spec_per_pipeline_and_rework_one_per_cause(surveyed):
+    # User's choice: a live survey split 22 pipelines into 45 cards of one function each.
+    split = {"coverage": {"scope": "s"}, "specs": [spec("a"), spec("b"), spec("c", "shared:src/shared.py"),
+                                                   spec("d", "src/shared.py"), spec("e", "billing")]}   # review round 1: an alias
+    for mode in ("preserve", "simplify"):
+        with pytest.raises(ValueError) as refused:
+            refactor_survey.survey_shape(split, mode, MAP, surveyed)
+        assert [x for x in str(refused.value).splitlines() if "합쳐라" in x] == [
+            f"`orders` 에 명세가 2개다 ['a', 'b'] — {mode} 에서는 파이프라인 하나가 명세 하나다. 그 부채를 한 명세로 합쳐라",
+            f"`shared:src/shared.py` 에 명세가 2개다 ['c', 'd'] — {mode} 에서는 파이프라인 하나가 명세 하나다. "
+            "그 부채를 한 명세로 합쳐라"]
+    assert len(refactor_survey.survey_shape(split, "rework", MAP, surveyed)["specs"]) == 5, "two causes, two specs"
+    # Review round 2: a pipeline and a shared path with the same name are two owners.
+    named = {**MAP, "shared": [{"path": "orders", "used_by": ["orders", "billing"]}]}
+    pair = {"coverage": {"scope": "s"}, "specs": [spec("p"), spec("s", "shared:orders")]}
+    assert len(refactor_survey.survey_shape(pair, "preserve", named, surveyed)["specs"]) == 2
+
+
 def test_dependency_cycles_and_unknown_dependencies_are_refused(surveyed):
     loop = {"coverage": {"scope": "s"}, "specs": [spec("a", depends=["b"]), spec("b", depends=["a"])]}
     with pytest.raises(ValueError, match="돌아온다"):
