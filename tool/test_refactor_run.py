@@ -153,7 +153,7 @@ def test_an_unstarted_card_takes_new_work_and_review_models_and_a_started_one_ke
 def test_a_card_keeps_its_chosen_models_through_a_refinement_a_recheck_and_another_screen(surveyed, monkeypatch):
     # Review of #236: a refinement and a recheck remade the card from its survey record, back on the
     # models it started with; an editor opened before another screen's change saved over it.
-    sid = surveyed_in("preserve", spec("orders-split"))["specs"][0]
+    sid = surveyed_in("preserve", spec("orders-split", "all"))["specs"][0]
     api, path = client(), f"/api/refactors/specs/{sid}/roles"
     cheap = {"worker": {"model": "claude-cheap", "effort": "low"}, "reviewer": {"model": "codex:gpt-cheap", "effort": ""}}
     assert api.post(path, json={**cheap, "was": {k: ROLES[k] for k in ("worker", "reviewer")}}).status_code == 200
@@ -174,7 +174,7 @@ def test_a_card_keeps_its_chosen_models_through_a_refinement_a_recheck_and_anoth
     monkeypatch.setattr(refactor_survey, "asked", asked)
     (surveyed / "src/orders.py").write_text("def place(order):\n    return [order]\n", encoding="utf-8")
     _git(surveyed, "commit", "-qam", "the target moved")
-    Host.answers = {"survey": {**ONE, "specs": [spec("orders-split", title="Split place again")]}}
+    Host.answers = {"survey": {**ONE, "specs": [spec("orders-split", "all", title="Split place again")]}}
     again = settled(api, api.post(f"/api/refactors/specs/{sid}/recheck",
                                   json={"request_id": "recheck-roles-0001", "mode": "preserve"}).json()["id"])
     card = specs.load("proj", sid)
@@ -216,7 +216,7 @@ def test_the_conversation_refines_cards_on_the_survey_model_until_the_mode_chang
     monkeypatch.setattr(query, "ChatSession", Talk)
     query.config("refactor", "proj").update(model="haiku", effort="low")   # the chat toolbar's pick
     query.session("refactor")   # a conversation already open on it
-    surveyed_in("preserve", spec("orders-split"))
+    surveyed_in("preserve", spec("orders-split", "all"))
     assert query.session("refactor").model == ROLES["survey"]["model"], "refined on the survey model"
     api, toolbar = client(), {"repo": "proj", "model": "haiku", "effort": "low"}
     refused = api.post("/api/config/refactor", json=toolbar)
@@ -229,7 +229,7 @@ def test_the_conversation_refines_cards_on_the_survey_model_until_the_mode_chang
 
 
 def test_a_card_from_before_roles_neither_starts_nor_is_rechecked_or_refined(surveyed):
-    run = surveyed_in("preserve", spec("orders-split"))
+    run = surveyed_in("preserve", spec("orders-split", "all"))
     sid = run["specs"][0]
     card = specs.load("proj", sid)
     specs.save({**card, "refactor": {k: v for k, v in card["refactor"].items() if k != "roles"}})
@@ -259,7 +259,7 @@ def characterize(test: str, also: str = ""):
 
 def test_preserve_freezes_its_characterization_before_the_refactoring(running):
     repo, remote = running
-    first, = surveyed_in("preserve", spec("orders-split"))["specs"]
+    first, = surveyed_in("preserve", spec("orders-split", "all"))["specs"]
     Worker.replies = [characterize("tests/test_orders.py"),
                       edited("src/orders.py", "def place(order):\n    result = order\n    return result\n")]
     started(client(), first)
@@ -275,7 +275,7 @@ def test_preserve_freezes_its_characterization_before_the_refactoring(running):
 
 
 def test_a_characterization_that_touches_code_is_refused(running):
-    run = surveyed_in("preserve", spec("orders-split"))
+    run = surveyed_in("preserve", spec("orders-split", "all"))
     Worker.replies = [characterize("tests/test_orders.py", also="src/orders.py")]
     started(client(), run["specs"][0])
     card = specs.load("proj", run["specs"][0])
@@ -454,7 +454,7 @@ def test_a_ci_repository_still_measures_a_rework_spec(running, monkeypatch):
 
 
 def test_a_card_saved_with_a_dotted_path_still_sees_its_file_change(surveyed):
-    run = surveyed_in("preserve", spec("orders-split"))
+    run = surveyed_in("preserve", spec("orders-split", "all"))
     card = specs.load("proj", run["specs"][0])
     card = {**card, "refactor": {**card["refactor"], "files": ["./src/orders.py"], "evidence": ["src/../src/orders.py"]}}
     (surveyed / "src/orders.py").write_text("def place(order):\n    return [order]\n", encoding="utf-8")
@@ -500,7 +500,7 @@ def test_a_hub_card_runs_in_a_linked_worktree(running, monkeypatch):
 
 
 def test_the_conversation_refines_the_same_card_and_splits_off_only_the_new_part(surveyed):
-    run = surveyed_in("preserve", spec("orders-split"))
+    run = surveyed_in("preserve", spec("orders-split", "all"))
     sid = run["specs"][0]
     source = {"focus": "refactor", "turn": 2, "session": "talk", "refactor_mode": "preserve",
               "refactor_generation": query.config("refactor", "proj").get("refactor_generation", 0)}
@@ -524,7 +524,7 @@ def test_the_conversation_refines_the_same_card_and_splits_off_only_the_new_part
 
 
 def test_a_card_is_refined_only_on_its_own_survey_model(surveyed):
-    run = surveyed_in("preserve", spec("orders-split"))
+    run = surveyed_in("preserve", spec("orders-split", "all"))
     sid = run["specs"][0]
     card = specs.load("proj", sid)
     api = client()
@@ -542,7 +542,7 @@ def test_a_card_is_refined_only_on_its_own_survey_model(surveyed):
 
 def test_saving_the_pinned_settings_again_keeps_an_empty_effort(surveyed):
     from main import channels
-    run = surveyed_in("preserve", spec("orders-split"))
+    run = surveyed_in("preserve", spec("orders-split", "all"))
     sid, codex = run["specs"][0], {"model": "codex:test-model", "effort": ""}
     card = specs.load("proj", sid)
     specs.save({**card, "refactor": {**card["refactor"], "roles": {**ROLES, "survey": codex}}})
@@ -557,12 +557,12 @@ def test_saving_the_pinned_settings_again_keeps_an_empty_effort(surveyed):
 
 
 def test_recheck_rewrites_a_stale_card_or_sets_it_aside(surveyed):
-    run = surveyed_in("preserve", spec("orders-split"))
+    run = surveyed_in("preserve", spec("orders-split", "all"))
     sid = run["specs"][0]
     (surveyed / "src/orders.py").write_text("def place(order):\n    return [order]\n", encoding="utf-8")
     _git(surveyed, "commit", "-qam", "the target moved")
     head, api = _git(surveyed, "rev-parse", "HEAD"), client()
-    Host.answers = {"survey": {**ONE, "specs": [spec("orders-split", title="Split place again")]}}
+    Host.answers = {"survey": {**ONE, "specs": [spec("orders-split", "all", title="Split place again")]}}
     body = {"request_id": "recheck-req-0001", "mode": "preserve"}
     again = settled(api, api.post(f"/api/refactors/specs/{sid}/recheck", json=body).json()["id"])
     assert again["state"] == "done" and again["recheck"] == sid
@@ -584,14 +584,20 @@ def test_a_recheck_of_the_whole_repository_spec_reads_every_pipeline_report(surv
     sid = surveyed_in("preserve", whole)["specs"][0]
     (surveyed / "src/billing.py").write_text("def charge(order):\n    return [order]\n", encoding="utf-8")
     _git(surveyed, "commit", "-qam", "the target moved")
+    reports = list(refactor.load("proj", specs.load("proj", sid)["refactor"]["survey"])["pipelines"].values())
+    api, body = client(), {"request_id": "recheck-all-0001", "mode": "preserve"}
+    Host.answers = {"survey": {**ONE, "specs": [spec("tidy-all")]}}   # narrowed to one pipeline
+    narrowed = settled(api, api.post(f"/api/refactors/specs/{sid}/recheck", json=body).json()["id"])
+    assert narrowed["state"] == "stopped" and "`all` 여야 한다" in narrowed["stopped"]["detail"], narrowed
     Host.answers = {"survey": {**ONE, "specs": [whole]}}
-    api = client()
     again = settled(api, api.post(f"/api/refactors/specs/{sid}/recheck",
-                                  json={"request_id": "recheck-all-0001", "mode": "preserve"}).json()["id"])
+                                  json={**body, "request_id": "recheck-all-0002"}).json()["id"])
     assert again["state"] == "done", again["stopped"]
     assert set(again["pipelines"]) == {"orders", "billing"}
+    # Review round 1: the map names both pipelines too, so read the report section itself.
     asked = Host.made[-1].text
-    assert '"id": "orders"' in asked and '"id": "billing"' in asked, "both reports go to the recheck"
+    sent = asked.split("The pipeline report from the older survey:\n", 1)[1].split("\n\nThe spec:\n", 1)[0]
+    assert json.loads(sent) == reports, "every report goes to the recheck"
 
 
 def test_a_recheck_keeps_a_card_that_depends_on_another_spec_of_its_survey(surveyed):

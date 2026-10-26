@@ -376,8 +376,10 @@ def acyclic(graph: dict[str, list[str]]) -> None:
         visit(key)
 
 
-def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = frozenset()) -> dict:
-    """An integration (or recheck) block; `known` are keys outside it a spec may still depend on."""
+def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = frozenset(), whole: bool = False) -> dict:
+    """An integration (or recheck) block; `known` are keys outside it a spec may still depend on.
+    `whole`: a `preserve` spec must be the whole repository's — a new survey's, or a recheck of one;
+    a recheck of an older card keeps the pipeline it was made with."""
     if not isinstance(value, dict) or not isinstance(value.get("coverage"), dict):
         raise ValueError("refactor-survey 는 coverage 가 있는 JSON 객체여야 한다")
     # Every refusal at once, the specs' own and their keys' and dependencies': one repair fixes them all.
@@ -397,6 +399,11 @@ def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = fr
     if mode == "preserve" and len(raw) > 1:   # one card for the repository: its debts are narrow, one run pays less
         refused.append(f"preserve 는 저장소 전체가 명세 하나다 — 명세가 {len(raw)}개다. 모든 부채를 "
                        f"`pipeline`: `{WHOLE}` 인 명세 하나로 합쳐라")
+    if mode == "preserve" and whole:
+        for s in raw:
+            if isinstance(s, dict) and s.get("pipeline") != WHOLE:
+                refused.append(f"`specs[{s.get('key')}].pipeline` 은 `{WHOLE}` 여야 한다 — preserve 명세 하나가 "
+                               "저장소 전체의 부채를 담는다")
     if mode == "simplify":   # one card per pipeline, its debts together
         owners, ids = {}, {p["id"] for p in map_["pipelines"]}
         for s in raw:
@@ -636,7 +643,7 @@ def integrated(w, run: dict) -> dict:
             + json.dumps(list(run["pipelines"].values()), ensure_ascii=False))
     try:
         survey = asked(w, run, "integrate", text, INTEGRATE_PROMPT, "refactor-survey",
-                       lambda v: survey_shape(v, run["mode"], run["map"], path))
+                       lambda v: survey_shape(v, run["mode"], run["map"], path, whole=True))
     except ValueError as exc:
         raise refactor.Stop("format", f"refactor-survey 가 맞지 않다 — {exc}") from exc
     run = w.note(survey=survey)
@@ -776,7 +783,7 @@ def rechecked(w, run: dict) -> dict:
     others = frozenset([*old["detail"]["depends"], *(s["key"] for s in (parent.get("survey") or {}).get("specs") or [])])
 
     def shape(value):
-        survey = survey_shape(value, run["mode"], parent["map"], path, others)
+        survey = survey_shape(value, run["mode"], parent["map"], path, others, whole=old["pipeline"] == WHOLE)
         if len(survey["specs"]) > 1 or survey["specs"] and survey["specs"][0]["key"] != old["detail"]["key"]:
             raise ValueError(f"key `{old['detail']['key']}` 의 명세 하나만 돌려줘야 한다")
         return survey

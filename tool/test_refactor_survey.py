@@ -390,6 +390,11 @@ def test_preserve_makes_one_spec_simplify_one_per_pipeline_and_rework_one_per_ca
                                         surveyed)["specs"][0]["pipeline"] == "all"
     with pytest.raises(ValueError, match="pipeline"):
         refactor_survey.spec_shape(whole, "simplify", MAP, surveyed)
+    # Review round 1: a new survey's one spec naming one pipeline is repaired; an older card's recheck keeps it.
+    narrow = {"coverage": {"scope": "s"}, "specs": [spec("n", files=["src/orders.py", "src/billing.py"])]}
+    with pytest.raises(ValueError, match=r"`specs\[n\]\.pipeline` 은 `all` 여야 한다"):
+        refactor_survey.survey_shape(narrow, "preserve", MAP, surveyed, whole=True)
+    assert refactor_survey.survey_shape(narrow, "preserve", MAP, surveyed)["specs"][0]["pipeline"] == "orders"
     # Review round 2: a pipeline and a shared path with the same name are two owners.
     named = {**MAP, "shared": [{"path": "orders", "used_by": ["orders", "billing"]}]}
     pair = {"coverage": {"scope": "s"}, "specs": [spec("p"), spec("s", "shared:orders")]}
