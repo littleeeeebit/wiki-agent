@@ -74,7 +74,8 @@ PIPELINE_SCHEMA = {
     "checked": ["<what you read>"], "unchecked": ["<what you could not read or run, and why>"],
     "proposals": [{"title": "...", "problem": "...", "change": "...", "files": ["..."]}]}
 SPEC_SCHEMA = {
-    "key": "<kebab-case id of at most 40 characters, unique in this survey>", "title": "<the one improvement>",
+    "key": "<kebab-case id of at most 40 characters, unique in this survey>",
+    "title": "<the pipeline's cleanup, or in rework the one root cause fixed>",
     "pipeline": "<one pipeline id, or shared:<path> for a shared boundary change: a path from the map's `shared` "
                 "or one this spec `creates`>",
     "files": ["<repository-relative files in the base commit the change touches>"],
@@ -121,13 +122,18 @@ PIPELINE_PROMPT = (
     "JSON shaped like:\n" + json.dumps(PIPELINE_SCHEMA))
 INTEGRATE_PROMPT = (
     "Turn a repository survey into executable refactoring specs for the selected mode. " + COMMON +
-    " The pipeline reports are your evidence: weigh every debt they name for the selected mode, and turn each "
-    "one worth doing into a spec, largest payoff first; leave one out only for a reason you state in "
+    " The pipeline reports are your evidence: weigh every debt they name for the selected mode and put each one "
+    "worth doing into a spec, largest payoff first; leave one out only for a reason you state in "
     "`coverage.unchecked`. Missing test coverage is not such a reason: in `preserve` the spec names the "
     "characterization tests to add in `tests.add`, and they are written and frozen before any code moves."
     " Each one is a new test: the run refuses any edit inside an existing test, so a check that would extend "
     "one is a new test beside it."
-    " A spec covers one improvement inside one pipeline; never bundle unrelated features. Never write a spec "
+    " The unit depends on the mode. In `preserve` and `simplify` a spec is a whole pipeline: every debt worth "
+    "doing in that pipeline goes into its one spec, so each pipeline and each `shared:<path>` has at most one. "
+    "In `rework` a spec is one root cause (one cycle, one misplaced responsibility, one measured bottleneck): "
+    "`pipeline` names where the cause lives, `files` lists every file the fix touches whichever pipeline owns "
+    "it, `impact` names the other pipelines, and two causes are two specs so each measurement stands alone. "
+    "Never bundle unrelated features. Never write a spec "
     "that only surveys, maps or documents structure. When a shared module change serves several pipelines, make "
     "it its own spec (`pipeline`: `shared:<path>`) that the pipeline specs depend on, unless splitting it would "
     "break the intermediate state; then keep it together and say why in `together`. A prerequisite another mode "
@@ -382,6 +388,15 @@ def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = fr
     keys = [k for k, _ in graph]
     if duplicated := sorted({k for k in keys if keys.count(k) > 1}):
         refused.append(f"명세 `key` 가 겹친다: {duplicated}")
+    if mode != "rework":   # preserve and simplify: one card per pipeline, its debts together
+        owners = {}
+        for s in raw:
+            if isinstance(s, dict) and isinstance(s.get("pipeline"), str):
+                owners.setdefault(s["pipeline"].strip(), []).append(s.get("key"))
+        for pipeline, held in owners.items():
+            if len(held) > 1:
+                refused.append(f"`{pipeline}` 에 명세가 {len(held)}개다 {held} — {mode} 에서는 파이프라인 하나가 "
+                               "명세 하나다. 그 부채를 한 명세로 합쳐라")
     for key, depends in graph:
         if unknown := set(depends) - set(keys) - known:
             refused.append(f"`specs[{key}].depends` 에 없는 명세: {sorted(unknown)}")

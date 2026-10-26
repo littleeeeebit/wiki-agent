@@ -131,7 +131,7 @@ def test_a_restart_keeps_the_mode_and_generation_its_cards_were_made_in(running,
 
 def test_an_unstarted_card_takes_new_work_and_review_models_and_a_started_one_keeps_its_own(running):
     # User's choice: a quota running low on one model moves the cards still to start, one by one.
-    first, second = surveyed_in("preserve", spec("orders-split"), spec("orders-names"))["specs"]
+    first, second = surveyed_in("preserve", spec("orders-split"), spec("billing-names", "billing"))["specs"]
     api = client()
     cheap = {"worker": {"model": "claude-cheap", "effort": "low"}, "reviewer": {"model": "codex:gpt-cheap", "effort": ""},
              "was": {k: ROLES[k] for k in ("worker", "reviewer")}}
@@ -188,7 +188,7 @@ def test_a_card_keeps_its_chosen_models_through_a_refinement_a_recheck_and_anoth
 def test_a_new_survey_deletes_the_unstarted_cards_of_an_earlier_one_at_its_start(running):
     # User's choice: at the new survey's start, not at its end (which sets every older card aside, `carded`),
     # and deleted, not set aside — even when the new survey then stops without cards.
-    first, second = surveyed_in("preserve", spec("orders-split"), spec("orders-names"))["specs"]
+    first, second = surveyed_in("preserve", spec("orders-split"), spec("billing-names", "billing"))["specs"]
     Worker.replies = [edited("src/orders.py", "def place(order):\n    return order  # split\n")]
     started(client(), first)
     Host.answers = {"survey": {**ONE, "specs": [{"key": "broken"}]}}
@@ -259,7 +259,7 @@ def characterize(test: str, also: str = ""):
 
 def test_preserve_freezes_its_characterization_before_the_refactoring(running):
     repo, remote = running
-    run = surveyed_in("preserve", spec("orders-split"), spec("orders-tidy"))
+    run = surveyed_in("preserve", spec("orders-split"), spec("billing-tidy", "billing"))
     first, second = run["specs"]
     Worker.replies = [characterize("tests/test_orders.py"),
                       edited("src/orders.py", "def place(order):\n    result = order\n    return result\n")]
