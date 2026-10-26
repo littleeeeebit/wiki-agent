@@ -1519,8 +1519,14 @@ def _check(path: Path, run, final: str):
             return lambda: loop.answered(repo, spec["id"], run, str(path))   # the person answered it
         return None
     if spec.get("writing"):
-        # The pull request's text was asked for; a person's own turn in between is not the answer.
-        return None if getattr(run, "person", False) else written(repo, path, run, spec, final)
+        # The pull request's text was asked for. A person's plain talk in between is not the answer; a
+        # person's own report is a new completion: a stopped or failed writing turn never came back
+        # (review round 1 of #242), so verify again and ask afresh.
+        if not getattr(run, "person", False):
+            return written(repo, path, run, spec, final)
+        if not any(b["name"] == "done-report" for b in blocks(final)[1]):
+            return None
+        spec = update(spec["repo"], spec["id"], writing=None)
     from . import refactor_run
     if (first := refactor_run.characterized(repo, path, run, spec, final)) is not refactor_run.DONE:
         return first
@@ -1548,7 +1554,7 @@ def _check(path: Path, run, final: str):
     if "error" in report or not valid(report.get("value")):
         return failed(run, spec, f"완료 보고를 읽지 못했다 — {report.get('error') or '항목마다 item 과 pass 가 있어야 한다'}")
     items = report["value"]
-    spec = update(spec["repo"], spec["id"], report=items, report_asked=False)
+    spec = update(spec["repo"], spec["id"], report=items, report_asked=False, summary=None)   # text is per head
     if len(items) < len(spec["done"]) or not all(i["pass"] for i in items):
         return failed(run, spec, "완료 보고에 통과하지 못했거나 빠진 항목이 있다. 판정하지 않는다")
     cleanup = next((b.get("value") for b in blocks(final)[1] if b["name"] == "test-cleanup"), None)
@@ -1582,7 +1588,7 @@ def pr_turn(repo: Path, path: Path, run, spec: dict):
     turn asks the worker for its text, with `pr-write.md`'s guide and examples.
     The answer comes back through `written`, which opens the pull request."""
 
-    if spec.get("summary") or run.halt.is_set():
+    if pr_text.summary(spec.get("summary")) or run.halt.is_set():
         return opened(repo, path, run, spec)
     head = sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
     spec = update(spec["repo"], spec["id"], writing={"head": head, "asked": 1})

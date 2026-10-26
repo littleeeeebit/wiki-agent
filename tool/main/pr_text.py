@@ -29,10 +29,11 @@ HANGUL = re.compile(r"[가-힣]")
 # An order to the worker, as a spec's instructions read once translated.
 ORDER = re.compile(r"(하십시오|하세요|하라|해라|할 것)[.!\s]*$")
 CITED = re.compile(r"`([^`\n]+)`")
-# A code name in prose, backticked or not: an identifier with `_`, a file name, a path.
-CODEISH = re.compile(r"`[^`\n]+`|\b[A-Za-z0-9]+_[A-Za-z0-9_]+\b"
+# A code name in prose, backticked or not: an identifier with `_` (`_helper`, `__init__` too), a file
+# name, a path of two slashes or more — `A/B` and `HTTP/2` are prose.
+CODEISH = re.compile(r"`[^`\n]+`|(?<!\w)(?=\w*_)(?=\w*[A-Za-z0-9])\w+"
                      r"|\b[\w-]+\.(?:py|tsx?|jsx?|md|json|toml|ya?ml|rs|go|java|kt|swift|sql)\b"
-                     r"|[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+", re.A)
+                     r"|\b[\w.-]+/[\w.-]+/[\w./-]+", re.A)
 SHAPE = ('```pr-summary\n{"title": "<바뀐 결과를 쉬운 말로, 80자 이내>", '
          '"context": "<이 코드가 제품에서 무슨 일을 하는지, 처음 보는 사람에게 한두 문장>", '
          '"changes": [{"what": "<무엇이 달라졌는지 쉬운 말로>", "where": ["`<diff 에 있는 파일이나 함수>`"]}], '
@@ -107,7 +108,7 @@ def asking(found: list[str]) -> str:
 
 
 def title_of(spec: dict) -> str:
-    told = spec.get("summary")
+    told = summary(spec.get("summary"))   # a summary saved in an earlier shape counts as none
     return told["title"] if told else f"{spec['id']} — PR 요약이 검사를 통과하지 못했습니다"
 
 
@@ -133,7 +134,7 @@ def body_of(spec: dict, numstat: str = "") -> str:
     `harvest.record` reads: `배경` and `변경 이유` become the record's why,
     and `바뀐 점`, the first section that is neither, its what."""
 
-    told = spec.get("summary")
+    told = summary(spec.get("summary"))
     if told:
         lines = ["## 배경", "", told["context"], "", "## 바뀐 점", "",
                  *(line for c in told["changes"]

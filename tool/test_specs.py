@@ -1068,9 +1068,10 @@ def test_the_pr_goes_up_as_the_worker_wrote_it_for_a_reader_new_to_the_code(repo
         "an order, not a description: 헬퍼를 추가하십시오"]
     assert pr_text.problems(dict(told, title="Share wiring"), "code.py") == ["not Korean: Share wiring"]
     assert [p.split(")")[0] for p in pr_text.problems(dict(told, changes=[{"what": w, "where": []} for w in (
-        "판정은 routes_proactive.py 에 있다", "eval_once 를 부른다", "src/api 아래로 옮겼다")]), "code.py")] == [
+        "판정은 routes_proactive.py 에 있다", "eval_once 를 부른다", "src/api/routes 아래로 옮겼다", "_helper 를 부른다",
+        "A/B 실험과 HTTP/2 연결은 그대로다")]), "code.py")] == [   # review round 1: `A/B` is prose, `_helper` is not
         "a code name in prose (routes_proactive", "a code name in prose (eval_once",
-        "a code name in prose (src/api"]
+        "a code name in prose (src/api/routes", "a code name in prose (_helper"]
     assert pr_text.problems(dict(told, changes=[{"what": "고쳤다", "where": ["설명만 있다"]}]), "code.py") == [
         "a `where` entry names nothing in backticks: 설명만 있다"]
     spec = {"id": "x", "repo": "proj", "goal": goal, "decisions": [], "report": [],
@@ -1080,9 +1081,46 @@ def test_the_pr_goes_up_as_the_worker_wrote_it_for_a_reader_new_to_the_code(repo
     assert "확인된 사실만" in body and goal not in body and "Both repeat it." not in body and "Gate order" not in body
     assert "2개 파일 · +3 −1\n\n- `src/a.py` +3 −1\n- `logo.png` 바이너리" in body
     assert pr_text.title_of(spec) == "x — PR 요약이 검사를 통과하지 못했습니다"
+    # A summary saved before this shape is none: facts only, never a `KeyError` (review round 1).
+    legacy = dict(spec, summary={"title": "옛 제목", "changes": ["옛 줄"], "why": "옛 이유", "review": []})
+    assert "확인된 사실만" in specs.body_of(legacy) and pr_text.title_of(legacy).startswith("x — ")
     with patch.object(specs, "sh", remote):
         specs.pull_request(repo, "b", "main", "가" * 300, "body")
     assert remote.calls[-1][remote.calls[-1].index("--title") + 1] == "가" * 255 + "…", "GitHub caps titles at 256"
+
+
+def test_a_stopped_pr_text_turn_or_a_stale_summary_never_keeps_a_task_from_its_text(repo):
+    """Review round 1 of #242: a writing turn that failed never reached the
+    check, left `writing` set, and every later turn was ignored; a summary
+    kept from an earlier head, or saved in the previous shape, went up as is."""
+
+    def stopped(path, halt):
+        raise RuntimeError("cancelled writing turn")
+
+    remote, web = Remote(), client()
+    Worker.replies, Worker.summaries = [report(True, True)], [stopped]
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote):
+        sid = made(repo, spec_block())[0]["id"]
+        path = started(web, sid)
+        until(lambda: specs.load("proj", sid).get("writing") and work._runs[path].done and path not in work._busy)
+        assert not remote.created()
+        # A person's plain talk is no answer; their own report is a new completion.
+        Worker.replies = ["Looking.", report(True, True)]
+        for text in ("Where are we?", "Finish it"):
+            assert web.post("/api/work/say", json={"path": path, "text": text}).status_code == 200
+            settled(path)
+            if text == "Where are we?":
+                assert specs.load("proj", sid)["writing"], "plain talk leaves the request standing"
+        until(lambda: specs.load("proj", sid)["state"].startswith("PR #"))
+        heard = [h for w in Worker.made for h in w.heard]
+        assert sum(h.startswith(WRITE_ASKS) for h in heard) == 2, "the text is asked again for the new report"
+        # A summary from an earlier head, or in the earlier shape, is not reused for the next report.
+        for stale in (dict(TOLD, title="옛 제목"), {"title": "옛 제목", "changes": ["옛 줄"], "why": "y", "review": []}):
+            specs.update("proj", sid, summary=stale, state="작업 중", pr=None)
+            assert specs.check(repo, work.Run(Worker(repo), task=True), report(True, True)) is not None
+            assert specs.load("proj", sid)["summary"] is None and specs.load("proj", sid)["writing"]
+            specs.update("proj", sid, writing=None)
+    work.close_all()
 
 
 def test_a_spec_attached_to_a_pr_into_a_non_default_base_is_republished_there(tmp_path):
