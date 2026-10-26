@@ -18,6 +18,7 @@ from pathlib import Path
 
 from common import worktree_home
 
+from .gate_tail import SUMMARY, failures, unexplained  # noqa: F401 — the runner and its tests read them here
 from .query import ROOT, config
 
 MODES = ("preserve", "simplify", "rework")
@@ -25,16 +26,10 @@ KINDS = ("duplication", "coupling", "mixed_responsibility", "defensive", "test_c
          "naming", "dead_code")
 LEVELS = ("high", "medium", "low")
 ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
+WHOLE = "all"   # the one `preserve` spec's pipeline: it holds every pipeline's debts
 # A spec is a change to make. One that only looks, maps or writes the structure down is the survey's own work.
 LOOKING = re.compile(r"^\s*(survey|investigate|audit|explore|map|analy[sz]e|document|diagram|study|inspect)\b"
                      r"|조사|구조도|파악", re.I)
-# Failure identifiers in the tail of other runners' output: vitest/jest, go test, cargo test. pytest's
-# `FAILED`/`ERROR` lines are read whole by `_node`.
-FAILED = re.compile(r"^\s*FAIL\s+(\S+)|^--- FAIL: (\S+)|^test (\S+) \.\.\. FAILED", re.M)
-# A pytest node id: its path and its parameter id may hold spaces, ` - ` and brackets; its names may not.
-# Any collected file (`docs/case1.txt::case1.txt` for a doctest), whose path holds neither `::` nor the
-# `: ` of a message (`ImportError: no a.b`); a name holds neither space, `:` nor `[`.
-NODE = re.compile(r"[^\s:](?:(?!::|: ).)*?\.\w+(?:::[^\s:\[]+)*(?:\[.*\])?")
 
 
 def _sections(text: str) -> tuple[str, dict[str, str]]:
@@ -75,9 +70,9 @@ PIPELINE_SCHEMA = {
     "proposals": [{"title": "...", "problem": "...", "change": "...", "files": ["..."]}]}
 SPEC_SCHEMA = {
     "key": "<kebab-case id of at most 40 characters, unique in this survey>",
-    "title": "<the pipeline's cleanup, or in rework the one root cause fixed>",
-    "pipeline": "<one pipeline id, or shared:<path> for a shared boundary change: a path from the map's `shared` "
-                "or one this spec `creates`>",
+    "title": "<in preserve the repository's cleanup, in simplify the pipeline's, in rework the one root cause fixed>",
+    "pipeline": f"<`{WHOLE}` for the one preserve spec; else one pipeline id, or shared:<path> for a shared boundary "
+                "change: a path from the map's `shared` or one this spec `creates`>",
     "files": ["<repository-relative files in the base commit the change touches>"],
     "creates": ["<repository-relative files the change creates, in folders that exist; omit when none>"],
     "boundary": "<the responsibility boundary this spec works inside>",
@@ -128,19 +123,21 @@ INTEGRATE_PROMPT = (
     "characterization tests to add in `tests.add`, and they are written and frozen before any code moves."
     " Each one is a new test: the run refuses any edit inside an existing test, so a check that would extend "
     "one is a new test beside it."
-    " The unit depends on the mode. In `preserve` and `simplify` a spec is a whole pipeline: every debt worth "
-    "doing in that pipeline goes into its one spec, so each pipeline and each `shared:<path>` has at most one. "
-    "In `rework` a spec is one root cause (one cycle, one misplaced responsibility, one measured bottleneck): "
-    "`pipeline` names where the cause lives, `files` lists every file the fix touches whichever pipeline owns "
-    "it, `impact` names the other pipelines, and two causes are two specs so each measurement stands alone. "
-    "Never bundle unrelated features. Never write a spec "
-    "that only surveys, maps or documents structure. When a shared module change serves several pipelines, make "
-    "it its own spec (`pipeline`: `shared:<path>`) that the pipeline specs depend on, unless splitting it would "
-    "break the intermediate state; then keep it together and say why in `together`. A prerequisite another mode "
-    "owns is not folded in: name it in `impact`. Test removals in `preserve` need an exact-duplicate, one-off or "
-    "temporary reason; `contract` updates belong to `simplify`, or to a `rework` spec that is itself a "
-    "`contract_change`. `measure` and `hypothesis` belong to `rework` performance specs; a spec with only a "
-    "hypothesis cannot run until it can be measured. No spec is a valid answer: then give `nothing` with the "
+    " The unit depends on the mode. In `preserve` there is exactly one spec for the whole repository: every debt "
+    f"worth doing in every pipeline and shared module goes into it, `pipeline` is `{WHOLE}`, `files` and `creates` "
+    "list every file it touches, and its `change`, `keep`, `verify` and `tests.add` cover each debt by name. In "
+    "`simplify` a spec is a whole pipeline: every debt worth doing in that pipeline goes into its one spec, so each "
+    "pipeline and each `shared:<path>` has at most one. In `rework` a spec is one root cause (one cycle, one "
+    "misplaced responsibility, one measured bottleneck): `pipeline` names where the cause lives, `files` lists every "
+    "file the fix touches whichever pipeline owns it, `impact` names the other pipelines, and two causes are two "
+    "specs so each measurement stands alone. Outside `preserve`, never bundle unrelated features. Never write a spec "
+    "that only surveys, maps or documents structure. In `simplify` and `rework`, when a shared module change serves "
+    "several pipelines, make it its own spec (`pipeline`: `shared:<path>`) that the pipeline specs depend on, unless "
+    "splitting it would break the intermediate state; then keep it together and say why in `together`. A "
+    "prerequisite another mode owns is not folded in: name it in `impact`. Test removals in `preserve` need an "
+    "exact-duplicate, one-off or temporary reason; `contract` updates belong to `simplify`, or to a `rework` spec "
+    "that is itself a `contract_change`. `measure` and `hypothesis` belong to `rework` performance specs; a spec with "
+    "only a hypothesis cannot run until it can be measured. No spec is a valid answer: then give `nothing` with the "
     "reason. End with one fenced block tagged `refactor-survey` holding JSON shaped like:\n"
     + json.dumps({"coverage": {"scope": "<what the survey covered>", "unchecked": ["..."],
                                "excluded": [{"path": "...", "reason": "..."}]},
@@ -298,7 +295,7 @@ def spec_shape(s, mode: str, map_: dict, root: Path) -> dict:
     # A shared owner the spec extracts is new, so the map could not list it; its own `creates` vouches for it.
     shared = [x["path"] for x in map_["shared"]] + creates
     ids = [p["id"] for p in map_["pipelines"]]
-    if pipeline not in ids and pipeline.removeprefix("shared:") not in shared:
+    if not (mode == "preserve" and pipeline == WHOLE) and pipeline not in ids and pipeline.removeprefix("shared:") not in shared:
         # The repair turn reads this; without the accepted values it only guesses again.
         raise ValueError(f"`{what}.pipeline` `{pipeline}` 은 지도의 파이프라인 하나나, 지도의 shared 또는 이 명세의 "
                          f"`creates` 경로를 담은 shared:<경로> 여야 한다 — 파이프라인: {', '.join(ids)}; "
@@ -370,8 +367,8 @@ def acyclic(graph: dict[str, list[str]]) -> None:
         visit(key)
 
 
-def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = frozenset()) -> dict:
-    """An integration (or recheck) block; `known` are keys outside it a spec may still depend on."""
+def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = frozenset(), whole: bool = False) -> dict:
+    """An integration (or recheck) block; `known`: keys outside it a spec may depend on; `whole`: preserve is `all`."""
     if not isinstance(value, dict) or not isinstance(value.get("coverage"), dict):
         raise ValueError("refactor-survey 는 coverage 가 있는 JSON 객체여야 한다")
     # Every refusal at once, the specs' own and their keys' and dependencies': one repair fixes them all.
@@ -388,7 +385,11 @@ def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = fr
     keys = [k for k, _ in graph]
     if duplicated := sorted({k for k in keys if keys.count(k) > 1}):
         refused.append(f"명세 `key` 가 겹친다: {duplicated}")
-    if mode != "rework":   # preserve and simplify: one card per pipeline, its debts together
+    if mode == "preserve" and len(raw) > 1:   # one card for the repository: its debts are narrow, one run pays less
+        refused.append(f"preserve 는 저장소 전체가 명세 하나다 — 명세가 {len(raw)}개다. 모든 부채를 `pipeline`: `{WHOLE}` 인 명세 하나로 합쳐라")
+    refused += [f"`specs[{s.get('key')}].pipeline` 은 `{WHOLE}` 여야 한다 — preserve 명세 하나가 저장소 전체의 부채를 담는다"
+                for s in raw if mode == "preserve" and whole and isinstance(s, dict) and str(s.get("pipeline")).strip() != WHOLE]
+    if mode == "simplify":   # one card per pipeline, its debts together
         owners, ids = {}, {p["id"] for p in map_["pipelines"]}
         for s in raw:
             if isinstance(s, dict) and isinstance(s.get("pipeline"), str):
@@ -417,70 +418,6 @@ def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = fr
     if not shaped:
         result["nothing"] = _text(value.get("nothing"), "nothing")
     return result
-
-
-def failures(verdict: dict) -> list[str] | None:
-    """The failing tests a gate's tail names, or None when it failed without naming any."""
-    if verdict.get("code") == 0:
-        return []
-    tail = verdict.get("tail") or ""
-    # Each line stripped, as `unexplained` reads it: an indented `--- FAIL:` (a go subtest) is named too.
-    found = {next(g for g in m.groups() if g) for line in tail.splitlines() if (m := FAILED.match(line.strip()))}
-    for line in tail.splitlines():
-        if (ids := _node(line)) is not None:
-            if len(ids) > 1:
-                return None   # a node id that could end in two places: two failures could read as one
-            found |= ids
-    return sorted(found) or None
-
-
-def _node(line: str) -> set[str] | None:
-    """The node ids a `FAILED`/`ERROR` line could name, indented or not: its text before a ` - ` or its
-    end that reads as a whole node id. None for any other line — unittest's closing `FAILED (failures=1)`,
-    a wrapper's `ERROR conda.cli...` log — which `unexplained` then compares as text."""
-    kind, _, body = line.strip().partition(" ")
-    if kind not in ("FAILED", "ERROR") or not body or body.startswith("("):
-        return None
-    ends = [i for i in range(len(body)) if body.startswith(" - ", i)] + [len(body)]
-    return {body[:i] for i in ends if NODE.fullmatch(body[:i])} or None
-
-
-SIGNAL = re.compile(r"\b(error|errors|fatal|fail|failed|failure|failures|exception|traceback|panic)\b", re.I)
-
-
-def unexplained(tail: str, baseline: str, trees: tuple) -> list[str]:
-    """The failure-looking lines of a failing run that no failure name covers and the
-    baseline run did not print, compared with both worktree paths blanked and, but on a `FAILED`/`ERROR`
-    line that names no node (`docs/case1.txt` is not `docs/case2.txt`), digits too."""
-    def plain(line: str) -> str:
-        line = line.strip()
-        for tree in trees:
-            line = line.replace(str(tree), "<tree>").replace(Path(tree).as_posix(), "<tree>")
-        return line if line.startswith(("FAILED", "ERROR")) else re.sub(r"\d+", "#", line)
-    printed = {plain(line) for line in baseline.splitlines()}
-    # pytest's closing count line is judged by its counts alone, before any digit-blind match: passed,
-    # skipped and warning counts move with any added test, failed and error counts may not grow.
-    summaries = [_counted(line) for line in baseline.splitlines() if SUMMARY.match(line.strip())]
-    odd = []
-    for line in (line.strip() for line in tail.splitlines()):
-        if SUMMARY.match(line):
-            if (counts := _counted(line)) and (not summaries or any(n > summaries[-1].get(k, 0)
-                                                                    for k, n in counts.items())):
-                odd.append(line)
-        elif SIGNAL.search(line) and not FAILED.search(line) and _node(line) is None and plain(line) not in printed:
-            odd.append(line)
-    return odd
-
-
-# Exactly pytest's count list, its time and its rule (none with `-q`): any other sentence that mentions
-# counts stays an ordinary line for the failure-looking comparison.
-_COUNT = r"\d+ (?:failed|passed|skipped|deselected|xfailed|xpassed|warnings?|errors?|rerun)"
-SUMMARY = re.compile(rf"^(?:=+ )?{_COUNT}(?:, {_COUNT})* in [\d.]+s(?: \(\d+:\d\d:\d\d\))?(?: =+)?$")
-
-
-def _counted(line: str) -> dict:
-    """The failed and error counts of a pytest summary line."""
-    return {kind.rstrip("s"): int(n) for n, kind in re.findall(r"(\d+) (failed|errors?)\b", line)}
 
 
 # -- The phases --------------------------------------------------------------------
@@ -627,7 +564,7 @@ def integrated(w, run: dict) -> dict:
             + json.dumps(list(run["pipelines"].values()), ensure_ascii=False))
     try:
         survey = asked(w, run, "integrate", text, INTEGRATE_PROMPT, "refactor-survey",
-                       lambda v: survey_shape(v, run["mode"], run["map"], path))
+                       lambda v: survey_shape(v, run["mode"], run["map"], path, whole=True))
     except ValueError as exc:
         raise refactor.Stop("format", f"refactor-survey 가 맞지 않다 — {exc}") from exc
     run = w.note(survey=survey)
@@ -720,6 +657,8 @@ def refined(repo: Path, block, source: dict) -> str:
         if block.get("id"):
             given["key"] = r["detail"]["key"]   # refining keeps the card's key
         detail = spec_shape(given, r["mode"], refactor.load(repo.name, r["survey"])["map"], repo)
+        if r["pipeline"] == WHOLE and detail["pipeline"] != WHOLE:   # review of #244: a recheck would lose reports
+            raise ValueError(f"`{target}` 은 저장소 전체 명세다 — `pipeline` 은 `{WHOLE}` 로 둔다")
         for dep in detail["depends"]:
             if not ((specs.load(repo.name, dep) or {}).get("refactor") or {}).get("survey") or dep == block.get("id"):
                 raise ValueError(f"`depends` 의 `{dep}` 은 다른 조사 명세의 id 여야 한다")
@@ -757,15 +696,16 @@ def rechecked(w, run: dict) -> dict:
     parent = refactor.load(w.repo.name, old["survey"]) or {}
     changed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", old["base"],
                         run["base"]], w.repo).stdout.splitlines()
+    reports = parent.get("pipelines") or {}
     text = (f"The repository map:\n{json.dumps(parent['map'], ensure_ascii=False)}\n\nThe pipeline report from the "
-            f"older survey:\n{json.dumps((parent.get('pipelines') or {}).get(old['pipeline']), ensure_ascii=False)}"
+            f"older survey:\n{json.dumps(list(reports.values()) if old['pipeline'] == WHOLE else reports.get(old['pipeline']), ensure_ascii=False)}"
             f"\n\nThe spec:\n{json.dumps(old['detail'], ensure_ascii=False)}\n\nFiles changed since its base "
             f"{old['base']}: {', '.join(changed[:300]) or 'none'}")
     # The card's prerequisites are other specs of its survey, not in this one-spec answer.
     others = frozenset([*old["detail"]["depends"], *(s["key"] for s in (parent.get("survey") or {}).get("specs") or [])])
 
     def shape(value):
-        survey = survey_shape(value, run["mode"], parent["map"], path, others)
+        survey = survey_shape(value, run["mode"], parent["map"], path, others, whole=old["pipeline"] == WHOLE)
         if len(survey["specs"]) > 1 or survey["specs"] and survey["specs"][0]["key"] != old["detail"]["key"]:
             raise ValueError(f"key `{old['detail']['key']}` 의 명세 하나만 돌려줘야 한다")
         return survey
@@ -784,8 +724,8 @@ def rechecked(w, run: dict) -> dict:
         else:
             specs.aside(w.repo.name, spec["id"])
     removed(w.repo, w.rid)
-    return w.note(map=parent["map"], pipelines={k: v for k, v in (parent.get("pipelines") or {}).items()
-                                                if k == old["pipeline"]},
+    whole = WHOLE in (old["pipeline"], *(s["pipeline"] for s in survey["specs"]))
+    return w.note(map=parent["map"], pipelines={k: v for k, v in reports.items() if whole or k == old["pipeline"]},
                   survey=survey, phase="done", state="done", specs=[spec["id"]] if survey["specs"] else [])
 
 

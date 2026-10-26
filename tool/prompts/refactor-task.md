@@ -29,8 +29,9 @@ from a refinement. To split a card, emit two blocks: the original with its `id`
 narrowed to what stays, and the split-off part with `"split_from": "<id>"`, a
 new `key` and `depends` naming the card it must follow, if any. Only a card
 that has not started can change. The server applies the selected mode's rules
-to every block: one named pipeline per spec (in `rework` its files may span
-the pipelines one root cause touches, named in `impact`), files and evidence that exist in the
+to every block: one named pipeline per spec (`all` for the one `preserve`
+spec of the whole repository; in `rework` its files may span the pipelines one
+root cause touches, named in `impact`), files and evidence that exist in the
 checkout, no survey-only spec, and test contract, measure and contract-change
 fields only where the mode allows them. A refinement never moves a change into
 another mode; name it as a prerequisite instead. Merge stays the person's act.

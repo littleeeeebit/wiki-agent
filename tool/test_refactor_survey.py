@@ -106,7 +106,8 @@ def surveyed(repo, tmp_path, monkeypatch):
     monkeypatch.setattr(refactor, "RUNS", tmp_path / "runs")
     monkeypatch.setattr(refactor, "ChatSession", Host)
     Host.made, Host.answers, Host.model, Host.afterword, Host.repair = [], {}, "claude-test-1", "", None
-    query.config("refactor", "proj").update(refactor_mode="preserve", refactor_generation=0)
+    # `simplify`: the default survey's two specs, a shared owner and a pipeline depending on it.
+    query.config("refactor", "proj").update(refactor_mode="simplify", refactor_generation=0)
     return repo
 
 
@@ -114,7 +115,7 @@ ROLES = {"survey": {"model": "claude-test", "effort": ""}, "worker": {"model": "
          "reviewer": {"model": "codex:gpt-review", "effort": "high"}}
 
 
-def start(api, key: str = "survey-req-0001", mode: str = "preserve", roles: dict | None = None):
+def start(api, key: str = "survey-req-0001", mode: str = "simplify", roles: dict | None = None):
     return api.post("/api/refactors", json={"request_id": key, "mode": mode, "roles": roles or ROLES})
 
 
@@ -139,14 +140,14 @@ def test_a_survey_reads_only_its_base_and_ends_in_unstarted_cards(surveyed):
     asked = [h.rest for h in Host.made]
     assert all(not r["write"] and r["tools"] == "Read,Glob,Grep" and r["model"] == "claude-test" for r in asked)
     assert all(h.path == refactor_survey.place(surveyed, run["id"]) for h in Host.made), "never the checkout"
-    assert "Selected mode: `preserve`" in Host.made[0].text and "no `.omm/`" in Host.made[0].text
+    assert "Selected mode: `simplify`" in Host.made[0].text and "no `.omm/`" in Host.made[0].text
     assert not refactor_survey.place(surveyed, run["id"]).exists(), "the survey's worktree is removed"
     assert (_git(surveyed, "rev-parse", "HEAD"), _git(surveyed, "status", "--porcelain")) == (head, tree)
     cards = [specs.load("proj", sid) for sid in run["specs"]]
     assert all(c["state"] == "정리됨" and c["worktree"] is None and c["pr"] is None for c in cards)
     shared, orders = cards
     assert orders["refactor"]["depends"] == [shared["id"]] and orders["refactor"]["base"] == head
-    assert orders["source"]["refactor_mode"] == "preserve" and orders["refactor"]["mode"] == "preserve"
+    assert orders["source"]["refactor_mode"] == "simplify" and orders["refactor"]["mode"] == "simplify"
     assert run["role"] == ROLES["survey"] and orders["refactor"]["roles"] == ROLES, "fixed for every card"
     assert orders["cell"] == {**ROLES["worker"], "fast": False} and orders["reviewer"] == ROLES["reviewer"]
     edit = {"rev": 1, "goal": "Other", "out": [], "done": [], "slug": orders["id"]}
@@ -189,7 +190,7 @@ def test_a_resumed_survey_pins_the_conversation_again_after_the_mode_came_back(s
     Host.answers = {"billing": "{not json"}
     run = settled(api, start(api).json()["id"])
     assert run["state"] == "stopped" and not run["specs"]
-    for mode in ("simplify", "preserve"):   # away and back: the pin goes with the first switch
+    for mode in ("preserve", "simplify"):   # away and back: the pin goes with the first switch
         assert api.post("/api/config/refactor", json={"repo": "proj", "model": "haiku", "effort": "low",
                                                       "refactor_mode": mode}).status_code == 200
     assert "refactor_pinned" not in query.config("refactor", "proj")
@@ -368,22 +369,38 @@ def test_a_map_path_glob_becomes_the_files_it_matches(surveyed):
                                      surveyed)
 
 
-def test_preserve_and_simplify_make_one_spec_per_pipeline_and_rework_one_per_cause(surveyed):
-    # User's choice: a live survey split 22 pipelines into 45 cards of one function each.
+def test_preserve_makes_one_spec_simplify_one_per_pipeline_and_rework_one_per_cause(surveyed):
+    # User's choice: a live survey split 22 pipelines into 45 cards of one function each; per pipeline it
+    # still gave 26 cards of one or two files, so `preserve` is one spec for the repository.
     split = {"coverage": {"scope": "s"}, "specs": [spec("a"), spec("b"), spec("c", "shared:src/shared.py"),
                                                    spec("d", "src/shared.py"), spec("e", "billing")]}   # review round 1: an alias
-    for mode in ("preserve", "simplify"):
-        with pytest.raises(ValueError) as refused:
-            refactor_survey.survey_shape(split, mode, MAP, surveyed)
-        assert [x for x in str(refused.value).splitlines() if "합쳐라" in x] == [
-            f"`orders` 에 명세가 2개다 ['a', 'b'] — {mode} 에서는 파이프라인 하나가 명세 하나다. 그 부채를 한 명세로 합쳐라",
-            f"`shared:src/shared.py` 에 명세가 2개다 ['c', 'd'] — {mode} 에서는 파이프라인 하나가 명세 하나다. "
-            "그 부채를 한 명세로 합쳐라"]
+    with pytest.raises(ValueError) as refused:
+        refactor_survey.survey_shape(split, "simplify", MAP, surveyed)
+    assert [x for x in str(refused.value).splitlines() if "합쳐라" in x] == [
+        "`orders` 에 명세가 2개다 ['a', 'b'] — simplify 에서는 파이프라인 하나가 명세 하나다. 그 부채를 한 명세로 합쳐라",
+        "`shared:src/shared.py` 에 명세가 2개다 ['c', 'd'] — simplify 에서는 파이프라인 하나가 명세 하나다. "
+        "그 부채를 한 명세로 합쳐라"]
+    with pytest.raises(ValueError) as refused:
+        refactor_survey.survey_shape(split, "preserve", MAP, surveyed)
+    assert [x for x in str(refused.value).splitlines() if "합쳐라" in x] == [
+        "preserve 는 저장소 전체가 명세 하나다 — 명세가 5개다. 모든 부채를 `pipeline`: `all` 인 명세 하나로 합쳐라"]
     assert len(refactor_survey.survey_shape(split, "rework", MAP, surveyed)["specs"]) == 5, "two causes, two specs"
+    whole = spec("w", "all", files=["src/orders.py", "src/billing.py", "src/shared.py"])
+    assert refactor_survey.survey_shape({"coverage": {"scope": "s"}, "specs": [whole]}, "preserve", MAP,
+                                        surveyed)["specs"][0]["pipeline"] == "all"
+    with pytest.raises(ValueError, match="pipeline"):
+        refactor_survey.spec_shape(whole, "simplify", MAP, surveyed)
+    # Review round 1: a new survey's one spec naming one pipeline is repaired; an older card's recheck keeps it.
+    narrow = {"coverage": {"scope": "s"}, "specs": [spec("n", files=["src/orders.py", "src/billing.py"])]}
+    with pytest.raises(ValueError, match=r"`specs\[n\]\.pipeline` 은 `all` 여야 한다"):
+        refactor_survey.survey_shape(narrow, "preserve", MAP, surveyed, whole=True)
+    assert refactor_survey.survey_shape(narrow, "preserve", MAP, surveyed)["specs"][0]["pipeline"] == "orders"
+    padded = {"coverage": {"scope": "s"}, "specs": [spec("p", " all ")]}   # review round 2: trimmed as `spec_shape` does
+    assert refactor_survey.survey_shape(padded, "preserve", MAP, surveyed, whole=True)["specs"][0]["pipeline"] == "all"
     # Review round 2: a pipeline and a shared path with the same name are two owners.
     named = {**MAP, "shared": [{"path": "orders", "used_by": ["orders", "billing"]}]}
     pair = {"coverage": {"scope": "s"}, "specs": [spec("p"), spec("s", "shared:orders")]}
-    assert len(refactor_survey.survey_shape(pair, "preserve", named, surveyed)["specs"]) == 2
+    assert len(refactor_survey.survey_shape(pair, "simplify", named, surveyed)["specs"]) == 2
 
 
 def test_dependency_cycles_and_unknown_dependencies_are_refused(surveyed):
