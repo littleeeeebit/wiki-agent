@@ -12,16 +12,18 @@ AI 코딩 에이전트는 세션이 끝나면 배운 것을 잊습니다. 지난
 한국어 사용자를 위해 만들었습니다. 화면, 질문, 선택지는 한국어입니다. 에이전트는
 더 정확하게 일하도록 영어로 생각하고 쓰며, 사람은 번역을 거쳐 한국어로 읽습니다.
 
-자세한 설명은 [개요 페이지](https://littleeeeebit.github.io/wiki-agent/overview.html)에
-층별 탭으로 나눠 두었습니다(저장소 안의 [`overview.html`](overview.html)과 같은 파일).
+왜 이걸 만들었고 어떤 순서로 커졌는지는 [소개 사이트의 이야기](https://littleeeeebit.github.io/wiki-agent/overview.html)에
+있습니다(저장소 안의 [`overview.html`](overview.html)과 [`overview/`](overview/)).
 
-## 세 층
+## 다섯 갈래
 
-| 층 | 하는 일 | 자세히 |
+| 갈래 | 하는 일 | 자세히 |
 | --- | --- | --- |
-| 훅 위키 | 교훈을 규칙 페이지로 적고, 훅이 세션 시작 · 말할 때마다 · 도구 직전 · 턴 끝에 끼어들어 규칙을 읽히거나 위반을 막습니다. 앱 없이도 어느 저장소에나 붙습니다 | [훅 위키 탭](https://littleeeeebit.github.io/wiki-agent/overview.html#p-wiki) |
-| 데스크톱 앱 | 다음 작업을 명세로 정하고, 작업 브랜치에서 에이전트에게 맡기고, 게이트와 리뷰 루프를 거쳐 머지하고, 결정을 기록합니다. 계획 세우기, 리팩터링, 휴대폰 연결도 있습니다 | [앱 탭](https://littleeeeebit.github.io/wiki-agent/overview.html#p-app) |
-| Jev · 개선 | 결정 모델 Jev가 검색과 다음 행동을 고르고(권한은 코드가 쥠), 자가 개선 실험은 재서 나아진 패치만 고릅니다 | [Jev · 개선 탭](https://littleeeeebit.github.io/wiki-agent/overview.html#p-brain) |
+| ① 규칙 훅 | 교훈을 규칙 페이지로 적고, 훅이 세션 시작 · 말할 때마다 · 도구 직전 · 턴 끝에 끼어들어 규칙을 읽히거나 위반을 막습니다. 앱 없이도 어느 저장소에나 붙습니다 | [규칙 훅](https://littleeeeebit.github.io/wiki-agent/overview/wiki.html) |
+| ② 맡기기 | 다음 작업을 대화로 명세 한 장에 정하고, 작업 브랜치에서 에이전트에게 맡기고, 서버가 검사를 다시 돌려 PR을 올립니다. 큰 일의 계획과 리팩터링도 같은 길로 갑니다 | [맡기기](https://littleeeeebit.github.io/wiki-agent/overview/task.html) |
+| ③ 리뷰 | 읽기만 하는 리뷰 칸이 라운드마다 읽고, 머지 허용이 나오면 허용된 그 커밋으로 머지하고 결정을 기록합니다 | [리뷰](https://littleeeeebit.github.io/wiki-agent/overview/review.html) |
+| ④ 묻기 · Jev | 저장소의 문서 · 결정 · 코드를 근거로 답합니다. 검색과 작업 흐름의 갈림길은 결정 모델 Jev가 고르고, 권한은 코드가 쥡니다 | [묻기 · Jev](https://littleeeeebit.github.io/wiki-agent/overview/ask.html) |
+| ⑤ 회고 | 하루의 어긋난 자리를 세어 규칙 후보로 내고, 자가 개선 실험은 재서 나아진 것만 고릅니다 | [회고](https://littleeeeebit.github.io/wiki-agent/overview/improve.html) |
 
 ## 이런 분께 맞습니다
 
@@ -88,14 +90,14 @@ python tool/setup_agents.py --project "../내-프로젝트" --agent both
 - 한 사람이 매일 쓰면서 고치는 프로젝트라 빠르게 바뀝니다.
 - Jev는 TypeSafe API 키가 있어야 돌고, 질문과 검색한 조각이 TypeSafe로 갑니다.
   키가 없어도 나머지 기능은 기본 검색으로 동작합니다.
-- 진행 중인 계획은 [개요 페이지의 진행 중](https://littleeeeebit.github.io/wiki-agent/overview.html#status)과
-  `docs/plans/`에 있습니다.
+- 진행 중인 계획은 [`docs/plans/`](docs/plans/)에 있습니다.
 
 ## 문서
 
 | 알고 싶은 것 | 읽을 곳 |
 | --- | --- |
-| 층별 설명과 시작하기 | [`overview.html`](overview.html) |
+| 왜 만들었나, 다섯 갈래 설명 | [`overview.html`](overview.html), [`overview/`](overview/) |
+| 설치와 실행 순서 한 장 | [`overview/guide.html`](overview/guide.html) |
 | Jev 운영과 되돌리기 | [`docs/jev-maintenance.md`](docs/jev-maintenance.md) |
 | 자가 개선 실험 | [`docs/self-improvement.md`](docs/self-improvement.md) |
 | 앱 설치, 계정, 문제 해결 | [`docs/chat-setup.md`](docs/chat-setup.md) |

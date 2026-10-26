@@ -290,37 +290,43 @@ the same at the four sizes above; the folded 52px rail opens quotas in a bounded
 45px, leaving 550px for the task transcript. Both task and mobile browser checks
 pass without horizontal overflow. No new palette choice is introduced.
 
-## Overview page
+## Overview site
 
-`overview.html` is the page a Korean developer opens from a community link to
-learn what wiki-agent is and how to start. It is laid out for PC first; the
-user named the targets as 16:10, 16:9 and 21:9 (2026-10-26), and asked that
-nothing be tuned for 4:3 or 5:4. Below 761px a phone layout remains.
+`overview.html` and the seven pages under `overview/` are what a Korean
+developer opens from a community link. The user rejected the earlier tabbed
+page on 2026-10-26 — no build-up, Korean nobody speaks, every pipeline mixed
+together, the install guide buried — and chose this shape:
 
-- The root font follows the width: `clamp(15px, 10px + .35vw, 20px)` — 15px
-  up to 1440, about 17px at 1920, 19px at 2560 and 20px at 3440.
-- The page is `max(92rem, 60vw)` wide plus a `clamp(20px, 4vw, 72px)` gutter:
-  about 1540px at 1920, 1744px at 2560 and 2064px at 3440.
-- From 761px each section puts its heading in a sticky left column
-  (15–20rem) and its content in the right one. The bar carries section links
-  with the current one marked.
-- Under 1440px the four focus cards and the four hook moments wrap to two per
-  row, and the five-step flow becomes five rows, because five columns shrink
-  to 150px at 1280. Jev's six-step flow is always rows: six columns measured
-  146px at 1440 and 175px at 1920.
-- Five tabs — 소개, 훅 위키, 앱, Jev·개선, 시작하기 — because one long page of
-  every feature read as scattered (user, 2026-10-26). 소개 fits one screen at
-  every PC target: the hero, a three-layer map whose cards open the layer
-  tabs, and the three start commands. Each other tab shows its own section
-  links in the bar. A hash to any section opens its tab, and the old
-  `#overview` and `#usage` still land.
-- The app tab ends with each focus — next task, refactoring, wiki,
-  retrospective — as what it is and a step graph (`.graph`, branches side by
-  side in `.fork`), so a first-time reader learns what each one does
-  (user, 2026-10-26). The focus cards at the top link down to them.
-- Hangul wraps by word (`word-break: keep-all`).
+- One story page told in date order (the real problems, then what was built
+  for each), five pipeline pages (① rule hooks, ② specs and delegation,
+  ③ review loop and merge, ④ asking the wiki and Jev, ⑤ retrospective and
+  self-improvement) and one usage guide. Every page shares `overview/site.css`.
+- A long-form magazine layout: a left margin column for the chapter number
+  and date, a 38rem body (about 40 Hangul characters a line), sidenotes on
+  the right. Figures, flows and the terminal blocks span the columns. Under
+  1280px the sidenotes drop below the body; under 960px everything is one
+  column.
+- Polite plain Korean (해요체). Jargon is explained where it first appears.
+- Real material only: app captures from a demo server seeded with this
+  repository's own conversations (translation on, no other repository
+  visible), real hook output, the real five rounds of one review loop, the
+  real line counts when refactoring began. Nothing invented to fill space.
+- PC first — the user named 16:10, 16:9 and 21:9, nothing tuned for 4:3 or
+  5:4 — and a phone still reads it.
 
-It reuses the app's palette and type families; no colour was added. Measured
-on 2026-10-26 at 1280×800, 1440×900, 1680×1050, 1920×1200, 1366×768,
-1600×900, 1920×1080, 2560×1440, 2560×1080, 3440×1440 and 390×844: no
-horizontal overflow and no overlap in the bar.
+Type: Pretendard for body and labels, Noto Serif KR 600/700 for headings and
+chapter numbers, IBM Plex Mono for code and English event names, with
+Pretendard as the Hangul fallback inside the mono stack so Korean in a
+terminal block is not set full-width. Eight levels — chapter number, h1, h2,
+h3, lead, body, caption, label. The root follows the width,
+`clamp(16px, 11.5px + .34vw, 19px)`; body is 1.0625rem at 1.85 line height.
+
+Colour reuses the app's paper ground and ink. The accent stays the app's calm
+blue `#3f6b8f` (dark `#8fb6d6`); the user picked it over vermilion and deep
+teal on 2026-10-26 because it stays quiet under the captures and does not
+collide with the red of "고쳐야 해요" or the green of "머지 허용". Faint text
+is `#62686f` on the site, 5.1:1 on the ground, because the app's `#878d95`
+falls under 4.5:1 for 14px captions.
+
+Measured on 2026-10-26 at 390×844, 1280×800, 1920×1080 and 3440×1440: no
+horizontal overflow on any of the seven pages.

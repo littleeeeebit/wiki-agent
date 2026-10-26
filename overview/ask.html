@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>④ 묻기 · Jev · wiki-agent</title>
+<meta name="description" content="저장소의 문서 · 결정 · 코드를 근거로 답하는 위키 포커스와, 검색과 작업 흐름의 갈림길을 고르는 결정 모델 Jev">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Serif+KR:wght@600;700&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-in">
+    <a class="brand" href="../overview.html">wiki-agent</a>
+    <nav class="nav" aria-label="사이트">
+      <a href="../overview.html">이야기</a>
+      <a href="wiki.html">① 규칙 훅</a>
+      <a href="task.html">② 맡기기</a>
+      <a href="review.html">③ 리뷰</a>
+      <a href="ask.html" aria-current="page">④ 묻기 · Jev</a>
+      <a href="improve.html">⑤ 회고</a>
+      <a href="guide.html">사용법</a>
+    </nav>
+    <a class="gh" href="https://github.com/littleeeeebit/wiki-agent">GitHub ↗</a>
+  </div>
+</header>
+
+<main class="sheet">
+
+  <section class="pagehead grid">
+    <span class="num">④</span>
+    <h1>위키에 묻기와 Jev</h1>
+    <p class="lead">앱의 <b>위키</b> 포커스에서 저장소에 대해 물으면, 문서 · 계획 · 결정 기록 · 코드를 근거로 답해요. 답에 나온 파일 이름을 누르면 그 자리가 열려요. 어디서 찾을지, 찾은 게 쓸모 있는지 같은 갈림길은 결정 모델 Jev가 골라요.</p>
+    <div class="solves"><span class="lab">이걸로 푸는 문제</span>“이거 전에 어떻게 정했더라”를 물으면 에이전트가 그럴듯하게 지어내기도 했어요. 그리고 기능이 늘면서 언제 검색하고 언제 바로 할지 같은 갈림길이 코드 곳곳에 흩어졌어요.</div>
+  </section>
+
+  <section class="chapter grid" id="answer">
+    <div class="side"><span class="lab">묻기</span></div>
+    <h2>답에는 근거가 붙어요</h2>
+    <figure class="shot mid">
+      <img src="img/ask-answer.webp" width="1374" height="428" alt="destructive-git-guards 규칙이 뭐라고 하나라는 질문과, craft/destructive-git-guards.md 16번째 줄을 근거로 단 답" loading="lazy">
+      <figcaption>“destructive-git-guards 규칙이 뭐라고 하나?”라는 질문에 규칙 페이지의 16번째 줄을 근거로 답했어요. 에이전트는 영어로 쓰고, 화면에는 한국어 번역이 덮여요.</figcaption>
+    </figure>
+    <p class="after">“왜 안 되지?”라고 물으면 코드보다 실제로 돌아간 기록(로그, 추적, 구조 문서)을 먼저 봐요. 코드는 일어날 수 있는 일을, 기록은 실제로 일어난 일을 보여 주니까요. 확인하지 못한 추측은 추측이라고 표시해요.</p>
+    <p>대화가 길어져 문맥을 비우면, 그 대화의 원문과 요약이 저장소의 <code>.wiki/memory/</code>에 남아요. 다음 질문에서는 그것도 근거가 돼요.</p>
+  </section>
+
+  <section class="chapter grid" id="jev">
+    <div class="side"><span class="lab">Jev</span></div>
+    <h2>Jev는 고르기만 해요</h2>
+    <p>Jev는 TypeSafe가 만든 결정 모델(<code>jev-1.13.0</code>)이에요. 글을 쓰는 모델이 아니라, 코드가 미리 내놓은 후보 중에서 하나를 고르는 모델이에요. 원래는 작업 흐름의 갈림길이 많아지면서 어떤 분기를 언제 불러야 할지가 흐려져서 들였어요. 위키 질문의 검색 판단부터 맡기고, 다음 날 작업 흐름으로 넓혔어요.</p>
+    <table class="plain mid">
+      <thead><tr><th>자리</th><th>Jev가 고르는 것</th><th>코드가 쥐고 있는 것</th></tr></thead>
+      <tbody>
+        <tr><td>검색 경로</td><td>검색할지 바로 답할지, 어느 출처에서 찾을지</td><td>내놓을 출처 목록, 바로 답할 수 있는 조건</td></tr>
+        <tr><td>근거 판정</td><td>찾은 조각이 쓸모 있는지, 서로 부딪히는지</td><td>후보 목록, 허용량</td></tr>
+        <tr><td>충분한지</td><td>이걸로 충분한지, 무엇을 더 찾을지</td><td>보강 순서, 최대 3라운드</td></tr>
+        <tr><td>작업 흐름</td><td>바로 시작할지 근거부터 모을지 되물을지, 검사를 더 돌릴지, 리뷰 지적을 바로 고칠지</td><td>허용된 동작 목록, 권한</td></tr>
+      </tbody>
+    </table>
+    <p class="pull">무엇을 할 수 있는지는 늘 코드가 정해요. Jev는 규칙을 끄거나 권한을 넓힐 수 없어요.</p>
+    <p>Jev가 확신하지 못하거나, 연결이 끊기거나, 예산을 다 쓰면 그걸 “아니다”로 처리하지 않아요. 기본 검색으로 돌아가 답하고, 의미 판정을 못 했다는 걸 밝혀요. 모든 단계가 마감 시각 · 호출 수 · 토큰을 한 예산으로 나눠 써요.</p>
+    <aside class="note">Jev는 영어에서 가장 정확해요. 한국어 질문으로 시험했을 때 판단이 흔들려서, Jev에게 가는 질문과 기준은 전부 영어로 써요.</aside>
+  </section>
+
+  <section class="chapter grid" id="modes">
+    <div class="side"><span class="lab">켜고 끄기</span></div>
+    <h2>처음엔 기록만 하고, 켜는 건 직접 해요</h2>
+    <ol class="flow mid">
+      <li><b>꺼짐</b><span class="who">키 없음</span><span>에이전트가 직접 저장소를 찾아 읽고 답해요</span></li>
+      <li><b>기록만</b><span class="who">shadow · 기본</span><span>에이전트가 답하고, Jev는 옆에서 자기 판단만 남겨요</span></li>
+      <li class="end"><b>켜짐</b><span class="who">active</span><span>Jev가 검색 경로를 고르고 근거를 걸러 묶어요. 답의 인용이 근거와 맞는지 검사한 뒤에 내보내요</span></li>
+    </ol>
+    <p class="after"><code>TYPESAFE_API_KEY</code>가 없으면 꺼져 있고, 넣으면 기록만 하는 상태로 시작해요. 실제로 고르게 하려면 설정에서 켜요. 되돌릴 때는 <code>python tool/eval/rollout.py off</code>로 바로 끄고, 지식 그래프 탐색만 끄려면 <code>WIKI_GRAPH_RETRIEVAL=off</code>를 써요.</p>
+    <p>켜기 전에 고정된 영어 평가 세트로 게이트 일곱 개를 모두 통과했어요. 기록해 둔 실행을 지금 코드가 똑같이 결정하는지, 돈을 쓰지 않고 다시 돌려 볼 수도 있어요.</p>
+  </section>
+
+  <section class="chapter grid" id="sources">
+    <div class="side"><span class="lab">재료</span></div>
+    <h2>찾는 곳은 이 저장소 안이에요</h2>
+    <p>검색 재료는 저장소의 문서, 결정 기록, 대화 메모리, 공통 규칙, 그리고 채택한 논문과 웹 문서예요. 이걸 조각으로 나눠 로컬 데이터베이스에 넣고, 한국어는 미리 영어로 맞춰 둬요. 찾을 때는 키워드 검색과 의미 검색을 섞고, 지식 그래프를 따라 몇 걸음만 더 넓혀요.</p>
+    <p>그래프의 관계는 후보를 찾는 데만 써요. 두 문서가 이어져 있다고 내용이 맞다는 증거가 되지는 않아요. 다른 저장소의 조각은 절대 섞이지 않아요.</p>
+  </section>
+
+  <nav class="pager" aria-label="앞뒤 장">
+    <a href="review.html"><span class="lab">← 이전</span><b>③ 리뷰를 돌려 머지하기</b></a>
+    <a class="next" href="improve.html"><span class="lab">다음 →</span><b>⑤ 하루를 돌아보고 고치기</b></a>
+  </nav>
+</main>
+
+</body>
+</html>
