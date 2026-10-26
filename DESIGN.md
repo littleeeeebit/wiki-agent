@@ -289,3 +289,48 @@ the same at the four sizes above; the folded 52px rail opens quotas in a bounded
 240px popover. On a 400×800 phone the requested fixed diff disclosure consumes
 45px, leaving 550px for the task transcript. Both task and mobile browser checks
 pass without horizontal overflow. No new palette choice is introduced.
+
+## Overview site
+
+`overview.html` and the seven pages under `overview/` are what a Korean
+developer opens from a community link. The user rejected the earlier tabbed
+page on 2026-10-26 — no build-up, Korean nobody speaks, every pipeline mixed
+together, the install guide buried — and chose this shape:
+
+- One story page told in date order (the real problems, then what was built
+  for each), five pipeline pages (① rule hooks, ② specs and delegation,
+  ③ review loop and merge, ④ asking the wiki and Jev, ⑤ retrospective and
+  self-improvement) and one usage guide. Every page shares `overview/site.css`.
+- A two-column PC layout: prose on the left, the capture, terminal output,
+  table or note it talks about on the right (`--split: 1fr 1.25fr`, one
+  shared gap). Every block starts on the same left edge as the top bar, and
+  every pair splits on the same line, so the eye never hunts for where the
+  text went. Step flows and capture strips run the full width below. A
+  section with no picture sets its paragraphs side by side on the same
+  split. Under 1280px flows turn vertical; under 960px everything is one
+  column. The earlier single 38rem centred column was dropped on 2026-10-26:
+  the user read it as a phone layout stretched across a PC screen.
+- Polite plain Korean (해요체). Jargon is explained where it first appears.
+- Real material only: app captures from a demo server seeded with this
+  repository's own conversations (translation on, no other repository
+  visible), real hook output, the real five rounds of one review loop, the
+  real line counts when refactoring began. Nothing invented to fill space.
+- PC first — the user named 16:10, 16:9 and 21:9, nothing tuned for 4:3 or
+  5:4 — and a phone still reads it.
+
+Type: Pretendard for body and labels, Noto Serif KR 600/700 for headings and
+chapter numbers, IBM Plex Mono for code and English event names, with
+Pretendard as the Hangul fallback inside the mono stack so Korean in a
+terminal block is not set full-width. Eight levels — chapter number, h1, h2,
+h3, lead, body, caption, label. The root follows the width,
+`clamp(16px, 11.5px + .34vw, 19px)`; body is 1.0625rem at 1.8 line height.
+
+Colour reuses the app's paper ground and ink. The accent stays the app's calm
+blue `#3f6b8f` (dark `#8fb6d6`); the user picked it over vermilion and deep
+teal on 2026-10-26 because it stays quiet under the captures and does not
+collide with the red of "고쳐야 해요" or the green of "머지 허용". Faint text
+is `#62686f` on the site, 5.1:1 on the ground, because the app's `#878d95`
+falls under 4.5:1 for 14px captions.
+
+Measured on 2026-10-26 at 390×844, 1280×800, 1920×1080 and 3440×1440: no
+horizontal overflow on any of the seven pages.

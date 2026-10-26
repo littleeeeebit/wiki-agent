@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>② 맡기기 · wiki-agent</title>
+<meta name="description" content="할 일 후보를 받고, 되묻는 선택지에 답해 명세를 정하고, 작업 브랜치에서 에이전트에게 맡겨 PR까지. 큰 일의 계획과 리팩터링도 같은 길로">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Serif+KR:wght@600;700&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-in">
+    <a class="brand" href="../overview.html">wiki-agent</a>
+    <nav class="nav" aria-label="사이트">
+      <a href="../overview.html">이야기</a>
+      <a href="wiki.html">① 규칙 훅</a>
+      <a href="task.html" aria-current="page">② 맡기기</a>
+      <a href="review.html">③ 리뷰</a>
+      <a href="ask.html">④ 묻기 · Jev</a>
+      <a href="improve.html">⑤ 회고</a>
+      <a href="guide.html">사용법</a>
+    </nav>
+    <a class="gh" href="https://github.com/littleeeeebit/wiki-agent">GitHub ↗</a>
+  </div>
+</header>
+
+<main class="sheet">
+
+  <section class="pagehead split">
+    <div class="txt">
+      <span class="num">②</span>
+      <h1>할 일을 정하고 맡기기</h1>
+      <p class="lead">앱의 <b>다음 작업</b> 포커스에서 할 일을 대화로 정하면 명세 카드 한 장이 나와요. [시작]을 누르면 에이전트가 작업 브랜치에서 그 명세대로 일하고, 서버가 검사를 다시 돌려 통과해야 PR이 올라가요.</p>
+    </div>
+    <div class="solves"><span class="lab">이걸로 푸는 문제</span>일을 넘길 때 질문 하나와 답 하나만 건너가서, 대화에서 바꾼 결정이 사라졌어요. 끝났다고 볼 기준도 없어서, 에이전트가 “다 했어요”라고 하면 그걸로 끝이었어요.</div>
+  </section>
+
+  <section class="chapter" id="spec">
+    <p class="kick"><span class="lab">정하기</span></p>
+    <h2>대화로 명세 한 장을 정해요</h2>
+    <div class="cols">
+      <p class="txt">이 포커스의 에이전트는 일을 직접 하지 않아요. 일할 세션에게 넘길 명세를 사람과 함께 정할 뿐이에요. 무엇을 할지 아직 모르겠으면 후보를 달라고 하고, 하고 싶은 일이 있으면 그냥 말하면 돼요.</p>
+      <p class="txt">명세는 요청 전체를 덮어야 해요. 사람이 직접 해야 하는 부분도 완료 조건에 남겨요. 한 PR에 넘칠 만큼 크면 조각마다 한 장씩 나오고, 조각마다 따로 작업 브랜치를 받아요.</p>
+    </div>
+    <div class="shots full">
+      <figure class="shot">
+        <span class="lab step">1 · 후보</span>
+        <a class="zoom" href="img/task-candidates.webp"><img src="img/task-candidates.webp" width="1328" height="634" alt="다음 작업 후보 세 개. 각 후보에 이유와 출처 문서의 행이 붙어 있다" loading="lazy"></a>
+        <figcaption>서버가 계획의 남은 단계, 열린 PR, 최근 결정, 검사 경고, 리뷰가 남긴 지적을 모아 붙이면, 에이전트가 후보를 3~5개 내요. 후보마다 출처가 붙어요.</figcaption>
+      </figure>
+      <figure class="shot">
+        <span class="lab step">2 · 되묻기</span>
+        <a class="zoom" href="img/task-choices.webp"><img src="img/task-choices.webp" width="1328" height="1134" alt="고른 후보의 범위를 묻는 선택지. 1번에 추천 표시가 있다" loading="lazy"></a>
+        <figcaption>하나를 고르면 범위, 끝났다고 볼 기준, 건드리지 않을 것을 선택지로 되물어요. 추천이 맨 앞에 오고, 대화에서 이미 정한 건 다시 묻지 않아요.</figcaption>
+      </figure>
+      <figure class="shot">
+        <span class="lab step">3 · 명세</span>
+        <a class="zoom" href="img/task-spec.webp"><img src="img/task-spec.webp" width="1374" height="622" alt="명세 카드와 그 아래 PR #15가 올라가고 머지됐다는 기록" loading="lazy"></a>
+        <figcaption>목표 · 완료 조건 · 제외가 담긴 명세 카드예요. 이 카드는 실제로 PR #15가 되어 머지됐어요(2026-09-25).</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="chapter" id="start">
+    <p class="kick"><span class="lab">맡기기</span></p>
+    <h2>[시작]을 누르면 PR까지 가요</h2>
+    <ol class="flow full">
+      <li><b>작업 브랜치</b><span>선택한 저장소에 작업 브랜치와 작업트리(따로 꺼낸 작업 폴더)를 만들어요</span></li>
+      <li><b>에이전트가 일하기</b><span>명세를 지시문으로 받은 Claude Code나 Codex가 그 폴더에서 일해요</span></li>
+      <li><b>마무리 보고</b><span>끝내기 전에 중간 테스트를 정리하고 보고해요. 빠뜨리면 서버가 한 번 더 요청해요</span></li>
+      <li><b>게이트</b><span>서버가 저장소의 검사 명령을 직접 다시 돌려요</span></li>
+      <li class="end"><b>PR</b><span>통과해야 올라가요. 그다음은 <a href="review.html">③ 리뷰</a>로 이어져요</span></li>
+    </ol>
+    <div class="split">
+      <p class="txt">핵심은 에이전트의 “통과했어요”를 믿지 않는다는 거예요. 게이트는 서버가 돌린 결과만 봐요. 저장소가 검사를 더 등록해 뒀다면, 이번에 바뀐 파일에 맞는 검사를 Jev가 하나 더 골라 PR 전에 돌려요. 실패하면 PR은 올라가지 않아요.</p>
+      <p class="vis warn">작업 에이전트는 작업 브랜치에서 전체 권한으로 일해요. 파일을 쓸 때마다 허락을 기다리지 않아요. 중요한 변경은 커밋해 두고 쓰세요. 모델 사용량은 각자의 CLI 계정에서 나가요.</p>
+    </div>
+  </section>
+
+  <section class="chapter" id="plan">
+    <p class="kick"><span class="lab">큰 일</span></p>
+    <h2>큰 일은 계획 PR부터 올려요</h2>
+    <div class="split">
+      <div class="txt">
+        <p>한두 PR로 끝나지 않을 일은 바로 맡기지 않고 계획부터 세워요. 대화창 위의 [계획 세우기]가 세 역할로 나눠 도와요.</p>
+        <p>시작하기 전에 시간 · 호출 수 · 토큰 한도를 정해요. 계획 PR이 승인돼도 구현이나 머지가 저절로 시작되지는 않아요. 머지는 사람이 해요.</p>
+      </div>
+      <table class="vis plain">
+        <thead><tr><th>역할</th><th>하는 일</th></tr></thead>
+        <tbody>
+          <tr><td>계획자</td><td>계획과 결정을 읽고, 범위를 바꿀 땐 선택지로 확인해요. 웹 조사 출처를 붙여 계획 문서를 쓰고 PR을 올려요</td></tr>
+          <tr><td>수정자</td><td>리뷰 지적을 받아 계획 문서를 고쳐요</td></tr>
+          <tr><td>리뷰어</td><td>코드가 아니라 계획 문서의 기준으로 따로 읽어요</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="chapter" id="refactor">
+    <p class="kick"><span class="lab">리팩터링</span></p>
+    <h2>코드 빚은 동작을 그대로 두고 갚아요</h2>
+    <div class="split">
+      <div class="txt">
+        <p>에이전트가 빠르게 쓴 코드는 한 번에 리뷰하기 어려울 만큼 커져요. <b>리팩터링</b> 포커스는 목적 하나를 골라 저장소를 읽기만 하며 조사하고, 실행할 명세 카드를 만들어요. 카드는 위의 보통 작업처럼 돌지만, 테스트에 관한 약속이 하나 더 붙어요.</p>
+        <p>조사는 사람의 작업 폴더가 아니라 따로 꺼낸 기준 커밋을 읽어요. 조사 중에 브랜치를 바꾸거나 파일을 고쳐도 결과가 흔들리지 않아요. 조사는 카드를 만들 뿐이고, 카드를 시작하는 건 사람이에요. 머지할 때마다 파일이 기록보다 커지지 못하게 하는 래칫 이야기는 <a href="../overview.html#ch6">이야기 6장</a>에 있어요.</p>
+      </div>
+      <table class="vis plain">
+        <thead><tr><th>목적</th><th>하는 일</th><th>테스트 약속</th></tr></thead>
+        <tbody>
+          <tr><td>동작 보존</td><td data-label="하는 일">큰 함수와 모듈을 책임에 따라 나눠요. 동작도, 알려진 버그도 바꾸지 않아요</td><td data-label="테스트 약속">첫 턴은 테스트만 써요. 서버가 손대지 않은 코드에서 통과를 확인해 얼려 둔 뒤에 리팩터링을 시켜요</td></tr>
+          <tr><td>복잡도 정리</td><td data-label="하는 일">이미 보장된 곳의 중복 검사, 안 쓰는 호환 분기, 낡은 테스트를 걷어 내요. 인증 · 입력 · 동시성 경계의 방어는 남겨요</td><td data-label="테스트 약속">바꿀 테스트를 미리 밝혀요. 밝히지 않은 기존 테스트는 그대로여야 해요</td></tr>
+          <tr><td>구조 · 성능</td><td data-label="하는 일">의존 순환과 측정된 병목을 고쳐요. 같은 조건에서 잰 개선 없이 캐시나 층을 덧붙이지 않아요</td><td data-label="테스트 약속">성능 카드는 측정 명령이 있어야 시작돼요. 같은 조건에서 전과 후를 재요</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3 class="full">조사는 이렇게 흘러가요</h3>
+    <ol class="flow">
+      <li><b>기준선</b><span>기준 커밋을 따로 꺼내 검사를 한 번 돌리고 결과를 적어 둬요</span></li>
+      <li><b>지도</b><span>저장소를 기능 흐름(파이프라인) 단위로 나눠요</span></li>
+      <li><b>흐름마다 읽기</b><span>흐름 하나씩 읽기만 해서 빚과 증거를 적어요</span></li>
+      <li><b>카드 만들기</b><span>실행할 명세 카드와 카드 사이의 순서를 내요. 서버가 형식과 순환을 검사해요</span></li>
+      <li><b>카드 [시작]</b><span>보통 작업처럼 돌아요. 앞 카드가 머지 전이면 시작하지 않아요</span></li>
+      <li class="end"><b>기준선과 비교</b><span>새 실패가 하나라도 있으면 PR을 열지 않아요</span></li>
+    </ol>
+  </section>
+
+  <nav class="pager" aria-label="앞뒤 장">
+    <a href="wiki.html"><span class="lab">← 이전</span><b>① 규칙을 먼저 읽히는 훅</b></a>
+    <a class="next" href="review.html"><span class="lab">다음 →</span><b>③ 리뷰를 돌려 머지하기</b></a>
+  </nav>
+</main>
+
+</body>
+</html>

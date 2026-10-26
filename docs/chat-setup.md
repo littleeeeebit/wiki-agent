@@ -56,14 +56,14 @@ Even if the wiki is in a separate location, it is displayed in the list. The wik
 
 ## 3. Running
 
-Before running for the first time and after modifying rules, generate a map file. Personal records are not needed.
+The install already wrote the map file (`graph.json`). After modifying hub rules, generate it again; personal records are not needed.
 
 ```powershell
 # Windows
 .venv/Scripts/python tool/graph.py
 ```
 
-On macOS/Linux, use `.venv/bin/python tool/graph.py`.
+On macOS/Linux, use `.venv/bin/python tool/graph.py`. Other repositories' maps are drawn when the map tab opens and need no file.
 
 The window is wrapped with Tauri. To build it for the first time, Rust must be present (<https://rustup.rs>).
 
