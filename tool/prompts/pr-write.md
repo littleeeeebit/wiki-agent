@@ -26,23 +26,26 @@ Write one `pr-summary` fenced JSON block, in Korean, with exactly these keys:
 - `context` — one or two sentences on what this part of the product does,
   for someone who has never seen it. Name the feature by what it does for a
   user (`컴패니언이 먼저 말을 거는 기능`), not by a module or function.
-- `changes` — two to five lines, each a difference the reader can picture.
-  One line per idea, not one per file.
+- `changes` — two to five entries, each `{"what": ..., "where": [...]}`.
+  `what` is a difference the reader can picture, one idea per entry, not one
+  per file. `where` points at the code that sentence describes, right after
+  it: the backticked file, function or test, as it appears in the diff, so a
+  reader can go from the claim straight to the place. Leave it empty only when
+  the sentence names no place, such as what was deliberately left unchanged.
 - `behavior` — what a user or a caller notices, before → after. When it is
   a refactor, say `없음` and what stays the same.
 - `why` — one or two sentences: the problem this removes or the risk it
   closes.
 - `verify` — how you know it works, in plain words: what the tests pin, what
   you ran and saw. One line each.
-- `code` — two to six lines for the reader who opens the code next. Each line
-  is a backticked name that appears in the diff, then what it does.
 
 ## Rules the server checks
 
-- Every prose field (all but `code`) is Korean and holds no code name at all:
-  nothing in backticks, no identifier with `_`, no file name, no path. Say
-  what the thing does instead. Code names go only in `code`.
-- Every backticked name in `code` appears in the diff.
+- Every prose field (everything but `where`) is Korean and holds no code name
+  at all: nothing in backticks, no identifier with `_`, no file name, no path.
+  Say what the thing does instead. Code names go only in `where`.
+- Every `where` entry holds a backticked name, and every such name appears in
+  the diff.
 - Describe, never instruct: no `하십시오`, `하라`, `할 것`.
 - Write in the plain past or present (`합쳤다`, `기록한다`), one voice for the
   whole block.
@@ -57,6 +60,7 @@ failure goes up as files and checks only.
    know, explain the term or drop it.
 2. Does `behavior` answer "will anyone notice?" in one line?
 3. Is every domain word explained at its first use?
+4. Can a reader go from each `what` straight to its code through `where`?
 
 ## What not to write
 
@@ -89,11 +93,12 @@ The diff: `routes_proactive.py` (+33 −36), two new tests in
 ```pr-summary
 {"title": "선제 발화 자격 판정을 한 곳으로 모음 (동작 변화 없음)",
  "context": "컴패니언은 사용자가 말하기 전에 먼저 말을 걸 수 있다(선제 발화). 말을 걸기 전에 '지금 걸어도 되는가'를 판정하는데, 이 판정을 미리 확인만 하는 요청과 실제로 말을 거는 요청 두 곳에서 한다.",
- "changes": ["두 요청이 같은 판정 순서(사용자 설정 확인 → 화면 상황 때문에 거절 → 결과 기록)를 각자 복사해 갖고 있던 것을 하나로 합쳤다.", "미리 확인하는 요청만 '마지막으로 확인한 시각'을 남기는 차이는 그대로 두었다."],
+ "changes": [{"what": "두 요청이 같은 판정 순서(사용자 설정 확인 → 사용자가 공유한 화면을 보고 지금은 말을 걸지 않기로 함 → 결과 기록)를 각자 복사해 갖고 있던 것을 하나로 합쳤다.", "where": ["`routes_proactive.py`의 `_evaluate_proactive_eligibility`"]},
+             {"what": "미리 확인하는 요청만 '마지막으로 확인한 시각'을 남기는 차이는 합친 판정 밖에 그대로 두었다.", "where": ["`routes_proactive.py`의 `proactive_check`"]},
+             {"what": "두 요청이 같은 입력에 같은 판정과 같은 기록을 내는지 보는 테스트를 추가했다.", "where": ["`test_check_and_trigger_preserve_eligibility_inputs_and_recording_order`"]}],
  "behavior": "없음. 두 요청의 응답과 남기는 기록은 바뀌기 전과 같다.",
  "why": "같은 판정이 두 벌 있어서, 한쪽만 고치면 확인 결과와 실제 동작이 어긋날 수 있었다.",
- "verify": ["기존 테스트는 한 줄도 바꾸지 않았고 모두 통과했다.", "두 요청이 같은 입력에 같은 판정과 같은 기록을 내는지, 설정 거절과 화면 거절이 겹칠 때 설정 쪽 사유가 남는지 보는 테스트 2개를 추가했다."],
- "code": ["`_evaluate_proactive_eligibility` — 합쳐진 판정 함수", "`record_check` — 확인 요청에서만 부르는 시각 기록, 판정 함수 밖에 둔다", "`test_check_and_trigger_preserve_eligibility_inputs_and_recording_order` — 두 요청의 판정 입력과 순서를 고정"]}
+ "verify": ["기존 테스트는 한 줄도 바꾸지 않았고 모두 통과했다.", "설정 거절과 화면 거절이 겹칠 때 설정 쪽 사유가 남는지도 테스트로 확인했다."]}
 ```
 
 ### 2. A bug fix — users notice
@@ -111,11 +116,12 @@ The diff: `auth/login.py` (+21 −4), `auth/session.py` (+9), three tests.
 ```pr-summary
 {"title": "로그인하면 보던 페이지로 돌아간다",
  "context": "로그인이 필요한 페이지를 열면 로그인 화면으로 보내고, 로그인이 끝나면 다시 서비스로 들여보낸다.",
- "changes": ["로그인 화면으로 보낼 때 원래 열려던 주소를 서버 쪽 세션에 적어 두고, 로그인이 끝나면 그 주소로 돌려보낸다.", "다른 사이트 주소는 돌아갈 곳으로 받지 않는다. 그런 주소가 오면 첫 화면으로 보낸다."],
+ "changes": [{"what": "로그인 화면으로 보낼 때 원래 열려던 주소를 서버 쪽 세션에 적어 둔다.", "where": ["`auth/session.py`의 `remember_target`"]},
+             {"what": "로그인이 끝나면 적어 둔 주소로 돌려보낸다.", "where": ["`auth/login.py`의 `login_done`"]},
+             {"what": "다른 사이트 주소는 돌아갈 곳으로 받지 않고, 그런 주소가 오면 첫 화면으로 보낸다.", "where": ["`auth/login.py`의 `safe_target`"]}],
  "behavior": "전에는 로그인 뒤 항상 첫 화면으로 갔다. 이제 보던 페이지로 돌아간다.",
  "why": "공유받은 링크를 열면 로그인 뒤 그 링크를 다시 찾아 들어가야 했다.",
- "verify": ["로그인 뒤 원래 페이지로 돌아가는 경우, 다른 사이트 주소가 거절되는 경우, 돌아갈 주소가 없는 경우를 테스트 3개로 확인했다."],
- "code": ["`remember_target` — 돌아갈 주소를 세션에 적는다", "`safe_target` — 같은 사이트 안의 주소만 통과시킨다", "`login_done` — 로그인 성공 뒤 돌려보낼 곳을 고른다"]}
+ "verify": ["로그인 뒤 원래 페이지로 돌아가는 경우, 다른 사이트 주소가 거절되는 경우, 돌아갈 주소가 없는 경우를 테스트 3개로 확인했다."]}
 ```
 
 ### 3. A new setting — callers notice
@@ -133,11 +139,11 @@ The diff: `tts/synth.py` (+27 −3), `config/defaults.toml` (+2), two tests.
 ```pr-summary
 {"title": "음성 합성이 늦으면 8초 뒤 준비된 인사말로 대신한다",
  "context": "컴패니언의 대답은 글로 만든 뒤 음성으로 합성해 들려준다. 합성 서버가 느려지면 지금까지는 사용자가 아무 소리도 없이 기다렸다.",
- "changes": ["합성에 시간 제한을 두었다. 기본값은 8초이고 설정 파일에서 바꿀 수 있다.", "시간이 넘으면 미리 녹음해 둔 짧은 인사말을 대신 들려주고, 원래 대답은 버린다."],
+ "changes": [{"what": "합성에 시간 제한을 두었다. 기본값은 8초이고 설정 파일에서 바꿀 수 있다.", "where": ["`config/defaults.toml`의 `timeout_seconds`"]},
+             {"what": "시간이 넘으면 미리 녹음해 둔 짧은 인사말을 대신 들려주고, 원래 대답은 버린다.", "where": ["`tts/synth.py`의 `synthesize`"]}],
  "behavior": "합성이 8초를 넘을 때만 달라진다. 침묵 대신 준비된 인사말이 나온다. 보통 속도에서는 그대로다.",
  "why": "지난주 기록에서 합성이 멈춘 듯 길어진 경우가 있었고, 그동안 사용자는 앱이 멈춘 줄 알았다.",
- "verify": ["일부러 느리게 만든 합성기로 8초 안에 인사말이 나오는지, 정상 속도에서는 원래 대답이 나오는지 테스트 2개로 확인했다."],
- "code": ["`synthesize` — 시간 제한을 걸고 넘으면 대체 음성을 돌려준다", "`timeout_seconds` — 설정 파일의 새 값, 기본 8"]}
+ "verify": ["일부러 느리게 만든 합성기로 8초 안에 인사말이 나오는지, 정상 속도에서는 원래 대답이 나오는지 테스트 2개로 확인했다."]}
 ```
 
 ## Now

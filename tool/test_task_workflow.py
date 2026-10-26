@@ -183,7 +183,7 @@ def test_agent_spec_update_and_completion_open_or_reuse_pr(repo):
         assert saved["rev"] == 2 and saved["pr"]["number"] == 7
         assert remote.pushes() == 1 and remote.created()
         # The revised goal is the worker's plan; the PR says what the worker's summary says.
-        assert "Handle an edge case" not in remote.body and "- 로그인 뒤 원래 열려던 페이지로 돌려보낸다." in remote.body
+        assert "Handle an edge case" not in remote.body and "- 로그인 뒤 원래 열려던 페이지로 돌려보낸다.\n\n" in remote.body
         run = work._runs[str(repo)]
         with patch.object(specs, "existing_pr", return_value=(7, "https://github.com/o/proj/pull/7")):
             remote.calls.clear()

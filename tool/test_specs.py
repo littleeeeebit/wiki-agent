@@ -154,8 +154,8 @@ class Remote:
 
 
 TOLD = {"title": "로그인 뒤 원래 페이지로 돌아간다", "context": "로그인이 필요한 페이지는 로그인 화면을 거친다.",
-        "changes": ["로그인 뒤 원래 열려던 페이지로 돌려보낸다."], "behavior": "전에는 첫 화면으로 갔다.",
-        "why": "공유받은 링크를 다시 찾아야 했다.", "verify": ["돌아가는 경우를 테스트했다."], "code": []}
+        "changes": [{"what": "로그인 뒤 원래 열려던 페이지로 돌려보낸다.", "where": []}], "behavior": "전에는 첫 화면으로 갔다.",
+        "why": "공유받은 링크를 다시 찾아야 했다.", "verify": ["돌아가는 경우를 테스트했다."]}
 # The answer to the server's request for the PR's text, right before the PR (`specs.pr_turn`).
 SUMMARIZED = "```pr-summary\n" + json.dumps(TOLD, ensure_ascii=False) + "\n```\n"
 SWEPT = "```test-cleanup\n" + json.dumps({"audited": ["test_a.py"], "removed": []}) + "\n```\n\n"
@@ -1014,7 +1014,7 @@ def test_a_code_only_commit_after_the_hook_rebuilt_the_indexes_leaves_them_the_h
 
 def test_the_pr_body_gives_harvest_its_what_and_why():
     spec = {"id": "fix-login", "repo": "proj", "goal": "Return to the page after login",
-            "summary": dict(TOLD, changes=["로그인 뒤 원래 페이지로 돌아간다"], why="화면은 기록을 모른다."),
+            "summary": dict(TOLD, changes=[{"what": "로그인 뒤 원래 페이지로 돌아간다", "where": []}], why="화면은 기록을 모른다."),
             "decisions": [{"what": "Run it on the server", "why": "The screen has no history", "rejected": "history"}],
             "report": [{"item": PASS, "pass": True, "evidence": "git version 2"}],
             "gate": {"cmd": PASS, "tail": "git version 2"},
@@ -1034,9 +1034,9 @@ def test_the_pr_goes_up_as_the_worker_wrote_it_for_a_reader_new_to_the_code(repo
     the prose; a summary that fails goes back once with the reasons."""
 
     goal = "Add one private helper. Replace both duplicated sequences."
-    told = dict(TOLD, code=["`code.py` — 돌아갈 주소를 기억한다"])
+    told = dict(TOLD, changes=[{"what": "돌아갈 주소를 기억한다.", "where": ["`code.py`"]}])
     # The first answer narrated code, as #262's worker did, and cited a name the diff lacks.
-    narrated = dict(told, changes=["`login_done`이 `remember_target`을 부른다"], code=["`nope.py` — 없다"])
+    narrated = dict(told, changes=[{"what": "`login_done`이 `remember_target`을 부른다", "where": ["`nope.py`"]}])
 
     def committed(path, halt):
         (path / "code.py").write_text("back = True\n", encoding="utf-8")
@@ -1058,21 +1058,21 @@ def test_the_pr_goes_up_as_the_worker_wrote_it_for_a_reader_new_to_the_code(repo
     assert "a code name in prose (`login_done`)" in heard[-1] and "`nope.py` is not in this branch's diff" in heard[-1]
     create = next(c for c in remote.calls if c[:3] == ["gh", "pr", "create"])
     assert create[create.index("--title") + 1] == TOLD["title"]
-    assert ("## 배경\n\n로그인이 필요한 페이지는 로그인 화면을 거친다.\n\n## 바뀐 점\n\n- 로그인 뒤 원래 열려던 페이지로 "
-            "돌려보낸다.\n\n## 동작 변화\n\n전에는 첫 화면으로 갔다.\n\n## 변경 이유\n\n") in remote.body
+    assert ("## 배경\n\n로그인이 필요한 페이지는 로그인 화면을 거친다.\n\n## 바뀐 점\n\n- 돌아갈 주소를 기억한다.\n"
+            "  - 위치: `code.py`\n\n## 동작 변화\n\n전에는 첫 화면으로 갔다.\n\n## 변경 이유\n\n") in remote.body
     assert "## 확인\n\n- 돌아가는 경우를 테스트했다.\n\n<details>" in remote.body
-    assert "## 코드 위치\n\n- `code.py` — 돌아갈 주소를 기억한다" in remote.body
     assert "Add one private helper" not in remote.body and "서버에서 돌린다" not in remote.body, "no spec sentence"
     assert saved["goal"] == goal and KICKED == []
 
     assert pr_text.problems(dict(told, why="헬퍼를 추가하십시오"), "code.py") == [
         "an order, not a description: 헬퍼를 추가하십시오"]
     assert pr_text.problems(dict(told, title="Share wiring"), "code.py") == ["not Korean: Share wiring"]
-    assert [p.split(")")[0] for p in pr_text.problems(dict(told, changes=[
-        "판정은 routes_proactive.py 에 있다", "eval_once 를 부른다", "src/api 아래로 옮겼다"]), "code.py")] == [
+    assert [p.split(")")[0] for p in pr_text.problems(dict(told, changes=[{"what": w, "where": []} for w in (
+        "판정은 routes_proactive.py 에 있다", "eval_once 를 부른다", "src/api 아래로 옮겼다")]), "code.py")] == [
         "a code name in prose (routes_proactive", "a code name in prose (eval_once",
         "a code name in prose (src/api"]
-    assert pr_text.problems(dict(told, code=["설명만 있다"]), "code.py") == ["a `code` entry names nothing in backticks: 설명만 있다"]
+    assert pr_text.problems(dict(told, changes=[{"what": "고쳤다", "where": ["설명만 있다"]}]), "code.py") == [
+        "a `where` entry names nothing in backticks: 설명만 있다"]
     spec = {"id": "x", "repo": "proj", "goal": goal, "decisions": [], "report": [],
             "gate": {"cmd": "pytest", "tail": "1 passed"}, "grounds": {"pages": [], "files": []},
             "refactor": {"detail": {"title": "Share wiring", "problem": "Both repeat it.", "keep": ["Gate order"]}}}
