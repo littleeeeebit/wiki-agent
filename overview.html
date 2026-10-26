@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>에이전트 위키 그림 설명</title>
+<title>wiki-agent 그림 설명</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap">
@@ -135,6 +135,18 @@ section{display:grid;gap:20px}
 .guard .row{display:grid;grid-template-columns:7rem minmax(0,1fr);gap:12px;line-height:1.5;font-size:.9375rem;color:var(--soft)}
 .guard .row b{font-weight:600;color:var(--ink)}
 
+/* ── 앱: 포커스 넷 + 명세가 머지까지 가는 길 ── */
+.focuses{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.focus{padding:20px;display:grid;gap:8px;align-content:start}
+.focus .name{font:700 1.25rem/1.2 var(--head)}
+.focus .follows{font-weight:500;color:var(--ink);line-height:1.5}
+.flow{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;counter-reset:flow}
+.flow li{counter-increment:flow;display:grid;gap:6px;align-content:start;padding-top:14px;border-top:2px solid var(--ink)}
+.flow li::before{content:counter(flow);font:500 .8125rem/1 var(--mono);color:var(--accent)}
+.flow li:last-child{border-top-color:var(--accent)}
+.flow b{font-weight:600;line-height:1.4}
+.flow span{font-size:.875rem;line-height:1.55;color:var(--soft)}
+
 /* ── 사용법 ── */
 .chooser{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .chooser a{display:grid;gap:6px;align-content:start;padding:18px 20px;text-decoration:none;color:var(--ink);transition:border-color .15s}
@@ -177,7 +189,7 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
 
 @media (max-width:760px){
   .page{gap:72px;padding-block:36px 72px}
-  .hero,.sessions,.drawers,.steps,.readfirst,.two,.day,.chooser,.lanes{grid-template-columns:minmax(0,1fr)}
+  .hero,.sessions,.drawers,.steps,.readfirst,.two,.day,.chooser,.lanes,.focuses,.flow{grid-template-columns:minmax(0,1fr)}
   .hero{gap:28px}
   .moment{border-left:0;border-top:1px solid var(--rule)}
   .moment:first-child{border-top:0}
@@ -196,7 +208,7 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
 
 <div class="bar">
   <div class="bar-in">
-    <span class="brand">ai-coding-agent-wiki</span>
+    <span class="brand">wiki-agent</span>
     <div class="toggle" role="tablist" aria-label="보기">
       <button type="button" role="tab" id="tab-overview" aria-controls="overview" aria-selected="true">개요</button>
       <button type="button" role="tab" id="tab-usage" aria-controls="usage" aria-selected="false" tabindex="-1">사용법</button>
@@ -210,7 +222,8 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
     <div class="hero-text">
       <div class="label">개요</div>
       <h1 class="display">에이전트가 <em>같은 실수를<br>두 번 하지 않게</em></h1>
-      <p class="lead">AI 코딩 에이전트는 세션이 끝나면 배운 것을 잊습니다. 이 저장소는 교훈을 적어 두고, 필요한 순간에 에이전트 눈앞에 먼저 펼쳐 줍니다.</p>
+      <p class="lead">AI 코딩 에이전트는 세션이 끝나면 배운 것을 잊습니다. wiki-agent는 교훈을 적어 두고, 필요한 순간에 에이전트 눈앞에 먼저 펼쳐 줍니다. 그 위에서 위키에 묻고, 일을 맡기고, 리뷰 루프로 돌려받는 데스크톱 앱이 돕니다.</p>
+      <p class="small">Claude Code · Codex CLI 위에서 동작 · 화면은 한국어</p>
     </div>
     <div class="machine" aria-label="사람의 말에 훅이 규칙 페이지를 붙여 에이전트에게 넘기는 모습">
       <div class="bubble user"><span class="who">사람</span><span class="said">“PR #91 리뷰 루프 돌려”</span></div>
@@ -274,6 +287,32 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
     </ol>
   </section>
 
+  <section id="app">
+    <div class="head">
+      <div class="label">데스크톱 앱</div>
+      <h2>한 창에서 묻고, 맡기고, 돌려받는다</h2>
+    </div>
+    <p>왼쪽엔 프로젝트와 작업 목록, 가운데엔 대화, 오른쪽엔 선택한 작업의 <b>에이전트 · 리뷰 · 터미널</b>이 있습니다. 가운데 대화는 목적에 따라 포커스 넷으로 나뉩니다.</p>
+    <div class="focuses">
+      <div class="focus card"><span class="name">다음 작업</span><span class="follows">후보를 내고, 되물어, 명세로 정한다</span><span class="small">계획의 남은 단계 · 열린 PR · 최근 결정 · 경고를 모아 후보를 내고, 선택지로 되물어 명세 카드로 끝냅니다</span></div>
+      <div class="focus card"><span class="name">리팩터링</span><span class="follows">목적 하나를 골라 조사하고 명세를 만든다</span><span class="small">동작 보존 정리 · 불필요한 복잡도 정리 · 구조·성능 근본 수정 중 하나로 저장소를 읽기 전용 조사합니다</span></div>
+      <div class="focus card"><span class="name">위키</span><span class="follows">문서와 기록으로 답한다</span><span class="small">저장소의 문서 · 계획 · 결정 · 코드를 근거로 답하고, 근거를 열어 볼 수 있습니다. “왜 안 되나”는 로그부터</span></div>
+      <div class="focus card"><span class="name">회고</span><span class="follows">오늘 어긋난 자리를 센다</span><span class="small">오늘의 커밋과 대화에서 정정 · 반복 지시 · 멈춤을 세어 규칙 후보를 냅니다</span></div>
+    </div>
+
+    <div class="head">
+      <div class="label">명세 카드 하나가 머지까지</div>
+    </div>
+    <ol class="flow">
+      <li><b>[시작]</b><span>선택한 체크아웃에 작업 브랜치를 만들고, 명세를 시스템 프롬프트로 받은 에이전트가 일합니다</span></li>
+      <li><b>게이트</b><span>에이전트의 “통과했다”가 아니라 서버가 다시 돌린 검사 결과를 믿습니다. 통과해야 PR</span></li>
+      <li><b>[리뷰 루프]</b><span>읽기 전용 리뷰 셀이 라운드마다 읽고, 지적은 작업 셀로. <code>머지 가능</code>까지</span></li>
+      <li><b>[머지]</b><span>리뷰가 허용한 바로 그 커밋에 묶어 스쿼시 머지하고, 브랜치를 정리합니다</span></li>
+      <li><b>결정 기록</b><span>명세의 결정과 이유가 <code>.wiki/decisions/</code>로. 다음 세션 시작 때 다시 실립니다</span></li>
+    </ol>
+    <p>가운데 탭에서는 규칙이 이어진 <b>지도</b>, <b>앱 구조</b> 그림, 작업과 리뷰의 실행 기록(<b>스위트</b>)도 봅니다. 휴대폰을 연결하면 밖에서도 작업을 보고 지시나 승인을 보낼 수 있습니다.</p>
+  </section>
+
   <section id="english">
     <div class="head">
       <div class="label">두 언어</div>
@@ -302,14 +341,14 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
         <tbody>
           <tr><td>사용자 입력</td><td class="dir">ko → en</td><td><code>inject.py</code>가 한국어 말 아래에 영어 번역을 붙입니다. 한국어 원문이 늘 기준입니다</td></tr>
           <tr><td>세션 시작 정보</td><td class="dir">ko → en</td><td><code>session_state.py</code>가 커밋·결정 기록을 영어로 옮겨 넣습니다</td></tr>
-          <tr><td>터미널 출력</td><td class="dir">en → ko</td><td><code>mirror.py</code>가 에이전트의 영어 설명을 옆 화면에 한국어로 띄웁니다</td></tr>
-          <tr><td>웹 채팅</td><td class="dir">양방향</td><td>대화 화면에서 영어 답변 위에 한국어 오버레이를 켜고 끕니다</td></tr>
+          <tr><td>앱 화면</td><td class="dir">en → ko</td><td>에이전트와 리뷰의 답변, 질문과 선택지를 한국어로 덮어 보여 줍니다. 위키 · 회고 · 다음 작업 대화는 처음부터 한국어로 답합니다</td></tr>
+          <tr><td>번역 끄기</td><td class="dir">—</td><td>설정의 번역 스위치는 앱 전체에 하나입니다. 끄면 번역 요청이 하나도 나가지 않습니다</td></tr>
         </tbody>
       </table>
     </div>
 
     <blockquote class="rule-quote">순서의 규칙은 하나였습니다. 한국어로 읽을 길이 서기 전에는 사람의 화면을 영어로 바꾸지 않는다.</blockquote>
-    <p>그래서 미러부터 만들었고, Claude와 Codex 각각에서 한국어가 제대로 뜨는 걸 확인한 뒤에야 “진행 설명은 영어로” 규칙을 켰습니다. 반대 순서였다면 사람은 돌아갈 길 없이 영어만 보고 있었을 겁니다.</p>
+    <p>그래서 한국어로 읽을 길부터 만들었고, Claude와 Codex 각각에서 한국어가 제대로 뜨는 걸 확인한 뒤에야 “진행 설명은 영어로” 규칙을 켰습니다. 반대 순서였다면 사람은 돌아갈 길 없이 영어만 보고 있었을 겁니다. <code>docs/</code> 문서가 대부분 영어인 것도 같은 이유입니다. 앱의 위키 포커스에 한국어로 물으면 그 문서를 근거로 한국어로 답합니다.</p>
 
     <div class="two">
       <div class="keeps card">
@@ -342,7 +381,7 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
       <div class="step"><span class="cmd">intersect</span><p>여러 프로젝트에서 겹치는 사고를 찾아 어댑터 초안을 만듭니다.</p></div>
       <div class="step"><span class="cmd">apply --write</span><p>훅과 금지 목록을 <code>.claude/settings.json</code>에 병합합니다. 기존 설정은 덮지 않습니다.</p></div>
     </div>
-    <p>프로젝트는 <code>.wiki/wiki-revision</code>에 위키 커밋 번호를 적어 고정합니다. 위키가 바뀌어도 팀 전원이 같은, 검증된 버전을 씁니다. 실제 명령은 오른쪽 위 <b>사용법</b> 탭에 있습니다.</p>
+    <p>프로젝트는 <code>.wiki/wiki-revision</code>에 위키 커밋 번호를 적어 고정합니다. 위키가 바뀌어도 팀 전원이 같은, 검증된 버전을 씁니다. 앱의 프로젝트 화면에서 <b>[연결]</b>을 누르면 어댑터 작성, 훅 설치, 실제 세션 시험까지 안내합니다. 명령은 오른쪽 위 <b>사용법</b> 탭에 있습니다.</p>
   </section>
 
   <section>
@@ -352,18 +391,21 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
     </div>
     <dl class="map">
       <dt>operator/ · craft/</dt><dd>규칙 페이지. 사람 규칙과 기술 규칙</dd>
-      <dt>skills/</dt><dd>절차서 — 리뷰 루프, 머지 후 정리, 회고, 디자인 한 바퀴</dd>
-      <dt>tool/</dt><dd>파이썬 도구 — inject(주입) · apply(설치) · census(세기) · translate(번역) · mirror(한국어판) · lint(검사)</dd>
+      <dt>skills/</dt><dd>절차서 — 리뷰 루프, 머지 후 정리, 회고, 디자인 한 바퀴, 마크다운 쓰기</dd>
+      <dt>tool/</dt><dd>파이썬 도구 — inject(주입) · apply · setup_agents(설치) · census(세기) · lint(검사) · harvest(결정 기록)</dd>
+      <dt>tool/main/</dt><dd>앱 서버 — 위키 질문, 명세, 작업 브랜치, 리뷰 루프, 리팩터링, 휴대폰 연결</dd>
+      <dt>tool/translate/ · search/</dt><dd>한국어 번역 오버레이 · 문서 검색과 지식 그래프</dd>
       <dt>adapters/</dt><dd>프로젝트별 설정 예시</dd>
-      <dt>raw/</dt><dd>측정 원본. 손대지 않는다</dd>
-      <dt>web/</dt><dd>대화 화면과 위키 지도 (<code>tool/chat.py</code>가 띄움)</dd>
+      <dt>raw/</dt><dd>대화 · 리뷰 · 측정 기록. git에 올리지 않는다</dd>
+      <dt>web/</dt><dd>앱 화면과 위키 지도. <code>web/src-tauri/</code>는 그 화면을 감싼 데스크톱 창</dd>
+      <dt>android/</dt><dd>휴대폰 동반 앱(APK, 선택)</dd>
       <dt>docs/plans/</dt><dd>계획서. 시리즈마다 폴더 하나(<code>loop/0-overview.md</code>, <code>1-…</code>). 끝난 시리즈는 <code>done/</code> 으로 옮긴다. <code>done/</code> 밖의 남은 단계가 세션 시작 때 자동으로 실린다</dd>
       <dt>graph.json</dt><dd>규칙끼리 이어진 그래프</dd>
     </dl>
   </section>
 
   <section class="closing">
-    <p class="lead">한 줄로: <b>에이전트의 실수 노트</b>와, 그 노트를 <b>훅으로 강제로 읽히는 장치</b>. 에이전트는 영어로 일하고, 사람은 한국어로 봅니다.</p>
+    <p class="lead">한 줄로: <b>에이전트의 실수 노트</b>와 그 노트를 <b>훅으로 강제로 읽히는 장치</b>, 그리고 그 위에서 <b>명세부터 머지까지</b> 돌리는 앱. 에이전트는 영어로 일하고, 사람은 한국어로 봅니다.</p>
     <div class="label">고치기 전에 먼저 읽을 세 장</div>
     <div class="readfirst">
       <a href="SCHEMA.md"><b>SCHEMA.md</b><span class="small">무엇을 어디에 적는가</span></a>
@@ -379,18 +421,44 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
   <header class="head">
     <div class="label">사용법</div>
     <h1 class="display">무엇을 하려는지부터<br>고르세요</h1>
-    <p class="lead">규칙 연결, 채팅 화면, 한국어 미러는 따로따로 설치합니다. 필요한 것만 하면 됩니다.</p>
+    <p class="lead">앱 실행, 규칙 연결, 휴대폰 연결은 따로따로입니다. 필요한 것만 하면 됩니다.</p>
   </header>
 
   <nav class="chooser" aria-label="사용법 목차">
-    <a class="card" href="#use-hooks"><span class="label">A</span><span class="q">내 프로젝트에서 에이전트가 규칙을 읽게</span><span class="small">훅 설치 · setup_agents</span></a>
-    <a class="card" href="#use-chat"><span class="label">B</span><span class="q">브라우저에서 위키에게 묻고 싶다</span><span class="small">위키 채팅 · setup_chat</span></a>
-    <a class="card" href="#use-mirror"><span class="label">C</span><span class="q">에이전트의 영어를 한국어로 보고 싶다</span><span class="small">한국어 미러 · 번역 키</span></a>
+    <a class="card" href="#use-app"><span class="label">A</span><span class="q">위키에 묻고 작업을 맡기고 싶다</span><span class="small">데스크톱 앱 · setup_chat</span></a>
+    <a class="card" href="#use-hooks"><span class="label">B</span><span class="q">내 프로젝트에서 에이전트가 규칙을 읽게</span><span class="small">훅 설치 · setup_agents</span></a>
+    <a class="card" href="#use-mobile"><span class="label">C</span><span class="q">밖에서 휴대폰으로 이어 보고 싶다</span><span class="small">휴대폰 연결 · QR</span></a>
   </nav>
+
+  <section class="guide" id="use-app">
+    <div class="guide-head">
+      <span class="label">A · 데스크톱 앱</span>
+      <h2>설치하고 창 띄우기</h2>
+      <div class="needs"><span>Python 3.11+</span><span>Node.js 22.12+</span><span>Rust</span><span>Git</span><span>본인 계정의 Claude Code 또는 Codex CLI</span></div>
+    </div>
+    <ol class="do">
+      <li><div class="body"><b>저장소 받기</b>
+<pre class="term">git clone https://github.com/littleeeeebit/wiki-agent.git
+cd wiki-agent</pre></div></li>
+      <li><div class="body"><b>설치와 내 계정 로그인</b><p>쓸 CLI에 맞춰 <b>하나만</b> 실행합니다. 패키지와 화면을 준비하고, 로그인이 안 돼 있으면 공식 로그인 창을 엽니다.</p>
+<pre class="term">python tool/setup_chat.py install --agent codex   <span class="c"># 또는 claude, both</span></pre><p>프로젝트 목록은 위키 폴더의 상위 폴더에서 찾습니다. 다른 곳이면 <code>--workspace "D:/작업 폴더"</code>를 붙입니다.</p></div></li>
+      <li><div class="body"><b>지도 파일 만들기</b><p>처음 한 번, 그리고 규칙을 고친 뒤마다.</p>
+<pre class="term">.venv/Scripts/python tool/graph.py   <span class="c"># macOS·Linux: .venv/bin/python</span></pre></div></li>
+      <li><div class="body"><b>한국어 번역 키 넣기 (선택)</b><p>위키 폴더에 <code>.env</code>를 만들고 키를 적습니다. 키가 없으면 번역 없이 원문이 그대로 나옵니다.</p>
+<pre class="term">GEMINI_API_KEY=<span class="c">여기에-본인-키</span></pre></div></li>
+      <li><div class="body"><b>실행</b>
+<pre class="term">.\tool\app.cmd        <span class="c"># Windows</span>
+tool/app.command      <span class="c"># macOS·Linux</span></pre><p>처음엔 창을 빌드하느라 몇 분 걸립니다. 창이 서버를 띄우고, 창을 닫으면 서버와 에이전트도 함께 내려갑니다. 창 없이 쓰려면 <code>python tool/main</code>을 실행하고 <code>http://127.0.0.1:8787</code>을 엽니다.</p></div></li>
+      <li><div class="body"><b>첫 작업</b><p>왼쪽에서 프로젝트를 고르고, 다음 작업 포커스에서 <b>후보 내기</b>를 누릅니다. 되묻는 선택지에 답하면 명세 카드가 나오고, <b>[시작 ▸]</b>을 누르면 에이전트가 작업 브랜치에서 일을 시작합니다.</p></div></li>
+    </ol>
+    <p class="note warn">작업 세션은 선택한 체크아웃의 작업 브랜치에서 전체 권한으로 돕니다. 파일을 쓸 때마다 허용을 기다리지 않습니다. 중요한 변경은 커밋해 두고 쓰세요. 모델 사용량은 각자의 CLI 계정에서 나갑니다.</p>
+  </section>
+
+  <hr class="cut">
 
   <section class="guide" id="use-hooks">
     <div class="guide-head">
-      <span class="label">A · 규칙 연결</span>
+      <span class="label">B · 규칙 연결</span>
       <h2>내 프로젝트에 공통 규칙 붙이기</h2>
       <div class="needs"><span>Python 3.11+</span><span>Git</span><span>Claude Code 또는 Codex CLI</span><span>Windows: Git Bash · PowerShell</span></div>
     </div>
@@ -420,53 +488,27 @@ python tool/setup_agents.py --project "../내-프로젝트" --agent both --check
 
   <hr class="cut">
 
-  <section class="guide" id="use-chat">
+  <section class="guide" id="use-mobile">
     <div class="guide-head">
-      <span class="label">B · 위키 채팅</span>
-      <h2>브라우저에서 위키에게 묻기</h2>
-      <div class="needs"><span>Python 3.11+</span><span>Node.js 22.12+</span><span>Git</span><span>본인 계정의 CLI</span></div>
+      <span class="label">C · 휴대폰 연결</span>
+      <h2>밖에서 휴대폰으로 이어 보기</h2>
+      <div class="needs"><span>A의 앱 실행</span><span>휴대폰 브라우저</span></div>
     </div>
     <ol class="do">
-      <li><div class="body"><b>설치와 내 계정 로그인</b><p>쓸 CLI에 맞춰 <b>하나만</b> 실행합니다. 패키지와 화면을 준비하고, 로그인이 안 돼 있으면 공식 로그인 창을 엽니다.</p>
-<pre class="term">python tool/setup_chat.py install --agent claude   <span class="c"># 또는 codex, both</span></pre></div></li>
-      <li><div class="body"><b>지도 파일 만들기</b><p>처음 한 번, 그리고 규칙을 고친 뒤마다.</p>
-<pre class="term">.venv/Scripts/python tool/graph.py   <span class="c"># macOS·Linux: .venv/bin/python</span></pre></div></li>
-      <li><div class="body"><b>실행</b>
-<pre class="term">.\tool\chat.cmd        <span class="c"># Windows</span>
-tool/chat.command      <span class="c"># macOS·Linux</span></pre><p>브라우저에서 <code>http://127.0.0.1:8787</code>을 엽니다. 끄는 건 실행한 터미널에서 <code>Ctrl+C</code>.</p></div></li>
+      <li><div class="body"><b>외부 연결 켜기</b><p>PC 앱에서 <b>설정 → 휴대폰 → 외부 연결 켜기</b>를 누릅니다. 터널 준비는 앱이 알아서 하고, 준비되면 연결 QR이 나옵니다. VPN이나 포트포워딩은 필요 없습니다.</p></div></li>
+      <li><div class="body"><b>QR 찍기</b><p>휴대폰 카메라로 QR을 찍어 브라우저로 엽니다. 작업 목록, 대화, 선택한 작업을 보고 지시나 승인을 보낼 수 있습니다. 안드로이드 앱(APK)은 선택입니다.</p></div></li>
     </ol>
-    <p class="note">각자 자기 PC에서 자기 계정으로 돌립니다. 서버는 실행한 PC에서만 열리고, 계정 정보를 다른 곳으로 복사하는 단계는 없습니다.</p>
-  </section>
-
-  <hr class="cut">
-
-  <section class="guide" id="use-mirror">
-    <div class="guide-head">
-      <span class="label">C · 한국어 미러</span>
-      <h2>에이전트의 영어를 한국어로 보기</h2>
-      <div class="needs"><span>B의 채팅 설치</span><span>Gemini API 키</span></div>
-    </div>
-    <ol class="do">
-      <li><div class="body"><b>번역 키 넣기</b><p>위키 저장소 폴더에 <code>.env</code>를 만들고 키를 적습니다. 기계 전역 환경변수보다 이 파일이 우선합니다. 키가 없으면 번역 없이 원문이 그대로 나옵니다.</p>
-<pre class="term">GEMINI_API_KEY=<span class="c">여기에-본인-키</span></pre></div></li>
-      <li><div class="body"><b>미러 열기</b>
-<pre class="term">tool\mirror.cmd        <span class="c"># Windows</span>
-tool/mirror.command    <span class="c"># macOS·Linux</span></pre><p><code>http://127.0.0.1:8787/#mirror</code>가 열립니다. 왼쪽엔 대화가 한국어로, 오른쪽엔 실제 명령과 패치가 번역 없이 쌓입니다. 번역한 명령은 더 이상 실행되는 명령이 아니니까요.</p></div></li>
-      <li><div class="body"><b>다른 작업트리 보기</b><p>화면 위쪽 드롭다운에서 호스트(claude · codex)와 작업트리를 고릅니다. 한 저장소의 작업트리는 그 저장소 아래에 묶여 있습니다.</p></div></li>
-      <li><div class="body"><b>화면 없이 터미널로만</b>
-<pre class="term">python tool/mirror.py --project .
-python tool/mirror.py --host codex --project C:\path\to\other-repo</pre></div></li>
-    </ol>
-    <p class="note warn">한 저장소에 작업 셀이 둘 이상이면 “가장 최근 세션”이 계속 바뀝니다. 그때는 <code>--session &lt;세션 파일&gt;</code>로 따라갈 파일을 직접 지정하세요.</p>
+    <p class="note warn">연결 링크는 한 번만, 5분 안에 쓸 수 있습니다. 그 링크를 연 사람은 이 PC의 작업을 조종할 수 있으니 남에게 보여 주지 마세요. PC와 앱이 켜져 있어야 이어집니다.</p>
   </section>
 
   <section class="closing">
     <div class="label">더 자세히</div>
     <div class="readfirst">
+      <a href="docs/chat-setup.md"><b>docs/chat-setup.md</b><span class="small">앱 설치 · 계정 바꾸기 · 업데이트 · 문제 해결</span></a>
       <a href="docs/hooks-setup.md"><b>docs/hooks-setup.md</b><span class="small">규칙 연결 전체 절차</span></a>
-      <a href="docs/chat-setup.md"><b>docs/chat-setup.md</b><span class="small">채팅 설치 · 계정 바꾸기 · 문제 해결</span></a>
-      <a href="docs/mirror-setup.md"><b>docs/mirror-setup.md</b><span class="small">미러가 따라가는 파일</span></a>
+      <a href="docs/mobile.md"><b>docs/mobile.md</b><span class="small">휴대폰 연결과 안드로이드 앱</span></a>
     </div>
+    <p class="small">docs/ 문서는 대부분 영어입니다. 앱의 위키 포커스에 한국어로 물어보면 그 문서를 근거로 한국어로 답합니다.</p>
   </section>
 
 </main>

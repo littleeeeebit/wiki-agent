@@ -1,527 +1,188 @@
-# ai-coding-agent-wiki
+# wiki-agent
 
-This private copy is a coding agent program with asking the wiki as its main
-feature, built by the finished plan
-[`docs/plans/done/wiki-agent/0-overview.md`](docs/plans/done/wiki-agent/0-overview.md).
+위키에 먼저 묻고, 일은 코딩 에이전트에게 맡기고, 결과는 리뷰 루프로 돌려받는
+데스크톱 앱입니다. Claude Code와 Codex CLI 위에서 돌아갑니다.
 
-## Where to read
+AI 코딩 에이전트는 세션이 끝나면 배운 것을 잊습니다. 지난주에 바로잡은 실수를
+이번 주 다른 프로젝트에서 또 합니다. wiki-agent는 그 교훈을 위키에 적어 두고,
+에이전트가 일을 시작하기 전에 맞는 규칙을 눈앞에 먼저 펼쳐 줍니다. 그 위에
+"무엇을 할지 정하기 → 맡기기 → 리뷰 → 머지 → 왜 그렇게 했는지 기록"을 한 창에서
+돌리는 앱을 얹었습니다.
 
-| You are | Start at |
+한국어 사용자를 위해 만들었습니다. 화면, 질문, 선택지는 한국어입니다. 에이전트는
+더 정확하게 일하도록 영어로 생각하고 쓰며, 사람은 번역을 거쳐 한국어로 읽습니다
+([두 언어](#두-언어--에이전트는-영어로-사람은-한국어로) 참고).
+
+그림으로 먼저 보고 싶다면 저장소를 받은 뒤 [`overview.html`](overview.html)을
+브라우저로 여세요. 개요와 사용법 두 탭으로 되어 있습니다.
+
+## 이런 분께 맞습니다
+
+- Claude Code나 Codex를 매일 쓰는데, 같은 지적을 계속 반복하게 되는 분
+- 에이전트에게 맡긴 일을 명세, PR, 리뷰, 머지까지 한 흐름으로 관리하고 싶은 분
+- 여러 저장소에 같은 작업 규칙을 걸어 두고 싶은 분
+
+## 무엇을 하나
+
+### 1. 같은 실수를 두 번 하지 않게 — 훅 위키
+
+에이전트 호스트(Claude Code, Codex)의 훅이 세 순간에 끼어듭니다.
+
+| 언제 | 무엇을 넣거나 막나 |
 | --- | --- |
-| Maintaining this program | [`docs/architecture.md`](docs/architecture.md), then [`docs/development.md`](docs/development.md) |
-| Connecting a repository to the rules | [`docs/hooks-setup.md`](docs/hooks-setup.md), [`docs/chat-setup.md`](docs/chat-setup.md) |
-| Connecting a phone over mobile data or another Wi-Fi network | [`docs/mobile.md`](docs/mobile.md) |
-| Maintaining Jev | [`docs/jev-maintenance.md`](docs/jev-maintenance.md) |
-| Looking for a shared rule | [`index.md`](index.md) |
+| 세션을 열 때 | 현재 브랜치와 작업트리 상태, 하다 만 계획의 남은 단계, 최근 결정과 그 이유, 모든 문서의 목록 |
+| 말을 걸 때마다 | 그 말에 걸린 규칙 페이지. 각 페이지가 자기 `triggers` 정규식을 적어 둡니다 |
+| 도구를 쓰기 직전 | 계산해야 보이는 위반만 검사합니다. 예: 기존 파일을 통째로 되쓰기, 진행 설명의 언어 |
 
-A connected repository's own knowledge stays in its `.wiki/` and `docs/`.
+규칙은 두 서랍에 있습니다. `operator/`는 사람을 따라가는 규칙(리뷰 루프 방식,
+결정은 선택지로 묻기, 파일은 diff로 고치기), `craft/`는 기술을 따라가는
+규칙(먼저 재현하기, 초록불도 의심하기, 위험한 git 명령 막기)입니다. 한 저장소만의
+지식은 그 저장소의 `.wiki/`와 `docs/`에 둡니다.
 
-A wiki that stops a coding agent making the same mistake again as it moves
-between projects, and the adapters that attach it to a project.
+적어 둔 규칙이 행동을 바꾸지 못하는 게 진짜 문제였기 때문에, 규칙은 싼 방법부터
+강제합니다. 명령 자체 금지 → 말에 맞는 규칙 주입 → 반복 지시를 절차서(`skills/`)로
+→ 도구 직전 검사 → 판단이 필요한 것만 글로. 자세한 내용은
+[`ENFORCEMENT.md`](ENFORCEMENT.md)에 있습니다. 훅은 고장 나도 작업을 막지 않습니다.
 
-Adapted for coding agents from Karpathy's
-[LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
-spec. Where the original's raw sources are papers and articles, here they are
-conversation logs and execution records, so ingesting is not "read and
-summarise" but "count and compare".
+### 2. 한 창에서 묻고, 맡기고, 돌려받기 — 데스크톱 앱
 
-The bottleneck was neither storage nor search. It was that what is written did
-not govern behaviour. So this wiki is not a tool for making more pages; it
-does two things.
+왼쪽에 프로젝트와 작업 목록, 가운데에 대화, 오른쪽에 선택한 작업의 에이전트·리뷰·
+터미널이 있습니다. 가운데 대화에는 포커스가 넷 있습니다.
 
-1. It sets a repeated instruction into a habit — the instruction becomes one
-   skill
-2. It turns the rules that can be into checks — the rules actually held were
-   not prose, they were guards that threw and gates that went red
+| 포커스 | 하는 일 |
+| --- | --- |
+| 다음 작업 | 계획의 남은 단계, 열린 PR, 최근 결정, 경고를 모아 후보를 내고, 선택지로 되물어 명세 카드로 정리합니다 |
+| 리팩터링 | 목적 하나(동작 보존 정리, 불필요한 복잡도 정리, 구조·성능 근본 수정)를 골라 저장소를 읽기 전용으로 조사하고, 실행할 명세를 만듭니다 |
+| 위키 | 저장소의 문서, 계획, 결정, 코드로 질문에 답하고 근거를 보여 줍니다. "왜 안 되나"는 로그부터 봅니다 |
+| 회고 | 오늘의 커밋과 대화에서 정정, 반복 지시, 멈춤을 세어 규칙 후보를 냅니다 |
 
-The schema is [`SCHEMA.md`](SCHEMA.md), the enforcement is
-[`ENFORCEMENT.md`](ENFORCEMENT.md), and the diagnosis and update procedures
-are [`MAINTENANCE.md`](MAINTENANCE.md). Read them before writing or changing a
-page.
+명세 카드 하나가 머지까지 가는 길은 이렇습니다.
 
-## Layout
+1. [시작]을 누르면 선택한 체크아웃에 새 작업 브랜치가 생기고, 명세를 시스템
+   프롬프트로 받은 에이전트 세션이 일을 시작합니다.
+2. 에이전트가 끝내면 서버가 그 저장소의 검사 명령(게이트)을 다시 돌립니다.
+   에이전트의 "통과했다"는 보고보다 실제 게이트 결과를 믿고, 통과해야 PR을 올립니다.
+3. [리뷰 루프]를 누르면 읽기 전용 리뷰 셀이 라운드마다 PR을 읽습니다. 지적은 작업
+   셀로 넘어가고, 고친 뒤 다시 게이트를 거쳐 push됩니다. `머지 가능`이 나오면
+   끝납니다.
+4. [머지]는 리뷰가 허용한 바로 그 커밋에 묶여 스쿼시 머지하고, 작업 브랜치를
+   정리합니다.
+5. 명세에 적힌 결정과 이유는 PR 본문을 거쳐 `.wiki/decisions/`의 결정 기록이
+   됩니다. 다음 세션을 열 때 "최근 결정"으로 다시 실려, 같은 고민을 반복하지
+   않게 합니다.
 
-```
-tool/        census · intersect · apply · inject · english_progress
-             trigger_audit · lint · repo_lint · graph · repo_graph
-  main/      the program's main: the wiki query, the worktrees and their agents
-  markers/   census markers, per language
-operator/    knowledge that follows the person — the review loop · edit as diffs · English progress
-craft/       knowledge that follows the technique — async pickup · finish the instruction · git blocks
-skills/      repeated instructions set into procedures (enforcement layer 3) — review loop · after merge · retrospect
-adapters/    per-project slot values
-raw/         census output and measurements. Immutable
-graph.json   the policy graph `graph` produces. The views consume it
-web/         the screen and the wiki map; `web/src-tauri/` is the window around it
-```
+그 밖에 가운데 탭에서 규칙이 이어진 지도, 앱 구조 그림, 작업·리뷰 실행 기록(스위트)을
+볼 수 있습니다. 모델과 추론 강도는 화면에서 고르고, Codex 모델 목록은 설치된 CLI에서
+읽어 옵니다. 새 버전이 올라오면 왼쪽 아래 카드가 알려 주고, 누르면 받아서 다시 빌드합니다.
 
-`project` scope knowledge is not here. It lives in the target repository, and
-an adapter only reads and composes it. Other people's landmines do not come in
-— that is itself an incident.
+### 3. 휴대폰으로 이어 보기
 
-## How to use it
+PC에서 설정 → 휴대폰 → 외부 연결 켜기를 누르고 QR을 찍으면, 휴대폰 브라우저에서
+같은 작업을 보고 지시나 승인을 보낼 수 있습니다. VPN이나 공유기 포트포워딩은 필요
+없습니다. 연결 링크는 한 번만, 5분 안에 쓸 수 있고, 그 링크를 연 사람은 이 PC의
+작업을 조종할 수 있으니 남에게 보여 주지 마세요. 안드로이드 앱(APK)은 선택입니다.
+자세한 내용은 [`docs/mobile.md`](docs/mobile.md)에 있습니다.
 
-Attaching a new project starts with a census. Not knowing what breaks means
-not knowing what to write down.
+### 두 언어 — 에이전트는 영어로, 사람은 한국어로
 
-```bash
-python tool/census.py --project ~/PycharmProjects/<name> --out raw/census-<name>.jsonl
-python tool/intersect.py raw/census-*.jsonl
-```
+한때 위키 페이지, 훅 프롬프트, 진행 보고가 전부 한국어였습니다. 그러자 에이전트가
+눈에 띄게 덜 정확해졌습니다. 그래서 에이전트가 닿는 면(문서, 프롬프트, 진행 보고,
+코드 주석)은 영어로 쓰고, 그 위에 Gemini 번역을 한 겹 덮어 사람은 한국어로 쓰고
+한국어로 읽습니다. 번역 키가 없거나 번역이 실패하면 원문이 그대로 나옵니다. 화면의
+번역 스위치를 끄면 번역 요청은 하나도 나가지 않습니다.
 
-The output becomes that project's draft adapter. Fill the slot values into the
-target checkout's `.wiki/adapter.toml` and attach. An existing install with no
-local adapter keeps falling back to `adapters/<name>.toml`.
+이 때문에 `docs/` 아래 문서는 대부분 영어입니다. 앱의 위키 포커스에 한국어로
+물어보면 그 문서들을 근거로 한국어로 답해 줍니다.
 
-```bash
-python tool/apply.py --project ~/PycharmProjects/<name>            # preview
-python tool/apply.py --project ~/PycharmProjects/<name> --write    # write
-```
+## 시작하기
 
-By default `apply` writes one file, `.claude/settings.json` — the
-`enforce.deny` a page declared (layer 1) and the injection hook (layer 2).
-Existing settings are merged, never overwritten.
+### 준비물
 
-### The team installer
+- Git, Python 3.11 이상, Node.js 22.12 이상
+- Rust(<https://rustup.rs>) — 데스크톱 창을 처음 빌드할 때 필요합니다
+- Claude Code나 Codex CLI 중 하나 이상, 본인 계정으로 로그인
+- 선택: Gemini API 키 — 한국어 번역에 씁니다
 
-`tool/setup_agents.py` checks the environment, the wiki version and the host,
-then installs and verifies through the existing `apply.py`. It depends on
-neither the project name nor a sibling folder name, and it does not copy an
-adapter into the hub. It needs Python 3.11 or later, Git, the packages in
-`requirements-hooks.txt`, and the chosen host's CLI. On Windows this wiki's
-commands use Git Bash for Claude and PowerShell for Codex.
+주로 Windows에서 쓰며 만들었습니다. macOS와 Linux용 실행 스크립트도 있습니다.
+
+### 앱 설치와 실행
 
 ```powershell
-python tool/setup_agents.py --project "D:/팀 작업/checkout" --agent both
-python tool/setup_agents.py --project "D:/팀 작업/checkout" --agent both --check
+git clone https://github.com/littleeeeebit/wiki-agent.git
+cd wiki-agent
+python tool/setup_chat.py install --agent codex   # 또는 claude, both
+.venv/Scripts/python tool/graph.py               # 지도 파일. macOS·Linux: .venv/bin/python
+.\tool\app.cmd                                    # macOS·Linux: tool/app.command
 ```
 
-On a machine that opens worktrees or updates its CLIs often, install at the
-user level instead: `python tool/setup_agents.py --global --trust-codex`.
-Every checkout, worktrees included, then reads the same hooks, and
-`--global --check` after an update tells you whether they still run. See
-[docs/hooks-setup.md](docs/hooks-setup.md).
+`setup_chat.py`는 패키지와 화면을 준비하고, CLI에 로그인이 안 돼 있으면 공식 로그인
+창을 엽니다. 창을 처음 빌드할 때는 몇 분 걸립니다. 창 없이 브라우저로 쓰려면
+`python tool/main`을 실행하고 `http://127.0.0.1:8787`을 여세요.
 
-The target holds `.wiki/wiki-revision` (the 40-character commit SHA of the
-wiki to use) and `.wiki/adapter.toml`. Set `agents = ["claude", "codex"]` and
-the `[slots]` values `review_dir`, `gate_cmd`, `live_cmd`, `server_stop` and
-`scratch_dirs` to fit the project. Codex needs `[features] hooks = true` in
-`.codex/config.toml`. Project rule entry points such as `AGENTS.md` and
-`CLAUDE.md` are owned by the project. The tool does not download dependencies,
-change versions or grant trust on its own.
+프로젝트 목록은 기본으로 위키 폴더의 상위 폴더에서 `.git`이 있는 폴더를 찾습니다.
+다른 곳에 있다면 설치할 때 `--workspace "D:/작업 폴더"`로 지정합니다.
 
-The hosts chosen with `--agent claude|codex|both`, and those already
-installed, are preserved in the target's `.wiki/installed-agents.json`. That
-file and the generated hook settings are excluded from the project's git.
-Existing user hooks and settings are merged, and on failure every file this
-install wrote is restored to its original bytes. A reinstall, a renamed folder
-and a same-named checkout each use their own local adapter. After moving,
-reinstall against the new path. Success exits 0 and failure exits 2.
-`--check` is read-only.
+한국어 번역을 쓰려면 위키 폴더에 `.env` 파일을 만들고 키를 적습니다.
 
-A default install refuses a working copy whose code or rules differ from the
-pinned SHA. `--allow-dirty-wiki` exists for verifying uncommitted development
-and still requires the SHA to match. A project's pinned SHA is set to a commit
-that contains the shared code and passed the install verification. Updating
-the wiki also means confirming the candidate commit installs, then updating
-the pinned SHA with it.
-
-The install check and the host's automatic events and question UI are separate
-evidence. In a new session, review and trust the project and the hooks
-yourself, and confirm all four events are actually delivered. Codex's project
-trust and hook-definition trust follow the
-[official hook guide](https://learn.chatgpt.com/docs/hooks#review-and-trust-hooks).
-Confirm the options UI directly with the `request_user_input` permitted in
-that session, and do not route around it with the async form.
-
-### Attach it to this repository too
-
-The session that edits the wiki has to have the wiki loaded.
-
-Both agents are install targets on the hub as well. Attach only Claude and a
-Codex cell running in this repository runs with no wiki hook at all.
-
-```bash
-python tool/apply.py --project . --write                 # Claude
-python tool/apply.py --project . --agent codex --write   # Codex
+```text
+GEMINI_API_KEY=여기에-본인-키
 ```
 
-`.claude/` and `.codex/` are not committed. Interpreter paths differ per
-machine, so run these commands again on the clone.
+자세한 설치와 문제 해결은 [`docs/chat-setup.md`](docs/chat-setup.md)에 있습니다.
 
-Installed and running are different evidence. These commands succeeding means
-the settings file exists, not that the host actually delivers the event. Codex
-runs only once trusted in `/hooks`, and `apply` does not write that trust.
-Whether it fired is confirmed by a line for that session actually appearing in
-`.wiki/trajectory.jsonl`.
+### 내 프로젝트에 규칙 연결하기
 
-There is a separate check for the install state alone — it answers with an
-exit code.
-
-```bash
-python tool/apply.py --project . --check                 # this repository's Claude wiring
-python tool/apply.py --project . --agent codex --check   # the same for Codex
-python tool/lint.py --check                              # every expected agent
-```
-
-`CLAUDE.md` is not touched. It holds project-scope knowledge this wiki does
-not own, and adding sentences to an always-loaded file is the very problem
-this wiki was built for. Skills are `operator` scope, so hanging them once in
-`~/.claude/skills/` is enough.
-
-### Connecting to Codex
-
-This mode merges into the target's `.codex/hooks.json` alone. The interpreter
-and the wiki path are decided at install time, so another machine installs
-again. Existing Claude settings and unrelated hooks in the user's `CODEX_HOME`
-are left alone. Codex's hooks feature and project trust have to be on, and
-after installing, the five new wiki hooks must be reviewed and trusted in
-`/hooks` before they run. The installer does not write the trust hash.
-
-Utterance injection, session state and automatic updating use the same tools
-as Claude. The stop check reads Codex's official `last_assistant_message` and
-does not guess at the transcript file format. `codex_pretool.py` applies the
-wiki's tool-name blocks and `Bash(...)` argument patterns along with the
-existing diff and progress-language checks. `request_user_input_async` and
-`functions.request_user_input_async` are forbidden outright by the existing
-`enforce.deny` declaration, regardless of whether options are present, and the
-permitted `request_user_input` is used instead. Sessions the wiki-agent app
-starts are the exception: there the default-mode experiment is off, and Codex
-asks with a `choices` block the screen draws as buttons
-(`tool/prompts/codex-choices.md`). When Codex supplies no tool
-description, the progress-language check has no value to judge. The shell
-check is limited to known direct command shapes. It is not a security boundary
-covering nested shells, dynamic commands and every PowerShell write, and it
-does not port the whole of `permissions.deny`.
-
-The threshold at which one injection switches to a file preview is 12,000
-tokens. Above that, Codex is given the path to the full text.
-
-Verification: `python -m pytest -q tool/test_codex_hooks.py`. It installs into
-a temporary repository, runs the commands, and confirms real injection,
-blocking, passing and updating, and that existing settings survive. On Windows
-it checks with `pwsh`. Codex commands take PowerShell's call operator `&`, and
-an existing install is updated with the `--write` commands above and then
-trusted again in `/hooks`. Codex running events automatically has to be
-confirmed separately, after the trust is granted.
-
-### What a census counts
-
-| Class | What |
-| --- | --- |
-| Repeated instruction | How many times the same thing was retyped. Retyped although already written means that rule does not work |
-| Correction | Where the user said the agent was wrong |
-| Resume demand | Where it stopped somewhere it should not have and had to be pushed again |
-| Partial completion | Where part of the instruction was done and the rest had to be asked for again |
-
-It prints the samples no marker matched. Without that section, a census
-measures the bias of whoever wrote the markers.
-
-It produces no percentages. String matching cannot catch the same rule written
-in different words. It extracts the sentences to compare instead, and a person
-judges.
-
-## Looking at it
-
-### Jev retrieval decisions
-
-The [full advancement plan](docs/plans/jev/0-overview.md) defines ten implementation
-stages beyond the current prototype, including graph traversal, English evidence,
-verified answers, agent choices, and measured rollout.
-
-The [research and design record](docs/research/jev-retrieval-controller.md)
-describes the current graph, the adopted primary sources, and the evaluation
-still needed. Jev can route searches among hub rules, repository documents,
-and saved memory, grade passages, and check whether the evidence is enough.
-The existing answering model writes the answer.
-
-Set `TYPESAFE_API_KEY` in the server environment and `WIKI_JEV=on` before
-starting the app to enable this in wiki queries. This sends the question,
-recent context, and retrieved excerpts to TypeSafe. The key stays server-side.
-`WIKI_JEV_MODEL` defaults to `jev-1.13.0`. For an individual search:
+앱의 프로젝트 화면에서 [연결]을 누르면 어댑터 작성, 훅 설치, 실제 세션 시험까지
+안내합니다. 명령으로 하려면 대상 프로젝트에 `.wiki/adapter.toml`(검사 명령 등)과
+`.wiki/wiki-revision`(쓸 위키 커밋 40자)을 만든 뒤 위키 폴더에서 실행합니다.
 
 ```powershell
-python tool/search 'Why was this design chosen?' --project . --jev --state 'Reviewing the retrieval design'
+python -m pip install -r requirements-hooks.txt
+python tool/setup_agents.py --project "../내-프로젝트" --agent both
+python tool/setup_agents.py --project "../내-프로젝트" --agent both --check   # 읽기만
 ```
 
-The JSON result includes citations, probabilities, model usage, and one of
-`direct`, `supported`, `insufficient`, or `fallback`. These are retrieval
-judgments, not correctness guarantees. Missing credentials or a failed judgment
-returns baseline search; insufficient evidence permits one wider search, then
-asks the answering agent to verify further. Controller instructions are English;
-source excerpts retain their original language. Verify with
-`python -m pytest -q tool/test_jev.py tool/test_search.py tool/test_main.py`.
+작업트리를 자주 여는 PC라면 `python tool/setup_agents.py --global --trust-codex`로
+사용자 단위에 한 번 설치하는 편이 낫습니다. 설치가 성공했다는 것과 훅이 실제로
+도는 것은 다른 증거입니다. 새 세션을 열어 훅을 직접 신뢰하고(Codex는 `/hooks`),
+세션 시작 정보와 규칙 주입이 실제로 오는지 확인하세요. 전체 절차는
+[`docs/hooks-setup.md`](docs/hooks-setup.md)에 있습니다.
 
-Each question's run can also go to a self-hosted Langfuse as one trace: what
-Jev and the translator were sent and gave back, each draft, and its provenance
-recording, in full text. Ordinary conversation synthesizes an `unverified`
-answer; explicit claim checks also record how each claim was judged.
-Add `LANGFUSE_BASE_URL` (this machine's instance is
-`http://localhost:3001`), `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` of a
-project of its own to the hub's `.env` (`LANGFUSE_TRACING_ENVIRONMENT` names
-the environment, `default` otherwise) and install `requirements-chat.txt`, which
-pins the v4 Python SDK the v4 server needs. Without them nothing is sent; a
-Langfuse that is down costs the trace, never the answer (`tool/main/tracing.py`).
-Keys read at start: the app picks up new ones on restart.
+## 쓰기 전에 알아 둘 점
 
-### The graph window
+- 작업 세션은 선택한 체크아웃의 작업 브랜치에서 전체 권한으로 돕니다. 파일을 쓸
+  때마다 허용을 기다리지 않습니다. 중요한 변경은 커밋해 두고 쓰세요.
+- 모델 사용량은 각자 CLI 계정에서 나갑니다. 리뷰 루프와 리팩터링 조사는 여러 턴을
+  씁니다.
+- 서버는 실행한 PC에서만 열립니다. 외부에서 닿는 길은 휴대폰 연결을 직접 켰을 때뿐입니다.
+- 한 사람이 매일 쓰면서 고치는 프로젝트라 빠르게 바뀝니다.
+- Jev(검색 판단 모델)와 자기 개선 실험은 선택 기능이며 실험 단계입니다.
+  [`docs/jev-maintenance.md`](docs/jev-maintenance.md),
+  [`docs/self-improvement.md`](docs/self-improvement.md)를 보세요.
 
-```bash
-python tool/graph.py --project ~/PycharmProjects/<name> --project ...
-tool/app.cmd                       # the window · "위키 지도" at the lower left
-tool/app.command                   # on macOS and Linux
-```
+## 문서
 
-The map lives in `web/`. The live force layout, dragging, zoom and pan,
-neighbour highlighting and search are taken from Obsidian; what a node means
-was changed. An Obsidian node is a thought someone wrote and its size is the
-number of links. A node here is a rule built by counting session logs, and its
-size is how many characters that rule loads in one turn — put there so that
-the cost of adding pages is visible on screen.
+| 알고 싶은 것 | 읽을 곳 |
+| --- | --- |
+| 그림으로 보는 개요와 사용법 | [`overview.html`](overview.html) |
+| 앱 설치, 계정, 문제 해결 | [`docs/chat-setup.md`](docs/chat-setup.md) |
+| 내 프로젝트에 규칙 연결 | [`docs/hooks-setup.md`](docs/hooks-setup.md) |
+| 휴대폰 연결 | [`docs/mobile.md`](docs/mobile.md) |
+| 프로그램 구조 | [`docs/architecture.md`](docs/architecture.md) |
+| 개발과 검사 | [`docs/development.md`](docs/development.md) |
+| 자세한 운영 노트(영어) | [`docs/reference.md`](docs/reference.md) |
+| 공통 규칙 목록 | [`index.md`](index.md) |
+| 위키를 고치기 전에 | [`SCHEMA.md`](SCHEMA.md), [`ENFORCEMENT.md`](ENFORCEMENT.md), [`MAINTENANCE.md`](MAINTENANCE.md) |
 
-Two axes Obsidian does not have.
+## 배경
 
-- Co-injection. How often two pages rode in the same turn of a real utterance,
-  which is the thickness of the dotted line.
-- The project. Switching tabs reads that repository's
-  `.claude/settings.json`, so only rules actually attached appear solid.
-  Unattached ones look hollow, and slots the adapter has not filled show up
-  with them. An Obsidian graph is inside one vault, so it never asks this.
+Karpathy의 [LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
+아이디어를 코딩 에이전트에 맞게 바꿨습니다. 원래는 논문과 글이 원재료지만, 여기서는
+대화 기록과 실행 기록이 원재료라서 "읽고 요약하기"가 아니라 "세고 비교하기"로
+규칙을 만듭니다.
 
-## The window: ask the wiki, then hand the work to an agent
+이 공개 저장소에는 원본의 규칙, 스킬, 적용 범위, 심각도가 그대로 있고, 실제 대화와
+측정 기록만 빠져 있습니다. 근거를 비공개로 둔 규칙에는 `sources_withheld: true`가
+붙어 있습니다.
 
-Team members follow the
-[chat install and sign-in guide](docs/chat-setup.md). Prepare with
-`python tool/setup_chat.py install --agent codex`, or `--agent claude|both`.
-It uses no personal path or login of the author's; each machine uses its own
-CLI and account. Projects default to the wiki's parent folder, changeable at
-install time with `--workspace`.
-
-Start it with `tool/app.cmd` (`tool/app.command` on macOS and Linux). The
-first start builds the Tauri window, which needs Rust. The window starts the
-Python server (`python tool/main`) itself and takes it down when it closes.
-The plan behind it is [phase 6](docs/plans/done/wiki-agent/6-main.md).
-
-One window, four areas: the project and its worktrees on the left, the wiki
-query in the middle, the selected worktree's agent and a shell in it on the
-right. "→ 작업" under an answer puts a draft instruction — the question, the
-answer, what it cited, the rules it matched — in the agent's box; the person
-writes the last line. Implementation sessions run with full access on a task
-branch in the selected checkout — no write waits for 허용; only the agent's
-questions about the intended result wait for an answer
-([details](docs/development.md)). The Korean translation switch is one for
-the whole app, and off means no request leaves.
-
-Choose the project, the model and the reasoning effort. The chosen CLI has to
-be signed in first. Codex models are not hard-coded; they come from the
-installed CLI's `model/list`. Only the efforts a model supports are shown, and
-the chosen model id is passed explicitly as `--model` on both calls. If the
-list cannot be read, an error is shown. After changing an account or a CLI,
-restart the server to refresh the list. The query format follows
-[the Codex App Server model list](https://learn.chatgpt.com/docs/app-server#models).
-
-The buttons above an answer switch between the exact answer and the plain
-explanation. The original comes first and the explanation is generated
-afterwards, so the second call costs more time and usage. Both are stored, and
-if generating the explanation fails the original survives. Old records are not
-back-filled with explanations.
-
-- [The answer prompt](tool/prompts/chat-answer.md): search the documents,
-  confirm the sources, compare conflicts, separate what was verified. It reads
-  and cites evidence inside the repository and distinguishes what it could not
-  actually confirm. What an internal work name means, and what a number
-  counted, are confirmed from the source and included in the reply.
-- [The explanation prompt](tool/prompts/chat-explain.md): receives only the
-  finished original, as JSON, and restates it preserving the meaning. The
-  answer prompt, the question, the search history and the focus instructions
-  are not passed. It runs in a separate temporary folder, in a new session,
-  with no search tools. Numbers, conditions, negations, unconfirmed points and
-  sources are preserved, and jargon is unpacked. The reader it writes for
-  joined today. Instead of phrasing that assumes earlier conversation or
-  development knowledge, it starts from what the work is, what is finished and
-  what needs confirming. It invents no background that is not in the original.
-
-Each prompt is written in English and specifies Korean output. They focus on
-the order of steps, the input and output boundaries, what must be preserved,
-and examples of faithful and unfaithful transformation, rather than on role
-declarations. They draw on the
-[prompting guide](https://developers.openai.com/api/docs/guides/prompt-engineering)
-and the
-[reasoning model guide](https://developers.openai.com/api/docs/guides/reasoning-best-practices).
-The plain explanation is not a separate fact-check of the original. The
-"View evidence and judgment" opens the sources and their recorded snapshots.
-Source locators and verification notices stay there, separate from the answer
-body. Next task, wiki and retrospect use the same synthesis path: the agent
-may interpret incomplete evidence, and its answer is recorded as `unverified`,
-not independently checked sentence by sentence.
-
-The project is shared by all three focuses of the query — next task, wiki and
-retrospect — and by the worktree list. The next-task focus gathers
-the open plan rows, open pull requests, recent decisions and lint warnings
-into candidates, asks back with options, and ends in a task spec card; its
-[시작] switches the checkout to a new task branch (`git switch -c`, no new
-worktree) whose session gets the spec as its system prompt, and
-the server opens the pull request only after the gate passes again there.
-
-Review is not a focus any more; it is a loop. Once a spec's pull request is up
-(and its plan-row commit pushed, when it has one), a read-only review cell in
-that checkout — Codex's default model at effort `high` unless the rail's
-settings say otherwise — reviews it round by round, in the format of
-`operator/codex-review-loop`. A refusal goes to the work cell as one turn; the
-server runs the gate and pushes, and the next round follows. The loop ends at
-`머지 가능`, where the review tab's [머지] squashes
-the pull request bound to the head the review allowed; after it lands, the
-server comments the P2 worth keeping, fast-forwards the original checkout only
-when it stands clean on the base, and deletes the task branch (only at the
-head the review allowed; a linked worktree goes with it) and the remote branch. Otherwise a loop stops only for a reason in the stage 4 plan's
-table, and [계속] takes it on. "리뷰 루프 (N)" on the rail takes pull requests
-opened without a spec, and stopped loops. Round files live in the hub under
-`raw/review/<repo>/<pr>/`. A loop carries its repository, so switching projects
-does not stop it; its worktree shows under "다른 프로젝트". Conversation context
-and records are kept per project and per focus, so leaving for another project and coming back
-continues where it left off. A server restart restores the project selection
-and the CLI sessions left in the records. "Clear context" applies to the
-selected project's focus alone and does not delete records. Older records
-with no project information are under "records from before projects". `chat_post.py`, which posts external briefings,
-also requires `--project <path>`. Within one CLI, changing the model continues
-the original conversation; switching between Claude and Codex starts a new
-context. "Related rules" on screen is a display-time comparison, not evidence
-that the host delivered a hook, and hooks are never re-run to produce it.
-
-During development, select affected cases from `tool/test_main.py`,
-`tool/test_specs.py`, `tool/test_loop.py` and `tool/test_connect.py`.
-Final verification has [one owner](docs/development.md#one-final-verification-owner):
-hosted CI for a configured public repository, bounded local work otherwise.
-The checks confirm the
-CLI events, the session separation, the original surviving a failure, and the
-model and effort validation. `tool/test_specs.py` confirms the next-task
-focus: a spec with an empty goal is refused, the gate stays the first done item
-and an adapter is required; slugs are tidied and a taken one gets a number; a
-save from a stale card is refused; blocks leave the answer and a broken one is
-an error; [시작 ▸] prepares the task branch first; the work session gets the spec as
-its system prompt; a passing report is not believed over a failing gate; a
-passing gate opens the pull request and the plan row follows; the PR body has
-the sections harvest reads; and a result line is shown once. `tool/test_loop.py`
-confirms the review loop, with both cells stood in and git run for real against
-a bare origin: the round parser; an allow ends at `머지 가능`; a refusal goes to
-the work cell, through the gate and up; two failed gates, the round cap and a
-finding disputed twice each stop; three seats leave a fourth loop waiting; a
-head or base that moved throws the round away; `adopt` and its four local
-branch cases; [머지] bound to the allowed head, a queued merge that cleans
-nothing until it lands, and every row of the after-merge table; the remote
-branch deleted only on its lease; [받아들임] and [다시 PR]; a Claude review cell
-with no shell; and a loop that keeps going across a project switch.
-`tool/test_connect.py` confirms connecting: each missing item makes a row
-`일부` under its own name; the gate is guessed from the first file that says;
-a host passes its test only when its own SessionStart injected, and the hook
-writes nothing without `WIKI_PROBE` and passes when it cannot write; the hub
-move lists every line before writing and writes nothing unconfirmed; the
-survey stops sending turns at its token limit, skips a page that exists and
-puts back what it touched outside `.wiki/`; `sync`, `harvest` and
-`session_state` import nothing of it; and the six handover steps, each
-condition broken touching nothing. These automatic checks guarantee neither the
-accuracy of every model response nor the quality of an explanation. To test
-the quality of a real progress answer, press "문맥 비우기" in the query pane
-first, wait for it to finish, then ask again. A check that re-explains
-an old original is distinct from this whole-flow check. When reviewing,
-compare two things separately: whether the body alone makes the purpose, the
-current state and what remains understandable, and whether the original's
-numbers, conditions and unconfirmed points survived unchanged. A response that
-only adds a parenthetical gloss to a term, or turns "an instruction was
-missed" into "the answer was wrong", does not pass.
-
-To check the next-task focus in the window, run one task on this repository
-through to its decision record:
-
-1. In the next-task focus, press "후보 내기" and pick one candidate.
-2. Answer the follow-up choices until the answer ends in a spec card.
-3. Edit one line under "완료 조건 — 한 줄에 하나", press "저장", then press
-   "시작 ▸".
-4. The work session works to the spec and ends with a `done-report`; the
-   server runs the gate again on the task branch.
-5. The pull request goes up with its `## 변경 이유` section holding the spec's
-   decisions, and its result line appears in the conversation.
-6. If the spec came from a plan row, the commit that sets that row to
-   `완료 — PR #n` lands in the same pull request.
-7. Merge it on GitHub. The card's state becomes `머지됨` and its result line
-   appears in the conversation.
-8. Run `python tool/harvest.py --project <checkout>` to preview and the same
-   command with `--write` to write, then check that the `.wiki/decisions/`
-   record for that pull request has the spec's decisions as its why. The
-   server does not run harvest after a merge, because it would write into the
-   original checkout; otherwise the record appears only at that repository's
-   next sync.
-
-## Maintenance
-
-Before a Codex hook times out, its execution stack and process information are
-collected locally and automatically. The install state, log location and
-retention are in [hook self-diagnosis](tool/hook-diagnostics.md).
-
-```bash
-python tool/lint.py --repo ~/PycharmProjects/<name>      # the hub wiki
-python tool/lint.py --check                              # including the real wiring (exits 1 on failure)
-python tool/repo_lint.py --repo ~/PycharmProjects/<name> # an attached repository
-python tool/trigger_audit.py raw/census-*.jsonl          # shared rules only — the knowledge axis is unmeasured
-```
-
-By default `trigger_audit` measures the shared rules alone. Measuring the
-knowledge axis (the decision records) as well needs that repository's census
-and `--project` together.
-
-```bash
-python tool/trigger_audit.py raw/census-<name>.jsonl --project ~/PycharmProjects/<name>
-```
-
-In output from a run without `--project`, the knowledge axis is unmeasured,
-not `0`.
-
-What the hook costs is measured by four more subcommands. Tokens are weighted
-by the API's rates as a stand-in for the subscription limit: input 1, cache
-write 2, cache read 0.1, output 5.
-
-```bash
-python tool/trigger_audit.py replay ~/PycharmProjects/<name>/.wiki/trajectory.jsonl --until <UTC>  # today's pages over past utterances, without and with deduplication
-python tool/trigger_audit.py latency --project ~/PycharmProjects/<name>   # the hook's own time, translation off
-python tool/trigger_audit.py usage --since <UTC> --until <UTC>             # weighted tokens per human utterance, every transcript on this PC
-python tool/trigger_audit.py ab ~/PycharmProjects/<name> --a <main worktree> --b <branch worktree> --model <m>  # one task set, two hooks
-```
-
-`ab` spends the subscription: `--dry-run` shows the task set first. Each
-`.wiki/trajectory.jsonl` row carries `sent`, the bytes of the whole injection,
-and `full`, the pages that went out untrimmed. The hook reads its own session's
-rows back: a page declaring `repeat: rule` that the session already received
-in full goes out as its rule paragraph, until the transcript compacts (`tx`,
-`txp`, `reset`). A turn over the host's ceiling sends every declaring page as
-its rule paragraph. `replay` exits 1 if a matched rule is ever missing from
-what it would send.
-
-`lint` catches where the structure rots and re-running a census catches where
-the content rots — a page written and the failure not falling means going up
-the ladder, not rewriting the prose. When to run what, and what to do with the
-findings, is in [`MAINTENANCE.md`](MAINTENANCE.md).
-
-`tool/test_lint.py` watches that the checks actually go red. A green with zero
-findings is not evidence that a check ran.
-
-## State
-
-Standing and attached are different things. Every layer standing means the
-machinery exists in this repository; which repository it actually hangs on is
-known only to `lint --check`.
-
-`python` has to be able to read `yaml` and `tomllib`. `apply` confirms that
-with the target interpreter before writing a hook — unable to read them, a
-hook quietly does nothing, and that is the worst failure shape an enforcement
-layer has.
-
-## Grounds in the public copy
-
-The original's rules, skills, applicability and severities are kept; only the
-actual conversations, cases and measurements are withheld.
-`sources_withheld: true` marks a rule whose grounds are private. `lint`
-exempts the missing grounds only for existing rules carrying that mark, and it
-does not substitute for a new rule's grounds. Installing and signing in with
-your own CLI follows the [install guide](docs/chat-setup.md); managing the
-public copy follows the [update guide](docs/publishing.md); what was verified
-follows the [check record](docs/verification.md).
+질문이나 버그 제보는 GitHub 이슈로 남겨 주세요.
