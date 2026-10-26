@@ -314,6 +314,10 @@ nothing be tuned for 4:3 or 5:4. Below 761px a phone layout remains.
   tabs, and the three start commands. Each other tab shows its own section
   links in the bar. A hash to any section opens its tab, and the old
   `#overview` and `#usage` still land.
+- The app tab ends with each focus — next task, refactoring, wiki,
+  retrospective — as what it is and a step graph (`.graph`, branches side by
+  side in `.fork`), so a first-time reader learns what each one does
+  (user, 2026-10-26). The focus cards at the top link down to them.
 - Hangul wraps by word (`word-break: keep-all`).
 
 It reuses the app's palette and type families; no colour was added. Measured
