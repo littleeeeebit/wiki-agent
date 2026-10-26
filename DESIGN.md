@@ -289,3 +289,26 @@ the same at the four sizes above; the folded 52px rail opens quotas in a bounded
 240px popover. On a 400×800 phone the requested fixed diff disclosure consumes
 45px, leaving 550px for the task transcript. Both task and mobile browser checks
 pass without horizontal overflow. No new palette choice is introduced.
+
+## Overview page
+
+`overview.html` is the page a Korean developer opens from a community link to
+learn what wiki-agent is and how to start. It is laid out for PC first; the
+user named the targets as 16:10, 16:9 and 21:9 (2026-10-26), and asked that
+nothing be tuned for 4:3 or 5:4. Below 761px a phone layout remains.
+
+- The root font follows the width: `clamp(15px, 10px + .35vw, 20px)` — 15px
+  up to 1440, about 17px at 1920, 19px at 2560 and 20px at 3440.
+- The page is `max(92rem, 60vw)` wide plus a `clamp(20px, 4vw, 72px)` gutter:
+  about 1540px at 1920, 1744px at 2560 and 2064px at 3440.
+- From 761px each section puts its heading in a sticky left column
+  (15–20rem) and its content in the right one. The bar carries section links
+  with the current one marked.
+- Under 1440px the four focus cards wrap to two per row, and the five-step
+  flow becomes five rows, because five columns shrink to 150px at 1280.
+- Hangul wraps by word (`word-break: keep-all`).
+
+It reuses the app's palette and type families; no colour was added. Measured
+on 2026-10-26 at 1280×800, 1440×900, 1680×1050, 1920×1200, 1366×768,
+1600×900, 1920×1080, 2560×1440, 2560×1080, 3440×1440 and 390×844: no
+horizontal overflow and no overlap in the bar.

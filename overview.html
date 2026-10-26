@@ -30,23 +30,25 @@
   --accent:#7fa9c9;--accent-wash:#1f2d39;--alarm:#d9705e;--alarm-wash:#3a221e;--bar:rgba(20,22,26,.88);}
 
 *{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%;scroll-padding-top:72px}
-body{margin:0;background:var(--ground);color:var(--ink);font:400 1rem/1.75 var(--sans);-webkit-font-smoothing:antialiased}
+/* 기준은 PC 16:10 · 16:9 · 21:9. 글자는 1280~1440에서 15px, 1920에서 약 17px, 2560에서 19px, 3440에서 20px */
+html{-webkit-text-size-adjust:100%;scroll-padding-top:88px;font-size:clamp(15px,calc(10px + .35vw),20px)}
+body{margin:0;background:var(--ground);color:var(--ink);font:400 1rem/1.75 var(--sans);-webkit-font-smoothing:antialiased;word-break:keep-all;overflow-wrap:break-word}
 a{color:var(--accent);text-underline-offset:3px}
 a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
 code{font:500 .8125rem var(--mono);background:var(--chip);padding:.05em .35em;border-radius:.225rem}
 [hidden]{display:none!important}
 
 /* 타입 단계 — sans 6개: display · h2 · name · lead · body · small / mono 3개: label .75 · data .8125 · name .875 */
-.display{font:700 clamp(2.1rem,5.4vw,3.4rem)/1.08 var(--head);letter-spacing:-.01em;text-wrap:balance;margin:0}
-h2{font:700 clamp(1.5rem,3.2vw,1.9rem)/1.2 var(--head);text-wrap:balance;margin:0}
-.lead{font-size:1.1875rem;line-height:1.7;color:var(--ink);max-width:36rem;margin:0}
-p{margin:0;max-width:38rem;color:var(--soft)}
+.display{font:700 clamp(2.4rem,3.4vw,4.25rem)/1.08 var(--head);letter-spacing:-.01em;text-wrap:balance;margin:0}
+h2{font:700 clamp(1.5rem,1.9vw,2.25rem)/1.2 var(--head);text-wrap:balance;margin:0}
+.lead{font-size:1.1875rem;line-height:1.7;color:var(--ink);max-width:40rem;margin:0}
+p{margin:0;max-width:46rem;color:var(--soft)}
 p b{color:var(--ink);font-weight:600}
 .small{font-size:.8125rem;line-height:1.5;color:var(--faint)}
 .label{font:500 .75rem/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
 
-.page{max-width:60rem;margin:0 auto;padding-inline:20px;padding-block:56px 96px;display:grid;gap:96px}
+/* 본문 폭: 92rem(1920에서 약 1540px). 21:9에서는 화면 폭의 60%까지 넓어진다(3440에서 약 2060px) */
+.page{--gutter:clamp(20px,4vw,72px);max-width:calc(max(92rem,60vw) + 2 * var(--gutter));margin:0 auto;padding-inline:var(--gutter);padding-block:clamp(48px,6vh,88px) 120px;display:grid;gap:clamp(80px,9vh,128px)}
 section{display:grid;gap:20px}
 .head{display:grid;gap:10px}
 .card{background:var(--panel);border:1px solid var(--edge);border-radius:var(--r-lg)}
@@ -54,15 +56,21 @@ section{display:grid;gap:20px}
 
 /* ── 상단 바 + 개요/사용법 토글 ── */
 .bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bar);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--rule)}
-.bar-in{max-width:60rem;margin:0 auto;padding-inline:20px;padding-block:10px;display:flex;align-items:center;justify-content:space-between;gap:16px}
-.brand{font:500 .8125rem/1.4 var(--mono);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-in{--gutter:clamp(20px,4vw,72px);max-width:calc(max(92rem,60vw) + 2 * var(--gutter));margin:0 auto;padding-inline:var(--gutter);padding-block:10px;display:flex;align-items:center;gap:24px}
+.brand{font:500 .875rem/1.4 var(--mono);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jump{display:flex;gap:4px;min-width:0;margin-right:auto}
+.jump a{font:500 .8125rem/1 var(--sans);color:var(--soft);text-decoration:none;padding:8px 10px;border-radius:var(--r);white-space:nowrap;transition:background-color .15s,color .15s}
+.jump a:hover{color:var(--ink);background:var(--chip)}
+.jump a[aria-current]{color:var(--accent);background:var(--accent-wash)}
+.gh{font:500 .8125rem/1 var(--mono);color:var(--soft);text-decoration:none;padding:8px 10px;border:1px solid var(--edge);border-radius:var(--r);flex:none}
+.gh:hover{color:var(--ink);border-color:var(--accent)}
 .toggle{display:inline-flex;padding:3px;background:var(--chip);border-radius:calc(var(--r) + 3px);flex:none}
 .toggle button{font:500 .875rem/1 var(--sans);color:var(--soft);background:transparent;border:0;border-radius:var(--r);padding:9px 16px;cursor:pointer;transition:background-color .15s,color .15s}
 .toggle button:hover{color:var(--ink)}
 .toggle button[aria-selected="true"]{background:var(--panel);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px var(--edge)}
 
 /* ── 히어로: 문장 + 핵심 장치 한 장 ── */
-.hero{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:48px;align-items:center}
+.hero{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:clamp(40px,5vw,96px);align-items:center;min-height:min(62vh,40rem)}
 .hero-text{display:grid;gap:22px}
 .hero-text .display em{font-style:normal;color:var(--accent)}
 .machine{display:grid;gap:10px;background:var(--panel);border:1px solid var(--edge);border-radius:var(--r-lg);padding:20px}
@@ -138,14 +146,14 @@ section{display:grid;gap:20px}
 /* ── 앱: 포커스 넷 + 명세가 머지까지 가는 길 ── */
 .focuses{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .focus{padding:20px;display:grid;gap:8px;align-content:start}
-.focus .name{font:700 1.25rem/1.2 var(--head)}
+.focus .name{font:700 1.375rem/1.2 var(--head)}
 .focus .follows{font-weight:500;color:var(--ink);line-height:1.5}
 .flow{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;counter-reset:flow}
 .flow li{counter-increment:flow;display:grid;gap:6px;align-content:start;padding-top:14px;border-top:2px solid var(--ink)}
 .flow li::before{content:counter(flow);font:500 .8125rem/1 var(--mono);color:var(--accent)}
 .flow li:last-child{border-top-color:var(--accent)}
 .flow b{font-weight:600;line-height:1.4}
-.flow span{font-size:.875rem;line-height:1.55;color:var(--soft)}
+.flow span{font-size:.9375rem;line-height:1.6;color:var(--soft)}
 
 /* ── 사용법 ── */
 .chooser{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
@@ -187,7 +195,31 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
 .readfirst b{font:500 .875rem/1.4 var(--mono);color:var(--accent)}
 .closing{border-top:1px solid var(--edge);padding-top:32px}
 
+/* ── PC: 섹션 제목은 왼쪽 열에 붙어 있고, 내용은 오른쪽 열을 쓴다 ── */
+@media (min-width:761px){
+  .page > section:not(.closing),.page > .guide{grid-template-columns:minmax(15rem,20rem) minmax(0,1fr);column-gap:clamp(40px,5vw,112px);row-gap:0}
+  .page > section > .head,.page > .guide > .guide-head{grid-column:1;grid-row:1 / span 12;align-self:start;position:sticky;top:96px}
+  .page > section > :not(.head):not(.guide-head){grid-column:2}
+  .page > section > :not(.head):not(.guide-head) ~ :not(.head):not(.guide-head){margin-top:24px}
+  .page > section > .subhead{margin-top:40px!important}
+  .focuses{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .readfirst{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+/* 1280~1440 폭(16:10 · 16:9의 작은 화면)에서는 포커스 카드를 두 줄로 */
+@media (min-width:761px) and (max-width:1439px){
+  .focuses{grid-template-columns:repeat(2,minmax(0,1fr))}
+  /* 다섯 칸이 150px까지 좁아지는 폭이라, 흐름은 번호 · 이름 · 설명의 줄로 */
+  .flow{grid-template-columns:minmax(0,1fr);gap:0;border:1px solid var(--edge);border-radius:var(--r-lg);background:var(--panel)}
+  .flow li{grid-template-columns:2rem 8rem minmax(0,1fr);align-items:baseline;gap:12px;padding:12px 20px;border-top:1px solid var(--rule)}
+  .flow li:first-child{border-top:0}
+  .flow li:last-child{border-top-color:var(--rule)}
+}
+/* 낮은 화면(1366×768, 1280×800): 히어로를 화면 높이에 억지로 맞추지 않는다 */
+@media (max-height:820px){ .hero{min-height:0} }
+
+/* 휴대폰 */
 @media (max-width:760px){
+  .jump{display:none}
   .page{gap:72px;padding-block:36px 72px}
   .hero,.sessions,.drawers,.steps,.readfirst,.two,.day,.chooser,.lanes,.focuses,.flow{grid-template-columns:minmax(0,1fr)}
   .hero{gap:28px}
@@ -196,6 +228,8 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
   .bridge{border-inline:0;border-block:1px dashed var(--edge);grid-auto-flow:column;justify-content:center;gap:12px}
   .guard .row{grid-template-columns:minmax(0,1fr);gap:0}
   .toggle button{padding:9px 12px}
+  .gh{display:none}
+  .toggle{margin-left:auto}
   .ladder li{grid-template-columns:2rem minmax(0,1fr);padding:14px 16px}
   .ladder .cost{grid-column:2;text-align:left}
   .map{grid-template-columns:minmax(0,1fr)}
@@ -209,6 +243,13 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
 <div class="bar">
   <div class="bar-in">
     <span class="brand">wiki-agent</span>
+    <nav class="jump" data-for="overview" aria-label="개요 바로가기">
+      <a href="#problem">문제</a><a href="#drawers">서랍</a><a href="#hooks">훅</a><a href="#ladder">사다리</a><a href="#app">앱</a><a href="#english">두 언어</a><a href="#attach">붙이기</a><a href="#folders">폴더</a>
+    </nav>
+    <nav class="jump" data-for="usage" aria-label="사용법 바로가기" hidden>
+      <a href="#use-app">A · 데스크톱 앱</a><a href="#use-hooks">B · 규칙 연결</a><a href="#use-mobile">C · 휴대폰 연결</a>
+    </nav>
+    <a class="gh" href="https://github.com/littleeeeebit/wiki-agent">GitHub</a>
     <div class="toggle" role="tablist" aria-label="보기">
       <button type="button" role="tab" id="tab-overview" aria-controls="overview" aria-selected="true">개요</button>
       <button type="button" role="tab" id="tab-usage" aria-controls="usage" aria-selected="false" tabindex="-1">사용법</button>
@@ -234,7 +275,7 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
     </div>
   </header>
 
-  <section>
+  <section id="problem">
     <div class="head">
       <div class="label">문제</div>
       <h2>적어 둔 교훈이 행동을 못 바꾼다</h2>
@@ -247,7 +288,7 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
     <p>문서로 남겨도 소용없었습니다. 문서는 <b>안 읽히면 그만</b>이니까요. 부족한 건 저장 공간도 검색도 아니었습니다. 그래서 이 위키가 하는 일은 딱 둘입니다. <b>반복되는 지시는 스킬로 굳히고</b>, <b>검사로 바꿀 수 있는 규칙은 검사로 바꿉니다.</b> 판단이 필요한 나머지는 글로 둡니다. 판단할 일을 기계로 막으면 헛경보가 작업을 멈추기 때문입니다.</p>
   </section>
 
-  <section>
+  <section id="drawers">
     <div class="head">
       <div class="label">어디에 적나</div>
       <h2>서랍은 세 개, 여기엔 둘만</h2>
@@ -260,7 +301,7 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
     <p>손으로 쓴 규칙 페이지는 몇 장뿐입니다. 나머지 문서는 세션 시작 때 <b>목록만</b> 한 번 넣어 주고, 본문은 에이전트가 필요할 때 엽니다. 규칙이 실패하는 방식은 “안 읽었다”라서 훅이 밀어 넣고, 문서가 실패하는 방식은 “있는 줄 몰랐다”라서 목록이면 충분합니다.</p>
   </section>
 
-  <section>
+  <section id="hooks">
     <div class="head">
       <div class="label">세션 하나에서 일어나는 일</div>
       <h2>훅이 끼어드는 세 순간</h2>
@@ -273,7 +314,7 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
     <p>“뭘 하던 중이었지”는 어떤 말에도 걸리지 않으니, 세션 시작 때 따로 한 번 넣습니다. 그리고 훅은 <b>고장 나도 막지 않습니다.</b> 번역 키가 없거나 스크립트가 터져도 작업은 그대로 갑니다. 일을 멈추는 강제는 결국 사람이 꺼 버리기 때문입니다.</p>
   </section>
 
-  <section>
+  <section id="ladder">
     <div class="head">
       <div class="label">어떻게 지키게 하나</div>
       <h2>싼 칸부터 오르고, 막히는 칸에서 멈춘다</h2>
@@ -300,9 +341,7 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
       <div class="focus card"><span class="name">회고</span><span class="follows">오늘 어긋난 자리를 센다</span><span class="small">오늘의 커밋과 대화에서 정정 · 반복 지시 · 멈춤을 세어 규칙 후보를 냅니다</span></div>
     </div>
 
-    <div class="head">
-      <div class="label">명세 카드 하나가 머지까지</div>
-    </div>
+    <div class="label subhead">명세 카드 하나가 머지까지</div>
     <ol class="flow">
       <li><b>[시작]</b><span>선택한 체크아웃에 작업 브랜치를 만들고, 명세를 시스템 프롬프트로 받은 에이전트가 일합니다</span></li>
       <li><b>게이트</b><span>에이전트의 “통과했다”가 아니라 서버가 다시 돌린 검사 결과를 믿습니다. 통과해야 PR</span></li>
@@ -371,7 +410,7 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
     </div>
   </section>
 
-  <section>
+  <section id="attach">
     <div class="head">
       <div class="label">새 프로젝트에 붙이기</div>
       <h2>세고, 겹치고, 붙인다</h2>
@@ -384,7 +423,7 @@ hr.cut{border:0;border-top:1px solid var(--edge);margin:0}
     <p>프로젝트는 <code>.wiki/wiki-revision</code>에 위키 커밋 번호를 적어 고정합니다. 위키가 바뀌어도 팀 전원이 같은, 검증된 버전을 씁니다. 앱의 프로젝트 화면에서 <b>[연결]</b>을 누르면 어댑터 작성, 훅 설치, 실제 세션 시험까지 안내합니다. 명령은 오른쪽 위 <b>사용법</b> 탭에 있습니다.</p>
   </section>
 
-  <section>
+  <section id="folders">
     <div class="head">
       <div class="label">폴더 지도</div>
       <h2>어디에 뭐가 있나</h2>
@@ -526,7 +565,19 @@ python tool/setup_agents.py --project "../내-프로젝트" --agent both --check
       tabs[key].tabIndex = on ? 0 : -1;
       panels[key].hidden = !on;
     }
+    for (const nav of document.querySelectorAll('.jump')) nav.hidden = nav.dataset.for !== name;
   }
+
+  // 바로가기에서 지금 읽는 섹션을 표시한다.
+  const links = new Map([...document.querySelectorAll('.jump a')].map(a => [a.hash.slice(1), a]));
+  const spy = new IntersectionObserver(entries => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      for (const a of links.values()) a.removeAttribute('aria-current');
+      links.get(e.target.id)?.setAttribute('aria-current', 'true');
+    }
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  for (const id of links.keys()) { const el = document.getElementById(id); if (el) spy.observe(el); }
 
   // 링크(#usage, #use-chat …)로 들어와도 맞는 탭이 열리게.
   function fromHash() {
