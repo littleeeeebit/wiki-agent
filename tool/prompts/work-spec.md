@@ -55,23 +55,8 @@ The person's later instructions update the assignment as work progresses.
   [{"item": "the done item as written", "pass": true, "evidence": "the command you ran, then the last line of its output"}]
   ```
 
-- Right before the `done-report`, add a `pr-summary` fenced JSON block. It is
-  the pull request's only prose: no sentence of the spec goes up. Read your
-  branch's final diff and write it in Korean, for a reviewer who has not seen
-  the spec, saying what the finished change does. It is the one text you write
-  in Korean, because it goes up as written:
-
-  ```pr-summary
-  {"title": "선제 발화 check·trigger의 자격 판정 중복을 헬퍼 하나로 합침", "changes": ["`routes_proactive.py`의 두 엔드포인트가 정책 평가·비전 거부·결과 기록을 `_evaluate_eligibility` 하나로 호출한다", "비전 거부보다 정책 거부가 먼저인 순서와 결과 기록 한 번은 그대로다", "평가 → 거부 → 기록 순서를 고정하는 라우트 테스트 2개를 새로 넣었다"], "why": "두 엔드포인트가 같은 판정 순서를 따로 들고 있어, 한쪽만 고치면 동작이 갈라질 수 있었다.", "review": ["`record_check`는 헬퍼 밖에 남겨 check만 기록한다 — 헬퍼 안으로 옮기면 trigger도 타임스탬프를 남긴다"]}
-  ```
-
-  Exactly these four keys. `title` names the outcome in plain words, within
-  80 characters. `changes` is three to six concrete changes; `why` is one or
-  two sentences; `review` says where to look first and why, and may be empty.
-  Describe, never instruct: no "하십시오" or "하라", and never copy or
-  translate the spec's title, goal or lists. Any file or symbol you put in
-  backticks must appear in the diff. The server checks all of this and sends
-  a failed summary back to you once.
+- Write no pull request text here. Once the report is in and the gate passes,
+  the server asks for it in a turn of its own, with a guide and examples.
 - If any item did not pass, do not say you are done and do not emit the
   block. Say what is blocking and ask.
 - The first `done` item is the repository gate, the server's command, not yours to run: report it

@@ -35,7 +35,7 @@ def test_a_turn_without_a_report_or_a_question_asks_for_the_report_once(repo):
         started(web, sid)
         saved = until(lambda: (s := specs.load(repo.name, sid)).get("pr") and s)
         assert saved["pr"]["number"] == 7 and not saved["report_asked"]
-        assert "pending server gate is not a failed item" in work._sessions[str(repo)].heard[-1]
+        assert "pending server gate is not a failed item" in work._sessions[str(repo)].heard[-2]
     work.close_all()
 
 

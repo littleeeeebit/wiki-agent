@@ -19,7 +19,6 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-import translate
 from agent import ChatSession, read_tools
 from common import errorlog, worktree_home
 from common import settings as settings_file
@@ -1168,7 +1167,7 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n
         if not preview["ok"]:
             return resolve_merge(loop, spec, repo, path, preview, base)
         deferred = spec.get("deferred") or []
-        kept_p2 = pick(loop, chat, deferred)
+        kept_p2, shown = pick(loop, chat, deferred)
         if not verification.cloud(spec) and (spec.get("review_contract") or {}).get("flows"):
             fresh = specs.load(loop.repo, loop.sid)
             problem = review_contract.merge_problem(repo, path, fresh, head, specs.current_merge_base(path, base, head))
@@ -1187,8 +1186,7 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n
                     return cloud_stop(loop, repo, spec, head, str(exc))
                 return stop(loop, loop.repo, loop.sid, Why.GATE, str(exc))
         # `p2` stays as the cell wrote it — the next candidates read it; the
-        # comment goes up on GitHub, read by a person, in Korean.
-        shown = translate.translate(kept_p2, translate.EN_KO, time.monotonic() + pr_text.TRANSLATE_SECONDS)
+        # comment goes up on GitHub, read by a person, in the cell's own Korean.
         comment = ("리뷰에서 남긴 P2 — 따로 할 만한 것\n\n" + "\n".join(f"- {p}" for p in shown)) if kept_p2 else ""
         change(loop, "머지 가능", p2=kept_p2, p2_comment=comment)
         return False
@@ -1714,20 +1712,22 @@ def corrected(loop: Loop, spec: dict, repo: Path, path: Path) -> bool:
     return shipped(loop, spec, repo, path, head, base)
 
 
-def pick(loop: Loop, chat: ChatSession, deferred: list[str]) -> list[str]:
-    """The deferred P2 worth a follow-up, as the review cell picks them."""
+def pick(loop: Loop, chat: ChatSession, deferred: list[str]) -> tuple[list[str], list[str]]:
+    """The deferred P2 worth a follow-up as the review cell picks them, and its own Korean for the PR comment."""
 
     if not deferred:
-        return []
+        return [], []
     try:
-        answer = ask(loop, chat, (
-            "The review allowed the merge. Go through the deferred P2 below once and keep only what is worth "
-            "doing as a follow-up; drop minor style and taste. End with the `p2-keep` block.\n\n"
-            + "\n".join(f"- {d}" for d in deferred)))
+        answer = ask(loop, chat, ("The review allowed the merge. Go through the deferred P2 below once and keep only "
+            "what is worth doing as a follow-up; drop minor style and taste. End with the `p2-keep` block, the kept items as written, then "
+            "`p2-korean`: each kept item in order, in Korean for a colleague who has not seen this code — the problem "
+            "and why it is worth doing, plain words, code names in backticks.\n\n" + "\n".join(f"- {d}" for d in deferred)))
     except RuntimeError:
-        return []
-    kept = block("p2-keep", answer)
-    return [k.strip() for k in kept if isinstance(k, str) and k.strip()] if isinstance(kept, list) else []
+        return [], []
+    kept, korean = block("p2-keep", answer), block("p2-korean", answer)
+    kept = [k.strip() for k in kept if isinstance(k, str) and k.strip()] if isinstance(kept, list) else []
+    fits = isinstance(korean, list) and len(korean) == len(kept) and all(isinstance(k, str) and pr_text.HANGUL.search(k) for k in korean)
+    return kept, [k.strip() for k in korean] if fits else kept
 
 
 def recover() -> list[tuple[str, str]]:

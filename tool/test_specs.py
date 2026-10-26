@@ -153,24 +153,28 @@ class Remote:
         return any(c[:3] == ["gh", "pr", "create"] for c in self.calls)
 
 
-# A finished answer carries the PR's summary; without it the server asks once more.
-SUMMARIZED = "```pr-summary\n" + json.dumps({"title": "로그인 뒤 원래 페이지로 돌아간다", "changes": ["로그인이 원래 페이지로 보낸다"],
-                                              "why": "로그인 뒤 첫 화면으로 떨어졌다.", "review": []},
-                                             ensure_ascii=False) + "\n```\n\n"
-SWEPT = "```test-cleanup\n" + json.dumps({"audited": ["test_a.py"], "removed": []}) + "\n```\n\n" + SUMMARIZED
+TOLD = {"title": "로그인 뒤 원래 페이지로 돌아간다", "context": "로그인이 필요한 페이지는 로그인 화면을 거친다.",
+        "changes": [{"what": "로그인 뒤 원래 열려던 페이지로 돌려보낸다.", "where": []}], "behavior": "전에는 첫 화면으로 갔다.",
+        "why": "공유받은 링크를 다시 찾아야 했다.", "verify": ["돌아가는 경우를 테스트했다."]}
+# The answer to the server's request for the PR's text, right before the PR (`specs.pr_turn`).
+SUMMARIZED = "```pr-summary\n" + json.dumps(TOLD, ensure_ascii=False) + "\n```\n"
+SWEPT = "```test-cleanup\n" + json.dumps({"audited": ["test_a.py"], "removed": []}) + "\n```\n\n"
+WRITE_ASKS = (pr_text.WRITE[:60], "The pull request's title and summary come only")
 
 
 def report(*passes: bool, sweep: str = SWEPT) -> str:
     items = [{"item": f"항목 {i}", "pass": p, "evidence": f"ran {i} · ok"} for i, p in enumerate(passes)]
-    told = "" if "```pr-summary" in sweep else SUMMARIZED
-    return "다 했다.\n\n" + sweep + told + "```done-report\n" + json.dumps(items, ensure_ascii=False) + "\n```"
+    return "다 했다.\n\n" + sweep + "```done-report\n" + json.dumps(items, ensure_ascii=False) + "\n```"
 
 
 class Worker:
-    """A write session that answers each turn with the next of `replies`. A
-    callable reply is called with the worktree and the turn's stop first."""
+    """A write session that answers each turn with the next of `replies`, and
+    the server's request for the PR's text with the next of `summaries` (else
+    `SUMMARIZED`). A callable reply is called with the worktree and the turn's
+    stop first."""
 
     replies: list = []
+    summaries: list = []
     made: list = []
 
     def __init__(self, path, model="", effort="", write=False, system="", bypass=False):
@@ -181,7 +185,10 @@ class Worker:
 
     def say(self, text, halt=None):
         self.heard.append(text)
-        reply = Worker.replies.pop(0) if Worker.replies else "알겠다"
+        if text.startswith(WRITE_ASKS):
+            reply = Worker.summaries.pop(0) if Worker.summaries else SUMMARIZED
+        else:
+            reply = Worker.replies.pop(0) if Worker.replies else "알겠다"
         if callable(reply):
             reply = reply(self.path, halt)
         yield Event("done", reply, {"session_id": "cli-1", "error": False}, self.id)
@@ -198,7 +205,7 @@ class Worker:
 
 @pytest.fixture(autouse=True)
 def fresh_workers():
-    Worker.replies, Worker.made = [], []
+    Worker.replies, Worker.summaries, Worker.made = [], [], []
     yield
     work.close_all()
 
@@ -480,7 +487,7 @@ def test_a_code_task_is_asked_once_for_its_test_cleanup_then_stopped(repo):
         path = started(web, sid)
         until(lambda: specs.load("proj", sid)["state"].startswith("PR #"))
         settled(path)
-        assert Worker.made[-1].heard[-1] == sweep.PROMPT
+        assert Worker.made[-1].heard[-2] == sweep.PROMPT and Worker.made[-1].heard[-1].startswith(WRITE_ASKS)
         assert specs.load("proj", sid)["test_cleanup"] == removed
         assert "test_a.py::test_v1" in remote.body and "v1 route is gone" in remote.body
 
@@ -560,8 +567,10 @@ def test_a_stop_publishes_nothing_even_after_a_fast_gate_passed(repo):
 
         remote.on_push = lambda: halts[-1].set()
         Worker.replies = [passing]
+        Worker.summaries = [lambda path, halt: halts.append(halt) or SUMMARIZED]   # the push follows this turn
         sid = made(repo, spec_block(slug="stop-late"))[0]["id"]
         started(web, sid)
+        until(lambda: specs.load("proj", sid)["fault"])
         assert remote.pushes() == 1 and not remote.created()
         assert "PR 은 만들지 않았다" in specs.load("proj", sid)["fault"]
 
@@ -640,7 +649,7 @@ def test_a_passing_gate_opens_the_pr_and_the_plan_row_follows(repo):
         assert specs.load("proj", "x")["source"]["plan"] is None, "없는 행은 출처가 아니다"
         first = web.post(f"/api/specs/{sid}/start", json={}).json()
         path = first["path"]
-        until(lambda: work._runs[path].turn != first["turn"])
+        until(lambda: specs.load("proj", sid)["fault"])   # the row's turn follows the PR text's turn
         settled(path)
 
         spec = specs.load("proj", sid)
@@ -1005,56 +1014,66 @@ def test_a_code_only_commit_after_the_hook_rebuilt_the_indexes_leaves_them_the_h
 
 def test_the_pr_body_gives_harvest_its_what_and_why():
     spec = {"id": "fix-login", "repo": "proj", "goal": "Return to the page after login",
-            "summary": {"title": "로그인 뒤 원래 페이지로", "changes": ["로그인 뒤 원래 페이지로 돌아간다"],
-                        "why": "화면은 기록을 모른다.", "review": []},
+            "summary": dict(TOLD, changes=[{"what": "로그인 뒤 원래 페이지로 돌아간다", "where": []}], why="화면은 기록을 모른다."),
             "decisions": [{"what": "Run it on the server", "why": "The screen has no history", "rejected": "history"}],
             "report": [{"item": PASS, "pass": True, "evidence": "git version 2"}],
             "gate": {"cmd": PASS, "tail": "git version 2"},
             "grounds": {"pages": ["craft/x"], "files": ["a.txt:1"], "rules": []}}
     _, text = harvest.record({"number": 7, "title": "로그인 뒤 원래 페이지로", "body": specs.body_of(spec),
                               "headRefName": "fix-login", "mergedAt": "2026-09-25"}, 0)
-    assert "What. 로그인 뒤 원래 페이지로 돌아간다" in text and "Why. 화면은 기록을 모른다." in text
+    assert "What. 로그인 뒤 원래 페이지로 돌아간다" in text and "Why. 로그인이 필요한 페이지는" in text
+    assert "화면은 기록을 모른다." in text
 
 
-def test_the_pr_goes_up_as_the_worker_wrote_it_and_never_in_the_specs_words(repo):
+def test_the_pr_goes_up_as_the_worker_wrote_it_for_a_reader_new_to_the_code(repo):
     """#262 went up with its spec's goal as the summary, translated: orders to
-    the worker (`헬퍼를 추가하십시오`), its `keep` list and its risk forecast,
-    none of it what the change did. The worker's Korean `pr-summary`, read
-    from the diff, is the only prose; nothing is translated; a summary that
-    fails its checks goes back once with the reasons."""
+    the worker (`헬퍼를 추가하십시오`), none of it what the change did. Its
+    worker's own summary then passed every check and still read as a list of
+    function names. Right before the PR the server asks for the text in a turn
+    of its own, with a guide and spec → PR examples; code names stay out of
+    the prose; a summary that fails goes back once with the reasons."""
 
     goal = "Add one private helper. Replace both duplicated sequences."
-    told = {"title": "로그인 리다이렉트를 서버로 옮김", "changes": ["`code.py`가 원래 페이지를 기억한다"],
-            "why": "화면은 기록을 모른다.", "review": ["`code.py`의 저장 시점"]}
-    # The first answer shaped its summary its own way, as #262's worker did, and cited a name the diff lacks.
-    misshapen = SWEPT.replace(SUMMARIZED, "```pr-summary\n" + json.dumps({"title": "x", "body": "y"}) + "\n```\n")
-    reply = report(True, True, sweep=SWEPT.replace(SUMMARIZED, "```pr-summary\n"
-                                                    + json.dumps(told, ensure_ascii=False) + "\n```\n"))
+    told = dict(TOLD, changes=[{"what": "돌아갈 주소를 기억한다.", "where": ["`code.py`"]}])
+    # The first answer narrated code, as #262's worker did, and cited a name the diff lacks.
+    narrated = dict(told, changes=[{"what": "`login_done`이 `remember_target`을 부른다", "where": ["`nope.py`"]}])
 
     def committed(path, halt):
         (path / "code.py").write_text("back = True\n", encoding="utf-8")
         _git(path, "add", "code.py")
         _git(path, "commit", "-qm", "redirect")
-        return report(True, True, sweep=misshapen)
+        return report(True, True)
 
     remote = Remote()
-    Worker.replies = [committed, reply]
+    Worker.replies = [committed]
+    Worker.summaries = ["```pr-summary\n" + json.dumps(s, ensure_ascii=False) + "\n```" for s in (narrated, told)]
     with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote):
         sid = made(repo, spec_block(goal=goal))[0]["id"]
         started(client(), sid)
         until(lambda: specs.load("proj", sid)["state"].startswith("PR #") or specs.load("proj", sid)["fault"])
-    assert not specs.load("proj", sid)["fault"]
+    saved = specs.load("proj", sid)
+    assert not saved["fault"] and not saved["writing"] and not Worker.summaries
+    heard = Worker.made[-1].heard
+    assert heard[-2].startswith(pr_text.WRITE[:60]) and "### 3." in heard[-2], "the guide and its examples"
+    assert "a code name in prose (`login_done`)" in heard[-1] and "`nope.py` is not in this branch's diff" in heard[-1]
     create = next(c for c in remote.calls if c[:3] == ["gh", "pr", "create"])
-    assert "keys title, changes, why, review" in Worker.made[-1].heard[-1] and not Worker.replies
-    assert create[create.index("--title") + 1] == "로그인 리다이렉트를 서버로 옮김"
-    assert "## 변경 요약\n\n- `code.py`가 원래 페이지를 기억한다\n\n## 변경 이유\n\n화면은 기록을 모른다." in remote.body
-    assert "## 리뷰 포인트\n\n- `code.py`의 저장 시점" in remote.body and "## 확인\n\n<details>" in remote.body
+    assert create[create.index("--title") + 1] == TOLD["title"]
+    assert ("## 배경\n\n로그인이 필요한 페이지는 로그인 화면을 거친다.\n\n## 바뀐 점\n\n- 돌아갈 주소를 기억한다.\n"
+            "  - 위치: `code.py`\n\n## 동작 변화\n\n전에는 첫 화면으로 갔다.\n\n## 변경 이유\n\n") in remote.body
+    assert "## 확인\n\n- 돌아가는 경우를 테스트했다.\n\n<details>" in remote.body
     assert "Add one private helper" not in remote.body and "서버에서 돌린다" not in remote.body, "no spec sentence"
-    assert specs.load("proj", sid)["goal"] == goal and KICKED == []
+    assert saved["goal"] == goal and KICKED == []
 
-    assert pr_text.problems(dict(told, changes=["`nope.py`를 고쳤다"], review=["헬퍼를 추가하십시오"]), "code.py") == [
-        "an order, not a description: 헬퍼를 추가하십시오", "`nope.py` is not in this branch's diff"]
+    assert pr_text.problems(dict(told, why="헬퍼를 추가하십시오"), "code.py") == [
+        "an order, not a description: 헬퍼를 추가하십시오"]
     assert pr_text.problems(dict(told, title="Share wiring"), "code.py") == ["not Korean: Share wiring"]
+    assert [p.split(")")[0] for p in pr_text.problems(dict(told, changes=[{"what": w, "where": []} for w in (
+        "판정은 routes_proactive.py 에 있다", "eval_once 를 부른다", "src/api/routes 아래로 옮겼다", "_helper 를 부른다",
+        "A/B 실험과 HTTP/2 연결은 그대로다")]), "code.py")] == [   # review round 1: `A/B` is prose, `_helper` is not
+        "a code name in prose (routes_proactive", "a code name in prose (eval_once",
+        "a code name in prose (src/api/routes", "a code name in prose (_helper"]
+    assert pr_text.problems(dict(told, changes=[{"what": "고쳤다", "where": ["설명만 있다"]}]), "code.py") == [
+        "a `where` entry names nothing in backticks: 설명만 있다"]
     spec = {"id": "x", "repo": "proj", "goal": goal, "decisions": [], "report": [],
             "gate": {"cmd": "pytest", "tail": "1 passed"}, "grounds": {"pages": [], "files": []},
             "refactor": {"detail": {"title": "Share wiring", "problem": "Both repeat it.", "keep": ["Gate order"]}}}
@@ -1062,9 +1081,46 @@ def test_the_pr_goes_up_as_the_worker_wrote_it_and_never_in_the_specs_words(repo
     assert "확인된 사실만" in body and goal not in body and "Both repeat it." not in body and "Gate order" not in body
     assert "2개 파일 · +3 −1\n\n- `src/a.py` +3 −1\n- `logo.png` 바이너리" in body
     assert pr_text.title_of(spec) == "x — PR 요약이 검사를 통과하지 못했습니다"
+    # A summary saved before this shape is none: facts only, never a `KeyError` (review round 1).
+    legacy = dict(spec, summary={"title": "옛 제목", "changes": ["옛 줄"], "why": "옛 이유", "review": []})
+    assert "확인된 사실만" in specs.body_of(legacy) and pr_text.title_of(legacy).startswith("x — ")
     with patch.object(specs, "sh", remote):
         specs.pull_request(repo, "b", "main", "가" * 300, "body")
     assert remote.calls[-1][remote.calls[-1].index("--title") + 1] == "가" * 255 + "…", "GitHub caps titles at 256"
+
+
+def test_a_stopped_pr_text_turn_or_a_stale_summary_never_keeps_a_task_from_its_text(repo):
+    """Review round 1 of #242: a writing turn that failed never reached the
+    check, left `writing` set, and every later turn was ignored; a summary
+    kept from an earlier head, or saved in the previous shape, went up as is."""
+
+    def stopped(path, halt):
+        raise RuntimeError("cancelled writing turn")
+
+    remote, web = Remote(), client()
+    Worker.replies, Worker.summaries = [report(True, True)], [stopped]
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote):
+        sid = made(repo, spec_block())[0]["id"]
+        path = started(web, sid)
+        until(lambda: specs.load("proj", sid).get("writing") and work._runs[path].done and path not in work._busy)
+        assert not remote.created()
+        # A person's plain talk is no answer; their own report is a new completion.
+        Worker.replies = ["Looking.", report(True, True)]
+        for text in ("Where are we?", "Finish it"):
+            assert web.post("/api/work/say", json={"path": path, "text": text}).status_code == 200
+            settled(path)
+            if text == "Where are we?":
+                assert specs.load("proj", sid)["writing"], "plain talk leaves the request standing"
+        until(lambda: specs.load("proj", sid)["state"].startswith("PR #"))
+        heard = [h for w in Worker.made for h in w.heard]
+        assert sum(h.startswith(WRITE_ASKS) for h in heard) == 2, "the text is asked again for the new report"
+        # A summary from an earlier head, or in the earlier shape, is not reused for the next report.
+        for stale in (dict(TOLD, title="옛 제목"), {"title": "옛 제목", "changes": ["옛 줄"], "why": "y", "review": []}):
+            specs.update("proj", sid, summary=stale, state="작업 중", pr=None)
+            assert specs.check(repo, work.Run(Worker(repo), task=True), report(True, True)) is not None
+            assert specs.load("proj", sid)["summary"] is None and specs.load("proj", sid)["writing"]
+            specs.update("proj", sid, writing=None)
+    work.close_all()
 
 
 def test_a_spec_attached_to_a_pr_into_a_non_default_base_is_republished_there(tmp_path):

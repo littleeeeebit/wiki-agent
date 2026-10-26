@@ -2748,9 +2748,9 @@ def submitted(repo: Path, tree: Path, record: dict, name: str, commit: str,
             "report": [{"item": f"`{name}` records the adoption of {record['origin']}", "pass": True,
                         "evidence": commit[:12]}],
             # No worker writes this PR, so the server says what it adds; the claims stay as adopted.
-            "summary": {"title": f"연구 채택: {record['title'] or record['origin']}"[:80],
-                        "changes": [f"`{name}`에 {record['origin']}의 채택 기록을 남긴다"],
-                        "why": "채택한 주장 — " + "; ".join(adoption["claims"]), "review": []},
+            "summary": {"title": f"연구 채택: {record['title'] or record['origin']}"[:80], "context": "위키의 연구 기록 가운데 채택한 것을 남긴다.",
+                        "changes": [{"what": f"{record['origin']}의 채택 기록을 위키에 남긴다", "where": [f"`{name}`"]}], "behavior": "없음. 코드는 바뀌지 않는다.",
+                        "why": "채택한 주장 — " + "; ".join(adoption["claims"]), "verify": ["서버가 채택 기록을 커밋했다."]},
             "gate": None, "fault": None, "history": [{"ts": now, "state": "작업 중"}]}
     lines: list[str] = []
     run = SimpleNamespace(halt=threading.Event(), put=lambda payload: lines.append(payload["text"]),

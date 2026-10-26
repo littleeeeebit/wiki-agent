@@ -427,7 +427,7 @@ def test_cloud_source_changes_during_final_selection_cannot_publish_success(clou
 
     def altered(_loop, _chat, _deferred):
         (Path(original["worktree"]) / "change.py").write_text("unverified change\n", encoding="utf-8")
-        return []
+        return [], []
 
     with patch.object(loop, "pick", altered):
         spec = looped("cloud")

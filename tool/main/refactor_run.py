@@ -451,7 +451,7 @@ def published(repo: Path, path: Path, run, spec: dict):
     if why := verified(repo, path, run, specs.load(spec["repo"], spec["id"]) or spec):
         return specs.failed(run, spec, why)
     specs.note(run, "리팩터링 검증 통과")
-    return specs.opened(repo, path, run, specs.load(spec["repo"], spec["id"]) or spec)
+    return specs.pr_turn(repo, path, run, specs.load(spec["repo"], spec["id"]) or spec)
 
 
 def measured(path: Path, spec: dict, measure: dict, head: str, halt) -> dict:

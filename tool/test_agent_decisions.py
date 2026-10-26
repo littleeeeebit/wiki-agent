@@ -400,13 +400,13 @@ def test_a_registered_check_jev_picks_runs_after_the_gate_and_rides_in_the_pr(re
     # The gate's own command is not offered again as a check.
     checks(repo, lint="git status --short", again="git --version", bad="git definitely-not-a-command")
     jev(**{"work.start": "dispatch", "specs.check": "check:lint"})
-    remote = Remote()
+    remote, lines, put = Remote(), [], work.Run.put
     Worker.replies = [report(True, True)]
-    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote):
-        sid = made(repo, english_block())[0]["id"]
-        path = client().post(f"/api/specs/{sid}/start", json={}).json()["path"]
-        run = settled(path)
-    lines = [e["text"] for e in run.events if e["kind"] == "tool"]
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote), patch.object(
+            work.Run, "put", lambda run, e: (e["kind"] == "tool" and lines.append(e["text"]), put(run, e))):
+        sid = made(repo, english_block())[0]["id"]   # every turn's lines: the PR-text turn replaces the first
+        client().post(f"/api/specs/{sid}/start", json={})
+        until(lambda: specs.load("proj", sid).get("pr"))   # saved once `gh pr create` has read the body
     gate, extra = lines.index("게이트 통과"), next(i for i, t in enumerate(lines) if "추가 확인 `lint`" in t)
     assert gate < extra, "the required gate ran first"
     assert remote.created() and "Jev 가 고른 추가 확인 — `git status --short` · 통과" in remote.body

@@ -862,7 +862,7 @@ def revise(repo: Path, spec: dict, change: dict) -> None:
     for round_ in spec.get("rounds") or []:
         round_["stale"] = True
         round_["stale_reason"] = "Specification revised"
-    spec.update(made, rev=spec["rev"] + 1, report=None, summary=None, summary_asked=False, gate=None, validation=None, checks=[], fault=None,
+    spec.update(made, rev=spec["rev"] + 1, report=None, summary=None, writing=None, gate=None, validation=None, checks=[], fault=None,
                 merge_request=None, maintenance=None, merge_progress=None)
     if spec.get("worktree") and not re.fullmatch(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+", spec["state"]):
         moved(spec, "작업 중", stopped=None)
@@ -1518,6 +1518,15 @@ def _check(path: Path, run, final: str):
         if spec["state"] == "멈춤" and (spec.get("stopped") or {}).get("reason") == loop.Why.ASKED.value:
             return lambda: loop.answered(repo, spec["id"], run, str(path))   # the person answered it
         return None
+    if spec.get("writing"):
+        # The pull request's text was asked for. A person's plain talk in between is not the answer; a
+        # person's own report is a new completion: a stopped or failed writing turn never came back
+        # (review round 1 of #242), so verify again and ask afresh.
+        if not getattr(run, "person", False):
+            return written(repo, path, run, spec, final)
+        if not any(b["name"] == "done-report" for b in blocks(final)[1]):
+            return None
+        spec = update(spec["repo"], spec["id"], writing=None)
     from . import refactor_run
     if (first := refactor_run.characterized(repo, path, run, spec, final)) is not refactor_run.DONE:
         return first
@@ -1545,17 +1554,9 @@ def _check(path: Path, run, final: str):
     if "error" in report or not valid(report.get("value")):
         return failed(run, spec, f"완료 보고를 읽지 못했다 — {report.get('error') or '항목마다 item 과 pass 가 있어야 한다'}")
     items = report["value"]
-    told = pr_text.summary(next((b.get("value") for b in blocks(final)[1] if b["name"] == "pr-summary"), None))
-    unfit = pr_text.problems(told, sh(["git", "diff", spec.get("start_head") or "HEAD", "HEAD"], path).stdout)
-    spec = update(spec["repo"], spec["id"], report=items, report_asked=False, summary=None if unfit else told)
+    spec = update(spec["repo"], spec["id"], report=items, report_asked=False, summary=None)   # text is per head
     if len(items) < len(spec["done"]) or not all(i["pass"] for i in items):
         return failed(run, spec, "완료 보고에 통과하지 못했거나 빠진 항목이 있다. 판정하지 않는다")
-    # The summary is the PR's only prose: sent back once with what failed; a second miss goes up as facts only.
-    if unfit and not spec.get("summary_asked") and not run.halt.is_set():
-        spec = update(spec["repo"], spec["id"], summary_asked=True)
-        note(run, "PR 요약(`pr-summary`)이 검사를 통과하지 못했다 — " + " · ".join(unfit[:3]))
-        return lambda: again(path, run.chat, pr_text.asking(unfit), spec) or update(spec["repo"], spec["id"],
-                                                                                     summary_asked=False)
     cleanup = next((b.get("value") for b in blocks(final)[1] if b["name"] == "test-cleanup"), None)
     if sweep.valid(cleanup):
         spec = update(spec["repo"], spec["id"], test_cleanup=cleanup, sweep_asked=False)
@@ -1579,4 +1580,36 @@ def _check(path: Path, run, final: str):
     go, why = extra_check(repo, path, run, spec)
     if not go:
         return failed(run, spec, why)
-    return opened(repo, path, run, load(spec["repo"], spec["id"]) or spec)
+    return pr_turn(repo, path, run, load(spec["repo"], spec["id"]) or spec)
+
+
+def pr_turn(repo: Path, path: Path, run, spec: dict):
+    """Right before the pull request, after the last change and the gate: one
+    turn asks the worker for its text, with `pr-write.md`'s guide and examples.
+    The answer comes back through `written`, which opens the pull request."""
+
+    if pr_text.summary(spec.get("summary")) or run.halt.is_set():
+        return opened(repo, path, run, spec)
+    head = sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
+    spec = update(spec["repo"], spec["id"], writing={"head": head, "asked": 1})
+    note(run, "PR 제목·본문을 작업자에게 요청한다")
+    return lambda: again(path, run.chat, pr_text.writing(spec), spec) or update(spec["repo"], spec["id"], writing=None)
+
+
+def written(repo: Path, path: Path, run, spec: dict, final: str):
+    """The answer to `pr_turn`'s request. Sent back once with what failed; a
+    second miss goes up as files and checks only."""
+
+    asked = spec["writing"]
+    if sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != asked["head"] or dirty(path):
+        update(spec["repo"], spec["id"], writing=None)
+        return failed(run, spec, "PR 글을 쓰는 턴에 코드가 바뀌었다 — 게이트를 다시 거쳐야 하니 완료 보고를 다시 받아라")
+    told = pr_text.summary(next((b.get("value") for b in blocks(final)[1] if b["name"] == "pr-summary"), None))
+    unfit = pr_text.problems(told, sh(["git", "diff", spec.get("start_head") or "HEAD", "HEAD"], path).stdout)
+    if unfit and asked["asked"] < 2 and not run.halt.is_set():
+        spec = update(spec["repo"], spec["id"], writing={**asked, "asked": 2})
+        note(run, "PR 요약(`pr-summary`)이 검사를 통과하지 못했다 — " + " · ".join(unfit[:3]))
+        return lambda: again(path, run.chat, pr_text.asking(unfit), spec) or update(spec["repo"], spec["id"],
+                                                                                     writing=None)
+    spec = update(spec["repo"], spec["id"], writing=None, summary=None if unfit else told)
+    return opened(repo, path, run, spec)

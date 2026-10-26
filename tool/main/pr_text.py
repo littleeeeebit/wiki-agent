@@ -5,40 +5,68 @@ a fact — the changed files, the checks, the gate.
 No spec sentence goes up. A spec is a plan and a set of instructions written
 for the worker; translated, it read as orders (`헬퍼를 추가하십시오`) and as
 predictions, never as what the change did. When the summary fails its checks
-twice, the body says so and keeps to the facts."""
+twice, the body says so and keeps to the facts.
+
+The reader is a colleague who knows neither the spec nor this part of the
+code. #262's first worker summary passed every check and still read as a
+list of function names, `proactive_check와 proactive_trigger에 각각 있던 …`:
+so the prose carries no code names at all. Each change names where it
+happened right after it, in `where`, the one place code names go."""
 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from . import sweep
 
-TRANSLATE_SECONDS = 60   # the review loop's P2 comment into Korean, one request
+# The turn that asks for the text right before the pull request: a guide and three spec → PR examples.
+WRITE = (Path(__file__).resolve().parents[1] / "prompts" / "pr-write.md").read_text(encoding="utf-8").strip()
 FILES_SHOWN = 30
 TITLE_LIMIT = 80
-KEYS = ("title", "changes", "why", "review")
+KEYS = ("title", "context", "changes", "behavior", "why", "verify")
 HANGUL = re.compile(r"[가-힣]")
 # An order to the worker, as a spec's instructions read once translated.
 ORDER = re.compile(r"(하십시오|하세요|하라|해라|할 것)[.!\s]*$")
 CITED = re.compile(r"`([^`\n]+)`")
-SHAPE = ('```pr-summary\n{"title": "<한국어 제목: 바뀐 결과, 80자 이내>", '
-         '"changes": ["<바뀐 점 한 줄씩, 파일·함수는 `백틱`으로>"], '
-         '"why": "<왜 바꿨는지, 한두 문장>", "review": ["<리뷰어가 먼저 볼 곳과 이유; 비어도 된다>"]}\n```')
+# A code name in prose, backticked or not: an identifier with `_` (`_helper`, `__init__` too), a file
+# name, a path of two slashes or more — `A/B` and `HTTP/2` are prose.
+CODEISH = re.compile(r"`[^`\n]+`|(?<!\w)(?=\w*_)(?=\w*[A-Za-z0-9])\w+"
+                     r"|\b[\w-]+\.(?:py|tsx?|jsx?|md|json|toml|ya?ml|rs|go|java|kt|swift|sql)\b"
+                     r"|\b[\w.-]+/[\w.-]+/[\w./-]+", re.A)
+SHAPE = ('```pr-summary\n{"title": "<바뀐 결과를 쉬운 말로, 80자 이내>", '
+         '"context": "<이 코드가 제품에서 무슨 일을 하는지, 처음 보는 사람에게 한두 문장>", '
+         '"changes": [{"what": "<무엇이 달라졌는지 쉬운 말로>", "where": ["`<diff 에 있는 파일이나 함수>`"]}], '
+         '"behavior": "<사용자·호출자가 겪는 동작 변화, 없으면 없다고>", '
+         '"why": "<왜 바꿨는지, 한두 문장>", "verify": ["<어떻게 확인했는지 한 줄씩>"]}\n```')
+
+
+def _lines(value) -> bool:
+    return isinstance(value, list) and all(isinstance(x, str) and x.strip() for x in value)
 
 
 def summary(value) -> dict | None:
-    """The `pr-summary` block's four fields, or None when it is not shaped as one."""
-
-    def lines(v) -> bool:
-        return isinstance(v, list) and all(isinstance(x, str) and x.strip() for x in v)
+    """The `pr-summary` block's fields, or None when it is not shaped as one."""
 
     if not isinstance(value, dict) or set(value) != set(KEYS):
         return None
-    if not (isinstance(value["title"], str) and value["title"].strip() and lines(value["changes"])
-            and value["changes"] and isinstance(value["why"], str) and lines(value["review"])):
+    texts = ("title", "context", "behavior", "why")
+
+    def change(c) -> bool:
+        return (isinstance(c, dict) and set(c) == {"what", "where"} and isinstance(c["what"], str)
+                and c["what"].strip() and _lines(c["where"]))   # empty only for a change that names no place
+
+    changes = value["changes"]
+    if not (all(isinstance(value[k], str) and value[k].strip() for k in texts) and _lines(value["verify"])
+            and value["verify"] and isinstance(changes, list) and changes and all(map(change, changes))):
         return None
-    return {"title": " ".join(value["title"].split()), "changes": value["changes"],
-            "why": value["why"].strip(), "review": value["review"]}
+    return {**{k: " ".join(value[k].split()) for k in texts}, "verify": value["verify"],
+            "changes": [{"what": " ".join(c["what"].split()), "where": c["where"]} for c in changes]}
+
+
+def _prose(told: dict) -> list[str]:
+    return [told["title"], told["context"], *(c["what"] for c in told["changes"]), told["behavior"], told["why"],
+            *told["verify"]]
 
 
 def problems(told: dict | None, diff: str) -> list[str]:
@@ -47,14 +75,24 @@ def problems(told: dict | None, diff: str) -> list[str]:
 
     if told is None:
         return [f"`pr-summary` is missing or not exactly the keys {', '.join(KEYS)}"]
-    texts = [told["title"], *told["changes"], told["why"], *told["review"]]
-    out = [f"not Korean: {t}" for t in texts if t and not HANGUL.search(t)]
+    prose = _prose(told)
+    out = [f"not Korean: {t}" for t in prose if not HANGUL.search(t)]
     if len(told["title"]) > TITLE_LIMIT:
         out.append(f"the title is {len(told['title'])} characters, over {TITLE_LIMIT}")
-    out += [f"an order, not a description: {t}" for t in texts if ORDER.search(t)]
-    out += [f"`{c}` is not in this branch's diff" for c in dict.fromkeys(c for t in texts for c in CITED.findall(t))
+    where = [w for c in told["changes"] for w in c["where"]]
+    out += [f"an order, not a description: {t}" for t in [*prose, *where] if ORDER.search(t)]
+    out += [f"a code name in prose ({m.group(0)}), say what it does in plain words and name it in that change's "
+            f"`where`: {t}" for t in prose if (m := CODEISH.search(t))]
+    out += [f"a `where` entry names nothing in backticks: {w}" for w in where if not CITED.search(w)]
+    out += [f"`{c}` is not in this branch's diff" for c in dict.fromkeys(c for w in where for c in CITED.findall(w))
             if c not in diff]
     return out
+
+
+def writing(spec: dict) -> str:
+    """The first request for the text, sent once the report is in."""
+
+    return WRITE.replace("<start>", (spec.get("start_head") or "origin/HEAD")[:12])
 
 
 def asking(found: list[str]) -> str:
@@ -63,13 +101,14 @@ def asking(found: list[str]) -> str:
     return ("The pull request's title and summary come only from your `pr-summary`; the spec's sentences never "
             "go up. Yours failed these checks:\n" + "\n".join(f"- {p}" for p in found) +
             "\n\nChange nothing and commit nothing. Read the branch's diff and write the block again, in Korean, "
-            "describing what the finished change does for a reviewer who has not read the spec: not the plan, "
-            "and not a translation of the spec. Then send the same `test-cleanup` and `done-report` blocks:\n\n"
-            + SHAPE)
+            "for a colleague who knows neither the spec nor this part of the code: what the code is for, what "
+            "changed and whether anyone notices, in plain words, with code names only in each change's `where`. Not the plan, "
+            "and not a translation of the spec. Follow the guide and the examples sent before, and send only the "
+            "block:\n\n" + SHAPE)
 
 
 def title_of(spec: dict) -> str:
-    told = spec.get("summary")
+    told = summary(spec.get("summary"))   # a summary saved in an earlier shape counts as none
     return told["title"] if told else f"{spec['id']} — PR 요약이 검사를 통과하지 못했습니다"
 
 
@@ -92,21 +131,18 @@ def _files(numstat: str) -> list[str]:
 
 def body_of(spec: dict, numstat: str = "") -> str:
     """The pull request's body. The section names are the ones
-    `harvest.record` reads: `변경 요약` becomes the record's what, and
-    `변경 이유` its why."""
+    `harvest.record` reads: `배경` and `변경 이유` become the record's why,
+    and `바뀐 점`, the first section that is neither, its what."""
 
-    told = spec.get("summary")
-    lines = ["## 변경 요약", ""]
-    lines += [f"- {c}" for c in told["changes"]] if told else [
-        "작업자의 PR 요약이 두 번 모두 검사를 통과하지 못해, 확인된 사실만 올립니다. "
-        "무엇이 바뀌었는지는 아래 파일 목록과 diff 로 확인해 주세요."]
-    lines.append("")
-    if told and told["why"]:
-        lines += ["## 변경 이유", "", told["why"], ""]
-    if files := _files(numstat):
-        lines += ["## 바뀐 파일", "", *files, ""]
-    if told and told["review"]:
-        lines += ["## 리뷰 포인트", "", *(f"- {r}" for r in told["review"]), ""]
+    told = summary(spec.get("summary"))
+    if told:
+        lines = ["## 배경", "", told["context"], "", "## 바뀐 점", "",
+                 *(line for c in told["changes"]
+                   for line in (f"- {c['what']}", *([f"  - 위치: {', '.join(c['where'])}"] if c["where"] else []))), "",
+                 "## 동작 변화", "", told["behavior"], "", "## 변경 이유", "", told["why"], ""]
+    else:
+        lines = ["## 바뀐 점", "", "작업자의 PR 요약이 두 번 모두 검사를 통과하지 못해, 확인된 사실만 올립니다. "
+                 "무엇이 바뀌었는지는 아래 파일 목록과 diff 로 확인해 주세요.", ""]
     # The worker's record as it wrote it: translated, it read as slop like the spec's sentences did.
     checks = [f"- [x] {i['item']}" + (f" — {i['evidence']}" if i.get("evidence") else "") for i in spec["report"]]
     last = (spec["gate"].get("tail") or "").splitlines()[-1:] or [""]
@@ -116,8 +152,11 @@ def body_of(spec: dict, numstat: str = "") -> str:
         checks += ["- [ ] 전체 게이트 — 리뷰가 허용한 커밋에서 머지 전에 돈다"]
     checks += [f"- [x] Jev 가 고른 추가 확인 — `{c['cmd']}` · 통과" for c in spec.get("checks") or []
                if c["ok"] and c.get("head") == spec["gate"].get("head")]
-    lines += ["## 확인", "", f"<details><summary>확인 기록 {len(checks)}건 (원문) — {last[0] or '서버 게이트 통과'}</summary>", "",
+    lines += ["## 확인", "", *(f"- {v}" for v in (told["verify"] if told else [])), *([""] if told else []),
+              f"<details><summary>확인 기록 {len(checks)}건 (원문) — {last[0] or '서버 게이트 통과'}</summary>", "",
               *checks, "", "</details>", ""]
+    if files := _files(numstat):
+        lines += ["## 바뀐 파일", "", *files, ""]
     from . import refactor_run
     lines += [*sweep.section(spec.get("test_cleanup")), *refactor_run.section(spec)]
     grounds = spec["grounds"]
