@@ -405,8 +405,7 @@ def test_a_registered_check_jev_picks_runs_after_the_gate_and_rides_in_the_pr(re
     with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote):
         sid = made(repo, english_block())[0]["id"]
         path = client().post(f"/api/specs/{sid}/start", json={}).json()["path"]
-        run = settled(path)
-        until(remote.created)   # the PR goes up after the turn that writes its text
+        run, _ = settled(path), until(remote.created)   # the PR goes up after the turn that writes its text
     lines = [e["text"] for e in run.events if e["kind"] == "tool"]
     gate, extra = lines.index("게이트 통과"), next(i for i, t in enumerate(lines) if "추가 확인 `lint`" in t)
     assert gate < extra, "the required gate ran first"
