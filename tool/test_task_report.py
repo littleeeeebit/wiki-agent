@@ -30,8 +30,7 @@ def test_a_turn_without_a_report_or_a_question_asks_for_the_report_once(repo):
     report = [{"item": PASS, "pass": True}, {"item": "돌아오는 테스트가 있다", "pass": True}]
     Worker.replies = [committed("The server gate is pending, so I cannot emit a done-report yet."),
                       SWEPT + "```done-report\n" + json.dumps(report) + "\n```"]
-    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote), \
-         patch.object(specs, "korean", side_effect=lambda spec: spec):
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote):
         sid = made(repo, spec_block())[0]["id"]
         started(web, sid)
         saved = until(lambda: (s := specs.load(repo.name, sid)).get("pr") and s)

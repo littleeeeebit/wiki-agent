@@ -38,7 +38,7 @@ from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
 
 from . import channels, pr_text, query, review_contract, runtime, sweep, work
-from .pr_text import body_of, korean
+from .pr_text import body_of
 from .decisions import extra_check, recommend, registered
 from .query import ROOT, _lock, current_repo, hold, project
 
@@ -862,7 +862,7 @@ def revise(repo: Path, spec: dict, change: dict) -> None:
     for round_ in spec.get("rounds") or []:
         round_["stale"] = True
         round_["stale_reason"] = "Specification revised"
-    spec.update(made, rev=spec["rev"] + 1, report=None, summary=None, gate=None, validation=None, checks=[], fault=None,
+    spec.update(made, rev=spec["rev"] + 1, report=None, summary=None, summary_asked=False, gate=None, validation=None, checks=[], fault=None,
                 merge_request=None, maintenance=None, merge_progress=None)
     if spec.get("worktree") and not re.fullmatch(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+", spec["state"]):
         moved(spec, "작업 중", stopped=None)
@@ -1391,15 +1391,10 @@ def opened(repo: Path, path: Path, run, spec: dict):
         return failed(run, spec, f"기본 브랜치를 모른다 — {said(base)}")
     if run.halt.is_set():
         return failed(run, spec, "사람이 멈춤 — push 는 했고 PR 은 만들지 않았다")
-    note(run, "PR 을 한국어로 옮기는 중")
-    shown = korean(spec)
-    # Translating can take a minute; a stop pressed meanwhile still holds.
-    if run.halt.is_set():
-        return failed(run, spec, "사람이 멈춤 — push 는 했고 PR 은 만들지 않았다")
     try:
         files = sh(["git", "diff", "--numstat", f"origin/{base.stdout.strip()}...HEAD"], path)
-        n, url = pull_request(path, branch, base.stdout.strip(), pr_text.title_of(shown),
-                              body_of(shown, "" if files.returncode else files.stdout))
+        n, url = pull_request(path, branch, base.stdout.strip(), pr_text.title_of(spec),
+                              body_of(spec, "" if files.returncode else files.stdout))
     except RuntimeError as exc:
         return failed(run, spec, str(exc))
     plan = spec["source"].get("plan")
@@ -1550,10 +1545,17 @@ def _check(path: Path, run, final: str):
     if "error" in report or not valid(report.get("value")):
         return failed(run, spec, f"완료 보고를 읽지 못했다 — {report.get('error') or '항목마다 item 과 pass 가 있어야 한다'}")
     items = report["value"]
-    told = next((b.get("value") for b in blocks(final)[1] if b["name"] == "pr-summary"), None)
-    spec = update(spec["repo"], spec["id"], report=items, report_asked=False, summary=pr_text.summary(told))
+    told = pr_text.summary(next((b.get("value") for b in blocks(final)[1] if b["name"] == "pr-summary"), None))
+    unfit = pr_text.problems(told, sh(["git", "diff", spec.get("start_head") or "HEAD", "HEAD"], path).stdout)
+    spec = update(spec["repo"], spec["id"], report=items, report_asked=False, summary=None if unfit else told)
     if len(items) < len(spec["done"]) or not all(i["pass"] for i in items):
         return failed(run, spec, "완료 보고에 통과하지 못했거나 빠진 항목이 있다. 판정하지 않는다")
+    # The summary is the PR's only prose: sent back once with what failed; a second miss goes up as facts only.
+    if unfit and not spec.get("summary_asked") and not run.halt.is_set():
+        spec = update(spec["repo"], spec["id"], summary_asked=True)
+        note(run, "PR 요약(`pr-summary`)이 검사를 통과하지 못했다 — " + " · ".join(unfit[:3]))
+        return lambda: again(path, run.chat, pr_text.asking(unfit), spec) or update(spec["repo"], spec["id"],
+                                                                                     summary_asked=False)
     cleanup = next((b.get("value") for b in blocks(final)[1] if b["name"] == "test-cleanup"), None)
     if sweep.valid(cleanup):
         spec = update(spec["repo"], spec["id"], test_cleanup=cleanup, sweep_asked=False)
