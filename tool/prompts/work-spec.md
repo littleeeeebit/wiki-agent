@@ -55,6 +55,18 @@ The person's later instructions update the assignment as work progresses.
   [{"item": "the done item as written", "pass": true, "evidence": "the command you ran, then the last line of its output"}]
   ```
 
+- Right before the `done-report`, add a `pr-summary` fenced JSON block. It
+  becomes the pull request's title and summary, read by a person who has not
+  seen the spec, so describe what the finished change does, not the plan:
+
+  ```pr-summary
+  {"title": "Merge the duplicated eligibility checks of proactive check and trigger into one helper", "changes": ["Both endpoints now call `_evaluate_eligibility` in routes_proactive.py instead of repeating it", "Vision veto order and the single policy recording stay as they were", "Two route tests pin the evaluate, veto, record order"], "review": ["`record_check` stays outside the helper so only check records it"]}
+  ```
+
+  `title` names the outcome in plain words, at most about 70 characters, with
+  no spec jargon. `changes` lists three to six concrete changes, each naming the
+  file, function or behaviour it touches. `review` lists where a reviewer should
+  look first and why; it may be empty.
 - If any item did not pass, do not say you are done and do not emit the
   block. Say what is blocking and ask.
 - The first `done` item is the repository gate, the server's command, not yours to run: report it

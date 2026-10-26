@@ -32,13 +32,13 @@ from pydantic import BaseModel
 
 import verify
 import debt
-import translate
 from common import errorlog, indexes, process, python_environment, swap, worktree_home
 from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
 
-from . import channels, query, review_contract, runtime, sweep, work
+from . import channels, pr_text, query, review_contract, runtime, sweep, work
+from .pr_text import body_of, korean
 from .decisions import extra_check, recommend, registered
 from .query import ROOT, _lock, current_repo, hold, project
 
@@ -46,7 +46,6 @@ SPECS = ROOT / "raw" / "specs"
 SPEC_PROMPT = (ROOT / "tool/prompts/work-spec.md").read_text(encoding="utf-8")
 
 GATE_SECONDS = 20 * 60
-TRANSLATE_SECONDS = 60   # the pull request's prose into Korean, one request
 TAIL = 80          # lines of the gate's output kept on the spec
 MAX_PLANS = 3      # materials for the candidates
 MAX_ROWS = 10
@@ -64,7 +63,7 @@ STATE = re.compile(r"정리됨|작업 중|PR #\d+|리뷰 대기|리뷰 R\d+|고�
 
 # A named block at the end of an answer: a fenced block whose info string is
 # its name. A block cut off before its closing fence is not one.
-BLOCK = re.compile(r"^```(candidates|choices|spec|spec-update|done-report|test-cleanup)[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
+BLOCK = re.compile(r"^```(candidates|choices|spec|spec-update|done-report|test-cleanup|pr-summary)[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
 
 REPORT_AGAIN = ("The specification is now revision {rev}, and your last answer had no `done-report`. "
                 "Do not claim completion while an independent prerequisite review or another dependency is pending. "
@@ -863,7 +862,7 @@ def revise(repo: Path, spec: dict, change: dict) -> None:
     for round_ in spec.get("rounds") or []:
         round_["stale"] = True
         round_["stale_reason"] = "Specification revised"
-    spec.update(made, rev=spec["rev"] + 1, report=None, gate=None, validation=None, checks=[], fault=None,
+    spec.update(made, rev=spec["rev"] + 1, report=None, summary=None, gate=None, validation=None, checks=[], fault=None,
                 merge_request=None, maintenance=None, merge_progress=None)
     if spec.get("worktree") and not re.fullmatch(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+", spec["state"]):
         moved(spec, "작업 중", stopped=None)
@@ -1307,48 +1306,6 @@ def valid(items) -> bool:
 
 
 
-def body_of(spec: dict) -> str:
-    """The pull request's body. The section names are the ones
-    `harvest.record` reads: `변경 요약` becomes the record's what, and
-    `변경 이유` its why."""
-
-    lines = ["## 변경 요약", "", spec["goal"], ""]
-    if spec["decisions"]:
-        lines += ["## 변경 이유", ""]
-        for d in spec["decisions"]:
-            lines.append(f"- {d['what']}" + (f" — {d['why']}" if d["why"] else "")
-                         + (f" (버린 것: {d['rejected']})" if d["rejected"] else ""))
-        lines.append("")
-    lines += ["## 확인", ""]
-    lines += [f"- [x] {i['item']}" + (f" — {i['evidence']}" if i.get("evidence") else "") for i in spec["report"]]
-    last = (spec["gate"].get("tail") or "").splitlines()[-1:] or [""]
-    what = "변경이 닿는 확인" if spec["gate"].get("selection") == "mapped" else "패치 확인" if spec["gate"].get("selection") == "deferred" else "게이트"
-    lines += [f"- [x] 서버의 {what} 기록 — `{spec['gate']['cmd']}` · {last[0]}".rstrip(" ·")]
-    if spec["gate"].get("selection") in {"mapped", "deferred"}:
-        lines += ["- [ ] 전체 게이트 — 리뷰가 허용한 커밋에서 머지 전에 돈다"]
-    lines += [f"- [x] Jev 가 고른 추가 확인 — `{c['cmd']}` · 통과" for c in spec.get("checks") or []
-              if c["ok"] and c.get("head") == spec["gate"].get("head")]
-    from . import refactor_run
-    lines += ["", *sweep.section(spec.get("test_cleanup")), *refactor_run.section(spec)]
-    grounds = spec["grounds"]
-    cited = ", ".join(f"`{g}`" for g in grounds["pages"] + grounds["files"]) or "없음"
-    lines += ["## 명세", "", f"`raw/specs/{spec['repo']}/{spec['id']}.json` · 근거: {cited}", ""]
-    return "\n".join(lines)
-
-
-def korean(spec: dict) -> dict:
-    """The spec as the pull request shows it. The agents wrote it in English;
-    GitHub is read by a person, so the prose goes up in Korean. Commands and
-    their output (`evidence`) stay as they ran. Translation fails open: a
-    line it could not translate goes up as it was."""
-
-    kinds = ("what", "why", "rejected")
-    texts = [spec["goal"], *(d[k] for d in spec["decisions"] for k in kinds), *(i["item"] for i in spec["report"])]
-    done = iter(translate.translate(texts, translate.EN_KO, time.monotonic() + TRANSLATE_SECONDS))
-    return {**spec, "goal": next(done), "decisions": [{k: next(done) for k in kinds} for _ in spec["decisions"]],
-            "report": [{**i, "item": next(done)} for i in spec["report"]]}
-
-
 def base_of(spec: dict, path: Path) -> subprocess.CompletedProcess:
     """The branch the pull request goes to. A spec sent back by `[다시 PR]`
     goes to the base it was reviewed for, one with a PR to that PR's base;
@@ -1385,6 +1342,8 @@ def pull_request(path: Path, branch: str, base: str, title: str, body: str) -> t
     Never retry a failed/timed-out create: re-list because its reply may be lost.
     Raise `RuntimeError` when publication cannot complete."""
 
+    # GitHub refuses a title over 256 characters; a spec's goal can run longer, and the body carries it whole.
+    title = title if len(title) <= 256 else title[:255] + "…"
     found = existing_pr(path, branch, base)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
         fh.write(body)
@@ -1438,7 +1397,9 @@ def opened(repo: Path, path: Path, run, spec: dict):
     if run.halt.is_set():
         return failed(run, spec, "사람이 멈춤 — push 는 했고 PR 은 만들지 않았다")
     try:
-        n, url = pull_request(path, branch, base.stdout.strip(), shown["goal"], body_of(shown))
+        files = sh(["git", "diff", "--numstat", f"origin/{base.stdout.strip()}...HEAD"], path)
+        n, url = pull_request(path, branch, base.stdout.strip(), pr_text.title_of(shown),
+                              body_of(shown, "" if files.returncode else files.stdout))
     except RuntimeError as exc:
         return failed(run, spec, str(exc))
     plan = spec["source"].get("plan")
@@ -1589,7 +1550,8 @@ def _check(path: Path, run, final: str):
     if "error" in report or not valid(report.get("value")):
         return failed(run, spec, f"완료 보고를 읽지 못했다 — {report.get('error') or '항목마다 item 과 pass 가 있어야 한다'}")
     items = report["value"]
-    spec = update(spec["repo"], spec["id"], report=items, report_asked=False)
+    told = next((b.get("value") for b in blocks(final)[1] if b["name"] == "pr-summary"), None)
+    spec = update(spec["repo"], spec["id"], report=items, report_asked=False, summary=pr_text.summary(told))
     if len(items) < len(spec["done"]) or not all(i["pass"] for i in items):
         return failed(run, spec, "완료 보고에 통과하지 못했거나 빠진 항목이 있다. 판정하지 않는다")
     cleanup = next((b.get("value") for b in blocks(final)[1] if b["name"] == "test-cleanup"), None)

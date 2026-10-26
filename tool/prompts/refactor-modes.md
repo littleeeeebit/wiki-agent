@@ -20,8 +20,9 @@ into clear responsibilities while observable behaviour stays identical.
   misplaced classes or modules, each only with evidence.
 - Keep observable results, error handling, side effects and call order.
 - One-off comparison scripts, temporary instrumentation and exact duplicate
-  tests may go. Never delete valid regression tests because they pass: fold
-  a useful check into an existing test or keep a minimal permanent one.
+  tests may go. Never delete valid regression tests because they pass: keep
+  a useful check as a minimal permanent test. An existing test's body is
+  frozen here; a check that would extend one is a new test beside it.
 - Verify again on the final state, after temporary code is gone.
 
 ## simplify

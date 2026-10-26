@@ -7,8 +7,10 @@ spec: no change another mode owns, no other pipeline, no unrelated cleanup.
 When the spec turns out wrong, stop and ask instead of widening it.
 
 - Test contract. Add the tests `tests.add` names and any test you need to
-  guard behaviour. Existing test files may change only by adding to them,
-  except the tests `tests.remove` and `tests.contract` list. The test cleanup
+  guard behaviour. Existing test files may change only by adding new tests
+  to them, except the tests `tests.remove` and `tests.contract` list; the
+  body of an existing test stays as it is, so a check that would extend one
+  is a new test beside it, even where `tests.add` says to extend. The test cleanup
   pass removes nothing else; report other candidates in its `reason`. Before
   the gate the server compares every existing test file with the task's start
   and stops the task on any other edit or deletion.
