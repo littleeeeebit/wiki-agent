@@ -377,9 +377,13 @@ def test_preserve_and_simplify_make_one_spec_per_pipeline_and_rework_one_per_cau
             refactor_survey.survey_shape(split, mode, MAP, surveyed)
         assert [x for x in str(refused.value).splitlines() if "합쳐라" in x] == [
             f"`orders` 에 명세가 2개다 ['a', 'b'] — {mode} 에서는 파이프라인 하나가 명세 하나다. 그 부채를 한 명세로 합쳐라",
-            f"`src/shared.py` 에 명세가 2개다 ['c', 'd'] — {mode} 에서는 파이프라인 하나가 명세 하나다. "
+            f"`shared:src/shared.py` 에 명세가 2개다 ['c', 'd'] — {mode} 에서는 파이프라인 하나가 명세 하나다. "
             "그 부채를 한 명세로 합쳐라"]
     assert len(refactor_survey.survey_shape(split, "rework", MAP, surveyed)["specs"]) == 5, "two causes, two specs"
+    # Review round 2: a pipeline and a shared path with the same name are two owners.
+    named = {**MAP, "shared": [{"path": "orders", "used_by": ["orders", "billing"]}]}
+    pair = {"coverage": {"scope": "s"}, "specs": [spec("p"), spec("s", "shared:orders")]}
+    assert len(refactor_survey.survey_shape(pair, "preserve", named, surveyed)["specs"]) == 2
 
 
 def test_dependency_cycles_and_unknown_dependencies_are_refused(surveyed):

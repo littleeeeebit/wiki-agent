@@ -389,10 +389,13 @@ def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = fr
     if duplicated := sorted({k for k in keys if keys.count(k) > 1}):
         refused.append(f"명세 `key` 가 겹친다: {duplicated}")
     if mode != "rework":   # preserve and simplify: one card per pipeline, its debts together
-        owners = {}
+        owners, ids = {}, {p["id"] for p in map_["pipelines"]}
         for s in raw:
-            if isinstance(s, dict) and isinstance(s.get("pipeline"), str):   # `shared:<path>` and `<path>` are one owner
-                owners.setdefault(s["pipeline"].strip().removeprefix("shared:"), []).append(s.get("key"))
+            if isinstance(s, dict) and isinstance(s.get("pipeline"), str):
+                # A pipeline id first, as `spec_shape` matches it; else `<path>` and `shared:<path>` are one owner.
+                owner = s["pipeline"].strip()
+                owner = owner if owner in ids else f"shared:{owner.removeprefix('shared:')}"
+                owners.setdefault(owner, []).append(s.get("key"))
         for pipeline, held in owners.items():
             if len(held) > 1:
                 refused.append(f"`{pipeline}` 에 명세가 {len(held)}개다 {held} — {mode} 에서는 파이프라인 하나가 "
