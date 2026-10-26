@@ -20,7 +20,7 @@ from agent import chat_session
 from agent.chat_session import Event
 from main import channels as chat_channels
 from main import query as chat
-from main import loop, specs, sweep, work
+from main import loop, pr_text, specs, sweep, work
 from test_main import _repo, client, no_machine_settings, parse, settled, until  # noqa: F401 — the fixture is autouse
 
 PASS = "git --version"
@@ -1029,7 +1029,7 @@ def test_the_pr_goes_up_in_korean_and_the_spec_stays_english(repo):
     web, remote = client(), Remote()
     Worker.replies = [report(True, True)]
     with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote), \
-         patch.object(specs.translate, "translate", korean):
+         patch.object(pr_text.translate, "translate", korean):
         sid = made(repo, spec_block(goal="Return to the page after login"))[0]["id"]
         started(web, sid)
     create = next(c for c in remote.calls if c[:3] == ["gh", "pr", "create"])
@@ -1039,6 +1039,41 @@ def test_the_pr_goes_up_in_korean_and_the_spec_stays_english(repo):
     assert "- [x] KO(항목 1) — ran 1 · ok" in remote.body, "명령과 그 출력은 옮기지 않는다"
     assert specs.load("proj", sid)["goal"] == "Return to the page after login"
     assert KICKED == [], "An ordinary done report opens the PR, then waits for explicit review"
+
+
+def test_the_pr_says_what_changed_in_the_workers_words_not_the_specs_plan(repo):
+    """A refactoring PR went up titled with its spec's whole goal, a plan in
+    spec jargon: nobody could tell what it did, and one over 256 characters
+    GitHub refused. The worker's `pr-summary` is the title and the summary;
+    the checks fold away."""
+
+    told = {"title": "Merge the duplicated eligibility checks", "changes": ["Both routes call one helper"],
+            "review": ["`record_check` stays outside"]}
+    reply = report(True, True).replace("```done-report", "```pr-summary\n" + json.dumps(told) + "\n```\n```done-report")
+    remote = Remote()
+    Worker.replies = [reply]
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote), \
+         patch.object(pr_text.translate, "translate", lambda texts, direction, deadline: list(texts)):
+        started(client(), made(repo, spec_block(goal="Add one private helper. " * 20))[0]["id"])
+    create = next(c for c in remote.calls if c[:3] == ["gh", "pr", "create"])
+    assert create[create.index("--title") + 1] == "Merge the duplicated eligibility checks"
+    assert "## 변경 요약\n\n- Both routes call one helper\n" in remote.body
+    assert "## 리뷰 포인트\n\n- `record_check` stays outside" in remote.body
+    assert "## 확인\n\n<details><summary>확인 기록 " in remote.body and "Add one private helper" not in remote.body
+
+    detail = {"title": "Share wiring", "problem": "Both endpoints repeat it.", "keep": ["Gate order"],
+              "risk": {"level": "medium", "why": "It mutates diagnostics."}, "rollback": "Inline it back."}
+    spec = {"id": "x", "repo": "proj", "goal": "Share wiring. Add a helper.", "decisions": [], "report": [],
+            "gate": {"cmd": "pytest", "tail": "1 passed"}, "grounds": {"pages": [], "files": []},
+            "refactor": {"detail": detail}}
+    body = specs.body_of(spec, "3\t1\tsrc/a.py\n-\t-\tlogo.png\n")
+    assert "## 변경 요약\n\nShare wiring. Add a helper.\n" in body, "no summary: the goal, as before"
+    assert "## 변경 이유\n\nBoth endpoints repeat it." in body and "## 그대로 지킨 것\n\n- Gate order" in body
+    assert "2개 파일 · +3 −1\n\n- `src/a.py` +3 −1\n- `logo.png` 바이너리" in body
+    assert "- 위험도 중간 — It mutates diagnostics.\n- 되돌리기 — Inline it back." in body
+    with patch.object(specs, "sh", remote):
+        specs.pull_request(repo, "b", "main", "가" * 300, "body")
+    assert remote.calls[-1][remote.calls[-1].index("--title") + 1] == "가" * 255 + "…", "GitHub caps titles at 256"
 
 
 def test_a_spec_attached_to_a_pr_into_a_non_default_base_is_republished_there(tmp_path):

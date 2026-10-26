@@ -26,7 +26,7 @@ from common import settings as settings_file
 from common.budget import Budget, Cancelled, Exhausted
 from workspace import adopt, base_branch, folder_for, holder, merged, remove, worktrees
 
-from . import channels, connect, decisions, query, review_contract, runtime, specs, sweep, verification, work
+from . import channels, connect, decisions, pr_text, query, review_contract, runtime, specs, sweep, verification, work
 from .query import ROOT, _lock, current_repo, hold, project, streaming
 from .review_result import (  # noqa: F401 -- preserve the loop protocol API
     FIRST, FINDING, FENCE, META, bare, parse, described, block, disposed,
@@ -1188,7 +1188,7 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n
                 return stop(loop, loop.repo, loop.sid, Why.GATE, str(exc))
         # `p2` stays as the cell wrote it — the next candidates read it; the
         # comment goes up on GitHub, read by a person, in Korean.
-        shown = translate.translate(kept_p2, translate.EN_KO, time.monotonic() + specs.TRANSLATE_SECONDS)
+        shown = translate.translate(kept_p2, translate.EN_KO, time.monotonic() + pr_text.TRANSLATE_SECONDS)
         comment = ("리뷰에서 남긴 P2 — 따로 할 만한 것\n\n" + "\n".join(f"- {p}" for p in shown)) if kept_p2 else ""
         change(loop, "머지 가능", p2=kept_p2, p2_comment=comment)
         return False
