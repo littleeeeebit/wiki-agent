@@ -378,6 +378,44 @@ def test_a_characterization_with_a_test_dependency_is_frozen(running):
     assert card["refactor_frozen"]["tests"] == ["tests/test_orders.py"], card["fault"]
 
 
+RULE = ("import pathlib, sys\n"
+        "bad = [p for p in pathlib.Path('tests').glob('test_*.py') if 'marked' not in p.read_text()]\n"
+        "print(*['FAILED rule.py::test_every_test_is_marked'] * bool(bad))\n"
+        "sys.exit(1 if bad else 0)\n")
+
+
+# PR #246 round 1: a gate that edits the tree judged another version; a new unnamed error beside an old
+# named failure is what the final command refuses too.
+FORMATTER = ("from pathlib import Path\np = Path('tests/test_orders.py')\n"
+             "if p.exists(): p.write_text(p.read_text() + '# formatted\\n')\n")
+WRAPPER = ("import pathlib, sys\nprint('FAILED old.py::test_old')\n"
+           "if pathlib.Path('tests/test_orders.py').exists(): print('FATAL repository marker rule failed')\n"
+           "sys.exit(1)\n")
+
+
+@pytest.mark.parametrize("gate, said", [
+    (RULE, "새 실패: rule.py::test_every_test_is_marked — 고정 전이라 그 테스트를 아직 고칠 수 있다"),
+    (FORMATTER, "동작 고정 커밋을 판정하지 못했다"),
+    (WRAPPER, "FATAL repository marker rule failed — 고정 전이라"),
+], ids=["new-failure", "gate-edits-tree", "unnamed-error"])
+def test_a_characterization_that_breaks_a_repository_rule_is_not_frozen(running, gate, said):
+    """ai-companion-voice-agent preserve-repository-boundaries: five new integration tests lacked the
+    settings marker a repository test requires; the final gate found it after the freeze, when the frozen
+    tests could no longer change. The baseline gate runs on the characterization head first."""
+    repo, _ = running
+    (repo / "rule.py").write_text(gate, encoding="utf-8")
+    _git(repo, "add", "rule.py")
+    _git(repo, "commit", "-qm", "rule")
+    _git(repo, "push", "-q", "origin", "main")
+    _adapter(repo, f"{PY} -B rule.py")
+    first, = surveyed_in("preserve", spec("orders-split", "all"))["specs"]
+    Worker.replies = [characterize("tests/test_orders.py")]
+    started(client(), first)
+    card = until(lambda: (c := specs.load("proj", first))["fault"] and c)
+    assert said in card["fault"], card["fault"]
+    assert not card.get("refactor_frozen")
+
+
 def test_an_existing_test_changes_only_within_the_contract(running):
     repo, remote = running
     (repo / "tests").mkdir()

@@ -170,6 +170,8 @@ def characterized(repo: Path, path: Path, run, spec: dict, final: str):
         return specs.failed(run, spec, "멈췄다" if done.returncode == refactor_profile.CUT else
                             "동작 고정 테스트가 바꾸기 전 코드에서 실패한다\n" + done.stdout[-1500:])
     head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
+    if problem := regressed(repo, path, run, spec, head):
+        return specs.failed(run, spec, problem)
     file = refactor_profile.STORE / refactor.scope_of(repo) / spec["id"] / "frozen.json"
     file.parent.mkdir(parents=True, exist_ok=True)
     # `refactor_profile.py preserve` reruns `test_argv` and the ratchet; `head` is where the tests were fixed
@@ -181,6 +183,51 @@ def characterized(repo: Path, path: Path, run, spec: dict, final: str):
                         refactor_frozen={"tests": tests, "test_argv": argv, "head": head, "file": str(file)})
     specs.note(run, f"동작 고정 테스트 {len(tests)}개를 `{head[:12]}` 에 고정했다")
     return lambda: specs.again(path, run.chat, FROZEN.format(head=head, tests=", ".join(tests)), spec)
+
+
+def regressed(repo: Path, path: Path, run, spec: dict, head: str) -> str:
+    """The survey's baseline gate on the characterization head `head`: why it may not be frozen, or empty.
+    A frozen test can no longer change, so a repository rule its new files break has to show before the
+    freeze (ai-companion-voice-agent: every integration module declares its settings profile)."""
+
+    seen = specs.judge(path, [baseline_of(spec)["cmd"]], run.halt, lambda text: specs.note(run, text))
+    if run.halt.is_set():
+        return "멈췄다"
+    if specs.dirty(path) or specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != head \
+            or not seen["ok"] and seen.get("code") in (None, 0):
+        # The freeze names `head`: a command that did not run, or changed the tree or HEAD, judged something else.
+        return f"기준 명령이 동작 고정 커밋을 판정하지 못했다 — {seen.get('reason') or '작업트리나 HEAD 가 바뀌었다'}"
+    problem, _ = compared(repo, path, spec, seen["ok"], seen["code"], seen.get("tail") or "", "동작 고정 커밋의 기준 명령")
+    return f"{problem} — 고정 전이라 그 테스트를 아직 고칠 수 있다" if problem else ""
+
+
+def baseline_of(spec: dict) -> dict:
+    return refactor.load(spec["repo"], spec["refactor"]["survey"])["baseline"]
+
+
+def compared(repo: Path, path: Path, spec: dict, ok: bool, code: int, tail: str, what: str) -> tuple[str, dict]:
+    """One gate run against the survey's baseline: why it fails something the baseline did not, or empty, and
+    the comparison to keep. The freeze and the final command judge the same output alike; `what` names the
+    run (a noun ending in `명령`)."""
+
+    baseline = baseline_of(spec)
+    check = {"baseline": {"cmd": baseline["cmd"], "code": baseline["code"], "failures": baseline["failures"]}}
+    now = [] if ok else refactor_survey.failures({"code": code, "tail": tail})
+    if now is None or not ok and not baseline["parsed"]:
+        return f"{what}이 실패했고, 실패한 검사를 이름으로 가리지 못해 시작 전부터 있던 실패인지 알 수 없다", \
+            {**check, "unparsed": True}
+    new, old = sorted(set(now) - set(baseline["failures"])), sorted(set(now) & set(baseline["failures"]))
+    check.update(new=new, pre_existing=old, code=code)
+    if new:
+        return f"새 실패: {', '.join(new[:10])}", check
+    if not ok and code != baseline["code"]:
+        # Named old failures excuse only the same failing run: another exit code means something else failed too.
+        return f"{what}이 {code} 로 끝났다 — 기준 게이트는 {baseline['code']} 였다", check
+    trees = (path, refactor_survey.place(repo, spec["refactor"]["survey"]))
+    if not ok and (odd := refactor_survey.unexplained(tail, baseline.get("tail") or "", trees)):
+        # A name extracted is not a run explained: a wrapper's own error beside an old failing test is new.
+        return f"{what}의 실패 줄이 기준 게이트 출력에 없다: " + " · ".join(odd[:5]), {**check, "unexplained": odd[:10]}
+    return "", check
 
 
 # The lock files `npm` rewrites beside a `package.json`; no other format is read, so none is accepted.
@@ -469,27 +516,9 @@ def verified(repo: Path, path: Path, run, spec: dict) -> str:
                    or specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != head):
         # Whatever its exit code, a command that changed the tree or the head judged something else.
         return "최종 검증이 무효다 — 최종 명령이 작업트리나 HEAD 를 바꿨다"
-    baseline = refactor.load(spec["repo"], spec["refactor"]["survey"])["baseline"]
-    now = [] if ok else refactor_survey.failures({"code": seen.get("code", 1), "tail": tail})
-    check = {**started, "final": "local", "head": head, "ok": ok,
-             "baseline": {"cmd": baseline["cmd"], "code": baseline["code"], "failures": baseline["failures"]}}
-    if now is None or not ok and not baseline["parsed"]:
-        specs.update(spec["repo"], spec["id"], refactor_check={**check, "unparsed": True})
-        return "최종 명령이 실패했고, 실패한 검사를 이름으로 가리지 못해 시작 전부터 있던 실패인지 알 수 없다"
-    new, old = sorted(set(now) - set(baseline["failures"])), sorted(set(now) & set(baseline["failures"]))
-    check.update(new=new, pre_existing=old, code=seen.get("code", 0))
-    specs.update(spec["repo"], spec["id"], refactor_check=check)
-    if new:
-        return f"새 실패: {', '.join(new[:10])}"
-    if not ok and seen["code"] != baseline["code"]:
-        # Named old failures excuse only the same failing run: another exit code means something else failed too.
-        return f"최종 명령이 {seen['code']} 로 끝났다 — 기준 게이트는 {baseline['code']} 였다"
-    trees = (path, refactor_survey.place(repo, spec["refactor"]["survey"]))
-    if not ok and (odd := refactor_survey.unexplained(tail, baseline.get("tail") or "", trees)):
-        # A name extracted is not a run explained: a wrapper's own error beside an old failing test is new.
-        specs.update(spec["repo"], spec["id"], refactor_check={**check, "unexplained": odd[:10]})
-        return "최종 명령의 실패 줄이 기준 게이트 출력에 없다: " + " · ".join(odd[:5])
-    return measuring(path, spec, head, run.halt)
+    problem, check = compared(repo, path, spec, ok, seen.get("code", 0 if ok else 1), tail, "최종 명령")
+    specs.update(spec["repo"], spec["id"], refactor_check={**started, "final": "local", "head": head, "ok": ok, **check})
+    return problem or measuring(path, spec, head, run.halt)
 
 
 def measuring(path: Path, spec: dict, head: str, halt) -> str:
