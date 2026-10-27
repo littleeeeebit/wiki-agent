@@ -384,12 +384,26 @@ RULE = ("import pathlib, sys\n"
         "sys.exit(1 if bad else 0)\n")
 
 
-def test_a_characterization_that_breaks_a_repository_rule_is_not_frozen(running):
+# PR #246 round 1: a gate that edits the tree judged another version; a new unnamed error beside an old
+# named failure is what the final command refuses too.
+FORMATTER = ("from pathlib import Path\np = Path('tests/test_orders.py')\n"
+             "if p.exists(): p.write_text(p.read_text() + '# formatted\\n')\n")
+WRAPPER = ("import pathlib, sys\nprint('FAILED old.py::test_old')\n"
+           "if pathlib.Path('tests/test_orders.py').exists(): print('FATAL repository marker rule failed')\n"
+           "sys.exit(1)\n")
+
+
+@pytest.mark.parametrize("gate, said", [
+    (RULE, "새 실패: rule.py::test_every_test_is_marked — 고정 전이라 그 테스트를 아직 고칠 수 있다"),
+    (FORMATTER, "동작 고정 커밋을 판정하지 못했다"),
+    (WRAPPER, "FATAL repository marker rule failed — 고정 전이라"),
+], ids=["new-failure", "gate-edits-tree", "unnamed-error"])
+def test_a_characterization_that_breaks_a_repository_rule_is_not_frozen(running, gate, said):
     """ai-companion-voice-agent preserve-repository-boundaries: five new integration tests lacked the
     settings marker a repository test requires; the final gate found it after the freeze, when the frozen
     tests could no longer change. The baseline gate runs on the characterization head first."""
     repo, _ = running
-    (repo / "rule.py").write_text(RULE, encoding="utf-8")
+    (repo / "rule.py").write_text(gate, encoding="utf-8")
     _git(repo, "add", "rule.py")
     _git(repo, "commit", "-qm", "rule")
     _git(repo, "push", "-q", "origin", "main")
@@ -398,7 +412,7 @@ def test_a_characterization_that_breaks_a_repository_rule_is_not_frozen(running)
     Worker.replies = [characterize("tests/test_orders.py")]
     started(client(), first)
     card = until(lambda: (c := specs.load("proj", first))["fault"] and c)
-    assert "기존 검사를 새로 깨뜨렸다" in card["fault"] and "rule.py::test_every_test_is_marked" in card["fault"]
+    assert said in card["fault"], card["fault"]
     assert not card.get("refactor_frozen")
 
 
