@@ -416,6 +416,77 @@ def test_a_characterization_that_breaks_a_repository_rule_is_not_frozen(running,
     assert not card.get("refactor_frozen")
 
 
+def frozen_at_pr() -> tuple[str, Path]:
+    first, = surveyed_in("preserve", spec("orders-split", "all"))["specs"]
+    Worker.replies = [characterize("tests/test_orders.py"),
+                      edited("src/orders.py", "def place(order):\n    result = order\n    return result\n")]
+    started(client(), first)
+    card = landed(first)
+    assert card["state"] == "PR #7", card["fault"]
+    return first, Path(card["worktree"])
+
+
+def test_a_person_refreezes_a_changed_characterization(running):
+    """ai-companion-voice-agent preserve-repository-boundaries: a frozen test needed a settings marker, and
+    neither the frozen tests nor the repository's rule test could change. The person approves the diff."""
+    first, path = frozen_at_pr()
+    (path / "tests/test_orders.py").write_text("from src.orders import place\nassert place(1) == 1  # marked\n",
+                                               encoding="utf-8")
+    _git(path, "commit", "-qam", "mark")
+    specs.update("proj", first, state="멈춤")
+    api = client()
+    change = api.get(f"/api/refactors/specs/{first}/frozen").json()
+    assert change["files"] == ["tests/test_orders.py"] and "# marked" in change["diff"]
+    stale = api.post(f"/api/refactors/specs/{first}/refreeze", json={"head": change["head"], "digest": "0" * 64})
+    assert stale.status_code == 409 and "다시 열어" in stale.json()["detail"]
+    done = api.post(f"/api/refactors/specs/{first}/refreeze", json={k: change[k] for k in ("head", "digest")})
+    assert done.status_code == 200, done.json()
+    frozen = specs.load("proj", first)["refactor_frozen"]
+    assert frozen["head"] == change["head"] and frozen["refrozen"][0]["from"] == change["from"]
+    assert json.loads(Path(frozen["file"]).read_text(encoding="utf-8"))["head"] == change["head"]
+    assert "refreeze-" not in _git(path, "worktree", "list")
+    assert api.get(f"/api/refactors/specs/{first}/frozen").json()["files"] == []
+
+
+def test_a_changed_characterization_that_fails_on_the_old_code_is_not_refrozen(running):
+    first, path = frozen_at_pr()
+    (path / "tests/test_orders.py").write_text("from src.orders import place\nassert place(1) == 2\n", encoding="utf-8")
+    (path / "src/orders.py").write_text("def place(order):\n    return order + 1\n", encoding="utf-8")
+    _git(path, "commit", "-qam", "follow the new code")
+    specs.update("proj", first, state="멈춤")
+    was = specs.load("proj", first)["refactor_frozen"]["head"]
+    change = client().get(f"/api/refactors/specs/{first}/frozen").json()
+    refused = client().post(f"/api/refactors/specs/{first}/refreeze", json={k: change[k] for k in ("head", "digest")})
+    assert refused.status_code == 409 and "고정 전 코드에서 실패한다" in refused.json()["detail"]
+    assert specs.load("proj", first)["refactor_frozen"]["head"] == was
+
+
+def test_the_old_code_run_links_node_modules_and_leaves_them(tmp_path):
+    """The frontend steps of a frozen command need the worktree's ignored `node_modules`;
+    `git worktree remove` would delete through a junction left in place."""
+    repo = tmp_path / "r"
+    (repo / "tests").mkdir(parents=True)
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    (repo / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+    (repo / "tests/t.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "base")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "node_modules/dep").mkdir(parents=True)
+    (repo / "node_modules/dep/keep.txt").write_text("kept", encoding="utf-8")
+    (repo / "tests/t.py").write_text("x = 2\n", encoding="utf-8")
+    _git(repo, "commit", "-qam", "mark")
+    check = ("import pathlib, sys; sys.exit(0 if pathlib.Path('node_modules/dep/keep.txt').is_file() "
+             "and pathlib.Path('tests/t.py').read_text() == 'x = 2\\n' else 1)")
+    frozen = {"head": base, "file": str(tmp_path / "store/card/frozen.json"), "test_argv": [PY, "-c", check]}
+    done = refactor_run.on_old_code(repo, repo, frozen, ["tests/t.py"])
+    assert done.returncode == 0, done.stdout
+    assert (repo / "node_modules/dep/keep.txt").read_text(encoding="utf-8") == "kept"
+    assert not (tmp_path / "r-worktrees/refreeze-card").exists()
+
+
 def test_an_existing_test_changes_only_within_the_contract(running):
     repo, remote = running
     (repo / "tests").mkdir()

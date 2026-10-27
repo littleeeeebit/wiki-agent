@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import ast
 import copy
+import hashlib
 import json
+import os
 import posixpath
 import statistics
 import subprocess
@@ -25,6 +27,7 @@ from fastapi import HTTPException
 
 import debt
 import refactor_profile
+from common import worktree_home
 
 from . import refactor, refactor_survey, review_contract, specs
 from .query import ROOT, config
@@ -228,6 +231,98 @@ def compared(repo: Path, path: Path, spec: dict, ok: bool, code: int, tail: str,
         # A name extracted is not a run explained: a wrapper's own error beside an old failing test is new.
         return f"{what}의 실패 줄이 기준 게이트 출력에 없다: " + " · ".join(odd[:5]), {**check, "unexplained": odd[:10]}
     return "", check
+
+
+# -- A frozen characterization a person approves again (`preserve`) -----------------------
+# A frozen test can no longer change, and `preserve` declares no test contract: a characterization that
+# broke a repository rule had no way out (ai-companion-voice-agent preserve-repository-boundaries). The
+# person reads the frozen tests' diff and approves it; the changed files must still pass on the code
+# before the refactoring, and the freeze moves to the current head.
+
+def frozen_change(spec: dict) -> dict:
+    """The frozen tests' diff since their freeze head: `head`, `from`, `files`, `diff` and the `digest` an
+    approval names."""
+
+    frozen = spec.get("refactor_frozen")
+    if not surveyed(spec) or spec["refactor"]["mode"] != "preserve" or not frozen:
+        raise HTTPException(404, "고정한 동작 고정 테스트가 없는 명세다")
+    path = Path(spec["worktree"])
+    head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
+    diff = specs.sh(["git", "--literal-pathspecs", "-c", "core.quotepath=off", "diff", frozen["head"], head, "--",
+                     *frozen["tests"]], path)
+    names = specs.sh(["git", "--literal-pathspecs", "-c", "core.quotepath=off", "diff", "--name-only", frozen["head"],
+                      head, "--", *frozen["tests"]], path)
+    if diff.returncode or names.returncode:
+        raise HTTPException(409, f"고정 기준과 비교하지 못했다 — {specs.said(diff if diff.returncode else names)}")
+    return {"head": head, "from": frozen["head"], "files": names.stdout.splitlines(), "diff": diff.stdout,
+            "digest": hashlib.sha256(diff.stdout.encode("utf-8")).hexdigest()}
+
+
+def refreeze(repo: Path, spec: dict, head: str, digest: str) -> dict:
+    """The person's approval of `frozen_change` at `head` with `digest`: the card frozen at `head`, or 409."""
+
+    if spec["state"] != "멈춤":
+        raise HTTPException(409, "멈춘 카드만 다시 고정한다 — 턴이나 라운드가 도는 중에는 받지 않는다")
+    change, frozen, path = frozen_change(spec), spec["refactor_frozen"], Path(spec["worktree"])
+    if (change["head"], change["digest"]) != (head, digest):
+        raise HTTPException(409, "본 뒤에 고정 테스트나 커밋이 바뀌었다 — 다시 열어 확인해라")
+    if not change["files"]:
+        raise HTTPException(409, "고정한 뒤 바뀐 고정 테스트가 없다")
+    if specs.dirty(path):
+        raise HTTPException(409, "작업트리에 커밋하지 않은 변경이 있다")
+    if gone := [t for t in frozen["tests"] if not (path / t).is_file()]:
+        raise HTTPException(409, f"고정 테스트를 지웠다 — 다시 고정은 고친 파일만 받는다: {', '.join(gone[:10])}")
+    if any(str(path) in a or path.as_posix() in a for a in frozen["test_argv"]):
+        raise HTTPException(409, "고정 명령이 작업트리 경로를 담고 있어 고정 전 코드에서 돌릴 수 없다")
+    done = on_old_code(repo, path, frozen, change["files"])
+    if done.returncode:
+        raise HTTPException(409, "바뀐 고정 테스트가 고정 전 코드에서 실패한다\n" + done.stdout[-1500:])
+    if specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != head or specs.dirty(path):
+        raise HTTPException(409, "도는 사이에 작업트리나 커밋이 바뀌었다 — 다시 열어 확인해라")
+    refrozen = [*frozen.get("refrozen", []), {"from": frozen["head"], "to": head, "files": change["files"],
+                                               "digest": digest, "ts": time.time()}]
+    file = Path(frozen["file"])
+    written = {**json.loads(file.read_text(encoding="utf-8")), "head": head, "refrozen": refrozen}
+    file.write_text(json.dumps(written, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
+    return specs.update(spec["repo"], spec["id"], refactor_frozen={**frozen, "head": head, "refrozen": refrozen})
+
+
+def on_old_code(repo: Path, path: Path, frozen: dict, files: list[str]):
+    """`test_argv` in a linked worktree of the freeze head with the changed frozen `files` of `path` laid over
+    it. `path`'s ignored `node_modules` directories are linked in, and unlinked before the worktree goes:
+    `git worktree remove` follows a junction into its target."""
+
+    scratch = worktree_home(repo) / f"refreeze-{Path(frozen['file']).parent.name}"
+    if scratch.exists():
+        raise HTTPException(409, f"지난 다시 고정의 작업트리가 남아 있다 — `{scratch}` 를 치운 뒤 다시 해라")
+    added = specs.sh(["git", "worktree", "add", "--detach", str(scratch), frozen["head"]], path, 120)
+    if added.returncode:
+        raise HTTPException(409, f"고정 전 코드의 작업트리를 만들지 못했다 — {specs.said(added)}")
+    links = []
+    try:
+        for rel in files:
+            shown = subprocess.run(["git", "show", f"HEAD:{rel}"], cwd=path, capture_output=True)
+            (scratch / rel).parent.mkdir(parents=True, exist_ok=True)
+            (scratch / rel).write_bytes(shown.stdout)
+        ignored = specs.sh(["git", "-c", "core.quotepath=off", "ls-files", "--others", "--ignored",
+                            "--exclude-standard", "--directory"], path).stdout.splitlines()
+        for rel in (d.rstrip("/") for d in ignored if d.rstrip("/").rsplit("/", 1)[-1] == "node_modules"):
+            if (path / rel).is_dir() and not (scratch / rel).exists():
+                (scratch / rel).parent.mkdir(parents=True, exist_ok=True)
+                if os.name == "nt":   # a junction needs no symlink privilege
+                    import _winapi
+                    _winapi.CreateJunction(str(path / rel), str(scratch / rel))
+                else:
+                    os.symlink(path / rel, scratch / rel, target_is_directory=True)
+                links.append(scratch / rel)
+        return refactor_profile.sh(frozen["test_argv"], scratch)
+    finally:
+        for link in links:   # an unlink that fails raises here, so the worktree is never removed through it
+            if os.name == "nt":
+                os.rmdir(link)   # removes the junction itself, not its target
+            else:
+                os.unlink(link)
+        specs.sh(["git", "worktree", "remove", "--force", str(scratch)], path, 120)
 
 
 # The lock files `npm` rewrites beside a `package.json`; no other format is read, so none is accepted.
@@ -581,6 +676,9 @@ def section(spec: dict) -> list[str]:
              f"- 조사 뒤 바뀐 파일 {len(c.get('changed') or [])}개 — 대상·근거 파일은 바뀌지 않았다"]
     if frozen := spec.get("refactor_frozen"):
         lines.append(f"- 동작 고정 테스트 `{'`, `'.join(frozen['tests'])}` — 바꾸기 전 코드에서 통과, `{frozen['head'][:12]}` 에 고정")
+        for r_ in frozen.get("refrozen", []):
+            lines.append(f"  - 사람이 승인해 다시 고정 `{r_['from'][:12]}` → `{r_['to'][:12]}`: 바뀐 고정 테스트 "
+                         f"`{'`, `'.join(r_['files'])}` — 바꾸기 전 코드에서 통과")
     tests = r["detail"].get("tests") or {}
     lines.append(f"- 테스트 계약: 기존 테스트 파일은 같거나 추가만 · 선언된 삭제 {len(tests.get('remove') or [])}건 · "
                  f"승인된 계약 갱신 {len(tests.get('contract') or [])}건")
