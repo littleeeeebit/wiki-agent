@@ -1467,6 +1467,7 @@ def _check(path: Path, run, final: str):
     if spec.get("planning") and spec["planning"].get("phase") != "handoff" and spec["state"] == "작업 중":
         # A plan goes up through `planning` only; a done report here publishes nothing.
         return None
+    from . import refactor_run   # it imports this module
     changes = [b for b in blocks(final)[1] if b["name"] == "spec-update"]
     if changes:
         if len(changes) != 1 or "error" in changes[0]:
@@ -1485,7 +1486,7 @@ def _check(path: Path, run, final: str):
             return None
         # A turn that asks the person waits for the answer: nothing is sent past the question (#193 round 6).
         # A `preserve` characterization in the same turn goes on to `characterized`, which freezes it first.
-        if spec["state"] == "작업 중" and not asks(final) and "```refactor-tests" not in final and \
+        if spec["state"] == "작업 중" and not asks(final) and not refactor_run.characterizing(spec, final) and \
                 not any(b["name"] == "done-report" for b in blocks(final)[1]):
             # Nothing else moves a revised task out of `작업 중`: ask once for the report the gate needs.
             # A second revision in answer to that request is the second miss, not a new first one.
@@ -1529,7 +1530,6 @@ def _check(path: Path, run, final: str):
         if not any(b["name"] == "done-report" for b in blocks(final)[1]):
             return None
         spec = update(spec["repo"], spec["id"], writing=None)
-    from . import refactor_run
     if (first := refactor_run.characterized(repo, path, run, spec, final)) is not refactor_run.DONE:
         return first
     report = next((b for b in blocks(final)[1] if b["name"] == "done-report"), None)

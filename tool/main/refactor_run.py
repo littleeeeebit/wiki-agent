@@ -130,6 +130,16 @@ def held(path: Path, release):
 
 # -- Characterization first (`preserve`) -----------------------------------------
 
+def characterizing(spec: dict, final: str) -> bool:
+    """`final` hands in a `refactor-tests` block for a `preserve` card not yet frozen."""
+    if not surveyed(spec) or spec["refactor"]["mode"] != "preserve" or spec.get("refactor_frozen"):
+        return False
+    try:
+        return bool(refactor.block("refactor-tests", final))
+    except refactor.Stop:
+        return False
+
+
 def characterized(repo: Path, path: Path, run, spec: dict, final: str):
     """`DONE` once frozen or outside `preserve`; else the next turn, a failure, or None to wait."""
 
@@ -173,28 +183,54 @@ def characterized(repo: Path, path: Path, run, spec: dict, final: str):
     return lambda: specs.again(path, run.chat, FROZEN.format(head=head, tests=", ".join(tests)), spec)
 
 
-# The lock files `npm`, `pnpm` and `yarn` rewrite beside a `package.json`.
-LOCKS = ("package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock")
+# The lock files `npm` rewrites beside a `package.json`; no other format is read, so none is accepted.
+LOCKS = ("package-lock.json", "npm-shrinkwrap.json")
 
 
 def dev_only(path: Path, base: str, name: str, changed: list[str]) -> bool:
-    """A test-only dependency the characterization added: a `package.json` changed in its `devDependencies`
-    alone, or the lock file beside one. Production dependencies, scripts and settings stay out of it."""
+    """A test-only dependency the characterization added: an existing `package.json` changed in its
+    `devDependencies` alone, or the npm lock beside one whose every changed package is marked `dev`.
+    Production dependencies, scripts, settings, a new or deleted manifest, and anything unread stay out."""
     folder, _, leaf = name.rpartition("/")
-    if leaf in LOCKS:
-        manifest = posixpath.join(folder, "package.json")
-        return manifest in changed and dev_only(path, base, manifest, changed)
-    if leaf != "package.json":
+    if leaf != "package.json" and leaf not in LOCKS:
         return False
-    def rest(rev: str) -> dict | None:
-        shown = specs.sh(["git", "show", f"{rev}:{name}"], path)
-        try:
-            data = json.loads(shown.stdout) if shown.returncode == 0 else {}
-        except ValueError:
-            return None
-        return {k: v for k, v in data.items() if k != "devDependencies"} if isinstance(data, dict) else None
-    old, new = rest(base), rest("HEAD")
-    return old is not None and old == new
+    old, new = (_json_at(path, rev, name) for rev in (base, "HEAD"))
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return False
+    if leaf == "package.json":
+        return _same(old, new, "devDependencies")
+    manifest = posixpath.join(folder, "package.json")
+    olds, news = old.get("packages"), new.get("packages")
+    if manifest not in changed or not dev_only(path, base, manifest, changed) or not _same(old, new, "packages") \
+            or not isinstance(olds, dict) or not isinstance(news, dict):
+        return False
+    for key in olds.keys() | news.keys():
+        before, after = olds.get(key), news.get(key)
+        if _same(before, after):
+            continue
+        if key == "":   # the root package: the manifest's own dependencies
+            if not (isinstance(before, dict) and isinstance(after, dict) and _same(before, after, "devDependencies")):
+                return False
+        elif not all(isinstance(e, dict) and e.get("dev") is True for e in (before, after) if e is not None):
+            return False
+    return True
+
+
+def _json_at(path: Path, rev: str, name: str):
+    """`name`'s JSON at `rev`, or None when Git cannot show it or it is not JSON."""
+    shown = specs.sh(["git", "show", f"{rev}:{name}"], path)
+    try:
+        return json.loads(shown.stdout) if shown.returncode == 0 else None
+    except ValueError:
+        return None
+
+
+def _same(old, new, *but: str) -> bool:
+    """The same JSON, `but` keys aside, with its types kept: Python's `1 == True` is not JSON's."""
+    def text(value):
+        value = {k: v for k, v in value.items() if k not in but} if isinstance(value, dict) else value
+        return json.dumps(value, sort_keys=True)
+    return text(old) == text(new)
 
 
 # -- Before the pull request ---------------------------------------------------------
