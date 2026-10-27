@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import posixpath
+import shutil
 import statistics
 import subprocess
 import tempfile
@@ -28,6 +29,7 @@ from fastapi import HTTPException
 
 import debt
 import refactor_profile
+from common import worktree_home
 
 from . import refactor, refactor_survey, review_contract, specs
 from .query import ROOT, config
@@ -247,9 +249,8 @@ def frozen_change(spec: dict) -> dict:
     if not surveyed(spec) or spec["refactor"]["mode"] != "preserve" or not frozen:
         raise HTTPException(404, "고정한 동작 고정 테스트가 없는 명세다")
     path = Path(spec["worktree"])
-    if left := spec.get("refreezing"):
-        raise HTTPException(409, f"지난 다시 고정이 작업트리를 `{left['branch']}` 로 되돌리지 못했다 — "
-                                 f"`git checkout -f {left['branch']}` 로 되돌린 뒤 다시 해라")
+    if left := spec.get("refreezing"):   # an earlier run that failed to restore, or a server that died in it
+        restore(spec, path, left)
     head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
     diff = specs.sh(["git", "--literal-pathspecs", "-c", "core.quotepath=off", "diff", frozen["head"], head, "--",
                      *frozen["tests"]], path)
@@ -277,7 +278,7 @@ def refreeze(repo: Path, spec: dict, head: str, digest: str) -> dict:
     if gone := [t for t in frozen["tests"] if not (path / t).is_file()]:
         raise HTTPException(409, f"고정 테스트를 지웠다 — 다시 고정은 고친 파일만 받는다: {', '.join(gone[:10])}")
     code = frozen.get("code") or frozen["head"]   # the characterization commit, kept across approvals
-    done = on_old_code(spec, path, frozen["tests"], frozen["test_argv"], code, head)
+    done = on_old_code(spec, repo, path, frozen["tests"], frozen["test_argv"], code, head)
     if done.returncode:
         raise HTTPException(409, "고정 테스트가 고정 전 코드에서 실패한다\n" + done.stdout[-1500:])
     if specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != head or specs.dirty(path):
@@ -305,19 +306,41 @@ def refreeze(repo: Path, spec: dict, head: str, digest: str) -> dict:
     return spec
 
 
-def on_old_code(spec: dict, path: Path, tests: list[str], argv: list[str], code: str, head: str):
+# The ignored directories a build writes, kept out of the old-code run: they may hold the refactored code
+# compiled (round 2: a package's `main` in `dist`). Data, assets and tool settings stay where tests read them
+# (ai-companion-voice-agent's `voice_profiles/`, `data/`, `.codex/`).
+# ponytail: a name list; a build that writes elsewhere still runs as built — name it here when one does.
+BUILT = {"dist", "build", "out", "target", ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache"}
+
+
+def on_old_code(spec: dict, repo: Path, path: Path, tests: list[str], argv: list[str], code: str, head: str):
     """`argv` in the card's own worktree switched to `code` with every frozen test laid over it as `head`
     commits it: the paths, environment and dependencies of the freeze's own run, so no import reaches the
     refactored code (a linked worktree reached it through `PYTHONPATH` and workspace links, #247 round 1).
-    The branch comes back in `finally`; `refreezing` on the card names it until then."""
+    Ignored `BUILT` directories wait aside, so no build output of the refactored code is run either
+    (round 2). `refreezing` on the card names all of it until `restore` puts it back."""
 
     branch = specs.sh(["git", "branch", "--show-current"], path).stdout.strip()
     if not branch:
         raise HTTPException(409, "작업트리가 브랜치에 있지 않다")
     texts = {t: subprocess.run(["git", "show", f"{head}:{t}"], cwd=path, capture_output=True, check=True).stdout
              for t in tests}
-    specs.update(spec["repo"], spec["id"], refreezing={"branch": branch, "head": head})
+    aside = worktree_home(repo) / f"refreeze-{spec['id']}"
+    if aside.exists():
+        raise HTTPException(409, f"지난 다시 고정이 옮겨 둔 폴더가 남아 있다 — `{aside}`")
+    listed = specs.sh(["git", "-c", "core.quotepath=off", "ls-files", "--others", "--ignored", "--exclude-standard",
+                       "--directory"], path).stdout.splitlines()
+    moving = [d.rstrip("/") for d in listed if d.endswith("/") and d.rstrip("/").rsplit("/", 1)[-1] in BUILT
+              and "node_modules/" not in d]
+    record = {"branch": branch, "head": head, "code": code, "aside": str(aside), "moved": [],
+              "tests": {t: hashlib.sha256(text).hexdigest() for t, text in texts.items()}}
+    specs.update(spec["repo"], spec["id"], refreezing=record)
     try:
+        for rel in moving:
+            (aside / rel).parent.mkdir(parents=True, exist_ok=True)
+            os.replace(path / rel, aside / rel)
+            record["moved"].append(rel)
+            specs.update(spec["repo"], spec["id"], refreezing=record)
         switched = specs.sh(["git", "checkout", "-q", "--detach", code], path, 120)
         if switched.returncode:
             raise HTTPException(409, f"고정 전 코드로 바꾸지 못했다 — {specs.said(switched)}")
@@ -325,11 +348,41 @@ def on_old_code(spec: dict, path: Path, tests: list[str], argv: list[str], code:
             (path / t).write_bytes(text)
         return refactor_profile.sh(argv, path)
     finally:
-        back = specs.sh(["git", "checkout", "-q", "-f", branch], path, 120)
-        if back.returncode or specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != head:
-            raise HTTPException(500, f"작업트리를 `{branch}` 로 되돌리지 못했다 — `git checkout -f {branch}` 로 "
-                                     f"되돌린 뒤 카드를 확인해라: {specs.said(back)}")
-        specs.update(spec["repo"], spec["id"], refreezing=None)
+        restore(spec, path, record)
+
+
+def restore(spec: dict, path: Path, record: dict) -> None:
+    """Put back what `on_old_code` switched and moved, then clear `refreezing`; 500 naming what is left.
+    Nothing is forced: the laid-over tests go back only while they are exactly what was written, the branch
+    comes back only by an unforced checkout, and an edit made meanwhile stays (round 2: `-f` erased one)."""
+
+    problems = []
+    current = specs.sh(["git", "branch", "--show-current"], path).stdout.strip()
+    if not current:   # still on `code`
+        for t, digest in record["tests"].items():
+            if (path / t).is_file() and hashlib.sha256((path / t).read_bytes()).hexdigest() == digest:
+                specs.sh(["git", "checkout", "-q", record["code"], "--", t], path, 60)
+        back = specs.sh(["git", "checkout", "-q", record["branch"]], path, 120)
+        if back.returncode:
+            problems.append(f"`{record['branch']}` 로 돌아가지 못했다: {specs.said(back)}")
+        elif specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != record["head"]:
+            problems.append(f"`{record['branch']}` 가 승인한 `{record['head'][:12]}` 가 아니다")
+    elif current != record["branch"]:
+        problems.append(f"작업트리가 `{record['branch']}` 가 아니라 `{current}` 에 있다")
+    aside = Path(record["aside"])
+    for rel in record["moved"]:
+        if (aside / rel).exists():
+            if (path / rel).exists():   # the run built it again: the refactored code's output is the one kept
+                shutil.rmtree(path / rel)
+            os.replace(aside / rel, path / rel)
+    if aside.exists() and not any(p.is_file() for p in aside.rglob("*")):
+        shutil.rmtree(aside)
+    elif aside.exists():
+        problems.append(f"옮겨 둔 폴더 `{aside}` 에 되돌리지 못한 것이 남았다")
+    if problems:
+        raise HTTPException(500, "다시 고정이 작업트리를 다 되돌리지 못했다 — " + " · ".join(problems)
+                            + " — 고친 뒤 [고정 테스트 변경 보기] 를 다시 누르면 확인하고 이어 간다")
+    specs.update(spec["repo"], spec["id"], refreezing=None)
 
 
 # The lock files `npm` rewrites beside a `package.json`; no other format is read, so none is accepted.

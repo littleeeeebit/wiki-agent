@@ -494,6 +494,66 @@ def test_a_changed_characterization_that_fails_on_the_old_code_is_not_refrozen(r
     assert (path / "src/orders.py").read_text(encoding="utf-8").endswith("order + 1\n"), "the branch came back"
 
 
+def test_a_refused_switch_keeps_an_edit_made_meanwhile(running):
+    """#247 round 2 (P0): the switch to the old code refused an edit that arrived after the clean check,
+    and the forced restore then erased it."""
+    _, remote = running
+    first, path = frozen_at_pr()
+    changed(path, "assert place(1) == 1  # marked")
+    specs.update("proj", first, state="멈춤")
+    edit = "def place(order):\n    return 'new local work'\n"
+    base, _ = commented(remote)
+
+    def sh(args, cwd, timeout=60):
+        if args[:4] == ["git", "checkout", "-q", "--detach"]:
+            (path / "src/orders.py").write_text(edit, encoding="utf-8")
+        return base(args, cwd, timeout)
+    with patch.object(specs, "sh", sh):
+        _, refused = approve(first)
+    assert refused.status_code == 409 and "바꾸지 못했다" in refused.json()["detail"]
+    assert (path / "src/orders.py").read_text(encoding="utf-8") == edit
+    assert not specs.load("proj", first).get("refreezing")
+
+
+def test_build_output_waits_aside_during_the_old_code_run(running):
+    """#247 round 2: an ignored `dist` holding the refactored code compiled ran instead of the old source."""
+    _, remote = running
+    first, path = frozen_at_pr()
+    with open(path / ".git/info/exclude", "a", encoding="utf-8") as exclude:
+        exclude.write("dist/\n")
+    (path / "dist").mkdir()
+    (path / "dist/built.txt").write_text("refactored", encoding="utf-8")
+    changed(path, "import pathlib\nassert place(1) == 1 and not pathlib.Path('dist').exists()")
+    specs.update("proj", first, state="멈춤")
+    with patch.object(specs, "sh", commented(remote)[0]):
+        _, done = approve(first)
+    assert done.status_code == 200, (done.json(), _git(path, "status", "--porcelain", "--ignored"))
+    assert (path / "dist/built.txt").read_text(encoding="utf-8") == "refactored"
+    assert not specs.load("proj", first).get("refreezing")
+
+
+def test_an_interrupted_refreeze_is_put_back_when_the_change_is_opened(running):
+    """#247 round 2: a restore that failed left `refreezing`, and nothing ever cleared it."""
+    _, remote = running
+    first, path = frozen_at_pr()
+    branch = _git(path, "branch", "--show-current")
+    changed(path, "assert place(1) == 1  # marked")
+    specs.update("proj", first, state="멈춤")
+    base, _ = commented(remote)
+
+    def sh(args, cwd, timeout=60):
+        if args == ["git", "checkout", "-q", branch]:
+            return subprocess.CompletedProcess(args, 1, "", "injected")
+        return base(args, cwd, timeout)
+    with patch.object(specs, "sh", sh):
+        _, failed = approve(first)
+    assert failed.status_code == 500 and specs.load("proj", first)["refreezing"]
+    with patch.object(specs, "sh", base):
+        opened = client().get(f"/api/refactors/specs/{first}/frozen")
+    assert opened.status_code == 200, opened.json()
+    assert _git(path, "branch", "--show-current") == branch and not specs.load("proj", first).get("refreezing")
+
+
 def test_a_second_approval_still_runs_on_the_characterization_commit(running):
     """#247 round 1: the old-code run checked out the moved freeze head, so a second approval ran on code the
     first one had let through."""

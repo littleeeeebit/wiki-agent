@@ -270,9 +270,16 @@ def frozen_card(repo: Path, sid: str) -> dict:
 
 @router.get("/api/refactors/specs/{sid}/frozen")
 def frozen_of(sid: str) -> dict:
-    """`[고정 테스트 변경 보기]`: what the frozen characterization tests became since their freeze."""
+    """`[고정 테스트 변경 보기]`: what the frozen characterization tests became since their freeze. It first
+    puts back what an interrupted re-freeze left, so the worktree is held for it."""
 
-    return refactor_run.frozen_change(frozen_card(current_repo(), sid))
+    repo = current_repo()
+    spec = frozen_card(repo, sid)
+    release = hold(work._busy, _lock, str(Path(spec.get("worktree") or repo)), "그 작업트리를 다른 요청이 쓰고 있다")
+    try:
+        return refactor_run.frozen_change(spec)
+    finally:
+        release()
 
 
 @router.post("/api/refactors/specs/{sid}/refreeze")
