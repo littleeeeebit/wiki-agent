@@ -378,6 +378,30 @@ def test_a_characterization_with_a_test_dependency_is_frozen(running):
     assert card["refactor_frozen"]["tests"] == ["tests/test_orders.py"], card["fault"]
 
 
+RULE = ("import pathlib, sys\n"
+        "bad = [p for p in pathlib.Path('tests').glob('test_*.py') if 'marked' not in p.read_text()]\n"
+        "print(*['FAILED rule.py::test_every_test_is_marked'] * bool(bad))\n"
+        "sys.exit(1 if bad else 0)\n")
+
+
+def test_a_characterization_that_breaks_a_repository_rule_is_not_frozen(running):
+    """ai-companion-voice-agent preserve-repository-boundaries: five new integration tests lacked the
+    settings marker a repository test requires; the final gate found it after the freeze, when the frozen
+    tests could no longer change. The baseline gate runs on the characterization head first."""
+    repo, _ = running
+    (repo / "rule.py").write_text(RULE, encoding="utf-8")
+    _git(repo, "add", "rule.py")
+    _git(repo, "commit", "-qm", "rule")
+    _git(repo, "push", "-q", "origin", "main")
+    _adapter(repo, f"{PY} -B rule.py")
+    first, = surveyed_in("preserve", spec("orders-split", "all"))["specs"]
+    Worker.replies = [characterize("tests/test_orders.py")]
+    started(client(), first)
+    card = until(lambda: (c := specs.load("proj", first))["fault"] and c)
+    assert "기존 검사를 새로 깨뜨렸다" in card["fault"] and "rule.py::test_every_test_is_marked" in card["fault"]
+    assert not card.get("refactor_frozen")
+
+
 def test_an_existing_test_changes_only_within_the_contract(running):
     repo, remote = running
     (repo / "tests").mkdir()

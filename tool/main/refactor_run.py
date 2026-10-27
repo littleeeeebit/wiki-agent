@@ -169,6 +169,8 @@ def characterized(repo: Path, path: Path, run, spec: dict, final: str):
     if done.returncode:
         return specs.failed(run, spec, "멈췄다" if done.returncode == refactor_profile.CUT else
                             "동작 고정 테스트가 바꾸기 전 코드에서 실패한다\n" + done.stdout[-1500:])
+    if problem := regressed(path, run, spec):
+        return specs.failed(run, spec, problem)
     head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
     file = refactor_profile.STORE / refactor.scope_of(repo) / spec["id"] / "frozen.json"
     file.parent.mkdir(parents=True, exist_ok=True)
@@ -181,6 +183,28 @@ def characterized(repo: Path, path: Path, run, spec: dict, final: str):
                         refactor_frozen={"tests": tests, "test_argv": argv, "head": head, "file": str(file)})
     specs.note(run, f"동작 고정 테스트 {len(tests)}개를 `{head[:12]}` 에 고정했다")
     return lambda: specs.again(path, run.chat, FROZEN.format(head=head, tests=", ".join(tests)), spec)
+
+
+def regressed(path: Path, run, spec: dict) -> str:
+    """The survey's baseline gate on the characterization head: why it may not be frozen, or empty. A frozen
+    test can no longer change, so a repository rule its new files break has to show before the freeze
+    (ai-companion-voice-agent: every integration module declares its settings profile)."""
+
+    baseline = refactor.load(spec["repo"], spec["refactor"]["survey"])["baseline"]
+    seen = specs.judge(path, [baseline["cmd"]], run.halt, lambda text: specs.note(run, text))
+    if run.halt.is_set():
+        return "멈췄다"
+    if seen["ok"]:
+        return ""
+    now = refactor_survey.failures(seen)
+    if now is None or not baseline["parsed"]:
+        # Unnamed failures: only the same exit code as the baseline reads as nothing new.
+        return "" if seen["code"] == baseline["code"] else \
+            f"기준 게이트가 동작 고정 커밋에서 {seen['code']} 로 끝났다 — 시작 전에는 {baseline['code']} 였다"
+    if new := sorted(set(now) - set(baseline["failures"])):
+        return ("동작 고정 커밋이 기존 검사를 새로 깨뜨렸다 — 고정 전이라 그 테스트를 아직 고칠 수 있다: "
+                + ", ".join(new[:10]))
+    return ""
 
 
 # The lock files `npm` rewrites beside a `package.json`; no other format is read, so none is accepted.
