@@ -416,6 +416,170 @@ def test_a_characterization_that_breaks_a_repository_rule_is_not_frozen(running,
     assert not card.get("refactor_frozen")
 
 
+def frozen_at_pr() -> tuple[str, Path]:
+    first, = surveyed_in("preserve", spec("orders-split", "all"))["specs"]
+    Worker.replies = [characterize("tests/test_orders.py"),
+                      edited("src/orders.py", "def place(order):\n    result = order\n    return result\n")]
+    started(client(), first)
+    card = landed(first)
+    assert card["state"] == "PR #7", card["fault"]
+    return first, Path(card["worktree"])
+
+
+def commented(remote):
+    """`remote` with `gh pr comment` answered; the comments it was given."""
+    said = []
+
+    def sh(args, cwd, timeout=60):
+        if args[:3] == ["gh", "pr", "comment"]:
+            said.append(Path(args[args.index("--body-file") + 1]).read_text(encoding="utf-8"))
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return remote(args, cwd, timeout)
+    return sh, said
+
+
+def approve(first: str):
+    api = client()
+    change = api.get(f"/api/refactors/specs/{first}/frozen").json()
+    return change, api.post(f"/api/refactors/specs/{first}/refreeze", json={k: change[k] for k in ("head", "digest")})
+
+
+def changed(path: Path, test: str, code: str | None = None) -> None:
+    (path / "tests/test_orders.py").write_text(f"from src.orders import place\n{test}\n", encoding="utf-8")
+    if code:
+        (path / "src/orders.py").write_text(code, encoding="utf-8")
+    _git(path, "commit", "-qam", "change")
+
+
+def test_a_person_refreezes_a_changed_characterization(running):
+    """ai-companion-voice-agent preserve-repository-boundaries: a frozen test needed a settings marker, and
+    neither the frozen tests nor the repository's rule test could change. The person approves the diff."""
+    _, remote = running
+    first, path = frozen_at_pr()
+    changed(path, "assert place(1) == 1  # marked")
+    specs.update("proj", first, state="멈춤")
+    branch = _git(path, "branch", "--show-current")
+    sh, said = commented(remote)
+    with patch.object(specs, "sh", sh):
+        change = client().get(f"/api/refactors/specs/{first}/frozen").json()
+        assert change["files"] == ["tests/test_orders.py"] and "# marked" in change["diff"]
+        stale = client().post(f"/api/refactors/specs/{first}/refreeze", json={"head": change["head"], "digest": "0" * 64})
+        assert stale.status_code == 409 and "다시 열어" in stale.json()["detail"]
+        change, done = approve(first)
+    assert done.status_code == 200, done.json()
+    card = specs.load("proj", first)
+    frozen = card["refactor_frozen"]
+    assert frozen["head"] == change["head"] and frozen["code"] == change["from"] and not card.get("refreezing")
+    assert json.loads(Path(frozen["file"]).read_text(encoding="utf-8"))["head"] == change["head"]
+    assert _git(path, "branch", "--show-current") == branch and not specs.dirty(path)
+    assert said and "다시 고정했다" in said[0] and "tests/test_orders.py" in said[0]
+    assert client().get(f"/api/refactors/specs/{first}/frozen").json()["files"] == []
+
+
+@pytest.mark.parametrize("pythonpath", [False, True])
+def test_a_changed_characterization_that_fails_on_the_old_code_is_not_refrozen(running, monkeypatch, pythonpath):
+    """#247 round 1: in a linked worktree the old-code run imported the active checkout through
+    `PYTHONPATH`; run in the card's own worktree, `PYTHONPATH` sees the old code too."""
+    repo, remote = running
+    if pythonpath:
+        monkeypatch.setenv("PYTHONPATH", str(repo))
+    first, path = frozen_at_pr()
+    changed(path, "assert place(1) == 2", "def place(order):\n    return order + 1\n")
+    specs.update("proj", first, state="멈춤")
+    was = specs.load("proj", first)["refactor_frozen"]["head"]
+    with patch.object(specs, "sh", commented(remote)[0]):
+        _, refused = approve(first)
+    assert refused.status_code == 409 and "고정 전 코드에서 실패한다" in refused.json()["detail"]
+    assert specs.load("proj", first)["refactor_frozen"]["head"] == was
+    assert (path / "src/orders.py").read_text(encoding="utf-8").endswith("order + 1\n"), "the branch came back"
+
+
+def test_a_refused_switch_keeps_an_edit_made_meanwhile(running):
+    """#247 round 2 (P0): the switch to the old code refused an edit that arrived after the clean check,
+    and the forced restore then erased it."""
+    _, remote = running
+    first, path = frozen_at_pr()
+    changed(path, "assert place(1) == 1  # marked")
+    specs.update("proj", first, state="멈춤")
+    edit = "def place(order):\n    return 'new local work'\n"
+    base, _ = commented(remote)
+
+    def sh(args, cwd, timeout=60):
+        if args[:4] == ["git", "checkout", "-q", "--detach"]:
+            (path / "src/orders.py").write_text(edit, encoding="utf-8")
+        return base(args, cwd, timeout)
+    with patch.object(specs, "sh", sh):
+        _, refused = approve(first)
+    assert refused.status_code == 409 and "바꾸지 못했다" in refused.json()["detail"]
+    assert (path / "src/orders.py").read_text(encoding="utf-8") == edit
+    assert not specs.load("proj", first).get("refreezing")
+
+
+@pytest.mark.parametrize("placeholder", [False, True])
+def test_build_output_refuses_the_old_code_run(running, placeholder):
+    """#247 round 2: an ignored `dist` holding the refactored code compiled ran instead of the old source.
+    Round 3: moving it aside lost files, and a tracked `.gitkeep` made git list `dist`'s files, not `dist`."""
+    _, remote = running
+    first, path = frozen_at_pr()
+    with open(path / ".git/info/exclude", "a", encoding="utf-8") as exclude:
+        exclude.write("packages/lib/dist/*\n!packages/lib/dist/.gitkeep\n" if placeholder else "dist/\n")
+    built = path / ("packages/lib/dist" if placeholder else "dist")
+    built.mkdir(parents=True)
+    if placeholder:
+        (built / ".gitkeep").write_text("", encoding="utf-8")
+        _git(path, "add", str(built / ".gitkeep"))
+    (built / "built.txt").write_text("refactored", encoding="utf-8")
+    changed(path, "assert place(1) == 1  # marked")
+    specs.update("proj", first, state="멈춤")
+    was = specs.load("proj", first)["refactor_frozen"]["head"]
+    with patch.object(specs, "sh", commented(remote)[0]):
+        _, refused = approve(first)
+    assert refused.status_code == 409 and "dist" in refused.json()["detail"], refused.json()
+    assert (built / "built.txt").read_text(encoding="utf-8") == "refactored"
+    card = specs.load("proj", first)
+    assert card["refactor_frozen"]["head"] == was and not card.get("refreezing")
+
+
+def test_an_interrupted_refreeze_is_put_back_when_the_change_is_opened(running):
+    """#247 round 2: a restore that failed left `refreezing`, and nothing ever cleared it."""
+    _, remote = running
+    first, path = frozen_at_pr()
+    branch = _git(path, "branch", "--show-current")
+    changed(path, "assert place(1) == 1  # marked")
+    specs.update("proj", first, state="멈춤")
+    base, _ = commented(remote)
+
+    def sh(args, cwd, timeout=60):
+        if args == ["git", "checkout", "-q", branch]:
+            return subprocess.CompletedProcess(args, 1, "", "injected")
+        return base(args, cwd, timeout)
+    with patch.object(specs, "sh", sh):
+        _, failed = approve(first)
+    assert failed.status_code == 500 and specs.load("proj", first)["refreezing"]
+    with patch.object(specs, "sh", base):
+        opened = client().get(f"/api/refactors/specs/{first}/frozen")
+    assert opened.status_code == 200, opened.json()
+    assert _git(path, "branch", "--show-current") == branch and not specs.load("proj", first).get("refreezing")
+
+
+def test_a_second_approval_still_runs_on_the_characterization_commit(running):
+    """#247 round 1: the old-code run checked out the moved freeze head, so a second approval ran on code the
+    first one had let through."""
+    _, remote = running
+    first, path = frozen_at_pr()
+    code = specs.load("proj", first)["refactor_frozen"]["head"]
+    sh, _ = commented(remote)
+    with patch.object(specs, "sh", sh):
+        changed(path, "assert place(1) == 1  # marked", "def place(order):\n    return order + 1\n")
+        specs.update("proj", first, state="멈춤")
+        assert approve(first)[1].status_code == 200
+        changed(path, "assert place(1) == 2")
+        specs.update("proj", first, state="멈춤")
+        _, refused = approve(first)
+    assert refused.status_code == 409 and "고정 전 코드에서 실패한다" in refused.json()["detail"]
+    assert specs.load("proj", first)["refactor_frozen"]["code"] == code
+
+
 def test_an_existing_test_changes_only_within_the_contract(running):
     repo, remote = running
     (repo / "tests").mkdir()

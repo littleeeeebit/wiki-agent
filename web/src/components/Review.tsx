@@ -144,6 +144,7 @@ function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek, choice }: Pr
             </div>
           ) : (
             <div className="mt-2 space-y-1.5">
+              {spec.refactor?.mode === 'preserve' && spec.refactor_frozen && <Refreeze spec={spec} onDone={onChanged} />}
               {needsLimits && <LimitsInput value={limits} onChange={setLimits} spent={recovering!.spent} />}
               {(reason === '반론' || analysis || needsRuling) && (
                 <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
@@ -318,6 +319,47 @@ function MergeProgress({ spec, pending }: { spec: Spec; pending: boolean }) {
       <ol className="mt-1 list-decimal space-y-1 pl-5">{record.steps.map((step, index) => <li key={index}>{step.text}</li>)}</ol>
     </details>}
   </section>
+}
+
+/** A frozen characterization test that had to change: the person reads its diff and approves it; the server
+ *  runs the changed tests on the code before the refactoring and freezes them at the current commit. */
+type FrozenChange = { head: string; from: string; files: string[]; diff: string; digest: string }
+
+function Refreeze({ spec, onDone }: { spec: Spec; onDone: () => void }) {
+  const [change, setChange] = useState<FrozenChange | null>(null)
+  const url = `/api/refactors/specs/${spec.id}`
+  const [working, setWorking] = useState('')
+  const [fault, setFault] = useState('')
+  async function run(what: string, fn: () => Promise<unknown>) {
+    setFault('')
+    setWorking(what)
+    try { await fn() } catch (err) { setFault(String(err instanceof Error ? err.message : err)) } finally { setWorking('') }
+  }
+  return <div className="space-y-1.5">
+    {!change ? <Btn disabled={!!working} onClick={() => run('look', async () =>
+      setChange(await api.get(`${url}/frozen`, spec.repo).then((r) => api.json<FrozenChange>(r, '고정 테스트 변경'))))}>
+      {working === 'look' ? '…' : '고정 테스트 변경 보기'}
+    </Btn> : !change.files.length ? <p className="text-faint">고정한 뒤 바뀐 고정 테스트가 없다.</p> : <>
+      <p className="text-muted-foreground">
+        고정 <span className="font-mono">{change.from.slice(0, 7)}</span> 뒤에 바뀐 고정 테스트 {change.files.length}개.
+        검사 문장이 빠지거나 약해지지 않았는지 읽고 승인하면, 바뀐 테스트를 바꾸기 전 코드에서 돌려 보고 통과할 때
+        <span className="font-mono"> {change.head.slice(0, 7)}</span> 에 다시 고정한다.
+      </p>
+      <pre aria-label="고정 테스트 변경" className="max-h-80 overflow-auto rounded-md border border-border bg-secondary p-2 font-mono text-[11.5px]">
+        {change.diff}
+      </pre>
+      <div className="flex gap-1.5">
+        <Btn tone="primary" disabled={!!working} onClick={() => run('refreeze', async () => {
+          await api.post(`${url}/refreeze`, { head: change.head, digest: change.digest }, 'POST', spec.repo)
+            .then((r) => api.json<Spec>(r, '다시 고정'))
+          setChange(null)
+          onDone()
+        })}>{working === 'refreeze' ? '바꾸기 전 코드에서 도는 중…' : '승인하고 다시 고정'}</Btn>
+        <Btn tone="ghost" disabled={!!working} onClick={() => setChange(null)}>닫기</Btn>
+      </div>
+    </>}
+    {fault && <p role="alert" className="whitespace-pre-wrap text-[12.5px] text-destructive">{fault}</p>}
+  </div>
 }
 
 function Detail({ text, on }: { text: string; on: boolean }) {

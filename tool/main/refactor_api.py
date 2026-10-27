@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 import improvement
 
-from . import channels, planning, refactor, refactor_survey, specs, work
+from . import channels, planning, refactor, refactor_run, refactor_survey, specs, work
 from .query import _lock, current_repo, hold
 
 router = APIRouter()
@@ -254,6 +254,48 @@ def recheck(sid: str, body: Start) -> dict:
         raise HTTPException(409, "명세 모드가 상단에서 고른 모드와 다르다 — 지금 모드로 다시 조사해라")
     # The card keeps the roles its survey started with, whatever the request carries.
     return surveyed(repo, body, fixed(spec), sid)
+
+
+class Refreeze(BaseModel):
+    head: str
+    digest: str
+
+
+def frozen_card(repo: Path, sid: str) -> dict:
+    spec = specs.load(repo.name, sid)
+    if spec is None:
+        raise HTTPException(404, "그런 명세가 없다")
+    return spec
+
+
+@router.get("/api/refactors/specs/{sid}/frozen")
+def frozen_of(sid: str) -> dict:
+    """`[고정 테스트 변경 보기]`: what the frozen characterization tests became since their freeze. It first
+    puts back what an interrupted re-freeze left, so the worktree is held for it."""
+
+    repo = current_repo()
+    spec = frozen_card(repo, sid)
+    release = hold(work._busy, _lock, str(Path(spec.get("worktree") or repo)), "그 작업트리를 다른 요청이 쓰고 있다")
+    try:
+        return refactor_run.frozen_change(spec)
+    finally:
+        release()
+
+
+@router.post("/api/refactors/specs/{sid}/refreeze")
+def refreeze(sid: str, body: Refreeze) -> dict:
+    """`[승인하고 다시 고정]`: the diff the person read, run on the code before the refactoring, frozen at `head`.
+    The card's worktree is held meanwhile, so no turn moves the head under it."""
+
+    repo = current_repo()
+    spec = frozen_card(repo, sid)
+    release = hold(work._busy, _lock, str(Path(spec.get("worktree") or repo)), "그 작업트리를 다른 요청이 쓰고 있다")
+    try:
+        spec = refactor_run.refreeze(repo, spec, body.head, body.digest)
+    finally:
+        release()
+    work.feed.put({"kind": "sync"})
+    return spec
 
 
 @router.post("/api/refactors/{rid}/cancel")

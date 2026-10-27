@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import ast
 import copy
+import hashlib
 import json
+import os
 import posixpath
 import statistics
 import subprocess
+import tempfile
 import time
 from collections import Counter
 from pathlib import Path
@@ -228,6 +231,150 @@ def compared(repo: Path, path: Path, spec: dict, ok: bool, code: int, tail: str,
         # A name extracted is not a run explained: a wrapper's own error beside an old failing test is new.
         return f"{what}의 실패 줄이 기준 게이트 출력에 없다: " + " · ".join(odd[:5]), {**check, "unexplained": odd[:10]}
     return "", check
+
+
+# -- A frozen characterization a person approves again (`preserve`) -----------------------
+# A frozen test can no longer change, and `preserve` declares no test contract: a characterization that
+# broke a repository rule had no way out (ai-companion-voice-agent preserve-repository-boundaries). The
+# person reads the frozen tests' diff and approves it; the frozen tests as they now are must still pass on
+# the characterization commit's code (`code`, never moved), and the freeze moves to the current head.
+
+def frozen_change(spec: dict) -> dict:
+    """The frozen tests' diff since their freeze head: `head`, `from`, `files`, `diff` and the `digest` an
+    approval names."""
+
+    frozen = spec.get("refactor_frozen")
+    if not surveyed(spec) or spec["refactor"]["mode"] != "preserve" or not frozen:
+        raise HTTPException(404, "고정한 동작 고정 테스트가 없는 명세다")
+    path = Path(spec["worktree"])
+    if left := spec.get("refreezing"):   # an earlier run that failed to restore, or a server that died in it
+        restore(spec, path, left)
+    head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
+    diff = specs.sh(["git", "--literal-pathspecs", "-c", "core.quotepath=off", "diff", frozen["head"], head, "--",
+                     *frozen["tests"]], path)
+    names = specs.sh(["git", "--literal-pathspecs", "-c", "core.quotepath=off", "diff", "--name-only", frozen["head"],
+                      head, "--", *frozen["tests"]], path)
+    if diff.returncode or names.returncode:
+        raise HTTPException(409, f"고정 기준과 비교하지 못했다 — {specs.said(diff if diff.returncode else names)}")
+    return {"head": head, "from": frozen["head"], "files": names.stdout.splitlines(), "diff": diff.stdout,
+            "digest": hashlib.sha256(diff.stdout.encode("utf-8")).hexdigest()}
+
+
+def refreeze(repo: Path, spec: dict, head: str, digest: str) -> dict:
+    """The person's approval of `frozen_change` at `head` with `digest`: the card frozen at `head`, or 409.
+    The pull request gets the record as a comment, beside the worker's summary."""
+
+    if spec["state"] != "멈춤":
+        raise HTTPException(409, "멈춘 카드만 다시 고정한다 — 턴이나 라운드가 도는 중에는 받지 않는다")
+    change, frozen, path = frozen_change(spec), spec["refactor_frozen"], Path(spec["worktree"])
+    if (change["head"], change["digest"]) != (head, digest):
+        raise HTTPException(409, "본 뒤에 고정 테스트나 커밋이 바뀌었다 — 다시 열어 확인해라")
+    if not change["files"]:
+        raise HTTPException(409, "고정한 뒤 바뀐 고정 테스트가 없다")
+    if specs.dirty(path):
+        raise HTTPException(409, "작업트리에 커밋하지 않은 변경이 있다")
+    if gone := [t for t in frozen["tests"] if not (path / t).is_file()]:
+        raise HTTPException(409, f"고정 테스트를 지웠다 — 다시 고정은 고친 파일만 받는다: {', '.join(gone[:10])}")
+    code = frozen.get("code") or frozen["head"]   # the characterization commit, kept across approvals
+    done = on_old_code(spec, path, frozen["tests"], frozen["test_argv"], code, head)
+    if done.returncode:
+        raise HTTPException(409, "고정 테스트가 고정 전 코드에서 실패한다\n" + done.stdout[-1500:])
+    if specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != head or specs.dirty(path):
+        raise HTTPException(409, "도는 사이에 작업트리나 커밋이 바뀌었다 — 다시 열어 확인해라")
+    record = {"from": frozen["head"], "to": head, "code": code, "files": change["files"], "digest": digest,
+              "ts": time.time()}
+    refrozen = [*frozen.get("refrozen", []), record]
+    file = Path(frozen["file"])
+    written = {**json.loads(file.read_text(encoding="utf-8")), "head": head, "code": code, "refrozen": refrozen}
+    file.write_text(json.dumps(written, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
+    spec = specs.update(spec["repo"], spec["id"],
+                        refactor_frozen={**frozen, "head": head, "code": code, "refrozen": refrozen})
+    if number := (spec.get("pr") or {}).get("number"):
+        text = (f"사람이 바뀐 동작 고정 테스트를 승인해 `{record['from'][:12]}` → `{head[:12]}` 로 다시 고정했다. "
+                f"고정 테스트 전체가 바꾸기 전 코드 `{code[:12]}` 에서 통과했다.\n\n"
+                + "\n".join(f"- `{f}`" for f in change["files"]))
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
+            fh.write(text)
+        try:
+            said = specs.sh(["gh", "pr", "comment", str(number), "--body-file", fh.name], repo, 60)
+        finally:
+            os.unlink(fh.name)
+        if said.returncode:
+            raise HTTPException(502, f"다시 고정했지만 PR 에 기록을 남기지 못했다 — {specs.said(said)}\n\n{text}")
+    return spec
+
+
+# The ignored paths a build writes: they may hold the refactored code compiled (round 2: a package's `main`
+# in `dist`), so the old-code run refuses while any is there instead of moving or deleting them (round 3:
+# both lost files). Data, assets and tool settings are not here; tests read them (ai-companion-voice-agent's
+# `voice_profiles/`, `data/`, `.codex/`).
+# ponytail: a name list; a build that writes elsewhere still runs as built — name it here when one does.
+BUILT = {"dist", "build", "out", "target", ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache"}
+
+
+def built(path: Path) -> list[str]:
+    """The ignored paths in or named as a `BUILT` directory outside `node_modules`: a collapsed directory, or
+    the files beside a tracked `.gitkeep`, which git lists one by one (round 3).
+    ponytail: a wholly ignored directory collapses unread (`.venv/` holds a `build` package), so a build
+    written inside one, `artifacts/web/dist`, is not seen."""
+
+    listed = specs.sh(["git", "-c", "core.quotepath=off", "ls-files", "--others", "--ignored", "--exclude-standard",
+                       "--directory"], path).stdout.splitlines()
+    return [p for p in listed if "node_modules/" not in p and set(p.rstrip("/").split("/")) & BUILT]
+
+
+def on_old_code(spec: dict, path: Path, tests: list[str], argv: list[str], code: str, head: str):
+    """`argv` in the card's own worktree switched to `code` with every frozen test laid over it as `head`
+    commits it: the paths, environment and dependencies of the freeze's own run, so no import reaches the
+    refactored code (a linked worktree reached it through `PYTHONPATH` and workspace links, #247 round 1),
+    and no build output of it either: `built` paths refuse the run. `refreezing` on the card names the
+    branch from before the switch until `restore` returns to it."""
+
+    branch = specs.sh(["git", "branch", "--show-current"], path).stdout.strip()
+    if not branch:
+        raise HTTPException(409, "작업트리가 브랜치에 있지 않다")
+    if left := built(path):
+        raise HTTPException(409, "바꾼 코드의 빌드 결과물일 수 있는 무시된 파일이 있어 고정 전 코드에서 돈다고 할 수 "
+                                 "없다 — 지우거나 작업트리 밖으로 옮긴 뒤 다시 해라: "
+                                 + ", ".join(f"`{p}`" for p in left[:10]))
+    texts = {t: subprocess.run(["git", "show", f"{head}:{t}"], cwd=path, capture_output=True, check=True).stdout
+             for t in tests}
+    record = {"branch": branch, "head": head, "code": code,
+              "tests": {t: hashlib.sha256(text).hexdigest() for t, text in texts.items()}}
+    specs.update(spec["repo"], spec["id"], refreezing=record)
+    try:
+        switched = specs.sh(["git", "checkout", "-q", "--detach", code], path, 120)
+        if switched.returncode:
+            raise HTTPException(409, f"고정 전 코드로 바꾸지 못했다 — {specs.said(switched)}")
+        for t, text in texts.items():
+            (path / t).write_bytes(text)
+        return refactor_profile.sh(argv, path)
+    finally:
+        restore(spec, path, record)
+
+
+def restore(spec: dict, path: Path, record: dict) -> None:
+    """Put back what `on_old_code` switched, then clear `refreezing`; 500 naming what is left.
+    Nothing is forced: the laid-over tests go back only while they are exactly what was written, the branch
+    comes back only by an unforced checkout, and an edit made meanwhile stays (round 2: `-f` erased one)."""
+
+    problems = []
+    current = specs.sh(["git", "branch", "--show-current"], path).stdout.strip()
+    if not current:   # still on `code`
+        for t, digest in record["tests"].items():
+            if (path / t).is_file() and hashlib.sha256((path / t).read_bytes()).hexdigest() == digest:
+                specs.sh(["git", "checkout", "-q", record["code"], "--", t], path, 60)
+        back = specs.sh(["git", "checkout", "-q", record["branch"]], path, 120)
+        if back.returncode:
+            problems.append(f"`{record['branch']}` 로 돌아가지 못했다: {specs.said(back)}")
+        elif specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != record["head"]:
+            problems.append(f"`{record['branch']}` 가 승인한 `{record['head'][:12]}` 가 아니다")
+    elif current != record["branch"]:
+        problems.append(f"작업트리가 `{record['branch']}` 가 아니라 `{current}` 에 있다")
+    if problems:
+        raise HTTPException(500, "다시 고정이 작업트리를 다 되돌리지 못했다 — " + " · ".join(problems)
+                            + " — 고친 뒤 [고정 테스트 변경 보기] 를 다시 누르면 확인하고 이어 간다")
+    specs.update(spec["repo"], spec["id"], refreezing=None)
 
 
 # The lock files `npm` rewrites beside a `package.json`; no other format is read, so none is accepted.
@@ -581,6 +728,9 @@ def section(spec: dict) -> list[str]:
              f"- 조사 뒤 바뀐 파일 {len(c.get('changed') or [])}개 — 대상·근거 파일은 바뀌지 않았다"]
     if frozen := spec.get("refactor_frozen"):
         lines.append(f"- 동작 고정 테스트 `{'`, `'.join(frozen['tests'])}` — 바꾸기 전 코드에서 통과, `{frozen['head'][:12]}` 에 고정")
+        for r_ in frozen.get("refrozen", []):
+            lines.append(f"  - 사람이 승인해 다시 고정 `{r_['from'][:12]}` → `{r_['to'][:12]}`: 바뀐 고정 테스트 "
+                         f"`{'`, `'.join(r_['files'])}` — 바꾸기 전 코드에서 통과")
     tests = r["detail"].get("tests") or {}
     lines.append(f"- 테스트 계약: 기존 테스트 파일은 같거나 추가만 · 선언된 삭제 {len(tests.get('remove') or [])}건 · "
                  f"승인된 계약 갱신 {len(tests.get('contract') or [])}건")

@@ -40,7 +40,11 @@ tests pass on the unchanged code and that the repository's gate fails nothing
 it did not fail before, freezes them, and then asks you for the refactoring.
 A frozen test file may not change afterwards, not even by one line, so new
 tests follow the repository's own rules for test files from the start. Those
-frozen tests run again in the final command.
+frozen tests run again in the final command. If a frozen test still has to
+change, change only what is needed, commit, and name the file and why in your
+answer: the person reads the diff and freezes it again once the changed tests
+pass on the code before the refactoring. Never route around a frozen test by
+changing another existing test.
 
 In `rework` with a `measure`, the server runs its command on the task's start
 commit and on your final commit, back to back in this worktree, the same
