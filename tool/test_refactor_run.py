@@ -286,6 +286,58 @@ def test_a_characterization_that_touches_code_is_refused(running):
     assert "테스트 밖을 바꿨다" in card["fault"] and not card.get("refactor_frozen") and card["pr"] is None
 
 
+def test_a_characterization_beside_a_spec_update_is_still_frozen(running):
+    """ai-companion-voice-agent preserve-repository-boundaries: the turn that pinned the tests also revised
+    the spec, the revision's report request ended the turn, and the `refactor-tests` block was never read."""
+    first, = surveyed_in("preserve", spec("orders-split", "all"))["specs"]
+    card = specs.load("proj", first)
+    change = {"rev": card["rev"], "reason": "Name the live limits", **{k: card[k] for k in ("goal", "out", "done")}}
+    pin = characterize("tests/test_orders.py")
+    Worker.replies = [lambda path, halt: pin(path, halt) + "\n\n```spec-update\n" + json.dumps(change) + "\n```",
+                      edited("src/orders.py", "def place(order):\n    result = order\n    return result\n")]
+    started(client(), first)
+    until(lambda: specs.load("proj", first)["state"] != "작업 중" or specs.load("proj", first)["fault"])
+    card = specs.load("proj", first)
+    assert card["refactor_frozen"]["tests"] == ["tests/test_orders.py"] and card["rev"] == change["rev"] + 1
+    assert card["state"] == "PR #7", (card["fault"], card["gate"])
+
+
+BEFORE = {"name": "web", "scripts": {"test": "vitest run"}, "dependencies": {"react": "18.3.1"}}
+
+
+@pytest.mark.parametrize("manifest, lock, frozen", [
+    ({**BEFORE, "devDependencies": {"react-test-renderer": "18.3.1"}}, True, True),
+    ({**BEFORE, "dependencies": {"react": "18.3.1", "left-pad": "1.3.0"}}, True, False),
+    ({**BEFORE, "scripts": {"test": "true"}, "devDependencies": {"react-test-renderer": "18.3.1"}}, False, False),
+    (BEFORE, True, False),
+])
+def test_a_characterization_may_add_only_a_test_dependency(running, manifest, lock, frozen):
+    """The voice agent's studio tests needed `react-test-renderer`: `devDependencies` and the lock file
+    beside them go with the tests; a production dependency, a script, or a lock file alone do not."""
+    repo, _ = running
+    (repo / "web").mkdir()
+    (repo / "web/package.json").write_text(json.dumps(BEFORE), encoding="utf-8")
+    (repo / "web/package-lock.json").write_text("{}\n", encoding="utf-8")
+    _git(repo, "add", "web")
+    _git(repo, "commit", "-qm", "web")
+    _git(repo, "push", "-q", "origin", "main")
+    first, = surveyed_in("preserve", spec("orders-split", "all"))["specs"]
+    pin = characterize("tests/test_orders.py")
+
+    def turn(path, halt):
+        (path / "web/package.json").write_text(json.dumps(manifest), encoding="utf-8")
+        if lock:
+            (path / "web/package-lock.json").write_text('{"lockfileVersion": 3}\n', encoding="utf-8")
+        return pin(path, halt)
+    Worker.replies = [turn, edited("src/orders.py", "def place(order):\n    result = order\n    return result\n")]
+    started(client(), first)
+    until(lambda: specs.load("proj", first)["state"] != "작업 중" or specs.load("proj", first)["fault"])
+    card = specs.load("proj", first)
+    assert bool(card.get("refactor_frozen")) == frozen, card["fault"]
+    if not frozen:
+        assert "테스트 밖을 바꿨다" in card["fault"] and "web/" in card["fault"]
+
+
 def test_an_existing_test_changes_only_within_the_contract(running):
     repo, remote = running
     (repo / "tests").mkdir()

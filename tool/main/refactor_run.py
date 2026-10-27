@@ -150,7 +150,8 @@ def characterized(repo: Path, path: Path, run, spec: dict, final: str):
         return specs.failed(run, spec, "동작 고정 테스트를 커밋하지 않았다")
     changed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames",
                         spec["start_head"], "HEAD"], path).stdout.splitlines()
-    if outside := [c for c in changed if c not in tests or not debt.TEST.search(c.lower())]:
+    if outside := [c for c in changed if (c not in tests or not debt.TEST.search(c.lower()))
+                   and not dev_only(path, spec["start_head"], c, changed)]:
         return specs.failed(run, spec, f"동작 고정 턴이 테스트 밖을 바꿨다: {', '.join(outside[:10])}")
     if missing := [t for t in tests if not (path / t).is_file()]:
         return specs.failed(run, spec, f"고정할 테스트 파일이 없다: {', '.join(missing)}")
@@ -170,6 +171,30 @@ def characterized(repo: Path, path: Path, run, spec: dict, final: str):
                         refactor_frozen={"tests": tests, "test_argv": argv, "head": head, "file": str(file)})
     specs.note(run, f"동작 고정 테스트 {len(tests)}개를 `{head[:12]}` 에 고정했다")
     return lambda: specs.again(path, run.chat, FROZEN.format(head=head, tests=", ".join(tests)), spec)
+
+
+# The lock files `npm`, `pnpm` and `yarn` rewrite beside a `package.json`.
+LOCKS = ("package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock")
+
+
+def dev_only(path: Path, base: str, name: str, changed: list[str]) -> bool:
+    """A test-only dependency the characterization added: a `package.json` changed in its `devDependencies`
+    alone, or the lock file beside one. Production dependencies, scripts and settings stay out of it."""
+    folder, _, leaf = name.rpartition("/")
+    if leaf in LOCKS:
+        manifest = posixpath.join(folder, "package.json")
+        return manifest in changed and dev_only(path, base, manifest, changed)
+    if leaf != "package.json":
+        return False
+    def rest(rev: str) -> dict | None:
+        shown = specs.sh(["git", "show", f"{rev}:{name}"], path)
+        try:
+            data = json.loads(shown.stdout) if shown.returncode == 0 else {}
+        except ValueError:
+            return None
+        return {k: v for k, v in data.items() if k != "devDependencies"} if isinstance(data, dict) else None
+    old, new = rest(base), rest("HEAD")
+    return old is not None and old == new
 
 
 # -- Before the pull request ---------------------------------------------------------

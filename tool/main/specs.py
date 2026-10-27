@@ -1484,7 +1484,9 @@ def _check(path: Path, run, final: str):
             note(run, "독립 선행 리뷰가 먼저다 — 완료로 표시하지 않고 사람의 리뷰 루프 시작을 기다린다")
             return None
         # A turn that asks the person waits for the answer: nothing is sent past the question (#193 round 6).
-        if spec["state"] == "작업 중" and not asks(final) and not any(b["name"] == "done-report" for b in blocks(final)[1]):
+        # A `preserve` characterization in the same turn goes on to `characterized`, which freezes it first.
+        if spec["state"] == "작업 중" and not asks(final) and "```refactor-tests" not in final and \
+                not any(b["name"] == "done-report" for b in blocks(final)[1]):
             # Nothing else moves a revised task out of `작업 중`: ask once for the report the gate needs.
             # A second revision in answer to that request is the second miss, not a new first one.
             if spec.get("report_asked"):
