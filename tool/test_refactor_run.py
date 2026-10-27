@@ -286,6 +286,98 @@ def test_a_characterization_that_touches_code_is_refused(running):
     assert "테스트 밖을 바꿨다" in card["fault"] and not card.get("refactor_frozen") and card["pr"] is None
 
 
+def test_a_characterization_beside_a_spec_update_is_still_frozen(running):
+    """ai-companion-voice-agent preserve-repository-boundaries: the turn that pinned the tests also revised
+    the spec, the revision's report request ended the turn, and the `refactor-tests` block was never read."""
+    first, = surveyed_in("preserve", spec("orders-split", "all"))["specs"]
+    card = specs.load("proj", first)
+    change = {"rev": card["rev"], "reason": "Name the live limits", **{k: card[k] for k in ("goal", "out", "done")}}
+    pin = characterize("tests/test_orders.py")
+    Worker.replies = [lambda path, halt: pin(path, halt) + "\n\n```spec-update\n" + json.dumps(change) + "\n```",
+                      edited("src/orders.py", "def place(order):\n    result = order\n    return result\n")]
+    started(client(), first)
+    until(lambda: specs.load("proj", first)["state"] != "작업 중" or specs.load("proj", first)["fault"])
+    card = specs.load("proj", first)
+    assert card["refactor_frozen"]["tests"] == ["tests/test_orders.py"] and card["rev"] == change["rev"] + 1
+    assert card["state"] == "PR #7", (card["fault"], card["gate"])
+
+
+def test_a_spec_update_that_only_mentions_the_characterization_still_asks_for_the_report():
+    """PR #245 round 1: the marker in prose, or on a card that is not an unfrozen `preserve` one, is no
+    characterization, and the revision's report request must still go out."""
+    card = {"refactor": {"mode": "preserve", "survey": "s", "roles": {}}}
+    block = "```refactor-tests\n{}\n```"
+    assert refactor_run.characterizing(card, block)
+    assert not refactor_run.characterizing(card, "I will supply ```refactor-tests later.")
+    assert not refactor_run.characterizing({**card, "refactor_frozen": {"head": "a"}}, block)
+    assert not refactor_run.characterizing({"refactor": {**card["refactor"], "mode": "simplify"}}, block)
+    assert not refactor_run.characterizing({}, block)
+
+
+MANIFEST = {"name": "web", "scripts": {"test": "vitest run"}, "dependencies": {"react": "18.3.1"}, "config": {"flag": 1}}
+DEV = {**MANIFEST, "devDependencies": {"react-test-renderer": "18.3.1"}}
+LOCK = {"name": "web", "lockfileVersion": 3, "packages": {"": {k: MANIFEST[k] for k in ("name", "dependencies")},
+                                                          "node_modules/react": {"version": "18.3.1"}}}
+DEV_LOCK = {**LOCK, "packages": {**LOCK["packages"], "": {**LOCK["packages"][""], "devDependencies": DEV["devDependencies"]},
+                                 "node_modules/react-test-renderer": {"version": "18.3.1", "dev": True}}}
+REPINNED = {**DEV_LOCK, "packages": {**DEV_LOCK["packages"], "node_modules/react": {"version": "18.3.2"}}}
+
+
+@pytest.mark.parametrize("files, accepted", [
+    ({"web/package.json": DEV, "web/package-lock.json": DEV_LOCK}, True),
+    ({"web/package.json": {**MANIFEST, "dependencies": {"react": "18.3.1", "left-pad": "1.3.0"}}}, False),
+    ({"web/package.json": {**DEV, "scripts": {"test": "true"}}}, False),
+    ({"web/package.json": {**DEV, "config": {"flag": True}}}, False),   # JSON's `true` is not `1`
+    ({"web/package-lock.json": DEV_LOCK}, False),   # a lock without its manifest
+    ({"web/package.json": DEV, "web/package-lock.json": REPINNED}, False),   # a production package moved
+    ({"web/package.json": DEV, "web/yarn.lock": "# yarn"}, False),   # a lock format that is not read
+    ({"other/package.json": {"devDependencies": {"vitest": "2"}}}, False),   # a new manifest
+    ({"web/package.json": None}, False),   # a deleted manifest
+])
+def test_a_characterization_may_add_only_a_test_dependency(tmp_path, files, accepted):
+    """The voice agent's studio tests needed `react-test-renderer`: `devDependencies` and an npm lock that
+    moves only `dev` packages go with the tests. PR #245 round 1: nothing else does."""
+    def commit(written: dict) -> str:
+        for name, value in written.items():
+            target = tmp_path / name
+            if value is None:
+                target.unlink()
+                continue
+            target.parent.mkdir(exist_ok=True)
+            target.write_text(value if isinstance(value, str) else json.dumps(value), encoding="utf-8")
+        _git(tmp_path, "add", "-A")
+        _git(tmp_path, "commit", "-qm", "c")
+        return _git(tmp_path, "rev-parse", "HEAD")
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "t@t")
+    _git(tmp_path, "config", "user.name", "t")
+    base = commit({"web/package.json": MANIFEST, "web/package-lock.json": LOCK})
+    commit(files)
+    assert all(refactor_run.dev_only(tmp_path, base, name, list(files)) for name in files) == accepted
+
+
+def test_a_characterization_with_a_test_dependency_is_frozen(running):
+    repo, _ = running
+    (repo / "web").mkdir()
+    (repo / "web/package.json").write_text(json.dumps(MANIFEST), encoding="utf-8")
+    (repo / "web/package-lock.json").write_text(json.dumps(LOCK), encoding="utf-8")
+    _git(repo, "add", "web")
+    _git(repo, "commit", "-qm", "web")
+    _git(repo, "push", "-q", "origin", "main")
+    first, = surveyed_in("preserve", spec("orders-split", "all"))["specs"]
+    pin = characterize("tests/test_orders.py")
+
+    def turn(path, halt):
+        (path / "web/package.json").write_text(json.dumps(DEV), encoding="utf-8")
+        (path / "web/package-lock.json").write_text(json.dumps(DEV_LOCK), encoding="utf-8")
+        return pin(path, halt)
+    Worker.replies = [turn, edited("src/orders.py", "def place(order):\n    result = order\n    return result\n")]
+    started(client(), first)
+    until(lambda: specs.load("proj", first)["state"] != "작업 중" or specs.load("proj", first)["fault"])
+    card = specs.load("proj", first)
+    assert card["refactor_frozen"]["tests"] == ["tests/test_orders.py"], card["fault"]
+
+
 def test_an_existing_test_changes_only_within_the_contract(running):
     repo, remote = running
     (repo / "tests").mkdir()

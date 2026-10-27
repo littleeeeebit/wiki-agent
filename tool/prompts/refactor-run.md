@@ -28,7 +28,9 @@ In `preserve`, your first answer is characterization only. Read the existing
 tests of the behaviour this spec touches. Add characterization or regression
 tests only for core behaviour they leave uncovered, and pin today's intended
 behaviour. A known bug is neither fixed nor pinned as a contract: leave it
-untested and name it in your answer. Change no other file. Commit, then
+untested and name it in your answer. Change no other file, except a test-only
+dependency: `devDependencies` in an existing `package.json`, and the npm
+lock beside it when every package it moves is a `dev` one. Commit, then
 end the answer with a fenced block tagged `refactor-tests` holding JSON:
 `{"tests": [every repository-relative test file that pins this behaviour,
 existing or new], "test_argv": [the command that runs exactly those tests
