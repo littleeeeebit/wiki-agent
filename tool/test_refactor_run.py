@@ -515,21 +515,29 @@ def test_a_refused_switch_keeps_an_edit_made_meanwhile(running):
     assert not specs.load("proj", first).get("refreezing")
 
 
-def test_build_output_waits_aside_during_the_old_code_run(running):
-    """#247 round 2: an ignored `dist` holding the refactored code compiled ran instead of the old source."""
+@pytest.mark.parametrize("placeholder", [False, True])
+def test_build_output_refuses_the_old_code_run(running, placeholder):
+    """#247 round 2: an ignored `dist` holding the refactored code compiled ran instead of the old source.
+    Round 3: moving it aside lost files, and a tracked `.gitkeep` made git list `dist`'s files, not `dist`."""
     _, remote = running
     first, path = frozen_at_pr()
     with open(path / ".git/info/exclude", "a", encoding="utf-8") as exclude:
-        exclude.write("dist/\n")
-    (path / "dist").mkdir()
-    (path / "dist/built.txt").write_text("refactored", encoding="utf-8")
-    changed(path, "import pathlib\nassert place(1) == 1 and not pathlib.Path('dist').exists()")
+        exclude.write("packages/lib/dist/*\n!packages/lib/dist/.gitkeep\n" if placeholder else "dist/\n")
+    built = path / ("packages/lib/dist" if placeholder else "dist")
+    built.mkdir(parents=True)
+    if placeholder:
+        (built / ".gitkeep").write_text("", encoding="utf-8")
+        _git(path, "add", str(built / ".gitkeep"))
+    (built / "built.txt").write_text("refactored", encoding="utf-8")
+    changed(path, "assert place(1) == 1  # marked")
     specs.update("proj", first, state="멈춤")
+    was = specs.load("proj", first)["refactor_frozen"]["head"]
     with patch.object(specs, "sh", commented(remote)[0]):
-        _, done = approve(first)
-    assert done.status_code == 200, (done.json(), _git(path, "status", "--porcelain", "--ignored"))
-    assert (path / "dist/built.txt").read_text(encoding="utf-8") == "refactored"
-    assert not specs.load("proj", first).get("refreezing")
+        _, refused = approve(first)
+    assert refused.status_code == 409 and "dist" in refused.json()["detail"], refused.json()
+    assert (built / "built.txt").read_text(encoding="utf-8") == "refactored"
+    card = specs.load("proj", first)
+    assert card["refactor_frozen"]["head"] == was and not card.get("refreezing")
 
 
 def test_an_interrupted_refreeze_is_put_back_when_the_change_is_opened(running):
