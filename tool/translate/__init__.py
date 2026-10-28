@@ -29,6 +29,7 @@ import argparse
 import collections
 import contextlib
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -513,9 +514,10 @@ def _store(path: Path | None = None) -> sqlite3.Connection | None:
     path = path or CACHE
     # Connections opened at once can be refused without the busy wait — the WAL switch, or recovering the
     # WAL after the last connection closed — and a refused store is a whole request left untranslated
-    # (overlay scenarios: one answer's 8 paragraphs as `limit`). So a refusal is tried again, briefly.
+    # (overlay scenarios: one answer's 8 paragraphs as `limit`). So a refusal that came at once is tried
+    # again, briefly; one that waited out the busy timeout is a lock still held, and stays a refusal.
     for attempt in range(3):
-        db = None
+        db, began = None, time.monotonic()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             db = sqlite3.connect(path, timeout=2.0)
@@ -529,6 +531,8 @@ def _store(path: Path | None = None) -> sqlite3.Connection | None:
         except Exception:
             if db is not None:
                 db.close()
+            if time.monotonic() - began > 0.5:
+                break
             time.sleep(0.05 * (attempt + 1))
     return None
 
@@ -578,13 +582,15 @@ def translate(texts: list[str], direction: str, deadline: float) -> list[str]:
 
 def _outcomes(texts: list[str], direction: str, deadline: float, accept=None,
               held: dict[str, str] | None = None, asked: dict[int, str] | None = None,
-              cancel: threading.Event | None = None) -> list[tuple[str, str]]:
+              cancel: threading.Event | None = None, again: bool = False) -> list[tuple[str, str]]:
     """`(text, status)` per input. The status is `skipped` (nothing of the
     source language), `cached`, `translated`, or why the original came back:
     `retired`, `no_key`, `limit`, `request_failed`, `spans_broken`, `deadline`,
-    or what `accept(source, translation)` returned against a translation —
-    `None` accepts it. What it rejects is not cached, and a cached
-    translation it rejects is asked for again. `held` (source -> English)
+    or what `accept(sources, translations)` returned against a translation —
+    one answer per pair, `None` accepting it; it sees the cache hits at once,
+    then each request's replies as that request lands. What it rejects is not
+    cached, and a cached translation it rejects is dropped and asked for
+    again. `again` asks once more, alone, for a fresh reply it rejects. `held` (source -> English)
     stands in for the cache, which is then neither read nor written: the
     caller keeps what it holds, and what is held is checked as a cache hit is
     — retired, and `accept`. `asked`, when given, is filled with the id of
@@ -594,7 +600,7 @@ def _outcomes(texts: list[str], direction: str, deadline: float, accept=None,
     if not texts:
         return []
     try:
-        return _translate(list(texts), direction, deadline, accept, held, asked, cancel)
+        return _translate(list(texts), direction, deadline, accept, held, asked, cancel, again)
     except Exception:
         # The callers are hooks part-way through assembling an injection. Their
         # own entry-point guard would catch this and pass the turn, which costs
@@ -607,19 +613,12 @@ def _outcomes(texts: list[str], direction: str, deadline: float, accept=None,
 LINE_ITEM = re.compile(r"\n(?=[ \t]*(?:[-*+][ \t]|\d+[.)][ \t]|\|))")
 
 
-def _version(direction: str) -> str:
-    """What a translation's cache key carries besides its text: the glossary, and toward Korean the examples,
-    which are part of en->ko's prompt; ko->en keys stay as they were."""
-
-    version = glossary()[2]
-    return version + "/x" + examples()[1] if direction == EN_KO else version
-
-
 def _translate(texts: list[str], direction: str, deadline: float, accept=None,
                held: dict[str, str] | None = None, asked: dict[int, str] | None = None,
-               cancel: threading.Event | None = None) -> list[tuple[str, str]]:
-    keep, fixed, _ = glossary()
-    version = _version(direction)
+               cancel: threading.Event | None = None, again: bool = False) -> list[tuple[str, str]]:
+    keep, fixed, version = glossary()
+    if direction == EN_KO:
+        version += "/x" + examples()[1]   # the examples are part of en->ko's prompt; ko->en keys stay as they were
     out = [(text, "skipped") for text in texts]
 
     wanted = [i for i, t in enumerate(texts) if worth_translating(t, direction)]
@@ -638,13 +637,20 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
             hit = dict(db.execute(f"SELECT k, v FROM shots WHERE k IN ({marks})", list(keys.values())).fetchall()
                        ) if held is None else {keys[i]: held[texts[i]] for i in wanted if texts[i] in held}
             retired = {k for (k,) in db.execute(f"SELECT k FROM retired WHERE k IN ({marks})", list(keys.values()))}
-            for i in list(wanted):
-                if keys[i] in retired:
-                    out[i] = (texts[i], "retired")
-                    wanted.remove(i)
-                elif keys[i] in hit and not (accept and accept(texts[i], hit[keys[i]])):
+            for i in [i for i in wanted if keys[i] in retired]:
+                out[i] = (texts[i], "retired")
+                wanted.remove(i)
+            found = [i for i in wanted if keys[i] in hit]
+            refused = accept([texts[i] for i in found], [hit[keys[i]] for i in found]) if accept and found else []
+            for i, no in itertools.zip_longest(found, refused):
+                if no:
+                    if held is None:
+                        # Dropped, so the plain overlay never shows what the checked one refused (review round 1).
+                        db.execute("DELETE FROM shots WHERE k = ?", (keys[i],))
+                else:
                     out[i] = (hit[keys[i]], "cached")
                     wanted.remove(i)
+            db.commit()
         except Exception:
             pass
 
@@ -670,7 +676,7 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
         system, cache = instruction(direction, fixed), CACHE
         got: dict[int, tuple[str, str]] = {}
 
-        def request(group: list[int]) -> None:
+        def request(group: list[int], last: bool = False) -> None:
             if cancel is not None and (cancel.is_set() or time.monotonic() >= deadline):
                 return
             # A request for the shared cache reads on past the caller's
@@ -688,22 +694,29 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
                 # Refused whole — one passage split or merged, and the array came back the wrong length —
                 # so each passage is asked for again alone, and only that one stays English.
                 for j in group if len(group) > 1 else ():
-                    request([j])
+                    request([j], last)
                 return
             back = iter(answer)
             answer = ["\n".join(next(back) for _ in pieces) for pieces in split]
             fresh: list[tuple[str, str]] = []
             broken: list[int] = []
+            made: dict[int, str] = {}
             for j, i, reply, (_, spans) in zip(group, [wanted[j] for j in group], answer, [masked[j] for j in group]):
                 if not intact(reply, len(spans)):
                     # Keep the original; a mangled span is not a translation.
                     got[i] = (texts[i], "spans_broken")
                     broken.append(j)
                     continue
-                done = restore(reply, spans)
-                refused = accept(texts[i], done) if accept else None
+                made[j] = restore(reply, spans)
+            # Read as this request lands, not after every request: one slow request would take the
+            # judge's time from replies that came back long before it (review round 1).
+            refusals = accept([texts[wanted[j]] for j in made], list(made.values())) if accept and made else []
+            rejected: list[int] = []
+            for (j, done), refused in itertools.zip_longest(made.items(), refusals):
+                i = wanted[j]
                 if refused:
                     got[i] = (texts[i], refused)
+                    rejected.append(j)
                     continue
                 fresh.append((keys[i], done))
                 got[i] = (done, "translated")
@@ -718,7 +731,11 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
                     finally:
                         store.close()
             for j in broken if len(group) > 1 else ():
-                request([j])
+                request([j], last)
+            # A model judge's "changed": "must stay out" came back `유지되어야 한다` (kept), and asked
+            # again `제외해야 한다`. Once, so a rendering that keeps flipping is not paid for again and again.
+            for j in rejected if again and not last else ():
+                request([j], True)
 
         for i in wanted:
             out[i] = (texts[i], "request_failed")
@@ -944,57 +961,32 @@ def checked(texts: list[str], direction: str, deadline: float) -> list[tuple[str
     the original comes back: what a verified answer is shown through may
     reword it, never restate its facts.
 
-    A rendering that no reading of its numbers and identifiers fits is
-    refused before it is cached. Every one left goes to the judge (`judged`): a
-    flipped one keeps its numbers, and negates as its source does or as it
-    does not — `missing` as `있다`, `fails` as `통과한다`, a double negation
-    (overlay flip scenarios: 30 of 30 shown). "changed" refuses it and drops
-    it from the cache, so the next view asks again. With no verdict only one
-    the strict check passes is shown, so a judge out of time or money leaves
-    no paragraph English that this check alone would have shown.
+    Every rendering that some reading of its numbers and identifiers fits
+    goes to the judge (`judged`), each request's as it lands: a flipped one
+    keeps its numbers, and negates as its source does or as it does not —
+    `missing` as `있다`, `fails` as `통과한다`, a double negation (overlay
+    flip scenarios: 30 of 30 shown). "same" shows it. Anything else refuses
+    it, keeps it out of the cache the plain overlay reads too, and asks for
+    it once more; except that with no verdict one the strict check passes is
+    shown, so a judge out of time or money leaves no paragraph English that
+    this check alone would have shown.
     """
 
     keep = glossary()[0]
 
-    def fits(source: str, made: str) -> str | None:
-        loose = kept(source, made, keep, words=True, negation=False, loose=True)
-        return None if loose or kept(source, made, keep, words=True) else "meaning_changed"
+    def accept(sources: list[str], made: list[str]) -> list[str | None]:
+        fits = [kept(s, m, keep, words=True, negation=False, loose=True) or kept(s, m, keep, words=True)
+                for s, m in zip(sources, made)]
+        pairs = [(s, m) if direction == EN_KO else (m, s) for s, m, ok in zip(sources, made, fits) if ok]
+        verdicts = iter(judged(pairs, deadline))
+        out: list[str | None] = []
+        for s, m, ok in zip(sources, made, fits):
+            verdict = next(verdicts) if ok else "changed"
+            shown = verdict == "same" or (verdict is None and kept(s, m, keep, words=True))
+            out.append(None if shown else "meaning_changed")
+        return out
 
-    texts = list(texts)
-    out = _outcomes(texts, direction, deadline, fits)
-    todo = list(range(len(texts)))
-    for again in (False, True):
-        shown = [i for i in todo if out[i][1] in ("translated", "cached")]
-        pairs = [(texts[i], out[i][0]) if direction == EN_KO else (out[i][0], texts[i]) for i in shown]
-        todo = []
-        for i, verdict in zip(shown, judged(pairs, deadline)):
-            if verdict == "same" or (verdict is None and kept(texts[i], out[i][0], keep, words=True)):
-                continue
-            if verdict == "changed":
-                forget(direction, texts[i])
-                todo.append(i)
-            out[i] = (texts[i], "meaning_changed")
-        if again or not todo:
-            break
-        # Asked again once at once: "must stay out" came back `유지되어야 한다` (kept), and again `제외해야 한다`.
-        for i, got in zip(todo, _outcomes([texts[i] for i in todo], direction, deadline, fits)):
-            out[i] = got
-    return out
-
-
-def forget(direction: str, text: str) -> None:
-    """Drop `text`'s cached translation, so it is asked for again."""
-
-    db = _store()
-    if db is None:
-        return
-    try:
-        db.execute("DELETE FROM shots WHERE k = ?", (_key(direction, _version(direction), text),))
-        db.commit()
-    except Exception:
-        pass
-    finally:
-        db.close()
+    return _outcomes(list(texts), direction, deadline, accept, again=True)
 
 
 # Negation by presence alone refused correct renderings: `missing` is `없다`, `instead of X` is `X가 아닌`,
@@ -1034,10 +1026,12 @@ def judged(pairs: list[tuple[str, str]], deadline: float) -> list[str | None]:
     needs nothing; a new question waits for the monthly limit as a
     translation does (`_ask`, review rounds 1 and 3)."""
 
+    if not pairs:
+        return []
     stamp = hashlib.sha256(JUDGE.encode("utf-8")).hexdigest()[:12]
     keys = [_key("meaning", stamp, source + "\0" + made) for source, made in pairs]
     db = _store()
-    if db is None or not pairs:
+    if db is None:
         return [None] * len(pairs)   # no store, no count: nothing is sent
     try:
         marks = ",".join("?" * len(keys))
@@ -1116,12 +1110,15 @@ def english(texts: list[str], deadline: float, held: dict[str, dict] | None = No
 
     keep, _fixed, glossary_version = glossary()
 
-    def accept(source: str, made: str) -> str | None:
+    def one(source: str, made: str) -> str | None:
         # Held before caching, so a rejected reply is asked for again next time.
         if language(made, keep) != "en":
             # Came back still Korean: `translate` may keep that, English evidence may not.
             return "not_english"
         return None if kept(source, made, keep) else "protected_changed"
+
+    def accept(sources: list[str], made: list[str]) -> list[str | None]:
+        return [one(s, m) for s, m in zip(sources, made)]
 
     langs = [language(text, keep) for text in texts]
     korean = [i for i, lang in enumerate(langs) if lang == "ko"]

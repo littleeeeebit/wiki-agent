@@ -365,36 +365,66 @@ def test_every_verified_rendering_is_judged_and_a_flipped_one_is_asked_again_onc
     missing, fails, port = "The writer is missing a retry.", "The build fails on Windows.", "It runs on port 8791."
     asked = renders(monkeypatch, {missing: ["작성기에 재시도가 빠져 있다."],
                                   fails: ["Windows에서 빌드가 통과한다.", "Windows에서 빌드가 실패한다."],
-                                  port: ["8792 포트에서 실행된다."]}, "통과")
+                                  port: ["8792 포트에서 실행된다."] * 2}, "통과")
     assert T.checked([missing, fails, port], T.EN_KO, soon()) == [
         ("작성기에 재시도가 빠져 있다.", "translated"), ("Windows에서 빌드가 실패한다.", "translated"),
         (port, "meaning_changed")]
-    assert asked["translate"] == [missing, fails, port, fails], "only the flipped one is asked again"
+    assert asked["translate"] == [missing, fails, port, fails, port], "each refused one is asked again once"
     assert asked["judge"] == [["작성기에 재시도가 빠져 있다.", "Windows에서 빌드가 통과한다."],
                               ["Windows에서 빌드가 실패한다."]], "a changed number is never judged"
     assert all(len(b) <= T.JUDGE_BATCH for b in asked["judge"])
 
-    asked = renders(monkeypatch, {fails: ["Windows에서 빌드가 통과한다."] * 2}, "통과")
+    asked = renders(monkeypatch, {}, "통과")
     assert T.checked([missing, fails], T.EN_KO, soon()) == [
         ("작성기에 재시도가 빠져 있다.", "cached"), ("Windows에서 빌드가 실패한다.", "cached")]
     assert asked == {"translate": [], "judge": []}, "kept renderings and verdicts need nothing"
 
-    T.forget(T.EN_KO, fails)
-    asked = renders(monkeypatch, {fails: ["Windows에서 빌드가 통과한다."] * 2}, "통과")
-    assert T.checked([fails], T.EN_KO, soon()) == [(fails, "meaning_changed")]
-    assert asked["translate"] == [fails, fails], "asked again once, not until it flips back"
-    assert T.checked([fails], T.EN_KO, 0) == [(fails, "deadline")], "a refused rendering is not kept"
+    linux = "The deploy fails on Linux."
+    asked = renders(monkeypatch, {linux: ["Linux에서 배포가 통과한다."] * 2}, "통과")
+    assert T.checked([linux], T.EN_KO, soon()) == [(linux, "meaning_changed")]
+    assert asked["translate"] == [linux, linux], "asked again once, not until it flips back"
+    assert T.translate([linux], T.EN_KO, 0) == [linux], "a refused rendering is not kept for the plain overlay"
+
+
+def test_a_slow_request_leaves_the_judge_time_for_replies_that_landed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 1: the judge waited for every request, so one stuck batch left four landed,
+    correct paragraphs English."""
+
+    texts = [f"Item {n} uses 486 M parameters." for n in range(T.BATCH)] + ["A slow paragraph."]
+    made = [f"항목 {n}은 4억 8,600만 개의 파라미터를 쓴다." for n in range(T.BATCH)]
+    release = threading.Event()
+
+    def ask(system, batch, _seconds, same_length=True):
+        if system == T.JUDGE:
+            return ["same"] * len(batch)
+        if texts[-1] in batch:
+            release.wait(5)
+            return ["느린 문단이다."]
+        return [made[texts.index(t)] for t in batch]
+
+    monkeypatch.setattr(T, "_ask", ask)
+    try:
+        out = T.checked(texts, T.EN_KO, time.monotonic() + 1)
+    finally:
+        release.set()
+    assert [t for t, _ in out[:T.BATCH]] == made, "each only the judge may show"
+
+
+def test_judging_nothing_opens_no_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(T, "_store", lambda *_a: pytest.fail("opened a store for nothing"))
+    assert T.judged([], soon()) == []
 
 
 def test_without_a_verdict_only_a_strictly_kept_rendering_is_shown(monkeypatch: pytest.MonkeyPatch) -> None:
     """A judge out of time or money leaves English only what the strict check alone would have left."""
 
     lacks, port = "The queue lacks a pause.", "Port 8791 is open."
-    asked = renders(monkeypatch, {lacks: ["큐에 일시 중지가 없다."], port: ["8791 포트가 열려 있다."]}, "")
+    asked = renders(monkeypatch, {lacks: ["큐에 일시 중지가 없다."] * 2, port: ["8791 포트가 열려 있다."]}, "")
     real = T._ask
     monkeypatch.setattr(T, "_ask", lambda system, *a, **k: None if system == T.JUDGE else real(system, *a, **k))
     assert T.checked([lacks, port], T.EN_KO, soon()) == [(lacks, "meaning_changed"), ("8791 포트가 열려 있다.", "translated")]
-    assert asked["translate"] == [lacks, port]
+    assert asked["translate"] == [lacks, port, lacks]
+    assert T.translate([lacks], T.EN_KO, 0) == [lacks], "refused without a verdict, so not kept (review round 1)"
 
 
 def test_a_judge_reply_of_the_wrong_length_is_asked_again_a_pair_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
