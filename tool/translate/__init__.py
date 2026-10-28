@@ -395,6 +395,19 @@ def cost(metadata: dict) -> float:
     return (tokens_in * PRICE_IN + tokens_out * PRICE_OUT) / 1_000_000
 
 
+def room() -> bool:
+    """Is this month under its limit? `_ask` reads it before every request, a retry or a judge
+    request after an answer settled included (review round 3). Unreadable is no."""
+
+    db = _store()
+    try:
+        return db is not None and spent(db) < limit()
+    except Exception:
+        return False
+    finally:
+        db and db.close()
+
+
 def usage() -> dict:
     """`{"month", "usd", "limit"}` for this month. `usd` is `None` when unreadable."""
 
@@ -416,7 +429,7 @@ def _ask(system: str, batch: list[str], seconds: float, same_length: bool = True
 
     started = time.monotonic()
     key = api_key()
-    if not key or seconds <= 0 or not batch:
+    if not key or seconds <= 0 or not batch or not room():
         return None
     text = json.dumps(batch, ensure_ascii=False)
     # A token is at least a character, so twice the input in characters is
@@ -952,8 +965,6 @@ def same_meaning(source: str, made: str, deadline: float) -> bool:
         row = db.execute("SELECT v FROM shots WHERE k = ?", (key,)).fetchone()
         if row:
             return row[0] == "same"
-        if spent(db) >= limit():
-            return False
         got = _ask(JUDGE, [source, made], deadline - time.monotonic(), same_length=False)
         verdict = got[0].strip().lower() if got and len(got) == 1 else ""
         if verdict in ("same", "changed"):

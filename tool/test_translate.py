@@ -7,6 +7,7 @@ below asserts on the *unchanged* input rather than on a translation.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -306,6 +307,25 @@ def test_a_passage_the_model_splits_in_two_costs_only_its_own_batch(
     assert sizes.count(1) == T.BATCH, "only the refused batch is asked again, a passage at a time"
 
 
+def test_a_retry_after_the_first_answer_spent_the_limit_is_not_sent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 3: a refused batch's passages were each sent again past the limit its answer reached."""
+
+    sent: list[int] = []
+
+    def http(request, timeout):
+        batch = json.loads(json.loads(request.data)["contents"][0]["parts"][0]["text"])
+        sent.append(len(batch))
+        reply = [] if len(batch) > 1 else ["번역됨"]   # the batch comes back the wrong length
+        return io.BytesIO(json.dumps({"usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 1},
+                                      "candidates": [{"content": {"parts": [{"text": json.dumps(reply)}]}}]}).encode())
+
+    monkeypatch.setattr(T, "limit", lambda: 0.00002)   # under one answer's cost
+    monkeypatch.setattr(T.urllib.request, "urlopen", http)
+    texts = ["The first passage is here.", "The next passage is here."]
+    assert T.translate(texts, T.EN_KO, soon()) == texts
+    assert sent == [2]
+
+
 def test_a_broken_placeholder_is_asked_again_alone(monkeypatch: pytest.MonkeyPatch) -> None:
     texts = ["`a` 를 고친다", "`b` 를 고친다", "`c` 를 고친다"]
     asked: list[list[str]] = []
@@ -348,7 +368,12 @@ def test_the_judge_waits_for_the_monthly_limit_but_a_kept_verdict_does_not(monke
     """Review round 1: a cached translation reached a paid judge request with the limit at zero."""
 
     sent: list[str] = []
-    monkeypatch.setattr(T, "_ask", lambda _s, batch, *_a, **_k: sent.append(batch[1]) or ["same"])
+
+    def http(request, timeout):
+        sent.append(json.loads(json.loads(request.data)["contents"][0]["parts"][0]["text"])[1])
+        return io.BytesIO(json.dumps({"candidates": [{"content": {"parts": [{"text": '["same"]'}]}}]}).encode())
+
+    monkeypatch.setattr(T.urllib.request, "urlopen", http)
     source, made = "The writer is missing a retry.", "작성기에 재시도가 없다."
     assert T.same_meaning(source, made, soon())
     monkeypatch.setenv("TRANSLATE_MONTHLY_USD", "0")
