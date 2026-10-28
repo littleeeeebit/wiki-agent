@@ -280,27 +280,48 @@ export const render = (texts: string[], direction: 'en->ko' | 'ko->en' = 'en->ko
 
 /** A verified answer's rendering. A translation that changed a number or an
  *  identifier comes back as the original, with a status saying so. */
-export const renderChecked = (texts: string[]) =>
-  post('/api/translate', { texts, direction: 'en->ko', checked: true }).then((r) =>
-    json<{ texts: string[]; statuses?: string[]; off?: boolean }>(r, '번역'),
-  )
+export async function renderChecked(texts: string[]): Promise<{ texts: string[]; statuses: string[]; off: boolean }> {
+  const parts = batches(texts)
+  const done = await Promise.all(parts.map((part) =>
+    post('/api/translate', { texts: part, direction: 'en->ko', checked: true }).then((r) =>
+      json<{ texts: string[]; statuses?: string[]; off?: boolean }>(r, '번역'),
+    )))
+  return {
+    texts: done.flatMap((d) => d.texts),
+    statuses: done.flatMap((d, n) => d.statuses ?? parts[n].map(() => '')),
+    off: done.some((d) => d.off),
+  }
+}
 
 /** For more than one request holds. Order and count survive intact.
  *
  *  The splitting lives here alone. Split at each call site and changing the
- *  limit means editing as many places as there are screens. */
+ *  limit means editing as many places as there are screens. Both of
+ *  `tool/main/app.py`'s limits: a verified answer of 45 paragraphs sent
+ *  whole was refused (413) and stayed English whole. */
 const BATCH = 40
+const CHARS = 40_000
+
+function batches(texts: string[]): string[][] {
+  const out: string[][] = []
+  let size = CHARS
+  for (const text of texts) {
+    if (size + text.length > CHARS || out[out.length - 1].length >= BATCH) {
+      out.push([])
+      size = 0
+    }
+    out[out.length - 1].push(text)
+    size += text.length
+  }
+  return out
+}
 
 export async function renderAll(
   texts: string[],
   direction: 'en->ko' | 'ko->en' = 'en->ko',
 ): Promise<string[]> {
-  const out: string[] = []
-  for (let i = 0; i < texts.length; i += BATCH) {
-    const { texts: done } = await render(texts.slice(i, i + BATCH), direction)
-    out.push(...done)
-  }
-  return out
+  const done = await Promise.all(batches(texts).map((part) => render(part, direction)))
+  return done.flatMap((d) => d.texts)
 }
 
 /** Read a `text/event-stream` body and hand back each event in order.

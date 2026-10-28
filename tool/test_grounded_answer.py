@@ -1018,6 +1018,24 @@ def test_a_presentation_may_drop_a_fact_but_never_add_one():
     assert not translate.kept("The server is enabled regardless.", "서버가 활성화되어 있지 않다.", keep, words=True)
     assert translate.kept("RFPs, e.g. from 나라장터, and zeroing notices.", "나라장터 등의 RFP, 그리고 공고를 0으로 만들기.",
                           keep, words=True), "an abbreviation is no identifier; `zeroing` spells a 0"
+    # Overlay scenarios: verified answers from ai-generation stayed English a paragraph at a time.
+    assert translate.kept("It uses 486 M parameters.", "4억 8,600만 개의 파라미터를 쓴다.", keep, words=True)
+    assert translate.kept("It uses 486 M parameters.", "486 M개의 파라미터를 쓴다.", keep, words=True)
+    assert translate.kept("It holds 1.2 billion rows and served 12k calls.", "12억 개의 행, 12,000건의 호출.", keep,
+                          words=True)
+    assert not translate.kept("It holds 1.2 billion rows.", "13억 개의 행을 보유한다.", keep, words=True)
+    assert translate.kept("It ran on Oct 28, small until 2026-09-07.", "10월 28일, 2026년 9월 7일까지는 작았다.", keep,
+                          words=True)
+    assert not translate.kept("It ran on Oct 28.", "11월 28일에 실행됐다.", keep, words=True)
+    assert translate.kept("A dozen start a server; it costs a tenth as much.", "12개가 서버를 시작하고, 비용은 10분의 1이다.",
+                          keep, words=True)
+    assert translate.kept("Phase 20 is done. When it closed, tests passed.", "20단계는 끝났다. 20단계가 닫힐 때 통과했다.",
+                          keep, words=True), "a number named again is no new fact"
+    assert translate.kept("## 3. Proposed direction during security review", "## 3. 보안 검토 동안의 제안 방향", keep,
+                          words=True), "`안 ` inside a word negates nothing"
+    assert translate.kept("It was moved by mistake.", "잘못 옮겨졌다.", keep, words=True)
+    assert not translate.kept("Port 8791 is open.", "8791 포트는 안 열려 있다.", keep, words=True)
+    assert translate.kept("Port 8791 is open.", "8791 포트는 열려 있지 않다.", keep, words=True, negation=False)
 
 
 def test_en_ko_is_shown_examples_that_pass_the_overlays_own_check():
