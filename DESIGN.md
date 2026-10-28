@@ -292,7 +292,7 @@ pass without horizontal overflow. No new palette choice is introduced.
 
 ## Overview site
 
-`overview.html` and the seven pages under `overview/` are what a Korean
+`overview.html` and the eight pages under `overview/` are what a Korean
 developer opens from a community link. The user rejected the earlier tabbed
 page on 2026-10-26 — no build-up, Korean nobody speaks, every pipeline mixed
 together, the install guide buried — and chose this shape:
@@ -300,7 +300,15 @@ together, the install guide buried — and chose this shape:
 - One story page told in date order (the real problems, then what was built
   for each), five pipeline pages (① rule hooks, ② specs and delegation,
   ③ review loop and merge, ④ asking the wiki and Jev, ⑤ retrospective and
-  self-improvement) and one usage guide. Every page shares `overview/site.css`.
+  self-improvement), a usage page and an install page. Every page shares
+  `overview/site.css`.
+- Usage and install never share a page (the user's call, 2026-10-28). Usage
+  (`guide.html`) is what to type where, the answer that comes back, then
+  "이럴 땐 · 이렇게" rows; install (`install.html`) is every setup step. The
+  install page is also the Korean copy of the people-facing parts of
+  `docs/chat-setup.md`, `docs/hooks-setup.md` and `docs/mobile.md`, because
+  the README linked readers into English documents they would not read; those
+  three documents say so and change the page with them.
 - A two-column PC layout: prose on the left, the capture, terminal output,
   table or note it talks about on the right (`--split: 1fr 1.25fr`, one
   shared gap). Every block starts on the same left edge as the top bar, and
@@ -314,7 +322,8 @@ together, the install guide buried — and chose this shape:
 - Real material only: app captures from a demo server seeded with this
   repository's own conversations (translation on, no other repository
   visible), real hook output, the real five rounds of one review loop, the
-  real line counts when refactoring began. Nothing invented to fill space.
+  real line counts when refactoring began. Nothing invented to fill space;
+  a usage example that is not a verbatim record says 예시 under it.
 - PC first — the user named 16:10, 16:9 and 21:9, nothing tuned for 4:3 or
   5:4 — and a phone still reads it.
 

@@ -3,6 +3,10 @@
 Each person downloads it to their own PC and runs it with their own Codex CLI or Claude Code account.
 It is not a method of connecting to the author's PC, CLI, or account. The server runs locally by default. To connect your own phone to your PC over mobile data or another Wi-Fi network, use the [mobile companion setup](mobile.md).
 
+People read the Korean version of these steps in `overview/install.html`
+(sections A and D). A change to installation, login, updates or troubleshooting
+here changes that page in the same pull request.
+
 ## 1. Preparation first
 
 - Install Git, Python 3.11 or higher, Node.js 22.12 or higher, and Rust (<https://rustup.rs>) to build the window.

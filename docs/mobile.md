@@ -6,6 +6,11 @@ or answers approvals. It connects over mobile data or another Wi-Fi network
 without a VPN or router port forwarding. Both networks must permit the relay
 connection, and the PC and app must remain awake and online.
 
+People read the Korean version of the user-facing parts (connecting, the
+Android app, reconnecting) in `overview/install.html` section C. A change to
+those parts here changes that page in the same pull request. The fixed
+address, the APK build and verification stay in this document only.
+
 ## Connect a phone
 
 1. Update the app dependencies and build the screen, then restart wiki-agent.

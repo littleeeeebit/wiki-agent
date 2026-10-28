@@ -64,7 +64,9 @@ python tool/setup_chat.py install --agent codex   # 또는 claude, both
 GEMINI_API_KEY=여기에-본인-키
 ```
 
-자세한 설치와 문제 해결은 [`docs/chat-setup.md`](docs/chat-setup.md)에 있습니다.
+자세한 설치와 문제 해결은 [설치법](https://littleeeeebit.github.io/wiki-agent/overview/install.html)에,
+설치 뒤 무엇을 어디에 말하면 되는지는 [사용법](https://littleeeeebit.github.io/wiki-agent/overview/guide.html)에
+있습니다.
 
 ### 내 프로젝트에 규칙 연결하기
 
@@ -77,7 +79,8 @@ python tool/setup_agents.py --project "../내-프로젝트" --agent both
 ```
 
 대상 프로젝트에 미리 둘 파일(`.wiki/adapter.toml`, `.wiki/wiki-revision`)과 훅 신뢰,
-실제 동작 확인은 [`docs/hooks-setup.md`](docs/hooks-setup.md)에 있습니다.
+실제 동작 확인은 [설치법의 ‘앱 없이 명령으로 붙이기’](https://littleeeeebit.github.io/wiki-agent/overview/install.html#hooks-cli)에
+있습니다.
 
 ## 쓰기 전에 알아 둘 점
 
@@ -93,20 +96,31 @@ python tool/setup_agents.py --project "../내-프로젝트" --agent both
 
 ## 문서
 
+사람이 읽는 안내는 소개 사이트에 한국어로 있습니다.
+
 | 알고 싶은 것 | 읽을 곳 |
 | --- | --- |
-| 왜 만들었나, 다섯 갈래 설명 | [`overview.html`](overview.html), [`overview/`](overview/) |
-| 설치와 실행 순서 한 장 | [`overview/guide.html`](overview/guide.html) |
-| Jev 운영과 되돌리기 | [`docs/jev-maintenance.md`](docs/jev-maintenance.md) |
-| 자가 개선 실험 | [`docs/self-improvement.md`](docs/self-improvement.md) |
-| 앱 설치, 계정, 문제 해결 | [`docs/chat-setup.md`](docs/chat-setup.md) |
-| 내 프로젝트에 규칙 연결 | [`docs/hooks-setup.md`](docs/hooks-setup.md) |
-| 휴대폰 연결 | [`docs/mobile.md`](docs/mobile.md) |
-| 프로그램 구조 | [`docs/architecture.md`](docs/architecture.md) |
-| 개발과 검사 | [`docs/development.md`](docs/development.md) |
-| 자세한 운영 노트(영어) | [`docs/reference.md`](docs/reference.md) |
-| 공통 규칙 목록 | [`index.md`](index.md) |
-| 위키를 고치기 전에 | [`SCHEMA.md`](SCHEMA.md), [`ENFORCEMENT.md`](ENFORCEMENT.md), [`MAINTENANCE.md`](MAINTENANCE.md) |
+| 왜 만들었나, 다섯 갈래 설명 | [이야기](https://littleeeeebit.github.io/wiki-agent/overview.html) |
+| 무엇을 어디에 말하면 어떤 답이 오는지 | [사용법](https://littleeeeebit.github.io/wiki-agent/overview/guide.html) |
+| 앱 설치와 실행 | [설치법 A](https://littleeeeebit.github.io/wiki-agent/overview/install.html#app) |
+| 내 프로젝트에 규칙 연결 (앱으로, 명령으로) | [설치법 B](https://littleeeeebit.github.io/wiki-agent/overview/install.html#hooks) |
+| 휴대폰 연결 | [설치법 C](https://littleeeeebit.github.io/wiki-agent/overview/install.html#phone) |
+| 계정 바꾸기, 업데이트, 막혔을 때 | [설치법 D](https://littleeeeebit.github.io/wiki-agent/overview/install.html#help) |
+| Jev 켜고 끄기 | [묻기 · Jev](https://littleeeeebit.github.io/wiki-agent/overview/ask.html#modes) |
+
+아래는 에이전트가 읽는 원본이라 영어입니다. 앱의 [위키]에 한국어로 물으면 이 문서를
+근거로 한국어로 답합니다.
+
+| 영어 원본 | 내용 |
+| --- | --- |
+| [`docs/chat-setup.md`](docs/chat-setup.md), [`docs/hooks-setup.md`](docs/hooks-setup.md), [`docs/mobile.md`](docs/mobile.md) | 설치법의 원본. 휴대폰의 고정 주소, 안드로이드 앱 빌드, 검증 기록도 있습니다 |
+| [`docs/jev-maintenance.md`](docs/jev-maintenance.md) | Jev 운영, 진단, 되돌리기 |
+| [`docs/self-improvement.md`](docs/self-improvement.md) | 자가 개선 실험 설정과 실행 |
+| [`docs/architecture.md`](docs/architecture.md) | 프로그램 구조 |
+| [`docs/development.md`](docs/development.md) | 개발과 검사 |
+| [`docs/reference.md`](docs/reference.md) | 자세한 운영 노트 |
+| [`index.md`](index.md) | 공통 규칙 목록 |
+| [`SCHEMA.md`](SCHEMA.md), [`ENFORCEMENT.md`](ENFORCEMENT.md), [`MAINTENANCE.md`](MAINTENANCE.md) | 위키를 고치기 전에 |
 
 ## 배경
 

@@ -4,6 +4,10 @@ Installing the chat and installing the hooks are separate. Hooks are commands
 the CLI runs when it starts or receives a question. They read the shared
 wiki's tools and hand the CLI the rules and documents that fit the project.
 
+People read the Korean version of these steps in `overview/install.html`
+(section B, "앱 없이 명령으로 붙이기"). A change to the steps here changes that
+page in the same pull request.
+
 ## 1. Prepare the wiki
 
 First, sign in to the CLIs you need with your own account, following the

@@ -1,4 +1,4 @@
-/* wiki-agent 소개 사이트 — 이야기 한 장, 파이프라인 다섯 장, 사용법 한 장이 함께 쓴다.
+/* wiki-agent 소개 사이트 — 이야기 한 장, 파이프라인 다섯 장, 사용법 · 설치법 두 장이 함께 쓴다.
    기준 화면은 PC 16:10 · 16:9 · 21:9. 판은 왼쪽 글 · 오른쪽 그림의 두 단이고, 모든 블록이 같은 왼쪽 선과
    같은 단 경계선을 쓴다. 960px 아래에서 한 단으로 접힌다. 값의 이유는 DESIGN.md "Overview site" */
 
@@ -183,6 +183,10 @@ table.plain td:first-child{font-weight:600;white-space:nowrap}
 .index.stack .t{font-size:1.0625rem}
 .index.stack .d{display:block;margin-top:.25rem}
 .index.stack .go{margin:0}
+/* 항목이 많은 색인 — 한 줄에 제목과 자리 이름 */
+.index.stack.tight a{padding:.8rem 1.35rem}
+.index.stack.tight .d{display:inline;margin:0 0 0 .75rem;font-size:.875rem;color:var(--faint)}
+.pagehead.top{align-items:start}
 
 /* 파이프라인 장 첫머리 — 왼쪽 제목과 리드, 오른쪽 “푸는 문제” */
 .pagehead{padding-block:clamp(3.5rem,8vh,6rem) clamp(3rem,7vh,5rem);align-items:end}
@@ -201,6 +205,27 @@ table.plain td:first-child{font-weight:600;white-space:nowrap}
 .steps .s-txt > *{grid-column:2}
 .steps .s-code{display:grid;gap:.6rem;min-width:0}
 .warn{padding:1rem 1.25rem;border-radius:var(--r-lg);background:var(--alarm-wash);color:var(--ink);font-size:.95rem;line-height:1.7}
+
+/* 사용법 대화 — 내가 쓰는 말은 오른쪽 말풍선, 돌아오는 답은 왼쪽 글. 앱의 대화 칸과 같은 배치 */
+.chat{display:grid;gap:1.1rem;padding:1.35rem 1.5rem;background:var(--panel);border:1px solid var(--edge);border-radius:var(--r-lg)}
+.chat > *{margin:0}
+.chat .who{display:block;font:500 .75rem/1.3 var(--sans);color:var(--faint);margin-bottom:.35rem}
+.chat .me{justify-self:end;max-width:88%;padding:.7rem 1rem;background:var(--chip);border-radius:var(--r-lg);font-size:.95rem;line-height:1.65}
+.chat .ans{font-size:.95rem;line-height:1.7;color:var(--soft)}
+.chat .ans b{color:var(--ink)}
+.chat .opts{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.6rem}
+.chat .opts span{font-size:.875rem;padding:.3rem .75rem;border:1px solid var(--edge);border-radius:var(--r);color:var(--soft)}
+.chat .opts span.on{border-color:var(--accent);color:var(--ink);box-shadow:0 0 0 1px var(--accent)}
+.chat .card{padding:.9rem 1.1rem;border:1px solid var(--edge);border-radius:var(--r);font-size:.9rem;line-height:1.65;color:var(--soft)}
+.chat .card .lab{display:block;margin-bottom:.3rem}
+.chat .card b{display:block;color:var(--ink);font-weight:600}
+.chat .sys{font-size:.875rem;line-height:1.6;color:var(--accent);padding-inline-start:.9rem;border-inline-start:2px solid var(--accent)}
+/* 이럴 땐 · 이렇게 — 첫 칸도 문장이라 줄을 바꾸고, 둘째 칸은 판의 오른쪽 단 선에서 시작한다 */
+table.cases,table.cases thead,table.cases tbody{display:block}
+table.cases tr{display:grid;grid-template-columns:var(--split);column-gap:var(--gap);border-bottom:1px solid var(--rule)}
+table.cases thead tr{border-bottom-color:var(--edge)}
+table.cases th,table.cases td{padding-inline:0;border:0}
+table.cases td:first-child{white-space:normal}
 
 /* 앞뒤 장 */
 .pager{display:grid;grid-template-columns:1fr 1fr;gap:1rem;padding-block:3rem 5rem;border-top:1px solid var(--rule)}
@@ -251,6 +276,8 @@ table.plain td:first-child{font-weight:600;white-space:nowrap}
   table.plain tr{padding:.9rem 0;border-bottom:1px solid var(--rule)}
   table.plain td{border:0;padding:.1rem 0}
   table.plain td:first-child{margin-bottom:.25rem}
+  table.cases thead{display:none}
+  table.cases tr{display:block}
   table.plain td[data-label]::before{content:attr(data-label) " · ";font-weight:600;color:var(--soft)}
   table.plain td[data-label] + td[data-label]{margin-top:.35rem}
   .term{white-space:pre-wrap;overflow-wrap:anywhere}
