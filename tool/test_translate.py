@@ -327,8 +327,8 @@ def test_a_verified_rendering_whose_negation_differs_is_judged_once(monkeypatch:
 
     def judge(system: str, batch: list[str], _seconds: float, same_length: bool = True) -> list[str]:
         asked.append(batch[1])
-        assert system == T.POLARITY and not same_length
-        return ["reversed" if "있다" in batch[1] else "same"]
+        assert system == T.JUDGE and not same_length
+        return ["changed" if "있다" in batch[1] else "same"]
 
     monkeypatch.setattr(T, "_ask", judge)
     accept = T.meaning((), soon())
@@ -342,6 +342,19 @@ def test_a_verified_rendering_whose_negation_differs_is_judged_once(monkeypatch:
     monkeypatch.setattr(T, "_ask", lambda *_a, **_k: None)
     assert T.meaning((), soon())("The queue lacks a pause.", "큐에 일시 중지가 없다.") == "meaning_changed", \
         "no verdict refuses"
+
+
+def test_the_judge_waits_for_the_monthly_limit_but_a_kept_verdict_does_not(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 1: a cached translation reached a paid judge request with the limit at zero."""
+
+    sent: list[str] = []
+    monkeypatch.setattr(T, "_ask", lambda _s, batch, *_a, **_k: sent.append(batch[1]) or ["same"])
+    source, made = "The writer is missing a retry.", "작성기에 재시도가 없다."
+    assert T.same_meaning(source, made, soon())
+    monkeypatch.setenv("TRANSLATE_MONTHLY_USD", "0")
+    assert T.same_meaning(source, made, soon()), "a kept verdict is free"
+    assert not T.same_meaning("The queue lacks a pause.", "큐에 일시 중지가 없다.", soon())
+    assert sent == [made]
 
 
 def test_a_list_is_asked_a_line_an_item_and_comes_back_whole(

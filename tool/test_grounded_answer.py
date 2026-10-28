@@ -1029,8 +1029,18 @@ def test_a_presentation_may_drop_a_fact_but_never_add_one():
     assert not translate.kept("It ran on Oct 28.", "11월 28일에 실행됐다.", keep, words=True)
     assert translate.kept("A dozen start a server; it costs a tenth as much.", "12개가 서버를 시작하고, 비용은 10분의 1이다.",
                           keep, words=True)
-    assert translate.kept("Phase 20 is done. When it closed, tests passed.", "20단계는 끝났다. 20단계가 닫힐 때 통과했다.",
-                          keep, words=True), "a number named again is no new fact"
+    again = ("Phase 20 is done. When it closed, tests passed.", "20단계는 끝났다. 20단계가 닫힐 때 통과했다.")
+    assert not translate.kept(*again, keep, words=True)
+    assert translate.kept(*again, keep, words=True, repeats=True), "a number named again is left to the judge"
+    # Review round 1: a count moved between values, a month excusing a lost day, units, a position as a fraction.
+    for source, made in [("There are 3 workers, 3 retries, and 5 failures.", "작업자 3명, 재시도 5회, 실패 5회다."),
+                         ("It ran on Oct 28 and processed 28 jobs.", "10월 28일에 실행되어 작업 10개를 처리했다."),
+                         ("The temperature is 300 K.", "온도는 300000 켈빈이다."),
+                         ("The payload is 3 B.", "페이로드는 30억 바이트다."),
+                         ("The tenth attempt succeeded.", "시도의 10분의 1이 성공했다.")]:
+        assert not translate.kept(source, made, keep, words=True, negation=False, repeats=True), source
+    assert translate.kept("It processes 3 thousand rows.", "행 3천 개를 처리한다.", keep, words=True)
+    assert translate.kept("It processes 2 million rows.", "행 2백만 개를 처리한다.", keep, words=True)
     assert translate.kept("## 3. Proposed direction during security review", "## 3. 보안 검토 동안의 제안 방향", keep,
                           words=True), "`안 ` inside a word negates nothing"
     assert translate.kept("It was moved by mistake.", "잘못 옮겨졌다.", keep, words=True)
