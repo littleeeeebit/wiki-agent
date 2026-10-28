@@ -823,10 +823,11 @@ NEGATION = re.compile(r"\b(?:not|no|never|none|nothing|neither|nor|without|canno
                       r"|않|(?<![가-힣])안 |(?<!잘)못|없|아니|아닌", re.I)
 
 
-def spelled(text: str, other: str = "") -> collections.Counter:
-    """The numbers `text` spells out, as digits: its number words, its month
-    names, its ordinals that `other` writes as an ordinal digit, and the
-    fractions it names that `other` writes as `N분의 1`."""
+def spelled(text: str, other: str = "", loose: bool = False) -> collections.Counter:
+    """The numbers `text` spells out, as digits: its number words, and its
+    ordinals that `other` writes as an ordinal digit. `loose` adds its month
+    names and the fractions it names that `other` writes as `N분의 1` —
+    readings that only send a rendering to the judge (`meaning`)."""
 
     def ordinal(before: str, after: str) -> bool:
         before = before.lower()
@@ -839,25 +840,31 @@ def spelled(text: str, other: str = "") -> collections.Counter:
     marked = {a or b for a, b in ORDINAL_DIGIT.findall(other)}
     ordinals = [ORDINALS[w.lower()] for w in ORDINAL.findall(text)] + ["2" for before, after in SECOND.findall(text)
                                                                        if ordinal(before, after)]
-    named = {FRACTIONS[w.lower()] for w in FRACTION_EN.findall(text)}
-    fractions = [d for n in FRACTION.findall(other) if n in named for d in (n, "1")]
-    return collections.Counter([WORDS[w.lower()] for w in SPELLED.findall(text)] + [n for n in ordinals if n in marked]
-                               + [MONTHS[m] for m in MONTH.findall(text)] + fractions)
+    out = collections.Counter([WORDS[w.lower()] for w in SPELLED.findall(text)] + [n for n in ordinals if n in marked])
+    if loose:
+        named = {FRACTIONS[w.lower()] for w in FRACTION_EN.findall(text)}
+        out.update([MONTHS[m] for m in MONTH.findall(text)]
+                   + [d for n in FRACTION.findall(other) if n in named for d in (n, "1")])
+    return out
 
 
 def kept(source: str, english: str, keep: tuple[str, ...], words: bool = False, negation: bool = True,
-         repeats: bool = False) -> bool:
+         loose: bool = False) -> bool:
     """Did every number and bare identifier of `source` come through
     `english` exactly as often, with none added? With `words` — a
     presentation — a number one side spells out and the other writes in
     digits is the same number, and both negate or neither does; evidence keeps
-    its digits (`3번` as `three` is uncertain). A presentation also compares
-    numbers by value: `09` is `9`, and `486 M` is `4억 8,600만`. Off for a
-    caller that judges them another way: `negation` leaves the negation out,
-    and `repeats` excuses extra mentions of a value the source states — a
-    rendering that names "phase 20" again where the English said "it". Each
-    value's count is still never short: "3 retries" as `5회` beside another
-    5 loses a 3 (review round 1).
+    its digits (`3번` as `three` is uncertain).
+
+    `negation` off leaves the negation out, and `loose` reads numbers as a
+    Korean rendering may restate them: by value (`09` is `9`, `486 M` is
+    `4억 8,600만`), month names and fractions as digits, and a value the
+    source states mentioned again ("phase 20" where the English said "it").
+    Each of those readings also fits a changed fact — `3 M` molar as `300만`,
+    "a third attempt" as `3분의 1`, `4천왕` as 4000 — so a loose match never
+    shows a rendering by itself; it only lets the judge decide (`meaning`,
+    review rounds 1 and 2). A loose count is never short: "3 retries" as
+    `5회` beside another 5 loses a 3.
 
     ponytail: Korean evidence's `9월` as `September` reads as a lost number
     and the chunk as `uncertain`; map month names there too if that turns out
@@ -868,8 +875,8 @@ def kept(source: str, english: str, keep: tuple[str, ...], words: bool = False, 
         prose = protect(text, keep)[0]
         names = [n.rstrip(".:-") for n in IDENTIFIER.findall(prose) if n.rstrip(".").lower() not in ABBREVIATIONS]
         rest = IDENTIFIER.sub(" ", prose)
-        numbers = [n.replace(",", "") for n in NUMBER.findall(scaled(rest) if words else rest)]
-        if words:
+        numbers = [n.replace(",", "") for n in NUMBER.findall(scaled(rest) if loose else rest)]
+        if loose:
             numbers = [re.sub(r"^0+(?=\d)", "", n) for n in numbers]
         return collections.Counter(names + numbers)
 
@@ -877,10 +884,10 @@ def kept(source: str, english: str, keep: tuple[str, ...], words: bool = False, 
     if not words:
         return ours == theirs
     said, made = protect(source, keep)[0], protect(english, keep)[0]
-    extra = theirs - ours - spelled(said, made)
-    if repeats:
-        extra = {n for n in extra if n not in ours and n not in spelled(said, made)}
-    return (not extra and not ours - theirs - spelled(made, said)
+    extra = theirs - ours - spelled(said, made, loose)
+    if loose:
+        extra = {n for n in extra if n not in ours and n not in spelled(said, made, loose)}
+    return (not extra and not ours - theirs - spelled(made, said, loose)
             and (not negation or bool(NEGATION.search(said)) == bool(NEGATION.search(made))))
 
 
@@ -922,9 +929,11 @@ JUDGE = "\n".join([
     '- "same": every statement keeps its polarity and its numbers. Denied stays denied, present stays present,',
     "  allowed stays allowed, before stays before, and each number counts the same thing. Other wording for the",
     "  same meaning is the same: `missing` as `없다`, `instead of X` as `X가 아닌`, `no more than 3` as `최대 3`,",
-    "  `it` spelled out as the thing it refers to.",
-    '- "changed": any statement is negated, denied or inverted relative to the English, loses a negation, or',
-    "  attaches a number to something else.",
+    "  `it` spelled out as the thing it refers to, a count in Korean units (`486 M` as `4억 8,600만`), a date",
+    "  by number (`Oct 28` as `10월 28일`).",
+    '- "changed": any statement is negated, denied or inverted relative to the English, loses a negation,',
+    "  attaches a number to something else, or reads a unit or a position as a count (`3 M` molar as `300만`,",
+    "  `a third attempt` as `3분의 1`).",
     '- Return a JSON array holding one string: "same" or "changed".',
 ])
 
@@ -963,7 +972,7 @@ def meaning(keep: tuple[str, ...], deadline: float):
     def accept(source: str, made: str) -> str | None:
         if kept(source, made, keep, words=True):
             return None
-        if kept(source, made, keep, words=True, negation=False, repeats=True) and same_meaning(source, made, deadline):
+        if kept(source, made, keep, words=True, negation=False, loose=True) and same_meaning(source, made, deadline):
             return None
         return "meaning_changed"
 

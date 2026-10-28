@@ -263,8 +263,8 @@
     },
     "tool/translate/__init__.py": {
       "dup": 12,
-      "lines": 1426,
-      "reason": "Review round 1: counts stay exact, a repeated source value and a negation difference go to the model judge, which waits for the monthly limit, and Korean 천/백만 scale like thousand/million. Before that: The verified-answer overlay compares numbers by value (Korean 만/억 units, month names, zero padding), asks the model only where negation presence differs, and a refused batch is asked for again a passage at a time: correct renderings had left whole paragraphs English. Before that: Review shadow normalization admits and collects batches on the caller's thread, sharing its deadline and avoiding shared caching of private context."
+      "lines": 1435,
+      "reason": "Review round 2: a loose number match (units, months, fractions, repeats) only reaches the judge, never shows a rendering by itself. Before that: Review round 1: counts stay exact, a repeated source value and a negation difference go to the model judge, which waits for the monthly limit, and Korean 천/백만 scale like thousand/million. Before that: The verified-answer overlay compares numbers by value (Korean 만/억 units, month names, zero padding), asks the model only where negation presence differs, and a refused batch is asked for again a passage at a time: correct renderings had left whole paragraphs English. Before that: Review shadow normalization admits and collects batches on the caller's thread, sharing its deadline and avoiding shared caching of private context."
     },
     "tool/trigger_audit.py": {
       "dup": 0,
