@@ -7,6 +7,7 @@ below asserts on the *unchanged* input rather than on a translation.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -287,7 +288,9 @@ def test_a_passage_the_model_splits_in_two_costs_only_its_own_batch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Twenty-one passages came back as twenty-three strings, the length check
-    refused the answer, and every passage of the turn went unread."""
+    refused the answer, and every passage of the turn went unread. Then the
+    batch it was in went unread with it, whole paragraphs English; its
+    passages are now asked for again one at a time."""
 
     texts = [f"{'가나다라마바사아자차카타파하'[n]} 문단은 한도를 넘으면 멈춘다" for n in range(T.BATCH * 3)]
     split = texts[T.BATCH]
@@ -300,8 +303,83 @@ def test_a_passage_the_model_splits_in_two_costs_only_its_own_batch(
     monkeypatch.setattr(T, "_ask", answers)
     out = T.translate(texts, T.KO_EN, soon())
     assert max(sizes) <= T.BATCH
-    lost = [t for t, o in zip(texts, out) if o != "EN"]
-    assert split in lost and len(lost) == T.BATCH
+    assert [t for t, o in zip(texts, out) if o != "EN"] == [split]
+    assert sizes.count(1) == T.BATCH, "only the refused batch is asked again, a passage at a time"
+
+
+def test_a_retry_after_the_first_answer_spent_the_limit_is_not_sent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 3: a refused batch's passages were each sent again past the limit its answer reached."""
+
+    sent: list[int] = []
+
+    def http(request, timeout):
+        batch = json.loads(json.loads(request.data)["contents"][0]["parts"][0]["text"])
+        sent.append(len(batch))
+        reply = [] if len(batch) > 1 else ["번역됨"]   # the batch comes back the wrong length
+        return io.BytesIO(json.dumps({"usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 1},
+                                      "candidates": [{"content": {"parts": [{"text": json.dumps(reply)}]}}]}).encode())
+
+    monkeypatch.setattr(T, "limit", lambda: 0.00002)   # under one answer's cost
+    monkeypatch.setattr(T.urllib.request, "urlopen", http)
+    texts = ["The first passage is here.", "The next passage is here."]
+    assert T.translate(texts, T.EN_KO, soon()) == texts
+    assert sent == [2]
+
+
+def test_a_broken_placeholder_is_asked_again_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    texts = ["`a` 를 고친다", "`b` 를 고친다", "`c` 를 고친다"]
+    asked: list[list[str]] = []
+
+    def answers(_system: str, batch: list[str], _seconds: float) -> list[str]:
+        asked.append(batch)
+        # Batched, the second passage loses its placeholder; alone, it keeps it.
+        return [p.replace("를 고친다", "fixed") if len(batch) == 1 or n != 1 else "fixed" for n, p in enumerate(batch)]
+
+    monkeypatch.setattr(T, "_ask", answers)
+    assert T.translate(texts, T.KO_EN, soon()) == ["`a` fixed", "`b` fixed", "`c` fixed"]
+    assert len(asked) == 2 and len(asked[1]) == 1
+
+
+def test_a_verified_rendering_whose_negation_differs_is_judged_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Presence alone refused `missing` as `없다`; the model now judges, and is asked once per pair."""
+
+    asked: list[str] = []
+
+    def judge(system: str, batch: list[str], _seconds: float, same_length: bool = True) -> list[str]:
+        asked.append(batch[1])
+        assert system == T.JUDGE and not same_length
+        return ["changed" if "있다" in batch[1] else "same"]
+
+    monkeypatch.setattr(T, "_ask", judge)
+    accept = T.meaning((), soon())
+    assert accept("The writer is missing a retry.", "작성기에 재시도가 없다.") is None
+    assert accept("The writer is missing a retry.", "작성기에 재시도가 없다.") is None
+    assert accept("Port 8791 is open.", "8791 포트는 열려 있지 않다.") is None   # the fake says same
+    assert accept("Port 8791 is not open.", "8791 포트는 열려 있다.") == "meaning_changed"
+    assert accept("It runs on port 8791.", "8792 포트에서 실행된다.") == "meaning_changed", "numbers are not judged"
+    assert accept("Port 8791 is not open.", "8791 포트는 열려 있지 않다.") is None, "same presence is not judged"
+    assert asked == ["작성기에 재시도가 없다.", "8791 포트는 열려 있지 않다.", "8791 포트는 열려 있다."]
+    monkeypatch.setattr(T, "_ask", lambda *_a, **_k: None)
+    assert T.meaning((), soon())("The queue lacks a pause.", "큐에 일시 중지가 없다.") == "meaning_changed", \
+        "no verdict refuses"
+
+
+def test_the_judge_waits_for_the_monthly_limit_but_a_kept_verdict_does_not(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 1: a cached translation reached a paid judge request with the limit at zero."""
+
+    sent: list[str] = []
+
+    def http(request, timeout):
+        sent.append(json.loads(json.loads(request.data)["contents"][0]["parts"][0]["text"])[1])
+        return io.BytesIO(json.dumps({"candidates": [{"content": {"parts": [{"text": '["same"]'}]}}]}).encode())
+
+    monkeypatch.setattr(T.urllib.request, "urlopen", http)
+    source, made = "The writer is missing a retry.", "작성기에 재시도가 없다."
+    assert T.same_meaning(source, made, soon())
+    monkeypatch.setenv("TRANSLATE_MONTHLY_USD", "0")
+    assert T.same_meaning(source, made, soon()), "a kept verdict is free"
+    assert not T.same_meaning("The queue lacks a pause.", "큐에 일시 중지가 없다.", soon())
+    assert sent == [made]
 
 
 def test_a_list_is_asked_a_line_an_item_and_comes_back_whole(
@@ -398,7 +476,7 @@ def test_korean_with_a_few_identifiers_is_not_sent_to_korean(
     assert asked == [], "paths counted as English"
     english = ["The hook passes. 훅.", "wiki-agent", "See " + "하" * 12 + " README.md for details.", "Pass/Fail"]
     T.translate(english, T.EN_KO, soon())
-    assert asked == [english], "English stopped being sent"
+    assert asked[0] == english, "English stopped being sent"   # then a passage at a time: the fake answers nothing
 
 
 def test_anything_that_raises_still_returns_the_input(
