@@ -340,28 +340,137 @@ def test_a_broken_placeholder_is_asked_again_alone(monkeypatch: pytest.MonkeyPat
     assert len(asked) == 2 and len(asked[1]) == 1
 
 
-def test_a_verified_rendering_whose_negation_differs_is_judged_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Presence alone refused `missing` as `없다`; the model now judges, and is asked once per pair."""
+def renders(monkeypatch: pytest.MonkeyPatch, renderings: dict[str, list[str]], changed: str) -> dict[str, list]:
+    """`_ask` as the translator, answering each source with its next rendering, and as the judge, which
+    calls a pair "changed" when its Korean holds `changed`. Returns what each was asked."""
 
-    asked: list[str] = []
+    asked: dict[str, list] = {"translate": [], "judge": []}
 
-    def judge(system: str, batch: list[str], _seconds: float, same_length: bool = True) -> list[str]:
-        asked.append(batch[1])
-        assert system == T.JUDGE and not same_length
-        return ["changed" if "있다" in batch[1] else "same"]
+    def ask(system, batch, _seconds, same_length=True):
+        if system == T.JUDGE:
+            asked["judge"].append([ko for _en, ko in batch])
+            return ["changed" if changed in ko else "same" for _en, ko in batch]
+        asked["translate"] += batch
+        return [renderings[text].pop(0) for text in batch]
+
+    monkeypatch.setattr(T, "_ask", ask)
+    return asked
+
+
+def test_every_verified_rendering_is_judged_and_a_flipped_one_is_asked_again_once(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Flip scenarios: a rendering that keeps its numbers and negates as its source does (`fails` as
+    `통과한다`) passed every check code makes, 30 of 30. Now the judge reads every one."""
+
+    missing, fails, port = "The writer is missing a retry.", "The build fails on Windows.", "It runs on port 8791."
+    asked = renders(monkeypatch, {missing: ["작성기에 재시도가 빠져 있다."],
+                                  fails: ["Windows에서 빌드가 통과한다.", "Windows에서 빌드가 실패한다."],
+                                  port: ["8792 포트에서 실행된다."] * 2}, "통과")
+    assert T.checked([missing, fails, port], T.EN_KO, soon()) == [
+        ("작성기에 재시도가 빠져 있다.", "translated"), ("Windows에서 빌드가 실패한다.", "translated"),
+        (port, "meaning_changed")]
+    assert asked["translate"] == [missing, fails, port, fails, port], "each refused one is asked again once"
+    assert asked["judge"] == [["작성기에 재시도가 빠져 있다.", "Windows에서 빌드가 통과한다."],
+                              ["Windows에서 빌드가 실패한다."]], "a changed number is never judged"
+    assert all(len(b) <= T.JUDGE_BATCH for b in asked["judge"])
+
+    asked = renders(monkeypatch, {}, "통과")
+    assert T.checked([missing, fails], T.EN_KO, soon()) == [
+        ("작성기에 재시도가 빠져 있다.", "cached"), ("Windows에서 빌드가 실패한다.", "cached")]
+    assert asked == {"translate": [], "judge": []}, "kept renderings and verdicts need nothing"
+
+    linux = "The deploy fails on Linux."
+    asked = renders(monkeypatch, {linux: ["Linux에서 배포가 통과한다."] * 2}, "통과")
+    assert T.checked([linux], T.EN_KO, soon()) == [(linux, "meaning_changed")]
+    assert asked["translate"] == [linux, linux], "asked again once, not until it flips back"
+    assert T.translate([linux], T.EN_KO, 0) == [linux], "a refused rendering is not kept for the plain overlay"
+
+
+def stalled(monkeypatch: pytest.MonkeyPatch, texts: list[str], made: list[str], stalls) -> tuple[list, list]:
+    """`checked(texts)` with a second to spare, `_ask` translating each text as `made` and judging every
+    pair "same", but holding the requests `stalls(system, batch)` picks until `checked` returns.
+    Returns its outcome and the texts asked for."""
+
+    release, asked = threading.Event(), []
+
+    def ask(system, batch, _seconds, same_length=True):
+        if stalls(system, batch):
+            release.wait(5)
+        if system == T.JUDGE:
+            return ["same"] * len(batch)
+        asked.extend(batch)
+        return [made[texts.index(t)] for t in batch]
+
+    monkeypatch.setattr(T, "_ask", ask)
+    try:
+        return T.checked(texts, T.EN_KO, time.monotonic() + 1), asked
+    finally:
+        release.set()
+
+
+def test_a_slow_request_leaves_the_judge_time_for_replies_that_landed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 1: the judge waited for every request, so one stuck batch left four landed,
+    correct paragraphs English."""
+
+    texts = [f"Item {n} uses 486 M parameters." for n in range(T.BATCH)] + ["A slow paragraph."]
+    made = [f"항목 {n}은 4억 8,600만 개의 파라미터를 쓴다." for n in range(T.BATCH)] + ["느린 문단이다."]
+    out, _ = stalled(monkeypatch, texts, made, lambda system, batch: texts[-1] in batch)
+    assert [t for t, _ in out[:T.BATCH]] == made[:T.BATCH], "each only the judge may show"
+
+
+def test_a_slow_judge_of_a_cache_hit_holds_back_no_fresh_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 2: the hits were judged before any request was sent, so one slow verdict left
+    every uncached paragraph English, never asked for."""
+
+    texts = ["Port 80 is open.", "Port 81 is open."]
+    made = ["80번 포트가 열려 있다.", "81번 포트가 열려 있다."]
+    monkeypatch.setattr(T, "_ask", lambda *_a, **_k: made[:1])
+    assert T.translate(texts[:1], T.EN_KO, soon()) == made[:1]   # cached by the plain path, never judged
+    out, asked = stalled(monkeypatch, texts, made,
+                         lambda system, batch: system == T.JUDGE and made[0] in [ko for _en, ko in batch])
+    assert asked == texts[1:]
+    assert out == [(made[0], "cached"), (made[1], "translated")], "no verdict: the strict check shows the hit"
+
+
+def test_a_slow_retry_leaves_its_batchs_settled_replies_shown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 2: a batch was adopted only once its thread ended, and the thread went on to
+    ask again for its refused reply, so one stuck retry hid three shown paragraphs."""
+
+    texts = ["The first paragraph is here.", "The next paragraph is here.", "The last paragraph is here.",
+             "It runs on port 8791."]
+    made = ["첫 문단이다.", "다음 문단이다.", "마지막 문단이다.", "8792 포트에서 실행된다."]
+    out, _ = stalled(monkeypatch, texts, made, lambda system, batch: batch == texts[-1:])
+    assert out == [(m, "translated") for m in made[:3]] + [(texts[-1], "meaning_changed")]
+
+
+def test_judging_nothing_opens_no_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(T, "_store", lambda *_a: pytest.fail("opened a store for nothing"))
+    assert T.judged([], soon()) == []
+
+
+def test_without_a_verdict_only_a_strictly_kept_rendering_is_shown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A judge out of time or money leaves English only what the strict check alone would have left."""
+
+    lacks, port = "The queue lacks a pause.", "Port 8791 is open."
+    asked = renders(monkeypatch, {lacks: ["큐에 일시 중지가 없다."] * 2, port: ["8791 포트가 열려 있다."]}, "")
+    real = T._ask
+    monkeypatch.setattr(T, "_ask", lambda system, *a, **k: None if system == T.JUDGE else real(system, *a, **k))
+    assert T.checked([lacks, port], T.EN_KO, soon()) == [(lacks, "meaning_changed"), ("8791 포트가 열려 있다.", "translated")]
+    assert asked["translate"] == [lacks, port, lacks]
+    assert T.translate([lacks], T.EN_KO, 0) == [lacks], "refused without a verdict, so not kept (review round 1)"
+
+
+def test_a_judge_reply_of_the_wrong_length_is_asked_again_a_pair_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    sizes: list[int] = []
+
+    def judge(system, batch, _seconds, same_length=True):
+        sizes.append(len(batch))
+        return ["same"] if len(batch) == 1 else None   # `_ask` refuses a length that does not match
 
     monkeypatch.setattr(T, "_ask", judge)
-    accept = T.meaning((), soon())
-    assert accept("The writer is missing a retry.", "작성기에 재시도가 없다.") is None
-    assert accept("The writer is missing a retry.", "작성기에 재시도가 없다.") is None
-    assert accept("Port 8791 is open.", "8791 포트는 열려 있지 않다.") is None   # the fake says same
-    assert accept("Port 8791 is not open.", "8791 포트는 열려 있다.") == "meaning_changed"
-    assert accept("It runs on port 8791.", "8792 포트에서 실행된다.") == "meaning_changed", "numbers are not judged"
-    assert accept("Port 8791 is not open.", "8791 포트는 열려 있지 않다.") is None, "same presence is not judged"
-    assert asked == ["작성기에 재시도가 없다.", "8791 포트는 열려 있지 않다.", "8791 포트는 열려 있다."]
-    monkeypatch.setattr(T, "_ask", lambda *_a, **_k: None)
-    assert T.meaning((), soon())("The queue lacks a pause.", "큐에 일시 중지가 없다.") == "meaning_changed", \
-        "no verdict refuses"
+    pairs = [(f"Step {n} passed.", f"{n}단계가 통과했다.") for n in range(T.JUDGE_BATCH + 1)]
+    assert T.judged(pairs, soon()) == ["same"] * len(pairs)
+    assert sorted(sizes) == [1] * len(pairs) + [T.JUDGE_BATCH], "the refused batch's pairs each alone, once"
 
 
 def test_the_judge_waits_for_the_monthly_limit_but_a_kept_verdict_does_not(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -370,16 +479,33 @@ def test_the_judge_waits_for_the_monthly_limit_but_a_kept_verdict_does_not(monke
     sent: list[str] = []
 
     def http(request, timeout):
-        sent.append(json.loads(json.loads(request.data)["contents"][0]["parts"][0]["text"])[1])
+        sent.extend(ko for _en, ko in json.loads(json.loads(request.data)["contents"][0]["parts"][0]["text"]))
         return io.BytesIO(json.dumps({"candidates": [{"content": {"parts": [{"text": '["same"]'}]}}]}).encode())
 
     monkeypatch.setattr(T.urllib.request, "urlopen", http)
-    source, made = "The writer is missing a retry.", "작성기에 재시도가 없다."
-    assert T.same_meaning(source, made, soon())
+    pair = ("The writer is missing a retry.", "작성기에 재시도가 없다.")
+    assert T.judged([pair], soon()) == ["same"]
     monkeypatch.setenv("TRANSLATE_MONTHLY_USD", "0")
-    assert T.same_meaning(source, made, soon()), "a kept verdict is free"
-    assert not T.same_meaning("The queue lacks a pause.", "큐에 일시 중지가 없다.", soon())
-    assert sent == [made]
+    assert T.judged([pair], soon()) == ["same"], "a kept verdict is free"
+    assert T.judged([("The queue lacks a pause.", "큐에 일시 중지가 없다.")], soon()) == [None]
+    assert sent == [pair[1]]
+
+
+def test_a_store_refused_once_is_opened_on_the_next_try(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Overlay scenarios: a connection refused while others opened left one answer's 8 paragraphs `limit`."""
+
+    real, calls = T.sqlite3.connect, []
+
+    def connect(*a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return real(*a, **k)
+
+    monkeypatch.setattr(T.sqlite3, "connect", connect)
+    db = T._store()
+    assert db is not None and len(calls) == 2
+    db.close()
 
 
 def test_a_list_is_asked_a_line_an_item_and_comes_back_whole(

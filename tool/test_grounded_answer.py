@@ -1067,9 +1067,9 @@ def test_en_ko_is_shown_examples_that_pass_the_overlays_own_check():
 
 
 def test_a_checked_overlay_refuses_a_rendering_that_changes_a_number(monkeypatch):
-    def outcomes(texts, direction, deadline, accept=None, held=None):
+    def outcomes(texts, direction, deadline, accept=None, held=None, again=False):
         made = [t.replace("8791", "8792") for t in texts]
-        return [(t, accept(t, m) or "translated") if accept(t, m) else (m, "translated") for t, m in zip(texts, made)]
+        return [(t, no) if no else (m, "translated") for t, m, no in zip(texts, made, accept(texts, made))]
 
     monkeypatch.setattr(translate, "_outcomes", outcomes)
     assert translate.checked(["Port 8791."], translate.EN_KO, 0) == [("Port 8791.", "meaning_changed")]
