@@ -386,28 +386,61 @@ def test_every_verified_rendering_is_judged_and_a_flipped_one_is_asked_again_onc
     assert T.translate([linux], T.EN_KO, 0) == [linux], "a refused rendering is not kept for the plain overlay"
 
 
+def stalled(monkeypatch: pytest.MonkeyPatch, texts: list[str], made: list[str], stalls) -> tuple[list, list]:
+    """`checked(texts)` with a second to spare, `_ask` translating each text as `made` and judging every
+    pair "same", but holding the requests `stalls(system, batch)` picks until `checked` returns.
+    Returns its outcome and the texts asked for."""
+
+    release, asked = threading.Event(), []
+
+    def ask(system, batch, _seconds, same_length=True):
+        if stalls(system, batch):
+            release.wait(5)
+        if system == T.JUDGE:
+            return ["same"] * len(batch)
+        asked.extend(batch)
+        return [made[texts.index(t)] for t in batch]
+
+    monkeypatch.setattr(T, "_ask", ask)
+    try:
+        return T.checked(texts, T.EN_KO, time.monotonic() + 1), asked
+    finally:
+        release.set()
+
+
 def test_a_slow_request_leaves_the_judge_time_for_replies_that_landed(monkeypatch: pytest.MonkeyPatch) -> None:
     """Review round 1: the judge waited for every request, so one stuck batch left four landed,
     correct paragraphs English."""
 
     texts = [f"Item {n} uses 486 M parameters." for n in range(T.BATCH)] + ["A slow paragraph."]
-    made = [f"항목 {n}은 4억 8,600만 개의 파라미터를 쓴다." for n in range(T.BATCH)]
-    release = threading.Event()
+    made = [f"항목 {n}은 4억 8,600만 개의 파라미터를 쓴다." for n in range(T.BATCH)] + ["느린 문단이다."]
+    out, _ = stalled(monkeypatch, texts, made, lambda system, batch: texts[-1] in batch)
+    assert [t for t, _ in out[:T.BATCH]] == made[:T.BATCH], "each only the judge may show"
 
-    def ask(system, batch, _seconds, same_length=True):
-        if system == T.JUDGE:
-            return ["same"] * len(batch)
-        if texts[-1] in batch:
-            release.wait(5)
-            return ["느린 문단이다."]
-        return [made[texts.index(t)] for t in batch]
 
-    monkeypatch.setattr(T, "_ask", ask)
-    try:
-        out = T.checked(texts, T.EN_KO, time.monotonic() + 1)
-    finally:
-        release.set()
-    assert [t for t, _ in out[:T.BATCH]] == made, "each only the judge may show"
+def test_a_slow_judge_of_a_cache_hit_holds_back_no_fresh_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 2: the hits were judged before any request was sent, so one slow verdict left
+    every uncached paragraph English, never asked for."""
+
+    texts = ["Port 80 is open.", "Port 81 is open."]
+    made = ["80번 포트가 열려 있다.", "81번 포트가 열려 있다."]
+    monkeypatch.setattr(T, "_ask", lambda *_a, **_k: made[:1])
+    assert T.translate(texts[:1], T.EN_KO, soon()) == made[:1]   # cached by the plain path, never judged
+    out, asked = stalled(monkeypatch, texts, made,
+                         lambda system, batch: system == T.JUDGE and made[0] in [ko for _en, ko in batch])
+    assert asked == texts[1:]
+    assert out == [(made[0], "cached"), (made[1], "translated")], "no verdict: the strict check shows the hit"
+
+
+def test_a_slow_retry_leaves_its_batchs_settled_replies_shown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 2: a batch was adopted only once its thread ended, and the thread went on to
+    ask again for its refused reply, so one stuck retry hid three shown paragraphs."""
+
+    texts = ["The first paragraph is here.", "The next paragraph is here.", "The last paragraph is here.",
+             "It runs on port 8791."]
+    made = ["첫 문단이다.", "다음 문단이다.", "마지막 문단이다.", "8792 포트에서 실행된다."]
+    out, _ = stalled(monkeypatch, texts, made, lambda system, batch: batch == texts[-1:])
+    assert out == [(m, "translated") for m in made[:3]] + [(texts[-1], "meaning_changed")]
 
 
 def test_judging_nothing_opens_no_store(monkeypatch: pytest.MonkeyPatch) -> None:

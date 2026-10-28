@@ -627,6 +627,7 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
 
     db = _store()
     keys = {i: _key(direction, version, texts[i]) for i in wanted}
+    found: list[int] = []
     if db is None:
         for i in wanted:
             out[i] = (texts[i], "limit")   # no store, no count: nothing is sent
@@ -640,17 +641,14 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
             for i in [i for i in wanted if keys[i] in retired]:
                 out[i] = (texts[i], "retired")
                 wanted.remove(i)
-            found = [i for i in wanted if keys[i] in hit]
-            refused = accept([texts[i] for i in found], [hit[keys[i]] for i in found]) if accept and found else []
-            for i, no in itertools.zip_longest(found, refused):
-                if no:
-                    if held is None:
-                        # Dropped, so the plain overlay never shows what the checked one refused (review round 1).
-                        db.execute("DELETE FROM shots WHERE k = ?", (keys[i],))
+            for i in [i for i in wanted if keys[i] in hit]:
+                wanted.remove(i)
+                if accept:
+                    # Checked beside the fresh requests, never before them: a slow judge of one hit kept
+                    # every uncached text from being asked for (review round 2).
+                    found.append(i)
                 else:
                     out[i] = (hit[keys[i]], "cached")
-                    wanted.remove(i)
-            db.commit()
         except Exception:
             pass
 
@@ -670,11 +668,34 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
                 out[i] = (texts[i], "limit" if over else "no_key")
             wanted = []
 
+    fresh_count = len(wanted)
+    wanted += found   # hits after the fresh texts: one index space, so a refused hit is asked for like any text
     if wanted:
         masked: list[tuple[str, list[str]]] = [protect(texts[i], keep) for i in wanted]
         seconds = max(0.0, deadline - time.monotonic())
         system, cache = instruction(direction, fixed), CACHE
         got: dict[int, tuple[str, str]] = {}
+
+        def recheck(group: list[int]) -> list[list[int]]:
+            """`accept` on the hits, settled into `got`; the refused ones, as the requests to ask them again in."""
+
+            texts_hit = [hit[keys[wanted[j]]] for j in group]
+            refusals = accept([texts[wanted[j]] for j in group], texts_hit)
+            again_asked = [j for j, no in zip(group, refusals) if no]
+            for j, made, no in zip(group, texts_hit, refusals):
+                got[wanted[j]] = (texts[wanted[j]], no) if no else (made, "cached")
+            if again_asked and held is None:
+                # Dropped, so the plain overlay never shows what the checked one refused (review round 1).
+                store = _store(cache)
+                if store is not None:
+                    try:
+                        store.executemany("DELETE FROM shots WHERE k = ?", [(keys[wanted[j]],) for j in again_asked])
+                        store.commit()
+                    except Exception:
+                        pass
+                    finally:
+                        store.close()
+            return [again_asked[s:s + BATCH] for s in range(0, len(again_asked), BATCH)]
 
         def request(group: list[int], last: bool = False) -> None:
             if cancel is not None and (cancel.is_set() or time.monotonic() >= deadline):
@@ -712,6 +733,7 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
             # judge's time from replies that came back long before it (review round 1).
             refusals = accept([texts[wanted[j]] for j in made], list(made.values())) if accept and made else []
             rejected: list[int] = []
+            settled: dict[int, tuple[str, str]] = {}
             for (j, done), refused in itertools.zip_longest(made.items(), refusals):
                 i = wanted[j]
                 if refused:
@@ -719,7 +741,7 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
                     rejected.append(j)
                     continue
                 fresh.append((keys[i], done))
-                got[i] = (done, "translated")
+                settled[i] = (done, "translated")
             if fresh and held is None:
                 store = _store(cache)
                 if store is not None:
@@ -730,6 +752,9 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
                         pass
                     finally:
                         store.close()
+            # Shown once cached, each on its own: a retry below may outlive the deadline, and the
+            # replies it does not touch are settled already (review round 2).
+            got.update(settled)
             for j in broken if len(group) > 1 else ():
                 request([j], last)
             # A model judge's "changed": "must stay out" came back `유지되어야 한다` (kept), and asked
@@ -742,28 +767,33 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
         # Small batches, sent at once: an answer whose array is not as long as
         # its batch is refused whole and asked for again a passage at a time,
         # so one passage the model split in two costs only itself.
-        groups = [list(range(n, min(n + BATCH, len(wanted)))) for n in range(0, len(wanted), BATCH)
+        groups = [list(range(n, min(n + BATCH, fresh_count))) for n in range(0, fresh_count, BATCH)
                   ] if seconds > 0 else []
-        workers = [] if cancel is not None else [threading.Thread(target=request, args=(g,), daemon=True) for g in groups]
+        hits = list(range(fresh_count, len(wanted)))
         if cancel is not None:
             # Owned normalization admits and collects one batch at a time.
             # Private source text never enters the shared translation cache.
-            for group in groups:
+            for group in (recheck(hits) if hits else []) + groups:
                 if cancel.is_set() or time.monotonic() >= deadline:
                     break
                 request(group)
-            for i in wanted:
-                if i in got:
-                    out[i] = got[i]
-            workers = []
-        for worker in workers:
-            worker.start()
-        for worker in workers:
-            worker.join(max(0.0, deadline - time.monotonic()))
-        for worker, group in zip(workers, groups):
-            if not worker.is_alive():
-                for i in (wanted[j] for j in group if wanted[j] in got):
-                    out[i] = got[i]
+        else:
+            workers = [threading.Thread(target=request, args=(g,), daemon=True) for g in groups]
+            for worker in workers:
+                worker.start()
+            # The hits on this thread while the fresh requests run: `accept` ends by the deadline, and a
+            # hit is settled even when no time is left. Asking a refused one again goes to a worker.
+            again_workers = [threading.Thread(target=request, args=(g,), daemon=True)
+                             for g in (recheck(hits) if hits else [])]
+            for worker in again_workers:
+                worker.start()
+            for worker in workers + again_workers:
+                worker.join(max(0.0, deadline - time.monotonic()))
+        # Each text as it stands now: what a thread still running settles later is cached for the next turn.
+        settled = dict(got)
+        for i in wanted:
+            if i in settled:
+                out[i] = settled[i]
 
     if db is not None:
         try:
@@ -773,11 +803,11 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
 
     # Checked here, after everything, rather than at the one moment the
     # response landed. Restoring spans and writing the cache take time of
-    # their own, so a batch is adopted only once its thread has finished, and
-    # the wait for it ends at the deadline. What was settled by then stands —
-    # a cache hit, a batch that finished — and a text still waiting on its
-    # request ran out. That work is kept: it lands in the cache, so the next
-    # turn has it for nothing.
+    # their own, so a text is adopted only once its reply is cached, and the
+    # wait for it ends at the deadline. What was settled by then stands — a
+    # cache hit, a reply cached — and a text still waiting on its request ran
+    # out. That work is kept: it lands in the cache, so the next turn has it
+    # for nothing.
     if time.monotonic() > deadline:
         return [(text, "deadline") if status == "request_failed" else (done, status)
                 for text, (done, status) in zip(texts, out)]
@@ -978,7 +1008,8 @@ def checked(texts: list[str], direction: str, deadline: float) -> list[tuple[str
         fits = [kept(s, m, keep, words=True, negation=False, loose=True) or kept(s, m, keep, words=True)
                 for s, m in zip(sources, made)]
         pairs = [(s, m) if direction == EN_KO else (m, s) for s, m, ok in zip(sources, made, fits) if ok]
-        verdicts = iter(judged(pairs, deadline))
+        # A moment before the caller's deadline, so what is shown by then is cached and settled by then.
+        verdicts = iter(judged(pairs, deadline - JUDGE_MARGIN))
         out: list[str | None] = []
         for s, m, ok in zip(sources, made, fits):
             verdict = next(verdicts) if ok else "changed"
@@ -1016,6 +1047,8 @@ JUDGE = "\n".join([
 # Pairs a judge request carries, sent at once as translations are. Flip scenarios, 3 runs: at 8 a swapped cause
 # and effect was judged "same" every run, at 4 a lost "without"; at 2 and at 1 none was.
 JUDGE_BATCH = 2
+# Seconds before the caller's deadline the judge stops waiting (`checked`).
+JUDGE_MARGIN = 0.25
 
 
 def judged(pairs: list[tuple[str, str]], deadline: float) -> list[str | None]:
