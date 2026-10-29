@@ -775,6 +775,18 @@ def test_a_changed_test_double_is_offered_to_the_person_by_name(surveyed, new, d
     assert (why in found) if why else found == "", found
 
 
+def test_a_test_file_that_is_not_utf8_is_not_offered_for_approval(tmp_path):
+    """#255 round 3: the patch is read as UTF-8, so `é` and `è` in a latin-1 file both showed as `�`."""
+    texts = {"s": b'# coding: latin-1\ndef test_sample():\n    assert value() == "\xe9"\n'}
+    texts["h"] = texts["s"].replace(b"\xe9", b"\xe8")
+    card = {"refactor": {"detail": {"tests": {}}}}
+    with patch.object(refactor_run, "_touched", lambda spec, kind: (tmp_path, "s", "h", ["tests/test_sample.py"])), \
+            patch.object(refactor_run, "_shown", lambda path, rev, name: texts[rev]):
+        with pytest.raises(HTTPException) as refused:
+            refactor_run.amendments(card)
+    assert refused.value.status_code == 409 and "UTF-8" in refused.value.detail
+
+
 def test_a_person_declares_the_changed_definitions_in_the_test_contract(running):
     """A spec-update cannot reach the contract: the person reads the diff and declares the changed definitions
     by name, and the card goes on by itself on the report it kept. Another edit in the file is still refused."""

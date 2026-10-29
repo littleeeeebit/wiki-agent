@@ -653,14 +653,17 @@ def amendments(spec: dict) -> dict:
     for name in listed:
         if not debt.TEST.search(name.lower()) or name in whole or not name.endswith(".py"):
             continue
-        allowed = named.get(name, set())
+        allowed, texts = named.get(name, set()), (_shown(path, start, name), _shown(path, head, name))
         try:
-            before = ast.parse(_shown(path, start, name), type_comments=True).body
-            after = ast.parse(_shown(path, head, name), type_comments=True).body
+            before, after = (ast.parse(t, type_comments=True).body for t in texts)
         except (SyntaxError, ValueError):
             continue   # `contract` says it could not read it
         if _kept(before, after, allowed):
             continue
+        try:   # the patch is read as UTF-8: another encoding shows different values as the same `�` (#255 round 3)
+            [t.decode("utf-8") for t in texts]
+        except UnicodeDecodeError:
+            raise HTTPException(409, f"`{name}` 이 UTF-8 이 아니라 변경을 그대로 보이지 못한다") from None
         # Git's own patch as text, never an external diff, a textconv or a `-diff` summary (#255 rounds 1–2).
         diff = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--text", "--no-ext-diff", "--no-textconv",
                          "--no-renames", start, head, "--", name], path)
