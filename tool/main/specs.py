@@ -395,7 +395,9 @@ def fields(repo: Path, block, gate: str, accepted: dict | None = None) -> dict:
     if not isinstance(block, dict):
         raise ValueError("명세는 JSON 객체여야 한다")
     goal = block.get("goal")
-    if not isinstance(goal, str) or not goal.strip():
+    if goal is not None and not isinstance(goal, str):
+        raise ValueError(f"`goal` 은 글줄 하나여야 한다 — {type(goal).__name__} 이 왔다")
+    if not goal or not goal.strip():
         raise ValueError("`goal` 이 비었다")
     grounds = block.get("grounds") or {}
     if not isinstance(grounds, dict):
@@ -884,12 +886,23 @@ def edit(sid: str, body: Edit) -> dict:
     return view(repo, spec)
 
 
+# What a revision carries: the screen's `Edit` and the agent's `spec-update` alike.
+REVISABLE = frozenset({"rev", "reason", "goal", "out", "done", "slug", "review", "prerequisite_review"})
+
+
 def revise(repo: Path, spec: dict, change: dict) -> None:
     """Persist a full spec revision; approval of earlier requirements expires."""
     if not isinstance(change, dict) or change.get("rev") != spec["rev"]:
         raise ValueError("명세 판이 바뀌었다. 현재 명세를 읽고 수정해라")
+    # A key dropped quietly reads as applied: the agent would report a change that never took effect.
+    if unknown := sorted(set(change) - REVISABLE):
+        raise ValueError(f"명세 변경이 모르는 키를 담았다: {', '.join(unknown)} — {', '.join(sorted(REVISABLE))} 만 받는다"
+                         + (". 테스트 계약은 명세 변경으로 고치지 못한다 — 바뀐 정의를 답에 적으면 사람이 "
+                            "[테스트 계약 변경 승인] 으로 선언한다" if "tests" in unknown else ""))
     reason = change.get("reason")
-    if not isinstance(reason, str) or not reason.strip() or not all(k in change for k in ("goal", "out", "done")):
+    if reason is not None and not isinstance(reason, str):
+        raise ValueError(f"`reason` 은 글줄 하나여야 한다 — {type(reason).__name__} 이 왔다")
+    if not reason or not reason.strip() or not all(k in change for k in ("goal", "out", "done")):
         raise ValueError("명세 변경에는 reason, goal, out, done 이 필요하다")
     gate = gate_of(repo)
     if not gate:

@@ -4,6 +4,7 @@ import { PlanStatus } from '@/components/Plan'
 import { locks, RefactorCheck, REFACTOR_MODE, RolesEditor, rolesText, SurveyDetail, surveyStarted } from '@/components/Refactor'
 import type { RefactorMode } from '@/components/Refactor'
 import { Btn } from '@/components/Modal'
+import { Amendments } from '@/components/Amendments'
 import { Removals } from '@/components/Removals'
 import type { Choice } from '@/components/Toolbar'
 import * as api from '@/lib/api'
@@ -161,6 +162,7 @@ function Started({ spec, korean, busy, onSpecs, onStart }: { spec: Spec } & Pick
       {spec.fault && <p className="mt-1 text-[12.5px] text-destructive">{spec.fault}</p>}
       {/* Both the refusal naming the button and the one saved before it existed. */}
       {spec.refactor?.survey && spec.fault?.includes('파일 단위로 선언한다') && <Removals spec={spec} onDone={onSpecs} />}
+      {spec.refactor?.survey && spec.fault?.includes('의 기존 테스트 변경') && <Amendments spec={spec} onDone={onSpecs} />}
     </div>
   )
 }

@@ -559,8 +559,32 @@ def _declared(spec: dict) -> tuple[set, dict]:
     return whole, named
 
 
+def _changed(old: list, new: list, at: tuple = ()) -> set:
+    """The definitions of a body that differ between `old` and `new`, by name: a class whose header stayed
+    is looked into, so a changed method of a test double names the method; one gone names itself."""
+
+    found, now = set(), {_named(t): t for t in new if _named(t)}
+    for s in old:
+        if not (name := _named(s)) or (t := now.get(name)) is not None and ast.dump(s) == ast.dump(t):
+            continue
+        inner = set()
+        if isinstance(s, ast.ClassDef) and isinstance(t, ast.ClassDef) and _head(s) == _head(t):
+            inner = _changed(s.body, t.body, (*at, name))
+        found |= inner or {(*at, name)}
+    return found
+
+
+def _amendable(before: list, after: list, allowed: set) -> set | None:
+    """The names that, declared beside `allowed`, explain every change: None when no names do."""
+
+    names = _changed(before, after) - allowed
+    return names if names and _kept(before, after, allowed | names) else None
+
+
 # What a refused deletion tells the worker: it cannot declare the file, the person can.
 WHOLE_FILE = " — 파일 삭제는 파일 단위로 선언한다. 사람이 [테스트 파일 삭제 승인] 으로 선언할 수 있다"
+# What a refused edit the definitions it changed explain tells the worker: a spec-update cannot reach the contract.
+CHANGED = " — 바뀐 정의는 사람이 [테스트 계약 변경 승인] 으로 선언할 수 있다"
 
 
 def contract(path: Path, spec: dict) -> str:
@@ -571,6 +595,7 @@ def contract(path: Path, spec: dict) -> str:
     which tests pytest collects from a file is not settled by its syntax (#252:
     inheritance, imported TestCases, plugins and configuration hooks each hid one).
     A survey names tests, so the person declares the file (`approve_removal`).
+    A changed definition the survey left out is the person's to declare too (`approve_amendment`).
     Python is compared as syntax, so a skip mark or a shadowing redefinition is a change."""
 
     whole, named = _declared(spec)
@@ -599,7 +624,7 @@ def contract(path: Path, spec: dict) -> str:
         if missing := sorted("::".join(p) for p in allowed if not _defines(before, p)):
             broken.append(f"`{name}` 에 선언한 테스트가 시작 커밋에 없다: {', '.join(missing)}")
         elif not _kept(before, after, allowed):
-            broken.append(f"`{name}` 의 기존 테스트 변경")
+            broken.append(f"`{name}` 의 기존 테스트 변경{CHANGED if _amendable(before, after, allowed) else ''}")
     return "" if not broken else ("테스트 계약 밖의 변경 — " + ", ".join(broken[:10])
                                   + " (명세의 tests.remove·tests.contract 에 없다)")
 
@@ -608,49 +633,113 @@ def removals(spec: dict) -> dict:
     """`[테스트 파일 삭제 승인]`: the existing test files the card deleted that its contract does not free
     whole, each with the tests named for it and its text at the start; `head` and the `digest` an approval names."""
 
+    path, start, head, listed = _touched(spec, "D")
+    whole, named = _declared(spec)
+    files = []
+    for name in listed:
+        if debt.TEST.search(name.lower()) and name not in whole and not (path / name).exists():
+            files.append({"file": name, "named": sorted("::".join(p) for p in named.get(name, ())),
+                          "text": _shown(path, start, name).decode("utf-8", "replace")})
+    return _seen(spec, start, head, files)
+
+
+def amendments(spec: dict) -> dict:
+    """`[테스트 계약 변경 승인]`: the existing Python test files the card changed outside its contract, each
+    with the definitions that explain the change (`names`, empty when none do) and the diff from the start."""
+
+    path, start, head, listed = _touched(spec, "M")
+    whole, named = _declared(spec)
+    files = []
+    for name in listed:
+        if not debt.TEST.search(name.lower()) or name in whole or not name.endswith(".py"):
+            continue
+        allowed = named.get(name, set())
+        try:
+            before = ast.parse(_shown(path, start, name), type_comments=True).body
+            after = ast.parse(_shown(path, head, name), type_comments=True).body
+        except (SyntaxError, ValueError):
+            continue   # `contract` says it could not read it
+        if _kept(before, after, allowed):
+            continue
+        diff = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--no-renames", start, head, "--", name], path)
+        files.append({"file": name, "names": sorted("::".join(p) for p in _amendable(before, after, allowed) or ()),
+                      "diff": diff.stdout})
+    return _seen(spec, start, head, files)
+
+
+def _touched(spec: dict, kind: str) -> tuple[Path, str, str, list[str]]:
+    """The card's worktree, start, head and the files `git diff --diff-filter=<kind>` lists between them."""
+
     if not surveyed(spec) or not spec.get("worktree"):
         raise HTTPException(404, "리팩터링 조사 명세의 작업트리가 없다")
     path, start = Path(spec["worktree"]), spec["start_head"]
     # A branch-mode card shares the checkout: another card's branch there is not this card's deletion (#252 round 3).
     if (specs.owner(path) or {}).get("id") != spec["id"]:
         raise HTTPException(409, "작업트리가 지금 이 카드의 브랜치에 있지 않다 — 이 카드의 브랜치를 먼저 열어라")
-    whole, named = _declared(spec)
     head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
-    listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", "--diff-filter=D",
-                       start, head], path)
+    listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames",
+                       f"--diff-filter={kind}", start, head], path)
     if not head or listed.returncode:
         raise HTTPException(409, f"시작 커밋과 비교하지 못했다 — {specs.said(listed)}")
-    files = []
-    for name in listed.stdout.splitlines():
-        if debt.TEST.search(name.lower()) and name not in whole and not (path / name).exists():
-            old = subprocess.run(["git", "show", f"{start}:{name}"], cwd=path, capture_output=True)
-            if old.returncode:   # an empty text would read as an empty file the person approved
-                raise HTTPException(409, f"`{name}` 의 시작 커밋 내용을 읽지 못했다 — "
-                                         f"{old.stderr.decode('utf-8', 'replace').strip()[:300]}")
-            files.append({"file": name, "named": sorted("::".join(p) for p in named.get(name, ())),
-                          "text": old.stdout.decode("utf-8", "replace")})
+    return path, start, head, listed.stdout.splitlines()
+
+
+def _shown(path: Path, rev: str, name: str) -> bytes:
+    old = subprocess.run(["git", "show", f"{rev}:{name}"], cwd=path, capture_output=True)
+    if old.returncode:   # an empty text would read as an empty file the person approved
+        raise HTTPException(409, f"`{name}` 의 {rev[:12]} 내용을 읽지 못했다 — "
+                                 f"{old.stderr.decode('utf-8', 'replace').strip()[:300]}")
+    return old.stdout
+
+
+def _seen(spec: dict, start: str, head: str, files: list) -> dict:
     key = [spec["repo"], spec["id"], start, head, files]
     return {"head": head, "files": files,
             "digest": hashlib.sha256(json.dumps(key, ensure_ascii=False).encode("utf-8")).hexdigest()}
+
+
+def _approved(spec: dict, looked, head: str, digest: str) -> dict:
+    """What `looked` shows now, when it is still what the person read at `head` with `digest`; else 409."""
+
+    # A file put back after the person looked would be freed, edits and all: nothing uncommitted.
+    if specs.dirty(Path(spec["worktree"])):
+        raise HTTPException(409, "작업트리에 커밋하지 않은 변경이 있다 — 정리한 뒤 다시 열어 확인해라")
+    seen = looked(spec)
+    if (seen["head"], seen["digest"]) != (head, digest):
+        raise HTTPException(409, "본 뒤에 커밋이나 바뀐 테스트 파일이 달라졌다 — 다시 열어 확인해라")
+    return seen
 
 
 def approve_removal(spec: dict, head: str, digest: str) -> dict:
     """The person's approval of `removals` at `head` with `digest`: each file declared removed whole in the
     card's test contract, and the card's fault the contract's answer now. 409 when anything moved since."""
 
-    # A file put back after the person looked would be freed whole, edits and all: nothing uncommitted.
-    if specs.dirty(Path(spec["worktree"])):
-        raise HTTPException(409, "작업트리에 커밋하지 않은 변경이 있다 — 정리한 뒤 다시 열어 확인해라")
-    seen = removals(spec)
-    if (seen["head"], seen["digest"]) != (head, digest):
-        raise HTTPException(409, "본 뒤에 커밋이나 삭제한 파일이 바뀌었다 — 다시 열어 확인해라")
+    seen = _approved(spec, removals, head, digest)
     if not seen["files"]:
         raise HTTPException(409, "승인할 테스트 파일 삭제가 없다")
-    tests = spec["refactor"]["detail"].get("tests") or {}
     approved = {"head": head, "ts": time.time()}
-    remove = [*tests.get("remove", []), *({"test": f["file"], "reason": "사람이 파일 통째 삭제를 승인했다",
-                                          "approved": approved} for f in seen["files"])]
-    detail = {**spec["refactor"]["detail"], "tests": {**tests, "remove": remove}}
+    return _declare(spec, "remove", [{"test": f["file"], "reason": "사람이 파일 통째 삭제를 승인했다",
+                                      "approved": approved} for f in seen["files"]])
+
+
+def approve_amendment(spec: dict, head: str, digest: str) -> dict:
+    """The person's approval of `amendments` at `head` with `digest`: each definition that explains a change
+    declared by name in the card's test contract, so a later edit elsewhere in the file is still refused."""
+
+    seen = _approved(spec, amendments, head, digest)
+    if not (ready := [f for f in seen["files"] if f["names"]]):
+        raise HTTPException(409, "이름 있는 정의로 설명되는 테스트 변경이 없다 — 승인할 것이 없다")
+    approved = {"head": head, "ts": time.time()}
+    return _declare(spec, "contract", [{"test": f"{f['file']}::{n}", "old": "시작 커밋의 정의",
+                                        "new": f"{head[:12]} 의 정의", "why": "사람이 바뀐 정의를 읽고 승인했다",
+                                        "approved": approved} for f in ready for n in f["names"]])
+
+
+def _declare(spec: dict, kind: str, entries: list) -> dict:
+    """`entries` added to the card's `tests.<kind>`, and its fault the contract's answer now."""
+
+    tests = spec["refactor"]["detail"].get("tests") or {}
+    detail = {**spec["refactor"]["detail"], "tests": {**tests, kind: [*tests.get(kind, []), *entries]}}
     spec = {**spec, "refactor": {**spec["refactor"], "detail": detail}}
     fault = spec.get("fault")
     if fault and fault.startswith("테스트 계약 밖의 변경"):

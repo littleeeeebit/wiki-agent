@@ -20,6 +20,8 @@ The person's later instructions update the assignment as work progresses.
   completion report. Use the current `rev`, a concrete `reason`, and the full
   updated `goal`, `out`, and `done` lists. The server preserves revision history
   and invalidates approval of the previous spec. Keep the repository gate.
+  Only `rev`, `reason`, `goal` (one string), `out`, `done`, `review` and
+  `prerequisite_review` are accepted; any other key refuses the whole update.
 - Declare task-specific review obligations in an optional `review` object in
   the spec or `spec-update`: `criteria` accepts `refactor`, `documentation`,
   `security`, `data`, `async`, `performance`; `evidence` accepts `offline`,

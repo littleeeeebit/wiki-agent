@@ -175,6 +175,18 @@ def test_spec_generation_and_revision_preserve_explicit_obligations(world):
     assert spec["rev"] == 2 and spec["review"]["criteria"] == ["async", "security"]
 
 
+def test_a_revision_refuses_what_it_cannot_apply_and_names_the_type_it_wanted(world):
+    """semantic-index-cleanup-97d92512: a `tests` key was dropped quietly, so the agent reported a contract
+    fix that never took effect; a list `goal` was reported as an empty one."""
+    spec = pr_spec(world, "declared", 1, "a.py")
+    base = {"rev": 1, "reason": "Approved by the person", "goal": spec["goal"], "done": spec["done"], "out": spec["out"]}
+    with pytest.raises(ValueError, match="모르는 키를 담았다: tests .*테스트 계약 변경 승인"):
+        specs.revise(world.repo, spec, {**base, "tests": {"contract": []}})
+    with pytest.raises(ValueError, match="`goal` 은 글줄 하나여야 한다 — list 이 왔다"):
+        specs.revise(world.repo, spec, {**base, "goal": ["Simplify"]})
+    assert spec["rev"] == 1
+
+
 def test_preservation_cli_rejects_bad_arguments_without_dispatch():
     with patch.object(sys, "argv", ["refactor_profile.py"]), patch.object(refactor_profile, "task") as task:
         assert refactor_profile.main() == 2

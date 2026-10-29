@@ -16,7 +16,11 @@ When the spec turns out wrong, stop and ask instead of widening it.
   is a new test beside it, even where `tests.add` says to extend. The test cleanup
   pass removes nothing else; report other candidates in its `reason`. Before
   the gate the server compares every existing test file with the task's start
-  and stops the task on any other edit or deletion.
+  and stops the task on any other edit or deletion. A `spec-update` cannot
+  change the test contract. When this spec's change has to edit a test or test
+  double the contract does not list, make only that edit, commit, and name each
+  changed definition (`path::name`, `path::Class::method`) in your answer: the
+  person reads the diff and declares them with `[테스트 계약 변경 승인]`.
 - Never change an expectation to make the current code pass, delete a failing
   test, or weaken a test, lint, gate or debt limit.
 - Completion. When you report done, the server runs the repository's final

@@ -142,7 +142,14 @@ test file's Python syntax tree or decoded JSON values identical (`equivalent`)
 or only adds lines. Exceptions are the removals and contract updates the spec
 declares. Deleting a file needs the file declared, not only its tests; when a
 survey named only the tests, the person reads the deleted file and declares it
-on the card (`[테스트 파일 삭제 승인]`, `refactor_run.approve_removal`). The card
+on the card (`[테스트 파일 삭제 승인]`, `refactor_run.approve_removal`). An edit
+to a test or test double the contract does not list is declared the same way:
+the person reads the diff and declares the changed definitions by name
+(`[테스트 계약 변경 승인]`, `refactor_run.approve_amendment`), so any other edit
+in that file is still refused. A `spec-update` cannot reach the contract, and
+`specs.revise` refuses any key it does not apply. A survey spec that lists an
+existing test file in `files` must declare it in `tests.contract` or
+`tests.remove`, or name it in `tests.add`. Either way the card
 then goes on by itself (`specs.resumed`), while the checkout still belongs to
 that card. The done report `_check` kept is checked again with no model turn
 while the head and spec revision it was stamped with still stand, and its turn's
