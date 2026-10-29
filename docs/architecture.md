@@ -145,8 +145,11 @@ survey named only the tests, the person reads the deleted file and declares it
 on the card (`[테스트 파일 삭제 승인]`, `refactor_run.approve_removal`). The card
 then goes on by itself (`specs.resumed`), while the checkout still belongs to
 that card. The done report `_check` kept is checked again with no model turn
-while the head and spec revision it was stamped with still stand, and its turn
-ended neither stopped nor failed; otherwise the worker is asked for one once. Research is in
+while the head and spec revision it was stamped with still stand, and its turn's
+record shows it neither cancelled nor failed; otherwise the worker is asked for
+one once. A stop taken after that record is written only keeps the turn from
+going on by itself; the approval is the person's later word, so the recorded
+answer still counts. Research is in
 [verified test cleanup](research/refactoring-test-cleanup.md). Suite resolves
 shared checkouts by their current branch owner, so a merged task cannot label
 another task's live run.
