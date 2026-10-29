@@ -651,15 +651,16 @@ HELPED = ("import pytest\n\n\ndef _entries(engine):\n    return engine._persiste
           "@pytest.mark.parametrize('n', [1, 2])\ndef test_parity(n):\n    assert _entries(n)\n")
 
 
-@pytest.mark.parametrize("after", ["", "talked", "revised", "committed", "stopped", "switched"])
+@pytest.mark.parametrize("after", ["", "talked", "revised", "committed", "stopped", "late", "switched"])
 def test_a_person_declares_a_deleted_test_file_removed_whole(running, after):
     """Keeping the file changed an undeclared helper, deleting it was refused, and the worker cannot declare
     a file: the person reads what it held and declares it, and the card goes on by itself on the report it
     kept. `talked`: a person's turn after the refusal leaves the report standing. `revised`: the refused
     answer revised the spec too, and the replay does not revise it again (#253 round 1). `committed`: a later
     commit outdates the report, and `stopped`: a stop that came as the answer ended voids it, so the worker
-    is asked for one. `switched`: the shared checkout moved to another branch between the approval and the
-    resume, so nothing is sent until this card's branch is back (#253 round 2)."""
+    is asked for one; `late`: so does a stop the server took after the turn's record, before its end (#253
+    round 3). `switched`: the shared checkout moved to another branch between the approval and the resume,
+    so nothing is sent until this card's branch is back (#253 round 2)."""
     repo, remote = running
     (repo / "tests").mkdir()
     (repo / "tests/test_parity.py").write_text(HELPED, encoding="utf-8")
@@ -680,17 +681,27 @@ def test_a_person_declares_a_deleted_test_file_removed_whole(running, after):
         change = {**{k: card[k] for k in ("rev", "goal", "out", "done")}, "reason": "Clarify before the report"}
         return "```spec-update\n" + json.dumps(change) + "\n```\n\n" + report(True, True)
     Worker.replies = [dropped]
-    started(client(), sid)
+    kept = work.remember
+
+    def remembered(where, role, text, **kw):   # `late`: the person's stop, taken once the record is written
+        kept(where, role, text, **kw)
+        if after == "late" and role == "assistant" and "```done-report" in text:
+            stopped = client().post("/api/work/stop", json={"path": str(where), "turn": kw["turn"]})
+            assert stopped.status_code == 200 and work._runs[str(where)].halt.is_set(), stopped.text
+    with patch.object(work, "remember", remembered):
+        started(client(), sid)
     card = specs.load("proj", sid)
     assert "[테스트 파일 삭제 승인]" in card["fault"] and not remote.created()
-    assert card["rev"] == 1 + (after == "revised") and card["report_at"]["rev"] == card["rev"]
+    assert card["rev"] == 1 + (after == "revised")
+    voided = after in ("stopped", "late")   # a stopped turn's report is no report
+    assert (card["report_at"] is None) == voided and (voided or card["report_at"]["rev"] == card["rev"])
     api = client()
     path, branch = Path(card["worktree"]), card["branch"]
     if after == "talked":
         parse(api.post("/api/work/say", json={"path": str(path), "text": "왜 막혔나"}).text)
     if after == "committed":
         _git(path, "commit", "--allow-empty", "-qm", "later")
-    if after in ("committed", "stopped"):
+    if after in ("committed", "stopped", "late"):
         Worker.replies = [report(True, True)]
     seen = api.get(f"/api/refactors/specs/{sid}/removals").json()
     assert [(f["file"], f["named"], f["text"]) for f in seen["files"]] == [("tests/test_parity.py", ["test_parity"], HELPED)]
@@ -736,8 +747,8 @@ def test_a_person_declares_a_deleted_test_file_removed_whole(running, after):
     card = landed(sid)
     assert card["state"] == "PR #7" and card["rev"] == 1 + (after == "revised"), card["fault"]
     heard = [h for w in Worker.made for h in w.heard]
-    assert heard.count(specs.REPORT_APPROVED) == (after in ("committed", "stopped")), heard
-    assert len(heard) == 2 + bool(after in ("talked", "committed", "stopped")), heard
+    assert heard.count(specs.REPORT_APPROVED) == (after in ("committed", "stopped", "late")), heard
+    assert len(heard) == 2 + bool(after in ("talked", "committed", "stopped", "late")), heard
     assert api.get(f"/api/refactors/specs/{sid}/removals").json()["files"] == []
 
 

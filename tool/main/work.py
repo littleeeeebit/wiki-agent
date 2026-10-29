@@ -630,6 +630,7 @@ class Run:
         self.session_id = chat.id
         self.events: list[dict] = []
         self.done = False
+        self.sealed = False   # past the turn's last stop (`run_turn`'s end); `stop` refuses after it
         self.halt = threading.Event()   # set by a stop; the session reads it too
         self.wake = threading.Condition()
         self.diff_base: str | None = None
@@ -833,6 +834,12 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
             # can send the next instruction at once.
             release()
             try:
+                with run.wake:   # no stop lands after this: whether one did is final
+                    run.sealed = True
+                if run.halt.is_set():   # a stop after the record voids its report all the same
+                    from . import specs
+
+                    specs.voided(path, run.turn)
                 run.finish()
                 feed.put({"kind": "work-record", "path": str(path)})
             except Exception as exc:
@@ -1018,8 +1025,13 @@ def stop(body: Stop) -> dict:
     run = attached(body.path)
     if run.turn != body.turn:
         raise HTTPException(409, "지금 도는 턴이 아니다")
-    if not run.done:
-        run.halt.set()   # first: a process not started yet is stopped by this
+    # One boundary with the turn's end (`sealed`): a stop lands before it or not at all, so the end can
+    # tell for good whether the turn was stopped (`specs.voided`).
+    with run.wake:
+        stopping = not run.done and not run.sealed
+        if stopping:
+            run.halt.set()   # first: a process not started yet is stopped by this
+    if stopping:
         run.chat.stop(run.halt)   # only this turn's process, not the next one's
     return {"ok": True}
 
