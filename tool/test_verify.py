@@ -14,11 +14,7 @@ import verify as ci
 from main import decisions, specs
 
 HEAD, BASE = "a" * 40, "b" * 40
-
-
-@pytest.fixture(autouse=True)
-def isolated_local_owner(tmp_path, monkeypatch):
-    monkeypatch.setattr(ci, "local_lock_path", lambda: tmp_path / "wiki-agent-final.lock")
+LOCKED = ci.locked   # `hosted_repo` replaces it
 
 
 @pytest.fixture
@@ -304,17 +300,40 @@ def test_two_local_final_runs_cannot_overlap(tmp_path):
     with ci.locked(tmp_path / "shared.lock"):
         with pytest.raises(RuntimeError, match="중복 실행하지"):
             with ci.locked(tmp_path / "shared.lock"):
-                pytest.fail("A second final run acquired the same host lock")
+                pytest.fail("A second final run acquired the same repository lock")
 
 
-def test_local_final_can_run_integration_fixtures_while_holding_its_host_lock(tmp_path):
+def test_a_final_run_in_one_repository_does_not_hold_up_another(hosted_repo, monkeypatch):
+    """The lock is the repository's (its git common dir): a second run of the same one is refused, another
+    repository's final run goes on beside it."""
+    monkeypatch.setattr(ci, "locked", LOCKED)
+    monkeypatch.setattr(ci, "backend", lambda *_: "local")
+    monkeypatch.setattr(ci, "run", lambda args, repo: str(repo))   # each repository is its own common dir
+    other = hosted_repo / "other"
+    other.mkdir()
+    (other / ci.POLICY).write_text((hosted_repo / ci.POLICY).read_text(encoding="utf-8"), encoding="utf-8")
+    beside = []
+
+    def judge(repo, command, env, halt, timeout):
+        if repo == hosted_repo:   # while the first repository's final run is under way
+            beside.append(ci.final(other, "main", judge=judge)["backend"])
+            with pytest.raises(RuntimeError, match="중복 실행하지"):
+                ci.final(hosted_repo, "main", judge=judge)
+        return {"ok": True, "head": HEAD}
+
+    assert ci.final(hosted_repo, "main", judge=judge)["backend"] == "local" and beside == ["local"]
+
+
+def test_local_final_can_run_integration_fixtures_while_holding_its_repository_lock(tmp_path):
     scratch = tmp_path / "outer-owner"
     scratch.mkdir()
     script = '''
 import subprocess, sys
+from pathlib import Path
 sys.path.insert(0, "tool")
 import verify
-with verify.locked(verify.local_lock_path()):
+common = Path(verify.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], "."))
+with verify.locked(common / "wiki-verification.lock"):
     done = subprocess.run([sys.executable, "-m", "pytest", "-q", "-n", "0", "--basetemp", sys.argv[1],
         "tool/test_loop.py::test_a_targeted_pass_cannot_merge_and_the_loop_runs_only_the_final_gate"], timeout=75)
 raise SystemExit(done.returncode)

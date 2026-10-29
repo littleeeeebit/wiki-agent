@@ -9,7 +9,6 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import tomllib
@@ -122,7 +121,7 @@ def locked(path):
 
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except (BlockingIOError, PermissionError) as exc:
-            raise Pending("다른 최종 검증이 진행 중입니다. 중복 실행하지 않았습니다") from exc
+            raise Pending("이 저장소의 다른 최종 검증이 진행 중입니다. 중복 실행하지 않았습니다") from exc
         try:
             yield
         finally:
@@ -274,12 +273,8 @@ def _ci_result(repo, cfg, head, base_oid, record, receipt, dispatch, deadline, h
     raise Pending("CI 대기가 중단됐습니다. 기존 실행은 유지하며 로컬 전체 검사는 시작하지 않습니다")
 
 
-def local_lock_path():
-    scratch = Path(os.environ.get("TEMP") or tempfile.gettempdir()) if os.name == "nt" else Path(tempfile.gettempdir())
-    return scratch / "wiki-agent-final.lock"
-
-
 def local_result(repo, command, record, receipt, dispatch, deadline, halt, judge):
+    """Runs under `final`'s lock, one per repository: another repository's final run goes on beside it."""
     if record.get("status") == "passed":
         return record["proof"]
     if record.get("status"):
@@ -289,27 +284,26 @@ def local_result(repo, command, record, receipt, dispatch, deadline, halt, judge
         raise Pending("현재 커밋·조건의 로컬 최종 검사 결과가 없습니다")
     if not command:
         raise ValueError("로컬 최종 검사 명령을 먼저 등록하세요")
-    with locked(local_lock_path()):
-        record.update(status="running", started_at=time.time(), command=command)
+    record.update(status="running", started_at=time.time(), command=command)
+    saved(receipt, record)
+    env = {**os.environ, "WIKI_FINAL_RUN": "1", "PYTEST_XDIST_AUTO_NUM_WORKERS": "2", "PYTHONUTF8": "1"}
+    print(f"로컬 최종 검사 · 한 번만 실행 · {command}", flush=True)
+    verdict = judge(repo, command, env, halt, max(0, deadline - time.monotonic()))
+    if verdict.get("ok") and verdict.get("head") != record["head"]:
+        verdict = {**verdict, "ok": False, "code": None, "reason": "검토한 커밋과 실제 검사한 커밋이 다릅니다"}
+    record.update(status="passed" if verdict["ok"] else "incomplete" if verdict.get("code", 1) is None else "failed",
+                  reason=verdict.get("reason", ""),
+                  tail=verdict.get("tail", ""), finished_at=time.time(),
+                  elapsed_seconds=verdict.get("elapsed_seconds"))
+    if not verdict["ok"]:
         saved(receipt, record)
-        env = {**os.environ, "WIKI_FINAL_RUN": "1", "PYTEST_XDIST_AUTO_NUM_WORKERS": "2", "PYTHONUTF8": "1"}
-        print(f"로컬 최종 검사 · 한 번만 실행 · {command}", flush=True)
-        verdict = judge(repo, command, env, halt, max(0, deadline - time.monotonic()))
-        if verdict.get("ok") and verdict.get("head") != record["head"]:
-            verdict = {**verdict, "ok": False, "code": None, "reason": "검토한 커밋과 실제 검사한 커밋이 다릅니다"}
-        record.update(status="passed" if verdict["ok"] else "incomplete" if verdict.get("code", 1) is None else "failed",
-                      reason=verdict.get("reason", ""),
-                      tail=verdict.get("tail", ""), finished_at=time.time(),
-                      elapsed_seconds=verdict.get("elapsed_seconds"))
-        if not verdict["ok"]:
-            saved(receipt, record)
-            error = Pending if record["status"] == "incomplete" else Failure
-            raise error(f"로컬 최종 검사 실패 — {record['reason']}\n{record['tail']}")
-        proof = {"head": record["head"], "base_oid": record["base_oid"], "backend": "local",
-                 "environment_digest": record["environment_digest"], "finished_at": record["finished_at"]}
-        record["proof"] = proof
-        saved(receipt, record)
-        return proof
+        error = Pending if record["status"] == "incomplete" else Failure
+        raise error(f"로컬 최종 검사 실패 — {record['reason']}\n{record['tail']}")
+    proof = {"head": record["head"], "base_oid": record["base_oid"], "backend": "local",
+             "environment_digest": record["environment_digest"], "finished_at": record["finished_at"]}
+    record["proof"] = proof
+    saved(receipt, record)
+    return proof
 
 
 def local_judge(repo, command, env, halt, timeout):
