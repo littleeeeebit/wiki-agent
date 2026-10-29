@@ -651,11 +651,13 @@ HELPED = ("import pytest\n\n\ndef _entries(engine):\n    return engine._persiste
           "@pytest.mark.parametrize('n', [1, 2])\ndef test_parity(n):\n    assert _entries(n)\n")
 
 
-@pytest.mark.parametrize("talked", [False, True])
-def test_a_person_declares_a_deleted_test_file_removed_whole(running, talked):
+@pytest.mark.parametrize("after", ["", "talked", "revised", "committed"])
+def test_a_person_declares_a_deleted_test_file_removed_whole(running, after):
     """Keeping the file changed an undeclared helper, deleting it was refused, and the worker cannot declare
-    a file: the person reads what it held and declares it, and the card goes on by itself. `talked`: a
-    person's turn came after the refused report, so the worker is asked for the report once."""
+    a file: the person reads what it held and declares it, and the card goes on by itself on the report it
+    kept. `talked`: a person's turn after the refusal leaves the report standing. `revised`: the refused
+    answer revised the spec too, and the replay does not revise it again (#253 round 1). `committed`: a later
+    commit outdates the report, so the worker is asked for one."""
     repo, remote = running
     (repo / "tests").mkdir()
     (repo / "tests/test_parity.py").write_text(HELPED, encoding="utf-8")
@@ -668,18 +670,28 @@ def test_a_person_declares_a_deleted_test_file_removed_whole(running, talked):
     def dropped(path, halt):
         _git(path, "rm", "-q", "tests/test_parity.py")
         _git(path, "commit", "-qm", "drop the parity test")
-        return report(True, True)
+        if after != "revised":
+            return report(True, True)
+        card = specs.owner(path)
+        change = {**{k: card[k] for k in ("rev", "goal", "out", "done")}, "reason": "Clarify before the report"}
+        return "```spec-update\n" + json.dumps(change) + "\n```\n\n" + report(True, True)
     Worker.replies = [dropped]
     started(client(), sid)
     card = specs.load("proj", sid)
     assert "[테스트 파일 삭제 승인]" in card["fault"] and not remote.created()
+    assert card["rev"] == 1 + (after == "revised") and card["report_at"]["rev"] == card["rev"]
     api = client()
+    path, branch = Path(card["worktree"]), card["branch"]
+    if after == "talked":
+        parse(api.post("/api/work/say", json={"path": str(path), "text": "왜 막혔나"}).text)
+    if after == "committed":
+        _git(path, "commit", "--allow-empty", "-qm", "later")
+        Worker.replies = [report(True, True)]
     seen = api.get(f"/api/refactors/specs/{sid}/removals").json()
     assert [(f["file"], f["named"], f["text"]) for f in seen["files"]] == [("tests/test_parity.py", ["test_parity"], HELPED)]
     stale = api.post(f"/api/refactors/specs/{sid}/removals", json={"head": seen["head"], "digest": "0" * 64})
     assert stale.status_code == 409 and "다시 열어" in stale.json()["detail"]
     # #252 round 3: another card's branch in the shared checkout, a file put back, a start text unread.
-    path, branch = Path(card["worktree"]), card["branch"]
     _git(path, "checkout", "-q", "-b", "another-card")
     assert "이 카드의 브랜치" in api.get(f"/api/refactors/specs/{sid}/removals").json()["detail"]
     _git(path, "checkout", "-q", branch)
@@ -688,9 +700,6 @@ def test_a_person_declares_a_deleted_test_file_removed_whole(running, talked):
     back = api.post(f"/api/refactors/specs/{sid}/removals", json={k: seen[k] for k in ("head", "digest")})
     assert back.status_code == 409 and "커밋하지 않은 변경" in back.json()["detail"]
     (path / "tests/test_parity.py").unlink()
-    if talked:
-        parse(api.post("/api/work/say", json={"path": str(path), "text": "왜 막혔나"}).text)
-        Worker.replies = [report(True, True)]
     real = subprocess.run
 
     def unreadable(args, **kw):
@@ -705,11 +714,12 @@ def test_a_person_declares_a_deleted_test_file_removed_whole(running, talked):
     remove = card["refactor"]["detail"]["tests"]["remove"]
     assert remove[-1]["test"] == "tests/test_parity.py" and remove[-1]["approved"]["head"] == seen["head"]
     assert card["fault"] is None and refactor_run.contract(Path(card["worktree"]), card) == ""
-    # A report that still stands is checked again with no model turn; one a person's turn followed is asked for.
+    # A report that still stands is checked again with no model turn; an outdated one is asked for again.
     card = landed(sid)
-    assert card["state"] == "PR #7", card["fault"]
+    assert card["state"] == "PR #7" and card["rev"] == 1 + (after == "revised"), card["fault"]
     heard = [h for w in Worker.made for h in w.heard]
-    assert heard.count(specs.REPORT_APPROVED) == talked and len(heard) == 2 + 2 * talked, heard
+    assert heard.count(specs.REPORT_APPROVED) == (after == "committed"), heard
+    assert len(heard) == 2 + bool(after in ("talked", "committed")), heard
     assert api.get(f"/api/refactors/specs/{sid}/removals").json()["files"] == []
 
 

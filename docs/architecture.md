@@ -143,8 +143,9 @@ or only adds lines. Exceptions are the removals and contract updates the spec
 declares. Deleting a file needs the file declared, not only its tests; when a
 survey named only the tests, the person reads the deleted file and declares it
 on the card (`[테스트 파일 삭제 승인]`, `refactor_run.approve_removal`). The card
-then goes on by itself (`specs.resumed`): the worker's last done report is
-checked again with no model turn, or the worker is asked for one once. Research is in
+then goes on by itself (`specs.resumed`). The done report `_check` kept is
+checked again with no model turn while the head and spec revision it was
+stamped with still stand; otherwise the worker is asked for one once. Research is in
 [verified test cleanup](research/refactoring-test-cleanup.md). Suite resolves
 shared checkouts by their current branch owner, so a merged task cannot label
 another task's live run.
@@ -274,8 +275,9 @@ and its commands are in [development](development.md) and the
 While a round or final gate runs, its task row shows how long it has left
 (`specs.gating`, `main/gate_eta.py`). Each passing gate's run time is kept per
 repository and command in `raw/gate-times.jsonl`. The last ten runs are taken
-as log-normal, and conditioned on the time already run. pytest's `[ 80%]` line,
-read from the live output, gives a second estimate `t / p`. The two are
+as log-normal, and conditioned on the time already run. For a single-command
+gate, pytest's `[ 80%]` line, read from the live output, gives a second
+estimate `t / p`; a chain of commands keeps its history alone. The two are
 combined by precision in log space, so the progress line counts for more as it
 nears its end.
 

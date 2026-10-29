@@ -55,6 +55,7 @@ def estimate(past: list[float], t: float, p: float | None) -> dict | None:
     progress; None with nothing to go on."""
 
     found = []   # (ln T, its variance)
+    p = p if p is not None and p >= 0.02 and t >= 5 else None   # too early to read a time from
     logs = [math.log(d) for d in past if d > 0]
     if len(logs) >= 3:
         mu, sigma = fmean(logs), max(stdev(logs), FLOOR)
@@ -63,7 +64,7 @@ def estimate(past: list[float], t: float, p: float | None) -> dict | None:
             found.append((mu + sigma * NormalDist().inv_cdf(1 - left / 2), sigma ** 2))
         elif p is None:
             return {"over": True}
-    if p is not None and p >= 0.02 and t >= 5:
+    if p is not None:
         found.append((math.log(t / p), SPREAD * (1 - p) / p + 1e-4))
     if not found:
         return None

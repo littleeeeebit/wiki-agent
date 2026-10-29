@@ -23,6 +23,7 @@ def test_the_estimate_conditions_past_runs_and_trusts_progress_as_it_grows():
     near = gate_eta.estimate([100, 300, 50, 200], 200, 0.99)["total"]
     assert near == pytest.approx(202, abs=3), "near the end the progress line outweighs a loose past"
     assert gate_eta.estimate([100, 100], 10, None) is None and gate_eta.estimate([], 3, 0.5) is None
+    assert gate_eta.estimate(past, 1000, 0) == {"over": True}, "a 0% reading is no progress (#253 round 1)"
 
 
 def test_progress_reads_the_last_pytest_percentage():
@@ -58,3 +59,10 @@ def test_a_passing_gate_keeps_its_time_and_the_next_one_starts_from_it(tmp_path,
     with specs.gating("proj", "card", "final", "slow"):
         assert 90 < specs._gating[("proj", "card")]["eta"]["total"] < 110
     assert ("proj", "card") not in specs._gating
+    # A chain's first pytest at 100% says nothing of the steps after it (#253 round 1): its history stands.
+    rows = [{"repo": "proj", "cmd": "a && b", "seconds": 300} for _ in range(3)]
+    specs.gate_times().write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    with specs.gating("proj", "card", "final", "a && b"):
+        specs._gating[("proj", "card")]["since"] -= 100
+        runtime.gate_output.get()(b"first pytest [100%]\nlint running")
+        assert specs._gating[("proj", "card")]["eta"]["total"] > 250
