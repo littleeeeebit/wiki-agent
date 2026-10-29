@@ -296,7 +296,10 @@ function Label({ children }: { children: string }) {
 
 type RowTask = Pick<Task, 'key' | 'name' | 'pr' | 'round' | 'phase' | 'waiting' | 'busy' | 'line'> & Partial<Pick<Task, 'gate'>>
 
-/** "게이트 중 · 3분 12초" while the task's gate runs, ticking each second. */
+/** Minutes, rounded up past the first: "1분 안", "4분". */
+const minutes = (s: number) => (s < 60 ? '1분 안' : `${Math.ceil(s / 60)}분`)
+
+/** "게이트 중 · 3분 12초 · 약 4분 남음 (3–6분)" while the task's gate runs, ticking each second. */
 function useGateLabel(gate: Task['gate'] | undefined): string {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -306,7 +309,12 @@ function useGateLabel(gate: Task['gate'] | undefined): string {
   }, [gate])
   if (!gate) return ''
   const s = Math.max(0, Math.floor(now / 1000 - gate.since))
-  return `${gate.kind === 'final' ? '최종 게이트' : '게이트'} 중 · ${s >= 60 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${s}초`}`
+  const label = `${gate.kind === 'final' ? '최종 게이트' : '게이트'} 중 · ${s >= 60 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${s}초`}`
+  const eta = gate.eta
+  if (!eta) return label
+  if ('over' in eta) return `${label} · 평소보다 오래 걸림`
+  const [mid, low, high] = [eta.total, eta.low, eta.high].map((t) => Math.max(0, t - s))
+  return `${label} · 약 ${minutes(mid)} 남음${high - low >= 60 ? ` (${Math.floor(low / 60)}–${Math.ceil(high / 60)}분)` : ''}`
 }
 
 /** One task: its name, PR and round; then one word of state and what a

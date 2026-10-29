@@ -37,7 +37,7 @@ from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
 
-from . import channels, pr_text, query, review_contract, runtime, sweep, work
+from . import channels, gate_eta, pr_text, query, review_contract, runtime, sweep, work
 from .pr_text import body_of
 from .decisions import extra_check, recommend, registered
 from .query import ROOT, _lock, current_repo, hold, project
@@ -76,6 +76,12 @@ REPORT_MISSING = ("Your last answer had neither a `done-report` nor a `choices` 
                   "a pending server gate is not a failed item. If the work is finished, end with the "
                   "`test-cleanup` block and the `done-report` block now. If something you own still fails, say "
                   "what blocks it and ask with a `choices` block.")
+# `resumed`: the server's line for a report it checks again, and its request when there is none.
+RESUMED = "사람의 승인으로 막힌 곳이 풀렸다 — 마지막 완료 보고를 다시 판정한다"
+REPORT_APPROVED = ("A person approved the change the server refused, and the specification now allows it. "
+                   "Your last answer had no `done-report`. If the work is finished, end with the `test-cleanup` "
+                   "block if tests changed and the `done-report` block now; otherwise say what blocks it and "
+                   "ask with a `choices` block.")
 
 # `path:line` or `path:line-line` as an answer cites it.
 LINE =re.compile(r":\d+(?:[-–]\d+)?$")
@@ -150,18 +156,48 @@ def publish(spec: dict) -> None:
 _gating: dict[tuple[str, str], dict] = {}
 
 
+def gate_times() -> Path:
+    """Passing gates' run times, one JSON line each, beside the specs (`gate_eta.past`)."""
+
+    return SPECS.parent / "gate-times.jsonl"
+
+
 @contextmanager
-def gating(repo: str | None, sid: str | None, kind: str):
+def gating(repo: str | None, sid: str | None, kind: str, cmd: str = ""):
+    """The task row's `gating` while a gate runs: its kind, start and `eta` (`gate_eta.estimate`).
+    The caller sets `ok` on what this yields; a passing run's time is kept for the next estimate."""
+
+    done: dict = {}
     if not (repo and sid):   # a bare check spec has no task row to show it on
-        yield
+        yield done
         return
-    _gating[(repo, sid)] = {"kind": kind, "since": time.time()}
+    history = gate_eta.past(gate_times(), repo, cmd) if cmd else []
+    row = _gating[(repo, sid)] = {"kind": kind, "since": time.time(), "eta": gate_eta.estimate(history, 0, None)}
+    shown = [time.monotonic()]
+
+    def seen(tail: bytes) -> None:
+        try:
+            row["eta"] = gate_eta.estimate(history, time.time() - row["since"], gate_eta.progress(tail))
+            if row["eta"] and time.monotonic() - shown[0] >= 10 and (spec := load(repo, sid)):
+                shown[0] = time.monotonic()
+                publish(spec)
+        except Exception as exc:   # an estimate never fails the gate it describes
+            errorlog.record("gate-eta", exc, repo=repo, spec=sid)
+
+    token = runtime.gate_output.set(seen)
     try:
         if spec := load(repo, sid):
             publish(spec)
-        yield
+        yield done
     finally:
+        runtime.gate_output.reset(token)
         _gating.pop((repo, sid), None)
+        if done.get("ok") and cmd:
+            try:
+                gate_eta.keep(gate_times(), {"repo": repo, "kind": kind, "cmd": cmd, "ts": time.time(),
+                                             "seconds": round(time.time() - row["since"], 1)})
+            except OSError as exc:
+                errorlog.record("gate-eta", exc, repo=repo, spec=sid)
         if spec := load(repo, sid):
             publish(spec)
 
@@ -1162,8 +1198,9 @@ def rounded(repo: Path, path: Path, spec: dict, base: str, halt: threading.Event
         return refused
     if reused := verify.cached_round(spec, chosen, current, clean):
         return reused, last
-    with gating(spec.get("repo"), spec.get("id"), "round"):
+    with gating(spec.get("repo"), spec.get("id"), "round", " && ".join(chosen["commands"])) as gated:
         verdict = {**judge(path, chosen["commands"], halt, noted), "selection": chosen["selection"]}
+        gated["ok"] = verdict["ok"]
     return verdict, {"head": verdict["head"], **chosen, "ok": verdict["ok"], "finished_at": verdict["ts"]}
 
 
@@ -1438,6 +1475,35 @@ def again(path: Path, chat, text: str, spec: dict) -> bool:
         return False
     try:
         work.begin(path, chat, text, release, work.Run(chat, task=True))
+    except BaseException:
+        release()
+        raise
+    return True
+
+
+def resumed(spec: dict) -> bool:
+    """A working card whose refusal a person's approval just cleared: the
+    worker's last answer is checked again when it carried the done report, with
+    no model turn; otherwise the worker is asked for the report once. A turn
+    already holding the worktree goes on as it is; then False."""
+
+    if spec["state"] != "작업 중" or spec.get("fault") or spec.get("writing") or not spec.get("worktree"):
+        return False
+    path = Path(spec["worktree"])
+    last = next((r for r in reversed(work.recall(path)) if r.get("role") == "assistant"), {})
+    final = "" if last.get("error") else last.get("text") or ""
+    reported = any(b["name"] == "done-report" for b in blocks(final)[1])
+    try:
+        release = hold(work._busy, _lock, str(path), "", kind="turn")
+    except HTTPException:
+        return False
+    try:
+        cell = spec.get("cell") or {}
+        chat = work.session(path, cell.get("model", ""), cell.get("effort", ""), cell.get("fast", False))
+        if reported:
+            work.begin(path, chat, RESUMED, release, work.Run(chat, task=True), replay=final)
+        else:
+            work.begin(path, chat, REPORT_APPROVED, release, work.Run(chat, task=True))
     except BaseException:
         release()
         raise

@@ -308,7 +308,7 @@ def removals_of(sid: str) -> dict:
 @router.post("/api/refactors/specs/{sid}/removals")
 def remove_whole(sid: str, body: Refreeze) -> dict:
     """The person declares the files read at `head` removed whole. The card's worktree is held meanwhile,
-    so no turn moves the head under it."""
+    so no turn moves the head under it. A card that approval freed goes on by itself (`specs.resumed`)."""
 
     repo = current_repo()
     spec = frozen_card(repo, sid)
@@ -317,6 +317,7 @@ def remove_whole(sid: str, body: Refreeze) -> dict:
         spec = refactor_run.approve_removal(spec, body.head, body.digest)
     finally:
         release()
+    specs.resumed(spec)
     work.feed.put({"kind": "sync"})
     return spec
 

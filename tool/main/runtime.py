@@ -19,6 +19,8 @@ stopping = threading.Event()
 LOCAL_SECONDS, CLEANUP_SECONDS = 19 * 60, 30
 FLOW_SECONDS = LOCAL_SECONDS
 verification_budget = ContextVar("verification_budget", default=None)
+# Called about once a second with the running gate's last output bytes, by a screen that shows it.
+gate_output = ContextVar("gate_output", default=None)
 
 
 def completed_receipt(record):
@@ -80,43 +82,66 @@ def gate(cmd, cwd, halt, env, timeout, owned_jobs, kill):
     timeout = min(timeout, budget.left()) if budget else timeout
     if halt.is_set() or timeout <= 0:
         return None, "", "사람이 멈춤" if halt.is_set() else "검증 실행 시간 제한을 넘었다"
-    deadline, cut = time.monotonic() + timeout, ""
+    deadline = time.monotonic() + timeout
     scratch = os.environ.get("TEMP") if os.name == "nt" else None
+    if seen := gate_output.get():
+        # The child shares the capture handle's file position: reading through it would move where the
+        # child writes. A watched gate captures to a named file, read through a handle of its own.
+        fd, name = tempfile.mkstemp(dir=scratch)
+        try:
+            with open(fd, "w+", encoding="utf-8", errors="replace") as output, open(name, "rb") as reader:
+                return _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, reader, seen)
+        finally:
+            try:
+                os.unlink(name)
+            except OSError:
+                pass   # ponytail: a background child still holding stdout keeps the file; TEMP collects it
     # A background setup child may inherit stdout; file capture never waits for its EOF.
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace", dir=scratch) as output:
-        proc = subprocess.Popen(cmd, shell=True, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                                stdout=output, stderr=subprocess.STDOUT, start_new_session=os.name != "nt",
-                                **{**process.background_options(), "creationflags":
-                                   process.background_options().get("creationflags", 0) | process.SUSPENDED})
-        job = process.contained(proc)
-        try:
-            if os.name == "nt" and not job:
-                proc.kill()
-                proc.wait(timeout=1)
-                raise OSError("Cannot own the verification process tree")
-            process.resumed(proc)
-            while True:
-                try:
-                    proc.wait(timeout=max(0.01, min(0.1, deadline - time.monotonic())))
-                    cut = "사람이 멈춤" if halt.is_set() else "검증 실행 시간 제한을 넘었다" \
-                        if time.monotonic() > deadline else ""
+        return _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output)
+
+
+def _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, reader=None, seen=None):
+    """`gate`'s run into `output`; `seen` gets the last 4 KB of `reader` about once a second."""
+
+    cut, shown = "", time.monotonic()
+    proc = subprocess.Popen(cmd, shell=True, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                            stdout=output, stderr=subprocess.STDOUT, start_new_session=os.name != "nt",
+                            **{**process.background_options(), "creationflags":
+                               process.background_options().get("creationflags", 0) | process.SUSPENDED})
+    job = process.contained(proc)
+    try:
+        if os.name == "nt" and not job:
+            proc.kill()
+            proc.wait(timeout=1)
+            raise OSError("Cannot own the verification process tree")
+        process.resumed(proc)
+        while True:
+            try:
+                proc.wait(timeout=max(0.01, min(0.1, deadline - time.monotonic())))
+                cut = "사람이 멈춤" if halt.is_set() else "검증 실행 시간 제한을 넘었다" \
+                    if time.monotonic() > deadline else ""
+                break
+            except subprocess.TimeoutExpired:
+                if halt.is_set() or time.monotonic() > deadline:
+                    cut = "사람이 멈춤" if halt.is_set() else "검증 실행 시간 제한을 넘었다"
+                    process.killed(job) if job else kill(proc)
+                    try:
+                        proc.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
                     break
-                except subprocess.TimeoutExpired:
-                    if halt.is_set() or time.monotonic() > deadline:
-                        cut = "사람이 멈춤" if halt.is_set() else "검증 실행 시간 제한을 넘었다"
-                        process.killed(job) if job else kill(proc)
-                        try:
-                            proc.wait(timeout=1)
-                        except subprocess.TimeoutExpired:
-                            proc.kill()
-                        break
-            output.seek(0)
-            return None if cut else proc.returncode, output.read(), cut
-        finally:
-            if job and owned_jobs is not None:
-                owned_jobs.append(job)
-            else:
-                process.terminated(job)
+                if seen and time.monotonic() - shown >= 1:
+                    shown = time.monotonic()
+                    reader.seek(max(0, os.fstat(reader.fileno()).st_size - 4096))
+                    seen(reader.read())
+        output.seek(0)
+        return None if cut else proc.returncode, output.read(), cut
+    finally:
+        if job and owned_jobs is not None:
+            owned_jobs.append(job)
+        else:
+            process.terminated(job)
 
 
 @contextmanager

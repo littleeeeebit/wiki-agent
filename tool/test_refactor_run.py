@@ -651,9 +651,11 @@ HELPED = ("import pytest\n\n\ndef _entries(engine):\n    return engine._persiste
           "@pytest.mark.parametrize('n', [1, 2])\ndef test_parity(n):\n    assert _entries(n)\n")
 
 
-def test_a_person_declares_a_deleted_test_file_removed_whole(running):
+@pytest.mark.parametrize("talked", [False, True])
+def test_a_person_declares_a_deleted_test_file_removed_whole(running, talked):
     """Keeping the file changed an undeclared helper, deleting it was refused, and the worker cannot declare
-    a file: the person reads what it held and declares it."""
+    a file: the person reads what it held and declares it, and the card goes on by itself. `talked`: a
+    person's turn came after the refused report, so the worker is asked for the report once."""
     repo, remote = running
     (repo / "tests").mkdir()
     (repo / "tests/test_parity.py").write_text(HELPED, encoding="utf-8")
@@ -686,6 +688,9 @@ def test_a_person_declares_a_deleted_test_file_removed_whole(running):
     back = api.post(f"/api/refactors/specs/{sid}/removals", json={k: seen[k] for k in ("head", "digest")})
     assert back.status_code == 409 and "커밋하지 않은 변경" in back.json()["detail"]
     (path / "tests/test_parity.py").unlink()
+    if talked:
+        parse(api.post("/api/work/say", json={"path": str(path), "text": "왜 막혔나"}).text)
+        Worker.replies = [report(True, True)]
     real = subprocess.run
 
     def unreadable(args, **kw):
@@ -696,10 +701,15 @@ def test_a_person_declares_a_deleted_test_file_removed_whole(running):
         assert "읽지 못했다" in api.get(f"/api/refactors/specs/{sid}/removals").json()["detail"]
     done = api.post(f"/api/refactors/specs/{sid}/removals", json={k: seen[k] for k in ("head", "digest")})
     assert done.status_code == 200, done.json()
-    card = specs.load("proj", sid)
+    card = done.json()
     remove = card["refactor"]["detail"]["tests"]["remove"]
     assert remove[-1]["test"] == "tests/test_parity.py" and remove[-1]["approved"]["head"] == seen["head"]
     assert card["fault"] is None and refactor_run.contract(Path(card["worktree"]), card) == ""
+    # A report that still stands is checked again with no model turn; one a person's turn followed is asked for.
+    card = landed(sid)
+    assert card["state"] == "PR #7", card["fault"]
+    heard = [h for w in Worker.made for h in w.heard]
+    assert heard.count(specs.REPORT_APPROVED) == talked and len(heard) == 2 + 2 * talked, heard
     assert api.get(f"/api/refactors/specs/{sid}/removals").json()["files"] == []
 
 

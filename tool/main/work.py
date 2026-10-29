@@ -750,19 +750,25 @@ def shown(row: dict) -> dict:
     return row
 
 
-def run_turn(path: Path, run: Run, text: str, release, decide: bool = False) -> None:
+def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, replay: str | None = None) -> None:
     """One turn, to its end, whoever is watching. The hold and the record are
     let go here, so a turn nobody watched is still on record.
 
     `decide`: a turn the server starts on its own, where Jev may choose to
     gather evidence first or to ask the person instead (`decisions.start_turn`).
     Decided here, on the turn's thread, so a stop reaches it; what is sent is
-    what the record keeps."""
+    what the record keeps.
+
+    `replay`: an earlier answer the task check reads again, with nothing sent
+    to the CLI; `text` is the server's line this turn shows and keeps."""
 
     chat, final, failed, meta, then = run.chat, "", "", {}, None
     try:
         events = None
-        if decide:
+        if replay is not None:
+            final, events = text, ()
+            run.put({"kind": "done", "text": text, "meta": {}, "session_id": chat.id, "parent_id": chat.parent_id})
+        elif decide:
             from . import decisions  # `decisions` reads this module's sessions
 
             sent, shown, kind = decisions.start_turn(path, run, text)
@@ -798,7 +804,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False) -> 
             # writes, and its lines are in this turn's record.
             from . import specs
 
-            then = specs.check(path, run, final)
+            then = specs.check(path, run, final if replay is None else replay)
     except Exception as exc:  # a turn that broke still owes the screen a reason
         errorlog.record("agent-exception", exc, turn=run.turn, path=str(path))
         # A stop while the process started breaks the start, not the turn.
@@ -930,11 +936,13 @@ def say(body: Order) -> StreamingResponse:
     return streaming(tail(run, -1))
 
 
-def begin(path: Path, chat: ChatSession, text: str, release, run: Run | None = None, decide: bool = False) -> Run:
+def begin(path: Path, chat: ChatSession, text: str, release, run: Run | None = None, decide: bool = False,
+          replay: str | None = None) -> Run:
     """Start one turn of `chat` on its own thread, which owns `release` from
     here. The caller holds the worktree already. `run` is one the caller made
     first, so a stop could reach it before the thread starts. `decide`: the
-    turn's thread decides what is sent, and records it (`run_turn`)."""
+    turn's thread decides what is sent, and records it (`run_turn`). `replay`:
+    no CLI turn; the task check reads that earlier answer again (`run_turn`)."""
 
     from . import specs
 
@@ -949,12 +957,12 @@ def begin(path: Path, chat: ChatSession, text: str, release, run: Run | None = N
         run.diff_base = diff_git(path, "rev-parse", "HEAD").strip()
     except (OSError, RuntimeError, subprocess.TimeoutExpired):
         pass  # The diff endpoint reports its failure; the agent still runs.
-    if not decide:
+    if not decide and replay is None:
         remember(path, "user", text)
 
     def execute():
         try:
-            run_turn(path, run, text, release, decide)
+            run_turn(path, run, text, release, decide, replay)
         finally:
             with _lock:
                 _turns.pop(threading.current_thread(), None)
