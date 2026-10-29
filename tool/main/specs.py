@@ -1500,14 +1500,21 @@ def resumed(spec: dict) -> bool:
         return False
     try:
         # Read under the hold: a turn that ended in between moved the card, the head or the report.
+        # The shared checkout may have switched to another card's branch since the approval let it go.
+        mine = owner(path) or {}
         spec = load(spec["repo"], spec["id"])
-        if not spec or spec["state"] != "작업 중" or spec.get("fault") or spec.get("writing"):
+        if not spec or (mine.get("repo"), mine.get("id")) != (spec["repo"], spec["id"]) or \
+                spec["state"] != "작업 중" or spec.get("fault") or spec.get("writing"):
             release()
             return False
-        stamp = {"head": sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), "rev": spec["rev"]}
+        at = spec.get("report_at") or {}
+        turn = next((r for r in work.recall(path) if at.get("turn") and r.get("turn") == at["turn"]
+                     and r.get("role") == "assistant"), {})
+        stands = bool(turn) and not turn.get("cancelled") and not turn.get("error") and \
+            (at.get("head"), at.get("rev")) == (sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), spec["rev"])
         cell = spec.get("cell") or {}
         chat = work.session(path, cell.get("model", ""), cell.get("effort", ""), cell.get("fast", False))
-        if spec.get("report") and spec.get("report_at") == stamp:
+        if spec.get("report") and stands:
             # Only the report and its cleanup, as `_check` kept them: the answer's other blocks — a spec
             # update above all — were applied when it came, and the report speaks for this head and revision.
             replay = "```done-report\n" + json.dumps(spec["report"], ensure_ascii=False) + "\n```"
@@ -1634,9 +1641,11 @@ def _check(path: Path, run, final: str):
     if "error" in report or not valid(report.get("value")):
         return failed(run, spec, f"완료 보고를 읽지 못했다 — {report.get('error') or '항목마다 item 과 pass 가 있어야 한다'}")
     items = report["value"]
-    # `report_at`: the head and revision the report speaks for, so `resumed` reuses it only while both stand.
+    # `report_at`: the head, revision and turn the report speaks for, so `resumed` reuses it only while the
+    # first two stand and the turn's record ended neither stopped nor failed.
     spec = update(spec["repo"], spec["id"], report=items, report_asked=False, summary=None,   # text is per head
-                  report_at={"head": sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), "rev": spec["rev"]})
+                  report_at={"head": sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), "rev": spec["rev"],
+                             "turn": getattr(run, "turn", None)})
     if len(items) < len(spec["done"]) or not all(i["pass"] for i in items):
         return failed(run, spec, "완료 보고에 통과하지 못했거나 빠진 항목이 있다. 판정하지 않는다")
     cleanup = next((b.get("value") for b in blocks(final)[1] if b["name"] == "test-cleanup"), None)

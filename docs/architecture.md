@@ -143,9 +143,10 @@ or only adds lines. Exceptions are the removals and contract updates the spec
 declares. Deleting a file needs the file declared, not only its tests; when a
 survey named only the tests, the person reads the deleted file and declares it
 on the card (`[테스트 파일 삭제 승인]`, `refactor_run.approve_removal`). The card
-then goes on by itself (`specs.resumed`). The done report `_check` kept is
-checked again with no model turn while the head and spec revision it was
-stamped with still stand; otherwise the worker is asked for one once. Research is in
+then goes on by itself (`specs.resumed`), while the checkout still belongs to
+that card. The done report `_check` kept is checked again with no model turn
+while the head and spec revision it was stamped with still stand, and its turn
+ended neither stopped nor failed; otherwise the worker is asked for one once. Research is in
 [verified test cleanup](research/refactoring-test-cleanup.md). Suite resolves
 shared checkouts by their current branch owner, so a merged task cannot label
 another task's live run.
