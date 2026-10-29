@@ -56,28 +56,6 @@ def test_progress_record_preserves_lines_without_duplicating_the_final_answer(ho
     assert len(work.steps(events[:-1])) == 2 + len(hooks)
 
 
-def test_two_commands_streaming_at_once_stay_one_event_and_one_step_each():
-    from agent.chat_events import merged
-
-    now = [0.0]
-
-    def interleaved():
-        for i in range(30000):
-            now[0] = i * 0.001
-            yield Event("tool", f"{i}\r", {"tool": "commandExecution", "item_id": "ab"[i % 2]})
-        yield Event("done", "ran")
-
-    events = list(merged(interleaved(), lambda: now[0]))
-    assert len(events) < 200 and events[-1].kind == "done"
-    assert events[-3].text.endswith("29998\r") and events[-2].text.endswith("29999\r")
-    record = [{"kind": e.kind, "text": e.text, "meta": e.meta} for e in events]
-    record.append({"kind": "tool", "text": "gate", "meta": {"tool": "commandExecution", "item_id": "a"}})
-    steps = work.steps(record)
-    # Folded up to the answer, never across it: `answered` counts the steps before it.
-    assert [s["text"][-6:] for s in steps] == ["29998\r", "29999\r", "gate"]
-    assert len(work.steps(record[:-1])) == 2
-
-
 def test_tool_results_keep_raw_output_out_of_the_automatic_translation_overlay():
     assert work.steps([{"kind": "tool", "text": "Raw command output", "meta": {"tool": "tool_result"}}]) == [
         {"kind": "tool", "text": "Raw command output", "command": True}]

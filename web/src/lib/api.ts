@@ -921,9 +921,7 @@ export type WorkEv = {
     /** A question's answers, one per question. */
     answers?: string[]
     id?: string
-    tool?: string
-    /** A command's streamed output: which command it is from. */
-    item_id?: string
+    tool?: string; item_id?: string   // a command's streamed output: which command it is from
     input?: Record<string, unknown>
     answer?: 'allow' | 'deny'
     allow?: boolean

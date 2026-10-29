@@ -276,6 +276,29 @@ def test_codex_command_output_and_mcp_progress_reach_the_agent_stream(tree):
     assert events[-1].kind == "done" and events[-1].text == "ran"
 
 
+def test_two_commands_streaming_at_once_stay_one_event_and_one_step_each():
+    from agent.chat_events import Event, merged
+    from main import work
+
+    now = [0.0]
+
+    def interleaved():
+        for i in range(30000):
+            now[0] = i * 0.001
+            yield Event("tool", f"{i}\r", {"tool": "commandExecution", "item_id": "ab"[i % 2]})
+        yield Event("done", "ran")
+
+    events = list(merged(interleaved(), lambda: now[0]))
+    assert len(events) < 200 and events[-1].kind == "done"
+    assert events[-3].text.endswith("29998\r") and events[-2].text.endswith("29999\r")
+    record = [{"kind": e.kind, "text": e.text, "meta": e.meta} for e in events]
+    record.append({"kind": "tool", "text": "gate", "meta": {"tool": "commandExecution", "item_id": "a"}})
+    steps = work.steps(record)
+    # Folded up to the answer, never across it: `answered` counts the steps before it.
+    assert [s["text"][-6:] for s in steps] == ["29998\r", "29999\r", "gate"]
+    assert len(work.steps(record[:-1])) == 2
+
+
 @pytest.mark.parametrize("provider", ["claude", "codex", "codex-legacy"])
 def test_completed_progress_is_separate_from_the_final_answer(tree, provider):
     text = "First progress.\nSecond line."
