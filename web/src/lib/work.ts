@@ -37,7 +37,8 @@ export function choicesOf(text: string): [string, ChoiceQuestion | { questions: 
  *  retain their originals; completed progress gets the Korean overlay. */
 export type Step =
   | { kind: 'compaction'; text: string; phase?: 'started' | 'completed'; pre_tokens?: number }
-  | { kind: 'tool'; text: string; command?: boolean }
+  /** `item`: the command whose streamed output this is; its next output joins it. */
+  | { kind: 'tool'; text: string; command?: boolean; item?: string }
   | { kind: 'progress'; text: string }
   /** What the person said into the turn while it ran. */
   | { kind: 'said'; text: string }
@@ -176,9 +177,26 @@ function apply(t: Turn, ev: WorkEv): Turn {
   if (ev.kind === 'progress') {
     return { ...t, text: '', steps: [...t.steps, { kind: 'progress', text: ev.text }], latest: 'step' }
   }
+  // One step per command's output since anything else came, its latest part,
+  // as the record keeps it (`work.steps`): a model download's progress bar is a
+  // write every moment, and a step for each redrew the whole turn for each
+  // until the window stopped answering. Two commands at once keep one each.
+  const item = ev.kind === 'tool' && m.tool === 'commandExecution' ? m.item_id : undefined
+  if (item) {
+    let i = t.steps.length - 1
+    for (; i >= (t.answered ?? 0); i--) {
+      const s = t.steps[i]
+      if (s.kind !== 'tool' || !s.item || s.item === item) break
+    }
+    const s = t.steps[i]
+    if (i >= (t.answered ?? 0) && s?.kind === 'tool' && s.item === item) {
+      return { ...t, steps: t.steps.with(i, { ...s, text: (s.text + ev.text).slice(-4000) }), latest: 'step' }
+    }
+  }
   if (ev.kind === 'tool' || ev.kind === 'said') {
     return { ...t, steps: [...t.steps, { kind: ev.kind, text: ev.text,
-      ...(['commandExecution', 'command_execution', 'tool_result'].includes(m.tool ?? '') ? { command: true } : {}) }], latest: 'step' }
+      ...(['commandExecution', 'command_execution', 'tool_result'].includes(m.tool ?? '') ? { command: true } : {}),
+      ...(item ? { item } : {}) }], latest: 'step' }
   }
   if (ev.kind === 'hook') {
     return { ...t, steps: [...t.steps, { kind: 'hook', text: ev.text, context: m.context }], latest: 'step' }

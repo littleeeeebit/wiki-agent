@@ -27,7 +27,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from agent import ChatSession, claude_usage, codex_usage
+from agent import OUTPUT_LIMIT, ChatSession, claude_usage, codex_usage, output_of
 from common.process import background_options
 from common import errorlog
 from workspace import remove, worktrees
@@ -715,13 +715,25 @@ def steps(events: list[dict]) -> list[dict]:
 
     out: list[dict] = []
     asked: dict[str, dict] = {}
+    # A command's output since anything else came is one step, its latest part,
+    # as the screen shows it live. Folded only up to the next other event, so a
+    # prefix's count (`answered`) stays the count of the whole's first steps.
+    running: dict[str, dict] = {}
     for ev in events:
         meta = ev["meta"]
+        item = output_of(ev["kind"], meta)
+        if item in running:
+            running[item]["text"] = (running[item]["text"] + ev["text"])[-OUTPUT_LIMIT:]
+            continue
+        if not item:
+            running.clear()
         # A hook's `context` is left out too: it is the wiki's, and the wiki has it.
         if ev["kind"] in ("tool", "progress", "said", "hook", "compaction"):
             out.append({"kind": ev["kind"], "text": ev["text"],
                         **({"phase": meta.get("phase"), "pre_tokens": meta.get("pre_tokens")} if ev["kind"] == "compaction" else {}),
                         **({"command": True} if meta.get("tool") in ("commandExecution", "command_execution", "tool_result") else {})})
+            if item:
+                running[item] = out[-1]
         elif ev["kind"] == "approval":
             # `none`: the turn ended before anyone answered.
             step = asked[str(meta.get("id"))] = {

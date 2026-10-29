@@ -263,13 +263,40 @@ def test_a_tool_line_shows_the_command_beside_what_it_is_for():
 def test_codex_command_output_and_mcp_progress_reach_the_agent_stream(tree):
     fixture = CODEX_BYPASS.replace(
         'say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "ran"}}})',
-        'say({"method": "item/commandExecution/outputDelta", "params": {"itemId": "command-1", "delta": "40 percent\\n"}})\n'
+        # A progress bar: many writes of one command, the screen's one step.
+        'for n in range(1, 301): say({"method": "item/commandExecution/outputDelta", "params": {"itemId": "command-1", "delta": f"\\r{n}/300"}})\n'
+        'say({"method": "item/commandExecution/outputDelta", "params": {"itemId": "command-1", "delta": "\\n40 percent\\n"}})\n'
         'say({"method": "item/mcpToolCall/progress", "params": {"itemId": "mcp-1", "message": "Collecting results"}})\n'
         'say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "ran"}}})')
     _, events = run(ChatSession(tree, model="codex:m", write=True, bypass=True), fixture, tree)
-    assert [(e.text, e.meta["tool"]) for e in events if e.meta.get("item_id")] == [
-        ("40 percent\n", "commandExecution"), ("Collecting results", "mcpToolCall")]
+    streamed = [(e.text, e.meta["tool"]) for e in events if e.meta.get("item_id")]
+    assert len(streamed) < 10 and streamed[-1] == ("Collecting results", "mcpToolCall")
+    output = "".join(text for text, tool in streamed if tool == "commandExecution")
+    assert output.endswith("\r300/300\n40 percent\n")
     assert events[-1].kind == "done" and events[-1].text == "ran"
+
+
+def test_two_commands_streaming_at_once_stay_one_event_and_one_step_each():
+    from agent.chat_events import Event, merged
+    from main import work
+
+    now = [0.0]
+
+    def interleaved():
+        for i in range(30000):
+            now[0] = i * 0.001
+            yield Event("tool", f"{i}\r", {"tool": "commandExecution", "item_id": "ab"[i % 2]})
+        yield Event("done", "ran")
+
+    events = list(merged(interleaved(), lambda: now[0]))
+    assert len(events) < 200 and events[-1].kind == "done"
+    assert events[-3].text.endswith("29998\r") and events[-2].text.endswith("29999\r")
+    record = [{"kind": e.kind, "text": e.text, "meta": e.meta} for e in events]
+    record.append({"kind": "tool", "text": "gate", "meta": {"tool": "commandExecution", "item_id": "a"}})
+    steps = work.steps(record)
+    # Folded up to the answer, never across it: `answered` counts the steps before it.
+    assert [s["text"][-6:] for s in steps] == ["29998\r", "29999\r", "gate"]
+    assert len(work.steps(record[:-1])) == 2
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex", "codex-legacy"])

@@ -35,7 +35,7 @@ from common import worktree_home
 from common.host import INSTRUCTIONS, environment, skill_config
 from common.process import SUSPENDED, contained, killed, resumed, terminated
 
-from .chat_events import Event, _claude_hook, _hook, _tool_brief, _user
+from .chat_events import Event, _claude_hook, _hook, _tool_brief, _user, merged
 from .chat_local import claude_usage, cli_command, codex_usage, quota_windows
 from . import chat_busy, read_tools
 
@@ -924,7 +924,7 @@ class ChatSession:
                 # The caller writes it on record; a resume must not try that thread again.
                 yield Event("context", f"Codex 이어가기 실패 — 새 대화로 시작했다 ({self._lost})")
                 self._lost = None
-            for event in self._drain():
+            for event in merged(self._drain()):
                 completed = event.kind == "done" and not event.meta.get("error")
                 yield event
         finally:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 
 
@@ -22,6 +23,46 @@ class Event:
     meta: dict = field(default_factory=dict)
     session_id: str = ""
     parent_id: str | None = None
+
+
+OUTPUT_EVERY = 0.5   # seconds one command's output gathers before it goes on as one event
+OUTPUT_LIMIT = 4000  # characters of it an event carries, the latest
+
+
+def merged(events, clock=time.monotonic):
+    """A command's streamed output as one event per `OUTPUT_EVERY`, not one per write.
+
+    A progress bar — a model download's — writes several times a second for as
+    long as it runs, and each write was an event every watching screen redrew
+    its whole turn for; the screen stopped answering, the project picker with
+    it. Each command gathers its own, so two running at once still make one
+    event each per `OUTPUT_EVERY`. Anything else that comes lets the gathered
+    output go first.
+    """
+
+    held: dict[str, Event] = {}   # command -> its gathered output, in the order they began
+    since = 0.0
+    for ev in events:
+        item = output_of(ev.kind, ev.meta)
+        if item:
+            if not held:
+                since = clock()
+            if item in held:
+                held[item].text = (held[item].text + ev.text)[-OUTPUT_LIMIT:]
+            else:
+                held[item] = ev
+            if clock() - since < OUTPUT_EVERY:
+                continue
+        yield from held.values()
+        held.clear()
+        if not item:
+            yield ev
+    yield from held.values()
+
+
+def output_of(kind: str, meta: dict) -> str | None:
+    """The command whose streamed output this event is, if it is one."""
+    return meta.get("item_id") if kind == "tool" and meta.get("tool") == "commandExecution" else None
 
 
 def _claude_hook(ev: dict) -> tuple[str, str]:
