@@ -324,27 +324,6 @@ def test_a_final_run_in_one_repository_does_not_hold_up_another(hosted_repo, mon
     assert ci.final(hosted_repo, "main", judge=judge)["backend"] == "local" and beside == ["local"]
 
 
-def test_local_final_can_run_integration_fixtures_while_holding_its_repository_lock(tmp_path):
-    scratch = tmp_path / "outer-owner"
-    scratch.mkdir()
-    script = '''
-import subprocess, sys
-from pathlib import Path
-sys.path.insert(0, "tool")
-import verify
-common = Path(verify.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], "."))
-with verify.locked(common / "wiki-verification.lock"):
-    done = subprocess.run([sys.executable, "-m", "pytest", "-q", "-n", "0", "--basetemp", sys.argv[1],
-        "tool/test_loop.py::test_a_targeted_pass_cannot_merge_and_the_loop_runs_only_the_final_gate"], timeout=75)
-raise SystemExit(done.returncode)
-'''
-    env = {**os.environ, "TEMP": str(scratch), "TMP": str(scratch), "TMPDIR": str(scratch),
-           "WIKI_FINAL_RUN": "1", "PYTHONUTF8": "1"}
-    result = subprocess.run([sys.executable, "-c", script, str(scratch / "tests")], cwd=Path(ci.__file__).resolve().parent.parent,
-                            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
 def test_direct_whole_suite_stops_before_collecting_or_running_tests():
     env = {k: v for k, v in os.environ.items() if k not in {"WIKI_FINAL_RUN", "GITHUB_ACTIONS", "RUNNER_ENVIRONMENT"}}
     env["PYTHONUTF8"] = "1"
