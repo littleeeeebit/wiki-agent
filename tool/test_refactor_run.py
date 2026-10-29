@@ -598,10 +598,14 @@ def test_an_existing_test_changes_only_within_the_contract(running):
 OLD_TESTS = "def test_guard():\n    assert True\n\n\ndef test_other():\n    assert True\n"
 
 
-def contracted(repo: Path, new: str | None, *declared: str, old: str = OLD_TESTS) -> str:
-    """`contract` on one existing test file changed to `new` (None deletes it), with `declared` removals."""
+def contracted(repo: Path, new: str | None, *declared: str, old: str = OLD_TESTS, beside: dict | None = None) -> str:
+    """`contract` on one existing test file changed to `new` (None deletes it), with `declared` removals;
+    `beside` are more files committed with it at the start."""
     (repo / "tests").mkdir(exist_ok=True)
     (repo / "tests/test_guard.py").write_text(old, encoding="utf-8")
+    for file, text in (beside or {}).items():
+        (repo / file).write_text(text, encoding="utf-8")
+        _git(repo, "add", file)
     _git(repo, "add", "tests")
     _git(repo, "commit", "-qm", "guard tests")
     start = _git(repo, "rev-parse", "HEAD")
@@ -658,10 +662,31 @@ CLASSED = "class TestGuard:\n    def test_one(self):\n        pass\n\n    def te
     (CLASSED, ("tests/test_guard.py::TestGuard::test_one",), "TestGuard::test_two"),
     (OLD_TESTS + "\ntest_alias = test_guard\n", ("tests/test_guard.py::test_guard", "tests/test_guard.py::test_other"),
      "test_alias"),
+    # Data named test* is not a test (#252 round 1).
+    ("test_cases = [1, 2]\n\n\ndef test_old():\n    assert test_cases\n", ("tests/test_guard.py::test_old",), ""),
+    # What syntax cannot settle needs the file declared (#252 round 1): an inherited test, a TestCase
+    # under any name, a `*` import.
+    ("class BaseChecks:\n    def test_required(self):\n        pass\n\n\nclass TestAPI(BaseChecks):\n"
+     "    def test_old(self):\n        pass\n", ("tests/test_guard.py::TestAPI::test_old",), "상속하는 클래스 TestAPI"),
+    ("import unittest\n\n\nclass LegacyChecks(unittest.TestCase):\n    def test_required(self):\n        pass\n\n\n"
+     "def test_old():\n    pass\n", ("tests/test_guard.py::test_old",), "상속하는 클래스 LegacyChecks"),
+    ("def test_old():\n    pass\n\n\nfrom os.path import *\n", ("tests/test_guard.py::test_old",), "`import *`"),
 ])
 def test_a_file_goes_when_every_test_in_it_is_declared(surveyed, old, declared, why):
     found = contracted(surveyed, None, *declared, old=old)
     assert (why in found) if why else found == "", found
+
+
+@pytest.mark.parametrize("file, text", [
+    ("pytest.ini", "[pytest]\npython_functions = test check\n"),
+    ("pyproject.toml", "[tool.pytest.ini_options]\npython_classes = [\"Test\", \"Check\"]\n"),
+    ("conftest.py", "def pytest_pycollect_makeitem(collector, name, obj):\n    return None\n"),
+])
+def test_a_repository_that_collects_other_names_needs_the_file_declared(surveyed, file, text):
+    """`check_required` is a test under `python_functions = test check` (#252 round 1)."""
+    old = "def check_required():\n    assert False\n\n\ndef test_old():\n    pass\n"
+    found = contracted(surveyed, None, "tests/test_guard.py::test_old", old=old, beside={file: text})
+    assert f"pytest 수집 설정 {file}" in found, found
 
 
 def test_a_type_comment_is_part_of_the_test_contract(surveyed):

@@ -541,21 +541,49 @@ def _kept(old: list, new: list, allowed: set, at: tuple = ()) -> bool:
     return True
 
 
-def _undeclared(body: list, allowed: set, at: tuple = ()) -> list[str]:
-    """The tests pytest would collect from a body (`test*` names, `Test*` classes)
-    that `allowed` does not free. A deleted file whose tests are all declared
-    removes nothing else a test asserts: its helpers and imports go with it."""
+# Values pytest never collects: a `test_cases = [...]` table is data, not a test.
+LITERAL = (ast.Constant, ast.List, ast.Tuple, ast.Set, ast.Dict, ast.ListComp, ast.SetComp, ast.DictComp,
+           ast.JoinedStr)
+# Settings and hooks that make pytest collect names other than `test*` functions and `Test*` classes.
+COLLECTION = r"python_(functions|classes)\s*=|pytest_pycollect_makeitem"
 
-    out = []
-    for name in _binds(body):
-        if (*at, name) in allowed:
+
+def _data(body: list) -> Counter:
+    """How often a body binds each name to a literal value, directly."""
+    found = Counter()
+    for s in body:
+        if isinstance(s, (ast.Assign, ast.AnnAssign)) and isinstance(s.value, LITERAL):
+            for t in s.targets if isinstance(s, ast.Assign) else [s.target]:
+                found.update(n.id for n in ast.walk(t) if isinstance(n, ast.Name))
+    return found
+
+
+def _undeclared(body: list, allowed: set, at: tuple = ()) -> tuple[list[str], list[str]]:
+    """The tests pytest would collect from a body by default (`test*` functions,
+    `Test*` classes) that `allowed` does not free, and why that list cannot be
+    trusted: a `*` import, or an undeclared class with bases (an inherited test,
+    a `unittest.TestCase` under any name). A deleted file whose tests are all
+    declared, and certainly so, removes nothing else: its helpers go with it."""
+
+    left, unsure = [], []
+    binds, data = _binds(body), _data(body)
+    if binds["*"]:
+        unsure.append("`import *`")
+    for name, count in binds.items():
+        where = "::".join((*at, name))
+        if name == "*" or (*at, name) in allowed or data[name] == count:
             continue
-        cls = next((s for s in body if isinstance(s, ast.ClassDef) and s.name == name), None)
-        if cls is not None and name.startswith("Test"):
-            out += _undeclared(cls.body, allowed, (*at, name))
+        classes = [s for s in body if isinstance(s, ast.ClassDef) and s.name == name]
+        if len(classes) == count:
+            if any(c.bases or c.keywords for c in classes):
+                unsure.append(f"상속하는 클래스 {where}")
+            elif name.startswith("Test"):
+                for c in classes:
+                    more = _undeclared(c.body, allowed, (*at, name))
+                    left, unsure = left + more[0], unsure + more[1]
         elif name.startswith(("test", "Test")):
-            out.append("::".join((*at, name)))
-    return out
+            left.append(where)
+    return left, unsure
 
 
 def _defines(body: list, parts: tuple) -> bool:
@@ -571,6 +599,9 @@ def contract(path: Path, spec: dict) -> str:
     survey names the tests it removes, not the file (emotion-state-cleanup-97d92512:
     the one declared test's helper read a renamed attribute, so keeping the file
     changed an undeclared helper and deleting it was refused, with no third way).
+    Its tests are read from syntax under pytest's default collection; where that
+    cannot be certain (`_undeclared`, or the repository's collection settings at
+    the start) the deletion still needs the file declared, and the refusal says why.
     Python is compared as syntax, so a skip mark or a shadowing redefinition is a change."""
 
     tests = spec["refactor"]["detail"].get("tests") or {}
@@ -580,7 +611,7 @@ def contract(path: Path, spec: dict) -> str:
         if "::" in d:
             file, *parts = d.split("::")
             named.setdefault(file, set()).add(tuple(parts))
-    start, broken = spec["start_head"], []
+    start, broken, settings = spec["start_head"], [], None
     listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", start, "HEAD"], path)
     for name in listed.stdout.splitlines():
         if not debt.TEST.search(name.lower()) or name in whole:
@@ -590,15 +621,21 @@ def contract(path: Path, spec: dict) -> str:
             continue   # a new test file
         allowed = named.get(name, set())
         if not (path / name).is_file():
-            left = None
+            left, unsure = None, []
             if allowed and name.endswith(".py"):
                 try:
-                    left = _undeclared(ast.parse(old.stdout, type_comments=True).body, allowed)
+                    left, unsure = _undeclared(ast.parse(old.stdout, type_comments=True).body, allowed)
                 except (SyntaxError, ValueError):
                     pass
-            if left == []:
+                if settings is None:
+                    found = specs.sh(["git", "-c", "core.quotepath=off", "grep", "-l", "-E", COLLECTION, start, "--",
+                                      "pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini", "*conftest.py"], path)
+                    settings = [f.split(":", 1)[-1] for f in found.stdout.splitlines()]
+                unsure += [f"pytest 수집 설정 {f}" for f in settings]
+            if left == [] and not unsure:
                 continue
             why = f" — 선언되지 않은 테스트가 남아 있다: {', '.join(left)}" if left else \
+                f" — 테스트 목록을 코드만으로 확정할 수 없어 파일 단위로 선언해야 한다 ({', '.join(unsure)})" if unsure else \
                 " — 파일 삭제는 파일 단위로 선언한다" if allowed else ""
             broken.append(f"`{name}` 삭제{why}")
             continue
