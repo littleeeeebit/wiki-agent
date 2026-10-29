@@ -130,7 +130,10 @@ In `_check`, before the existing report, cleanup and gate steps:
   those tests through `review_contract.preservation_command`.
 - The test contract check compares every test file between `start_head` and
   HEAD with `refactor_run.equivalent` (moved from the deleted `refactor_finish`), allowing pure additions and the
-  spec's declared merges, deletions and contract updates.
+  spec's declared merges, deletions and contract updates. A deleted file needs
+  the file declared; the person can add that declaration after reading the
+  file (`[테스트 파일 삭제 승인]`), since which tests pytest collects from a file
+  is not settled by its syntax (#252).
 - The final command replaces the round checks and its failures are compared
   with the survey baseline. Only pre-existing, parsed failures let the pull
   request open; a pass is kept as the head's final result.

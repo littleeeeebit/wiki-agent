@@ -298,6 +298,29 @@ def refreeze(sid: str, body: Refreeze) -> dict:
     return spec
 
 
+@router.get("/api/refactors/specs/{sid}/removals")
+def removals_of(sid: str) -> dict:
+    """`[테스트 파일 삭제 승인]`: the deleted test files the card's contract does not free, as they were."""
+
+    return refactor_run.removals(frozen_card(current_repo(), sid))
+
+
+@router.post("/api/refactors/specs/{sid}/removals")
+def remove_whole(sid: str, body: Refreeze) -> dict:
+    """The person declares the files read at `head` removed whole. The card's worktree is held meanwhile,
+    so no turn moves the head under it."""
+
+    repo = current_repo()
+    spec = frozen_card(repo, sid)
+    release = hold(work._busy, _lock, str(Path(spec.get("worktree") or repo)), "그 작업트리를 다른 요청이 쓰고 있다")
+    try:
+        spec = refactor_run.approve_removal(spec, body.head, body.digest)
+    finally:
+        release()
+    work.feed.put({"kind": "sync"})
+    return spec
+
+
 @router.post("/api/refactors/{rid}/cancel")
 def cancel(rid: str) -> dict:
     repo = current_repo()

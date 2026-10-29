@@ -635,13 +635,72 @@ def contracted(repo: Path, new: str | None, *declared: str, old: str = OLD_TESTS
     (OLD_TESTS + "\n\ndef test_new(test_guard=None):\n    test_other = 1\n", (), ""),    # the function's own
     ("def test_guard():\n    assert True\n", ("tests/test_guard.py::test_other",), ""),
     ("def test_guard():\n    pass\n", ("tests/test_guard.py::test_other",), "기존 테스트 변경"),
-    (None, ("tests/test_guard.py::test_other",), "파일 단위"),
+    (None, ("tests/test_guard.py::test_other",), "[테스트 파일 삭제 승인]"),
     (None, ("tests/test_guard.py",), ""),
+    # Every test named is still not the file: what pytest collects from it is not settled by syntax (#252).
+    (None, ("tests/test_guard.py::test_guard", "tests/test_guard.py::test_other"), "파일 단위로 선언한다"),
     (OLD_TESTS + "\n\ndef test_new():\n    assert True\n", ("tests/test_guard.py::test_gone",), "시작 커밋에 없다"),
 ])
 def test_a_test_contract_frees_only_what_it_names(surveyed, new, declared, why):
     found = contracted(surveyed, new, *declared)
     assert (why in found) if why else found == "", found
+
+
+# emotion-state-cleanup-97d92512: the survey named the one test, whose helper read a renamed attribute.
+HELPED = ("import pytest\n\n\ndef _entries(engine):\n    return engine._persistent\n\n\n"
+          "@pytest.mark.parametrize('n', [1, 2])\ndef test_parity(n):\n    assert _entries(n)\n")
+
+
+def test_a_person_declares_a_deleted_test_file_removed_whole(running):
+    """Keeping the file changed an undeclared helper, deleting it was refused, and the worker cannot declare
+    a file: the person reads what it held and declares it."""
+    repo, remote = running
+    (repo / "tests").mkdir()
+    (repo / "tests/test_parity.py").write_text(HELPED, encoding="utf-8")
+    _git(repo, "add", "tests")
+    _git(repo, "commit", "-qm", "parity test")
+    _git(repo, "push", "-q", "origin", "main")
+    tests = {"add": [], "contract": [], "remove": [{"test": "tests/test_parity.py::test_parity", "reason": "renamed"}]}
+    sid, = surveyed_in("simplify", spec("parity-names", "billing", files=["src/billing.py"], tests=tests))["specs"]
+
+    def dropped(path, halt):
+        _git(path, "rm", "-q", "tests/test_parity.py")
+        _git(path, "commit", "-qm", "drop the parity test")
+        return report(True, True)
+    Worker.replies = [dropped]
+    started(client(), sid)
+    card = specs.load("proj", sid)
+    assert "[테스트 파일 삭제 승인]" in card["fault"] and not remote.created()
+    api = client()
+    seen = api.get(f"/api/refactors/specs/{sid}/removals").json()
+    assert [(f["file"], f["named"], f["text"]) for f in seen["files"]] == [("tests/test_parity.py", ["test_parity"], HELPED)]
+    stale = api.post(f"/api/refactors/specs/{sid}/removals", json={"head": seen["head"], "digest": "0" * 64})
+    assert stale.status_code == 409 and "다시 열어" in stale.json()["detail"]
+    # #252 round 3: another card's branch in the shared checkout, a file put back, a start text unread.
+    path, branch = Path(card["worktree"]), card["branch"]
+    _git(path, "checkout", "-q", "-b", "another-card")
+    assert "이 카드의 브랜치" in api.get(f"/api/refactors/specs/{sid}/removals").json()["detail"]
+    _git(path, "checkout", "-q", branch)
+    (path / "tests").mkdir(exist_ok=True)
+    (path / "tests/test_parity.py").write_text(HELPED, encoding="utf-8")
+    back = api.post(f"/api/refactors/specs/{sid}/removals", json={k: seen[k] for k in ("head", "digest")})
+    assert back.status_code == 409 and "커밋하지 않은 변경" in back.json()["detail"]
+    (path / "tests/test_parity.py").unlink()
+    real = subprocess.run
+
+    def unreadable(args, **kw):
+        if args[:2] == ["git", "show"]:
+            return subprocess.CompletedProcess(args, 128, b"", b"fatal: unable to read blob")
+        return real(args, **kw)
+    with patch.object(refactor_run.subprocess, "run", unreadable):
+        assert "읽지 못했다" in api.get(f"/api/refactors/specs/{sid}/removals").json()["detail"]
+    done = api.post(f"/api/refactors/specs/{sid}/removals", json={k: seen[k] for k in ("head", "digest")})
+    assert done.status_code == 200, done.json()
+    card = specs.load("proj", sid)
+    remove = card["refactor"]["detail"]["tests"]["remove"]
+    assert remove[-1]["test"] == "tests/test_parity.py" and remove[-1]["approved"]["head"] == seen["head"]
+    assert card["fault"] is None and refactor_run.contract(Path(card["worktree"]), card) == ""
+    assert api.get(f"/api/refactors/specs/{sid}/removals").json()["files"] == []
 
 
 def test_a_type_comment_is_part_of_the_test_contract(surveyed):

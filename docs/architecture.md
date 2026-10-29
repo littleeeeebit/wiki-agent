@@ -140,7 +140,9 @@ and status are in
 A survey card's test contract (`refactor_run.contract`) keeps every existing
 test file's Python syntax tree or decoded JSON values identical (`equivalent`)
 or only adds lines. Exceptions are the removals and contract updates the spec
-declares. Research is in
+declares. Deleting a file needs the file declared, not only its tests; when a
+survey named only the tests, the person reads the deleted file and declares it
+on the card (`[테스트 파일 삭제 승인]`, `refactor_run.approve_removal`). Research is in
 [verified test cleanup](research/refactoring-test-cleanup.md). Suite resolves
 shared checkouts by their current branch owner, so a merged task cannot label
 another task's live run.
