@@ -922,6 +922,8 @@ export type WorkEv = {
     answers?: string[]
     id?: string
     tool?: string
+    /** A command's streamed output: which command it is from. */
+    item_id?: string
     input?: Record<string, unknown>
     answer?: 'allow' | 'deny'
     allow?: boolean

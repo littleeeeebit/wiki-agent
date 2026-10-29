@@ -263,12 +263,16 @@ def test_a_tool_line_shows_the_command_beside_what_it_is_for():
 def test_codex_command_output_and_mcp_progress_reach_the_agent_stream(tree):
     fixture = CODEX_BYPASS.replace(
         'say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "ran"}}})',
-        'say({"method": "item/commandExecution/outputDelta", "params": {"itemId": "command-1", "delta": "40 percent\\n"}})\n'
+        # A progress bar: many writes of one command, the screen's one step.
+        'for n in range(1, 301): say({"method": "item/commandExecution/outputDelta", "params": {"itemId": "command-1", "delta": f"\\r{n}/300"}})\n'
+        'say({"method": "item/commandExecution/outputDelta", "params": {"itemId": "command-1", "delta": "\\n40 percent\\n"}})\n'
         'say({"method": "item/mcpToolCall/progress", "params": {"itemId": "mcp-1", "message": "Collecting results"}})\n'
         'say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "ran"}}})')
     _, events = run(ChatSession(tree, model="codex:m", write=True, bypass=True), fixture, tree)
-    assert [(e.text, e.meta["tool"]) for e in events if e.meta.get("item_id")] == [
-        ("40 percent\n", "commandExecution"), ("Collecting results", "mcpToolCall")]
+    streamed = [(e.text, e.meta["tool"]) for e in events if e.meta.get("item_id")]
+    assert len(streamed) < 10 and streamed[-1] == ("Collecting results", "mcpToolCall")
+    output = "".join(text for text, tool in streamed if tool == "commandExecution")
+    assert output.endswith("\r300/300\n40 percent\n")
     assert events[-1].kind == "done" and events[-1].text == "ran"
 
 

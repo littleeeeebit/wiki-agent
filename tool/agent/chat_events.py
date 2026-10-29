@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 
 
@@ -22,6 +23,39 @@ class Event:
     meta: dict = field(default_factory=dict)
     session_id: str = ""
     parent_id: str | None = None
+
+
+OUTPUT_EVERY = 0.5   # seconds one command's output gathers before it goes on as one event
+OUTPUT_LIMIT = 4000  # characters of it an event carries, the latest
+
+
+def merged(events, clock=time.monotonic):
+    """A command's streamed output as one event per `OUTPUT_EVERY`, not one per write.
+
+    A progress bar — a model download's — writes several times a second for as
+    long as it runs, and each write was an event every watching screen redrew
+    its whole turn for; the screen stopped answering, the project picker with
+    it. Anything else that comes lets the gathered output go first, in order.
+    """
+
+    held, since = None, 0.0
+    for ev in events:
+        item = ev.meta.get("item_id") if ev.kind == "tool" and ev.meta.get("tool") == "commandExecution" else None
+        if held is not None and item and item == held.meta.get("item_id"):
+            held.text = (held.text + ev.text)[-OUTPUT_LIMIT:]
+        else:
+            if held is not None:
+                yield held
+            held, since = None, clock()
+            if not item:
+                yield ev
+                continue
+            held = ev
+        if clock() - since >= OUTPUT_EVERY:
+            yield held
+            held = None
+    if held is not None:
+        yield held
 
 
 def _claude_hook(ev: dict) -> tuple[str, str]:
