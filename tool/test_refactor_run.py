@@ -676,6 +676,24 @@ def test_a_person_declares_a_deleted_test_file_removed_whole(running):
     assert [(f["file"], f["named"], f["text"]) for f in seen["files"]] == [("tests/test_parity.py", ["test_parity"], HELPED)]
     stale = api.post(f"/api/refactors/specs/{sid}/removals", json={"head": seen["head"], "digest": "0" * 64})
     assert stale.status_code == 409 and "다시 열어" in stale.json()["detail"]
+    # #252 round 3: another card's branch in the shared checkout, a file put back, a start text unread.
+    path, branch = Path(card["worktree"]), card["branch"]
+    _git(path, "checkout", "-q", "-b", "another-card")
+    assert "이 카드의 브랜치" in api.get(f"/api/refactors/specs/{sid}/removals").json()["detail"]
+    _git(path, "checkout", "-q", branch)
+    (path / "tests").mkdir(exist_ok=True)
+    (path / "tests/test_parity.py").write_text(HELPED, encoding="utf-8")
+    back = api.post(f"/api/refactors/specs/{sid}/removals", json={k: seen[k] for k in ("head", "digest")})
+    assert back.status_code == 409 and "커밋하지 않은 변경" in back.json()["detail"]
+    (path / "tests/test_parity.py").unlink()
+    real = subprocess.run
+
+    def unreadable(args, **kw):
+        if args[:2] == ["git", "show"]:
+            return subprocess.CompletedProcess(args, 128, b"", b"fatal: unable to read blob")
+        return real(args, **kw)
+    with patch.object(refactor_run.subprocess, "run", unreadable):
+        assert "읽지 못했다" in api.get(f"/api/refactors/specs/{sid}/removals").json()["detail"]
     done = api.post(f"/api/refactors/specs/{sid}/removals", json={k: seen[k] for k in ("head", "digest")})
     assert done.status_code == 200, done.json()
     card = specs.load("proj", sid)

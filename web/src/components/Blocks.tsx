@@ -158,7 +158,8 @@ function Started({ spec, korean, busy, onSpecs, onStart }: { spec: Spec } & Pick
         </div>
       )}
       {spec.fault && <p className="mt-1 text-[12.5px] text-destructive">{spec.fault}</p>}
-      {spec.refactor?.survey && spec.fault?.includes('[테스트 파일 삭제 승인]') && <Removals spec={spec} onDone={onSpecs} />}
+      {/* Both the refusal naming the button and the one saved before it existed. */}
+      {spec.refactor?.survey && spec.fault?.includes('파일 단위로 선언한다') && <Removals spec={spec} onDone={onSpecs} />}
     </div>
   )
 }

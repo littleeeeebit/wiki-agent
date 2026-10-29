@@ -611,6 +611,9 @@ def removals(spec: dict) -> dict:
     if not surveyed(spec) or not spec.get("worktree"):
         raise HTTPException(404, "리팩터링 조사 명세의 작업트리가 없다")
     path, start = Path(spec["worktree"]), spec["start_head"]
+    # A branch-mode card shares the checkout: another card's branch there is not this card's deletion (#252 round 3).
+    if (specs.owner(path) or {}).get("id") != spec["id"]:
+        raise HTTPException(409, "작업트리가 지금 이 카드의 브랜치에 있지 않다 — 이 카드의 브랜치를 먼저 열어라")
     whole, named = _declared(spec)
     head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
     listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", "--diff-filter=D",
@@ -619,18 +622,25 @@ def removals(spec: dict) -> dict:
         raise HTTPException(409, f"시작 커밋과 비교하지 못했다 — {specs.said(listed)}")
     files = []
     for name in listed.stdout.splitlines():
-        if debt.TEST.search(name.lower()) and name not in whole:
-            text = subprocess.run(["git", "show", f"{start}:{name}"], cwd=path, capture_output=True).stdout
+        if debt.TEST.search(name.lower()) and name not in whole and not (path / name).exists():
+            old = subprocess.run(["git", "show", f"{start}:{name}"], cwd=path, capture_output=True)
+            if old.returncode:   # an empty text would read as an empty file the person approved
+                raise HTTPException(409, f"`{name}` 의 시작 커밋 내용을 읽지 못했다 — "
+                                         f"{old.stderr.decode('utf-8', 'replace').strip()[:300]}")
             files.append({"file": name, "named": sorted("::".join(p) for p in named.get(name, ())),
-                          "text": text.decode("utf-8", "replace")})
-    digest = hashlib.sha256(json.dumps([head, files], ensure_ascii=False).encode("utf-8")).hexdigest()
-    return {"head": head, "files": files, "digest": digest}
+                          "text": old.stdout.decode("utf-8", "replace")})
+    key = [spec["repo"], spec["id"], start, head, files]
+    return {"head": head, "files": files,
+            "digest": hashlib.sha256(json.dumps(key, ensure_ascii=False).encode("utf-8")).hexdigest()}
 
 
 def approve_removal(spec: dict, head: str, digest: str) -> dict:
     """The person's approval of `removals` at `head` with `digest`: each file declared removed whole in the
     card's test contract, and the card's fault the contract's answer now. 409 when anything moved since."""
 
+    # A file put back after the person looked would be freed whole, edits and all: nothing uncommitted.
+    if specs.dirty(Path(spec["worktree"])):
+        raise HTTPException(409, "작업트리에 커밋하지 않은 변경이 있다 — 정리한 뒤 다시 열어 확인해라")
     seen = removals(spec)
     if (seen["head"], seen["digest"]) != (head, digest):
         raise HTTPException(409, "본 뒤에 커밋이나 삭제한 파일이 바뀌었다 — 다시 열어 확인해라")
