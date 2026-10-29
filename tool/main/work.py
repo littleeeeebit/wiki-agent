@@ -812,6 +812,8 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
         failed = "사람이 멈춤" if run.halt.is_set() else f"{type(exc).__name__}: {exc}"
         run.put({"kind": "error", "text": failed, "meta": {}, "session_id": chat.id, "parent_id": None})
     finally:
+        with run.wake:   # no stop lands after this, so the record says for good whether one did
+            run.sealed, cancelled = True, run.halt.is_set()
         try:
             with run.wake:
                 made = steps(run.events)
@@ -820,7 +822,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
                 at = next((i for i, e in enumerate(run.events) if e["kind"] == "done"), None)
                 answered = {} if at is None else {"answered": len(steps(run.events[:at + 1]))}
             remember(path, "assistant", final, error=failed, steps=made,
-                     turn=run.turn, cell=chat.id, started_at=run.started_at, cancelled=run.halt.is_set(),
+                     turn=run.turn, cell=chat.id, started_at=run.started_at, cancelled=cancelled,
                      provider="codex" if chat.is_codex else "claude", diff_base=run.diff_base, **answered, **meta)
             if REFUSED.search(failed):
                 remember(path, "context", "안전 거절 — 다음 턴은 새 대화로 시작한다",
@@ -834,12 +836,6 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
             # can send the next instruction at once.
             release()
             try:
-                with run.wake:   # no stop lands after this: whether one did is final
-                    run.sealed = True
-                if run.halt.is_set():   # a stop after the record voids its report all the same
-                    from . import specs
-
-                    specs.voided(path, run.turn)
                 run.finish()
                 feed.put({"kind": "work-record", "path": str(path)})
             except Exception as exc:
@@ -1025,8 +1021,8 @@ def stop(body: Stop) -> dict:
     run = attached(body.path)
     if run.turn != body.turn:
         raise HTTPException(409, "지금 도는 턴이 아니다")
-    # One boundary with the turn's end (`sealed`): a stop lands before it or not at all, so the end can
-    # tell for good whether the turn was stopped (`specs.voided`).
+    # One boundary with the turn's end (`sealed`): a stop lands before it or not at all, so the turn's
+    # record tells for good whether it was stopped (`specs.resumed` reads it).
     with run.wake:
         stopping = not run.done and not run.sealed
         if stopping:

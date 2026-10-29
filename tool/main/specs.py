@@ -1508,11 +1508,11 @@ def resumed(spec: dict) -> bool:
             release()
             return False
         at = spec.get("report_at") or {}
+        # That turn's record is written sealed and before its hold is let go, so it says for good whether a
+        # stop landed; no record is no report.
         turn = next((r for r in work.recall(path) if at.get("turn") and r.get("turn") == at["turn"]
                      and r.get("role") == "assistant"), {})
-        live = work._runs.get(str(path))   # its turn, unfinished or stopped, has not settled the report yet
-        settled = live is None or live.turn != at.get("turn") or (live.done and not live.halt.is_set())
-        stands = bool(turn) and settled and not turn.get("cancelled") and not turn.get("error") and \
+        stands = bool(turn) and not turn.get("cancelled") and not turn.get("error") and \
             (at.get("head"), at.get("rev")) == (sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), spec["rev"])
         cell = spec.get("cell") or {}
         chat = work.session(path, cell.get("model", ""), cell.get("effort", ""), cell.get("fast", False))
@@ -1529,13 +1529,6 @@ def resumed(spec: dict) -> bool:
         release()
         raise
     return True
-
-
-def voided(path: Path, turn: str) -> None:
-    """A stopped turn's report is no report: `resumed` asks for a new one."""
-
-    if (spec := owner(path)) and (spec.get("report_at") or {}).get("turn") == turn:
-        update(spec["repo"], spec["id"], report_at=None)
 
 
 def check(path: Path, run, final: str):
