@@ -658,8 +658,8 @@ def test_a_person_declares_a_deleted_test_file_removed_whole(running, after):
     kept. `talked`: a person's turn after the refusal leaves the report standing. `revised`: the refused
     answer revised the spec too, and the replay does not revise it again (#253 round 1). `committed`: a later
     commit outdates the report, and `stopped`: a stop that came as the answer ended voids it, so the worker
-    is asked for one. `late`: a stop sent once the turn's record is written comes after its seal and does
-    not land, so the report stands (#253 rounds 3 and 4). `switched`: the shared checkout moved to another branch between the approval and the resume,
+    is asked for one. `late`: a stop sent once the turn's record is written keeps the turn from going on by
+    itself but not its recorded answer, so the report stands (#253 rounds 3–5). `switched`: the shared checkout moved to another branch between the approval and the resume,
     so nothing is sent until this card's branch is back (#253 round 2)."""
     repo, remote = running
     (repo / "tests").mkdir()
@@ -691,7 +691,7 @@ def test_a_person_declares_a_deleted_test_file_removed_whole(running, after):
     with patch.object(work, "remember", remembered):
         started(client(), sid)
     # Checked out here: the record's own failure is caught where it is written.
-    assert late == ([(200, False)] if after == "late" else []), late
+    assert late == ([(200, True)] if after == "late" else []), late
     card = specs.load("proj", sid)
     assert "[테스트 파일 삭제 승인]" in card["fault"] and not remote.created()
     assert card["rev"] == 1 + (after == "revised")

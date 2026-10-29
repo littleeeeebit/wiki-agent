@@ -1508,8 +1508,9 @@ def resumed(spec: dict) -> bool:
             release()
             return False
         at = spec.get("report_at") or {}
-        # That turn's record is written sealed and before its hold is let go, so it says for good whether a
-        # stop landed; no record is no report.
+        # That turn's record, written before its hold was let go, says whether its answer counts: one stopped
+        # before it was recorded does not. A stop after that only kept the turn from going on by itself
+        # (`loop.answered`, `dispatch`); this approval is the person's later word. No record is no report.
         turn = next((r for r in work.recall(path) if at.get("turn") and r.get("turn") == at["turn"]
                      and r.get("role") == "assistant"), {})
         stands = bool(turn) and not turn.get("cancelled") and not turn.get("error") and \
