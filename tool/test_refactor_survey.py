@@ -291,6 +291,27 @@ def test_specs_that_only_look_or_cross_pipelines_are_refused(surveyed, bad, why)
         refactor_survey.spec_shape(spec("x", **bad), "preserve", MAP, surveyed)
 
 
+def test_a_spec_that_edits_an_existing_test_file_declares_it(surveyed):
+    """semantic-index-cleanup-97d92512: `change` edited a module-level fake in a listed test file whose
+    contract was empty, so the run refused the edit the spec asked for."""
+    (surveyed / "tests").mkdir()
+    (surveyed / "tests/test_orders.py").write_text("def test_place():\n    assert True\n", encoding="utf-8")
+    files = ["src/orders.py", "tests/test_orders.py"]
+    with pytest.raises(ValueError, match="`tests/test_orders.py` 이 tests.contract.*tests.contract 에 넣거나"):
+        refactor_survey.spec_shape(spec("x", files=files), "simplify", MAP, surveyed)
+    with pytest.raises(ValueError, match="preserve 명세는 기존 테스트를 고치지 않는다"):
+        refactor_survey.spec_shape(spec("x", files=files), "preserve", MAP, surveyed)
+    contract = [{"test": "tests/test_orders.py::_Fake::place", "old": "a", "new": "b", "why": "c"}]
+    for tests, mode in (({"contract": contract}, "simplify"), ({"add": ["tests/test_orders.py: a new case"]}, "preserve")):
+        assert refactor_survey.spec_shape(spec("x", files=files, tests=tests), mode, MAP, surveyed)["files"] == files
+    # #255 round 1: a helper beside the tests may only gain fixtures, which the run allows undeclared.
+    (surveyed / "tests/conftest.py").write_text("def existing():\n    return 1\n", encoding="utf-8")
+    helped = spec("x", files=["src/orders.py", "tests/conftest.py"], tests={"add": ["tests/test_new.py: a new case"]})
+    assert refactor_survey.spec_shape(helped, "preserve", MAP, surveyed)["files"][1] == "tests/conftest.py"
+    with pytest.raises(ValueError, match="`specs\\[x\\].title` 은 글줄 하나여야 한다 — list 이 왔다"):
+        refactor_survey.spec_shape(spec("x", title=["a"]), "simplify", MAP, surveyed)
+
+
 def test_a_path_is_kept_as_git_writes_it(surveyed):
     made = refactor_survey.spec_shape(spec("x", files=["./src/orders.py"],
                                            evidence=[{"path": "src/../src/orders.py", "symbol": "place"}]),

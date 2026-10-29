@@ -133,7 +133,10 @@ In `_check`, before the existing report, cleanup and gate steps:
   spec's declared merges, deletions and contract updates. A deleted file needs
   the file declared; the person can add that declaration after reading the
   file (`[테스트 파일 삭제 승인]`), since which tests pytest collects from a file
-  is not settled by its syntax (#252).
+  is not settled by its syntax (#252). A changed test or test double the
+  survey left out of the contract is declared by name the same way, after
+  the person reads the diff (`[테스트 계약 변경 승인]`); a `spec-update` that
+  carries `tests` is refused instead of dropped.
 - The final command replaces the round checks and its failures are compared
   with the survey baseline. Only pre-existing, parsed failures let the pull
   request open; a pass is kept as the head's final result.

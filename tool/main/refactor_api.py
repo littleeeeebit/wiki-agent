@@ -322,6 +322,30 @@ def remove_whole(sid: str, body: Refreeze) -> dict:
     return spec
 
 
+@router.get("/api/refactors/specs/{sid}/amendments")
+def amendments_of(sid: str) -> dict:
+    """`[테스트 계약 변경 승인]`: the existing test files the card changed outside its contract, as diffs."""
+
+    return refactor_run.amendments(frozen_card(current_repo(), sid))
+
+
+@router.post("/api/refactors/specs/{sid}/amendments")
+def amend(sid: str, body: Refreeze) -> dict:
+    """The person declares the changed definitions read at `head` in the card's test contract, by name.
+    Held and resumed as `remove_whole` is: a spec-update cannot reach the contract, only this can."""
+
+    repo = current_repo()
+    spec = frozen_card(repo, sid)
+    release = hold(work._busy, _lock, str(Path(spec.get("worktree") or repo)), "그 작업트리를 다른 요청이 쓰고 있다")
+    try:
+        spec = refactor_run.approve_amendment(spec, body.head, body.digest)
+    finally:
+        release()
+    specs.resumed(spec)
+    work.feed.put({"kind": "sync"})
+    return spec
+
+
 @router.post("/api/refactors/{rid}/cancel")
 def cancel(rid: str) -> dict:
     repo = current_repo()

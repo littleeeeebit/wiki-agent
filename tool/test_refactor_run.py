@@ -755,6 +755,90 @@ def test_a_person_declares_a_deleted_test_file_removed_whole(running, after):
     assert api.get(f"/api/refactors/specs/{sid}/removals").json()["files"] == []
 
 
+# semantic-index-cleanup-97d92512: the change dropped `generation` from a module-level fake's signatures.
+FAKED = ("class _Repository:\n    def list_bindings(self, task, *, generation):\n        return []\n\n"
+         "    def record_deleted(self, task, *, generation, mem0_record_ids):\n        return None\n\n\n"
+         "LIMIT = 1\n\n\ndef test_cleanup():\n    assert _Repository()\n")
+UNFAKED = FAKED.replace(", *, generation)", ")").replace("*, generation, ", "*, ")
+
+
+@pytest.mark.parametrize("new, declared, why", [
+    (UNFAKED, (), "[테스트 계약 변경 승인]"),
+    (UNFAKED, ("tests/test_guard.py::_Repository::list_bindings",
+               "tests/test_guard.py::_Repository::record_deleted"), ""),
+    (UNFAKED, ("tests/test_guard.py::_Repository::list_bindings",), "[테스트 계약 변경 승인]"),
+    # A changed statement no name holds explains nothing a person could declare by name.
+    (FAKED.replace("LIMIT = 1", "LIMIT = 2"), (), "기존 테스트 변경 (명세"),
+])
+def test_a_changed_test_double_is_offered_to_the_person_by_name(surveyed, new, declared, why):
+    found = contracted(surveyed, new, *declared, old=FAKED)
+    assert (why in found) if why else found == "", found
+
+
+def test_a_test_file_that_is_not_utf8_is_not_offered_for_approval(tmp_path):
+    """#255 round 3: the patch is read as UTF-8, so `é` and `è` in a latin-1 file both showed as `�`."""
+    texts = {"s": b'# coding: latin-1\ndef test_sample():\n    assert value() == "\xe9"\n'}
+    texts["h"] = texts["s"].replace(b"\xe9", b"\xe8")
+    card = {"refactor": {"detail": {"tests": {}}}}
+    with patch.object(refactor_run, "_touched", lambda spec, kind: (tmp_path, "s", "h", ["tests/test_sample.py"])), \
+            patch.object(refactor_run, "_shown", lambda path, rev, name: texts[rev]):
+        with pytest.raises(HTTPException) as refused:
+            refactor_run.amendments(card)
+    assert refused.value.status_code == 409 and "UTF-8" in refused.value.detail
+
+
+def test_a_person_declares_the_changed_definitions_in_the_test_contract(running):
+    """A spec-update cannot reach the contract: the person reads the diff and declares the changed definitions
+    by name, and the card goes on by itself on the report it kept. Another edit in the file is still refused."""
+    repo, remote = running
+    (repo / "tests").mkdir()
+    (repo / "tests/test_cleanup.py").write_text(FAKED, encoding="utf-8")
+    _git(repo, "add", "tests")
+    _git(repo, "commit", "-qm", "cleanup test")
+    _git(repo, "push", "-q", "origin", "main")
+    sid, = surveyed_in("simplify", spec("cleanup-names", "billing", files=["src/billing.py"]))["specs"]
+    Worker.replies = [edited("tests/test_cleanup.py", UNFAKED)]
+    started(client(), sid)
+    card = specs.load("proj", sid)
+    assert "[테스트 계약 변경 승인]" in card["fault"] and not remote.created()
+    api = client()
+    seen = api.get(f"/api/refactors/specs/{sid}/amendments").json()
+    names = ["_Repository::list_bindings", "_Repository::record_deleted"]
+    assert [(f["file"], f["names"]) for f in seen["files"]] == [("tests/test_cleanup.py", names)]
+    assert "-    def list_bindings(self, task, *, generation):" in seen["files"][0]["diff"]
+    stale = api.post(f"/api/refactors/specs/{sid}/amendments", json={"head": seen["head"], "digest": "0" * 64})
+    assert stale.status_code == 409 and "다시 열어" in stale.json()["detail"]
+    # #255 rounds 1–2: the person reads Git's own patch as text, whatever diff or attributes the repository sets,
+    # and a patch that cannot be shown approves nothing.
+    attributes = Path(card["worktree"]).parent / "review-attributes"
+    attributes.write_text("tests/test_cleanup.py -diff\n", encoding="utf-8")
+    _git(Path(card["worktree"]), "config", "diff.external", "missing-review-diff-executable")
+    _git(Path(card["worktree"]), "config", "core.attributesFile", attributes.as_posix())
+    assert api.get(f"/api/refactors/specs/{sid}/amendments").json() == seen
+    shell = specs.sh
+
+    def blind(args, *rest, **kw):
+        if args[:5] == ["git", "-c", "core.quotepath=off", "diff", "--text"]:
+            return subprocess.CompletedProcess(args, 128, "", "fatal: diff failed")
+        return shell(args, *rest, **kw)
+    with patch.object(specs, "sh", blind):
+        assert "보이지 못했다" in api.get(f"/api/refactors/specs/{sid}/amendments").json()["detail"]
+        refused = api.post(f"/api/refactors/specs/{sid}/amendments", json={k: seen[k] for k in ("head", "digest")})
+    assert refused.status_code == 409 and "보이지 못했다" in refused.json()["detail"]
+    done = api.post(f"/api/refactors/specs/{sid}/amendments", json={k: seen[k] for k in ("head", "digest")})
+    assert done.status_code == 200, done.json()
+    card = done.json()
+    declared = card["refactor"]["detail"]["tests"]["contract"]
+    assert [c["test"] for c in declared] == [f"tests/test_cleanup.py::{n}" for n in names]
+    assert all(c["approved"]["head"] == seen["head"] for c in declared) and card["fault"] is None
+    card = landed(sid)
+    assert card["state"] == "PR #7", card["fault"]
+    path = Path(card["worktree"])
+    (path / "tests/test_cleanup.py").write_text(UNFAKED.replace("LIMIT = 1", "LIMIT = 2"), encoding="utf-8")
+    _git(path, "commit", "-qam", "more")
+    assert "기존 테스트 변경" in refactor_run.contract(path, specs.load("proj", sid))
+
+
 def test_a_type_comment_is_part_of_the_test_contract(surveyed):
     typed = OLD_TESTS + "\nvalue = []  # type: list[int]\n"
     assert "기존 테스트 변경" in contracted(surveyed, OLD_TESTS + "\nvalue = []\n", old=typed)
