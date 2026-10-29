@@ -123,7 +123,7 @@ INTEGRATE_PROMPT = (
     "`coverage.unchecked`. Missing test coverage is not such a reason: in `preserve` the spec names the "
     "characterization tests to add in `tests.add`, and they are written and frozen before any code moves."
     " Each one is a new test: the run refuses any edit inside an existing test, so a check that would extend "
-    "one is a new test beside it. An existing test file in `files` either takes new tests `tests.add` names by "
+    "one is a new test beside it. An existing test module in `files` either takes new tests `tests.add` names by "
     "its path, or names in `tests.contract` (`<path>::<name>`, `<path>::<Class>::<method>`) every test and test "
     "double the change edits: a spec that edits one it does not declare is refused."
     " The unit depends on the mode. In `preserve` there is exactly one spec for the whole repository: every debt "
@@ -352,9 +352,10 @@ def spec_shape(s, mode: str, map_: dict, root: Path) -> dict:
     if shaped["tests"]["contract"] and not amendable:
         raise ValueError(f"`{what}.tests.contract` 는 simplify 명세나 rework 의 계약 변경 명세에만 있다")
     # The run refuses an edit of an existing test file its contract does not free (`refactor_run.contract`):
-    # one in `files` is declared, or takes new tests `tests.add` names, or the spec asks for what it forbids.
+    # a test module in `files` is declared, or takes new tests `tests.add` names, or the spec asks for what it
+    # forbids. A helper beside them (`conftest.py`) may only gain fixtures, so its name is not matched (#255 round 1).
     declared = {t["test"].split("::")[0] for t in [*shaped["tests"]["remove"], *shaped["tests"]["contract"]]}
-    if stray := [f for f in shaped["files"] if debt.TEST.search(f.lower()) and f not in declared
+    if stray := [f for f in shaped["files"] if debt.TEST.search(f.rsplit("/", 1)[-1].lower()) and f not in declared
                  and not any(f in a for a in shaped["tests"]["add"])]:
         raise ValueError(
             f"`{what}.files` 의 기존 테스트 파일 {', '.join(f'`{f}`' for f in stray)} 이 tests.contract·tests.remove "

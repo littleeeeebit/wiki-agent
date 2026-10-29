@@ -796,6 +796,19 @@ def test_a_person_declares_the_changed_definitions_in_the_test_contract(running)
     assert "-    def list_bindings(self, task, *, generation):" in seen["files"][0]["diff"]
     stale = api.post(f"/api/refactors/specs/{sid}/amendments", json={"head": seen["head"], "digest": "0" * 64})
     assert stale.status_code == 409 and "다시 열어" in stale.json()["detail"]
+    # #255 round 1: the person reads Git's own patch, and a patch that cannot be shown approves nothing.
+    _git(Path(card["worktree"]), "config", "diff.external", "missing-review-diff-executable")
+    assert api.get(f"/api/refactors/specs/{sid}/amendments").json() == seen
+    shell = specs.sh
+
+    def blind(args, *rest, **kw):
+        if args[:5] == ["git", "-c", "core.quotepath=off", "diff", "--no-ext-diff"]:
+            return subprocess.CompletedProcess(args, 128, "", "fatal: diff failed")
+        return shell(args, *rest, **kw)
+    with patch.object(specs, "sh", blind):
+        assert "보이지 못했다" in api.get(f"/api/refactors/specs/{sid}/amendments").json()["detail"]
+        refused = api.post(f"/api/refactors/specs/{sid}/amendments", json={k: seen[k] for k in ("head", "digest")})
+    assert refused.status_code == 409 and "보이지 못했다" in refused.json()["detail"]
     done = api.post(f"/api/refactors/specs/{sid}/amendments", json={k: seen[k] for k in ("head", "digest")})
     assert done.status_code == 200, done.json()
     card = done.json()

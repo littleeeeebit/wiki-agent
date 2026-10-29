@@ -304,6 +304,10 @@ def test_a_spec_that_edits_an_existing_test_file_declares_it(surveyed):
     contract = [{"test": "tests/test_orders.py::_Fake::place", "old": "a", "new": "b", "why": "c"}]
     for tests, mode in (({"contract": contract}, "simplify"), ({"add": ["tests/test_orders.py: a new case"]}, "preserve")):
         assert refactor_survey.spec_shape(spec("x", files=files, tests=tests), mode, MAP, surveyed)["files"] == files
+    # #255 round 1: a helper beside the tests may only gain fixtures, which the run allows undeclared.
+    (surveyed / "tests/conftest.py").write_text("def existing():\n    return 1\n", encoding="utf-8")
+    helped = spec("x", files=["src/orders.py", "tests/conftest.py"], tests={"add": ["tests/test_new.py: a new case"]})
+    assert refactor_survey.spec_shape(helped, "preserve", MAP, surveyed)["files"][1] == "tests/conftest.py"
     with pytest.raises(ValueError, match="`specs\\[x\\].title` 은 글줄 하나여야 한다 — list 이 왔다"):
         refactor_survey.spec_shape(spec("x", title=["a"]), "simplify", MAP, surveyed)
 
