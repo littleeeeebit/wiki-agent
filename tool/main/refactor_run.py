@@ -541,6 +541,23 @@ def _kept(old: list, new: list, allowed: set, at: tuple = ()) -> bool:
     return True
 
 
+def _undeclared(body: list, allowed: set, at: tuple = ()) -> list[str]:
+    """The tests pytest would collect from a body (`test*` names, `Test*` classes)
+    that `allowed` does not free. A deleted file whose tests are all declared
+    removes nothing else a test asserts: its helpers and imports go with it."""
+
+    out = []
+    for name in _binds(body):
+        if (*at, name) in allowed:
+            continue
+        cls = next((s for s in body if isinstance(s, ast.ClassDef) and s.name == name), None)
+        if cls is not None and name.startswith("Test"):
+            out += _undeclared(cls.body, allowed, (*at, name))
+        elif name.startswith(("test", "Test")):
+            out.append("::".join((*at, name)))
+    return out
+
+
 def _defines(body: list, parts: tuple) -> bool:
     found = next((s for s in body if _named(s) == parts[0]), None)
     return found is not None and (len(parts) == 1 or isinstance(found, ast.ClassDef) and _defines(found.body, parts[1:]))
@@ -550,6 +567,10 @@ def contract(path: Path, spec: dict) -> str:
     """Why the existing tests changed outside the spec's test contract, or empty.
     A declared `path` frees the whole file; a declared `path::name` (or
     `path::Class::name`) frees only that test, and it must exist at the start.
+    A Python file may be deleted once every test in it is declared, since a
+    survey names the tests it removes, not the file (emotion-state-cleanup-97d92512:
+    the one declared test's helper read a renamed attribute, so keeping the file
+    changed an undeclared helper and deleting it was refused, with no third way).
     Python is compared as syntax, so a skip mark or a shadowing redefinition is a change."""
 
     tests = spec["refactor"]["detail"].get("tests") or {}
@@ -569,7 +590,17 @@ def contract(path: Path, spec: dict) -> str:
             continue   # a new test file
         allowed = named.get(name, set())
         if not (path / name).is_file():
-            broken.append(f"`{name}` 삭제" + (" — 파일 삭제는 파일 단위로 선언한다" if allowed else ""))
+            left = None
+            if allowed and name.endswith(".py"):
+                try:
+                    left = _undeclared(ast.parse(old.stdout, type_comments=True).body, allowed)
+                except (SyntaxError, ValueError):
+                    pass
+            if left == []:
+                continue
+            why = f" — 선언되지 않은 테스트가 남아 있다: {', '.join(left)}" if left else \
+                " — 파일 삭제는 파일 단위로 선언한다" if allowed else ""
+            broken.append(f"`{name}` 삭제{why}")
             continue
         new = (path / name).read_bytes()
         if not name.endswith(".py"):

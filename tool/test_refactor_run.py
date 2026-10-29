@@ -635,12 +635,32 @@ def contracted(repo: Path, new: str | None, *declared: str, old: str = OLD_TESTS
     (OLD_TESTS + "\n\ndef test_new(test_guard=None):\n    test_other = 1\n", (), ""),    # the function's own
     ("def test_guard():\n    assert True\n", ("tests/test_guard.py::test_other",), ""),
     ("def test_guard():\n    pass\n", ("tests/test_guard.py::test_other",), "기존 테스트 변경"),
-    (None, ("tests/test_guard.py::test_other",), "파일 단위"),
+    (None, ("tests/test_guard.py::test_other",), "선언되지 않은 테스트가 남아 있다: test_guard"),
     (None, ("tests/test_guard.py",), ""),
+    # Every test declared: the file may go, helpers and all (emotion-state-cleanup-97d92512).
+    (None, ("tests/test_guard.py::test_guard", "tests/test_guard.py::test_other"), ""),
     (OLD_TESTS + "\n\ndef test_new():\n    assert True\n", ("tests/test_guard.py::test_gone",), "시작 커밋에 없다"),
 ])
 def test_a_test_contract_frees_only_what_it_names(surveyed, new, declared, why):
     found = contracted(surveyed, new, *declared)
+    assert (why in found) if why else found == "", found
+
+
+HELPED = ("import pytest\n\n\ndef _entries(engine):\n    return engine._persistent\n\n\n"
+          "@pytest.mark.parametrize('n', [1, 2])\ndef test_parity(n):\n    assert _entries(n)\n")
+CLASSED = "class TestGuard:\n    def test_one(self):\n        pass\n\n    def test_two(self):\n        pass\n"
+
+
+@pytest.mark.parametrize("old, declared, why", [
+    (HELPED, ("tests/test_guard.py::test_parity",), ""),
+    (CLASSED, ("tests/test_guard.py::TestGuard",), ""),
+    (CLASSED, ("tests/test_guard.py::TestGuard::test_one", "tests/test_guard.py::TestGuard::test_two"), ""),
+    (CLASSED, ("tests/test_guard.py::TestGuard::test_one",), "TestGuard::test_two"),
+    (OLD_TESTS + "\ntest_alias = test_guard\n", ("tests/test_guard.py::test_guard", "tests/test_guard.py::test_other"),
+     "test_alias"),
+])
+def test_a_file_goes_when_every_test_in_it_is_declared(surveyed, old, declared, why):
+    found = contracted(surveyed, None, *declared, old=old)
     assert (why in found) if why else found == "", found
 
 
