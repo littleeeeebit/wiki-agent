@@ -177,13 +177,21 @@ function apply(t: Turn, ev: WorkEv): Turn {
   if (ev.kind === 'progress') {
     return { ...t, text: '', steps: [...t.steps, { kind: 'progress', text: ev.text }], latest: 'step' }
   }
-  // One step per command's output, its latest part: a model download's
-  // progress bar is a write every moment, and a step for each redrew the whole
-  // turn for each until the window stopped answering.
+  // One step per command's output since anything else came, its latest part,
+  // as the record keeps it (`work.steps`): a model download's progress bar is a
+  // write every moment, and a step for each redrew the whole turn for each
+  // until the window stopped answering. Two commands at once keep one each.
   const item = ev.kind === 'tool' && m.tool === 'commandExecution' ? m.item_id : undefined
-  const last = t.steps.at(-1)
-  if (item && last?.kind === 'tool' && last.item === item) {
-    return { ...t, steps: [...t.steps.slice(0, -1), { ...last, text: (last.text + ev.text).slice(-4000) }], latest: 'step' }
+  if (item) {
+    let i = t.steps.length - 1
+    for (; i >= (t.answered ?? 0); i--) {
+      const s = t.steps[i]
+      if (s.kind !== 'tool' || !s.item || s.item === item) break
+    }
+    const s = t.steps[i]
+    if (i >= (t.answered ?? 0) && s?.kind === 'tool' && s.item === item) {
+      return { ...t, steps: t.steps.with(i, { ...s, text: (s.text + ev.text).slice(-4000) }), latest: 'step' }
+    }
   }
   if (ev.kind === 'tool' || ev.kind === 'said') {
     return { ...t, steps: [...t.steps, { kind: ev.kind, text: ev.text,

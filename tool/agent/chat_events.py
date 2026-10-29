@@ -35,27 +35,34 @@ def merged(events, clock=time.monotonic):
     A progress bar — a model download's — writes several times a second for as
     long as it runs, and each write was an event every watching screen redrew
     its whole turn for; the screen stopped answering, the project picker with
-    it. Anything else that comes lets the gathered output go first, in order.
+    it. Each command gathers its own, so two running at once still make one
+    event each per `OUTPUT_EVERY`. Anything else that comes lets the gathered
+    output go first.
     """
 
-    held, since = None, 0.0
+    held: dict[str, Event] = {}   # command -> its gathered output, in the order they began
+    since = 0.0
     for ev in events:
-        item = ev.meta.get("item_id") if ev.kind == "tool" and ev.meta.get("tool") == "commandExecution" else None
-        if held is not None and item and item == held.meta.get("item_id"):
-            held.text = (held.text + ev.text)[-OUTPUT_LIMIT:]
-        else:
-            if held is not None:
-                yield held
-            held, since = None, clock()
-            if not item:
-                yield ev
+        item = output_of(ev.kind, ev.meta)
+        if item:
+            if not held:
+                since = clock()
+            if item in held:
+                held[item].text = (held[item].text + ev.text)[-OUTPUT_LIMIT:]
+            else:
+                held[item] = ev
+            if clock() - since < OUTPUT_EVERY:
                 continue
-            held = ev
-        if clock() - since >= OUTPUT_EVERY:
-            yield held
-            held = None
-    if held is not None:
-        yield held
+        yield from held.values()
+        held.clear()
+        if not item:
+            yield ev
+    yield from held.values()
+
+
+def output_of(kind: str, meta: dict) -> str | None:
+    """The command whose streamed output this event is, if it is one."""
+    return meta.get("item_id") if kind == "tool" and meta.get("tool") == "commandExecution" else None
 
 
 def _claude_hook(ev: dict) -> tuple[str, str]:
