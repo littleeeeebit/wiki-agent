@@ -92,7 +92,8 @@ Auto mode decides before execution and records its choice. It does not dispatch
 CI for private repositories. The hosted workflow also refuses private-repository
 jobs. A confirmed missing/disabled workflow selects local; an uncertain workflow
 lookup on a known public repository stops pending. No account token, paid runner or self-hosted runner is required for local
-mode. Local execution holds a machine-wide final-run lock and uses the existing
+mode. Local execution holds the repository's final-run lock (in its git common
+directory, so another repository's final run is not held up) and uses the existing
 process-tree cancellation and shared time budget. Busy, interrupted and
 unavailable verification stays pending instead of starting implementation fixes.
 

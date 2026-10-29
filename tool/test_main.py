@@ -74,7 +74,6 @@ def no_machine_settings(tmp_path):
          patch.object(work, "_sessions", {}), patch.object(work, "_busy", {}), \
          patch.object(work, "_runs", {}), patch.object(work, "_turns", {}), \
          patch.object(specs, "SPECS", tmp_path / "specs"), \
-         patch.object(specs.verify, "local_lock_path", return_value=tmp_path / "wiki-agent-final.lock"), \
          patch.object(runtime, "stopping", threading.Event()), \
          patch.object(errorlog, "FILE", tmp_path / "errors.jsonl"), \
          patch.object(chat_session, "claude_usage", return_value=[]):
