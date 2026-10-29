@@ -661,9 +661,9 @@ def amendments(spec: dict) -> dict:
             continue   # `contract` says it could not read it
         if _kept(before, after, allowed):
             continue
-        # Git's own patch: an external diff or textconv could show something else, or nothing (#255 round 1).
-        diff = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--no-ext-diff", "--no-textconv", "--no-renames",
-                         start, head, "--", name], path)
+        # Git's own patch as text, never an external diff, a textconv or a `-diff` summary (#255 rounds 1–2).
+        diff = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--text", "--no-ext-diff", "--no-textconv",
+                         "--no-renames", start, head, "--", name], path)
         if diff.returncode or not diff.stdout.strip():   # a change nobody can read is not approved
             raise HTTPException(409, f"`{name}` 의 변경을 보이지 못했다 — {specs.said(diff)}")
         files.append({"file": name, "names": sorted("::".join(p) for p in _amendable(before, after, allowed) or ()),

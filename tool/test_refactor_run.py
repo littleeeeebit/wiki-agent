@@ -796,13 +796,17 @@ def test_a_person_declares_the_changed_definitions_in_the_test_contract(running)
     assert "-    def list_bindings(self, task, *, generation):" in seen["files"][0]["diff"]
     stale = api.post(f"/api/refactors/specs/{sid}/amendments", json={"head": seen["head"], "digest": "0" * 64})
     assert stale.status_code == 409 and "다시 열어" in stale.json()["detail"]
-    # #255 round 1: the person reads Git's own patch, and a patch that cannot be shown approves nothing.
+    # #255 rounds 1–2: the person reads Git's own patch as text, whatever diff or attributes the repository sets,
+    # and a patch that cannot be shown approves nothing.
+    attributes = Path(card["worktree"]).parent / "review-attributes"
+    attributes.write_text("tests/test_cleanup.py -diff\n", encoding="utf-8")
     _git(Path(card["worktree"]), "config", "diff.external", "missing-review-diff-executable")
+    _git(Path(card["worktree"]), "config", "core.attributesFile", attributes.as_posix())
     assert api.get(f"/api/refactors/specs/{sid}/amendments").json() == seen
     shell = specs.sh
 
     def blind(args, *rest, **kw):
-        if args[:5] == ["git", "-c", "core.quotepath=off", "diff", "--no-ext-diff"]:
+        if args[:5] == ["git", "-c", "core.quotepath=off", "diff", "--text"]:
             return subprocess.CompletedProcess(args, 128, "", "fatal: diff failed")
         return shell(args, *rest, **kw)
     with patch.object(specs, "sh", blind):
