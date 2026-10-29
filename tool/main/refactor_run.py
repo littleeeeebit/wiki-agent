@@ -541,68 +541,13 @@ def _kept(old: list, new: list, allowed: set, at: tuple = ()) -> bool:
     return True
 
 
-# Values pytest never collects: a `test_cases = [...]` table is data, not a test.
-LITERAL = (ast.Constant, ast.List, ast.Tuple, ast.Set, ast.Dict, ast.ListComp, ast.SetComp, ast.DictComp,
-           ast.JoinedStr)
-# Settings and hooks that make pytest collect names other than `test*` functions and `Test*` classes.
-COLLECTION = r"python_(functions|classes)\s*=|pytest_pycollect_makeitem"
-
-
-def _data(body: list) -> Counter:
-    """How often a body binds each name to a literal value, directly."""
-    found = Counter()
-    for s in body:
-        if isinstance(s, (ast.Assign, ast.AnnAssign)) and isinstance(s.value, LITERAL):
-            for t in s.targets if isinstance(s, ast.Assign) else [s.target]:
-                found.update(n.id for n in ast.walk(t) if isinstance(n, ast.Name))
-    return found
-
-
-def _undeclared(body: list, allowed: set, at: tuple = ()) -> tuple[list[str], list[str]]:
-    """The tests pytest would collect from a body by default (`test*` functions,
-    `Test*` classes) that `allowed` does not free, and why that list cannot be
-    trusted: a `*` import, or an undeclared class with bases (an inherited test,
-    a `unittest.TestCase` under any name). A deleted file whose tests are all
-    declared, and certainly so, removes nothing else: its helpers go with it."""
-
-    left, unsure = [], []
-    binds, data = _binds(body), _data(body)
-    if binds["*"]:
-        unsure.append("`import *`")
-    for name, count in binds.items():
-        where = "::".join((*at, name))
-        if name == "*" or (*at, name) in allowed or data[name] == count:
-            continue
-        classes = [s for s in body if isinstance(s, ast.ClassDef) and s.name == name]
-        if len(classes) == count:
-            if any(c.bases or c.keywords for c in classes):
-                unsure.append(f"상속하는 클래스 {where}")
-            elif name.startswith("Test"):
-                for c in classes:
-                    more = _undeclared(c.body, allowed, (*at, name))
-                    left, unsure = left + more[0], unsure + more[1]
-        elif name.startswith(("test", "Test")):
-            left.append(where)
-    return left, unsure
-
-
 def _defines(body: list, parts: tuple) -> bool:
     found = next((s for s in body if _named(s) == parts[0]), None)
     return found is not None and (len(parts) == 1 or isinstance(found, ast.ClassDef) and _defines(found.body, parts[1:]))
 
 
-def contract(path: Path, spec: dict) -> str:
-    """Why the existing tests changed outside the spec's test contract, or empty.
-    A declared `path` frees the whole file; a declared `path::name` (or
-    `path::Class::name`) frees only that test, and it must exist at the start.
-    A Python file may be deleted once every test in it is declared, since a
-    survey names the tests it removes, not the file (emotion-state-cleanup-97d92512:
-    the one declared test's helper read a renamed attribute, so keeping the file
-    changed an undeclared helper and deleting it was refused, with no third way).
-    Its tests are read from syntax under pytest's default collection; where that
-    cannot be certain (`_undeclared`, or the repository's collection settings at
-    the start) the deletion still needs the file declared, and the refusal says why.
-    Python is compared as syntax, so a skip mark or a shadowing redefinition is a change."""
+def _declared(spec: dict) -> tuple[set, dict]:
+    """The files a spec's test contract frees whole, and the tests it frees by name, per file."""
 
     tests = spec["refactor"]["detail"].get("tests") or {}
     declared = [t["test"] for t in [*tests.get("remove", []), *tests.get("contract", [])]]
@@ -611,7 +556,25 @@ def contract(path: Path, spec: dict) -> str:
         if "::" in d:
             file, *parts = d.split("::")
             named.setdefault(file, set()).add(tuple(parts))
-    start, broken, settings = spec["start_head"], [], None
+    return whole, named
+
+
+# What a refused deletion tells the worker: it cannot declare the file, the person can.
+WHOLE_FILE = " — 파일 삭제는 파일 단위로 선언한다. 사람이 [테스트 파일 삭제 승인] 으로 선언할 수 있다"
+
+
+def contract(path: Path, spec: dict) -> str:
+    """Why the existing tests changed outside the spec's test contract, or empty.
+    A declared `path` frees the whole file; a declared `path::name` (or
+    `path::Class::name`) frees only that test, and it must exist at the start.
+    A deleted file needs the file declared, even when every test in it is named:
+    which tests pytest collects from a file is not settled by its syntax (#252:
+    inheritance, imported TestCases, plugins and configuration hooks each hid one).
+    A survey names tests, so the person declares the file (`approve_removal`).
+    Python is compared as syntax, so a skip mark or a shadowing redefinition is a change."""
+
+    whole, named = _declared(spec)
+    start, broken = spec["start_head"], []
     listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", start, "HEAD"], path)
     for name in listed.stdout.splitlines():
         if not debt.TEST.search(name.lower()) or name in whole:
@@ -621,23 +584,7 @@ def contract(path: Path, spec: dict) -> str:
             continue   # a new test file
         allowed = named.get(name, set())
         if not (path / name).is_file():
-            left, unsure = None, []
-            if allowed and name.endswith(".py"):
-                try:
-                    left, unsure = _undeclared(ast.parse(old.stdout, type_comments=True).body, allowed)
-                except (SyntaxError, ValueError):
-                    pass
-                if settings is None:
-                    found = specs.sh(["git", "-c", "core.quotepath=off", "grep", "-l", "-E", COLLECTION, start, "--",
-                                      "pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini", "*conftest.py"], path)
-                    settings = [f.split(":", 1)[-1] for f in found.stdout.splitlines()]
-                unsure += [f"pytest 수집 설정 {f}" for f in settings]
-            if left == [] and not unsure:
-                continue
-            why = f" — 선언되지 않은 테스트가 남아 있다: {', '.join(left)}" if left else \
-                f" — 테스트 목록을 코드만으로 확정할 수 없어 파일 단위로 선언해야 한다 ({', '.join(unsure)})" if unsure else \
-                " — 파일 삭제는 파일 단위로 선언한다" if allowed else ""
-            broken.append(f"`{name}` 삭제{why}")
+            broken.append(f"`{name}` 삭제{WHOLE_FILE}")
             continue
         new = (path / name).read_bytes()
         if not name.endswith(".py"):
@@ -655,6 +602,50 @@ def contract(path: Path, spec: dict) -> str:
             broken.append(f"`{name}` 의 기존 테스트 변경")
     return "" if not broken else ("테스트 계약 밖의 변경 — " + ", ".join(broken[:10])
                                   + " (명세의 tests.remove·tests.contract 에 없다)")
+
+
+def removals(spec: dict) -> dict:
+    """`[테스트 파일 삭제 승인]`: the existing test files the card deleted that its contract does not free
+    whole, each with the tests named for it and its text at the start; `head` and the `digest` an approval names."""
+
+    if not surveyed(spec) or not spec.get("worktree"):
+        raise HTTPException(404, "리팩터링 조사 명세의 작업트리가 없다")
+    path, start = Path(spec["worktree"]), spec["start_head"]
+    whole, named = _declared(spec)
+    head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
+    listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", "--diff-filter=D",
+                       start, head], path)
+    if not head or listed.returncode:
+        raise HTTPException(409, f"시작 커밋과 비교하지 못했다 — {specs.said(listed)}")
+    files = []
+    for name in listed.stdout.splitlines():
+        if debt.TEST.search(name.lower()) and name not in whole:
+            text = subprocess.run(["git", "show", f"{start}:{name}"], cwd=path, capture_output=True).stdout
+            files.append({"file": name, "named": sorted("::".join(p) for p in named.get(name, ())),
+                          "text": text.decode("utf-8", "replace")})
+    digest = hashlib.sha256(json.dumps([head, files], ensure_ascii=False).encode("utf-8")).hexdigest()
+    return {"head": head, "files": files, "digest": digest}
+
+
+def approve_removal(spec: dict, head: str, digest: str) -> dict:
+    """The person's approval of `removals` at `head` with `digest`: each file declared removed whole in the
+    card's test contract, and the card's fault the contract's answer now. 409 when anything moved since."""
+
+    seen = removals(spec)
+    if (seen["head"], seen["digest"]) != (head, digest):
+        raise HTTPException(409, "본 뒤에 커밋이나 삭제한 파일이 바뀌었다 — 다시 열어 확인해라")
+    if not seen["files"]:
+        raise HTTPException(409, "승인할 테스트 파일 삭제가 없다")
+    tests = spec["refactor"]["detail"].get("tests") or {}
+    approved = {"head": head, "ts": time.time()}
+    remove = [*tests.get("remove", []), *({"test": f["file"], "reason": "사람이 파일 통째 삭제를 승인했다",
+                                          "approved": approved} for f in seen["files"])]
+    detail = {**spec["refactor"]["detail"], "tests": {**tests, "remove": remove}}
+    spec = {**spec, "refactor": {**spec["refactor"], "detail": detail}}
+    fault = spec.get("fault")
+    if fault and fault.startswith("테스트 계약 밖의 변경"):
+        fault = contract(Path(spec["worktree"]), spec) or None
+    return specs.update(spec["repo"], spec["id"], refactor=spec["refactor"], fault=fault)
 
 
 def refused(path: Path, spec: dict, chosen: dict, head: str) -> tuple[dict, dict] | None:

@@ -598,14 +598,10 @@ def test_an_existing_test_changes_only_within_the_contract(running):
 OLD_TESTS = "def test_guard():\n    assert True\n\n\ndef test_other():\n    assert True\n"
 
 
-def contracted(repo: Path, new: str | None, *declared: str, old: str = OLD_TESTS, beside: dict | None = None) -> str:
-    """`contract` on one existing test file changed to `new` (None deletes it), with `declared` removals;
-    `beside` are more files committed with it at the start."""
+def contracted(repo: Path, new: str | None, *declared: str, old: str = OLD_TESTS) -> str:
+    """`contract` on one existing test file changed to `new` (None deletes it), with `declared` removals."""
     (repo / "tests").mkdir(exist_ok=True)
     (repo / "tests/test_guard.py").write_text(old, encoding="utf-8")
-    for file, text in (beside or {}).items():
-        (repo / file).write_text(text, encoding="utf-8")
-        _git(repo, "add", file)
     _git(repo, "add", "tests")
     _git(repo, "commit", "-qm", "guard tests")
     start = _git(repo, "rev-parse", "HEAD")
@@ -639,10 +635,10 @@ def contracted(repo: Path, new: str | None, *declared: str, old: str = OLD_TESTS
     (OLD_TESTS + "\n\ndef test_new(test_guard=None):\n    test_other = 1\n", (), ""),    # the function's own
     ("def test_guard():\n    assert True\n", ("tests/test_guard.py::test_other",), ""),
     ("def test_guard():\n    pass\n", ("tests/test_guard.py::test_other",), "기존 테스트 변경"),
-    (None, ("tests/test_guard.py::test_other",), "선언되지 않은 테스트가 남아 있다: test_guard"),
+    (None, ("tests/test_guard.py::test_other",), "[테스트 파일 삭제 승인]"),
     (None, ("tests/test_guard.py",), ""),
-    # Every test declared: the file may go, helpers and all (emotion-state-cleanup-97d92512).
-    (None, ("tests/test_guard.py::test_guard", "tests/test_guard.py::test_other"), ""),
+    # Every test named is still not the file: what pytest collects from it is not settled by syntax (#252).
+    (None, ("tests/test_guard.py::test_guard", "tests/test_guard.py::test_other"), "파일 단위로 선언한다"),
     (OLD_TESTS + "\n\ndef test_new():\n    assert True\n", ("tests/test_guard.py::test_gone",), "시작 커밋에 없다"),
 ])
 def test_a_test_contract_frees_only_what_it_names(surveyed, new, declared, why):
@@ -650,43 +646,43 @@ def test_a_test_contract_frees_only_what_it_names(surveyed, new, declared, why):
     assert (why in found) if why else found == "", found
 
 
+# emotion-state-cleanup-97d92512: the survey named the one test, whose helper read a renamed attribute.
 HELPED = ("import pytest\n\n\ndef _entries(engine):\n    return engine._persistent\n\n\n"
           "@pytest.mark.parametrize('n', [1, 2])\ndef test_parity(n):\n    assert _entries(n)\n")
-CLASSED = "class TestGuard:\n    def test_one(self):\n        pass\n\n    def test_two(self):\n        pass\n"
 
 
-@pytest.mark.parametrize("old, declared, why", [
-    (HELPED, ("tests/test_guard.py::test_parity",), ""),
-    (CLASSED, ("tests/test_guard.py::TestGuard",), ""),
-    (CLASSED, ("tests/test_guard.py::TestGuard::test_one", "tests/test_guard.py::TestGuard::test_two"), ""),
-    (CLASSED, ("tests/test_guard.py::TestGuard::test_one",), "TestGuard::test_two"),
-    (OLD_TESTS + "\ntest_alias = test_guard\n", ("tests/test_guard.py::test_guard", "tests/test_guard.py::test_other"),
-     "test_alias"),
-    # Data named test* is not a test (#252 round 1).
-    ("test_cases = [1, 2]\n\n\ndef test_old():\n    assert test_cases\n", ("tests/test_guard.py::test_old",), ""),
-    # What syntax cannot settle needs the file declared (#252 round 1): an inherited test, a TestCase
-    # under any name, a `*` import.
-    ("class BaseChecks:\n    def test_required(self):\n        pass\n\n\nclass TestAPI(BaseChecks):\n"
-     "    def test_old(self):\n        pass\n", ("tests/test_guard.py::TestAPI::test_old",), "상속하는 클래스 TestAPI"),
-    ("import unittest\n\n\nclass LegacyChecks(unittest.TestCase):\n    def test_required(self):\n        pass\n\n\n"
-     "def test_old():\n    pass\n", ("tests/test_guard.py::test_old",), "상속하는 클래스 LegacyChecks"),
-    ("def test_old():\n    pass\n\n\nfrom os.path import *\n", ("tests/test_guard.py::test_old",), "`import *`"),
-])
-def test_a_file_goes_when_every_test_in_it_is_declared(surveyed, old, declared, why):
-    found = contracted(surveyed, None, *declared, old=old)
-    assert (why in found) if why else found == "", found
+def test_a_person_declares_a_deleted_test_file_removed_whole(running):
+    """Keeping the file changed an undeclared helper, deleting it was refused, and the worker cannot declare
+    a file: the person reads what it held and declares it."""
+    repo, remote = running
+    (repo / "tests").mkdir()
+    (repo / "tests/test_parity.py").write_text(HELPED, encoding="utf-8")
+    _git(repo, "add", "tests")
+    _git(repo, "commit", "-qm", "parity test")
+    _git(repo, "push", "-q", "origin", "main")
+    tests = {"add": [], "contract": [], "remove": [{"test": "tests/test_parity.py::test_parity", "reason": "renamed"}]}
+    sid, = surveyed_in("simplify", spec("parity-names", "billing", files=["src/billing.py"], tests=tests))["specs"]
 
-
-@pytest.mark.parametrize("file, text", [
-    ("pytest.ini", "[pytest]\npython_functions = test check\n"),
-    ("pyproject.toml", "[tool.pytest.ini_options]\npython_classes = [\"Test\", \"Check\"]\n"),
-    ("conftest.py", "def pytest_pycollect_makeitem(collector, name, obj):\n    return None\n"),
-])
-def test_a_repository_that_collects_other_names_needs_the_file_declared(surveyed, file, text):
-    """`check_required` is a test under `python_functions = test check` (#252 round 1)."""
-    old = "def check_required():\n    assert False\n\n\ndef test_old():\n    pass\n"
-    found = contracted(surveyed, None, "tests/test_guard.py::test_old", old=old, beside={file: text})
-    assert f"pytest 수집 설정 {file}" in found, found
+    def dropped(path, halt):
+        _git(path, "rm", "-q", "tests/test_parity.py")
+        _git(path, "commit", "-qm", "drop the parity test")
+        return report(True, True)
+    Worker.replies = [dropped]
+    started(client(), sid)
+    card = specs.load("proj", sid)
+    assert "[테스트 파일 삭제 승인]" in card["fault"] and not remote.created()
+    api = client()
+    seen = api.get(f"/api/refactors/specs/{sid}/removals").json()
+    assert [(f["file"], f["named"], f["text"]) for f in seen["files"]] == [("tests/test_parity.py", ["test_parity"], HELPED)]
+    stale = api.post(f"/api/refactors/specs/{sid}/removals", json={"head": seen["head"], "digest": "0" * 64})
+    assert stale.status_code == 409 and "다시 열어" in stale.json()["detail"]
+    done = api.post(f"/api/refactors/specs/{sid}/removals", json={k: seen[k] for k in ("head", "digest")})
+    assert done.status_code == 200, done.json()
+    card = specs.load("proj", sid)
+    remove = card["refactor"]["detail"]["tests"]["remove"]
+    assert remove[-1]["test"] == "tests/test_parity.py" and remove[-1]["approved"]["head"] == seen["head"]
+    assert card["fault"] is None and refactor_run.contract(Path(card["worktree"]), card) == ""
+    assert api.get(f"/api/refactors/specs/{sid}/removals").json()["files"] == []
 
 
 def test_a_type_comment_is_part_of_the_test_contract(surveyed):
