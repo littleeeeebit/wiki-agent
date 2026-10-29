@@ -142,7 +142,14 @@ test file's Python syntax tree or decoded JSON values identical (`equivalent`)
 or only adds lines. Exceptions are the removals and contract updates the spec
 declares. Deleting a file needs the file declared, not only its tests; when a
 survey named only the tests, the person reads the deleted file and declares it
-on the card (`[테스트 파일 삭제 승인]`, `refactor_run.approve_removal`). Research is in
+on the card (`[테스트 파일 삭제 승인]`, `refactor_run.approve_removal`). The card
+then goes on by itself (`specs.resumed`), while the checkout still belongs to
+that card. The done report `_check` kept is checked again with no model turn
+while the head and spec revision it was stamped with still stand, and its turn's
+record shows it neither cancelled nor failed; otherwise the worker is asked for
+one once. A stop taken after that record is written only keeps the turn from
+going on by itself; the approval is the person's later word, so the recorded
+answer still counts. Research is in
 [verified test cleanup](research/refactoring-test-cleanup.md). Suite resolves
 shared checkouts by their current branch owner, so a merged task cannot label
 another task's live run.
@@ -268,6 +275,15 @@ under the repository's common Git directory; a host lock serializes local
 final runs across projects. The flow
 and its commands are in [development](development.md) and the
 [reliability plan](plans/reliability/2-tests.md).
+
+While a round or final gate runs, its task row shows how long it has left
+(`specs.gating`, `main/gate_eta.py`). Each passing gate's run time is kept per
+repository and command in `raw/gate-times.jsonl`. The last ten runs are taken
+as log-normal, and conditioned on the time already run. For a single-command
+gate, pytest's `[ 80%]` line, read from the live output, gives a second
+estimate `t / p`; a chain of commands keeps its history alone. The two are
+combined by precision in log space, so the progress line counts for more as it
+nears its end.
 
 The final gate ends with the debt ratchet, `tool/debt.py check`, for every
 repository; one without `.wiki/ratchet.json` passes it. Files may not grow

@@ -37,7 +37,7 @@ from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
 
-from . import channels, pr_text, query, review_contract, runtime, sweep, work
+from . import channels, gate_eta, pr_text, query, review_contract, runtime, sweep, work
 from .pr_text import body_of
 from .decisions import extra_check, recommend, registered
 from .query import ROOT, _lock, current_repo, hold, project
@@ -76,6 +76,12 @@ REPORT_MISSING = ("Your last answer had neither a `done-report` nor a `choices` 
                   "a pending server gate is not a failed item. If the work is finished, end with the "
                   "`test-cleanup` block and the `done-report` block now. If something you own still fails, say "
                   "what blocks it and ask with a `choices` block.")
+# `resumed`: the server's line for a report it checks again, and its request when there is none.
+RESUMED = "사람의 승인으로 막힌 곳이 풀렸다 — 마지막 완료 보고를 다시 판정한다"
+REPORT_APPROVED = ("A person approved the change the server refused, and the specification now allows it. "
+                   "Your last answer had no `done-report`. If the work is finished, end with the `test-cleanup` "
+                   "block if tests changed and the `done-report` block now; otherwise say what blocks it and "
+                   "ask with a `choices` block.")
 
 # `path:line` or `path:line-line` as an answer cites it.
 LINE =re.compile(r":\d+(?:[-–]\d+)?$")
@@ -150,18 +156,51 @@ def publish(spec: dict) -> None:
 _gating: dict[tuple[str, str], dict] = {}
 
 
+def gate_times() -> Path:
+    """Passing gates' run times, one JSON line each, beside the specs (`gate_eta.past`)."""
+
+    return SPECS.parent / "gate-times.jsonl"
+
+
 @contextmanager
-def gating(repo: str | None, sid: str | None, kind: str):
+def gating(repo: str | None, sid: str | None, kind: str, cmd: str = ""):
+    """The task row's `gating` while a gate runs: its kind, start and `eta` (`gate_eta.estimate`).
+    The caller sets `ok` on what this yields; a passing run's time is kept for the next estimate."""
+
+    done: dict = {}
     if not (repo and sid):   # a bare check spec has no task row to show it on
-        yield
+        yield done
         return
-    _gating[(repo, sid)] = {"kind": kind, "since": time.time()}
+    history = gate_eta.past(gate_times(), repo, cmd) if cmd else []
+    row = _gating[(repo, sid)] = {"kind": kind, "since": time.time(), "eta": gate_eta.estimate(history, 0, None)}
+    shown = [time.monotonic()]
+    # One command's percentage is not a chain's: `[100%]` of the first pytest would read as the gate's end.
+    single = not re.search(r"&&|\|\||;|\n", cmd)
+
+    def seen(tail: bytes) -> None:
+        try:
+            p = gate_eta.progress(tail) if single else None
+            row["eta"] = gate_eta.estimate(history, time.time() - row["since"], p)
+            if row["eta"] and time.monotonic() - shown[0] >= 10 and (spec := load(repo, sid)):
+                shown[0] = time.monotonic()
+                publish(spec)
+        except Exception as exc:   # an estimate never fails the gate it describes
+            errorlog.record("gate-eta", exc, repo=repo, spec=sid)
+
+    token = runtime.gate_output.set(seen)
     try:
         if spec := load(repo, sid):
             publish(spec)
-        yield
+        yield done
     finally:
+        runtime.gate_output.reset(token)
         _gating.pop((repo, sid), None)
+        if done.get("ok") and cmd:
+            try:
+                gate_eta.keep(gate_times(), {"repo": repo, "kind": kind, "cmd": cmd, "ts": time.time(),
+                                             "seconds": round(time.time() - row["since"], 1)})
+            except OSError as exc:
+                errorlog.record("gate-eta", exc, repo=repo, spec=sid)
         if spec := load(repo, sid):
             publish(spec)
 
@@ -1162,8 +1201,9 @@ def rounded(repo: Path, path: Path, spec: dict, base: str, halt: threading.Event
         return refused
     if reused := verify.cached_round(spec, chosen, current, clean):
         return reused, last
-    with gating(spec.get("repo"), spec.get("id"), "round"):
+    with gating(spec.get("repo"), spec.get("id"), "round", " && ".join(chosen["commands"])) as gated:
         verdict = {**judge(path, chosen["commands"], halt, noted), "selection": chosen["selection"]}
+        gated["ok"] = verdict["ok"]
     return verdict, {"head": verdict["head"], **chosen, "ok": verdict["ok"], "finished_at": verdict["ts"]}
 
 
@@ -1444,6 +1484,54 @@ def again(path: Path, chat, text: str, spec: dict) -> bool:
     return True
 
 
+def resumed(spec: dict) -> bool:
+    """A working card whose refusal a person's approval just cleared: the
+    report `_check` kept is checked again, with no model turn, while the head
+    and revision it spoke for still stand (`report_at`); otherwise the worker
+    is asked for a report once. A turn already holding the worktree goes on as
+    it is; then False."""
+
+    if not spec.get("worktree"):
+        return False
+    path = Path(spec["worktree"])
+    try:
+        release = hold(work._busy, _lock, str(path), "", kind="turn")
+    except HTTPException:
+        return False
+    try:
+        # Read under the hold: a turn that ended in between moved the card, the head or the report.
+        # The shared checkout may have switched to another card's branch since the approval let it go.
+        mine = owner(path) or {}
+        spec = load(spec["repo"], spec["id"])
+        if not spec or (mine.get("repo"), mine.get("id")) != (spec["repo"], spec["id"]) or \
+                spec["state"] != "작업 중" or spec.get("fault") or spec.get("writing"):
+            release()
+            return False
+        at = spec.get("report_at") or {}
+        # That turn's record, written before its hold was let go, says whether its answer counts: one stopped
+        # before it was recorded does not. A stop after that only kept the turn from going on by itself
+        # (`loop.answered`, `dispatch`); this approval is the person's later word. No record is no report.
+        turn = next((r for r in work.recall(path) if at.get("turn") and r.get("turn") == at["turn"]
+                     and r.get("role") == "assistant"), {})
+        stands = bool(turn) and not turn.get("cancelled") and not turn.get("error") and \
+            (at.get("head"), at.get("rev")) == (sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), spec["rev"])
+        cell = spec.get("cell") or {}
+        chat = work.session(path, cell.get("model", ""), cell.get("effort", ""), cell.get("fast", False))
+        if spec.get("report") and stands:
+            # Only the report and its cleanup, as `_check` kept them: the answer's other blocks — a spec
+            # update above all — were applied when it came, and the report speaks for this head and revision.
+            replay = "```done-report\n" + json.dumps(spec["report"], ensure_ascii=False) + "\n```"
+            if spec.get("test_cleanup"):
+                replay += "\n\n```test-cleanup\n" + json.dumps(spec["test_cleanup"], ensure_ascii=False) + "\n```"
+            work.begin(path, chat, RESUMED, release, work.Run(chat, task=True), replay=replay)
+        else:
+            work.begin(path, chat, REPORT_APPROVED, release, work.Run(chat, task=True))
+    except BaseException:
+        release()
+        raise
+    return True
+
+
 def check(path: Path, run, final: str):
     """What an ended work turn means for the spec that owns the worktree.
 
@@ -1556,7 +1644,11 @@ def _check(path: Path, run, final: str):
     if "error" in report or not valid(report.get("value")):
         return failed(run, spec, f"완료 보고를 읽지 못했다 — {report.get('error') or '항목마다 item 과 pass 가 있어야 한다'}")
     items = report["value"]
-    spec = update(spec["repo"], spec["id"], report=items, report_asked=False, summary=None)   # text is per head
+    # `report_at`: the head, revision and turn the report speaks for, so `resumed` reuses it only while the
+    # first two stand and the turn's record ended neither stopped nor failed.
+    spec = update(spec["repo"], spec["id"], report=items, report_asked=False, summary=None,   # text is per head
+                  report_at={"head": sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), "rev": spec["rev"],
+                             "turn": getattr(run, "turn", None)})
     if len(items) < len(spec["done"]) or not all(i["pass"] for i in items):
         return failed(run, spec, "완료 보고에 통과하지 못했거나 빠진 항목이 있다. 판정하지 않는다")
     cleanup = next((b.get("value") for b in blocks(final)[1] if b["name"] == "test-cleanup"), None)

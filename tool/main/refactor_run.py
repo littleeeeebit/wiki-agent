@@ -705,9 +705,10 @@ def verified(repo: Path, path: Path, run, spec: dict) -> str:
 
     proof = None
     try:
-        with specs.gating(spec["repo"], spec["id"], "final"):
+        with specs.gating(spec["repo"], spec["id"], "final", local) as gated:
             proof = specs.verify.final(path, base, project=repo, local_command=local, halt=run.halt,
                                        judge=judging, local_only=local_only)
+            gated["ok"] = proof is not None
         reason = ""
     except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
         reason = str(exc)
