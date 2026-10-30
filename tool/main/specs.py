@@ -45,9 +45,7 @@ from .query import ROOT, _lock, current_repo, hold, project
 SPECS = ROOT / "raw" / "specs"
 SPEC_PROMPT = (ROOT / "tool/prompts/work-spec.md").read_text(encoding="utf-8")
 
-# Only a ceiling, as the final run's: a stuck gate is cut when its output stops growing (`runtime.IDLE_SECONDS`).
-# At 20 minutes it cut ai-coding-wiki's freeze baseline, a suite of 6 to 16 minutes plus the tests it froze.
-GATE_SECONDS = verify.FINAL_SECONDS
+GATE_SECONDS = verify.FINAL_SECONDS   # a ceiling only: a stuck gate is cut by silence (`runtime.IDLE_SECONDS`)
 TAIL = 80          # lines of the gate's output kept on the spec
 MAX_PLANS = 3      # materials for the candidates
 MAX_ROWS = 10
@@ -683,9 +681,8 @@ def sh(args: list[str], cwd: Path, timeout: float = 60) -> subprocess.CompletedP
 
 def status(path: Path, *flags: str) -> subprocess.CompletedProcess:
     """`git status --porcelain` without the untracked files the app writes
-    (`HARVESTED`): the decision records a session's start hook harvests
-    (`tool/sync.py`) wait for a person's batch commit, a cleared conversation's
-    memory stays local, and no gate, commit or switch of ours takes them. A failed
+    (`HARVESTED`: start-hook decision records, cleared conversations' memory);
+    no gate, commit or switch of ours takes them. A failed
     status reads as dirty, so every check on it fails closed. Untracked files
     are listed one by one: a folder Git folds into one line could hide
     anything beside the records. Nor the indexes the hook rebuilt, while they
