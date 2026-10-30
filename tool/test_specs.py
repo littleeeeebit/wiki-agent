@@ -416,13 +416,14 @@ sys.stdin.readline()
 print(json.dumps({"type": "result", "result": "saw it", "session_id": "cli-1"}), flush=True)
 sys.stdin.read()
 '''
-    commands, real_popen = [], subprocess.Popen
+    commands, prompts, real_popen = [], [], subprocess.Popen
 
     def spawn(command, **kwargs):
         # `subprocess` is one module: `git` goes through here too.
         if command[0] != "claude":
             return real_popen(command, **kwargs)
         commands.append(command)
+        prompts.append(Path(command[command.index("--append-system-prompt-file") + 1]).read_text(encoding="utf-8"))
         return real_popen([sys.executable, "-X", "utf8", "-c", fake], **kwargs)
 
     sid = made(repo, spec_block())[0]["id"]
@@ -432,7 +433,10 @@ sys.stdin.read()
             path = started(client(), sid)
     finally:
         work.close_all()
-    system = commands[0][commands[0].index("--append-system-prompt") + 1]
+    system = prompts[0]
+    # A spec-sized prompt on the command line overran Windows' limit (WinError 206).
+    assert not any("Task: carry out" in arg for arg in commands[0])
+    assert not Path(commands[0][commands[0].index("--append-system-prompt-file") + 1]).exists()
     assert system.startswith("Task: carry out the current spec") and "로그인 뒤 원래 페이지로 돌아간다" in system
     assert json.loads(system.split("```json\n")[1].split("```")[0])["done"][0] == PASS
     spec = specs.load("proj", sid)
