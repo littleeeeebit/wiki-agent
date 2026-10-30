@@ -104,29 +104,23 @@ export function RefactorSurvey({ repo, mode, generation, options, korean, busy, 
   }
   return <div className="mb-5 space-y-3">
     <div role="radiogroup" aria-label="리팩터링 모드" className="grid gap-2 md:grid-cols-3">
+      {/* The purpose on the card; what a mode changes and leaves alone in its tooltip. */}
       {MODES.map((m) => <button key={m.id} type="button" role="radio" aria-checked={m.id === mode}
         disabled={busy || working || m.id === mode} onClick={() => onMode(m.id)}
+        title={`바꾸는 것: ${m.changes.join(' · ')}\n하지 않는 것: ${m.not.join(' · ')}`}
         className={cn('min-w-0 rounded-md border p-3 text-left text-[12.5px] disabled:cursor-default',
           m.id === mode ? 'border-primary bg-primary/5' : 'border-border bg-card hover:bg-secondary')}>
         <span className="block font-heading text-[13.5px] font-semibold">{REFACTOR_MODE[m.id]}</span>
         <span className="mt-1 block">{m.purpose}</span>
-        <span className="mt-2 block text-faint">대표 변경</span>
-        <ul className="text-muted-foreground">{m.changes.map((c) => <li key={c}>· {c}</li>)}</ul>
-        <span className="mt-2 block text-faint">하지 않는 것</span>
-        <ul className="text-muted-foreground">{m.not.map((c) => <li key={c}>· {c}</li>)}</ul>
       </button>)}
     </div>
     <div className={box}>
       <div aria-label="리팩터링 모델" className="mb-3 space-y-2">
         {ROLES.map((r) => <div key={r.key} className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <div className="w-44 shrink-0">
-            <div className="font-heading text-[11px] font-semibold">{r.label} 모델</div>
-            <div className="text-[10.5px] text-faint">{r.note}</div>
-          </div>
+          <div className="w-16 shrink-0 font-heading text-[11px] font-semibold" title={r.note}>{r.label} 모델</div>
           <Toolbar value={roles[r.key]} options={options} busy={busy || working}
             onChange={(next) => setRoles((prev) => ({ ...prev, [r.key]: { model: next.model, effort: next.effort } }))} />
         </div>)}
-        <p className="text-[11.5px] text-muted-foreground">이 조사에서 나온 모든 명세가 이 모델로 조사·구현·리뷰된다. 시작 전 명세는 [모델 바꾸기]로 구현·리뷰 모델만 바꿀 수 있고, 시작한 명세는 끝까지 같은 모델로 간다.</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Btn tone="primary" disabled={busy || working || !runs || !!live || !!unpicked.length}
@@ -135,15 +129,9 @@ export function RefactorSurvey({ repo, mode, generation, options, korean, busy, 
           onClick={() => void act('/api/refactors', { request_id: crypto.randomUUID(), mode, roles })}>
           리팩터링 시작
         </Btn>
-        <span className="min-w-0 text-muted-foreground">
-          <span className="font-mono">{repo}</span> · {REFACTOR_MODE[mode]} · {unpicked.length
-            ? <span className="text-wait">{unpicked.join('·')} 모델을 고르지 않았다</span> : rolesText(roles)}
-        </span>
+        {!!unpicked.length && <span className="min-w-0 text-wait">{unpicked.join('·')} 모델을 고르지 않았다</span>}
       </div>
-      <p className="mt-2 text-muted-foreground">
-        조사는 코드를 읽기만 한다. 파이프라인별 설명과 실행할 명세가 나오고, 명세의 [시작]은 따로 누른다 — 작업트리·리뷰·검증을 거쳐 PR 까지만 가며 머지는 직접 한다.
-      </p>
-      {scope === 'hub' && <p className="mt-2 text-wait">wiki-agent 자체는 명세마다 별도 작업트리에서 실행한다. 머지와 앱 재시작은 직접 한다.</p>}
+      {scope === 'hub' && <p className="mt-2 text-wait">허브 저장소 · 머지와 앱 재시작은 직접 한다</p>}
       {fault && <p role="alert" className="mt-2 whitespace-pre-wrap break-words text-destructive">{fault}</p>}
       {!runs && !fault && <p role="status" className="mt-2 text-faint">조사 기록을 읽는 중…</p>}
       {live && live.mode !== mode && <p className="mt-2 text-wait">다른 모드의 조사 `{live.id}` 가 진행 중이다 — {REFACTOR_MODE[live.mode]}</p>}

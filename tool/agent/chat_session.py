@@ -35,7 +35,7 @@ from common import worktree_home
 from common.host import INSTRUCTIONS, environment, skill_config
 from common.process import SUSPENDED, contained, killed, resumed, terminated
 
-from .chat_events import Event, _claude_hook, _hook, _tool_brief, _user, merged
+from .chat_events import Event, _claude_hook, _hook, _patch_meta, _result_meta, _tool_brief, _tool_meta, _user, merged
 from .chat_local import claude_usage, cli_command, codex_usage, quota_windows
 from . import chat_busy, read_tools
 
@@ -1039,7 +1039,7 @@ class ChatSession:
                     if item["type"] == "fileChange":
                         paths = [str(c.get("path")) for c in item.get("changes") or [] if c.get("path")]
                         self._changes[str(item.get("id"))] = paths
-                        yield Event("tool", ("파일 변경 · " + ", ".join(paths))[:120])
+                        yield Event("tool", ("파일 변경 · " + ", ".join(paths))[:120], _patch_meta(item.get("changes")))
                     else:
                         yield Event("tool", str(item.get("command") or item.get("tool")
                                                 or item.get("query") or item["type"])[:120], {"tool": item["type"]})
@@ -1221,8 +1221,8 @@ class ChatSession:
                     yield Event("progress", progress)
                 for block in blocks:
                     if block.get("type") == "tool_use":
-                        # `tool` names it: whether a web search ran is read from here (`planning`).
-                        yield Event("tool", _tool_brief(block), {"tool": str(block.get("name") or "")})
+                        # `tool` names it: whether a web search ran is read from here (`planning`). A file edit carries its `diff`.
+                        yield Event("tool", _tool_brief(block), _tool_meta(block))
 
             elif kind == "system" and ev.get("subtype") == "hook_response":
                 event = _hook(str(ev.get("hook_event") or ""), *_claude_hook(ev))
@@ -1245,7 +1245,7 @@ class ChatSession:
                         if self.results is not None:
                             self.results.append(str(content))
                         yield Event("tool", str(content)[:4000],
-                                    {"tool": "tool_result", "tool_use_id": block.get("tool_use_id")})
+                                    {"tool": "tool_result", "tool_use_id": block.get("tool_use_id"), **_result_meta(ev)})
 
             elif kind == "result":
                 if not ev.get("is_error"):

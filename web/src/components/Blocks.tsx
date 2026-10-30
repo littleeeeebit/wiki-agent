@@ -59,7 +59,7 @@ function Candidates({ list, korean, busy, onSay }: { list: { title: string; why?
   const shown = useOverlay(list.flatMap((c) => [c.title, c.why ?? '']), korean)
   return (
     <div className={box}>
-      <div className="mb-2 font-heading text-[11px] text-faint">후보 — 하나를 고르면 되묻는다</div>
+      <div className="mb-2 font-heading text-[11px] text-faint">후보</div>
       <div className="space-y-1.5">
         {list.map((c, i) => (
           <button key={i} type="button" disabled={busy} onClick={() => onSay(c.title)}
@@ -137,7 +137,7 @@ function Started({ spec, korean, busy, onSpecs, onStart }: { spec: Spec } & Pick
   return (
     <div className={box}>
       <Head spec={spec} />
-      <SpecDetails spec={spec} korean={korean} />
+      {!editing && <SpecDetails spec={spec} korean={korean} />}
       {spec.refactor?.survey && <RefactorCheck spec={spec} />}
       {spec.planning && <PlanStatus spec={spec} korean={korean} onChanged={onSpecs} />}
       {!busy && !/^(머지됨|머지 대기|리뷰 대기|리뷰 R\d+|고치는 중 R\d+)$/.test(spec.state) &&
@@ -207,8 +207,7 @@ export function SpecForm({ spec, specs = [], busy, onSpecs, onStart, onRenamed, 
   const [fault, setFault] = useState('')
   const [editing, setEditing] = useState(spec.state !== '정리됨')
 
-  const edited = goal !== spec.goal || out !== spec.out.join('\n') || done !== spec.done.slice(1).join('\n')
-    || slug !== spec.id
+  const edited = goal !== spec.goal || out !== spec.out.join('\n') || done !== spec.done.slice(1).join('\n') || slug !== spec.id
 
   async function act(what: string, fn: () => Promise<unknown>) {
     setFault('')
@@ -224,12 +223,13 @@ export function SpecForm({ spec, specs = [], busy, onSpecs, onStart, onRenamed, 
   }
 
   const field = 'w-full rounded-md border border-border bg-background px-2 py-1 text-[12.5px]'
+  const own = spec.state === '정리됨'   // else a started card's [명세 수정] opened it: no second head, toggle or copy
   return (
     <div className={box}>
-      <Head spec={spec} />
-      <SpecDetails spec={spec} korean={korean} />
+      {own && <Head spec={spec} />}
+      {!editing && <SpecDetails spec={spec} korean={korean} />}
       {surveyed && <SurveyDetail spec={spec} korean={korean} />}
-      {!surveyed && <Btn className="mt-2" onClick={() => setEditing((open) => !open)}>{editing ? '원문 편집 닫기' : '원문 수정'}</Btn>}
+      {own && !surveyed && <Btn className="mt-2" onClick={() => setEditing((open) => !open)}>{editing ? '편집 닫기' : '명세 수정'}</Btn>}
       {editing && <div className="mt-2 space-y-2 text-[12.5px]">
         <label className="block">
           <span className="text-faint">이름</span>

@@ -8,6 +8,9 @@ import * as api from '@/lib/api'
 import { PROFILE_LABEL, type LocalVerification, type Spec, type VerificationConfig, type LoopSettings, type Options } from '@/lib/api'
 import { LOOPING } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
+import { DiffLines } from '@/components/LiveChanges'
+import { useLoaded } from '@/lib/loaded'
+import { GateOr } from '@/components/TaskRail'
 
 /** The review tab: the loop of the selected task's spec — its rounds, why it
  *  stopped, and the buttons that act on it. Which spec and PR it is, the
@@ -190,8 +193,8 @@ function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek, choice }: Pr
           )}
           <div>
             최종 검증 · {final?.verification?.backend === 'ci' ? 'GitHub CI · ' : final?.verification?.backend === 'local' ? '로컬 · ' : ''}
-            {running ? '도는 중 — 끝나기 전에는 머지하지 않는다'
-              : !final ? '아직 — 리뷰가 허용한 커밋에서 돈다'
+            {running ? <GateOr gate={spec.gating} className="text-primary">도는 중</GateOr>
+              : !final ? '대기'
                 : !final.ok ? <span className={final.pending ? 'text-muted-foreground' : 'text-destructive'}>{final.pending ? '준비 대기' : '실패'} — {final.reason}</span>
                   : spec.unproven ? `지난 통과는 이제 안 선다 — ${spec.unproven}`
                     : <span className="text-primary">통과</span>}
@@ -230,9 +233,7 @@ function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek, choice }: Pr
       )}
 
       {spec.state === '머지 대기' && (
-        <p className="mt-3 text-muted-foreground">
-          GitHub 이 들고 있다 — {spec.queued || '대기열'}. 실제로 머지되면 정리하고, 대기에서 빠지면 멈춘다.
-        </p>
+        <p className="mt-3 text-muted-foreground">GitHub 머지 대기 · {spec.queued || '대기열'}</p>
       )}
 
       {spec.cleanup && spec.cleanup.length > 0 && (
@@ -285,7 +286,7 @@ function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek, choice }: Pr
       {file && (
         <div className="mt-3">
           <div className="flex items-center gap-2 font-mono text-[10.5px] text-faint">
-            <span className="truncate">{file.title}</span>
+            <span className="min-w-0 break-all">{file.title}</span>
             <button type="button" className="ml-auto" onClick={() => setFile(null)}>닫기</button>
           </div>
           <pre className="mt-1 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-secondary p-2 text-[12px]">{shownFile}</pre>
@@ -326,38 +327,26 @@ function MergeProgress({ spec, pending }: { spec: Spec; pending: boolean }) {
 type FrozenChange = { head: string; from: string; files: string[]; diff: string; digest: string }
 
 function Refreeze({ spec, onDone }: { spec: Spec; onDone: () => void }) {
-  const [change, setChange] = useState<FrozenChange | null>(null)
   const url = `/api/refactors/specs/${spec.id}`
-  const [working, setWorking] = useState('')
-  const [fault, setFault] = useState('')
-  async function run(what: string, fn: () => Promise<unknown>) {
-    setFault('')
-    setWorking(what)
-    try { await fn() } catch (err) { setFault(String(err instanceof Error ? err.message : err)) } finally { setWorking('') }
-  }
+  // Read again whenever the stop changes: a fix the worker made is what the next read shows.
+  // A refused re-freeze reads again at once: the read puts back what the interrupted one left.
+  const [change, fault, setFault, reload] = useLoaded<FrozenChange>(`${url}/frozen`, spec.repo, '고정 테스트 변경', spec.stopped?.detail)
+  const [working, setWorking] = useState(false)
+  if (!change) return fault ? <div className="space-y-1.5">
+    <p role="alert" className="whitespace-pre-wrap text-[12.5px] text-destructive">{fault}</p><Btn onClick={() => { setFault(''); reload() }}>다시 읽기</Btn></div> : null
+  if (!change.files.length) return <p className="text-faint">고정한 뒤 바뀐 고정 테스트가 없다.</p>
   return <div className="space-y-1.5">
-    {!change ? <Btn disabled={!!working} onClick={() => run('look', async () =>
-      setChange(await api.get(`${url}/frozen`, spec.repo).then((r) => api.json<FrozenChange>(r, '고정 테스트 변경'))))}>
-      {working === 'look' ? '…' : '고정 테스트 변경 보기'}
-    </Btn> : !change.files.length ? <p className="text-faint">고정한 뒤 바뀐 고정 테스트가 없다.</p> : <>
-      <p className="text-muted-foreground">
-        고정 <span className="font-mono">{change.from.slice(0, 7)}</span> 뒤에 바뀐 고정 테스트 {change.files.length}개.
-        검사 문장이 빠지거나 약해지지 않았는지 읽고 승인하면, 바뀐 테스트를 바꾸기 전 코드에서 돌려 보고 통과할 때
-        <span className="font-mono"> {change.head.slice(0, 7)}</span> 에 다시 고정한다.
-      </p>
-      <pre aria-label="고정 테스트 변경" className="max-h-80 overflow-auto rounded-md border border-border bg-secondary p-2 font-mono text-[11.5px]">
-        {change.diff}
-      </pre>
-      <div className="flex gap-1.5">
-        <Btn tone="primary" disabled={!!working} onClick={() => run('refreeze', async () => {
-          await api.post(`${url}/refreeze`, { head: change.head, digest: change.digest }, 'POST', spec.repo)
-            .then((r) => api.json<Spec>(r, '다시 고정'))
-          setChange(null)
-          onDone()
-        })}>{working === 'refreeze' ? '바꾸기 전 코드에서 도는 중…' : '승인하고 다시 고정'}</Btn>
-        <Btn tone="ghost" disabled={!!working} onClick={() => setChange(null)}>닫기</Btn>
-      </div>
-    </>}
+    <p className="text-muted-foreground">바뀐 고정 테스트 {change.files.length}개 · <span className="font-mono">{change.from.slice(0, 7)}</span>
+      {' → '}<span className="font-mono">{change.head.slice(0, 7)}</span></p>
+    <DiffLines lines={change.diff.split('\n')} label="고정 테스트 변경" className="max-h-80 rounded-md border border-border bg-secondary p-2" />
+    <Btn tone="primary" disabled={working} title="바꾸기 전 코드에서 돌려 통과하면 이 커밋에 다시 고정한다" onClick={async () => {
+      setFault('')
+      setWorking(true)
+      try {
+        await api.post(`${url}/refreeze`, { head: change.head, digest: change.digest }, 'POST', spec.repo).then((r) => api.json<Spec>(r, '다시 고정'))
+        onDone()
+      } catch (err) { setFault(String(err instanceof Error ? err.message : err)); reload() } finally { setWorking(false) }
+    }}>{working ? '바꾸기 전 코드에서 도는 중…' : '고정 테스트 변경 승인'}</Btn>
     {fault && <p role="alert" className="whitespace-pre-wrap text-[12.5px] text-destructive">{fault}</p>}
   </div>
 }
@@ -473,8 +462,6 @@ function VerificationPanel({ spec }: { spec: Spec }) {
   return <section aria-label={cloud ? '클라우드 구현의 로컬 검증' : '등록 흐름의 로컬 검증'} className="mt-3 rounded-md border border-border p-3">
     <div className="font-heading text-[11px] font-semibold">{cloud ? 'Claude Code Cloud → 로컬 검증' : '등록 흐름 → 로컬 검증'}</div>
     <p className="mt-1">{record ? VERIFICATION_STATE[record.state] : '로컬 검증 대기'}</p>
-    <p className="mt-1 text-faint">{cloud ? '클라우드에서 PR 인계·주요 흐름 명세 준비 → 이 기계의 테스트 환경 설정 → 로컬 실행 검증 → 독립 리뷰. 실패하면 클라우드에서 고친 뒤 재개한다.'
-      : '승인한 테스트 환경에서 필요한 등록 흐름을 수집한 뒤 독립 리뷰에 전달한다. 실패하면 해당 작업의 구현 담당 경로에서 수정한다.'}</p>
     {record?.reason && <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p>}
     <div className="mt-2 flex flex-wrap gap-2">
       {cloud && <Btn disabled={working} onClick={async () => {
@@ -488,7 +475,6 @@ function VerificationPanel({ spec }: { spec: Spec }) {
       <textarea readOnly value={handoff} rows={7} onFocus={(e) => e.target.select()}
         className="mt-1 w-full rounded-md border border-border bg-background p-2 font-mono text-[12px]" />
     </label>}
-    <p className="mt-1 text-faint">{cloud ? '.env 는 로컬에 유지한다. GitHub 의 기존 보호 규칙에 필수 검사를 추가한다.' : '.env 와 테스트 데이터는 로컬에 유지한다.'}</p>
     {config?.problem && <p className="mt-2 text-muted-foreground">검증 준비 필요 — {config.problem}</p>}
     {editing && config?.manifest && <form className="mt-3 space-y-2" onSubmit={(e) => { e.preventDefault(); void save() }}>
       {Object.entries(labels).map(([key, label]) => <label key={key} className="block">

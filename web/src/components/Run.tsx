@@ -165,9 +165,7 @@ function Evidence({ e, onPeek }: { e: RunEvidence; onPeek: (path: string, line: 
       </div>
       {e.now && e.now !== 'same' && (
         <p role="status" className="mt-0.5 text-muted-foreground">
-          {e.now === 'changed' ? '파일이 그 뒤 바뀌었다 — 누르면 지금 파일이 열린다. 이 실행이 본 판은 ‘판단에 쓴 영어’ 스냅숏뿐이다'
-            : e.now === 'missing' ? '파일이 지워졌다 — 이 실행이 본 판은 ‘판단에 쓴 영어’ 스냅숏뿐이다'
-              : '파일을 읽지 못한다 — 이 실행이 본 판은 ‘판단에 쓴 영어’ 스냅숏뿐이다'}
+          {e.now === 'changed' ? '그 뒤 바뀜 · 열면 지금 파일' : e.now === 'missing' ? '지워짐' : '읽지 못함'} · 본 판은 ‘판단에 쓴 영어’뿐
         </p>
       )}
       {english && <p className="mt-1 whitespace-pre-wrap font-mono text-[12px] text-muted-foreground">{e.text_en}</p>}

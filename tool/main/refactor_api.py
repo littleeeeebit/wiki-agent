@@ -270,7 +270,7 @@ def frozen_card(repo: Path, sid: str) -> dict:
 
 @router.get("/api/refactors/specs/{sid}/frozen")
 def frozen_of(sid: str) -> dict:
-    """`[고정 테스트 변경 보기]`: what the frozen characterization tests became since their freeze. It first
+    """The refreeze card's read: what the frozen characterization tests became since their freeze. It first
     puts back what an interrupted re-freeze left, so the worktree is held for it."""
 
     repo = current_repo()
@@ -284,7 +284,7 @@ def frozen_of(sid: str) -> dict:
 
 @router.post("/api/refactors/specs/{sid}/refreeze")
 def refreeze(sid: str, body: Refreeze) -> dict:
-    """`[승인하고 다시 고정]`: the diff the person read, run on the code before the refactoring, frozen at `head`.
+    """`[고정 테스트 변경 승인]`: the diff the person read, run on the code before the refactoring, frozen at `head`.
     The card's worktree is held meanwhile, so no turn moves the head under it."""
 
     repo = current_repo()

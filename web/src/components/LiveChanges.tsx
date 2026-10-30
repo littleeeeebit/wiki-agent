@@ -43,6 +43,16 @@ export function LiveChanges({ path, busy, turn }: {
   )
 }
 
+/** Diff lines coloured by their mark. A file's `--- a/…` and `+++ b/…` pair is its header, not a change. */
+export function DiffLines({ lines, label, className }: { lines: string[]; label: string; className?: string }) {
+  const header = (i: number) => (lines[i].startsWith('--- ') && lines[i + 1]?.startsWith('+++ '))
+    || (lines[i].startsWith('+++ ') && lines[i - 1]?.startsWith('--- '))
+  return <pre tabIndex={0} aria-label={label} className={cn('overflow-auto font-mono text-[12px] leading-relaxed', className)}>
+    {lines.map((line, i) => <div key={i} className={cn('min-w-max', header(i) || line.startsWith('@@') ? 'text-primary'
+      : line.startsWith('+') ? 'bg-add/10 text-add' : line.startsWith('-') ? 'bg-del/10 text-del' : 'text-muted-foreground')}>{line || ' '}</div>)}
+  </pre>
+}
+
 function FileChange({ file, path, busy, turn }: { file: api.ChangedFile; path: string; busy: boolean; turn?: string }) {
   const [open, setOpen] = useState(false)
   const [data, setData] = useState<api.Changes | null>(null)
@@ -65,7 +75,6 @@ function FileChange({ file, path, busy, turn }: { file: api.ChangedFile; path: s
     return () => { generation = false; clearTimeout(timer) }
   }, [open, path, file.path, busy, turn])
   const lines = data?.diff.split('\n') ?? []
-  const hunkStart = lines.findIndex((line) => line.startsWith('@@'))
   return <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="border-b border-border last:border-b-0">
     <summary className="cursor-pointer px-4 py-2 text-[12.5px]">
       <span className="break-all font-mono text-[12px]">{file.path}</span>
@@ -75,10 +84,7 @@ function FileChange({ file, path, busy, turn }: { file: api.ChangedFile; path: s
     {open && <>
       {error && <p role="status" className="px-4 py-2 text-[12.5px] text-destructive">{error}</p>}
       {!error && !data && <p className="px-4 py-2 text-[12.5px] text-muted-foreground">diff 읽는 중…</p>}
-      {data?.diff && <pre tabIndex={0} aria-label={`${file.path} diff`} className="max-h-[25dvh] overflow-auto border-t border-border p-3 font-mono text-[12px] leading-relaxed">
-        {lines.map((line, i) => <div key={i} className={cn('min-w-max', hunkStart >= 0 && i > hunkStart && line.startsWith('+') ? 'bg-add/10 text-add'
-          : hunkStart >= 0 && i > hunkStart && line.startsWith('-') ? 'bg-del/10 text-del' : line.startsWith('@@') ? 'text-primary' : 'text-muted-foreground')}>{line || ' '}</div>)}
-      </pre>}
+      {data?.diff && <DiffLines lines={lines} label={`${file.path} diff`} className="max-h-[25dvh] border-t border-border p-3" />}
       {data && !data.diff && !error && <p className="px-4 py-2 text-[12.5px] text-muted-foreground">{file.binary ? '바이너리 파일은 텍스트 diff가 없다' : '표시할 텍스트 변경이 없다'}</p>}
       {data?.truncated && <p className="px-4 py-2 text-[12.5px] text-muted-foreground">이 파일의 diff가 커서 일부만 표시한다. 전체 내용은 Git에서 확인할 수 있다.</p>}
       {data?.omitted.includes(file.path) && <p className="px-4 py-2 text-[12.5px] text-muted-foreground">큰 파일 또는 심볼릭 링크의 내용은 생략한다</p>}

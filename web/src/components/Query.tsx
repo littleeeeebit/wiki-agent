@@ -436,7 +436,6 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
       {legacy.length > 0 && (
         <details key={active} className="max-h-64 overflow-auto border-b border-border px-5 py-2 text-xs">
           <summary className="cursor-pointer">프로젝트 미분류 이전 기록 ({legacy.length}개)</summary>
-          <p className="my-2 text-muted-foreground">예전 기록에는 프로젝트가 저장되지 않았다. 지금 프로젝트의 기록으로 치지 않는다.</p>
           {legacy.map((row, i) => <pre key={i} className="my-3 whitespace-pre-wrap">{row.role === 'user' ? '나' : '답'}: {row.text}</pre>)}
         </details>
       )}
@@ -475,11 +474,9 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
                 onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} />
             ) : undefined}
             empty={active === 'next' ? (
-              <div className="space-y-2 text-[13.5px] text-faint">
-                <p>계획의 남은 행, 열린 PR, 최근 결정, 경고를 모아 다음 작업 후보를 낸다. 직접 물어도 된다.</p>
-                <Btn tone="primary" disabled={busy} onClick={() => void send('', true)}>후보 내기</Btn>
-              </div>
-            ) : active === 'refactor' ? <p className="text-[13.5px] text-faint">조사 결과를 묻거나, 명세를 같은 명세로 다듬거나 나누도록 대화로 요청한다.</p> : undefined}
+              <Btn tone="primary" disabled={busy} onClick={() => void send('', true)}
+                title="계획의 남은 행, 열린 PR, 최근 결정, 경고를 모아 다음 작업 후보를 낸다">후보 내기</Btn>
+            ) : active === 'refactor' ? <span /> : undefined}
           />
           <Composer busy={busy} onSend={send} seed={typed} />
         </div>

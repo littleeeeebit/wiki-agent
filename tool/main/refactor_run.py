@@ -373,7 +373,7 @@ def restore(spec: dict, path: Path, record: dict) -> None:
         problems.append(f"작업트리가 `{record['branch']}` 가 아니라 `{current}` 에 있다")
     if problems:
         raise HTTPException(500, "다시 고정이 작업트리를 다 되돌리지 못했다 — " + " · ".join(problems)
-                            + " — 고친 뒤 [고정 테스트 변경 보기] 를 다시 누르면 확인하고 이어 간다")
+                            + " — 고친 뒤 [고정 테스트 변경 승인] 을 다시 누르면 확인하고 이어 간다")
     specs.update(spec["repo"], spec["id"], refreezing=None)
 
 
