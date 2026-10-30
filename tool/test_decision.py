@@ -81,8 +81,16 @@ def test_the_file_key_is_used_and_never_enters_the_environment(tmp_path, monkeyp
     assert status == {"mode": "shadow", "model": "jev-1.13.0", "key": True, "key_source": "file",
                       "health": "configured", "problem": "", "file": "jev.env", "mode_source": "default",
                       "disabled_sources": [], "limits": {"seconds": 15.0, "calls": 6, "candidates": 40},
-                      "active_projects": [], "canary": False}
+                      "active_projects": [], "canary": False, "file_mode": "shadow"}
     assert "secret" not in json.dumps(status) + repr(cfg)
+
+
+def test_the_screen_learns_the_file_mode_under_a_saved_one_and_saving_none_returns_to_it(tmp_path, monkeypatch):
+    env(tmp_path, monkeypatch, "TYPESAFE_API_KEY=k\nWIKI_JEV_MODE=off\n")
+    saved = decision.save({"mode": "active"})
+    assert (saved.mode, saved.mode_source, saved.file_mode) == ("active", "app", "off")
+    back = decision.save({"mode": None})
+    assert (back.mode, back.mode_source, back.file_mode) == ("off", "file", "off")
 
 
 def test_an_empty_file_key_does_not_fall_through_to_the_environment(tmp_path, monkeypatch):

@@ -385,8 +385,7 @@ export type Jev = {
   mode: JevMode
   mode_source: 'app' | 'file' | 'environment' | 'legacy' | 'default'
   model: string
-  key: boolean
-  key_source: string
+  key: boolean; key_source: string
   health: 'disabled' | 'configured' | 'unavailable'
   problem: string | null
   file: string
@@ -396,6 +395,7 @@ export type Jev = {
   active_projects: string[]
   /** Active where the mode came from, shadow here: this checkout is not among `active_projects`. */
   canary: boolean
+  file_mode: JevMode   // without the app's saved mode; saving this one clears that
 }
 export type Probe = { health: 'reachable' | 'auth_failed' | 'unavailable'; category: string; expected: boolean | null;
   elapsed_ms?: number | null }

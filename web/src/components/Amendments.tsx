@@ -11,7 +11,7 @@ type Amendment = { head: string; digest: string; files: { file: string; names: s
 
 export function Amendments({ spec, onDone }: { spec: Spec; onDone: () => void }) {
   const url = `/api/refactors/specs/${spec.id}/amendments`
-  const [seen, fault, setFault] = useLoaded<Amendment>(url, spec.repo, '바뀐 테스트 파일', spec.fault)
+  const [seen, fault, setFault, reload] = useLoaded<Amendment>(url, spec.repo, '바뀐 테스트 파일', spec.fault)
   const [working, setWorking] = useState(false)
   const ready = seen?.files.some((f) => f.names.length > 0 || f.blob)
   return <div className="mt-2 space-y-1.5 text-[12.5px]">
@@ -29,8 +29,9 @@ export function Amendments({ spec, onDone }: { spec: Spec; onDone: () => void })
       try {
         await api.post(url, { head: seen!.head, digest: seen!.digest }, 'POST', spec.repo).then((r) => api.json<Spec>(r, '계약 변경 승인'))
         onDone()
-      } catch (err) { setFault(String(err instanceof Error ? err.message : err)) } finally { setWorking(false) }
+      } catch (err) { setFault(String(err instanceof Error ? err.message : err)); reload() } finally { setWorking(false) }
     }}>{working ? '…' : '테스트 계약 변경 승인'}</Btn>}
     {fault && <p role="alert" className="whitespace-pre-wrap text-destructive">{fault}</p>}
+    {fault && !seen && <Btn onClick={() => { setFault(''); reload() }}>다시 읽기</Btn>}
   </div>
 }

@@ -136,13 +136,12 @@ def _snippet(old: str, new: str) -> list[str]:
 
 
 def _tool_meta(block: dict) -> dict:
-    """A tool call's name and, for a file edit, the lines it takes out and puts in, as the screen colours them."""
+    """A tool call's name and, for an edit, the lines it takes out and puts in, as the screen colours them.
+    A `Write` may replace a file whose old lines only its result knows: `_result_meta` carries that one."""
 
     name = str(block.get("name") or "")
     args = block.get("input") or {}
-    if name == "Write" and isinstance(args.get("content"), str):
-        lines = ["+" + line for line in args["content"].splitlines()]
-    elif name == "Edit" and isinstance(args.get("old_string"), str) and isinstance(args.get("new_string"), str):
+    if name == "Edit" and isinstance(args.get("old_string"), str) and isinstance(args.get("new_string"), str):
         lines = _snippet(args["old_string"], args["new_string"])
     elif name == "MultiEdit" and isinstance(args.get("edits"), list):
         lines = [line for e in args["edits"] if isinstance(e, dict)
@@ -150,6 +149,20 @@ def _tool_meta(block: dict) -> dict:
     else:
         return {"tool": name}
     return {"tool": name, "diff": _clipped(lines)} if lines else {"tool": name}
+
+
+def _result_meta(ev: dict) -> dict:
+    """A `Write`'s result (`tool_use_result`): a new file as its content, a replaced one as Claude's own patch."""
+
+    done = ev.get("tool_use_result")
+    if not isinstance(done, dict) or done.get("type") not in ("create", "update"):
+        return {}
+    if done["type"] == "create":
+        lines = ["+" + line for line in str(done.get("content") or "").splitlines()]
+    else:
+        hunks = done.get("structuredPatch") if isinstance(done.get("structuredPatch"), list) else []
+        lines = [line for h in hunks if isinstance(h, dict) for line in ["⋯", *map(str, h.get("lines") or [])]][1:]
+    return {"diff": _clipped(lines)} if lines else {}
 
 
 def _patch_meta(changes: object) -> dict:

@@ -332,7 +332,8 @@ function Refreeze({ spec, onDone }: { spec: Spec; onDone: () => void }) {
   // A refused re-freeze reads again at once: the read puts back what the interrupted one left.
   const [change, fault, setFault, reload] = useLoaded<FrozenChange>(`${url}/frozen`, spec.repo, '고정 테스트 변경', spec.stopped?.detail)
   const [working, setWorking] = useState(false)
-  if (!change) return fault ? <p role="alert" className="whitespace-pre-wrap text-[12.5px] text-destructive">{fault}</p> : null
+  if (!change) return fault ? <div className="space-y-1.5">
+    <p role="alert" className="whitespace-pre-wrap text-[12.5px] text-destructive">{fault}</p><Btn onClick={() => { setFault(''); reload() }}>다시 읽기</Btn></div> : null
   if (!change.files.length) return <p className="text-faint">고정한 뒤 바뀐 고정 테스트가 없다.</p>
   return <div className="space-y-1.5">
     <p className="text-muted-foreground">바뀐 고정 테스트 {change.files.length}개 · <span className="font-mono">{change.from.slice(0, 7)}</span>

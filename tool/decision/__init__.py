@@ -100,6 +100,7 @@ class Config:
     limits: dict = field(default_factory=lambda: dict(QUESTION))
     active_projects: tuple[str, ...] = ()   # empty: active mode is active everywhere
     canary: bool = False   # active where it came from, shadow here: this checkout is not in `active_projects`
+    file_mode: str = ""   # the mode without the app's saved one: choosing it on the screen clears that one
     # The host model the run answers with (`ChatSession`'s `model`, `codex:` for Codex); what Jev leaves
     # uncertain goes to it (`knowledge.host_decides`). Not a setting: whoever knows the run's model sets it
     # with `dataclasses.replace`; empty is the default Claude backend.
@@ -115,7 +116,8 @@ class Config:
                 "key_source": self.key_source, "health": health, "problem": self.problem,
                 "file": env_file().name, "mode_source": self.mode_source,
                 "disabled_sources": list(self.disabled), "limits": dict(self.limits),
-                "active_projects": list(self.active_projects), "canary": self.canary}
+                "active_projects": list(self.active_projects), "canary": self.canary,
+                "file_mode": self.file_mode}
 
 
 def checked_settings(data: object) -> dict:
@@ -204,6 +206,7 @@ def config(project: str | Path | None = None) -> Config:
         saved = checked_settings(json.loads(path.read_text(encoding="utf-8")) if path.exists() else {})
     except (OSError, ValueError):
         return Config("off", model, key_source, "unreadable_settings", key, "app")
+    file_mode = mode
     if saved["mode"] and not problem:
         mode, mode_source = saved["mode"], "app"
     # `mode_source` still says where active came from: a form seeded from it keeps the saved mode.
@@ -211,7 +214,7 @@ def config(project: str | Path | None = None) -> Config:
         project is None or canonical(project) not in saved["active_projects"])
     return Config("shadow" if canary else mode, model, key_source, problem, key, mode_source,
                   tuple(saved["disabled_sources"]), {**QUESTION, **saved["limits"]}, tuple(saved["active_projects"]),
-                  canary)
+                  canary, file_mode=file_mode)
 
 
 def noul(text: str) -> dict:

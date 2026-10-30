@@ -10,7 +10,7 @@ type Removal = { head: string; digest: string; files: { file: string; named: str
 
 export function Removals({ spec, onDone }: { spec: Spec; onDone: () => void }) {
   const url = `/api/refactors/specs/${spec.id}/removals`
-  const [seen, fault, setFault] = useLoaded<Removal>(url, spec.repo, '삭제한 테스트 파일', spec.fault)
+  const [seen, fault, setFault, reload] = useLoaded<Removal>(url, spec.repo, '삭제한 테스트 파일', spec.fault)
   const [working, setWorking] = useState(false)
   return <div className="mt-2 space-y-1.5 text-[12.5px]">
     {seen && !seen.files.length && <p className="text-faint">승인할 테스트 파일 삭제가 없다.</p>}
@@ -24,8 +24,9 @@ export function Removals({ spec, onDone }: { spec: Spec; onDone: () => void }) {
       try {
         await api.post(url, { head: seen.head, digest: seen.digest }, 'POST', spec.repo).then((r) => api.json<Spec>(r, '삭제 승인'))
         onDone()
-      } catch (err) { setFault(String(err instanceof Error ? err.message : err)) } finally { setWorking(false) }
+      } catch (err) { setFault(String(err instanceof Error ? err.message : err)); reload() } finally { setWorking(false) }
     }}>{working ? '…' : '테스트 파일 삭제 승인'}</Btn>}
     {fault && <p role="alert" className="whitespace-pre-wrap text-destructive">{fault}</p>}
+    {fault && !seen && <Btn onClick={() => { setFault(''); reload() }}>다시 읽기</Btn>}
   </div>
 }

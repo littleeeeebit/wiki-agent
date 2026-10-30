@@ -268,12 +268,21 @@ def test_a_file_edit_carries_the_lines_it_takes_out_and_puts_in():
 
     edit = chat_events._tool_meta({"name": "Edit", "input": {"file_path": "a.py", "old_string": "a\nb\nc", "new_string": "a\nB\nc"}})
     assert edit == {"tool": "Edit", "diff": " a\n-b\n+B\n c"}
-    assert chat_events._tool_meta({"name": "Write", "input": {"file_path": "n.py", "content": "x\ny\n"}})["diff"] == "+x\n+y"
+    # A Write's old lines are on disk until it runs: its result carries the diff, as Claude's CLI wrote it.
+    assert chat_events._tool_meta({"name": "Write", "input": {"file_path": "n.py", "content": "x\n"}}) == {"tool": "Write"}
+    made = {"tool_use_result": {"type": "create", "filePath": "n.py", "content": "x\ny\n", "structuredPatch": []}}
+    assert chat_events._result_meta(made) == {"diff": "+x\n+y"}
+    replaced = {"tool_use_result": {"type": "update", "filePath": "a.py", "content": "new_code = 2\nkeep = 0\n",
+                                    "structuredPatch": [{"oldStart": 1, "lines": ["-old_code = 1", "+new_code = 2", " keep = 0"]},
+                                                        {"oldStart": 9, "lines": ["-z", "+Z"]}]}}
+    assert chat_events._result_meta(replaced) == {"diff": "-old_code = 1\n+new_code = 2\n keep = 0\n⋯\n-z\n+Z"}
+    assert chat_events._result_meta({"tool_use_result": {"type": "text", "file": {}}}) == {}
+    assert chat_events._result_meta({"tool_use_result": "Error"}) == {}
     multi = chat_events._tool_meta({"name": "MultiEdit", "input": {"edits": [
         {"old_string": "p", "new_string": "q"}, {"old_string": "r", "new_string": "s"}]}})["diff"]
     assert multi == "-p\n+q\n⋯\n-r\n+s"
     assert chat_events._tool_meta({"name": "Read", "input": {"file_path": "a.py"}}) == {"tool": "Read"}
-    long = chat_events._tool_meta({"name": "Write", "input": {"content": "\n".join(map(str, range(250)))}})["diff"]
+    long = chat_events._result_meta({"tool_use_result": {"type": "create", "content": "\n".join(map(str, range(250)))}})["diff"]
     assert long.count("\n") == chat_events.DIFF_LINES and long.endswith("50줄 더 — 코드 변경 현황에서 전체를 본다")
 
     patch = chat_events._patch_meta([

@@ -272,15 +272,16 @@ function JevPart({ onEdited }: { onEdited: Dispatch<SetStateAction<(() => Promis
     }
   }
 
-  const edited = !!jev && !!limits && (mode !== (saved(jev) ?? jev.mode)
+  // The file's own mode is sent as none: saving it clears the app's, and the mode follows the file again.
+  const stored = jev && mode === jev.file_mode ? null : mode
+  const edited = !!jev && !!limits && (stored !== saved(jev)
     || JSON.stringify([...off].sort()) !== JSON.stringify([...jev.disabled_sources].sort())
     || JSON.stringify(limits) !== JSON.stringify(jev.limits))
-  // Saved by the window's one [저장]. A mode left as the file sets it keeps following the file.
+  // Saved by the window's one [저장].
   useEffect(() => {
-    const store = async () => seed(await api.setJev({
-      mode: jev && saved(jev) === null && mode === jev.mode ? null : mode, disabled_sources: off, limits: limits! }))
+    const store = async () => seed(await api.setJev({ mode: stored, disabled_sources: off, limits: limits! }))
     onEdited(edited ? () => store : null)
-  }, [edited, jev, mode, off, limits, onEdited, seed])
+  }, [edited, stored, off, limits, onEdited, seed])
 
   if (!jev || !limits) {
     return <Part title="질문 (Jev)"><p className="text-faint">{fault || '읽는 중…'}</p></Part>
@@ -308,7 +309,7 @@ function JevPart({ onEdited }: { onEdited: Dispatch<SetStateAction<(() => Promis
               <input type="radio" name="jev-mode" className="mt-0.5 accent-primary" checked={mode === m.id}
                 onChange={() => setMode(m.id)} />
               <span className="min-w-0">
-                <span className="block text-[12.5px]">{m.label}{mode === m.id && ' ✓'}</span>
+                <span className="block text-[12.5px]">{m.label}{m.id === jev.file_mode && <span className="text-faint"> · {jev.file}</span>}{mode === m.id && ' ✓'}</span>
                 <span className="block text-[12.5px] text-faint">{m.note}</span>
               </span>
             </label>
