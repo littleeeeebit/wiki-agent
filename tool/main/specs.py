@@ -45,7 +45,7 @@ from .query import ROOT, _lock, current_repo, hold, project
 SPECS = ROOT / "raw" / "specs"
 SPEC_PROMPT = (ROOT / "tool/prompts/work-spec.md").read_text(encoding="utf-8")
 
-GATE_SECONDS = 20 * 60
+GATE_SECONDS = verify.FINAL_SECONDS   # a ceiling only: a stuck gate is cut by silence (`runtime.IDLE_SECONDS`)
 TAIL = 80          # lines of the gate's output kept on the spec
 MAX_PLANS = 3      # materials for the candidates
 MAX_ROWS = 10
@@ -680,9 +680,9 @@ def sh(args: list[str], cwd: Path, timeout: float = 60) -> subprocess.CompletedP
 
 
 def status(path: Path, *flags: str) -> subprocess.CompletedProcess:
-    """`git status --porcelain` without the untracked decision records a
-    session's start hook harvests (`tool/sync.py`): they wait for a person's
-    batch commit, and no gate, commit or switch of ours takes them. A failed
+    """`git status --porcelain` without the untracked files the app writes
+    (`HARVESTED`: start-hook decision records, cleared conversations' memory);
+    no gate, commit or switch of ours takes them. A failed
     status reads as dirty, so every check on it fails closed. Untracked files
     are listed one by one: a folder Git folds into one line could hide
     anything beside the records. Nor the indexes the hook rebuilt, while they
@@ -1291,7 +1291,7 @@ def selected(repo: Path, path: Path, base: str, gate_cmd: str) -> dict:
     own = sh(["git", "config", "--get", "core.whitespace"], path)
     check = "git diff --check" if own.returncode not in (0, 1) else \
         f'git -c "core.whitespace={",".join(filter(None, [own.stdout.strip(), "cr-at-eol"]))}" diff --check'
-    full = {"base_oid": oid, "commands": [check + (f" {oid} HEAD" if oid else "") + f' -- . ":(exclude){HARVESTED}"'],
+    full = {"base_oid": oid, "commands": [check + (f" {oid} HEAD" if oid else "") + " -- . " + " ".join(f'":(exclude){h}"' for h in HARVESTED)],
             "selection": "deferred"}
     listed = sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", oid, "HEAD"], path) \
         if oid else None

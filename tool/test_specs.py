@@ -727,7 +727,7 @@ def test_round_checks_follow_changed_paths_and_defer_uncertain_scope_to_the_fina
     edit = lambda name: lambda: (repo / name).write_text("y\n", encoding="utf-8")  # noqa: E731
     deferred = ("deferred", ['git -c "core.whitespace=cr-at-eol" diff --check ' + subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "origin/main"], capture_output=True, text=True).stdout.strip()
-        + ' HEAD -- . ":(exclude).wiki/decisions/"'])
+        + ' HEAD -- . ":(exclude).wiki/decisions/" ":(exclude).wiki/memory/"'])
     assert after(edit("src/a/x.py")) == ("mapped", ["check a"])
     assert after(edit("src/shared.py")) == ("mapped", ["check b", "check c"]), "every consumer of a shared file"
     assert after(lambda: _git(repo, "mv", "src/a/x.py", "src/b/y.py")) == ("mapped", ["check a", "check b"]), \
@@ -783,6 +783,12 @@ def test_a_harvested_decision_record_is_not_uncommitted_work_but_anything_else_i
     (repo / ".wiki/decisions/2026-10-22-246-fix-x.md").write_text("# fix x\n", encoding="utf-8")
     assert specs.sh(["git", "status", "--porcelain"], repo).stdout == "?? .wiki/\n", "Git folds the folder"
     assert not specs.dirty(repo) and specs.judge(repo, [PASS], threading.Event())["ok"]
+    # A cleared conversation's memory pair (`main/memory.py`), unignored: it failed a refactor card's
+    # freeze as "tests not committed" after every test was committed.
+    (repo / ".git/info/exclude").write_text(".wiki/*\n!.wiki/decisions/\n!.wiki/memory/\n", encoding="utf-8")
+    (repo / ".wiki/memory").mkdir()
+    (repo / ".wiki/memory/2026-10-24-070333-next.raw.md").write_text("# said\n", encoding="utf-8")
+    assert not specs.dirty(repo)
     (repo / "left.txt").write_text("x", encoding="utf-8")
     assert specs.dirty(repo) and specs.judge(repo, [PASS], threading.Event())["reason"] == "커밋 안 된 변경"
     plain = repo.parent / "plain"

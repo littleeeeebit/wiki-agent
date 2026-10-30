@@ -14,7 +14,10 @@ import time
 import tomllib
 
 POLICY = "verification.toml"
-HARVESTED = ".wiki/decisions/"   # where the start hook writes records (`tool/sync.py`): never the task's work
+# Untracked files the app itself writes into a checkout, never the task's work: the start hook's records
+# (`tool/sync.py`) and a cleared conversation's memory pair (`main/memory.py`). Left out, a memory written
+# beside a refactor turn read as its uncommitted tests (ai-coding-wiki `preserve-repository-boundaries`).
+HARVESTED = (".wiki/decisions/", ".wiki/memory/")
 # Only a ceiling: a stuck local run is cut when its output stops growing (`runtime.IDLE_SECONDS`).
 FINAL_SECONDS = 2 * 60 * 60
 
