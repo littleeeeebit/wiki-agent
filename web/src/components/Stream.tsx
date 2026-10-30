@@ -45,10 +45,7 @@ export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onS
         {intro}
         {messages.length === 0 && empty}
         {messages.length === 0 && !empty && (
-          <p className="text-[13.5px] text-faint">
-            위키에 물어라. ‘근거와 판단 보기’에서 원문을 본다. 할 일이 정해지면
-            다음 작업 초점에서 명세로 만든다.
-          </p>
+          <p className="text-[13.5px] text-faint">위키에 물어라.</p>
         )}
 
         <div className="space-y-6">
@@ -82,7 +79,7 @@ export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onS
                 ) : (
                   m.pending && <Blink />
                 )}
-                {m.cancelled ? <p role="status" className="text-[12.5px] text-muted-foreground">⏹ 멈춤 · 멈춘 질문은 아무것도 싣지 않는다</p>
+                {m.cancelled ? <p role="status" className="text-[12.5px] text-muted-foreground">⏹ 멈춤</p>
                   : m.error && <p role="alert" className="text-[12.5px] text-destructive">{m.error}</p>}
                 {!m.pending && m.runId && <RunDetails key={m.runId} runId={m.runId} onPeek={(p, l) => onPeek(p, l, m.runId)} onMapRun={onMapRun} />}
                 {blocks && m.blocks && m.blocks.length > 0 && blocks(m)}
@@ -152,16 +149,13 @@ function AnswerVersions(
       {m.verification && <Checked v={m.verification} />}
       {checked.fault && (
         <p role="status" className="text-[12.5px] text-muted-foreground">
-          {checked.fault === 'changed'
-            ? `표시 오류 · 한국어로 옮기며 숫자나 식별자가 바뀐 문단은 ${original} 그대로 보인다.`
-            : `표시 오류 · 한국어 번역을 받지 못한 문단은 ${original} 그대로 보인다.`}
+          {checked.fault === 'changed' ? `일부 문단은 ${original} · 번역이 숫자나 식별자를 바꿨다` : `일부 문단은 ${original} · 번역을 받지 못했다`}
         </p>
       )}
       {translated && !simple && (
-        <p role="status" className="flex flex-wrap items-center gap-x-2 text-[12.5px] text-muted-foreground">
-          {english ? `${original}이다.`
-            : m.verification?.verified ? '번역 · 검증된 것은 영어 원문이며, 이 번역은 뜻까지 대조하지 않았다.'
-              : '번역 · 영어 원문을 옮긴 것이며, 이 번역은 뜻까지 대조하지 않았다.'}
+        <p role="status" className="flex flex-wrap items-center gap-x-2 text-[12.5px] text-muted-foreground"
+          title={m.verification?.verified ? '검증한 것은 영어 원문이다. 번역은 뜻까지 대조하지 않았다' : '번역은 뜻까지 대조하지 않았다'}>
+          {english ? original : '번역'}
           <button type="button" aria-pressed={english} onClick={() => setEnglish(!english)}
             className="min-h-9 rounded-md px-2 underline underline-offset-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
             {english ? '번역 보기' : '영어 원문 보기'}
@@ -172,7 +166,7 @@ function AnswerVersions(
         <div role="group" aria-label="답변 보기" className="inline-flex gap-1 rounded-lg border border-border p-1">
           {[{ value: false, label: '1. 정확한 답변' }, { value: true, label: '2. 쉬운 설명' }].map((option) => (
             <button key={option.label} type="button" aria-pressed={simple === option.value}
-              onClick={() => setSimple(option.value)}
+              onClick={() => setSimple(option.value)} title={option.value ? '쉽게 풀어 쓴 설명 · 검증하지 않았다' : undefined}
               className={`min-h-9 rounded-md px-3 text-[12.5px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${simple === option.value ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-secondary/50'}`}>
               {option.label}
             </button>
@@ -181,46 +175,42 @@ function AnswerVersions(
       )}
       {simple ? (
         <div className="space-y-2">
-          <p className="text-[12.5px] text-muted-foreground">{m.verification?.verified
-            ? '쉽게 풀어 쓴 설명이며, 검증하지 않았다. 검증된 내용은 ‘정확한 답변’의 영어 원문이다.'
-            : m.verification
-              ? '쉽게 풀어 쓴 설명이다. 원문도 검증되지 않았으며, ‘정확한 답변’에 영어 원문이 있다.'
-              : '같은 내용을 쉽게 풀었습니다. 근거와 조건은 원문에서 함께 확인할 수 있습니다.'}</p>
           {m.simpleText && (
             <Answer text={m.simpleText} korean={korean} {...props} onDecide={undefined} />
           )}
-          {m.simplePending && <p role="status" className="text-[12.5px] text-muted-foreground">의미와 조건을 유지하며 쉽게 풀어 쓰는 중…</p>}
-          {m.simpleError && <p role="alert" className="text-[12.5px] text-destructive">쉬운 설명을 만들지 못했습니다. ‘정확한 답변’에서 원문을 볼 수 있습니다. {m.simpleError}</p>}
+          {m.simplePending && <p role="status" className="text-[12.5px] text-muted-foreground">쉬운 설명 쓰는 중…</p>}
+          {m.simpleError && <p role="alert" className="text-[12.5px] text-destructive">쉬운 설명 실패 · {m.simpleError}</p>}
         </div>
       ) : <Answer text={text} korean={korean} {...props} />}
-      {!simple && m.simplePending && <p role="status" className="text-[12.5px] text-muted-foreground">원문을 읽는 동안 쉬운 설명을 준비하고 있습니다.</p>}
     </div>
   )
 }
 
 /** How the answer above was checked, as the server recorded it. Only the
  *  claims that passed were published; this says what that means here. */
-const CHECKED: Record<Verification['status'], string> = {
-  complete: '검증됨 · 질문의 모든 부분이 인용한 근거로 확인됐다',
-  partial: '부분 답 · 근거로 확인된 부분만 싣는다',
-  abstained: '답 보류 · 찾은 근거로는 확인되는 답이 없다',
-  verification_unavailable: '검증 불가 · 근거 대조를 하지 못했다',
-  unverified: '답변 · 에이전트가 근거를 종합해 답했다 (문장별 검증 없음)',
+const CHECKED: Record<Verification['status'], [string, string]> = {
+  complete: ['검증됨', '질문의 모든 부분이 인용한 근거로 확인됐다'],
+  partial: ['부분 답', '근거로 확인된 부분만 싣는다'],
+  abstained: ['답 보류', '찾은 근거로는 확인되는 답이 없다'],
+  verification_unavailable: ['검증 불가', '근거 대조를 하지 못했다'],
+  unverified: ['답변', '에이전트가 근거를 종합해 답했다 (문장별 검증 없음)'],
 }
 
 function Checked({ v }: { v: Verification }) {
   // An answer that cites nothing was checked against the conversation, not a source — whole or in part.
   const conversational = (v.status === 'complete' || v.status === 'partial') && !v.citations?.length
   const sourced = v.status === 'complete' && !conversational && !v.host_checked
-  const line = v.degraded ? '미검증 답 · 검증이 안 돼 기본 모드로 싣는다'
+  // The word on screen; what it means in the tooltip.
+  const [line, why] = v.degraded ? ['미검증 답', '검증이 안 돼 기본 모드로 싣는다']
     : conversational
-      ? `${v.status === 'complete' ? '대화로 답함' : '대화로 일부 답함'} · 출처를 찾지 않았고, 대화에 있던 내용만 옮겼다`
+      ? [v.status === 'complete' ? '대화로 답함' : '대화로 일부 답함', '출처를 찾지 않았고, 대화에 있던 내용만 옮겼다']
       : v.host_checked
-        ? `${v.status === 'complete' ? '모델 확인' : v.status === 'partial' ? '모델 확인 · 부분 답' : CHECKED[v.status]} · Jev 가 확신하지 못한 부분은 답하는 모델이 근거와 대조했다 (Jev 검증 아님)`
+        ? [v.status === 'complete' ? '모델 확인' : v.status === 'partial' ? '모델 확인 · 부분 답' : CHECKED[v.status][0],
+          'Jev 가 확신하지 못한 부분은 답하는 모델이 근거와 대조했다 (Jev 검증 아님)']
         : CHECKED[v.status]
   const missing = v.status === 'complete' ? 0 : v.missing_requirements.length
   return (
-    <div role="status" className={`font-mono text-[10.5px] leading-snug ${sourced ? 'text-primary/80' : 'text-muted-foreground'}`}>
+    <div role="status" title={why} className={`font-mono text-[10.5px] leading-snug ${sourced ? 'text-primary/80' : 'text-muted-foreground'}`}>
       {line}
       {missing > 0 && ` · 확인 못 한 부분 ${missing}`}
       {v.conflicts.length > 0 && ` · 근거와 충돌 ${v.conflicts.length}`}

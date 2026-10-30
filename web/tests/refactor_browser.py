@@ -147,7 +147,9 @@ def main():
             for i, role in enumerate(("survey", "worker", "reviewer")):
                 pickers.nth(2 * i).click()   # each role's model, then its effort
                 page.get_by_role("option", name=ROLES[role]["model"], exact=True).click()
-            expect(page.get_by_text("조사 opus / 구현 sonnet / 리뷰 codex:gpt-review", exact=False).first).to_be_visible()
+            # The pickers say what was picked; no summary line repeats them, and nothing is left unpicked.
+            expect(page.get_by_text("모델을 고르지 않았다", exact=False)).to_have_count(0)
+            expect(launch).to_be_enabled()
             launch.click()
             report = page.get_by_label("리팩터링 조사", exact=True)
             expect(report.get_by_role("status")).to_have_text("진행 중 · 기준 커밋 게이트")
@@ -180,7 +182,7 @@ def main():
             expect(first).to_be_enabled()
             expect(second).to_be_disabled()
             expect(cards.get_by_label("시작할 수 없는 이유", exact=True)).to_contain_text(f"선행 명세 shared-check-{run['id']}")
-            expect(cards.get_by_role("button", name="원문 수정", exact=True)).to_have_count(0)
+            expect(cards.get_by_role("button", name="명세 수정", exact=True)).to_have_count(0)
             expect(cards.get_by_text("Order validation runs once at the boundary", exact=False).first).to_be_visible()
             cards.get_by_role("button", name="다시 확인", exact=True).last.click()
             first.click()

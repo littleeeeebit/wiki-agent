@@ -260,6 +260,34 @@ def test_a_tool_line_shows_the_command_beside_what_it_is_for():
     assert brief({"name": "TodoWrite", "input": {}}) == "TodoWrite"
 
 
+def test_a_file_edit_carries_the_lines_it_takes_out_and_puts_in():
+    """The agent pane colours a write as it streams; the record keeps the same lines."""
+
+    from agent import chat_events
+    from main import work
+
+    edit = chat_events._tool_meta({"name": "Edit", "input": {"file_path": "a.py", "old_string": "a\nb\nc", "new_string": "a\nB\nc"}})
+    assert edit == {"tool": "Edit", "diff": " a\n-b\n+B\n c"}
+    assert chat_events._tool_meta({"name": "Write", "input": {"file_path": "n.py", "content": "x\ny\n"}})["diff"] == "+x\n+y"
+    multi = chat_events._tool_meta({"name": "MultiEdit", "input": {"edits": [
+        {"old_string": "p", "new_string": "q"}, {"old_string": "r", "new_string": "s"}]}})["diff"]
+    assert multi == "-p\n+q\n⋯\n-r\n+s"
+    assert chat_events._tool_meta({"name": "Read", "input": {"file_path": "a.py"}}) == {"tool": "Read"}
+    long = chat_events._tool_meta({"name": "Write", "input": {"content": "\n".join(map(str, range(250)))}})["diff"]
+    assert long.count("\n") == chat_events.DIFF_LINES and long.endswith("50줄 더 — 코드 변경 현황에서 전체를 본다")
+
+    patch = chat_events._patch_meta([
+        {"path": "new.txt", "kind": {"type": "add"}, "diff": "hello\n"},
+        {"path": "old.py", "kind": {"type": "update", "move_path": None},
+         "diff": "--- a/old.py\n+++ b/old.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n"},
+        {"path": "gone.txt", "kind": "delete", "diff": "bye\n"}])
+    assert patch["diff"] == "▸ new.txt\n+hello\n▸ old.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n▸ gone.txt\n-bye"
+    assert chat_events._patch_meta([{"path": "e.txt", "kind": "add", "diff": ""}]) == {}
+
+    record = [{"kind": "tool", "text": "Edit · a.py", "meta": edit}]
+    assert work.steps(record) == [{"kind": "tool", "text": "Edit · a.py", "diff": " a\n-b\n+B\n c"}]
+
+
 def test_codex_command_output_and_mcp_progress_reach_the_agent_stream(tree):
     fixture = CODEX_BYPASS.replace(
         'say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "ran"}}})',

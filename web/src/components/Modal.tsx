@@ -77,16 +77,13 @@ export function ClearAsk({ onClear, onClose }: {
         <Btn tone="danger" disabled={!!working} onClick={() => void pick('delete')}>
           {working === 'delete' ? '지우는 중…' : '지우기'}
         </Btn>
-        <Btn tone="primary" disabled={!!working} onClick={() => void pick('memory')}>
+        <Btn tone="primary" disabled={!!working} onClick={() => void pick('memory')}
+          title="원시 대화와 정리한 메모리를 .wiki/memory/ 에 쓴다 · 정리에 모델 한 턴">
           {working === 'memory' ? '정리하는 중…' : '메모리로 남기기'}
         </Btn>
       </>
     )}>
-      <p>비우면 다음 지시부터 새 대화다. 지금까지의 대화는 어떻게 할까?</p>
-      <ul className="mt-2 space-y-1 text-muted-foreground">
-        <li>· 메모리로 남기기 — 원시 대화와, 그것을 정리한 메모리 한 쌍을 이 저장소의 <code className="font-mono text-[12px]">.wiki/memory/</code> 에 쓴다. 위키 검색이 메모리를 찾는다. 정리에 모델 한 턴이 든다</li>
-        <li>· 지우기 — 기록에서도 지운다. 되돌릴 수 없다</li>
-      </ul>
+      <p>지금까지의 대화를 어떻게 할까? 지우기는 되돌릴 수 없다.</p>
       {fault && <p role="alert" className="mt-2 whitespace-pre-wrap text-destructive">{fault}</p>}
     </Modal>
   )

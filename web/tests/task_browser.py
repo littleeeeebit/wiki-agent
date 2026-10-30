@@ -284,7 +284,8 @@ def main():
             survey_roles ={"survey": {"model": "opus", "effort": ""}, "worker": {"model": "sonnet", "effort": ""}, "reviewer": {"model": "opus", "effort": ""}}
             cards = [draft, {**draft, "id": "draft-refactor", "refactor": {"mode": "preserve", "survey": "abcd1234", "roles": survey_roles}},   # starts on its fixed worker
                      {**spec, "id": "existing-task", "state": "PR #9", "pr": {"number": 9}, "worktree": None,
-                      "branch": "existing-task", "cell": {"model": "sonnet", "effort": "", "fast": False}}]
+                      "branch": "existing-task", "cell": {"model": "sonnet", "effort": "", "fast": False},
+                      "gating": {"kind": "final", "since": time.time() - 200, "eta": {"total": 600, "low": 300, "high": 900}}}]
             rows = [{"path": "fixture-task", "name": "fixture-task", "branch": "fixture", "dirty": False,
                      "primary": True, "merged": False, "live": False, "busy": False}]
             page.route("**/api/worktrees", lambda route: route.fulfill(json={"project": "fixture", "repo": "fixture", "rows": rows}))
@@ -306,7 +307,8 @@ def main():
             # question cannot be answered from a pane with no worktree.
             asked = '```choices\n{"question": "Continue old task?", "options": [{"label": "Continue"}]}\n```'
             page.route("**/api/work/log*", lambda route: route.fulfill(json={
-                "rows": [{"role": "assistant", "text": f"Old turn\n\n{asked}", "model": "codex:fixture-fast", "steps": []}],
+                "rows": [{"role": "assistant", "text": f"Old turn\n\n{asked}", "model": "codex:fixture-fast",
+                          "steps": [{"kind": "tool", "text": "Edit · a.py", "diff": " a\n-b\n+B"}]}],
                 "session_id": "fixture", "busy": False, "running": None, "rules": [], "queued": None}))
             page.set_viewport_size({"width": 1440, "height": 900})
             page.goto(base)
@@ -315,7 +317,7 @@ def main():
                            page.get_by_role("button", name="시작 ▸", exact=True).last)
 
             def pick(model):
-                agent.get_by_text("명세의 [시작]이", exact=False).wait_for()
+                agent.get_by_text("명세에서 [시작]을", exact=False).wait_for()
                 agent.get_by_role("combobox").first.click()
                 page.get_by_role("option", name=model, exact=True).click()
 
@@ -332,11 +334,20 @@ def main():
             page.get_by_role("navigation", name="초점", exact=True).get_by_role("button", name="다음 작업", exact=True).click()
             press(first)
             agent.get_by_text("Old turn", exact=True).wait_for()
+            # A file edit shows what it takes out in red and what it puts in in green, as it streams.
+            edit = agent.get_by_label("Edit · a.py 변경", exact=True)
+            expect(edit.locator("div.text-del")).to_have_text("-b")
+            expect(edit.locator("div.text-add")).to_have_text("+B")
+            # A running final gate keeps its time left whole on the rail, and takes the state's place in the header.
+            gate = page.locator('nav[aria-label="작업"] .task-state.text-primary')
+            expect(gate).to_contain_text("남음 (")
+            assert gate.evaluate("e => e.scrollWidth <= e.clientWidth"), gate.inner_text()
             agent.get_by_text("Continue old task?", exact=False).first.wait_for()
             assert agent.get_by_label("선택한 작업 모델", exact=True).inner_text() == "Claude 기본"
             assert agent.locator('[data-question-pending="true"]').count() == 0
             page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="existing-task").click()
-            agent.get_by_text("명세의 [시작]이", exact=False).wait_for()
+            agent.get_by_text("명세에서 [시작]을", exact=False).wait_for()
+            expect(page.locator('section.task-pane header [role="status"]')).to_contain_text("최종 게이트")
             assert agent.get_by_label("선택한 작업 모델", exact=True).inner_text() != "sonnet"
             page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="draft-task").click()
             pick("codex:fixture-fast")
@@ -694,6 +705,8 @@ def main():
             page.get_by_role("textbox", name="목표", exact=True).fill("Revised synthetic requirements")
             page.get_by_role("button", name="저장", exact=True).click()
             page.get_by_text("수정된 합성 요구사항", exact=True).wait_for()
+            # The form closed; the read-only copy is back, folded.
+            page.get_by_text("범위 · 완료 조건 보기", exact=True).click()
             page.get_by_text("변경 이력 · 현재 판 2", exact=True).wait_for()
             if not limits.locator("details").evaluate("e => e.open"):
                 limits.locator("summary").click()

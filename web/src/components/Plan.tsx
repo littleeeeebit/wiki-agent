@@ -86,10 +86,7 @@ export function PlanStart({ options, onClose, onStarted }: {
         <div className="space-y-2">
           {ROLES.map((r) => (
             <div key={r.key} className="flex items-center gap-3">
-              <div className="w-40 shrink-0">
-                <div className="font-heading text-[11px] font-semibold">{r.label}</div>
-                <div className="text-[10.5px] text-faint">{r.note}</div>
-              </div>
+              <div className="w-16 shrink-0 font-heading text-[11px] font-semibold" title={r.note}>{r.label}</div>
               <Toolbar value={roles[r.key]} options={options} busy={working}
                 onChange={(next) => setRoles((prev) => ({ ...prev, [r.key]: next }))} />
             </div>
@@ -105,12 +102,6 @@ export function PlanStart({ options, onClose, onStarted }: {
               </label>
             ))}
         </div>
-        <ul className="space-y-0.5 text-[11.5px] text-muted-foreground">
-          <li>· 호출은 계획자에게 보낸 턴 수다. 한 턴 안에서 호스트가 부른 모델 호출까지 세지는 못해 엄격한 공급자 상한이 아니다</li>
-          <li>· 토큰은 답이 끝난 뒤에 보고된다. 마지막 턴이 한도를 넘을 수 있고, 넘으면 실패로 적고 더 보내지 않는다</li>
-          <li>· 사용량을 알리지 않는 호스트는 0 으로 치지 않고 멈춘다. 시간 한도에 닿으면 도는 턴을 끊는다</li>
-          <li>· 적어도 단계 수 + 2 턴이 든다 (조사, 개요). 답을 못 읽으면 한 번, 검사 실패면 한 번 더 든다</li>
-        </ul>
         {fault && <p role="alert" className="whitespace-pre-wrap text-destructive">{fault}</p>}
       </div>
     </Modal>

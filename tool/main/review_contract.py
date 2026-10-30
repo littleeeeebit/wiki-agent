@@ -267,7 +267,7 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
 
             protected = specs.sh(["git", "--literal-pathspecs", "diff", "--exit-code", baseline, head, "--", *tests], path)
             if tests and protected.returncode == 1:   # `--exit-code`: 1 is a difference, above it an error
-                problems.append("고정된 동작 보존 테스트가 바뀌었다 — 리뷰 탭의 [고정 테스트 변경 보기] 에서 확인하고 "
+                problems.append("고정된 동작 보존 테스트가 바뀌었다 — 리뷰 탭에서 diff 를 읽고 [고정 테스트 변경 승인] 으로 "
                                 "승인하면, 바꾸기 전 코드에서 돌려 본 뒤 지금 커밋에 다시 고정한다")
             elif not tests or protected.returncode:
                 problems.append("고정된 동작 보존 테스트가 바뀌었거나 기준선을 확인하지 못했다")

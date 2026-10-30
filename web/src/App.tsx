@@ -14,7 +14,7 @@ import { Settings } from '@/components/Settings'
 import { LiveChanges } from '@/components/LiveChanges'
 import { Architecture } from '@/components/Architecture'
 import { Suite } from '@/components/Suite'
-import { TaskRail } from '@/components/TaskRail'
+import { GateOr, TaskRail } from '@/components/TaskRail'
 import type { View } from '@/components/TaskRail'
 import { Terminal, closed } from '@/components/Terminal'
 import * as api from '@/lib/api'
@@ -740,7 +740,7 @@ export default function App() {
             <span className="flex shrink-0 gap-1.5 font-mono text-[10.5px]">
               {(task?.pr ?? other?.pr) && <span className="text-muted-foreground">#{task?.pr ?? other?.pr}</span>}
               {(task?.round || other?.round) ? <span className="text-muted-foreground">R{task?.round || other?.round}</span> : null}
-              <span className={TONE[spec ? phase(spec.state) : 'none']}>{spec?.state ?? (other ? other.line : '명세 없음')}</span>
+              <GateOr gate={task?.gate} className={TONE[spec ? phase(spec.state) : 'none']}>{spec?.state ?? (other ? other.line : '명세 없음')}</GateOr>
             </span>
           )}
           {!task && !other && <span className="truncate text-[12.5px] text-faint">작업 목록에서 선택하세요</span>}
@@ -827,12 +827,7 @@ export default function App() {
 
       {setting && (
         <Settings sw={sw} theme={theme} options={options} loop={loopSettings} onSwitch={flip} onTheme={setTheme}
-          onLoop={async (s) => setLoopSettings(await api.setLoopSettings(s))} onClose={() => setSetting(false)}
-          onProjects={() => {
-            setSetting(false)
-            setView('projects')
-            setMobilePane('chat')
-          }} />
+          onLoop={async (s) => setLoopSettings(await api.setLoopSettings(s))} onClose={() => setSetting(false)} />
       )}
     </div>
   )

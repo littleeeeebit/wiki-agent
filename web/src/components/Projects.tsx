@@ -159,7 +159,6 @@ export function Projects({ current }: { current: string }) {
             {asking.plan.adapter && (
               <section className="mb-3">
                 <div className="mb-1 font-heading text-[11px] font-semibold text-faint">원본 체크아웃에 쓰는 .wiki/adapter.toml</div>
-                <p className="mb-1 text-muted-foreground">gate_cmd는 변경 완료 전 검사 명령입니다. 비어 있으면 연결 후에도 일부로 표시됩니다. live_cmd와 server_stop은 실행 확인·종료 방법이며 나중에 채울 수 있습니다.</p>
                 <ul className="font-mono text-[12px]">
                   {Object.entries(asking.plan.adapter).map(([k, v]) => <li key={k}>{k} = {v || <span className="text-wait">{k === 'gate_cmd' ? '필수 — 프로젝트 검사 명령' : '미설정 — 나중에 입력 가능'}</span>}</li>)}
                 </ul>

@@ -59,7 +59,7 @@ export function Toolbar({ value, options, busy, onChange, showFast = false }: Pr
       <Picker
         label="모델"
         hideLabel
-        width="w-32"
+        width="w-auto min-w-32"
         items={models}
         value={inn(value.model)}
         disabled={busy || !options}

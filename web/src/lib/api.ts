@@ -921,7 +921,7 @@ export type WorkEv = {
     /** A question's answers, one per question. */
     answers?: string[]
     id?: string
-    tool?: string; item_id?: string   // a command's streamed output: which command it is from
+    tool?: string; item_id?: string; diff?: string   // which command streamed output is from; a file edit's `-`/`+` lines
     input?: Record<string, unknown>
     answer?: 'allow' | 'deny'
     allow?: boolean
@@ -943,7 +943,7 @@ export type WorkEv = {
 
 export type WorkStep =
   | { kind: 'compaction'; text: string; phase?: 'started' | 'completed'; pre_tokens?: number }
-  | { kind: 'tool' | 'progress' | 'said' | 'hook'; text: string; command?: boolean }
+  | { kind: 'tool' | 'progress' | 'said' | 'hook'; text: string; command?: boolean; diff?: string }
   | { kind: 'approval'; tool: string; text: string; answer: 'allow' | 'deny' | 'none'; by: AnsweredBy;
       answers?: string[]; input?: Record<string, unknown> }
 

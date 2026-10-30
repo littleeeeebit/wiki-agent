@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { MouseEvent } from 'react'
+import type { MouseEvent, ReactNode } from 'react'
 import { FolderGit2, Plus, Repeat, Settings as Gear } from 'lucide-react'
 import { Btn, Modal } from '@/components/Modal'
 import { Picker } from '@/components/Toolbar'
@@ -131,24 +131,18 @@ export function TaskRail(props: Props) {
           <Plus className="size-3.5" /> <span className="rail-new-task-label">새 작업</span>
         </button>
         </div>
-        {unwired && (
-          <div className="flex items-center gap-2 text-[12.5px]">
-            <span aria-hidden className={cn('size-2 shrink-0 rounded-full', unwired === '일부' ? 'bg-wait' : 'bg-border')} />
-            <span className="min-w-0 flex-1 truncate text-muted-foreground">위키 {unwired}</span>
-            <Btn tone="primary" onClick={() => props.onView('projects')}>연결</Btn>
-          </div>
-        )}
         <button type="button" className="mobile-only hidden w-full items-center justify-between rounded-md px-2 text-[14px] text-muted-foreground"
           aria-expanded={toolsOpen} aria-controls="rail-tools" onClick={() => setToolsOpen((open) => !open)}>
           프로젝트 · 리뷰 <span aria-hidden>{toolsOpen ? '−' : '+'}</span>
         </button>
         <div id="rail-tools" data-open={toolsOpen} className="grid grid-cols-2 gap-1.5">
-          <button type="button" aria-pressed={view === 'projects'}
+          {/* The current project's wiki, when not wholly attached, is said here: one way to [연결]. */}
+          <button type="button" aria-pressed={view === 'projects'} aria-label="프로젝트 · 연결"
             onClick={() => props.onView(view === 'projects' ? 'chat' : 'projects')}
-            className={cn('h-7 rounded-md border border-sidebar-border px-2 text-[12.5px] hover:bg-sidebar-accent',
-              view === 'projects' && 'bg-sidebar-accent')}
-            title="저장소마다 위키가 붙었는지, [연결]">
-            프로젝트 · 연결
+            className={cn('flex h-7 items-center justify-center gap-1.5 rounded-md border border-sidebar-border px-2 text-[12.5px] hover:bg-sidebar-accent',
+              view === 'projects' && 'bg-sidebar-accent')}>
+            {unwired ? <><span aria-hidden className={cn('size-2 shrink-0 rounded-full', unwired === '일부' ? 'bg-wait' : 'bg-border')} />
+              위키 {unwired} · 연결</> : '프로젝트 · 연결'}
           </button>
           <button type="button" disabled={pickable.length === 0 || looping} onClick={openLoop}
             className="h-7 rounded-md border border-sidebar-border px-2 text-[12.5px] hover:bg-sidebar-accent disabled:opacity-40"
@@ -184,9 +178,7 @@ export function TaskRail(props: Props) {
 
       <nav aria-label="작업" className="min-h-0 flex-1 overflow-y-auto px-2 py-2 max-[1280px]:px-1">
         {tasks.length === 0 && (
-          <p className={cn('px-2 py-1 text-[12.5px] text-faint', WIDE)}>
-            아직 작업이 없다. [새 작업] 으로 명세를 정하고 [시작] 한다.
-          </p>
+          <p className={cn('px-2 py-1 text-[12.5px] text-faint', WIDE)}>아직 작업이 없다.</p>
         )}
         {GROUPS.map((g) => {
           const list = tasks.filter((t) => t.group === g.id)
@@ -299,7 +291,7 @@ type RowTask = Pick<Task, 'key' | 'name' | 'pr' | 'round' | 'phase' | 'waiting' 
 /** Minutes, rounded up past the first: "1분 안", "4분". */
 const minutes = (s: number) => (s < 60 ? '1분 안' : `${Math.ceil(s / 60)}분`)
 
-/** "게이트 중 · 3분 12초 · 약 4분 남음 (3–6분)" while the task's gate runs, ticking each second. */
+/** "최종 게이트 3분 12초 · 약 4분 남음 (3–6분)" while the task's gate runs, ticking each second. */
 function useGateLabel(gate: Task['gate'] | undefined): string {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -309,12 +301,18 @@ function useGateLabel(gate: Task['gate'] | undefined): string {
   }, [gate])
   if (!gate) return ''
   const s = Math.max(0, Math.floor(now / 1000 - gate.since))
-  const label = `${gate.kind === 'final' ? '최종 게이트' : '게이트'} 중 · ${s >= 60 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${s}초`}`
+  const label = `${gate.kind === 'final' ? '최종 게이트' : '게이트'} ${s >= 60 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${s}초`}`
   const eta = gate.eta
   if (!eta) return label
   if ('over' in eta) return `${label} · 평소보다 오래 걸림`
   const [mid, low, high] = [eta.total, eta.low, eta.high].map((t) => Math.max(0, t - s))
   return `${label} · 약 ${minutes(mid)} 남음${high - low >= 60 ? ` (${Math.floor(low / 60)}–${Math.ceil(high / 60)}분)` : ''}`
+}
+
+/** The task pane's header: the running gate with its time left, in the state word's place. */
+export function GateOr({ gate, className, children }: { gate: Task['gate'] | undefined; className: string; children: ReactNode }) {
+  const label = useGateLabel(gate)
+  return label ? <span role="status" className="text-primary">{label}</span> : <span className={className}>{children}</span>
 }
 
 /** One task: its name, PR and round; then one word of state and what a
@@ -334,17 +332,18 @@ function Row({ task: t, selected, onSelect, onMenu, title }: {
       <span className="flex items-center gap-2">
         <span aria-hidden className={cn('size-2 shrink-0 rounded-full', t.waiting ? 'bg-wait' : DOT[t.phase],
           t.busy && 'animate-pulse')} />
-        <span className={cn('task-name min-w-0 truncate font-mono text-[12px]', WIDE)}>{t.name}</span>
+        <span className={cn('task-name min-w-0 break-all font-mono text-[12px]', WIDE)}>{t.name}</span>
         {(t.pr || t.round > 0) && (
           <span className={cn('ml-auto shrink-0 font-mono text-[10.5px] text-muted-foreground', WIDE)}>
             {t.pr ? `#${t.pr}` : ''}{t.round > 0 ? ` R${t.round}` : ''}
           </span>
         )}
       </span>
-      <span role={gate ? 'status' : undefined}
-        className={cn('task-state mt-0.5 block truncate pl-4 font-mono text-[10.5px]', t.waiting ? 'text-wait' : gate ? 'text-primary' : 'text-muted-foreground', WIDE)}>
-        {line}
-      </span>
+      {/* Wrapped, never cut: a gate's time left and a stop's reason are the point of the line. */}
+      {gate && <span role="status" className={cn('task-state mt-0.5 block pl-4 font-mono text-[10.5px] text-primary', WIDE)}>{gate}</span>}
+      {t.line && <span className={cn('task-state mt-0.5 block break-words pl-4 font-mono text-[10.5px]', t.waiting ? 'text-wait' : 'text-muted-foreground', WIDE)}>
+        {t.line}
+      </span>}
       <span className={cn('sr-only', NARROW)}>{tip}</span>
     </button>
   )

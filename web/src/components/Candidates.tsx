@@ -50,7 +50,7 @@ export function Candidates({ raw, korean, onDecide }: Props) {
 
   return (
     <div className="not-prose my-2 space-y-2 rounded-md border border-border bg-card p-3">
-      <div className="font-heading text-[11px] text-faint">위키 갱신 후보 — 무엇이 될지는 네가 정한다</div>
+      <div className="font-heading text-[11px] text-faint">위키 갱신 후보</div>
       {shown.map((line, i) => {
         const s = state[i] ?? {}
         return (

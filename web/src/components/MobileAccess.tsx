@@ -139,8 +139,6 @@ export function MobileSettings() {
   }
   return <section aria-label="휴대폰 연결" className="space-y-3">
     <h3 className="font-heading text-[14px] font-semibold">휴대폰</h3>
-    <p className="text-[14px] leading-relaxed text-muted-foreground">PC에서 작업을 실행하고 휴대폰 앱이나 브라우저에서 대화·변경 사항·승인을 이어갑니다. 모바일 데이터와 다른 Wi-Fi에서도 연결됩니다.</p>
-    <p className="text-[14px] leading-relaxed text-muted-foreground">외부 연결을 켜고 휴대폰 카메라로 연결 QR을 스캔하세요. 별도 설치 없이 브라우저에서 바로 사용할 수 있습니다.</p>
     {info?.local ? <>
       <p role="status" className="text-[14px]">{info.starting ? info.progress || '외부 연결을 여는 중…' : info.enabled ? '외부 연결 켜짐' : '외부 연결 꺼짐'}</p>
       <div className="space-y-2 rounded-md border border-border bg-background p-3">

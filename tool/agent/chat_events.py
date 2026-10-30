@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import time
 from dataclasses import dataclass, field
@@ -117,3 +118,53 @@ def _tool_brief(block: dict) -> str:
         if isinstance(value, str) and value.strip():
             return f"{name} · {value.strip()[:90]}{ran}"
     return f"{name}{ran}"
+
+
+DIFF_LINES = 200   # lines of one write's diff an event carries; the changes panel has the rest
+
+
+def _clipped(lines: list[str]) -> str:
+    more = len(lines) - DIFF_LINES
+    return "\n".join(lines[:DIFF_LINES] + ([f"… {more}줄 더 — 코드 변경 현황에서 전체를 본다"] if more > 0 else []))
+
+
+def _snippet(old: str, new: str) -> list[str]:
+    """Two snippets as one hunk with no header: its line numbers would count from the snippet, not the file."""
+
+    a, b = old.splitlines(), new.splitlines()
+    return list(difflib.unified_diff(a, b, lineterm="", n=max(len(a), len(b))))[3:]
+
+
+def _tool_meta(block: dict) -> dict:
+    """A tool call's name and, for a file edit, the lines it takes out and puts in, as the screen colours them."""
+
+    name = str(block.get("name") or "")
+    args = block.get("input") or {}
+    if name == "Write" and isinstance(args.get("content"), str):
+        lines = ["+" + line for line in args["content"].splitlines()]
+    elif name == "Edit" and isinstance(args.get("old_string"), str) and isinstance(args.get("new_string"), str):
+        lines = _snippet(args["old_string"], args["new_string"])
+    elif name == "MultiEdit" and isinstance(args.get("edits"), list):
+        lines = [line for e in args["edits"] if isinstance(e, dict)
+                 for line in ["⋯", *_snippet(str(e.get("old_string") or ""), str(e.get("new_string") or ""))]][1:]
+    else:
+        return {"tool": name}
+    return {"tool": name, "diff": _clipped(lines)} if lines else {"tool": name}
+
+
+def _patch_meta(changes: object) -> dict:
+    """Codex's `fileChange`: an added or deleted file comes as its content, an update as a unified diff."""
+
+    lines: list[str] = []
+    for c in changes if isinstance(changes, list) else []:
+        if not isinstance(c, dict):
+            continue
+        kind = c.get("kind")
+        kind = kind.get("type") if isinstance(kind, dict) else kind
+        body = str(c.get("diff") or "").splitlines()
+        mark = {"add": "+", "delete": "-"}.get(str(kind))
+        if mark is None:   # an update: its own `---`/`+++` header names the path again
+            hunk = next((i for i, line in enumerate(body) if line.startswith("@@")), 0)
+            body, mark = body[hunk:], ""
+        lines += [f"▸ {c.get('path')}", *(mark + line for line in body)]
+    return {"diff": _clipped(lines)} if any(not line.startswith("▸ ") for line in lines) else {}

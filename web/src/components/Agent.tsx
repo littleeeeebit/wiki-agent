@@ -6,6 +6,7 @@ import { Questions } from '@/components/Questions'
 import type { Asked } from '@/components/Questions'
 import { TokenUsage } from '@/components/ProviderUsage'
 import { Composer } from '@/components/Composer'
+import { DiffLines } from '@/components/LiveChanges'
 import { Btn, ClearAsk } from '@/components/Modal'
 import { Toolbar } from '@/components/Toolbar'
 import type { Choice } from '@/components/Toolbar'
@@ -98,7 +99,7 @@ export function Agent({
         </div>
         {row && rules.length > 0 && (
           <div className="-mt-1 flex items-center gap-2 pb-2 text-[12.5px] text-muted-foreground">
-            <span className="min-w-0 truncate">
+            <span className="min-w-0 break-words">
               세션 허용:{' '}
               {rules.map((r, i) => (
                 <span key={i}>
@@ -126,14 +127,7 @@ export function Agent({
           again — 60,000 nodes, a quarter second a key. */}
       <div className="min-h-0 flex-1 overflow-y-auto [contain:size]">
         <div className="space-y-5 px-4 py-4">
-          {!row && (
-            <p className="text-[13.5px] text-faint">
-              명세의 [시작]이 선택한 저장소에 작업 브랜치를 만들고 첫 턴을 보낸다. 에이전트는 전체 접근 권한으로 작업한다.
-            </p>
-          )}
-          {row && turns.length === 0 && (
-            <p className="text-[13.5px] text-faint">지시를 보내라. 도는 동안에도 보내면 그 턴에 끼어든다.</p>
-          )}
+          {!row && <p className="text-[13.5px] text-faint">명세에서 [시작]을 누르면 여기서 작업한다.</p>}
           {note && turns.length === 0 && <p className="text-[12.5px] text-muted-foreground">{note}</p>}
           {turns.map((t) =>
             t.role === 'user' ? (
@@ -185,11 +179,7 @@ export function Agent({
         disabled={!row}
         max={320}
         seed={seed}
-        placeholder={!busy ? '지시를 입력하세요'
-          : last?.answered != null
-            ? queued ? '지시 하나가 이미 기다린다. 그것을 취소하면 이것을 보낼 수 있다.'
-              : '답은 끝났고 마무리가 도는 중이다. 보내면 끝난 뒤 다음 지시로 보낸다.'
-            : '도는 턴에 끼어든다. 에이전트가 다음 걸음 전에 읽는다.'}
+        placeholder={!busy ? '지시' : last?.answered != null ? queued ? '대기 중인 지시가 있다' : '마무리 뒤에 보낸다' : '도는 턴에 끼어들기'}
         onSend={(text) => (!busy || !last ? onSend(text)
           : last.answered != null ? onQueue(last, text) : onSteer(last, text))}
       />
@@ -234,7 +224,7 @@ export function Reply({ turn, on, progressOn = on, onAnswer, onPeek, onSend }: {
             {s.phase === 'started' ? '문맥 압축 시작 · 대화 기록을 요약한다' : '문맥 압축 완료'}
             {s.pre_tokens != null && ` · 압축 전 ${s.pre_tokens.toLocaleString()} 토큰`}
           </p> : s.kind === 'progress' ? <Progress text={s.text} on={progressOn} onPeek={onPeek} />
-            : s.kind === 'tool' ? <Tool text={s.text} on={progressOn && !s.command} />
+            : s.kind === 'tool' ? <Tool text={s.text} diff={s.diff} on={progressOn && !s.command} />
             : s.kind === 'said' ? <Said text={s.text} />
               : s.kind === 'hook' ? <Hook text={s.text} context={s.context} />
                 : QUESTIONS.has(s.tool) ? <Question step={s} turn={turn} korean={on} onAnswer={onAnswer} />
@@ -295,11 +285,15 @@ function Progress({ text, on, onPeek }: { text: string; on: boolean; onPeek: Pro
   return <Answer text={shown} korean={on} remote="" onPeek={onPeek} />
 }
 
-function Tool({ text, on }: { text: string; on: boolean }) {
+function Tool({ text, diff, on }: { text: string; diff?: string; on: boolean }) {
   // Claude supplies a description before the command. Only that prose is mirrored.
   const at = text.indexOf(' · $ ')
   const [shown] = useOverlay([at < 0 ? text : text.slice(0, at)], on)
-  return <p className="whitespace-pre-wrap break-words font-mono text-[12px] leading-snug text-faint">· {shown}{at < 0 ? '' : text.slice(at)}</p>
+  return <>
+    <p className="whitespace-pre-wrap break-words font-mono text-[12px] leading-snug text-faint">· {shown}{at < 0 ? '' : text.slice(at)}</p>
+    {diff && <DiffLines lines={diff.split('\n')} label={`${text} 변경`}
+      className="mt-1 max-h-72 rounded-md border border-border bg-card px-2 py-1.5 leading-snug" />}
+  </>
 }
 
 /** A hook that spoke — the wiki's injection, its auto-update. What it put into

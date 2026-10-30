@@ -37,8 +37,8 @@ export function choicesOf(text: string): [string, ChoiceQuestion | { questions: 
  *  retain their originals; completed progress gets the Korean overlay. */
 export type Step =
   | { kind: 'compaction'; text: string; phase?: 'started' | 'completed'; pre_tokens?: number }
-  /** `item`: the command whose streamed output this is; its next output joins it. */
-  | { kind: 'tool'; text: string; command?: boolean; item?: string }
+  /** `item`: the command whose streamed output this is; its next output joins it. `diff`: a file edit's lines. */
+  | { kind: 'tool'; text: string; command?: boolean; item?: string; diff?: string }
   | { kind: 'progress'; text: string }
   /** What the person said into the turn while it ran. */
   | { kind: 'said'; text: string }
@@ -196,7 +196,7 @@ function apply(t: Turn, ev: WorkEv): Turn {
   if (ev.kind === 'tool' || ev.kind === 'said') {
     return { ...t, steps: [...t.steps, { kind: ev.kind, text: ev.text,
       ...(['commandExecution', 'command_execution', 'tool_result'].includes(m.tool ?? '') ? { command: true } : {}),
-      ...(item ? { item } : {}) }], latest: 'step' }
+      ...(item ? { item } : {}), ...(m.diff ? { diff: m.diff } : {}) }], latest: 'step' }
   }
   if (ev.kind === 'hook') {
     return { ...t, steps: [...t.steps, { kind: 'hook', text: ev.text, context: m.context }], latest: 'step' }

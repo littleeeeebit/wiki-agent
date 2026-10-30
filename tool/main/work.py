@@ -710,8 +710,7 @@ def steps(events: list[dict]) -> list[dict]:
     """What ran and what was asked, in one line in order, for the record.
 
     An approval's `input` is left out: a `Write` carries the whole file, and
-    what was written is in the worktree and its commits.
-    """
+    what was written is in the worktree and its commits. A tool's `diff` stays: it is cut to `DIFF_LINES`."""
 
     out: list[dict] = []
     asked: dict[str, dict] = {}
@@ -731,7 +730,8 @@ def steps(events: list[dict]) -> list[dict]:
         if ev["kind"] in ("tool", "progress", "said", "hook", "compaction"):
             out.append({"kind": ev["kind"], "text": ev["text"],
                         **({"phase": meta.get("phase"), "pre_tokens": meta.get("pre_tokens")} if ev["kind"] == "compaction" else {}),
-                        **({"command": True} if meta.get("tool") in ("commandExecution", "command_execution", "tool_result") else {})})
+                        **({"command": True} if meta.get("tool") in ("commandExecution", "command_execution", "tool_result") else {}),
+                        **({"diff": meta["diff"]} if meta.get("diff") else {})})
             if item:
                 running[item] = out[-1]
         elif ev["kind"] == "approval":

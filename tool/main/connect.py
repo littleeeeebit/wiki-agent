@@ -10,8 +10,8 @@ last `[연결]` or `[다시 시험]` left in `raw/connect/<repo>.json`.
 `[연결]` moves the installed hosts' wiring to this hub first when it is elsewhere
 (asked, with every line shown), writes the adapter into the original checkout
 — one of the two writes the server makes there — takes the old per-project
-hooks out, and tests the installed hosts declared by the adapter. With the
-survey on, `survey` goes on from there. After the survey's pull request merges, `handover` takes the original's
+hooks out, and tests the installed hosts declared by the adapter. With a
+survey chosen in its confirmation, `survey` goes on from there. After the survey's pull request merges, `handover` takes the original's
 uncommitted adapter out of the way of the fast-forward that brings the merged
 one.
 
@@ -622,7 +622,7 @@ def plan(name: str) -> dict:
     data, _ = adapter_of(path)
     return {"hub": hub(data), "agents": hosts(data),
             "adapter": None if exists else guess(path), "unwire": unwire(path, write=False),
-            "survey": survey.estimate(path) if survey.settings()["survey"] else None}
+            "survey": survey.estimate(path)}   # the confirmation asks whether to survey, every time
 
 
 @router.post("/api/connect/{name}")
@@ -640,7 +640,7 @@ def connect(name: str, body: Connect) -> dict:
     write_adapter(path)
     unwire(path)
     go_on = None
-    if body.survey and survey.settings()["survey"]:
+    if body.survey:
         go_on = lambda: survey.start(path)  # noqa: E731
     if not examine(path, go_on):
         raise HTTPException(409, "이 저장소의 시험이 아직 돌고 있다")

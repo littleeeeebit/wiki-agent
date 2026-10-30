@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import type { ReactNode } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import type { Dispatch, ReactNode, SetStateAction } from 'react'
 import { Btn, Modal } from '@/components/Modal'
 import { MobileSettings } from '@/components/MobileAccess'
 import * as api from '@/lib/api'
@@ -16,14 +16,13 @@ type Props = {
   onTheme: (theme: 'dark' | 'light') => void
   onLoop: (s: LoopSettings) => Promise<void>
   onClose: () => void
-  onProjects: () => void
 }
 
 const field = 'h-7 rounded-md border border-input bg-background px-2 font-mono text-[12px]'
 
 /** Everything the whole window shares, in four parts: general, connection,
  *  questions (Jev), review. What a part edits is saved by that part's own button. */
-export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, onClose, onProjects }: Props) {
+export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, onClose }: Props) {
   const [survey, setSurvey] = useState<SurveySettings | null>(null)
   const [savedSurvey, setSavedSurvey] = useState<SurveySettings | null>(null)
   const [structure, setStructure] = useState<api.StructureSettings | null>(null)
@@ -70,6 +69,23 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
 
   const loopEdited = !!loop && (rounds !== loop.rounds || seats !== loop.concurrent)
   const surveyEdited = JSON.stringify(survey) !== JSON.stringify(savedSurvey)
+  const structureEdited = JSON.stringify(structure) !== JSON.stringify(savedStructure)
+  // Jev's part keeps its own form and hands up how to save it while it differs from the server's.
+  const [jevSave, setJevSave] = useState<(() => Promise<void>) | null>(null)
+  const edited = loopEdited || surveyEdited || structureEdited || !!jevSave
+  // One [저장] for the window: each part that differs goes to its own endpoint.
+  const save = () => act('save', async () => {
+    if (survey && surveyEdited) {
+      const saved = await api.setSurveySettings(survey)
+      setSurvey(saved); setSavedSurvey(saved)
+    }
+    if (loop && loopEdited) await onLoop({ ...loop, rounds, concurrent: seats })
+    if (structure && structureEdited) {
+      const saved = await api.setStructureSettings(structure)
+      setStructure(saved); setSavedStructure(saved)
+    }
+    await jevSave?.()
+  })
   const usage = sw?.usage
   const models = options?.models.filter((m) => m.id) ?? []
   // A model's own efforts, as the toolbar reads them; a model without a list
@@ -83,7 +99,8 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
   )
 
   return (
-    <Modal title="설정" onClose={onClose}>
+    <Modal title="설정" onClose={onClose} foot={
+      <Btn tone="primary" disabled={!edited || working === 'save'} onClick={save}>{working === 'save' ? '저장하는 중…' : '저장'}</Btn>}>
       <div className="space-y-5">
         <Part title="일반">
           <Row label="한국어 번역" note={usage ? `이번 달 ${usage.usd == null ? '?' : `$${usage.usd.toFixed(2)}`} / $${usage.limit.toFixed(0)}` : undefined}>
@@ -95,10 +112,6 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
               <option value="partial">일부 활성화</option>
             </select>
           </Row>
-          <p className="text-[12.5px] text-faint">일부 활성화는 에이전트·리뷰의 완료된 답변과 질문·선택지를 번역한다. 위키·회고·다음 작업 대화는 전체 한국어로 표시한다.</p>
-          <Row label="작업 권한" note="에이전트는 전체 접근 권한으로 실행한다. 필요한 작업 방향만 질문한다">
-            <span className="text-[12px]">전체 접근</span>
-          </Row>
           <Row label="어두운 화면" note="이 기계에만 기억한다">
             <input type="checkbox" role="switch" className="size-4 accent-primary" checked={theme === 'dark'}
               onChange={(e) => onTheme(e.target.checked ? 'dark' : 'light')} />
@@ -109,28 +122,20 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
 
         <Part title="연결">
           <Row label="허브" note={hub ? (hub.refused ? `옮길 수 없다 — ${hub.refused}`
-            : hub.needed ? '이 기계의 hook 과 스킬 링크가 아직 옛 허브를 가리킨다. 첫 [연결] 때 바뀔 줄을 보여 주고 옮긴다'
-              : '이 기계의 hook 과 스킬 링크가 이 허브를 가리킨다') : '읽는 중…'}>
+            : hub.needed ? '옛 허브를 가리킨다 · 첫 [연결] 때 옮긴다' : undefined) : '읽는 중…'}>
             <span className="font-mono text-[12px]">{hub?.name ?? ''}</span>
-          </Row>
-          <Row label="저장소마다 [연결]" note="위키가 붙었는지 보고 붙인다">
-            <Btn onClick={onProjects}>프로젝트 목록 ▸</Btn>
           </Row>
           {survey && (
             <>
-              <Row label="[연결] 이 전수조사까지" note="켜면 견적을 보여 주고 확인받는다">
-                <input type="checkbox" role="switch" className="size-4 accent-primary" checked={survey.survey}
-                  onChange={(e) => setSurvey({ ...survey, survey: e.target.checked })} />
-              </Row>
-              <Row label="토큰 한도">
+              <Row label="연결 조사 토큰 한도">
                 <input type="number" min={10000} step={100000} value={survey.survey_tokens} className={`${field} w-32`}
                   onChange={(e) => setSurvey({ ...survey, survey_tokens: Number(e.target.value) })} />
               </Row>
-              <Row label="시간 한도 (분)">
+              <Row label="연결 조사 시간 한도 (분)">
                 <input type="number" min={1} value={survey.survey_minutes} className={`${field} w-20`}
                   onChange={(e) => setSurvey({ ...survey, survey_minutes: Number(e.target.value) })} />
               </Row>
-              <Row label="조사 모델">
+              <Row label="연결 조사 모델">
                 <span className="flex gap-1.5">
                   <select value={survey.survey_model} className={`${field} w-32 font-sans`}
                     onChange={(e) => setSurvey({ ...survey, survey_model: e.target.value, survey_effort: '' })}>
@@ -143,11 +148,6 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
                     (v) => setSurvey({ ...survey, survey_effort: v }))}
                 </span>
               </Row>
-              <Save edited={surveyEdited} busy={working === 'survey'} onSave={() => act('survey', async () => {
-                const saved = await api.setSurveySettings(survey)
-                setSurvey(saved)
-                setSavedSurvey(saved)
-              })} />
             </>
           )}
         </Part>
@@ -162,7 +162,7 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
           </Row>
           {notification && <p role="status">{notification}</p>}
         </Part>
-        <JevPart />
+        <JevPart onEdited={setJevSave} />
 
         <Part title="리뷰">
           {!loop ? <p className="text-faint">읽는 중…</p> : (<>
@@ -174,13 +174,9 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
             <input type="number" min={1} max={10} value={seats} className={`${field} w-20`}
               onChange={(e) => setSeats(Number(e.target.value))} />
           </Row>
-          <p className="text-faint">리뷰 모델과 추론 강도는 리뷰 탭에서 고른다.</p>
-          <p className="text-faint">리뷰 허용 후 [머지]를 눌러야 진행한다. 위키·색인·앱 구조를 PR에 반영하고 필요한 재검토를 거친 뒤 머지·정리한다.</p>
-          <Save edited={loopEdited} busy={working === 'loop'}
-            onSave={() => act('loop', () => onLoop({ ...loop, rounds, concurrent: seats }))} />
           </>)}
           {structure && (<>
-          <Row label="구조 문서 새로 고침 모델" note="머지 때 PR 이 바꾼 부분만 읽어 .omm 을 고친다. 고르지 않으면 건너뛴다">
+          <Row label="구조 문서 새로 고침 모델" note="머지 때 .omm 갱신 · 고르지 않으면 건너뛴다">
             <span className="flex gap-1.5">
               <select value={structure.omm_model} aria-label="구조 문서 새로 고침 모델" className={`${field} w-32 font-sans`}
                 onChange={(e) => setStructure({ omm_model: e.target.value, omm_effort: '' })}>
@@ -193,11 +189,6 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
                 (v) => setStructure({ ...structure, omm_effort: v }))}
             </span>
           </Row>
-          <Save edited={JSON.stringify(structure) !== JSON.stringify(savedStructure)} busy={working === 'structure'}
-            onSave={() => act('structure', async () => {
-              const saved = await api.setStructureSettings(structure)
-              setStructure(saved); setSavedStructure(saved)
-            })} />
           </>)}
         </Part>
 
@@ -228,14 +219,6 @@ function Row({ label, note, children }: { label: string; note?: string; children
   )
 }
 
-function Save({ edited, busy, onSave }: { edited: boolean; busy: boolean; onSave: () => void }) {
-  return (
-    <div className="flex justify-end">
-      <Btn tone="primary" disabled={!edited || busy} onClick={onSave}>{busy ? '저장하는 중…' : '저장'}</Btn>
-    </div>
-  )
-}
-
 // Where each Jev setting came from, as a person reads it.
 const SOURCE: Record<Jev['mode_source'], string> = {
   app: '이 화면에서 정함', file: '.env 파일', environment: '환경 변수', legacy: '옛 설정 이름', default: '기본값',
@@ -245,8 +228,7 @@ const SOURCE: Record<Jev['mode_source'], string> = {
 const saved = (j: Jev): JevMode | null => j.mode_source === 'app' ? (j.canary ? 'active' : j.mode) : null
 const HEALTH: Record<Jev['health'], string> ={ configured: '설정됨', disabled: '꺼짐', unavailable: '쓸 수 없음' }
 const PROBED: Record<Probe['health'], string> = { reachable: '응답함', auth_failed: '키가 거절됨', unavailable: '닿지 않음' }
-const MODES: { id: JevMode | null; label: string; note: string }[] = [
-  { id: null, label: '파일 따름', note: '.env 의 모드를 쓴다' },
+const MODES: { id: JevMode; label: string; note: string }[] = [
   { id: 'off', label: '끔', note: '기본 검색과 답만' },
   { id: 'shadow', label: '그림자', note: '뒤에서 판단만 기록하고 답은 기본대로' },
   { id: 'active', label: '켬', note: '판단이 검색을 이끌고, 에이전트가 근거를 종합해 답한다 (문장별 검증 없음)' },
@@ -259,24 +241,24 @@ const LIMIT: { id: keyof JevLimits; label: string; min: number; max: number; ste
 
 /** Jev: whether it is reachable, how a question uses it, and what a question
  *  may search. The key is never shown or edited here — only whether one exists. */
-function JevPart() {
+function JevPart({ onEdited }: { onEdited: Dispatch<SetStateAction<(() => Promise<void>) | null>> }) {
   const [jev, setJev] = useState<Jev | null>(null)
-  const [mode, setMode] = useState<JevMode | null>(null)
+  const [mode, setMode] = useState<JevMode>('off')
   const [off, setOff] = useState<string[]>([])
   const [limits, setLimits] = useState<JevLimits | null>(null)
   const [probe, setProbe] = useState<Probe | null>(null)
   const [working, setWorking] = useState('')
   const [fault, setFault] = useState('')
 
-  const seed = (j: Jev) => {
+  const seed = useCallback((j: Jev) => {
     setJev(j)
-    setMode(saved(j))
+    setMode(saved(j) ?? j.mode)
     setOff(j.disabled_sources)
     setLimits(j.limits)
-  }
+  }, [])
   useEffect(() => {
     api.getJev().then(seed).catch((err) => setFault(String(err instanceof Error ? err.message : err)))
-  }, [])
+  }, [seed])
 
   async function act(key: string, fn: () => Promise<void>) {
     setFault('')
@@ -290,12 +272,19 @@ function JevPart() {
     }
   }
 
+  const edited = !!jev && !!limits && (mode !== (saved(jev) ?? jev.mode)
+    || JSON.stringify([...off].sort()) !== JSON.stringify([...jev.disabled_sources].sort())
+    || JSON.stringify(limits) !== JSON.stringify(jev.limits))
+  // Saved by the window's one [저장]. A mode left as the file sets it keeps following the file.
+  useEffect(() => {
+    const store = async () => seed(await api.setJev({
+      mode: jev && saved(jev) === null && mode === jev.mode ? null : mode, disabled_sources: off, limits: limits! }))
+    onEdited(edited ? () => store : null)
+  }, [edited, jev, mode, off, limits, onEdited, seed])
+
   if (!jev || !limits) {
     return <Part title="질문 (Jev)"><p className="text-faint">{fault || '읽는 중…'}</p></Part>
   }
-  const edited = mode !== saved(jev)
-    || JSON.stringify([...off].sort()) !== JSON.stringify([...jev.disabled_sources].sort())
-    || JSON.stringify(limits) !== JSON.stringify(jev.limits)
   return (
     <Part title="질문 (Jev)">
       <Row label="상태" note={jev.problem ? `${HEALTH[jev.health]} — ${jev.problem}`
@@ -344,11 +333,7 @@ function JevPart() {
             onChange={(e) => setLimits({ ...limits, [l.id]: Number(e.target.value) })} />
         </Row>
       ))}
-      <p className="text-[12.5px] text-faint">새 질문부터 적용된다. 도는 질문은 시작할 때의 설정을 끝까지 쓴다. 키는 .env 에서만 바꾼다.</p>
       {fault && <p role="alert" className="whitespace-pre-wrap text-destructive">{fault}</p>}
-      <Save edited={edited} busy={working === 'save'} onSave={() => act('save', async () => {
-        seed(await api.setJev({ mode, disabled_sources: off, limits }))
-      })} />
     </Part>
   )
 }
