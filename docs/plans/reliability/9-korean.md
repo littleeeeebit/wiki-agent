@@ -363,7 +363,7 @@ pairs, and needs its own approval.
 Translation covers about 84 unique Korean questions (B and D share them),
 the twins' chunks, and 84 overlay answers. That is estimated at under USD 1
 at `gemini-3.1-flash-lite`. It must fit the month's remaining
-`TRANSLATE_MONTHLY_USD` (default 5). The balance is checked when approval is
+`TRANSLATE_MONTHLY_USD` (dollars; absent or 0 is no limit). The balance is checked when approval is
 asked and again when the run starts. Jev's tokens have no dated price; v8's
 retrieval run used about 2 M for 278 rows, so roughly 3–5 M here. The base
 run needs the owner's approval with this estimate.

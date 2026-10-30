@@ -517,7 +517,8 @@ def test_a_translator_fault_ends_explicit_with_no_english_in_evidence_and_questi
 
     isolated.setattr(translate.urllib.request, "urlopen", urlopen)
     if kind == "limit":
-        isolated.setenv("TRANSLATE_MONTHLY_USD", "0")
+        isolated.setenv("TRANSLATE_MONTHLY_USD", "1")
+        translate.charge(1.0)
     # Only the slow transport tests the deadline; response faults must reach their assertions under CI load.
     seconds = 0.4 if kind == "slow" else 5.0
     # Evidence normalization, as `judge` asks for a passage.
