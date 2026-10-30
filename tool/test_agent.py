@@ -982,6 +982,41 @@ def test_a_close_waits_for_a_stop_still_using_the_job(tree):
     assert order == ["kill", "close"]
 
 
+def test_a_late_close_removes_only_its_own_process_prompt_file(tree):
+    # The prompt is a file (a spec overran Windows' command line, WinError 206).
+    # A close still ending the old process deleted the restarted one's prompt.
+    waiting, finish, terminated = threading.Event(), threading.Event(), chat_session.terminated
+    first = []
+
+    def late(job):
+        if not first:
+            first.append(job)
+            waiting.set()
+            assert finish.wait(10)
+        terminated(job)
+
+    session, real_popen = ChatSession(tree, system="marker"), subprocess.Popen
+    with patch.object(chat_session.subprocess, "Popen", lambda _, **kw: real_popen(
+            [sys.executable, "-X", "utf8", "-c", "import sys; sys.stdin.read()"], **kw)), \
+         patch.object(chat_session, "cli_command", side_effect=lambda name: [name]), \
+         patch.object(chat_session, "terminated", side_effect=late):
+        session.ensure()
+        old = session._prompt
+        closer = threading.Thread(target=session.close)
+        closer.start()
+        assert waiting.wait(10)
+        session.ensure()
+        new = session._prompt
+        finish.set()
+        closer.join(10)
+        try:
+            assert new != old and os.path.exists(new) and not os.path.exists(old)
+            assert open(new, encoding="utf-8").read().startswith("marker")
+        finally:
+            session.close()
+    assert not os.path.exists(new)
+
+
 def test_a_close_survives_a_process_slow_to_die_after_its_kill(tree):
     # A Codex exec that outlived its kill by five seconds raised out of `close`,
     # and the oneshot's folder it still held failed the cleanup after it.

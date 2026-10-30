@@ -219,6 +219,7 @@ class ChatSession:
         self._resume: str | None = resume
         self._proc: subprocess.Popen | None = None
         self._job = None   # `_proc`'s Windows job: its background shells end with it
+        self._prompt: str | None = None   # `_proc`'s system prompt file, removed with it
         # `settled(answer)`: the answer closes the work. Background tasks still
         # running after one are left over, not awaited (`_drain`).
         self.settled = None
@@ -295,11 +296,6 @@ class ChatSession:
                 "quota": self.quota, "usage": self.usage, "error": self._quota_error}
 
     @property
-    def _prompt_file(self) -> Path:
-        """The system prompt Claude reads at start-up; removed by `close`."""
-        return Path(tempfile.gettempdir()) / f"wiki-agent-prompt-{self.id}.md"
-
-    @property
     def is_codex(self) -> bool:
         return bool(self.model and self.model.startswith("codex:"))
 
@@ -366,12 +362,15 @@ class ChatSession:
             # instructions. Native hooks and the app's prompts own this workflow.
             cmd += ["--disable-slash-commands"]
             cmd += ["--settings", json.dumps({"fastMode": self.fast})]
-        if self.system or self.asking:
+        prompt = None
+        if (self.system or self.asking) and not self.is_codex:
             # A spec-sized prompt passes Windows' 32,767-character command
             # line and `CreateProcess` fails (WinError 206): read from a file.
-            self._prompt_file.write_text(self.system + self.asking, encoding="utf-8")
-            cmd += ["--system-prompt-file" if self.isolated else "--append-system-prompt-file",
-                    str(self._prompt_file)]
+            # One per process, owner-only (`mkstemp`): a shared /tmp hides the spec.
+            fd, prompt = tempfile.mkstemp(prefix="wiki-agent-prompt-", suffix=".md")
+            with os.fdopen(fd, "w", encoding="utf-8") as file:
+                file.write(self.system + self.asking)
+            cmd += ["--system-prompt-file" if self.isolated else "--append-system-prompt-file", prompt]
         if self.model:
             cmd += ["--model", self.model]
         if self.effort:
@@ -421,13 +420,18 @@ class ChatSession:
             cmd.append("-")
             self.model_name = self.model.removeprefix("codex:")
         self._stderr = deque(maxlen=20)
-        cmd = [*cli_command(cmd[0]), *cmd[1:]]
-        proc = subprocess.Popen(
-            cmd, cwd=str(self.repo), env=self._env,
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, encoding="utf-8",
-            errors="replace", bufsize=1, creationflags=SUSPENDED, start_new_session=os.name != "nt",
-        )
+        try:
+            cmd = [*cli_command(cmd[0]), *cmd[1:]]
+            proc = subprocess.Popen(
+                cmd, cwd=str(self.repo), env=self._env,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                errors="replace", bufsize=1, creationflags=SUSPENDED, start_new_session=os.name != "nt",
+            )
+        except BaseException:
+            if prompt:
+                Path(prompt).unlink(missing_ok=True)
+            raise
         # The CLI's background shells outlive it — even its own `stop_task`
         # leaves the shell's child running (2.1.291). Whatever ends this
         # process ends them through the job, or elsewhere its process group
@@ -435,8 +439,9 @@ class ChatSession:
         job = contained(proc)
         # Published as a pair under `_halting`, which `stop` holds while it
         # uses the job: a closed handle's number goes to the next job made.
+        # The prompt goes with them: a late `close` removes its own process's file only.
         with self._halting:
-            self._proc, self._job = proc, job
+            self._proc, self._job, self._prompt = proc, job, prompt
         # Registered after the process exists: `end_all` either lists it or was first and refuses it.
         with _live_lock:
             refused = _ending
@@ -839,6 +844,7 @@ class ChatSession:
         with self._halting:
             proc, self._proc = self._proc, None
             job, self._job = self._job, None
+            prompt, self._prompt = self._prompt, None
         self._pending.clear()
         self._asks.clear()
         self._changes.clear()
@@ -856,7 +862,8 @@ class ChatSession:
         finally:
             # Nobody watches its background work after this: no orphans.
             terminated(job)
-            self._prompt_file.unlink(missing_ok=True)
+            if prompt:
+                Path(prompt).unlink(missing_ok=True)
 
     # -- One turn -----------------------------------------------------------
 
