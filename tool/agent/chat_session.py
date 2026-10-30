@@ -295,6 +295,11 @@ class ChatSession:
                 "quota": self.quota, "usage": self.usage, "error": self._quota_error}
 
     @property
+    def _prompt_file(self) -> Path:
+        """The system prompt Claude reads at start-up; removed by `close`."""
+        return Path(tempfile.gettempdir()) / f"wiki-agent-prompt-{self.id}.md"
+
+    @property
     def is_codex(self) -> bool:
         return bool(self.model and self.model.startswith("codex:"))
 
@@ -362,7 +367,11 @@ class ChatSession:
             cmd += ["--disable-slash-commands"]
             cmd += ["--settings", json.dumps({"fastMode": self.fast})]
         if self.system or self.asking:
-            cmd += ["--system-prompt" if self.isolated else "--append-system-prompt", self.system + self.asking]
+            # A spec-sized prompt passes Windows' 32,767-character command
+            # line and `CreateProcess` fails (WinError 206): read from a file.
+            self._prompt_file.write_text(self.system + self.asking, encoding="utf-8")
+            cmd += ["--system-prompt-file" if self.isolated else "--append-system-prompt-file",
+                    str(self._prompt_file)]
         if self.model:
             cmd += ["--model", self.model]
         if self.effort:
@@ -847,6 +856,7 @@ class ChatSession:
         finally:
             # Nobody watches its background work after this: no orphans.
             terminated(job)
+            self._prompt_file.unlink(missing_ok=True)
 
     # -- One turn -----------------------------------------------------------
 
