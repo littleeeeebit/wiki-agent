@@ -75,9 +75,6 @@ ENDPOINT = (
 PRICE_IN = 0.25
 PRICE_OUT = 1.50
 
-# The monthly limit when neither `.env` nor the environment names one.
-MONTHLY_USD = 5.0
-
 # How much longer than its caller a request that goes to the shared cache may
 # keep reading. The caller stops waiting at its deadline; the answer still lands
 # in the cache, so a passage too long to translate within one turn's seconds is
@@ -336,24 +333,26 @@ def api_key() -> str:
     return setting("GEMINI_API_KEY") or ""
 
 
-def limit() -> float:
-    """This month's ceiling in dollars. Unreadable means zero.
+def limit() -> float | None:
+    """`TRANSLATE_MONTHLY_USD` in dollars; absent, blank or `0` is no limit (a built-in $5 stopped
+    translation mid-month, 2026-10-30). `None` is a mistyped one (`$10`, `-1`): never read as none,
+    it stops new requests and the screen says so."""
 
-    A limit that cannot be read is not a reason to spend without one. Zero
-    stops new requests and nothing else — the cache still answers, and the
-    screens show English, which is visible where an overrun is not.
-    """
-
-    raw = setting("TRANSLATE_MONTHLY_USD")
-    if raw is None:
-        return MONTHLY_USD
-    # A blank line is a statement, as it is for the key, and `inf` is not a
-    # ceiling. Both read as unreadable rather than as the default or no limit.
+    raw = (setting("TRANSLATE_MONTHLY_USD") or "").strip()
+    if not raw:
+        return 0.0
     try:
         value = float(raw)
     except ValueError:
-        return 0.0
-    return value if math.isfinite(value) and value >= 0 else 0.0
+        return None
+    return value if math.isfinite(value) and value >= 0 else None
+
+
+def over(db: sqlite3.Connection) -> bool:
+    """This month has reached its ceiling, or its ceiling cannot be read; never with none."""
+
+    ceiling = limit()
+    return ceiling is None or (ceiling > 0 and spent(db) >= ceiling)
 
 
 def month() -> str:
@@ -402,7 +401,7 @@ def room() -> bool:
 
     db = _store()
     try:
-        return db is not None and spent(db) < limit()
+        return db is not None and not over(db)
     except Exception:
         return False
     finally:
@@ -660,12 +659,12 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
     # ponytail: read-then-send, so processes racing at the limit each send one.
     if wanted:
         try:
-            over = spent(db) >= limit()
+            full = over(db)
         except Exception:
-            over = True
-        if over or not api_key():
+            full = True
+        if full or not api_key():
             for i in wanted:
-                out[i] = (texts[i], "limit" if over else "no_key")
+                out[i] = (texts[i], "limit" if full else "no_key")
             wanted = []
 
     fresh_count = len(wanted)
@@ -1547,7 +1546,8 @@ def main() -> int:
     if args.usage:
         now = usage()
         usd = "읽을 수 없다" if now["usd"] is None else f"${now['usd']:.4f}"
-        print(f"{now['month']} 사용 {usd} / 한도 ${now['limit']:.2f}")
+        cap = "설정 오류 — 새 번역을 보내지 않는다" if now["limit"] is None else f"${now['limit']:.2f}" if now["limit"] else "없음"
+        print(f"{now['month']} 사용 {usd} / 한도 {cap}")
         return 0
     if args.check:
         return check(args.paths, args.manifest, args.source_root, args.review)

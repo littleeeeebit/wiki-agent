@@ -8,7 +8,7 @@ Goal. `wiki` runs without translation — it takes the question exactly as a hum
 
 It already does. Step 2 split `inject.py` and left the translation in the hook entry point, and `pipeline_imports` blocks the `translate` import of `wiki`. This step only verifies that with the actual path.
 
-| Path | Translation off (`TRANSLATE_MONTHLY_USD=0`, discard cache) |
+| Path | Translation off (`TRANSLATE_MONTHLY_USD=0`, discard cache — what `0` meant then; since PR #262 `0` is no limit, so verify this today with an empty `GEMINI_API_KEY` in an isolated settings file and a throwaway cache) |
 | --- | --- |
 | Query — `inject.py` hook | Five rule sheets were injected. Only the English version is missing |
 | Graph — `graph.py` | Does not call translation from the start. `graph.json` appears |

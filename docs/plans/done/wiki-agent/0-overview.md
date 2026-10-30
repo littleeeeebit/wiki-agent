@@ -130,7 +130,7 @@ Agent session is a screen that writes to the server. Before building, write down
 `translate` measures its budget in two ways.
 
 - Deadline per caller (seconds). The caller passes it. There is no default value. Hooks short, overlays long — so #19 does not happen again
-- Monthly cost limit ($). Multiply the number of tokens in the response by the Gemini rate and count. If exceeded, return the original text for the remainder of the month. The limit is `TRANSLATE_MONTHLY_USD` of `.env`, default $5. Usage display on the screen is done by `usage()` in step 6
+- Monthly cost limit ($). Multiply the number of tokens in the response by the Gemini rate and count. If exceeded, return the original text for the remainder of the month. The limit is `TRANSLATE_MONTHLY_USD` of `.env`, default $5 (since PR #262 no default, and `0` is no limit). Usage display on the screen is done by `usage()` in step 6
 
 ## Safety boundary
 

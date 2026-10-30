@@ -851,7 +851,7 @@ export async function loopEvents(onEvent: (ev: FeedEv) => void, signal: AbortSig
 
 // -- The translation switch ---------------------------------------------------
 
-export type Usage = { month: string; usd: number | null; limit: number }
+export type Usage = { month: string; usd: number | null; limit: number | null }
 export type TranslationMode = 'off' | 'full' | 'partial'
 export type Switch = { translate: boolean; mode?: TranslationMode; usage: Usage }
 

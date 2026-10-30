@@ -485,7 +485,8 @@ def test_the_judge_waits_for_the_monthly_limit_but_a_kept_verdict_does_not(monke
     monkeypatch.setattr(T.urllib.request, "urlopen", http)
     pair = ("The writer is missing a retry.", "작성기에 재시도가 없다.")
     assert T.judged([pair], soon()) == ["same"]
-    monkeypatch.setenv("TRANSLATE_MONTHLY_USD", "0")
+    monkeypatch.setenv("TRANSLATE_MONTHLY_USD", "1")
+    T.charge(1.0)
     assert T.judged([pair], soon()) == ["same"], "a kept verdict is free"
     assert T.judged([("The queue lacks a pause.", "큐에 일시 중지가 없다.")], soon()) == [None]
     assert sent == [pair[1]]
@@ -713,7 +714,8 @@ def test_a_spent_month_sends_nothing_but_the_cache_still_answers(
     monkeypatch.setattr(T, "_ask", _rewrites_all_prose)
     assert ko("훅이 조용히 죽는다") == "ENGLISH ENGLISH ENGLISH"
 
-    T.charge(T.MONTHLY_USD)
+    monkeypatch.setenv("TRANSLATE_MONTHLY_USD", "1")
+    T.charge(1.0)
     asked: list[list[str]] = []
     monkeypatch.setattr(T, "_ask", lambda _s, batch, _t: asked.append(batch))
 
@@ -726,23 +728,29 @@ def test_a_spent_month_sends_nothing_but_the_cache_still_answers(
 def test_the_limit_is_read_like_the_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Absent means the default; unreadable means zero, never unlimited."""
+    """Dollars; absent, blank or zero is no limit, never a built-in one; a mistyped one stops new requests."""
 
     envfile = tmp_path / ".env"
     monkeypatch.setattr(T, "ENV", envfile)
-    assert T.limit() == T.MONTHLY_USD
+    monkeypatch.delenv("TRANSLATE_MONTHLY_USD", raising=False)
+    assert T.limit() == 0.0
 
     monkeypatch.setenv("TRANSLATE_MONTHLY_USD", "12.5")
     assert T.limit() == 12.5
 
     envfile.write_text("TRANSLATE_MONTHLY_USD=0\n", encoding="utf-8")
     assert T.limit() == 0.0, "the file outranks the variable"
+    envfile.write_text("TRANSLATE_MONTHLY_USD=\n", encoding="utf-8")
+    assert T.limit() == 0.0
 
-    # A blank line is a statement, as it is for the key. `nan` and `inf` pass
-    # `float()`, and neither is a ceiling.
-    for unreadable in ("five dollars", "", "nan", "inf", "-1"):
-        envfile.write_text(f"TRANSLATE_MONTHLY_USD={unreadable}\n", encoding="utf-8")
-        assert T.limit() == 0.0, unreadable
+    # `nan` and `inf` pass `float()`, and neither is a ceiling.
+    asked: list[list[str]] = []
+    monkeypatch.setattr(T, "_ask", lambda _s, batch, _t: asked.append(batch))
+    for mistyped in ("five dollars", "$10", "10,00", "nan", "inf", "-1"):
+        envfile.write_text(f"TRANSLATE_MONTHLY_USD={mistyped}\n", encoding="utf-8")
+        assert T.limit() is None and not T.room(), mistyped
+        assert ko("훅이 조용히 죽는다") == "훅이 조용히 죽는다", mistyped
+    assert asked == [], "a mistyped ceiling let a request out"
 
 
 def test_a_count_that_raises_keeps_the_cache_hits(
@@ -763,6 +771,7 @@ def test_a_count_that_raises_keeps_the_cache_hits(
     asked: list[list[str]] = []
     monkeypatch.setattr(T, "_ask", lambda _s, batch, _t: asked.append(batch))
     monkeypatch.setattr(T, "spent", locked)
+    monkeypatch.setenv("TRANSLATE_MONTHLY_USD", "1")   # with no ceiling the count is never read
 
     assert T.translate(["훅이 조용히 죽는다", "다른 문장이다"], T.KO_EN, soon()) == [
         "ENGLISH ENGLISH ENGLISH", "다른 문장이다"
@@ -770,15 +779,16 @@ def test_a_count_that_raises_keeps_the_cache_hits(
     assert asked == [], "a request went out with the count unreadable"
 
 
-def test_a_zero_limit_sends_nothing(
+def test_a_zero_limit_is_no_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # A built-in $5 ceiling stopped translation mid-month (2026-10-30).
     monkeypatch.setenv("TRANSLATE_MONTHLY_USD", "0")
-    asked: list[list[str]] = []
-    monkeypatch.setattr(T, "_ask", lambda _s, batch, _t: asked.append(batch))
+    T.charge(100.0)
+    monkeypatch.setattr(T, "_ask", _rewrites_all_prose)
 
-    assert ko("훅이 조용히 죽는다") == "훅이 조용히 죽는다"
-    assert asked == []
+    assert ko("훅이 조용히 죽는다") == "ENGLISH ENGLISH ENGLISH"
+    assert T.room()
 
 
 def test_without_a_store_nothing_is_sent(monkeypatch: pytest.MonkeyPatch) -> None:
