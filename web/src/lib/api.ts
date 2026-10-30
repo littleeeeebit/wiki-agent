@@ -208,7 +208,7 @@ function moved(res: Response) {
   if (to) window.dispatchEvent(new CustomEvent('project-moved', { detail: decodeURIComponent(to) }))
 }
 
-export const get = async (url: string, owner?: string) => fetch(url, { headers: await scoped(url, owner) })
+export const get = async (url: string, owner?: string, signal?: AbortSignal) => fetch(url, { headers: await scoped(url, owner), signal })
 
 export async function json<T>(res: Response, what: string): Promise<T> {
   if (!res.ok) {
@@ -1022,9 +1022,9 @@ export async function workSay(
 /** Reattach to a turn after the last `seq` seen. `gone` when the server holds
  *  another turn by now (410): the record is the thing to read then. */
 export async function workEvents(
-  path: string, turn: string, after: number, onEvent: (ev: WorkEv) => void,
+  path: string, turn: string, after: number, onEvent: (ev: WorkEv) => void, signal?: AbortSignal,
 ): Promise<'gone' | void> {
-  const res = await get(`/api/work/events?${new URLSearchParams({ path, turn, after: String(after) })}`)
+  const res = await get(`/api/work/events?${new URLSearchParams({ path, turn, after: String(after) })}`, undefined, signal)
   if (res.status === 410) return 'gone'
   await events(res, onEvent, workError)
 }
