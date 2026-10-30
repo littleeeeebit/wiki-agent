@@ -986,7 +986,7 @@ def test_a_clone_without_origin_head_asks_github_and_a_rerun_keeps_no_old_verdic
 def test_a_persons_turn_runs_a_final_that_failed_outside_the_code_once_more(running, tmp_path, swept):
     # ai-companion-voice-agent `latency-record-preparation-97d92512`: a slowed machine failed two timing
     # tests in the final, and every later report on the same head got the stored failure back
-    # ("기존 로컬 최종 검사: failed … 자동 재실행하지 않습니다"), so the pull request could never open.
+    # (`기존 로컬 최종 검사: failed … 자동 재실행하지 않습니다`), so the pull request could never open.
     # Unswept: the person's turn leaves out `test-cleanup`, and the server's own turn asking for it
     # carries the report — the person's word still counts there (#257 review round 1).
     repo, remote = running
