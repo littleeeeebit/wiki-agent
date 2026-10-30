@@ -788,11 +788,11 @@ def verified(repo: Path, path: Path, run, spec: dict) -> str:
         return measuring(path, spec, verdict["head"], run.halt)   # whoever owns the suite, the spec's measurement is ours
     head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
     cmd, local = specs.required(repo, spec), specs.local_required(repo, spec)
-    # The receipt hands a failed final of this head back unrun, even one a slowed machine failed: a person's
-    # turn after it is the word to run it once more, as a continue is for a task (`loop.finalized`).
-    last = (spec.get("validation") or {}).get("final") or {}
-    again = ("incomplete", "running", "failed") if run.person and last.get("head") == head and not last.get("ok") \
-        and run.started_at > (last.get("finished_at") or 0) else ()
+    # The receipt hands a failed final of this head back unrun, even one a slowed machine failed: a person's word
+    # since then — whichever server turn then reports — runs it once more, as a continue does a task's.
+    last, said = (spec.get("validation") or {}).get("final") or {}, specs.work.recall(path)
+    again = ("incomplete", "running", "failed") if last.get("head") == head and not last.get("ok") and any(
+        r.get("person") and r["ts"] > (last.get("finished_at") or 0) for r in said) else ()
     record = {"head": head, "base_oid": specs.current_merge_base(path, base, head), "command": cmd,
               "environment_digest": specs.digest(repo, path, cmd), "ok": False, "code": None,
               "reason": "끝나지 않았다", "finished_at": None}

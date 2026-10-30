@@ -982,10 +982,13 @@ def test_a_clone_without_origin_head_asks_github_and_a_rerun_keeps_no_old_verdic
     assert ["gh", "repo", "view"] in [c[:3] for c in remote.calls]
 
 
-def test_a_persons_turn_runs_a_final_that_failed_outside_the_code_once_more(running, tmp_path):
+@pytest.mark.parametrize("swept", [True, False])
+def test_a_persons_turn_runs_a_final_that_failed_outside_the_code_once_more(running, tmp_path, swept):
     # ai-companion-voice-agent `latency-record-preparation-97d92512`: a slowed machine failed two timing
     # tests in the final, and every later report on the same head got the stored failure back
     # ("기존 로컬 최종 검사: failed … 자동 재실행하지 않습니다"), so the pull request could never open.
+    # Unswept: the person's turn leaves out `test-cleanup`, and the server's own turn asking for it
+    # carries the report — the person's word still counts there (#257 review round 1).
     repo, remote = running
     slow = tmp_path / "slow"
     (repo / "gate.py").write_text(f"import pathlib, sys\nsys.exit(pathlib.Path({str(slow)!r}).exists())\n",
@@ -999,8 +1002,9 @@ def test_a_persons_turn_runs_a_final_that_failed_outside_the_code_once_more(runn
 
     def recovered(path, halt):
         slow.unlink()   # the machine, not the code: no commit
-        return report(True, True)
-    Worker.replies = [edited("src/billing.py", "def charge(order):\n    return order  # named\n"), recovered]
+        return report(True, True) if swept else report(True, True, sweep="")
+    Worker.replies = [edited("src/billing.py", "def charge(order):\n    return order  # named\n"), recovered,
+                      report(True, True)]
     path = started(client(), run["specs"][0])
     card = specs.load("proj", run["specs"][0])
     assert card["fault"] and not card["state"].startswith("PR #"), "the slowed final failed"
