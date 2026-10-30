@@ -728,7 +728,7 @@ def test_a_spent_month_sends_nothing_but_the_cache_still_answers(
 def test_the_limit_is_read_like_the_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Dollars; absent, zero or anything not a positive amount is no limit, never a built-in one."""
+    """Dollars; absent, blank or zero is no limit, never a built-in one; a mistyped one stops new requests."""
 
     envfile = tmp_path / ".env"
     monkeypatch.setattr(T, "ENV", envfile)
@@ -740,11 +740,17 @@ def test_the_limit_is_read_like_the_key(
 
     envfile.write_text("TRANSLATE_MONTHLY_USD=0\n", encoding="utf-8")
     assert T.limit() == 0.0, "the file outranks the variable"
+    envfile.write_text("TRANSLATE_MONTHLY_USD=\n", encoding="utf-8")
+    assert T.limit() == 0.0
 
     # `nan` and `inf` pass `float()`, and neither is a ceiling.
-    for none in ("five dollars", "", "nan", "inf", "-1"):
-        envfile.write_text(f"TRANSLATE_MONTHLY_USD={none}\n", encoding="utf-8")
-        assert T.limit() == 0.0, none
+    asked: list[list[str]] = []
+    monkeypatch.setattr(T, "_ask", lambda _s, batch, _t: asked.append(batch))
+    for mistyped in ("five dollars", "$10", "10,00", "nan", "inf", "-1"):
+        envfile.write_text(f"TRANSLATE_MONTHLY_USD={mistyped}\n", encoding="utf-8")
+        assert T.limit() is None and not T.room(), mistyped
+        assert ko("훅이 조용히 죽는다") == "훅이 조용히 죽는다", mistyped
+    assert asked == [], "a mistyped ceiling let a request out"
 
 
 def test_a_count_that_raises_keeps_the_cache_hits(

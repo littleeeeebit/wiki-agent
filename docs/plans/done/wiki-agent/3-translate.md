@@ -41,7 +41,7 @@ Pipelines without `__all__` (`wiki`, `agent`, `workspace`) are not checked yet. 
 
 | What | How |
 | --- | --- |
-| Limit | `TRANSLATE_MONTHLY_USD` of `.env`, if not present, environment variable of the same name, if neither, $5. The reading order is the same as `GEMINI_API_KEY` |
+| Limit | `TRANSLATE_MONTHLY_USD` of `.env`, if not present, environment variable of the same name, if neither, $5. The reading order is the same as `GEMINI_API_KEY`. Superseded by PR #262: no built-in default; absent, blank or `0` is no limit; a value that is not an amount stops new requests |
 | `0` | Do not send new requests. Cache responds as is |
 | Unreadable value | Treated as `0`. Safe for the money side when the limit cannot be read. Non-numeric values, negative numbers, `nan`·`inf`, and empty values — if there is a line like a key, that line wins |
 | Fee | `usageMetadata` of the response — input is `promptTokenCount`, output is the sum of `candidatesTokenCount` and `thoughtsTokenCount` — multiplied by the rate table. `gemini-3.1-flash-lite` input $0.25, output $1.50 (per 1 million tokens, 2026-09-24 ai.google.dev rate table) |

@@ -333,26 +333,26 @@ def api_key() -> str:
     return setting("GEMINI_API_KEY") or ""
 
 
-def limit() -> float:
-    """This month's ceiling in dollars, `TRANSLATE_MONTHLY_USD`. Zero is no limit.
+def limit() -> float | None:
+    """`TRANSLATE_MONTHLY_USD` in dollars; absent, blank or `0` is no limit (a built-in $5 stopped
+    translation mid-month, 2026-10-30). `None` is a mistyped one (`$10`, `-1`): never read as none,
+    it stops new requests and the screen says so."""
 
-    A positive amount is the ceiling; absent, blank, zero or anything else
-    that is not a positive amount means none. A built-in $5 ceiling stopped
-    translation mid-month with nothing on screen but English (2026-10-30).
-    """
-
-    try:
-        value = float(setting("TRANSLATE_MONTHLY_USD") or 0)
-    except ValueError:
+    raw = (setting("TRANSLATE_MONTHLY_USD") or "").strip()
+    if not raw:
         return 0.0
-    return value if math.isfinite(value) and value > 0 else 0.0
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return value if math.isfinite(value) and value >= 0 else None
 
 
 def over(db: sqlite3.Connection) -> bool:
-    """This month has reached its ceiling; never, with no ceiling."""
+    """This month has reached its ceiling, or its ceiling cannot be read; never with none."""
 
     ceiling = limit()
-    return ceiling > 0 and spent(db) >= ceiling
+    return ceiling is None or (ceiling > 0 and spent(db) >= ceiling)
 
 
 def month() -> str:
@@ -1546,7 +1546,8 @@ def main() -> int:
     if args.usage:
         now = usage()
         usd = "읽을 수 없다" if now["usd"] is None else f"${now['usd']:.4f}"
-        print(f"{now['month']} 사용 {usd} / 한도 ${now['limit']:.2f}")
+        cap = "설정 오류 — 새 번역을 보내지 않는다" if now["limit"] is None else f"${now['limit']:.2f}" if now["limit"] else "없음"
+        print(f"{now['month']} 사용 {usd} / 한도 {cap}")
         return 0
     if args.check:
         return check(args.paths, args.manifest, args.source_root, args.review)
