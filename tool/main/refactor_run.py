@@ -618,12 +618,9 @@ def contract(path: Path, spec: dict) -> str:
         if not (path / name).is_file():
             broken.append(f"`{name}` 삭제{WHOLE_FILE}")
             continue
-        new = (path / name).read_bytes()
-        # The bytes the tests run, not `git hash-object`: a clean filter would hide an edit (#258 round 1).
-        if name in pinned and (seen := subprocess.run(["git", "cat-file", "blob", pinned[name]], cwd=path,
-                                                      capture_output=True)).returncode == 0 \
-                and seen.stdout.replace(b"\r\n", b"\n") == new.replace(b"\r\n", b"\n"):
+        if name in pinned and _runs_as(path, name, pinned[name]):
             continue
+        new = (path / name).read_bytes()
         if not name.endswith(".py"):
             if allowed or not (equivalent(name, old.stdout, new) or added_only(old.stdout, new)):
                 broken.append(f"`{name}` 의 기존 테스트 변경{PINNED}")
@@ -679,7 +676,13 @@ def amendments(spec: dict) -> dict:
             blob = specs.sh(["git", "rev-parse", f"{head}:{name}"], path).stdout.strip()
             if not blob:
                 raise HTTPException(409, f"`{name}` 의 {head[:12]} blob 을 읽지 못했다")
-            if pinned.get(name) == blob or not allowed and (equivalent(name, *texts) or added_only(*texts)):
+            if not allowed and (equivalent(name, *texts) or added_only(*texts)):
+                continue
+            # Never shown as approved while `contract` still refuses it: nothing would be left to approve.
+            if not _runs_as(path, name, blob):
+                raise HTTPException(409, f"`{name}` 의 작업트리 바이트가 {head[:12]} 에 커밋된 내용과 다르다 — "
+                                         "ident·필터·인코딩 변환이나 커밋하지 않은 변경을 없앤 뒤 다시 열어라")
+            if pinned.get(name) == blob:
                 continue
         try:   # the patch is read as UTF-8: another encoding shows different values as the same `�` (#255 round 3)
             [t.decode("utf-8") for t in texts]
@@ -695,6 +698,15 @@ def amendments(spec: dict) -> dict:
     return _seen(spec, start, head, files)
 
 
+def _runs_as(path: Path, name: str, blob: str) -> bool:
+    """Whether the bytes the tests run are `blob`'s, line endings aside: read past every clean filter
+    and replacement object, which would show an edit as the approved content (#258 rounds 1–2)."""
+
+    seen = subprocess.run(["git", "--no-replace-objects", "cat-file", "blob", blob], cwd=path, capture_output=True)
+    runs = (path / name).read_bytes()
+    return not seen.returncode and seen.stdout.replace(b"\r\n", b"\n") == runs.replace(b"\r\n", b"\n")
+
+
 def _touched(spec: dict, kind: str) -> tuple[Path, str, str, list[str]]:
     """The card's worktree, start, head and the files `git diff --diff-filter=<kind>` lists between them."""
 
@@ -704,6 +716,9 @@ def _touched(spec: dict, kind: str) -> tuple[Path, str, str, list[str]]:
     # A branch-mode card shares the checkout: another card's branch there is not this card's deletion (#252 round 3).
     if (specs.owner(path) or {}).get("id") != spec["id"]:
         raise HTTPException(409, "작업트리가 지금 이 카드의 브랜치에 있지 않다 — 이 카드의 브랜치를 먼저 열어라")
+    # A replacement object makes every patch and text shown here something other than what the tests run.
+    if specs.sh(["git", "for-each-ref", "--count=1", "refs/replace/"], path).stdout.strip():
+        raise HTTPException(409, "저장소에 대체 객체(refs/replace)가 있어 보이는 내용을 믿을 수 없다 — 지운 뒤 다시 열어라")
     head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
     listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames",
                        f"--diff-filter={kind}", start, head], path)
