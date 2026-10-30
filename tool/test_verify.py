@@ -222,7 +222,7 @@ def test_private_local_verification_runs_once_and_reuses_across_sessions(hosted_
     def judge(repo, command, env, halt, timeout):
         calls.append(command)
         assert env["WIKI_FINAL_RUN"] == "1" and env["PYTEST_XDIST_AUTO_NUM_WORKERS"] == "2"
-        assert 0 < timeout <= 19 * 60
+        assert 0 < timeout <= ci.FINAL_SECONDS
         return {"ok": True, "head": HEAD, "tail": "passed", "elapsed_seconds": 1}
 
     proof = ci.final(hosted_repo, "main", judge=judge)

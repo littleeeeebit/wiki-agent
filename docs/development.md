@@ -94,7 +94,11 @@ jobs. A confirmed missing/disabled workflow selects local; an uncertain workflow
 lookup on a known public repository stops pending. No account token, paid runner or self-hosted runner is required for local
 mode. Local execution holds the repository's final-run lock (in its git common
 directory, so another repository's final run is not held up) and uses the existing
-process-tree cancellation and shared time budget. Busy, interrupted and
+process-tree cancellation. A run is cut as stuck when its output has not grown for
+ten minutes (`runtime.IDLE_SECONDS`), not by how long it has run: a suite that takes
+19 minutes keeps printing, a stuck one does not. Gates run Python unbuffered so each
+test's mark reaches the capture as it passes. Two hours (`verify.FINAL_SECONDS`) is
+only a ceiling for a run that keeps printing without end. Busy, interrupted and
 unavailable verification stays pending instead of starting implementation fixes.
 
 CI runs on an explicit final request, not every repair commit. PR updates cancel

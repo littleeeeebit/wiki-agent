@@ -18,6 +18,10 @@ from common.budget import Budget
 stopping = threading.Event()
 LOCAL_SECONDS, CLEANUP_SECONDS = 19 * 60, 30
 FLOW_SECONDS = LOCAL_SECONDS
+# A slow run and a stuck one look alike by the clock; only one keeps writing. A gate whose
+# output has not grown this long is stuck, however long it has run (its tests are each shorter).
+IDLE_SECONDS = 10 * 60
+STUCK = f"검증 실행이 {IDLE_SECONDS // 60}분째 출력 없이 멈췄다"
 verification_budget = ContextVar("verification_budget", default=None)
 # Called about once a second with the running gate's last output bytes, by a screen that shows it.
 gate_output = ContextVar("gate_output", default=None)
@@ -102,9 +106,12 @@ def gate(cmd, cwd, halt, env, timeout, owned_jobs, kill):
 
 
 def _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, reader=None, seen=None):
-    """`gate`'s run into `output`; `seen` gets the last 4 KB of `reader` about once a second."""
+    """`gate`'s run into `output`; `seen` gets the last 4 KB of `reader` about once a second.
+    Python writes to a file in blocks: unbuffered, each test's mark reaches `output` as it passes."""
 
     cut, shown = "", time.monotonic()
+    size, grew = 0, shown
+    env = {**(os.environ if env is None else env), "PYTHONUNBUFFERED": "1"}
     proc = subprocess.Popen(cmd, shell=True, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                             stdout=output, stderr=subprocess.STDOUT, start_new_session=os.name != "nt",
                             **{**process.background_options(), "creationflags":
@@ -123,18 +130,23 @@ def _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, reader=No
                     if time.monotonic() > deadline else ""
                 break
             except subprocess.TimeoutExpired:
-                if halt.is_set() or time.monotonic() > deadline:
-                    cut = "사람이 멈춤" if halt.is_set() else "검증 실행 시간 제한을 넘었다"
+                now = time.monotonic()
+                if now - shown >= 1:
+                    shown = now
+                    if (now_size := os.fstat(output.fileno()).st_size) != size:
+                        size, grew = now_size, now
+                    if seen:
+                        reader.seek(max(0, os.fstat(reader.fileno()).st_size - 4096))
+                        seen(reader.read())
+                stuck = now - grew > IDLE_SECONDS
+                if halt.is_set() or now > deadline or stuck:
+                    cut = "사람이 멈춤" if halt.is_set() else STUCK if stuck else "검증 실행 시간 제한을 넘었다"
                     process.killed(job) if job else kill(proc)
                     try:
                         proc.wait(timeout=1)
                     except subprocess.TimeoutExpired:
                         proc.kill()
                     break
-                if seen and time.monotonic() - shown >= 1:
-                    shown = time.monotonic()
-                    reader.seek(max(0, os.fstat(reader.fileno()).st_size - 4096))
-                    seen(reader.read())
         output.seek(0)
         return None if cut else proc.returncode, output.read(), cut
     finally:
