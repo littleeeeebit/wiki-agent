@@ -839,6 +839,35 @@ def test_a_person_declares_the_changed_definitions_in_the_test_contract(running)
     assert "기존 테스트 변경" in refactor_run.contract(path, specs.load("proj", sid))
 
 
+def test_a_person_approves_a_changed_test_file_that_is_not_python_as_it_is(running):
+    """ai-companion-voice-agent: a `.test.ts` change outside the contract offered nothing to approve, so the card
+    stopped for good. The person reads the diff and frees that content; any later edit is refused again."""
+    repo, remote = running
+    (repo / "web").mkdir()
+    (repo / "web/run.test.ts").write_text("it('runs', () => expect(run()).toBe(1))\n", encoding="utf-8")
+    _git(repo, "add", "web")
+    _git(repo, "commit", "-qm", "ts test")
+    _git(repo, "push", "-q", "origin", "main")
+    sid, = surveyed_in("simplify", spec("cleanup-ts", "billing", files=["src/billing.py"]))["specs"]
+    Worker.replies = [edited("web/run.test.ts", "it('runs', async () => expect(await run()).toBe(1))\n")]
+    started(client(), sid)
+    assert "[테스트 계약 변경 승인]" in specs.load("proj", sid)["fault"] and not remote.created()
+    api = client()
+    seen = api.get(f"/api/refactors/specs/{sid}/amendments").json()
+    assert [(f["file"], f["names"], bool(f["blob"])) for f in seen["files"]] == [("web/run.test.ts", [], True)]
+    assert "+it('runs', async ()" in seen["files"][0]["diff"]
+    done = api.post(f"/api/refactors/specs/{sid}/amendments", json={k: seen[k] for k in ("head", "digest")})
+    assert done.status_code == 200, done.json()
+    assert done.json()["refactor"]["detail"]["tests"]["contract"][-1]["blob"] == seen["files"][0]["blob"]
+    assert done.json()["fault"] is None
+    card = landed(sid)
+    assert card["state"] == "PR #7", card["fault"]
+    path = Path(card["worktree"])
+    (path / "web/run.test.ts").write_text("it.skip('runs', () => {})\n", encoding="utf-8")
+    _git(path, "commit", "-qam", "more")
+    assert "기존 테스트 변경" in refactor_run.contract(path, specs.load("proj", sid))
+
+
 def test_a_type_comment_is_part_of_the_test_contract(surveyed):
     typed = OLD_TESTS + "\nvalue = []  # type: list[int]\n"
     assert "기존 테스트 변경" in contracted(surveyed, OLD_TESTS + "\nvalue = []\n", old=typed)

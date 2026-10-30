@@ -546,17 +546,20 @@ def _defines(body: list, parts: tuple) -> bool:
     return found is not None and (len(parts) == 1 or isinstance(found, ast.ClassDef) and _defines(found.body, parts[1:]))
 
 
-def _declared(spec: dict) -> tuple[set, dict]:
-    """The files a spec's test contract frees whole, and the tests it frees by name, per file."""
+def _declared(spec: dict) -> tuple[set, dict, dict]:
+    """The files a spec's test contract frees whole, the tests it frees by name, per file, and the files a
+    person approved at one content, by blob: no syntax compares a test file that is not Python by name."""
 
     tests = spec["refactor"]["detail"].get("tests") or {}
-    declared = [t["test"] for t in [*tests.get("remove", []), *tests.get("contract", [])]]
+    entries = [*tests.get("remove", []), *tests.get("contract", [])]
+    pinned = {t["test"]: t["blob"] for t in entries if t.get("blob")}
+    declared = [t["test"] for t in entries if not t.get("blob")]
     whole, named = {d for d in declared if "::" not in d}, {}
     for d in declared:
         if "::" in d:
             file, *parts = d.split("::")
             named.setdefault(file, set()).add(tuple(parts))
-    return whole, named
+    return whole, named, pinned
 
 
 def _changed(old: list, new: list, at: tuple = ()) -> set:
@@ -585,6 +588,9 @@ def _amendable(before: list, after: list, allowed: set) -> set | None:
 WHOLE_FILE = " — 파일 삭제는 파일 단위로 선언한다. 사람이 [테스트 파일 삭제 승인] 으로 선언할 수 있다"
 # What a refused edit the definitions it changed explain tells the worker: a spec-update cannot reach the contract.
 CHANGED = " — 바뀐 정의는 사람이 [테스트 계약 변경 승인] 으로 선언할 수 있다"
+# A test file that is not Python has no definitions to compare: the person approves the file as it is.
+PINNED = (" — 파이썬이 아닌 테스트 파일은 정의를 이름으로 대조하지 못한다. "
+          "사람이 [테스트 계약 변경 승인] 으로 지금 내용 그대로의 파일을 승인할 수 있다")
 
 
 def contract(path: Path, spec: dict) -> str:
@@ -595,10 +601,11 @@ def contract(path: Path, spec: dict) -> str:
     which tests pytest collects from a file is not settled by its syntax (#252:
     inheritance, imported TestCases, plugins and configuration hooks each hid one).
     A survey names tests, so the person declares the file (`approve_removal`).
-    A changed definition the survey left out is the person's to declare too (`approve_amendment`).
+    A changed definition the survey left out is the person's to declare too (`approve_amendment`), and so is a
+    changed test file that is not Python, approved at one blob: any later edit of it is refused again.
     Python is compared as syntax, so a skip mark or a shadowing redefinition is a change."""
 
-    whole, named = _declared(spec)
+    whole, named, pinned = _declared(spec)
     start, broken = spec["start_head"], []
     listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", start, "HEAD"], path)
     for name in listed.stdout.splitlines():
@@ -611,10 +618,12 @@ def contract(path: Path, spec: dict) -> str:
         if not (path / name).is_file():
             broken.append(f"`{name}` 삭제{WHOLE_FILE}")
             continue
+        if name in pinned and specs.sh(["git", "hash-object", "--", name], path).stdout.strip() == pinned[name]:
+            continue
         new = (path / name).read_bytes()
         if not name.endswith(".py"):
             if allowed or not (equivalent(name, old.stdout, new) or added_only(old.stdout, new)):
-                broken.append(f"`{name}` 의 기존 테스트 변경")
+                broken.append(f"`{name}` 의 기존 테스트 변경{PINNED}")
             continue
         try:
             before, after = ast.parse(old.stdout, type_comments=True).body, ast.parse(new, type_comments=True).body
@@ -634,7 +643,7 @@ def removals(spec: dict) -> dict:
     whole, each with the tests named for it and its text at the start; `head` and the `digest` an approval names."""
 
     path, start, head, listed = _touched(spec, "D")
-    whole, named = _declared(spec)
+    whole, named, _ = _declared(spec)
     files = []
     for name in listed:
         if debt.TEST.search(name.lower()) and name not in whole and not (path / name).exists():
@@ -644,22 +653,31 @@ def removals(spec: dict) -> dict:
 
 
 def amendments(spec: dict) -> dict:
-    """`[테스트 계약 변경 승인]`: the existing Python test files the card changed outside its contract, each
-    with the definitions that explain the change (`names`, empty when none do) and the diff from the start."""
+    """`[테스트 계약 변경 승인]`: the existing test files the card changed outside its contract, each with the
+    diff from the start and the definitions that explain the change (`names`, empty when none do); a file that
+    is not Python carries its `blob` at the head instead, the content an approval frees and nothing else."""
 
     path, start, head, listed = _touched(spec, "M")
-    whole, named = _declared(spec)
+    whole, named, pinned = _declared(spec)
     files = []
     for name in listed:
-        if not debt.TEST.search(name.lower()) or name in whole or not name.endswith(".py"):
+        if not debt.TEST.search(name.lower()) or name in whole:
             continue
         allowed, texts = named.get(name, set()), (_shown(path, start, name), _shown(path, head, name))
-        try:
-            before, after = (ast.parse(t, type_comments=True).body for t in texts)
-        except (SyntaxError, ValueError):
-            continue   # `contract` says it could not read it
-        if _kept(before, after, allowed):
-            continue
+        blob = None
+        if name.endswith(".py"):
+            try:
+                before, after = (ast.parse(t, type_comments=True).body for t in texts)
+            except (SyntaxError, ValueError):
+                continue   # `contract` says it could not read it
+            if _kept(before, after, allowed):
+                continue
+        else:
+            blob = specs.sh(["git", "rev-parse", f"{head}:{name}"], path).stdout.strip()
+            if not blob:
+                raise HTTPException(409, f"`{name}` 의 {head[:12]} blob 을 읽지 못했다")
+            if pinned.get(name) == blob or not allowed and (equivalent(name, *texts) or added_only(*texts)):
+                continue
         try:   # the patch is read as UTF-8: another encoding shows different values as the same `�` (#255 round 3)
             [t.decode("utf-8") for t in texts]
         except UnicodeDecodeError:
@@ -669,8 +687,8 @@ def amendments(spec: dict) -> dict:
                          "--no-renames", start, head, "--", name], path)
         if diff.returncode or not diff.stdout.strip():   # a change nobody can read is not approved
             raise HTTPException(409, f"`{name}` 의 변경을 보이지 못했다 — {specs.said(diff)}")
-        files.append({"file": name, "names": sorted("::".join(p) for p in _amendable(before, after, allowed) or ()),
-                      "diff": diff.stdout})
+        names = [] if blob else sorted("::".join(p) for p in _amendable(before, after, allowed) or ())
+        files.append({"file": name, "names": names, "diff": diff.stdout, **({"blob": blob} if blob else {})})
     return _seen(spec, start, head, files)
 
 
@@ -731,15 +749,19 @@ def approve_removal(spec: dict, head: str, digest: str) -> dict:
 
 def approve_amendment(spec: dict, head: str, digest: str) -> dict:
     """The person's approval of `amendments` at `head` with `digest`: each definition that explains a change
-    declared by name in the card's test contract, so a later edit elsewhere in the file is still refused."""
+    declared by name in the card's test contract, so a later edit elsewhere in the file is still refused;
+    a file that is not Python declared at its blob, so any later edit of it is refused."""
 
     seen = _approved(spec, amendments, head, digest)
-    if not (ready := [f for f in seen["files"] if f["names"]]):
+    if not (ready := [f for f in seen["files"] if f["names"] or f.get("blob")]):
         raise HTTPException(409, "이름 있는 정의로 설명되는 테스트 변경이 없다 — 승인할 것이 없다")
     approved = {"head": head, "ts": time.time()}
-    return _declare(spec, "contract", [{"test": f"{f['file']}::{n}", "old": "시작 커밋의 정의",
-                                        "new": f"{head[:12]} 의 정의", "why": "사람이 바뀐 정의를 읽고 승인했다",
-                                        "approved": approved} for f in ready for n in f["names"]])
+    return _declare(spec, "contract", [
+        *({"test": f"{f['file']}::{n}", "old": "시작 커밋의 정의", "new": f"{head[:12]} 의 정의",
+           "why": "사람이 바뀐 정의를 읽고 승인했다", "approved": approved} for f in ready for n in f["names"]),
+        *({"test": f["file"], "blob": f["blob"], "old": "시작 커밋의 파일", "new": f"{head[:12]} 의 파일 그대로",
+           "why": "사람이 바뀐 파일을 읽고 이 내용 그대로 승인했다", "approved": approved}
+          for f in ready if f.get("blob"))])
 
 
 def _declare(spec: dict, kind: str, entries: list) -> dict:
