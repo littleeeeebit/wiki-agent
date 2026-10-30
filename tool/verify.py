@@ -15,6 +15,8 @@ import tomllib
 
 POLICY = "verification.toml"
 HARVESTED = ".wiki/decisions/"   # where the start hook writes records (`tool/sync.py`): never the task's work
+# Only a ceiling: a stuck local run is cut when its output stops growing (`runtime.IDLE_SECONDS`).
+FINAL_SECONDS = 2 * 60 * 60
 
 
 class Pending(RuntimeError):
@@ -312,7 +314,7 @@ def local_judge(repo, command, env, halt, timeout):
     return specs.judge(repo, [command], halt, env=env, timeout=timeout)
 
 
-def final(repo, base, *, project=None, local_command="", dispatch=True, seconds=19 * 60, halt=None,
+def final(repo, base, *, project=None, local_command="", dispatch=True, seconds=FINAL_SECONDS, halt=None,
           judge=local_judge, retry_reason="", noted=None, local_only=False, again=()):
     project = Path(project or repo)
     cfg = policy(repo, project=project)

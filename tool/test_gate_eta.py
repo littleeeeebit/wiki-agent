@@ -3,6 +3,7 @@
 import json
 import sys
 import threading
+import time
 
 import pytest
 
@@ -45,6 +46,21 @@ def test_a_watched_gate_shows_its_output_while_it_runs(tmp_path):
         runtime.gate_output.reset(token)
     assert (code, cut) == (0, "") and "[ 50%]" in out and "[100%]" in out
     assert any(gate_eta.progress(t) == 0.5 for t in tails), tails
+
+
+def test_a_gate_is_cut_when_its_output_stops_not_when_it_has_run_long(tmp_path, monkeypatch):
+    """ai-generation's suite ran 15 to 19 minutes and a 19-minute clock cut it as if stuck. Neither script
+    flushes: their marks reach the gate only because it runs Python unbuffered."""
+
+    monkeypatch.setattr(runtime, "IDLE_SECONDS", 3)
+    (tmp_path / "slow.py").write_text("import time\nfor _ in range(6):\n    print('.', end='')\n    time.sleep(1)\n",
+                                      encoding="utf-8")
+    (tmp_path / "stuck.py").write_text("import time\nprint('.', end='')\ntime.sleep(60)\n", encoding="utf-8")
+    kill = lambda proc: proc.kill()   # noqa: E731
+    assert runtime.gate(f'"{sys.executable}" slow.py', tmp_path, threading.Event(), None, 60, None, kill) == (0, "......", "")
+    started = time.monotonic()
+    code, out, cut = runtime.gate(f'"{sys.executable}" stuck.py', tmp_path, threading.Event(), None, 60, None, kill)
+    assert (code, out, cut) == (None, ".", runtime.STUCK) and time.monotonic() - started < 15
 
 
 def test_a_passing_gate_keeps_its_time_and_the_next_one_starts_from_it(tmp_path, monkeypatch):
