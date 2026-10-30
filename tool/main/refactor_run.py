@@ -618,9 +618,12 @@ def contract(path: Path, spec: dict) -> str:
         if not (path / name).is_file():
             broken.append(f"`{name}` 삭제{WHOLE_FILE}")
             continue
-        if name in pinned and specs.sh(["git", "hash-object", "--", name], path).stdout.strip() == pinned[name]:
-            continue
         new = (path / name).read_bytes()
+        # The bytes the tests run, not `git hash-object`: a clean filter would hide an edit (#258 round 1).
+        if name in pinned and (seen := subprocess.run(["git", "cat-file", "blob", pinned[name]], cwd=path,
+                                                      capture_output=True)).returncode == 0 \
+                and seen.stdout.replace(b"\r\n", b"\n") == new.replace(b"\r\n", b"\n"):
+            continue
         if not name.endswith(".py"):
             if allowed or not (equivalent(name, old.stdout, new) or added_only(old.stdout, new)):
                 broken.append(f"`{name}` 의 기존 테스트 변경{PINNED}")

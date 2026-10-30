@@ -868,6 +868,30 @@ def test_a_person_approves_a_changed_test_file_that_is_not_python_as_it_is(runni
     assert "기존 테스트 변경" in refactor_run.contract(path, specs.load("proj", sid))
 
 
+def test_an_approved_blob_frees_only_the_bytes_the_tests_run(tmp_path):
+    """#258 round 1: `git hash-object` ran a clean filter that turned `it.skip(` back into `it(`, so an unread
+    skip matched the approved blob. Only line endings may differ from what the person read."""
+    repo, file = tmp_path, tmp_path / "run.test.ts"
+    _git(repo, "init", "-q")
+    file.write_bytes(b"it('runs', () => expect(run()).toBe(1))\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "start")
+    start = _git(repo, "rev-parse", "HEAD")
+    approved = b"it('runs', () => expect(run()).toBe(2))\n"
+    file.write_bytes(approved)
+    _git(repo, "commit", "-qam", "approved")
+    card = {"start_head": start, "refactor": {"detail": {"tests": {"contract": [
+        {"test": "run.test.ts", "blob": _git(repo, "rev-parse", "HEAD:run.test.ts")}]}}}}
+    file.write_bytes(approved.replace(b"\n", b"\r\n"))
+    assert refactor_run.contract(repo, card) == ""
+    (repo / "clean.py").write_text("import sys\nsys.stdout.buffer.write(sys.stdin.buffer.read()"
+                                   ".replace(b'it.skip(', b'it('))\n", encoding="utf-8")
+    _git(repo, "config", "filter.hide.clean", f'"{PY}" "{(repo / "clean.py").as_posix()}"')
+    (repo / ".git/info/attributes").write_text("run.test.ts filter=hide\n", encoding="utf-8")
+    file.write_bytes(approved.replace(b"it(", b"it.skip("))
+    assert "기존 테스트 변경" in refactor_run.contract(repo, card)
+
+
 def test_a_type_comment_is_part_of_the_test_contract(surveyed):
     typed = OLD_TESTS + "\nvalue = []  # type: list[int]\n"
     assert "기존 테스트 변경" in contracted(surveyed, OLD_TESTS + "\nvalue = []\n", old=typed)
