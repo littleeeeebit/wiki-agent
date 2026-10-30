@@ -873,6 +873,8 @@ def test_an_approved_blob_frees_only_the_bytes_the_tests_run(tmp_path):
     skip matched the approved blob. Only line endings may differ from what the person read."""
     repo, file = tmp_path, tmp_path / "run.test.ts"
     _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
     file.write_bytes(b"it('runs', () => expect(run()).toBe(1))\n")
     _git(repo, "add", ".")
     _git(repo, "commit", "-qm", "start")
@@ -910,6 +912,8 @@ def test_a_file_whose_worktree_bytes_are_not_its_commit_is_refused_before_approv
     so the card stayed refused with nothing to approve. The person is told why before approving."""
     repo, file = tmp_path, tmp_path / "run.test.ts"
     _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
     file.write_bytes(b"it('runs', () => expect(run()).toBe(1))\n// $Id$\n")
     _git(repo, "add", ".")
     _git(repo, "commit", "-qm", "start")
