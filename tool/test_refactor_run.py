@@ -839,6 +839,104 @@ def test_a_person_declares_the_changed_definitions_in_the_test_contract(running)
     assert "기존 테스트 변경" in refactor_run.contract(path, specs.load("proj", sid))
 
 
+def test_a_person_approves_a_changed_test_file_that_is_not_python_as_it_is(running):
+    """ai-companion-voice-agent: a `.test.ts` change outside the contract offered nothing to approve, so the card
+    stopped for good. The person reads the diff and frees that content; any later edit is refused again."""
+    repo, remote = running
+    (repo / "web").mkdir()
+    (repo / "web/run.test.ts").write_text("it('runs', () => expect(run()).toBe(1))\n", encoding="utf-8")
+    _git(repo, "add", "web")
+    _git(repo, "commit", "-qm", "ts test")
+    _git(repo, "push", "-q", "origin", "main")
+    sid, = surveyed_in("simplify", spec("cleanup-ts", "billing", files=["src/billing.py"]))["specs"]
+    Worker.replies = [edited("web/run.test.ts", "it('runs', async () => expect(await run()).toBe(1))\n")]
+    started(client(), sid)
+    assert "[테스트 계약 변경 승인]" in specs.load("proj", sid)["fault"] and not remote.created()
+    api = client()
+    seen = api.get(f"/api/refactors/specs/{sid}/amendments").json()
+    assert [(f["file"], f["names"], bool(f["blob"])) for f in seen["files"]] == [("web/run.test.ts", [], True)]
+    assert "+it('runs', async ()" in seen["files"][0]["diff"]
+    done = api.post(f"/api/refactors/specs/{sid}/amendments", json={k: seen[k] for k in ("head", "digest")})
+    assert done.status_code == 200, done.json()
+    assert done.json()["refactor"]["detail"]["tests"]["contract"][-1]["blob"] == seen["files"][0]["blob"]
+    assert done.json()["fault"] is None
+    card = landed(sid)
+    assert card["state"] == "PR #7", card["fault"]
+    path = Path(card["worktree"])
+    (path / "web/run.test.ts").write_text("it.skip('runs', () => {})\n", encoding="utf-8")
+    _git(path, "commit", "-qam", "more")
+    assert "기존 테스트 변경" in refactor_run.contract(path, specs.load("proj", sid))
+
+
+def test_an_approved_blob_frees_only_the_bytes_the_tests_run(tmp_path):
+    """#258 round 1: `git hash-object` ran a clean filter that turned `it.skip(` back into `it(`, so an unread
+    skip matched the approved blob. Only line endings may differ from what the person read."""
+    repo, file = tmp_path, tmp_path / "run.test.ts"
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    file.write_bytes(b"it('runs', () => expect(run()).toBe(1))\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "start")
+    start = _git(repo, "rev-parse", "HEAD")
+    approved = b"it('runs', () => expect(run()).toBe(2))\n"
+    file.write_bytes(approved)
+    _git(repo, "commit", "-qam", "approved")
+    card = {"start_head": start, "refactor": {"detail": {"tests": {"contract": [
+        {"test": "run.test.ts", "blob": _git(repo, "rev-parse", "HEAD:run.test.ts")}]}}}}
+    file.write_bytes(approved.replace(b"\n", b"\r\n"))
+    assert refactor_run.contract(repo, card) == ""
+    (repo / "clean.py").write_text("import sys\nsys.stdout.buffer.write(sys.stdin.buffer.read()"
+                                   ".replace(b'it.skip(', b'it('))\n", encoding="utf-8")
+    _git(repo, "config", "filter.hide.clean", f'"{PY}" "{(repo / "clean.py").as_posix()}"')
+    (repo / ".git/info/attributes").write_text("run.test.ts filter=hide\n", encoding="utf-8")
+    file.write_bytes(approved.replace(b"it(", b"it.skip("))
+    assert "기존 테스트 변경" in refactor_run.contract(repo, card)
+    # Rounds 2–3: a replacement object, behind the approved blob or the start, hid the committed skip.
+    (repo / ".git/info/attributes").unlink()
+    _git(repo, "commit", "-qam", "skip")
+    _git(repo, "replace", start, _git(repo, "commit-tree", _git(repo, "rev-parse", "HEAD^{tree}"), "-m", "start"))
+    assert "refs/replace" in refactor_run.contract(repo, card)
+    with patch.object(specs, "owner", lambda path: {"id": "card"}), pytest.raises(HTTPException) as refused:
+        refactor_run.amendments({**card, "id": "card", "worktree": str(repo), "refactor": {"survey": "s", **card["refactor"]}})
+    assert "refs/replace" in refused.value.detail
+    # Round 4: the namespace Git reads, when the server inherited another one.
+    _git(repo, "update-ref", "refs/elsewhere/" + start, _git(repo, "rev-parse", "refs/replace/" + start))
+    _git(repo, "update-ref", "-d", "refs/replace/" + start)
+    with patch.dict("os.environ", {"GIT_REPLACE_REF_BASE": "refs/elsewhere/"}):
+        assert "refs/replace" in refactor_run.contract(repo, card)
+
+
+def test_a_file_whose_worktree_bytes_are_not_its_commit_is_refused_before_approval(tmp_path):
+    """#258 round 2: under `ident` the approved blob never matched the worktree, and the pin then hid the file,
+    so the card stayed refused with nothing to approve. The person is told why before approving."""
+    repo, file = tmp_path, tmp_path / "run.test.ts"
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    file.write_bytes(b"it('runs', () => expect(run()).toBe(1))\n// $Id$\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "start")
+    start = _git(repo, "rev-parse", "HEAD")
+    file.write_bytes(b"it('runs', () => expect(run()).toBe(2))\n// $Id$\n")
+    _git(repo, "commit", "-qam", "change")
+    (repo / ".git/info/attributes").write_text("run.test.ts ident\n", encoding="utf-8")
+    file.unlink()
+    _git(repo, "checkout", "--", "run.test.ts")
+    card = {"start_head": start, "refactor": {"detail": {"tests": {"contract": [{"test": "run.test.ts::runs"}]}}}}
+    assert "기존 테스트 변경" in refactor_run.contract(repo, card)
+    head = _git(repo, "rev-parse", "HEAD")
+    with patch.object(refactor_run, "_touched", lambda spec, kind: (repo, start, head, ["run.test.ts"])), \
+            pytest.raises(HTTPException) as refused:
+        refactor_run.amendments(card)
+    assert refused.value.status_code == 409 and "ident" in refused.value.detail
+    file.unlink()   # round 3: a file gone before the preview is the same refusal, not a crash
+    with patch.object(refactor_run, "_touched", lambda spec, kind: (repo, start, head, ["run.test.ts"])), \
+            pytest.raises(HTTPException) as refused:
+        refactor_run.amendments(card)
+    assert refused.value.status_code == 409
+
+
 def test_a_type_comment_is_part_of_the_test_contract(surveyed):
     typed = OLD_TESTS + "\nvalue = []  # type: list[int]\n"
     assert "기존 테스트 변경" in contracted(surveyed, OLD_TESTS + "\nvalue = []\n", old=typed)
