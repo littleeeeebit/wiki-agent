@@ -8,8 +8,8 @@
     },
     "tool/agent/chat_session.py": {
       "dup": 0,
-      "lines": 1359,
-      "reason": "A turn cut off at capacity after it worked is continued (PR #221): an isolated session never resumes the id it did not persist, a continuation goes only to a Codex thread `thread/resume` reached and a fresh one stops the turn with the loss on record, and a failed Codex turn carries the usage it spent so the retries' total is charged. Before that: Providers lead their own process group on POSIX (audit R2), so Ctrl+C reaches none of them: every session with a running provider registers itself, and a server going down ends them all, a one-off explanation that no registry holds included, and refuses new ones until it starts again (`end_all`, `reopen`, `end`). Then a caller grading what the host read passes `results`, and both providers keep every tool result there whole: a tool event shows only 4000 characters, and Codex `exec` sends no result event (v5 calibration, PR #109)."
+      "lines": 1375,
+      "reason": "A spec-sized system prompt overran Windows' 32,767-character command line (WinError 206), so Claude reads it from an owner-only file made per process, owned and removed with that process, and removed on any failure before it starts (PR #261). Before that: A turn cut off at capacity after it worked is continued (PR #221): an isolated session never resumes the id it did not persist, a continuation goes only to a Codex thread `thread/resume` reached and a fresh one stops the turn with the loss on record, and a failed Codex turn carries the usage it spent so the retries' total is charged. Before that: Providers lead their own process group on POSIX (audit R2), so Ctrl+C reaches none of them: every session with a running provider registers itself, and a server going down ends them all, a one-off explanation that no registry holds included, and refuses new ones until it starts again (`end_all`, `reopen`, `end`). Then a caller grading what the host read passes `results`, and both providers keep every tool result there whole: a tool event shows only 4000 characters, and Codex `exec` sends no result event (v5 calibration, PR #109)."
     },
     "tool/apply.py": {
       "dup": 6,
@@ -193,8 +193,8 @@
     },
     "tool/test_agent.py": {
       "dup": 46,
-      "lines": 1055,
-      "reason": "A server going down must end a one-off explanation's provider, which no registry holds, and start no new one until reopened; pinned on a real stand-in process whose child holds the pipe."
+      "lines": 1098,
+      "reason": "The prompt file is pinned on a real stand-in process: a late close of the old process removes only its own file, and a prompt that cannot be written leaves none (PR #261). Before that: A server going down must end a one-off explanation's provider, which no registry holds, and start no new one until reopened; pinned on a real stand-in process whose child holds the pipe."
     },
     "tool/test_agent_decisions.py": {
       "dup": 12,

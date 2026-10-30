@@ -362,15 +362,6 @@ class ChatSession:
             # instructions. Native hooks and the app's prompts own this workflow.
             cmd += ["--disable-slash-commands"]
             cmd += ["--settings", json.dumps({"fastMode": self.fast})]
-        prompt = None
-        if (self.system or self.asking) and not self.is_codex:
-            # A spec-sized prompt passes Windows' 32,767-character command
-            # line and `CreateProcess` fails (WinError 206): read from a file.
-            # One per process, owner-only (`mkstemp`): a shared /tmp hides the spec.
-            fd, prompt = tempfile.mkstemp(prefix="wiki-agent-prompt-", suffix=".md")
-            with os.fdopen(fd, "w", encoding="utf-8") as file:
-                file.write(self.system + self.asking)
-            cmd += ["--system-prompt-file" if self.isolated else "--append-system-prompt-file", prompt]
         if self.model:
             cmd += ["--model", self.model]
         if self.effort:
@@ -420,7 +411,15 @@ class ChatSession:
             cmd.append("-")
             self.model_name = self.model.removeprefix("codex:")
         self._stderr = deque(maxlen=20)
+        prompt = None
         try:
+            if (self.system or self.asking) and not self.is_codex:
+                # A spec-sized prompt passes Windows' 32,767-character command line (WinError 206).
+                # One owner-only file per process (`mkstemp`): a shared /tmp hides the spec.
+                fd, prompt = tempfile.mkstemp(prefix="wiki-agent-prompt-", suffix=".md")
+                with os.fdopen(fd, "w", encoding="utf-8") as file:
+                    file.write(self.system + self.asking)
+                cmd += ["--system-prompt-file" if self.isolated else "--append-system-prompt-file", prompt]
             cmd = [*cli_command(cmd[0]), *cmd[1:]]
             proc = subprocess.Popen(
                 cmd, cwd=str(self.repo), env=self._env,

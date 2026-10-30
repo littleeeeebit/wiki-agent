@@ -1017,6 +1017,19 @@ def test_a_late_close_removes_only_its_own_process_prompt_file(tree):
     assert not os.path.exists(new)
 
 
+def test_a_prompt_that_cannot_be_written_leaves_no_file(tree):
+    made, mkstemp = [], chat_session.tempfile.mkstemp
+
+    def full(fd, *args, **kwargs):
+        os.close(fd)
+        raise OSError(28, "disk full")
+
+    with patch.object(chat_session.tempfile, "mkstemp", lambda **kw: made.append(mkstemp(dir=tree, **kw)) or made[-1]), \
+         patch.object(chat_session.os, "fdopen", full), pytest.raises(OSError):
+        ChatSession(tree, system="marker").ensure()
+    assert len(made) == 1 and not os.path.exists(made[0][1])
+
+
 def test_a_close_survives_a_process_slow_to_die_after_its_kill(tree):
     # A Codex exec that outlived its kill by five seconds raised out of `close`,
     # and the oneshot's folder it still held failed the cleanup after it.
