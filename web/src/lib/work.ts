@@ -269,6 +269,11 @@ export function useWork() {
   const missed = useRef(new Set<string>())
   // The server's turns this window already follows.
   const own = useRef(new Set<string>())
+  // The reattached stream of each path's running turn. A browser keeps six
+  // connections to the server, and a stream stays open until its turn ends:
+  // each re-read (a resync, a switch, a server-started turn) left the last
+  // one open beside the new one, until no request reached the server.
+  const streams = useRef(new Map<string, AbortController>())
 
   const patch = useCallback((path: string, key: number, fn: (t: Turn) => Turn) => {
     setTurns((all) => {
@@ -282,6 +287,8 @@ export function useWork() {
   }, [])
 
   const forget = useCallback((path: string) => {
+    streams.current.get(path)?.abort()
+    streams.current.delete(path)
     lives.current.set(path, (lives.current.get(path) ?? 0) + 1)
     loading.current.delete(path)
     setTurns(({ [path]: _gone, ...rest }) => rest)
@@ -304,7 +311,7 @@ export function useWork() {
    *  stream that starts it — the instruction's own, or a reattach. */
   const follow = useCallback(async (
     path: string, key: number, first: (on: (ev: WorkEv) => void) => Promise<'gone' | void>,
-    known: { session?: string; turn?: string } = {},
+    known: { session?: string; turn?: string; signal?: AbortSignal } = {},
   ) => {
     let owner = known.session ?? ''
     let turn = known.turn ?? ''
@@ -336,16 +343,19 @@ export function useWork() {
     } catch {
       cut = true
     }
+    // Aborted by `forget`: the path's record is read again, with its own stream.
+    if (known.signal?.aborted) return false
     // A cut stream is not the end of the turn, even after the answer: once
     // more, after the last event seen.
     if ((cut || !ended) && !gone && turn) {
       try {
-        gone = (await api.workEvents(path, turn, last, on)) === 'gone'
+        gone = (await api.workEvents(path, turn, last, on, known.signal)) === 'gone'
         cut = false
       } catch {
         // The server itself is gone; nothing more to read.
       }
     }
+    if (known.signal?.aborted) return false
     patch(path, key, (t) => (t.pending
       ? { ...t, pending: false, error: t.error
           || (gone ? '다른 턴이 시작됐다. 기록을 다시 읽는다' : cut || !ended ? '스트림이 끊겼다' : undefined) }
@@ -379,9 +389,13 @@ export function useWork() {
         setTurns((all) => ({ ...all, [path]: [...past, ...(live ? [live] : []), ...(all[path] ?? [])] }))
         setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
         if (live && running) {
-          follow(path, live.key, (on) => api.workEvents(path, running.turn, -1, on),
-            { session: running.session_id, turn: running.turn })
+          const control = new AbortController()
+          streams.current.get(path)?.abort()
+          streams.current.set(path, control)
+          follow(path, live.key, (on) => api.workEvents(path, running.turn, -1, on, control.signal),
+            { session: running.session_id, turn: running.turn, signal: control.signal })
             .then((gone) => {
+              if (streams.current.get(path) === control) streams.current.delete(path)
               if (gone) {
                 forget(path)
                 load(path)

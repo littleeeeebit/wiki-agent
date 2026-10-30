@@ -781,14 +781,18 @@ def verified(repo: Path, path: Path, run, spec: dict) -> str:
     if cfg and not local_only and specs.verify.backend(path, cfg) == "ci":
         # Hosted CI owns the full suite there; a local full run before the pull request would be a second one.
         verdict, record = specs.rounded(repo, path, spec, base, run.halt, lambda text: specs.note(run, text))
-        specs.update(spec["repo"], spec["id"], gate=verdict,
-                     refactor_check={**started, "final": "ci"})
+        specs.update(spec["repo"], spec["id"], gate=verdict, refactor_check={**started, "final": "ci"})
         specs.validate(spec["repo"], spec["id"], round=record)
         if not verdict["ok"]:
             return f"판정 실패 — {verdict['reason']}"
         return measuring(path, spec, verdict["head"], run.halt)   # whoever owns the suite, the spec's measurement is ours
     head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
     cmd, local = specs.required(repo, spec), specs.local_required(repo, spec)
+    # The receipt hands a failed final of this head back unrun, even one a slowed machine failed: a person's
+    # turn after it is the word to run it once more, as a continue is for a task (`loop.finalized`).
+    last = (spec.get("validation") or {}).get("final") or {}
+    again = ("incomplete", "running", "failed") if run.person and last.get("head") == head and not last.get("ok") \
+        and run.started_at > (last.get("finished_at") or 0) else ()
     record = {"head": head, "base_oid": specs.current_merge_base(path, base, head), "command": cmd,
               "environment_digest": specs.digest(repo, path, cmd), "ok": False, "code": None,
               "reason": "끝나지 않았다", "finished_at": None}
@@ -803,7 +807,7 @@ def verified(repo: Path, path: Path, run, spec: dict) -> str:
     try:
         with specs.gating(spec["repo"], spec["id"], "final", local) as gated:
             proof = specs.verify.final(path, base, project=repo, local_command=local, halt=run.halt,
-                                       judge=judging, local_only=local_only)
+                                       judge=judging, local_only=local_only, again=again)
             gated["ok"] = proof is not None
         reason = ""
     except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
