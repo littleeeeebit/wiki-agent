@@ -252,7 +252,7 @@ function JevPart({ onEdited }: { onEdited: Dispatch<SetStateAction<(() => Promis
 
   const seed = useCallback((j: Jev) => {
     setJev(j)
-    setMode(saved(j) ?? j.mode)
+    setMode(saved(j) ?? (j.file_mode || j.mode))   // a canary shows shadow here: the form keeps the file's own mode
     setOff(j.disabled_sources)
     setLimits(j.limits)
   }, [])

@@ -152,16 +152,20 @@ def _tool_meta(block: dict) -> dict:
 
 
 def _result_meta(ev: dict) -> dict:
-    """A `Write`'s result (`tool_use_result`): a new file as its content, a replaced one as Claude's own patch."""
+    """A `Write`'s result (`tool_use_result`): a new file as its content, a replaced one as Claude's own patch.
+    It belongs to the event, not a block: with several results in one event no diff is said to be whose."""
 
     done = ev.get("tool_use_result")
-    if not isinstance(done, dict) or done.get("type") not in ("create", "update"):
+    content = (ev.get("message") or {}).get("content")
+    results = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_result"] if isinstance(content, list) else []
+    if not isinstance(done, dict) or done.get("type") not in ("create", "update") or len(results) != 1:
         return {}
     if done["type"] == "create":
         lines = ["+" + line for line in str(done.get("content") or "").splitlines()]
     else:
         hunks = done.get("structuredPatch") if isinstance(done.get("structuredPatch"), list) else []
-        lines = [line for h in hunks if isinstance(h, dict) for line in ["⋯", *map(str, h.get("lines") or [])]][1:]
+        lines = [line for h in hunks if isinstance(h, dict) and isinstance(h.get("lines"), list)
+                 for line in ["⋯", *(x for x in h["lines"] if isinstance(x, str))]][1:]
     return {"diff": _clipped(lines)} if lines else {}
 
 
