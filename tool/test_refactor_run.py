@@ -898,6 +898,11 @@ def test_an_approved_blob_frees_only_the_bytes_the_tests_run(tmp_path):
     with patch.object(specs, "owner", lambda path: {"id": "card"}), pytest.raises(HTTPException) as refused:
         refactor_run.amendments({**card, "id": "card", "worktree": str(repo), "refactor": {"survey": "s", **card["refactor"]}})
     assert "refs/replace" in refused.value.detail
+    # Round 4: the namespace Git reads, when the server inherited another one.
+    _git(repo, "update-ref", "refs/elsewhere/" + start, _git(repo, "rev-parse", "refs/replace/" + start))
+    _git(repo, "update-ref", "-d", "refs/replace/" + start)
+    with patch.dict("os.environ", {"GIT_REPLACE_REF_BASE": "refs/elsewhere/"}):
+        assert "refs/replace" in refactor_run.contract(repo, card)
 
 
 def test_a_file_whose_worktree_bytes_are_not_its_commit_is_refused_before_approval(tmp_path):

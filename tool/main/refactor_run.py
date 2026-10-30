@@ -717,10 +717,12 @@ REPLACED = "저장소에 대체 객체(refs/replace)가 있어 보이는 내용�
 
 
 def _replaced(path: Path) -> bool:
-    """Whether `refs/replace` holds anything: the start, the patch or a blob could then read as another
-    commit's, so neither the contract nor an approval reads it (#258 rounds 2–3)."""
+    """Whether the replacement namespace Git reads (`refs/replace/`, or `GIT_REPLACE_REF_BASE` the server
+    inherited) holds anything: the start, the patch or a blob could then read as another commit's, so
+    neither the contract nor an approval reads it (#258 rounds 2–4)."""
 
-    return bool(specs.sh(["git", "for-each-ref", "--count=1", "refs/replace/"], path).stdout.strip())
+    base = os.environ.get("GIT_REPLACE_REF_BASE") or "refs/replace/"
+    return bool(specs.sh(["git", "for-each-ref", "--count=1", base], path).stdout.strip())
 
 
 def _touched(spec: dict, kind: str) -> tuple[Path, str, str, list[str]]:
