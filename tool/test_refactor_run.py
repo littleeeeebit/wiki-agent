@@ -890,12 +890,11 @@ def test_an_approved_blob_frees_only_the_bytes_the_tests_run(tmp_path):
     (repo / ".git/info/attributes").write_text("run.test.ts filter=hide\n", encoding="utf-8")
     file.write_bytes(approved.replace(b"it(", b"it.skip("))
     assert "기존 테스트 변경" in refactor_run.contract(repo, card)
-    # Round 2: a replacement object behind the approved blob, its content committed, is not what was approved.
+    # Rounds 2–3: a replacement object, behind the approved blob or the start, hid the committed skip.
     (repo / ".git/info/attributes").unlink()
-    _git(repo, "replace", card["refactor"]["detail"]["tests"]["contract"][0]["blob"],
-         _git(repo, "hash-object", "-w", "--", "run.test.ts"))
     _git(repo, "commit", "-qam", "skip")
-    assert "기존 테스트 변경" in refactor_run.contract(repo, card)
+    _git(repo, "replace", start, _git(repo, "commit-tree", _git(repo, "rev-parse", "HEAD^{tree}"), "-m", "start"))
+    assert "refs/replace" in refactor_run.contract(repo, card)
     with patch.object(specs, "owner", lambda path: {"id": "card"}), pytest.raises(HTTPException) as refused:
         refactor_run.amendments({**card, "id": "card", "worktree": str(repo), "refactor": {"survey": "s", **card["refactor"]}})
     assert "refs/replace" in refused.value.detail
@@ -922,6 +921,11 @@ def test_a_file_whose_worktree_bytes_are_not_its_commit_is_refused_before_approv
             pytest.raises(HTTPException) as refused:
         refactor_run.amendments(card)
     assert refused.value.status_code == 409 and "ident" in refused.value.detail
+    file.unlink()   # round 3: a file gone before the preview is the same refusal, not a crash
+    with patch.object(refactor_run, "_touched", lambda spec, kind: (repo, start, head, ["run.test.ts"])), \
+            pytest.raises(HTTPException) as refused:
+        refactor_run.amendments(card)
+    assert refused.value.status_code == 409
 
 
 def test_a_type_comment_is_part_of_the_test_contract(surveyed):

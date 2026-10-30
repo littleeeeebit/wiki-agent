@@ -606,6 +606,8 @@ def contract(path: Path, spec: dict) -> str:
     Python is compared as syntax, so a skip mark or a shadowing redefinition is a change."""
 
     whole, named, pinned = _declared(spec)
+    if _replaced(path):
+        return f"테스트 계약을 대조하지 못했다 — {REPLACED}"
     start, broken = spec["start_head"], []
     listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", start, "HEAD"], path)
     for name in listed.stdout.splitlines():
@@ -703,8 +705,22 @@ def _runs_as(path: Path, name: str, blob: str) -> bool:
     and replacement object, which would show an edit as the approved content (#258 rounds 1–2)."""
 
     seen = subprocess.run(["git", "--no-replace-objects", "cat-file", "blob", blob], cwd=path, capture_output=True)
-    runs = (path / name).read_bytes()
+    try:
+        runs = (path / name).read_bytes()
+    except OSError:   # gone or unreadable is not the approved content
+        return False
     return not seen.returncode and seen.stdout.replace(b"\r\n", b"\n") == runs.replace(b"\r\n", b"\n")
+
+
+# Why a repository with replacement objects is not read: every diff, show and blob would come through them.
+REPLACED = "저장소에 대체 객체(refs/replace)가 있어 보이는 내용을 믿을 수 없다 — 지운 뒤 다시 확인해라"
+
+
+def _replaced(path: Path) -> bool:
+    """Whether `refs/replace` holds anything: the start, the patch or a blob could then read as another
+    commit's, so neither the contract nor an approval reads it (#258 rounds 2–3)."""
+
+    return bool(specs.sh(["git", "for-each-ref", "--count=1", "refs/replace/"], path).stdout.strip())
 
 
 def _touched(spec: dict, kind: str) -> tuple[Path, str, str, list[str]]:
@@ -716,9 +732,8 @@ def _touched(spec: dict, kind: str) -> tuple[Path, str, str, list[str]]:
     # A branch-mode card shares the checkout: another card's branch there is not this card's deletion (#252 round 3).
     if (specs.owner(path) or {}).get("id") != spec["id"]:
         raise HTTPException(409, "작업트리가 지금 이 카드의 브랜치에 있지 않다 — 이 카드의 브랜치를 먼저 열어라")
-    # A replacement object makes every patch and text shown here something other than what the tests run.
-    if specs.sh(["git", "for-each-ref", "--count=1", "refs/replace/"], path).stdout.strip():
-        raise HTTPException(409, "저장소에 대체 객체(refs/replace)가 있어 보이는 내용을 믿을 수 없다 — 지운 뒤 다시 열어라")
+    if _replaced(path):
+        raise HTTPException(409, REPLACED)
     head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
     listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames",
                        f"--diff-filter={kind}", start, head], path)
