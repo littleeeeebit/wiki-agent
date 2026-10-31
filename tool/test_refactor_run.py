@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 from unittest.mock import patch
 
@@ -635,6 +636,38 @@ def test_a_build_rebuilt_during_the_restore_keeps_both_copies(tmp_path):
     assert (path / "dist/file.txt").read_text(encoding="utf-8") == "rebuilt user file"
     assert aside.read_text(encoding="utf-8") == "held build"
     saving.assert_not_called()
+
+
+def test_a_build_rebuilt_while_held_aside_is_kept_on_posix(tmp_path):
+    """#265 round 5 (P0): on POSIX the move aside linked the build then unlinked its worktree path, so a build
+    rebuilt there in between was the file unlinked. The move aside is one rename now; a build rebuilt after it
+    stays, and so do the held copy and `refreezing`."""
+    path, head = _held_repo(tmp_path)
+    original = path / "dist/file.txt"
+    original.write_text("held build", encoding="utf-8")
+
+    def rename(src, dst):
+        os.rename(src, dst)
+        if Path(src) == original:
+            original.write_text("rebuilt user file", encoding="utf-8")
+
+    def link(src, dst):
+        assert Path(src) != original, "the worktree build is never linked and unlinked"
+        os.link(src, dst)
+    posix = types.SimpleNamespace(name="posix", rename=rename, link=link, unlink=os.unlink,
+                                  removedirs=os.removedirs, environ=os.environ)
+
+    def run(argv, where):
+        return subprocess.CompletedProcess(argv, 0, "")
+    with patch.object(refactor_run, "os", posix), patch.object(specs, "update", return_value={}) as saving, \
+            patch.object(refactor_profile, "sh", run):
+        with pytest.raises(HTTPException) as refused:
+            refactor_run.on_old_code({"repo": "r", "id": "probe"}, path, ["test.py"], ["x"], head, head)
+    assert refused.value.status_code == 500
+    assert original.read_text(encoding="utf-8") == "rebuilt user file"
+    [held] = tmp_path.glob(".repo-held-*/dist/file.txt")
+    assert held.read_text(encoding="utf-8") == "held build"
+    assert saving.call_args.kwargs["refreezing"] is not None
 
 
 def test_a_framework_build_refuses_the_old_code_run(running):

@@ -338,7 +338,8 @@ def on_old_code(spec: dict, path: Path, tests: list[str], argv: list[str], code:
              for t in tests}
     # Each build path goes to a folder made empty and new beside the worktree (a reused one held an older copy
     # the move overwrote, #265 round 4), renamed on the same volume and never deleted; the card names it before
-    # anything moves, so `restore` brings it back after a crash too.
+    # anything moves, so `restore` brings it back after a crash too. Nothing else writes in that new folder, so
+    # a rename into it replaces nothing on any system.
     found = [p.rstrip("/") for p in built(path)]
     held = Path(tempfile.mkdtemp(prefix=f".{path.name}-held-", dir=path.parent)) if found else None
     record = {"branch": branch, "head": head, "code": code,
@@ -349,7 +350,7 @@ def on_old_code(spec: dict, path: Path, tests: list[str], argv: list[str], code:
         for rel, aside in record["held"].items():
             Path(aside).parent.mkdir(parents=True, exist_ok=True)
             try:
-                _moved(path / rel, Path(aside))
+                os.rename(path / rel, aside)   # one step, so a build rebuilt at `rel` meanwhile stays there
             except OSError as exc:   # a running `next dev` holds its files open
                 raise HTTPException(409, f"빌드 결과물 `{rel}` 을 잠시 치우지 못했다 — 그 폴더를 쓰는 개발 서버나 "
                                          f"빌드를 끈 뒤 다시 해라 ({exc.strerror or exc})") from exc
@@ -364,8 +365,10 @@ def on_old_code(spec: dict, path: Path, tests: list[str], argv: list[str], code:
 
 
 def _moved(src: Path, dst: Path) -> None:
-    """`src` renamed to `dst`, failing when `dst` exists: Windows' rename never replaces, POSIX's replaces a
-    file, so a file there is linked then unlinked; a POSIX directory rename fails onto a non-empty one."""
+    """Held `src` put back at `dst`, failing when `dst` exists: Windows' rename never replaces, POSIX's replaces
+    a file, so a file there is linked then unlinked; a POSIX directory rename fails onto a non-empty one.
+    Only for the way back: `src` sits in the held folder, which no build writes, so nothing replaces it between
+    the link and the unlink (#265 round 5: moving aside this way unlinked a build rebuilt in the worktree)."""
 
     if os.name == "nt" or src.is_dir():
         os.rename(src, dst)
