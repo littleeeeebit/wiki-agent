@@ -540,15 +540,15 @@ def test_build_output_refuses_the_old_code_run(running, placeholder):
     assert card["refactor_frozen"]["head"] == was and not card.get("refreezing")
 
 
-def test_a_framework_cache_is_not_build_output(running):
-    """ai-coding-wiki: `next dev` left `client/.next/`, which no import reaches, and every approval was refused."""
+def test_a_framework_build_refuses_the_old_code_run(running):
+    """#265 round 1: no package entry points into `client/.next`, yet Next's loader reads `.next/server`,
+    so a run on the old source got the new build and the approval passed."""
     first, path = frozen_at_pr()
     with open(path / ".git/info/exclude", "a", encoding="utf-8") as exclude:
-        exclude.write(".next/\n.turbo/\n")
-    for cache in (".next", ".turbo"):
-        (path / "client" / cache).mkdir(parents=True)
-        (path / "client" / cache / "BUILD_ID").write_text("x", encoding="utf-8")
-    assert refactor_run.built(path) == []
+        exclude.write(".next/\n")
+    (path / "client/.next/server").mkdir(parents=True)
+    (path / "client/.next/server/page.js").write_text("module.exports = 'new'\n", encoding="utf-8")
+    assert refactor_run.built(path) == ["client/.next/"]
 
 
 def test_an_interrupted_refreeze_is_put_back_when_the_change_is_opened(running):
