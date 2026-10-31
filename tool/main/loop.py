@@ -1129,7 +1129,8 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
                 retry_reason=retry, again=again,
                 local_only=bool(review_contract.preservation_command(spec)),
                 noted=lambda backend: specs.validate(loop.repo, loop.sid, final={**record, "verification": {"backend": backend}}))
-            gated["ok"] = verdict["ok"]
+            # A pass carried over the wiki indexes ran nothing; its second is no gate's time to estimate from.
+            gated["ok"] = verdict["ok"] and not (verdict.get("verification") or {}).get("carried_from")
         if verification.cloud(spec):
             verdict = {**verdict, **{k: verification.redact(verdict[k], settings) for k in ("reason", "tail")}}
     finally:
@@ -1199,9 +1200,25 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n
     if spec.get("implementation_environment") == "external":
         return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, "최종 게이트 실패 — 외부에서 수정 후 다음 라운드를 시작한다")
     spec = change(loop, f"고치는 중 R{n}")
-    if spec is None or told(loop, spec, path, repair(final["command"], final)) is None:
+    if spec is None:
         return False
-    if specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() == head:
+    if spec.get("merge_progress") and spec.get("merge_request"):
+        # A clicked merge waits on this gate: the merge screen says so, not "in progress" for the hours a repair takes.
+        why = final["reason"].partition("\n")[0]   # the reason carries the gate's tail after its first line
+        specs.merge_progress(loop.repo, loop.sid, f"최종 검증 실패 — 고치는 중 R{n} · {why}"[:300], "waiting_review")
+    if told(loop, spec, path, repair(final["command"], final)) is None:
+        return False
+    moved = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
+    request = (specs.load(loop.repo, loop.sid) or spec).get("merge_request") or {}
+    if moved != head and request.get("head"):
+        from . import maintenance
+
+        # Only a document repair stays inside the click (`requested_merge`); say now, not after the next gate.
+        if not maintenance.documents_only(path, request["head"], moved):
+            specs.update(loop.repo, loop.sid, merge_request=None)
+            specs.merge_progress(loop.repo, loop.sid, "최종 검증 실패를 코드로 고쳤다 — 머지 요청 취소, 새 리뷰·최종 검증 뒤 다시 머지하세요",
+                                 "blocked")
+    if moved == head:
         if (specs.load(loop.repo, loop.sid) or spec).get("repaired") != head:   # it may have fixed what is outside the code
             specs.update(loop.repo, loop.sid, repaired=head, continued=time.time())
             return True

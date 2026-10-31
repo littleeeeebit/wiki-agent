@@ -552,6 +552,46 @@ def test_a_head_race_never_leaves_a_reusable_local_pass(hosted_repo, monkeypatch
         ci.final(hosted_repo, "main", judge=lambda *_: pytest.fail("The untested head cannot reuse or rerun"))
 
 
+def test_a_local_pass_carries_over_a_commit_of_only_the_wiki_indexes(tmp_path, monkeypatch):
+    """ai-generation #60: merge preparation committed one line of `.wiki/corpus.json` and the
+    30-minute suite ran again. A pass carries over the indexes; anything else beside them runs."""
+
+    def git(*args):
+        return ci.run(["git", *args], tmp_path)
+
+    def committed(name, text):
+        (tmp_path / name).parent.mkdir(exist_ok=True)
+        (tmp_path / name).write_text(text, encoding="utf-8")
+        git("add", name)
+        git("commit", "-qm", name)
+        return git("rev-parse", "HEAD")
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.name", "fixture")
+    git("config", "user.email", "fixture@example.com")
+    (tmp_path / ci.POLICY).write_text('[verification]\nmode = "local"\nround = "focused-check"\nlocal = "complete-check"\n',
+                                      encoding="utf-8")
+    heads = [committed("code.py", "x = 1\n")]
+    monkeypatch.setattr(ci, "identity", lambda *_: (heads[-1], BASE, ""))
+    calls = []
+
+    def judge(repo, command, env, halt, timeout):
+        calls.append(heads[-1])
+        return {"ok": True, "head": heads[-1]}
+
+    first = ci.final(tmp_path, "main", judge=judge)
+    heads.append(committed(".wiki/corpus.json", '{"docs": []}\n'))
+    carried = ci.final(tmp_path, "main", judge=judge)
+    assert calls == [heads[0]] and carried["head"] == heads[1] and carried["carried_from"] == heads[0]
+    assert ci.final(tmp_path, "main", dispatch=False, judge=judge) == carried, "the merge's confirm reads the same proof"
+    assert {k: v for k, v in carried.items() if k not in ("head", "carried_from")} == \
+        {k: v for k, v in first.items() if k != "head"}
+    committed(".wiki/graph.json", "{}\n")
+    heads.append(committed("code.py", "x = 2\n"))
+    ci.final(tmp_path, "main", judge=judge)
+    assert calls == [heads[0], heads[2]], "a code change beside the indexes runs the gate"
+
+
 @pytest.fixture
 def diverged_repo(tmp_path):
     def git(*args):

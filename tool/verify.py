@@ -311,6 +311,30 @@ def local_result(repo, command, record, receipt, dispatch, deadline, halt, judge
     return proof
 
 
+def carried(repo, common, head, base_oid, signature):
+    """A local pass of an ancestor that differs from `head` only in the generated wiki indexes:
+    merge preparation's commit. ai-generation #60 ran its 30-minute suite again for one line of
+    `.wiki/corpus.json`, and the rerun failed twice on load. Same base and signature only."""
+    from common import indexes
+
+    for path in common.glob(f"wiki-verification-*-{base_oid}-{signature}.json"):
+        try:
+            old = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(old, dict) or old.get("status") != "passed" or old.get("backend") != "local" \
+                    or (old.get("base_oid"), old.get("environment_digest")) != (base_oid, signature) \
+                    or old.get("head") in (None, head) or not isinstance(old.get("proof"), dict):
+                continue
+            run(["git", "merge-base", "--is-ancestor", old["head"], head], repo)
+            names = run(["git", "diff", "--no-renames", "--name-only", "-z", old["head"], head], repo).split("\0")
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+            continue
+        if all(name in indexes.INDEXES for name in names if name):
+            return {"head": head, "base_oid": base_oid, "environment_digest": signature, "backend": "local",
+                    "status": "passed", "finished_at": old.get("finished_at"),
+                    "proof": {**old["proof"], "head": head, "carried_from": old["head"]}}
+    return None
+
+
 def local_judge(repo, command, env, halt, timeout):
     from main import specs
 
@@ -338,7 +362,8 @@ def final(repo, base, *, project=None, local_command="", dispatch=True, seconds=
                                           "inputs": inputs, "records": records, "python": [sys.version, sys.executable]}, sort_keys=True).encode()).hexdigest()
     receipt = common / f"wiki-verification-{head}-{base_oid}-{signature}.json"
     with locked(common / "wiki-verification.lock"):
-        record = json.loads(receipt.read_text(encoding="utf-8")) if receipt.is_file() else {
+        record = json.loads(receipt.read_text(encoding="utf-8")) if receipt.is_file() else \
+            carried(repo, common, head, base_oid, signature) or {
             "head": head, "base_oid": base_oid, "environment_digest": signature,
             "backend": "local" if local_only else backend(repo, cfg)}
         if not isinstance(record, dict) or (record.get("head"), record.get("base_oid"), record.get("environment_digest")) != (

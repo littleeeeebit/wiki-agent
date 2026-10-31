@@ -58,7 +58,14 @@ the saved click authorizes that prepared head and reviewed repairs of it that
 change only what preparation itself may (Markdown, `.omm`, the wiki indexes).
 On 2026-10-06 every click produced generated `.omm` prose that review refused,
 so a strict head binding cancelled every request. A code repair, stop or
-specification revision still cancels the request. Restart preserves an interrupted
+specification revision still cancels the request. A head that differs from a
+locally passed one only in `.wiki/corpus.json` and `.wiki/graph.json` takes that
+pass over (`verify.carried`) for the same base and signature; review still runs.
+On 2026-10-31 ai-generation #60's preparation changed one line of the catalog,
+and the full local suite, already passed, ran again for 30 minutes and failed
+twice on load-sensitive tests. A final gate failure under a clicked request is
+shown on the merge progress at once, and a code repair cancels the request
+then, not after the next gate. Restart preserves an interrupted
 clicked request, but cannot invent one. GitHub's expected-head merge guard
 still binds the actual merge. A failed merge attempt cancels the request,
 including a direct click, so the poller cannot retry it unexpectedly.
