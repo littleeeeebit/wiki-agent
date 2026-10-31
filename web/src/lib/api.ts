@@ -876,6 +876,8 @@ export type Worktree = {
   merged: boolean
   live: boolean
   busy: boolean
+  /** A re-freeze has it on the old code; `branch` is the one it returns to. */
+  refreezing?: boolean
 }
 
 export const getWorktrees = () =>

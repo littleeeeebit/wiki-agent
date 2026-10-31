@@ -344,10 +344,16 @@ def listing() -> dict:
         rows = worktrees(repo)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+    from . import specs
+
+    # A re-freeze has its card's worktree detached on the old code for minutes; the row keeps the branch it
+    # returns to, so the card still owns it instead of the rail showing a second, spec-less task (ai-coding-wiki #162).
+    refreezing = {Path(s["worktree"]).resolve(): s["refreezing"]["branch"] for s in specs.listing(repo.name)
+                  if s.get("refreezing") and s.get("worktree")}
     out = []
     for row in rows:
-        from . import specs
-
+        if back := not row["branch"] and refreezing.get(row["path"].resolve()):
+            row = {**row, "branch": back, "refreezing": True}
         if row["path"].resolve() == repo.resolve() and specs.dismissed(repo.name, row["branch"]):
             continue
         chat = _sessions.get(str(row["path"]))

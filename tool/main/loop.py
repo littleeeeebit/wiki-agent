@@ -666,6 +666,13 @@ def kick(repo: str, sid: str, *, automatic: bool = False) -> None:
         spec = specs.load(repo, sid)
         if spec is None:
             raise HTTPException(404, "그런 명세가 없다")
+        if spec.get("refreezing"):
+            # The re-freeze has the card's worktree on the old code on purpose; a loop started then read the
+            # detached checkout as a lost branch and stopped the card (ai-coding-wiki #162).
+            if automatic:
+                return
+            raise HTTPException(409, "고정 테스트를 바꾸기 전 코드에서 확인하는 중이다 — 끝나면 작업트리가 브랜치로 돌아온다. "
+                                     "그 뒤에 다시 해라 (멈춰 남았으면 [고정 테스트 변경 승인] 화면을 열면 되돌린다)")
         if automatic and not (LOOPING.fullmatch(spec["state"]) or (
                 spec["state"] == "멈춤" and (spec.get("stopped") or {}).get("reason") == Why.RESTART.value)):
             return  # A user stop or blocker may have won since recovery/poll read it.

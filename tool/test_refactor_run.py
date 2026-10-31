@@ -22,12 +22,14 @@ import pytest
 from fastapi import HTTPException
 
 import refactor_profile
-from main import query, refactor, refactor_run, refactor_survey, specs, work
+from main import loop, query, refactor, refactor_run, refactor_survey, specs, work
 from test_main import client, no_machine_settings, parse, until  # noqa: F401 — the fixture is autouse
 from test_main import settled as settled_task
 from test_task_workflow import until
 from test_refactor_survey import ROLES, Host, _git, settled, spec, start, surveyed  # noqa: F401 — `surveyed` is a fixture
 from test_specs import Remote, Worker, _adapter, fresh_workers, report, repo, started  # noqa: F401
+
+KICK = loop.kick
 
 PY = Path(sys.executable).as_posix()
 ONE = {"coverage": {"scope": "src", "unchecked": [], "excluded": []}}
@@ -476,6 +478,37 @@ def test_a_person_refreezes_a_changed_characterization(running):
     assert _git(path, "branch", "--show-current") == branch and not specs.dirty(path)
     assert said and "다시 고정했다" in said[0] and "tests/test_orders.py" in said[0]
     assert client().get(f"/api/refactors/specs/{first}/frozen").json()["files"] == []
+
+
+def test_the_card_keeps_its_worktree_while_the_old_code_runs(running):
+    """ai-coding-wiki #162: during the minutes-long old-code run the rail showed the detached checkout as a
+    second task, a resumed review read it as a lost branch and stopped the card, and the short hold refused
+    every project switch."""
+    _, remote = running
+    first, path = frozen_at_pr()
+    branch = _git(path, "branch", "--show-current")
+    changed(path, "assert place(1) == 1  # marked")
+    specs.update("proj", first, state="멈춤")
+    sh, _ = commented(remote)
+    seen = {}
+    kick = KICK   # `running` records kicks instead of starting loops
+
+    def run(argv, where, **kw):
+        seen["detached"] = not _git(where, "branch", "--show-current")
+        seen["row"] = next(r for r in work.listing()["rows"] if Path(r["path"]) == path)
+        seen["switch"] = work.busy()
+        with pytest.raises(HTTPException) as refused:
+            kick("proj", first)
+        seen["kick"] = refused.value.detail
+        kick("proj", first, automatic=True)   # a restart's recovery leaves it be
+        seen["state"] = specs.load("proj", first)["state"]
+        return subprocess.CompletedProcess(argv, 0, "")
+    with patch.object(specs, "sh", sh), patch.object(refactor_profile, "sh", run):
+        _, done = approve(first)
+    assert done.status_code == 200, done.json()
+    assert seen["detached"] and seen["row"]["branch"] == branch and seen["row"]["refreezing"]
+    assert not seen["switch"] and "확인하는 중" in seen["kick"] and seen["state"] == "멈춤"
+    assert _git(path, "branch", "--show-current") == branch
 
 
 @pytest.mark.parametrize("pythonpath", [False, True])
