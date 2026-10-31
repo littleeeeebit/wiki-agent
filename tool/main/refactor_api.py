@@ -288,11 +288,13 @@ def frozen_of(sid: str) -> dict:
 @router.post("/api/refactors/specs/{sid}/refreeze")
 def refreeze(sid: str, body: Refreeze) -> dict:
     """`[고정 테스트 변경 승인]`: the diff the person read, run on the code before the refactoring, frozen at `head`.
-    The card's worktree is held meanwhile, so no turn moves the head under it."""
+    The card's worktree is held meanwhile, so no turn moves the head under it. Held as a turn: the run takes
+    minutes and reads only the repository it was given, so a project switch need not wait (ai-coding-wiki #162)."""
 
     repo = current_repo()
     spec = frozen_card(repo, sid)
-    release = hold(work._busy, _lock, str(Path(spec.get("worktree") or repo)), "그 작업트리를 다른 요청이 쓰고 있다")
+    release = hold(work._busy, _lock, str(Path(spec.get("worktree") or repo)), "그 작업트리를 다른 요청이 쓰고 있다",
+                   kind="turn")
     try:
         spec = refactor_run.refreeze(repo, spec, body.head, body.digest)
     finally:

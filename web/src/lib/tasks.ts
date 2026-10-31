@@ -83,6 +83,7 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
     if (waiting) parts.push(asks ? `승인 ${asks}` : '승인 대기')
     if (p === 'ready' && !merging) parts.push('머지를 누른다')
     if (p === 'stop' && s.stopped) parts.push(s.stopped.reason)
+    if (row?.refreezing) parts.push('바꾸기 전 코드에서 고정 테스트 확인 중')
     if (p === 'queued') parts.push(s.queued || '대기열')
     out.push({
       key: row?.path ?? `spec:${s.id}`, path: row?.path ?? null, spec: s, name: s.id,

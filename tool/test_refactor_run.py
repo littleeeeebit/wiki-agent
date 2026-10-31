@@ -10,10 +10,12 @@ final command run.
 """
 # ruff: noqa: F811 — a borrowed fixture is named again by each test that takes it
 
+import contextlib
 import json
 import os
 import subprocess
 import sys
+import threading
 import types
 from pathlib import Path
 from unittest.mock import patch
@@ -22,12 +24,14 @@ import pytest
 from fastapi import HTTPException
 
 import refactor_profile
-from main import query, refactor, refactor_run, refactor_survey, specs, work
+from main import loop, query, refactor, refactor_run, refactor_survey, specs, work
 from test_main import client, no_machine_settings, parse, until  # noqa: F401 — the fixture is autouse
 from test_main import settled as settled_task
 from test_task_workflow import until
 from test_refactor_survey import ROLES, Host, _git, settled, spec, start, surveyed  # noqa: F401 — `surveyed` is a fixture
 from test_specs import Remote, Worker, _adapter, fresh_workers, report, repo, started  # noqa: F401
+
+KICK = loop.kick
 
 PY = Path(sys.executable).as_posix()
 ONE = {"coverage": {"scope": "src", "unchecked": [], "excluded": []}}
@@ -478,6 +482,67 @@ def test_a_person_refreezes_a_changed_characterization(running):
     assert client().get(f"/api/refactors/specs/{first}/frozen").json()["files"] == []
 
 
+def test_the_card_keeps_its_worktree_while_the_old_code_runs(running):
+    """ai-coding-wiki #162: during the minutes-long old-code run the rail showed the detached checkout as a
+    second task, a resumed review read it as a lost branch and stopped the card, and the short hold refused
+    every project switch."""
+    _, remote = running
+    first, path = frozen_at_pr()
+    branch = _git(path, "branch", "--show-current")
+    changed(path, "assert place(1) == 1  # marked")
+    specs.update("proj", first, state="멈춤")
+    sh, _ = commented(remote)
+    seen = {}
+    kick = KICK   # `running` records kicks instead of starting loops
+
+    def run(argv, where, **kw):
+        seen["detached"] = not _git(where, "branch", "--show-current")
+        seen["row"] = next(r for r in work.listing()["rows"] if Path(r["path"]) == path)
+        seen["switch"] = work.busy()
+        with pytest.raises(HTTPException) as refused:
+            kick("proj", first)
+        seen["kick"] = refused.value.detail
+        kick("proj", first, automatic=True)   # a restart's recovery leaves it be
+        seen["state"] = specs.load("proj", first)["state"]
+        return subprocess.CompletedProcess(argv, 0, "")
+    with patch.object(specs, "sh", sh), patch.object(refactor_profile, "sh", run):
+        _, done = approve(first)
+    assert done.status_code == 200, done.json()
+    assert seen["detached"] and seen["row"]["branch"] == branch and seen["row"]["refreezing"]
+    assert not seen["switch"] and "확인하는 중" in seen["kick"] and seen["state"] == "멈춤"
+    assert _git(path, "branch", "--show-current") == branch
+
+
+def test_a_review_resumed_before_the_record_wins_over_the_refreeze(running):
+    """Round 1 (P1): `kick` read no `refreezing` yet, started the loop, and the re-freeze, having read `멈춤`
+    before, detached the checkout under it. The record is taken where `kick` moves the card, so the later
+    of the two is refused and the checkout never leaves the branch."""
+    _, remote = running
+    first, path = frozen_at_pr()
+    branch = _git(path, "branch", "--show-current")
+    changed(path, "assert place(1) == 1  # marked")
+    specs.update("proj", first, state="멈춤")
+    opened = refactor_run.frozen_change
+
+    def resumed(spec):
+        with patch.object(threading.Thread, "start"):   # the loop's first step would race the assertion
+            KICK("proj", first)
+        return opened(spec)
+
+    def run(argv, where, **kw):
+        raise AssertionError("the old-code run started on a card the review had taken")
+    sh, _ = commented(remote)
+    with patch.object(specs, "sh", sh):
+        change = client().get(f"/api/refactors/specs/{first}/frozen").json()
+    with patch.object(specs, "sh", sh), patch.object(loop, "_loops", {}), \
+            patch.object(refactor_run, "frozen_change", resumed), patch.object(refactor_profile, "sh", run):
+        done = client().post(f"/api/refactors/specs/{first}/refreeze", json={k: change[k] for k in ("head", "digest")})
+    assert done.status_code == 409 and "다시 움직였다" in done.json()["detail"]
+    card = specs.load("proj", first)
+    assert card["state"] == "리뷰 대기" and not card.get("refreezing") and not card.get("stopped")
+    assert _git(path, "branch", "--show-current") == branch
+
+
 @pytest.mark.parametrize("pythonpath", [False, True])
 def test_a_changed_characterization_that_fails_on_the_old_code_is_not_refrozen(running, monkeypatch, pythonpath):
     """#247 round 1: in a linked worktree the old-code run imported the active checkout through
@@ -593,6 +658,14 @@ def _held_repo(root: Path) -> tuple[Path, str]:
     return path, _git(path, "rev-parse", "HEAD")
 
 
+@contextlib.contextmanager
+def _stopped_card():
+    """A stopped card `on_old_code` may record `refreezing` on, without a stored spec; yields the save."""
+    with patch.object(specs, "load", return_value={"repo": "r", "id": "probe", "state": "멈춤"}), \
+            patch.object(specs, "save") as saved:
+        yield saved
+
+
 def test_an_older_held_copy_is_never_overwritten(tmp_path):
     """#265 round 4 (P0): the held folder was named by the card and reused, so a move aside replaced an older
     copy left there and the restore then cleared it."""
@@ -605,7 +678,7 @@ def test_an_older_held_copy_is_never_overwritten(tmp_path):
     def run(argv, where):
         assert not (path / "dist/file.txt").exists()
         return subprocess.CompletedProcess(argv, 0, "")
-    with patch.object(specs, "update", return_value={}), patch.object(refactor_profile, "sh", run):
+    with _stopped_card(), patch.object(specs, "update", return_value={}), patch.object(refactor_profile, "sh", run):
         assert refactor_run.on_old_code({"repo": "r", "id": "probe"}, path, ["test.py"], ["x"], head, head).returncode == 0
     assert (path / "dist/file.txt").read_text(encoding="utf-8") == "current build"
     assert older.read_text(encoding="utf-8") == "older user file"
@@ -659,15 +732,16 @@ def test_a_build_rebuilt_while_held_aside_is_kept_on_posix(tmp_path):
 
     def run(argv, where):
         return subprocess.CompletedProcess(argv, 0, "")
-    with patch.object(refactor_run, "os", posix), patch.object(specs, "update", return_value={}) as saving, \
-            patch.object(refactor_profile, "sh", run):
+    with patch.object(refactor_run, "os", posix), _stopped_card() as recorded, \
+            patch.object(specs, "update", return_value={}) as saving, patch.object(refactor_profile, "sh", run):
         with pytest.raises(HTTPException) as refused:
             refactor_run.on_old_code({"repo": "r", "id": "probe"}, path, ["test.py"], ["x"], head, head)
     assert refused.value.status_code == 500
     assert original.read_text(encoding="utf-8") == "rebuilt user file"
     [held] = tmp_path.glob(".repo-held-*/dist/file.txt")
     assert held.read_text(encoding="utf-8") == "held build"
-    assert saving.call_args.kwargs["refreezing"] is not None
+    assert recorded.call_args.args[0]["refreezing"]["held"] == {"dist/file.txt": str(held)}
+    assert not any("refreezing" in c.kwargs for c in saving.call_args_list)   # never cleared
 
 
 def test_a_framework_build_refuses_the_old_code_run(running):
