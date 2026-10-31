@@ -336,18 +336,20 @@ def on_old_code(spec: dict, path: Path, tests: list[str], argv: list[str], code:
         raise HTTPException(409, "작업트리가 브랜치에 있지 않다")
     texts = {t: subprocess.run(["git", "show", f"{head}:{t}"], cwd=path, capture_output=True, check=True).stdout
              for t in tests}
-    # Each build path goes to `held` beside the worktree, renamed on the same volume and never deleted; the card
-    # names it before anything moves, so `restore` brings it back after a crash too.
-    held = path.parent / f".{path.name}-held-{spec['id']}"
+    # Each build path goes to a folder made empty and new beside the worktree (a reused one held an older copy
+    # the move overwrote, #265 round 4), renamed on the same volume and never deleted; the card names it before
+    # anything moves, so `restore` brings it back after a crash too.
+    found = [p.rstrip("/") for p in built(path)]
+    held = Path(tempfile.mkdtemp(prefix=f".{path.name}-held-", dir=path.parent)) if found else None
     record = {"branch": branch, "head": head, "code": code,
               "tests": {t: hashlib.sha256(text).hexdigest() for t, text in texts.items()},
-              "held": {p.rstrip("/"): str(held / p.rstrip("/")) for p in built(path)}}
+              "held": {rel: str(held / rel) for rel in found}}
     specs.update(spec["repo"], spec["id"], refreezing=record)
     try:
         for rel, aside in record["held"].items():
             Path(aside).parent.mkdir(parents=True, exist_ok=True)
             try:
-                os.replace(path / rel, aside)
+                _moved(path / rel, Path(aside))
             except OSError as exc:   # a running `next dev` holds its files open
                 raise HTTPException(409, f"빌드 결과물 `{rel}` 을 잠시 치우지 못했다 — 그 폴더를 쓰는 개발 서버나 "
                                          f"빌드를 끈 뒤 다시 해라 ({exc.strerror or exc})") from exc
@@ -359,6 +361,17 @@ def on_old_code(spec: dict, path: Path, tests: list[str], argv: list[str], code:
         return refactor_profile.sh(argv, path)
     finally:
         restore(spec, path, record)
+
+
+def _moved(src: Path, dst: Path) -> None:
+    """`src` renamed to `dst`, failing when `dst` exists: Windows' rename never replaces, POSIX's replaces a
+    file, so a file there is linked then unlinked; a POSIX directory rename fails onto a non-empty one."""
+
+    if os.name == "nt" or src.is_dir():
+        os.rename(src, dst)
+    else:
+        os.link(src, dst)
+        os.unlink(src)
 
 
 def restore(spec: dict, path: Path, record: dict) -> None:
@@ -382,15 +395,13 @@ def restore(spec: dict, path: Path, record: dict) -> None:
     for rel, aside in (record.get("held") or {}).items():
         if not Path(aside).exists():
             continue   # never moved, or already back
-        if (path / rel).exists():   # rebuilt meanwhile: neither copy is overwritten
-            problems.append(f"`{rel}` 가 다시 생겨 치워 둔 빌드 결과물을 `{aside}` 에 그대로 두었다")
+        try:   # no check before it: a build written between the check and the move was overwritten (round 4)
+            _moved(Path(aside), path / rel)
+        except OSError as exc:   # rebuilt meanwhile, or held open: both copies stay
+            problems.append(f"치워 둔 빌드 결과물 `{aside}` 를 `{rel}` 로 되돌리지 못해 그대로 두었다: {exc.strerror or exc}")
             continue
-        try:
-            os.replace(aside, path / rel)
-            with contextlib.suppress(OSError):   # only the empty folders it made; a non-empty one stops it
-                os.removedirs(Path(aside).parent)
-        except OSError as exc:
-            problems.append(f"`{aside}` 를 `{rel}` 로 되돌리지 못했다: {exc.strerror or exc}")
+        with contextlib.suppress(OSError):   # only the empty folders it made; a non-empty one stops it
+            os.removedirs(Path(aside).parent)
     if problems:
         raise HTTPException(500, "다시 고정이 작업트리를 다 되돌리지 못했다 — " + " · ".join(problems)
                             + " — 고친 뒤 [고정 테스트 변경 승인] 을 다시 누르면 확인하고 이어 간다")

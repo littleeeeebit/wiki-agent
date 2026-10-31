@@ -549,7 +549,7 @@ def test_build_output_waits_aside_during_the_old_code_run(running, placeholder):
     assert done.status_code == 200, done.json()
     assert seen == [False], "the old code ran without the refactored build"
     assert (built / "built.txt").read_text(encoding="utf-8") == "refactored"
-    assert not (path.parent / f".{path.name}-held-{first}").exists()
+    assert not list(path.parent.glob(f".{path.name}-held-*"))
     card = specs.load("proj", first)
     assert card["refactor_frozen"]["head"] == change["head"] and not card.get("refreezing")
 
@@ -563,18 +563,78 @@ def test_a_build_held_open_is_refused_with_nothing_lost(running):
     specs.update("proj", first, state="멈춤")
     was = specs.load("proj", first)["refactor_frozen"]["head"]
 
-    real = os.replace
+    real = os.rename
 
     def held(src, dst):
         if Path(src) == built:
             raise PermissionError(13, "in use")
         return real(src, dst)
-    with patch.object(specs, "sh", commented(remote)[0]), patch.object(refactor_run.os, "replace", held):
+    with patch.object(specs, "sh", commented(remote)[0]), patch.object(refactor_run.os, "rename", held):
         _, refused = approve(first)
     assert refused.status_code == 409 and "개발 서버" in refused.json()["detail"], refused.json()
     assert (built / "built.txt").read_text(encoding="utf-8") == "refactored"
     card = specs.load("proj", first)
     assert card["refactor_frozen"]["head"] == was and not card.get("refreezing")
+
+
+def _held_repo(root: Path) -> tuple[Path, str]:
+    path = root / "repo"
+    path.mkdir()
+    _git(path, "init", "-q", "-b", "task")
+    _git(path, "config", "user.name", "t")
+    _git(path, "config", "user.email", "t@example.com")
+    (path / ".gitignore").write_text("dist/*\n!dist/.gitkeep\n", encoding="utf-8")
+    (path / "test.py").write_text("assert True\n", encoding="utf-8")
+    (path / "dist").mkdir()
+    (path / "dist/.gitkeep").write_text("", encoding="utf-8")
+    _git(path, "add", ".")
+    _git(path, "commit", "-qm", "base")
+    return path, _git(path, "rev-parse", "HEAD")
+
+
+def test_an_older_held_copy_is_never_overwritten(tmp_path):
+    """#265 round 4 (P0): the held folder was named by the card and reused, so a move aside replaced an older
+    copy left there and the restore then cleared it."""
+    path, head = _held_repo(tmp_path)
+    (path / "dist/file.txt").write_text("current build", encoding="utf-8")
+    older = tmp_path / ".repo-held-probe/dist/file.txt"
+    older.parent.mkdir(parents=True)
+    older.write_text("older user file", encoding="utf-8")
+
+    def run(argv, where):
+        assert not (path / "dist/file.txt").exists()
+        return subprocess.CompletedProcess(argv, 0, "")
+    with patch.object(specs, "update", return_value={}), patch.object(refactor_profile, "sh", run):
+        assert refactor_run.on_old_code({"repo": "r", "id": "probe"}, path, ["test.py"], ["x"], head, head).returncode == 0
+    assert (path / "dist/file.txt").read_text(encoding="utf-8") == "current build"
+    assert older.read_text(encoding="utf-8") == "older user file"
+
+
+def test_a_build_rebuilt_during_the_restore_keeps_both_copies(tmp_path):
+    """#265 round 4 (P0): the restore checked the path was free, a build wrote it, and the rename replaced
+    that build and cleared the record. The move now fails onto an existing path: both stay, and so does
+    `refreezing`."""
+    path, head = _held_repo(tmp_path)
+    aside = tmp_path / ".repo-held-x/dist/file.txt"
+    aside.parent.mkdir(parents=True)
+    aside.write_text("held build", encoding="utf-8")
+    real = (os.rename, os.link)
+
+    def rebuilt(move):
+        def then(src, dst):
+            if Path(src) == aside:
+                (path / "dist/file.txt").write_text("rebuilt user file", encoding="utf-8")
+            return move(src, dst)
+        return then
+    record = {"branch": "task", "head": head, "code": head, "tests": {}, "held": {"dist/file.txt": str(aside)}}
+    with patch.object(specs, "update", return_value={}) as saving, \
+            patch.object(refactor_run.os, "rename", rebuilt(real[0])), patch.object(refactor_run.os, "link", rebuilt(real[1])):
+        with pytest.raises(HTTPException) as refused:
+            refactor_run.restore({"repo": "r", "id": "probe"}, path, record)
+    assert refused.value.status_code == 500 and "그대로 두었다" in refused.value.detail
+    assert (path / "dist/file.txt").read_text(encoding="utf-8") == "rebuilt user file"
+    assert aside.read_text(encoding="utf-8") == "held build"
+    saving.assert_not_called()
 
 
 def test_a_framework_build_refuses_the_old_code_run(running):
