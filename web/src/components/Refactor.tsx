@@ -44,10 +44,25 @@ const ROLES: { key: keyof api.RefactorRoles; label: string; note: string }[] = [
   { key: 'reviewer', label: '리뷰', note: '명세 PR 의 리뷰 셀. 따로 연 읽기 전용 세션' },
 ]
 const NO_ROLE = { model: '', effort: '' }
+const NO_ROLES = { survey: NO_ROLE, worker: NO_ROLE, reviewer: NO_ROLE }
+// The panel remounts for each repository (`key={repo}`): a pick held only in its state came back empty, so
+// the toolbars showed other models after a visit to another repository.
+const picks = new Map<string, api.RefactorRoles>()
 const role = (r: api.PlanRole) => `${r.model}${r.effort ? ` · ${r.effort}` : ''}`
 /** `조사 a / 구현 b / 리뷰 c`, as a survey and each of its cards show them. */
 export const rolesText = (roles: api.RefactorRoles) => ROLES.map((r) => `${r.label} ${role(roles[r.key])}`).join(' / ')
 const where = (e: api.SurveyEvidence) => `${e.path} · ${e.symbol}`
+/** `recheck:repair` → `명세 다시 확인 · 거부된 답 고치는 중`, `pipeline:<id>` → `파이프라인 설명 · <id>`. */
+const turnName = (phase: string) => {
+  const repair = phase.endsWith(':repair')
+  const [head, ...id] = (repair ? phase.slice(0, -7) : phase).split(':')
+  return [PHASE[head === 'pipeline' ? 'pipelines' : head] ?? head, id.join(':'), repair && '거부된 답 고치는 중']
+    .filter(Boolean).join(' · ')
+}
+const elapsed = (since: number) => {
+  const s = Math.max(0, Math.round(Date.now() / 1000 - since))
+  return s < 60 ? `${s}초째` : `${Math.floor(s / 60)}분 ${s % 60}초째`
+}
 
 /** The refactoring focus: a purpose mode, `[리팩터링 시작]` and the selected
  *  mode's latest survey of this repository. A survey only reads; its specs are
@@ -56,8 +71,10 @@ export function RefactorSurvey({ repo, mode, generation, options, korean, busy, 
   repo: string; mode: RefactorMode; generation: number; options: api.Options | null; korean: boolean
   busy: boolean; onMode: (mode: RefactorMode) => void; onSpecs: () => void; onPinned: () => void
 }) {
-  // Nothing preset: every role is picked here, never taken from the chat's toolbar or a CLI default.
-  const [roles, setRoles] = useState<api.RefactorRoles>({ survey: NO_ROLE, worker: NO_ROLE, reviewer: NO_ROLE })
+  // Picked here or by this repository's last survey, never taken from the chat's toolbar or a CLI default.
+  const [roles, setPicked] = useState<api.RefactorRoles>(() => picks.get(repo) ?? NO_ROLES)
+  const setRoles = (next: (prev: api.RefactorRoles) => api.RefactorRoles) =>
+    setPicked((prev) => { const now = next(prev); picks.set(repo, now); return now })
   const unpicked = ROLES.filter((r) => !roles[r.key].model).map((r) => r.label)
   const [runs, setRuns] = useState<api.Survey[] | null>(null)
   const [scope, setScope] = useState('')
@@ -75,6 +92,8 @@ export function RefactorSurvey({ repo, mode, generation, options, korean, busy, 
       .then((next) => {
         if (stale || next.repo !== repo) return
         setRuns(next.runs); setScope(next.scope); setFault('')
+        const last = next.runs.find((r) => r.kind === 'survey' && !r.recheck && r.roles)?.roles
+        if (last && !picks.has(repo)) { picks.set(repo, last); setPicked(last) }
         const now = next.runs.some((r) => r.kind === 'survey' && r.state === 'running')
         // A survey that just ended has written or rewritten cards.
         if (running.current && !now) changed.current()
@@ -180,6 +199,9 @@ function Report({ run, korean, working, onAct }: {
       {run.state === 'stopped' && <Btn disabled={working} onClick={() => void onAct(`/api/refactors/${run.id}/resume`)}>재개</Btn>}
     </div>
     {run.stopped && run.state === 'stopped' && <p className="mt-2 whitespace-pre-wrap break-words text-destructive">{run.stopped.detail || run.stopped.reason}</p>}
+    {run.state === 'running' && run.live && <p aria-label="지금 턴" className="mt-2 break-words">
+      {turnName(run.live.phase)} · {elapsed(run.live.since)} · 읽기 {run.live.tools}번
+      {run.live.last && <span className="text-muted-foreground"> · {run.live.last}</span>}</p>}
     <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
       {run.base && <><dt className="text-faint">기준 커밋</dt><dd className="font-mono">{run.base.slice(0, 12)}{run.branch && ` · ${run.branch}`}</dd></>}
       {gate && <><dt className="text-faint">기준 게이트</dt><dd className="min-w-0 break-words">

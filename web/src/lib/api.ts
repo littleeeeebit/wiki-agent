@@ -53,8 +53,8 @@ export type Survey = {
   id: string; kind?: 'survey'; mode: RefactorMode | LegacyMode; state: string; phase: string; created: number
   generation?: number; recheck?: string | null; role?: { model: string; effort: string }; roles?: RefactorRoles | null
   stopped: { reason: string; detail: string } | null
-  spent: { seconds: number; calls: number; tokens: number; unknown?: boolean }
-  base?: string; branch?: string
+  live?: { phase: string; since: number; tools: number; last: string } | null   // the running turn: `refactor.Worker.live`
+  spent: { seconds: number; calls: number; tokens: number; unknown?: boolean }; base?: string; branch?: string
   baseline?: { cmd: string; ok: boolean; code: number | null; reason: string; failures: string[]; parsed: boolean }
   models?: { phase: string; requested: string; reported: string }[]
   map?: { pipelines: { id: string; name: string; entry: string; paths: string[]; role: string }[]

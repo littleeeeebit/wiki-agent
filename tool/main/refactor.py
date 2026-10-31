@@ -121,6 +121,18 @@ class Worker:
         self.unknown = self.base.get("unknown", False)
         self.started = time.monotonic()
         self.active: work.Run | None = None
+        self.phase = ""   # the turn `refactor_survey.said` sent, its `:repair` too
+
+    def live(self) -> dict | None:
+        """The running turn as the survey panel shows it: a recheck is one turn of minutes, and its record
+        does not move until the turn ends, so the panel had only a disabled button to go by."""
+
+        run = self.active
+        if run is None or run.done:
+            return None
+        tools = [e for e in list(run.events) if e["kind"] == "tool"]
+        return {"phase": self.phase, "since": run.started_at, "tools": len(tools),
+                "last": tools[-1]["text"][:160] if tools else ""}
 
     def cancel(self) -> None:
         self.halt.set()

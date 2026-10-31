@@ -67,7 +67,10 @@ def mine(repo: Path, rid: str) -> dict:
 @router.get("/api/refactors")
 def runs() -> dict:
     repo = current_repo()
-    return {"repo": repo.name, "scope": refactor.scope_of(repo), "runs": refactor.listing(repo.name)}
+    with _lock:
+        workers = {rid: w for (name, rid), w in refactor._workers.items() if name == repo.name}
+    runs = [{**r, "live": w.live()} if (w := workers.get(r["id"])) else r for r in refactor.listing(repo.name)]
+    return {"repo": repo.name, "scope": refactor.scope_of(repo), "runs": runs}
 
 
 @router.get("/api/refactors/{rid}")

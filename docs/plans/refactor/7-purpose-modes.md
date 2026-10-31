@@ -109,7 +109,11 @@ Validation refuses a spec that covers more than one pipeline, names a file
 absent at `base`, has another mode, depends on an unknown or cyclic id,
 declares a contract update outside `simplify` (or `rework` marked as a
 separate contract change with migration and rollback), or only investigates or
-documents structure. In `preserve` it also refuses a second spec, and in
+documents structure. A `simplify` spec that lists an existing test file
+declares it or adds tests to it; a mode that cannot declare one lists the file
+its change must edit, and the run stops on that edit for the person's
+`[테스트 계약 변경 승인]` — refused at the survey, a recheck whose change must
+edit a test pinning a moved internal had no valid answer. In `preserve` it also refuses a second spec, and in
 `simplify` a second spec on the same pipeline or `shared:<path>`. Every turn checks that HEAD and the working tree did not
 move. The turn's reported model is compared with the requested one.
 

@@ -299,8 +299,14 @@ def test_a_spec_that_edits_an_existing_test_file_declares_it(surveyed):
     files = ["src/orders.py", "tests/test_orders.py"]
     with pytest.raises(ValueError, match="`tests/test_orders.py` 이 tests.contract.*tests.contract 에 넣거나"):
         refactor_survey.spec_shape(spec("x", files=files), "simplify", MAP, surveyed)
-    with pytest.raises(ValueError, match="preserve 명세는 기존 테스트를 고치지 않는다"):
-        refactor_survey.spec_shape(spec("x", files=files), "preserve", MAP, surveyed)
+    # explicit-activity-generation-outcome-94ac7a2d: a rework recheck whose change must edit tests pinning the
+    # moved internal channel had no valid answer — refused for a contract, then for the file — so the card
+    # could never start. A mode that cannot declare a test leaves it to the person's approval in the run.
+    for mode in ("preserve", "rework"):
+        assert refactor_survey.spec_shape(spec("x", files=files), mode, MAP, surveyed)["files"] == files
+    with pytest.raises(ValueError, match="비우고, 고쳐야 하는 기존 테스트 파일은 files 에 둔다"):
+        refactor_survey.spec_shape(spec("x", files=files, tests={"contract": [
+            {"test": "tests/test_orders.py::test_place", "old": "a", "new": "b", "why": "c"}]}), "rework", MAP, surveyed)
     contract = [{"test": "tests/test_orders.py::_Fake::place", "old": "a", "new": "b", "why": "c"}]
     for tests, mode in (({"contract": contract}, "simplify"), ({"add": ["tests/test_orders.py: a new case"]}, "preserve")):
         assert refactor_survey.spec_shape(spec("x", files=files, tests=tests), mode, MAP, surveyed)["files"] == files
@@ -519,3 +525,16 @@ def test_the_earlier_workflow_is_read_only_and_a_restart_lets_go_of_it(surveyed)
     assert start(api, mode="cleanup").status_code == 400
     listed = api.get("/api/refactors").json()["runs"]
     assert [r["mode"] for r in listed] == ["cleanup"], "its record is still read as it was"
+
+
+def test_the_panel_sees_the_running_turn(tmp_path):
+    """A recheck is one turn of minutes and its record holds still meanwhile: the panel showed nothing but a
+    disabled `[리팩터링 시작]`. The worker hands over the turn it runs, the repair named apart."""
+    w = refactor.Worker(tmp_path, {"id": "r1", "spent": {"seconds": 0, "calls": 0, "tokens": 0}})
+    assert w.live() is None
+    w.phase = "recheck:repair"
+    w.active = type("Run", (), {"done": False, "started_at": 5.0, "events": [
+        {"kind": "progress", "text": "thinking"}, {"kind": "tool", "text": "소스 읽기 · read_file"}]})()
+    assert w.live() == {"phase": "recheck:repair", "since": 5.0, "tools": 1, "last": "소스 읽기 · read_file"}
+    w.active.done = True
+    assert w.live() is None
