@@ -12,6 +12,7 @@ refinements land on the same card through `refined`.
 from __future__ import annotations
 
 import ast
+import contextlib
 import copy
 import hashlib
 import json
@@ -305,8 +306,8 @@ def refreeze(repo: Path, spec: dict, head: str, digest: str) -> dict:
 
 
 # The ignored paths a build writes: they may hold the refactored code compiled (round 2: a package's `main`
-# in `dist`), so the old-code run refuses while any is there instead of moving or deleting them (round 3:
-# both lost files). Data, assets and tool settings are not here; tests read them (ai-companion-voice-agent's
+# in `dist`, #265: Next's loader reads `.next/server`), so the old-code run holds them aside, renamed and put
+# back, never deleted (#247 round 3: deleting lost files). Data, assets and tool settings are not here; tests read them (ai-companion-voice-agent's
 # `voice_profiles/`, `data/`, `.codex/`).
 # ponytail: a name list; a build that writes elsewhere still runs as built — name it here when one does.
 BUILT = {"dist", "build", "out", "target", ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache"}
@@ -327,22 +328,29 @@ def on_old_code(spec: dict, path: Path, tests: list[str], argv: list[str], code:
     """`argv` in the card's own worktree switched to `code` with every frozen test laid over it as `head`
     commits it: the paths, environment and dependencies of the freeze's own run, so no import reaches the
     refactored code (a linked worktree reached it through `PYTHONPATH` and workspace links, #247 round 1),
-    and no build output of it either: `built` paths refuse the run. `refreezing` on the card names the
-    branch from before the switch until `restore` returns to it."""
+    and no build output of it either: `built` paths wait aside meanwhile (`held`). `refreezing` on the card
+    names the branch and those paths until `restore` returns them."""
 
     branch = specs.sh(["git", "branch", "--show-current"], path).stdout.strip()
     if not branch:
         raise HTTPException(409, "작업트리가 브랜치에 있지 않다")
-    if left := built(path):
-        raise HTTPException(409, "바꾼 코드의 빌드 결과물일 수 있는 무시된 파일이 있어 고정 전 코드에서 돈다고 할 수 "
-                                 "없다 — 지우거나 작업트리 밖으로 옮긴 뒤 다시 해라: "
-                                 + ", ".join(f"`{p}`" for p in left[:10]))
     texts = {t: subprocess.run(["git", "show", f"{head}:{t}"], cwd=path, capture_output=True, check=True).stdout
              for t in tests}
+    # Each build path goes to `held` beside the worktree, renamed on the same volume and never deleted; the card
+    # names it before anything moves, so `restore` brings it back after a crash too.
+    held = path.parent / f".{path.name}-held-{spec['id']}"
     record = {"branch": branch, "head": head, "code": code,
-              "tests": {t: hashlib.sha256(text).hexdigest() for t, text in texts.items()}}
+              "tests": {t: hashlib.sha256(text).hexdigest() for t, text in texts.items()},
+              "held": {p.rstrip("/"): str(held / p.rstrip("/")) for p in built(path)}}
     specs.update(spec["repo"], spec["id"], refreezing=record)
     try:
+        for rel, aside in record["held"].items():
+            Path(aside).parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.replace(path / rel, aside)
+            except OSError as exc:   # a running `next dev` holds its files open
+                raise HTTPException(409, f"빌드 결과물 `{rel}` 을 잠시 치우지 못했다 — 그 폴더를 쓰는 개발 서버나 "
+                                         f"빌드를 끈 뒤 다시 해라 ({exc.strerror or exc})") from exc
         switched = specs.sh(["git", "checkout", "-q", "--detach", code], path, 120)
         if switched.returncode:
             raise HTTPException(409, f"고정 전 코드로 바꾸지 못했다 — {specs.said(switched)}")
@@ -371,6 +379,18 @@ def restore(spec: dict, path: Path, record: dict) -> None:
             problems.append(f"`{record['branch']}` 가 승인한 `{record['head'][:12]}` 가 아니다")
     elif current != record["branch"]:
         problems.append(f"작업트리가 `{record['branch']}` 가 아니라 `{current}` 에 있다")
+    for rel, aside in (record.get("held") or {}).items():
+        if not Path(aside).exists():
+            continue   # never moved, or already back
+        if (path / rel).exists():   # rebuilt meanwhile: neither copy is overwritten
+            problems.append(f"`{rel}` 가 다시 생겨 치워 둔 빌드 결과물을 `{aside}` 에 그대로 두었다")
+            continue
+        try:
+            os.replace(aside, path / rel)
+            with contextlib.suppress(OSError):   # only the empty folders it made; a non-empty one stops it
+                os.removedirs(Path(aside).parent)
+        except OSError as exc:
+            problems.append(f"`{aside}` 를 `{rel}` 로 되돌리지 못했다: {exc.strerror or exc}")
     if problems:
         raise HTTPException(500, "다시 고정이 작업트리를 다 되돌리지 못했다 — " + " · ".join(problems)
                             + " — 고친 뒤 [고정 테스트 변경 승인] 을 다시 누르면 확인하고 이어 간다")

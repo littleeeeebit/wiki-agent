@@ -11,6 +11,7 @@ final command run.
 # ruff: noqa: F811 — a borrowed fixture is named again by each test that takes it
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -515,12 +516,7 @@ def test_a_refused_switch_keeps_an_edit_made_meanwhile(running):
     assert not specs.load("proj", first).get("refreezing")
 
 
-@pytest.mark.parametrize("placeholder", [False, True])
-def test_build_output_refuses_the_old_code_run(running, placeholder):
-    """#247 round 2: an ignored `dist` holding the refactored code compiled ran instead of the old source.
-    Round 3: moving it aside lost files, and a tracked `.gitkeep` made git list `dist`'s files, not `dist`."""
-    _, remote = running
-    first, path = frozen_at_pr()
+def _with_build(path: Path, placeholder: bool) -> Path:
     with open(path / ".git/info/exclude", "a", encoding="utf-8") as exclude:
         exclude.write("packages/lib/dist/*\n!packages/lib/dist/.gitkeep\n" if placeholder else "dist/\n")
     built = path / ("packages/lib/dist" if placeholder else "dist")
@@ -529,12 +525,53 @@ def test_build_output_refuses_the_old_code_run(running, placeholder):
         (built / ".gitkeep").write_text("", encoding="utf-8")
         _git(path, "add", str(built / ".gitkeep"))
     (built / "built.txt").write_text("refactored", encoding="utf-8")
+    return built
+
+
+@pytest.mark.parametrize("placeholder", [False, True])
+def test_build_output_waits_aside_during_the_old_code_run(running, placeholder):
+    """#247 round 2: an ignored `dist` holding the refactored code compiled ran instead of the old source.
+    Refused instead, ai-coding-wiki's `client/.next/` left the person deleting 607MB by hand (#265): the
+    build waits beside the worktree while the old code runs, and comes back. A tracked `.gitkeep` makes git
+    list `dist`'s files, not `dist` (#247 round 3)."""
+    _, remote = running
+    first, path = frozen_at_pr()
+    built = _with_build(path, placeholder)
+    changed(path, "assert place(1) == 1  # marked")
+    specs.update("proj", first, state="멈춤")
+    seen, real = [], refactor_profile.sh
+
+    def run(argv, where):
+        seen.append((built / "built.txt").exists())
+        return real(argv, where)
+    with patch.object(specs, "sh", commented(remote)[0]), patch.object(refactor_profile, "sh", run):
+        change, done = approve(first)
+    assert done.status_code == 200, done.json()
+    assert seen == [False], "the old code ran without the refactored build"
+    assert (built / "built.txt").read_text(encoding="utf-8") == "refactored"
+    assert not (path.parent / f".{path.name}-held-{first}").exists()
+    card = specs.load("proj", first)
+    assert card["refactor_frozen"]["head"] == change["head"] and not card.get("refreezing")
+
+
+def test_a_build_held_open_is_refused_with_nothing_lost(running):
+    """A running `next dev` holds `.next` open, and Windows refuses the rename: say so, and move nothing."""
+    _, remote = running
+    first, path = frozen_at_pr()
+    built = _with_build(path, False)
     changed(path, "assert place(1) == 1  # marked")
     specs.update("proj", first, state="멈춤")
     was = specs.load("proj", first)["refactor_frozen"]["head"]
-    with patch.object(specs, "sh", commented(remote)[0]):
+
+    real = os.replace
+
+    def held(src, dst):
+        if Path(src) == built:
+            raise PermissionError(13, "in use")
+        return real(src, dst)
+    with patch.object(specs, "sh", commented(remote)[0]), patch.object(refactor_run.os, "replace", held):
         _, refused = approve(first)
-    assert refused.status_code == 409 and "dist" in refused.json()["detail"], refused.json()
+    assert refused.status_code == 409 and "개발 서버" in refused.json()["detail"], refused.json()
     assert (built / "built.txt").read_text(encoding="utf-8") == "refactored"
     card = specs.load("proj", first)
     assert card["refactor_frozen"]["head"] == was and not card.get("refreezing")
