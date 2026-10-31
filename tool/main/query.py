@@ -86,6 +86,8 @@ def project() -> str:
         if not isinstance(name, str):
             raise HTTPException(409, "저장된 프로젝트 설정을 읽을 수 없습니다")
         _project = name
+    if _project != channels.WIKI.name and channels.repo_for(_project) is None:
+        _project = channels.WIKI.name   # moved or gone: a fresh screen loads the hub and picks it again
     screen = claimed.get()
     if screen is not None and screen != _project:
         raise HTTPException(409, f"다른 창이 프로젝트를 {_project} 로 바꿨다. 화면을 맞춘다",

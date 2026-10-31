@@ -141,7 +141,9 @@ def test_websocket_runs_existing_guards_and_delivers_each_chunk(companion):
                           "body": json.dumps({"translate": False})})
             assert ws.receive_json()["status"] == 200
             assert json.loads(ws.receive_bytes())["translate"] is False
-        with patch.object(query, "_project", "new-project"):
+        # A selection that names a repository: one that names none falls back to the hub (#264).
+        with patch.object(query, "_project", "new-project"), \
+                patch.object(query.channels, "repo_for", lambda name: Path(name)):
             with phone.websocket_connect("wss://fixture.trycloudflare.com/api/mobile/request") as ws:
                 ws.send_json({"url": "/api/knowledge/status", "project": "old-project"})
                 response = ws.receive_json()

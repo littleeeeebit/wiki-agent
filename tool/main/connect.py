@@ -79,12 +79,13 @@ def record(name: str) -> dict:
     return saved if isinstance(saved, dict) else {}
 
 
-def keep(name: str, **fields) -> dict:
-    """Merged into the record and swapped in whole. Every change is told to
-    the screens: a test that ends in the background changes a row."""
+def keep(name: str, replace: bool = False, **fields) -> dict:
+    """Merged into the record (or, with `replace`, the whole of it) and swapped
+    in whole. Every change is told to the screens: a test that ends in the
+    background changes a row."""
 
     with _records:
-        now = {**record(name), **fields}
+        now = fields if replace else {**record(name), **fields}
         file = RECORDS / f"{name}.json"
         file.parent.mkdir(parents=True, exist_ok=True)
         temporary = file.with_suffix(".tmp")
@@ -695,9 +696,12 @@ def add(body: Folder) -> dict:
     if known is not None and known.resolve() != path:
         raise HTTPException(409, f"같은 이름의 저장소가 이미 있다: {known}")
     if known is None:
-        with _records:   # what a vanished workspace folder of this name left is not this one's
-            (RECORDS / f"{name}.json").unlink(missing_ok=True)
-        keep(name, path=str(path), id=identity(path, make=True))
+        try:
+            token = identity(path, make=True)
+        except OSError as exc:
+            raise HTTPException(400, f"저장소의 Git 폴더에 식별 표시를 쓰지 못했다: {exc}") from exc
+        # Replaced, not merged: what a vanished workspace folder of this name left is not this one's.
+        keep(name, replace=True, path=str(path), id=token)
     return {"name": name}
 
 

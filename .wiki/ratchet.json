@@ -123,8 +123,8 @@
     },
     "tool/main/query.py": {
       "dup": 0,
-      "lines": 1052,
-      "reason": "The refactoring focus keeps the survey model a survey of its mode fixed beside the mode on disk, and refuses another model until the mode changes, since the conversation that refines the survey's cards ran on the chat toolbar's model (#232 review round 1). Before that: The refactoring focus keeps its mode and generation on disk, since a restart that reset them made every survey card of a later generation unstartable; the config that owns them lives here."
+      "lines": 1054,
+      "reason": "A stored selection that no longer names a repository (a picked one moved or replaced) falls back to the hub, so a fresh screen still loads and 프로젝트 · 연결 can pick it again (#264 review round 3). Before that: The refactoring focus keeps the survey model a survey of its mode fixed beside the mode on disk, and refuses another model until the mode changes, since the conversation that refines the survey's cards ran on the chat toolbar's model (#232 review round 1). Before that: The refactoring focus keeps its mode and generation on disk, since a restart that reset them made every survey card of a later generation unstartable; the config that owns them lives here."
     },
     "tool/main/refactor.py": {
       "dup": 0,

@@ -164,14 +164,40 @@ def test_a_picked_name_follows_its_repository_never_a_replacement(tmp_path):
         assert chat_channels.repo_for("proj") is None, "gone: an unrelated workspace folder does not inherit it"
 
 
-def test_a_vanished_workspace_repositorys_record_is_not_inherited(tmp_path):
+def test_a_vanished_workspace_repositorys_record_is_not_inherited_nor_lost_on_a_failed_pick(tmp_path):
     workspace, outside = tmp_path / "ws", tmp_path / "outside"
     workspace.mkdir()
     outside.mkdir()
+    repo = _repo(outside)
     with patch.object(chat_channels, "WORKSPACE", workspace):
         connect.keep("proj", probe={"claude": {"ok": True}}, trust=True)
-        client().post("/api/folders", json={"path": str(_repo(outside))})
+        before = (connect.RECORDS / "proj.json").read_bytes()
+        write = Path.write_text
+        # #264 round 3: the old record went before the token, and a refused token write lost it.
+        with patch.object(Path, "write_text", lambda p, *a, **k: (_ for _ in ()).throw(PermissionError("read-only"))
+                          if p.name == connect.ID else write(p, *a, **k)):
+            refused = client().post("/api/folders", json={"path": str(repo)})
+        assert refused.status_code == 400 and (connect.RECORDS / "proj.json").read_bytes() == before
+        client().post("/api/folders", json={"path": str(repo)})
         assert "trust" not in connect.record("proj") and "probe" not in connect.record("proj")
+
+
+def test_a_selected_repository_that_moved_leaves_a_fresh_screen_on_the_hub(tmp_path):
+    """#264 round 3: the stored selection named nothing, `/api/channels` refused, and the screen could not
+    load far enough to pick the folder again."""
+    workspace, outside = tmp_path / "ws", tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    repo = _repo(outside).resolve()
+    with patch.object(chat_channels, "WORKSPACE", workspace), patch.object(chat, "_project", "proj"):
+        client().post("/api/folders", json={"path": str(repo)})
+        (tmp_path / "moved").mkdir()
+        repo.rename(tmp_path / "moved" / "proj")
+        stale = client().get("/api/channels", headers={"X-Project": "proj"})
+        assert stale.status_code == 409 and stale.headers["X-Project-Moved"] == chat_channels.WIKI.name
+        assert client().get("/api/channels").status_code == 200 and chat.project() == chat_channels.WIKI.name
+        assert client().post("/api/folders", json={"path": str(tmp_path / "moved" / "proj")}).status_code == 200
+        assert chat_channels.repo_for("proj") == (tmp_path / "moved" / "proj").resolve()
 
 
 @pytest.mark.parametrize("platform, code, out, err, got", [
