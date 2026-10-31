@@ -25,7 +25,7 @@ from common import settings as settings_file
 from common.budget import Budget, Cancelled, Exhausted
 from workspace import adopt, base_branch, folder_for, holder, merged, remove, worktrees
 
-from . import channels, connect, decisions, pr_text, query, review_contract, runtime, specs, sweep, verification, work
+from . import channels, connect, decisions, maintenance, pr_text, query, review_contract, runtime, specs, sweep, verification, work
 from .query import ROOT, _lock, current_repo, hold, project, streaming
 from .review_result import (  # noqa: F401 -- preserve the loop protocol API
     FIRST, FINDING, FENCE, META, bare, parse, described, block, disposed,
@@ -1129,7 +1129,7 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
                 retry_reason=retry, again=again,
                 local_only=bool(review_contract.preservation_command(spec)),
                 noted=lambda backend: specs.validate(loop.repo, loop.sid, final={**record, "verification": {"backend": backend}}))
-            gated["ok"] = verdict["ok"]
+            gated["ok"] = verdict["ok"] and not (verdict.get("verification") or {}).get("carried_from")   # a carried pass ran nothing
         if verification.cloud(spec):
             verdict = {**verdict, **{k: verification.redact(verdict[k], settings) for k in ("reason", "tail")}}
     finally:
@@ -1199,9 +1199,9 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n
     if spec.get("implementation_environment") == "external":
         return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, "최종 게이트 실패 — 외부에서 수정 후 다음 라운드를 시작한다")
     spec = change(loop, f"고치는 중 R{n}")
-    if spec is None or told(loop, spec, path, repair(final["command"], final)) is None:
+    if spec is None or told(loop, maintenance.waiting(spec, n, final["reason"]), path, repair(final["command"], final)) is None:
         return False
-    if specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() == head:
+    if maintenance.repaired(path, specs.load(loop.repo, loop.sid) or spec) == head:
         if (specs.load(loop.repo, loop.sid) or spec).get("repaired") != head:   # it may have fixed what is outside the code
             specs.update(loop.repo, loop.sid, repaired=head, continued=time.time())
             return True
