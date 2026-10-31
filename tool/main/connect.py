@@ -5,7 +5,8 @@ the hosts' user-level hooks call this hub, no per-project install of the old
 kind is left beside them, Codex trusts the hooks, and a real session of each
 host got the injection. The cheap items are read on every listing; the
 expensive two — the sessions and Codex's trust — are read from the record the
-last `[연결]` or `[다시 시험]` left in `raw/connect/<repo>.json`.
+last `[연결]` or `[다시 시험]` left in `raw/connect/<repo>.json`. A repository
+outside the workspace is one `[폴더 찾기]` picked; its record keeps the `path`.
 
 `[연결]` moves the installed hosts' wiring to this hub first when it is elsewhere
 (asked, with every line shown), writes the adapter into the original checkout
@@ -26,6 +27,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -39,7 +41,7 @@ from pydantic import BaseModel
 import apply
 import setup_agents
 from agent import cli_command
-from common import swap
+from common import process, swap
 from common.host import environment, skill_config
 from workspace import base_branch
 
@@ -90,6 +92,54 @@ def keep(name: str, **fields) -> dict:
         swap(temporary, file)
     work.feed.put({"kind": "connect", "repo": name})
     return now
+
+
+def added(name: str) -> Path | None:
+    """The folder [폴더 찾기] picked for `name`, while it is still that repository."""
+
+    saved = record(name).get("path")
+    path = Path(saved) if isinstance(saved, str) and saved else None
+    return path if path and path.name == name and (path / ".git").exists() else None
+
+
+def added_names() -> list[str]:
+    return [file.stem for file in RECORDS.glob("*.json") if added(file.stem)]
+
+
+# The OS's own folder dialog, in a process of its own: Tk opens windows only on a main thread (macOS).
+TK = """import sys
+try:
+    import tkinter
+    from tkinter import filedialog
+    root = tkinter.Tk()
+except Exception:
+    sys.exit(3)
+root.withdraw()
+root.attributes("-topmost", True)
+print(filedialog.askdirectory(parent=root, title=sys.argv[1], mustexist=True) or "")
+"""
+CLOSED = "\0"   # the dialog opened and the person closed it
+
+
+def pick_folder(title: str = "연결할 저장소 폴더") -> str | None:
+    """A folder the person picked on this machine, `CLOSED`, or None where no dialog opens."""
+
+    if sys.platform == "darwin":
+        argv = ["osascript", "-e", f'POSIX path of (choose folder with prompt "{title}")']
+    elif sys.platform.startswith("linux") and shutil.which("zenity"):
+        argv = ["zenity", "--file-selection", "--directory", f"--title={title}"]
+    else:
+        argv = [sys.executable, "-c", TK, title]
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              env={**os.environ, "PYTHONIOENCODING": "utf-8"}, timeout=15 * 60,
+                              **process.background_options())
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if done.returncode == 3 and argv[0] == sys.executable:
+        return None
+    # osascript and zenity end with 1 when closed; Tk prints nothing.
+    return done.stdout.strip() if done.stdout.strip() and not done.returncode else CLOSED
 
 
 def digest(data: bytes) -> str:
@@ -581,6 +631,37 @@ def listing() -> dict:
     # The settings modal's hub line: whether this machine's wiring points here yet.
     return {"rows": rows(), "settings": survey.settings(),
             "hub": {"name": channels.WIKI.name, "needed": now["needed"], "refused": now["refused"]}}
+
+
+class Folder(BaseModel):
+    path: str
+
+
+@router.post("/api/connect/browse")
+def browse() -> dict:
+    """[폴더 찾기] on this machine: the picked path, empty when closed. 501 where no dialog
+    opens, and the screen asks for the path instead."""
+
+    picked = pick_folder()
+    if picked is None:
+        raise HTTPException(501, "이 환경에서는 폴더 창을 열 수 없다 — 경로를 입력하라")
+    return {"path": "" if picked == CLOSED else picked}
+
+
+@router.post("/api/connect/folder")
+def add(body: Folder) -> dict:
+    """A repository anywhere on this machine, known from now on by its folder's name. `[연결]` follows."""
+
+    path = Path(body.path.strip()).expanduser()
+    if not body.path.strip() or not path.is_absolute() or not (path / ".git").exists():
+        raise HTTPException(400, f"Git 저장소 폴더가 아니다: {body.path}")
+    path = path.resolve()
+    known = channels.repo_for(path.name)
+    if known is not None and known.resolve() != path:
+        raise HTTPException(409, f"같은 이름의 저장소가 이미 있다: {known}")
+    if known is None:
+        keep(path.name, path=str(path))
+    return {"name": path.name}
 
 
 @router.get("/api/connect/settings")

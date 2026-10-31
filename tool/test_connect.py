@@ -107,17 +107,62 @@ def test_each_missing_item_makes_the_row_partial_and_is_named(tmp_path):
     assert found["notes"] == ["채워야 함 — review_dir, scratch_dirs, server_stop"], "빈 선택 슬롯은 알림이다"
 
 
-def test_the_listing_carries_the_state_instead_of_wired_always(tmp_path):
+def test_only_a_connected_repository_is_offered(tmp_path):
+    """The picker offered every Git folder beside the hub, and none of the unconnected ones worked."""
     workspace = tmp_path / "ws"
     workspace.mkdir()
     repo = _repo(workspace)
     with patch.object(chat_channels, "WORKSPACE", workspace), patch.object(connect, "users", return_value=ALL):
-        rows = {r["id"]: r for r in chat_channels.projects()}
-        assert rows["proj"]["state"] == "미연결" and not rows["proj"]["wired"]
+        assert "proj" not in {r["id"] for r in chat_channels.projects()}
         connected(repo)
         rows = {r["id"]: r for r in chat_channels.projects()}
-        assert rows["proj"]["state"] == "연결 완료" and rows["proj"]["wired"]
-        assert chat_channels.WIKI.name in rows
+        assert rows["proj"]["state"] == "연결 완료" and chat_channels.WIKI.name in rows
+
+
+def test_a_folder_picked_anywhere_is_known_by_its_name_once_added(tmp_path):
+    workspace, elsewhere = tmp_path / "ws", tmp_path / "elsewhere"
+    workspace.mkdir()
+    elsewhere.mkdir()
+    repo = _repo(elsewhere)
+    with patch.object(chat_channels, "WORKSPACE", workspace), patch.object(connect, "users", return_value=ALL):
+        assert chat_channels.repo_for("proj") is None
+        assert client().post("/api/connect/folder", json={"path": str(tmp_path)}).status_code == 400, "no .git"
+        assert client().post("/api/connect/folder", json={"path": "proj"}).status_code == 400, "not absolute"
+        assert client().post("/api/connect/folder", json={"path": str(repo)}).json() == {"name": "proj"}
+        assert chat_channels.repo_for("proj") == repo.resolve()
+        assert "proj" not in {r["id"] for r in chat_channels.projects()}, "added, not yet connected"
+        connected(repo)
+        assert "proj" in {r["id"] for r in chat_channels.projects()}
+        _repo(workspace)
+        assert chat_channels.repo_for("proj") == (workspace / "proj").resolve(), "the workspace's own comes first"
+        other = tmp_path / "other"
+        other.mkdir()
+        refused = client().post("/api/connect/folder", json={"path": str(_repo(other))})
+        assert refused.status_code == 409 and "같은 이름" in refused.json()["detail"]
+        assert chat_channels.repo_for("../ws/proj") is None and chat_channels.repo_for("..") is None
+
+
+@pytest.mark.parametrize("platform, code, out, got", [
+    ("darwin", 0, "/Users/me/repo/\n", "/Users/me/repo/"),
+    ("darwin", 1, "", connect.CLOSED),
+    ("win32", 0, "C:/Users/me/repo\n", "C:/Users/me/repo"),
+    ("win32", 0, "\n", connect.CLOSED),
+    ("win32", 3, "", None),
+])
+def test_the_folder_dialog_is_the_os_own_and_says_closed_apart_from_unavailable(monkeypatch, platform, code, out, got):
+    ran = []
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setattr(connect.subprocess, "run", lambda argv, **kw: ran.append(argv) or
+                        subprocess.CompletedProcess(argv, code, out, ""))
+    assert connect.pick_folder() == got
+    assert ran[0][0] == ("osascript" if platform == "darwin" else sys.executable)
+
+
+def test_browse_says_where_no_dialog_opens_so_the_screen_asks_for_a_path(monkeypatch):
+    monkeypatch.setattr(connect, "pick_folder", lambda: None)
+    assert client().post("/api/connect/browse").status_code == 501
+    monkeypatch.setattr(connect, "pick_folder", lambda: connect.CLOSED)
+    assert client().post("/api/connect/browse").json() == {"path": ""}
 
 
 # -- the guesses ----------------------------------------------------------------------

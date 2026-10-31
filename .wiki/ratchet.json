@@ -293,8 +293,8 @@
     },
     "web/src/components/Projects.tsx": {
       "dup": 9,
-      "lines": 193,
-      "reason": "baseline at adoption"
+      "lines": 216,
+      "reason": "The list holds only connected repositories, so connecting a new one starts here: [폴더 찾기] opens the OS folder dialog, and where none opens (a phone, a Python without Tk) a path field takes its place. Before that: baseline at adoption"
     },
     "web/src/components/Settings.tsx": {
       "dup": 18,
@@ -303,8 +303,8 @@
     },
     "web/src/lib/api.ts": {
       "dup": 0,
-      "lines": 1030,
-      "reason": "A running gate's `eta` is typed here: the whole run's median and 80% range, or `over` past every earlier run (four lines). Before that: Translation requests are split by both of the server's limits, the verified answer's included: a 45-paragraph answer sent whole was refused and stayed English. Before that: The structure refresh's model setting is typed here. Before that: The survey's three fixed roles (survey, implementation, review) are one shared type for the survey record and its cards. The refactoring survey record, its pipelines and specs, and a survey card's verification are typed here (refactor stage 7). Before that: refactoring mode, generation and run metadata and unlimited refactoring plan limits."
+      "lines": 1032,
+      "reason": "[폴더 찾기]'s two calls: the OS folder dialog (null where none opens) and adding the picked folder; the never-listed unconnected state and the always-true `wired` left the Project type. Before that: A running gate's `eta` is typed here: the whole run's median and 80% range, or `over` past every earlier run (four lines). Before that: Translation requests are split by both of the server's limits, the verified answer's included: a 45-paragraph answer sent whole was refused and stayed English. Before that: The structure refresh's model setting is typed here. Before that: The survey's three fixed roles (survey, implementation, review) are one shared type for the survey record and its cards. The refactoring survey record, its pipelines and specs, and a survey card's verification are typed here (refactor stage 7). Before that: refactoring mode, generation and run metadata and unlimited refactoring plan limits."
     },
     "web/tests/mobile_browser.py": {
       "dup": 12,

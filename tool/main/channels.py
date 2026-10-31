@@ -100,38 +100,38 @@ def efforts_of(model: str) -> set[str]:
 
 
 def projects() -> list[dict]:
-    """The repositories that can be chosen: whatever in the workspace has a `.git`.
-
-    The list is not held by hand — editing this every time a repository is
-    added means not editing it. Each carries its connection state
-    (`connect.status`); `wired` is any adapter at all, which is where the
-    hooks and the injection run.
+    """The repositories that can be chosen: those connected to this wiki, in the
+    workspace or wherever [폴더 찾기] picked them (`connect.added`). One not
+    connected is not offered: nothing runs in it, and it only crowded the
+    picker. Each carries its state (`connect.status`): `연결 완료` or `일부`.
     """
 
     from . import connect  # `connect` imports this module
 
-    paths = [WIKI] + [path for path in (sorted(WORKSPACE.iterdir()) if WORKSPACE.is_dir() else [])
-                      if path.name != WIKI.name and (path / ".git").exists() and repo_for(path.name) is not None]
+    names = sorted({path.name for path in (WORKSPACE.iterdir() if WORKSPACE.is_dir() else [])
+                    if path.name != WIKI.name and (path / ".git").exists()} | set(connect.added_names()))
     wired = connect.users()
     found = []
-    for path in paths:
+    for path in filter(None, map(repo_for, [WIKI.name, *names])):
         state = connect.status(path, wired)
-        found.append({"id": path.name, "path": str(path), "wired": state["state"] != "미연결", **state})
+        if state["state"] != "미연결":
+            found.append({"id": path.name, "path": str(path), **state})
     return found
 
 
 def repo_for(name: str) -> Path | None:
-    """A repository path by name. Never outside the workspace — this value came
-    from the screen."""
+    """A repository path by name: in the workspace, or a folder a person picked
+    for it (`connect.added`). Nowhere else — this value came from the screen."""
 
-    if not name:
+    if not name or name != Path(name).name or name in (".", ".."):
         return None
     if name == WIKI.name:
         return WIKI
     path = (WORKSPACE / name).resolve()
-    if name != path.name or path.parent != WORKSPACE.resolve() or not (path / ".git").exists():
-        return None
-    return path
+    if name == path.name and path.parent == WORKSPACE.resolve() and (path / ".git").exists():
+        return path
+    from . import connect
+    return connect.added(name)
 
 
 @dataclass(frozen=True)

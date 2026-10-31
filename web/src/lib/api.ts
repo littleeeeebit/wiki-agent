@@ -70,8 +70,7 @@ export type Survey = {
 export type Project = {
   id: string
   path: string
-  wired: boolean
-  state: '연결 완료' | '일부' | '미연결'
+  state: '연결 완료' | '일부'
   missing: string[]
   notes: string[]
   probing: boolean
@@ -809,6 +808,9 @@ export const connectPlan = (name: string) =>
   get(`/api/connect/${encodeURIComponent(name)}/plan`).then((r) => json<ConnectPlan>(r, '연결 계획'))
 export const connect = (name: string, body: { hub: string; survey: boolean }) =>
   post(`/api/connect/${encodeURIComponent(name)}`, body).then((r) => json<{ ok: boolean }>(r, '연결'))
+/** [폴더 찾기]: the OS dialog's path, '' when closed, null where no dialog opens (501). */
+export const browseFolder = () => post('/api/connect/browse').then((r) => (r.status === 501 ? null : json<{ path: string }>(r, '폴더 찾기').then((d) => d.path)))
+export const addFolder = (path: string) => post('/api/connect/folder', { path }).then((r) => json<{ name: string }>(r, '폴더 추가'))
 export const reprobe = (name: string) =>
   post(`/api/connect/${encodeURIComponent(name)}/probe`).then((r) => json<{ ok: boolean }>(r, '다시 시험'))
 export const setSurveySettings = (body: SurveySettings) =>
