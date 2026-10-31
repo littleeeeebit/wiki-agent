@@ -552,44 +552,80 @@ def test_a_head_race_never_leaves_a_reusable_local_pass(hosted_repo, monkeypatch
         ci.final(hosted_repo, "main", judge=lambda *_: pytest.fail("The untested head cannot reuse or rerun"))
 
 
-def test_a_local_pass_carries_over_a_commit_of_only_the_wiki_indexes(tmp_path, monkeypatch):
+def git_in(path, *args):
+    return ci.run(["git", *args], path)
+
+
+def committed(path, name, text):
+    (path / name).parent.mkdir(exist_ok=True)
+    (path / name).write_text(text, encoding="utf-8")
+    git_in(path, "add", name)
+    git_in(path, "commit", "-qm", name)
+    return git_in(path, "rev-parse", "HEAD")
+
+
+@pytest.fixture
+def indexed(tmp_path, monkeypatch):
+    """A local-policy repository whose `final` sees the newest of `heads`; `calls` lists the heads judged."""
+
+    for path in (tmp_path, tmp_path / "dependency"):
+        path.mkdir(exist_ok=True)
+        git_in(path, "init", "-q", "-b", "main")
+        git_in(path, "config", "user.name", "fixture")
+        git_in(path, "config", "user.email", "fixture@example.com")
+    (tmp_path / ci.POLICY).write_text('[verification]\nmode = "local"\nround = "focused-check"\nlocal = "complete-check"\n',
+                                      encoding="utf-8")
+    heads, calls = [committed(tmp_path, "code.py", "x = 1\n")], []
+    monkeypatch.setattr(ci, "identity", lambda *_: (heads[-1], BASE, ""))
+    return SimpleNamespace(heads=heads, calls=calls,
+                           judge=lambda *_: calls.append(heads[-1]) or {"ok": True, "head": heads[-1]})
+
+
+def test_a_local_pass_carries_over_a_commit_of_only_the_wiki_indexes(tmp_path, indexed):
     """ai-generation #60: merge preparation committed one line of `.wiki/corpus.json` and the
     30-minute suite ran again. A pass carries over the indexes; anything else beside them runs."""
 
-    def git(*args):
-        return ci.run(["git", *args], tmp_path)
-
-    def committed(name, text):
-        (tmp_path / name).parent.mkdir(exist_ok=True)
-        (tmp_path / name).write_text(text, encoding="utf-8")
-        git("add", name)
-        git("commit", "-qm", name)
-        return git("rev-parse", "HEAD")
-
-    git("init", "-q", "-b", "main")
-    git("config", "user.name", "fixture")
-    git("config", "user.email", "fixture@example.com")
-    (tmp_path / ci.POLICY).write_text('[verification]\nmode = "local"\nround = "focused-check"\nlocal = "complete-check"\n',
-                                      encoding="utf-8")
-    heads = [committed("code.py", "x = 1\n")]
-    monkeypatch.setattr(ci, "identity", lambda *_: (heads[-1], BASE, ""))
-    calls = []
-
-    def judge(repo, command, env, halt, timeout):
-        calls.append(heads[-1])
-        return {"ok": True, "head": heads[-1]}
-
+    heads, calls, judge = indexed.heads, indexed.calls, indexed.judge
     first = ci.final(tmp_path, "main", judge=judge)
-    heads.append(committed(".wiki/corpus.json", '{"docs": []}\n'))
+    heads.append(committed(tmp_path, ".wiki/corpus.json", '{"docs": []}\n'))
     carried = ci.final(tmp_path, "main", judge=judge)
     assert calls == [heads[0]] and carried["head"] == heads[1] and carried["carried_from"] == heads[0]
     assert ci.final(tmp_path, "main", dispatch=False, judge=judge) == carried, "the merge's confirm reads the same proof"
     assert {k: v for k, v in carried.items() if k not in ("head", "carried_from")} == \
         {k: v for k, v in first.items() if k != "head"}
-    committed(".wiki/graph.json", "{}\n")
-    heads.append(committed("code.py", "x = 2\n"))
+    committed(tmp_path, ".wiki/graph.json", "{}\n")
+    heads.append(committed(tmp_path, "code.py", "x = 2\n"))
     ci.final(tmp_path, "main", judge=judge)
     assert calls == [heads[0], heads[2]], "a code change beside the indexes runs the gate"
+
+
+@pytest.mark.parametrize("beside", ["corrupt proof", "ignored submodule"])
+def test_a_pass_does_not_carry_a_proof_its_own_head_refuses_or_a_submodule_diff_hides(tmp_path, indexed, beside):
+    """PR #266 round 1: a proof bound elsewhere passed once carried; `diff.ignoreSubmodules=all`
+    hid a dependency's new commit beside the index."""
+
+    heads, calls, judge = indexed.heads, indexed.calls, indexed.judge
+    dependency = tmp_path / "dependency"
+    if beside == "ignored submodule":
+        committed(dependency, "value.txt", "good\n")
+        git_in(tmp_path, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(dependency), "vendor")
+        git_in(tmp_path, "commit", "-qm", "vendor")
+        git_in(tmp_path, "config", "diff.ignoreSubmodules", "all")
+        heads.append(git_in(tmp_path, "rev-parse", "HEAD"))
+    ci.final(tmp_path, "main", judge=judge)
+    if beside == "corrupt proof":
+        receipt = next((tmp_path / ".git").glob("wiki-verification-*.json"))
+        record = json.loads(receipt.read_text(encoding="utf-8"))
+        receipt.write_text(json.dumps({**record, "proof": {**record["proof"], "head": "f" * 40}}), encoding="utf-8")
+    else:
+        vendor = tmp_path / "vendor"
+        git_in(vendor, "config", "user.name", "fixture")
+        git_in(vendor, "config", "user.email", "fixture@example.com")
+        committed(vendor, "value.txt", "bad\n")
+        git_in(tmp_path, "add", "vendor")
+    heads.append(committed(tmp_path, ".wiki/corpus.json", '{"docs": []}\n'))
+    proof = ci.final(tmp_path, "main", judge=judge)
+    assert calls == [heads[-2], heads[-1]] and "carried_from" not in proof
 
 
 @pytest.fixture

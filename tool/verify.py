@@ -320,18 +320,23 @@ def carried(repo, common, head, base_oid, signature):
     for path in common.glob(f"wiki-verification-*-{base_oid}-{signature}.json"):
         try:
             old = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(old, dict) or old.get("status") != "passed" or old.get("backend") != "local" \
-                    or (old.get("base_oid"), old.get("environment_digest")) != (base_oid, signature) \
-                    or old.get("head") in (None, head) or not isinstance(old.get("proof"), dict):
+            proof = old.get("proof") if isinstance(old, dict) else None
+            # The proof stands for its own receipt, as `final` demands of one read at that head.
+            if not isinstance(proof, dict) or old.get("status") != "passed" or old.get("head") in (None, head) \
+                    or (old.get("base_oid"), old.get("environment_digest"), old.get("backend")) != (base_oid, signature, "local") \
+                    or (proof.get("head"), proof.get("base_oid"), proof.get("environment_digest"), proof.get("backend")) \
+                    != (old["head"], base_oid, signature, "local"):
                 continue
             run(["git", "merge-base", "--is-ancestor", old["head"], head], repo)
-            names = run(["git", "diff", "--no-renames", "--name-only", "-z", old["head"], head], repo).split("\0")
+            # A submodule a config tells diff to ignore still changes what the tests read.
+            names = run(["git", "diff", "--ignore-submodules=none", "--no-renames", "--name-only", "-z", old["head"], head],
+                        repo).split("\0")
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             continue
         if all(name in indexes.INDEXES for name in names if name):
             return {"head": head, "base_oid": base_oid, "environment_digest": signature, "backend": "local",
                     "status": "passed", "finished_at": old.get("finished_at"),
-                    "proof": {**old["proof"], "head": head, "carried_from": old["head"]}}
+                    "proof": {**proof, "head": head, "carried_from": old["head"]}}
     return None
 
 
