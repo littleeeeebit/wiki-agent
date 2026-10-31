@@ -256,6 +256,39 @@ def test_an_ordinary_answer_the_check_leaves_unanswered_falls_back_to_synthesis(
     assert out["verified"]["status"] == fell and len(messages) == 1
 
 
+@pytest.mark.parametrize("tool", ["WebSearch", "webSearch"])   # Claude's tool, Codex's item
+def test_a_checked_answer_that_searched_the_web_is_synthesized_with_what_it_found(tmp_path, tool):
+    # PR #269 review round 1 (P1): no evidence id cites the web, so the checked draft published the port and
+    # dropped the release the person asked the web for.
+    ports = item(tmp_path, "docs/ports.md", PORTS)
+    d = {**dossier([ports], ["What port does the daemon use?", "What did the release page announce?"]),
+         "progress": "no"}
+    replies = [draft(claim("c1", "The search daemon listens on port 8791."), unresolved=("r1",), status="partial"),
+               "The daemon listens on port 8791 [e1]. The release adds native web search (https://example.org/release)."]
+    messages = []
+
+    def generate(message):
+        messages.append(message)
+        yield {"kind": "tool", "text": "latest release", "tool": tool}
+        return replies.pop(0)
+
+    flow = knowledge.grounded("question", None, "", d, generate, CFG, cache=None,
+                              evaluate=Judge(answers={"c1_r1": ("irrelevant", 0.99)}))
+    with pytest.raises(StopIteration) as done:
+        while True:
+            next(flow)
+    v = done.value.value["verified"]
+    assert v["status"] == "unverified" and v["verified"] is False and v["reason"] == "fallback:web"
+    assert "https://example.org/release" in done.value.value["text"] and len(messages) == 2
+    synthesis = (Path(knowledge.__file__).resolve().parents[1] / "prompts" / knowledge.ANALYSIS_PROMPT)
+    assert messages[1].startswith(synthesis.read_text(encoding="utf-8"))
+    # A turn that read only the repository is checked and published as before.
+    out, _events, messages = answer(d, [draft(claim("c1", "The search daemon listens on port 8791."),
+                                              unresolved=("r1",), status="partial")],
+                                    Judge(answers={"c1_r1": ("irrelevant", 0.99)}), verify_claims=None)
+    assert out["verified"]["status"] == "partial" and len(messages) == 1
+
+
 def test_a_supported_claim_is_published_complete_with_its_citation(tmp_path):
     ports = item(tmp_path, "docs/ports.md", PORTS)
     judge = Judge()
