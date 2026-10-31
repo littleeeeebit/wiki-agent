@@ -8,8 +8,8 @@
     },
     "tool/agent/chat_session.py": {
       "dup": 0,
-      "lines": 1375,
-      "reason": "A spec-sized system prompt overran Windows' 32,767-character command line (WinError 206), so Claude reads it from an owner-only file made per process, owned and removed with that process, and removed on any failure before it starts (PR #261). Before that: A turn cut off at capacity after it worked is continued (PR #221): an isolated session never resumes the id it did not persist, a continuation goes only to a Codex thread `thread/resume` reached and a fresh one stops the turn with the loss on record, and a failed Codex turn carries the usage it spent so the retries' total is charged. Before that: Providers lead their own process group on POSIX (audit R2), so Ctrl+C reaches none of them: every session with a running provider registers itself, and a server going down ends them all, a one-off explanation that no registry holds included, and refuses new ones until it starts again (`end_all`, `reopen`, `end`). Then a caller grading what the host read passes `results`, and both providers keep every tool result there whole: a tool event shows only 4000 characters, and Codex `exec` sends no result event (v5 calibration, PR #109)."
+      "lines": 1378,
+      "reason": "A read session given the web tools turns Codex's own web search live, not only a source-only one: the wiki and next-task focuses had no web search on either host. Before that: A spec-sized system prompt overran Windows' 32,767-character command line (WinError 206), so Claude reads it from an owner-only file made per process, owned and removed with that process, and removed on any failure before it starts (PR #261). Before that: A turn cut off at capacity after it worked is continued (PR #221): an isolated session never resumes the id it did not persist, a continuation goes only to a Codex thread `thread/resume` reached and a fresh one stops the turn with the loss on record, and a failed Codex turn carries the usage it spent so the retries' total is charged. Before that: Providers lead their own process group on POSIX (audit R2), so Ctrl+C reaches none of them: every session with a running provider registers itself, and a server going down ends them all, a one-off explanation that no registry holds included, and refuses new ones until it starts again (`end_all`, `reopen`, `end`). Then a caller grading what the host read passes `results`, and both providers keep every tool result there whole: a tool event shows only 4000 characters, and Codex `exec` sends no result event (v5 calibration, PR #109)."
     },
     "tool/apply.py": {
       "dup": 6,
@@ -108,8 +108,8 @@
     },
     "tool/main/knowledge.py": {
       "dup": 0,
-      "lines": 3911,
-      "reason": "A research promotion's spec carries its own Korean `summary`: no worker writes that PR, and the pull request's prose no longer comes from the spec (four lines). Before that: Jev stage 11 step 3 (11-question-shape.md): arm B's wording adopted; coverage quotes its requirement, so judge_questions takes the texts, and conflict is two literal questions combined in code (conflicted) where the judge reads it. The judge places passages until the body as sent, questions included, fits MAX_BODY (PR #184 review). Before that, v7 F2 and M1 (5-english-baseline.md): parsed reads one host answer that follows its reasoning, never a second or an inner one, and ASK names a quoted question someone else asked as material. Before that, v6 route change (5-english-baseline.md): the ANALYSIS question says what to do in a routine case is the policy that covers it, a fact, and why; beside L1's analysis judge policy, B's progress route question, ordinary-answer check policy, plain rendering and synthesis fallback."
+      "lines": 3919,
+      "reason": "PR #269 review round 1: a checked ordinary answer whose draft searched the web falls back to synthesis (`fallback:web`); no evidence id cites the web, so the web part was dropped. Before that: A research promotion's spec carries its own Korean `summary`: no worker writes that PR, and the pull request's prose no longer comes from the spec (four lines). Before that: Jev stage 11 step 3 (11-question-shape.md): arm B's wording adopted; coverage quotes its requirement, so judge_questions takes the texts, and conflict is two literal questions combined in code (conflicted) where the judge reads it. The judge places passages until the body as sent, questions included, fits MAX_BODY (PR #184 review). Before that, v7 F2 and M1 (5-english-baseline.md): parsed reads one host answer that follows its reasoning, never a second or an inner one, and ASK names a quoted question someone else asked as material. Before that, v6 route change (5-english-baseline.md): the ANALYSIS question says what to do in a routine case is the policy that covers it, a fact, and why; beside L1's analysis judge policy, B's progress route question, ordinary-answer check policy, plain rendering and synthesis fallback."
     },
     "tool/main/loop.py": {
       "dup": 0,
@@ -123,8 +123,8 @@
     },
     "tool/main/query.py": {
       "dup": 0,
-      "lines": 1056,
-      "reason": "A stored selection that no longer names a repository (a picked one moved or replaced) falls back to the hub for a screen's request only (`screened`), so a fresh screen still loads and 프로젝트 · 연결 can pick it again while a background owner is refused instead of writing into the hub (#264 review rounds 3 and 4). Before that: The refactoring focus keeps the survey model a survey of its mode fixed beside the mode on disk, and refuses another model until the mode changes, since the conversation that refines the survey's cards ran on the chat toolbar's model (#232 review round 1). Before that: The refactoring focus keeps its mode and generation on disk, since a restart that reset them made every survey card of a later generation unstartable; the config that owns them lives here."
+      "lines": 1057,
+      "reason": "A conversation focus is started with WebSearch and WebFetch, so a question asking to search deeply has the web to search. Before that: A stored selection that no longer names a repository (a picked one moved or replaced) falls back to the hub for a screen's request only (`screened`), so a fresh screen still loads and 프로젝트 · 연결 can pick it again while a background owner is refused instead of writing into the hub (#264 review rounds 3 and 4). Before that: The refactoring focus keeps the survey model a survey of its mode fixed beside the mode on disk, and refuses another model until the mode changes, since the conversation that refines the survey's cards ran on the chat toolbar's model (#232 review round 1). Before that: The refactoring focus keeps its mode and generation on disk, since a restart that reset them made every survey card of a later generation unstartable; the config that owns them lives here."
     },
     "tool/main/refactor.py": {
       "dup": 0,
@@ -193,8 +193,8 @@
     },
     "tool/test_agent.py": {
       "dup": 46,
-      "lines": 1098,
-      "reason": "The prompt file is pinned on a real stand-in process: a late close of the old process removes only its own file, and a prompt that cannot be written leaves none (PR #261). Before that: A server going down must end a one-off explanation's provider, which no registry holds, and start no new one until reopened; pinned on a real stand-in process whose child holds the pipe."
+      "lines": 1124,
+      "reason": "The wiki and next-task focuses are pinned to the web tools on Claude and to live web search on a stand-in Codex app server. Before that: The prompt file is pinned on a real stand-in process: a late close of the old process removes only its own file, and a prompt that cannot be written leaves none (PR #261). Before that: A server going down must end a one-off explanation's provider, which no registry holds, and start no new one until reopened; pinned on a real stand-in process whose child holds the pipe."
     },
     "tool/test_agent_decisions.py": {
       "dup": 12,
@@ -288,8 +288,8 @@
     },
     "web/src/components/Blocks.tsx": {
       "dup": 6,
-      "lines": 320,
-      "reason": "A started survey card refused for an existing test edit shows `[테스트 계약 변경 승인]`, which lives in `Amendments.tsx` (two lines). Before that: A started survey card whose fault names `[테스트 파일 삭제 승인]` shows it; the panel itself lives in `Removals.tsx` (#252 merged it here without raising this ceiling, so main failed debt.py check; three lines). Before that: Survey spec cards (refactor stage 7): no free-text edit, a Start model picker defaulting to the survey's model, lock reasons, [다시 확인], the verification table, and a read-only card for the earlier workflow."
+      "lines": 337,
+      "reason": "Candidates are checkboxes with [고른 N개로 이어 가기] and [전부 하기]: pieces of one piece of work were forced down to a single pick. Before that: A started survey card refused for an existing test edit shows `[테스트 계약 변경 승인]`, which lives in `Amendments.tsx` (two lines). Before that: A started survey card whose fault names `[테스트 파일 삭제 승인]` shows it; the panel itself lives in `Removals.tsx` (#252 merged it here without raising this ceiling, so main failed debt.py check; three lines). Before that: Survey spec cards (refactor stage 7): no free-text edit, a Start model picker defaulting to the survey's model, lock reasons, [다시 확인], the verification table, and a read-only card for the earlier workflow."
     },
     "web/src/components/Projects.tsx": {
       "dup": 9,

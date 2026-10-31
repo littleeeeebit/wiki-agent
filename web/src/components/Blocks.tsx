@@ -54,25 +54,42 @@ function Broken({ name, error, busy, onSay }: { name: string; error: string } & 
   )
 }
 
-/** Shown translated, sent as written: the agent reads its own words back. */
+/** What picking candidates says back: one title as it was, several as one
+ *  request whose every piece gets its own spec. */
+const picked =(titles: string[]) => titles.length === 1 ? titles[0]
+  : ['Do all of these; each becomes its own spec, none dropped:', ...titles.map((t) => `- ${t}`)].join('\n')
+
+/** Shown translated, sent as written: the agent reads its own words back.
+ *  Several or all can be picked: candidates that are pieces of one piece of
+ *  work were forced down to a single pick. */
 function Candidates({ list, korean, busy, onSay }: { list: { title: string; why?: string; source?: string }[] } & BlockProps) {
   const shown = useOverlay(list.flatMap((c) => [c.title, c.why ?? '']), korean)
+  const [chosen, setChosen] = useState<number[]>([])
+  const send = (at: number[]) => onSay(picked([...at].sort((a, b) => a - b).map((i) => list[i].title)))
   return (
     <div className={box}>
-      <div className="mb-2 font-heading text-[11px] text-faint">후보</div>
+      <div className="mb-2 font-heading text-[11px] text-faint">후보 · 하나, 여럿, 전부 고를 수 있다</div>
       <div className="space-y-1.5">
         {list.map((c, i) => (
-          <button key={i} type="button" disabled={busy} onClick={() => onSay(c.title)}
-            className="block w-full rounded-md border border-border px-2.5 py-1.5 text-left hover:bg-secondary disabled:opacity-40">
-            <div className="text-[13.5px] leading-snug">{shown[i * 2]}</div>
-            {(c.why || c.source) && (
-              <div className="mt-0.5 text-[12.5px] text-muted-foreground">
-                {shown[i * 2 + 1]}
-                {c.source && <span className="ml-1.5 font-mono text-[10.5px] text-faint">{c.source}</span>}
-              </div>
-            )}
-          </button>
+          <label key={i} className={`flex w-full cursor-pointer items-start gap-2 rounded-md border px-2.5 py-1.5 text-left hover:bg-secondary ${
+            chosen.includes(i) ? 'border-primary bg-primary/10' : 'border-border'} ${busy ? 'opacity-40' : ''}`}>
+            <input type="checkbox" disabled={busy} checked={chosen.includes(i)} className="mt-1 size-4 shrink-0 accent-primary"
+              onChange={() => setChosen((now) => now.includes(i) ? now.filter((n) => n !== i) : [...now, i])} />
+            <div className="min-w-0">
+              <div className="text-[13.5px] leading-snug">{shown[i * 2]}</div>
+              {(c.why || c.source) && (
+                <div className="mt-0.5 text-[12.5px] text-muted-foreground">
+                  {shown[i * 2 + 1]}
+                  {c.source && <span className="ml-1.5 font-mono text-[10.5px] text-faint">{c.source}</span>}
+                </div>
+              )}
+            </div>
+          </label>
         ))}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <Btn tone="primary" disabled={busy || !chosen.length} onClick={() => send(chosen)}>고른 {chosen.length}개로 이어 가기</Btn>
+        {list.length > 1 && <Btn disabled={busy} onClick={() => send(list.map((_, i) => i))}>전부 하기</Btn>}
       </div>
     </div>
   )

@@ -1256,6 +1256,8 @@ DRAFT = "answer-draft/1"
 VERIFIED = "verified-answer/1"
 # A host tool line that ran the search command (`query.SEARCH_NOTE`): retrieval again, by the host.
 HOST_SEARCH = re.compile(r"tool/search\b|jev_search")
+# How a web search or fetch names itself on a tool line: Claude's tools, Codex's items.
+WEB_TOOLS = {"WebSearch", "WebFetch", "webSearch", "web_search"}
 DRAFT_PROMPT = "answer-draft.md"
 ANALYSIS_PROMPT = "answer-analysis.md"
 CLAIM_KINDS = ("source_fact", "inference", "recommendation", "direct_text")
@@ -2103,7 +2105,8 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
     if run is not None:
         cancel = run.cancel
         evaluate = run.jev(evaluate or functools.partial(decision.evaluate, cfg))
-    generate = drafted(run, generate)
+    web: list[str] = []   # the web tools the host's turns ran: no evidence id cites what they found
+    generate = drafted(run, generate, web)
     job = Grounding(dossier, cfg, cancel, cache, evaluate,
                     said="\n".join(filter(None, (said, dossier.get("question_en")))),
                     verify_claims=verify_claims)
@@ -2141,7 +2144,9 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
             run.called(record)
     synthesized = job.analysis
     fell = job.published()["verified"]["status"] if job.verify_claims is None and not synthesized else None
-    if fell in ("abstained", "verification_unavailable") and not job.cancel.is_set():
+    # A draft that searched the web found what no claim may cite: checked, the web part was simply dropped.
+    fell = "web" if fell and web else fell
+    if fell in ("abstained", "verification_unavailable", "web") and not job.cancel.is_set():
         # Nothing shown answered the question: an ordinary answer synthesizes instead of refusing (#59).
         # Should this turn be unusable too, the checked generation before it is what is published.
         job.analysis = True
@@ -2161,7 +2166,7 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
     return out
 
 
-def drafted(run: Run | None, generate):
+def drafted(run: Run | None, generate, web: list[str] | None = None):
     """`generate`, each turn a generation of the run's trace: the brief the
     host was sent and the text it wrote — the draft its claims are read
     from — with the model and tokens of the `{"kind": "usage"}` item a
@@ -2200,6 +2205,9 @@ def drafted(run: Run | None, generate):
                 else:
                     searches += isinstance(item, dict) and item.get("kind") == "tool" and bool(
                         HOST_SEARCH.search(str(item.get("text") or "")))
+                    if web is not None and isinstance(item, dict) and item.get("kind") == "tool" \
+                            and item.get("tool") in WEB_TOOLS:
+                        web.append(item["tool"])
                     item = turn.send((yield item))
         except StopIteration as done:
             text = done.value

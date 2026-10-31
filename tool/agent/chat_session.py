@@ -324,7 +324,8 @@ class ChatSession:
 
     @property
     def searching(self) -> bool:
-        return self.source_only and WEB_TOOLS <= set(self.tools.split(","))
+        """Given the web tools: Codex's own web search is live, not its cached default."""
+        return WEB_TOOLS <= set(self.tools.split(","))
 
     # -- Lifetime -----------------------------------------------------------
 
@@ -391,6 +392,8 @@ class ChatSession:
                 # Dynamic function calls use this host in current Codex. It
                 # exposes only the tools above, not a native shell or filesystem.
                 cmd += ["--enable", "code_mode_host"]
+            elif self.searching:
+                cmd += ["-c", 'web_search="live"']
             self.model_name = self.model.removeprefix("codex:")
             skills = skill_config(self.repo, self._env)
             if skills:
