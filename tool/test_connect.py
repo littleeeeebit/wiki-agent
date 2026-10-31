@@ -143,7 +143,7 @@ def test_a_folder_picked_anywhere_is_known_by_its_name_once_added(tmp_path):
 
 def test_a_picked_name_follows_its_repository_never_a_replacement(tmp_path):
     """#264 round 2: A moved into the workspace and B made at A's old path; the name selected B and
-    [연결] wrote B an adapter under A's test results."""
+    `[연결]` wrote B an adapter under A's test results."""
     workspace, outside = tmp_path / "ws", tmp_path / "outside"
     workspace.mkdir()
     outside.mkdir()

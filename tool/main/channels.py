@@ -101,7 +101,7 @@ def efforts_of(model: str) -> set[str]:
 
 def projects() -> list[dict]:
     """The repositories that can be chosen: those connected to this wiki, in the
-    workspace or wherever [폴더 찾기] picked them (`connect.added`). One not
+    workspace or wherever `[폴더 찾기]` picked them (`connect.added`). One not
     connected is not offered: nothing runs in it, and it only crowded the
     picker. Each carries its state (`connect.status`): `연결 완료` or `일부`.
     """

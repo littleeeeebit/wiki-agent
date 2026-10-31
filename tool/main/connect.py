@@ -99,7 +99,7 @@ ID = "wiki-agent-id"   # in the checkout's own Git directory: it moves with the 
 
 
 def identity(path: Path, make: bool = False) -> str:
-    """The token [폴더 찾기] left in `path`'s Git directory; with `make`, one is left if none is."""
+    """The token `[폴더 찾기]` left in `path`'s Git directory; with `make`, one is left if none is."""
 
     where = indexes.git_dir(path)
     if where is None:
@@ -115,7 +115,7 @@ def identity(path: Path, make: bool = False) -> str:
 
 
 def added(name: str) -> Path | None:
-    """The folder [폴더 찾기] picked for `name`, while the repository there is the one picked
+    """The folder `[폴더 찾기]` picked for `name`, while the repository there is the one picked
     (its `identity`). A moved or replaced one names nothing until it is picked again."""
 
     saved, token = record(name).get("path"), record(name).get("id")
@@ -669,7 +669,7 @@ class Folder(BaseModel):
 # Under `/api/folders`, not `/api/connect/…`: a repository may be named `browse` or `folder`.
 @router.post("/api/folders/browse")
 def browse() -> dict:
-    """[폴더 찾기] on this machine: the picked path, empty when closed. 501 where no dialog
+    """`[폴더 찾기]` on this machine: the picked path, empty when closed. 501 where no dialog
     opens, and the screen asks for the path instead."""
 
     picked = pick_folder()
