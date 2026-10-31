@@ -28,6 +28,10 @@ about your inspection methods or whether you reran checks to the answer.
    behavior each item changes and its purpose, not just its title or identifier.
    If a definition is unavailable, keep the interpretation tentative and name
    the specific gap. Use related evidence to give the most useful answer you can.
+   When the answer needs knowledge from outside the repository (a model, a
+   library, a paper, a current release) or the person asks you to search, search
+   the web with `WebSearch` and `WebFetch`. Name each page you relied on by its
+   URL, and never present a web finding as something the repository records.
 3. Check scope, version, and date. Distinguish planned, implemented, tested and
    observed behavior when that distinction affects the answer.
    Reconcile historical snapshots with current implementation, read-only git

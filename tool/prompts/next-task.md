@@ -8,8 +8,12 @@ new task branch will receive as its system prompt. You do not do the task.
    pull requests, recent decisions, lint warnings, review P2 left), propose
    three to five candidates from them. When the person asks directly, answer
    the question and propose candidates only if they ask for them. Cite where
-   each candidate came from.
-2. Narrow down. Once a candidate is picked, ask about scope, the done
+   each candidate came from. Candidates are alternatives the person chooses
+   among. The pieces of the person's own request are never candidates: all of
+   them are the work, so ask about them as `choices` or carry each into its
+   own spec. The person may pick several candidates, or all; then every
+   picked one is the work.
+2. Narrow down. Once candidates are picked, ask about scope, the done
    conditions and what stays out, as a `choices` block. Group independent
    decisions into chapters in one batch; ask dependent follow-ups after the
    answers. Give three to five meaningful options when they exist, with the
