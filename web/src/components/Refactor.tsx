@@ -109,7 +109,9 @@ export function RefactorSurvey({ repo, mode, generation, options, korean, busy, 
   // A stopped survey with no cards yet resumes into the current generation.
   const latest = surveys.find((r) => !r.recheck && r.mode === mode
     && ((r.generation ?? 0) === generation || (r.state === 'stopped' && !r.specs?.length)))
-  const rechecks = surveys.filter((r) => r.recheck && r.mode === mode && r.state !== 'done' && r.state !== 'superseded')
+  // A recheck a newer one of the same card replaced is history: shown, a refusal fixed since read as current.
+  const rechecks = surveys.filter((r) => r.recheck && r.mode === mode && r.state !== 'done' && r.state !== 'superseded'
+    && !surveys.some((n) => n.recheck === r.recheck && n.created > r.created))
   const live = surveys.find((r) => r.state === 'running')
   const legacy = (runs ?? []).filter((r) => r.kind !== 'survey')
   async function act(path: string, body?: unknown) {

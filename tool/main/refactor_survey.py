@@ -91,7 +91,8 @@ SPEC_SCHEMA = {
                             "why": "<the current requirement or public contract it follows>"}]},
     "measure": {"metric": "<rework performance only>", "task": "<representative task>",
                 "argv": ["<command run from the repository root>"], "repeat": 5},
-    "hypothesis": {"claim": "<rework, when it cannot be measured>", "check": "<how it could be verified>"},
+    "hypothesis": {"claim": "<rework performance claim not yet measurable; none for a structural change>",
+                   "check": "<how it could be verified>"},
     "contract_change": {"impact": "<rework contract change or data migration only>", "compatibility": "...",
                         "migration": "...", "rollback": "..."}}
 
@@ -706,7 +707,8 @@ RECHECK_PROMPT = (
     "Recheck one refactoring spec against the current code. " + COMMON + " It was written on an older commit and "
     "the files listed changed since. Read its pipeline again here. If the problem still holds, return the spec "
     "rewritten for this code with the same key; if it no longer holds, or now belongs to another mode, return no "
-    "spec and say why in `nothing`. End with one fenced block tagged `refactor-survey` holding JSON shaped like:\n"
+    "spec and say why in `nothing`. A rewritten spec must be able to start: a performance claim comes back with a "
+    "`measure` command, and a spec that claims no performance change has no `hypothesis`. End with one fenced block tagged `refactor-survey` holding JSON shaped like:\n"
     + json.dumps({"coverage": {"scope": "<what you reread>", "unchecked": ["..."], "excluded": []},
                   "specs": [SPEC_SCHEMA], "nothing": "<only with no spec: why>"}))
 
@@ -733,6 +735,11 @@ def rechecked(w, run: dict) -> dict:
         survey = survey_shape(value, run["mode"], parent["map"], path, others, whole=old["pipeline"] == WHOLE)
         if len(survey["specs"]) > 1 or survey["specs"] and survey["specs"][0]["key"] != old["detail"]["key"]:
             raise ValueError(f"key `{old['detail']['key']}` 의 명세 하나만 돌려줘야 한다")
+        # A hypothesis alone cannot start (`refactor_run.startable`), and the start sends it back here: accepted, a
+        # structural rework that wrote one ("No performance improvement is claimed") came back the same every time.
+        if survey["specs"] and survey["specs"][0].get("hypothesis") and not survey["specs"][0].get("measure"):
+            raise ValueError("`hypothesis` 만 있고 `measure` 가 없어 시작할 수 없다 — 성능을 주장하면 measure(argv·repeat) "
+                             "로 측정할 수 있게 하고, 성능 주장이 아니면 hypothesis 를 빼라")
         return survey
 
     try:

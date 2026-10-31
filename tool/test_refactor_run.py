@@ -1419,6 +1419,27 @@ def test_recheck_rewrites_a_stale_card_or_sets_it_aside(surveyed):
     assert gone["state"] == "done" and gone["specs"] == [] and specs.load("proj", sid) is None
 
 
+def test_a_recheck_comes_back_startable_from_an_unmeasured_hypothesis(surveyed):
+    """ai-companion-voice-agent memory-owned-recall-decision: a structural rework wrote a hypothesis ("No
+    performance improvement is claimed") and no measure; the start sent it to a recheck, which took the same
+    answer back every time. The recheck refuses it, and the repair turn drops the hypothesis."""
+    claim = {"claim": "No performance improvement is claimed", "check": "same decisions before and after"}
+    sid = surveyed_in("rework", spec("recall-owner", hypothesis=claim))["specs"][0]
+    with pytest.raises(HTTPException) as unmeasured:
+        refactor_run.startable(surveyed, specs.load("proj", sid), "")
+    assert "측정 명령이 없는" in unmeasured.value.detail
+    Host.answers = {"survey": {**ONE, "specs": [spec("recall-owner", hypothesis=claim)]}}
+    Host.repair = json.dumps({**ONE, "specs": [spec("recall-owner")]})
+    api = client()
+    again = settled(api, api.post(f"/api/refactors/specs/{sid}/recheck",
+                                  json={"request_id": "recheck-hyp-0001", "mode": "rework"}).json()["id"])
+    assert again["state"] == "done", again["stopped"]
+    said = [getattr(h, "text", "") for h in Host.made]
+    assert any("block was refused" in t and "hypothesis" in t for t in said), "the refusal named the way out"
+    assert not specs.load("proj", sid)["refactor"]["detail"].get("hypothesis")
+    assert refactor_run.startable(surveyed, specs.load("proj", sid), "") == []
+
+
 def test_a_recheck_of_the_whole_repository_spec_reads_every_pipeline_report(surveyed):
     whole = spec("tidy-all", "all", files=["src/orders.py", "src/billing.py"])
     sid = surveyed_in("preserve", whole)["specs"][0]
