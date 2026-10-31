@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -47,7 +49,6 @@ PROMPT = ("Does the agent need to read the file {path} (candidate {id} in the st
 VERSION = hashlib.sha256(PROMPT.encode()).hexdigest()[:16]
 LINES, CHARS, TOTAL = 200, 8000, 60000
 SEARCH_K, SEARCH_SECONDS = 20, 5.0
-CITED = re.compile(r":\d+(?:-\d+)?$")
 MERGED = "머지됨"
 READY = ("decided", "uncertain")
 
@@ -70,9 +71,18 @@ class Tree:
 
 
 def grounded(spec: dict) -> list[str]:
-    """The spec's grounds files as paths, their `:line` cites cut off."""
+    """The spec's grounds files in git's repository-relative spelling, their
+    `:line` cites cut off with the spec checks' own syntax (`specs.LINE`):
+    `./a.py:1–3` is `a.py`. A path leaving the repository names nothing."""
 
-    return list(dict.fromkeys(CITED.sub("", f).strip() for f in spec["grounds"].get("files", []) if f.strip()))
+    from .specs import LINE  # `specs` imports `decisions`, which imports this module
+
+    out = []
+    for f in spec["grounds"].get("files", []):
+        path = posixpath.normpath(LINE.sub("", f.strip()).replace("\\", "/")) if f.strip() else ""
+        if path not in ("", ".", "..") and not path.startswith(("../", "/")) and not re.match(r"[A-Za-z]:", path):
+            out.append(path)
+    return list(dict.fromkeys(out))
 
 
 def searched(goal: str, repo: Path) -> list[str]:
@@ -230,10 +240,24 @@ def render(kept: list[str], dropped: list[str], tree: Tree) -> str:
 
 def first(spec: dict, repo: Path, path: Path, cfg: decision.Config, *, cancel=None, occasion: str = "",
           run=None) -> str:
-    """The file section of the work start in `path`, once it is recorded."""
+    """The file section of the work start in `path`, once it is recorded.
+
+    Only active mode applies the judgement. Shadow — the configured mode, or
+    a checkout outside the canary's `active_projects` — loads the full list
+    and records Jev's judgement beside it, in the background, waiting for none of it."""
 
     tree = Tree(path)
     offered = candidates(spec, repo, tree)
+    if cfg.mode == "shadow":
+        def aside():
+            try:
+                decisions.keep((spec["repo"], spec["id"]), {**judge(spec, offered, cfg, occasion=occasion),
+                                                            "applied": False})
+            except Exception:  # noqa: BLE001 — a shadow never touches the turn
+                pass
+
+        threading.Thread(target=aside, daemon=True).start()
+        return render([c["path"] for c in offered], [], tree)
     rec = judge(spec, offered, cfg, cancel=cancel, occasion=occasion)
     decisions.keep((spec["repo"], spec["id"]), rec)
     if run is not None and offered:

@@ -3,6 +3,8 @@ fallback that loads everything, the first turn's two lists, and the replay
 that sends no turn to a coding session. Jev is a stand-in behind
 `decisions.transport`; git is real."""
 
+import contextlib
+import io
 import json
 import subprocess
 from pathlib import Path
@@ -14,6 +16,7 @@ import decision
 from common.language import language
 from eval import file_filter as replay
 from main import channels, decisions, file_filter, specs, work
+from test_main import until
 
 
 def git(repo: Path, *args: str) -> str:
@@ -102,6 +105,14 @@ def test_candidates_are_grounds_then_search_then_overlapping_merges_present_and_
     assert len(file_filter.candidates(spec(), repo, tree, hits=["b.md"], before=50.0)) == 2
 
 
+def test_grounds_in_any_accepted_spelling_name_the_tracked_file(world):
+    repo, _ = world
+    s = spec(files=("./a.py:3", "a.py:1–3", "sub\\..\\b.md:2-4", "../out.py", "C:/x.py"))
+    assert file_filter.grounded(s) == ["a.py", "b.md"]
+    assert [c["path"] for c in file_filter.candidates(s, repo, file_filter.Tree(repo), hits=[], before=50.0)] == \
+        ["a.py", "b.md", "c.py"], "`overlap` grounds `a.py:1` too"
+
+
 def test_search_hits_outside_the_repository_are_not_candidates(world, monkeypatch):
     repo, _ = world
     monkeypatch.setattr(file_filter.search, "ask", lambda *a, **k: [
@@ -183,6 +194,19 @@ def test_a_work_start_sends_the_filtered_first_turn_and_records_it(world, monkey
     assert noted == ["Jev · 파일 3개 중 2개를 싣는다"]
 
 
+def test_shadow_loads_every_file_and_records_the_judgement_unapplied(world, monkeypatch):
+    repo, _ = world
+    worktree = repo.parent / "wt"
+    git(repo, "worktree", "add", "-q", "-b", "now", str(worktree))
+    monkeypatch.setattr(decisions, "transport", Jev({"a.py": 0.1, "c.py": 0.1}))
+    monkeypatch.setattr(file_filter.search, "ask", lambda *a, **k: None)
+    text = file_filter.first(spec(), repo, worktree, cfg(mode="shadow"), occasion="start:1")
+    assert "### `a.py`" in text and "### `c.py`" in text and "Available, not loaded" not in text
+    until(lambda: decisions.history(("proj", "now")))
+    [rec] = decisions.history(("proj", "now"))
+    assert rec["applied"] is False and rec["mode"] == "shadow" and [f["path"] for f in rec["dropped"]] == ["a.py", "c.py"]
+
+
 def test_api_jev_lists_the_file_point_as_provisional():
     got = decisions.coverage(cfg())
     assert got["points"]["work.files"]["baseline"] == "the full list"
@@ -194,13 +218,27 @@ def test_api_jev_lists_the_file_point_as_provisional():
 # -- the replay -----------------------------------------------------------------
 
 
+def test_one_arm_the_tokenizer_misses_puts_both_arms_on_the_estimate(monkeypatch):
+    answers = [b'{"input_tokens": 1000}', OSError("timed out")]
+
+    def urlopen(req, timeout):
+        got = answers.pop(0)
+        if isinstance(got, Exception):
+            raise got
+        return contextlib.nullcontext(io.BytesIO(got))
+
+    monkeypatch.setattr(replay.settings, "pick", lambda found, name, default=None: ("key", "file"))
+    monkeypatch.setattr(replay.urllib.request, "urlopen", urlopen)
+    assert replay.count("s" * 40, ["a" * 4000, "a" * 400]) == ([1010, 110], "estimate:chars/4")
+
+
 def test_the_replay_measures_both_arms_and_never_opens_a_coding_session(world, monkeypatch, tmp_path):
     repo, base = world
     monkeypatch.setattr(decisions, "transport", Jev({"a.py": 0.9, "c.py": 0.05}))
     monkeypatch.setattr(file_filter.search, "ask", lambda *a, **k: None)
     monkeypatch.setattr(channels, "repo_for", lambda name: repo if name == "proj" else None)
     monkeypatch.setattr(decision, "config", lambda project=None: cfg())
-    monkeypatch.setattr(replay, "count", lambda system, text: ((len(system) + len(text)) // 4, "estimate:chars/4"))
+    monkeypatch.setattr(replay.settings, "pick", lambda found, name, default=None: (None, "default"))
 
     def no_session(*a, **k):
         raise AssertionError("the replay opened a coding session")

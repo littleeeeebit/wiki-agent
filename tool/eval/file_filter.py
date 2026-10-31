@@ -63,21 +63,26 @@ def started_at(spec: dict) -> float:
                default=file_filter.merged_at(spec))
 
 
-def count(system: str, text: str) -> tuple[int, str]:
-    """The first turn's input tokens and how they were counted."""
+def count(system: str, texts: list[str]) -> tuple[list[int], str]:
+    """Each first turn's input tokens, all counted the same way, and how: one
+    arm the tokenizer could not count puts every arm on the estimate, so a
+    saving never compares two methods."""
 
     key = settings.pick(settings.entries(ROOT / ".env") if (ROOT / ".env").exists() else {}, "ANTHROPIC_API_KEY")[0]
-    if key:
+    counted = []
+    for text in texts if key else []:
         body = json.dumps({"model": COUNTED_BY, "system": system,
                            "messages": [{"role": "user", "content": text}]}).encode("utf-8")
         req = urllib.request.Request(COUNTER, body, {"x-api-key": key, "anthropic-version": "2023-06-01",
                                                      "content-type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=30) as got:
-                return int(json.loads(got.read())["input_tokens"]), f"count_tokens:{COUNTED_BY}"
+                counted.append(int(json.loads(got.read())["input_tokens"]))
         except (OSError, ValueError, KeyError):
-            pass
-    return (len(system) + len(text)) // 4, "estimate:chars/4"
+            break
+    if key and len(counted) == len(texts):
+        return counted, f"count_tokens:{COUNTED_BY}"
+    return [(len(system) + len(t)) // 4 for t in texts], "estimate:chars/4"
 
 
 def replay(spec: dict, repo: Path, start: str, cfg: decision.Config) -> dict:
@@ -86,9 +91,9 @@ def replay(spec: dict, repo: Path, start: str, cfg: decision.Config) -> dict:
     rec = file_filter.judge(spec, offered, cfg, occasion="replay")
     system = specs.SPEC_PROMPT.rstrip() + "\n\n" + specs.brief(spec)
     every = [c["path"] for c in offered]
-    before, how = count(system, "Start." + file_filter.render(every, [], tree))
-    after, _ = count(system, "Start." + file_filter.render([f["path"] for f in rec["kept"]],
-                                                           [f["path"] for f in rec["dropped"]], tree))
+    (before, after), how = count(system, ["Start." + file_filter.render(every, [], tree),
+                                          "Start." + file_filter.render([f["path"] for f in rec["kept"]],
+                                                                        [f["path"] for f in rec["dropped"]], tree)])
     return {"repo": spec["repo"], "spec": spec["id"], "start": start, "status": rec["status"], "reason": rec["reason"],
             "threshold": rec["threshold"], "offered": offered, "kept": rec["kept"], "dropped": rec["dropped"],
             "tokens_before": before, "tokens_after": after, "counted": how,
@@ -101,7 +106,7 @@ def table(rows: list[dict]) -> str:
     for r in rows:
         usage = ((r["jev"] or {}).get("usage")) or {}
         saved = r["tokens_before"] - r["tokens_after"]
-        lines.append(f"| {r['repo']}/{r['spec']}{'' if r['status'] == 'filtered' else ' (' + r['reason'] + ')'} "
+        lines.append(f"| {r['repo']}/{r['spec']}{'' if r['status'] == 'filtered' else ' (' + (r['reason'] or r['status']) + ')'} "
                      f"| {len(r['offered'])} | {len(r['kept'])} | {len(r['dropped'])} | {r['tokens_before']:,} "
                      f"| {r['tokens_after']:,} | {saved:,} | "
                      f"{usage.get('input_tokens', '–')}/{usage.get('output_tokens', '–')} |")
