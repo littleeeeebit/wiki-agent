@@ -41,7 +41,7 @@ from pydantic import BaseModel
 import apply
 import setup_agents
 from agent import cli_command
-from common import process, swap
+from common import indexes, process, swap
 from common.host import environment, skill_config
 from workspace import base_branch
 
@@ -94,16 +94,40 @@ def keep(name: str, **fields) -> dict:
     return now
 
 
-def added(name: str) -> Path | None:
-    """The folder [폴더 찾기] picked for `name`, while it is still that repository."""
+ID = "wiki-agent-id"   # in the checkout's own Git directory: it moves with the repository, not its folder
 
-    saved = record(name).get("path")
+
+def identity(path: Path, make: bool = False) -> str:
+    """The token [폴더 찾기] left in `path`'s Git directory; with `make`, one is left if none is."""
+
+    where = indexes.git_dir(path)
+    if where is None:
+        return ""
+    try:
+        return (where / ID).read_text(encoding="utf-8").strip()
+    except OSError:
+        if not make:
+            return ""
+    token = secrets.token_hex(16)
+    (where / ID).write_text(token + "\n", encoding="utf-8")
+    return token
+
+
+def added(name: str) -> Path | None:
+    """The folder [폴더 찾기] picked for `name`, while the repository there is the one picked
+    (its `identity`). A moved or replaced one names nothing until it is picked again."""
+
+    saved, token = record(name).get("path"), record(name).get("id")
     path = Path(saved) if isinstance(saved, str) and saved else None
-    return path if path and path.name == name and (path / ".git").exists() else None
+    return path if path and token and path.name == name and identity(path) == token else None
 
 
 def added_names() -> list[str]:
     return [file.stem for file in RECORDS.glob("*.json") if added(file.stem)]
+
+
+def registered(name: str) -> bool:
+    return bool(record(name).get("id"))
 
 
 # The OS's own folder dialog, in a process of its own: Tk opens windows only on a main thread (macOS).
@@ -658,15 +682,23 @@ def add(body: Folder) -> dict:
     """A repository anywhere on this machine, known from now on by its folder's name. `[연결]` follows."""
 
     path = Path(body.path.strip()).expanduser()
-    if not body.path.strip() or not path.is_absolute() or not (path / ".git").exists():
+    if not body.path.strip() or not path.is_absolute() or indexes.git_dir(path) is None:
         raise HTTPException(400, f"Git 저장소 폴더가 아니다: {body.path}")
-    path = path.resolve()
-    known = channels.repo_for(path.name)
+    path, name = path.resolve(), path.resolve().name
+    if registered(name):
+        # The repository picked under this name, moved: it follows. Any other keeps out of its records.
+        if identity(path) != record(name)["id"]:
+            raise HTTPException(409, f"같은 이름의 다른 저장소가 이미 연결돼 있다: {record(name).get('path')}")
+        keep(name, path=str(path))
+        return {"name": name}
+    known = channels.repo_for(name)
     if known is not None and known.resolve() != path:
         raise HTTPException(409, f"같은 이름의 저장소가 이미 있다: {known}")
     if known is None:
-        keep(path.name, path=str(path))
-    return {"name": path.name}
+        with _records:   # what a vanished workspace folder of this name left is not this one's
+            (RECORDS / f"{name}.json").unlink(missing_ok=True)
+        keep(name, path=str(path), id=identity(path, make=True))
+    return {"name": name}
 
 
 @router.get("/api/connect/settings")

@@ -24,7 +24,7 @@ INDEXES = (".wiki/corpus.json", ".wiki/graph.json")
 RECEIPT = "wiki-indexes.json"
 
 
-def _git_dir(repo: Path) -> Path | None:
+def git_dir(repo: Path) -> Path | None:
     """This checkout's own Git directory; a linked worktree's `.git` is a file naming it."""
     dot = Path(repo) / ".git"
     if dot.is_dir():
@@ -64,7 +64,7 @@ def record(repo: Path, written: dict[str, str], at: str) -> None:
     """After the hook wrote `written` (name -> the text it passed to
     `write_text`) at HEAD `at`, read before writing: the hashes of those bytes,
     with the platform's line ends as text mode wrote them."""
-    where = _git_dir(repo)
+    where = git_dir(repo)
     if where is None or not at:
         return
     kept = _receipt(where)
@@ -103,7 +103,7 @@ def _links(repo: Path, commit: str) -> bool:
 def rebuilt(repo: Path, name: str) -> bool:
     """`name` is an index the hook wrote, nobody changed since, at this HEAD or
     at one whose documents are this HEAD's."""
-    found = _receipt(_git_dir(repo)) if name in INDEXES else {}
+    found = _receipt(git_dir(repo)) if name in INDEXES else {}
     digest = found.get("files", {}).get(name)
     if not digest or digest != _hash(Path(repo) / name):
         return False

@@ -141,6 +141,39 @@ def test_a_folder_picked_anywhere_is_known_by_its_name_once_added(tmp_path):
         assert chat_channels.repo_for("../ws/proj") is None and chat_channels.repo_for("..") is None
 
 
+def test_a_picked_name_follows_its_repository_never_a_replacement(tmp_path):
+    """#264 round 2: A moved into the workspace and B made at A's old path; the name selected B and
+    [연결] wrote B an adapter under A's test results."""
+    workspace, outside = tmp_path / "ws", tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    a = _repo(outside).resolve()
+    with patch.object(chat_channels, "WORKSPACE", workspace):
+        assert client().post("/api/folders", json={"path": str(a)}).json() == {"name": "proj"}
+        connect.keep("proj", probe={"claude": {"ok": True}}, trust=True)
+        a.rename(workspace / "proj")
+        b = _repo(outside).resolve()
+        assert chat_channels.repo_for("proj") is None, "neither the replacement nor the workspace folder"
+        refused = client().post("/api/folders", json={"path": str(b)})
+        assert refused.status_code == 409 and "다른 저장소" in refused.json()["detail"]
+        moved = (workspace / "proj").resolve()
+        assert client().post("/api/folders", json={"path": str(moved)}).json() == {"name": "proj"}
+        assert chat_channels.repo_for("proj") == moved and connect.record("proj")["trust"] is True
+        moved.rename(tmp_path / "gone")
+        _repo(workspace)
+        assert chat_channels.repo_for("proj") is None, "gone: an unrelated workspace folder does not inherit it"
+
+
+def test_a_vanished_workspace_repositorys_record_is_not_inherited(tmp_path):
+    workspace, outside = tmp_path / "ws", tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    with patch.object(chat_channels, "WORKSPACE", workspace):
+        connect.keep("proj", probe={"claude": {"ok": True}}, trust=True)
+        client().post("/api/folders", json={"path": str(_repo(outside))})
+        assert "trust" not in connect.record("proj") and "probe" not in connect.record("proj")
+
+
 @pytest.mark.parametrize("platform, code, out, err, got", [
     ("darwin", 0, "/Users/me/repo/\n", "", "/Users/me/repo/"),
     ("darwin", 1, "", "execution error: User canceled. (-128)", connect.CLOSED),

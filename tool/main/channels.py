@@ -122,16 +122,17 @@ def projects() -> list[dict]:
 def repo_for(name: str) -> Path | None:
     """A repository path by name: a folder a person picked for it
     (`connect.added`), or one in the workspace. Nowhere else — this value came
-    from the screen. The picked one comes first: a later folder of the same
-    name in the workspace must not take over its records."""
+    from the screen. A picked name belongs to that repository alone: moved or
+    replaced, it names nothing — never a workspace folder of the same name,
+    which would take over its records — until the person picks it again."""
 
     if not name or name != Path(name).name or name in (".", ".."):
         return None
     if name == WIKI.name:
         return WIKI
     from . import connect
-    if picked := connect.added(name):
-        return picked
+    if connect.registered(name):
+        return connect.added(name)
     path = (WORKSPACE / name).resolve()
     if name == path.name and path.parent == WORKSPACE.resolve() and (path / ".git").exists():
         return path
