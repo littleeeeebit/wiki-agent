@@ -65,7 +65,7 @@ MAX_EVIDENCE = 6
 EXCERPT = 500
 CHECK_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
 # State fields that are identifiers, commands or paths: sent as they are, never translated.
-LITERAL = ("id", "pages", "files", "command", "source", "changed_files")
+LITERAL = ("id", "pages", "files", "path", "command", "source", "changed_files")
 HANGUL = re.compile(r"[ᄀ-ᇿ㄰-㆏가-힯]+")
 DEFERRED = "None of these clearly; leave it to the server's usual step."
 
@@ -99,6 +99,9 @@ POINTS = {
     "work.start": {"entry": "main.specs.start -> main.work.begin(decide=True) -> main.work.run_turn",
                    "operations": ["prepare_work_turn", "retrieve_evidence", "request_clarification"],
                    "baseline": "prepare_work_turn"},
+    "work.files": {"entry": "main.work.run_turn -> main.decisions.start_turn -> main.file_filter.first",
+                   "operations": ["keep", "drop"], "baseline": "the full list",
+                   "note": "a relevance Noul per candidate file; dropped files are listed as available"},
     "specs.check": {"entry": "main.work.run_turn -> main.specs.check -> main.specs._check",
                     "operations": ["summarize_result", "run_registered_check"], "baseline": "summarize_result"},
     "loop.fix": {"entry": "main.loop.step -> main.loop.told",
@@ -120,6 +123,8 @@ OWNERS = [
       for p in ("review.selection", "review.judgment")),
     *({"point": p, "owner": "jev", "allowed_operations": POINTS[p]["operations"], "authority": ADMITTED,
        "kinds": ("action",), "policy": "action"} for p in ("work.start", "specs.check", "loop.fix")),
+    {"point": "work.files", "owner": "jev", "allowed_operations": [], "kinds": ("relevance",), "policy": "files",
+     "authority": "code builds the candidates and loads the full list on any failure; Jev only drops"},
     {"point": "specs.candidates", "owner": "jev", "allowed_operations": [], "kinds": ("action",), "policy": "action",
      "authority": "a recommendation only: the person chooses the goal"},
     {"point": "query.route", "owner": "jev", "allowed_operations": ["retrieve_evidence", "summarize_result"],
@@ -196,7 +201,9 @@ def coverage(cfg: decision.Config | None = None) -> dict:
 
     cfg = cfg or decision.config()
     made = knowledge.manifest(cfg)
-    held = {**made["policies"], "action": knowledge.fitted(policy(cfg), ("action",))}
+    from . import file_filter  # it imports this module
+    held = {**made["policies"], "action": knowledge.fitted(policy(cfg), ("action",)),
+            "files": knowledge.fitted(file_filter.policy(cfg), ("relevance",))}
     items = []
     for o in OWNERS:
         pol = held.get(o["policy"]) or {}
@@ -612,7 +619,7 @@ def start_turn(path: Path, run, text: str) -> tuple[str | None, str, str]:
     first — or `None` when no turn goes: a question for the person (`done`),
     or a stop or an occasion already acted on (`error`). The screen's is Korean."""
 
-    from . import channels, specs  # `specs` imports this module
+    from . import channels, file_filter, specs  # both import this module
 
     spec = specs.owner(path)
     repo = channels.repo_for(spec["repo"]) if spec else None
@@ -632,6 +639,7 @@ def start_turn(path: Path, run, text: str) -> tuple[str | None, str, str]:
         pick.done("executed", asked=pick.candidate["args"]["missing"])
         return None, (f"시작하기 전에 정해 줄 것이 있다 — {asked}. 이 작업트리에 지시로 적어 보내면 그것으로 "
                       f"시작한다. ({how})"), "done"
+    text += file_filter.first(spec, repo, path, pick.cfg, cancel=run.halt, occasion=f"start:{run.turn}", run=run)
     if pick.operation == "retrieve_evidence":
         note(run, f"Jev · 근거를 먼저 모은다 ({how})")
         found, ids = gathered(pick, spec["goal"], repo,

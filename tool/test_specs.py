@@ -442,7 +442,7 @@ sys.stdin.read()
     spec = specs.load("proj", sid)
     assert spec["state"] == "작업 중" and spec["worktree"] == path
     rows = work.recall(Path(path))
-    assert [(r["role"], r["text"]) for r in rows] == [("user", "Start."), ("assistant", "saw it")]
+    assert [(r["role"], r["text"].split("\n")[0]) for r in rows] == [("user", "Start."), ("assistant", "saw it")]
 
 
 def test_a_passing_report_is_not_believed_over_a_failing_gate_or_an_uncommitted_change(repo, monkeypatch):

@@ -103,8 +103,8 @@
     },
     "tool/main/decisions.py": {
       "dup": 0,
-      "lines": 831,
-      "reason": "`extra_check` compares status reads only when both succeeded, so two failed reads never pass as an unchanged tree (#220, two lines). Before that: v7 W and F (5-english-baseline.md): the work-start prompt says when a specification already carries what the work needs, and the review-fix prompt names a convention finding and a disputed one's remedy; calibrated on the revealed fixtures."
+      "lines": 839,
+      "reason": "`work.files` is listed beside the other points in `POINTS` and `OWNERS` so `/api/jev` shows it, `path` joins the literal keys normalization never translates, and `start_turn` appends the file section (`main/file_filter.py` holds the rest; jev-file-filter-at-work-start, eight lines). Before that: `extra_check` compares status reads only when both succeeded, so two failed reads never pass as an unchanged tree (#220, two lines). Before that: v7 W and F (5-english-baseline.md): the work-start prompt says when a specification already carries what the work needs, and the review-fix prompt names a convention finding and a disputed one's remedy; calibrated on the revealed fixtures."
     },
     "tool/main/knowledge.py": {
       "dup": 0,

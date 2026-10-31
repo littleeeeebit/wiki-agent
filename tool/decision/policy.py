@@ -27,7 +27,8 @@ ARTIFACT = Path("eval") / "jev" / "policy.json"
 
 # `ask`: is a part of the query asked of the assistant, or material pasted with it (`main.knowledge.ASK`).
 # `progress`: does the query ask about the repository's own progress (`main.knowledge.PROGRESS`).
-NOUL = ("route", "source", "useful", "conflict", "redirect", "coverage", "ask", "analysis", "progress")
+# `relevance`: does a work start need a candidate file loaded (`main.file_filter`).
+NOUL = ("route", "source", "useful", "conflict", "redirect", "coverage", "ask", "analysis", "progress", "relevance")
 # `action` is stage 8's: which code-owned operation an owner function runs next (`main.decisions`).
 CHOICE = ("repair", "relation", "answers", "faithful", "action")
 KINDS = NOUL + CHOICE
