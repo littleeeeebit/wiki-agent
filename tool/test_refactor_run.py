@@ -10,6 +10,7 @@ final command run.
 """
 # ruff: noqa: F811 — a borrowed fixture is named again by each test that takes it
 
+import contextlib
 import json
 import os
 import subprocess
@@ -657,6 +658,14 @@ def _held_repo(root: Path) -> tuple[Path, str]:
     return path, _git(path, "rev-parse", "HEAD")
 
 
+@contextlib.contextmanager
+def _stopped_card():
+    """A stopped card `on_old_code` may record `refreezing` on, without a stored spec; yields the save."""
+    with patch.object(specs, "load", return_value={"repo": "r", "id": "probe", "state": "멈춤"}), \
+            patch.object(specs, "save") as saved:
+        yield saved
+
+
 def test_an_older_held_copy_is_never_overwritten(tmp_path):
     """#265 round 4 (P0): the held folder was named by the card and reused, so a move aside replaced an older
     copy left there and the restore then cleared it."""
@@ -669,7 +678,7 @@ def test_an_older_held_copy_is_never_overwritten(tmp_path):
     def run(argv, where):
         assert not (path / "dist/file.txt").exists()
         return subprocess.CompletedProcess(argv, 0, "")
-    with patch.object(specs, "update", return_value={}), patch.object(refactor_profile, "sh", run):
+    with _stopped_card(), patch.object(specs, "update", return_value={}), patch.object(refactor_profile, "sh", run):
         assert refactor_run.on_old_code({"repo": "r", "id": "probe"}, path, ["test.py"], ["x"], head, head).returncode == 0
     assert (path / "dist/file.txt").read_text(encoding="utf-8") == "current build"
     assert older.read_text(encoding="utf-8") == "older user file"
@@ -723,15 +732,16 @@ def test_a_build_rebuilt_while_held_aside_is_kept_on_posix(tmp_path):
 
     def run(argv, where):
         return subprocess.CompletedProcess(argv, 0, "")
-    with patch.object(refactor_run, "os", posix), patch.object(specs, "update", return_value={}) as saving, \
-            patch.object(refactor_profile, "sh", run):
+    with patch.object(refactor_run, "os", posix), _stopped_card() as recorded, \
+            patch.object(specs, "update", return_value={}) as saving, patch.object(refactor_profile, "sh", run):
         with pytest.raises(HTTPException) as refused:
             refactor_run.on_old_code({"repo": "r", "id": "probe"}, path, ["test.py"], ["x"], head, head)
     assert refused.value.status_code == 500
     assert original.read_text(encoding="utf-8") == "rebuilt user file"
     [held] = tmp_path.glob(".repo-held-*/dist/file.txt")
     assert held.read_text(encoding="utf-8") == "held build"
-    assert saving.call_args.kwargs["refreezing"] is not None
+    assert recorded.call_args.args[0]["refreezing"]["held"] == {"dist/file.txt": str(held)}
+    assert not any("refreezing" in c.kwargs for c in saving.call_args_list)   # never cleared
 
 
 def test_a_framework_build_refuses_the_old_code_run(running):
