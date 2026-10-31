@@ -78,6 +78,27 @@ def documents_only(path: Path, old: str, new: str) -> bool:
     return not names.returncode and all(maintained(name) for name in names.stdout.split("\0") if name)
 
 
+def waiting(spec: dict, n: int, reason: str) -> dict:
+    """`spec`, its clicked merge told that the final gate failed and round `n` repairs it: the merge
+    screen said "review and final gate in progress" through hours of repair (ai-generation #60)."""
+    if spec.get("merge_request"):
+        why = reason.partition("\n")[0]   # the gate's tail follows its first line
+        specs.merge_progress(spec["repo"], spec["id"], f"최종 검증 실패 — 고치는 중 R{n} · {why}"[:300], "waiting_review")
+    return spec
+
+
+def repaired(path: Path, spec: dict) -> str:
+    """HEAD after a final gate's repair. Only a document repair stays inside the click
+    (`loop.requested_merge`); a code repair cancels it now, not after the next review and gate."""
+    head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
+    request = spec.get("merge_request") or {}
+    if request.get("head") and head != request["head"] and not documents_only(path, request["head"], head):
+        specs.update(spec["repo"], spec["id"], merge_request=None)
+        specs.merge_progress(spec["repo"], spec["id"], "최종 검증 실패를 코드로 고쳤다 — 머지 요청 취소, 새 리뷰·최종 검증 뒤 다시 머지하세요",
+                             "blocked")
+    return head
+
+
 def outputs(path: Path) -> dict:
     names = changes(path) | {name for name in (".wiki/corpus.json", ".wiki/graph.json") if (path / name).exists()}
     return {"files": {name: outputs_hash(path / name) for name in sorted(names)},

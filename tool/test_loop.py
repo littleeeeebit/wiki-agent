@@ -2680,45 +2680,27 @@ def test_a_mapped_round_then_the_full_gate_once_and_the_same_identity_reuses_bot
 
 def test_a_failed_final_gate_goes_to_repair_and_a_new_review(world):
     """The round's mapped check passes; the full gate on the allowed head
-    does not. The repair's commit gets its own round checks and review."""
+    does not. The repair's commit gets its own round checks and review. A clicked merge
+    waiting on that gate is told at once, and cancelled by a code repair (ai-generation #60)."""
 
     mapped(world, "*")
-    path = Path(pr_spec(world, "fix-f2", 7, gate=None)["worktree"])
+    spec = pr_spec(world, "fix-f2", 7, gate=None)
+    path = Path(spec["worktree"])
     broken = commit(path, "broken")
     git(path, "push", "-q", "origin", "fix-f2")
+    specs.update("proj", "fix-f2", merge_request={"head": broken, "base": "main", "rev": spec["rev"], "pr": 7})
+    seen = []
     Reviewer.replies = [allow, allow]
-    Worker.replies = [unbroken]
+    Worker.replies = [lambda path, halt: seen.append(specs.load("proj", "fix-f2")["merge_progress"]) or unbroken(path, halt)]
     spec = looped("fix-f2")
     assert "python gate.py" in Worker.made[-1].heard[0] and "failed" in Worker.made[-1].heard[0]
     assert spec["state"] == "머지 가능" and spec["rounds"][0]["head"] == broken and len(spec["rounds"]) == 2
     assert spec["validation"]["final"]["ok"] and spec["validation"]["final"]["head"] == world.hub.head(7) != broken
     assert "test-cleanup" in Worker.made[-1].heard[0], "a gate repair is asked for its cleanup too"
-
-
-def test_a_clicked_merge_shows_its_failed_final_gate_and_a_code_repair_cancels_it_at_once(world):
-    """ai-generation #60: the prepared head's final gate failed and the merge screen kept
-    "review and final gate in progress" through hours of repair the click could no longer cover."""
-
-    mapped(world, "*")
-    spec = pr_spec(world, "fix-f3", 7, gate=None)
-    path = Path(spec["worktree"])
-    broken = commit(path, "broken")
-    git(path, "push", "-q", "origin", "fix-f3")
-    specs.update("proj", "fix-f3", merge_request={"head": broken, "base": "main", "rev": spec["rev"], "pr": 7})
-    specs.merge_progress("proj", "fix-f3", "준비 커밋 독립 리뷰·최종 게이트 진행 중", "waiting_review")
-    seen = []
-
-    def repair(path, halt):
-        seen.append(specs.load("proj", "fix-f3")["merge_progress"])
-        return unbroken(path, halt)
-
-    Reviewer.replies = [allow, allow]
-    Worker.replies = [repair]
-    done = looped("fix-f3")
     assert seen[0]["state"] == "waiting_review" and seen[0]["stage"].startswith("최종 검증 실패 — 고치는 중 R1 · ")
     assert "\n" not in seen[0]["stage"], "the gate's tail stays out of the merge screen"
-    assert done["state"] == "머지 가능" and not done["merge_request"]
-    assert done["merge_progress"]["state"] == "blocked" and "머지 요청 취소" in done["merge_progress"]["stage"]
+    assert not spec["merge_request"] and spec["merge_progress"]["state"] == "blocked"
+    assert "머지 요청 취소" in spec["merge_progress"]["stage"]
 
 
 def test_a_gate_repair_without_its_test_cleanup_stops_the_loop(world):
