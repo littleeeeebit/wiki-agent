@@ -5,7 +5,8 @@ the hosts' user-level hooks call this hub, no per-project install of the old
 kind is left beside them, Codex trusts the hooks, and a real session of each
 host got the injection. The cheap items are read on every listing; the
 expensive two — the sessions and Codex's trust — are read from the record the
-last `[연결]` or `[다시 시험]` left in `raw/connect/<repo>.json`.
+last `[연결]` or `[다시 시험]` left in `raw/connect/<repo>.json`. A repository
+outside the workspace is one `[폴더 찾기]` picked; its record keeps the `path`.
 
 `[연결]` moves the installed hosts' wiring to this hub first when it is elsewhere
 (asked, with every line shown), writes the adapter into the original checkout
@@ -26,6 +27,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -39,7 +41,7 @@ from pydantic import BaseModel
 import apply
 import setup_agents
 from agent import cli_command
-from common import swap
+from common import indexes, process, swap
 from common.host import environment, skill_config
 from workspace import base_branch
 
@@ -77,12 +79,13 @@ def record(name: str) -> dict:
     return saved if isinstance(saved, dict) else {}
 
 
-def keep(name: str, **fields) -> dict:
-    """Merged into the record and swapped in whole. Every change is told to
-    the screens: a test that ends in the background changes a row."""
+def keep(name: str, replace: bool = False, **fields) -> dict:
+    """Merged into the record (or, with `replace`, the whole of it) and swapped
+    in whole. Every change is told to the screens: a test that ends in the
+    background changes a row."""
 
     with _records:
-        now = {**record(name), **fields}
+        now = fields if replace else {**record(name), **fields}
         file = RECORDS / f"{name}.json"
         file.parent.mkdir(parents=True, exist_ok=True)
         temporary = file.with_suffix(".tmp")
@@ -90,6 +93,82 @@ def keep(name: str, **fields) -> dict:
         swap(temporary, file)
     work.feed.put({"kind": "connect", "repo": name})
     return now
+
+
+ID = "wiki-agent-id"   # in the checkout's own Git directory: it moves with the repository, not its folder
+
+
+def identity(path: Path, make: bool = False) -> str:
+    """The token `[폴더 찾기]` left in `path`'s Git directory; with `make`, one is left if none is."""
+
+    where = indexes.git_dir(path)
+    if where is None:
+        return ""
+    try:
+        return (where / ID).read_text(encoding="utf-8").strip()
+    except OSError:
+        if not make:
+            return ""
+    token = secrets.token_hex(16)
+    (where / ID).write_text(token + "\n", encoding="utf-8")
+    return token
+
+
+def added(name: str) -> Path | None:
+    """The folder `[폴더 찾기]` picked for `name`, while the repository there is the one picked
+    (its `identity`). A moved or replaced one names nothing until it is picked again."""
+
+    saved, token = record(name).get("path"), record(name).get("id")
+    path = Path(saved) if isinstance(saved, str) and saved else None
+    return path if path and token and path.name == name and identity(path) == token else None
+
+
+def added_names() -> list[str]:
+    return [file.stem for file in RECORDS.glob("*.json") if added(file.stem)]
+
+
+def registered(name: str) -> bool:
+    return bool(record(name).get("id"))
+
+
+# The OS's own folder dialog, in a process of its own: Tk opens windows only on a main thread (macOS).
+TK = """import sys
+try:
+    import tkinter
+    from tkinter import filedialog
+    root = tkinter.Tk()
+except Exception:
+    sys.exit(3)
+root.withdraw()
+root.attributes("-topmost", True)
+print(filedialog.askdirectory(parent=root, title=sys.argv[1], mustexist=True) or "")
+"""
+CLOSED = "\0"   # the dialog opened and the person closed it
+
+
+def pick_folder(title: str = "연결할 저장소 폴더") -> str | None:
+    """A folder the person picked on this machine, `CLOSED`, or None where no dialog opens."""
+
+    if sys.platform == "darwin":
+        argv = ["osascript", "-e", f'POSIX path of (choose folder with prompt "{title}")']
+    elif sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return None
+    elif sys.platform.startswith("linux") and shutil.which("zenity"):
+        argv = ["zenity", "--file-selection", "--directory", f"--title={title}"]
+    else:
+        argv = [sys.executable, "-c", TK, title]
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              env={**os.environ, "PYTHONIOENCODING": "utf-8"}, timeout=15 * 60,
+                              **process.background_options())
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if not done.returncode:
+        return done.stdout.strip() or CLOSED   # Tk prints nothing when closed
+    # Closed is osascript's -128 and zenity's 1; any other ending never showed a dialog.
+    closed = "(-128)" in done.stderr if argv[0] == "osascript" else \
+        argv[0] == "zenity" and done.returncode == 1 and "display" not in done.stderr
+    return CLOSED if closed else None
 
 
 def digest(data: bytes) -> str:
@@ -581,6 +660,49 @@ def listing() -> dict:
     # The settings modal's hub line: whether this machine's wiring points here yet.
     return {"rows": rows(), "settings": survey.settings(),
             "hub": {"name": channels.WIKI.name, "needed": now["needed"], "refused": now["refused"]}}
+
+
+class Folder(BaseModel):
+    path: str
+
+
+# Under `/api/folders`, not `/api/connect/…`: a repository may be named `browse` or `folder`.
+@router.post("/api/folders/browse")
+def browse() -> dict:
+    """`[폴더 찾기]` on this machine: the picked path, empty when closed. 501 where no dialog
+    opens, and the screen asks for the path instead."""
+
+    picked = pick_folder()
+    if picked is None:
+        raise HTTPException(501, "이 환경에서는 폴더 창을 열 수 없다 — 경로를 입력하라")
+    return {"path": "" if picked == CLOSED else picked}
+
+
+@router.post("/api/folders")
+def add(body: Folder) -> dict:
+    """A repository anywhere on this machine, known from now on by its folder's name. `[연결]` follows."""
+
+    path = Path(body.path.strip()).expanduser()
+    if not body.path.strip() or not path.is_absolute() or indexes.git_dir(path) is None:
+        raise HTTPException(400, f"Git 저장소 폴더가 아니다: {body.path}")
+    path, name = path.resolve(), path.resolve().name
+    if registered(name):
+        # The repository picked under this name, moved: it follows. Any other keeps out of its records.
+        if identity(path) != record(name)["id"]:
+            raise HTTPException(409, f"같은 이름의 다른 저장소가 이미 연결돼 있다: {record(name).get('path')}")
+        keep(name, path=str(path))
+        return {"name": name}
+    known = channels.repo_for(name)
+    if known is not None and known.resolve() != path:
+        raise HTTPException(409, f"같은 이름의 저장소가 이미 있다: {known}")
+    if known is None:
+        try:
+            token = identity(path, make=True)
+        except OSError as exc:
+            raise HTTPException(400, f"저장소의 Git 폴더에 식별 표시를 쓰지 못했다: {exc}") from exc
+        # Replaced, not merged: what a vanished workspace folder of this name left is not this one's.
+        keep(name, replace=True, path=str(path), id=token)
+    return {"name": name}
 
 
 @router.get("/api/connect/settings")

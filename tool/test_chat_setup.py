@@ -27,12 +27,11 @@ def test_projects_are_local_and_include_wiki_outside_workspace(tmp_path):
     (project / ".wiki").mkdir()
     (project / ".wiki/adapter.toml").write_text("agents=[]", encoding="utf-8")
     with patch.object(chat_channels, "WIKI", wiki), patch.object(chat_channels, "WORKSPACE", workspace):
-        assert {p["id"] for p in chat_channels.projects()} == {wiki.name, project.name}
+        assert {p["id"] for p in chat_channels.projects()} == {project.name}, "the wiki has no adapter here"
         assert chat_channels.repo_for(wiki.name) == wiki
         assert chat_channels.repo_for(project.name) == project
         assert chat_channels.repo_for("../이름 바꾼 위키") is None
         assert chat_channels.repo_for(str(project)) is None
-        assert next(p for p in chat_channels.projects() if p["id"] == project.name)["wired"]
 
 
 def _npm_shim(shim, entry):

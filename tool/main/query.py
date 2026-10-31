@@ -68,6 +68,8 @@ _project: str | None = None
 # The project the screen that sent this request is showing (`X-Project`), set
 # by `app.only_this_screen` for every route but the switch itself.
 claimed: ContextVar[str | None] = ContextVar("claimed", default=None)
+# Set for a screen's request, never for a background owner, which must not fall back to another project.
+screened: ContextVar[bool] = ContextVar("screened", default=False)
 
 
 def project() -> str:
@@ -86,6 +88,8 @@ def project() -> str:
         if not isinstance(name, str):
             raise HTTPException(409, "저장된 프로젝트 설정을 읽을 수 없습니다")
         _project = name
+    if screened.get() and _project != channels.WIKI.name and channels.repo_for(_project) is None:
+        _project = channels.WIKI.name   # moved or gone: a fresh screen loads the hub and picks it again
     screen = claimed.get()
     if screen is not None and screen != _project:
         raise HTTPException(409, f"다른 창이 프로젝트를 {_project} 로 바꿨다. 화면을 맞춘다",

@@ -296,8 +296,11 @@ Team members follow the
 [chat install and sign-in guide](chat-setup.md). Prepare with
 `python tool/setup_chat.py install --agent codex`, or `--agent claude|both`.
 It uses no personal path or login of the author's; each machine uses its own
-CLI and account. Projects default to the wiki's parent folder, changeable at
-install time with `--workspace`.
+CLI and account. Only repositories connected to the wiki are listed. Those in
+the wiki's parent folder (changeable at install time with `--workspace`) are
+found by name; one anywhere else is picked with [폴더 찾기] in 프로젝트 · 연결,
+which opens the OS folder dialog (Tk on Windows, `osascript` on macOS, `zenity`
+or Tk on Linux) and asks for a typed path where none opens.
 
 Start it with `tool/app.cmd` (`tool/app.command` on macOS and Linux). The
 first start builds the Tauri window, which needs Rust. The window starts the

@@ -107,17 +107,142 @@ def test_each_missing_item_makes_the_row_partial_and_is_named(tmp_path):
     assert found["notes"] == ["채워야 함 — review_dir, scratch_dirs, server_stop"], "빈 선택 슬롯은 알림이다"
 
 
-def test_the_listing_carries_the_state_instead_of_wired_always(tmp_path):
+def test_only_a_connected_repository_is_offered(tmp_path):
+    """The picker offered every Git folder beside the hub, and none of the unconnected ones worked."""
     workspace = tmp_path / "ws"
     workspace.mkdir()
     repo = _repo(workspace)
     with patch.object(chat_channels, "WORKSPACE", workspace), patch.object(connect, "users", return_value=ALL):
-        rows = {r["id"]: r for r in chat_channels.projects()}
-        assert rows["proj"]["state"] == "미연결" and not rows["proj"]["wired"]
+        assert "proj" not in {r["id"] for r in chat_channels.projects()}
         connected(repo)
         rows = {r["id"]: r for r in chat_channels.projects()}
-        assert rows["proj"]["state"] == "연결 완료" and rows["proj"]["wired"]
-        assert chat_channels.WIKI.name in rows
+        assert rows["proj"]["state"] == "연결 완료"
+
+
+def test_a_folder_picked_anywhere_is_known_by_its_name_once_added(tmp_path):
+    workspace, elsewhere = tmp_path / "ws", tmp_path / "elsewhere"
+    workspace.mkdir()
+    elsewhere.mkdir()
+    repo = _repo(elsewhere)
+    with patch.object(chat_channels, "WORKSPACE", workspace), patch.object(connect, "users", return_value=ALL):
+        assert chat_channels.repo_for("proj") is None
+        assert client().post("/api/folders", json={"path": str(tmp_path)}).status_code == 400, "no .git"
+        assert client().post("/api/folders", json={"path": "proj"}).status_code == 400, "not absolute"
+        assert client().post("/api/folders", json={"path": str(repo)}).json() == {"name": "proj"}
+        assert chat_channels.repo_for("proj") == repo.resolve()
+        assert "proj" not in {r["id"] for r in chat_channels.projects()}, "added, not yet connected"
+        connected(repo)
+        assert "proj" in {r["id"] for r in chat_channels.projects()}
+        _repo(workspace)
+        # #264 round 1: a later folder of the same name beside the hub took over the picked one's records.
+        assert chat_channels.repo_for("proj") == repo.resolve(), "the picked folder keeps its name"
+        refused = client().post("/api/folders", json={"path": str(workspace / "proj")})
+        assert refused.status_code == 409 and "같은 이름" in refused.json()["detail"]
+        assert chat_channels.repo_for("../ws/proj") is None and chat_channels.repo_for("..") is None
+
+
+def test_a_picked_name_follows_its_repository_never_a_replacement(tmp_path):
+    """#264 round 2: A moved into the workspace and B made at A's old path; the name selected B and
+    `[연결]` wrote B an adapter under A's test results."""
+    workspace, outside = tmp_path / "ws", tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    a = _repo(outside).resolve()
+    with patch.object(chat_channels, "WORKSPACE", workspace):
+        assert client().post("/api/folders", json={"path": str(a)}).json() == {"name": "proj"}
+        connect.keep("proj", probe={"claude": {"ok": True}}, trust=True)
+        a.rename(workspace / "proj")
+        b = _repo(outside).resolve()
+        assert chat_channels.repo_for("proj") is None, "neither the replacement nor the workspace folder"
+        refused = client().post("/api/folders", json={"path": str(b)})
+        assert refused.status_code == 409 and "다른 저장소" in refused.json()["detail"]
+        moved = (workspace / "proj").resolve()
+        assert client().post("/api/folders", json={"path": str(moved)}).json() == {"name": "proj"}
+        assert chat_channels.repo_for("proj") == moved and connect.record("proj")["trust"] is True
+        moved.rename(tmp_path / "gone")
+        _repo(workspace)
+        assert chat_channels.repo_for("proj") is None, "gone: an unrelated workspace folder does not inherit it"
+
+
+def test_a_vanished_workspace_repositorys_record_is_not_inherited_nor_lost_on_a_failed_pick(tmp_path):
+    workspace, outside = tmp_path / "ws", tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    repo = _repo(outside)
+    with patch.object(chat_channels, "WORKSPACE", workspace):
+        connect.keep("proj", probe={"claude": {"ok": True}}, trust=True)
+        before = (connect.RECORDS / "proj.json").read_bytes()
+        write = Path.write_text
+        # #264 round 3: the old record went before the token, and a refused token write lost it.
+        with patch.object(Path, "write_text", lambda p, *a, **k: (_ for _ in ()).throw(PermissionError("read-only"))
+                          if p.name == connect.ID else write(p, *a, **k)):
+            refused = client().post("/api/folders", json={"path": str(repo)})
+        assert refused.status_code == 400 and (connect.RECORDS / "proj.json").read_bytes() == before
+        client().post("/api/folders", json={"path": str(repo)})
+        assert "trust" not in connect.record("proj") and "probe" not in connect.record("proj")
+
+
+def test_a_selected_repository_that_moved_leaves_a_fresh_screen_on_the_hub(tmp_path):
+    """#264 round 3: the stored selection named nothing, `/api/channels` refused, and the screen could not
+    load far enough to pick the folder again."""
+    workspace, outside = tmp_path / "ws", tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    repo = _repo(outside).resolve()
+    with patch.object(chat_channels, "WORKSPACE", workspace), patch.object(chat, "_project", "proj"):
+        client().post("/api/folders", json={"path": str(repo)})
+        (tmp_path / "moved").mkdir()
+        repo.rename(tmp_path / "moved" / "proj")
+        # #264 round 4: outside a screen's request — a worker's completion — it is refused, never the hub.
+        with pytest.raises(HTTPException) as refused:
+            chat.current_repo()
+        assert refused.value.status_code == 409 and chat.project() == "proj"
+        stale = client().get("/api/channels", headers={"X-Project": "proj"})
+        assert stale.status_code == 409 and stale.headers["X-Project-Moved"] == chat_channels.WIKI.name
+        assert client().get("/api/channels").status_code == 200 and chat.project() == chat_channels.WIKI.name
+        # #264 round 5: the owner's completion, after the screen moved to the hub, is not written there.
+        specs.told(chat_channels.repo_for("proj"), {"id": "plan-task"}, "계획 PR #7")
+        assert not (chat.LOGS / "next.jsonl").exists()
+        assert client().post("/api/folders", json={"path": str(tmp_path / "moved" / "proj")}).status_code == 200
+        assert chat_channels.repo_for("proj") == (tmp_path / "moved" / "proj").resolve()
+
+
+@pytest.mark.parametrize("platform, code, out, err, got", [
+    ("darwin", 0, "/Users/me/repo/\n", "", "/Users/me/repo/"),
+    ("darwin", 1, "", "execution error: User canceled. (-128)", connect.CLOSED),
+    ("darwin", 1, "", "execution error: not allowed (-1743)", None),
+    ("win32", 0, "C:/Users/me/repo\n", "", "C:/Users/me/repo"),
+    ("win32", 0, "\n", "", connect.CLOSED),
+    ("win32", 3, "", "", None),
+    ("win32", 1, "", "Traceback", None),
+    ("linux", 1, "", "", connect.CLOSED),
+    ("linux", 1, "", "Gtk-WARNING: cannot open display", None),
+])
+def test_the_folder_dialog_is_the_os_own_and_says_closed_apart_from_unavailable(
+        monkeypatch, platform, code, out, err, got):
+    ran = []
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/zenity" if name == "zenity" else None)
+    monkeypatch.setattr(connect.subprocess, "run", lambda argv, **kw: ran.append(argv) or
+                        subprocess.CompletedProcess(argv, code, out, err))
+    assert connect.pick_folder() == got
+    assert ran[0][0] == {"darwin": "osascript", "linux": "zenity"}.get(platform, sys.executable)
+    monkeypatch.delenv("DISPLAY")
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    if platform == "linux":
+        assert connect.pick_folder() is None and len(ran) == 1, "no display: no dialog is tried"
+
+
+def test_browse_says_where_no_dialog_opens_so_the_screen_asks_for_a_path(monkeypatch):
+    monkeypatch.setattr(connect, "pick_folder", lambda: None)
+    assert client().post("/api/folders/browse").status_code == 501
+    monkeypatch.setattr(connect, "pick_folder", lambda: connect.CLOSED)
+    assert client().post("/api/folders/browse").json() == {"path": ""}
+    # #264 round 1: under `/api/connect/` these took the connect request of a repository so named.
+    monkeypatch.setattr(connect, "pick_folder", lambda: pytest.fail("a repository's connect opened the dialog"))
+    for name in ("browse", "folder"):
+        assert client().post(f"/api/connect/{name}", json={"hub": "", "survey": False}).status_code == 404
 
 
 # -- the guesses ----------------------------------------------------------------------

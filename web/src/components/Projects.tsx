@@ -2,21 +2,25 @@ import { useCallback, useEffect, useState } from 'react'
 import { Btn, Modal } from '@/components/Modal'
 import * as api from '@/lib/api'
 import type { ConnectPlan, Project } from '@/lib/api'
+import { remote } from '@/lib/mobile'
 import { cn } from '@/lib/utils'
 
-const DOT: Record<Project['state'], string> = { '연결 완료': 'bg-primary', 일부: 'bg-wait', 미연결: 'bg-border' }
+const DOT: Record<Project['state'], string> = { '연결 완료': 'bg-primary', 일부: 'bg-wait' }
 
 const kilo = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : `${Math.round(n / 1000)}k`)
 const minutes = (s: number) => `${Math.max(1, Math.round(s / 60))}분`
 
-/** The middle pane's project list: every repository in the workspace, how far
- *  the wiki is attached to it, `[연결]` and `[다시 시험]`. The survey's own
- *  settings are the settings modal's. */
+/** The middle pane's project list: the repositories connected to the wiki, wholly
+ *  or in part, `[연결]` and `[다시 시험]`, and `[폴더 찾기]` to connect one from
+ *  anywhere. The survey's own settings are the settings modal's. */
 export function Projects({ current }: { current: string }) {
   const [rows, setRows] = useState<Project[]>([])
   const [fault, setFault] = useState('')
   const [working, setWorking] = useState('')
   const [asking, setAsking] = useState<{ name: string; plan: ConnectPlan } | null>(null)
+  // Where no OS dialog opens here — a phone, a Python without Tk — the path is typed.
+  const [typing, setTyping] = useState(remote)
+  const [typed, setTyped] = useState('')
 
   const read = useCallback(() => {
     api.getConnect()
@@ -49,13 +53,23 @@ export function Projects({ current }: { current: string }) {
     }
   }
 
-  const begin = (name: string) => act(name, async () => {
+  async function start(name: string) {
     const plan = await api.connectPlan(name)
     if (!plan.hub.needed && !plan.survey) {
       await api.connect(name, { hub: '', survey: false })
     } else {
       setAsking({ name, plan })
     }
+  }
+  const begin = (name: string) => act(name, () => start(name))
+  const find = () => act('folder', async () => {
+    const path = await api.browseFolder()
+    if (path === null) setTyping(true)
+    else if (path) await start((await api.addFolder(path)).name)
+  })
+  const addTyped = () => act('folder', async () => {
+    await start((await api.addFolder(typed.trim())).name)
+    setTyped('')
   })
 
   const confirm = (survey: boolean) => {
@@ -72,7 +86,19 @@ export function Projects({ current }: { current: string }) {
       <div className="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-card px-5 font-mono text-[10.5px] text-faint">
         <span>연결 완료 {count('연결 완료')}</span>
         <span>일부 {count('일부')}</span>
-        <span>미연결 {count('미연결')}</span>
+        {typing ? (
+          <form className="ml-auto flex items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); void addTyped() }}>
+            <input aria-label="연결할 저장소 폴더 경로" placeholder="저장소 폴더 경로" value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              className="h-7 w-64 rounded-md border border-input bg-background px-2 font-mono text-[12px] text-foreground" />
+            <Btn type="submit" disabled={!!working || !typed.trim()}>{working === 'folder' ? '연결하는 중…' : '연결'}</Btn>
+          </form>
+        ) : (
+          <Btn className="ml-auto font-sans" disabled={!!working} onClick={() => void find()}
+            title="이 컴퓨터의 폴더 창에서 연결할 Git 저장소를 고른다">
+            {working === 'folder' ? '폴더 고르는 중…' : '폴더 찾기'}
+          </Btn>
+        )}
       </div>
       {fault && (
         <div role="alert" className="whitespace-pre-wrap border-b border-destructive/30 bg-destructive/10 px-5 py-2 text-[12.5px] text-destructive">
@@ -88,13 +114,11 @@ export function Projects({ current }: { current: string }) {
               <span className="shrink-0 text-muted-foreground">{r.state}</span>
               {r.probing && <span className="shrink-0 animate-pulse text-faint">시험 중…</span>}
               <span className="ml-auto flex shrink-0 gap-1.5">
-                {r.state !== '미연결' && (
-                  <Btn disabled={!!working || r.probing}
-                    onClick={() => void act(`probe:${r.id}`, () => api.reprobe(r.id).then(() => {}))}
-                    title="이 프로젝트에 연결한 CLI 중 설치된 도구의 실제 세션을 한 턴씩 돌린다. 도구마다 모델 한 턴의 비용이 든다">
-                    다시 시험
-                  </Btn>
-                )}
+                <Btn disabled={!!working || r.probing}
+                  onClick={() => void act(`probe:${r.id}`, () => api.reprobe(r.id).then(() => {}))}
+                  title="이 프로젝트에 연결한 CLI 중 설치된 도구의 실제 세션을 한 턴씩 돌린다. 도구마다 모델 한 턴의 비용이 든다">
+                  다시 시험
+                </Btn>
                 {r.state !== '연결 완료' && (
                   <Btn tone="primary" disabled={!!working || r.probing} onClick={() => void begin(r.id)}>
                     {working === r.id ? '연결하는 중…' : '연결'}

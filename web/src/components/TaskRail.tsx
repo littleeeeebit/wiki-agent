@@ -90,7 +90,7 @@ export function TaskRail(props: Props) {
   } : undefined)
 
   const projects: Item[] = options?.projects.map((p) => ({ value: p.id, label: p.id,
-    note: p.state === '미연결' ? undefined : p.state })) ?? []
+    note: p.state === '일부' ? p.state : undefined })) ?? []
   // The current project's state when the wiki is not wholly attached: the
   // rail says so and offers [연결] right there.
   const state = options?.projects.find((p) => p.id === repo)?.state
@@ -141,7 +141,7 @@ export function TaskRail(props: Props) {
             onClick={() => props.onView(view === 'projects' ? 'chat' : 'projects')}
             className={cn('flex h-7 items-center justify-center gap-1.5 rounded-md border border-sidebar-border px-2 text-[12.5px] hover:bg-sidebar-accent',
               view === 'projects' && 'bg-sidebar-accent')}>
-            {unwired ? <><span aria-hidden className={cn('size-2 shrink-0 rounded-full', unwired === '일부' ? 'bg-wait' : 'bg-border')} />
+            {unwired ? <><span aria-hidden className="size-2 shrink-0 rounded-full bg-wait" />
               위키 {unwired} · 연결</> : '프로젝트 · 연결'}
           </button>
           <button type="button" disabled={pickable.length === 0 || looping} onClick={openLoop}
