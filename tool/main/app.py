@@ -213,7 +213,7 @@ async def only_this_screen(request: Request, call_next):
     # this is the check behind that promise.
     if not screen and request.method != "GET" and not pairing:
         return refused(400, "어느 프로젝트의 화면인지 모르는 쓰기는 받지 않는다")
-    token = query.claimed.set(unquote(screen) if screen else None)
+    token, screened = query.claimed.set(unquote(screen) if screen else None), query.screened.set(True)
     try:
         response = await call_next(request)
         if remote:
@@ -222,6 +222,7 @@ async def only_this_screen(request: Request, call_next):
         return response
     finally:
         query.claimed.reset(token)
+        query.screened.reset(screened)
 
 
 # -- The translation switch -------------------------------------------------

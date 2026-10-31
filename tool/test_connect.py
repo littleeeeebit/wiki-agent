@@ -193,6 +193,10 @@ def test_a_selected_repository_that_moved_leaves_a_fresh_screen_on_the_hub(tmp_p
         client().post("/api/folders", json={"path": str(repo)})
         (tmp_path / "moved").mkdir()
         repo.rename(tmp_path / "moved" / "proj")
+        # #264 round 4: outside a screen's request — a worker's completion — it is refused, never the hub.
+        with pytest.raises(HTTPException) as refused:
+            chat.current_repo()
+        assert refused.value.status_code == 409 and chat.project() == "proj"
         stale = client().get("/api/channels", headers={"X-Project": "proj"})
         assert stale.status_code == 409 and stale.headers["X-Project-Moved"] == chat_channels.WIKI.name
         assert client().get("/api/channels").status_code == 200 and chat.project() == chat_channels.WIKI.name
