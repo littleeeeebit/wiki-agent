@@ -345,7 +345,13 @@ def on_old_code(spec: dict, path: Path, tests: list[str], argv: list[str], code:
     record = {"branch": branch, "head": head, "code": code,
               "tests": {t: hashlib.sha256(text).hexdigest() for t, text in texts.items()},
               "held": {rel: str(held / rel) for rel in found}}
-    specs.update(spec["repo"], spec["id"], refreezing=record)
+    with specs._files:   # `kick` reads and moves the card under this lock: one of the two wins, never both
+        latest = specs.load(spec["repo"], spec["id"]) or {}
+        if latest.get("state") != "멈춤" or latest.get("refreezing"):
+            if held:
+                held.rmdir()
+            raise HTTPException(409, "확인하는 사이에 카드가 다시 움직였다 — 멈춘 뒤 다시 열어 확인해라")
+        specs.save({**latest, "refreezing": record})
     try:
         for rel, aside in record["held"].items():
             Path(aside).parent.mkdir(parents=True, exist_ok=True)

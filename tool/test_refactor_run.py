@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import types
 from pathlib import Path
 from unittest.mock import patch
@@ -508,6 +509,36 @@ def test_the_card_keeps_its_worktree_while_the_old_code_runs(running):
     assert done.status_code == 200, done.json()
     assert seen["detached"] and seen["row"]["branch"] == branch and seen["row"]["refreezing"]
     assert not seen["switch"] and "확인하는 중" in seen["kick"] and seen["state"] == "멈춤"
+    assert _git(path, "branch", "--show-current") == branch
+
+
+def test_a_review_resumed_before_the_record_wins_over_the_refreeze(running):
+    """Round 1 (P1): `kick` read no `refreezing` yet, started the loop, and the re-freeze, having read `멈춤`
+    before, detached the checkout under it. The record is taken where `kick` moves the card, so the later
+    of the two is refused and the checkout never leaves the branch."""
+    _, remote = running
+    first, path = frozen_at_pr()
+    branch = _git(path, "branch", "--show-current")
+    changed(path, "assert place(1) == 1  # marked")
+    specs.update("proj", first, state="멈춤")
+    opened = refactor_run.frozen_change
+
+    def resumed(spec):
+        with patch.object(threading.Thread, "start"):   # the loop's first step would race the assertion
+            KICK("proj", first)
+        return opened(spec)
+
+    def run(argv, where, **kw):
+        raise AssertionError("the old-code run started on a card the review had taken")
+    sh, _ = commented(remote)
+    with patch.object(specs, "sh", sh):
+        change = client().get(f"/api/refactors/specs/{first}/frozen").json()
+    with patch.object(specs, "sh", sh), patch.object(loop, "_loops", {}), \
+            patch.object(refactor_run, "frozen_change", resumed), patch.object(refactor_profile, "sh", run):
+        done = client().post(f"/api/refactors/specs/{first}/refreeze", json={k: change[k] for k in ("head", "digest")})
+    assert done.status_code == 409 and "다시 움직였다" in done.json()["detail"]
+    card = specs.load("proj", first)
+    assert card["state"] == "리뷰 대기" and not card.get("refreezing") and not card.get("stopped")
     assert _git(path, "branch", "--show-current") == branch
 
 
