@@ -200,6 +200,9 @@ def test_a_selected_repository_that_moved_leaves_a_fresh_screen_on_the_hub(tmp_p
         stale = client().get("/api/channels", headers={"X-Project": "proj"})
         assert stale.status_code == 409 and stale.headers["X-Project-Moved"] == chat_channels.WIKI.name
         assert client().get("/api/channels").status_code == 200 and chat.project() == chat_channels.WIKI.name
+        # #264 round 5: the owner's completion, after the screen moved to the hub, is not written there.
+        specs.told(chat_channels.repo_for("proj"), {"id": "plan-task"}, "계획 PR #7")
+        assert not (chat.LOGS / "next.jsonl").exists()
         assert client().post("/api/folders", json={"path": str(tmp_path / "moved" / "proj")}).status_code == 200
         assert chat_channels.repo_for("proj") == (tmp_path / "moved" / "proj").resolve()
 

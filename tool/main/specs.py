@@ -781,10 +781,11 @@ def _slots(repo: Path) -> str:
     return "\n".join(f"- `{k}` in `.wiki/adapter.toml`" for k in SLOTS if not values.get(k, "").strip())
 
 
-def told(repo: Path, spec: dict, text: str) -> None:
-    """A result row in the `next` conversation, where the spec came from."""
-
-    query.remember("next", "result", text, repo=repo, spec=spec["id"])
+def told(repo: Path | None, spec: dict, text: str) -> None:
+    """A result row in the `next` conversation, where the spec came from — none for an owner that no longer
+    resolves, never the selection, which may be another repository by now; the card carries the state."""
+    if repo:
+        query.remember("next", "result", text, repo=repo, spec=spec["id"])
 
 
 # -- The screen -------------------------------------------------------------
