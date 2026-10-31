@@ -307,8 +307,7 @@ def refreeze(repo: Path, spec: dict, head: str, digest: str) -> dict:
 # The ignored paths a build writes: they may hold the refactored code compiled (round 2: a package's `main`
 # in `dist`), so the old-code run refuses while any is there instead of moving or deleting them (round 3:
 # both lost files). Data, assets and tool settings are not here; tests read them (ai-companion-voice-agent's
-# `voice_profiles/`, `data/`, `.codex/`). A framework's output stays here although no package entry points
-# into it: Next's own loader reads `.next/server`, so a test run on the old source got the new build (#265 round 1).
+# `voice_profiles/`, `data/`, `.codex/`).
 # ponytail: a name list; a build that writes elsewhere still runs as built — name it here when one does.
 BUILT = {"dist", "build", "out", "target", ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache"}
 

@@ -529,7 +529,7 @@ def test_the_earlier_workflow_is_read_only_and_a_restart_lets_go_of_it(surveyed)
 
 def test_the_panel_sees_the_running_turn(tmp_path):
     """A recheck is one turn of minutes and its record holds still meanwhile: the panel showed nothing but a
-    disabled [리팩터링 시작]. The worker hands over the turn it runs, the repair named apart."""
+    disabled `[리팩터링 시작]`. The worker hands over the turn it runs, the repair named apart."""
     w = refactor.Worker(tmp_path, {"id": "r1", "spent": {"seconds": 0, "calls": 0, "tokens": 0}})
     assert w.live() is None
     w.phase = "recheck:repair"
