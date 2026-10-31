@@ -540,6 +540,17 @@ def test_build_output_refuses_the_old_code_run(running, placeholder):
     assert card["refactor_frozen"]["head"] == was and not card.get("refreezing")
 
 
+def test_a_framework_cache_is_not_build_output(running):
+    """ai-coding-wiki: `next dev` left `client/.next/`, which no import reaches, and every approval was refused."""
+    first, path = frozen_at_pr()
+    with open(path / ".git/info/exclude", "a", encoding="utf-8") as exclude:
+        exclude.write(".next/\n.turbo/\n")
+    for cache in (".next", ".turbo"):
+        (path / "client" / cache).mkdir(parents=True)
+        (path / "client" / cache / "BUILD_ID").write_text("x", encoding="utf-8")
+    assert refactor_run.built(path) == []
+
+
 def test_an_interrupted_refreeze_is_put_back_when_the_change_is_opened(running):
     """#247 round 2: a restore that failed left `refreezing`, and nothing ever cleared it."""
     _, remote = running

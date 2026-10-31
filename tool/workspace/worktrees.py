@@ -228,7 +228,10 @@ def worktrees(repo: Path, *, details: bool = True) -> list[dict]:
         elif line.startswith("branch "):
             row["branch"] = line[7:].removeprefix("refs/heads/")
         elif not line and row:
-            if row["path"] == repo or row["path"].parent == root:
+            # A refactoring survey's detached read-only checkout (`refactor_survey.place`) is no task: listed,
+            # the rail offered it as one with no model, and a message there ran on the CLI default.
+            survey = not row["branch"] and row["path"].name.startswith("refactor-survey-")
+            if row["path"] == repo or row["path"].parent == root and not survey:
                 if details:
                     row["dirty"] = bool(_git(row["path"], "status", "--porcelain").stdout.strip())
                     row["merged"] = row["path"] != repo and merged(repo, row["branch"])

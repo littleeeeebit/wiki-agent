@@ -57,6 +57,14 @@ def test_create_puts_the_worktree_beside_the_repo(repo, monkeypatch):
     assert len(calls) == 2  # Fresh checkout identity and Git's registered worktree list.
 
 
+def test_a_survey_checkout_is_not_a_task(repo):
+    survey = repo.parent / "demo-worktrees" / "refactor-survey-1a2b3c4d"
+    git(repo, "worktree", "add", "-q", "--detach", str(survey))
+    assert worktrees(repo) == []
+    create(repo, "refactor-survey-x")   # a task branch of that name is still a task
+    assert [r["branch"] for r in worktrees(repo)] == ["refactor-survey-x"]
+
+
 def test_create_refuses_bad_names_and_worktrees(repo):
     for name in ("Fix", "로그인", "../up", "-x", "a" * 65, ""):
         with pytest.raises(ValueError):

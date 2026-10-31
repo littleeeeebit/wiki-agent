@@ -125,7 +125,9 @@ INTEGRATE_PROMPT = (
     " Each one is a new test: the run refuses any edit inside an existing test, so a check that would extend "
     "one is a new test beside it. An existing test module in `files` either takes new tests `tests.add` names by "
     "its path, or names in `tests.contract` (`<path>::<name>`, `<path>::<Class>::<method>`) every test and test "
-    "double the change edits: a spec that edits one it does not declare is refused."
+    "double the change edits: a spec that edits one it does not declare is refused. Where `tests.contract` does "
+    "not belong to the mode, a change that must edit an existing test still lists its file in `files`: the run "
+    "shows the person each changed definition to approve by name."
     " The unit depends on the mode. In `preserve` there is exactly one spec for the whole repository: every debt "
     f"worth doing in every pipeline and shared module goes into it, `pipeline` is `{WHOLE}`, `files` and `creates` "
     "list every file it touches, and its `change`, `keep`, `verify` and `tests.add` cover each debt by name. In "
@@ -350,19 +352,23 @@ def spec_shape(s, mode: str, map_: dict, root: Path) -> dict:
         shaped["measure"].update(argv=argv, repeat=repeat)
     amendable = mode == "simplify" or "contract_change" in shaped
     if shaped["tests"]["contract"] and not amendable:
-        raise ValueError(f"`{what}.tests.contract` 는 simplify 명세나 rework 의 계약 변경 명세에만 있다")
+        # The way out goes with the refusal: told only "no", a repair drops the file the change must edit.
+        raise ValueError(f"`{what}.tests.contract` 는 simplify 명세나 rework 의 계약 변경 명세에만 있다 — 비우고, 고쳐야 "
+                         "하는 기존 테스트 파일은 files 에 둔다. 실행이 바뀐 정의를 사람에게 보여 이름으로 승인받는다")
     # The run refuses an edit of an existing test file its contract does not free (`refactor_run.contract`):
-    # a test module in `files` is declared, or takes new tests `tests.add` names, or the spec asks for what it
-    # forbids. A helper beside them (`conftest.py`) may only gain fixtures, so its name is not matched (#255 round 1).
+    # in `simplify` a test module in `files` is declared, or takes new tests `tests.add` names, or the spec asks
+    # for what it forbids. A helper beside them (`conftest.py`) may only gain fixtures, so its name is not
+    # matched (#255 round 1). A mode that cannot declare one leaves it to the person: the run stops on the edit
+    # and `[테스트 계약 변경 승인]` declares the changed definitions; refused here, a recheck whose change must
+    # edit a test that pins a moved internal had no valid answer and the card could never start.
     declared = {t["test"].split("::")[0] for t in [*shaped["tests"]["remove"], *shaped["tests"]["contract"]]}
-    if stray := [f for f in shaped["files"] if debt.TEST.search(f.rsplit("/", 1)[-1].lower()) and f not in declared
-                 and not any(f in a for a in shaped["tests"]["add"])]:
+    if amendable and (stray := [f for f in shaped["files"] if debt.TEST.search(f.rsplit("/", 1)[-1].lower())
+                                and f not in declared and not any(f in a for a in shaped["tests"]["add"])]):
         raise ValueError(
             f"`{what}.files` 의 기존 테스트 파일 {', '.join(f'`{f}`' for f in stray)} 이 tests.contract·tests.remove "
-            "에 없고 tests.add 도 그 파일에 새 테스트를 두지 않는다 — 실행은 기존 테스트 변경을 거부한다. "
-            + ("바뀌는 테스트나 테스트 대역을 `<파일>::<이름>` 으로 tests.contract 에 넣거나" if amendable else
-               f"{mode} 명세는 기존 테스트를 고치지 않는다 —")
-            + " 새 테스트만 둔다면 tests.add 에 그 파일을 적고, 아니면 files 에서 빼라")
+            "에 없고 tests.add 도 그 파일에 새 테스트를 두지 않는다 — 실행은 기존 테스트 변경을 거부한다. 바뀌는 "
+            "테스트나 테스트 대역을 `<파일>::<이름>` 으로 tests.contract 에 넣거나, 새 테스트만 둔다면 tests.add 에 그 "
+            "파일을 적고, 아니면 files 에서 빼라")
     return shaped
 
 
@@ -514,6 +520,7 @@ def said(w, run: dict, phase: str, text: str, system: str) -> str:
     """One read-only turn on the chosen model, refused when another model answered; all it said."""
 
     path = checkout(w, run)
+    w.phase = phase
     final = refactor.turn(w, run, f"{rules(run['mode'])}\n\n{text}", system, path)
     # The session `turn` ran is still registered for its path; Claude names the model it attached at init.
     seen = str(getattr(work._runs[str(path)].chat, "model_name", "") or "")
