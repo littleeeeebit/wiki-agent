@@ -126,6 +126,8 @@ def pick_folder(title: str = "연결할 저장소 폴더") -> str | None:
 
     if sys.platform == "darwin":
         argv = ["osascript", "-e", f'POSIX path of (choose folder with prompt "{title}")']
+    elif sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return None
     elif sys.platform.startswith("linux") and shutil.which("zenity"):
         argv = ["zenity", "--file-selection", "--directory", f"--title={title}"]
     else:
@@ -136,10 +138,12 @@ def pick_folder(title: str = "연결할 저장소 폴더") -> str | None:
                               **process.background_options())
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if done.returncode == 3 and argv[0] == sys.executable:
-        return None
-    # osascript and zenity end with 1 when closed; Tk prints nothing.
-    return done.stdout.strip() if done.stdout.strip() and not done.returncode else CLOSED
+    if not done.returncode:
+        return done.stdout.strip() or CLOSED   # Tk prints nothing when closed
+    # Closed is osascript's -128 and zenity's 1; any other ending never showed a dialog.
+    closed = "(-128)" in done.stderr if argv[0] == "osascript" else \
+        argv[0] == "zenity" and done.returncode == 1 and "display" not in done.stderr
+    return CLOSED if closed else None
 
 
 def digest(data: bytes) -> str:
@@ -637,7 +641,8 @@ class Folder(BaseModel):
     path: str
 
 
-@router.post("/api/connect/browse")
+# Under `/api/folders`, not `/api/connect/…`: a repository may be named `browse` or `folder`.
+@router.post("/api/folders/browse")
 def browse() -> dict:
     """[폴더 찾기] on this machine: the picked path, empty when closed. 501 where no dialog
     opens, and the screen asks for the path instead."""
@@ -648,7 +653,7 @@ def browse() -> dict:
     return {"path": "" if picked == CLOSED else picked}
 
 
-@router.post("/api/connect/folder")
+@router.post("/api/folders")
 def add(body: Folder) -> dict:
     """A repository anywhere on this machine, known from now on by its folder's name. `[연결]` follows."""
 
