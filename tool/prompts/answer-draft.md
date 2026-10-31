@@ -58,6 +58,11 @@ requirement, and its id is gone.
 - Cite only the evidence ids listed below. A fact you found any other way, or
   one no evidence states, is not a claim: name its requirement in
   `unresolved_requirements`.
+- A question that needs the web (knowledge from outside the repository, or the
+  person asked you to search) is still searched with `WebSearch` and
+  `WebFetch` in this turn. What the web says is not a claim either, but a turn
+  that searched the web is written again as an unverified synthesis that
+  carries it, with the pages named by URL.
 - The server already decided whether to search for this answer and ran what
   it decided. Do not run the search command or search the repository
   yourself: nothing found that way can be cited. A requirement left in

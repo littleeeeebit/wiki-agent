@@ -174,8 +174,9 @@ def session(cid: str) -> ChatSession:
             cfg = config(cid)
             repo = current_repo()
             system = "\n\n".join((channels.ANSWER_PROMPT, channels.get(cid).preamble, search_note(repo)))
-            chat = ChatSession(repo, system=system, model=cfg["model"], effort=cfg["effort"],
-                               choices=cid in ("next", "refactor"))
+            # The web too: "search deeply" about a model, a library or a paper had nothing to search with.
+            chat = ChatSession(repo, tools="Bash,Read,Glob,Grep,WebSearch,WebFetch", system=system, model=cfg["model"],
+                               effort=cfg["effort"], choices=cid in ("next", "refactor"))
             # Restarting the server is not clearing the conversation either.
             # Only the same CLI, after an explicit reset, is resumed.
             chat.session_id = resumable(recall(cid, include_context=True), chat.is_codex)

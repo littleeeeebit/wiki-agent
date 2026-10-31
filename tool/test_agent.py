@@ -528,6 +528,32 @@ def test_codex_source_profile_has_no_shell_connectors_or_permission_dialog(tree,
     assert events[-1].kind == "done" and events[-1].text == "read safely"
 
 
+CODEX_ANSWERS = CODEX_START + '''say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "searched"}}})
+say({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+sys.stdin.read()
+'''
+
+
+@pytest.mark.parametrize("cid", ["wiki", "next"])
+def test_a_conversation_focus_searches_the_web_on_both_hosts(tree, cid):
+    """Asked to search deeply, `위키` and `다음 작업` had no web tool on either host (2026-10-31)."""
+
+    from main import query
+
+    def focus(model):
+        with patch.object(query, "current_repo", return_value=tree), patch.dict(query._sessions, clear=True), \
+             patch.object(query, "config", return_value={"model": model, "effort": ""}), \
+             patch.object(query, "recall", return_value=[]):
+            return query.session(cid)
+
+    claude = focus("")
+    assert {"WebSearch", "WebFetch"} <= set(claude.tools.split(",")) and not claude.write
+    claude.close()
+    command, events = run(focus("codex:m"), CODEX_ANSWERS, tree)
+    assert 'web_search="live"' in command and "--disable" in command
+    assert events[-1].kind == "done" and events[-1].text == "searched"
+
+
 
 
 
