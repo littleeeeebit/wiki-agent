@@ -2,8 +2,8 @@ agents = ["claude", "codex"]
 
 [slots]
 review_dir = "artifacts/review"
-gate_cmd = "python -m pytest tool"
-live_cmd = "open a new Claude Code session and a new Codex session, and confirm the hooks actually run"
+gate_cmd = "python tool/verify.py final --base main"
+live_cmd = "run python tool/main in this session (needs web/dist: npm --prefix web run build) and open http://127.0.0.1:8787; after a hook change, open a new Claude Code session and a new Codex session and confirm the hooks actually run"
 server_stop = "close the wiki-agent window (tool/app.cmd), or Ctrl+C in the terminal that ran python tool/main"
 scratch_dirs = "artifacts/"
 
