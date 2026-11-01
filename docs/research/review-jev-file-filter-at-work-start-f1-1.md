@@ -95,7 +95,7 @@ In test_file_filter.py's `world` (tracked a.py, b.md), build grounds files from 
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Observed, not yet independently reviewed. At cb5651a, a temporary repository with tracked `a.py` and the ref `<repo>/a.py:1` (forward slashes, Windows drive) gave `specs.inside` True and `specs.missing` empty, but `file_filter.grounded` returned `[]` and `candidates(..., hits=[])` returned `[]`. The fix follows the hypothesis: `specs.relative(repo, ref)` does `(repo / LINE.sub('', ref)).resolve()` and returns `relative_to(repo.resolve()).as_posix()` or `None`. `specs.inside` is now `relative(...) is not None`, and `grounded(spec, repo)` maps every grounds file through it, for the spec's own grounds and for merged specs' grounds in the overlap check. `searched` reads search hits' absolute paths through the same function. On this Windows machine, `relative` maps all of these to `a.py`: backslash and forward-slash absolute refs, `A.PY` (so `resolve()` returned the file's real letter case here), `./a.py:3` and `a.py:1–3`. `../out.py` and an absolute path beside the repository map to `None`, and the validator drops them too. The experiment is `tool/test_file_filter.py::test_every_grounds_path_the_spec_checks_accept_names_its_tracked_file`: refs go through `specs.fields`, every kept ref maps into `Tree(repo).files`, and candidates offer `a.py`, `b.md` and the overlapping merge's `c.py`. It passes with the fix, in the commit that adds this result. Not checked: paths through a symlinked folder (the counterevidence), and case behaviour on other filesystems.
 
 ## Unresolved limits
 

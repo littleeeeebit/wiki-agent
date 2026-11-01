@@ -6,6 +6,7 @@ that sends no turn to a coding session. Jev is a stand-in behind
 import contextlib
 import io
 import json
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -105,12 +106,19 @@ def test_candidates_are_grounds_then_search_then_overlapping_merges_present_and_
     assert len(file_filter.candidates(spec(), repo, tree, hits=["b.md"], before=50.0)) == 2
 
 
-def test_grounds_in_any_accepted_spelling_name_the_tracked_file(world):
+def test_every_grounds_path_the_spec_checks_accept_names_its_tracked_file(world):
     repo, _ = world
-    s = spec(files=("./a.py:3", "a.py:1–3", "sub\\..\\b.md:2-4", "../out.py", "C:/x.py"))
-    assert file_filter.grounded(s) == ["a.py", "b.md"]
-    assert [c["path"] for c in file_filter.candidates(s, repo, file_filter.Tree(repo), hits=[], before=50.0)] == \
-        ["a.py", "b.md", "c.py"], "`overlap` grounds `a.py:1` too"
+    refs = [str(repo / "a.py") + ":1", str(repo / "a.py").replace("/", "\\") + ":2", (repo / "b.md").as_posix(),
+            "./a.py:3", "a.py:1–3", "sub\\..\\b.md:2-4", *([str(repo / "A.PY")] if os.name == "nt" else []),
+            "../out.py", str(repo.parent / "x.py")]
+    kept = specs.fields(repo, {"goal": "g", "done": [], "grounds": {"files": refs}}, "gate")["grounds"]["files"]
+    assert kept == refs[:-2] and not specs.missing(repo, {"grounds": {"files": kept}}), "outside refs are dropped"
+    s = spec(files=kept)
+    tree = file_filter.Tree(repo)
+    assert all(specs.relative(repo, r) in tree.files for r in kept), "each accepted ref in git's spelling"
+    assert file_filter.grounded(s, repo) == ["a.py", "b.md"]
+    assert [c["path"] for c in file_filter.candidates(s, repo, tree, hits=[], before=50.0)] == ["a.py", "b.md", "c.py"], \
+        "`overlap` grounds `a.py:1` too"
 
 
 def test_search_hits_outside_the_repository_are_not_candidates(world, monkeypatch):

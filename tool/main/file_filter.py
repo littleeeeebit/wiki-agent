@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import posixpath
 import re
 import threading
 import time
@@ -70,35 +69,25 @@ class Tree:
         return text if text and "\x00" not in text[:8000] else None
 
 
-def grounded(spec: dict) -> list[str]:
-    """The spec's grounds files in git's repository-relative spelling, their
-    `:line` cites cut off with the spec checks' own syntax (`specs.LINE`):
-    `./a.py:1–3` is `a.py`. A path leaving the repository names nothing."""
+def grounded(spec: dict, repo: Path) -> list[str]:
+    """The spec's grounds files in git's spelling in `repo`, read the way the
+    spec checks accepted them (`specs.relative`): `./a.py:1–3` and
+    `C:/proj/a.py:1` are `a.py`. A path outside the repository names nothing."""
 
-    from .specs import LINE  # `specs` imports `decisions`, which imports this module
+    from .specs import relative  # `specs` imports `decisions`, which imports this module
 
-    out = []
-    for f in spec["grounds"].get("files", []):
-        path = posixpath.normpath(LINE.sub("", f.strip()).replace("\\", "/")) if f.strip() else ""
-        if path not in ("", ".", "..") and not path.startswith(("../", "/")) and not re.match(r"[A-Za-z]:", path):
-            out.append(path)
-    return list(dict.fromkeys(out))
+    return list(dict.fromkeys(p for f in spec["grounds"].get("files", []) if f.strip()
+                              if (p := relative(repo, f.strip())) is not None))
 
 
 def searched(goal: str, repo: Path) -> list[str]:
     """Repository paths of the search index's hits for `goal`; none when the
     daemon gives no answer — it starts for next time."""
 
-    out = []
-    for hit in search.ask(goal, repo, SEARCH_SECONDS, k=SEARCH_K) or []:
-        path = (hit.get("locator") or {}).get("path")
-        try:
-            inside = Path(hit.get("path") or "").resolve().is_relative_to(repo.resolve())
-        except (OSError, ValueError):
-            inside = False
-        if isinstance(path, str) and inside:
-            out.append(path)
-    return list(dict.fromkeys(out))
+    from .specs import relative  # `specs` imports `decisions`, which imports this module
+
+    return list(dict.fromkeys(p for hit in search.ask(goal, repo, SEARCH_SECONDS, k=SEARCH_K) or []
+                              if isinstance(hit.get("path"), str) and (p := relative(repo, hit["path"]))))
 
 
 def merged_at(spec: dict) -> float:
@@ -130,7 +119,7 @@ def candidates(spec: dict, repo: Path, tree: Tree, *, hits: list[str] | None = N
     specs with overlapping grounds changed — present in `tree`, at most
     `MAX_FILES`. `hits` stands in for the search (`searched`)."""
 
-    ground = grounded(spec)
+    ground = grounded(spec, repo)
     found: dict[str, list[str]] = {}
 
     def add(path: str, via: str) -> None:
@@ -142,7 +131,7 @@ def candidates(spec: dict, repo: Path, tree: Tree, *, hits: list[str] | None = N
     for p in searched(spec["goal"], repo) if hits is None else hits:
         add(p, "search")
     for s in merged(spec["repo"], before, spec["id"]) if ground else []:
-        if set(grounded(s)) & set(ground):
+        if set(grounded(s, repo)) & set(ground):
             commit = s["merge"]["commit"]
             for p in git(repo, "-c", "core.quotepath=off", "diff", "--name-only", f"{commit}^1", commit).splitlines():
                 add(p, f"merged:{s['id']}")
