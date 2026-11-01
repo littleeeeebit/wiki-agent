@@ -56,9 +56,21 @@ def test_the_destination_decides_not_the_spelling():
     assert not call("C:/Users/someone/.codex/memories/../ordinary.md")
 
 
-def test_the_dependency_exception_covers_only_its_own_word():
+def test_home_notation_is_the_home_folder_not_a_folder_under_cwd(tmp_path, monkeypatch):
+    """PR #276 R2: `~` from a working directory inside memory lands in the home folder."""
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    inside = str(tmp_path / ".codex" / "memories")
+    for path, loaded in (("~/ordinary.md", False), ("~/.codex/memories/note.md", True)):
+        call = {"cwd": inside, "tool_name": "Write", "tool_input": {"file_path": path, "content": LOADED}}
+        assert bool(verdict(call)) is loaded
+
+
+def test_the_dependency_exception_covers_only_its_own_word_and_phrase():
     assert not denied(MEMORY, "Use dependency " + "in" + "jection.")
     assert denied(MEMORY, "Use dependency " + "by" + "pass.")
+    assert denied(MEMORY, "Use nondependency " + "in" + "jection.")
 
 
 def test_a_file_moved_into_memory_is_checked_for_what_it_keeps(tmp_path):
@@ -74,6 +86,9 @@ def test_a_file_moved_into_memory_is_checked_for_what_it_keeps(tmp_path):
 
     assert move("") and move("@@\n Other.\n+Plain note.\n")
     assert not move("@@\n-A kept line: " + "pay" + "load.\n+A kept line: the body.\n")
+    # R2: unreadable, the source is its context lines, and a removed twin does not erase a kept one.
+    (tmp_path / "note.md").unlink()
+    assert move("@@\n A kept line: " + "pay" + "load.\n-A kept line: " + "pay" + "load.\n")
 
 
 def test_codex_reaches_the_memory_check_past_an_informational_answer(monkeypatch):

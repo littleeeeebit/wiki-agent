@@ -16,7 +16,7 @@ memories still hold.
 from __future__ import annotations
 
 import json
-import ntpath
+import os
 from pathlib import Path
 import re
 import sys
@@ -42,8 +42,8 @@ WORDS = {
 }
 # A word's own inflections count (`bypassed`, `exploits`); `dependency injection` is not the loaded
 # sense, and that exception belongs to that one word.
-LOADED = re.compile(r"\b(" + "|".join(("(?<!dependency )" if w == "injection" else "") + w for w in WORDS) + r")\w*",
-                    re.I)
+LOADED = re.compile(r"\b(" + "|".join(("(?<!\\bdependency )" if w == "injection" else "") + w for w in WORDS)
+                    + r")\w*", re.I)
 
 # Claude Code's auto memory and Codex's memories: the files every session of a project loads.
 MEMORY = re.compile(r"[\\/]\.claude[\\/]projects[\\/][^\\/]+[\\/]memory[\\/]|[\\/]\.codex[\\/]memories[\\/]", re.I)
@@ -68,9 +68,10 @@ def found(text: str) -> list[str]:
 
 
 def place(path: str, cwd: str) -> str:
-    """Where `path` lands: against the call's working directory, `..` resolved. `ntpath` reads both separators."""
+    """Where `path` lands, in the host's own spelling: `~` expanded, then against the call's working
+    directory, `..` resolved. On Windows `os.path` reads both separators."""
 
-    return ntpath.normpath(ntpath.join(cwd, path))
+    return os.path.normpath(os.path.join(cwd, os.path.expanduser(path)))
 
 
 def moved(body: str, cwd: str) -> list[tuple[str, str]]:
@@ -85,11 +86,11 @@ def moved(body: str, cwd: str) -> list[tuple[str, str]]:
         section = body[header.end():].split("\n*** ", 1)[0].splitlines()
         try:
             kept = Path(place(source[0], cwd)).read_text(encoding="utf-8", errors="replace").splitlines()
+            for line in (line[1:] for line in section if line.startswith("-")):   # the whole source, less removals
+                if line in kept:
+                    kept.remove(line)
         except (IndexError, OSError):
-            kept = [line[1:] for line in section if line.startswith(" ")]
-        for line in (line[1:] for line in section if line.startswith("-")):
-            if line in kept:
-                kept.remove(line)
+            kept = [line[1:] for line in section if line.startswith(" ")]   # context lines exclude removals already
         moves.append((header[1].strip(), "\n".join(kept)))
     return moves
 
