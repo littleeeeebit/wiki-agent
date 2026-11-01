@@ -95,7 +95,11 @@ def held(path: Path, text: str, turn, report, stop, keep, owing: str = "") -> st
             keep({"cleanup_owed": before})
             stop(missing)
             return None
-        answer = turn(OWED)
+        try:
+            answer = turn(OWED)
+        except BaseException:   # a stop raised before the follow-up (`loop.told`): the repair still owes it
+            keep({"cleanup_owed": before})
+            raise
     if answer is not None:
         found = report(answer)
         keep({"cleanup_owed": "", **({"test_cleanup": found} if valid(found) else {})})

@@ -295,7 +295,7 @@ def recall(path: Path, limit: int = MAX_REPLAY) -> list[dict]:
     return memory.since_clear(rows)[-limit:]
 
 
-def handoff(rows: list[dict], why: str) -> str:
+def handoff(rows: list[dict]) -> str:
     """What the conversation after a refusal starts from, beside the spec that
     is already its system prompt (`specs.system`): why it is new, the turns
     before it, abridged, and what to do."""
@@ -307,10 +307,11 @@ def handoff(rows: list[dict], why: str) -> str:
             lines.append("- Asked: " + text.splitlines()[0][:300])
         elif row.get("role") == "assistant":
             lines.append("- Answered: " + (text[-600:].replace("\n", " ") if text
-                                           else f"(no answer: {str(row.get('error') or '')[:200]})"))
+                                           else "(no answer)"))
+    # Never the refusal itself: a classifier that reads the whole context flags talk of an earlier flag.
     return ("## Why this conversation is new\n"
-            f"The model provider's safety system refused a request in the previous conversation: {why}\n"
-            "A refused conversation cannot be continued, so this one starts fresh. The worktree and the "
+            "The previous conversation stopped before it finished and cannot be continued, so this one "
+            "starts fresh. The worktree and the "
             "branch are as that conversation left them.\n\n"
             "## The conversation so far, oldest first and abridged\n" + "\n".join(lines[-24:]) + "\n\n"
             "## What to do\n"
@@ -841,7 +842,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
                      provider="codex" if chat.is_codex else "claude", diff_base=run.diff_base, **answered, **meta)
             if REFUSED.search(failed):
                 remember(path, "context", "안전 거절 — 다음 턴은 새 대화로 시작한다",
-                         handoff=handoff(recall(path), failed))
+                         handoff=handoff(recall(path)))
         except Exception as exc:
             # Transcript publication is not the execution boundary. A lost
             # record must not skip an already accepted review/plan handoff.

@@ -178,7 +178,7 @@ class Worker:
     made: list = []
 
     def __init__(self, path, model="", effort="", write=False, system="", bypass=False):
-        self.path, self.system, self.model = Path(path), system, model or None   # as `ChatSession` keeps it
+        self.path, self.system, self.model, self.effort = Path(path), system, model or None, effort or None   # as `ChatSession` keeps them
         self.id, self.session_id, self.alive, self.parent_id = uuid.uuid4().hex, None, True, None
         self.is_codex, self.rules, self.heard, self.bypass = False, [], [], bypass
         Worker.made.append(self)
