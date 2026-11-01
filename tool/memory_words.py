@@ -71,7 +71,7 @@ def place(path: str, cwd: str) -> str:
     """Where `path` lands, in the host's own spelling: `~` expanded, then against the call's working
     directory, `..` resolved. On Windows `os.path` reads both separators."""
 
-    return os.path.normpath(os.path.join(cwd, os.path.expanduser(path)))
+    return os.path.normpath(os.path.join(os.path.expanduser(cwd), os.path.expanduser(path)))
 
 
 def moved(body: str, cwd: str) -> list[tuple[str, str]]:
@@ -82,7 +82,7 @@ def moved(body: str, cwd: str) -> list[tuple[str, str]]:
 
     moves = []
     for header in MOVE_TO.finditer(body):
-        source = re.findall(r"^\*\*\* Update File: (.+)$", body[:header.start()], re.M)[-1:]
+        source = re.findall(r"^\*\*\* Update File: (.+?)\r?$", body[:header.start()], re.M)[-1:]   # CRLF too
         section = body[header.end():].split("\n*** ", 1)[0].splitlines()
         try:
             kept = Path(place(source[0], cwd)).read_text(encoding="utf-8", errors="replace").splitlines()

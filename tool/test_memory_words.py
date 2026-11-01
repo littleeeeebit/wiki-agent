@@ -65,6 +65,9 @@ def test_home_notation_is_the_home_folder_not_a_folder_under_cwd(tmp_path, monke
     for path, loaded in (("~/ordinary.md", False), ("~/.codex/memories/note.md", True)):
         call = {"cwd": inside, "tool_name": "Write", "tool_input": {"file_path": path, "content": LOADED}}
         assert bool(verdict(call)) is loaded
+    # R3: `~` in `cwd` is the home folder too.
+    call = {"cwd": "~/.codex", "tool_name": "Write", "tool_input": {"file_path": "memories/note.md", "content": LOADED}}
+    assert verdict(call)
 
 
 def test_the_dependency_exception_covers_only_its_own_word_and_phrase():
@@ -85,6 +88,9 @@ def test_a_file_moved_into_memory_is_checked_for_what_it_keeps(tmp_path):
         return bool(answer)
 
     assert move("") and move("@@\n Other.\n+Plain note.\n")
+    # R3: a CRLF patch names the same source, so it gets the same answer.
+    crlf = f"*** Begin Patch\r\n*** Update File: note.md\r\n*** Move to: {target}\r\n@@\r\n Other.\r\n+Plain.\r\n"
+    assert verdict({"cwd": str(tmp_path), "tool_name": "apply_patch", "tool_input": {"input": crlf}})
     assert not move("@@\n-A kept line: " + "pay" + "load.\n+A kept line: the body.\n")
     # R2: unreadable, the source is its context lines, and a removed twin does not erase a kept one.
     (tmp_path / "note.md").unlink()
