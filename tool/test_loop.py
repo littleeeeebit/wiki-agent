@@ -1339,6 +1339,15 @@ def cut(monkeypatch, cls):
     monkeypatch.setattr(cls, "say", told)
 
 
+@pytest.mark.parametrize("notice", [CUT, ""])
+def test_a_handoff_keeps_an_answer_that_quotes_the_notice_phrase(notice):
+    """PR #275 R4: only the parser's leading notice is dropped, never answer lines that hold its words."""
+
+    answer = 'Committed sample.py as a1b2c3d; the fixture text is "blocked by our safety systems"; push pending.'
+    context = work.handoff([{"role": "assistant", "text": notice + answer}])
+    assert "- Answered: " + answer in context and "stop_reason" not in context
+
+
 def test_a_repair_turn_that_went_on_past_a_cut_response_is_judged_by_its_answer(world, monkeypatch):
     """PR #272 R1: one response of the repair turn was cut, the turn went on to a complete
     disposition, and the loop stopped anyway."""
