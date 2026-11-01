@@ -589,7 +589,7 @@ def consume(path: Path, run: work.Run, text: str) -> tuple[str, str, dict, int, 
             work.remember(path, "assistant", final, error=failed, steps=made,
                           turn=run.turn, cell=run.chat.id, started_at=run.started_at, cancelled=run.halt.is_set(),
                           provider="codex" if run.chat.is_codex else "claude",
-                          **{k: v for k, v in meta.items() if k != "session_id"})
+                          **{k: v for k, v in meta.items() if k not in ("session_id", "answer")})   # `answer` is in `final`
         except OSError as exc:  # a lost transcript row must not take the turn's usage with it
             note(run, f"대화 기록을 남기지 못했다 — {exc}")
     return final, failed, meta, tools, web
@@ -1145,7 +1145,9 @@ def revise(lp, spec: dict, path: Path, text: str) -> str | None:
         if lp.halt.is_set():
             return None
         if failed or run.halt.is_set():
-            # A turn stopped on its own (`/api/work/stop`) writes nothing, as a failed one.
+            # A turn stopped on its own (`/api/work/stop`) writes nothing, as a failed one. One the
+            # provider cut stops the loop (`corrected`) rather than asking that provider again.
+            lp.refused = bool(work.REFUSED.search(failed))
             return ""
         try:
             # Any path is let through the shape check; `target` judges it before the write.

@@ -6,7 +6,7 @@ triggers: ["훅", "hook", "cp949", "UnicodeEncodeError", "UnicodeDecodeError", "
 slots: []
 sources: []
 sources_withheld: true
-links: [english-progress, diagnose-from-what-ran]
+links: [english-progress, diagnose-from-what-ran, memory-stays-neutral]
 ---
 
 # A hook never stops the session, whatever happens

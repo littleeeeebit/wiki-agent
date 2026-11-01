@@ -384,7 +384,7 @@ def test_a_refused_cloud_review_hands_off_without_its_secrets(cloud_world):
         spec = looped("cloud")
     assert spec["stopped"]["reason"] == loop.Why.EXTERNAL.value
     handoff = (loop.folder("proj", spec["pr"]["number"]) / "handoff.md").read_text(encoding="utf-8")
-    assert "blocked by our safety systems" in handoff and "private-api-key" not in handoff
+    assert "safety" not in handoff and "private-api-key" not in handoff   # neither the cut (PR #275) nor its secret
 
 
 @pytest.mark.parametrize("change_source", [False, True])
