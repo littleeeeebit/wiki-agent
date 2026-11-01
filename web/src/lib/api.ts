@@ -602,7 +602,9 @@ export type Spec = {
   planning?: Planning | null
   /** A survey spec's block (`survey` set), or a card of the earlier workflow (`run`, a legacy `mode`). */
   refactor?: { mode?: RefactorMode | LegacyMode; files?: string[]; run?: string; survey?: string; base?: string
-    pipeline?: string; evidence?: string[]; depends?: string[]; detail?: SurveySpec; roles?: RefactorRoles }
+    pipeline?: string; evidence?: string[]; depends?: string[]; detail?: SurveySpec; roles?: RefactorRoles
+    /** Jev's mode where a fitted `refactor.mode` disagreed and the spec held under it too; the card runs in `mode`. */
+    jev_mode?: RefactorMode }
   /** What `refactor_run` checked before the pull request (`docs/plans/refactor/7-purpose-modes.md`, Execution). */
   refactor_check?: { changed?: string[]; final?: 'ci' | 'local'; ok?: boolean; unparsed?: boolean
     baseline?: { cmd: string; code: number | null; failures: string[] }; new?: string[]; pre_existing?: string[]

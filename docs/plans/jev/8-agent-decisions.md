@@ -40,6 +40,33 @@ arbitrary command, new file path, tool name, or executable argument string.
 | `main/specs.py::check` | Select useful additional registered checks from evidence | Required adapter gate always runs; Jev cannot skip or weaken it |
 | `main/loop.py` at a fixed review result | Retrieve context for a disputed finding or send the next existing correction turn | Deterministic review outcome, round limit, and merge conditions remain authoritative |
 | `main/query.py` | Search, answer partially, or ask a targeted clarification | Stage 7 publication policy and existing user-choice UI |
+| `main/specs.py::pr_turn` → `main/pr_text.py::writing` (`pr.form`) | Which form the pull request text takes: feature with a behaviour change, fix, refactor with no behaviour change, plan document, or files only | A form choice (below): the worker gets the shared rules of `tool/prompts/pr-write.md` and the section of code's form, read off the diff (refactor criteria or a preserve run, prose-only or artifact-root paths, data or binary files, else feature) |
+| `main/refactor_survey.py::carded` → `moded` (`refactor.mode`) | Which of preserve, simplify and rework each proposed spec belongs to | A form choice: the survey's mode stands; at a fitted point a disagreement is checked again with `spec_shape` under Jev's mode and, when it holds, the card shows both modes |
+
+### Form choices
+
+A form choice is one kind in the registry (`decisions.FORMS`): a point declares
+its offered forms with one line each, code's baseline and its fixture set, and
+`/api/jev` lists it with its forms as operations, the baseline and whether it
+is provisional. `choose_form` runs code's baseline and records Jev's pick, its
+probability and the option order beside it, on a thread of its own. Only a
+point that `fitted` finds fitted and that `ACTIVATED` names, in active mode,
+hands Jev's form on; doubt, deferral or a failed ask runs the baseline, never
+the host model. `ACTIVATED` is empty: activating a point is a person's change.
+
+`python tool/eval/branches.py` asks every frozen fixture under
+`eval/jev/branches/` in the registered option order and reversed, since Jev's
+Choice leans toward the first option, and writes a result under
+`eval/jev/branches/results/`. A point is fitted only by its newest result for
+the same model, forms and fixture digest, with the accuracy's 95% Wilson lower
+bound at 0.90 and the two orders agreeing on at least 0.90 of the fixtures.
+Thirty fixtures cannot pass that bound even all correct (0.886); the sets hold
+41 and 40. First run, 2026-11-01 (`20261101T024509Z.json`): `pr.form` 0.90
+accurate (lower bound 0.77), the orders agreeing on 0.98, code's baseline 0.68
+— its misses are the fixes, which a diff cannot tell from a feature;
+`refactor.mode` 0.875 (lower bound 0.74), agreeing on 1.0. Both stay
+provisional. Labels were set by the implementing agent; `refactor.mode`'s are
+the survey's modes, so code's baseline matches them by construction.
 
 After implementation, list exact callable entry points and supported operation
 coverage in the product diagnostics. A recommendation that never affects any

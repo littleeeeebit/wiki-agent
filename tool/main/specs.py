@@ -1708,7 +1708,8 @@ def pr_turn(repo: Path, path: Path, run, spec: dict):
     head = sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
     spec = update(spec["repo"], spec["id"], writing={"head": head, "asked": 1})
     note(run, "PR 제목·본문을 작업자에게 요청한다")
-    return lambda: again(path, run.chat, pr_text.writing(spec), spec) or update(spec["repo"], spec["id"], writing=None)
+    text = pr_text.writing(spec, repo, path, run.halt)   # read off the diff while this turn still holds the tree
+    return lambda: again(path, run.chat, text, spec) or update(spec["repo"], spec["id"], writing=None)
 
 
 def written(repo: Path, path: Path, run, spec: dict, final: str):

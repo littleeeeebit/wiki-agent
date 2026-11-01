@@ -608,9 +608,13 @@ def carded(w, run: dict) -> list[str]:
     source = {"focus": "refactor", "turn": time.time(), "session": "", "plan": None,
               "refactor_mode": run["mode"], "refactor_generation": run.get("generation", 0)}
     for s in run["survey"]["specs"]:
+        if specs.load(repo.name, sid[s["key"]]) is not None:
+            continue   # a resume asks nothing again
+        also = moded(w, run, s, sid[s["key"]])
         with specs._files:
             if specs.load(repo.name, sid[s["key"]]) is None:
-                fresh(repo, sid[s["key"]], made(repo, w.rid, run["base"], s, [sid[d] for d in s["depends"]]), source)
+                fields = made(repo, w.rid, run["base"], s, [sid[d] for d in s["depends"]])
+                fresh(repo, sid[s["key"]], {**fields, "refactor": {**fields["refactor"], **also}}, source)
     for spec in specs.listing(repo.name):
         held = spec.get("refactor") or {}
         if held.get("survey") and held["survey"] != w.rid and spec["state"] == "정리됨":
@@ -618,6 +622,33 @@ def carded(w, run: dict) -> list[str]:
                 if specs.load(repo.name, spec["id"]) is not None:
                     specs.aside(repo.name, spec["id"])
     return list(sid.values())
+
+
+def mode_state(s: dict) -> dict:
+    """What Jev reads for `refactor.mode`: the change, never the mode-only fields that would name it."""
+    return {"task": "A read-only refactoring survey proposed this change.",
+            **{k: s[k] for k in ("title", "problem", "change", "boundary", "impact", "keep")},
+            "verify": [v["criterion"] for v in s["verify"]], "files": s["files"], "risk": s["risk"]["level"]}
+
+
+def moded(w, run: dict, s: dict, sid: str) -> dict:
+    """`refactor.mode` for one proposed spec: the survey's mode stands, Jev's recorded beside it. Only a
+    fitted, activated point that disagrees checks the spec again under Jev's mode with `spec_shape` and,
+    when it holds there too, marks the card with Jev's mode for the person; the card keeps the survey's."""
+    import decision
+
+    from . import decisions
+    picked = decisions.choose_form("refactor.mode", mode_state(s), run["mode"], log=(w.repo.name, sid),
+                                   occasion=f"survey:{w.rid}", cfg=decision.config(w.repo))
+    if picked["form"] == run["mode"]:
+        return {}
+    try:
+        spec_shape(s, picked["form"], run["map"], checkout(w, run))
+    except ValueError as exc:
+        decisions.outcome((w.repo.name, sid), picked["record"], "refused", mode=picked["form"], reason=str(exc)[:300])
+        return {}
+    decisions.outcome((w.repo.name, sid), picked["record"], "executed", mode=picked["form"])
+    return {"jev_mode": picked["form"]}
 
 
 def made(repo: Path, survey: str, base: str, s: dict, depends: list[str]) -> dict:
