@@ -126,11 +126,6 @@
       "lines": 1057,
       "reason": "A conversation focus is started with WebSearch and WebFetch, so a question asking to search deeply has the web to search. Before that: A stored selection that no longer names a repository (a picked one moved or replaced) falls back to the hub for a screen's request only (`screened`), so a fresh screen still loads and 프로젝트 · 연결 can pick it again while a background owner is refused instead of writing into the hub (#264 review rounds 3 and 4). Before that: The refactoring focus keeps the survey model a survey of its mode fixed beside the mode on disk, and refuses another model until the mode changes, since the conversation that refines the survey's cards ran on the chat toolbar's model (#232 review round 1). Before that: The refactoring focus keeps its mode and generation on disk, since a restart that reset them made every survey card of a later generation unstartable; the config that owns them lives here."
     },
-    "tool/main/refactor.py": {
-      "dup": 0,
-      "lines": 818,
-      "reason": "`purpose` shows the `refactor-scope` JSON `turn` reads (`SCOPE`): asked only for a reason and choices, ai-coding-wiki's full-refactor audit answered in YAML and stopped on `json.loads` (seven lines). Before that: A read-only turn's snapshot stops on a failed status read instead of comparing two failures as unchanged (#220, four lines). Before that: `targeted` lets a cleanup or restructure scan match files under a package directory, which a full-refactor spec for ai-companion-voice-agent named and the server refused (#194, four lines). Before that: Settled refactoring conversations retain cancellation and file discovery; resumed candidate runs checkpoint cumulative usage so earlier calls and tokens are not counted twice."
-    },
     "tool/main/refactor_run.py": {
       "dup": 0,
       "lines": 1015,
@@ -163,7 +158,7 @@
     },
     "tool/search/daemon.py": {
       "dup": 10,
-      "lines": 1232,
+      "lines": 1224,
       "reason": "baseline at adoption"
     },
     "tool/search/evidence.py": {
@@ -192,7 +187,7 @@
       "reason": "The hook records a receipt of the exact index bytes it wrote and the HEAD it read first (`common.indexes`), so a checkout's clean check can tell them from a person's edit (four lines). Before that: baseline at adoption"
     },
     "tool/test_agent.py": {
-      "dup": 46,
+      "dup": 28,
       "lines": 1124,
       "reason": "The wiki and next-task focuses are pinned to the web tools on Claude and to live web search on a stand-in Codex app server. Before that: The prompt file is pinned on a real stand-in process: a late close of the old process removes only its own file, and a prompt that cannot be written leaves none (PR #261). Before that: A server going down must end a one-off explanation's provider, which no registry holds, and start no new one until reopened; pinned on a real stand-in process whose child holds the pipe."
     },
@@ -209,11 +204,6 @@
     "tool/test_edit_as_diff.py": {
       "dup": 11,
       "lines": 198,
-      "reason": "baseline at adoption"
-    },
-    "tool/test_evaluation.py": {
-      "dup": 12,
-      "lines": 606,
       "reason": "baseline at adoption"
     },
     "tool/test_jev_contract.py": {
@@ -233,7 +223,7 @@
     },
     "tool/test_main.py": {
       "dup": 61,
-      "lines": 1849,
+      "lines": 1848,
       "reason": "baseline at adoption"
     },
     "tool/test_markdown_emphasis.py": {
@@ -258,7 +248,7 @@
     },
     "tool/test_task_workflow.py": {
       "dup": 22,
-      "lines": 512,
+      "lines": 510,
       "reason": "Regressions for a revised task's report request and its second miss, a running gate on its task row, and a running turn naming its owning spec, which need this file's started-task fixtures (#194). Before that: baseline at adoption"
     },
     "tool/transcript.py": {
@@ -283,7 +273,7 @@
     },
     "web/src/App.tsx": {
       "dup": 0,
-      "lines": 839,
+      "lines": 834,
       "reason": "A worktree removed under its task leaves the selection on that task's own spec, remembered while it was on screen, instead of blank; another spec naming the checkout is never taken (#203 review P2, #204 round 1). Before that: A task picked by its spec key before the worktree list arrives follows to the worktree key instead of the pane going blank (the intermittent `머지 ▸` timeout in CI, five lines). Before that: Every pane with no worktree (nothing selected, a selection whose task is gone, a spec not started) shares the empty pane's pick, and [시작] always sends it: the pick made under a stale selection or a selected draft card was keyed elsewhere and ai-coding-wiki's start still ran on Claude's default (two lines). Before that: A spec card's start, refactoring cards included, falls back to the model picked in the empty agent pane, while reopening keeps the task's own model: per-task keys alone sent an empty model and the first turn ran on the Claude default (twelve lines, the reopen path split out of start). Before that: the work model is kept per task under `spec:<repo>/<id>` instead of once per window, which carried one repository's model into rfg_rag's task; the task derivation moved above its first use (#194, ten lines). Before that: the refactoring tab's import and pane; splitting App.tsx is left to a refactor run, not this feature"
     },
     "web/src/components/Blocks.tsx": {
@@ -298,7 +288,7 @@
     },
     "web/src/components/Settings.tsx": {
       "dup": 18,
-      "lines": 354,
+      "lines": 340,
       "reason": "The model the merge's structure refresh runs on is chosen here, beside the review settings; none chosen skips the refresh. Before that: baseline at adoption"
     },
     "web/src/lib/api.ts": {
@@ -307,12 +297,12 @@
       "reason": "A worktree row says when a re-freeze has it on the old code (ai-coding-wiki #162). [폴더 찾기]'s two calls: the OS folder dialog (null where none opens) and adding the picked folder; the never-listed unconnected state and the always-true `wired` left the Project type. Before that: A running gate's `eta` is typed here: the whole run's median and 80% range, or `over` past every earlier run (four lines). Before that: Translation requests are split by both of the server's limits, the verified answer's included: a 45-paragraph answer sent whole was refused and stayed English. Before that: The structure refresh's model setting is typed here. Before that: The survey's three fixed roles (survey, implementation, review) are one shared type for the survey record and its cards. The refactoring survey record, its pipelines and specs, and a survey card's verification are typed here (refactor stage 7). Before that: refactoring mode, generation and run metadata and unlimited refactoring plan limits."
     },
     "web/tests/mobile_browser.py": {
-      "dup": 12,
-      "lines": 595,
+      "dup": 7,
+      "lines": 589,
       "reason": "baseline at adoption"
     },
     "web/tests/task_browser.py": {
-      "dup": 12,
+      "dup": 7,
       "lines": 850,
       "reason": "Checks that a file edit's diff in the agent pane colours what it takes out and puts in, that a running final gate's time left stands whole on the rail and in the task header, and reopens the spec card's folded copy after its edit form closes (UI cleanup: live diff, gate line, one edit toggle; thirteen lines). Before that: Removes the worktree from the listing after the merge failure and checks, once the changes pane goes, that the task stays selected with its merge button; then deletes the task from another window while a second spec names the same checkout (specs first, listing held) and checks that spec is not selected (#203 review P2 and #204 round 1, twenty-seven lines). Before that: Holds the worktree list on the merge-failure reload until the rail row is picked by its spec key, then releases it; the row must stay selected when the worktree arrives (the intermittent `머지 ▸` timeout, nine lines; an event, not a delay, after #203 round 1). Before that: Checks that a stale checkout's last question card cannot be answered from a pane with no worktree (#199 review note). Before that: Checks the pick made with a draft card selected, under a stale selection (the hidden primary checkout a started card lands on) and with a started PR not checked out is what each start sends, that an empty pane never shows a PR's own model (#199 round 2) or a past turn's model on the stale checkout (#199 round 3) before anything is picked, and that the reopened task keeps its own model (#199 round 1). Before that: Checks that ordinary and refactoring spec cards started with no task selected send the empty agent pane's model (P0: they sent an empty or the conversation's model), and that reopening a task keeps its own. Before that: baseline at adoption"
     },
