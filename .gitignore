@@ -31,5 +31,5 @@ android/local.properties
 laya/data/
 laya/notes/
 laya/checkpoints/
-# Form-choice evaluation results (`tool/eval/branches.py`): long, and they muddle review; kept on the machine.
-eval/jev/branches/results/
+# What an evaluation run writes (`craft/results-stay-off-git`): long, and they muddle review; kept on the machine.
+eval/**/results/
