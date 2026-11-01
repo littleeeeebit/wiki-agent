@@ -807,7 +807,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
                 remember(path, "context", ev.text)
                 ev.kind = "tool"
             if ev.kind == "done":
-                final, meta = ev.text, dict(ev.meta)
+                final, meta = ev.text, {k: v for k, v in ev.meta.items() if k != "answer"}   # it is in `final`
                 if meta.pop("error", False):
                     failed = final or "완료된 답이 없다"
             elif ev.kind == "error":
@@ -839,9 +839,9 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
             remember(path, "assistant", final, error=failed, steps=made,
                      turn=run.turn, cell=chat.id, started_at=run.started_at, cancelled=run.halt.is_set(),
                      provider="codex" if chat.is_codex else "claude", diff_base=run.diff_base, **answered, **meta)
-            if REFUSED.search(failed) or meta.get("refused"):   # answered or not, the conversation holds it
+            if REFUSED.search(failed):
                 remember(path, "context", "안전 거절 — 다음 턴은 새 대화로 시작한다",
-                         handoff=handoff(recall(path), failed or final.split("\n\n", 1)[0]))
+                         handoff=handoff(recall(path), failed))
         except Exception as exc:
             # Transcript publication is not the execution boundary. A lost
             # record must not skip an already accepted review/plan handoff.

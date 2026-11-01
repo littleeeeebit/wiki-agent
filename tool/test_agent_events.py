@@ -80,12 +80,11 @@ sys.stdin.read()
     # What its transcript keeps, should a later CLI stream it the same way.
     '{"type": "assistant", "message": {"stop_reason": "refusal", "content": [{"type": "thinking", "thinking": ""}]}}',
 ])
-def test_a_response_the_safeguards_stopped_marks_the_turn_and_fails_only_an_empty_one(tree, stopped):
+def test_a_response_the_safeguards_stopped_fails_the_turn_as_a_refusal(tree, stopped):
     from main import work
 
     # PR #272 R1: the CLI went on past the refusal and ended on an ordinary
     # result, so the loop read a format failure and sent the request again.
-    # Its second R1 turn went on to a complete answer, which #273 then threw away.
     fixture = '''import json, sys
 say = lambda m: print(json.dumps(m), flush=True)
 sys.stdin.readline()
@@ -96,11 +95,9 @@ sys.stdin.read()
 '''
     _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
     done = events[-1]
-    assert done.kind == "done" and done.meta["refused"] and not done.meta["error"]
+    assert done.kind == "done" and done.meta["error"] and done.meta["refused"]
     assert work.REFUSED.search(done.text) and done.text.endswith("Not repaired.")
-    _, events = run(ChatSession(tree, write=True, bypass=True),
-                    fixture.replace('"result": "Not repaired."', '"result": ""'), tree)
-    assert events[-1].meta["refused"] and events[-1].meta["error"]
+    assert done.meta["answer"] == "Not repaired.", "what it went on to answer, apart from the notice"
     # A child's refusal is the child's: the parent that went on and finished is not failed (#273 R2).
     _, events = run(ChatSession(tree, write=True, bypass=True),
                     fixture.replace(stopped, stopped[:-1] + ', "parent_tool_use_id": "bg-1"}'), tree)

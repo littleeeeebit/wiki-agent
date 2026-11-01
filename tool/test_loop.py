@@ -1294,31 +1294,50 @@ def test_a_provider_safety_refusal_stops_and_resumes_in_a_new_conversation(world
 CUT = "A response was blocked by our safety systems (stop_reason: refusal); the turn went on without it.\n\n"
 
 
-def test_a_repair_turn_that_went_on_past_a_cut_response_is_judged_by_its_answer(world):
+def cut(monkeypatch, cls, claude_only=False):
+    """`cls.say` as a provider that cut one response of every turn, which went on to its reply: the
+    done event the chat parser makes then. `claude_only` leaves a Codex cell's turns alone."""
+
+    say = cls.say
+
+    def told(cell, text, halt=None):
+        for ev in say(cell, text, halt):
+            if ev.kind == "done" and not (claude_only and cell.model):
+                ev.meta = {**ev.meta, "error": True, "refused": True, "answer": ev.text}
+                ev.text = CUT + ev.text
+            yield ev
+
+    monkeypatch.setattr(cls, "say", told)
+
+
+def test_a_repair_turn_that_went_on_past_a_cut_response_is_judged_by_its_answer(world, monkeypatch):
     """PR #272 R1: one response of the repair turn was cut, the turn went on to a complete
     disposition, and the loop stopped anyway."""
 
     spec = pr_spec(world, "repair-cut-complete", 7)
     finding = "[P1] a.txt:1 — wrong path"
+    cut(monkeypatch, Worker)
     Reviewer.replies = [deny(finding), allow]
-    Worker.replies = [lambda path, halt: CUT + fixed((finding, "fixed"))(path, halt)]
+    Worker.replies = [fixed((finding, "fixed"))]
     assert looped(spec["id"])["state"] == "머지 가능"
 
 
-def test_a_repair_turn_cut_short_of_its_disposition_stops_without_asking_again(world):
+def test_a_repair_turn_cut_short_of_its_disposition_stops_without_asking_again(world, monkeypatch):
     spec = pr_spec(world, "repair-cut-short", 7)
     finding = "[P1] a.txt:1 — wrong path"
+    cut(monkeypatch, Worker)
     Reviewer.replies = [deny(finding), allow]
-    Worker.replies = [CUT + "Not repaired."]
+    Worker.replies = ["Not repaired."]
     stopped = looped(spec["id"])
     assert stopped["state"] == "멈춤" and stopped["stopped"]["reason"] == loop.Why.EXTERNAL.value
     assert "다시 보내지 않았다" in stopped["stopped"]["detail"]
-    assert sum(text.startswith("Review round 1") for w in Worker.made for text in w.heard) == 1
+    assert sum(len(w.heard) for w in Worker.made) == 1
 
 
 @pytest.mark.parametrize("answered", [False, True])
-def test_a_repair_turn_the_provider_refused_goes_to_codex_once(world, monkeypatch, answered):
-    """PR #272 R1: Claude's classifier kept cutting a repair of the repository's own guard."""
+def test_a_repair_turn_the_provider_refused_goes_to_codex_and_stays(world, monkeypatch, answered):
+    """PR #272 R1: Claude's classifier kept cutting a repair of the repository's own guard. The
+    cleanup follow-up goes to Codex too, never back to Claude (#275 R1)."""
 
     spec = pr_spec(world, f"repair-to-codex-{int(answered)}", 7)
     finding = "[P1] a.txt:1 — wrong path"
@@ -1326,26 +1345,36 @@ def test_a_repair_turn_the_provider_refused_goes_to_codex_once(world, monkeypatc
 
     def told(worker, text, halt=None):
         models.append(worker.model)
-        if worker.model is None:   # Claude, the spec's cell
-            yield Event("done", CUT + "Not repaired.", {"error": False}, worker.id) if answered \
-                else Event("error", CUT.strip(), {}, worker.id)
+        if worker.model is None and not answered:   # Claude, the spec's cell, cut with nothing after it
+            yield Event("error", CUT.strip(), {}, worker.id)
             return
         yield from say(worker, text, halt)
 
     monkeypatch.setattr(Worker, "say", told)
+    cut(monkeypatch, Worker, claude_only=True)
     monkeypatch.setattr(loop, "fallback_model", lambda: "codex:test")
     Reviewer.replies = [deny(finding), allow]
-    Worker.replies = [fixed((finding, "fixed"))]
+    Worker.replies = [*(["Not repaired."] if answered else []), fixed((finding, "fixed"), cleanup=""),
+                      fixed((finding, "fixed"))]
     done = looped(spec["id"])
     assert done["state"] == "머지 가능" and done["cell"]["model"] == "codex:test"
     assert models[:2] == [None, "codex:test"] and None not in models[1:]
 
 
-def test_a_review_cut_short_of_its_verdict_stops_without_asking_again(world):
-    spec = pr_spec(world, "review-cut-short", 7)
-    Reviewer.replies = [CUT + "Partial review."]
-    stopped = looped(spec["id"])
-    assert stopped["stopped"]["reason"] == loop.Why.EXTERNAL.value
+def test_a_plan_or_a_codex_cell_never_moves(world, monkeypatch):
+    monkeypatch.setattr(loop, "fallback_model", lambda: "codex:test")
+    lp = loop.Loop("proj", "none")
+    assert not loop.moved(lp, {"planning": {"roles": {}}, "cell": {"model": "sonnet"}})
+    assert not loop.moved(lp, {"cell": {"model": "codex:other"}})
+
+
+@pytest.mark.parametrize("reply, merged", [(allow, True), ("Partial review.", False)])
+def test_a_review_that_went_on_past_a_cut_response_is_read_and_never_asked_again(world, monkeypatch, reply, merged):
+    spec = pr_spec(world, f"review-cut-{int(merged)}", 7)
+    cut(monkeypatch, Reviewer)
+    Reviewer.replies = [reply]
+    done = looped(spec["id"])
+    assert done["state"] == "머지 가능" if merged else done["stopped"]["reason"] == loop.Why.EXTERNAL.value
     assert sum(len(r.heard) for r in Reviewer.made) == 1
 
 

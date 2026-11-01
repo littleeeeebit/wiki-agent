@@ -500,7 +500,8 @@ def moved(loop: Loop, spec: dict) -> bool:
     card's cell, which its survey fixed."""
 
     chosen = spec.get("cell") or {}
-    if chosen.get("model", "").startswith("codex:") or (spec.get("refactor") or {}).get("roles"):
+    if chosen.get("model", "").startswith("codex:") or (spec.get("refactor") or {}).get("roles") \
+            or spec.get("planning"):   # a plan's reviser role, not `cell`, picks its model
         return False
     model = fallback_model()
     return bool(model) and change(loop, cell={**chosen, "model": model, "effort": "", "fast": False}) is not None
@@ -648,6 +649,7 @@ class Loop:
         self.halt = threading.Event()
         self.chat: ChatSession | None = None   # the review cell's turn, while one runs
         self.run: work.Run | None = None        # the work cell's turn, while one runs
+        self.refused = False   # the last turn's response was cut, its answer kept, its cell not moved
         self.thread: threading.Thread | None = None
 
     def stop(self) -> None:
@@ -879,7 +881,8 @@ def wait_hold(loop: Loop, path: Path):
 def ask(loop: Loop, chat: ChatSession, text: str, instruction: str = "") -> str:
     """One turn of the review cell: its final answer, or `RuntimeError`."""
 
-    final, failed = "", ""
+    final, failed, answered = "", "", ""
+    loop.refused = False
     spec = specs.load(loop.repo, loop.sid)
     path = Path(spec["worktree"])
     repo = channels.repo_for(loop.repo)
@@ -904,7 +907,7 @@ def ask(loop: Loop, chat: ChatSession, text: str, instruction: str = "") -> str:
                 run.put({"kind": "tool", "text": "압축 뒤 명세를 다시 넣었다", "meta": {}, "session_id": chat.id,
                          "parent_id": None})
             if ev.kind == "done":
-                final = ev.text
+                final, answered = ev.text, ev.meta.get("answer") or ""
                 failed = (final or "완료된 답이 없다") if ev.meta.get("error") else ""
                 if ev.meta.get("session_id"):
                     kept = folder(loop.repo, specs.load(loop.repo, loop.sid)["pr"]["number"]) / "session.json"
@@ -931,6 +934,9 @@ def ask(loop: Loop, chat: ChatSession, text: str, instruction: str = "") -> str:
             run.finish()
     if work.REFUSED.search(failed):
         refused_cell(specs.load(loop.repo, loop.sid) or spec, verification.redact(failed, redaction) if redaction else failed)
+        if answered.strip():   # it went on to an answer: the round judges that, and never asks again
+            loop.refused = True
+            return answered
     if failed or not final.strip():
         raise RuntimeError(failed or "빈 답이다")
     return final
@@ -940,9 +946,19 @@ def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     """A repair turn of the work cell (`turn`) — review, gate, merge conflict,
     local verification — held to its test cleanup (`sweep.held`)."""
 
+    loop.refused = False
     if spec.get("planning"):    # a plan's revision writes documents only
         return turn(loop, spec, path, text)
-    return sweep.held(path, text, lambda t: turn(loop, spec, path, t), lambda answer: block("test-cleanup", answer),
+
+    def follow(t: str) -> str | None:
+        # Each turn reads the spec again: a refusal may have moved its cell (`moved`). One that could
+        # not move is never asked anything more in this repair.
+        if loop.refused:
+            raise RuntimeError("A response was blocked by our safety systems earlier in this repair; "
+                               "nothing more is sent to that provider")
+        return turn(loop, specs.load(loop.repo, loop.sid) or spec, path, t)
+
+    return sweep.held(path, text, follow, lambda answer: block("test-cleanup", answer),
                       lambda why: stop(loop, loop.repo, loop.sid, Why.FORMAT, why), lambda fields: change(loop, **fields),
                       (specs.load(loop.repo, loop.sid) or spec).get("cleanup_owed", ""))
 
@@ -994,8 +1010,15 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
         return None
     end = next((e for e in reversed(run.events) if e["kind"] in ("done", "error")), None)
     failure = next((e for e in run.events if e["kind"] == "error" or (e.get("meta") or {}).get("error")), None)
-    if failure and work.REFUSED.search(failure["text"] or "") and moved(loop, spec):
-        return turn(loop, specs.load(loop.repo, loop.sid) or spec, path, text)
+    if failure and work.REFUSED.search(failure["text"] or ""):
+        # The provider cut a response. What the turn went on to answer is the caller's to judge;
+        # with no answer, Codex takes the same turn. Moved, the cell stays on Codex.
+        answered = (failure.get("meta") or {}).get("answer") or ""
+        if moved(loop, spec):
+            return answered if answered.strip() else turn(loop, specs.load(loop.repo, loop.sid) or spec, path, text)
+        if answered.strip():
+            loop.refused = True   # never sent again to the provider that cut it
+            return answered
     if failure:
         raise RuntimeError(failure["text"] or "완료된 답이 없다")
     if not end or end["kind"] != "done" or not end["text"].strip():
@@ -1603,7 +1626,7 @@ def step(loop: Loop) -> bool:
             (kept / f"round-{n}-result.md").write_text(
                 verification.redact(answer, settings) if verification.cloud(spec) else answer, encoding="utf-8")
             why = verification.redact(str(exc), settings) if verification.cloud(spec) else str(exc)
-            if work.REFUSED.search(answer):
+            if loop.refused:
                 return stop(loop, loop.repo, loop.sid, Why.EXTERNAL,
                             f"R{n} 리뷰 응답 하나를 모델 제공자가 안전 정책으로 끊었고, 남은 답을 읽지 못했다 — "
                             f"{why}. 같은 요청을 다시 보내지 않았다")
@@ -1702,7 +1725,7 @@ def corrected(loop: Loop, spec: dict, repo: Path, path: Path) -> bool:
                     f"R{n} 수정 턴을 보내지 않았다 — 제안이 실행 직전 확인을 넘지 못했다")
     for attempt in range(2):
         try:
-            answer = told(loop, specs.load(loop.repo, loop.sid) or spec, path, text)   # its cell may have moved
+            answer = told(loop, spec, path, text)
             if answer is None:
                 return False
             # Revised requirements invalidate the old review; do not restore it.
@@ -1723,9 +1746,8 @@ def corrected(loop: Loop, spec: dict, repo: Path, path: Path) -> bool:
                     problem = "고쳤다고 보고했지만 검토한 HEAD 뒤의 수정 커밋이 없다"
             if not problem and researched:
                 problem = recovery.unrecorded(path, researched)
-            if problem and work.REFUSED.search(answer) and (attempt or not moved(loop, spec)):
-                # A stopped response the turn went on without: its answer is judged, and only
-                # another provider is asked again.
+            if problem and loop.refused:
+                # A cut response the turn went on without, on a cell that could not move: never asked again.
                 return stop(loop, loop.repo, loop.sid, Why.EXTERNAL,
                             f"R{n} 수정 턴의 응답 하나를 모델 제공자가 안전 정책으로 끊었고, 남은 답으로는 "
                             f"완료를 확인하지 못했다 — {problem}. 같은 요청을 다시 보내지 않았다")
