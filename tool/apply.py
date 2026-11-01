@@ -38,7 +38,7 @@ SYNC_MARK = "sync.py"
 CONTINUATION_MARK = "declared_continuation.py"
 # Every script this wiki wires by name, besides the pages' `enforce.pretooluse`.
 OWNED = (HOOK_MARK, SESSION_MARK, SYNC_MARK, CONTINUATION_MARK, "keepalive.py",
-         "codex_pretool.py", "host_boundary.py", "deny.py")
+         "codex_pretool.py", "host_boundary.py", "deny.py", "guard.py")
 
 # Recognize the retired bridge by its executable/script, never by an
 # account-home path: CODEX_HOME still holds the selected CLI login.
@@ -470,7 +470,7 @@ def configure(settings: dict, project: Path | None, adapter: str | None, python:
                 entry["hooks"][0]["additionalContextLimit"] = 12000
             changes += put_hook(settings, event, mark, entry)
     else:
-        pre = {s: wrap(script_entry(python, s, "진행 설명 확인")) for s in scripts}
+        pre = {s: wrap(script_entry(python, s, "위키: 효과 검사" if s == "guard.py" else "진행 설명 확인")) for s in [*scripts, "guard.py"]}
         if project is None:
             # `permissions.deny` in the user settings would bind every
             # repository on the machine. `deny.py` behind the dispatcher

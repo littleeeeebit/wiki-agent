@@ -90,6 +90,63 @@ the app's task and review workflow. Reinstalling removes this wiki's retired
 `keepalive.py` entries; the search daemon never sends keystrokes or paid idle
 turns. The old `keep_alive` adapter value is ignored.
 
+### The effect guard
+
+`tool/guard.py` is a PreToolUse hook on both hosts: Claude runs it as its own
+entry, Codex runs it inside `codex_pretool.py` after `host_boundary.py` and the
+pages' `enforce.deny` rules. It judges only sessions the app started
+(`WIKI_AGENT_MANAGED=1`) in a checkout with an adapter; everywhere else it
+passes.
+
+It does not match command patterns. A shell command is parsed into a tree
+(`;`, `&&`, `||`, `|`, `$(...)`, backticks, redirections, here documents, and
+the strings handed to `bash -c`, `sh -c`, `pwsh -Command`, `powershell
+-Command` and `cmd /c`, parsed again up to eight levels deep) and reduced to
+effects: `read`, `write(path)`, `delete(path)`, `spawn(executable)`,
+`network(host)`, and `top(reason)` for what cannot be decided before it runs —
+`eval`, `source`, `-EncodedCommand`, a variable, substitution or glob in a
+written path, a script file, an unclosed quote, nesting past the limit. An
+Edit, Write, MultiEdit, NotebookEdit or apply_patch call is a `write` (or
+`delete`) of its resolved target. Reads, and tools that neither run a shell nor
+edit a file, are not restricted. The call passes when every effect lies inside
+the task's grant, computed again for each call:
+
+| Effect | Granted when |
+|---|---|
+| `write`, `delete` | the path resolves (links, junctions and `..` followed) inside a write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder; each `[guard] write_roots` entry, relative to the checkout |
+| — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and deleting any folder that holds them |
+| `spawn` | the executable is one that `gate_cmd`, `verification.toml`'s round and local commands, a `[checks]` command or `python tool/search` runs, or is listed in `[guard] executables`. `git` and `gh` are modelled by verb: a known verb is its writes and its remote's host, an unknown one is `top` |
+| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts` |
+| `top` | never |
+
+The optional adapter table adds to the grant and never names a command:
+
+```toml
+[guard]
+write_roots = ["../shared-fixtures"]
+network_hosts = ["pypi.org"]
+executables = ["ruff", "npx"]
+```
+
+A denial lists each effect outside the grant, why, and what would open it,
+then the grant itself. The person reads it, so it stays Korean:
+
+```
+위키 효과 검사가 이 호출을 막았다 — 작업에 허가된 효과 밖이다.
+- spawn(cargo): 허가된 실행 파일이 아니다 — `.wiki/adapter.toml` 의 `[guard] executables` 에 `cargo` 를 더하면 열린다
+- delete(C:/work/other): 쓰기 루트 밖이다 — `.wiki/adapter.toml` 의 `[guard] write_roots` 에 이 경로를 담은 디렉터리를 더하면 열린다
+- top(variable in a write path): 판단할 수 없는 형태다(variable in a write path) — 어떤 허가로도 열리지 않으니, 리터럴 경로와 직접 실행하는 명령으로 풀어 쓴다
+허가: 쓰기 루트 C:\work\repo, C:\Users\me\AppData\Local\Temp · 실행 파일 npm, python · 호스트 127.0.0.1, github.com
+```
+
+A `top` is answered by writing the command out: a literal path instead of
+`$TEMP/x`, the program itself instead of `eval` or a script file. A variable
+the same command assigns once, before use and outside a conditional, counts
+as its literal. The guard's limits: what a granted interpreter (`python`,
+`npm`) does inside its own process is not modelled, and the hub's own
+`tool/` is inside its checkout's write root. Any exception in the hook passes
+the call (`craft/hooks-fail-open`).
+
 Run `git rev-parse HEAD` in the wiki folder and store the resulting
 40-character value as a single line in the **target project's**
 `.wiki/wiki-revision`. Use UTF-8 without BOM and LF. That value is how the

@@ -1,0 +1,2673 @@
+{
+ "about": "Real commands from this repository's Claude Code and Codex sessions, home and account anonymised, with the effects `guard.derive` must give for them under `context`.",
+ "context": {
+  "cwd": "C:/Users/me/PycharmProjects/wiki-agent",
+  "home": "C:/Users/me",
+  "temp": "C:/Users/me/AppData/Local/Temp",
+  "windows": true,
+  "remotes": [
+   [
+    "origin",
+    "github.com"
+   ]
+  ]
+ },
+ "commands": [
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "$(true) && powershell -NoProfile -Command \"\\$env:PYTHONIOENCODING='utf-8'; python -c \\\"import json; d=json.load(open('eval/jev/reliability-v5/actions.json',encoding='utf-8')); print(len(d['fixtures']))\\\"\" 2>&1 | tail -1",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(substitution as the command name)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "B=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/pr-105-body.md\" && sed -i 's/전체 게이트는 1804 passed, 4 skipped다\\./전체 게이트는 리뷰가 허용한 헤드 95b3e6c에서 1815 passed, 5 skipped다./' \"$B\" && grep -n \"전체 게이트\" \"$B\" && gh pr edit 105 --body-file \"$B\" >/dev/null && echo edited",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "top(sed script writes or runs)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/pr-105-body.md)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "B=fix/refactor-freeze-ignores-app-memory; diff <(git diff --name-only $B adccaaa) <(git diff --name-only f786e1a 3c97ce3) && echo \"only #262 differs\" && git branch -D $B && git branch -r | grep -c refactor-freeze; rm -f artifacts/review/pr263-round-*.md \"$TEMP/fixrun.log\" \"$TEMP/oldcheck.log\" \"$TEMP/ci263.log\" \"$TEMP/ci263b.log\"; ls artifacts/review artifacts 2>&1 | head; git status --short; git worktree list | wc -l",
+   "effects": [
+    "read",
+    "top(glob in a delete path)",
+    "top(variable in a delete path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "CARGO=$(command -v cargo || echo \"$USERPROFILE/.cargo/bin/cargo.exe\"); \"$CARGO\" check --quiet --manifest-path web/src-tauri/Cargo.toml 2>&1 | tail -20; echo \"cargo=$?\"; cd web && npx tsc -b 2>&1 | tail -5; echo tsc=$?; npx eslint src/App.tsx src/components/UpdateCard.tsx src/lib/leave.ts 2>&1 | tail -10; echo eslint=$?; cd .. && python tool/debt.py check 2>&1 | tail -5",
+   "effects": [
+    "read",
+    "spawn(npx)",
+    "spawn(python)",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "CARGO=/c/Users/me/.cargo/bin/cargo.exe; command -v cargo >/dev/null && CARGO=cargo; \"$CARGO\" check --quiet --manifest-path web/src-tauri/Cargo.toml 2>&1 | tail -3; echo cargo=$?; cd web && npm run build 2>&1 | grep -E \"error|built in\" | head -3; npm run lint 2>&1 | grep -c warning; cd .. && python tool/debt.py check; echo debt=$?; python tool/lint.py 2>&1 | tail -2; git diff --stat",
+   "effects": [
+    "read",
+    "spawn(npm)",
+    "spawn(python)",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "CARGO=/c/Users/me/.cargo/bin/cargo.exe; command -v cargo >/dev/null && CARGO=cargo; \"$CARGO\" check --quiet --manifest-path web/src-tauri/Cargo.toml 2>&1 | tail -3; echo cargo=$?; python tool/lint.py 2>&1 | tail -1; python tool/debt.py check; echo debt=$?; LC_ALL=C grep -c '[^ -~]' tool/app.cmd; git diff --stat",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "CARGO=/c/Users/me/.cargo/bin/cargo.exe; command -v cargo >/dev/null && CARGO=cargo; \"$CARGO\" check --quiet --manifest-path web/src-tauri/Cargo.toml 2>&1 | tail -8; echo cargo=$?; S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; WT=$S/wt; git worktree add --detach -q \"$WT\" c8d586e && { git diff --name-only --diff-filter=AMR c8d586e; git ls-files --others --exclude-standard; } | sort -u | while read f; do mkdir -p \"$WT/$(dirname \"$f\")\"; cp \"$f\" \"$WT/$f\"; done; cp -r web/dist \"$WT/web/dist\"; diff -q tool/app.cmd $WT/tool/app.cmd && diff -q web/src-tauri/src/main.rs $WT/web/src-tauri/src/main.rs && echo same",
+   "effects": [
+    "read",
+    "top(substitution in a write path)",
+    "top(variable as the command name)",
+    "top(variable in a write path)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/dist)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "CARGO=/c/Users/me/.cargo/bin/cargo.exe; command -v cargo >/dev/null && CARGO=cargo; \"$CARGO\" check --quiet --manifest-path web/src-tauri/Cargo.toml 2>&1 | tail; echo check=$?; grep -n -A12 \"### Updates\" docs/chat-setup.md; grep -n \"update card\\|UpdateCard\" docs/development.md",
+   "effects": [
+    "read",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "D=\"$TEMP/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/swt\"; rm -rf \"$D\"; mkdir -p \"$D\" && cd \"$D\" && git init -q && echo a > f && git add f && git -c user.name=t -c user.email=t@t commit -qm a && git update-index --skip-worktree f && echo b > f && git add -f -- f; echo \"add rc $?\"; cd .. && rm -rf \"$D\"",
+   "effects": [
+    "read",
+    "top(relative path after an unknown cd)",
+    "top(variable in a delete path)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "D=\"$TEMP/flake1b\"; rm -rf \"$D\"; mkdir -p \"$D\"; for i in $(seq 1 16); do (python -m pytest -q -p no:cacheprovider -n 0 -s tool/test_review_contract.py::test_zz_probe_timing > \"$D/$i.log\" 2>&1) & done; wait; git checkout -- tool/test_review_contract.py; git status --short; grep -ah PROBE \"$D\"/*.log | sort -t' ' -k4 -n | tail -6",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(variable in a delete path)",
+    "top(variable in a write path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "D=\"/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/8f8b8d46-6d21-49a5-ba11-8a71b8cabbd0/scratchpad/audit\"; mkdir -p \"$D\"; pdftotext -layout \"/c/Users/me/Downloads/wiki-agent-audit-2026-10-10.pdf\" \"$D/audit.txt\"; wc -l \"$D/audit.txt\"",
+   "effects": [
+    "read",
+    "spawn(pdftotext)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/8f8b8d46-6d21-49a5-ba11-8a71b8cabbd0/scratchpad/audit)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "D=\"/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/8f8b8d46-6d21-49a5-ba11-8a71b8cabbd0/scratchpad/audit\"; which pdftoppm && pdftoppm -r 110 -png \"/c/Users/me/Downloads/wiki-agent-audit-2026-10-10.pdf\" \"$D/p\" && ls \"$D\"",
+   "effects": [
+    "read",
+    "spawn(pdftoppm)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "D=raw/review-evidence/mobile-p0-20261009 && mkdir -p $D && cp artifacts/review/*.md $D/ && ls $D | wc -l && rm -rf \"$(pwd)/artifacts\" && test ! -e artifacts && echo \"artifacts removed\"; ls -la raw/android/; curl -s -m5 http://127.0.0.1:49932/api/mobile/status; echo",
+   "effects": [
+    "network(127.0.0.1)",
+    "read",
+    "top(substitution in a delete path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/review-evidence/mobile-p0-20261009)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "GIT_CONFIG_GLOBAL=/dev/null timeout 300 python -m pytest -q test_refactor_run.py -k \"approved_blob_frees_only or worktree_bytes_are_not\" -p no:randomly",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(GIT_CONFIG_GLOBAL changes what runs)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "P=$(grep -o \"127.0.0.1:[0-9]*\" C:/Users/me/PycharmProjects/wiki-agent/raw/main.log | head -1); curl -s \"http://$P/api/refactors/7357ebbe\" | python -c \"\nimport json,sys; r=json.load(sys.stdin)\nprint(r.get('state'), r.get('phase'), r.get('spent'))\nm=r.get('map') or {}\nnames=[p.get('name') or p.get('id') for p in (m.get('pipelines') or [])]\nprint('pipelines in map:', len(names)); print('done:', list((r.get('pipelines') or {}).keys()))\"",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(variable in a network target)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "P=$(python -c \"import urllib.parse;print(urllib.parse.quote(r'C:\\Users\\me\\PycharmProjects\\ai-generation'))\"); curl -s -m 10 -H \"x-project: ai-generation\" \"http://127.0.0.1:9656/api/work/log?path=$P\" | python -c \"\nimport sys,json\nd=json.load(sys.stdin); print('busy',d['busy'],'running',d['running'],'queued',d['queued'], 'rows',len(d['rows']))\"",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(variable in a network target)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=\"/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad\"; D=\"$S/res-support-1020\"; mkdir -p \"$D\" && cd \"$D\" && unzip -o -q /c/Users/me/Downloads/res/result-support-20261020-072747.zip && unzip -o -q /c/Users/me/Downloads/res/result-setup-20261020-072747.zip -d setup && find . -type f | head -50 && ls -la",
+   "effects": [
+    "read",
+    "top(relative path after an unknown cd)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; cd \"$S/pr3-live\" && git checkout -q --detach refactor-purpose-modes-3 && git log --oneline -1 && cd C:/Users/me/PycharmProjects/wiki-agent/web && npx vite build --outDir \"$S/pr3-live/web/dist\" --emptyOutDir 2>&1 | grep -E \"built in|error\" ",
+   "effects": [
+    "read",
+    "spawn(npx)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pr3-live)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; cd C:/Users/me/PycharmProjects; for r in wiki-agent ai-companion-voice-agent wiki-agent-refactor-scratch; do echo \"== $r\"; git -C $r worktree list 2>&1 | grep -iE \"survey|pr3-live|refactor\" ; done; ls \"$S\"; cmd //c \"dir /AL /S /B $(cygpath -w \"$S/pr3-live\")\" 2>&1 | head -5",
+   "effects": [
+    "read",
+    "top(relative path after an unknown cd)",
+    "top(variable in a nested shell string)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad\"; export PER=400; ( sh \"$S/label-full.sh\" \"$S/label-val.log\" full1-val validation.candidates.jsonl coverage:1:0.8 route:1:0.25 conflict:1:0.35 redirect:1:0.35 progress:1:0.25 ask:1:0.15 source:1:0.12 analysis:1:0.35 ) & ( sh \"$S/label-full.sh\" \"$S/label-cal.log\" full1-cal calibration.candidates.jsonl coverage:1:0.8 route:1:0.25 conflict:1:0.35 redirect:1:0.35 progress:1:0.25 ask:1:0.15 source:1:0.12 analysis:1:0.35 ) & wait; grep -hE \"^===|\\\"stopped\\\"|usd_in_all\" \"$S/label-val.log\" \"$S/label-cal.log\"",
+   "effects": [
+    "read",
+    "top(variable in a shell's arguments)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad\"; for c in 12 16; do sed \"s/^CAP, SUB, HARD, T = 8,/CAP, SUB, HARD, T = $c,/\" $S/jointserve.py > $S/jointserve_c.py; echo \"cap $c\"; python -I -X utf8 $S/jointserve_c.py | tail -4; done",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(variable in a sed script)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/jointserve_c.py)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad\"; for f in a b c; do echo \"--- resume $(date +%T)\" >> \"$S/label-full-$f.log\"; done; sh \"$S/label-full.sh\" \"$S/label-full-a.log\" full1 full1.candidates.jsonl coverage:6:2.3 route:8:0.7 ask:4:0.25 & sh \"$S/label-full.sh\" \"$S/label-full-b.log\" full1 full1.candidates.jsonl useful:8:1.3 conflict:8:0.95 source:4:0.2 & sh \"$S/label-full.sh\" \"$S/label-full-c.log\" full1 full1.candidates.jsonl redirect:8:0.95 analysis:8:1.05 progress:8:0.7 & wait; grep -h \"===\\|stopped\\|usd_in_all\" \"$S\"/label-full-?.log | tail -40",
+   "effects": [
+    "read",
+    "top(variable in a shell's arguments)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad\"; sed -i 's/63 passed/62 passed/' \"$S/pr-absence.md\" && gh pr edit 151 --body-file \"$S/pr-absence.md\" >/dev/null && echo ok; cd /c/Users/me/PycharmProjects/wiki-agent && grep -n \"def pack\" -A30 laya/train.py | head -45",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "top(sed script writes or runs)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/pr-absence.md)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad\"; sed -i 's/of 35\")/of 35.3\")/' \"$S/spend.py\"; sh \"$S/label-full.sh\" \"$S/label-full3.log\" full3 full3.candidates.jsonl coverage:3:1.85; grep -a \"^{\\\"round\\|===\\|failed\\|stopped\" \"$S/label-full3.log\" | tail -6 | cut -c1-230; python \"$S/spend.py\" | tail -1",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(a shell script file)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/spend.py)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad\"; sh \"$S/calibration-useful.sh\" > \"$S/calibration-useful.log\" 2>&1; echo exit=$?; grep -E \"^==|spent|STOP|stopped|labels|Traceback|Error\" \"$S/calibration-useful.log\" | tail -15",
+   "effects": [
+    "read",
+    "top(a shell script file)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/calibration-useful.log)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad\"; sh \"$S/label-full.sh\" \"$S/label-aug2.log\" aug2 aug2.candidates.jsonl coverage:2:0.8; grep -a \"^{\\\"round\\|===\\|stopped\" \"$S/label-aug2.log\" | cut -c1-240; python -I -c \"\nimport json,collections\nc=collections.Counter(v for l in open(r'C:/Users/me/PycharmProjects/wiki-agent/laya/data/coverage/aug2.jsonl',encoding='utf-8') for v in json.loads(l)['expected'].values()); print(c)\"",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(a shell script file)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad\"; sh \"$S/label-full.sh\" \"$S/label-full-a.log\" full1 train.candidates.jsonl coverage:6:2.0 route:8:0.6 ask:4:0.5 & sh \"$S/label-full.sh\" \"$S/label-full-b.log\" full1 train.candidates.jsonl useful:8:0.8 conflict:8:0.8 source:4:0.4 & sh \"$S/label-full.sh\" \"$S/label-full-c.log\" full1 train.candidates.jsonl redirect:8:0.8 analysis:8:0.9 progress:8:0.6 & wait; grep -h \"===\\|stopped\\|usd_in_all\" \"$S\"/label-full-?.log",
+   "effects": [
+    "read",
+    "top(variable in a shell's arguments)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad\" && W=\"$S/contract/wiki-agent\" && mkdir -p \"$S/review-252\" && cp \"$W\"/artifacts/review/contract-file-removal-* \"$S/review-252/\" && cmd //c \"rmdir $(cygpath -w \"$W/web/node_modules\")\" && ls web/node_modules | head -2 && git worktree remove \"$W\" && git branch -D fix/refactor-contract-whole-file-removal && git worktree list && git branch && git branch -r | grep -c fix/refactor-contract || true; git status -sb | head -1",
+   "effects": [
+    "read",
+    "top(variable in a delete path)",
+    "top(variable in a nested shell string)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/review-252)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad\"; for w in site demo; do for d in web/node_modules node_modules .venv; do p=\"$S/$w/wiki-agent/$d\"; [ -e \"$p\" ] && { echo \"$w $d exists\"; powershell -NoProfile -Command \"(Get-Item -Force '$(cygpath -w \"$p\")').LinkType\"; }; done; done; echo done",
+   "effects": [
+    "read",
+    "top(variable in a nested shell string)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad\"; git worktree remove \"$S/site/wiki-agent\" && git worktree remove --force \"$S/demo/wiki-agent\" && git branch -D docs/korean-help-pages && git worktree prune && git worktree list && git branch --list 'docs/*'; ls \"$S/site\" \"$S/demo\"",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/demo/wiki-agent)",
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/site/wiki-agent)",
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=$(curl -s -m5 http://127.0.0.1:49932/api/mobile/status); echo \"$S\"; O=$(echo \"$S\" | python -c \"import json,sys;print(json.load(sys.stdin)['origin'])\"); [ -n \"$O\" ] && curl -s -m20 -o /dev/null -w 'install %{http_code}\\n' $O/mobile-install && curl -s -m30 -o /dev/null -w 'apk %{http_code} %{content_type} %{size_download}\\n' $O/mobile-install.apk",
+   "effects": [
+    "network(127.0.0.1)",
+    "read",
+    "spawn(python)",
+    "top(variable in a network target)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad; D=$S/res-policy; mkdir -p $D; cd $D && for z in /c/Users/me/Downloads/res/*.zip; do n=$(basename $z .zip); mkdir -p $n; unzip -oq $z -d $n; done; ls $D/*; cat $D/result-setup-*/*.json 2>/dev/null | head -50",
+   "effects": [
+    "read",
+    "top(variable in a write path)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/res-policy)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; CARGO=/c/Users/me/.cargo/bin/cargo.exe; command -v cargo >/dev/null && CARGO=cargo; \"$CARGO\" build --release --quiet --manifest-path $S/wt/web/src-tauri/Cargo.toml 2>&1 | tail -3; echo built; for i in 1 2 3; do timeout 220 python -I -X utf8 -u $S/cycle.py $S > $S/cycle$i.txt 2>&1 < /dev/null; echo \"== $i\"; grep -v \"^ *File\\|^ *~\\|^ *\\^\" $S/cycle$i.txt | tail -3; done",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(variable as the command name)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; WT=$S/wt; git worktree add --detach -q \"$WT\" c8d586e && { git diff --name-only --diff-filter=AMR c8d586e; git ls-files --others --exclude-standard; } | sort -u | while read f; do mkdir -p \"$WT/$(dirname \"$f\")\"; cp \"$f\" \"$WT/$f\"; done; cmd //c mklink //J \"$(cygpath -w $WT/web/node_modules)\" \"$(cygpath -w $PWD/web/node_modules)\" >/dev/null && cd $WT/web && npm run build 2>&1 | grep -E \"built in|error\" ; ls $WT/web/dist/index.html",
+   "effects": [
+    "read",
+    "spawn(npm)",
+    "top(substitution in a write path)",
+    "top(variable in a nested shell string)",
+    "top(variable in a write path)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; WT=$S/wt; git worktree add --detach -q \"$WT\" origin/main~1 && { git diff --name-only --diff-filter=AMR origin/main~1; git ls-files --others --exclude-standard; } | sort -u | while read f; do mkdir -p \"$WT/$(dirname \"$f\")\"; cp \"$f\" \"$WT/$f\"; done; git diff --name-only --diff-filter=D origin/main~1 | while read f; do rm -f \"$WT/$f\"; done; cp -r web/dist \"$WT/web/dist\"; cd \"$WT\" && git status --short | wc -l && git log --oneline -1",
+   "effects": [
+    "read",
+    "top(substitution in a write path)",
+    "top(variable in a delete path)",
+    "top(variable in a write path)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/dist)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; date +%T; cat $S/wt/raw/events.txt $S/wt/raw/relaunch.txt $S/wt/raw/main.log; echo; tail -c 600 $S/wt/raw/errors.jsonl; wmic process where \"ProcessId=32872 or ProcessId=27600 or ProcessId=2000 or ProcessId=4844 or ProcessId=16952\" get ProcessId,ParentProcessId,CommandLine",
+   "effects": [
+    "read",
+    "spawn(wmic)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; ls $S/wt/raw/; cat $S/wt/raw/main.err.log | tail -5; cd $S/wt && WEBVIEW2_USER_DATA_FOLDER=\"$(cygpath -w $S/wv2)\" WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 timeout 120 cmd //c \"$(cygpath -w $S/wt/web/src-tauri)\\\\..\\\\..\\\\tool\\\\app.cmd\" < /dev/null; echo \"exit=$?\"; python -c \"import time; time.sleep(8)\"; tasklist //FI \"IMAGENAME eq wiki-agent.exe\" | tail -2",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(variable in a nested shell string)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; python -c \"\nimport psutil; print([p.pid for p in psutil.process_iter(['cmdline']) if 'scratchpad' in ' '.join(p.info['cmdline'] or []) and 'main' in ' '.join(p.info['cmdline'] or []) and 'psutil' not in ' '.join(p.info['cmdline'] or [])])\"; cmd //c rmdir \"$(cygpath -w $S/wt/web/node_modules)\" && ls web/node_modules | head -2 && rm -rf \"$S/wt\" && git worktree prune && git worktree list",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
+    "read",
+    "spawn(python)",
+    "top(variable in a nested shell string)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; taskkill //PID 10168 //F >/dev/null; python -c \"\nimport psutil,time\nfor _ in range(60):\n    if not any('scratchpad' in ' '.join(q.info['cmdline'] or []) for q in psutil.process_iter(['cmdline']) if q.info['cmdline'] and 'tool' in ' '.join(q.info['cmdline'])): break\n    time.sleep(1)\n\"; find $S/wt -maxdepth 3 -type l; cd /c/Users/me/PycharmProjects/wiki-agent && git worktree remove --force \"$S/wt\" && git worktree prune && rm -rf \"$S/wv2\"; git worktree list; git status --short",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wv2)",
+    "read",
+    "spawn(python)",
+    "spawn(taskkill)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; taskkill //PID 6732 //F >/dev/null; CARGO=/c/Users/me/.cargo/bin/cargo.exe; command -v cargo >/dev/null && CARGO=cargo; \"$CARGO\" build --release --quiet --manifest-path $S/wt/web/src-tauri/Cargo.toml 2>&1 | tail -3; echo built; for i in 1 2 3; do timeout 220 python -I -X utf8 -u $S/cycle.py $S > $S/cycle$i.txt 2>&1 < /dev/null; echo \"== $i\"; grep -v \"^ *File\\|^ *~\\|^ *\\^\" $S/cycle$i.txt | tail -6; done",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "spawn(taskkill)",
+    "top(variable as the command name)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "SP=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; P=$(cygpath -w \"$SP/probe-dbl.cmd\"); rm -f \"$SP/marker.txt\"; cmd.exe //c start \"\" \"$P\"; sleep 6; echo \"start (default terminal): $(cat \"$SP/marker.txt\" 2>&1 | head -c 60)\"; rm -f \"$SP/marker.txt\"; cmd.exe //c start \"\" conhost.exe cmd.exe /c \"$P\"; sleep 6; echo \"start via conhost: $(cat \"$SP/marker.txt\" 2>&1 | head -c 60)\"",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/marker.txt)",
+    "read",
+    "top(variable in a nested shell string)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "SP=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; P=$(cygpath -w \"$SP/probe-dbl.cmd\"); rm -f \"$SP/marker.txt\"; conhost.exe cmd.exe //c \"$P\"; sleep 3; echo \"conhost: $(cat \"$SP/marker.txt\" 2>&1 | head -c 80)\"; rm -f \"$SP/marker.txt\"; \"$LOCALAPPDATA/Microsoft/WindowsApps/wt.exe\" cmd.exe //c \"$P\"; echo \"wt exit=$?\"; sleep 6; echo \"wt: $(cat \"$SP/marker.txt\" 2>&1 | head -c 80)\"",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/marker.txt)",
+    "read",
+    "spawn(conhost)",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "SP=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; rm -f \"$SP/marker.txt\"; W=$(cygpath -w \"$SP\"); printf '@echo off\\r\\necho ran %%date%% %%time%% > \"%s\\\\marker.txt\"\\r\\n' \"$W\" > \"$SP/probe-dbl.cmd\"; cat \"$SP/probe-dbl.cmd\"; explorer.exe \"$(cygpath -w \"$SP/probe-dbl.cmd\")\"; sleep 6; cat \"$SP/marker.txt\" 2>&1; ls \"$LOCALAPPDATA/Microsoft/WindowsApps/\" 2>/dev/null | grep -i \"wt\\|terminal\"",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/marker.txt)",
+    "read",
+    "spawn(explorer)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/probe-dbl.cmd)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "SP=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; sed -e 's|set \"ROOT=%~dp0..\"|set \"ROOT=C:\\\\Users\\\\me\\\\PycharmProjects\\\\wiki-agent\"|' -e 's|^start \"\" |echo WOULD START |' -e 's|^setlocal|setlocal\\necho STEP setlocal|' /c/Users/me/PycharmProjects/wiki-agent/tool/app.cmd > \"$SP/app-probe.cmd\"; grep -n \"ROOT=\\|WOULD\\|STEP\" \"$SP/app-probe.cmd\"; cd \"$SP\" && cmd.exe //c \"app-probe.cmd\" < /dev/null 2>&1 | head -20; echo \"cmd exit=$?\"",
+   "effects": [
+    "read",
+    "spawn(app-probe)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/app-probe.cmd)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "T=\"/c/Program Files/WindowsApps/Microsoft.WindowsTerminal_1.24.12741.0_x64__8wekyb3d8bbwe/wt.exe\"; test -e \"$T\" && echo \"target exists\" || echo \"target missing\"; ls \"/c/Program Files/WindowsApps/\" 2>&1 | head -3; cmd.exe //c \"dir /b \\\"C:\\Program Files\\WindowsApps\\\" | findstr /i Terminal\" 2>&1 | iconv -f cp949 -t utf-8 | head",
+   "effects": [
+    "read",
+    "spawn(findstr)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "W=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pr2-fix\"; cd \"$W\" && git status --short && git commit -qam \"Keep the refactoring focus prompt in English\n\nCo-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\" && git log --oneline -1 && cd /c/Users/me/PycharmProjects/wiki-agent && git worktree remove \"$W\" && git worktree list | head -5",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pr2-fix)",
+    "read",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pr2-fix)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "W=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/contract/wiki-agent\" && git -C \"$W\" status --short && git fetch origin --prune && git status -sb | head -1 && git pull --ff-only && echo \"tree branch: $(git rev-parse fix/refactor-contract-whole-file-removal^{tree})\" && echo \"tree merge:  $(git rev-parse 6ba1e9e^{tree})\" && git diff --stat fix/refactor-contract-whole-file-removal 6ba1e9e && ls \"$W/artifacts/review/\" && cmd //c \"fsutil reparsepoint query $(cygpath -w \"$W/web/node_modules\")\" | head -3",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "top(variable in a nested shell string)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "WT=\"/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/license/wiki-agent\" && git worktree remove \"$WT\" && git branch -D docs/mit-license && git fetch -q --prune && git branch -r | grep mit-license; echo \"remote branch check done\"; git worktree list; git status -sb | head -1; python tool/lint.py --repo . 2>&1 | tail -2; python tool/repo_lint.py --repo . 2>&1 | tail -2",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "spawn(python)",
+    "top(variable in a delete path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "WT=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt; export WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333; nohup \"$WT/web/src-tauri/target/release/wiki-agent.exe\" >/dev/null 2>&1 & disown; for i in $(seq 1 60); do curl -s http://127.0.0.1:9333/json 2>/dev/null | grep -q '127.0.0.1' && break; sleep 1; done; curl -s http://127.0.0.1:9333/json | grep '\"url\"'; tasklist //FI \"IMAGENAME eq wiki-agent.exe\" | tail -2",
+   "effects": [
+    "network(127.0.0.1)",
+    "read",
+    "spawn(wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cat .chat-local.json 2>/dev/null; for p in 8765 8000 8080 5173 7860 3000; do curl -s -m 3 localhost:$p/api/connect -o /tmp/c.json && echo \"port $p\" && break; done; python -c \"\nimport json;d=json.load(open('/tmp/c.json',encoding='utf-8'));print([(r['id'],r['state']) for r in d['rows']])\" 2>&1 | head -5",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(variable in a network target)",
+    "write(C:/Users/me/AppData/Local/Temp/c.json)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cat /c/Users/me/PycharmProjects/wiki-agent-worktrees/omm-incremental/raw/errors.jsonl 2>/dev/null | head -3 | cut -c1-200; git worktree remove --force /c/Users/me/PycharmProjects/wiki-agent-worktrees/omm-incremental && git branch -D omm-incremental; git fetch -q --prune origin; git branch -r | grep omm-incremental && git push -q origin --delete omm-incremental; rm -f artifacts/review/omm-incremental-round-*.md; git worktree list; git branch",
+   "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent-worktrees/omm-incremental)",
+    "network(github.com)",
+    "read",
+    "top(glob in a delete path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cat /proc/29344/cmdline 2>/dev/null | tr '\\0' ' '; echo; ls /proc | head -0; for p in /proc/[0-9]*; do w=$(cat $p/winpid 2>/dev/null); [ \"$w\" = \"29344\" ] && tr '\\0' ' ' < $p/cmdline; done; echo; sc query type= service state= all 2>/dev/null | grep -i -A0 cloudflare | head",
+   "effects": [
+    "read",
+    "spawn(sc)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd \"/c/Users/Public/Documents/ESTsoft/CreatorTemp\" && for d in tmp*/; do [ -d \"$d/drive/MyDrive/laya\" ] && rm -rf \"$d\" && echo \"removed $d\"; done; cd /c/Users/me/PycharmProjects/wiki-agent && grep -n \"MICRO_BATCH\" docs/plans/laya/4-training.md",
+   "effects": [
+    "read",
+    "top(variable in a delete path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/wa\" && cp tool/main/refactor.py ../refactor.bak && git show HEAD:tool/main/refactor.py > tool/main/refactor.py && timeout 600 python -m pytest -q -p no:cacheprovider tool/test_refactor.py -k \"full_plans\" 2>&1 | grep -E \"assert|passed|failed\" | head -5; cp ../refactor.bak tool/main/refactor.py && rm ../refactor.bak && git diff --stat",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/refactor.bak)",
+    "read",
+    "spawn(python)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/refactor.bak)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/wa/tool/main/refactor.py)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/wa\" && grep -rn \"^<<<<<<<\\|^>>>>>>>\" tool docs; ruff check tool/main/refactor.py tool/main/refactor_api.py tool/test_refactor.py && git add tool/main/refactor.py tool/main/refactor_api.py && GIT_EDITOR=true git rebase --continue 2>&1 | tail -4; git status --short | grep -v \"^M \\|^A \"; grep -n \"^<<<<<<<\\|^=======\\|^>>>>>>>\" tool/main/refactor.py tool/main/refactor_api.py tool/test_refactor.py",
+   "effects": [
+    "read",
+    "spawn(ruff)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/wa)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/wa\" && python -m ruff check tool && python -c \"import sys; sys.path.insert(0,'tool'); import main.app\" && grep -n \"def _repo\\|def client\\|def no_machine_settings\\|def settled\\|def until\" tool/test_main.py && sed -n \"$(grep -n 'def _repo' tool/test_main.py | cut -d: -f1),+30p\" tool/test_main.py",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(substitution in a sed script)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/wa/web\" && grep -n '\"lint\"\\|\"build\"' package.json && timeout 300 npm run lint 2>&1 | tail -15 && timeout 300 npx tsc -b 2>&1 | tail -15",
+   "effects": [
+    "read",
+    "spawn(npm)",
+    "spawn(npx)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/wa/web\" && timeout 300 npm run lint 2>&1 | grep -E \"Refactor.tsx|error|Found\" | tail -5; cd .. && git status --short | head -3",
+   "effects": [
+    "read",
+    "spawn(npm)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad\" && rm -rf look && python shoot.py look 390x844 overview.html overview/review.html && python shoot.py look 1280x800 overview.html",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/look)",
+    "read",
+    "spawn(python)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/resume/wiki-agent\" && python -m ruff check tool && (cd web && npx tsc -b && npx oxlint src/components/TaskRail.tsx src/lib/api.ts) && git status --short",
+   "effects": [
+    "read",
+    "spawn(npx)",
+    "spawn(python)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad\" && echo \"with global: $(git config user.email)\"; echo \"without: [$(GIT_CONFIG_GLOBAL=/dev/null git config user.email)]\"; git config --system user.email; echo system-exit=$?",
+   "effects": [
+    "read",
+    "top(GIT_CONFIG_GLOBAL changes what runs)",
+    "top(git config --system)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd \"C:/Users/me/PycharmProjects/wiki-agent\" && gh pr view 82 --json baseRefName,headRefOid && ls artifacts/review/ && rm -f artifacts/review/refactor-full-round-*.md && ls artifacts/review/; python tool/corpus.py --project \"C:\\Users\\me\\PycharmProjects\\wiki-agent\" --write 2>&1 | tail -2; python tool/lint.py --repo . 2>&1 | tail -3; python tool/repo_lint.py --repo . 2>&1 | tail -3; git status --porcelain | head",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "spawn(python)",
+    "top(glob in a delete path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd \"C:/Users/me/PycharmProjects/wiki-agent\" && python tool/debt.py check --base main; echo debt=$?; ruff check tool/debt.py tool/refactor_profile.py tool/main/planning.py tool/main/refactor.py tool/test_debt.py tool/test_refactor_profile.py tool/test_refactor.py; timeout 900 python -m pytest -q -p no:cacheprovider tool/test_debt.py tool/test_refactor.py tool/test_refactor_profile.py tool/test_specs.py tool/test_planning.py tool/test_main.py tool/test_improvement.py 2>&1 | tail -1",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "spawn(ruff)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd \"C:/Users/me/PycharmProjects/wiki-agent\" && timeout 600 npm --prefix web run build 2>&1 | tail -6; stat -c '%y %n' web/dist/index.html; git status --short | head -5; curl -s -m 5 http://127.0.0.1:1373/ | grep -o 'assets/index-[^\"]*\\.js' | head -1; grep -o 'assets/index-[^\"]*\\.js' web/dist/index.html | head -1",
+   "effects": [
+    "network(127.0.0.1)",
+    "read",
+    "spawn(npm)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd \"C:/Users/me/PycharmProjects/wiki-agent/laya\" && python -m pytest test_laya.py -q -p no:cacheprovider -o addopts=\"\" 2>&1 | tail -3; ruff check . 2>&1 | tail -1; python support.py widen train 0 2>&1 | tail -1; git stash push -q support.py && python -m pytest test_laya.py -q -p no:cacheprovider -o addopts=\"\" -k support_asks 2>&1 | grep -E \"^E .*Error\" | head -1; git stash pop -q; git status --short",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "spawn(ruff)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/laya)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/1258396b-a6e6-4a4f-8ce7-64fb0bc75367/scratchpad && rm -rf tinyrepo && mkdir tinyrepo && cd tinyrepo && git init -q && echo x > a.txt && git add -A && git -c user.email=a@a -c user.name=a commit -qm a && for i in 1 2 3; do /usr/bin/time -f \"%e s debt\" python /c/Users/me/PycharmProjects/wiki-agent/tool/debt.py check; echo \"exit=$?\"; done 2>&1; for i in 1 2 3; do /usr/bin/time -f \"%e s bare python\" python -c \"pass\"; done 2>&1",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/1258396b-a6e6-4a4f-8ce7-64fb0bc75367/scratchpad/tinyrepo)",
+    "read",
+    "spawn(python)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/1258396b-a6e6-4a4f-8ce7-64fb0bc75367/scratchpad/tinyrepo)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/1258396b-a6e6-4a4f-8ce7-64fb0bc75367/scratchpad/tinyrepo/a.txt)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects && ls -d ai-companion-voice-agent* 2>/dev/null; P=$(cd /c/Users/me/PycharmProjects/ai-companion-voice-agent && git worktree list | grep -i 32916e65 | awk '{print $1}'); echo \"wt=$P\"; cd \"$P\" && git status -sb | head -5; git ls-files -v | grep -E \"^[Ssh] \" | head; git config --get core.sparseCheckout; git sparse-checkout list 2>&1 | head -3; cat .wiki/ratchet.json 2>/dev/null | head -3; git ls-files -v .wiki | head",
+   "effects": [
+    "read",
+    "top(relative path after an unknown cd)",
+    "write(C:/Users/me/PycharmProjects/ai-companion-voice-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/ai-companion-voice-agent && S=\"$TEMP/omm-main-check\" && rm -rf \"$S\" && git worktree add -q --detach \"$S\" HEAD && cd \"$S\" && git checkout -q ea5e04a1 -- .omm && python -m pytest tests/unit/voice_control/test_turn_lifecycle_diagram.py -q -p no:cacheprovider",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(relative path after an unknown cd)",
+    "top(variable in a delete path)",
+    "top(variable in a write path)",
+    "write(C:/Users/me/PycharmProjects/ai-companion-voice-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/ai-companion-voice-agent && S=\"$TEMP/omm-main-check\" && rm -rf \"$S\" && git worktree add -q --detach \"$S\" HEAD && cd \"$S\" && git checkout -q ea5e04a1 -- .omm && python -m pytest tests/unit/voice_control/test_turn_lifecycle_diagram.py -q -p no:cacheprovider 2>&1 | tail -4",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(relative path after an unknown cd)",
+    "top(variable in a delete path)",
+    "top(variable in a write path)",
+    "write(C:/Users/me/PycharmProjects/ai-companion-voice-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/ai-companion-voice-agent && git -c core.whitespace=cr-at-eol diff --check 13c11f093661e5ca7fe8372c6b30f33ae91ccc9c HEAD -- . \":(exclude).wiki/decisions/\" > \"$TEMP/crcheck.txt\" 2>&1; echo rc=$?; grep -v \"^+\" \"$TEMP/crcheck.txt\" | head -20; cd /c/Users/me/PycharmProjects/wiki-agent && grep -n \"diff\\\", \\\"--check\\|diff --check\" tool/main/specs.py tool/*.py tool/main/*.py | head",
+   "effects": [
+    "read",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/ai-companion-voice-agent && git worktree remove --force \"$TEMP/omm-main-check\" && git worktree list | grep -c omm-main-check; git status --short | grep -v \"^?? .wiki/decisions\" | head -3",
+   "effects": [
+    "read",
+    "top(variable in a delete path)",
+    "write(C:/Users/me/PycharmProjects/ai-companion-voice-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/ai-companion-voice-agent && grep -n -i \"conda\" scripts/local_ci.py | head -5; conda env list 2>/dev/null | head",
+   "effects": [
+    "read",
+    "spawn(conda)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/ai-generation && git status --short | head -5; git branch --show-current; P=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad\"; PYTHONUNBUFFERED=1 timeout 3000 \"$USERPROFILE/anaconda3/Scripts/conda.exe\" run --no-capture-output -n ai-generation python -m pytest -p no:cacheprovider -q --durations=25 --durations-min=5 > \"${P:?}/aigen-durations.log\" 2>&1; echo \"exit=$?\"; tail -40 \"${P:?}/aigen-durations.log\"",
+   "effects": [
+    "read",
+    "top(variable as the command name)",
+    "top(variable in a write path)",
+    "write(C:/Users/me/PycharmProjects/ai-generation)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent && cp tool/agent/chat_session.py \"$TEMP/cs_new.py\" && git show HEAD:tool/agent/chat_session.py > tool/agent/chat_session.py && (cd tool && timeout 300 python -m pytest test_agent.py -q -k \"silent_past or owes_no_followup or closing_answer\" 2>&1 | tail -6); cp \"$TEMP/cs_new.py\" tool/agent/chat_session.py && git diff --stat",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(variable in a write path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/tool/agent/chat_session.py)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent && find artifacts -mindepth 1 -maxdepth 1 -exec rm -rf {} + && ls -A artifacts | wc -l; netstat -ano | grep -E \"LISTENING\" | grep -E \":(8787|8863|5173) \" ; python tool/lint.py --repo . 2>&1 | tail -4; python tool/repo_lint.py --repo . 2>&1 | tail -4",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(variable in a delete path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent && git fetch -q && git log --oneline main..origin/main | head; git log --oneline -3 origin/main; grep -n \"def ask\\|Near\\|held\\|def main\\|asked\\|before\\b\" laya/joint.py; grep -n \"class Near\" -A25 laya/gate.py | head -40",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent && git stash push -q web/src/components/Run.tsx && npm --prefix web run build >/dev/null 2>&1; timeout 200 python web/tests/screen_state_browser.py 2>&1 | tail -1; git stash pop -q && git diff --stat web/src/components/Run.tsx && npm --prefix web run build >/dev/null 2>&1; timeout 200 python web/tests/screen_state_browser.py 2>&1 | tail -1",
+   "effects": [
+    "read",
+    "spawn(npm)",
+    "spawn(python)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent && ruff check tool/test_refactor_run.py && git add tool/test_refactor_run.py && git commit -q -F - <<'EOF'\nGive the two new test repositories a git identity\n\nCI run 41017858285 failed both new tests at `git commit` (exit 128): the\nrunner has no global identity. Set one per repository, as line 352 does.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\nEOF\ngit push -q && git rev-parse HEAD",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "spawn(ruff)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent-gen; python -m pytest laya tool/test_search.py -q -p no:cacheprovider 2>&1 | grep -E \"^E |FAILED|passed|failed\" | head -20",
+   "effects": [
+    "read",
+    "spawn(python)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent-jev11 && n=$(grep -n \"^def test_each_jev_question_arm\" tool/test_evaluation.py | cut -d: -f1) && { printf '\"\"\"Stage 11 of docs/plans/jev: each question arm'\"'\"'s requests and its offline comparison (`tool/eval/arms.py`).\"\"\"\\n\\nimport json\\n\\nimport pytest\\n\\n\\n'; sed -n \"${n},\\$p\" tool/test_evaluation.py; } > tool/test_jev_arms.py && echo $n && head -12 tool/test_jev_arms.py",
+   "effects": [
+    "read",
+    "top(variable in a sed script)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent-jev11/tool/test_jev_arms.py)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent-pr152 && grep -n \"trimmed\\|test_a_file_diff_over_the_limit\" tool/test_loop.py; grep -n \"gh pr diff\\|\\\"diff\\\"\" tool/test_loop.py | head; ruff check tool/main/loop.py tool/agent/read_tools.py | tail -3",
+   "effects": [
+    "read",
+    "spawn(ruff)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent-worktrees/omm-incremental && python tool/debt.py check --repo . --base main 2>&1 | tail -3; cmd //c \"mklink /J C:\\\\Users\\\\me\\\\PycharmProjects\\\\wiki-agent-worktrees\\\\omm-incremental\\\\web\\\\node_modules C:\\\\Users\\\\me\\\\PycharmProjects\\\\wiki-agent\\\\web\\\\node_modules\" && cd web && (npx tsc -b && echo TSC-OK) 2>&1 | tail -5",
+   "effects": [
+    "read",
+    "spawn(npx)",
+    "spawn(python)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent-worktrees/omm-incremental/web/node_modules)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent/laya/data && for k in route source useful conflict redirect coverage ask analysis progress repair; do [ -f $k/pilot1-train.candidates.jsonl ] && { echo \"exists $k\"; continue; }; mv $k/train.candidates.jsonl $k/pilot1-train.candidates.jsonl && printf \"%s %s\\n\" $k \"$(wc -l < $k/pilot1-train.candidates.jsonl)\"; done",
+   "effects": [
+    "read",
+    "top(variable in a delete path)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent/tool && for m in main.specs main.refactor main.refactor_run main.refactor_survey main.refactor_api main.query main.loop; do python -c \"import $m\" 2>&1 | tail -1 | sed \"s/^/$m: /\"; done; python -m ruff check main; cd .. && python tool/debt.py check --base main; echo \"exit $?\"",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(variable in a sed script)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent/web && npm run build && cd .. && python web/tests/refactor_browser.py",
+   "effects": [
+    "read",
+    "spawn(npm)",
+    "spawn(python)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent/web && npx tsc --noEmit -p . 2>&1 | tail -10; npx eslint src/components/Review.tsx src/lib/api.ts 2>&1 | tail -10",
+   "effects": [
+    "read",
+    "spawn(npx)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent/web && npx tsc -b && npx oxlint src/components/Agent.tsx src/components/LiveChanges.tsx src/components/TaskRail.tsx src/App.tsx src/lib/work.ts src/lib/api.ts && cd .. && python tool/debt.py check",
+   "effects": [
+    "read",
+    "spawn(npx)",
+    "spawn(python)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent/web && npx tsc -b && npx oxlint src/lib/work.ts && cd .. && ruff check tool/agent/chat_events.py tool/main/work.py tool/test_main.py && echo OK",
+   "effects": [
+    "read",
+    "spawn(npx)",
+    "spawn(ruff)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent; W=../wiki-agent-worktrees/laya-wiki; ls .wiki/laya*.md 2>/dev/null; mv $W/.wiki/laya*.md .wiki/; git worktree remove $W && git branch -D docs/laya-wiki; ls .wiki/*.md; python tool/repo_lint.py --repo . | tail -2; python tool/repo_graph.py --repo . 2>&1 | tail -3; python -c \"\nimport json;g=json.load(open('.wiki/graph.json',encoding='utf-8'))\ne=[x for x in g['edges'] if 'laya' in x['a'] and x['a'].startswith('.wiki')]; print(len(e)); [print(x) for x in e[:30]]; print(g['counts'], [o for o in g['orphans'] if 'laya' in o])\"",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(glob in a delete path)",
+    "top(variable in a delete path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.wiki)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd /c/Users/me/PycharmProjects/wiki-agent; python -m pytest laya -q -p no:cacheprovider 2>&1 | tail -1; ruff check laya tool/agent 2>&1 | tail -1; git diff --stat",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "spawn(ruff)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd C:/Users/me/PycharmProjects/wiki-agent && S=C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad; python web/tests/task_browser.py > $S/tb2.log 2>&1; echo \"task_browser $?\"; tail -1 $S/tb2.log | cut -c1-200; rm -f artifacts/refactor-survey.png; python -m ruff check tool laya | tail -1; python tool/lint.py --check > /dev/null 2>&1; echo \"lint $?\"; python tool/debt.py check --base main 2>&1 | tail -4",
+   "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/refactor-survey.png)",
+    "read",
+    "spawn(python)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd C:/Users/me/PycharmProjects/wiki-agent && SP=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; (web/src-tauri/target/release/wiki-agent.exe > \"$SP/exe.out\" 2> \"$SP/exe.err\"; echo \"exited=$?\" >> \"$SP/exe.out\") & sleep 12; echo \"--- out\"; cat \"$SP/exe.out\"; echo \"--- err\"; cat \"$SP/exe.err\" | head -20; tasklist //FI \"IMAGENAME eq wiki-agent.exe\" //NH; ls -la --time-style=full-iso raw/main.log",
+   "effects": [
+    "read",
+    "spawn(wiki-agent)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd C:/Users/me/PycharmProjects/wiki-agent && python -m pytest -q -n 4 tool/test_main.py 2>&1 | tee C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pytest-main-pr3.log | grep -E \"passed|failed|error\" | tail -5",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pytest-main-pr3.log)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd C:/Users/me/PycharmProjects/wiki-agent && python tool/lint.py --check > /dev/null 2>&1; echo \"lint $?\"; rm -f artifacts/refactor-survey.png; cd web && npx tsc --noEmit -p . > /dev/null 2>&1; echo \"tsc $?\"; npm run lint > /dev/null 2>&1; echo \"web lint $?\"",
+   "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/refactor-survey.png)",
+    "read",
+    "spawn(npm)",
+    "spawn(npx)",
+    "spawn(python)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd C:/Users/me/PycharmProjects/wiki-agent && rm -- artifacts/review/refactor-runner-cleanup-round-*.md; rm -f \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/suite-79.log\"; ls artifacts/review | grep -c refactor; python tool/lint.py --repo . 2>&1 | tail -1; python tool/repo_lint.py --repo . 2>&1 | tail -2; git status --short | head -3; git branch | cat",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/suite-79.log)",
+    "read",
+    "spawn(python)",
+    "top(glob in a delete path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd C:/Users/me/PycharmProjects/wiki-agent && rm -- artifacts/review/refactor-scanner-round-*.md && ls artifacts/review/ | grep -c refactor-scanner; mv \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/suite-77.log\" /dev/null 2>/dev/null; rm -f \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/suite-77.log\"; python tool/lint.py --repo . 2>&1 | tail -3; python tool/repo_lint.py --repo . 2>&1 | tail -3",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/suite-77.log)",
+    "read",
+    "spawn(python)",
+    "top(glob in a delete path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd C:/Users/me/PycharmProjects/wiki-agent && ruff check tool/main/refactor_run.py tool/main/refactor_survey.py tool/main/specs.py tool/test_refactor_run.py && python -m pytest -q -n 4 tool/test_refactor_run.py tool/test_refactor_survey.py 2>&1 | tee C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pytest-r1-pr2.log | grep -E \"passed|failed|Error|FAILED\" | tail -15",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "spawn(ruff)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pytest-r1-pr2.log)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd C:/Users/me/PycharmProjects/wiki-agent/web && npx tsc --noEmit -p . 2>&1 | head -20; echo \"tsc exit ${PIPESTATUS[0]}\"; npm run lint > ../../wl.log 2>&1; echo \"lint exit $?\"; tail -15 ../../wl.log",
+   "effects": [
+    "read",
+    "spawn(npm)",
+    "spawn(npx)",
+    "write(C:/Users/me/PycharmProjects/wl.log)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd C:/Users/me/PycharmProjects/wiki-agent/web && npx vite build > ../../vb.log 2>&1; echo \"build exit $?\"; tail -3 ../../vb.log; rm -f ../../vb.log",
+   "effects": [
+    "delete(C:/Users/me/PycharmProjects/vb.log)",
+    "read",
+    "spawn(npx)",
+    "write(C:/Users/me/PycharmProjects/vb.log)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd C:/Users/me/PycharmProjects/wiki-agent; D=raw/review-evidence/debt-20261008/review; mkdir -p $D && cp artifacts/review/debt-round-*.md artifacts/review/debt-round-3-*.xml artifacts/review/debt-pr-body.md artifacts/review/test-necessity-20261008.md artifacts/review/heavy83*.tsv $D/ && ls $D | wc -l && rm -rf artifacts/debt-baseline && rm -f artifacts/review/debt-*.md artifacts/review/debt-*.xml artifacts/review/debt-equivalence.py artifacts/review/test-necessity-20261008.md artifacts/review/heavy83* && rm -rf artifacts/review/__pycache__ && ls artifacts/review; ls artifacts | grep -c .",
+   "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/debt-baseline)",
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/review/__pycache__)",
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/review/debt-equivalence.py)",
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/review/test-necessity-20261008.md)",
+    "read",
+    "top(glob in a delete path)",
+    "top(glob in a write path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/artifacts/review/debt-pr-body.md)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/artifacts/review/test-necessity-20261008.md)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/review-evidence/debt-20261008/review)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd C:/Users/me/PycharmProjects/wiki-agent; T=$(mktemp -d); python -c \"import zipfile,sys; zipfile.ZipFile('laya/data/useful/colab-useful.zip').extractall(sys.argv[1])\" \"$T\"; cd \"$T\"; PYTHONIOENCODING=utf-8 /c/Users/me/PycharmProjects/wiki-agent/laya/.venv/Scripts/python -I -c \"\nimport sys; sys.path.insert(0, r'$T/laya')\nimport label, train, laya\nprint('DATA', label.DATA, 'laya pkg', laya.__file__[-30:])\nfor s in train.SPLITS:\n    p = label.DATA/'useful'/f'{s}.jsonl'\n    if p.exists():\n        rows = label.read(p); print(s, len(rows), sum(len(r['expected']) for r in rows))\nprint(sorted(train.PUBLISHED), train.MAX_LEN)\n\"; cd /; rm -rf \"$T\"",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(variable in a delete path)",
+    "write(C:/Users/me/AppData/Local/Temp)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cd C:/Users/me/PycharmProjects/wiki-agent; sed -i 's/return min(4, os.cpu_count() or 1) if full and not focused else 0/return min(8, os.cpu_count() or 1) if full and not focused else 0/' tool/conftest.py && sed -i '27s/assert pytest_xdist_auto_num_workers(config) == 4$/assert pytest_xdist_auto_num_workers(config) == 8/' tool/test_verification_runtime.py && sed -i '26s/use up to four isolated pytest-xdist workers\\./use up to eight isolated pytest-xdist workers./' docs/development.md && git diff --stat",
+   "effects": [
+    "read",
+    "top(sed script writes or runs)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/docs/development.md)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/tool/conftest.py)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/tool/test_verification_runtime.py)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "claude --version 2>&1; P=$(dirname \"$(which claude)\"); ls \"$P\" | head; find \"$(npm root -g 2>/dev/null)/@anthropic-ai\" -maxdepth 2 2>/dev/null | head",
+   "effects": [
+    "read",
+    "spawn(claude)",
+    "spawn(npm)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "cmd.exe //c \"assoc .cmd & ftype cmdfile\" 2>&1 | iconv -f cp949 -t utf-8; echo ---; reg query 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.cmd' //s 2>&1 | iconv -f cp949 -t utf-8 | head -20; echo ---; reg query 'HKCU\\Software\\Classes\\.cmd' //s 2>&1 | iconv -f cp949 -t utf-8 | head; reg query 'HKCU\\Software\\Classes\\cmdfile' //s 2>&1 | iconv -f cp949 -t utf-8 | head; echo ---; reg query 'HKCU\\Console\\%%Startup' 2>&1 | iconv -f cp949 -t utf-8",
+   "effects": [
+    "read",
+    "spawn(assoc)",
+    "spawn(ftype)",
+    "spawn(reg)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "curl -s -m 5 http://127.0.0.1:9656/api/loops | python -c \"\nimport sys,json\nfor t in json.load(sys.stdin)['turns']: print('turn', t.get('path'))\"",
+   "effects": [
+    "network(127.0.0.1)",
+    "read",
+    "spawn(python)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "curl -s -m 5 http://127.0.0.1:9656/api/worktrees | python -c \"\nimport sys,json\nd=json.load(sys.stdin); print(d['project'], d['repo'])\nfor w in d['rows'][:40]:\n  print({k:v for k,v in w.items() if k in ('branch','busy','running','live','state','kind','turn','active')})\n\"; wmic process where \"ProcessId=54700\" get CreationDate,CommandLine 2>/dev/null | head -3",
+   "effects": [
+    "network(127.0.0.1)",
+    "read",
+    "spawn(python)",
+    "spawn(wmic)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "f='C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/ff175329-3ac4-4464-b95e-e2f8de92f59b/scratchpad/pr84-body.md' && test -s \"$f\" && gh pr edit 84 --body-file \"$f\" >/dev/null && gh pr view 84 --json body -q .body | wc -c && gh pr view 84 --json body -q .body | grep -c \"1587 passed\"; rm -f /tmp/pr84.md",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/pr84.md)",
+    "network(github.com)",
+    "read"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "find android/app/src android/app/build.gradle -newer android/app/build/outputs/apk/release/app-release.apk -type f; echo \"newer-check done\"; \"raw/android-sdk/build-tools/36.0.0/apksigner.bat\" verify --print-certs android/app/build/outputs/apk/release/app-release.apk 2>&1 | head -4",
+   "effects": [
+    "read",
+    "spawn(apksigner)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "find artifacts -type l | head -3; git check-ignore -q artifacts && echo ignored; rm -rf artifacts && echo \"artifacts removed\"; P=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad\"; rm -rf \"${P:?}/wprobe\" \"${P:?}/r1fixed.py\" \"${P:?}/r2fixed.py\" \"${P:?}\"/*_browser.log; ls \"${P:?}\"",
+   "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts)",
+    "read",
+    "top(variable in a delete path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "find artifacts -type l | head; git check-ignore -q artifacts && echo ignored; rm -rf artifacts && ls -d artifacts 2>&1 | head -1; P=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad\"; rm -rf \"$P/wprobe\" \"$P/r1fixed.py\" \"$P/r2fixed.py\" \"$P\"/*_browser.log; ls \"$P\"",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad/r1fixed.py)",
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad/r2fixed.py)",
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad/wprobe)",
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts)",
+    "read",
+    "top(glob in a delete path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "for a in \"--picks\" \"--picks joint\" '--picks \"\"' \"--picks ,\"  \"--picks --bad.zip\" \"--picks a.zip,,b.zip\"; do echo \"[$a]\"; eval python train.py pack $a 2>&1 | tail -n 1 | cut -c1-50; done; python train.py pack --picks a.zip,b.zip joint | tail -n 1; python -m pytest test_laya.py -q -x -k \"joint or pack\" && ruff check .",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "spawn(ruff)",
+    "top(eval runs code the guard cannot read)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "for p in $(netstat -ano | grep LISTENING | grep \"127.0.0.1\" | awk '{print $2}' | sed 's/.*://' | sort -un); do t=$(curl -s -m 1 http://127.0.0.1:$p/api/options 2>/dev/null | head -c 80); [ -n \"$t\" ] && case \"$t\" in *focus*|*model*|*project*) echo \"$p $t\";; esac; done",
+   "effects": [
+    "read",
+    "top(glob as the command name)",
+    "top(variable in a network target)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "for p in $(ps | awk '/python/{print $1}'); do c=$(tr '\\0' ' ' < /proc/$p/cmdline 2>/dev/null); case \"$c\" in *verify.py*) echo \"$p $c\"; kill $p;; esac; done; echo checked",
+   "effects": [
+    "read",
+    "spawn(kill)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "for p in overview.html overview/guide.html overview/site.css overview/img/guide-connect.webp; do echo \"$p $(curl -s -o /dev/null -w '%{http_code}' https://owner.github.io/wiki-agent/$p)\"; done; curl -s https://owner.github.io/wiki-agent/overview.html | grep -o \"<title>[^<]*\"",
+   "effects": [
+    "network(owner.github.io)",
+    "read",
+    "top(variable in a network target)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "for v in live cached bogus; do echo \"== $v\"; timeout 30 codex -c \"web_search=\\\"$v\\\"\" features list 2>&1 | head -3; done",
+   "effects": [
+    "read",
+    "spawn(codex)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "gh pr merge 112 --squash --match-head-commit dc7a48ffd01c5345857ce99e8ae0aba06201376a && gh pr view 112 --json state,mergeCommit -q '.state+\" \"+.mergeCommit.oid'",
+   "effects": [
+    "network(github.com)",
+    "read"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "gh pr merge 213 --squash --delete-branch 2>&1 | tail -1; git fetch -q origin --prune; M=$(gh pr view 213 --json state,mergeCommit --jq '.state+\" \"+.mergeCommit.oid'); echo $M; git checkout -q main 2>/dev/null; git pull -q --ff-only; git diff b4fee32 ${M#* } -- tool/test_korean.py tool/test_loop.py --stat; git branch --list 'fix-ci-clock*'; git branch -r | grep fix-ci-clock; rm -f artifacts/review/ci-clock-flakes-round-*.md; python tool/lint.py --repo . 2>&1 | tail -1; python tool/repo_lint.py --repo . 2>&1 | tail -1; git status --short; git log --oneline -1",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "spawn(python)",
+    "top(glob in a delete path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "gh pr merge 269 --merge --match-head-commit acdc7412cc22c394ea27609e3cf69a7a2f2e6d6c 2>&1 | tail -2; git fetch -q origin --prune; gh pr view 269 --json state,mergeCommit -q '.state+\" \"+.mergeCommit.oid'; git checkout -q main && git pull -q --ff-only && git branch -d fix/next-web-and-candidates; git branch -r | grep next-web; rm -rf artifacts/review; python tool/lint.py --repo . 2>&1 | tail -1; python tool/repo_lint.py --repo . 2>&1 | tail -1; git status --short; git log --oneline -1; git branch",
+   "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/review)",
+    "network(github.com)",
+    "read",
+    "spawn(python)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "gh pr view 265 --json body -q .body > \"$TEMP/pr265.md\" && python - \"$TEMP/pr265.md\" <<'EOF'\nimport sys\np = sys.argv[1]\ns = open(p, encoding=\"utf-8\").read()\na = \"`.<작업트리>-held-<카드>` 로 같은 드라이브 안에서 이름만 바꿔 옮기고(옮기기 전에 카드에 기록)\"\nb = \"매번 새로 만드는 빈 폴더 `.<작업트리>-held-<임의>` 로 같은 드라이브 안에서 이름만 바꿔 옮기고(옮기기 전에 카드에 기록, 옮기기와 되돌리기 모두 대상이 있으면 실패하고 덮어쓰지 않음)\"\nc = \"빌드 결과물 관련 3개 통과\"\nd = \"빌드 결과물 관련 6개 통과(이미 있는 보관본·되돌리는 사이 다시 생긴 빌드를 덮어쓰지 않는 경우 포함)\"\nassert a in s and c in s\nopen(p, \"w\", encoding=\"utf-8\").write(s.replace(a, b).replace(c, d))\nEOF\ngh pr edit 265 --body-file \"$TEMP/pr265.md\"",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "spawn(python)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "gh run view 41158469347 --log-failed > \"$TEMP/ci264f.log\" 2>&1; grep -nE \"Error|error|FAIL|넘었다|failed|::error\" \"$TEMP/ci264f.log\" | head -30",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "git branch --show-current && git pull --ff-only -q && git log -1 --oneline && git diff --stat d9cb626117706fa2484f8ced665fed411261ff5a e99df2a -- tool .wiki/ratchet.json && echo \"diff-empty-check-done\"; git branch --list fix/gate-sets-aside-interrupted-preparation; git branch -r | grep gate-sets-aside; rm -f artifacts/review/setaside-round-*.md; git status --porcelain; python tool/lint.py --repo . > \"$TEMP/lint.txt\" 2>&1; echo lint=$?; tail -n 3 \"$TEMP/lint.txt\"; python tool/repo_lint.py --repo . > \"$TEMP/rlint.txt\" 2>&1; echo repo_lint=$?; tail -n 3 \"$TEMP/rlint.txt\"; git worktree list",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "spawn(python)",
+    "top(glob in a delete path)",
+    "top(variable in a write path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "git branch -D fix/analysis-coverage-no-host && git branch -r | grep -c analysis-coverage; rm artifacts/review/analysis-l1-round-*.md; python tool/lint.py --repo . 2>&1 | tail -3; python tool/repo_lint.py --repo . 2>&1 | tail -3; git branch; git worktree list; git status --short | head",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(glob in a delete path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "git check-ignore -v data/joint/picks.jsonl; mv -n data/joint/picks.jsonl data/joint/picks-validation.jsonl && ls data/joint; ruff check . && ruff format --check joint.py support.py train.py test_laya.py; cd .. && grep -n \"picks\" docs/plans/laya/4-training.md | head -20",
+   "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/data/joint/picks.jsonl)",
+    "read",
+    "spawn(ruff)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/data/joint/picks-validation.jsonl)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "git checkout -q -b docs/v6-design && grep -n \"The held-out answers were therefore not run\" -A4 docs/plans/reliability/5-english-baseline.md; grep -n \"Answer support and added latency are not measured\" docs/plans/reliability/5-english-baseline.md",
+   "effects": [
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "git checkout -q -b fix/capacity-cut-mid-turn-continues && git status --porcelain && S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity\" && git worktree add -q --detach \"$S\" HEAD && cp tool/test_agent_events.py \"$S/tool/test_agent_events.py\" && (cd \"$S\" && python -m pytest -q -p no:cacheprovider tool/test_agent_events.py -k cut_off 2>&1 | tee \"$S.log\" >/dev/null); grep -E \"passed|failed|^E \" \"$S.log\" | head -4; git worktree remove --force \"$S\" && git worktree list | grep -c old-capacity",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(variable in a delete path)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity.log)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity/tool/test_agent_events.py)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "git checkout -q -b fix/gate-restores-rebuilt-indexes && ruff check tool/main/specs.py tool/main/loop.py tool/test_specs.py && python tool/debt.py check; timeout 900 python -m pytest -q -p no:cacheprovider tool/test_specs.py 2>&1 | tee \"$TMPDIR/idx.log\" | tail -4",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "spawn(ruff)",
+    "top(variable in a write path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "git checkout -q main && git pull -q --ff-only && git log --oneline -1 && [ \"$(git rev-parse fix/audit-screen-state^{tree})\" = \"$(git rev-parse 8753e884^{tree})\" ] && echo \"trees equal\" && git branch -D fix/audit-screen-state; git branch -r | grep audit-screen || echo \"remote branch gone\"; rm -f artifacts/review/audit-screen-round-*.md; ls artifacts/review | wc -l",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "top(glob in a delete path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "git fetch -q origin && WT=\"/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/contract/wiki-agent\" && git worktree add -q -b fix/refactor-contract-whole-file-removal \"$WT\" origin/main && cd \"$WT\" && grep -n \"def _named\\|def _binds\\|def _head\" tool/main/refactor_run.py && sed -n \"$(grep -n 'def _named' tool/main/refactor_run.py | cut -d: -f1),+8p\" tool/main/refactor_run.py",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "top(substitution in a sed script)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/contract/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "git fetch -q origin && git log --oneline HEAD..origin/main | head; git add docs/plans/jev/ && git commit -q -m \"Jev stage 11: record step 3's adoption and held-out gates\n\nCo-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\" && python -m pytest tool/test_decision_flow.py tool/test_jev_arms.py tool/test_evaluation.py -q -p no:cacheprovider && python tool/debt.py check && ruff check tool/ && git push -q -u origin jev-direct-questions && git log --oneline -4",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "spawn(python)",
+    "spawn(ruff)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "git fetch origin --prune -q && git pull --ff-only -q && git log --oneline -1 && echo tree: $(git rev-parse fix/laya-refusal^{tree}) $(git rev-parse 556d2a1^{tree}) && git -C ../wiki-agent-refusal status --porcelain | head && git worktree remove ../wiki-agent-refusal && git branch -D fix/laya-refusal && git branch -r | grep refusal; git push origin --delete fix/laya-refusal 2>&1 | tail -1; git worktree list; git branch",
+   "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent-refusal)",
+    "network(github.com)",
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "git mv README.md docs/reference.md && perl -pi -e 's{\\]\\((?!https?:|#|docs/)}{](../}g; s{\\]\\(docs/}{](}g' docs/reference.md && grep -no \"\\]([^)]*)\" docs/reference.md | grep -v http",
+   "effects": [
+    "read",
+    "spawn(perl)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "git stash list | head -3; git stash pop -q && git diff --stat; grep -c \"specs.owner(path)\" tool/main/work.py; cat \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/tasks/bzuzrevzb.output\" | head -20; wmic process where \"CommandLine like '%pytest-of-me%' or CommandLine like '%question_waits%'\" get ProcessId,Name 2>/dev/null | head",
+   "effects": [
+    "read",
+    "spawn(wmic)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "git stash push -q tool/common/process.py && wsl -d Ubuntu-24.04 -e sh -c \"cd /mnt/c/Users/me/PycharmProjects/wiki-agent/tool && PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider -o addopts='' --noconftest test_process.py 2>&1 | grep -E 'assert|passed|failed' | tail -3\" 2>/dev/null | tr -d '\\0'; git stash pop -q; git status --short",
+   "effects": [
+    "read",
+    "spawn(wsl)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "git status --short | head -3; git pull -q --ff-only && git log --oneline -1 && [ \"$(git rev-parse omm-skip-indexes^{tree})\" = \"$(git rev-parse 2ef10e2^{tree})\" ] && echo \"tree identical\"; git -C ../wiki-agent-worktrees/omm-skip-indexes status --short | head -3; git worktree remove ../wiki-agent-worktrees/omm-skip-indexes && git branch -D omm-skip-indexes; git branch -r | grep -c omm-skip-indexes; rm -f artifacts/review/omm-skip-indexes-round-*.md; python tool/lint.py --repo . 2>&1 | tail -1; python tool/repo_lint.py --repo . 2>&1 | tail -1; git worktree list",
+   "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent-worktrees/omm-skip-indexes)",
+    "network(github.com)",
+    "read",
+    "spawn(python)",
+    "top(glob in a delete path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "git worktree remove --force \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/v5\" && git branch -D plan/reliability-v5 && (git push -q origin --delete plan/reliability-v5 2>&1 | tail -1); git fetch -q --prune; rm -f artifacts/review/reliability-v5-round-*.md; ls artifacts/review/; git worktree list; git branch -a | grep -v \"remotes/origin/HEAD\"; python tool/lint.py --repo . 2>&1 | tail -1; python tool/repo_lint.py --repo . 2>&1 | tail -1",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/v5)",
+    "network(github.com)",
+    "read",
+    "spawn(python)",
+    "top(glob in a delete path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "grep -n \"\\bloop\\b\" tool/test_refactor_run.py | grep -v \"loop.kick\\|from main import\" | head; python -m pytest tool/test_refactor_run.py -q -p no:cacheprovider -k \"keeps_its_worktree or person_refreezes or interrupted_refreeze\" > \"$TEMP/k.log\" 2>&1; echo exit=$?; tail -30 \"$TEMP/k.log\"",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "grep -n \"^## Steps\\|^| 6 | v7\" docs/plans/reliability/5-english-baseline.md; sed -n \"$(grep -n '^### Draft set' docs/plans/reliability/5-english-baseline.md | head -1 | cut -d: -f1),+26p\" docs/plans/reliability/5-english-baseline.md",
+   "effects": [
+    "read",
+    "top(substitution in a sed script)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "grep -n \"^/\\*\\* A persisted run\\|^export function RefactorStatus\\|^/\\*\\* Old runs\\|^export function RefactorHistory\" components/Refactor.tsx; wc -l components/Refactor.tsx",
+   "effects": [
+    "read"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "grep -n \"def integrate_conflict\\|def fix_and_change\\|def finish_repair\\|def cancelled\" tool/test_loop.py; for f in integrate_conflict fix_and_change; do n=$(grep -n \"def $f\" tool/test_loop.py | head -1 | cut -d: -f1); sed -n \"${n},$((n+14))p\" tool/test_loop.py; echo ----; done; sed -n 226,230p tool/test_loop.py",
+   "effects": [
+    "read",
+    "top(variable in a sed script)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "grep -n \"free port\\|bind\\|--port\\|getsockname\" tool/main/app.py tool/app.cmd web/src-tauri/src/main.rs 2>/dev/null | head; for p in 8791 10534 16106 16107 16116 24313; do echo \"$p: $(curl -s -m 2 http://127.0.0.1:$p/api/worktrees -o /dev/null -w '%{http_code}')\"; done",
+   "effects": [
+    "read",
+    "top(variable in a network target)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "grep -n '\"lint\"\\|\"build\"\\|\"typecheck\"' web/package.json; timeout 300 npm --prefix web run lint > /tmp/weblint.log 2>&1; echo \"lint exit $?\"; tail -5 /tmp/weblint.log",
+   "effects": [
+    "read",
+    "spawn(npm)",
+    "write(C:/Users/me/AppData/Local/Temp/weblint.log)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "grep -v \"^$\" /c/Users/me/PycharmProjects/wiki-agent/artifacts/review/ci-clock-flakes-round-2-result.md | grep -v \"^   \\|^```\" | head -30",
+   "effects": [
+    "read",
+    "top(an unclosed backtick)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "grep -v \"^$\" /c/Users/me/PycharmProjects/wiki-agent/artifacts/review/pr260-round-1-result.md | grep -v \"^    \\|^```\" | head -80",
+   "effects": [
+    "read",
+    "top(an unclosed backtick)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "ls artifacts artifacts/review; P=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad\"; rm -rf artifacts && echo \"artifacts removed\"; rm -f \"${P:?}/aigen-durations.log\" \"${P:?}/pr-watchdog.md\"; python tool/lint.py --repo . 2>&1 | tail -2; python tool/repo_lint.py --repo . 2>&1 | tail -2; git status --short | head -3; git worktree list | wc -l",
+   "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts)",
+    "read",
+    "spawn(python)",
+    "top(variable in a delete path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "mkdir -p raw/android artifacts && cp android/app/build/outputs/apk/release/app-release.apk raw/android/wiki-agent.apk && cp android/app/build/outputs/bundle/release/app-release.aab raw/android/wiki-agent.aab && cp raw/android/wiki-agent.apk artifacts/wiki-agent.apk && curl -s -m5 http://127.0.0.1:21570/api/mobile/status; echo; O=https://intermediate-titled-compaq-biblical.trycloudflare.com; curl -s -m15 -o /dev/null -w 'install page %{http_code}\\n' $O/mobile-install; curl -s -m30 -o \"$TEMP/dl.apk\" -w 'apk %{http_code} %{content_type} %{size_download}\\n' $O/mobile-install.apk; sha256sum \"$TEMP/dl.apk\" raw/android/wiki-agent.apk | cut -c1-16",
+   "effects": [
+    "network(127.0.0.1)",
+    "network(intermediate-titled-compaq-biblical.trycloudflare.com)",
+    "read",
+    "top(variable in a write path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/artifacts)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/artifacts/wiki-agent.apk)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/android)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/android/wiki-agent.aab)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/android/wiki-agent.apk)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "npm --prefix web run build > \"$TEMP/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad/build.log\" 2>&1; echo build=$?; python web/tests/task_browser.py",
+   "effects": [
+    "read",
+    "spawn(npm)",
+    "spawn(python)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "npx tsc -b > \"$TEMP/claude/tsc.log\" 2>&1; echo tsc=$?; npx oxlint src/components/Blocks.tsx > \"$TEMP/claude/oxlint.log\" 2>&1; echo lint=$?; cat \"$TEMP/claude/tsc.log\" | head -20; cat \"$TEMP/claude/oxlint.log\" | head -20",
+   "effects": [
+    "read",
+    "spawn(npx)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "pkill -f \"pytest tool/test_reliability_v5.py\" ; timeout 100 python -m pytest \"tool/test_reliability_v5.py::test_the_grader_reads_what_the_answering_host_read_beside_the_dossier\" -q -p no:cacheprovider -x 2>&1 | tail -20",
+   "effects": [
+    "read",
+    "spawn(pkill)",
+    "spawn(python)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "python - <<'EOF'\nimport json,glob\nn=0\nfor f in glob.glob('raw/eval/jev/reliability-v7-*/arms.jsonl'):\n    for l in open(f,encoding='utf-8'):\n        r=json.loads(l)\n        if r['rep']>0 and r.get('breaches'): n+=1\nprint('v7 later-rep breaches', n)\nEOF\nsed -i.bak 's/^Tests: the grace.s edge (15,050 ms passes, 15,051 ms breaches), host time$/&/' /dev/null 2>/dev/null; grep -n \"^Tests: the grace\" -A3 docs/plans/reliability/5-english-baseline.md",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(sed script writes or runs)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "python -c \"import fitz; print(fitz.__doc__)\" 2>&1 | head -2; python -c \"import pypdf; print(pypdf.__version__)\" 2>&1|head -2; magick -version 2>&1 | head -1; ls \"/c/Program Files/gs\" 2>&1",
+   "effects": [
+    "read",
+    "spawn(magick)",
+    "spawn(python)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "python -m ruff check tool laya && python tool/lint.py --check > \"$TEMP/lint.log\" 2>&1; echo lint=$?; tail -2 \"$TEMP/lint.log\"; python tool/debt.py check 2>&1 | tail -4; cd web && npx tsc -b 2>&1 | tail -3; echo tsc=$?; npx oxlint src/components/Refactor.tsx 2>&1 | tail -2",
+   "effects": [
+    "read",
+    "spawn(npx)",
+    "spawn(python)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "python -m ruff check tool laya && python tool/lint.py --check > \"$TEMP/lint.log\" 2>&1; echo lint=$?; tail -3 \"$TEMP/lint.log\"; python tool/debt.py check 2>&1 | tail -6; cd web && npx tsc --noEmit -p . 2>&1 | tail -5; echo tsc=$?; ls src/lib/*.test.ts 2>/dev/null | head",
+   "effects": [
+    "read",
+    "spawn(npx)",
+    "spawn(python)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "python tool/debt.py check && cd web && npx tsc -b && cd .. && npm --prefix web run build > \"$TEMP/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad/build.log\" 2>&1; echo build=$?",
+   "effects": [
+    "read",
+    "spawn(npm)",
+    "spawn(npx)",
+    "spawn(python)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "python tool/debt.py check && ruff check tool/agent/chat_session.py && timeout 600 python -m pytest -q -p no:cacheprovider tool/test_agent_events.py 2>&1 | tee \"$TMPDIR/cap-r1b.log\" | tail -3",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "spawn(ruff)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "python tool/debt.py check >/dev/null 2>&1; echo \"debt exit=$?\"; D=\"$TEMP/stress\"; rm -rf \"$D\"; mkdir -p \"$D\"; for i in $(seq 1 8); do (python -m pytest -q -p no:cacheprovider -n 0 \"tool/test_review_contract.py::test_slow_manifest_git_is_reaped_at_shared_deadline_without_a_request\" > \"$D/rc$i.log\" 2>&1) & (python -m pytest -q -p no:cacheprovider -n 0 \"tool/test_verification_runtime.py::test_setup_and_flows_share_budget_and_cleanup_runs_after_timeout\" > \"$D/vr$i.log\" 2>&1) & done; wait; for k in rc vr; do echo \"$k:\"; grep -h 'passed\\|failed' \"$D\"/$k*.log | sed 's/ in .*//' | sort | uniq -c; done",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(variable in a delete path)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "python tool/debt.py check >/dev/null 2>&1; echo debt exit $?; git add laya/test_laya.py && git commit -q -m \"Laya test: keep test_laya.py within its line ratchet\n\nCo-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\" && git push -q && git diff 674ccce HEAD --stat && S=\"/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad\"; python tool/verify.py final --base main > \"$S/final-197b.log\" 2>&1; echo exit $?; tail -5 \"$S/final-197b.log\"",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "spawn(python)",
+    "top(variable in a write path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "python tool/debt.py check; echo debt=$? && git add tool/main/refactor_run.py tool/test_refactor_run.py .wiki/ratchet.json && git commit -q -F - <<'EOF'\nMove a held build aside in one rename\n\nOn POSIX the move aside linked the build into the held folder and then\nunlinked its worktree path, so a build rebuilt there in between was the\nfile unlinked. The move aside is now a single rename into the fresh held\nfolder, which nothing else writes; only the way back links then unlinks,\nwhere the source is the held copy.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\nEOF\ngit push -q && git rev-parse HEAD",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "spawn(python)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "python tool/lint.py 2>&1 | tail -3 && python tool/repo_lint.py --repo . 2>&1 | tail -2 && git add overview.html DESIGN.md && git commit -q -F - <<'EOF'\noverview.html을 PC 기준(16:10 · 16:9 · 21:9)으로 다시 배치합니다\n\n60rem 한 줄 세로 흐름이라 PC에서 모바일 화면처럼 보였습니다. 글자와 본문 폭이\n화면 폭을 따라 커지고, 761px부터는 섹션 제목을 왼쪽 열에 붙이고 내용을 오른쪽\n열에 둡니다. 상단 바에 섹션 바로가기를 넣었고, 한글은 단어 단위로 줄을 바꿉니다.\n4:3 · 5:4용 중간 구간은 두지 않습니다. 결정은 DESIGN.md의 Overview page에 있습니다.\n\nCo-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\nEOF\ngit push -q 2>&1 | tail -2; git log --oneline -2",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "spawn(python)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "realpath artifacts && rm -rf artifacts/* && ls -A artifacts | wc -l",
+   "effects": [
+    "read",
+    "top(glob in a delete path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "reg query 'HKCU\\Console\\%%Startup' 2>&1 | iconv -f cp949 -t utf-8 | grep Delegation; SP=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; rm -f \"$SP/marker.txt\"; explorer.exe \"$(cygpath -w \"$SP/probe-dbl.cmd\")\"; sleep 8; echo \"double-click probe: $(cat \"$SP/marker.txt\" 2>&1 | head -c 60)\"",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/marker.txt)",
+    "read",
+    "spawn(explorer)",
+    "spawn(reg)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "reg query 'HKCU\\Software\\Microsoft\\Command Processor' 2>&1 | iconv -f cp949 -t utf-8 | head -8; echo ---; reg query 'HKLM\\Software\\Microsoft\\Command Processor' 2>&1 | iconv -f cp949 -t utf-8 | head -8",
+   "effects": [
+    "read",
+    "spawn(reg)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "rm -f artifacts/t1.log artifacts/t2.log artifacts/t3.log; L=$(mktemp -d); timeout 600 python -m pytest tool/test_file_filter.py tool/test_agent_decisions.py tool/test_specs.py tool/test_decision.py tool/test_decision_flow.py tool/test_jev_contract.py -q -n 2 -p no:cacheprovider > $L/t.log 2>&1; grep -E \"passed|failed|^FAILED|^E \" $L/t.log | head -40; python -m pytest tool/test_specs.py tool/test_agent_decisions.py --collect-only -q -p no:cacheprovider > $L/c.log 2>&1; grep -E \"tests? collected|error\" $L/c.log; echo $L",
+   "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/t1.log)",
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/t2.log)",
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/t3.log)",
+    "read",
+    "spawn(python)",
+    "top(variable in a write path)",
+    "write(C:/Users/me/AppData/Local/Temp)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "rm -v artifacts/review/command-output-flood-round-{1,2,3}.md artifacts/review/command-output-flood-round-{1,2,3}-result.md | wc -l; python tool/lint.py --repo . ; python tool/repo_lint.py --repo . ; git status --short | head",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(glob in a delete path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "rm laya/__init__.py && for m in kinds notes loop pool train label; do ls tool/$m.py tool/$m 2>/dev/null; done; grep -n \"from laya\\|import laya\\|python -m laya\" laya/*.py laya/prompts/*.md",
+   "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/laya/__init__.py)",
+    "read"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "ruff check tool/test_specs.py && timeout 500 python -m pytest -q -p no:cacheprovider tool/test_specs.py -k \"receipt\" 2>&1 | tee \"$TMPDIR/idx7.log\" | tail -20",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "spawn(ruff)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "sed -i 's/{\"item\": \"First stage tests pass\", \"pass\": True}\\]/{\"item\": \"돌아오는 테스트가 있다\", \"pass\": True}]/' tool/test_task_workflow.py && python -m pytest tool/test_task_workflow.py -q -k \"report\" -p no:cacheprovider",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "top(sed script writes or runs)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/tool/test_task_workflow.py)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "sed -n 1,60p docs/publishing.md; pip list 2>/dev/null | grep -i -E \"hypothesis|pytest|ruff\"",
+   "effects": [
+    "read",
+    "spawn(pip)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "sh \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/topup.sh\"",
+   "effects": [
+    "read",
+    "top(a shell script file)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "taskkill //PID 26740 //F >/dev/null; S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; mkdir -p $S/wv2; cat > $S/launch.cmd <<EOF\n@echo off\nset WEBVIEW2_USER_DATA_FOLDER=$(cygpath -w $S/wv2)\nset WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333\nstart \"\" \"$(cygpath -w $S/wt/web/src-tauri/target/release/wiki-agent.exe)\"\nEOF\ncmd //c \"$(cygpath -w $S/launch.cmd)\"; echo launched",
+   "effects": [
+    "read",
+    "spawn(taskkill)",
+    "top(variable in a nested shell string)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/launch.cmd)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wv2)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "taskkill //PID 26984 //F 2>&1 | iconv -f cp949 -t utf-8; cd C:/Users/me/PycharmProjects/wiki-agent && explorer.exe \"$(cygpath -w tool/app.cmd)\"; for i in $(seq 1 30); do tasklist //FI \"IMAGENAME eq wiki-agent.exe\" //NH 2>/dev/null | grep -q wiki-agent && break; sleep 2; done; tasklist //FI \"IMAGENAME eq wiki-agent.exe\" //NH 2>&1 | iconv -f cp949 -t utf-8; sleep 8; ls -la --time-style=full-iso raw/main.log; P=$(grep -o \"127.0.0.1:[0-9]*\" raw/main.log | head -1); echo \"port=$P $(curl -s -o /dev/null -w '%{http_code}' \"http://$P/\")\"",
+   "effects": [
+    "read",
+    "spawn(explorer)",
+    "spawn(taskkill)",
+    "top(variable in a network target)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "taskkill //PID 7096 //T //F; sleep 1; netstat -ano | grep LISTEN | grep \":5199 \" || echo \"5199 closed\"",
+   "effects": [
+    "read",
+    "spawn(taskkill)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "tasklist //FI \"PID eq 21684\" //NH 2>&1 | iconv -f cp949 -t utf-8; taskkill //PID 21684 //F 2>&1 | iconv -f cp949 -t utf-8; sleep 2; SP=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; rm -f \"$SP/marker.txt\"; explorer.exe \"$(cygpath -w \"$SP/probe-dbl.cmd\")\"; sleep 8; echo \"double-click probe: $(cat \"$SP/marker.txt\" 2>&1 | head -c 60)\"; tasklist //FI \"IMAGENAME eq WindowsTerminal.exe\" //V //FO LIST 2>&1 | iconv -f cp949 -t utf-8 | grep -E \"PID|상태\"",
+   "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/marker.txt)",
+    "read",
+    "spawn(explorer)",
+    "spawn(taskkill)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "timeout 100 python -m pytest -q -p no:cacheprovider -n 0 tool/test_process.py 2>&1 | tail -2; wsl -d Ubuntu-24.04 -e sh -c \"cd /mnt/c/Users/me/PycharmProjects/wiki-agent/tool && PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider -o addopts='' --noconftest test_process.py 2>&1 | tail -3\" | tr -d '\\0'",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "spawn(wsl)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "timeout 560 python -m pytest -q -p no:cacheprovider --maxfail=50 tool/test_process.py tool/test_agent.py tool/test_mobile.py \"tool/test_loop.py::test_the_loop_settings_and_the_translation_switch_written_at_once_both_survive\" \"tool/test_task_workflow.py::test_saved_permission_switch_cannot_downgrade_agent_and_fix_prompts_allow_push\" > \"$TEMP/a.txt\" 2>&1; echo exit=$?; grep -aE \"^FAILED|passed|failed\" \"$TEMP/a.txt\" | tail -5; wsl -d Ubuntu-24.04 -e sh -c \"cd /mnt/c/Users/me/PycharmProjects/wiki-agent/tool && PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider -o addopts='' --noconftest test_process.py 2>&1 | tail -1\" 2>/dev/null | tr -d '\\0'",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "spawn(wsl)",
+    "top(variable in a write path)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "wevtutil qe Application //c:20 //rd:true //f:text 2>&1 | iconv -f cp949 -t utf-8 -c 2>/dev/null | tr -d '\\000' | grep -aE \"Date:|Source:|Event ID:|Level:|Faulting|애플리케이션|모듈|예외\" | head -80",
+   "effects": [
+    "read",
+    "spawn(wevtutil)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "which python && python -c \"import sys;print(sys.version)\"; python -c \"import torch;print('torch',torch.__version__,torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else '')\" 2>&1 | tail -1; python -c \"import transformers;print('transformers',transformers.__version__)\" 2>&1 | tail -1; pip index versions laya 2>&1 | head -2; nvidia-smi --query-gpu=name,memory.total,memory.used --format=csv 2>&1 | tail -2; ls /c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/laya-src/ 2>&1",
+   "effects": [
+    "read",
+    "spawn(pip)",
+    "spawn(python)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "wmic process where \"ProcessId=24764\" get CommandLine,ParentProcessId 2>&1 | cut -c1-300; curl -s -m 5 http://127.0.0.1:8791/api/options | head -c 300",
+   "effects": [
+    "network(127.0.0.1)",
+    "read",
+    "spawn(wmic)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "wmic process where \"ProcessId=26708\" get CommandLine 2>/dev/null | head -3; cd /c/Users/me/PycharmProjects/wiki-agent && timeout 900 python -m pytest tool/test_loop.py -q -p no:cacheprovider 2>&1 | tail -2",
+   "effects": [
+    "read",
+    "spawn(python)",
+    "spawn(wmic)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "wmic process where \"ProcessId=29344\" get CommandLine 2>&1 | head -3; sc query cloudflared 2>&1 | head -5; ls ~/.cloudflared 2>&1; ls /c/Windows/System32/config/systemprofile/.cloudflared 2>&1 | head",
+   "effects": [
+    "read",
+    "spawn(sc)",
+    "spawn(wmic)"
+   ]
+  },
+  {
+   "dialect": "posix",
+   "source": "claude",
+   "command": "wsl -d Ubuntu-24.04 -e sh -c \"python3 --version; python3 -c 'import pytest' 2>&1 | tail -1; ls /mnt/c/Users/me/PycharmProjects/wiki-agent/tool/common/process.py\" 2>&1 | tr -d '\\0'",
+   "effects": [
+    "read",
+    "spawn(wsl)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "$changed = @(git diff --name-only) + @(git ls-files --others --exclude-standard)\nforeach ($path in $changed) {\n  if ($path.StartsWith('.omm/')) {\n    $content = [IO.File]::ReadAllText((Join-Path (Get-Location) $path))\n    [IO.File]::WriteAllText((Join-Path (Get-Location) $path), ($content.Replace(\"`r`n\", \"`n\").TrimEnd()+\"`n\"), [Text.UTF8Encoding]::new($false))\n  }\n}\ngit diff --check\nomm validate\nGet-Content .omm/overall-architecture/speech/diagram.mmd\nGet-Content .omm/state-transitions/diagram.mmd\ngit diff --numstat",
+   "effects": [
+    "read",
+    "spawn(omm)",
+    "top(method WriteAllText)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "$newTests = @(git ls-files --others --exclude-standard -- 'tests/*preserve*.py' 'tests/**/*preserve*.py' | Where-Object { $_ -ne 'tests/integration/test_character_activation_isolation_preserve.py' })\n& \"$env:USERPROFILE/anaconda3/Scripts/conda.exe\" run --no-capture-output -n ai-voice-agent python -m pytest $newTests -q --tb=short",
+   "effects": [
+    "read",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "$p = Join-Path (Get-Location) 'tests/integration/test_postgres_auth_repository.py'; $s = [IO.File]::ReadAllText($p); $s = $s.Replace('idle_expires_at=created_at + timedelta(minutes=30),','idle_expires_at=created_at + timedelta(hours=1 if index == 2 else 12),').Replace('absolute_expires_at=created_at + timedelta(hours=8),','absolute_expires_at=created_at + timedelta(hours=2 if index == 2 else 24),'); [IO.File]::WriteAllText($p, $s, [Text.UTF8Encoding]::new($false))\n& \"$env:USERPROFILE\\anaconda3\\Scripts\\conda.exe\" run --no-capture-output -n ai-voice-agent python -m ruff check tests/integration/test_postgres_auth_repository.py",
+   "effects": [
+    "read",
+    "top(method WriteAllText)",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "$path = Join-Path (Get-Location) '.wiki/graph.json'; $content = [IO.File]::ReadAllText($path); [IO.File]::WriteAllText($path, $content.Replace(\"`r`n\", \"`n\").Replace(\"`n\", \"`r`n\"), [Text.UTF8Encoding]::new($false)); git diff --stat; git -c core.whitespace=cr-at-eol diff --check; git diff -- .wiki/graph.json; git add -- .wiki/corpus.json .wiki/graph.json; git commit -m \"Regenerate wiki indexes from tracked inputs\"; git push origin HEAD",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "top(method WriteAllText)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "$testPath = Join-Path (Get-Location) 'tests/integration/test_browser_voice_session.py'; $testText = [IO.File]::ReadAllText($testPath); [IO.File]::WriteAllText($testPath, $testText.Replace(\"`r`n\", \"`n\"), [Text.UTF8Encoding]::new($false)); git diff --check; & \"$env:USERPROFILE\\anaconda3\\Scripts\\conda.exe\" run --no-capture-output -n ai-voice-agent python -m pytest tests/integration/test_browser_voice_session.py tests/unit/api/test_browser_turn_transaction.py tests/unit/api/test_browser_turn_completion_observability.py tests/unit/api/test_browser_turn_terminal_observability.py tests/integration/test_browser_turn_stage_corpus.py -q",
+   "effects": [
+    "read",
+    "top(method WriteAllText)",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "$testPath = Join-Path (Get-Location) 'tests/integration/test_memory_v18_deferred_extraction.py'; $testText = [System.IO.File]::ReadAllText($testPath); [System.IO.File]::WriteAllText($testPath, $testText.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)); git diff --check -- tests/integration/test_memory_v18_deferred_extraction.py; git diff --numstat -- tests/integration/test_memory_v18_deferred_extraction.py; & \"$env:USERPROFILE\\anaconda3\\Scripts\\conda.exe\" run --no-capture-output -n ai-voice-agent python -m pytest tests/integration/test_memory_v18_deferred_extraction.py tests/unit/core/test_settings_memory_v18_flags.py -q",
+   "effects": [
+    "read",
+    "top(method WriteAllText)",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "$utf8 = [System.Text.UTF8Encoding]::new($false)\nforeach ($map in @('.omm/state-transitions/diagram.mmd', '.omm/request-lifecycle/diagram.mmd')) {\n  $content = git show \"6842ad51:$map\"\n  [System.IO.File]::WriteAllText((Join-Path (Get-Location) $map), (($content -join \"`n\").TrimEnd() + \"`n\"), $utf8)\n}",
+   "effects": [
+    "read",
+    "top(method WriteAllText)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "& \"$env:USERPROFILE/anaconda3/Scripts/conda.exe\" run --no-capture-output -n ai-voice-agent python -m pytest tests/unit/characters/test_voice_assets.py -m local_assets -q --tb=short",
+   "effects": [
+    "read",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "& \"$env:USERPROFILE/anaconda3/Scripts/conda.exe\" run --no-capture-output -n ai-voice-agent python -m ruff check tests/integration/test_character_activation_isolation_preserve.py tests/unit/characters/test_authoring_acceptance_preserve.py; node node_modules/eslint/bin/eslint.js tests/automation/memory-report-preserve.test.js",
+   "effects": [
+    "read",
+    "spawn(node)",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "& \"$env:USERPROFILE/anaconda3/envs/ai-voice-agent/python.exe\" -m pytest tests/conversation/test_text_encoding_integrity.py -q --tb=short; omm validate; git diff --cached --check",
+   "effects": [
+    "read",
+    "spawn(omm)",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "& \"$env:USERPROFILE/anaconda3/envs/ai-voice-agent/python.exe\" -m ruff check src/ai_companion_voice_agent/api/routes_voice.py src/ai_companion_voice_agent/api/browser_turn_execution.py tests/integration/test_audio_observation_preserve.py tests/integration/test_memory_projection_preserve.py tests/integration/test_request_options_preserve.py tests/integration/test_speech_session_lifecycle_preserve.py tests/integration/test_turn_control_decoding_preserve.py\nomm validate",
+   "effects": [
+    "read",
+    "spawn(omm)",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "& \"$env:USERPROFILE\\anaconda3\\Scripts\\conda.exe\" run --no-capture-output -n ai-voice-agent python -c \"import subprocess; from pathlib import Path; p='.omm/overall-architecture/conversation/meta.yaml'; original=subprocess.check_output(['git','show','HEAD:'+p]); assert original.count(b'- models\\r\\n')==1; Path(p).write_bytes(original.replace(b'- models\\r\\n', b''))\"; git diff --check; git diff --stat; git add -- .omm/overall-architecture/conversation/meta.yaml; git commit -m \"docs: remove untracked conversation model child declaration\"",
+   "effects": [
+    "read",
+    "top(variable as the command name)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "& \"$env:USERPROFILE\\anaconda3\\Scripts\\conda.exe\" run --no-capture-output -n ai-voice-agent python -m pytest tests/integration/test_memory_v18_deferred_extraction.py tests/unit/core/test_settings_memory_v18_flags.py -q",
+   "effects": [
+    "read",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "& \"$env:USERPROFILE\\anaconda3\\Scripts\\conda.exe\" run --no-capture-output -n ai-voice-agent python scripts/run_postgres_migration_tests.py --suite repository -k test_postgres_auth_repository -q",
+   "effects": [
+    "read",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "@'\nawait page.getByRole('dialog').locator('input[type=text]').first().fill('Preserve Witness Edited');\nconst preview = page.waitForResponse(r=>r.url().includes('/tts/') && r.request().method()==='POST',{timeout:60000});\nawait page.getByRole('button',{name:'미리 듣기',exact:true}).click();\nconst response=await preview;\nreturn {previewStatus:response.status(),path:new URL(response.url()).pathname,buttons:await page.getByRole('dialog').locator('button').allTextContents()};\n'@ | node artifacts/preserve-live/browser-command.mjs",
+   "effects": [
+    "read",
+    "spawn(node)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "@'\nconst saved=page.waitForResponse(r=>r.url().includes('/versions') && r.request().method()==='POST');\nawait page.getByRole('button',{name:'이걸로 저장하고 대화하기',exact:true}).click();\nconst response=await saved; const data=await response.json();\nreturn {status:response.status(),id:data.character?.character_id,version:data.active_version?.version_id,dialogClosed:await page.getByRole('dialog').count()===0,selection:await page.locator('select').first().inputValue()};\n'@ | node artifacts/preserve-live/browser-command.mjs",
+   "effects": [
+    "read",
+    "spawn(node)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "@'\nglobalThis.heldVersion=false;\nglobalThis.releaseVersion=undefined;\nawait page.route('**/characters/*/versions/*',async route=>{const response=await route.fetch();heldVersion=true;await new Promise(resolve=>globalThis.releaseVersion=resolve);try{await route.fulfill({response});}catch{}});\nawait page.getByRole('button',{name:'캐릭터 만들기',exact:true}).click();\nawait page.getByRole('dialog').locator('select').selectOption(created.data.character.character_id);\nreturn {held:heldVersion};\n'@ | node artifacts/preserve-live/browser-command.mjs",
+   "effects": [
+    "read",
+    "spawn(node)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "@'\nreturn {ordinary:liveEvidence.ordinary||null};\n'@ | node artifacts/preserve-live/browser-command.mjs\nrg 'PROVIDER_REQUEST' artifacts/preserve-live/product.log | Select-Object -Last 5",
+   "effects": [
+    "read",
+    "spawn(node)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "@'\nreturn {url:page.url(),body:(await page.locator('body').innerText()).slice(0,1800),inputs:await page.locator('input').evaluateAll(es=>es.map(e=>({type:e.type,attr:e.getAttribute('type'),outer:e.outerHTML.slice(0,250)})))};\n'@ | node artifacts/preserve-live/browser-command.mjs",
+   "effects": [
+    "read",
+    "spawn(node)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like '*artifacts/preserve-live/browser.mjs*' } | ForEach-Object { Stop-Process -Id $_.ProcessId }\nnode artifacts/preserve-live/browser.mjs",
+   "effects": [
+    "read",
+    "spawn(node)",
+    "spawn(stop-process)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "Get-Content .omm/overall-architecture/fastapi-api/app-factory/description.md; Get-Content .omm/overall-architecture/speech/description.md; Get-Content .omm/dependency-map/local-service/description.md",
+   "effects": [
+    "read"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "Get-Content .omm/overall-architecture/memory/indexer/description.md; Get-Content .omm/overall-architecture/characters/versions/description.md; rg --files tests | rg 'indexer.*repository|character.*repository|character.*catalog|postgres'; Get-Content local_services/memory_indexer/repository.py | Select-Object -First 120; rg -n 'def record_indexed|def record_rebuild_binding' local_services/memory_indexer/repository.py; rg -n 'def activate|def get_version' src/ai_companion_voice_agent/characters/repository.py",
+   "effects": [
+    "read"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "Get-Content artifacts/preserve-live/qwen.log -Tail 12\nGet-Content frontend/src/user/useCharacterStudioController.ts | Select-Object -Skip 220 -First 95",
+   "effects": [
+    "read"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "Get-Content local_services/qwen_clone_tts_server/app.py | Select-Object -Skip 490 -First 145; Get-Content tests/unit/qwen_clone_tts_server/test_qwen_clone_tts_server.py | Select-Object -Skip 280 -First 100; git grep -n _elapsed_ms -- local_services/qwen_clone_tts_server tests; git ls-files '*AGENTS.md' '*verification.toml'; & \"$env:USERPROFILE\\anaconda3\\Scripts\\conda.exe\" run --no-capture-output -n ai-voice-agent python -m pytest tests/unit/qwen_clone_tts_server/test_qwen_clone_tts_server.py tests/unit/qwen_clone_tts_server/test_warmup.py tests/unit/qwen_clone_tts_server/test_incremental_protocol.py",
+   "effects": [
+    "read",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "Get-Content local_services/qwen_clone_tts_server/config.py -TotalCount 105; & C:/Users/me/anaconda3/envs/qwen3-tts-faster/python.exe -c \"import torch, importlib.util; print('cuda_available=', torch.cuda.is_available()); print('faster_qwen3_tts_available=', importlib.util.find_spec('faster_qwen3_tts') is not None)\"",
+   "effects": [
+    "read",
+    "spawn(python)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "Get-Content src/ai_companion_voice_agent/memory/memory_retrieval.py | Select-Object -Skip 1180 -First 44; Get-Content src/ai_companion_voice_agent/agent/gemini_session_memory_client.py -TotalCount 125; Get-Content .wiki/launchers.md -TotalCount 160; Get-Content .wiki/ports.md -TotalCount 80",
+   "effects": [
+    "read"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "Get-Content tests/conftest.py | Select-Object -First 105; Get-Content tests/integration/test_browser_session_full_duplex.py | Select-Object -First 20; Get-Content src/ai_companion_voice_agent/api/auth.py -ErrorAction SilentlyContinue | Select-Object -First 15",
+   "effects": [
+    "read"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "Get-Content tests/integration/test_proactive_vision_session_binding.py | Select-Object -Skip 184 -First 148; omm validate overall-architecture/proactive-system; git diff HEAD --exit-code -- src tests .omm/overall-architecture/proactive-system",
+   "effects": [
+    "read",
+    "spawn(omm)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "Stop-Process -Id 47016\nGet-Content artifacts/preserve-live/runtime.py | Select-Object -Skip 65 -First 55",
+   "effects": [
+    "read",
+    "spawn(stop-process)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "Test-Path .omm/data-flow/diagram.mmd; git status --short --untracked-files=all | Select-Object -First 12; git check-ignore .omm/data-flow/diagram.mmd; git config --get core.autocrlf; omm validate --help",
+   "effects": [
+    "read",
+    "spawn(omm)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "gh api repos/owner/ai-companion-voice-agent/commits/d2563f3d800df8dd4c5fe7021793a2323eecf334/check-runs --jq '{total_count: .total_count, checks: [.check_runs[] | {name, status, conclusion, details_url}]}'",
+   "effects": [
+    "network(github.com)",
+    "read"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "gh api repos/owner/ai-companion-voice-agent/commits/d2563f3d800df8dd4c5fe7021793a2323eecf334/status --jq '{state, statuses: [.statuses[] | {context, state, description, target_url}]}'\ngit status --porcelain --untracked-files=no",
+   "effects": [
+    "network(github.com)",
+    "read"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git add -- ",
+   "effects": [
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git add -- .gitignore .omm/overall-architecture/conversation/models/meta.yaml .omm/overall-architecture/conversation/models/constraint.md; git diff --cached --check; git diff --cached --stat; omm validate",
+   "effects": [
+    "read",
+    "spawn(omm)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git add -- .omm/overall-architecture/proactive-system/diagram.mmd .omm/overall-architecture/proactive-system/meta.yaml .omm/overall-architecture/proactive-system/routes/description.md .omm/overall-architecture/proactive-system/request-context/description.md .omm/overall-architecture/proactive-system/request-context/meta.yaml; git diff --cached --check; git commit -m \"Document proactive request context ownership in the architecture map\"; git push origin proactive-context-preparation-7357ebbe",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git add -- src/ai_companion_voice_agent/api/routes_proactive.py .omm/overall-architecture/proactive-system/routes/description.md; git commit -m \"refactor: share proactive eligibility wiring\"; git diff --exit-code HEAD; git status --short",
+   "effects": [
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git add .omm; git diff --cached --stat 7587a04e -- .omm; git -c core.whitespace=cr-at-eol diff --cached --check; omm validate overall-architecture/memory; $index = Get-Content .omm/analysis.json -Raw | ConvertFrom-Json; $missing = @($index | Where-Object { -not (Test-Path \".omm/$_/description.md\") }); Write-Output \"Indexed descriptions: $($index.Count); missing: $($missing.Count)\"; git diff --cached --name-only --diff-filter=D 7587a04e -- .omm; git diff HEAD -- src tests",
+   "effects": [
+    "read",
+    "spawn(omm)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git add .omm; omm validate",
+   "effects": [
+    "read",
+    "spawn(omm)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git add tests/automation/adult-persona-acceptance.test.js; git commit -m \"test: characterize adult account release error handling\"; git status --short",
+   "effects": [
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git commit -m \"Track conversation model architecture node\"; git push origin preserve-repository-boundaries-1f9c4293",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git diff -- .omm/overall-architecture/characters/diagram.mmd .omm/overall-architecture/memory/diagram.mmd; omm validate; git add .omm/overall-architecture/characters .omm/overall-architecture/memory; git -c core.whitespace=cr-at-eol diff --cached --check; git commit -m \"docs: correct character and memory flow consumers\"; git push origin HEAD:refs/heads/schema-sample-traversal-7357ebbe; git status --short",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "spawn(omm)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git diff -- src/ai_companion_voice_agent/api/routes_characters.py | Select-Object -First 100; rg -n 'skip|xfail|^def test_' tests/integration/test_character_routes.py tests/integration/test_character_isolation.py tests/integration/test_rejected_requests_leave_no_trace.py; git add src/ai_companion_voice_agent/api/routes_characters.py src/ai_companion_voice_agent/api/routes_character_catalog.py src/ai_companion_voice_agent/api/character_route_authority.py .omm/overall-architecture/fastapi-api/routes-characters/description.md; git commit -m \"Separate character catalog routes from studio execution\"; git status --short",
+   "effects": [
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git diff --cached -- .gitignore; @'\nfrom pathlib import Path\np=Path('.omm/overall-architecture/conversation/models/meta.yaml')\np.write_text(p.read_text(encoding='utf-8'),encoding='utf-8',newline='\\n')\n'@ | & \"$env:USERPROFILE/anaconda3/envs/ai-voice-agent/python.exe\" -\ngit add -- .omm/overall-architecture/conversation/models/meta.yaml\ngit diff --cached --check\ngit check-ignore --no-index models/example.bin .omm/overall-architecture/conversation/models/meta.yaml",
+   "effects": [
+    "read",
+    "top(variable as the command name)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git diff --cached -- tests/integration\n git branch --show-current",
+   "effects": [
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git diff --check\n git status --porcelain --untracked-files=no\n git push origin preserve-repository-boundaries-1f9c4293\n git rev-parse HEAD",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git diff --check; git status --short; git add .omm/state-transitions/diagram.mmd; git commit -m \"Restore early playback response registration in state diagram\"; git push origin studio-disconnect-loop-7357ebbe",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git diff --exit-code dca177300f1ce7ace939732adda9cf2578d5190e -- tests; rg -n 'skip|xfail|^def test_merge_' tests/unit/memory/test_session_memory_finalizer.py; git diff --check; omm validate; & \"$env:USERPROFILE/anaconda3/Scripts/conda.exe\" run --no-capture-output -n ai-voice-agent python -m pytest tests/unit/memory/test_session_memory_finalizer.py -q",
+   "effects": [
+    "read",
+    "spawn(omm)",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git diff --exit-code; git log -1 --format=\"%h %s\"; git status --porcelain --untracked-files=no; git rev-list --left-right --count HEAD...@{upstream}",
+   "effects": [
+    "read",
+    "spawn(upstream)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git diff --numstat; git diff --check; omm validate",
+   "effects": [
+    "read",
+    "spawn(omm)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git diff --quiet 499bd757 -- tests/unit/qwen_clone_tts_server/test_faster_backend.py; if ($LASTEXITCODE -ne 0) { throw 'Frozen tests changed' }; git add .omm; git commit -m \"docs: correct playback finalization and context ownership maps\"; git push origin HEAD; git status --short",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git push origin preserve-repository-boundaries-1f9c4293",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git push origin preserve-repository-boundaries-1f9c4293\n git status --porcelain --untracked-files=no",
+   "effects": [
+    "network(github.com)",
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git restore --source=7587a04e --worktree -- .omm; Get-Content .omm/overall-architecture/memory/meta.yaml -TotalCount 25; Get-Command omm | Format-List Name,CommandType,Definition; Get-Content src/ai_companion_voice_agent/memory/profile_reset_operation.py; Get-Content .omm/overall-architecture/memory/writers/meta.yaml",
+   "effects": [
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git show 7587a04e:.omm/overall-architecture/memory/diagram.mmd; git show 7587a04e:.omm/overall-architecture/memory/description.md; git show 7587a04e:.omm/analysis.json; Get-Content docs/code-reviews/2026-07-31-technical-debt-audit.md | Select-Object -Skip 338 -First 16; Get-Content docs/plans/plan-32916e65/10-major-flow-acceptance.md | Select-Object -Skip 91 -First 15; git diff --name-status 7587a04e HEAD -- .omm | Group-Object {($_ -split '\\s+')[0]} | Select-Object Name,Count; git diff --name-only --diff-filter=D 7587a04e HEAD -- '.omm/**/diagram.mmd'; Get-Command omm | Select-Object Source",
+   "effects": [
+    "read"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "git status --short; Get-Content src/ai_companion_voice_agent/conversation/activities/base.py; rg -n 'build_activity_plan|def _resolution|self._resolution' src/ai_companion_voice_agent/conversation/activities/{choose_together,ideal_type_worldcup,twenty_questions}.py; if (Test-Path verification.toml) { Get-Content verification.toml }; rg --files --hidden -g AGENTS.md -g verification.toml",
+   "effects": [
+    "read",
+    "spawn(choose_together,ideal_type_worldcup,twenty_questions)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "node --input-type=module -e 'import { serializedReport } from \"./tests/automation/memory-report-preserve.test.js\"; for (const kind of [\"conversation\", \"companion\"]) for (const variant of [\"valid\", \"invalid\", \"changed\"]) console.log(JSON.stringify([kind, variant, await serializedReport(kind, variant)]));'",
+   "effects": [
+    "read",
+    "spawn(node)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "node --test tests/automation/memory-report-preserve.test.js tests/automation/conversation-memory-acceptance.test.js tests/automation/companion-self-memory-acceptance.test.js tests/automation/reference-persona-acceptance.test.js",
+   "effects": [
+    "read",
+    "spawn(node)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "npm --prefix frontend install --save-dev --save-exact react-test-renderer@18.3.1 @types/react-test-renderer@18.3.1 --ignore-scripts --no-audit --no-fund",
+   "effects": [
+    "read",
+    "spawn(npm)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "npm --prefix frontend run build",
+   "effects": [
+    "read",
+    "spawn(npm)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "npm --prefix frontend run typecheck\nGet-Content .omm/dependency-map/vision-layer/description.md\nGet-Content tests/integration/test_vision_lifecycle_preserve.py -TotalCount 100",
+   "effects": [
+    "read",
+    "spawn(npm)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "npm --prefix frontend run typecheck; npx eslint tools/automation/conversation-memory-acceptance.js tools/automation/companion-self-memory-acceptance.js tools/automation/reference-persona-acceptance.js tools/automation/memory-account-session.js",
+   "effects": [
+    "read",
+    "spawn(npm)",
+    "spawn(npx)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "npm --prefix frontend test -- src/core/audio/ordinarySpeechStream.test.ts src/core/audio/playbackLifecycle.test.ts src/core/audio/pcmEncoding.test.ts src/core/session/turnControl.test.ts",
+   "effects": [
+    "read",
+    "spawn(npm)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "npm --prefix frontend test -- src/core/audio/ordinarySpeechStream.test.ts src/core/audio/playbackLifecycle.test.ts src/core/audio/pcmEncoding.test.ts src/core/session/turnControl.test.ts src/user/characterStudioLifecycle.preserve.test.ts src/user/characterStudio.test.ts src/user/voicePreview.test.ts src/core/runtime/authLifecycle.preserve.test.ts src/core/runtime/authBoundaryOwnership.test.ts src/core/runtime/voiceRuntime.test.ts src/dev/devControls.preserve.test.ts src/dev/memoryEvidence.test.ts src/dev/promptBudget.test.ts",
+   "effects": [
+    "read",
+    "spawn(npm)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "npm --prefix frontend test -- src/core/audio/playbackLifecycle.test.ts src/core/session/turnControl.test.ts; omm validate; git diff --check",
+   "effects": [
+    "read",
+    "spawn(npm)",
+    "spawn(omm)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "npm --prefix frontend test -- src/core/runtime/authLifecycle.preserve.test.ts src/dev/devControls.preserve.test.ts; npm --prefix frontend run typecheck",
+   "effects": [
+    "read",
+    "spawn(npm)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "npm --prefix frontend test -- src/dev/devControls.preserve.test.ts src/dev/memoryEvidence.test.ts src/dev/promptBudget.test.ts",
+   "effects": [
+    "read",
+    "spawn(npm)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "npx --yes oh-my-mermaid@0.2.0 validate",
+   "effects": [
+    "read",
+    "spawn(npx)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "npx --yes oh-my-mermaid@0.2.0 validate; git diff --check",
+   "effects": [
+    "read",
+    "spawn(npx)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "npx --yes oh-my-mermaid@0.2.0 validate; git diff --check; git diff -- .omm/state-transitions/diagram.mmd",
+   "effects": [
+    "read",
+    "spawn(npx)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "npx eslint tests/automation/adult-persona-acceptance.test.js tests/automation/persona-login-session.test.js; git diff --check; git diff --stat; git diff --numstat",
+   "effects": [
+    "read",
+    "spawn(npx)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "npx eslint tools/automation/adult-persona-acceptance.js tools/automation/persona-login-session.js tests/automation/adult-persona-acceptance.test.js tests/automation/persona-login-session.test.js",
+   "effects": [
+    "read",
+    "spawn(npx)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "omm validate",
+   "effects": [
+    "read",
+    "spawn(omm)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "omm validate; & \"$env:USERPROFILE\\anaconda3\\Scripts\\conda.exe\" run --no-capture-output -n ai-voice-agent python -m ruff check local_services/memory_indexer/repository.py tests/unit/memory_indexer/test_repository_mapping.py tests/unit/memory_indexer/test_worker.py tests/unit/memory_indexer/test_rebuild.py tests/integration/test_memory_indexer_repository.py; git diff --check",
+   "effects": [
+    "read",
+    "spawn(omm)",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "omm validate; git diff --check; git diff --stat",
+   "effects": [
+    "read",
+    "spawn(omm)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "omm validate; git diff --stat; git diff d2563f3d --name-only -- tests frontend/src/*test*; git log -5 --oneline",
+   "effects": [
+    "read",
+    "spawn(omm)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "omm validate; if ($LASTEXITCODE -ne 0) { throw 'Architecture validation failed' }; git diff --check; git diff HEAD^ HEAD --check; rg -l 'FasterQwenBackend|_stream_waveforms' tests/unit/qwen_clone_tts_server",
+   "effects": [
+    "read",
+    "spawn(omm)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "rg -n '_DISPOSABLE_CLUSTER_PREFIXES|directory_prefix=' src/ai_companion_voice_agent/evaluation/product_validation_local_runtime.py; $mappingTemp = (Resolve-Path -LiteralPath '.tmp/postgres-index-mapping-v7o3a_mb').Path; $mappingRoot = (Resolve-Path -LiteralPath '.tmp').Path; if ((Split-Path -Parent $mappingTemp) -ne $mappingRoot -or (Test-Path -LiteralPath (Join-Path $mappingTemp 'cluster/postmaster.pid'))) { throw 'Unsafe cleanup target' }; Remove-Item -LiteralPath $mappingTemp -Recurse -Force",
+   "effects": [
+    "read",
+    "top(variable in a delete path)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "rg -n 'health|port|acceptance|smoke' local_services/qwen_clone_tts_server/README.md tools/*qwen* .wiki/launchers.md; git diff --check; & \"$env:USERPROFILE\\anaconda3\\Scripts\\conda.exe\" run --no-capture-output -n ai-voice-agent python -m pytest tests/unit/qwen_clone_tts_server/test_faster_backend.py",
+   "effects": [
+    "read",
+    "top(variable as the command name)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "rg -n 'resolve_requested_|_SAMPLING|_MEMORY|math\\.|normalize_dialogue_provider|DIALOGUE_PROVIDERS|DEFAULT_MEMORY_BUDGET_RATIOS|MEMORY_RANKED_FACT_CAP|MemoryBudgetRatios' src/ai_companion_voice_agent/api/browser_turn_execution.py\nrg -n -A18 -B2 'browser_turn_execution import' src/ai_companion_voice_agent/api/routes_{voice,proactive,memory}.py\nGet-Content src/ai_companion_voice_agent/api/browser_turn_execution.py | Select-Object -Skip 430 -First 300",
+   "effects": [
+    "read",
+    "spawn(voice,proactive,memory)"
+   ]
+  },
+  {
+   "dialect": "ps",
+   "source": "codex",
+   "command": "rg -n 'telemetry_sink|latency_logger\\.(write|update)|_.*telemetry' src/ai_companion_voice_agent/core/app_state.py src/ai_companion_voice_agent/pipeline/voice_pipeline.py src/ai_companion_voice_agent/api/browser_turn_finalization.py src/ai_companion_voice_agent/memory/companion_write_worker.py\nrg --files src tests | rg 'latency_logger|latency.*race|background.*latency|deferred.*telemetry'\nGet-Content src/ai_companion_voice_agent/observability/latency_logger.py",
+   "effects": [
+    "read"
+   ]
+  }
+ ]
+}

@@ -16,9 +16,8 @@ def verdict(payload: dict) -> dict | None:
     tool = payload.get("tool_name")
     command = str(given.get("command") or "").strip()
     denies, _ = declared()
-    # Tools and Bash argument patterns share `enforce.deny` declarations.
-    # ponytail: only the declared pattern of the direct command is matched. A
-    # nested shell can bypass it; a security boundary needs host execution policy.
+    # Tools and Bash argument patterns share `enforce.deny` declarations. A
+    # nested shell is judged by `guard.py`, which parses it into effects.
     for rule in denies:
         blocked = rule == tool
         if tool == "Bash" and rule.startswith("Bash(") and rule.endswith(")"):
