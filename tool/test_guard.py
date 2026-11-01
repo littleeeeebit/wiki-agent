@@ -271,6 +271,44 @@ def test_no_wrapper_turns_a_denied_form_into_a_pass(repo, form, wrapper):
     assert call(repo, WRAPPERS[wrapper](FORMS[form][0])), form
 
 
+# A second review round found more forms the model followed too far. Each rule is a property:
+# a construct whose later effect the model cannot place soundly must reduce to `top` (or resolve
+# the real target), so the call is denied. Inputs name neutral targets outside the grant.
+ROUND2 = {
+    # A copy into a name that is already a directory writes a descendant of it, not the name.
+    "copy-into-existing-directory": ("cp ../adapter.toml .wiki", "Bash", "허가를 정하는 파일"),
+    # A link (any flag spelling, hard or symbolic) redirects later paths; its target is not followable.
+    "combined-link-flags": ("ln -sf ../outside link", "Bash", "판단할 수 없는"),
+    "windows-junction": ("cmd /c mklink /J link ../outside", "Bash", "판단할 수 없는"),
+    # A .NET method that writes is not made safe by its name alone; the receiver is unknown.
+    "writing-instance-method": ("(Get-Item README.md).CopyTo('../outside/target.md')", "PowerShell",
+                                "판단할 수 없는"),
+    # Quoting only a parameter's value keeps it a named parameter, not a positional pathname.
+    "quoted-parameter-value": ("Remove-Item -LiteralPath:'../outside/target.txt'", "PowerShell", "쓰기 루트 밖이다"),
+    # ripgrep runs its preprocessor on each input file, so the child can mutate them.
+    "ripgrep-preprocessor-file": ("rg --pre rm pattern README.md", "Bash", "판단할 수 없는"),
+    # `-execdir` runs in the matched entry's directory, so a relative target lands somewhere unknown.
+    "find-execdir-directory": ("find . -execdir rm target.txt ';'", "Bash", "판단할 수 없는"),
+    # An arithmetic command still runs the substitutions written inside it.
+    "arithmetic-substitution": ("(( n = $(rm ../outside/target.txt) ))", "Bash", "쓰기 루트 밖이다"),
+    # A git read verb can launch a program through an execution-capable option.
+    "git-read-pager-program": ("git grep --open-files-in-pager=./helper pattern", "Bash", "판단할 수 없는"),
+}
+
+
+@pytest.mark.parametrize("form", ROUND2)
+def test_each_followed_too_far_form_is_denied(repo, form):
+    command, tool, marker = ROUND2[form]
+    reason = call(repo, command, tool=tool)
+    assert reason and marker in reason, (form, reason)
+
+
+@pytest.mark.parametrize("wrapper", WRAPPERS)
+@pytest.mark.parametrize("form", [f for f, (_, tool, _) in ROUND2.items() if tool == "Bash"])
+def test_no_wrapper_turns_a_round2_denial_into_a_pass(repo, form, wrapper):
+    assert call(repo, WRAPPERS[wrapper](ROUND2[form][0])), form
+
+
 def test_declared_git_blocks_hold_inside_nested_shells(monkeypatch):
     """F10 — a declared `Bash(...)` block holds inside `bash -c`, `pwsh -Command` and `$(...)`."""
     import apply
@@ -289,7 +327,11 @@ def test_declared_git_blocks_hold_inside_nested_shells(monkeypatch):
     assert blocked("ls && sh -lc \"git reset --hard\"")
     assert blocked("pwsh -Command 'git reset --hard'", tool="PowerShell")
     assert blocked("echo $(git clean -fdx)")
+    # A blocked command after a harmless one in the same nested script is still a separate command.
+    assert blocked("bash -c 'echo ready; git reset --hard'")
+    assert blocked("bash -c 'git clean -fdx' | tee out.txt")
     assert blocked("git clean -fdx") and not blocked("git status")
+    assert not blocked("bash -c 'echo ready; git status'")
 
 
 def test_undecidable_calls_are_denied(repo):

@@ -154,8 +154,9 @@ def outside(effect: tuple, g: Grant) -> str | None:
     if kind == "network":
         return None if target in g.hosts else \
             f"허가된 호스트가 아니다 — `.wiki/adapter.toml` 의 `[guard] network_hosts` 에 `{target}` 를 더하면 열린다"
-    if any(contained(target, [p]) for p in g.protected) or \
-            kind == "delete" and any(contained(p, [target]) for p in g.protected):
+    # A delete or a tree write (recursive copy, extraction) also reaches a protected path it contains.
+    reaches_protected = kind in ("delete", "write_tree") and any(contained(p, [target]) for p in g.protected)
+    if any(contained(target, [p]) for p in g.protected) or reaches_protected:
         return "허가를 정하는 파일이다 — 어떤 `[guard]` 항목으로도 열리지 않고, 사람이 직접 고친다"
     if contained(target, g.roots):
         return None

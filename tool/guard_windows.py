@@ -24,7 +24,7 @@ abs newguid tobase64string frombase64string getenvironmentvariable getcurrentdir
 readline peek close dispose invoke getenumerator movenext count sum average totalseconds totalmilliseconds
 addseconds adddays addhours addminutes tolocaltime touniversaltime getname getnames getvalues isdefined utf8
 getencoding fromfiletime haskey test values keys item getfiles getdirectories enumeratefiles enumeratedirectories
-getrelativepath ispathrooted haschanged clone copyto indexofany wait result getawaiter getresult""".split())
+getrelativepath ispathrooted haschanged clone indexofany wait result getawaiter getresult""".split())
 SAFE_TYPES = re.compile(r"^(system\.)?(text\.stringbuilder|collections\.[\w.`\[\]]+|object|psobject|pscustomobject|"
                         r"diagnostics\.stopwatch|random|datetime|timespan|version|uri|guid|text\.utf8encoding|"
                         r"text\.regularexpressions\.regex|management\.automation\.[\w.]+)$")
@@ -102,7 +102,9 @@ def ps_args(args: list) -> tuple[dict, list, bool]:
     named, pos, ambiguous, i = {}, [], False, 0
     while i < len(args):
         w, t = args[i], args[i].text
-        if re.match(r"^-[A-Za-z]", t) and not w.quoted and not w.why:
+        # A named parameter is one whose own `-Name` was written unquoted; quoting only its
+        # value (`-LiteralPath:'../x'`) does not turn the word into a positional path.
+        if (w.raw or t)[:1] == "-" and re.match(r"^-[A-Za-z]", w.raw or t) and not w.why:
             k, colon, v = t[1:].partition(":")
             k = k.lower()
             full = next((p for p in PS_VALUES if p.startswith(k)), None)
@@ -207,8 +209,11 @@ def cmd_builtin(name: str, args: list, ctx):
     ops = [w for w in args if w.why or not w.text.startswith("/")]
     if name in ("del", "erase", "rd", "rmdir"):
         return writes("delete", ops, ctx), None
-    if name in ("md", "mkdir", "mklink"):
-        return writes("write", ops[:1] if name == "mklink" else ops, ctx), None
+    if name == "mklink":
+        # A symlink, junction or hardlink redirects later paths through it; not followable here.
+        return top("mklink creates a link the guard cannot follow"), None
+    if name in ("md", "mkdir"):
+        return writes("write", ops, ctx), None
     if name in ("copy", "xcopy", "robocopy"):
         dest = ops[1:2] if name == "robocopy" else ops[-1:] if len(ops) > 1 else [here(ctx)]
         return writes("write", dest, ctx), None

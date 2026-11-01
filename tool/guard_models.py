@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import replace
 import re
 
-from guard import Word, assignment, code, envs, moved_to, paths, top
+from guard import NULLS, Word, assignment, code, envs, moved_to, paths, top
 
 KEYWORDS = {
     "posix": {"if", "then", "elif", "else", "fi", "do", "done", "while", "until", "{", "}", "!", "time", "for",
@@ -146,40 +146,45 @@ def basename(text: str) -> str:
     return re.split(r"[\\/]", text.rstrip("/\\"))[-1]
 
 
-def into_dir(pos: list, dest: list, ctx) -> set:
+def into_dir(pos: list, dest: list, ctx, kind: str = "write") -> set:
     """A directory destination writes `<dir>/<source-basename>`, not just the directory.
 
-    Only syntactic directory destinations count: a `-t`/`--target-directory`
-    option, a trailing separator, or (for three or more operands) the last one.
-    This names the real descendant, so a copy into a protected file's parent is
-    seen. A tainted end is already a `top` from the directory write itself.
+    A `-t`/`--target-directory` option, or the last operand of a two-or-more
+    operand copy, may be an existing directory, so the real target is a
+    descendant of it. Naming that descendant catches a copy into a protected
+    file's parent (`cp x .wiki`), which a bare-directory write would miss. A
+    tainted end is already a `top` from the directory write itself.
     """
     dirs = list(dest)
     srcs = list(pos)
     if not dest:
         dirs = [w for w in pos if not w.why and re.search(r"[\\/]$", w.text)]
-        if len(pos) >= 3 and not pos[-1].why and pos[-1] not in dirs:
+        if len(pos) >= 2 and not pos[-1].why and pos[-1] not in dirs:
             dirs.append(pos[-1])
         srcs = [w for w in pos if w not in dirs]
     out = set()
     for d in dirs:
-        if d.why:
+        if d.why or d.text.replace("\\", "/").rstrip("/").lower() in NULLS:
             continue
         for s in srcs:
             if s.why or not s.text:
                 continue
-            out |= paths("write", Word(d.text.rstrip("/\\") + "/" + basename(s.text)), ctx)
+            out |= paths(kind, Word(d.text.rstrip("/\\") + "/" + basename(s.text)), ctx)
     return out
 
 
 def m_copy(name, args, ctx):
     pos, vals, flags = getopt(args, COPY_TAKES)
-    if name == "ln" and ("-s" in flags or "--symbolic" in flags):
-        # A symlink redirects every later path through it; its target is not decidable here.
+    if name == "ln":
+        # A link, hard or symbolic, redirects later paths through it; its target is not followable here.
         return top("ln creates a link the guard cannot follow"), None
+    short = "".join(f[1:] for f in flags if not f.startswith("--"))
+    recursive = name == "cp" and ("r" in short or "R" in short or "a" in short
+                                  or any(f in ("--recursive", "--archive", "--dereference-recursive") for f in flags))
+    kind = "write_tree" if recursive else "write"
     dest = vals.get("-t", []) + vals.get("--target-directory", [])
-    out = writes("write", dest or pos[1:] or ([here(ctx)] if name == "ln" else []), ctx)
-    out |= into_dir(pos, dest, ctx)
+    out = writes(kind, dest or pos[1:], ctx)
+    out |= into_dir(pos, dest, ctx, kind)
     if name == "mv":
         out |= writes("delete", pos if dest else pos[:-1], ctx)
     return out, None
@@ -213,7 +218,8 @@ def m_tar(name, args, ctx):
         return top("tar runs a program"), None
     short = "".join(f[1:] for f in flags if not f.startswith("--"))
     if "x" in short or "--extract" in flags or "--get" in flags:
-        return writes("write", vals.get("-C", []) + vals.get("--directory", []) or [here(ctx)], ctx), None
+        # Extraction writes an archive-decided tree into the directory; its descendants are unknown.
+        return writes("write_tree", vals.get("-C", []) + vals.get("--directory", []) or [here(ctx)], ctx), None
     if "t" in short or "--list" in flags:
         return set(), None
     return writes("write", vals.get("-f", []) + vals.get("--file", []), ctx), None
@@ -224,7 +230,7 @@ def m_archive(name, args, ctx):
     if name == "unzip":
         if any(f in ("-l", "-p", "-t", "-v", "-Z", "-z") for f in flags):
             return set(), None
-        return writes("write", vals.get("-d", []) or [here(ctx)], ctx), None
+        return writes("write_tree", vals.get("-d", []) or [here(ctx)], ctx), None
     if name == "zip":
         return writes("write", pos[:1], ctx), None
     if any(f in ("-c", "--stdout", "-l", "--list", "-t", "--test") for f in flags):
@@ -298,7 +304,10 @@ def m_find(name, args, ctx):
             while j < len(args) and args[j].text not in (";", "+"):
                 argv.append(Word("{}", "variable") if "{}" in args[j].text else args[j])
                 j += 1
-            out |= run_argv(argv, ctx)[0] if argv else set()
+            # `-execdir`/`-okdir` run in the matched entry's directory, not here, so a relative
+            # target resolves somewhere unknown: drop the known cwd for them.
+            run_ctx = replace(ctx, cwds=frozenset({None})) if t in ("-execdir", "-okdir") else ctx
+            out |= run_argv(argv, run_ctx)[0] if argv else set()
             i = j
         elif t in ("-fprint", "-fprint0", "-fprintf", "-fls") and i + 1 < len(args):
             out |= paths("write", args[i + 1], ctx)
@@ -314,11 +323,12 @@ RG_TAKES = {"--pre", "--pre-glob", "--hostname-bin", "-f", "--file", "-g", "--gl
 
 
 def m_rg(name, args, ctx):
-    """ripgrep reads, except `--pre`/`--hostname-bin`, which launch a program per file."""
+    """ripgrep reads, except `--pre`/`--hostname-bin`, which launch a program on each input file."""
     _pos, vals, _flags = getopt(args, RG_TAKES)
     out = set()
     for w in vals.get("--pre", []) + vals.get("--hostname-bin", []):
-        out |= run_argv([w], ctx)[0] if w.text else set()
+        # ripgrep runs the program with each searched file as its argument; which files is not known here.
+        out |= run_argv([w, Word("{}", "variable")], ctx)[0] if w.text else set()
     return out, None
 
 
@@ -633,6 +643,9 @@ def m_git(name, args, ctx):
         vals = getopt(rest, GIT_TAKES)[1]
         out |= writes("write", vals.get("-o", []) + vals.get("--output", [])
                       + vals.get("--output-directory", []), g)
+        # `git grep -O/--open-files-in-pager=<cmd>` launches that program; its effects are not decidable.
+        if any(not w.why and (w.text == "-O" or w.text.startswith(("-O", "--open-files-in-pager"))) for w in rest):
+            out |= top("a git pager program (--open-files-in-pager)")
         return out, None
     if verb == "ls-remote":
         return out | remotes_of(rest, g, False), None

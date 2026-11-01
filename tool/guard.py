@@ -146,8 +146,10 @@ def dollar(s: str, i: int, w: Word, buf: list, d: str, mark: str = "") -> int:
         w.vars = True
         return i + 1 + plain.end()
     if d == "posix" and s.startswith("$((", i):
+        end = close_paren(s, close_paren(s, i + 3, d) + 1, d)
+        scan(s[i + 3:end], w, d)        # a `$(...)` the shell runs inside the arithmetic still counts
         w.taint("variable")
-        return close_paren(s, close_paren(s, i + 3, d) + 1, d) + 1
+        return end + 1
     if nxt == "(":
         j = close_paren(s, i + 2, d)
         w.subs.append((d, s[i + 2:j]))
@@ -332,8 +334,11 @@ def lex(s: str, d: str) -> list:
             i = n if j < 0 else j
             continue
         if d == "posix" and s.startswith("((", i):
-            i = find(s, "))", i, "an unclosed ((") + 2
-            out.append(("w", Word("true")))
+            j = find(s, "))", i, "an unclosed ((")
+            inner = Word()
+            scan(s[i + 2:j], inner, d)   # a `$(...)` the arithmetic runs still has its effects
+            out.append(("w", Word("true", subs=inner.subs)))
+            i = j + 2
             continue
         if d == "posix" and s[i:i + 2] in ("<(", ">("):
             j = close_paren(s, i + 2, d)
@@ -492,6 +497,12 @@ def reduce(toks: list, ctx: Ctx, src: str = "") -> set:
     consts, once, depth, chain = dict(ctx.consts), bound_once(src, ctx.d) if src else set(), 0, set()
     cmds = commands(toks, ctx.d)
     for k, (join, items) in enumerate(cmds):
+        if ctx.sink is not None:
+            # `deny.py` fnmatches each simple command against the pages' `Bash(...)` patterns,
+            # so a block holds even after a preceding statement (`echo ok; git reset --hard`).
+            words = " ".join(it[1].raw or it[1].text for it in items if it[0] == "w")
+            if words:
+                ctx.sink.append(words)
         if pending is not None:
             cwds = pending if join == "&&" else cwds | pending
             pending = None
@@ -523,8 +534,6 @@ def code(text: str, d: str, ctx: Ctx, fresh: bool = True, **kw) -> set:
     """Effects of a string parsed again one level down."""
     if ctx.depth >= DEPTH:
         return top(f"nesting deeper than {DEPTH}")
-    if ctx.sink is not None:
-        ctx.sink.append(text)           # a command a nested shell or substitution runs, for `deny.py`
     return reduce(lex(text, d), ctx.deeper(d, fresh, **kw), text)   # `Unclosed` makes the whole call top
 
 
@@ -681,7 +690,7 @@ def paths(kind: str, w: Word, ctx: Ctx) -> set:
     if w.text.lower() == "$null" and ctx.d == "ps":
         return set()
     if w.why:
-        return top(f"{w.why} in a {kind} path")
+        return top(f"{w.why} in a {'write' if kind == 'write_tree' else kind} path")
     out = set()
     for cwd in ctx.cwds:
         try:
@@ -788,7 +797,11 @@ def call_effects(tool: str, given: dict, ctx: Ctx, host: str) -> set:
 
 
 def render(effect: tuple) -> str:
-    return effect[0] if effect == READ else f"{effect[0]}({effect[1]})"
+    if effect == READ:
+        return effect[0]
+    # A recursive copy or an extraction writes a whole tree; the person reads it as a write.
+    kind = "write" if effect[0] == "write_tree" else effect[0]
+    return f"{kind}({effect[1]})"
 
 
 # -- The hook ----------------------------------------------------------------

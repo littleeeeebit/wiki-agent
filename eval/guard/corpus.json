@@ -88,6 +88,7 @@
     "top(variable in a write path)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/dist)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/dist/dist)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -383,6 +384,7 @@
     "top(variable in a write path)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/dist)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/dist/dist)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -587,7 +589,9 @@
     "read",
     "spawn(python)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/refactor.bak)",
-    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/wa/tool/main/refactor.py)"
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/refactor.bak/refactor.py)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/wa/tool/main/refactor.py)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/wa/tool/main/refactor.py/refactor.bak)"
    ]
   },
   {
@@ -878,7 +882,7 @@
     "read",
     "spawn(npx)",
     "spawn(python)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent-worktrees/omm-incremental/web/node_modules)"
+    "top(mklink creates a link the guard cannot follow)"
    ]
   },
   {
@@ -1323,7 +1327,8 @@
     "delete(C:/Users/me/PycharmProjects/wiki-agent/data/joint/picks.jsonl)",
     "read",
     "spawn(ruff)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent/data/joint/picks-validation.jsonl)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent/data/joint/picks-validation.jsonl)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/data/joint/picks-validation.jsonl/picks.jsonl)"
    ]
   },
   {
@@ -1346,6 +1351,7 @@
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity.log)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity/tool/test_agent_events.py)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity/tool/test_agent_events.py/test_agent_events.py)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -1559,9 +1565,12 @@
     "top(variable in a write path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/artifacts)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/artifacts/wiki-agent.apk)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/artifacts/wiki-agent.apk/wiki-agent.apk)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/raw/android)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/raw/android/wiki-agent.aab)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/android/wiki-agent.apk)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/android/wiki-agent.aab/app-release.aab)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/android/wiki-agent.apk)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/android/wiki-agent.apk/app-release.apk)"
    ]
   },
   {
