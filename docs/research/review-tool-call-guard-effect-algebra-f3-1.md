@@ -127,7 +127,36 @@ Add one parametrised test, named for the invariant rather than a round, where ea
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+The hypothesis held. Against the pre-fix tree (`c9770fe`), every member channel in the experiment
+passed as `read` only: `(Get-Item README.md).Replace(…)`, `… | % Delete`, `… | foreach -m Delete`,
+`… | % -MemberName Del*`, `ForEach-Object -MemberName CopyTo -ArgumentList …`,
+`(Get-Item …).ForEach('Delete')`, `(Get-Item …).Delete.Invoke()`,
+`(Get-Item …).PSObject.Methods['Delete'].Invoke()`, `(Get-Item …).$m()`, `(Get-Item …).'Delete'()`,
+and the `(Get-Item …).IsReadOnly = $true` / `.set_IsReadOnly(…)` setters. Only the round-1
+`.CopyTo(…)` spelling was caught, confirming the check sat at one lexical site.
+
+The fix routes every channel through one gate, `guard.member_effect(recv, method, literal_recv)`,
+the sole consumer in `words_effects`: a member is inert only when the receiver type is statically
+safe (`SAFE_TYPES`), or the receiver is a string literal (the word begins with a quote — an index
+quote like `.Methods['Delete']` does not count), or the name is read-only for every type
+(`SAFE_MEMBERS`). Polymorphic/dispatching names (replace, foreach, where, invoke, add, insert, get,
+getvalue, item, …) left `SAFE_MEMBERS`, so on an unknown receiver they are `top`. The lexer now
+marks a dynamic or quoted member name (`.$m(`, `.'Delete'(`) as undecidable, and recognises the
+intrinsic `.ForEach({block})`/`.Where({block})` (block reduced as a group) apart from
+`.ForEach('Delete')` (a method name → gate). `ForEach-Object`/`Where-Object`/`%`/`foreach` (piped or
+with a member name rather than its `(...)` clause) go through a `foreach_member` model that sends the
+`-MemberName`/positional name to the gate, with a wildcard name `top`. `ps_statement` now makes an
+assignment whose target is a member or element (`$x.Prop =`, `(expr).Member =`, `$a[0] =`) `top`,
+while a plain `$var =`/`$env:X =` is unchanged.
+
+Tests (in `tool/test_guard.py`): `test_a_member_on_an_unknown_receiver_is_denied` covers thirteen
+syntaxes (instance method, ForEach-Object -MemberName, `% Delete`, `foreach -m`, wildcard member,
+member-with-arguments, intrinsic `.ForEach('Delete')`, `.Invoke()`, `.PSObject.Methods[…].Invoke()`,
+dynamic `.$m()`, quoted `.'Delete'()`, member assignment, setter), each denied;
+`test_read_only_members_and_safe_receivers_stay_allowed` keeps the controls (`'a,b'.Split(',')`,
+`'x'.Replace('x','y')`, `(Get-Date).ToString()`, `% Name`, `% { $_.Name }`, `(1..3).ForEach({…})`)
+passing. The corpus matches with five PowerShell entries gaining `top(method Replace)` (a `.Replace`
+on an unknown-typed `$content`, already `top` via a sibling `WriteAllText`).
 
 ## Unresolved limits
 

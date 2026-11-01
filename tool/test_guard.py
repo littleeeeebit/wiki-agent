@@ -309,6 +309,173 @@ def test_no_wrapper_turns_a_round2_denial_into_a_pass(repo, form, wrapper):
     assert call(repo, WRAPPERS[wrapper](ROUND2[form][0])), form
 
 
+# A third review round named more forms that acted outside the grant. Each line below is a property,
+# not one command: the rule it names holds across every syntax that reaches the same effect. Inputs
+# name neutral targets (`outside/`, the protected `.wiki`/`verification.toml`), never a real command.
+
+# F1 — a copy/move/extract into a directory writes files *under* it, so a protected file there is reached.
+# The rule: the destination's descendants are named, whatever program or dialect writes them.
+DEST_FORMS = {
+    "cp-rename": ("cp src/adapter.toml .wiki", "Bash"),
+    "cp-trailing-slash": ("cp src/adapter.toml .wiki/", "Bash"),
+    "mv-into-dir": ("mv src/adapter.toml .wiki", "Bash"),
+    "cp-target-flag": ("cp -t .wiki src/adapter.toml", "Bash"),
+    "copy-item": ("Copy-Item src/adapter.toml -Destination .wiki", "PowerShell"),
+    "copy-item-literal": ("Copy-Item -LiteralPath src/adapter.toml -Destination .wiki", "PowerShell"),
+    "move-item": ("Move-Item src/adapter.toml .wiki", "PowerShell"),
+    "copy-item-default-cwd": ("Copy-Item src/verification.toml", "PowerShell"),
+    "expand-archive": ("Expand-Archive bundle.zip -DestinationPath .wiki", "PowerShell"),
+    "cmd-copy": ('cmd /c "copy src\\adapter.toml .wiki"', "Bash"),
+    "cmd-robocopy": ("cmd /c robocopy src .wiki adapter.toml", "Bash"),
+}
+
+
+@pytest.mark.parametrize("form", DEST_FORMS)
+def test_a_copy_into_a_protected_directory_is_denied(repo, form):
+    command, tool = DEST_FORMS[form]
+    reason = call(repo, command, tool=tool)
+    assert reason and "허가를 정하는 파일" in reason, (form, reason)
+
+
+def test_tar_keeping_absolute_member_names_is_undecidable(repo):
+    for command in ("tar -xPf payload.tar -C safe", "tar --absolute-names -xf payload.tar -C safe",
+                    "tar --absolute-paths -xf payload.tar -C safe"):
+        assert "판단할 수 없는" in call(repo, command), command
+    assert call(repo, "tar -xf payload.tar -C safe") is None     # without -P, extraction stays under -C
+
+
+# F2 — creating a link and then writing under it escapes the grant through the link; `realpath` cannot
+# see a link that does not exist yet. The rule: a link effect beside any other write is undecidable.
+LINK_FORMS = {
+    "cp-symbolic": ("cp -s ../outside/target.txt link && printf x > link", "Bash"),
+    "cp-symbolic-long": ("cp --symbolic-link ../outside/target.txt link && printf x > link", "Bash"),
+    "cp-symbolic-combined": ("cp -sf ../outside/target.txt link && printf x > link", "Bash"),
+    "cp-archive-into": ("cp -a ../outside dir && printf x > dir/f", "Bash"),
+    "cp-recursive-into": ("cp -r ../outside dir && printf x > dir/f", "Bash"),
+    "rsync-archive-into": ("rsync -a ../outside/ dir && printf x > dir/f", "Bash"),
+    "new-item-symlink": ("New-Item -ItemType SymbolicLink -Path link -Target ../outside; Set-Content link x",
+                         "PowerShell"),
+    "new-item-junction": ("ni -Type Junction link -Value ../outside; Set-Content link/f x", "PowerShell"),
+    "loop-order": ("for i in 1 2; do printf x > link; cp -s ../outside link; done", "Bash"),
+}
+
+
+@pytest.mark.parametrize("form", LINK_FORMS)
+def test_a_link_written_through_in_the_same_command_is_denied(repo, form):
+    command, tool = LINK_FORMS[form]
+    assert call(repo, command, tool=tool), form
+
+
+def test_a_hard_link_from_an_outside_source_is_denied(repo):
+    # A hard link mutates its source inode; a literal outside source is a write outside the roots.
+    assert "쓰기 루트 밖이다" in call(repo, "cp -l ../outside/target.txt link")
+
+
+def test_a_link_alone_is_allowed(repo):
+    # No second write through the link: `realpath` resolves it on the next call, so it is judged
+    # as an ordinary write at its own location — extraction and recursive copy alone stay allowed.
+    for command in ("cp -s a b", "cp -r src dst", "tar -xf bundle.tar -C out", "unzip bundle.zip -d out"):
+        assert call(repo, command) is None, command
+
+
+# F3 — a PowerShell member name does not fix its effect (`String.Replace` reads, `FileInfo.Replace`
+# writes). The rule: every syntax that invokes a member routes through one gate, and a polymorphic
+# name on an unknown receiver is undecidable, whichever way it was written.
+MEMBER_FORMS = {
+    "instance-method": "(Get-Item README.md).Replace('../outside/target.md', $null)",
+    "foreach-object-membername": "Get-Item ../outside/target.txt | ForEach-Object -MemberName Delete",
+    "percent-positional": "gi ../outside/target.txt | % Delete",
+    "foreach-abbrev": "gi ../outside/target.txt | foreach -m Delete",
+    "wildcard-member": "gi ../outside/target.txt | % -MemberName Del*",
+    "member-with-arguments": "gi README.md | ForEach-Object -MemberName CopyTo -ArgumentList '../outside/t.md'",
+    "intrinsic-foreach-method": "(Get-Item ../outside/target.txt).ForEach('Delete')",
+    "invoke-member": "(Get-Item ../outside/target.txt).Delete.Invoke()",
+    "psobject-invoke": "(Get-Item ../outside/target.txt).PSObject.Methods['Delete'].Invoke()",
+    "dynamic-member": "(Get-Item ../outside/target.txt).$m()",
+    "quoted-member": "(Get-Item ../outside/target.txt).'Delete'()",
+    "member-assignment": "(Get-Item ../outside/target.txt).IsReadOnly = $true",
+    "setter-method": "(Get-Item ../outside/target.txt).set_IsReadOnly($true)",
+}
+
+
+@pytest.mark.parametrize("form", MEMBER_FORMS)
+def test_a_member_on_an_unknown_receiver_is_denied(repo, form):
+    assert "판단할 수 없는" in call(repo, MEMBER_FORMS[form], tool="PowerShell"), form
+
+
+def test_read_only_members_and_safe_receivers_stay_allowed(repo):
+    for ok in ("'a,b'.Split(',')", "'x'.Replace('x','y')", "(Get-Date).ToString()",
+               "Get-ChildItem | ForEach-Object { $_.Name }", "Get-ChildItem | % Name",
+               "(1..3).ForEach({ $_ * 2 })"):
+        assert call(repo, ok, tool="PowerShell") is None, ok
+
+
+# F11/F12/F13/F14 — one form each, on a neutral target, that acted outside the grant.
+OUTSIDE_FORMS = {
+    "F11-local-executable": ("./cat", "Bash", "허가된 실행 파일이 아니다"),
+    "F11-local-modelled-program": ("./git push origin HEAD", "Bash", "허가된 실행 파일이 아니다"),
+    "F12-in-process-group-cd": ("& { Set-Location ../outside }; Set-Content target.txt x", "PowerShell",
+                                "판단할 수 없는"),
+    "F13-curl-connect-to": ("curl --connect-to localhost:80:unlisted.example:80 http://localhost/", "Bash",
+                            "허가된 호스트가 아니다"),
+    "F14-gh-absolute-endpoint": ("gh api https://unlisted.example/path", "Bash", "허가된 호스트가 아니다"),
+}
+
+
+@pytest.mark.parametrize("form", OUTSIDE_FORMS)
+def test_each_remaining_form_outside_the_grant_is_denied(repo, form):
+    command, tool, marker = OUTSIDE_FORMS[form]
+    reason = call(repo, command, tool=tool)
+    assert reason and marker in reason, (form, reason)
+
+
+def test_a_system_executable_by_absolute_path_keeps_its_model(repo):
+    # The planted-binary rule is scoped to paths the task could write: a system path is trusted.
+    assert call(repo, "/usr/bin/time python tool/search q") is None
+
+
+@pytest.mark.parametrize("wrapper", WRAPPERS)
+@pytest.mark.parametrize("form", list(LINK_FORMS) + list(DEST_FORMS))
+def test_no_wrapper_turns_a_round3_denial_into_a_pass(repo, form, wrapper):
+    table = LINK_FORMS if form in LINK_FORMS else DEST_FORMS
+    command, tool = table[form]
+    if tool != "Bash":
+        return
+    assert call(repo, WRAPPERS[wrapper](command)), form
+
+
+def test_declared_blocks_hold_across_every_payload_shape(monkeypatch):
+    """F9 — the declared `Bash(...)` block fires whatever field, tool name or argv shape carries it."""
+    import apply
+    import deny
+
+    monkeypatch.setattr(apply, "declared", lambda: (
+        {"Bash(git reset --hard*)": ["craft/destructive-git-guards"],
+         "Bash(git clean -fdx*)": ["craft/destructive-git-guards"]}, {}))
+
+    def blocked(payload):
+        answer = deny.verdict(payload)
+        return answer and answer["hookSpecificOutput"]["permissionDecisionReason"]
+
+    def shape(tool, field, value):
+        return {"tool_name": tool, "tool_input": {field: value}}
+
+    bad = [shape("Bash", "command", "git reset --hard"),
+           shape("exec_command", "cmd", "bash -c 'git reset --hard'"),
+           shape("functions.exec_command", "cmd", "git reset --hard"),
+           shape("shell_command", "command", "echo ready; git reset --hard"),
+           shape("shell", "command", ["bash", "-lc", "git reset --hard"]),
+           shape("local_shell", "command", ["git", "reset", "--hard"])]
+    for payload in bad:
+        reason = blocked(payload)
+        assert reason and "공유 위키의 차단 규칙" in reason, payload
+    for payload in bad:
+        payload["tool_input"] = {k: (["git", "status"] if isinstance(v, list) else v.replace(
+            "git reset --hard", "git status").replace("git clean -fdx", "git status"))
+            for k, v in payload["tool_input"].items()}
+        assert not blocked(payload), payload
+
+
 def test_declared_git_blocks_hold_inside_nested_shells(monkeypatch):
     """F10 — a declared `Bash(...)` block holds inside `bash -c`, `pwsh -Command` and `$(...)`."""
     import apply

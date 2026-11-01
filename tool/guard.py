@@ -63,6 +63,7 @@ class Ctx:
     stdin: object = None                # a here document's Word, or None
     piped: bool = False
     funcs: set = field(default_factory=set, compare=False)
+    roots: tuple = ()                   # the task's write roots, to tell a planted local binary from a system one
     env: tuple = ()                     # assignments in front of the current command
     consts: tuple = ()                  # ((name, literal), ...) the script assigned before here
     sink: object = field(default=None, compare=False)   # a list collecting nested shell strings, or None
@@ -75,6 +76,12 @@ class Ctx:
 
 def top(reason: str) -> set:
     return {("top", reason)}
+
+
+# A member name the lexer saw after `.`/`::` but could not read: a `$var` or a quoted string.
+DYNAMIC_MEMBER = "\0member"
+# PowerShell commands that move the session location (and so the directory later paths resolve from).
+LOCATION_CMDS = {"set-location", "sl", "cd", "chdir", "push-location", "pushd", "pop-location", "popd"}
 
 
 class Unclosed(ValueError):
@@ -288,9 +295,21 @@ def read_word(s: str, i: int, d: str) -> tuple[Word, int]:
     w.text, w.raw = "".join(buf), s[start:i]
     if d == "ps" and w.text in ("?", "%") and w.why == "glob":
         w.why = ""                      # Where-Object and ForEach-Object
-    if d == "ps" and s[i:i + 1] == "(" and (m := re.search(r"(?:\[([\w.`\[\]]+)\])?(?:\.|::)([A-Za-z_]\w*)$",
-                                                           s[start:i])):
-        w.recv, w.method = m.group(1) or "", m.group(2)
+    if d == "ps" and s[i:i + 1] == "(":
+        tail = s[start:i]
+        if m := re.search(r"(?:\[([\w.`\[\]]+)\])?(?:\.|::)([A-Za-z_]\w*)$", tail):
+            w.recv, w.method = m.group(1) or "", m.group(2)
+            if m.group(2).lower() in ("foreach", "where", "psforeach", "pswhere"):
+                j = i + 1
+                while j < len(s) and s[j] in " \t`\r\n":
+                    j += 1
+                # `.ForEach({block})`/`.Where({block})` run the block, which is reduced as a group;
+                # `.ForEach('Delete')` names a method on each item and must be judged (left as a method).
+                if s[j:j + 1] == "{":
+                    w.method = ""
+        elif re.search(r"(?:\.|::)\s*(?:\$|['\"])", tail):
+            # `.$name()` / `.'Delete'()`: a member bound to a name only known at run time.
+            w.method = DYNAMIC_MEMBER
     return w, i
 
 
@@ -543,16 +562,35 @@ def words_effects(words: list, ctx: Ctx) -> set:
         for d, text in w.subs:
             out |= code(text, d, ctx, fresh=False)
         if w.method:
-            from guard_windows import SAFE_METHODS, SAFE_TYPES
-            method = w.method.lower()
-            if method == "new":
-                # A constructor's receiver decides what it does: `[Text.UTF8Encoding]::new`
-                # is inert, `[IO.FileStream]::new('out', 'Create')` creates a file.
-                if not (w.recv and SAFE_TYPES.match(w.recv.lower())):
-                    out |= top(f"constructor of {w.recv or 'an unknown type'}")
-            elif method not in SAFE_METHODS:
-                out |= top(f"method {w.method}")
+            # The receiver is a string literal only when the word begins with a quote (`'x'.Replace`);
+            # a quote later in the word (an index like `.Methods['Delete']`) is not the receiver.
+            literal = bool(re.match(r"^\s*['\"]", w.raw))
+            out |= member_effect(w.recv, w.method, literal)
     return out
+
+
+def member_effect(recv: str, method: str, literal_recv: bool) -> set:
+    """One gate every PowerShell member invocation routes through, whatever the syntax wrote it.
+
+    A member name does not fix its effect: `String.Replace` is pure but `FileInfo.Replace`
+    overwrites a file, so a name alone is not safe. A call is inert only when the receiver's
+    type is statically known and safe, or the receiver is a string literal, or the name is
+    read-only for every receiver type. Anything else — a polymorphic or dispatching name on
+    an unknown receiver, or a name the lexer could not read — is undecidable.
+    """
+    from guard_windows import SAFE_MEMBERS, SAFE_TYPES
+
+    name = method.lower()
+    recv = recv.lower()
+    if name == DYNAMIC_MEMBER:
+        return top("a dynamic or quoted member name")
+    if name == "new":
+        # A constructor's receiver decides what it does: `[Text.UTF8Encoding]::new`
+        # is inert, `[IO.FileStream]::new('out', 'Create')` creates a file.
+        return set() if recv and SAFE_TYPES.match(recv) else top(f"constructor of {recv or 'an unknown type'}")
+    if (recv and SAFE_TYPES.match(recv)) or (not recv and literal_recv):
+        return set()
+    return set() if name in SAFE_MEMBERS else top(f"method {method}")
 
 
 ASSIGN = re.compile(r"^([A-Za-z_]\w*)(?:\[[^\]]*\])?\+?=")
@@ -564,11 +602,19 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
     from guard_windows import ps_statement
 
     eff, words, stdin, call, consts = {READ}, [], None, False, dict(ctx.consts)
+    group_moved = False
     for it in items:
         if it[0] == "g":
             inner = reduce(it[2], ctx.deeper(fresh=False)) if ctx.depth < DEPTH else top(f"nesting deeper than {DEPTH}")
             eff |= inner
             words.append(Word("(...)", "group"))
+            # A PowerShell group (`& {…}`, `.{…}`, `(…)`, `$(…)`) runs in the same runspace, so a
+            # `Set-Location` inside it moves the location for the statements that follow. A POSIX
+            # `(…)` subshell does not. When such a group may move the location, the next path is
+            # relative to an unknown directory.
+            if ctx.d == "ps" and any(c[0] == "w" and not c[1].why and c[1].text.lower() in LOCATION_CMDS
+                                     for c in it[2]):
+                group_moved = True
         elif it[0] == "r":
             _fd, op, target = it[1], it[2], bind(it[3], consts)
             eff |= words_effects([target], ctx)
@@ -588,6 +634,10 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
                 env.append(words.pop(0))
         if not (words and not words[0].quoted and words[0].text.lower() in KEYWORDS[ctx.d]):
             break
+        # `foreach` is the loop statement only with its `(...)` clause; otherwise (piped, or with a
+        # member name like `foreach -m Delete`) it is the ForEach-Object cmdlet, judged by its model.
+        if ctx.d == "ps" and words[0].text.lower() == "foreach" and not (len(words) > 1 and words[1].why == "group"):
+            break
         key = words.pop(0).text.lower()
         if key in ("for", "select", "case", "foreach", "using", "param", "class", "enum", "data"):
             return eff | envs(env, ctx), None
@@ -598,18 +648,19 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
     if ctx.d == "ps" and not call:
         words, stop = ps_statement(words, ctx)
         eff |= stop
+    unknown = frozenset({None}) if group_moved else None
     if len(words) > 1 and words[1].why == "group" and words[1].text == "(...)" and not words[0].why:
         # `name() { ...; }` defines a function; the body follows as its own command.
         ctx.funcs.add(words[0].text.lower())
-        return eff | simple([("w", w) for w in words[2:]], ctx)[0], None
+        return eff | simple([("w", w) for w in words[2:]], ctx)[0], unknown
     if not words:
-        return eff, None
+        return eff, unknown
     if words[0].why == "group":
-        return eff, None
+        return eff, unknown
     if words[0].why:
-        return eff | top(f"{words[0].why} as the command name"), None
+        return eff | top(f"{words[0].why} as the command name"), unknown
     more, moved = run_argv(words, ctx)
-    return eff | more, moved
+    return eff | more, unknown if moved is None else moved
 
 
 def assignment(w: Word) -> re.Match | None:
@@ -742,6 +793,24 @@ def contained(path: str, roots: list[str], windows: bool | None = None) -> bool:
 
 SHELL_TOOLS = {"Bash", "PowerShell", "Monitor", "exec_command", "shell_command", "shell", "local_shell"}
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch"}
+# Codex sends the shell command under `cmd`, sometimes as an argv list, and on Windows it is PowerShell.
+CODEX_SHELL_TOOLS = SHELL_TOOLS - {"Bash", "PowerShell", "Monitor"}
+
+
+def shell_command(payload: dict, host: str = "claude") -> tuple[str, object, str]:
+    """`(tool, command, dialect)` read off a tool call the one way, for both the deny check and the guard.
+
+    A shell command may arrive under `command` or `cmd`, as a string or an argv list, from a tool
+    whose name may carry a `functions.` prefix; and a Codex shell on Windows is PowerShell. Reading
+    it in one place keeps the declared-deny check and the effect guard judging the same command.
+    """
+    tool = str(payload.get("tool_name") or "").removeprefix("functions.")
+    given = payload.get("tool_input") or {}
+    command = given.get("command", given.get("cmd", "")) if isinstance(given, dict) else ""
+    windows = os.name == "nt"
+    dialect = "ps" if tool == "PowerShell" or (host == "codex" and windows) \
+        or (tool in CODEX_SHELL_TOOLS and windows) else "posix"
+    return tool, command, dialect
 PATCH = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+)$|^\*\*\* Move to: (.+)$", re.M)
 
 
@@ -752,12 +821,38 @@ def derive(command, dialect: str, ctx: Ctx) -> set:
     ctx = replace(ctx, d=dialect, funcs=set())   # functions are this call's own, never carried in
     try:
         if isinstance(command, list):
-            return {READ} | run_argv([Word(str(a), quoted=True) for a in command], ctx)[0]
-        return {READ} | reduce(lex(str(command), dialect), ctx, str(command))
+            return collapse({READ} | run_argv([Word(str(a), quoted=True) for a in command], ctx)[0])
+        return collapse({READ} | reduce(lex(str(command), dialect), ctx, str(command)))
     except Unclosed as error:
         return {READ} | top(str(error))
     except RecursionError:
         return top("nesting too deep to parse")
+
+
+def collapse(effs: set) -> set:
+    """Fold link effects into the command's path effects, order-insensitively.
+
+    A link (symlink, junction or hard link) created in a command changes how the names of
+    later paths resolve, and `realpath` cannot see a link that does not exist yet. So when a
+    command both creates a link and writes, deletes or extracts under where that link sits,
+    the later write may leave the grant through the link: the whole command is undecidable.
+    A link that is not written through in the same command is resolved by `realpath` on the
+    next call, so on its own it is judged as a write (or a tree write) at its own location.
+    """
+    singles = [p for k, p in effs if k == "link"]
+    trees = [p for k, p in effs if k == "linktree"]
+    if not singles and not trees:
+        return effs
+    out = {e for e in effs if e[0] not in ("link", "linktree")}
+    written = [p for k, p in out if k in ("write", "write_tree", "delete")]
+    slipped = False
+    for where in singles:
+        out.add(("write", where))
+        slipped = slipped or any(contained(p, [where]) or contained(where, [p]) for p in written)
+    for root in trees:
+        out.add(("write_tree", root))
+        slipped = slipped or any(p != root and contained(p, [root]) for p in written)
+    return out | top("a link is created and a path under it is written in the same command") if slipped else out
 
 
 def nested_bash_commands(command, dialect: str = "posix") -> list:
@@ -768,22 +863,23 @@ def nested_bash_commands(command, dialect: str = "posix") -> list:
     wrapped in `bash -c`, `pwsh -Command` or `$(...)`. Paths stay unresolved
     here (`cwds` is unknown); only the raw strings matter.
     """
-    if not isinstance(command, str):
-        return []
     found: list = []
     ctx = Ctx(dialect, frozenset({None}), "", "", os.name == "nt", sink=found)
     try:
-        reduce(lex(command, dialect), ctx, command)
+        if isinstance(command, list):
+            from guard_models import run_argv
+            run_argv([Word(str(a), quoted=True) for a in command], ctx)
+        else:
+            reduce(lex(str(command), dialect), ctx, str(command))
     except Exception:
         pass
     return found
 
 
-def call_effects(tool: str, given: dict, ctx: Ctx, host: str) -> set:
+def call_effects(tool: str, given: dict, ctx: Ctx, host: str, payload: dict) -> set:
     if tool in SHELL_TOOLS:
-        command = given.get("command", given.get("cmd", ""))
-        windows_codex = host == "codex" and ctx.windows
-        return derive(command, "ps" if tool == "PowerShell" or windows_codex else "posix", ctx)
+        _tool, command, dialect = shell_command(payload, host)
+        return derive(command, dialect, ctx)
     if tool in EDIT_TOOLS:
         native = replace(ctx, d="ps")     # host paths: no Git Bash drive mapping
         if tool != "apply_patch":
@@ -821,8 +917,8 @@ def verdict(payload: dict, host: str = "claude") -> dict | None:
         return None
     ctx = Ctx("posix", frozenset({str(cwd).replace("\\", "/") if os.name == "nt" else str(cwd)}),
               str(Path.home()).replace("\\", "/"), temps()[0].as_posix(),
-              os.name == "nt", remotes=g.remotes)
-    bad = [(render(e), why) for e in sorted(call_effects(tool, given, ctx, host)) if (why := outside(e, g))]
+              os.name == "nt", remotes=g.remotes, roots=tuple(g.roots))
+    bad = [(render(e), why) for e in sorted(call_effects(tool, given, ctx, host, payload)) if (why := outside(e, g))]
     if not bad:
         return None
     lines = ["위키 효과 검사가 이 호출을 막았다 — 작업에 허가된 효과 밖이다."]

@@ -169,7 +169,39 @@ Add one parametrised test with two families. In the first, each link-capable for
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+The hypothesis held, with one scoping decision recorded below. Against the pre-fix tree (`c9770fe`),
+`cp -s ../outside/target.txt link; printf x > link` derived `write(link)` + `write(link/target.txt)`,
+both inside the checkout, and passed; `cp -l ../outside/t link` derived writes inside the checkout
+and passed (the hard-link source write was missing); `New-Item -ItemType SymbolicLink … ; Set-Content
+link x` derived `write(link)` and passed. Only `ln` and `mklink` were already `top`, confirming the
+earlier fixes covered names, not the capability.
+
+The fix adds a link effect kind (`link` for a single location, `linktree` for a directory that may
+hold links) and one order-insensitive rule in `guard.collapse`, applied once over the whole command's
+effect set in `derive`: a link effect beside any write/delete/tree-write *at or under* the link makes
+the command `top`; a link not written through in the same command is folded back to a write at its own
+location (sound, because `realpath` resolves it on the next call). Link-capable forms now emit the
+effect: `cp -s`/`--symbolic-link`, `cp -l`/`--link` (plus a write to the literal source, since a hard
+link mutates the source inode), symlink-preserving `cp -a`/`-d`/`-P`/`-R` without `-L`, `rsync`
+`-a`/`-l`/`-H`/`--links`/`--hard-links`/`--link-dest`, and PowerShell `New-Item -ItemType
+SymbolicLink|Junction|HardLink`. `ln` and `mklink` stay unconditional `top`.
+
+Scoping (recorded, not hidden): `tar -x`, `unzip`, `git checkout`/… and `patch` are **not** made
+link-capable. On this host `core.symlinks` defaults to `false` (verified: `git config core.symlinks`
+→ `false`), libarchive/bsdtar and git refuse `..`/absolute members by default, and treating every
+extraction or checkout as link-capable would collapse the pervasive `git checkout && <edit>` and
+`tar -x && rm` patterns to `top` — a precision cost out of proportion to the within-one-command
+residual. The cross-call symlink-slip (a link made in one call, followed in a later call) is already
+sound through `realpath`.
+
+Tests (in `tool/test_guard.py`): `test_a_link_written_through_in_the_same_command_is_denied` covers
+nine link forms (cp -s, --symbolic-link, cp -sf, cp -a/-r into a dir, rsync -a, New-Item SymbolicLink,
+ni Junction, and the loop form `for i in 1 2; do printf x > link; cp -s ../outside link; done`), each
+denied; `test_a_hard_link_from_an_outside_source_is_denied` pins the hard-link source write;
+`test_a_link_alone_is_allowed` keeps `cp -s a b`, `cp -r src dst`, `tar -xf … -C out` and `unzip …
+-d out` passing on their own; `test_no_wrapper_turns_a_round3_denial_into_a_pass` wraps the Bash forms
+in `bash -c`/`sh -lc`/`$(…)`. The corpus still matches (its `mklink`/`cp` entries are `top` or carry
+variable destinations).
 
 ## Unresolved limits
 

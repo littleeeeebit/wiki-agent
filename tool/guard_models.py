@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import replace
 import re
 
-from guard import NULLS, Word, assignment, code, envs, moved_to, paths, top
+from guard import NULLS, Word, assignment, code, contained, envs, moved_to, paths, resolve, top
 
 KEYWORDS = {
     "posix": {"if", "then", "elif", "else", "fi", "do", "done", "while", "until", "{", "}", "!", "time", "for",
@@ -179,14 +179,32 @@ def m_copy(name, args, ctx):
         # A link, hard or symbolic, redirects later paths through it; its target is not followable here.
         return top("ln creates a link the guard cannot follow"), None
     short = "".join(f[1:] for f in flags if not f.startswith("--"))
+    longs = {f for f in flags if f.startswith("--")}
     recursive = name == "cp" and ("r" in short or "R" in short or "a" in short
-                                  or any(f in ("--recursive", "--archive", "--dereference-recursive") for f in flags))
+                                  or longs & {"--recursive", "--archive", "--dereference-recursive"})
+    dereference = "L" in short or "--dereference-recursive" in longs
+    symbolic = name == "cp" and ("s" in short or "--symbolic-link" in longs)
+    hard = name == "cp" and ("l" in short or "--link" in longs)
+    # A copy reproduces or creates links unless it dereferences them: -s/-l are explicit, and a
+    # recursive or archive copy (without -L) carries any symlink in the source tree to the copy.
+    makes_link = symbolic or hard or (name == "cp" and not dereference
+                                      and (recursive or "d" in short or "P" in short or "--no-dereference" in longs
+                                           or any(f.startswith("--preserve") and ("links" in f or "all" in f)
+                                                  for f in longs)))
     kind = "write_tree" if recursive else "write"
     dest = vals.get("-t", []) + vals.get("--target-directory", [])
+    srcs = pos if dest else pos[:-1]
     out = writes(kind, dest or pos[1:], ctx)
-    out |= into_dir(pos, dest, ctx, kind)
+    if not (makes_link and not recursive):
+        out |= into_dir(pos, dest, ctx, kind)
     if name == "mv":
-        out |= writes("delete", pos if dest else pos[:-1], ctx)
+        out |= writes("delete", srcs, ctx)
+    if makes_link:
+        # The link's own location is where it sits; a hard link also mutates its source inode.
+        tag = "linktree" if recursive else "link"
+        out = {(tag if k in ("write", "write_tree") else k, p) for k, p in out}
+        if hard:
+            out |= writes("write", srcs, ctx)
     return out, None
 
 
@@ -217,6 +235,9 @@ def m_tar(name, args, ctx):
     if any(k in vals for k in runs):
         return top("tar runs a program"), None
     short = "".join(f[1:] for f in flags if not f.startswith("--"))
+    if "P" in short or any(f in ("--absolute-names", "--absolute-paths") for f in flags):
+        # With -P an archive member can carry an absolute path or `..`, landing outside -C.
+        return top("tar keeps absolute or escaping member names (-P)"), None
     if "x" in short or "--extract" in flags or "--get" in flags:
         # Extraction writes an archive-decided tree into the directory; its descendants are unknown.
         return writes("write_tree", vals.get("-C", []) + vals.get("--directory", []) or [here(ctx)], ctx), None
@@ -503,12 +524,26 @@ def m_curl(name, args, ctx):
     for w in pos + [v for k in ("--url", "-x", "--proxy", "--preproxy", "--socks5", "--socks5-hostname")
                     for v in vals.get(k, [])]:
         out |= network(w)
+    # `--connect-to H1:P1:H2:P2` and `--resolve H:P:ADDR` redirect the connection to another host.
+    for w in vals.get("--connect-to", []) + vals.get("--resolve", []):
+        out |= override_host(w)
     for k in ("-o", "--output", "-D", "--dump-header", "-c", "--cookie-jar", "--stderr", "--trace",
-              "--trace-ascii", "--output-dir"):
+              "--trace-ascii"):
         out |= writes("write", [w for w in vals.get(k, []) if w.text != "-"], ctx)
+    # `--output-dir` names a directory the server's file names land in: an archive-decided tree.
+    out |= writes("write_tree", vals.get("--output-dir", []), ctx)
     if any(f in ("--remote-name", "--remote-name-all") or (f[1:2] != "-" and "O" in f) for f in flags):
         out |= paths("write", here(ctx), ctx)
     return out, None
+
+
+def override_host(w: Word) -> set:
+    """The real destination host a curl `--connect-to`/`--resolve` value points the connection at."""
+    if w.why:
+        return top(f"{w.why} in a curl connection override")
+    parts = w.text.split(":")
+    # Both forms carry the destination host in the third colon-field; an empty field keeps the URL's host.
+    return network(Word(parts[2])) if len(parts) > 2 and parts[2] else set()
 
 
 def m_wget(name, args, ctx):
@@ -523,8 +558,10 @@ def m_wget(name, args, ctx):
         out |= network(w)
     named = [w for k in ("-O", "--output-document") for w in vals.get(k, [])]
     out |= writes("write", [w for w in named if w.text != "-"], ctx)
-    out |= writes("write", [w for k in ("-P", "--directory-prefix", "-o", "--output-file", "-a",
-                                        "--append-output") for w in vals.get(k, [])], ctx)
+    out |= writes("write", [w for k in ("-o", "--output-file", "-a", "--append-output")
+                            for w in vals.get(k, [])], ctx)
+    # `-P` names a directory the downloaded tree lands in, with server-decided file names.
+    out |= writes("write_tree", vals.get("-P", []) + vals.get("--directory-prefix", []), ctx)
     if not named and "--spider" not in flags:
         out |= paths("write", here(ctx), ctx)
     return out, None
@@ -534,7 +571,7 @@ REMOTE = re.compile(r"^(?:[^@/\\:\s]+@)?([^/\\:\s]{2,}|\[[^\]]+\]):")
 
 
 def m_ssh(name, args, ctx):
-    pos, vals, _ = getopt(args, {"-p", "-P", "-i", "-l", "-o", "-F", "-L", "-R", "-D", "-J", "-b", "-c", "-E",
+    pos, vals, flags = getopt(args, {"-p", "-P", "-i", "-l", "-o", "-F", "-L", "-R", "-D", "-J", "-b", "-c", "-E",
                                  "-e", "-m", "-O", "-Q", "-S", "-W", "-w", "-B", "-I", "-X", "--rsh",
                                  "--rsync-path", "--exclude", "--include", "--filter", "--files-from",
                                  "--exclude-from", "--log-file", "--temp-dir", "--chmod", "--port",
@@ -548,13 +585,19 @@ def m_ssh(name, args, ctx):
         out |= {("network", host_of(h)) for h in w.text.split(",")}
     if name in ("ssh", "sftp", "telnet", "nc", "ncat", "netcat", "ftp", "tftp", "mosh"):
         return out | (network(Word(re.sub(r"^[^@]*@", "", pos[0].text), pos[0].why)) if pos else set()), None
+    short = "".join(f[1:] for f in flags if not f.startswith("--"))
+    # `rsync -a/-l/-H`, `--links`, `--hard-links` and `--link-dest` reproduce or create links.
+    rsync_link = name == "rsync" and ("a" in short or "l" in short or "H" in short
+                                      or any(f in ("--links", "--hard-links") or f.startswith("--link-dest")
+                                             for f in flags))
     for k, w in enumerate(pos):
         if w.why:
             out |= top(f"{w.why} in a {name} operand")
         elif REMOTE.match(w.text) or "::" in w.text:
             out |= {("network", host_of(re.sub(r"^[^@]*@", "", w.text).split("::")[0] + ":"))}
         elif k == len(pos) - 1 and k:
-            out |= paths("write", w, ctx)
+            out |= {("linktree", p) if rsync_link and kind == "write" else (kind, p)
+                    for kind, p in paths("write", w, ctx)}
     return out, None
 
 
@@ -716,6 +759,11 @@ def m_gh(name, args, ctx):
     if repo is not None and repo.text.count("/") >= 2:
         hosts.append(repo.text.split("/")[0])
     out = {("network", host_of(h)) for h in hosts}
+    if verb == "api":
+        # `gh api` accepts an absolute endpoint and sends the request to that URL's own host,
+        # not the default GitHub host.
+        for w in pos[1:]:
+            out |= network(w) if not w.why and "://" in w.text else set()
     if verb in ("config", "alias", "extension", "ext") and sub not in ("get", "list", "") \
             or verb == "auth" and sub in ("login", "logout", "setup-git", "refresh", "switch"):
         out |= paths("write", Word("~/.config/gh"), ctx)
@@ -724,7 +772,8 @@ def m_gh(name, args, ctx):
     elif (verb, sub) == ("pr", "checkout"):
         out |= paths("write", here(ctx), ctx)
     elif sub == "download":
-        out |= writes("write", vals.get("-D", []) + vals.get("--dir", []) + vals.get("-O", []) + vals.get(
+        # A download names a directory its release/run assets land in, with server-decided names.
+        out |= writes("write_tree", vals.get("-D", []) + vals.get("--dir", []) + vals.get("-O", []) + vals.get(
             "--output", []) or [here(ctx)], ctx)
     elif verb == "codespace" and sub in ("cp", "ssh", "code", "jupyter", "ports"):
         out |= top(f"gh codespace {sub}")
@@ -752,6 +801,26 @@ MODELS = {name: model for model, names in (
 ) for name in names.split()}
 
 
+def planted(raw: str, ctx) -> bool:
+    """Could a path-named command be a local file the task wrote, rather than a system program?
+
+    A system binary (`/usr/bin/time`, `C:/Windows/...`) is outside every write root and keeps its
+    model; a path that resolves inside a write root — or cannot be resolved — could be planted and
+    is treated as an ungranted spawn. With no grant to check against, only a relative path is suspect.
+    """
+    places = set()
+    for cwd in ctx.cwds:
+        try:
+            places.add(resolve(raw, cwd, ctx))
+        except ValueError:
+            return True
+    if None in places:
+        return True
+    if not ctx.roots:
+        return not re.match(r"^([A-Za-z]:[\\/]|[\\/])", raw.replace("\\", "/"))
+    return any(contained(p, list(ctx.roots), ctx.windows) for p in places)
+
+
 def run_argv(words: list, ctx) -> tuple[set, object]:
     """Effects of running `words[0]` with the rest as its arguments."""
     if not words:
@@ -771,6 +840,11 @@ def run_argv(words: list, ctx) -> tuple[set, object]:
         # A function's body runs in the caller's context (cwd, variables), not where it
         # was defined, so its effects cannot be placed from the definition alone.
         return top(f"the shell function {name}"), None
+    if re.search(r"[\\/]", raw) and planted(raw, ctx):
+        # A command named by a path that the task could have written is a specific local file, not a
+        # PATH lookup: its basename must not lend it a trusted reader or a program model, since an
+        # attacker could plant `./cat` or a local `git`. It is an ungranted spawn the grant must name.
+        return {("spawn", name)}, None
     if name in READERS and name not in MODELS:
         return set(), None
     model = MODELS.get(name)

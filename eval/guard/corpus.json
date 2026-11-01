@@ -1945,6 +1945,7 @@
    "effects": [
     "read",
     "spawn(omm)",
+    "top(method Replace)",
     "top(method WriteAllText)"
    ]
   },
@@ -1963,6 +1964,7 @@
    "command": "$p = Join-Path (Get-Location) 'tests/integration/test_postgres_auth_repository.py'; $s = [IO.File]::ReadAllText($p); $s = $s.Replace('idle_expires_at=created_at + timedelta(minutes=30),','idle_expires_at=created_at + timedelta(hours=1 if index == 2 else 12),').Replace('absolute_expires_at=created_at + timedelta(hours=8),','absolute_expires_at=created_at + timedelta(hours=2 if index == 2 else 24),'); [IO.File]::WriteAllText($p, $s, [Text.UTF8Encoding]::new($false))\n& \"$env:USERPROFILE\\anaconda3\\Scripts\\conda.exe\" run --no-capture-output -n ai-voice-agent python -m ruff check tests/integration/test_postgres_auth_repository.py",
    "effects": [
     "read",
+    "top(method Replace)",
     "top(method WriteAllText)",
     "top(variable as the command name)"
    ]
@@ -1974,6 +1976,7 @@
    "effects": [
     "network(github.com)",
     "read",
+    "top(method Replace)",
     "top(method WriteAllText)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -1984,6 +1987,7 @@
    "command": "$testPath = Join-Path (Get-Location) 'tests/integration/test_browser_voice_session.py'; $testText = [IO.File]::ReadAllText($testPath); [IO.File]::WriteAllText($testPath, $testText.Replace(\"`r`n\", \"`n\"), [Text.UTF8Encoding]::new($false)); git diff --check; & \"$env:USERPROFILE\\anaconda3\\Scripts\\conda.exe\" run --no-capture-output -n ai-voice-agent python -m pytest tests/integration/test_browser_voice_session.py tests/unit/api/test_browser_turn_transaction.py tests/unit/api/test_browser_turn_completion_observability.py tests/unit/api/test_browser_turn_terminal_observability.py tests/integration/test_browser_turn_stage_corpus.py -q",
    "effects": [
     "read",
+    "top(method Replace)",
     "top(method WriteAllText)",
     "top(variable as the command name)"
    ]
@@ -1994,6 +1998,7 @@
    "command": "$testPath = Join-Path (Get-Location) 'tests/integration/test_memory_v18_deferred_extraction.py'; $testText = [System.IO.File]::ReadAllText($testPath); [System.IO.File]::WriteAllText($testPath, $testText.Replace(\"`r`n\", \"`n\"), [System.Text.UTF8Encoding]::new($false)); git diff --check -- tests/integration/test_memory_v18_deferred_extraction.py; git diff --numstat -- tests/integration/test_memory_v18_deferred_extraction.py; & \"$env:USERPROFILE\\anaconda3\\Scripts\\conda.exe\" run --no-capture-output -n ai-voice-agent python -m pytest tests/integration/test_memory_v18_deferred_extraction.py tests/unit/core/test_settings_memory_v18_flags.py -q",
    "effects": [
     "read",
+    "top(method Replace)",
     "top(method WriteAllText)",
     "top(variable as the command name)"
    ]

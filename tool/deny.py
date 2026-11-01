@@ -13,21 +13,22 @@ def verdict(payload: dict) -> dict | None:
     import guard
     from apply import declared
 
-    given = payload.get("tool_input") or {}
-    tool = payload.get("tool_name")
-    command = str(given.get("command") or "").strip()
+    # Read the command the one way the guard does: `command` or `cmd`, a string or an argv list,
+    # a `functions.`-prefixed or native tool name, PowerShell on a Codex-on-Windows shell. Checking
+    # the declarations against a different projection is validate-before-canonicalize (CWE-180).
+    raw_tool = str(payload.get("tool_name") or "")
+    tool, raw, dialect = guard.shell_command(payload)
+    command = (" ".join(map(str, raw)) if isinstance(raw, list) else str(raw)).strip()
     denies, _ = declared()
-    # Tools and Bash argument patterns share `enforce.deny` declarations. A
-    # nested shell (`bash -c '...'`, `$(...)`, `pwsh -Command '...'`) runs
-    # commands the direct pattern never sees, so every command the guard's
-    # parser finds one level down is held to the same `Bash(...)` patterns too.
-    inner = guard.nested_bash_commands(command, "ps" if tool == "PowerShell" else "posix") \
-        if tool in guard.SHELL_TOOLS else []
+    # Tools and Bash argument patterns share `enforce.deny` declarations. A nested shell
+    # (`bash -c '...'`, `$(...)`, `pwsh -Command '...'`) runs commands the direct pattern never
+    # sees, so every command the guard's parser finds one level down is held to them too.
+    inner = guard.nested_bash_commands(raw, dialect) if tool in guard.SHELL_TOOLS else []
     for rule in denies:
-        blocked = rule == tool
+        blocked = rule == raw_tool
         if rule.startswith("Bash(") and rule.endswith(")"):
             pattern = rule[5:-1]
-            if tool == "Bash":
+            if tool in guard.SHELL_TOOLS:
                 blocked = fnmatchcase(command, pattern)
             blocked = blocked or any(fnmatchcase(c.strip(), pattern) for c in inner)
         if blocked:

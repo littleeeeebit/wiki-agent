@@ -144,7 +144,9 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
 def outside(effect: tuple, g: Grant) -> str | None:
     """Why `effect` leaves the grant, naming what would allow it; `None` when it is inside."""
     kind, target = effect
-    if kind == "read":
+    if kind in ("read", "link", "linktree"):
+        # `link`/`linktree` are folded into writes by `guard.collapse` before judging; a lone
+        # one reaching here is a link not written through, resolved by `realpath` on the next call.
         return None
     if kind == "top":
         return f"판단할 수 없는 형태다({target}) — 어떤 허가로도 열리지 않으니, 리터럴 경로와 직접 실행하는 명령으로 풀어 쓴다"

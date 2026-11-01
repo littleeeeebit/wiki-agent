@@ -133,7 +133,30 @@ Run one parametrized test through codex_pretool.verdict with WIKI_AGENT_MANAGED 
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+The hypothesis held: the cause was three readers of one payload disagreeing, not the nested parse.
+Against the pre-fix tree (`c9770fe`), `deny.verdict` read only `tool_input.command` with a fixed
+posix dialect and no `functions.` stripping or argv-list handling, so a Codex `exec_command` payload
+`{cmd: "bash -c 'git reset --hard'"}` reached it as an empty command and passed the declared block,
+while `guard.call_effects` (reading `cmd`) permitted the checkout write.
+
+The fix adds one shared normalizer, `guard.shell_command(payload, host)`, returning
+`(tool, command, dialect)` read the one way — `command` or `cmd`, a string or an argv list, a
+`functions.`-stripped tool name, PowerShell on a Codex-on-Windows shell. Both `deny.verdict` and
+`guard.call_effects` now take the command from it (validate-after-canonicalize, CWE-180), and
+`guard.nested_bash_commands` accepts an argv list. The declared `Bash(...)` patterns are fnmatched
+against the top-level command for every shell tool (not only `Bash`) and against each nested command;
+the direct tool-name deny still matches the raw (unstripped) tool name so its reason names the tool
+as written.
+
+Tests (in `tool/test_guard.py`): `test_declared_blocks_hold_across_every_payload_shape` drives
+`deny.verdict` with the declared git blocks monkeypatched and six payload shapes — `Bash/command`,
+`exec_command/cmd` wrapping `bash -c`, `functions.exec_command/cmd`, `shell_command/command` with a
+compound `echo ready; git reset --hard`, `shell/command` as the argv list `["bash","-lc","git reset
+--hard"]`, and `local_shell/command` as `["git","reset","--hard"]` — asserting each is blocked with
+the shared-wiki reason and that the same shapes carrying `git status` are not;
+`test_declared_git_blocks_hold_inside_nested_shells` (F10) still passes unchanged. The existing
+`test_codex_hooks` suite (which exercises the raw-tool-name deny for `request_user_input_async` and
+`functions.request_user_input_async`) also passes.
 
 ## Unresolved limits
 

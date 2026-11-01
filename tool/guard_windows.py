@@ -3,28 +3,33 @@
 PowerShell binds parameters by name or position and lets a name be
 abbreviated, so `ps_args` reads both; a parameter it does not know may or may
 not have taken the next word, and then every positional word counts as a
-possible target. Expressions run nothing except the methods they call, which
-must be in `SAFE_METHODS`.
+possible target. Expressions run nothing except the members they invoke, judged
+by `guard.member_effect`: a name is accepted receiver-free only when it is in
+`SAFE_MEMBERS`, read-only for every type that defines it.
 """
 
 from __future__ import annotations
 
 import re
 
-from guard import Word, envs, moved_to, top
-from guard_models import PS_SHELLS, SHELLS, exe, here, m_cd, network, run_argv, writes
+from guard import Word, envs, member_effect, moved_to, top
+from guard_models import PS_SHELLS, SHELLS, exe, here, into_dir, m_cd, network, run_argv, writes
 
-SAFE_METHODS = set("""trim trimend trimstart replace split substring tostring tolower toupper tolowerinvariant
+# Members that only read, whatever the receiver's type. Polymorphic or dispatching names
+# (replace, foreach, where, invoke, add, insert, get, getvalue, item, delete, copyto, …) are
+# left out on purpose: on an unknown receiver they reduce to `top` (see `guard.member_effect`),
+# since the same name means a write on one type and a read on another.
+SAFE_MEMBERS = set("""trim trimend trimstart split substring tostring tolower toupper tolowerinvariant
 toupperinvariant contains startswith endswith indexof lastindexof padleft padright join combine getfullpath
 getfilename getfilenamewithoutextension getdirectoryname getextension gettemppath exists readalltext readalllines
-readallbytes readlines matches match ismatch escape unescape parse tryparse format equals compareto gettype add
-addrange insert containskey containsvalue get getvalue getstring getbytes normalize isnullorempty
-isnullorwhitespace toarray where foreach sort reverse distinct toint32 toint64 todouble round floor ceiling max min
-abs newguid tobase64string frombase64string getenvironmentvariable getcurrentdirectory waitforexit readtoend
-readline peek close dispose invoke getenumerator movenext count sum average totalseconds totalmilliseconds
+readallbytes readlines matches match ismatch escape unescape parse tryparse format equals compareto gettype
+containskey containsvalue getstring getbytes normalize isnullorempty
+isnullorwhitespace toarray sort reverse distinct toint32 toint64 todouble round floor ceiling max min
+abs newguid tobase64string frombase64string getenvironmentvariable getcurrentdirectory
+count sum average totalseconds totalmilliseconds
 addseconds adddays addhours addminutes tolocaltime touniversaltime getname getnames getvalues isdefined utf8
-getencoding fromfiletime haskey test values keys item getfiles getdirectories enumeratefiles enumeratedirectories
-getrelativepath ispathrooted haschanged clone indexofany wait result getawaiter getresult""".split())
+getencoding fromfiletime haskey test values keys getfiles getdirectories enumeratefiles enumeratedirectories
+getrelativepath ispathrooted haschanged indexofany length name fullname directoryname basename extension""".split())
 SAFE_TYPES = re.compile(r"^(system\.)?(text\.stringbuilder|collections\.[\w.`\[\]]+|object|psobject|pscustomobject|"
                         r"diagnostics\.stopwatch|random|datetime|timespan|version|uri|guid|text\.utf8encoding|"
                         r"text\.regularexpressions\.regex|management\.automation\.[\w.]+)$")
@@ -62,10 +67,8 @@ PS_TARGETS = {
     "set-item": [("write", PATH, 0)], "set-itemproperty": [("write", PATH, 0)],
     "new-itemproperty": [("write", PATH, 0)], "remove-itemproperty": [("write", PATH, 0)],
     "clear-item": [("write", PATH, 0)], "set-acl": [("write", PATH, 0)],
-    "copy-item": [("write", ("destination",), 1)],
-    "move-item": [("delete", PATH, 0), ("write", ("destination",), 1)],
     "rename-item": [("delete", PATH, 0), ("write", ("newname",), 1)],
-    "expand-archive": [("write", ("destinationpath",), 1)], "compress-archive": [("write", ("destinationpath",), 1)],
+    "compress-archive": [("write", ("destinationpath",), 1)],
 }
 PS_VALUES = ("path", "literalpath", "destination", "destinationpath", "filepath", "value", "encoding", "itemtype",
              "name", "newname", "filter", "include", "exclude", "uri", "outfile", "infile", "method", "body",
@@ -141,18 +144,41 @@ def ps_cmdlet(canon: str, args: list, ctx):
         return set(), moved_to(w, ctx) if w is not None else ctx.cwds
     if canon == "pop-location":
         return set(), frozenset({None})
+    def arrayed(ws) -> set:
+        # `'a','b'` is two paths; the lexer joined them into one word, so the elements
+        # cannot be told apart. A comma in a path is left undecided.
+        return top(f"{canon} path array") if any("," in w.text and not w.why for w in ws) else set()
+
+    if canon in ("copy-item", "move-item"):
+        srcs = named.get("path", []) + named.get("literalpath", []) or (pos if ambiguous else pos[:1])
+        dests = named.get("destination", []) or (pos if ambiguous else pos[1:2])
+        # Copy-Item/Move-Item default the destination to the current directory when it is omitted.
+        target = dests or [here(ctx)]
+        recurse = any(not w.why and re.fullmatch(r"-r(ecurse)?", w.text, re.I) for w in args)
+        kind = "write_tree" if recurse else "write"
+        out = arrayed(srcs + target) | writes(kind, target, ctx) | into_dir(srcs, target, ctx, kind)
+        if canon == "move-item":
+            out |= writes("delete", srcs, ctx)
+        return out, None
+    if canon == "expand-archive":
+        dest = named.get("destinationpath", []) or (pos if ambiguous else pos[1:2]) or [here(ctx)]
+        return arrayed(dest) | writes("write_tree", dest, ctx), None
+    if canon == "new-item":
+        target = named.get("path", []) + named.get("name", []) or (pos if ambiguous else pos[:1])
+        itemtype = (named.get("itemtype", []) + named.get("typename", []) + [Word("")])[0].text.lower()
+        link = itemtype in ("symboliclink", "junction", "hardlink")
+        out = arrayed(target) | {("link" if link and k == "write" else k, p)
+                                 for k, p in writes("write", target, ctx)}
+        return out, None
+    if canon in ("foreach-object", "where-object"):
+        return foreach_member(canon, args, ctx), None
     if canon in PS_TARGETS:
         out = set()
         for kind, keys, index in PS_TARGETS[canon]:
             found = [w for k in keys for w in named.get(k, [])] + (pos if ambiguous else pos[index:index + 1])
             if not found and ctx.piped and (kind == "delete" or index == 0):
                 out |= top(f"{canon} takes its path from the pipeline")
-            for w in found:
-                # `'a','b'` is two paths; the lexer joined them into one word, so the
-                # elements cannot be told apart. A comma in a path is left undecided.
-                if "," in w.text and not w.why:
-                    out |= top(f"{canon} path array")
-            out |= writes(kind, found, ctx)
+            out |= arrayed(found) | writes(kind, found, ctx)
         return out, None
     if canon in ("invoke-webrequest", "invoke-restmethod"):
         return reach("uri", "proxy") | writes("write", named.get("outfile", []), ctx), None
@@ -181,19 +207,67 @@ def ps_cmdlet(canon: str, args: list, ctx):
 ASSIGN_OPS = {"=", "+=", "-=", "*=", "/=", "%=", "??="}
 
 
+def foreach_member(canon: str, args: list, ctx) -> set:
+    """ForEach-Object/Where-Object given a member name rather than a script block.
+
+    A script-block argument is a group, reduced where it appears. A `-MemberName` or positional
+    member name invokes that member on every pipeline object, so it goes through the member gate;
+    a wildcard name could match a writing member and is undecidable.
+    """
+    if any(w.why == "group" for w in args):
+        return set()
+    members, i = [], 0
+    while i < len(args):
+        w, t = args[i], args[i].text
+        if w.why:
+            return top(f"{w.why} in {canon}")
+        if t.startswith("-"):
+            k = t[1:].lower()
+            if k and "membername".startswith(k) and i + 1 < len(args):
+                members.append(args[i + 1])
+                i += 2
+                continue
+            i += 1
+            continue
+        members.append(w)               # the first positional word is the member name
+        break
+    out = set()
+    for w in members:
+        # The member name here is the operand, not a receiver literal, so the receiver stays unknown.
+        out |= top(f"{canon} wildcard member name") if re.search(r"[*?\[]", w.text) \
+            else member_effect("", w.text, False)
+    return out
+
+
 def ps_statement(words: list, ctx) -> tuple[list, set]:
     """The command a PowerShell statement runs: assignments stripped, expressions running nothing."""
     out = set()
+    member_assign = out | top("assignment to a member or indexed target")
     if len(words) >= 2 and words[1].text in ASSIGN_OPS and not words[1].quoted:
-        if words[0].text.lower().startswith("$env:"):
+        target = words[0].text
+        if target.lower().startswith("$env:"):
             value = words[2] if len(words) > 2 else Word()
-            out |= envs([Word(words[0].text[5:] + "=" + value.text, value.why)], ctx)
-        words = words[2:]
+            out |= envs([Word(target[5:] + "=" + value.text, value.why)], ctx)
+            words = words[2:]
+        elif re.fullmatch(r"\$[A-Za-z_]\w*", target) and not words[0].quoted:
+            words = words[2:]           # a plain scalar variable: the value runs as its own command
+        else:
+            # `$x.Prop = …`, `$x[0] = …`: a write through a member or element, not a scalar.
+            return [], member_assign
     elif words and not words[0].quoted and re.match(r"^\$?[\w:.-]+=", words[0].text):
         target, _, value = words[0].text.partition("=")
+        if "." in target or "[" in target:
+            return [], member_assign
         if target.lower().startswith("$env:"):
             out |= envs([Word(target[5:] + "=" + value, words[0].why)], ctx)
         words = ([Word(value, words[0].why)] if value else []) + words[1:]
+    else:
+        # `(expr).Member = …` spans several words before the operator.
+        for j in range(1, len(words)):
+            if words[j].text in ASSIGN_OPS and not words[j].quoted:
+                return [], member_assign
+            if words[j].why or not re.fullmatch(r"[.\w:$\[\]()'\"-]*", words[j].text):
+                break
     if words and (words[0].text.startswith(("$", "[")) or words[0].quoted or re.match(r"^-?\d", words[0].text)):
         return [], out
     return words, out
@@ -214,11 +288,17 @@ def cmd_builtin(name: str, args: list, ctx):
         return top("mklink creates a link the guard cannot follow"), None
     if name in ("md", "mkdir"):
         return writes("write", ops, ctx), None
-    if name in ("copy", "xcopy", "robocopy"):
-        dest = ops[1:2] if name == "robocopy" else ops[-1:] if len(ops) > 1 else [here(ctx)]
-        return writes("write", dest, ctx), None
+    if name == "robocopy":
+        # `robocopy <src> <dst> [files…]`: named files land as <dst>/<file>; with none it copies a tree.
+        target, files = ops[1:2] or [here(ctx)], ops[2:]
+        return (writes("write", target, ctx) | into_dir(files, target, ctx)) if files \
+            else writes("write_tree", target, ctx), None
+    if name in ("copy", "xcopy"):
+        srcs, target = ops[:-1], ops[-1:] if len(ops) > 1 else [here(ctx)]
+        return writes("write", target, ctx) | into_dir(srcs, target, ctx), None
     if name in ("move", "ren", "rename"):
-        return writes("delete", ops[:1], ctx) | writes("write", ops[1:2], ctx), None
+        target = ops[1:2]
+        return writes("delete", ops[:1], ctx) | writes("write", target, ctx) | into_dir(ops[:1], target, ctx), None
     if name in ("cd", "chdir", "pushd", "popd"):
         return m_cd(name, ops, ctx)
     if name == "set":

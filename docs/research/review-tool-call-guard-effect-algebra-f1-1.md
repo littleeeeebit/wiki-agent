@@ -159,7 +159,29 @@ Add one parametrised test that walks the model registry instead of listing spell
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+The hypothesis held. Run against the pre-fix tree (code at `c9770fe`), the reproductions derived a
+bare-directory write and missed the protected descendant: `Copy-Item -LiteralPath ../adapter.toml
+-Destination .wiki` → `write(<checkout>/.wiki)` only; `tar -xPf payload.tar -C safe` →
+`write(safe)` only (no `top`); `Copy-Item ../verification.toml` → `read` only (no write at all, the
+missing-destination case); `cmd /c robocopy .. .wiki adapter.toml` → `write(.wiki)` only. As the
+hypothesis predicted, `cp ../adapter.toml .wiki` already named `.wiki/adapter.toml`, confirming the
+round-2 fix reached only `cp`/`mv`.
+
+The fix routes every destination-taking model through the shared descendant helper (`into_dir`):
+`Copy-Item`/`Move-Item` in `guard_windows.ps_cmdlet` and the cmd `copy`/`xcopy`/`robocopy`/`move`
+builtins now name `<dest>/<basename(src)>`, with the destination defaulting to the current directory
+when omitted; `Expand-Archive`, `gh … download`, `wget -P` and `curl --output-dir` emit `write_tree`
+(a data-decided tree, which `outside()` already checks for protected descendants); and
+`tar -P`/`--absolute-names`/`--absolute-paths` reduce to `top`. The guard judges only the effect
+set, so the whole class is covered, not each spelling.
+
+Tests (in `tool/test_guard.py`): `test_a_copy_into_a_protected_directory_is_denied` walks eleven
+copy/move forms (cp, mv, `cp -t`, Copy-Item, Copy-Item -LiteralPath, Move-Item, Copy-Item with no
+destination, Expand-Archive, cmd copy, cmd robocopy) into the protected `.wiki`/`verification.toml`
+and asserts each is denied with the protected-file reason; `test_tar_keeping_absolute_member_names_is_undecidable`
+pins the three `-P` spellings to `top` while a plain `-C` extraction stays allowed. The 260-command
+corpus still matches (the copy commands in it pass variable destinations, already `top`); the five
+entries that changed gained `top(method Replace)` from F3, none from F1.
 
 ## Unresolved limits
 
