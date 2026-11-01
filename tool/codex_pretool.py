@@ -12,6 +12,7 @@ def verdict(payload: dict) -> dict | None:
     import edit_as_diff
     import english_progress
     import markdown_emphasis
+    import memory_words
 
     denied = host_boundary.verdict(payload) or deny.verdict(payload)
     if denied:
@@ -26,7 +27,7 @@ def verdict(payload: dict) -> dict | None:
     # Codex takes one PreToolUse hook, so the checks are chained here. On
     # Claude `apply.py` wires each one separately out of a page's
     # `enforce.pretooluse`.
-    return markdown_emphasis.verdict(payload) or english_progress.verdict(payload)
+    return markdown_emphasis.verdict(payload) or memory_words.verdict(payload) or english_progress.verdict(payload)
 
 
 if __name__ == "__main__":
