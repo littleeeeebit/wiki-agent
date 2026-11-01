@@ -1,0 +1,12 @@
+agents = ["claude", "codex"]
+
+[slots]
+review_dir = "artifacts/review"
+gate_cmd = "python -m pytest tool"
+live_cmd = "open a new Claude Code session and a new Codex session, and confirm the hooks actually run"
+server_stop = "close the wiki-agent window (tool/app.cmd), or Ctrl+C in the terminal that ran python tool/main"
+scratch_dirs = "artifacts/"
+
+[checks]
+native_host = {cmd = "python -m pytest -q tool/test_host_boundary.py tool/test_loop.py -k \"host_boundary or manually_published or review_attach\"", about = "Native host boundary and manual task PR recovery regressions", paths = ["tool/agent/chat_session.py","tool/apply.py","tool/codex_pretool.py","tool/common/__init__.py","tool/common/host.py","tool/hook-diagnostics.md","tool/hook.py","tool/hook_diagnostics.py","tool/host_boundary.py","tool/inject.py","tool/keepalive.py","tool/lint.py","tool/main/connect.py","tool/main/loop.py","tool/search/__init__.py","tool/search/daemon.py","tool/setup_agents.py","tool/test_agent.py","tool/test_hook_diagnostics.py","tool/test_host_boundary.py","tool/test_keepalive.py","tool/test_loop.py","tool/test_main.py","tool/test_sessions.py","tool/test_trigger_audit.py","tool/trigger_audit.py","tool/watch_hook_timeouts.ps1","tool/workspace/sessions.py"]}
+native_docs = {cmd = "python tool/lint.py --check", about = "Shared native workflow rules and documentation", paths = ["README.md","docs/architecture.md","docs/hooks-setup.md","docs/research/native-host-boundary.md","operator/agent-delegation.md","operator/codex-review-loop.md","operator/compact-before-idle.md","skills/after-merge/SKILL.md","skills/review-loop/SKILL.md"]}
