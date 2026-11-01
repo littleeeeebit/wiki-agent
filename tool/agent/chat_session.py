@@ -1169,6 +1169,10 @@ class ChatSession:
 
             elif kind == "stream_event":
                 inner = ev.get("event") or {}
+                # CLI 2.1.316's stream-json leaves `stop_reason` empty on the assistant
+                # event; only this partial `message_delta` carries it.
+                if inner.get("type") == "message_delta" and not ev.get("parent_tool_use_id"):
+                    refused = refused or (inner.get("delta") or {}).get("stop_reason") == "refusal"
                 if inner.get("type") == "content_block_delta":
                     delta = inner.get("delta") or {}
                     if delta.get("type") == "text_delta" and delta.get("text") and not ev.get("parent_tool_use_id"):
@@ -1321,6 +1325,7 @@ class ChatSession:
                      "the turn went on without it.\n\n" if refused else "") + str(ev.get("result") or ""),
                     {"ms": ev.get("duration_ms"),
                      "error": bool(ev.get("is_error")) or refused,
+                     "refused": refused,
                      "session_id": ev.get("session_id"),
                      "model": self.model_name,
                      # This wiki is cost-sensitive enough to draw injected
