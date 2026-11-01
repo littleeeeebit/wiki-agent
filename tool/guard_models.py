@@ -142,10 +142,44 @@ def m_reader_with_output(name, args, ctx):
     return out, None
 
 
+def basename(text: str) -> str:
+    return re.split(r"[\\/]", text.rstrip("/\\"))[-1]
+
+
+def into_dir(pos: list, dest: list, ctx) -> set:
+    """A directory destination writes `<dir>/<source-basename>`, not just the directory.
+
+    Only syntactic directory destinations count: a `-t`/`--target-directory`
+    option, a trailing separator, or (for three or more operands) the last one.
+    This names the real descendant, so a copy into a protected file's parent is
+    seen. A tainted end is already a `top` from the directory write itself.
+    """
+    dirs = list(dest)
+    srcs = list(pos)
+    if not dest:
+        dirs = [w for w in pos if not w.why and re.search(r"[\\/]$", w.text)]
+        if len(pos) >= 3 and not pos[-1].why and pos[-1] not in dirs:
+            dirs.append(pos[-1])
+        srcs = [w for w in pos if w not in dirs]
+    out = set()
+    for d in dirs:
+        if d.why:
+            continue
+        for s in srcs:
+            if s.why or not s.text:
+                continue
+            out |= paths("write", Word(d.text.rstrip("/\\") + "/" + basename(s.text)), ctx)
+    return out
+
+
 def m_copy(name, args, ctx):
-    pos, vals, _ = getopt(args, COPY_TAKES)
+    pos, vals, flags = getopt(args, COPY_TAKES)
+    if name == "ln" and ("-s" in flags or "--symbolic" in flags):
+        # A symlink redirects every later path through it; its target is not decidable here.
+        return top("ln creates a link the guard cannot follow"), None
     dest = vals.get("-t", []) + vals.get("--target-directory", [])
     out = writes("write", dest or pos[1:] or ([here(ctx)] if name == "ln" else []), ctx)
+    out |= into_dir(pos, dest, ctx)
     if name == "mv":
         out |= writes("delete", pos if dest else pos[:-1], ctx)
     return out, None
@@ -273,6 +307,21 @@ def m_find(name, args, ctx):
     return out, None
 
 
+RG_TAKES = {"--pre", "--pre-glob", "--hostname-bin", "-f", "--file", "-g", "--glob", "--iglob", "--type-add",
+            "-E", "--encoding", "-M", "--max-columns", "-A", "--after-context", "-B", "--before-context",
+            "-C", "--context", "-m", "--max-count", "-d", "--max-depth", "--sort", "--sortr", "-j", "--threads",
+            "--color", "--colors", "-r", "--replace", "--ignore-file", "-t", "--type", "-T", "--type-not"}
+
+
+def m_rg(name, args, ctx):
+    """ripgrep reads, except `--pre`/`--hostname-bin`, which launch a program per file."""
+    _pos, vals, _flags = getopt(args, RG_TAKES)
+    out = set()
+    for w in vals.get("--pre", []) + vals.get("--hostname-bin", []):
+        out |= run_argv([w], ctx)[0] if w.text else set()
+    return out, None
+
+
 def m_xargs(name, args, ctx):
     pos, vals, flags = getopt(args, {"-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a", "--max-args", "--replace",
                                      "--max-procs", "--delimiter", "--arg-file", "--max-lines", "--max-chars"},
@@ -353,7 +402,10 @@ def m_sh(name, args, ctx):
             return top(f"{w.why} in a shell's arguments"), None
         if re.fullmatch(r"-[a-zA-Z]*c[a-zA-Z]*", t):
             return (nested(args[i + 1], "posix", ctx) if i + 1 < len(args) else top("-c without a string")), None
-        if t in ("--rcfile", "--init-file", "-o", "+o", "-O", "+O"):
+        if t in ("--rcfile", "--init-file"):
+            # The shell runs this file at startup; its contents are not decidable here.
+            return top(f"a shell startup file ({t})"), None
+        if t in ("-o", "+o", "-O", "+O"):
             i += 2
             continue
         if t in ("-s", "-"):
@@ -577,6 +629,10 @@ def m_git(name, args, ctx):
     if args[i].why:
         return out | top(f"{args[i].why} as the git verb"), None
     if verb in GIT_READ:
+        # A read verb still writes through `--output`/`-o` (e.g. `git diff --output=f`).
+        vals = getopt(rest, GIT_TAKES)[1]
+        out |= writes("write", vals.get("-o", []) + vals.get("--output", [])
+                      + vals.get("--output-directory", []), g)
         return out, None
     if verb == "ls-remote":
         return out | remotes_of(rest, g, False), None
@@ -675,7 +731,7 @@ MODELS = {name: model for model, names in (
     (m_copy, "cp mv ln install"), (m_dd, "dd"), (m_patch, "patch"), (m_mktemp, "mktemp"), (m_tar, "tar"),
     (m_archive, "zip unzip gzip gunzip xz unxz bzip2 bunzip2 zstd unzstd"), (m_split, "split csplit"),
     (m_cd, "cd pushd popd chdir"), (m_export, "export declare local typeset readonly alias set"), (m_sed, "sed"), (m_awk, "awk gawk mawk nawk"), (m_find, "find"),
-    (m_xargs, "xargs"), (m_prefix, " ".join(PREFIX)), (m_watch, "watch"), (m_trap, "trap"),
+    (m_xargs, "xargs"), (m_rg, "rg"), (m_prefix, " ".join(PREFIX)), (m_watch, "watch"), (m_trap, "trap"),
     (m_top, "eval source . socat"), (m_sh, " ".join(SHELLS)), (m_pwsh, " ".join(PS_SHELLS)),
     (m_cmd, "cmd"), (m_curl, "curl"), (m_wget, "wget"),
     (m_ssh, "ssh scp sftp rsync telnet nc ncat netcat ftp tftp mosh"),
@@ -698,7 +754,11 @@ def run_argv(words: list, ctx) -> tuple[set, object]:
         if ctx.d == "cmd" and raw.lstrip("@").lower() in CMD_BUILTINS:
             return cmd_builtin(raw.lstrip("@").lower(), args, ctx)
     name = exe(raw)
-    if name in ctx.funcs or name in READERS and name not in MODELS:
+    if name in ctx.funcs:
+        # A function's body runs in the caller's context (cwd, variables), not where it
+        # was defined, so its effects cannot be placed from the definition alone.
+        return top(f"the shell function {name}"), None
+    if name in READERS and name not in MODELS:
         return set(), None
     model = MODELS.get(name)
     return model(name, args, ctx) if model else ({("spawn", name)}, None)

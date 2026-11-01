@@ -233,6 +233,52 @@ def test_a_nested_shell_no_longer_bypasses_the_guard(repo):
     assert ("delete(" if os.name == "nt" else "spawn(") in codex
 
 
+@pytest.mark.parametrize("command,tool,marker", [
+    # F1 — a symlink created earlier redirects later paths; the link is undecidable.
+    ("ln -s ../other link && rm link/victim", "Bash", "판단할 수 없는"),
+    # F2 — a directory destination writes the protected descendant it actually names.
+    ("cp /tmp/adapter.toml .wiki/", "Bash", "허가를 정하는 파일"),
+    # F3 — a constructor on a non-inert type creates a file; the receiver is unmodelled.
+    ("[System.IO.FileStream]::new('C:/outside/victim', 'Create').Dispose()", "PowerShell", "판단할 수 없는"),
+    # F4 — a comma-joined path array hides a second, escaping target.
+    ("Remove-Item -LiteralPath 'keep','../other/victim'", "PowerShell", "판단할 수 없는"),
+    # F5 — a git read verb still writes through --output.
+    ("git diff HEAD~1 HEAD --output=../victim.patch", "Bash", "쓰기 루트 밖이다"),
+    # F6 — a function runs in the caller's context, not where it was defined.
+    ("f() { touch victim; }; cd ..; f", "Bash", "판단할 수 없는"),
+    # F7 — ANSI-C quoting encodes the path separators the shell will decode.
+    ("rm -- $'./\\x2e\\x2e/victim'", "Bash", "판단할 수 없는"),
+    # F8 — a shell startup file runs before the given command.
+    ("bash --rcfile /tmp/payload.rc -ic 'true'", "Bash", "판단할 수 없는"),
+    # F9 — a reader option launches an ungranted preprocessor.
+    ("rg --pre ./helper needle README.md", "Bash", "허가된 실행 파일이 아니다"),
+])
+def test_forms_the_model_cannot_follow_are_denied(repo, command, tool, marker):
+    reason = call(repo, command, tool=tool)
+    assert reason and marker in reason, reason
+
+
+def test_nested_shells_cannot_bypass_the_declared_git_blocks(monkeypatch):
+    """F10 — a declared `Bash(...)` block holds inside `bash -c`, `pwsh -Command` and `$(...)`."""
+    import apply
+    import deny
+
+    monkeypatch.setattr(apply, "declared", lambda: (
+        {"Bash(git reset --hard*)": ["craft/destructive-git-guards"],
+         "Bash(git clean -fdx*)": ["craft/destructive-git-guards"]}, {}))
+
+    def blocked(command, tool="Bash"):
+        answer = deny.verdict({"tool_name": tool, "tool_input": {"command": command}})
+        return answer and answer["hookSpecificOutput"]["permissionDecisionReason"]
+
+    assert blocked("git reset --hard")                              # the direct block still fires
+    assert blocked("bash -c 'git reset --hard'")
+    assert blocked("ls && sh -lc \"git reset --hard\"")
+    assert blocked("pwsh -Command 'git reset --hard'", tool="PowerShell")
+    assert blocked("echo $(git clean -fdx)")
+    assert blocked("git clean -fdx") and not blocked("git status")
+
+
 def test_undecidable_calls_are_denied(repo):
     assert "판단할 수 없는" in call(repo, 'eval "$X"')
 
@@ -282,6 +328,29 @@ def test_the_guard_answers_each_corpus_call_within_200ms(repo):
             took.append(time.perf_counter() - start)
         slowest = max(slowest, min(took))
     assert slowest < 0.2, slowest
+
+
+def test_the_hook_subprocess_adds_a_bounded_latency(repo):
+    """What the PreToolUse hook costs end to end: the guard process over a baseline process."""
+    env = host.environment({"WIKI_AGENT_MANAGED": "1", "TEMP": os.environ["TEMP"],
+                            "TMP": os.environ["TMP"], "TMPDIR": os.environ["TMPDIR"]})
+    samples = ["git add -A && git commit -qm x && git push origin HEAD", "rm -rf ../other",
+               "bash -c 'git reset --hard'", "npx tsc -b | tee out.txt",
+               "pwsh -Command 'Remove-Item ../other -Recurse'"]
+
+    def run(args, stdin):
+        start = time.perf_counter()
+        subprocess.run(args, input=stdin, capture_output=True, env=env, timeout=30)
+        return time.perf_counter() - start
+
+    baseline = min(run([sys.executable, "-c", "pass"], b"") for _ in range(3))
+    worst = 0.0
+    for command in samples:
+        payload = json.dumps({"tool_name": "PowerShell" if "pwsh" in command else "Bash",
+                              "tool_input": {"command": command}, "cwd": str(repo)}).encode("utf-8")
+        worst = max(worst, min(run([sys.executable, str(TOOL / "guard.py")], payload) for _ in range(3)))
+    # The hook's own work (process start aside) stays well under a second per call.
+    assert worst - baseline < 1.0, (baseline, worst)
 
 
 # -- The hook entry point -----------------------------------------------------

@@ -21,7 +21,7 @@ readallbytes readlines matches match ismatch escape unescape parse tryparse form
 addrange insert containskey containsvalue get getvalue getstring getbytes normalize isnullorempty
 isnullorwhitespace toarray where foreach sort reverse distinct toint32 toint64 todouble round floor ceiling max min
 abs newguid tobase64string frombase64string getenvironmentvariable getcurrentdirectory waitforexit readtoend
-readline peek close dispose new invoke getenumerator movenext count sum average totalseconds totalmilliseconds
+readline peek close dispose invoke getenumerator movenext count sum average totalseconds totalmilliseconds
 addseconds adddays addhours addminutes tolocaltime touniversaltime getname getnames getvalues isdefined utf8
 getencoding fromfiletime haskey test values keys item getfiles getdirectories enumeratefiles enumeratedirectories
 getrelativepath ispathrooted haschanged clone copyto indexofany wait result getawaiter getresult""".split())
@@ -145,6 +145,11 @@ def ps_cmdlet(canon: str, args: list, ctx):
             found = [w for k in keys for w in named.get(k, [])] + (pos if ambiguous else pos[index:index + 1])
             if not found and ctx.piped and (kind == "delete" or index == 0):
                 out |= top(f"{canon} takes its path from the pipeline")
+            for w in found:
+                # `'a','b'` is two paths; the lexer joined them into one word, so the
+                # elements cannot be told apart. A comma in a path is left undecided.
+                if "," in w.text and not w.why:
+                    out |= top(f"{canon} path array")
             out |= writes(kind, found, ctx)
         return out, None
     if canon in ("invoke-webrequest", "invoke-restmethod"):

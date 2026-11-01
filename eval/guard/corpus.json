@@ -1076,7 +1076,9 @@
     "top(glob in a write path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/artifacts/review/debt-pr-body.md)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/artifacts/review/test-necessity-20261008.md)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/review-evidence/debt-20261008/review)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/review-evidence/debt-20261008/review)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/review-evidence/debt-20261008/review/debt-pr-body.md)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/review-evidence/debt-20261008/review/test-necessity-20261008.md)"
    ]
   },
   {

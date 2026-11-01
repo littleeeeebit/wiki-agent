@@ -38,6 +38,7 @@ class Word:
     subs: list = field(default_factory=list)   # (dialect, code) run while it expands
     quoted: bool = False
     method: str = ""                    # PowerShell `.Name(` directly after this word
+    recv: str = ""                      # the `[Type]` a PowerShell `[Type]::method(` calls on
     raw: str = ""                       # the source as written, for `NAME=` and keywords
     vars: bool = False                  # holds `MARK`s for plain variables, bound in `simple`
 
@@ -64,6 +65,7 @@ class Ctx:
     funcs: set = field(default_factory=set, compare=False)
     env: tuple = ()                     # assignments in front of the current command
     consts: tuple = ()                  # ((name, literal), ...) the script assigned before here
+    sink: object = field(default=None, compare=False)   # a list collecting nested shell strings, or None
 
     def deeper(self, d: str | None = None, fresh: bool = True, **kw) -> "Ctx":
         # A new shell sees none of this one's unexported variables; `$(...)` and groups do.
@@ -164,7 +166,12 @@ def dollar(s: str, i: int, w: Word, buf: list, d: str, mark: str = "") -> int:
             j += 2 if s[j] == "\\" else 1
         if j >= len(s):
             raise Unclosed("an unclosed quote")
-        buf.append(s[i + 2:j])
+        body = s[i + 2:j]
+        if "\\" in body:
+            # `$'...'` decodes C escapes the guard does not: `\x2e` is `.`, so a
+            # resolved path would differ from what the shell runs. Leave it undecided.
+            w.taint("ANSI-C quoting")
+        buf.append(body)
         w.quoted = True
         return j + 1
     name = re.match(r"(?:[A-Za-z_]\w*:)?[A-Za-z_]\w*|[_?$^]" if d == "ps" else r"[A-Za-z_]\w*|[0-9@*#?$!-]",
@@ -279,8 +286,9 @@ def read_word(s: str, i: int, d: str) -> tuple[Word, int]:
     w.text, w.raw = "".join(buf), s[start:i]
     if d == "ps" and w.text in ("?", "%") and w.why == "glob":
         w.why = ""                      # Where-Object and ForEach-Object
-    if d == "ps" and s[i:i + 1] == "(" and (m := re.search(r"(?:\.|::)([A-Za-z_]\w*)$", s[start:i])):
-        w.method = m.group(1)
+    if d == "ps" and s[i:i + 1] == "(" and (m := re.search(r"(?:\[([\w.`\[\]]+)\])?(?:\.|::)([A-Za-z_]\w*)$",
+                                                           s[start:i])):
+        w.recv, w.method = m.group(1) or "", m.group(2)
     return w, i
 
 
@@ -515,6 +523,8 @@ def code(text: str, d: str, ctx: Ctx, fresh: bool = True, **kw) -> set:
     """Effects of a string parsed again one level down."""
     if ctx.depth >= DEPTH:
         return top(f"nesting deeper than {DEPTH}")
+    if ctx.sink is not None:
+        ctx.sink.append(text)           # a command a nested shell or substitution runs, for `deny.py`
     return reduce(lex(text, d), ctx.deeper(d, fresh, **kw), text)   # `Unclosed` makes the whole call top
 
 
@@ -524,8 +534,14 @@ def words_effects(words: list, ctx: Ctx) -> set:
         for d, text in w.subs:
             out |= code(text, d, ctx, fresh=False)
         if w.method:
-            from guard_windows import SAFE_METHODS
-            if w.method.lower() not in SAFE_METHODS:
+            from guard_windows import SAFE_METHODS, SAFE_TYPES
+            method = w.method.lower()
+            if method == "new":
+                # A constructor's receiver decides what it does: `[Text.UTF8Encoding]::new`
+                # is inert, `[IO.FileStream]::new('out', 'Create')` creates a file.
+                if not (w.recv and SAFE_TYPES.match(w.recv.lower())):
+                    out |= top(f"constructor of {w.recv or 'an unknown type'}")
+            elif method not in SAFE_METHODS:
                 out |= top(f"method {w.method}")
     return out
 
@@ -724,14 +740,34 @@ def derive(command, dialect: str, ctx: Ctx) -> set:
     """Effects of a shell command: a string, or an argv list run without a shell."""
     from guard_models import run_argv
 
+    ctx = replace(ctx, d=dialect, funcs=set())   # functions are this call's own, never carried in
     try:
         if isinstance(command, list):
             return {READ} | run_argv([Word(str(a), quoted=True) for a in command], ctx)[0]
-        return {READ} | reduce(lex(str(command), dialect), replace(ctx, d=dialect), str(command))
+        return {READ} | reduce(lex(str(command), dialect), ctx, str(command))
     except Unclosed as error:
         return {READ} | top(str(error))
     except RecursionError:
         return top("nesting too deep to parse")
+
+
+def nested_bash_commands(command, dialect: str = "posix") -> list:
+    """Every command string a nested shell or substitution inside `command` will run.
+
+    `deny.py` fnmatches these against the pages' `Bash(...)` patterns, so a
+    declared block such as `git reset --hard` is kept even when the command is
+    wrapped in `bash -c`, `pwsh -Command` or `$(...)`. Paths stay unresolved
+    here (`cwds` is unknown); only the raw strings matter.
+    """
+    if not isinstance(command, str):
+        return []
+    found: list = []
+    ctx = Ctx(dialect, frozenset({None}), "", "", os.name == "nt", sink=found)
+    try:
+        reduce(lex(command, dialect), ctx, command)
+    except Exception:
+        pass
+    return found
 
 
 def call_effects(tool: str, given: dict, ctx: Ctx, host: str) -> set:

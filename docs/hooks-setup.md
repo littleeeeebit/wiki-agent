@@ -96,7 +96,10 @@ turns. The old `keep_alive` adapter value is ignored.
 entry, Codex runs it inside `codex_pretool.py` after `host_boundary.py` and the
 pages' `enforce.deny` rules. It judges only sessions the app started
 (`WIKI_AGENT_MANAGED=1`) in a checkout with an adapter; everywhere else it
-passes.
+passes. `tool/deny.py` matches each page's `Bash(...)` pattern against not only
+the direct command but every command the guard's parser finds one level down,
+so a block such as `git reset --hard` holds even inside `bash -c '…'`,
+`pwsh -Command '…'` or `$(…)`.
 
 It does not match command patterns. A shell command is parsed into a tree
 (`;`, `&&`, `||`, `|`, `$(...)`, backticks, redirections, here documents, and
