@@ -306,9 +306,9 @@ def handoff(rows: list[dict]) -> str:
         if row.get("role") == "user" and text:
             lines.append("- Asked: " + text.splitlines()[0][:300])
         elif row.get("role") == "assistant":
-            # Only a leading notice stays out, the parser's (`ChatSession._drain`) or a failed result's own; an answer quoting it is kept.
-            text = re.sub(r"^(A response was blocked by our safety systems \(stop_reason: refusal\); the turn went on "
-                          r"without it\.|This request was blocked by our safety systems\.[^\n]*)\s*", "", text)
+            # A turn whose text is its failure is provider text: only the answer the parser kept apart goes on.
+            if row.get("error") and row.get("error") == row.get("text"):
+                text = str(row.get("answer") or "").strip()
             lines.append("- Answered: " + (text[-600:].replace("\n", " ") if text else "(no answer)"))
     # Never the refusal itself: a classifier that reads the whole context flags talk of an earlier flag.
     return ("## Why this conversation is new\n"
@@ -810,7 +810,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
                 remember(path, "context", ev.text)
                 ev.kind = "tool"
             if ev.kind == "done":
-                final, meta = ev.text, {k: v for k, v in ev.meta.items() if k != "answer"}   # it is in `final`
+                final, meta = ev.text, dict(ev.meta)   # a cut turn's `answer` stays apart, for `handoff`
                 if meta.pop("error", False):
                     failed = final or "완료된 답이 없다"
             elif ev.kind == "error":

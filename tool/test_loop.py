@@ -1339,15 +1339,35 @@ def cut(monkeypatch, cls):
     monkeypatch.setattr(cls, "say", told)
 
 
-@pytest.mark.parametrize("notice", [CUT, REFUSAL + "\n", ""])
-def test_a_handoff_keeps_an_answer_that_quotes_the_notice_phrase(notice):
-    """PR #275 R4: only a leading notice is dropped, never answer lines that hold its words; R5: a
-    failed result's own notice, with no parser prefix, is dropped too."""
+QUOTING = 'Committed sample.py as a1b2c3d; the fixture text is "blocked by our safety systems"; push pending.'
 
-    answer = 'Committed sample.py as a1b2c3d; the fixture text is "blocked by our safety systems"; push pending.'
-    context = work.handoff([{"role": "assistant", "text": notice + answer}])
-    assert "- Answered: " + answer in context and "stop_reason" not in context and "Reason:" not in context
-    assert "safety" not in work.handoff([{"role": "assistant", "text": REFUSAL}])
+
+@pytest.mark.parametrize("cut,failed,result", [
+    (True, False, QUOTING), (False, False, QUOTING),          # an answer, behind the parser's notice or not
+    (False, True, REFUSAL), (True, True, REFUSAL),            # a failed result, alone or after a cut
+    (False, True, "API Error: 400 " + json.dumps({"error": {"message": REFUSAL}})),
+    (False, True, REFUSAL.replace(" Reason:", "\nReason:")),
+])
+def test_a_handoff_carries_the_answer_and_never_a_failed_result(tmp_path, monkeypatch, cut, failed, result):
+    """PR #275 R4–R6: through the real parser and record writer, the handoff keeps an answer even when
+    it quotes the notice's words, and carries nothing of a failed result in whatever form it comes."""
+
+    cell = chat_session.ChatSession(tmp_path, model="opus", effort="high")
+    if cut:
+        cell._events.put({"type": "stream_event", "event": {
+            "type": "message_delta", "delta": {"stop_reason": "refusal"}}})
+    cell._events.put({"type": "result", "is_error": failed, "result": result, "session_id": "sample"})
+    rows = []
+    monkeypatch.setattr(work, "remember", lambda path, role, text, **extra: rows.append(
+        {"role": role, "text": text, **extra}))
+    monkeypatch.setattr(work, "recall", lambda *_: rows[:])
+    with patch.object(cell, "say", return_value=iter([list(cell._drain())[-1]])), \
+         patch.object(work, "steps", return_value=[]), patch.object(work, "dispatch"), \
+         patch.object(work, "notice"), patch.object(work.errorlog, "record"), patch.object(specs, "check"):
+        work.run_turn(tmp_path, work.Run(cell), "Complete the sample task.", lambda: None)
+    context = work.handoff(rows)
+    assert "stop_reason" not in context and "Reason:" not in context and "Potentially" not in context
+    assert ("- Answered: " + QUOTING in context) if not failed else ("safety" not in context)
 
 
 def test_a_repair_turn_that_went_on_past_a_cut_response_is_judged_by_its_answer(world, monkeypatch):
