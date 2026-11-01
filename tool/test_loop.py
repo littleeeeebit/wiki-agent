@@ -269,6 +269,7 @@ def world(tmp_path, template):
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
          patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Worker), \
          patch.object(loop, "ChatSession", Reviewer), patch.object(loop, "review_model", lambda: "codex:test"), \
+         patch.object(loop, "fallback_model", lambda: ""), \
          patch.object(specs, "sh", hub), patch.object(loop, "REVIEW", tmp_path / "review"), \
          patch.object(loop, "_cells", {}), patch.object(loop, "_loops", {}), patch.object(loop, "_review_runs", {}), \
          patch.object(loop, "_seated", 0):
@@ -1313,6 +1314,31 @@ def test_a_repair_turn_cut_short_of_its_disposition_stops_without_asking_again(w
     assert stopped["state"] == "멈춤" and stopped["stopped"]["reason"] == loop.Why.EXTERNAL.value
     assert "다시 보내지 않았다" in stopped["stopped"]["detail"]
     assert sum(text.startswith("Review round 1") for w in Worker.made for text in w.heard) == 1
+
+
+@pytest.mark.parametrize("answered", [False, True])
+def test_a_repair_turn_the_provider_refused_goes_to_codex_once(world, monkeypatch, answered):
+    """PR #272 R1: Claude's classifier kept cutting a repair of the repository's own guard."""
+
+    spec = pr_spec(world, f"repair-to-codex-{int(answered)}", 7)
+    finding = "[P1] a.txt:1 — wrong path"
+    say, models = Worker.say, []
+
+    def told(worker, text, halt=None):
+        models.append(worker.model)
+        if worker.model is None:   # Claude, the spec's cell
+            yield Event("done", CUT + "Not repaired.", {"error": False}, worker.id) if answered \
+                else Event("error", CUT.strip(), {}, worker.id)
+            return
+        yield from say(worker, text, halt)
+
+    monkeypatch.setattr(Worker, "say", told)
+    monkeypatch.setattr(loop, "fallback_model", lambda: "codex:test")
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = [fixed((finding, "fixed"))]
+    done = looped(spec["id"])
+    assert done["state"] == "머지 가능" and done["cell"]["model"] == "codex:test"
+    assert models[:2] == [None, "codex:test"] and None not in models[1:]
 
 
 def test_a_review_cut_short_of_its_verdict_stops_without_asking_again(world):
