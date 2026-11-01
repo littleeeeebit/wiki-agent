@@ -228,8 +228,9 @@ def test_each_denial_names_the_effect_and_the_grant_that_would_allow_it(repo):
 def test_a_nested_shell_no_longer_bypasses_the_guard(repo):
     assert "delete(" in call(repo, "bash -c 'rm -rf ../other'")
     assert "delete(" in call(repo, "Remove-Item ../other -Recurse", tool="PowerShell")
-    assert "delete(" in call(repo, "Remove-Item ../other -Recurse", tool="exec_command", host_name="codex",
-                             cmd="Remove-Item ../other -Recurse") if os.name == "nt" else True
+    # Codex on Windows runs PowerShell; elsewhere the same text is an unknown program.
+    codex = call(repo, tool="exec_command", host_name="codex", cmd="Remove-Item ../other -Recurse")
+    assert ("delete(" if os.name == "nt" else "spawn(") in codex
 
 
 def test_undecidable_calls_are_denied(repo):
