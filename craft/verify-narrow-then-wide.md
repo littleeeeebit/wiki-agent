@@ -6,7 +6,7 @@ triggers: ["테스트를? (돌|실행)", "pytest", "전체를? 돌리", "다 돌
 slots: []
 sources: []
 sources_withheld: true
-links: [diagnose-from-what-ran, pick-up-async-results, do-the-whole-instruction, codex-review-loop]
+links: [diagnose-from-what-ran, pick-up-async-results, do-the-whole-instruction, codex-review-loop, results-stay-off-git]
 ---
 
 # Measure narrow, go wide once at the end — not everything on every repair

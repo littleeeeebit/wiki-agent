@@ -6,7 +6,7 @@ triggers: ["예산|budget|상한|한도", "마감|deadline|timeout|제한\\s*시
 slots: []
 sources: []
 sources_withheld: true
-links: [gate-the-exit-not-the-callers, diagnose-from-what-ran, client-lifecycle-in-one-scope]
+links: [gate-the-exit-not-the-callers, diagnose-from-what-ran, client-lifecycle-in-one-scope, results-stay-off-git]
 ---
 
 # Measure after the value changes for the last time

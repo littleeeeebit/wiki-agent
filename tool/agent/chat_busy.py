@@ -25,9 +25,11 @@ CONTINUE = ("The provider stopped your previous turn at capacity before it finis
             "from where you stopped; do not redo steps that already completed.")
 
 def refused(event: Event) -> bool:
-    """Codex says it with an `error`; Claude with a `done` whose result is an error."""
+    """Codex says it with an `error`; Claude with a `done` whose result is an error.
+    A safety refusal is never capacity, whatever its answer says about a 429:
+    sent again, it is refused again (PR #273 R1)."""
     failed = event.kind == "error" or (event.kind == "done" and event.meta.get("error"))
-    return bool(failed) and bool(BUSY.search(event.text))
+    return bool(failed) and not event.meta.get("refused") and bool(BUSY.search(event.text))
 
 
 def charged(meta: dict, carried: dict | None, cost: float | None) -> dict:

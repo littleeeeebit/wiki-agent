@@ -74,6 +74,35 @@ sys.stdin.read()
     assert events[-1].kind == "done" and events[-1].meta["error"]
 
 
+@pytest.mark.parametrize("stopped", [
+    # What CLI 2.1.316 streams: the reason only on the partial message delta.
+    '{"type": "stream_event", "event": {"type": "message_delta", "delta": {"stop_reason": "refusal"}}}',
+    # What its transcript keeps, should a later CLI stream it the same way.
+    '{"type": "assistant", "message": {"stop_reason": "refusal", "content": [{"type": "thinking", "thinking": ""}]}}',
+])
+def test_a_response_the_safeguards_stopped_fails_the_turn_as_a_refusal(tree, stopped):
+    from main import work
+
+    # PR #272 R1: the CLI went on past the refusal and ended on an ordinary
+    # result, so the loop read a format failure and sent the request again.
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say(STOPPED)'''.replace("STOPPED", stopped) + '''
+say({"type": "assistant", "message": {"stop_reason": "end_turn", "content": [{"type": "text", "text": "Not repaired."}]}})
+say({"type": "result", "result": "Not repaired.", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    done = events[-1]
+    assert done.kind == "done" and done.meta["error"]
+    assert work.REFUSED.search(done.text) and done.text.endswith("Not repaired.")
+    # A child's refusal is the child's: the parent that went on and finished is not failed (#273 R2).
+    _, events = run(ChatSession(tree, write=True, bypass=True),
+                    fixture.replace(stopped, stopped[:-1] + ', "parent_tool_use_id": "bg-1"}'), tree)
+    assert not events[-1].meta["error"] and not events[-1].meta["refused"]
+
+
 def test_failed_background_turn_cannot_complete_the_next_prompt_with_stale_events(tree):
     failed = '''import json, sys
 say = lambda m: print(json.dumps(m), flush=True)
@@ -395,6 +424,17 @@ def test_a_turn_refused_at_capacity_is_sent_again_until_it_is_taken(monkeypatch)
     rows = [{"role": "assistant", "session_id": "saved-thread", "provider": "claude"},
             {"role": "assistant", "text": "", "error": "멈췄다."}]
     assert query.resumable(rows, codex=False) == "saved-thread"
+
+
+def test_a_safety_refusal_that_mentions_a_429_is_never_sent_again(monkeypatch):
+    """PR #273 R1: the answer after a refusal named an HTTP 429 handler and read as capacity."""
+
+    refusal = [("done", "A response was blocked by our safety systems.\n\nCould not repair the HTTP 429 handler.",
+                {"error": True, "refused": True})]
+    chat, sent = _busy_session([refusal, [("done", "Unexpected retry")]], monkeypatch)
+    events = list(chat.say("repair", threading.Event()))
+    assert sent == ["repair"]
+    assert [e.kind for e in events] == ["done"] and events[0].meta["refused"]
 
 
 def test_a_turn_cut_off_at_capacity_after_it_worked_is_continued_never_redone(monkeypatch):

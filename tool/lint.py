@@ -171,6 +171,13 @@ def check(
             'cp949 에서 한 글자에 죽는다. `sys.stdout.reconfigure(encoding="utf-8")`',
         ))
 
+    for name in tracked_run_outputs(wiki):
+        findings.append((
+            "추적되는 평가 결과",
+            f"`{name}` 은 평가 실행이 쓴 결과다 — `eval/**/results/` 아래에 쓰고 "
+            "`git rm --cached` 하라 (`craft/results-stay-off-git`)",
+        ))
+
     # --- 8. Line breaks that split one breath to fit a width
     for where, before, after in broken_wraps(wiki):
         findings.append((
@@ -421,6 +428,22 @@ def fragile_tools(wiki: Path = WIKI) -> list[str]:
         if writes and not fixed:
             found.append(path.relative_to(directory).as_posix())
     return found
+
+
+RUN_OUTPUT = re.compile(r"^eval/(.*/)?(results/|\d{4}-?\d{2}-?\d{2}[^/]*\.json$)")
+
+
+def tracked_run_outputs(wiki: Path = WIKI) -> list[str]:
+    """Files under `eval/` that a run wrote and git tracks: anything under a
+    `results/` (only `add -f` gets it there) or a JSON named by its date or
+    UTC stamp. `.gitignore` keeps `results/` out; this catches the script
+    that writes somewhere else, as `tool/eval/file_filter.py` did (#270).
+    Fixtures and gates are named for what they hold, never for a day."""
+
+    done = subprocess.run(["git", "-C", str(wiki), "ls-files", "-z", "--", "eval"],
+                          capture_output=True, check=False)
+    names = done.stdout.decode("utf-8", "replace").split("\0") if done.returncode == 0 else []
+    return sorted(n for n in names if RUN_OUTPUT.match(n))
 
 
 def missing_hook_guards(wiki: Path, loaded: dict) -> list[tuple[str, str]]:

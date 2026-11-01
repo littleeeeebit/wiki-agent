@@ -45,6 +45,7 @@ python tool/intersect.py raw/census-*.jsonl
 | [An error names the symptom site](craft/error-names-the-symptom-site.md) | `landmine` |
 | [Gate the exit, not the callers](craft/gate-the-exit-not-the-callers.md) | `landmine` |
 | [Measure after the value changes last](craft/measure-after-the-last-change.md) | `landmine` |
+| [What a run writes stays off git](craft/results-stay-off-git.md) | `contract` |
 | [A screen follows its purpose, polish follows an order](craft/screen-follows-the-purpose.md) | `contract` |
 
 A census cannot see a rule that works — the detail is under "there are two

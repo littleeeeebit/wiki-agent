@@ -214,6 +214,21 @@ def test_a_planted_defect_turns_its_check_red(tmp_path, mutate, expect):
     assert expect in planted(tmp_path, mutate)
 
 
+def test_a_tracked_run_output_under_eval_is_caught_and_a_fixture_is_not(tmp_path):
+    import subprocess
+
+    from lint import tracked_run_outputs
+
+    for name in ("eval/jev/gates.json", "eval/jev/file-filter/2026-11-01.json",
+                 "eval/jev/branches/results/20261101T045300Z.json", "eval/guard/corpus.json"):
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text("{}", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-f", "eval"], check=True)
+    assert tracked_run_outputs(tmp_path) == ["eval/jev/branches/results/20261101T045300Z.json",
+                                             "eval/jev/file-filter/2026-11-01.json"]
+
+
 def test_a_declared_conflict_is_not_a_missing_link(tmp_path):
     """Declaring it lets it pass — the heart of how contradictions work."""
 

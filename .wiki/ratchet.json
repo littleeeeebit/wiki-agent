@@ -8,8 +8,8 @@
     },
     "tool/agent/chat_session.py": {
       "dup": 0,
-      "lines": 1378,
-      "reason": "A read session given the web tools turns Codex's own web search live, not only a source-only one: the wiki and next-task focuses had no web search on either host. Before that: A spec-sized system prompt overran Windows' 32,767-character command line (WinError 206), so Claude reads it from an owner-only file made per process, owned and removed with that process, and removed on any failure before it starts (PR #261). Before that: A turn cut off at capacity after it worked is continued (PR #221): an isolated session never resumes the id it did not persist, a continuation goes only to a Codex thread `thread/resume` reached and a fresh one stops the turn with the loss on record, and a failed Codex turn carries the usage it spent so the retries' total is charged. Before that: Providers lead their own process group on POSIX (audit R2), so Ctrl+C reaches none of them: every session with a running provider registers itself, and a server going down ends them all, a one-off explanation that no registry holds included, and refuses new ones until it starts again (`end_all`, `reopen`, `end`). Then a caller grading what the host read passes `results`, and both providers keep every tool result there whole: a tool event shows only 4000 characters, and Codex `exec` sends no result event (v5 calibration, PR #109)."
+      "lines": 1390,
+      "reason": "A response the provider's safeguards stopped fails its turn as a refusal: the CLI goes on past it and ends on an ordinary result, so the stop reason is read from the partial `message_delta` (where CLI 2.1.316 streams it) and the assistant message, a child's left to the child, and the done event carries `refused` so the capacity retry never resends it (PR #273, after #272 R1 was resent and stopped as a format failure). Before that: A read session given the web tools turns Codex's own web search live, not only a source-only one: the wiki and next-task focuses had no web search on either host. Before that: A spec-sized system prompt overran Windows' 32,767-character command line (WinError 206), so Claude reads it from an owner-only file made per process, owned and removed with that process, and removed on any failure before it starts (PR #261). Before that: A turn cut off at capacity after it worked is continued (PR #221): an isolated session never resumes the id it did not persist, a continuation goes only to a Codex thread `thread/resume` reached and a fresh one stops the turn with the loss on record, and a failed Codex turn carries the usage it spent so the retries' total is charged. Before that: Providers lead their own process group on POSIX (audit R2), so Ctrl+C reaches none of them: every session with a running provider registers itself, and a server going down ends them all, a one-off explanation that no registry holds included, and refuses new ones until it starts again (`end_all`, `reopen`, `end`). Then a caller grading what the host read passes `results`, and both providers keep every tool result there whole: a tool event shows only 4000 characters, and Codex `exec` sends no result event (v5 calibration, PR #109)."
     },
     "tool/apply.py": {
       "dup": 6,
@@ -98,8 +98,8 @@
     },
     "tool/lint.py": {
       "dup": 7,
-      "lines": 962,
-      "reason": "baseline at adoption"
+      "lines": 985,
+      "reason": "Reports a tracked file under `eval/` that a run wrote — in a `results/` folder or a JSON named by a date or stamp — since `.gitignore` cannot catch a script that writes elsewhere, as `tool/eval/file_filter.py` did in #270 (`craft/results-stay-off-git`, PR #273). Before that: baseline at adoption"
     },
     "tool/main/decisions.py": {
       "dup": 0,

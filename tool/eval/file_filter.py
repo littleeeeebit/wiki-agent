@@ -10,7 +10,7 @@ section — and the Jev request's usage.
 Sends one Jev request per spec and, with `ANTHROPIC_API_KEY` set, both first
 turns to Anthropic's token-counting endpoint (counted, never answered);
 without that key the count is characters / 4 and says so. No turn goes to a
-coding session. Writes `eval/jev/file-filter/<date>.json`.
+coding session. Writes `eval/jev/file-filter/results/<date>.json`, kept off git.
 
 Limits: search hits come from today's index, filtered to files that existed
 at the starting revision; evidence the work-start choice may attach goes to
@@ -35,7 +35,7 @@ from main.query import ROOT  # noqa: E402
 from session_state import run as git  # noqa: E402
 
 RESULT = "jev-file-filter-replay/1"
-OUT = ROOT / "eval" / "jev" / "file-filter"
+OUT = ROOT / "eval" / "jev" / "file-filter" / "results"
 COUNTER = "https://api.anthropic.com/v1/messages/count_tokens"
 COUNTED_BY = "claude-opus-5-5"
 
