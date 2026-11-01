@@ -1,0 +1,10 @@
+created: 2026-11-01T04:07:30.536Z
+updated: 2026-11-01T04:07:30.537Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: ranking
+children: []
+parentPath:
+  - knowledge
+  - retrieval

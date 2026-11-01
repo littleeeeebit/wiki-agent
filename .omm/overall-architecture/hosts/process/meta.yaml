@@ -1,0 +1,9 @@
+created: 2026-11-01T04:07:28.800Z
+updated: 2026-11-01T04:07:28.801Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: process
+children: []
+parentPath:
+  - hosts

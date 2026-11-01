@@ -4,6 +4,12 @@ update_count: 1
 last_field: diagram
 kind: nested-class
 title: review
-children: []
+children:
+  - admission
+  - correction
+  - final
+  - merge
+  - recovery
+  - round
 parentPath:
   - workflows

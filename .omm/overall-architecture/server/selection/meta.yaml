@@ -1,0 +1,9 @@
+created: 2026-11-01T04:07:32.474Z
+updated: 2026-11-01T04:07:32.475Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: selection
+children: []
+parentPath:
+  - server

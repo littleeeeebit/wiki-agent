@@ -4,5 +4,11 @@ update_count: 1
 last_field: diagram
 kind: nested-class
 title: clients
-children: []
+children:
+  - android
+  - api
+  - desktop
+  - mobile
+  - screen
+  - terminal
 parentPath: []

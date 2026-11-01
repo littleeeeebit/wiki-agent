@@ -1,0 +1,10 @@
+created: 2026-11-01T04:07:34.015Z
+updated: 2026-11-01T04:07:34.017Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: drafts
+children: []
+parentPath:
+  - workflows
+  - planning

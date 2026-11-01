@@ -5,6 +5,11 @@ last_field: diagram
 kind: nested-class
 title: knowledge
 children:
+  - controller
+  - decision
+  - grounding
+  - normalization
+  - records
   - retrieval
 parentPath: []
 prev_diagram: "graph LR\r

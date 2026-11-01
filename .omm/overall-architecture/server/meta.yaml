@@ -6,4 +6,9 @@ kind: nested-class
 title: server
 children:
   - architecture
+  - feed
+  - ingress
+  - lifecycle
+  - selection
+  - suite
 parentPath: []
