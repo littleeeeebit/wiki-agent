@@ -153,8 +153,8 @@
     },
     "tool/memory_words.py": {
       "dup": 10,
-      "lines": 116,
-      "reason": "A new PreToolUse hook that keeps saved memories in neutral words. Its duplicated lines are the fail-open `__main__` block every hook script here repeats on purpose (`craft/hooks-fail-open`)."
+      "lines": 150,
+      "reason": "Reads a path against the call's `cwd`, scopes the one exception to its own word and checks what a patch moves into memory (PR #276 R1). Before that: A new PreToolUse hook that keeps saved memories in neutral words. Its duplicated lines are the fail-open `__main__` block every hook script here repeats on purpose (`craft/hooks-fail-open`)."
     },
     "tool/repo_lint.py": {
       "dup": 7,

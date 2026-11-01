@@ -16,11 +16,12 @@ memories still hold.
 from __future__ import annotations
 
 import json
+import ntpath
 from pathlib import Path
 import re
 import sys
 
-from markdown_emphasis import WATCHED, written
+from markdown_emphasis import MOVE_TO, WATCHED, written
 
 # Each loaded word, and what to write instead.
 WORDS = {
@@ -39,8 +40,10 @@ WORDS = {
     "evasion": "slipping past a check",
     "weaponi": "misuse",
 }
-# A word's own inflections count (`bypassed`, `exploits`); `dependency injection` is not the loaded sense.
-LOADED = re.compile(r"\b(?<!dependency )(" + "|".join(WORDS) + r")\w*", re.I)
+# A word's own inflections count (`bypassed`, `exploits`); `dependency injection` is not the loaded
+# sense, and that exception belongs to that one word.
+LOADED = re.compile(r"\b(" + "|".join(("(?<!dependency )" if w == "injection" else "") + w for w in WORDS) + r")\w*",
+                    re.I)
 
 # Claude Code's auto memory and Codex's memories: the files every session of a project loads.
 MEMORY = re.compile(r"[\\/]\.claude[\\/]projects[\\/][^\\/]+[\\/]memory[\\/]|[\\/]\.codex[\\/]memories[\\/]", re.I)
@@ -64,15 +67,46 @@ def found(text: str) -> list[str]:
     return list(seen.values())
 
 
+def place(path: str, cwd: str) -> str:
+    """Where `path` lands: against the call's working directory, `..` resolved. `ntpath` reads both separators."""
+
+    return ntpath.normpath(ntpath.join(cwd, path))
+
+
+def moved(body: str, cwd: str) -> list[tuple[str, str]]:
+    """`(destination, text)` for each file a patch moves: the source's lines less those the patch removes.
+
+    `written` returns only what a patch adds, which is all a style check needs; a move also carries
+    every line it keeps. Unreadable sources fall back to the patch's own context lines."""
+
+    moves = []
+    for header in MOVE_TO.finditer(body):
+        source = re.findall(r"^\*\*\* Update File: (.+)$", body[:header.start()], re.M)[-1:]
+        section = body[header.end():].split("\n*** ", 1)[0].splitlines()
+        try:
+            kept = Path(place(source[0], cwd)).read_text(encoding="utf-8", errors="replace").splitlines()
+        except (IndexError, OSError):
+            kept = [line[1:] for line in section if line.startswith(" ")]
+        for line in (line[1:] for line in section if line.startswith("-")):
+            if line in kept:
+                kept.remove(line)
+        moves.append((header[1].strip(), "\n".join(kept)))
+    return moves
+
+
 def verdict(payload: dict) -> dict | None:
     """The hook's answer, or `None` to let the write through."""
 
     tool = str(payload.get("tool_name") or "").removeprefix("functions.")
     if tool not in WATCHED:
         return None
+    given, cwd = payload.get("tool_input") or {}, str(payload.get("cwd") or Path.cwd())
+    incoming = [(path, text) for path, text, _ in written(given, tool)]
+    if tool == "apply_patch":
+        incoming += moved(str(given.get("input") or given.get("patch") or ""), cwd)
     hits = []
-    for path, text, _ in written(payload.get("tool_input") or {}, tool):
-        if MEMORY.search(path.replace("~", "/~")):
+    for path, text in incoming:
+        if MEMORY.search(place(path, cwd)):
             hits += [h for h in found(text) if h not in hits]
     if not hits:
         return None

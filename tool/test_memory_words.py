@@ -44,6 +44,50 @@ def test_the_nearest_correct_writes_pass(path, text):
     assert not denied(path, text)
 
 
+def test_the_destination_decides_not_the_spelling():
+    """PR #276 R1: a relative path is read against the call's `cwd`, and `..` is resolved."""
+
+    def call(path):
+        return verdict({"cwd": "C:/Users/someone", "tool_name": "Write",
+                        "tool_input": {"file_path": path, "content": LOADED}})
+
+    assert call(".codex/memories/note.md") and call(".claude/projects/C--repo/memory/note.md")
+    assert call("docs/../.codex/memories/note.md")
+    assert not call("C:/Users/someone/.codex/memories/../ordinary.md")
+
+
+def test_the_dependency_exception_covers_only_its_own_word():
+    assert not denied(MEMORY, "Use dependency " + "in" + "jection.")
+    assert denied(MEMORY, "Use dependency " + "by" + "pass.")
+
+
+def test_a_file_moved_into_memory_is_checked_for_what_it_keeps(tmp_path):
+    """PR #276 R1: a move carries its unchanged lines, which the added fragments never show."""
+
+    (tmp_path / "note.md").write_text("A kept line: " + "pay" + "load.\nOther.\n", encoding="utf-8")
+    target = str(tmp_path / ".codex" / "memories" / "note.md")
+
+    def move(hunk):
+        body = f"*** Begin Patch\n*** Update File: note.md\n*** Move to: {target}\n{hunk}*** End Patch\n"
+        answer = verdict({"cwd": str(tmp_path), "tool_name": "apply_patch", "tool_input": {"input": body}})
+        return bool(answer)
+
+    assert move("") and move("@@\n Other.\n+Plain note.\n")
+    assert not move("@@\n-A kept line: " + "pay" + "load.\n+A kept line: the body.\n")
+
+
+def test_codex_reaches_the_memory_check_past_an_informational_answer(monkeypatch):
+    """PR #276 R1: with no Markdown parser the emphasis check only informs, which ended the chain."""
+
+    import codex_pretool
+    import markdown_emphasis
+
+    monkeypatch.setattr(markdown_emphasis, "parser", lambda: None)
+    body = f"*** Begin Patch\n*** Add File: {MEMORY}\n+{LOADED}\n*** End Patch\n"
+    answer = codex_pretool.verdict({"tool_name": "functions.apply_patch", "tool_input": {"input": body}})
+    assert answer["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
 def test_every_listed_word_has_its_plain_replacement():
     assert all(WORDS.values()) and not any(stem in plain for stem in WORDS for plain in WORDS.values())
 
