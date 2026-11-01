@@ -33,8 +33,8 @@
     },
     "tool/deny.py": {
       "dup": 10,
-      "lines": 51,
-      "reason": "baseline at adoption"
+      "lines": 58,
+      "reason": "A declared `Bash(...)` block is matched against every nested shell's commands too, for the Bash and PowerShell tools (PR #272 R1 F10). Before that: baseline at adoption"
     },
     "tool/edit_as_diff.py": {
       "dup": 12,
@@ -75,6 +75,11 @@
       "dup": 7,
       "lines": 150,
       "reason": "baseline at adoption"
+    },
+    "tool/guard.py": {
+      "dup": 0,
+      "lines": 834,
+      "reason": "The effect guard parses Bash, PowerShell and cmd into one effect lattice in a single hook process, which every tool call pays to start; splitting it would add imports to that path (PR #272)."
     },
     "tool/host_boundary.py": {
       "dup": 10,

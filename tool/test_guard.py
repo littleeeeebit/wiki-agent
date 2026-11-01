@@ -110,8 +110,8 @@ def test_nesting_is_recursed_to_a_fixed_depth():
     ("echo `rm x", "posix", "unclosed backtick"),
     ("echo \"$(rm x\"", "posix", "unclosed"),
     ("Write-Output 'abc", "ps", "unclosed quote"),
-    ("PATH=/evil:$PATH python x.py", "posix", "PATH"),
-    ("git -c core.sshCommand=evil fetch", "posix", "git config key"),
+    ("PATH=/opt/tools:$PATH python x.py", "posix", "PATH"),
+    ("git -c core.sshCommand=helper fetch", "posix", "git config key"),
     ("[IO.File]::WriteAllText('a', 'b')", "ps", "WriteAllText"),
 ])
 def test_undecidable_forms_reduce_to_top(command, dialect, reason):
@@ -122,7 +122,7 @@ def test_undecidable_forms_reduce_to_top(command, dialect, reason):
 @pytest.mark.parametrize("command,expected", [
     ("echo hi > out.txt 2>>err.log", {"write(C:/Users/me/PycharmProjects/wiki-agent/out.txt)",
                                       "write(C:/Users/me/PycharmProjects/wiki-agent/err.log)"}),
-    ("cat <<'EOF' > notes.md\n$(rm -rf /)\nEOF", {"write(C:/Users/me/PycharmProjects/wiki-agent/notes.md)"}),
+    ("cat <<'EOF' > notes.md\n$(rm -r out)\nEOF", {"write(C:/Users/me/PycharmProjects/wiki-agent/notes.md)"}),
     ("echo 2>&1 >/dev/null", set()),
     ("curl -sS https://example.org/x -o /tmp/y", {"network(example.org)", "write(C:/Users/me/AppData/Local/Temp/y)"}),
     ("S=/c/x; rm -rf \"$S/y\"", {"delete(C:/x/y)"}),
@@ -218,14 +218,14 @@ def test_calls_inside_the_grant_pass(repo):
 
 
 def test_each_denial_names_the_effect_and_the_grant_that_would_allow_it(repo):
-    reason = call(repo, "cargo build && curl https://evil.example/x && rm -rf ../other")
+    reason = call(repo, "cargo build && curl https://unlisted.example/x && rm -rf ../other")
     assert "spawn(cargo)" in reason and "`[guard] executables` 에 `cargo`" in reason
-    assert "network(evil.example)" in reason and "`[guard] network_hosts` 에 `evil.example`" in reason
+    assert "network(unlisted.example)" in reason and "`[guard] network_hosts` 에 `unlisted.example`" in reason
     assert "delete(" in reason and "other" in reason and "`[guard] write_roots`" in reason
     assert reason.splitlines()[-1].startswith("허가: 쓰기 루트") and "npx" in reason and "pypi.org" in reason
 
 
-def test_a_nested_shell_no_longer_bypasses_the_guard(repo):
+def test_a_nested_shell_keeps_the_effects_it_wraps(repo):
     assert "delete(" in call(repo, "bash -c 'rm -rf ../other'")
     assert "delete(" in call(repo, "Remove-Item ../other -Recurse", tool="PowerShell")
     # Codex on Windows runs PowerShell; elsewhere the same text is an unknown program.
@@ -233,32 +233,45 @@ def test_a_nested_shell_no_longer_bypasses_the_guard(repo):
     assert ("delete(" if os.name == "nt" else "spawn(") in codex
 
 
-@pytest.mark.parametrize("command,tool,marker", [
-    # F1 — a symlink created earlier redirects later paths; the link is undecidable.
-    ("ln -s ../other link && rm link/victim", "Bash", "판단할 수 없는"),
-    # F2 — a directory destination writes the protected descendant it actually names.
-    ("cp /tmp/adapter.toml .wiki/", "Bash", "허가를 정하는 파일"),
-    # F3 — a constructor on a non-inert type creates a file; the receiver is unmodelled.
-    ("[System.IO.FileStream]::new('C:/outside/victim', 'Create').Dispose()", "PowerShell", "판단할 수 없는"),
-    # F4 — a comma-joined path array hides a second, escaping target.
-    ("Remove-Item -LiteralPath 'keep','../other/victim'", "PowerShell", "판단할 수 없는"),
-    # F5 — a git read verb still writes through --output.
-    ("git diff HEAD~1 HEAD --output=../victim.patch", "Bash", "쓰기 루트 밖이다"),
-    # F6 — a function runs in the caller's context, not where it was defined.
-    ("f() { touch victim; }; cd ..; f", "Bash", "판단할 수 없는"),
-    # F7 — ANSI-C quoting encodes the path separators the shell will decode.
-    ("rm -- $'./\\x2e\\x2e/victim'", "Bash", "판단할 수 없는"),
-    # F8 — a shell startup file runs before the given command.
-    ("bash --rcfile /tmp/payload.rc -ic 'true'", "Bash", "판단할 수 없는"),
-    # F9 — a reader option launches an ungranted preprocessor.
-    ("rg --pre ./helper needle README.md", "Bash", "허가된 실행 파일이 아니다"),
-])
-def test_forms_the_model_cannot_follow_are_denied(repo, command, tool, marker):
+# Soundness: a call passes only when every effect it has lies under the grant, and an effect the model
+# cannot follow is `top`, which lies under none. Each form below once had an effect the model missed
+# (PR #272 R1, F1–F9); each is built on a neutral target and must be denied for the reason named.
+FORMS = {
+    "F1-link-made-earlier": ("ln -s ../other link && rm link/target.txt", "Bash", "판단할 수 없는"),
+    "F2-directory-destination": ("cp /tmp/adapter.toml .wiki/", "Bash", "허가를 정하는 파일"),
+    "F3-constructor": ("[System.IO.FileStream]::new('C:/outside/target.txt', 'Create').Dispose()", "PowerShell",
+                       "판단할 수 없는"),
+    "F4-path-array": ("Remove-Item -LiteralPath 'keep','../other/target.txt'", "PowerShell", "판단할 수 없는"),
+    "F5-read-verb-output": ("git diff HEAD~1 HEAD --output=../other.patch", "Bash", "쓰기 루트 밖이다"),
+    "F6-function-call-site": ("f() { touch target.txt; }; cd ..; f", "Bash", "판단할 수 없는"),
+    "F7-ansi-c-escape": ("rm -- $'a\\tb'", "Bash", "판단할 수 없는"),
+    "F8-startup-file": ("bash --rcfile startup.rc -ic 'true'", "Bash", "판단할 수 없는"),
+    "F9-reader-preprocessor": ("rg --pre ./helper needle README.md", "Bash", "허가된 실행 파일이 아니다"),
+}
+
+
+@pytest.mark.parametrize("form", FORMS)
+def test_every_form_with_an_effect_outside_the_grant_is_denied(repo, form):
+    command, tool, marker = FORMS[form]
     reason = call(repo, command, tool=tool)
     assert reason and marker in reason, reason
 
 
-def test_nested_shells_cannot_bypass_the_declared_git_blocks(monkeypatch):
+# Monotonicity: wrapping a command keeps every effect it had, so no wrapper turns a denial into a pass.
+WRAPPERS = {
+    "bash-c": lambda c: "bash -c " + shlex.quote(c),
+    "sh-lc": lambda c: "ls && sh -lc " + shlex.quote(c),
+    "substitution": lambda c: f"echo $({c})",
+}
+
+
+@pytest.mark.parametrize("wrapper", WRAPPERS)
+@pytest.mark.parametrize("form", [f for f, (_, tool, _) in FORMS.items() if tool == "Bash"])
+def test_no_wrapper_turns_a_denied_form_into_a_pass(repo, form, wrapper):
+    assert call(repo, WRAPPERS[wrapper](FORMS[form][0])), form
+
+
+def test_declared_git_blocks_hold_inside_nested_shells(monkeypatch):
     """F10 — a declared `Bash(...)` block holds inside `bash -c`, `pwsh -Command` and `$(...)`."""
     import apply
     import deny
