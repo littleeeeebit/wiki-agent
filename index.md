@@ -27,6 +27,7 @@ python tool/intersect.py raw/census-*.jsonl
 | [Cloud implements, local verifies](operator/cloud-local-review.md) | `contract` |
 | [The agent writes English, the person reads the mirror](operator/english-progress.md) | `landmine` |
 | [Edit files as diffs](operator/edit-files-as-diffs.md) | `contract` |
+| [A saved memory says what happened in plain words](operator/memory-stays-neutral.md) | `landmine` |
 | [Cleanup after a merge](operator/after-merge-cleanup.md) | `contract` |
 | [Ask as options](operator/ask-with-arrow-key-options.md) | `contract` |
 | [Do not multiply subagents](operator/agent-delegation.md) | `contract` |

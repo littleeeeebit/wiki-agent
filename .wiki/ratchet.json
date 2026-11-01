@@ -23,8 +23,8 @@
     },
     "tool/codex_pretool.py": {
       "dup": 10,
-      "lines": 41,
-      "reason": "baseline at adoption"
+      "lines": 42,
+      "reason": "Chains the memory-word check for Codex, which takes one PreToolUse hook. Before that: baseline at adoption"
     },
     "tool/declared_continuation.py": {
       "dup": 12,
@@ -150,6 +150,11 @@
       "dup": 17,
       "lines": 465,
       "reason": "baseline at adoption"
+    },
+    "tool/memory_words.py": {
+      "dup": 10,
+      "lines": 151,
+      "reason": "Reads a path in the host's own spelling with `~` expanded, and subtracts removed lines only from a source it read (PR #276 R2). Before that: Reads a path against the call's `cwd`, scopes the one exception to its own word and checks what a patch moves into memory (PR #276 R1). Before that: A new PreToolUse hook that keeps saved memories in neutral words. Its duplicated lines are the fail-open `__main__` block every hook script here repeats on purpose (`craft/hooks-fail-open`)."
     },
     "tool/repo_lint.py": {
       "dup": 7,
