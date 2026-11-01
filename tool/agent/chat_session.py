@@ -1239,7 +1239,8 @@ class ChatSession:
                 yield self._approval(rid, reply, name, args, _tool_brief({"name": name, "input": args}), outside)
 
             elif kind == "assistant":
-                refused = refused or (ev.get("message") or {}).get("stop_reason") == "refusal"
+                refused = refused or (not ev.get("parent_tool_use_id")
+                                      and (ev.get("message") or {}).get("stop_reason") == "refusal")
                 blocks = list(_blocks(ev.get("message") or {}))
                 progress = "\n\n".join(b.get("text", "") for b in blocks if b.get("type") == "text")
                 if progress.strip() and ev.get("parent_tool_use_id"):

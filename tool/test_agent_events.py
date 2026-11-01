@@ -97,6 +97,10 @@ sys.stdin.read()
     done = events[-1]
     assert done.kind == "done" and done.meta["error"]
     assert work.REFUSED.search(done.text) and done.text.endswith("Not repaired.")
+    # A child's refusal is the child's: the parent that went on and finished is not failed (#273 R2).
+    _, events = run(ChatSession(tree, write=True, bypass=True),
+                    fixture.replace(stopped, stopped[:-1] + ', "parent_tool_use_id": "bg-1"}'), tree)
+    assert not events[-1].meta["error"] and not events[-1].meta["refused"]
 
 
 def test_failed_background_turn_cannot_complete_the_next_prompt_with_stale_events(tree):
