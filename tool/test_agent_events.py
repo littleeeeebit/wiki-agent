@@ -95,8 +95,9 @@ sys.stdin.read()
 '''
     _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
     done = events[-1]
-    assert done.kind == "done" and done.meta["error"]
+    assert done.kind == "done" and done.meta["error"] and done.meta["refused"]
     assert work.REFUSED.search(done.text) and done.text.endswith("Not repaired.")
+    assert done.meta["answer"] == "Not repaired.", "what it went on to answer, apart from the notice"
     # A child's refusal is the child's: the parent that went on and finished is not failed (#273 R2).
     _, events = run(ChatSession(tree, write=True, bypass=True),
                     fixture.replace(stopped, stopped[:-1] + ', "parent_tool_use_id": "bg-1"}'), tree)

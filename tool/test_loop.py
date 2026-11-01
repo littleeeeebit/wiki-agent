@@ -1252,36 +1252,48 @@ def test_the_next_review_waits_for_a_complete_correction_and_published_head(worl
     assert complete["rounds"][1]["head"] == world.hub.head(7)
 
 
-def test_a_provider_safety_refusal_stops_and_resumes_in_a_new_conversation(world, monkeypatch):
-    spec = pr_spec(world, "repair-refused", 7)
-    finding = "[P0] a.txt:1 — history still holds records"
-    refusal = "This request was blocked by our safety systems. Reason: Potentially unintended activity."
-    say, refusals = Worker.say, [refusal]
+REFUSAL = "This request was blocked by our safety systems. Reason: Potentially unintended activity."
+
+
+def refusing(monkeypatch, times, shape="error"):
+    """`Worker.say` refusing its first `times` turns whole, in either shape the CLI reports: an API
+    error, or the parser's failed `done` whose text is its notice alone (an empty result)."""
+
+    say, refusals = Worker.say, [REFUSAL] * times
 
     def refused(worker, text, halt=None):
         if refusals:
             worker.heard.append(text)
-            yield Event("error", refusals.pop(), {}, worker.id)
+            refusals.pop()
+            yield (Event("error", REFUSAL, {}, worker.id) if shape == "error" else
+                   Event("done", CUT, {"error": True, "refused": True, "answer": "", "session_id": "cli-1"}, worker.id))
             return
         yield from say(worker, text, halt)
 
     monkeypatch.setattr(Worker, "say", refused)
+
+
+@pytest.mark.parametrize("shape", ["error", "done"])
+def test_a_refused_repair_goes_once_more_in_a_new_conversation_on_the_same_cell(world, monkeypatch, shape):
+    """A cut that a fresh context clears (claude-code #84821) no longer stops the loop; the new
+    conversation keeps the spec's model and effort, never the CLI's defaults, and never carries the
+    parser's notice (PR #275 R3)."""
+
+    spec = pr_spec(world, f"repair-refused-{shape}", 7)
+    specs.update("proj", spec["id"], cell={"model": "opus", "effort": "high", "fast": False})
+    finding = "[P0] a.txt:1 — history still holds records"
+    refusing(monkeypatch, 1, shape)
     Reviewer.replies = [deny(finding), allow]
     Worker.replies = [fixed((finding, "fixed"))]
-    stopped = looped(spec["id"])
-    assert stopped["state"] == "멈춤" and stopped["stopped"]["reason"] == loop.Why.EXTERNAL.value
-    assert "안전 정책" in stopped["stopped"]["detail"] and refusal in stopped["stopped"]["detail"]
-    assert sum(len(w.heard) for w in Worker.made) == 1
-    first = Worker.made[-1]
-
-    client().post(f"/api/specs/{spec['id']}/resume", json={}).raise_for_status()
-    waited(lambda: not loop._loops)
-    fresh = Worker.made[-1]
-    assert fresh is not first and fresh.session_id is None
+    assert looped(spec["id"])["state"] == "머지 가능"
+    first, fresh = Worker.made[0], Worker.made[-1]
+    assert sum(len(w.heard) for w in Worker.made) == 2 and fresh is not first
+    assert (fresh.model, fresh.effort) == (first.model, first.effort) == ("opus", "high")
     assert fresh.system.startswith(specs.system(Path(spec["worktree"])))
-    assert "## Why this conversation is new" in fresh.system and refusal in fresh.system
+    # A classifier reading the whole context flags talk of an earlier flag: the handoff never repeats it.
+    assert "## Why this conversation is new" in fresh.system and "safety" not in fresh.system
     assert "- Asked: Review round 1 refused the merge" in fresh.system
-    assert specs.load("proj", spec["id"])["state"] == "머지 가능"
+    assert "safety" not in fresh.heard[0] and "previous conversation stopped" in fresh.heard[0]
     # Past the screen's 200 rows the conversation keeps its handoff and its session.
     path = Path(spec["worktree"])
     for _ in range(101):
@@ -1290,34 +1302,211 @@ def test_a_provider_safety_refusal_stops_and_resumes_in_a_new_conversation(world
     assert work.session(path, "", "") is fresh
 
 
-def test_a_refused_review_resumes_in_a_new_review_conversation_from_its_handoff(world, monkeypatch):
+def test_a_repair_refused_again_in_its_new_conversation_stops_and_resumes_fresh(world, monkeypatch):
+    spec = pr_spec(world, "repair-refused-twice", 7)
+    finding = "[P0] a.txt:1 — history still holds records"
+    refusing(monkeypatch, 2)
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = [fixed((finding, "fixed"))]
+    stopped = looped(spec["id"])
+    assert stopped["state"] == "멈춤" and stopped["stopped"]["reason"] == loop.Why.EXTERNAL.value
+    assert "안전 정책" in stopped["stopped"]["detail"] and REFUSAL in stopped["stopped"]["detail"]
+    assert sum(len(w.heard) for w in Worker.made) == 2
+    last = Worker.made[-1]
+
+    client().post(f"/api/specs/{spec['id']}/resume", json={}).raise_for_status()
+    waited(lambda: not loop._loops)
+    assert Worker.made[-1] is not last and Worker.made[-1].session_id is None
+    assert specs.load("proj", spec["id"])["state"] == "머지 가능"
+
+
+CUT ="A response was blocked by our safety systems (stop_reason: refusal); the turn went on without it.\n\n"
+
+
+def cut(monkeypatch, cls):
+    """`cls.say` as a provider that cut one response of every turn, which went on to its reply: the
+    done event the chat parser makes then."""
+
+    say = cls.say
+
+    def told(cell, text, halt=None):
+        for ev in say(cell, text, halt):
+            if ev.kind == "done":
+                ev.meta = {**ev.meta, "error": True, "refused": True, "answer": ev.text}
+                ev.text = CUT + ev.text
+            yield ev
+
+    monkeypatch.setattr(cls, "say", told)
+
+
+QUOTING = 'Committed sample.py as a1b2c3d; the fixture text is "blocked by our safety systems"; push pending.'
+
+
+@pytest.mark.parametrize("cut,failed,result", [
+    (True, False, QUOTING), (False, False, QUOTING),          # an answer, behind the parser's notice or not
+    (False, True, REFUSAL), (True, True, REFUSAL),            # a failed result, alone or after a cut
+    (False, True, "API Error: 400 " + json.dumps({"error": {"message": REFUSAL}})),
+    (False, True, REFUSAL.replace(" Reason:", "\nReason:")),
+])
+def test_a_handoff_carries_the_answer_and_never_a_failed_result(tmp_path, monkeypatch, cut, failed, result):
+    """PR #275 R4–R6: through the real parser and record writer, the handoff keeps an answer even when
+    it quotes the notice's words, and carries nothing of a failed result in whatever form it comes."""
+
+    cell = chat_session.ChatSession(tmp_path, model="opus", effort="high")
+    if cut:
+        cell._events.put({"type": "stream_event", "event": {
+            "type": "message_delta", "delta": {"stop_reason": "refusal"}}})
+    cell._events.put({"type": "result", "is_error": failed, "result": result, "session_id": "sample"})
+    rows = []
+    monkeypatch.setattr(work, "remember", lambda path, role, text, **extra: rows.append(
+        {"role": role, "text": text, **extra}))
+    monkeypatch.setattr(work, "recall", lambda *_: rows[:])
+    with patch.object(cell, "say", return_value=iter([list(cell._drain())[-1]])), \
+         patch.object(work, "steps", return_value=[]), patch.object(work, "dispatch"), \
+         patch.object(work, "notice"), patch.object(work.errorlog, "record"), patch.object(specs, "check"):
+        work.run_turn(tmp_path, work.Run(cell), "Complete the sample task.", lambda: None)
+    context = work.handoff(rows)
+    assert "stop_reason" not in context and "Reason:" not in context and "Potentially" not in context
+    assert ("- Answered: " + QUOTING in context) if not failed else ("safety" not in context)
+
+
+def test_a_repair_turn_that_went_on_past_a_cut_response_is_judged_by_its_answer(world, monkeypatch):
+    """PR #272 R1: one response of the repair turn was cut, the turn went on to a complete
+    disposition, and the loop stopped anyway."""
+
+    spec = pr_spec(world, "repair-cut-complete", 7)
+    finding = "[P1] a.txt:1 — wrong path"
+    cut(monkeypatch, Worker)
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = [fixed((finding, "fixed"))]
+    assert looped(spec["id"])["state"] == "머지 가능"
+
+
+def test_a_repair_turn_cut_short_of_its_disposition_goes_once_more_then_stops(world, monkeypatch):
+    spec = pr_spec(world, "repair-cut-short", 7)
+    finding = "[P1] a.txt:1 — wrong path"
+    cut(monkeypatch, Worker)
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = ["Not repaired.", "Still not repaired."]
+    stopped = looped(spec["id"])
+    assert stopped["state"] == "멈춤" and stopped["stopped"]["reason"] == loop.Why.EXTERNAL.value
+    assert "새 대화로 한 번 더" in stopped["stopped"]["detail"]
+    asked = [w for w in Worker.made if w.heard]
+    assert [len(w.heard) for w in asked] == [1, 1], "each in its own conversation"
+    # PR #275 R3: the answer is carried into the new conversation, the parser's notice is not.
+    assert "Not repaired." in asked[1].system and "safety" not in asked[1].system
+
+
+def test_a_repair_refused_after_it_committed_still_owes_its_cleanup_in_the_retry(world, monkeypatch):
+    """PR #275 R3: the first turn committed code and was refused, so the retry measured from the
+    repaired HEAD and was let off its cleanup report."""
+
+    from main import sweep
+
+    spec = pr_spec(world, "repair-refused-committed", 7)
+    finding = "[P1] a.txt:1 — wrong path"
+    say, first = Worker.say, [True]
+
+    def committed_then_refused(worker, text, halt=None):
+        if first:
+            first.pop()
+            worker.heard.append(text)
+            commit(worker.path, "partial.txt")
+            yield Event("done", CUT, {"error": True, "refused": True, "answer": "", "session_id": "cli-1"}, worker.id)
+            return
+        yield from say(worker, text, halt)
+
+    monkeypatch.setattr(Worker, "say", committed_then_refused)
+    Reviewer.replies = [deny(finding), allow]
+    disposed = json.dumps([{"finding": finding, "action": "fixed", "evidence": "test_path passed"}])
+    answer = "고쳤다.\n\n```disposition\n" + disposed + "\n```"
+    Worker.replies = [answer, CLEANED + answer]   # `OWED` asks for the report and the disposition again
+    done = looped(spec["id"])
+    heard = [text for w in Worker.made for text in w.heard]
+    assert len(heard) == 3 and sweep.OWED in heard[2]
+    assert done["state"] == "머지 가능" and done["test_cleanup"]
+
+
+def test_a_cut_repair_owing_its_cleanup_report_is_never_asked_for_it_in_that_conversation(world, monkeypatch):
+    """PR #275 R1: the cleanup follow-up went back to the conversation that was cut."""
+
+    spec = pr_spec(world, "repair-cut-owing", 7)
+    finding = "[P1] a.txt:1 — wrong path"
+    cut(monkeypatch, Worker)
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = [fixed((finding, "fixed"), cleanup="")]
+    stopped = looped(spec["id"])
+    assert stopped["stopped"]["reason"] == loop.Why.EXTERNAL.value
+    assert [len(w.heard) for w in Worker.made if w.heard] == [1, 1]
+    assert stopped["cleanup_owed"], "PR #275 R2: a resumed repair still owes the report"
+
+
+def test_a_review_cut_short_of_its_p2_pick_keeps_every_p2_unasked(world, monkeypatch):
+    """PR #275 R2: the P2 pick went to the review cell the cut had closed, resuming its conversation."""
+
+    spec = pr_spec(world, "review-cut-p2", 7)
+    cut(monkeypatch, Reviewer)
+    Reviewer.replies = [lambda first, _: f"{first}\n[P2] a.txt:1 — 이름이 모호하다\n머지 허용"]
+    done = looped(spec["id"])
+    assert done["state"] == "머지 가능" and done["p2"] == ["[P2] a.txt:1 — 이름이 모호하다"]
+    assert sum(len(r.heard) for r in Reviewer.made) == 1
+
+
+def test_a_plan_revision_the_provider_cut_marks_the_loop_refused(monkeypatch, tmp_path):
+    """PR #275 R2: `revise` dropped the refusal, so the correction asked the same reviser again."""
+
+    from main import planning
+
+    class Run:
+        halt, chat = threading.Event(), None
+
+        def finish(self):
+            pass
+
+    lp = loop.Loop("proj", "plan-cut")
+    monkeypatch.setattr(loop, "wait_hold", lambda lp, path: lambda: None)
+    monkeypatch.setattr(planning, "ChatSession", lambda *a, **k: type("Chat", (), {"close": lambda self: None})())
+    monkeypatch.setattr(planning, "opened", lambda path, chat: Run())
+    monkeypatch.setattr(planning, "consume", lambda path, run, text: (CUT + "Not revised.", CUT + "Not revised.", {}, 0, 0))
+    spec = {"planning": {"roles": {"reviser": {"model": "", "effort": ""}}}, "artifact_root": "docs/plans/x"}
+    assert planning.revise(lp, spec, tmp_path, "Revise.") == "" and lp.refused
+
+
+@pytest.mark.parametrize("replies, merged, asked", [([allow], True, [1]), (["Partial review.", allow], True, [1, 1]),
+                                                    (["Partial review."] * 2, False, [1, 1])])
+def test_a_review_that_went_on_past_a_cut_response_is_read_or_asked_once_more_anew(world, monkeypatch, replies,
+                                                                                   merged, asked):
+    spec = pr_spec(world, f"review-cut-{len(asked)}{int(merged)}", 7)
+    cut(monkeypatch, Reviewer)
+    Reviewer.replies = list(replies)
+    done = looped(spec["id"])
+    assert done["state"] == "머지 가능" if merged else done["stopped"]["reason"] == loop.Why.EXTERNAL.value
+    assert [len(r.heard) for r in Reviewer.made if r.heard] == asked, "each in its own conversation"
+
+
+def test_a_refused_review_goes_once_more_in_a_new_review_conversation_from_its_handoff(world, monkeypatch):
     spec = pr_spec(world, "review-refused", 7)
     finding = "[P1] a.txt:1 — wrong path"
-    refusal = "This request was blocked by our safety systems. Reason: Potentially unintended activity."
     say, calls = Reviewer.say, []
 
     def refused(cell, text, halt=None):
         calls.append(text)
         if len(calls) == 2:   # round 2's first turn
-            yield Event("error", refusal, {})
+            cell.heard.append(text)
+            yield Event("error", REFUSAL, {})
             return
         yield from say(cell, text, halt)
 
     monkeypatch.setattr(Reviewer, "say", refused)
     Reviewer.replies = [deny(finding), allow]
     Worker.replies = [fixed((finding, "fixed"))]
-    stopped = looped(spec["id"])
-    assert stopped["stopped"]["reason"] == loop.Why.EXTERNAL.value and len(calls) == 2
-    kept = loop.folder("proj", 7)
-    assert not (kept / "session.json").exists()
-    handoff = (kept / "handoff.md").read_text(encoding="utf-8")
-    assert refusal in handoff and f'"id": "{spec["id"]}"' in handoff and finding in handoff
-
-    client().post(f"/api/specs/{spec['id']}/resume", json={}).raise_for_status()
-    waited(lambda: not loop._loops)
-    fresh = Reviewer.made[-1]
-    assert fresh is not Reviewer.made[0] and handoff in fresh.system
-    assert specs.load("proj", spec["id"])["state"] == "머지 가능"
+    assert looped(spec["id"])["state"] == "머지 가능" and len(calls) == 3
+    assert calls[2] == calls[1], "the round's own instruction, in the new conversation"
+    handoff = (loop.folder("proj", 7) / "handoff.md").read_text(encoding="utf-8")
+    assert "safety" not in handoff and f'"id": "{spec["id"]}"' in handoff and finding in handoff
+    first, fresh = Reviewer.made[0], Reviewer.made[-1]
+    assert fresh is not first and handoff in fresh.system and fresh.heard == [calls[2]]
+    assert (fresh.model, fresh.effort) == (first.model, first.effort)
 
 
 def test_a_restatement_carries_the_server_instruction_never_a_path_from_the_text(tmp_path, monkeypatch):

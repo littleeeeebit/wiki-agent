@@ -62,6 +62,14 @@ Then one block per finding. A finding starts on its own line:
 followed by as many lines as it needs: the trigger, the defect, the impact,
 and evidence someone else can reproduce.
 
+Write findings in plain engineering terms: the property the code breaks, the
+class of input that breaks it, and the test or code path that shows it. Where
+an input has to be quoted, give the smallest form that shows the defect with
+neutral names (`outside/target.txt`, `startup.rc`, `helper`), never words that
+cast it as an attack, a victim or a payload. A finding about a guard, a
+sandbox or a permission check states the property violated — an input whose
+effect leaves the grant is allowed — rather than a recipe for getting past it.
+
 The grades come from the criteria the round instruction carries under
 `Review profile`: plan criteria, code criteria, or both for a mixed change.
 Judge by those criteria only.
