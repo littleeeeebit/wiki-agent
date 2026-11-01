@@ -451,7 +451,8 @@ def fixing(n: int, findings: list[dict], said: str) -> str:
                          + (f"\n{f['body']}" if f["body"] else "") for f in findings)
     return (
         f"Review round {n} refused the merge (`{said}`) and found the following. For each finding: "
-        "reproduce it first. Fix it where it "
+        "do not reproduce it by running an exploit or bypass; prove it with a test that asserts the correct "
+        "outcome (for a guard, that the form is denied). Fix it where it "
         "points, and count separately the other places the same rule applies to. If you do not agree, "
         "say why with evidence rather than changing the code. A finding that asks for what the spec lists "
         "under `out`, or for an irreversible or outside action (rewriting or force-pushing pushed history, "
@@ -1576,6 +1577,10 @@ def step(loop: Loop) -> bool:
             (kept / f"round-{n}-result.md").write_text(
                 verification.redact(answer, settings) if verification.cloud(spec) else answer, encoding="utf-8")
             why = verification.redact(str(exc), settings) if verification.cloud(spec) else str(exc)
+            if work.REFUSED.search(answer):
+                return stop(loop, loop.repo, loop.sid, Why.EXTERNAL,
+                            f"R{n} 리뷰 응답 하나를 모델 제공자가 안전 정책으로 끊었고, 남은 답을 읽지 못했다 — "
+                            f"{why}. 같은 요청을 다시 보내지 않았다")
             ask_for = (f"Your answer to round {n} could not be read: {why}. Answer round {n} again, in the "
                        f"shape the instruction `{order}` gives: first line `Round {n} · PR #{pr} · {head[:7]}`, "
                        "a `finding-meta` block naming only ids listed under `Known findings`, last line "
@@ -1692,6 +1697,11 @@ def corrected(loop: Loop, spec: dict, repo: Path, path: Path) -> bool:
                     problem = "고쳤다고 보고했지만 검토한 HEAD 뒤의 수정 커밋이 없다"
             if not problem and researched:
                 problem = recovery.unrecorded(path, researched)
+            if problem and work.REFUSED.search(answer):
+                # A stopped response the turn went on without: its answer is judged, never asked again.
+                return stop(loop, loop.repo, loop.sid, Why.EXTERNAL,
+                            f"R{n} 수정 턴의 응답 하나를 모델 제공자가 안전 정책으로 끊었고, 남은 답으로는 "
+                            f"완료를 확인하지 못했다 — {problem}. 같은 요청을 다시 보내지 않았다")
         except RuntimeError as exc:
             if loop.halt.is_set():
                 return False

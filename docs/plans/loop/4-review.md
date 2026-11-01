@@ -54,7 +54,7 @@ The prompt is `tool/prompts/review-round.md`. It translates "what the instructio
    - The last non-empty line must start with `머지 허용` or `머지 불가`
    - If it deviates, the round fails. Send it again once, and if it fails again, `멈춤 — 라운드 형식`
 4. If `머지 허용`, the loop ends. The specification is `머지 가능`. Go to P2 selection below
-5. If `머지 불가`, send P0·P1 to the work cell in one turn. P2 is written in `Deferred P2` and not sent. The work cell's instructions are exactly as in the procedure document's "what the receiver holds" — reproduce first, fix the pointed place and count other places affected by the rule separately, if you disagree, provide evidence. `disposition` block at the end of the answer
+5. If `머지 불가`, send P0·P1 to the work cell in one turn. P2 is written in `Deferred P2` and not sent. The work cell's instructions are exactly as in the procedure document's "what the receiver holds" — prove it with a test that asserts the correct outcome rather than by running an exploit (since PR #272 R1, where reproduction requests were cut by the provider's safety system), fix the pointed place and count other places affected by the rule separately, if you disagree, provide evidence. `disposition` block at the end of the answer
    `[{finding, action: "fixed" | "not-reproduced" | "disagree", evidence}]`
 6. The server runs the gate (executor of step 3). If it fails, send the tail of the output to the work cell in one turn and run it again. If it fails twice in a row, `멈춤 — 게이트`
 7. If it passes, push. Next round

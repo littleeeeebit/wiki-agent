@@ -1319,13 +1319,15 @@ class ChatSession:
                 usage = ev.get("usage") or {}
                 self.usage = {"input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
                               "cost_usd": ev.get("total_cost_usd"), "scope": "turn"}
-                # Worded to match `work.REFUSED`: never resent, the next turn opens a new conversation.
+                # Worded to match `work.REFUSED`, so a caller never resends it. A turn that went on to an
+                # answer is not failed for it: the caller judges that answer (PR #272 R1, after #273).
+                answer = str(ev.get("result") or "")
                 yield Event(
                     "done",
                     ("A response was blocked by our safety systems (stop_reason: refusal); "
-                     "the turn went on without it.\n\n" if refused else "") + str(ev.get("result") or ""),
+                     "the turn went on without it.\n\n" if refused else "") + answer,
                     {"ms": ev.get("duration_ms"),
-                     "error": bool(ev.get("is_error")) or refused,
+                     "error": bool(ev.get("is_error")) or refused and not answer.strip(),
                      "refused": refused,
                      "session_id": ev.get("session_id"),
                      "model": self.model_name,

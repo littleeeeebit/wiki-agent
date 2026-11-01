@@ -1290,6 +1290,39 @@ def test_a_provider_safety_refusal_stops_and_resumes_in_a_new_conversation(world
     assert work.session(path, "", "") is fresh
 
 
+CUT = "A response was blocked by our safety systems (stop_reason: refusal); the turn went on without it.\n\n"
+
+
+def test_a_repair_turn_that_went_on_past_a_cut_response_is_judged_by_its_answer(world):
+    """PR #272 R1: one response of the repair turn was cut, the turn went on to a complete
+    disposition, and the loop stopped anyway."""
+
+    spec = pr_spec(world, "repair-cut-complete", 7)
+    finding = "[P1] a.txt:1 — wrong path"
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = [lambda path, halt: CUT + fixed((finding, "fixed"))(path, halt)]
+    assert looped(spec["id"])["state"] == "머지 가능"
+
+
+def test_a_repair_turn_cut_short_of_its_disposition_stops_without_asking_again(world):
+    spec = pr_spec(world, "repair-cut-short", 7)
+    finding = "[P1] a.txt:1 — wrong path"
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = [CUT + "Not repaired."]
+    stopped = looped(spec["id"])
+    assert stopped["state"] == "멈춤" and stopped["stopped"]["reason"] == loop.Why.EXTERNAL.value
+    assert "다시 보내지 않았다" in stopped["stopped"]["detail"]
+    assert sum(text.startswith("Review round 1") for w in Worker.made for text in w.heard) == 1
+
+
+def test_a_review_cut_short_of_its_verdict_stops_without_asking_again(world):
+    spec = pr_spec(world, "review-cut-short", 7)
+    Reviewer.replies = [CUT + "Partial review."]
+    stopped = looped(spec["id"])
+    assert stopped["stopped"]["reason"] == loop.Why.EXTERNAL.value
+    assert sum(len(r.heard) for r in Reviewer.made) == 1
+
+
 def test_a_refused_review_resumes_in_a_new_review_conversation_from_its_handoff(world, monkeypatch):
     spec = pr_spec(world, "review-refused", 7)
     finding = "[P1] a.txt:1 — wrong path"
