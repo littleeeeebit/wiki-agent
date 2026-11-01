@@ -971,6 +971,9 @@ class ChatSession:
         followups = 0
         foreground_result_seen = False
         replay_human, held, expired = None, None, False   # held: an answer kept back for follow-ups
+        # The CLI continues past a response its safeguards stopped and ends the
+        # turn with an ordinary result, so the refusal is only seen here.
+        refused = False
         proc = self._proc
         while True:
             # A background task runs silent for as long as it needs — a test
@@ -1232,6 +1235,7 @@ class ChatSession:
                 yield self._approval(rid, reply, name, args, _tool_brief({"name": name, "input": args}), outside)
 
             elif kind == "assistant":
+                refused = refused or (ev.get("message") or {}).get("stop_reason") == "refusal"
                 blocks = list(_blocks(ev.get("message") or {}))
                 progress = "\n\n".join(b.get("text", "") for b in blocks if b.get("type") == "text")
                 if progress.strip() and ev.get("parent_tool_use_id"):
@@ -1310,11 +1314,13 @@ class ChatSession:
                 usage = ev.get("usage") or {}
                 self.usage = {"input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
                               "cost_usd": ev.get("total_cost_usd"), "scope": "turn"}
+                # Worded to match `work.REFUSED`: never resent, the next turn opens a new conversation.
                 yield Event(
                     "done",
-                    str(ev.get("result") or ""),
+                    ("A response was blocked by our safety systems (stop_reason: refusal); "
+                     "the turn went on without it.\n\n" if refused else "") + str(ev.get("result") or ""),
                     {"ms": ev.get("duration_ms"),
-                     "error": bool(ev.get("is_error")),
+                     "error": bool(ev.get("is_error")) or refused,
                      "session_id": ev.get("session_id"),
                      "model": self.model_name,
                      # This wiki is cost-sensitive enough to draw injected

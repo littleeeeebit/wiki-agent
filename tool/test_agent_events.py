@@ -74,6 +74,25 @@ sys.stdin.read()
     assert events[-1].kind == "done" and events[-1].meta["error"]
 
 
+def test_a_response_the_safeguards_stopped_fails_the_turn_as_a_refusal(tree):
+    from main import work
+
+    # PR #272 R1: the CLI went on past the refusal and ended on an ordinary
+    # result, so the loop read a format failure and sent the request again.
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say({"type": "assistant", "message": {"stop_reason": "refusal", "content": [{"type": "thinking", "thinking": ""}]}})
+say({"type": "assistant", "message": {"stop_reason": "end_turn", "content": [{"type": "text", "text": "Not repaired."}]}})
+say({"type": "result", "result": "Not repaired.", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    done = events[-1]
+    assert done.kind == "done" and done.meta["error"]
+    assert work.REFUSED.search(done.text) and done.text.endswith("Not repaired.")
+
+
 def test_failed_background_turn_cannot_complete_the_next_prompt_with_stale_events(tree):
     failed = '''import json, sys
 say = lambda m: print(json.dumps(m), flush=True)
