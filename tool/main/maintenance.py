@@ -140,8 +140,13 @@ def findings(repo: Path, path: Path) -> list[tuple[str, str]]:
     return repo_lint.check(path, wiring=False)
 
 
-def indexes(path: Path) -> list[str]:
-    published = set(git(path, "ls-files", "--cached", "-z").split("\0")) | changes(path)
+def indexes(path: Path, repo: Path | None = None) -> list[str]:
+    """The wiki indexes preparation publishes from `path`, a checkout of `repo`, rebuilt. A target
+    repository commits them (forced: its `.wiki/` ignores them); the hub keeps them out of version
+    control (`test_distribution`), so its merge preparation leaves them alone."""
+    if (repo or path).resolve() == query.ROOT.resolve():
+        return []
+    published =set(git(path, "ls-files", "--cached", "-z").split("\0")) | changes(path)
     docs = [doc for doc in corpus.collect(path, corpus.DEFAULT_ROOTS) if doc["path"] in published]
     if not docs and not (path / ".wiki/corpus.json").exists():
         return []
@@ -238,14 +243,14 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
                 git(path, "--literal-pathspecs", "update-index", flag, "--", *flagged)
         specs.merge_progress(spec["repo"], spec["id"], "위키 색인·부채 기준선 새로 고치는 중")
         ratcheted = debt.tighten(path)   # only lowers: what this PR shrank stays shrunk
-        generated = indexes(path) + ratcheted
+        generated = indexes(path, repo) + ratcheted
         specs.merge_progress(spec["repo"], spec["id"], "위키 lint 확인 중")
         problems = findings(repo, path)
         if problems:
             specs.merge_progress(spec["repo"], spec["id"], "위키 lint 수정 중")
             repair(path, spec, problems)
             specs.merge_progress(spec["repo"], spec["id"], "수정한 위키 lint·색인 다시 확인 중")
-            generated = indexes(path) + ratcheted
+            generated = indexes(path, repo) + ratcheted
             remaining = findings(repo, path)
             if remaining:
                 raise ValueError("위키 lint 수정이 끝나지 않았다 — " + json.dumps(remaining, ensure_ascii=False))

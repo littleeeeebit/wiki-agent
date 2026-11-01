@@ -36,6 +36,7 @@ arbitrary command, new file path, tool name, or executable argument string.
 | --- | --- | --- |
 | `main/specs.py::materials/answered` | Rank supported next-work candidates; identify missing decision inputs | Existing candidate UI presents them; the user chooses goals |
 | `main/work.py::begin/run_turn/dispatch` | Prepare evidence first, request missing input, or dispatch a bounded work turn | Existing session, worktree, queue, stop flag, and approval handling |
+| `main/file_filter.py::first` (`work.files`, from `start_turn`) | One relevance Noul per code-built candidate file (grounds, search hits for the goal, files merged specs with overlapping grounds changed; at most `MAX_FILES`), all in one request | The first turn loads kept files (200 lines, 8,000 characters each, 60,000 in all) and lists dropped ones under "Available, not loaded"; no key, mode off, failed normalization or a result with no answers loads the full list and records `fallback`. Measured by `tool/eval/file_filter.py --replay 10` (`eval/jev/file-filter/`) |
 | `main/specs.py::check` | Select useful additional registered checks from evidence | Required adapter gate always runs; Jev cannot skip or weaken it |
 | `main/loop.py` at a fixed review result | Retrieve context for a disputed finding or send the next existing correction turn | Deterministic review outcome, round limit, and merge conditions remain authoritative |
 | `main/query.py` | Search, answer partially, or ask a targeted clarification | Stage 7 publication policy and existing user-choice UI |

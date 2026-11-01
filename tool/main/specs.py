@@ -361,9 +361,16 @@ def strings(value, what: str) -> list[str]:
     return [v.strip() for v in value if v.strip()]
 
 
+def relative(repo: Path, ref: str) -> str | None:
+    """`ref` (`a.py:3`, `./a.py`, `C:/proj/a.py:1–3`) as git spells it in `repo`, or `None` outside it.
+    The one reading of a grounds path: what `inside` accepts is what `file_filter` loads."""
+
+    target, root = (repo / LINE.sub("", ref)).resolve(), repo.resolve()
+    return target.relative_to(root).as_posix() if root in target.parents else None
+
+
 def inside(repo: Path, ref: str) -> bool:
-    target = (repo / LINE.sub("", ref)).resolve()
-    return repo.resolve() in target.parents
+    return relative(repo, ref) is not None
 
 
 def backed(ref: str, paths: set[str]) -> bool:

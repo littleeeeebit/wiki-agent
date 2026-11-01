@@ -373,7 +373,7 @@ def test_a_complete_spec_offers_no_question_and_a_stop_sends_nothing(repo, jev):
         settled(path)
     record = decisions.history(("proj", sid))[0]
     assert [c["id"] for c in record["offered"]] == ["dispatch", "evidence"], "nothing is missing to ask for"
-    assert Worker.made[-1].heard == ["Start."]
+    assert [s[:6] for s in Worker.made[-1].heard] == ["Start."] and "Evidence the" not in Worker.made[-1].heard[0]
 
     def stop_meanwhile(state, budget):
         budget.cancel.set()

@@ -1,0 +1,2996 @@
+{
+ "schema_version": "jev-file-filter-replay/1",
+ "prompt_version": "b2fee46211198b5f",
+ "specs": [
+  {
+   "repo": "ai-generation",
+   "spec": "require-lead-and-honest-panel-prompt",
+   "start": "7bd971614f66b9e2cc2586660e176ce6def43e2f",
+   "status": "empty",
+   "reason": "",
+   "threshold": null,
+   "offered": [],
+   "kept": [],
+   "dropped": [],
+   "tokens_before": 3407,
+   "tokens_after": 3407,
+   "counted": "count_tokens:claude-opus-5-5",
+   "jev": null
+  },
+  {
+   "repo": "ai-coding-wiki",
+   "spec": "submission-rating-simplification-02719744",
+   "start": "e16b8bba972237f7fe75329e9c6fca915e5dd09e",
+   "status": "filtered",
+   "reason": "",
+   "threshold": 0.2,
+   "offered": [
+    {
+     "path": "src/ai_coding_wiki/signals.py",
+     "via": [
+      "grounds"
+     ]
+    },
+    {
+     "path": "src/ai_coding_wiki/submissions.py",
+     "via": [
+      "grounds",
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "docs/development/TDD.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-05-code-drafts-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-08-embedding-large-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/data/reach-pass-2026-09-10/reading-round-1-result.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/platform/api.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-08-26-milestone-2-unattended-loop-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/architecture/learning-loop.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-08-27-milestone-3-second-track-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-15-skeleton-blocks-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/domain/judging.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/ops/security.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-02-rating-history-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-08-23-milestone-1-vertical-slice-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/conventions.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f6-1.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f1-2.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/data/ml-dl-reach-2026-09-10/documents/momentum-pattern.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/data/repair-round-2026-09-10/documents/momentum-pattern.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/data/repair-round-2026-09-10/documents/tree-pattern.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "client/components/Hint.tsx",
+     "via": [
+      "merged:guidance-hint-timing-contracts-02719744"
+     ]
+    },
+    {
+     "path": "tests/test_hint_api.py",
+     "via": [
+      "merged:guidance-hint-timing-contracts-02719744",
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": ".wiki/graph.json",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "client/app/page.authentication.test.tsx",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "client/app/page.tsx",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "client/components/Workspace.progress.test.tsx",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "client/components/Workspace.tsx",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "docs/plans/data/skeleton-coverage-2026-09-15.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/backup.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_accounting.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_authority.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_collection.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_comparison.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_evaluation.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_evidence.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_publication.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_reader.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_reading.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_report.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    }
+   ],
+   "kept": [
+    {
+     "path": "src/ai_coding_wiki/signals.py",
+     "p": 0.75
+    },
+    {
+     "path": "src/ai_coding_wiki/submissions.py",
+     "p": 0.78
+    }
+   ],
+   "dropped": [
+    {
+     "path": "docs/development/TDD.md",
+     "p": 0.13
+    },
+    {
+     "path": "docs/plans/2026-09-05-code-drafts-outcome.md",
+     "p": 0.09
+    },
+    {
+     "path": "docs/plans/2026-09-08-embedding-large-outcome.md",
+     "p": 0.07
+    },
+    {
+     "path": "docs/plans/data/reach-pass-2026-09-10/reading-round-1-result.md",
+     "p": 0.06
+    },
+    {
+     "path": "docs/platform/api.md",
+     "p": 0.17
+    },
+    {
+     "path": "docs/plans/2026-08-26-milestone-2-unattended-loop-plan.md",
+     "p": 0.05
+    },
+    {
+     "path": "docs/architecture/learning-loop.md",
+     "p": 0.07
+    },
+    {
+     "path": "docs/plans/2026-08-27-milestone-3-second-track-plan.md",
+     "p": 0.05
+    },
+    {
+     "path": "docs/plans/2026-09-15-skeleton-blocks-outcome.md",
+     "p": 0.07
+    },
+    {
+     "path": "docs/domain/judging.md",
+     "p": 0.13
+    },
+    {
+     "path": "docs/ops/security.md",
+     "p": 0.07
+    },
+    {
+     "path": "docs/plans/2026-09-02-rating-history-plan.md",
+     "p": 0.05
+    },
+    {
+     "path": "docs/plans/2026-08-23-milestone-1-vertical-slice-plan.md",
+     "p": 0.06
+    },
+    {
+     "path": "docs/conventions.md",
+     "p": 0.1
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f6-1.md",
+     "p": 0.03
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f1-2.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/data/ml-dl-reach-2026-09-10/documents/momentum-pattern.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/data/repair-round-2026-09-10/documents/momentum-pattern.md",
+     "p": 0.05
+    },
+    {
+     "path": "docs/plans/data/repair-round-2026-09-10/documents/tree-pattern.md",
+     "p": 0.05
+    },
+    {
+     "path": "client/components/Hint.tsx",
+     "p": 0.06
+    },
+    {
+     "path": "tests/test_hint_api.py",
+     "p": 0.15
+    },
+    {
+     "path": ".wiki/graph.json",
+     "p": 0.08
+    },
+    {
+     "path": "client/app/page.authentication.test.tsx",
+     "p": 0.06
+    },
+    {
+     "path": "client/app/page.tsx",
+     "p": 0.06
+    },
+    {
+     "path": "client/components/Workspace.progress.test.tsx",
+     "p": 0.06
+    },
+    {
+     "path": "client/components/Workspace.tsx",
+     "p": 0.06
+    },
+    {
+     "path": "docs/plans/data/skeleton-coverage-2026-09-15.py",
+     "p": 0.07
+    },
+    {
+     "path": "ops/backup.py",
+     "p": 0.06
+    },
+    {
+     "path": "ops/creativity_accounting.py",
+     "p": 0.06
+    },
+    {
+     "path": "ops/creativity_authority.py",
+     "p": 0.06
+    },
+    {
+     "path": "ops/creativity_collection.py",
+     "p": 0.06
+    },
+    {
+     "path": "ops/creativity_comparison.py",
+     "p": 0.06
+    },
+    {
+     "path": "ops/creativity_evaluation.py",
+     "p": 0.06
+    },
+    {
+     "path": "ops/creativity_evidence.py",
+     "p": 0.06
+    },
+    {
+     "path": "ops/creativity_publication.py",
+     "p": 0.06
+    },
+    {
+     "path": "ops/creativity_reader.py",
+     "p": 0.06
+    },
+    {
+     "path": "ops/creativity_reading.py",
+     "p": 0.06
+    },
+    {
+     "path": "ops/creativity_report.py",
+     "p": 0.06
+    }
+   ],
+   "tokens_before": 25009,
+   "tokens_after": 9391,
+   "counted": "count_tokens:claude-opus-5-5",
+   "jev": {
+    "status": "uncertain",
+    "usage": {
+     "input_tokens": 6403,
+     "output_tokens": 715
+    },
+    "elapsed_ms": 350,
+    "model": "jev-1.13.0"
+   }
+  },
+  {
+   "repo": "ai-companion-voice-agent",
+   "spec": "memory-owned-recall-decision-94ac7a2d",
+   "start": "4902f5269ce9b1e52773a9e964552547d8b343fa",
+   "status": "filtered",
+   "reason": "",
+   "threshold": 0.2,
+   "offered": [
+    {
+     "path": "src/ai_companion_voice_agent/memory/companion_write_worker.py",
+     "via": [
+      "grounds"
+     ]
+    },
+    {
+     "path": "src/ai_companion_voice_agent/memory/memory_grounding.py",
+     "via": [
+      "grounds"
+     ]
+    },
+    {
+     "path": "src/ai_companion_voice_agent/memory/memory_retrieval.py",
+     "via": [
+      "grounds",
+      "merged:recall-contract-cleanup-97d92512",
+      "merged:preserve-repository-boundaries-1f9c4293"
+     ]
+    },
+    {
+     "path": "src/ai_companion_voice_agent/memory/recall_abstention.py",
+     "via": [
+      "grounds",
+      "merged:preserve-repository-boundaries-1f9c4293"
+     ]
+    },
+    {
+     "path": "src/ai_companion_voice_agent/memory/recall_resolution.py",
+     "via": [
+      "grounds",
+      "merged:preserve-repository-boundaries-1f9c4293"
+     ]
+    },
+    {
+     "path": "src/ai_companion_voice_agent/pipeline/voice_pipeline.py",
+     "via": [
+      "grounds",
+      "merged:explicit-activity-generation-outcome-94ac7a2d",
+      "merged:application-owned-recent-history-94ac7a2d",
+      "merged:deferred-worker-construction-7357ebbe"
+     ]
+    },
+    {
+     "path": "tests/integration/test_memory_recall_grounding_contract.py",
+     "via": [
+      "grounds"
+     ]
+    },
+    {
+     "path": "tests/unit/memory/test_recall_contracts_preserve.py",
+     "via": [
+      "grounds",
+      "merged:preserve-repository-boundaries-1f9c4293"
+     ]
+    },
+    {
+     "path": ".omm/dependency-map/memory-layer/description.md",
+     "via": [
+      "search",
+      "merged:preserve-repository-boundaries-1f9c4293"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-07-30-memory-read-recall-ownership-contract-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/request-lifecycle/recall-grounding/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-07-28-memory-recall-speech-and-mutation-ownership-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-07-27-memory-recall-scope-and-retention-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/memory-system/retrieval/projection/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/code-reviews/2026-07-28-memory-prompt-representation-and-value-typing-review.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/implementation-reports/2026-07-28-memory-recall-speech-and-mutation-ownership-report.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/request-lifecycle/recall-parallel-bundle/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/implementation-reports/2026-07-28-memory-prompt-representation-and-value-typing-report.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/architecture/pipeline.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/proactive-system/routes/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/memory/README.md",
+     "via": [
+      "search",
+      "merged:recall-contract-cleanup-97d92512"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-07-28-memory-value-review-and-normalization-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/request-lifecycle/recall-resolution-generation/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/request-lifecycle/generate/description.md",
+     "via": [
+      "search",
+      "merged:explicit-activity-generation-outcome-94ac7a2d"
+     ]
+    },
+    {
+     "path": "docs/plans/plan-32916e65/8-diagnostics-and-suite-isolation.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-07-26-product-persona-validation-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-08-06-memory-correctness-pgvector-activation-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-07-30-gemini-role-budget-contract-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/data-flow/diagram.mmd",
+     "via": [
+      "merged:explicit-activity-generation-outcome-94ac7a2d"
+     ]
+    },
+    {
+     "path": ".omm/data-flow/proposal/description.md",
+     "via": [
+      "merged:explicit-activity-generation-outcome-94ac7a2d"
+     ]
+    },
+    {
+     "path": ".omm/request-lifecycle/generate/meta.yaml",
+     "via": [
+      "merged:explicit-activity-generation-outcome-94ac7a2d"
+     ]
+    },
+    {
+     "path": ".wiki/graph.json",
+     "via": [
+      "merged:explicit-activity-generation-outcome-94ac7a2d",
+      "merged:preserve-repository-boundaries-1f9c4293"
+     ]
+    },
+    {
+     "path": "src/ai_companion_voice_agent/api/browser_activity_bridge.py",
+     "via": [
+      "merged:explicit-activity-generation-outcome-94ac7a2d"
+     ]
+    },
+    {
+     "path": "src/ai_companion_voice_agent/pipeline/session_state.py",
+     "via": [
+      "merged:explicit-activity-generation-outcome-94ac7a2d"
+     ]
+    },
+    {
+     "path": "tests/conversation/test_activity_outcome_handoff.py",
+     "via": [
+      "merged:explicit-activity-generation-outcome-94ac7a2d"
+     ]
+    },
+    {
+     "path": "tests/conversation/test_llm_brain.py",
+     "via": [
+      "merged:explicit-activity-generation-outcome-94ac7a2d"
+     ]
+    },
+    {
+     "path": ".omm/data-flow/recent-turn-store/concern.md",
+     "via": [
+      "merged:application-owned-recent-history-94ac7a2d"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/memory/recent/description.md",
+     "via": [
+      "merged:application-owned-recent-history-94ac7a2d"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/memory/recent/meta.yaml",
+     "via": [
+      "merged:application-owned-recent-history-94ac7a2d"
+     ]
+    },
+    {
+     "path": "src/ai_companion_voice_agent/core/app_state.py",
+     "via": [
+      "merged:application-owned-recent-history-94ac7a2d"
+     ]
+    }
+   ],
+   "kept": [
+    {
+     "path": "src/ai_companion_voice_agent/memory/memory_grounding.py",
+     "p": 0.81
+    },
+    {
+     "path": "src/ai_companion_voice_agent/memory/memory_retrieval.py",
+     "p": 0.73
+    },
+    {
+     "path": "src/ai_companion_voice_agent/memory/recall_abstention.py",
+     "p": 0.33
+    },
+    {
+     "path": "src/ai_companion_voice_agent/memory/recall_resolution.py",
+     "p": 0.98
+    },
+    {
+     "path": "src/ai_companion_voice_agent/pipeline/voice_pipeline.py",
+     "p": 0.97
+    },
+    {
+     "path": "tests/integration/test_memory_recall_grounding_contract.py",
+     "p": 0.8
+    },
+    {
+     "path": "tests/unit/memory/test_recall_contracts_preserve.py",
+     "p": 0.77
+    },
+    {
+     "path": ".omm/dependency-map/memory-layer/description.md",
+     "p": 0.91
+    },
+    {
+     "path": "docs/plans/2026-07-30-memory-read-recall-ownership-contract-plan.md",
+     "p": 0.55
+    },
+    {
+     "path": ".omm/request-lifecycle/recall-grounding/description.md",
+     "p": 0.6
+    },
+    {
+     "path": "docs/plans/2026-07-28-memory-recall-speech-and-mutation-ownership-plan.md",
+     "p": 0.34
+    },
+    {
+     "path": "docs/plans/2026-07-27-memory-recall-scope-and-retention-plan.md",
+     "p": 0.33
+    },
+    {
+     "path": ".omm/overall-architecture/memory-system/retrieval/projection/description.md",
+     "p": 0.51
+    },
+    {
+     "path": "docs/code-reviews/2026-07-28-memory-prompt-representation-and-value-typing-review.md",
+     "p": 0.33
+    },
+    {
+     "path": "docs/implementation-reports/2026-07-28-memory-recall-speech-and-mutation-ownership-report.md",
+     "p": 0.3
+    },
+    {
+     "path": ".omm/request-lifecycle/recall-parallel-bundle/description.md",
+     "p": 0.31
+    },
+    {
+     "path": "docs/implementation-reports/2026-07-28-memory-prompt-representation-and-value-typing-report.md",
+     "p": 0.28
+    },
+    {
+     "path": "docs/architecture/pipeline.md",
+     "p": 0.44
+    },
+    {
+     "path": "docs/memory/README.md",
+     "p": 0.59
+    },
+    {
+     "path": "docs/plans/2026-07-28-memory-value-review-and-normalization-plan.md",
+     "p": 0.26
+    },
+    {
+     "path": ".omm/request-lifecycle/recall-resolution-generation/description.md",
+     "p": 0.6
+    },
+    {
+     "path": ".omm/data-flow/diagram.mmd",
+     "p": 0.43
+    },
+    {
+     "path": ".omm/data-flow/proposal/description.md",
+     "p": 0.21
+    },
+    {
+     "path": ".wiki/graph.json",
+     "p": 0.46
+    }
+   ],
+   "dropped": [
+    {
+     "path": "src/ai_companion_voice_agent/memory/companion_write_worker.py",
+     "p": 0.16
+    },
+    {
+     "path": ".omm/overall-architecture/proactive-system/routes/description.md",
+     "p": 0.15
+    },
+    {
+     "path": ".omm/request-lifecycle/generate/description.md",
+     "p": 0.16
+    },
+    {
+     "path": "docs/plans/plan-32916e65/8-diagnostics-and-suite-isolation.md",
+     "p": 0.14
+    },
+    {
+     "path": "docs/plans/2026-07-26-product-persona-validation-plan.md",
+     "p": 0.19
+    },
+    {
+     "path": "docs/plans/2026-08-06-memory-correctness-pgvector-activation-plan.md",
+     "p": 0.08
+    },
+    {
+     "path": "docs/plans/2026-07-30-gemini-role-budget-contract-plan.md",
+     "p": 0.06
+    },
+    {
+     "path": ".omm/request-lifecycle/generate/meta.yaml",
+     "p": 0.12
+    },
+    {
+     "path": "src/ai_companion_voice_agent/api/browser_activity_bridge.py",
+     "p": 0.09
+    },
+    {
+     "path": "src/ai_companion_voice_agent/pipeline/session_state.py",
+     "p": 0.18
+    },
+    {
+     "path": "tests/conversation/test_activity_outcome_handoff.py",
+     "p": 0.14
+    },
+    {
+     "path": "tests/conversation/test_llm_brain.py",
+     "p": 0.12
+    },
+    {
+     "path": ".omm/data-flow/recent-turn-store/concern.md",
+     "p": 0.15
+    },
+    {
+     "path": ".omm/overall-architecture/memory/recent/description.md",
+     "p": 0.18
+    },
+    {
+     "path": ".omm/overall-architecture/memory/recent/meta.yaml",
+     "p": 0.13
+    },
+    {
+     "path": "src/ai_companion_voice_agent/core/app_state.py",
+     "p": 0.13
+    }
+   ],
+   "tokens_before": 30870,
+   "tokens_after": 30103,
+   "counted": "count_tokens:claude-opus-5-5",
+   "jev": {
+    "status": "uncertain",
+    "usage": {
+     "input_tokens": 7606,
+     "output_tokens": 715
+    },
+    "elapsed_ms": 230,
+    "model": "jev-1.13.0"
+   }
+  },
+  {
+   "repo": "ai-coding-wiki",
+   "spec": "wiki-reembedding-cleanup-02719744",
+   "start": "6c246ed618d950dfdb1f625ac27a90d1b7df8ee5",
+   "status": "filtered",
+   "reason": "",
+   "threshold": 0.2,
+   "offered": [
+    {
+     "path": "tests/conftest.py",
+     "via": [
+      "grounds"
+     ]
+    },
+    {
+     "path": "tests/test_wiki_reembed.py",
+     "via": [
+      "grounds"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-10-21-deepseek-generation-ab-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-10-20-evidence-storage-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-10-23-luna-deepseek-creativity-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-10-22-jev-shadow-grounding-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/data/rag-label-admission-2026-09-06/implementation-review-2.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/research/review-deepseek-generation-ab-f2-1.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/conventions.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-08-26-milestone-2-unattended-loop-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/ops/testing.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f1-2.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f7-1.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-05-code-drafts-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-05-concept-evaluation-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-06-document-evaluation-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-10-21-english-problem-bank-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f8-2.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/code-reviews/2026-08-24-wiki-hybrid-search-review.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-03-prerequisite-dag-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f1-1.md",
+     "via": [
+      "search"
+     ]
+    }
+   ],
+   "kept": [
+    {
+     "path": "tests/conftest.py",
+     "p": 0.68
+    },
+    {
+     "path": "tests/test_wiki_reembed.py",
+     "p": 0.98
+    }
+   ],
+   "dropped": [
+    {
+     "path": "docs/plans/2026-10-21-deepseek-generation-ab-outcome.md",
+     "p": 0.07
+    },
+    {
+     "path": "docs/plans/2026-10-20-evidence-storage-outcome.md",
+     "p": 0.09
+    },
+    {
+     "path": "docs/plans/2026-10-23-luna-deepseek-creativity-plan.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/2026-10-22-jev-shadow-grounding-outcome.md",
+     "p": 0.06
+    },
+    {
+     "path": "docs/plans/data/rag-label-admission-2026-09-06/implementation-review-2.md",
+     "p": 0.05
+    },
+    {
+     "path": "docs/research/review-deepseek-generation-ab-f2-1.md",
+     "p": 0.06
+    },
+    {
+     "path": "docs/conventions.md",
+     "p": 0.1
+    },
+    {
+     "path": "docs/plans/2026-08-26-milestone-2-unattended-loop-plan.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/ops/testing.md",
+     "p": 0.1
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f1-2.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f7-1.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/2026-09-05-code-drafts-outcome.md",
+     "p": 0.07
+    },
+    {
+     "path": "docs/plans/2026-09-05-concept-evaluation-plan.md",
+     "p": 0.06
+    },
+    {
+     "path": "docs/plans/2026-09-06-document-evaluation-outcome.md",
+     "p": 0.06
+    },
+    {
+     "path": "docs/plans/2026-10-21-english-problem-bank-outcome.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f8-2.md",
+     "p": 0.03
+    },
+    {
+     "path": "docs/code-reviews/2026-08-24-wiki-hybrid-search-review.md",
+     "p": 0.09
+    },
+    {
+     "path": "docs/plans/2026-09-03-prerequisite-dag-outcome.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f1-1.md",
+     "p": 0.04
+    }
+   ],
+   "tokens_before": 24528,
+   "tokens_after": 8585,
+   "counted": "count_tokens:claude-opus-5-5",
+   "jev": {
+    "status": "uncertain",
+    "usage": {
+     "input_tokens": 3629,
+     "output_tokens": 373
+    },
+    "elapsed_ms": 186,
+    "model": "jev-1.13.0"
+   }
+  },
+  {
+   "repo": "ai-coding-wiki",
+   "spec": "backup-recovery-contract-02719744",
+   "start": "52b4eec6e0c2fe8952909f673eca3330b297655b",
+   "status": "filtered",
+   "reason": "",
+   "threshold": 0.2,
+   "offered": [
+    {
+     "path": "docs/ops/backups.md",
+     "via": [
+      "grounds",
+      "search"
+     ]
+    },
+    {
+     "path": "ops/backup.py",
+     "via": [
+      "grounds",
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "tests/test_backups.py",
+     "via": [
+      "grounds",
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-10-22-jev-chunk-relevance-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/data/jev-shadow-grounding-2026-10-22/README.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-05-scheduled-backups-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/data/foundation-base-2026-09-05/README.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/data/content-cohort-2026-09-06/protocol.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-10-22-jev-shadow-grounding-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-06-document-evaluation-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/data/retrieval-reach-2026-09-09/README.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-06-rag-measurement-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-06-evaluated-content-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/data/content-cohort-2026-09-06/publication-review.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-10-23-luna-deepseek-creativity-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/data/fresh-retrieval-2026-09-06/README.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f8-2.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-10-21-english-problem-bank-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-05-concept-evaluation-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/data/content-cohort-2026-09-06/README.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-06-reference-staging-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".wiki/graph.json",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "client/app/page.authentication.test.tsx",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "client/app/page.tsx",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "client/components/Workspace.progress.test.tsx",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "client/components/Workspace.tsx",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "docs/plans/data/skeleton-coverage-2026-09-15.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_accounting.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_authority.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_collection.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_comparison.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_evaluation.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_evidence.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_publication.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_reader.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_reading.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_report.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_transport.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/host.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "src/ai_coding_wiki/api/problems.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    }
+   ],
+   "kept": [
+    {
+     "path": "docs/ops/backups.md",
+     "p": 0.94
+    },
+    {
+     "path": "ops/backup.py",
+     "p": 0.79
+    },
+    {
+     "path": "tests/test_backups.py",
+     "p": 0.95
+    }
+   ],
+   "dropped": [
+    {
+     "path": "docs/plans/2026-10-22-jev-chunk-relevance-outcome.md",
+     "p": 0.06
+    },
+    {
+     "path": "docs/plans/data/jev-shadow-grounding-2026-10-22/README.md",
+     "p": 0.05
+    },
+    {
+     "path": "docs/plans/2026-09-05-scheduled-backups-outcome.md",
+     "p": 0.13
+    },
+    {
+     "path": "docs/plans/data/foundation-base-2026-09-05/README.md",
+     "p": 0.05
+    },
+    {
+     "path": "docs/plans/data/content-cohort-2026-09-06/protocol.md",
+     "p": 0.06
+    },
+    {
+     "path": "docs/plans/2026-10-22-jev-shadow-grounding-outcome.md",
+     "p": 0.05
+    },
+    {
+     "path": "docs/plans/2026-09-06-document-evaluation-outcome.md",
+     "p": 0.05
+    },
+    {
+     "path": "docs/plans/data/retrieval-reach-2026-09-09/README.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/2026-09-06-rag-measurement-outcome.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/2026-09-06-evaluated-content-outcome.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/data/content-cohort-2026-09-06/publication-review.md",
+     "p": 0.07
+    },
+    {
+     "path": "docs/plans/2026-10-23-luna-deepseek-creativity-plan.md",
+     "p": 0.03
+    },
+    {
+     "path": "docs/plans/data/fresh-retrieval-2026-09-06/README.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f8-2.md",
+     "p": 0.03
+    },
+    {
+     "path": "docs/plans/2026-10-21-english-problem-bank-outcome.md",
+     "p": 0.03
+    },
+    {
+     "path": "docs/plans/2026-09-05-concept-evaluation-plan.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/data/content-cohort-2026-09-06/README.md",
+     "p": 0.05
+    },
+    {
+     "path": "docs/plans/2026-09-06-reference-staging-outcome.md",
+     "p": 0.06
+    },
+    {
+     "path": ".wiki/graph.json",
+     "p": 0.06
+    },
+    {
+     "path": "client/app/page.authentication.test.tsx",
+     "p": 0.03
+    },
+    {
+     "path": "client/app/page.tsx",
+     "p": 0.03
+    },
+    {
+     "path": "client/components/Workspace.progress.test.tsx",
+     "p": 0.03
+    },
+    {
+     "path": "client/components/Workspace.tsx",
+     "p": 0.03
+    },
+    {
+     "path": "docs/plans/data/skeleton-coverage-2026-09-15.py",
+     "p": 0.05
+    },
+    {
+     "path": "ops/creativity_accounting.py",
+     "p": 0.04
+    },
+    {
+     "path": "ops/creativity_authority.py",
+     "p": 0.04
+    },
+    {
+     "path": "ops/creativity_collection.py",
+     "p": 0.04
+    },
+    {
+     "path": "ops/creativity_comparison.py",
+     "p": 0.04
+    },
+    {
+     "path": "ops/creativity_evaluation.py",
+     "p": 0.04
+    },
+    {
+     "path": "ops/creativity_evidence.py",
+     "p": 0.04
+    },
+    {
+     "path": "ops/creativity_publication.py",
+     "p": 0.08
+    },
+    {
+     "path": "ops/creativity_reader.py",
+     "p": 0.04
+    },
+    {
+     "path": "ops/creativity_reading.py",
+     "p": 0.04
+    },
+    {
+     "path": "ops/creativity_report.py",
+     "p": 0.04
+    },
+    {
+     "path": "ops/creativity_transport.py",
+     "p": 0.04
+    },
+    {
+     "path": "ops/host.py",
+     "p": 0.12
+    },
+    {
+     "path": "src/ai_coding_wiki/api/problems.py",
+     "p": 0.04
+    }
+   ],
+   "tokens_before": 25047,
+   "tokens_after": 11724,
+   "counted": "count_tokens:claude-opus-5-5",
+   "jev": {
+    "status": "uncertain",
+    "usage": {
+     "input_tokens": 6534,
+     "output_tokens": 715
+    },
+    "elapsed_ms": 215,
+    "model": "jev-1.13.0"
+   }
+  },
+  {
+   "repo": "ai-companion-voice-agent",
+   "spec": "playback-branch-retirement-owner-94ac7a2d",
+   "start": "893ec4ed06eff74889c82f043c409ebcd8f621bd",
+   "status": "filtered",
+   "reason": "",
+   "threshold": 0.2,
+   "offered": [
+    {
+     "path": "frontend/src/core/audio/ordinarySpeechStream.ts",
+     "via": [
+      "grounds"
+     ]
+    },
+    {
+     "path": "frontend/src/core/audio/pcmScheduler.ts",
+     "via": [
+      "grounds"
+     ]
+    },
+    {
+     "path": "frontend/src/core/audio/speechFallback.ts",
+     "via": [
+      "grounds"
+     ]
+    },
+    {
+     "path": ".omm/orchestration/browser-client/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/speech/playback/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-07-30-validation-controls-lifecycle-evidence-postgres-tests-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-07-30-ordinary-speech-terminal-state-diagnostic-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/browser/runtime/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-08-01-browser-turn-finalization-ownership-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-07-31-proactive-lifecycle-convergence-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-08-01-browser-terminal-observability-parity-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/node-automation-callgraph.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-07-31-persona-context-memory-debug-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-07-31-controlled-browser-response-contract-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/plan-32916e65/5-browser-conversation-transition.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/request-lifecycle/browser-playback/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-07-31-safe-boundary-and-alternate-entry-removal-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-08-22-companion-remediation/openai-turn-ack-loss.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/code-reviews/2026-07-31-technical-debt-audit.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".wiki/decisions/2026-09-06-140-littlebitai-generation-boundaries.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/speech/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/plan-32916e65/10-major-flow-acceptance.md",
+     "via": [
+      "search"
+     ]
+    }
+   ],
+   "kept": [
+    {
+     "path": "frontend/src/core/audio/ordinarySpeechStream.ts",
+     "p": 0.9
+    },
+    {
+     "path": "frontend/src/core/audio/pcmScheduler.ts",
+     "p": 0.91
+    },
+    {
+     "path": "frontend/src/core/audio/speechFallback.ts",
+     "p": 0.89
+    },
+    {
+     "path": ".omm/orchestration/browser-client/description.md",
+     "p": 0.35
+    },
+    {
+     "path": ".omm/overall-architecture/speech/playback/description.md",
+     "p": 0.75
+    },
+    {
+     "path": "docs/plans/2026-07-30-ordinary-speech-terminal-state-diagnostic-plan.md",
+     "p": 0.37
+    },
+    {
+     "path": ".omm/overall-architecture/browser/runtime/description.md",
+     "p": 0.7
+    },
+    {
+     "path": "docs/plans/2026-08-01-browser-turn-finalization-ownership-plan.md",
+     "p": 0.26
+    },
+    {
+     "path": "docs/plans/2026-07-31-proactive-lifecycle-convergence-plan.md",
+     "p": 0.41
+    },
+    {
+     "path": ".omm/request-lifecycle/browser-playback/description.md",
+     "p": 0.49
+    },
+    {
+     "path": "docs/plans/2026-07-31-safe-boundary-and-alternate-entry-removal-plan.md",
+     "p": 0.23
+    },
+    {
+     "path": ".omm/overall-architecture/speech/description.md",
+     "p": 0.55
+    },
+    {
+     "path": "docs/plans/plan-32916e65/10-major-flow-acceptance.md",
+     "p": 0.23
+    }
+   ],
+   "dropped": [
+    {
+     "path": "docs/plans/2026-07-30-validation-controls-lifecycle-evidence-postgres-tests-plan.md",
+     "p": 0.15
+    },
+    {
+     "path": "docs/plans/2026-08-01-browser-terminal-observability-parity-plan.md",
+     "p": 0.16
+    },
+    {
+     "path": "docs/node-automation-callgraph.md",
+     "p": 0.14
+    },
+    {
+     "path": "docs/plans/2026-07-31-persona-context-memory-debug-plan.md",
+     "p": 0.06
+    },
+    {
+     "path": "docs/plans/2026-07-31-controlled-browser-response-contract-plan.md",
+     "p": 0.18
+    },
+    {
+     "path": "docs/plans/plan-32916e65/5-browser-conversation-transition.md",
+     "p": 0.19
+    },
+    {
+     "path": "docs/plans/2026-08-22-companion-remediation/openai-turn-ack-loss.md",
+     "p": 0.07
+    },
+    {
+     "path": "docs/code-reviews/2026-07-31-technical-debt-audit.md",
+     "p": 0.11
+    },
+    {
+     "path": ".wiki/decisions/2026-09-06-140-littlebitai-generation-boundaries.md",
+     "p": 0.06
+    }
+   ],
+   "tokens_before": 26176,
+   "tokens_after": 26248,
+   "counted": "count_tokens:claude-opus-5-5",
+   "jev": {
+    "status": "uncertain",
+    "usage": {
+     "input_tokens": 3873,
+     "output_tokens": 391
+    },
+    "elapsed_ms": 207,
+    "model": "jev-1.13.0"
+   }
+  },
+  {
+   "repo": "ai-coding-wiki",
+   "spec": "guidance-hint-timing-contracts-02719744",
+   "start": "dcb33f2bbc2fa3185bbab1ce0afd82226990de38",
+   "status": "filtered",
+   "reason": "",
+   "threshold": 0.2,
+   "offered": [
+    {
+     "path": "client/components/Hint.tsx",
+     "via": [
+      "grounds"
+     ]
+    },
+    {
+     "path": "docs/platform/api.md",
+     "via": [
+      "grounds",
+      "search"
+     ]
+    },
+    {
+     "path": "src/ai_coding_wiki/submissions.py",
+     "via": [
+      "grounds",
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "tests/test_hint_api.py",
+     "via": [
+      "grounds",
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-02-hints-client-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-02-hint-timing-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/architecture/data-model.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-08-27-milestone-4-what-the-learner-sees-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f1-2.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-02-hints-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-05-concept-evaluation-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-08-26-milestone-2-unattended-loop-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-10-23-luna-deepseek-creativity-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-10-23-luna-deepseek-creativity-audit.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f1-1.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/data/rag-label-admission-2026-09-06/implementation-review-1.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/development/TDD.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f8-2.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/code-reviews/2026-08-24-wiki-hybrid-search-review.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/domain/skill-profile.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/data/generation-explanation-2026-09-06/input-review-2.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-06-rag-evaluation-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".wiki/graph.json",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "client/app/page.authentication.test.tsx",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "client/app/page.tsx",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "client/components/Workspace.progress.test.tsx",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "client/components/Workspace.tsx",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "docs/plans/data/skeleton-coverage-2026-09-15.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/backup.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_accounting.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_authority.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_collection.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_comparison.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_evaluation.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_evidence.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_publication.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_reader.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_reading.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_report.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    },
+    {
+     "path": "ops/creativity_transport.py",
+     "via": [
+      "merged:preserve-repository-boundaries-3578a758"
+     ]
+    }
+   ],
+   "kept": [
+    {
+     "path": "client/components/Hint.tsx",
+     "p": 0.93
+    },
+    {
+     "path": "docs/platform/api.md",
+     "p": 0.77
+    },
+    {
+     "path": "tests/test_hint_api.py",
+     "p": 0.96
+    },
+    {
+     "path": "docs/plans/2026-09-02-hints-client-plan.md",
+     "p": 0.29
+    },
+    {
+     "path": "docs/plans/2026-09-02-hint-timing-plan.md",
+     "p": 0.52
+    },
+    {
+     "path": "docs/architecture/data-model.md",
+     "p": 0.21
+    },
+    {
+     "path": "docs/plans/2026-09-02-hints-plan.md",
+     "p": 0.23
+    }
+   ],
+   "dropped": [
+    {
+     "path": "src/ai_coding_wiki/submissions.py",
+     "p": 0.16
+    },
+    {
+     "path": "docs/plans/2026-08-27-milestone-4-what-the-learner-sees-plan.md",
+     "p": 0.09
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f1-2.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/2026-09-05-concept-evaluation-plan.md",
+     "p": 0.06
+    },
+    {
+     "path": "docs/plans/2026-08-26-milestone-2-unattended-loop-plan.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/2026-10-23-luna-deepseek-creativity-plan.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/2026-10-23-luna-deepseek-creativity-audit.md",
+     "p": 0.03
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f1-1.md",
+     "p": 0.03
+    },
+    {
+     "path": "docs/plans/data/rag-label-admission-2026-09-06/implementation-review-1.md",
+     "p": 0.05
+    },
+    {
+     "path": "docs/development/TDD.md",
+     "p": 0.05
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f8-2.md",
+     "p": 0.03
+    },
+    {
+     "path": "docs/code-reviews/2026-08-24-wiki-hybrid-search-review.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/domain/skill-profile.md",
+     "p": 0.05
+    },
+    {
+     "path": "docs/plans/data/generation-explanation-2026-09-06/input-review-2.md",
+     "p": 0.05
+    },
+    {
+     "path": "docs/plans/2026-09-06-rag-evaluation-outcome.md",
+     "p": 0.04
+    },
+    {
+     "path": ".wiki/graph.json",
+     "p": 0.05
+    },
+    {
+     "path": "client/app/page.authentication.test.tsx",
+     "p": 0.04
+    },
+    {
+     "path": "client/app/page.tsx",
+     "p": 0.04
+    },
+    {
+     "path": "client/components/Workspace.progress.test.tsx",
+     "p": 0.04
+    },
+    {
+     "path": "client/components/Workspace.tsx",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/data/skeleton-coverage-2026-09-15.py",
+     "p": 0.04
+    },
+    {
+     "path": "ops/backup.py",
+     "p": 0.03
+    },
+    {
+     "path": "ops/creativity_accounting.py",
+     "p": 0.03
+    },
+    {
+     "path": "ops/creativity_authority.py",
+     "p": 0.03
+    },
+    {
+     "path": "ops/creativity_collection.py",
+     "p": 0.04
+    },
+    {
+     "path": "ops/creativity_comparison.py",
+     "p": 0.04
+    },
+    {
+     "path": "ops/creativity_evaluation.py",
+     "p": 0.04
+    },
+    {
+     "path": "ops/creativity_evidence.py",
+     "p": 0.04
+    },
+    {
+     "path": "ops/creativity_publication.py",
+     "p": 0.03
+    },
+    {
+     "path": "ops/creativity_reader.py",
+     "p": 0.03
+    },
+    {
+     "path": "ops/creativity_reading.py",
+     "p": 0.03
+    },
+    {
+     "path": "ops/creativity_report.py",
+     "p": 0.03
+    },
+    {
+     "path": "ops/creativity_transport.py",
+     "p": 0.03
+    }
+   ],
+   "tokens_before": 24809,
+   "tokens_after": 22764,
+   "counted": "count_tokens:claude-opus-5-5",
+   "jev": {
+    "status": "uncertain",
+    "usage": {
+     "input_tokens": 6396,
+     "output_tokens": 715
+    },
+    "elapsed_ms": 201,
+    "model": "jev-1.13.0"
+   }
+  },
+  {
+   "repo": "ai-generation",
+   "spec": "comics-run-first-editor",
+   "start": "b9801828253db013f38fa4845eabd0c501713610",
+   "status": "fallback",
+   "reason": "normalization_failed",
+   "threshold": 0.2,
+   "offered": [
+    {
+     "path": "DESIGN.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/studio/11-characters.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".wiki/decisions/2026-09-26-021-feat-comic-phase-1.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/comic/23-automation.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/comic/0-overview.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/comic/2-editor-state.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/comic/5-script-beats.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/comic/6-script-pages.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/research/review-comic-phase-23-run-to-end-f3-1.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/comic/1-manual-episode.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/comic/7-script-panels.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/moss/3-comic-renderer.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".wiki/decisions/2026-09-25-014-phase-6-control-detailer.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".wiki/decisions/2026-09-26-018-feat-phase10-screens.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/comic/19.5-speaker-staging.md",
+     "via": [
+      "search"
+     ]
+    }
+   ],
+   "kept": [
+    {
+     "path": "DESIGN.md",
+     "p": null
+    },
+    {
+     "path": "docs/plans/studio/11-characters.md",
+     "p": null
+    },
+    {
+     "path": ".wiki/decisions/2026-09-26-021-feat-comic-phase-1.md",
+     "p": null
+    },
+    {
+     "path": "docs/plans/comic/23-automation.md",
+     "p": null
+    },
+    {
+     "path": "docs/plans/comic/0-overview.md",
+     "p": null
+    },
+    {
+     "path": "docs/plans/comic/2-editor-state.md",
+     "p": null
+    },
+    {
+     "path": "docs/plans/comic/5-script-beats.md",
+     "p": null
+    },
+    {
+     "path": "docs/plans/comic/6-script-pages.md",
+     "p": null
+    },
+    {
+     "path": "docs/research/review-comic-phase-23-run-to-end-f3-1.md",
+     "p": null
+    },
+    {
+     "path": "docs/plans/comic/1-manual-episode.md",
+     "p": null
+    },
+    {
+     "path": "docs/plans/comic/7-script-panels.md",
+     "p": null
+    },
+    {
+     "path": "docs/plans/moss/3-comic-renderer.md",
+     "p": null
+    },
+    {
+     "path": ".wiki/decisions/2026-09-25-014-phase-6-control-detailer.md",
+     "p": null
+    },
+    {
+     "path": ".wiki/decisions/2026-09-26-018-feat-phase10-screens.md",
+     "p": null
+    },
+    {
+     "path": "docs/plans/comic/19.5-speaker-staging.md",
+     "p": null
+    }
+   ],
+   "dropped": [],
+   "tokens_before": 25848,
+   "tokens_after": 25848,
+   "counted": "count_tokens:claude-opus-5-5",
+   "jev": null
+  },
+  {
+   "repo": "ai-coding-wiki",
+   "spec": "retrieval-evaluation-test-name-02719744",
+   "start": "9498f5db873716354718992bad5c37d796c2736c",
+   "status": "filtered",
+   "reason": "",
+   "threshold": 0.2,
+   "offered": [
+    {
+     "path": "docs/knowledge/rag.md",
+     "via": [
+      "grounds"
+     ]
+    },
+    {
+     "path": "tests/test_rag_evaluation.py",
+     "via": [
+      "grounds"
+     ]
+    },
+    {
+     "path": "docs/plans/data/fresh-retrieval-2026-09-06/README.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-10-20-evidence-storage-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-06-rag-evaluation-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-05-concept-evaluation-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/data/rag-measurement-2026-09-06/README.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/data/luna-deepseek-creativity-2026-10-23/README.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/knowledge/concept-evaluation.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-10-23-luna-deepseek-creativity-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-08-27-milestone-4-what-the-learner-sees-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f1-2.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-06-rag-measurement-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/code-reviews/2026-08-24-wiki-hybrid-search-review.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-08-23-milestone-1-vertical-slice-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f8-1.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-06-rag-reference-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/research/review-deepseek-generation-ab-f2-1.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-08-contained-cli-reader-outcome.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f7-1.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-09-04-g2-evidence-outcome.md",
+     "via": [
+      "search"
+     ]
+    }
+   ],
+   "kept": [
+    {
+     "path": "tests/test_rag_evaluation.py",
+     "p": 0.98
+    }
+   ],
+   "dropped": [
+    {
+     "path": "docs/knowledge/rag.md",
+     "p": 0.17
+    },
+    {
+     "path": "docs/plans/data/fresh-retrieval-2026-09-06/README.md",
+     "p": 0.09
+    },
+    {
+     "path": "docs/plans/2026-10-20-evidence-storage-outcome.md",
+     "p": 0.09
+    },
+    {
+     "path": "docs/plans/2026-09-06-rag-evaluation-outcome.md",
+     "p": 0.15
+    },
+    {
+     "path": "docs/plans/2026-09-05-concept-evaluation-plan.md",
+     "p": 0.08
+    },
+    {
+     "path": "docs/plans/data/rag-measurement-2026-09-06/README.md",
+     "p": 0.07
+    },
+    {
+     "path": "docs/plans/data/luna-deepseek-creativity-2026-10-23/README.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/knowledge/concept-evaluation.md",
+     "p": 0.08
+    },
+    {
+     "path": "docs/plans/2026-10-23-luna-deepseek-creativity-plan.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/2026-08-27-milestone-4-what-the-learner-sees-plan.md",
+     "p": 0.05
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f1-2.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/2026-09-06-rag-measurement-outcome.md",
+     "p": 0.08
+    },
+    {
+     "path": "docs/code-reviews/2026-08-24-wiki-hybrid-search-review.md",
+     "p": 0.06
+    },
+    {
+     "path": "docs/plans/2026-08-23-milestone-1-vertical-slice-plan.md",
+     "p": 0.05
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f8-1.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/2026-09-06-rag-reference-outcome.md",
+     "p": 0.09
+    },
+    {
+     "path": "docs/research/review-deepseek-generation-ab-f2-1.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/2026-09-08-contained-cli-reader-outcome.md",
+     "p": 0.16
+    },
+    {
+     "path": "docs/research/review-luna-deepseek-creativity-comparison-f7-1.md",
+     "p": 0.04
+    },
+    {
+     "path": "docs/plans/2026-09-04-g2-evidence-outcome.md",
+     "p": 0.07
+    }
+   ],
+   "tokens_before": 23431,
+   "tokens_after": 4828,
+   "counted": "count_tokens:claude-opus-5-5",
+   "jev": {
+    "status": "decided",
+    "usage": {
+     "input_tokens": 3661,
+     "output_tokens": 373
+    },
+    "elapsed_ms": 197,
+    "model": "jev-1.13.0"
+   }
+  },
+  {
+   "repo": "ai-companion-voice-agent",
+   "spec": "character-session-domain-resolver-94ac7a2d",
+   "start": "e3b4f72d718f2d9087f634423b9d7811aa3703f2",
+   "status": "filtered",
+   "reason": "",
+   "threshold": 0.2,
+   "offered": [
+    {
+     "path": "src/ai_companion_voice_agent/characters/catalog.py",
+     "via": [
+      "grounds"
+     ]
+    },
+    {
+     "path": "src/ai_companion_voice_agent/characters/session_binding.py",
+     "via": [
+      "grounds"
+     ]
+    },
+    {
+     "path": "src/ai_companion_voice_agent/core/app_state.py",
+     "via": [
+      "grounds",
+      "merged:application-owned-recent-history-94ac7a2d",
+      "merged:vision-background-extraction-7357ebbe"
+     ]
+    },
+    {
+     "path": "tests/integration/test_rejected_requests_leave_no_trace.py",
+     "via": [
+      "grounds"
+     ]
+    },
+    {
+     "path": "tests/unit/characters/test_character_catalog.py",
+     "via": [
+      "grounds"
+     ]
+    },
+    {
+     "path": ".omm/dependency-map/characters-layer/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/characters/binding/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/characters/resolver/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-07-31-customer-character-lifecycle-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/characters/README.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/fastapi-api/routes-characters/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/characters/versions/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/auth/README.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/plan-32916e65/3-model-client-lifecycle.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-07-31-explicit-integration-settings-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/request-lifecycle/session-route/path-select/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/plans/2026-07-31-controlled-browser-response-contract-plan.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/server/proactive/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/orchestration/app-state/description.md",
+     "via": [
+      "search",
+      "merged:vision-background-extraction-7357ebbe"
+     ]
+    },
+    {
+     "path": "docs/architecture/pipeline.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/memory/recent/description.md",
+     "via": [
+      "search",
+      "merged:application-owned-recent-history-94ac7a2d"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/characters/studio/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": "docs/memory/README.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/server/execution/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/proactive-system/routes/description.md",
+     "via": [
+      "search"
+     ]
+    },
+    {
+     "path": ".omm/data-flow/recent-turn-store/concern.md",
+     "via": [
+      "merged:application-owned-recent-history-94ac7a2d"
+     ]
+    },
+    {
+     "path": ".omm/overall-architecture/memory/recent/meta.yaml",
+     "via": [
+      "merged:application-owned-recent-history-94ac7a2d"
+     ]
+    },
+    {
+     "path": "src/ai_companion_voice_agent/pipeline/voice_pipeline.py",
+     "via": [
+      "merged:application-owned-recent-history-94ac7a2d"
+     ]
+    },
+    {
+     "path": "tests/integration/test_recent_history_application_owner.py",
+     "via": [
+      "merged:application-owned-recent-history-94ac7a2d"
+     ]
+    },
+    {
+     "path": "src/ai_companion_voice_agent/api/routes_memory.py",
+     "via": [
+      "merged:memory-reset-cleanup-97d92512"
+     ]
+    },
+    {
+     "path": "tests/integration/test_memory_reset_component_contract.py",
+     "via": [
+      "merged:memory-reset-cleanup-97d92512"
+     ]
+    },
+    {
+     "path": "src/ai_companion_voice_agent/vision/settled_screen_extraction.py",
+     "via": [
+      "merged:vision-background-extraction-7357ebbe"
+     ]
+    },
+    {
+     "path": "tests/integration/test_vision_routes.py",
+     "via": [
+      "merged:vision-background-extraction-7357ebbe"
+     ]
+    }
+   ],
+   "kept": [
+    {
+     "path": "src/ai_companion_voice_agent/characters/catalog.py",
+     "p": 0.92
+    },
+    {
+     "path": "src/ai_companion_voice_agent/characters/session_binding.py",
+     "p": 0.92
+    },
+    {
+     "path": "src/ai_companion_voice_agent/core/app_state.py",
+     "p": 0.95
+    },
+    {
+     "path": "tests/integration/test_rejected_requests_leave_no_trace.py",
+     "p": 0.75
+    },
+    {
+     "path": "tests/unit/characters/test_character_catalog.py",
+     "p": 0.62
+    },
+    {
+     "path": ".omm/dependency-map/characters-layer/description.md",
+     "p": 0.92
+    },
+    {
+     "path": ".omm/overall-architecture/characters/binding/description.md",
+     "p": 0.77
+    },
+    {
+     "path": ".omm/overall-architecture/characters/resolver/description.md",
+     "p": 0.83
+    },
+    {
+     "path": "docs/plans/2026-07-31-customer-character-lifecycle-plan.md",
+     "p": 0.22
+    },
+    {
+     "path": "docs/characters/README.md",
+     "p": 0.33
+    },
+    {
+     "path": ".omm/overall-architecture/fastapi-api/routes-characters/description.md",
+     "p": 0.4
+    },
+    {
+     "path": ".omm/overall-architecture/characters/versions/description.md",
+     "p": 0.59
+    },
+    {
+     "path": ".omm/request-lifecycle/session-route/path-select/description.md",
+     "p": 0.23
+    },
+    {
+     "path": ".omm/orchestration/app-state/description.md",
+     "p": 0.67
+    },
+    {
+     "path": "docs/architecture/pipeline.md",
+     "p": 0.21
+    },
+    {
+     "path": ".omm/overall-architecture/memory/recent/description.md",
+     "p": 0.34
+    },
+    {
+     "path": ".omm/overall-architecture/characters/studio/description.md",
+     "p": 0.23
+    }
+   ],
+   "dropped": [
+    {
+     "path": "docs/auth/README.md",
+     "p": 0.1
+    },
+    {
+     "path": "docs/plans/plan-32916e65/3-model-client-lifecycle.md",
+     "p": 0.1
+    },
+    {
+     "path": "docs/plans/2026-07-31-explicit-integration-settings-plan.md",
+     "p": 0.11
+    },
+    {
+     "path": "docs/plans/2026-07-31-controlled-browser-response-contract-plan.md",
+     "p": 0.08
+    },
+    {
+     "path": ".omm/overall-architecture/server/proactive/description.md",
+     "p": 0.12
+    },
+    {
+     "path": "docs/memory/README.md",
+     "p": 0.1
+    },
+    {
+     "path": ".omm/overall-architecture/server/execution/description.md",
+     "p": 0.14
+    },
+    {
+     "path": ".omm/overall-architecture/proactive-system/routes/description.md",
+     "p": 0.13
+    },
+    {
+     "path": ".omm/data-flow/recent-turn-store/concern.md",
+     "p": 0.18
+    },
+    {
+     "path": ".omm/overall-architecture/memory/recent/meta.yaml",
+     "p": 0.15
+    },
+    {
+     "path": "src/ai_companion_voice_agent/pipeline/voice_pipeline.py",
+     "p": 0.2
+    },
+    {
+     "path": "tests/integration/test_recent_history_application_owner.py",
+     "p": 0.14
+    },
+    {
+     "path": "src/ai_companion_voice_agent/api/routes_memory.py",
+     "p": 0.08
+    },
+    {
+     "path": "tests/integration/test_memory_reset_component_contract.py",
+     "p": 0.07
+    },
+    {
+     "path": "src/ai_companion_voice_agent/vision/settled_screen_extraction.py",
+     "p": 0.07
+    },
+    {
+     "path": "tests/integration/test_vision_routes.py",
+     "p": 0.07
+    }
+   ],
+   "tokens_before": 29333,
+   "tokens_after": 28343,
+   "counted": "count_tokens:claude-opus-5-5",
+   "jev": {
+    "status": "uncertain",
+    "usage": {
+     "input_tokens": 5800,
+     "output_tokens": 589
+    },
+    "elapsed_ms": 207,
+    "model": "jev-1.13.0"
+   }
+  }
+ ],
+ "limits": {
+  "lines": 200,
+  "chars": 8000,
+  "total": 60000,
+  "max_files": 40
+ }
+}
