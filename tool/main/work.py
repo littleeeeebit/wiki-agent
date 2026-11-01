@@ -306,6 +306,8 @@ def handoff(rows: list[dict]) -> str:
         if row.get("role") == "user" and text:
             lines.append("- Asked: " + text.splitlines()[0][:300])
         elif row.get("role") == "assistant":
+            # The parser's notice of a cut stays out: only what the turn answered is carried.
+            text = "\n".join(line for line in text.splitlines() if not REFUSED.search(line)).strip()
             lines.append("- Answered: " + (text[-600:].replace("\n", " ") if text
                                            else "(no answer)"))
     # Never the refusal itself: a classifier that reads the whole context flags talk of an earlier flag.

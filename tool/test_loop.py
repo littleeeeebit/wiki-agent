@@ -1255,29 +1255,34 @@ def test_the_next_review_waits_for_a_complete_correction_and_published_head(worl
 REFUSAL = "This request was blocked by our safety systems. Reason: Potentially unintended activity."
 
 
-def refusing(monkeypatch, times):
-    """`Worker.say` refusing its first `times` turns whole, as the CLI reports it."""
+def refusing(monkeypatch, times, shape="error"):
+    """`Worker.say` refusing its first `times` turns whole, in either shape the CLI reports: an API
+    error, or the parser's failed `done` whose text is its notice alone (an empty result)."""
 
     say, refusals = Worker.say, [REFUSAL] * times
 
     def refused(worker, text, halt=None):
         if refusals:
             worker.heard.append(text)
-            yield Event("error", refusals.pop(), {}, worker.id)
+            refusals.pop()
+            yield (Event("error", REFUSAL, {}, worker.id) if shape == "error" else
+                   Event("done", CUT, {"error": True, "refused": True, "answer": "", "session_id": "cli-1"}, worker.id))
             return
         yield from say(worker, text, halt)
 
     monkeypatch.setattr(Worker, "say", refused)
 
 
-def test_a_refused_repair_goes_once_more_in_a_new_conversation_on_the_same_cell(world, monkeypatch):
+@pytest.mark.parametrize("shape", ["error", "done"])
+def test_a_refused_repair_goes_once_more_in_a_new_conversation_on_the_same_cell(world, monkeypatch, shape):
     """A cut that a fresh context clears (claude-code #84821) no longer stops the loop; the new
-    conversation keeps the spec's model and effort, never the CLI's defaults."""
+    conversation keeps the spec's model and effort, never the CLI's defaults, and never carries the
+    parser's notice (PR #275 R3)."""
 
-    spec = pr_spec(world, "repair-refused", 7)
+    spec = pr_spec(world, f"repair-refused-{shape}", 7)
     specs.update("proj", spec["id"], cell={"model": "opus", "effort": "high", "fast": False})
     finding = "[P0] a.txt:1 — history still holds records"
-    refusing(monkeypatch, 1)
+    refusing(monkeypatch, 1, shape)
     Reviewer.replies = [deny(finding), allow]
     Worker.replies = [fixed((finding, "fixed"))]
     assert looped(spec["id"])["state"] == "머지 가능"
@@ -1355,7 +1360,40 @@ def test_a_repair_turn_cut_short_of_its_disposition_goes_once_more_then_stops(wo
     stopped = looped(spec["id"])
     assert stopped["state"] == "멈춤" and stopped["stopped"]["reason"] == loop.Why.EXTERNAL.value
     assert "새 대화로 한 번 더" in stopped["stopped"]["detail"]
-    assert [len(w.heard) for w in Worker.made if w.heard] == [1, 1], "each in its own conversation"
+    asked = [w for w in Worker.made if w.heard]
+    assert [len(w.heard) for w in asked] == [1, 1], "each in its own conversation"
+    # PR #275 R3: the answer is carried into the new conversation, the parser's notice is not.
+    assert "Not repaired." in asked[1].system and "safety" not in asked[1].system
+
+
+def test_a_repair_refused_after_it_committed_still_owes_its_cleanup_in_the_retry(world, monkeypatch):
+    """PR #275 R3: the first turn committed code and was refused, so the retry measured from the
+    repaired HEAD and was let off its cleanup report."""
+
+    from main import sweep
+
+    spec = pr_spec(world, "repair-refused-committed", 7)
+    finding = "[P1] a.txt:1 — wrong path"
+    say, first = Worker.say, [True]
+
+    def committed_then_refused(worker, text, halt=None):
+        if first:
+            first.pop()
+            worker.heard.append(text)
+            commit(worker.path, "partial.txt")
+            yield Event("done", CUT, {"error": True, "refused": True, "answer": "", "session_id": "cli-1"}, worker.id)
+            return
+        yield from say(worker, text, halt)
+
+    monkeypatch.setattr(Worker, "say", committed_then_refused)
+    Reviewer.replies = [deny(finding), allow]
+    disposed = json.dumps([{"finding": finding, "action": "fixed", "evidence": "test_path passed"}])
+    answer = "고쳤다.\n\n```disposition\n" + disposed + "\n```"
+    Worker.replies = [answer, CLEANED + answer]   # `OWED` asks for the report and the disposition again
+    done = looped(spec["id"])
+    heard = [text for w in Worker.made for text in w.heard]
+    assert len(heard) == 3 and sweep.OWED in heard[2]
+    assert done["state"] == "머지 가능" and done["test_cleanup"]
 
 
 def test_a_cut_repair_owing_its_cleanup_report_is_never_asked_for_it_in_that_conversation(world, monkeypatch):

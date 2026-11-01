@@ -86,20 +86,24 @@ def held(path: Path, text: str, turn, report, stop, keep, owing: str = "") -> st
         except (OSError, subprocess.SubprocessError):
             before = ""
         before = before or UNKNOWN    # owes the report whatever the turn commits, and survives a stop as owed
-    answer = turn(f"{text}\n\n{REPAIR}")
-    for last in (False, True):
-        missing = answer is not None and unreported(path, before, report(answer))
-        if not missing:
-            break
-        if last:
-            keep({"cleanup_owed": before})
-            stop(missing)
-            return None
-        try:
+    try:
+        answer = turn(f"{text}\n\n{REPAIR}")
+        for last in (False, True):
+            missing = answer is not None and unreported(path, before, report(answer))
+            if not missing:
+                break
+            if last:
+                keep({"cleanup_owed": before})
+                stop(missing)
+                return None
             answer = turn(OWED)
-        except BaseException:   # a stop raised before the follow-up (`loop.told`): the repair still owes it
+    except BaseException:
+        # A turn that raised (a refusal, `loop.told`) after committing code: whatever retries it is
+        # still measured from here. With no code committed nothing is owed yet, and a resume repairs
+        # rather than only asking for the report (`loop.step`).
+        if owed(path, before):
             keep({"cleanup_owed": before})
-            raise
+        raise
     if answer is not None:
         found = report(answer)
         keep({"cleanup_owed": "", **({"test_cleanup": found} if valid(found) else {})})
