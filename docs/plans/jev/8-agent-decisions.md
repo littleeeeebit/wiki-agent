@@ -57,11 +57,12 @@ the host model. `ACTIVATED` is empty: activating a point is a person's change.
 `python tool/eval/branches.py` asks every frozen fixture under
 `eval/jev/branches/` in the registered option order and reversed, since Jev's
 Choice leans toward the first option, and writes a result under
-`eval/jev/branches/results/`. A point is fitted only by its newest result for
+`eval/jev/branches/results/`, which git ignores: results stay on the machine
+that ran them, so a point is fitted only where its passing result exists. A point is fitted only by its newest result for
 the same model, forms and fixture digest, with the accuracy's 95% Wilson lower
 bound at 0.90 and the two orders agreeing on at least 0.90 of the fixtures.
 Thirty fixtures cannot pass that bound even all correct (0.886); the sets hold
-41 and 40. First run, 2026-11-01 (`20261101T024509Z.json`): `pr.form` 0.90
+41 and 40. First run, 2026-11-01: `pr.form` 0.90
 accurate (lower bound 0.77), the orders agreeing on 0.98, code's baseline 0.68
 — its misses are the fixes, which a diff cannot tell from a feature;
 `refactor.mode` 0.875 (lower bound 0.74), agreeing on 1.0. Both stay

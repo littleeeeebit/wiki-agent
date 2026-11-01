@@ -32,6 +32,7 @@ import time
 import tomllib
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -912,27 +913,33 @@ def fixtures(point: str, root: Path = ROOT) -> list[dict]:
 
 def fitted(point: str, model: str, root: Path = ROOT) -> dict | None:
     """The newest evaluation of `point` (`tool/eval/branches.py`) when it fits it: the same model, forms
-    and frozen fixtures, the accuracy's Wilson lower bound and the order agreement each at `FIT`. A newer
-    result that falls short leaves the point provisional again, as does `None`."""
+    and frozen fixtures, the accuracy's Wilson lower bound and the order agreement each at `FIT`. Newest
+    is by the run time each result records, never its file name (`--out` names files freely); a result
+    without a readable, zoned run time counts for nothing. A newer result that falls short leaves the
+    point provisional again, as does `None`."""
 
     try:
         want = digest(fixtures(point, root))
     except (OSError, ValueError, KeyError):
         return None
-    for path in sorted((root / BRANCHES / "results").glob("*.json"), reverse=True):
+    runs = []
+    for path in (root / BRANCHES / "results").glob("*.json"):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            ran = datetime.fromisoformat(data["ran_at"])
+        except (OSError, ValueError, TypeError, KeyError):
             continue
-        got = (data.get("points") or {}).get(point) if isinstance(data, dict) else None
-        if not isinstance(got, dict):
-            continue
-        fits = (data.get("model") == model and data.get("form_version") == FORM_VERSION
-                and got.get("fixtures_sha256") == want
-                and ((got.get("accuracy") or {}).get("low") or 0) >= FIT["low"]
-                and (got.get("order_agreement") or 0) >= FIT["order_agreement"])
-        return got if fits else None
-    return None
+        got = (data.get("points") or {}).get(point)
+        if ran.tzinfo is not None and isinstance(got, dict):
+            runs.append((ran, data, got))
+    if not runs:
+        return None
+    _, data, got = max(runs, key=lambda r: r[0])
+    fits = (data.get("model") == model and data.get("form_version") == FORM_VERSION
+            and got.get("fixtures_sha256") == want
+            and ((got.get("accuracy") or {}).get("low") or 0) >= FIT["low"]
+            and (got.get("order_agreement") or 0) >= FIT["order_agreement"])
+    return got if fits else None
 
 
 def choose_form(point: str, state: dict, baseline: str, *, log: tuple[str, str], occasion: str,

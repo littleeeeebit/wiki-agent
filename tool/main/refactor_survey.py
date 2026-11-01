@@ -777,13 +777,15 @@ def rechecked(w, run: dict) -> dict:
         survey = asked(w, run, "recheck", text, RECHECK_PROMPT, "refactor-survey", shape)
     except ValueError as exc:
         raise refactor.Stop("format", f"다시 확인한 refactor-survey 가 맞지 않다 — {exc}") from exc
+    # The rewritten spec is survey output too: its mode is asked again, and a mark the old text earned goes.
+    also = moded(w, {**run, "map": parent["map"]}, survey["specs"][0], spec["id"]) if survey["specs"] else {}
     with specs._files:
         spec = specs.load(w.repo.name, run["recheck"])
         if spec is None or spec["state"] != "정리됨":
             raise refactor.Stop("spec_gone", f"`{run['recheck']}` 명세가 없거나 이미 시작했다")
         if survey["specs"]:
-            specs.save({**spec, **kept(spec, made(w.repo, w.rid, run["base"], survey["specs"][0], old["depends"])),
-                        "rev": spec["rev"] + 1})
+            fields = kept(spec, made(w.repo, w.rid, run["base"], survey["specs"][0], old["depends"]))
+            specs.save({**spec, **fields, "refactor": {**fields["refactor"], **also}, "rev": spec["rev"] + 1})
         else:
             specs.aside(w.repo.name, spec["id"])
     removed(w.repo, w.rid)

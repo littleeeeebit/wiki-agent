@@ -2,6 +2,7 @@
 `refactor.mode`. Jev is a stand-in behind `decisions.transport`; nothing goes
 to a network. The fixture sets are the committed ones under `eval/jev/branches/`.
 """
+# ruff: noqa: F811 — a borrowed fixture is named again by each test that takes it
 
 import json
 import shutil
@@ -13,10 +14,11 @@ from types import SimpleNamespace
 import pytest
 
 import decision
-from main import decisions, pr_text, refactor_survey
+from main import decisions, pr_text, refactor_survey, specs
 from main.query import ROOT
 from test_main import client, no_machine_settings, until  # noqa: F401 — the fixture is autouse
-from test_refactor_survey import MAP, spec as survey_spec
+from test_refactor_survey import MAP, spec as survey_spec, surveyed  # noqa: F401 — `surveyed` is a fixture
+from test_specs import fresh_workers, repo  # noqa: F401 — fixtures, one autouse
 
 POINTS = ("pr.form", "refactor.mode")
 
@@ -242,6 +244,36 @@ def test_a_fitted_disagreement_is_checked_again_under_jevs_mode_and_marked_besid
     assert "measure" not in json.dumps(refactor_survey.mode_state(reworked)), "Jev never reads a mode-only field"
 
 
+def test_a_rechecked_spec_is_asked_its_mode_again_and_loses_the_old_texts_mark(jev, surveyed, monkeypatch):
+    from test_refactor_run import ONE, surveyed_in
+    from test_refactor_survey import Host, _git, settled
+
+    sid = surveyed_in("simplify", survey_spec("orders-split"))["specs"][0]   # Jev off: the survey asks nothing
+    card = specs.load("proj", sid)
+    specs.save({**card, "refactor": {**card["refactor"], "jev_mode": "rework"}})   # earned by the old text
+    (surveyed / "src/orders.py").write_text("def place(order):\n    return [order]\n", encoding="utf-8")
+    _git(surveyed, "commit", "-qam", "the target moved")
+    monkeypatch.setattr(decision, "config", lambda project=None: cfg("active"))
+    Host.answers = {"survey": {**ONE, "specs": [survey_spec("orders-split", title="Split place again")]}}
+    jev(lambda state, options: "preserve")
+    api = client()
+
+    def recheck(n: int) -> dict:
+        return settled(api, api.post(f"/api/refactors/specs/{sid}/recheck",
+                                     json={"request_id": f"recheck-req-000{n}", "mode": "simplify"}).json()["id"])
+
+    assert recheck(1)["state"] == "done"
+    assert "jev_mode" not in specs.load("proj", sid)["refactor"], "the rewritten text's mode is asked afresh"
+    until(lambda: records(("proj", sid)))
+    shadow = records(("proj", sid))[0]
+    assert shadow["predicted"] == "preserve" and shadow["selected"] == "simplify" and shadow["occasion"].startswith("survey:")
+    fitted_and_activated(monkeypatch, "refactor.mode")
+    assert recheck(2)["state"] == "done"
+    rewritten = specs.load("proj", sid)
+    assert rewritten["refactor"]["mode"] == "simplify" and rewritten["refactor"]["jev_mode"] == "preserve"
+    assert records(("proj", sid))[-1]["outcomes"] == [{"status": "executed", "mode": "preserve"}]
+
+
 # -- the evaluation -------------------------------------------------------------------
 
 
@@ -281,6 +313,17 @@ def test_the_evaluation_asks_each_fixture_in_both_orders_and_fits_only_what_agre
         assert got["accuracy"]["value"] == 1.0 and got["accuracy"]["low"] >= 0.90 and got["order_agreement"] == 1.0
         assert got["fits"] and decisions.fitted(point, decision.MODEL, root) is not None
     assert decisions.fitted("pr.form", "another-model", root) is None
+    # Newest is the recorded run time, not the file name: a newer failing run unfits a passing one named
+    # to sort first, and a result with no zoned run time counts for nothing.
+    results = root / decisions.BRANCHES / "results"
+    passing = json.loads((results / "20261101T000000Z.json").read_text(encoding="utf-8"))
+    (results / "20261101T000000Z.json").rename(results / "latest.json")
+    (results / "zzz.json").write_text(json.dumps({**passing, "ran_at": "2099-01-01T00:00:00"}), encoding="utf-8")
+    assert decisions.fitted("pr.form", decision.MODEL, root) is not None
+    failing = {**passing, "ran_at": "2099-01-01T00:00:00+00:00",
+               "points": {p: {**r, "order_agreement": 0.5} for p, r in passing["points"].items()}}
+    (results / "20990101T000000Z.json").write_text(json.dumps(failing), encoding="utf-8")
+    assert decisions.fitted("pr.form", decision.MODEL, root) is None
     # Always the first option read: the two orders never agree, and nothing fits.
     result, root, _ = evaluated(tmp_path / "first", monkeypatch, lambda label, options: options[0])
     for point in POINTS:
