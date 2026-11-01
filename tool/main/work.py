@@ -306,9 +306,9 @@ def handoff(rows: list[dict]) -> str:
         if row.get("role") == "user" and text:
             lines.append("- Asked: " + text.splitlines()[0][:300])
         elif row.get("role") == "assistant":
-            # Only the notice the parser puts first (`ChatSession._drain`) stays out; an answer quoting it is kept.
-            text = re.sub(r"^A response was blocked by our safety systems \(stop_reason: refusal\); "
-                          r"the turn went on without it\.\s*", "", text)
+            # Only a leading notice stays out, the parser's (`ChatSession._drain`) or a failed result's own; an answer quoting it is kept.
+            text = re.sub(r"^(A response was blocked by our safety systems \(stop_reason: refusal\); the turn went on "
+                          r"without it\.|This request was blocked by our safety systems\.[^\n]*)\s*", "", text)
             lines.append("- Answered: " + (text[-600:].replace("\n", " ") if text else "(no answer)"))
     # Never the refusal itself: a classifier that reads the whole context flags talk of an earlier flag.
     return ("## Why this conversation is new\n"
