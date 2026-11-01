@@ -1,0 +1,9 @@
+created: 2026-11-01T04:07:28.051Z
+updated: 2026-11-01T04:07:28.052Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: injection
+children: []
+parentPath:
+  - hooks

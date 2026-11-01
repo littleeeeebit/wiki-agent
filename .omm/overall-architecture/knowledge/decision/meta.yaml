@@ -1,0 +1,10 @@
+created: 2026-11-01T04:07:29.656Z
+updated: 2026-11-01T04:07:29.657Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: decision
+children:
+  - form-choices
+parentPath:
+  - knowledge

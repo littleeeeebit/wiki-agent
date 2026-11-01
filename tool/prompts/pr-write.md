@@ -15,7 +15,8 @@ sentence failed.
 From the branch's final diff (`git diff <start>...HEAD`) and what you
 verified. Read the spec only to learn the intent; never copy or translate its
 sentences. A spec is a plan and a set of orders to you; the pull request
-says what the finished change does.
+says what the finished change does. The server read this change as one
+form; its section after these rules adds what that form needs.
 
 ## The block
 
@@ -75,9 +76,14 @@ proactive_check와 proactive_trigger에 각각 있던 정책 평가·화면 근�
 경로에서만 공통 판정 직전에 호출됩니다.
 ```
 
-## Three examples: spec, then the pull request text
+## Form: refactor-no-behaviour
 
-### 1. A refactor — nothing observable changes
+The change restructures code and nothing a user or a caller observes
+changes. End the title with `(동작 변화 없음)`. `behavior` is `없음`, then
+what stays the same. `verify` says how the sameness was shown: existing
+tests left as they were, tests that pin the old behaviour.
+
+### Example: the spec, then the pull request text
 
 The spec:
 
@@ -101,7 +107,13 @@ The diff: `routes_proactive.py` (+33 −36), two new tests in
  "verify": ["기존 테스트는 한 줄도 바꾸지 않았고 모두 통과했다.", "설정 거절과 화면 거절이 겹칠 때 설정 쪽 사유가 남는지도 테스트로 확인했다."]}
 ```
 
-### 2. A bug fix — users notice
+## Form: fix
+
+The change corrects behaviour that was wrong. `behavior` names the case
+that went wrong and what happens in it now; `why` says who ran into it and
+how. The title states the corrected outcome, never only `버그 수정`.
+
+### Example: the spec, then the pull request text
 
 The spec:
 
@@ -124,7 +136,14 @@ The diff: `auth/login.py` (+21 −4), `auth/session.py` (+9), three tests.
  "verify": ["로그인 뒤 원래 페이지로 돌아가는 경우, 다른 사이트 주소가 거절되는 경우, 돌아갈 주소가 없는 경우를 테스트 3개로 확인했다."]}
 ```
 
-### 3. A new setting — callers notice
+## Form: feature-with-behaviour-change
+
+The change adds or changes what a user or a caller can do or sees.
+`behavior` says before → after and when the difference shows: always, by
+default, or only behind a setting. The title names the new ability, not the
+code that provides it.
+
+### Example: the spec, then the pull request text
 
 The spec:
 
@@ -146,7 +165,26 @@ The diff: `tts/synth.py` (+27 −3), `config/defaults.toml` (+2), two tests.
  "verify": ["일부러 느리게 만든 합성기로 8초 안에 인사말이 나오는지, 정상 속도에서는 원래 대답이 나오는지 테스트 2개로 확인했다."]}
 ```
 
+## Form: plan-document
+
+The change is a document: a plan, a design, a recorded decision or an
+outcome. No product code changes. `context` says what the document is for
+and who reads it. Each change says what the document now decides or
+records, never which headings it gained. `behavior` is `없음 — 제품 코드는
+그대로다`, unless the document changes a rule people follow; then say which.
+`verify` says what was checked: links, and the facts against the code or
+the measurements they cite.
+
+## Form: files-only
+
+The change adds or replaces files a reader checks by listing them: data,
+fixtures, recorded results, notebooks, generated files. One change per kind
+of file, saying what the files are and where they came from; do not narrate
+their contents. `behavior` says whether anything reads them now. `verify`
+says how they were produced or checked: the command that made them, a hash,
+a count.
+
 ## Now
 
-Write the `pr-summary` for this branch the same way. Send only that block;
+Write the `pr-summary` for this branch in this form. Send only that block;
 the report is already in.

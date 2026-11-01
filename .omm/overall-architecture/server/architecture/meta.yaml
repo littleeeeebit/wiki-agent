@@ -5,6 +5,9 @@ last_field: diagram
 kind: nested-class
 title: architecture
 children:
+  - analyzer
+  - reader
+  - viewer
   - writer
 parentPath:
   - server

@@ -1,0 +1,9 @@
+created: 2026-11-01T04:07:33.389Z
+updated: 2026-11-01T04:07:33.389Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: git
+children: []
+parentPath:
+  - workflows

@@ -1064,7 +1064,9 @@ def test_the_pr_goes_up_as_the_worker_wrote_it_for_a_reader_new_to_the_code(repo
     saved = specs.load("proj", sid)
     assert not saved["fault"] and not saved["writing"] and not Worker.summaries
     heard = Worker.made[-1].heard
-    assert heard[-2].startswith(pr_text.WRITE[:60]) and "### 3." in heard[-2], "the guide and its examples"
+    assert heard[-2].startswith(pr_text.WRITE[:60]), "the guide"
+    assert "## Form: feature-with-behaviour-change" in heard[-2] and "## Form: fix" not in heard[-2], \
+        "the one form code reads off a one-file code change, with its example"
     assert "a code name in prose (`login_done`)" in heard[-1] and "`nope.py` is not in this branch's diff" in heard[-1]
     create = next(c for c in remote.calls if c[:3] == ["gh", "pr", "create"])
     assert create[create.index("--title") + 1] == TOLD["title"]

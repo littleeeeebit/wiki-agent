@@ -5,6 +5,10 @@ last_field: diagram
 kind: nested-class
 title: workflows
 children:
+  - execution
+  - git
   - planning
   - review
+  - specification
+  - verification
 parentPath: []

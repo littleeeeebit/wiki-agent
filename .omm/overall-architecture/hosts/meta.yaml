@@ -5,7 +5,10 @@ last_field: diagram
 kind: nested-class
 title: hosts
 children:
+  - approvals
+  - process
   - protocol
+  - read-tools
 parentPath: []
 prev_diagram: "graph LR\r
 

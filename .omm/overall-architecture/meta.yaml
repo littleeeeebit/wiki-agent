@@ -50,5 +50,6 @@ children:
   - hooks
   - hosts
   - knowledge
+  - repository
   - server
   - workflows

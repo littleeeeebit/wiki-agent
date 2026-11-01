@@ -141,6 +141,8 @@ function Head({ spec }: { spec: Spec }) {
     <div className="mb-2 flex items-center gap-2 font-heading text-[11px] text-faint">
       <span>명세</span>
       {spec.refactor?.mode && <span>{REFACTOR_MODE[spec.refactor.mode] ?? spec.refactor.mode}</span>}
+      {spec.refactor?.jev_mode && <span title="조사 모드는 그대로다. Jev 는 이 명세가 다른 모드에 속한다고 봤다">
+        Jev: {REFACTOR_MODE[spec.refactor.jev_mode]}</span>}
       <span className="font-mono">{spec.id}</span>
       {spec.rev > 1 && <span>판 {spec.rev}</span>}
       <span className="ml-auto font-mono text-[10.5px] font-normal text-muted-foreground">{spec.state}</span>

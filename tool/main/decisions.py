@@ -3,6 +3,8 @@
 `work.start` dispatches, gathers evidence or asks; `specs.check` selects an extra scoped check.
 `loop.fix` repairs or gathers context; `specs.answered` recommends the person's next task.
 None replaces final verification or the person's choice of goal.
+`pr.form` and `refactor.mode` are form choices (`FORMS`, `choose_form`): code offers closed forms and a
+baseline, and Jev's pick stays a record beside it until a fixture gate fits the point.
 
 Code builds the candidates; Jev picks one id or defers. The pick becomes an
 ActionProposal, and `admit` checks it again right before the owner runs it:
@@ -30,6 +32,7 @@ import time
 import tomllib
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -93,6 +96,44 @@ PROMPTS = {
 }
 VERSION = hashlib.sha256(json.dumps(PROMPTS, sort_keys=True).encode()).hexdigest()[:16]
 
+# Form choices: a branch point in the work's form. Code offers a closed set of forms, one line each, and
+# its own baseline; Jev's pick is recorded beside the baseline until the point's frozen fixtures fit it
+# (`tool/eval/branches.py`, `fitted`). Its prompts carry their own version, so the action policy stands.
+BRANCHES = Path("eval") / "jev" / "branches"
+FIT = {"low": 0.90, "order_agreement": 0.90}
+FORMS = {
+    "pr.form": {
+        "entry": "main.specs.pr_turn -> main.pr_text.writing", "fixtures": "pr-form.json",
+        "question": "A coding agent finished the change in the state and is about to write its pull request. "
+                    "Which form of pull request fits the change, judged by what it does for someone who uses or "
+                    "calls the code?",
+        "forms": {"feature-with-behaviour-change": "It adds or changes what a user or a caller can do or sees.",
+                  "fix": "It corrects behaviour that was wrong, so a case that failed now works as intended.",
+                  "refactor-no-behaviour": "It restructures code; nothing a user or a caller observes changes.",
+                  "plan-document": "It writes or revises a plan, a design or another document; no product code "
+                                   "changes.",
+                  "files-only": "It only adds or replaces data, fixtures, notebooks, generated or recorded files, "
+                                "read by listing them rather than by prose."},
+        "baseline": "code reads the diff: refactor criteria or a preserve run is refactor-no-behaviour; only prose "
+                    "or files under the artifact root is plan-document; only data or binary files is files-only; "
+                    "anything else is feature-with-behaviour-change"},
+    "refactor.mode": {
+        "entry": "main.refactor_survey.carded -> main.refactor_survey.moded", "fixtures": "refactor-mode.json",
+        "question": "A read-only refactoring survey proposed the spec in the state. Which refactoring mode does "
+                    "the change it proposes belong to?",
+        "forms": {"preserve": "Split code into clear responsibilities while observable behaviour stays identical.",
+                  "simplify": "Remove unneeded complexity: duplicated checks, unused branches and wrappers, stale "
+                              "test contracts, names that do not say their role.",
+                  "rework": "Fix a structural or performance root cause: a dependency cycle, a wrong "
+                            "responsibility boundary, unclear ownership of shared state, a measured bottleneck."},
+        "baseline": "the survey's own mode"},
+}
+FORM_VERSION = hashlib.sha256(json.dumps({p: [f["question"], f["forms"]] for p, f in FORMS.items()},
+                                         sort_keys=True).encode()).hexdigest()[:16]
+# ponytail: empty in the change that added the gate. A fitted point runs Jev's form only once a person's
+# change names it here; until then every point records Jev beside the baseline and hands on the baseline.
+ACTIVATED: frozenset[str] = frozenset()
+
 # The decision points this server owns, by their callable entry points, and
 # what each may choose. Shown by `/api/jev`.
 POINTS = {
@@ -111,6 +152,9 @@ POINTS = {
     "query": {"entry": "main.query.say -> main.knowledge.prepare, main.knowledge.grounded",
               "operations": ["retrieve_evidence", "summarize_result"], "baseline": "baseline retrieval",
               "note": "stages 6 and 7: route and repair retrieval, synthesize an answer with recorded provenance"},
+    **{p: {"entry": f["entry"], "operations": list(f["forms"]), "baseline": f["baseline"],
+           "note": "a form choice: Jev is recorded beside the baseline until its fixture gate fits the point"}
+       for p, f in FORMS.items()},
 }
 HOST = ("Tool selection inside a Claude or Codex session is the host's own planner: not intercepted, and "
         "outside controller coverage.")
@@ -127,6 +171,9 @@ OWNERS = [
      "authority": "code builds the candidates and loads the full list on any failure; Jev only drops"},
     {"point": "specs.candidates", "owner": "jev", "allowed_operations": [], "kinds": ("action",), "policy": "action",
      "authority": "a recommendation only: the person chooses the goal"},
+    *({"point": p, "owner": "jev", "allowed_operations": list(f["forms"]), "kinds": ("action",), "policy": "forms",
+       "authority": "code offers the forms and runs its baseline; Jev's form runs only at a fitted point named "
+                    "in `ACTIVATED`, the baseline on doubt"} for p, f in FORMS.items()),
     {"point": "query.route", "owner": "jev", "allowed_operations": ["retrieve_evidence", "summarize_result"],
      "kinds": ("route", "source", "analysis", "progress", "ask"), "policy": "retrieval",
      "authority": "code: budgets, sources available, the explicit-request rule, direct-answer restrictions"},
@@ -203,16 +250,22 @@ def coverage(cfg: decision.Config | None = None) -> dict:
     made = knowledge.manifest(cfg)
     from . import file_filter  # it imports this module
     held = {**made["policies"], "action": knowledge.fitted(policy(cfg), ("action",)),
-            "files": knowledge.fitted(file_filter.policy(cfg), ("relevance",))}
+            "files": knowledge.fitted(file_filter.policy(cfg), ("relevance",)),
+            "forms": knowledge.fitted(form_policy(cfg), ("action",))}
+    # A form point is fitted by its fixture gate alone, whatever its Choice thresholds are.
+    fits = {p: fitted(p, cfg.model) is not None for p in FORMS}
     items = []
     for o in OWNERS:
         pol = held.get(o["policy"]) or {}
         kinds = {k: pol["kinds"].get(k, "provisional") for k in o["kinds"]} if pol else {}
+        provisional = not fits[o["point"]] if o["point"] in FORMS else "provisional" in kinds.values()
         items.append({"point": o["point"], "owner": o["owner"], "allowed_operations": o["allowed_operations"],
                       "authority": o["authority"], "policy_version": pol.get("version"), "decisions": kinds,
-                      "provisional": "provisional" in kinds.values(), "covered": o.get("covered", True)})
-    return {"prompt_version": VERSION, "operations": list(OPERATIONS), "points": POINTS, "outside": HOST,
-            "items": items, "manifest": {**made, "actions": VERSION}}
+                      "provisional": provisional, "covered": o.get("covered", True)})
+    points = {**POINTS, **{p: {**POINTS[p], "provisional": not fits[p], "active": fits[p] and p in ACTIVATED}
+                           for p in FORMS}}
+    return {"prompt_version": VERSION, "operations": list(OPERATIONS), "points": points, "outside": HOST,
+            "items": items, "manifest": {**made, "actions": VERSION, "forms": FORM_VERSION}}
 
 
 def candidate(cid: str, operation: str, about: str, **args) -> dict:
@@ -307,14 +360,17 @@ def ask(point: str, options: dict[str, str], state: dict, cfg: decision.Config, 
     state_en, options = both["state"], both["options"]
     if budget.cancel.is_set():
         return {**empty, "status": "cancelled", "reason": "cancelled"}
+    asked = PROMPTS[point] if point in PROMPTS else FORMS[point]["question"]   # a form choice has its own
     question = {"action": {"decision": "action", "candidate": None,
-                           "question": decision.choice(PROMPTS[point], {**options, decision.DEFER: DEFERRED})}}
+                           "question": decision.choice(asked, {**options, decision.DEFER: DEFERRED})}}
     req = decision.request("action", state_en, question, allowed=list(options), model=cfg.model,
-                           prompt_version=VERSION, policy_version=pol.version, normalization_version=version,
+                           prompt_version=VERSION if point in PROMPTS else FORM_VERSION,
+                           policy_version=pol.version, normalization_version=version,
                            budget=budget)
-    # A doubt goes to the host model where the run falls back (`knowledge.falls_back`), and says so.
+    # A doubt goes to the host model where the run falls back (`knowledge.falls_back`), and says so;
+    # a form choice's doubt runs code's baseline instead.
     host = (lambda s, q, stage: knowledge.host_decides(s, q, stage, budget.cancel, cfg.host)) \
-        if knowledge.falls_back(cfg) else None
+        if knowledge.falls_back(cfg) and point in PROMPTS else None
     res = decision.checked(req, decision.decide(req, transport(cfg), budget, [], pol, None, host))
     picked = res["selected_candidate_ids"]
     return {"request_id": req["request_id"], "status": res["status"], "reason": res["reason_code"],
@@ -837,3 +893,103 @@ def recommend(repo: Path, items: list[dict]) -> list[dict]:
     at = ids.index(jev["choice"])
     best = {**items[at], "recommended": {"confidence": jev["answer"]["confidence"], "by": jev.get("by") or "jev"}}
     return [best, *items[:at], *items[at + 1:]]
+
+
+# -- form choices -----------------------------------------------------------
+
+def form_policy(cfg: decision.Config) -> decision.Policy:
+    return decision.policy(cfg.model, ROOT / ARTIFACT, prompt_version=FORM_VERSION)
+
+
+def digest(value) -> str:
+    """Canonical JSON's hash: a checkout's line endings never change a fixture's identity."""
+
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def fixtures(point: str, root: Path = ROOT) -> list[dict]:
+    return json.loads((root / BRANCHES / FORMS[point]["fixtures"]).read_text(encoding="utf-8"))["fixtures"]
+
+
+def fitted(point: str, model: str, root: Path = ROOT) -> dict | None:
+    """The newest evaluation of `point` (`tool/eval/branches.py`) when it fits it: the same model, forms
+    and frozen fixtures, the accuracy's Wilson lower bound and the order agreement each at `FIT`. Newest
+    is by the run time each result records, never its file name (`--out` names files freely); a result
+    without a readable, zoned run time counts for nothing. A newer result that falls short leaves the
+    point provisional again, as does `None`."""
+
+    try:
+        want = digest(fixtures(point, root))
+    except (OSError, ValueError, KeyError):
+        return None
+    runs = []
+    for path in (root / BRANCHES / "results").glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            ran = datetime.fromisoformat(data["ran_at"])
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+        got = (data.get("points") or {}).get(point)
+        if ran.tzinfo is not None and isinstance(got, dict):
+            runs.append((ran, data, got))
+    if not runs:
+        return None
+    _, data, got = max(runs, key=lambda r: r[0])
+    fits = (data.get("model") == model and data.get("form_version") == FORM_VERSION
+            and got.get("fixtures_sha256") == want
+            and ((got.get("accuracy") or {}).get("low") or 0) >= FIT["low"]
+            and (got.get("order_agreement") or 0) >= FIT["order_agreement"])
+    return got if fits else None
+
+
+def choose_form(point: str, state: dict, baseline: str, *, log: tuple[str, str], occasion: str,
+                cfg: decision.Config | None = None, cancel: threading.Event | None = None) -> dict:
+    """The form the owner at `point` runs for `occasion`: `{"form", "record"}`.
+
+    Code's `baseline` runs while the point is provisional, Jev's pick recorded beside it on a thread of its
+    own — the pick, its probability and the option order asked. A fitted point named in `ACTIVATED`, in
+    active mode, waits for Jev and runs its form, the baseline on doubt, deferral or failure; only then is
+    `record` returned. Mode off asks nothing. A baseline outside the point's forms is refused."""
+
+    forms = FORMS[point]["forms"]
+    if baseline not in forms:
+        raise ValueError(f"unregistered form for {point}: {baseline}")
+    cfg = cfg or decision.config()
+    if cfg.mode == "off":
+        return {"form": baseline, "record": None}
+    active = cfg.mode == "active" and point in ACTIVATED and fitted(point, cfg.model) is not None
+
+    def decide() -> dict:
+        budget, pol = Budget(**ACTION, cancel=cancel), form_policy(cfg)
+        try:
+            jev = ask(point, dict(forms), state, cfg, budget, pol)
+        except Exception as exc:  # noqa: BLE001 — a broken ask is no choice: the baseline runs
+            jev = {"status": "unavailable", "reason": f"error:{type(exc).__name__}", "answer": None, "choice": None}
+        answer = jev["answer"] or {}
+        selected = jev["choice"] if active and jev["choice"] else baseline
+        record = {"schema_version": RECORD, "id": uuid.uuid4().hex, "ts": time.time(), "point": point,
+                  "occasion": occasion, "mode": cfg.mode, "status": "fitted" if active else "provisional",
+                  "basis": (jev.get("by") or "jev") if jev["choice"] else
+                  "deferred" if answer.get("choice") == decision.DEFER else jev["status"],
+                  "baseline": baseline, "offered": list(forms), "order": "natural",
+                  "predicted": answer.get("choice"), "probability": (answer.get("probabilities") or {}).get(
+                      answer.get("choice")), "accepted": jev["choice"], "selected": selected,
+                  "rejected": [f for f in forms if f != selected], "proposal": None, "jev": jev,
+                  "policy": pol.record(), "prompt_version": FORM_VERSION, "budget": budget.record()}
+        keep(log, record)
+        return record
+
+    def aside():
+        try:
+            decide()
+        except Exception:  # noqa: BLE001 — a shadow never touches the owner's step
+            pass
+
+    if not active:
+        threading.Thread(target=aside, daemon=True).start()
+        return {"form": baseline, "record": None}
+    try:
+        record = decide()
+    except Exception:  # noqa: BLE001 — an unwritable record is no choice: the baseline runs
+        return {"form": baseline, "record": None}
+    return {"form": record["selected"], "record": record}

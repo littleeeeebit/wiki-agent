@@ -1,0 +1,1 @@
+ACTIVATED is empty. Activating a point is a person's change, and removing the point from ACTIVATED rolls it back. The fixtures under eval/jev/branches/ are frozen and identified by their canonical JSON digest, and results stay off git.

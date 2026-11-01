@@ -1,0 +1,2649 @@
+{
+ "schema": "jev-branch-fixtures/1",
+ "point": "pr.form",
+ "frozen": "2026-11-01",
+ "labels": "Labelled by hand by the implementing agent (Claude Opus 5.5) from each change's goal, diff and merged pull request title, reviewed fixture by fixture. Merged specs carry their own goal; main-line commits with no spec carry their subject as the goal. English only: specs whose goal holds Korean were left out.",
+ "sha256": "936df680a72b41d01bc3ac4de444c9969037e0a5e8f8513058f53bff9adf7877",
+ "fixtures": [
+  {
+   "id": "ai-coding-wiki/authentication-header-contract-02719744",
+   "from": {
+    "repo": "ai-coding-wiki",
+    "spec": "authentication-header-contract-02719744",
+    "commit": "8e8a54cccdda28824c4ba363b90a9a4efad2760b"
+   },
+   "facts": {
+    "goal": "Simplify the authenticated header's profile contract. Require profiles, profileId, onProfile and onNewProfile. Keep profileId nullable. Remove the profiles/profileId defaults and callback-presence guards, retaining guards on actual data availability and choices. Supply realistic profile props at all three test render sites. Add focused profile-switch and new-profile interaction tests without changing existing behavior expectations.",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": "simplify",
+    "files": [
+     {
+      "path": "client/components/HandleBar.test.tsx",
+      "added": 68,
+      "removed": 1
+     },
+     {
+      "path": "client/components/HandleBar.tsx",
+      "added": 14,
+      "removed": 15
+     }
+    ]
+   },
+   "label": "refactor-no-behaviour",
+   "sha256": "74c1ecb6f0e20d5c350f0ed556bddea2d76de5c7ee4ae8e3f96bc2d3c62639c8"
+  },
+  {
+   "id": "ai-coding-wiki/backup-recovery-contract-02719744",
+   "from": {
+    "repo": "ai-coding-wiki",
+    "spec": "backup-recovery-contract-02719744",
+    "commit": "6c246ed618d950dfdb1f625ac27a90d1b7df8ee5"
+   },
+   "facts": {
+    "goal": "Simplify successful-backup assertions. Replace the complete command-sequence assertion with targeted assertions over the existing fake's recorded commands and observations. Verify the exact source image, isolated restore target, actual restoration and verification, cleanup, manifest contents, publication only after verified restore, and retention after publication. Do not prescribe readiness-poll count or unrelated ancillary command ordering. Leave the Docker fake unchanged.",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": "simplify",
+    "files": [
+     {
+      "path": "tests/test_backups.py",
+      "added": 43,
+      "removed": 8
+     }
+    ]
+   },
+   "label": "refactor-no-behaviour",
+   "sha256": "995b17b4d08e7de19aac8bc86fa0534323d88484f8a4774f03bbfa7eea43fb51"
+  },
+  {
+   "id": "ai-coding-wiki/retrieval-evaluation-test-name-02719744",
+   "from": {
+    "repo": "ai-coding-wiki",
+    "spec": "retrieval-evaluation-test-name-02719744",
+    "commit": "dcb33f2bbc2fa3185bbab1ce0afd82226990de38"
+   },
+   "facts": {
+    "goal": "Clarify the retrieval diagnostic CLI test contract. Rename the test to test_cli_reports_deferred_suite_and_refuses_overwrite. Preserve its body and every assertion.",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": "simplify",
+    "files": [
+     {
+      "path": "tests/test_rag_evaluation.py",
+      "added": 1,
+      "removed": 1
+     }
+    ]
+   },
+   "label": "refactor-no-behaviour",
+   "sha256": "3d247e50234f779360251b702ce85c0556ed49926fa76c5c6d65e10d067c4d7b"
+  },
+  {
+   "id": "ai-coding-wiki/submission-rating-simplification-02719744",
+   "from": {
+    "repo": "ai-coding-wiki",
+    "spec": "submission-rating-simplification-02719744",
+    "commit": "d54e6dc28468821c058563bfd6571f957e0e283f"
+   },
+   "facts": {
+    "goal": "Simplify submission projection and static-signal names. Remove _public's unused Problem parameter and its sole argument. Delete the pass-through visit_Subscript override so ast.NodeVisitor uses the identical generic traversal. Rename _MAX_SOURCE_BYTES to _MAX_SOURCE_CHARS at its declaration and both uses. Do not change its value or len(code) comparisons.",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": "simplify",
+    "files": [
+     {
+      "path": ".wiki/graph.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": "src/ai_coding_wiki/signals.py",
+      "added": 3,
+      "removed": 6
+     },
+     {
+      "path": "src/ai_coding_wiki/submissions.py",
+      "added": 2,
+      "removed": 4
+     }
+    ]
+   },
+   "label": "refactor-no-behaviour",
+   "sha256": "13b063cab336e5cc520d961fb08be9de01487b3eb6e64ae741bc28f65c970537"
+  },
+  {
+   "id": "ai-companion-voice-agent/activity-resolution-construction-7357ebbe",
+   "from": {
+    "repo": "ai-companion-voice-agent",
+    "spec": "activity-resolution-construction-7357ebbe",
+    "commit": "48df96b80a5dad4042d87ef08c0257a4f1baa196"
+   },
+   "facts": {
+    "goal": "Share activity resolution construction. Add one construction helper beside build_activity_plan, receiving activity_type explicitly. Replace the identical bodies or delegate through thin methods where compatibility matters.",
+    "artifact_root": null,
+    "criteria": [
+     "refactor"
+    ],
+    "refactor_mode": "preserve",
+    "files": [
+     {
+      "path": "src/ai_companion_voice_agent/conversation/activities/base.py",
+      "added": 25,
+      "removed": 0
+     },
+     {
+      "path": "src/ai_companion_voice_agent/conversation/activities/choose_together.py",
+      "added": 5,
+      "removed": 10
+     },
+     {
+      "path": "src/ai_companion_voice_agent/conversation/activities/ideal_type_worldcup.py",
+      "added": 5,
+      "removed": 10
+     },
+     {
+      "path": "src/ai_companion_voice_agent/conversation/activities/twenty_questions.py",
+      "added": 5,
+      "removed": 10
+     },
+     {
+      "path": "tests/conversation/test_activity_actions.py",
+      "added": 79,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "refactor-no-behaviour",
+   "sha256": "954f81bf39194cee84c1b18a0aee763db70cf7e4199c2630df9efd40417579f2"
+  },
+  {
+   "id": "ai-companion-voice-agent/application-owned-recent-history-94ac7a2d",
+   "from": {
+    "repo": "ai-companion-voice-agent",
+    "spec": "application-owned-recent-history-94ac7a2d",
+    "commit": "cd65a6fa497b7d3088827a75b9465838f98e8886"
+   },
+   "facts": {
+    "goal": "Give shared recent history an application owner. Give AppState an explicit recent-history accessor and ownership slot. When it constructs a pipeline, inject that same store; when an existing pipeline is supplied, adopt its store before creating another. Keep optional standalone VoicePipeline construction compatible by creating its own store only when no store is injected. Ensure session finalization and all existing pipeline store access use the identical instance. This step establishes the shared boundary without changing proactive callers yet.",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": "rework",
+    "files": [
+     {
+      "path": ".omm/data-flow/recent-turn-store/concern.md",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": ".omm/overall-architecture/memory/recent/description.md",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": ".omm/overall-architecture/memory/recent/meta.yaml",
+      "added": 2,
+      "removed": 2
+     },
+     {
+      "path": "src/ai_companion_voice_agent/core/app_state.py",
+      "added": 15,
+      "removed": 1
+     },
+     {
+      "path": "src/ai_companion_voice_agent/pipeline/voice_pipeline.py",
+      "added": 6,
+      "removed": 1
+     },
+     {
+      "path": "tests/integration/test_recent_history_application_owner.py",
+      "added": 190,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "refactor-no-behaviour",
+   "sha256": "f8202e096b1cf41f542657fba0dc6e87bde29c8a72405ef7aba0b949db1106ec"
+  },
+  {
+   "id": "ai-companion-voice-agent/auth-revocation-statement-7357ebbe",
+   "from": {
+    "repo": "ai-companion-voice-agent",
+    "spec": "auth-revocation-statement-7357ebbe",
+    "commit": "315cf3d9213f1e1f369b3e588eff2c0555d91168"
+   },
+   "facts": {
+    "goal": "Share account-wide session revocation statement construction. First characterize administrative revocation on PostgreSQL. Then extract a private SQL statement builder used by all three methods. Keep execution inside each method's current transaction; never delegate administrative operations to the separately transactional public revoke method.",
+    "artifact_root": null,
+    "criteria": [
+     "refactor"
+    ],
+    "refactor_mode": "preserve",
+    "files": [
+     {
+      "path": "src/ai_companion_voice_agent/auth/repository.py",
+      "added": 18,
+      "removed": 16
+     },
+     {
+      "path": "tests/integration/test_postgres_auth_repository.py",
+      "added": 119,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "refactor-no-behaviour",
+   "sha256": "b09a5711b2ad9ea8befa5c87e980d8fd973a388789fd1c9c6edecc82f23e36da"
+  },
+  {
+   "id": "ai-companion-voice-agent/browser-timing-projections-7357ebbe",
+   "from": {
+    "repo": "ai-companion-voice-agent",
+    "spec": "browser-timing-projections-7357ebbe",
+    "commit": "6b98283193e39c534d4c81dd920bab4f126e40a2"
+   },
+   "facts": {
+    "goal": "Consolidate browser timing projections. Reuse to_server_fields for setup fields and add one narrow response projection for the existing timing keys. Keep all measurements and response-ready overwrites at their original points.",
+    "artifact_root": null,
+    "criteria": [
+     "refactor"
+    ],
+    "refactor_mode": "preserve",
+    "files": [
+     {
+      "path": "src/ai_companion_voice_agent/api/browser_turn_execution.py",
+      "added": 3,
+      "removed": 23
+     },
+     {
+      "path": "src/ai_companion_voice_agent/api/browser_turn_transaction.py",
+      "added": 23,
+      "removed": 0
+     },
+     {
+      "path": "tests/integration/test_browser_voice_session.py",
+      "added": 95,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "refactor-no-behaviour",
+   "sha256": "8a8b4dfab34f9553def3039b746d3279e6d3abad85f6e6ad4d38851c0103f88a"
+  },
+  {
+   "id": "ai-companion-voice-agent/catalog-active-read-statement-7357ebbe",
+   "from": {
+    "repo": "ai-companion-voice-agent",
+    "spec": "catalog-active-read-statement-7357ebbe",
+    "commit": "056d00fb8659422d551e27115e54511e704039c1"
+   },
+   "facts": {
+    "goal": "Share the active character-version read statement. Extract a private statement builder containing the existing join and common owner filter. Keep character filtering, ordering, transaction ownership and record conversion in each reader.",
+    "artifact_root": null,
+    "criteria": [
+     "refactor"
+    ],
+    "refactor_mode": "preserve",
+    "files": [
+     {
+      "path": ".omm/overall-architecture/characters/versions/description.md",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": ".omm/overall-architecture/characters/versions/meta.yaml",
+      "added": 2,
+      "removed": 2
+     },
+     {
+      "path": ".omm/overall-architecture/conversation/meta.yaml",
+      "added": 2,
+      "removed": 2
+     },
+     {
+      "path": "src/ai_companion_voice_agent/characters/repository.py",
+      "added": 28,
+      "removed": 36
+     },
+     {
+      "path": "tests/integration/test_postgres_customer_character_repository.py",
+      "added": 53,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "refactor-no-behaviour",
+   "sha256": "a0da5a74829c6219cffee380acd7c29e151c599e737292e334f6bc0554a0481a"
+  },
+  {
+   "id": "ai-companion-voice-agent/emotion-entry-construction-b51f506d",
+   "from": {
+    "repo": "ai-companion-voice-agent",
+    "spec": "emotion-entry-construction-b51f506d",
+    "commit": "be042fbf67a10b662e1cf3e7a7937c61fb4ebdcd"
+   },
+   "facts": {
+    "goal": "Share immediate and deferred emotion entry construction. Extract two private constructors taking the same next_state, signature and repeat_count values. Replace only the repeated construction expressions at their existing positions. Leave lock acquisition, snapshots, assignments, revisions, mutation tokens and compensation code untouched.",
+    "artifact_root": null,
+    "criteria": [
+     "refactor"
+    ],
+    "refactor_mode": "preserve",
+    "files": [
+     {
+      "path": ".wiki/graph.json",
+      "added": 2,
+      "removed": 2
+     },
+     {
+      "path": "src/ai_companion_voice_agent/emotion/store.py",
+      "added": 25,
+      "removed": 20
+     },
+     {
+      "path": "tests/unit/emotion/test_emotion_entry_path_parity.py",
+      "added": 85,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "refactor-no-behaviour",
+   "sha256": "e7ec459026f457748299f550c3a84699df0e59f7bcf8d0deae9536c525791f38"
+  },
+  {
+   "id": "ai-companion-voice-agent/memory-projection-collector-7357ebbe",
+   "from": {
+    "repo": "ai-companion-voice-agent",
+    "spec": "memory-projection-collector-7357ebbe",
+    "commit": "3518cea91e5540ea9886dfa41365215a3ba1020b"
+   },
+   "facts": {
+    "goal": "Share accepted-fact collection in memory projection. Retain two explicit input adapters and extract their common collector. Preserve lazy traversal so reaching the accepted-fact cap stops inspecting later values.",
+    "artifact_root": null,
+    "criteria": [
+     "refactor"
+    ],
+    "refactor_mode": "preserve",
+    "files": [
+     {
+      "path": "src/ai_companion_voice_agent/memory/memory_projection.py",
+      "added": 20,
+      "removed": 18
+     },
+     {
+      "path": "tests/unit/memory/test_memory_projection_value_privacy.py",
+      "added": 100,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "refactor-no-behaviour",
+   "sha256": "42be97ebfdddcf8d7162e7a072c6ad59d2a16f1fe68c544c82eb1c4a55830317"
+  },
+  {
+   "id": "ai-generation/comic-phase-21-panel-upscale",
+   "from": {
+    "repo": "ai-generation",
+    "spec": "comic-phase-21-panel-upscale",
+    "commit": "9d3062b620d3e4c31e3c012392266cc5a3d5cf32"
+   },
+   "facts": {
+    "goal": "docs/plans/comic/21-panel-upscale.md is implemented: an optional, off-by-default per-panel SeedVR2 upscale runs after colour/unify and before phase-19 detection and phase-20 balloon art, is reversible, and leaves output pages fixed at 2400 px tall.",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": ".wiki/corpus.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": ".wiki/graph.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": "backend/studio/api/comic.py",
+      "added": 45,
+      "removed": 9
+     },
+     {
+      "path": "backend/studio/comic/models.py",
+      "added": 40,
+      "removed": 1
+     },
+     {
+      "path": "backend/studio/comic/service.py",
+      "added": 295,
+      "removed": 20
+     },
+     {
+      "path": "backend/studio/pipelines/upscale_seedvr2.py",
+      "added": 8,
+      "removed": 3
+     },
+     {
+      "path": "backend/studio/recipes/comic.py",
+      "added": 53,
+      "removed": 0
+     },
+     {
+      "path": "backend/studio/server.py",
+      "added": 2,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/fake_seedvr2.py",
+      "added": 3,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_comic.py",
+      "added": 2,
+      "removed": 1
+     },
+     {
+      "path": "backend/tests/test_comic_post.py",
+      "added": 277,
+      "removed": 2
+     },
+     {
+      "path": "backend/tests/test_comic_rollback.py",
+      "added": 17,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_comic_staging.py",
+      "added": 2,
+      "removed": 2
+     },
+     {
+      "path": "docs/plans/comic/0-overview.md",
+      "added": 26,
+      "removed": 26
+     },
+     {
+      "path": "docs/plans/comic/21-panel-upscale.md",
+      "added": 62,
+      "removed": 0
+     },
+     {
+      "path": "docs/plans/comic/assets/phase21/upscale.png",
+      "added": null,
+      "removed": null
+     },
+     {
+      "path": "frontend/src/api/schema.d.ts",
+      "added": 174,
+      "removed": 2
+     },
+     {
+      "path": "frontend/src/comic/EpisodeEditor.tsx",
+      "added": 204,
+      "removed": 5
+     },
+     {
+      "path": "frontend/src/comic/doc.test.ts",
+      "added": 10,
+      "removed": 1
+     },
+     {
+      "path": "frontend/src/comic/doc.ts",
+      "added": 14,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "feature-with-behaviour-change",
+   "sha256": "1ee5b36c7068cb57ee4bf7efbab2a37d3491409e7b9b0cc38e0c56b53690776d"
+  },
+  {
+   "id": "ai-generation/comic-phase-23-run-to-end",
+   "from": {
+    "repo": "ai-generation",
+    "spec": "comic-phase-23-run-to-end",
+    "commit": "d7908057931b15de9b3c4d32d834157025ccc8a4"
+   },
+   "facts": {
+    "goal": "An episode runs from situation to all selected exports with Run to end, keeping review gates, selective reruns, cancellation and resumable progress, exactly as docs/plans/comic/23-automation.md specifies, and the overview marks phase 23 complete",
+    "artifact_root": null,
+    "criteria": [
+     "async",
+     "data",
+     "documentation"
+    ],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": ".wiki/corpus.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": ".wiki/graph.json",
+      "added": 5,
+      "removed": 3
+     },
+     {
+      "path": "DESIGN.md",
+      "added": 63,
+      "removed": 0
+     },
+     {
+      "path": "backend/studio/api/app.py",
+      "added": 5,
+      "removed": 1
+     },
+     {
+      "path": "backend/studio/api/comic.py",
+      "added": 164,
+      "removed": 27
+     },
+     {
+      "path": "backend/studio/comic/export.py",
+      "added": 34,
+      "removed": 0
+     },
+     {
+      "path": "backend/studio/comic/runner.py",
+      "added": 1248,
+      "removed": 0
+     },
+     {
+      "path": "backend/studio/engine/registry.py",
+      "added": 4,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_comic_runner.py",
+      "added": 670,
+      "removed": 0
+     },
+     {
+      "path": "docs/plans/comic/0-overview.md",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": "docs/plans/comic/23-automation.md",
+      "added": 149,
+      "removed": 0
+     },
+     {
+      "path": "docs/plans/comic/assets/phase23/run-to-end.png",
+      "added": null,
+      "removed": null
+     },
+     {
+      "path": "docs/research/review-comic-phase-23-run-to-end-f3-1.md",
+      "added": 111,
+      "removed": 0
+     },
+     {
+      "path": "frontend/src/api/schema.d.ts",
+      "added": 475,
+      "removed": 3
+     },
+     {
+      "path": "frontend/src/comic/EpisodeEditor.tsx",
+      "added": 46,
+      "removed": 13
+     },
+     {
+      "path": "frontend/src/comic/RunPanel.tsx",
+      "added": 288,
+      "removed": 0
+     },
+     {
+      "path": "frontend/src/comic/ScriptEditor.tsx",
+      "added": 13,
+      "removed": 8
+     },
+     {
+      "path": "frontend/src/comic/doc.ts",
+      "added": 5,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "feature-with-behaviour-change",
+   "sha256": "a698b0b0d0c4f19e79d32dda84d3b1a7f6f312daa03c2c014076de3ccc6d3d2d"
+  },
+  {
+   "id": "ai-generation/comic-phase22-exports",
+   "from": {
+    "repo": "ai-generation",
+    "spec": "comic-phase22-exports",
+    "commit": "4e7fb5d5eae4169f766142ee11e58c377c2cef19"
+   },
+   "facts": {
+    "goal": "Phase 22 of the comic plan (layered, PDF and CBZ export) is implemented exactly as docs/plans/comic/22-exports.md specifies, and the overview marks it complete",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": ".wiki/corpus.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": ".wiki/graph.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": "backend/studio/api/app.py",
+      "added": 11,
+      "removed": 1
+     },
+     {
+      "path": "backend/studio/api/comic.py",
+      "added": 218,
+      "removed": 46
+     },
+     {
+      "path": "backend/studio/comic/export.py",
+      "added": 808,
+      "removed": 0
+     },
+     {
+      "path": "backend/studio/comic/models.py",
+      "added": 103,
+      "removed": 0
+     },
+     {
+      "path": "backend/studio/comic/render.py",
+      "added": 19,
+      "removed": 11
+     },
+     {
+      "path": "backend/studio/comic/service.py",
+      "added": 22,
+      "removed": 37
+     },
+     {
+      "path": "backend/tests/test_comic.py",
+      "added": 45,
+      "removed": 14
+     },
+     {
+      "path": "backend/tests/test_comic_bubbles.py",
+      "added": 4,
+      "removed": 4
+     },
+     {
+      "path": "backend/tests/test_comic_candidates.py",
+      "added": 3,
+      "removed": 2
+     },
+     {
+      "path": "backend/tests/test_comic_colour.py",
+      "added": 7,
+      "removed": 7
+     },
+     {
+      "path": "backend/tests/test_comic_export.py",
+      "added": 504,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_comic_post.py",
+      "added": 14,
+      "removed": 14
+     },
+     {
+      "path": "backend/tests/test_comic_prompts.py",
+      "added": 4,
+      "removed": 5
+     },
+     {
+      "path": "docs/plans/comic/0-overview.md",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": "docs/plans/comic/22-exports.md",
+      "added": 84,
+      "removed": 0
+     },
+     {
+      "path": "docs/plans/comic/assets/phase22/exports.png",
+      "added": null,
+      "removed": null
+     },
+     {
+      "path": "frontend/src/Comics.tsx",
+      "added": 22,
+      "removed": 2
+     },
+     {
+      "path": "frontend/src/api/schema.d.ts",
+      "added": 368,
+      "removed": 25
+     },
+     {
+      "path": "frontend/src/comic/EpisodeEditor.tsx",
+      "added": 12,
+      "removed": 32
+     },
+     {
+      "path": "frontend/src/comic/ExportPanel.tsx",
+      "added": 181,
+      "removed": 0
+     },
+     {
+      "path": "frontend/src/comic/exports.ts",
+      "added": 55,
+      "removed": 0
+     },
+     {
+      "path": "requirements.txt",
+      "added": 4,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "feature-with-behaviour-change",
+   "sha256": "df8c6aa04036dd5741c998e7e2f59efe59bb7634d04aa242d62dc9191a6a9ecb"
+  },
+  {
+   "id": "ai-generation/deepseek-flash-provider",
+   "from": {
+    "repo": "ai-generation",
+    "spec": "deepseek-flash-provider",
+    "commit": "a18b3fe5e5bb8f64ebe907d59260e014613ed92c"
+   },
+   "facts": {
+    "goal": "Every hosted-LLM flow offers Gemini or DeepSeek (`deepseek-flash` on DeepSeek's own API), and DeepSeek is the default for image tag expansion.",
+    "artifact_root": null,
+    "criteria": [
+     "security"
+    ],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": ".env.example",
+      "added": 7,
+      "removed": 2
+     },
+     {
+      "path": ".wiki/corpus.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": "backend/studio/api/app.py",
+      "added": 3,
+      "removed": 1
+     },
+     {
+      "path": "backend/studio/comic/models.py",
+      "added": 3,
+      "removed": 3
+     },
+     {
+      "path": "backend/studio/comic/runner.py",
+      "added": 3,
+      "removed": 2
+     },
+     {
+      "path": "backend/studio/comic/script.py",
+      "added": 8,
+      "removed": 8
+     },
+     {
+      "path": "backend/studio/engine/llm.py",
+      "added": 110,
+      "removed": 54
+     },
+     {
+      "path": "backend/studio/pipelines/anima_base.py",
+      "added": 4,
+      "removed": 9
+     },
+     {
+      "path": "backend/studio/recipes/comic.py",
+      "added": 2,
+      "removed": 2
+     },
+     {
+      "path": "backend/studio/settings.py",
+      "added": 20,
+      "removed": 4
+     },
+     {
+      "path": "backend/tests/t2i_anima_schema.json",
+      "added": 1,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_comic_runner.py",
+      "added": 5,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_comic_script.py",
+      "added": 4,
+      "removed": 1
+     },
+     {
+      "path": "backend/tests/test_expand.py",
+      "added": 83,
+      "removed": 4
+     },
+     {
+      "path": "docs/plans/studio/0-overview.md",
+      "added": 1,
+      "removed": 0
+     },
+     {
+      "path": "docs/plans/studio/3-prompt-expansion.md",
+      "added": 27,
+      "removed": 0
+     },
+     {
+      "path": "frontend/src/AnimatePanel.tsx",
+      "added": 2,
+      "removed": 2
+     },
+     {
+      "path": "frontend/src/ExpandControls.tsx",
+      "added": 8,
+      "removed": 5
+     },
+     {
+      "path": "frontend/src/api.ts",
+      "added": 3,
+      "removed": 1
+     },
+     {
+      "path": "frontend/src/api/schema.d.ts",
+      "added": 7,
+      "removed": 4
+     },
+     {
+      "path": "frontend/src/comic/EpisodeEditor.tsx",
+      "added": 3,
+      "removed": 1
+     },
+     {
+      "path": "frontend/src/comic/RunPanel.tsx",
+      "added": 2,
+      "removed": 1
+     },
+     {
+      "path": "frontend/src/comic/ScriptEditor.tsx",
+      "added": 3,
+      "removed": 1
+     },
+     {
+      "path": "frontend/src/comic/doc.ts",
+      "added": 1,
+      "removed": 1
+     }
+    ]
+   },
+   "label": "feature-with-behaviour-change",
+   "sha256": "3e9f22d7e4063420b9629c00b87593447d248d64ef350c8185d839c5bd0bbea7"
+  },
+  {
+   "id": "ai-generation/developer-mode",
+   "from": {
+    "repo": "ai-generation",
+    "spec": "developer-mode",
+    "commit": "b9801828253db013f38fa4845eabd0c501713610"
+   },
+   "facts": {
+    "goal": "Pose benchmark and Layout chooser live only in a developer mode reached by one header switch; normal mode never lists them and developer mode lists nothing else",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": ".wiki/corpus.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": "DESIGN.md",
+      "added": 31,
+      "removed": 0
+     },
+     {
+      "path": "frontend/src/App.tsx",
+      "added": 26,
+      "removed": 10
+     },
+     {
+      "path": "frontend/src/Comics.tsx",
+      "added": 6,
+      "removed": 9
+     },
+     {
+      "path": "frontend/src/comic/ChoiceCompare.tsx",
+      "added": 42,
+      "removed": 43
+     },
+     {
+      "path": "frontend/src/comic/PoseBenchmark.tsx",
+      "added": 96,
+      "removed": 93
+     },
+     {
+      "path": "frontend/src/comic/doc.ts",
+      "added": 4,
+      "removed": 4
+     },
+     {
+      "path": "frontend/src/views.test.ts",
+      "added": 9,
+      "removed": 0
+     },
+     {
+      "path": "frontend/src/views.ts",
+      "added": 12,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "feature-with-behaviour-change",
+   "sha256": "ba0044b48803c10904d88f459520a221b3e1645baa7ad90d8235e2a7a9131d12"
+  },
+  {
+   "id": "ai-generation/expand-structured-order",
+   "from": {
+    "repo": "ai-generation",
+    "spec": "expand-structured-order",
+    "commit": "b164dd86d0726aa6dae08d3a8aa44ad6b823e69b"
+   },
+   "facts": {
+    "goal": "Expansion translates every Korean idea first, classifies it as instruction or description, returns per-subject structured tags that code assembles in a fixed order, and uses selected character sheets as context",
+    "artifact_root": null,
+    "criteria": [
+     "data"
+    ],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": ".wiki/corpus.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": ".wiki/graph.json",
+      "added": 6,
+      "removed": 4
+     },
+     {
+      "path": "backend/studio/engine/llm.py",
+      "added": 86,
+      "removed": 27
+     },
+     {
+      "path": "backend/studio/engine/tags.py",
+      "added": 82,
+      "removed": 55
+     },
+     {
+      "path": "backend/studio/pipelines/anima_base.py",
+      "added": 86,
+      "removed": 17
+     },
+     {
+      "path": "backend/studio/pipelines/cast.py",
+      "added": 39,
+      "removed": 4
+     },
+     {
+      "path": "backend/tests/t2i_anima_schema.json",
+      "added": 16,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_characters.py",
+      "added": 32,
+      "removed": 6
+     },
+     {
+      "path": "backend/tests/test_comic_prompts.py",
+      "added": 3,
+      "removed": 4
+     },
+     {
+      "path": "backend/tests/test_eval_expand.py",
+      "added": 18,
+      "removed": 12
+     },
+     {
+      "path": "backend/tests/test_expand.py",
+      "added": 170,
+      "removed": 41
+     },
+     {
+      "path": "backend/tests/test_prompt.py",
+      "added": 6,
+      "removed": 8
+     },
+     {
+      "path": "docs/plans/studio/0-overview.md",
+      "added": 3,
+      "removed": 1
+     },
+     {
+      "path": "docs/plans/studio/3-prompt-expansion.md",
+      "added": 85,
+      "removed": 0
+     },
+     {
+      "path": "docs/research/review-expand-structured-order-f1-1.md",
+      "added": 128,
+      "removed": 0
+     },
+     {
+      "path": "docs/research/review-expand-structured-order-f1-2.md",
+      "added": 141,
+      "removed": 0
+     },
+     {
+      "path": "frontend/src/ExpandControls.tsx",
+      "added": 10,
+      "removed": 6
+     },
+     {
+      "path": "frontend/src/Gallery.tsx",
+      "added": 1,
+      "removed": 0
+     },
+     {
+      "path": "frontend/src/api.ts",
+      "added": 2,
+      "removed": 0
+     },
+     {
+      "path": "tools/eval_expand.py",
+      "added": 35,
+      "removed": 13
+     },
+     {
+      "path": "tools/eval_expand/runs/deepseek-deepseek-flash.json",
+      "added": 6453,
+      "removed": 5569
+     },
+     {
+      "path": "tools/eval_expand/runs/gemini-gemini-3.5-flash-lite.json",
+      "added": 5545,
+      "removed": 5556
+     }
+    ]
+   },
+   "label": "feature-with-behaviour-change",
+   "sha256": "08ef92067809f5c4c7b844a6a515ffa3d9e2ac465c41e10ff00fe15abea21fc6"
+  },
+  {
+   "id": "ai-generation/moss-charref-reference",
+   "from": {
+    "repo": "ai-generation",
+    "spec": "moss-charref-reference",
+    "commit": "762711b9e4438eb604fdcd4cf173e1614bbc94ff"
+   },
+   "facts": {
+    "goal": "MOSS Base draws a character from one reference picture through the CharRef v2 LoRA, chosen with the character chip, and a benchmark grid with tagger agreement shows how well it follows the reference against an Anima baseline",
+    "artifact_root": "docs/plans/moss",
+    "criteria": [
+     "data"
+    ],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": ".wiki/corpus.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": ".wiki/graph.json",
+      "added": 3,
+      "removed": 2
+     },
+     {
+      "path": "backend/studio/engine/catalogue.py",
+      "added": 10,
+      "removed": 0
+     },
+     {
+      "path": "backend/studio/engine/lora.py",
+      "added": 91,
+      "removed": 0
+     },
+     {
+      "path": "backend/studio/engine/moss.py",
+      "added": 311,
+      "removed": 35
+     },
+     {
+      "path": "backend/studio/pipelines/cast.py",
+      "added": 7,
+      "removed": 0
+     },
+     {
+      "path": "backend/studio/pipelines/t2i_moss.py",
+      "added": 62,
+      "removed": 8
+     },
+     {
+      "path": "backend/tests/charref_v2_header.json",
+      "added": 1,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_moss.py",
+      "added": 2,
+      "removed": 1
+     },
+     {
+      "path": "backend/tests/test_moss_charref.py",
+      "added": 297,
+      "removed": 0
+     },
+     {
+      "path": "docs/plans/moss/2-charref.md",
+      "added": 212,
+      "removed": 0
+     },
+     {
+      "path": "docs/plans/moss/assets/2-charref/charref-report.json",
+      "added": 294,
+      "removed": 0
+     },
+     {
+      "path": "docs/plans/moss/assets/2-charref/contact-sheet.jpg",
+      "added": null,
+      "removed": null
+     },
+     {
+      "path": "docs/plans/moss/assets/2-charref/ui-chip.jpg",
+      "added": null,
+      "removed": null
+     },
+     {
+      "path": "docs/plans/moss/assets/2-charref/ui-drawer2.jpg",
+      "added": null,
+      "removed": null
+     },
+     {
+      "path": "docs/plans/moss/assets/2-charref/ui-results.jpg",
+      "added": null,
+      "removed": null
+     },
+     {
+      "path": "frontend/src/App.tsx",
+      "added": 7,
+      "removed": 3
+     },
+     {
+      "path": "frontend/src/Gallery.tsx",
+      "added": 2,
+      "removed": 2
+     },
+     {
+      "path": "frontend/src/GenerateBar.tsx",
+      "added": 28,
+      "removed": 5
+     },
+     {
+      "path": "frontend/src/api.ts",
+      "added": 2,
+      "removed": 0
+     },
+     {
+      "path": "tools/charref_benchmark.py",
+      "added": 232,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "feature-with-behaviour-change",
+   "sha256": "297fc58820a2330f49e760cfd99d2ac87cc877b300a9175f51f64693820587b2"
+  },
+  {
+   "id": "ai-generation/moss-image-engine",
+   "from": {
+    "repo": "ai-generation",
+    "spec": "moss-image-engine",
+    "commit": "c3f72eaaaff95eff9049d3ca623635491ccd2c0f"
+   },
+   "facts": {
+    "goal": "MOSS-Image Base and SFT (INT8 ConvRot) generate images from the image window as a selectable engine beside Anima, with their own defaults, on the 10 GB card",
+    "artifact_root": "docs/plans/moss",
+    "criteria": [
+     "data"
+    ],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": ".wiki/corpus.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": ".wiki/graph.json",
+      "added": 4,
+      "removed": 3
+     },
+     {
+      "path": "backend/studio/engine/catalogue.py",
+      "added": 49,
+      "removed": 1
+     },
+     {
+      "path": "backend/studio/engine/moss.py",
+      "added": 334,
+      "removed": 0
+     },
+     {
+      "path": "backend/studio/engine/pipeline_moss_image.py",
+      "added": 457,
+      "removed": 0
+     },
+     {
+      "path": "backend/studio/engine/prompt.py",
+      "added": 5,
+      "removed": 0
+     },
+     {
+      "path": "backend/studio/engine/registry.py",
+      "added": 11,
+      "removed": 5
+     },
+     {
+      "path": "backend/studio/pipelines/cast.py",
+      "added": 16,
+      "removed": 14
+     },
+     {
+      "path": "backend/studio/pipelines/t2i_anima.py",
+      "added": 13,
+      "removed": 6
+     },
+     {
+      "path": "backend/studio/pipelines/t2i_moss.py",
+      "added": 101,
+      "removed": 0
+     },
+     {
+      "path": "backend/studio/server.py",
+      "added": 2,
+      "removed": 0
+     },
+     {
+      "path": "backend/studio/settings.py",
+      "added": 6,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_moss.py",
+      "added": 211,
+      "removed": 0
+     },
+     {
+      "path": "docs/plans/moss/1-engine.md",
+      "added": 162,
+      "removed": 0
+     },
+     {
+      "path": "frontend/src/App.tsx",
+      "added": 5,
+      "removed": 4
+     },
+     {
+      "path": "frontend/src/GenerateBar.tsx",
+      "added": 30,
+      "removed": 24
+     },
+     {
+      "path": "frontend/src/api.ts",
+      "added": 29,
+      "removed": 5
+     },
+     {
+      "path": "frontend/src/request.test.ts",
+      "added": 25,
+      "removed": 5
+     },
+     {
+      "path": "frontend/src/request.ts",
+      "added": 22,
+      "removed": 6
+     },
+     {
+      "path": "tools/fetch_models.py",
+      "added": 1,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "feature-with-behaviour-change",
+   "sha256": "bfda2f4af4fb75d0431cab7ac4ecc4d65162a3578562edb5fdaacce3a6abd5ed"
+  },
+  {
+   "id": "ai-generation/speed-cfg-tail-truncation",
+   "from": {
+    "repo": "ai-generation",
+    "spec": "speed-cfg-tail-truncation",
+    "commit": "39579c23fed4ea2b9207621a013831cebe92f781"
+   },
+   "facts": {
+    "goal": "The Anima sampler can skip the unconditional forward after a chosen fraction of the steps, and the default fraction is the one the quality gate passes",
+    "artifact_root": "docs/plans/speed",
+    "criteria": [
+     "data",
+     "performance"
+    ],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": ".wiki/corpus.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": ".wiki/graph.json",
+      "added": 3,
+      "removed": 2
+     },
+     {
+      "path": "backend/studio/comic/models.py",
+      "added": 4,
+      "removed": 1
+     },
+     {
+      "path": "backend/studio/comic/service.py",
+      "added": 15,
+      "removed": 6
+     },
+     {
+      "path": "backend/studio/engine/parity.py",
+      "added": 3,
+      "removed": 0
+     },
+     {
+      "path": "backend/studio/pipelines/anima_base.py",
+      "added": 17,
+      "removed": 1
+     },
+     {
+      "path": "backend/tests/t2i_anima_schema.json",
+      "added": 7,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_cfg_tail.py",
+      "added": 101,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_comic.py",
+      "added": 3,
+      "removed": 1
+     },
+     {
+      "path": "backend/tests/test_comic_prompts.py",
+      "added": 2,
+      "removed": 2
+     },
+     {
+      "path": "backend/tests/test_prompt.py",
+      "added": 2,
+      "removed": 1
+     },
+     {
+      "path": "docs/plans/speed/2-cfg-tail.md",
+      "added": 177,
+      "removed": 0
+     },
+     {
+      "path": "docs/plans/speed/assets/2-gate-crops.webp",
+      "added": null,
+      "removed": null
+     },
+     {
+      "path": "docs/plans/speed/assets/2-gate-grid.webp",
+      "added": null,
+      "removed": null
+     },
+     {
+      "path": "frontend/src/App.tsx",
+      "added": 3,
+      "removed": 10
+     },
+     {
+      "path": "frontend/src/Gallery.tsx",
+      "added": 1,
+      "removed": 2
+     },
+     {
+      "path": "frontend/src/Knobs.tsx",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": "frontend/src/comic/EpisodeEditor.tsx",
+      "added": 2,
+      "removed": 0
+     },
+     {
+      "path": "frontend/src/comic/doc.test.ts",
+      "added": 12,
+      "removed": 0
+     },
+     {
+      "path": "frontend/src/comic/doc.ts",
+      "added": 5,
+      "removed": 2
+     },
+     {
+      "path": "frontend/src/request.test.ts",
+      "added": 19,
+      "removed": 3
+     },
+     {
+      "path": "frontend/src/request.ts",
+      "added": 21,
+      "removed": 1
+     },
+     {
+      "path": "tools/speed_gate.py",
+      "added": 3,
+      "removed": 1
+     }
+    ]
+   },
+   "label": "feature-with-behaviour-change",
+   "sha256": "13b37cffbe883ecff123e02365ae5cb55d8597033a7765fbb4bd7247caae6a3e"
+  },
+  {
+   "id": "ai-generation/tag-adherence",
+   "from": {
+    "repo": "ai-generation",
+    "spec": "tag-adherence",
+    "commit": "a1915c6f71429c6d20fadd3e4783d1966af6f9ed"
+   },
+   "facts": {
+    "goal": "Each expanded image shows how many of its requested tags PixAI finds in the render, and the eval set records that adherence for both hosted providers.",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": ".wiki/corpus.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": ".wiki/graph.json",
+      "added": 4,
+      "removed": 3
+     },
+     {
+      "path": "backend/studio/api/app.py",
+      "added": 4,
+      "removed": 2
+     },
+     {
+      "path": "backend/studio/engine/tagger.py",
+      "added": 17,
+      "removed": 0
+     },
+     {
+      "path": "backend/studio/jobs/queue.py",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": "backend/studio/jobs/store.py",
+      "added": 17,
+      "removed": 3
+     },
+     {
+      "path": "backend/studio/pipelines/anima_base.py",
+      "added": 4,
+      "removed": 1
+     },
+     {
+      "path": "backend/studio/pipelines/tag_backfill.py",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": "backend/studio/recipes/comic.py",
+      "added": 3,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/t2i_anima_schema.json",
+      "added": 8,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_comic_bubbles.py",
+      "added": 3,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_comic_prompts.py",
+      "added": 1,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_control_detailer.py",
+      "added": 3,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_eval_expand.py",
+      "added": 12,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_expand.py",
+      "added": 1,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_image_editing.py",
+      "added": 3,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_screens.py",
+      "added": 83,
+      "removed": 0
+     },
+     {
+      "path": "docs/plans/studio/3-prompt-expansion.md",
+      "added": 34,
+      "removed": 0
+     },
+     {
+      "path": "docs/research/review-tag-adherence-f1-1.md",
+      "added": 111,
+      "removed": 0
+     },
+     {
+      "path": "frontend/src/Gallery.tsx",
+      "added": 30,
+      "removed": 6
+     },
+     {
+      "path": "frontend/src/api.ts",
+      "added": 5,
+      "removed": 0
+     },
+     {
+      "path": "frontend/src/api/schema.d.ts",
+      "added": 4,
+      "removed": 0
+     },
+     {
+      "path": "tools/contact_sheet.py",
+      "added": 7,
+      "removed": 1
+     },
+     {
+      "path": "tools/eval_expand.py",
+      "added": 76,
+      "removed": 0
+     },
+     {
+      "path": "tools/eval_expand/runs/render-deepseek-deepseek-flash.json",
+      "added": 363,
+      "removed": 0
+     },
+     {
+      "path": "tools/eval_expand/runs/render-gemini-gemini-3.5-flash-lite.json",
+      "added": 251,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "feature-with-behaviour-change",
+   "sha256": "4acc7d43f08fd5c1856c06bf254ed6a0482baeb5dcd6d7ae7feef53c3ed08079"
+  },
+  {
+   "id": "rfg_rag/frontend",
+   "from": {
+    "repo": "rfg_rag",
+    "spec": "frontend",
+    "commit": "438abc6b887d517e44875b238c96ea7ac638ead6"
+   },
+   "facts": {
+    "goal": "A Perplexity-style question screen (React + Vite) in a new top-level frontend/ folder, backed by a single FastAPI endpoint that wraps the existing answer_question, with one-click launchers for Windows (.cmd) and macOS (.command); no other pipeline's code changes.",
+    "artifact_root": null,
+    "criteria": [
+     "async",
+     "documentation"
+    ],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": ".gitignore",
+      "added": 2,
+      "removed": 0
+     },
+     {
+      "path": ".wiki/corpus.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": ".wiki/memory/2026-10-13-163158-next.md",
+      "added": 69,
+      "removed": 0
+     },
+     {
+      "path": ".wiki/memory/2026-10-13-163158-next.raw.md",
+      "added": 98,
+      "removed": 0
+     },
+     {
+      "path": "AGENTS.md",
+      "added": 3,
+      "removed": 1
+     },
+     {
+      "path": "CLAUDE.md",
+      "added": 3,
+      "removed": 1
+     },
+     {
+      "path": "README.md",
+      "added": 39,
+      "removed": 0
+     },
+     {
+      "path": "frontend/DESIGN.md",
+      "added": 86,
+      "removed": 0
+     },
+     {
+      "path": "frontend/server.py",
+      "added": 53,
+      "removed": 0
+     },
+     {
+      "path": "frontend/start.cmd",
+      "added": 11,
+      "removed": 0
+     },
+     {
+      "path": "frontend/start.command",
+      "added": 12,
+      "removed": 0
+     },
+     {
+      "path": "frontend/web/index.html",
+      "added": 13,
+      "removed": 0
+     },
+     {
+      "path": "frontend/web/package-lock.json",
+      "added": 2433,
+      "removed": 0
+     },
+     {
+      "path": "frontend/web/package.json",
+      "added": 20,
+      "removed": 0
+     },
+     {
+      "path": "frontend/web/src/App.css",
+      "added": 231,
+      "removed": 0
+     },
+     {
+      "path": "frontend/web/src/App.jsx",
+      "added": 241,
+      "removed": 0
+     },
+     {
+      "path": "frontend/web/src/main.jsx",
+      "added": 7,
+      "removed": 0
+     },
+     {
+      "path": "frontend/web/vite.config.js",
+      "added": 8,
+      "removed": 0
+     },
+     {
+      "path": "requirements.txt",
+      "added": 4,
+      "removed": 0
+     },
+     {
+      "path": "tests/test_server.py",
+      "added": 21,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "feature-with-behaviour-change",
+   "sha256": "bdc21b83db739b39a82b9fdab21d82edf505a8e08202dca105275ff8c10d6cd2"
+  },
+  {
+   "id": "ai-generation/require-lead-and-honest-panel-prompt",
+   "from": {
+    "repo": "ai-generation",
+    "spec": "require-lead-and-honest-panel-prompt",
+    "commit": "5945a07c73f38135db1839fef4503e86d8d298f2"
+   },
+   "facts": {
+    "goal": "An episode cannot reach the panel script with an empty cast, and the panel prompt never advertises character keys that are not listed, so the Gemini c1/c2 failure cannot recur on the generated or the hand-written path.",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": ".wiki/graph.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": "backend/studio/comic/runner.py",
+      "added": 4,
+      "removed": 1
+     },
+     {
+      "path": "backend/studio/comic/script.py",
+      "added": 37,
+      "removed": 12
+     },
+     {
+      "path": "backend/studio/comic/service.py",
+      "added": 11,
+      "removed": 0
+     },
+     {
+      "path": "backend/tests/test_comic_script.py",
+      "added": 90,
+      "removed": 2
+     },
+     {
+      "path": "frontend/src/comic/EpisodeEditor.tsx",
+      "added": 3,
+      "removed": 2
+     },
+     {
+      "path": "frontend/src/comic/RunPanel.tsx",
+      "added": 6,
+      "removed": 3
+     },
+     {
+      "path": "frontend/src/comic/ScriptEditor.tsx",
+      "added": 5,
+      "removed": 3
+     },
+     {
+      "path": "frontend/src/comic/doc.ts",
+      "added": 2,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "fix",
+   "sha256": "d110b6d189cb73701082397cebe0db365c9e0ac519dd86ef669753517cc37c94"
+  },
+  {
+   "id": "ai-companion-voice-agent/actor-child-closure-supervision-94ac7a2d",
+   "from": {
+    "repo": "ai-companion-voice-agent",
+    "spec": "actor-child-closure-supervision-94ac7a2d",
+    "commit": "d37f7013ada239d97673a584bcdae3dd4f9d21ae"
+   },
+   "facts": {
+    "goal": "Retain actor child ownership after request rejection. Separate result settlement from child retirement in each invocation. Keep deadline rejection timing and primary error precedence, but retain the child handle, stream listeners, and bounded termination supervision until close. Initiate termination on every terminal failure path, escalate using verified platform-supported child termination, and clean timers/listeners/pipes exactly once after confirmed closure. A child that does not close must remain explicitly owned and reported; killing is not treated as proof of closure. Keep one child per invocation and the existing payload protocol.",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": "rework",
+    "files": [
+     {
+      "path": ".omm/command-surface/evaluation-scripts/description.md",
+      "added": 2,
+      "removed": 0
+     },
+     {
+      "path": "tests/automation/product-user-actor-child-lifetime.test.js",
+      "added": 571,
+      "removed": 0
+     },
+     {
+      "path": "tools/automation/product-user-actor-bridge.js",
+      "added": 166,
+      "removed": 39
+     }
+    ]
+   },
+   "label": "fix",
+   "sha256": "933786756e43b79222dd23ec5be053f25784924e01c4fc0d9d64647c813db34a"
+  },
+  {
+   "id": "ai-companion-voice-agent/audio-state-independent-of-logging-94ac7a2d",
+   "from": {
+    "repo": "ai-companion-voice-agent",
+    "spec": "audio-state-independent-of-logging-94ac7a2d",
+    "commit": "f96c3ffbb7a7c34185f8b5b6078852cae8c30031"
+   },
+   "facts": {
+    "goal": "Keep audio observation state out of diagnostic readback. Move operational chunk counts, start/arrival times, and endpoint timing inputs into AudioObservationSession fields. Produce diagnostic snapshots from that state. Let websocket_audio retain write/read/send behavior for the client-facing sanitized latency payload, but never replace the session's operational state with logger readback. Maintain compatibility method arguments where necessary while making explicit that diagnostic dictionaries are projections, not authoritative counters.",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": "rework",
+    "files": [
+     {
+      "path": ".omm/data-flow/observations/description.md",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": "src/ai_companion_voice_agent/api/websocket_voice.py",
+      "added": 2,
+      "removed": 0
+     },
+     {
+      "path": "src/ai_companion_voice_agent/audio/observation_session.py",
+      "added": 46,
+      "removed": 18
+     },
+     {
+      "path": "tests/integration/test_audio_operational_state_ownership.py",
+      "added": 134,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "fix",
+   "sha256": "a4df86bb29ca13e4f97fa42870d5b407b1980e127e1f92add3b1353fd870387e"
+  },
+  {
+   "id": "ai-companion-voice-agent/qwen-worker-lifespan-94ac7a2d",
+   "from": {
+    "repo": "ai-companion-voice-agent",
+    "spec": "qwen-worker-lifespan-94ac7a2d",
+    "commit": "2e4ca102fe09c852f8aecaad4a1480ccb3331a4c"
+   },
+   "facts": {
+    "goal": "Own Qwen worker activation and retirement in lifespan. Allow inert manager construction for the application and activate workers only inside lifespan. Enclose activation, preload, and warmup in the cleanup scope. At retirement, stop admission first, cancel sessions, unblock queues, stop further warmup work, and join every owned worker outside the event loop. Retain references and emit an explicit safe shutdown failure when a bounded join leaves a worker alive; do not release model resources or claim closure while it runs. Preserve standalone-manager compatibility through an explicit activation policy rather than hidden application construction side effects.",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": "rework",
+    "files": [
+     {
+      "path": ".omm/analysis.json",
+      "added": 1,
+      "removed": 0
+     },
+     {
+      "path": ".omm/orchestration/background-workers/description.md",
+      "added": 2,
+      "removed": 0
+     },
+     {
+      "path": ".omm/orchestration/diagram.mmd",
+      "added": 1,
+      "removed": 0
+     },
+     {
+      "path": ".omm/overall-architecture/speech/qwen/description.md",
+      "added": 3,
+      "removed": 1
+     },
+     {
+      "path": ".omm/overall-architecture/speech/qwen/diagram.mmd",
+      "added": 4,
+      "removed": 1
+     },
+     {
+      "path": ".omm/overall-architecture/speech/qwen/meta.yaml",
+      "added": 4,
+      "removed": 3
+     },
+     {
+      "path": ".omm/overall-architecture/speech/qwen/workers/constraint.md",
+      "added": 1,
+      "removed": 0
+     },
+     {
+      "path": ".omm/overall-architecture/speech/qwen/workers/description.md",
+      "added": 7,
+      "removed": 0
+     },
+     {
+      "path": ".omm/overall-architecture/speech/qwen/workers/meta.yaml",
+      "added": 10,
+      "removed": 0
+     },
+     {
+      "path": ".omm/overall-architecture/speech/qwen/workers/note.md",
+      "added": 1,
+      "removed": 0
+     },
+     {
+      "path": ".wiki/corpus.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": ".wiki/graph.json",
+      "added": 3,
+      "removed": 2
+     },
+     {
+      "path": "docs/research/review-qwen-worker-lifespan-94ac7a2d-f1-1.md",
+      "added": 101,
+      "removed": 0
+     },
+     {
+      "path": "local_services/qwen_clone_tts_server/app.py",
+      "added": 47,
+      "removed": 15
+     },
+     {
+      "path": "local_services/qwen_clone_tts_server/incremental_session.py",
+      "added": 51,
+      "removed": 10
+     },
+     {
+      "path": "local_services/qwen_clone_tts_server/warmup.py",
+      "added": 47,
+      "removed": 2
+     },
+     {
+      "path": "tests/unit/qwen_clone_tts_server/test_http_adapters_preserve.py",
+      "added": 20,
+      "removed": 3
+     },
+     {
+      "path": "tests/unit/qwen_clone_tts_server/test_worker_lifespan.py",
+      "added": 410,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "fix",
+   "sha256": "3eaa25c3d1c1b756a5fb1b4261c11f8a8eb0c30e5d07fc90a044d43d864ab6e6"
+  },
+  {
+   "id": "ai-generation/speed-tensorrt-trial",
+   "from": {
+    "repo": "ai-generation",
+    "spec": "speed-tensorrt-trial",
+    "commit": "8bfa570b8546716bb62827e2896d0133941223cd"
+   },
+   "facts": {
+    "goal": "The TensorRT trial for the Anima transformer is decided on the estimate: the plan records what TensorRT does, why a bf16 engine cannot clear 15% s/step over the shipped compile + sage + INT8 default (nor realistically over bf16 compile + sage), and an Outcome that says the trial did not pay, in a change that one git revert removes",
+    "artifact_root": "docs/plans/speed",
+    "criteria": [
+     "documentation"
+    ],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": ".wiki/corpus.json",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": ".wiki/graph.json",
+      "added": 3,
+      "removed": 2
+     },
+     {
+      "path": "docs/plans/speed/4-tensorrt.md",
+      "added": 118,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "plan-document",
+   "sha256": "5c254f86c96e999151f30c051f04dbe0fb61d70e20f0d18fa1bbcd0b8f3f81ca"
+  },
+  {
+   "id": "wiki-agent/readme-next-task-checks",
+   "from": {
+    "repo": "wiki-agent",
+    "spec": "readme-next-task-checks",
+    "commit": "af8fbdb4c0f479fece8a5e6b2ddf06ee509de3d3"
+   },
+   "facts": {
+    "goal": "README's query-screen Checks paragraph lists tool/test_specs.py with what it confirms, and gives the in-window procedure for the next-task focus from candidates through the harvest check",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": "README.md",
+      "added": 31,
+      "removed": 2
+     },
+     {
+      "path": "docs/plans/loop/3-spec.md",
+      "added": 1,
+      "removed": 1
+     }
+    ]
+   },
+   "label": "plan-document",
+   "sha256": "9e87639c8e128b1f2377b68bd70f000f23a34ff2527bb46662b0e23a7beb410e"
+  },
+  {
+   "id": "wiki-agent@342bb3b55d",
+   "from": {
+    "repo": "wiki-agent",
+    "commit": "342bb3b55d6c43b406e2ca5f896e46d041f8e1b4",
+    "goal_from": "commit subject"
+   },
+   "facts": {
+    "goal": "Fix two clock-bound CI flakes in test_korean and test_loop (#213)",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": "tool/test_korean.py",
+      "added": 6,
+      "removed": 1
+     },
+     {
+      "path": "tool/test_loop.py",
+      "added": 1,
+      "removed": 1
+     }
+    ]
+   },
+   "label": "fix",
+   "sha256": "ecff8d4a5e8f58aeabc2417d52a606f13fedeeafd921c3b028f065dc1d1660c2"
+  },
+  {
+   "id": "wiki-agent@4c6c506484",
+   "from": {
+    "repo": "wiki-agent",
+    "commit": "4c6c50648466e73eb6e8fae9ed5508742c4f5293",
+    "goal_from": "commit subject"
+   },
+   "facts": {
+    "goal": "Keep a task selected when its worktree goes; share the Windows swap retry (#204)",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": ".wiki/ratchet.json",
+      "added": 4,
+      "removed": 4
+     },
+     {
+      "path": "tool/common/__init__.py",
+      "added": 15,
+      "removed": 0
+     },
+     {
+      "path": "tool/common/settings.py",
+      "added": 3,
+      "removed": 1
+     },
+     {
+      "path": "tool/main/connect.py",
+      "added": 2,
+      "removed": 1
+     },
+     {
+      "path": "tool/main/memory.py",
+      "added": 2,
+      "removed": 1
+     },
+     {
+      "path": "tool/main/specs.py",
+      "added": 1,
+      "removed": 15
+     },
+     {
+      "path": "tool/test_connect.py",
+      "added": 3,
+      "removed": 9
+     },
+     {
+      "path": "tool/test_sync.py",
+      "added": 30,
+      "removed": 0
+     },
+     {
+      "path": "web/src/App.tsx",
+      "added": 10,
+      "removed": 2
+     },
+     {
+      "path": "web/tests/task_browser.py",
+      "added": 29,
+      "removed": 2
+     }
+    ]
+   },
+   "label": "fix",
+   "sha256": "9c6679aa3147ccd21d2775b21f9fa3b96027aaad52b4a3eb720f4fe6d494b658"
+  },
+  {
+   "id": "wiki-agent@d5c010a040",
+   "from": {
+    "repo": "wiki-agent",
+    "commit": "d5c010a0404453573882f2e8e2b6508927b81ed7",
+    "goal_from": "commit subject"
+   },
+   "facts": {
+    "goal": "fix: adapt desktop toolbars to 16:10 screens (#88)",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": "DESIGN.md",
+      "added": 2,
+      "removed": 2
+     },
+     {
+      "path": "web/src/index.css",
+      "added": 10,
+      "removed": 0
+     },
+     {
+      "path": "web/tests/desktop_browser.py",
+      "added": 101,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "fix",
+   "sha256": "0f282158a5bea54d90964824cf56b312133fe5b9ce2a659013c4bf9bb1ab0237"
+  },
+  {
+   "id": "wiki-agent@553acec316",
+   "from": {
+    "repo": "wiki-agent",
+    "commit": "553acec316f11a33fa691e660cc50b266a3f2d27",
+    "goal_from": "commit subject"
+   },
+   "facts": {
+    "goal": "fix: provision and recover mobile access automatically (#89)",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": "docs/mobile.md",
+      "added": 48,
+      "removed": 15
+     },
+     {
+      "path": "requirements-chat.txt",
+      "added": 1,
+      "removed": 0
+     },
+     {
+      "path": "tool/main/mobile.py",
+      "added": 124,
+      "removed": 55
+     },
+     {
+      "path": "tool/main/mobile_transport.py",
+      "added": 152,
+      "removed": 0
+     },
+     {
+      "path": "tool/test_mobile.py",
+      "added": 75,
+      "removed": 9
+     },
+     {
+      "path": "tool/test_mobile_transport.py",
+      "added": 87,
+      "removed": 0
+     },
+     {
+      "path": "web/src/components/MobileAccess.tsx",
+      "added": 34,
+      "removed": 8
+     },
+     {
+      "path": "web/src/lib/mobile.ts",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": "web/tests/mobile_browser.py",
+      "added": 2,
+      "removed": 2
+     },
+     {
+      "path": "web/tests/mobile_connection.py",
+      "added": 85,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "fix",
+   "sha256": "da7b20ef9f9b7d491082a702ab6ded22dc4dd016d1d6bab1f8c152079d7ad549"
+  },
+  {
+   "id": "ai-generation@bfbb24af2e",
+   "from": {
+    "repo": "ai-generation",
+    "commit": "bfbb24af2ebd196dea25034735eea4ddf8209484",
+    "goal_from": "commit subject"
+   },
+   "facts": {
+    "goal": "docs: comic phase 15 plan — plain paragraph labels (#36)",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": "docs/plans/comic/15-pose-benchmark.md",
+      "added": 30,
+      "removed": 30
+     }
+    ]
+   },
+   "label": "plan-document",
+   "sha256": "323c3440888d1f029e2e18497d021c04096bacfa599dd38bc522b800e9a439d6"
+  },
+  {
+   "id": "ai-coding-wiki@7f189a2e2c",
+   "from": {
+    "repo": "ai-coding-wiki",
+    "commit": "7f189a2e2ca68efb3392c811b39739389c99e08a",
+    "goal_from": "commit subject"
+   },
+   "facts": {
+    "goal": "Catch the records up to 114, and tell the roadmap who can open the gate (#115)",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": ".wiki/decisions/2026-09-09-113-chore-decision-records-109-112.md",
+      "added": 32,
+      "removed": 0
+     },
+     {
+      "path": ".wiki/decisions/2026-09-09-114-feat-quotes-are-stored.md",
+      "added": 37,
+      "removed": 0
+     },
+     {
+      "path": "docs/plans/2026-09-03-roadmap.md",
+      "added": 23,
+      "removed": 1
+     }
+    ]
+   },
+   "label": "plan-document",
+   "sha256": "052e7f3e66f4dbf8df19cf2ce535a2dfde650851c3e8eaaa4fb51cb303212fe6"
+  },
+  {
+   "id": "ai-companion-voice-agent@628001e858",
+   "from": {
+    "repo": "ai-companion-voice-agent",
+    "commit": "628001e858a881896997d75b2aed54df4e62adb5",
+    "goal_from": "commit subject"
+   },
+   "facts": {
+    "goal": "docs: plan memory retrieval attribution and domain anchor",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": "docs/plans/2026-08-01-memory-retrieval-attribution-and-domain-anchor-plan.md",
+      "added": 200,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "plan-document",
+   "sha256": "1b1ec81bdff5f57b94e47a1a9f8f85fa6043da2628c71d9478885a323c143c2a"
+  },
+  {
+   "id": "wiki-agent@ffed160814",
+   "from": {
+    "repo": "wiki-agent",
+    "commit": "ffed1608147b2f390f915d1313959afdd1bfbf50",
+    "goal_from": "commit subject"
+   },
+   "facts": {
+    "goal": "Laya stage 6: useful and redirect fail their gates (#216)",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": "docs/plans/laya/0-overview.md",
+      "added": 1,
+      "removed": 1
+     },
+     {
+      "path": "docs/plans/laya/6-rollout.md",
+      "added": 39,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "plan-document",
+   "sha256": "75a832fd5c08c9c4dc6e2b800b9a29cda98a31c6fc44372d2842ebd4c78a5320"
+  },
+  {
+   "id": "wiki-agent@de2ea7819c",
+   "from": {
+    "repo": "wiki-agent",
+    "commit": "de2ea7819cb44b7e89b886cd5f779bee3392590b",
+    "goal_from": "commit subject"
+   },
+   "facts": {
+    "goal": "Laya notebook: run label smoothing 0 to test useful's probability floor (#208)",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": "laya/notebooks/train.ipynb",
+      "added": 2,
+      "removed": 2
+     }
+    ]
+   },
+   "label": "files-only",
+   "sha256": "6a02eb5dea2e42e081e5fafe3848b27cd9020647879530f643330a20f0c06f38"
+  },
+  {
+   "id": "wiki-agent@a0e88d346c",
+   "from": {
+    "repo": "wiki-agent",
+    "commit": "a0e88d346cd7bfaebb890fcfddc85d3b4ea364b3",
+    "goal_from": "commit subject"
+   },
+   "facts": {
+    "goal": "fix: re-review the fourth set's held-out half with gpt-6.1-sol (reliability PR 5, v4)",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": "eval/jev/reliability-v4/intents.json",
+      "added": 31,
+      "removed": 23
+     }
+    ]
+   },
+   "label": "files-only",
+   "sha256": "f296e632760af4b1aa9ff907f3433a6cd482ce7d12fe4d1d95f538126aad3bdc"
+  },
+  {
+   "id": "wiki-agent@fd51d167ba",
+   "from": {
+    "repo": "wiki-agent",
+    "commit": "fd51d167ba64ef7ae7db571af650750e15825bd5",
+    "goal_from": "commit subject"
+   },
+   "facts": {
+    "goal": "fix: references ask only what the question asks (label review round 3)",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": "eval/jev/reliability/intents.json",
+      "added": 27,
+      "removed": 27
+     }
+    ]
+   },
+   "label": "files-only",
+   "sha256": "c4d1d9cf1db732a338aaedc23b7a9046b57c8c3efe8f83194ce6e77e79341932"
+  },
+  {
+   "id": "wiki-agent@efa18e0248",
+   "from": {
+    "repo": "wiki-agent",
+    "commit": "efa18e0248c2e59a7b0695324fa0a777a0599d16",
+    "goal_from": "commit subject"
+   },
+   "facts": {
+    "goal": "fix: reword the three labels the round 1 label review refused",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": "eval/jev/reliability/intents.json",
+      "added": 14,
+      "removed": 11
+     }
+    ]
+   },
+   "label": "files-only",
+   "sha256": "adac3c7b4021d75e68693ad760428dcddc46030c83370b8b22f122438247fdeb"
+  },
+  {
+   "id": "ai-companion-voice-agent@6a5dd55abc",
+   "from": {
+    "repo": "ai-companion-voice-agent",
+    "commit": "6a5dd55abc1d1f62d3cb55b8accd19a2e020a995",
+    "goal_from": "commit subject"
+   },
+   "facts": {
+    "goal": "test(eval): add context remediation v2 evidence artifacts",
+    "artifact_root": null,
+    "criteria": [],
+    "refactor_mode": null,
+    "files": [
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/0000-c262ce445cac2181beded65023ec46d18ab834da72f8a9788c91b93a69355e65.artifact.json",
+      "added": 185,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/0000-c262ce445cac2181beded65023ec46d18ab834da72f8a9788c91b93a69355e65.attempt-start.json",
+      "added": 17,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/0001-deb6c9c869f122b5ff680a60f7f687cc538629ab9c38185f6c5ab030ec8b626a.artifact.json",
+      "added": 299,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/0001-deb6c9c869f122b5ff680a60f7f687cc538629ab9c38185f6c5ab030ec8b626a.attempt-start.json",
+      "added": 17,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/0002-8e4fb5b9098edf65d248b170205b13c72e8692b2a14efbddecb90de41633fa4b.artifact.json",
+      "added": 186,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/0002-8e4fb5b9098edf65d248b170205b13c72e8692b2a14efbddecb90de41633fa4b.attempt-start.json",
+      "added": 17,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/0003-19d55c3bb6d0be1321200b849685f05dbee13401713162bb58a22eb48abff4ae.artifact.json",
+      "added": 203,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/0003-19d55c3bb6d0be1321200b849685f05dbee13401713162bb58a22eb48abff4ae.attempt-start.json",
+      "added": 17,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/19d55c3bb6d0be1321200b849685f05dbee13401713162bb58a22eb48abff4ae.000.site-coupang-01.primary.turn-receipt.json",
+      "added": 99,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/19d55c3bb6d0be1321200b849685f05dbee13401713162bb58a22eb48abff4ae.run-start.json",
+      "added": 108,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/8e4fb5b9098edf65d248b170205b13c72e8692b2a14efbddecb90de41633fa4b.000.site-coupang-01.primary.turn-receipt.json",
+      "added": 82,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/8e4fb5b9098edf65d248b170205b13c72e8692b2a14efbddecb90de41633fa4b.run-start.json",
+      "added": 108,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/artifact-index.json",
+      "added": 65,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/c262ce445cac2181beded65023ec46d18ab834da72f8a9788c91b93a69355e65.000.site-coupang-01.primary.turn-receipt.json",
+      "added": 81,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/c262ce445cac2181beded65023ec46d18ab834da72f8a9788c91b93a69355e65.run-start.json",
+      "added": 108,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/deb6c9c869f122b5ff680a60f7f687cc538629ab9c38185f6c5ab030ec8b626a.000.site-coupang-01.primary.turn-receipt.json",
+      "added": 102,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/deb6c9c869f122b5ff680a60f7f687cc538629ab9c38185f6c5ab030ec8b626a.001.site-coupang-02.primary.turn-receipt.json",
+      "added": 102,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/artifacts/deb6c9c869f122b5ff680a60f7f687cc538629ab9c38185f6c5ab030ec8b626a.run-start.json",
+      "added": 108,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-off-coupang-01-audit-panel-collapsed.json",
+      "added": 16,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-off-coupang-01-decision-tier-unavailable.json",
+      "added": 16,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-off-coupang-01-fetch-binary-formdata-guard.json",
+      "added": 16,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-off-coupang-01-focused-not-admitted.json",
+      "added": 16,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-off-coupang-01-formdata-unavailable.json",
+      "added": 16,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-off-coupang-01-json-post-formdata-guard.json",
+      "added": 16,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-off-coupang-01-natural-decision-unknown.json",
+      "added": 16,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-off-coupang-01-natural-full-path-complete.json",
+      "added": 53,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-off-coupang-01-natural-voice-deictic-missed.json",
+      "added": 16,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-off-coupang-keyboard-natural-no-generic-rationale-complete.json",
+      "added": 54,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-off-explicit-read-run-invalid.json",
+      "added": 16,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-official-retry-non-atomic-runner-root-cause.json",
+      "added": 49,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-on-coupang-keyboard-grounded-appearance-complete.json",
+      "added": 44,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-on-dino-inspired-layout-baseline.json",
+      "added": 163,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-on-dino-layout-runner-recovery.json",
+      "added": 87,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-on-inven-02-chrome-clean-state-failure.json",
+      "added": 16,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-on-inven-02-chrome-clean-state-retry-timeout.json",
+      "added": 16,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-on-inven-02-debug-tab-frame-tree-timeout.json",
+      "added": 16,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-on-inven-02-dom-oracle-clone-unsupported.json",
+      "added": 16,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-on-inven-02-dom-oracle-navigator-unsupported.json",
+      "added": 16,
+      "removed": 0
+     },
+     {
+      "path": "docs/runtime-audits/context-remediation-candidate/v2/development-artifacts/2026-07-16-on-inven-02-vision-voice-linkage-failure.json",
+      "added": 16,
+      "removed": 0
+     }
+    ]
+   },
+   "label": "files-only",
+   "sha256": "e3b35bd66a4e94b35394e6b17ab312bb18e4ec6146c5b76ba127b3448a651ec1"
+  }
+ ]
+}

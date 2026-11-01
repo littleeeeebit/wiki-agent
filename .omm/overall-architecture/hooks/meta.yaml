@@ -4,5 +4,11 @@ update_count: 1
 last_field: diagram
 kind: nested-class
 title: hooks
-children: []
+children:
+  - context
+  - dispatch
+  - guards
+  - injection
+  - install
+  - sync
 parentPath: []

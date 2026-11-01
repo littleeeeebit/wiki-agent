@@ -1,0 +1,9 @@
+created: 2026-11-01T04:07:30.021Z
+updated: 2026-11-01T04:07:30.022Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: normalization
+children: []
+parentPath:
+  - knowledge

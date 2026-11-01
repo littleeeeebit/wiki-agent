@@ -4,6 +4,11 @@ update_count: 1
 last_field: diagram
 kind: nested-class
 title: planning
-children: []
+children:
+  - collect
+  - drafts
+  - publication
+  - research
+  - validate
 parentPath:
   - workflows

@@ -1,0 +1,10 @@
+created: 2026-11-01T04:07:30.879Z
+updated: 2026-11-01T04:07:30.879Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: store
+children: []
+parentPath:
+  - knowledge
+  - retrieval

@@ -1,0 +1,10 @@
+created: 2026-11-01T04:07:34.311Z
+updated: 2026-11-01T04:07:34.312Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: publication
+children: []
+parentPath:
+  - workflows
+  - planning

@@ -5,7 +5,11 @@ last_field: diagram
 kind: nested-class
 title: retrieval
 children:
+  - daemon
   - evidence-graph
+  - ranking
+  - sources
+  - store
 parentPath:
   - knowledge
 prev_diagram: "graph LR\r

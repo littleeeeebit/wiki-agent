@@ -1,0 +1,9 @@
+created: 2026-11-01T04:07:32.134Z
+updated: 2026-11-01T04:07:32.135Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: ingress
+children: []
+parentPath:
+  - server

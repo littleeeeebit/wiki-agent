@@ -163,6 +163,14 @@ mode off disables observations without removing mandatory evidence checks.
 Its prompt is different from the synthetic experiment and has no fitted active
 policy. See the investigation's production section for collection limitations.
 
+The form choices (`pr.form`, `refactor.mode`) are fitted only by
+`python tool/eval/branches.py` on the frozen fixtures under
+`eval/jev/branches/`: the newest result for a point needs a 95% Wilson lower
+bound of 0.90 and 0.90 agreement between the natural and reversed option
+orders. A fitted point still runs code's baseline until a person's change
+names it in `decisions.ACTIVATED`; removing it there is the rollback. See
+[stage 8, form choices](plans/jev/8-agent-decisions.md#form-choices).
+
 ## Rollback
 
 Each switch is independent and touches no document, index generation or trace.

@@ -16,12 +16,24 @@ happened right after it, in `where`, the one place code names go."""
 from __future__ import annotations
 
 import re
+import threading
 from pathlib import Path
 
-from . import sweep
+import decision
+from session_state import run as git
 
-# The turn that asks for the text right before the pull request: a guide and three spec → PR examples.
+from . import decisions, sweep
+
+# The turn that asks for the text right before the pull request: the shared guide, then one section per
+# `pr.form` form (`decisions.FORMS`), each with its spec → PR example where it has one.
 WRITE = (Path(__file__).resolve().parents[1] / "prompts" / "pr-write.md").read_text(encoding="utf-8").strip()
+_body, _now = WRITE.split("\n## Now\n")
+SHARED, *_parts = re.split(r"^## Form: (\S+)[ \t]*\r?\n", _body, flags=re.M)
+SECTIONS = {_parts[i]: _parts[i + 1].strip() for i in range(0, len(_parts), 2)}
+NOW = "## Now\n\n" + _now.strip()
+# Paths a reader checks by listing them: data, recorded results, notebooks, lockfiles, images.
+DATA = re.compile(r"\.(json|jsonl|csv|tsv|parquet|ipynb|lock|png|jpe?g|gif|webp|svg|pdf)$", re.I)
+FORM_FILES = 40
 FILES_SHOWN = 30
 TITLE_LIMIT = 80
 KEYS = ("title", "context", "changes", "behavior", "why", "verify")
@@ -89,10 +101,66 @@ def problems(told: dict | None, diff: str) -> list[str]:
     return out
 
 
-def writing(spec: dict) -> str:
-    """The first request for the text, sent once the report is in."""
+def guide(form: str) -> str:
+    """The shared rules and `form`'s section, as the worker reads them."""
 
-    return WRITE.replace("<start>", (spec.get("start_head") or "origin/HEAD")[:12])
+    return f"{SHARED.strip()}\n\n## Form: {form}\n\n{SECTIONS[form]}\n\n{NOW}"
+
+
+def form_facts(spec: dict, numstat: str) -> dict:
+    """What the `pr.form` choice reads off the branch, code's baseline and Jev alike: the goal, the
+    diff's files with their line counts (`None` for a binary file), the artifact root, the review
+    criteria asked and a survey run's refactoring mode."""
+
+    rows = [line.split("\t", 2) for line in numstat.splitlines() if line.count("\t") >= 2]
+    return {"goal": spec["goal"], "artifact_root": spec.get("artifact_root"),
+            "criteria": list((spec.get("review") or {}).get("criteria") or []),
+            "refactor_mode": (spec.get("refactor") or {}).get("mode"),
+            "files": [{"path": p, "added": int(a) if a.isdigit() else None, "removed": int(d) if d.isdigit() else None}
+                      for a, d, p in rows]}
+
+
+def form_baseline(facts: dict) -> str:
+    """Code's `pr.form`, from the diff alone. The wiki's own indexes and records under `.wiki/` say
+    nothing of the change and are left out, unless they are all there is. Code never reads a fix
+    from a diff: that is left to the feature form."""
+
+    from . import review_contract   # it reaches `specs`, which imports this module
+
+    if "refactor" in facts["criteria"] or facts["refactor_mode"] == "preserve":
+        return "refactor-no-behaviour"
+    files = [f for f in facts["files"] if not f["path"].startswith(".wiki/")] or facts["files"]
+    root = (facts["artifact_root"] or "").strip("/")
+    if files and all(review_contract.prose(f["path"]) or (root and f["path"].startswith(root + "/")) for f in files):
+        return "plan-document"
+    if files and all(f["added"] is None or DATA.search(f["path"]) for f in files):
+        return "files-only"
+    return "feature-with-behaviour-change"
+
+
+def form_state(facts: dict) -> dict:
+    """What Jev reads for `pr.form`: English, the paths sent as they are."""
+
+    files = facts["files"]
+    return {"task": "A coding agent finished this change and is about to write its pull request.",
+            "goal": facts["goal"], "files_changed": len(files),
+            "lines": {"added": sum(f["added"] or 0 for f in files), "removed": sum(f["removed"] or 0 for f in files)},
+            "changed_files": files[:FORM_FILES], "review_criteria": facts["criteria"],
+            "artifact_root": {"path": facts["artifact_root"]} if facts["artifact_root"] else None,
+            "refactoring_mode": facts["refactor_mode"]}
+
+
+def writing(spec: dict, repo: Path, path: Path, cancel: threading.Event | None = None) -> str:
+    """The first request for the text, sent once the report is in, in the form code's baseline reads
+    off the diff. Jev's `pr.form` is recorded beside it (`decisions.choose_form`); only a fitted point
+    a person activated hands Jev's form on instead."""
+
+    start = spec.get("start_head") or "origin/HEAD"
+    facts = form_facts(spec, git(path, "-c", "core.quotepath=off", "diff", "--numstat", start, "HEAD"))
+    form = decisions.choose_form("pr.form", form_state(facts), form_baseline(facts), log=(spec["repo"], spec["id"]),
+                                 occasion=f"pr:{(spec.get('writing') or {}).get('head', '')}",
+                                 cfg=decision.config(repo), cancel=cancel)["form"]
+    return guide(form).replace("<start>", start[:12])
 
 
 def asking(found: list[str]) -> str:
