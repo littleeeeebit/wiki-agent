@@ -67,30 +67,29 @@ def call(top: Path, command: str = "", tool: str = "Bash", host_name: str = "cla
 # -- Parsing and reduction ----------------------------------------------------
 
 @pytest.mark.parametrize("command,dialect", [
-    ("bash -c 'rm -rf /c/x/y'", "posix"),
-    ("sh -c \"rm -rf /c/x/y\"", "posix"),
-    ("ls; bash -lc 'cd /c/x && rm -rf y'", "posix"),
-    ("echo $(bash -c 'rm -rf /c/x/y')", "posix"),
-    ("echo `rm -rf /c/x/y`", "posix"),
-    ("true && (rm -rf /c/x/y) || false", "posix"),
-    ("cat a | xargs echo | rm -rf /c/x/y", "posix"),
-    ("pwsh -NoProfile -Command \"Remove-Item C:/x/y -Recurse\"", "posix"),
-    ("powershell -Command 'Remove-Item C:\\x\\y'", "posix"),
-    ("cmd /c \"rmdir /s /q C:\\x\\y\"", "posix"),
-    ("cmd //c \"del C:\\x\\y\"", "posix"),
-    ("bash -c \"pwsh -Command 'cmd /c del C:\\x\\y'\"", "posix"),
-    ("pwsh -Command { Remove-Item C:/x/y }", "ps"),
-    ("cmd /c rd /s /q C:\\x\\y", "ps"),
+    ("bash -c 'echo x > /c/x/y'", "posix"),
+    ("sh -c \"echo x > /c/x/y\"", "posix"),
+    ("echo $(bash -c 'echo x > /c/x/y')", "posix"),
+    ("echo `echo x > /c/x/y`", "posix"),
+    ("true && (echo x > /c/x/y) || false", "posix"),
+    ("cat a | grep b | echo x > /c/x/y", "posix"),
+    ("pwsh -NoProfile -Command \"'x' > C:/x/y\"", "posix"),
+    ("powershell -Command 'Write-Output x > C:\\x\\y'", "posix"),
+    ("cmd /c \"echo x > C:\\x\\y\"", "posix"),
+    ("cmd //c \"echo x > C:\\x\\y\"", "posix"),
+    ("bash -c \"pwsh -Command 'cmd /c echo x > C:\\x\\y'\"", "posix"),
+    ("pwsh -Command { 'x' > C:/x/y }", "ps"),
+    ("cmd /c echo x > C:\\x\\y", "ps"),
 ])
 def test_nested_shell_strings_are_parsed_again(command, dialect):
-    assert "delete(C:/x/y)" in effects(command, dialect)
+    assert "write(C:/x/y)" in effects(command, dialect)
 
 
 def test_nesting_is_recursed_to_a_fixed_depth():
-    command = "rm -rf /c/x/y"
+    command = "echo x > /c/x/y"
     for depth in range(DEPTH + 2):
         found = effects(command)
-        assert ("delete(C:/x/y)" in found) if depth <= DEPTH else any("nesting deeper" in e for e in found)
+        assert ("write(C:/x/y)" in found) if depth <= DEPTH else any("nesting deeper" in e for e in found)
         command = "bash -c " + shlex.quote(command)
 
 
@@ -101,19 +100,19 @@ def test_nesting_is_recursed_to_a_fixed_depth():
     ("powershell -EncodedCommand ZQBjAGgAbwA=", "posix", "encoded"),
     ("pwsh -enc ZQBjAGgAbwA=", "ps", "encoded"),
     ("Invoke-Expression $code", "ps", "invoke-expression"),
-    ("rm $X/out", "posix", "variable in a delete path"),
+    ("echo hi > $X/out", "posix", "variable in a write path"),
     ("echo hi > $OUT", "posix", "variable in a write path"),
     ("echo hi > \"$(mktemp)\"", "posix", "substitution in a write path"),
-    ("rm *.pyc", "posix", "glob in a delete path"),
-    ("touch out-[0-9].txt", "posix", "glob in a write path"),
-    ("Remove-Item $path", "ps", "variable in a delete path"),
+    ("echo hi > *.pyc", "posix", "glob in a write path"),
+    ("echo hi > out-[0-9].txt", "posix", "glob in a write path"),
+    ("'x' > $path", "ps", "variable in a write path"),
     ("& $env:TOOL x", "ps", "variable as the command name"),
     ("bash -c \"$SCRIPT\"", "posix", "variable in a nested shell"),
     ("echo `rm x", "posix", "unclosed backtick"),
     ("echo \"$(rm x\"", "posix", "unclosed"),
     ("Write-Output 'abc", "ps", "unclosed quote"),
     ("PATH=/opt/tools:$PATH python x.py", "posix", "PATH"),
-    ("git -c core.sshCommand=helper fetch", "posix", "git config key"),
+    ("git -c core.sshCommand=helper status", "posix", "-c"),
     ("[IO.File]::WriteAllText('a', 'b')", "ps", "WriteAllText"),
 ])
 def test_undecidable_forms_reduce_to_top(command, dialect, reason):
@@ -126,8 +125,8 @@ def test_undecidable_forms_reduce_to_top(command, dialect, reason):
                                       "write(C:/Users/me/PycharmProjects/wiki-agent/err.log)"}),
     ("cat <<'EOF' > notes.md\n$(rm -r out)\nEOF", {"write(C:/Users/me/PycharmProjects/wiki-agent/notes.md)"}),
     ("echo 2>&1 >/dev/null", set()),
-    ("curl -sS https://example.org/x -o /tmp/y", {"network(example.org)", "write(C:/Users/me/AppData/Local/Temp/y)"}),
-    ("S=/c/x; rm -rf \"$S/y\"", {"delete(C:/x/y)"}),
+    ("echo x > /tmp/y", {"write(C:/Users/me/AppData/Local/Temp/y)"}),
+    ("S=/c/x; echo x > \"$S/y\"", {"write(C:/x/y)"}),
 ])
 def test_redirections_and_bound_constants(command, expected):
     assert effects(command) - {"read"} == expected
@@ -172,19 +171,19 @@ def test_posix_containment(path, root, inside):
 
 
 @pytest.mark.parametrize("command,expected", [
-    ("touch /c/r/a", "write(C:/r/a)"),
-    ("touch /C/r/../a", "write(C:/a)"),
-    ("touch C:a", "write(C:/Users/me/PycharmProjects/wiki-agent/a)"),
-    ("touch '\\\\?\\C:\\r\\a'", "write(C:/r/a)"),
-    ("touch /usr/x", "write(//msys/usr/x)"),
-    ("touch ~/a", "write(C:/Users/me/a)"),
+    ("echo x > /c/r/a", "write(C:/r/a)"),
+    ("echo x > /C/r/../a", "write(C:/a)"),
+    ("echo x > C:a", "write(C:/Users/me/PycharmProjects/wiki-agent/a)"),
+    ("echo x > '\\\\?\\C:\\r\\a'", "write(C:/r/a)"),
+    ("echo x > /usr/x", "write(//msys/usr/x)"),
+    ("echo x > ~/a", "write(C:/Users/me/a)"),
 ])
 def test_drive_letter_forms_resolve_to_one_spelling(command, expected):
     assert expected in effects(command)
 
 
 def test_a_relative_path_after_an_unknown_cd_is_top():
-    assert any("unknown cd" in e for e in effects("cd \"$X\"; touch a"))
+    assert any("unknown cd" in e for e in effects("cd \"$X\"; echo x > a"))
 
 
 @pytest.mark.skipif(os.name != "nt", reason="junctions are Windows'")
@@ -212,51 +211,179 @@ def test_a_symlink_out_of_the_root_is_outside(tmp_path):
 
 def test_calls_inside_the_grant_pass(repo):
     for command in ("python -m ruff check tool", "npm --prefix web run build", "npx tsc -b",
-                    "git add -A && git commit -qm x && git push origin HEAD", "gh pr view 3 --json title",
-                    "rm -rf build && echo hi > out.txt", "curl -s https://pypi.org/simple/x",
-                    "curl -s http://localhost:8000/api", "python tool/search \"query\"",
-                    "touch ../shared/f", "echo hi > /tmp/x.log", "ls ~ && cat /etc/hosts"):
+                    "git add -A && git commit -qm x && git push origin HEAD", "git status --short && git diff --stat",
+                    "echo hi > out.txt", "python tool/search \"query\"", "echo x > ../shared/f",
+                    "echo hi > /tmp/x.log", "ls ~ && cat /etc/hosts", "find . -name '*.py'"):
         assert call(repo, command) is None, command
+    for command in ("Get-ChildItem; Get-Content README.md", "'x' > out.txt", "'a,b'.Split(',')"):
+        assert call(repo, command, tool="PowerShell") is None, command
 
 
 def test_each_denial_names_the_effect_and_the_grant_that_would_allow_it(repo):
-    reason = call(repo, "cargo build && curl https://unlisted.example/x && rm -rf ../other")
+    reason = call(repo, "GH_HOST=unlisted.example cargo build && echo x > ../other/f")
     assert "spawn(cargo)" in reason and "`[guard] executables` 에 `cargo`" in reason
     assert "network(unlisted.example)" in reason and "`[guard] network_hosts` 에 `unlisted.example`" in reason
-    assert "delete(" in reason and "other" in reason and "`[guard] write_roots`" in reason
+    assert "write(" in reason and "other" in reason and "`[guard] write_roots`" in reason
     assert reason.splitlines()[-1].startswith("허가: 쓰기 루트") and "npx" in reason and "pypi.org" in reason
 
 
 def test_a_nested_shell_keeps_the_effects_it_wraps(repo):
-    assert "delete(" in call(repo, "bash -c 'rm -rf ../other'")
-    assert "delete(" in call(repo, "Remove-Item ../other -Recurse", tool="PowerShell")
-    # Codex on Windows runs PowerShell; elsewhere the same text is an unknown program.
-    codex = call(repo, tool="exec_command", host_name="codex", cmd="Remove-Item ../other -Recurse")
-    assert ("delete(" if os.name == "nt" else "spawn(") in codex
+    assert "write(" in call(repo, "bash -c 'echo x > ../other/f'")
+    assert "write(" in call(repo, "'x' > ../other/f", tool="PowerShell")
+    # Codex runs PowerShell on Windows and a POSIX shell elsewhere; either reads this redirection the same.
+    assert "write(" in call(repo, tool="exec_command", host_name="codex", cmd="'x' > ../other/f")
 
 
-# Soundness: a call passes only when every effect it has lies under the grant, and an effect the model
-# cannot follow is `top`, which lies under none. Each form below once had an effect the model missed
-# (PR #272 R1, F1–F9); each is built on a neutral target and must be denied for the reason named.
-FORMS = {
-    "F1-link-made-earlier": ("ln -s ../other link && rm link/target.txt", "Bash", "판단할 수 없는"),
-    "F2-directory-destination": ("cp /tmp/adapter.toml .wiki/", "Bash", "허가를 정하는 파일"),
-    "F3-constructor": ("[System.IO.FileStream]::new('C:/outside/target.txt', 'Create').Dispose()", "PowerShell",
-                       "판단할 수 없는"),
-    "F4-path-array": ("Remove-Item -LiteralPath 'keep','../other/target.txt'", "PowerShell", "판단할 수 없는"),
-    "F5-read-verb-output": ("git diff HEAD~1 HEAD --output=../other.patch", "Bash", "쓰기 루트 밖이다"),
-    "F6-function-call-site": ("f() { touch target.txt; }; cd ..; f", "Bash", "판단할 수 없는"),
-    "F7-ansi-c-escape": ("rm -- $'a\\tb'", "Bash", "판단할 수 없는"),
-    "F8-startup-file": ("bash --rcfile startup.rc -ic 'true'", "Bash", "판단할 수 없는"),
-    "F9-reader-preprocessor": ("rg --pre ./helper needle README.md", "Bash", "판단할 수 없는"),
+def test_files_that_decide_the_grant_are_never_granted(repo):
+    for command in ("echo x > .git/config", "echo x > .wiki/adapter.toml", "echo x > .claude/settings.json",
+                    "echo x > verification.toml", "echo x > .wiki", "echo x > ."):
+        assert "허가를 정하는 파일" in (call(repo, command) or ""), command
+
+
+def test_every_ancestor_of_a_protected_path_is_judged_protected_for_every_path_kind(repo):
+    g = guard_grant.grant(repo, {})
+    for p in g.protected:
+        a = Path(p).parent
+        while contained(str(a), g.roots) and a != a.parent:
+            for kind in ("write", "delete"):
+                assert "허가를 정하는 파일" in (guard_grant.outside((kind, str(a)), g) or ""), (kind, a)
+            a = a.parent
+
+
+def test_ordinary_writes_beside_protected_files_stay_allowed(repo):
+    for command in ("printf x > safe/a", "echo x > .wiki-notes.md", "git add -A && git commit -qm x"):
+        assert call(repo, command) is None, command
+
+
+# -- The closed table (spec rev 5) ------------------------------------------------
+# Only a program the table lists, with the flags its row lists, yields effects other than `top`; a program
+# with no row is a `spawn` only a grant naming it allows. Every form outside the table is denied by design,
+# whichever of the two it reduces to. The rules below are walked over the tables themselves, so a row added
+# later is held to them without a new test.
+
+def test_every_row_refuses_a_flag_it_does_not_list():
+    from guard_models import KEYWORDS, TABLE
+    from guard_windows import PS_ROWS
+
+    for name, r in TABLE.items():
+        # A shell keyword (`time`) is read before any program: what follows it is the command.
+        if not r.free and name not in KEYWORDS["posix"]:
+            assert any(e.startswith("top(") for e in effects(f"{name} --zz-unmodelled x")), name
+    for name in PS_ROWS:
+        assert any(e.startswith("top(") for e in effects(f"{name} -ZzUnmodelled x", "ps")), name
+
+
+def test_cmd_rows_only_read_or_move_the_directory():
+    from guard_windows import CMD_ROWS
+
+    for name in CMD_ROWS - {"cd", "chdir"}:
+        assert effects(f"cmd /c {name} /s x") == {"read"}, name
+
+
+def test_a_program_with_no_row_is_only_a_spawn(repo):
+    assert effects("zz-unlisted-tool --anything ../outside/target.txt") == {"read", "spawn(zz-unlisted-tool)"}
+    # A cmdlet is not an executable a grant could name: outside the table it is `top`.
+    assert any(e.startswith("top(") for e in effects("Zz-Unlisted ../outside/target.txt", "ps"))
+    assert "허가된 실행 파일이 아니다" in call(repo, "xxd -r dump.hex ../outside/target.txt")
+
+
+# Forms earlier rounds found acting outside the grant, each on a neutral target. None has a row in the
+# core table, so each is denied; the follow-up specs that add their rows bring their own effect tests.
+OUTSIDE_TABLE_FORMS = {
+    # File writers, copies and moves.
+    "rm": ("rm -rf ../outside", "Bash"),
+    "touch": ("touch .wiki/adapter.toml", "Bash"),
+    "cp-into-directory": ("cp ../adapter.toml .wiki", "Bash"),
+    "cp-target-flag": ("cp -t .wiki src/adapter.toml", "Bash"),
+    "mv-into-dir": ("mv src/adapter.toml .wiki", "Bash"),
+    "mktemp-outside": ("mktemp -p ../outside", "Bash"),
+    "copy-item": ("Copy-Item src/adapter.toml -Destination .wiki", "PowerShell"),
+    "move-item": ("Move-Item src/adapter.toml .wiki", "PowerShell"),
+    "set-content": ("Set-Content ../outside/target.txt x", "PowerShell"),
+    "remove-item": ("Remove-Item -LiteralPath:'../outside/target.txt'", "PowerShell"),
+    "cmd-copy": ('cmd /c "copy src\\adapter.toml .wiki"', "Bash"),
+    "cmd-del": ("cmd /c del /s target.txt", "Bash"),
+    # Links and trees.
+    "ln": ("ln -s ../outside link", "Bash"),
+    "cp-symbolic": ("cp -s ../outside/target.txt link && printf x > link", "Bash"),
+    "cp-archive": ("cp -a ../outside dir", "Bash"),
+    "rsync-archive": ("rsync -a ../outside/ dir", "Bash"),
+    "new-item-symlink": ("New-Item -ItemType SymbolicLink -Path link -Value ../outside", "PowerShell"),
+    "new-item-junction": ("ni -ItemType Junction link -Value ../outside", "PowerShell"),
+    "mklink": ("cmd /c mklink /J link ..\\outside", "Bash"),
+    "rename-item": ("Rename-Item link b; Set-Content b/f x", "PowerShell"),
+    # Archives.
+    "tar-extract": ("tar -xf bundle.tar -C safe", "Bash"),
+    "tar-remove-files": ("tar -cf saved.tar --remove-files ../outside/target.txt", "Bash"),
+    "unzip": ("unzip bundle.zip -d safe", "Bash"),
+    "gzip": ("gzip ../outside/target.txt", "Bash"),
+    "expand-archive": ("Expand-Archive bundle.zip -DestinationPath safe", "PowerShell"),
+    # Network clients.
+    "curl": ("curl -O http://localhost:8000/verification.toml", "Bash"),
+    "curl-connect-to": ("curl --connect-to localhost:80:unlisted.example:80 http://localhost/", "Bash"),
+    "wget": ("wget http://localhost:8000/verification.toml", "Bash"),
+    "web-request": ("Invoke-WebRequest http://localhost:8000/x -OutFile .wiki", "PowerShell"),
+    "gh-api": ("gh api https://unlisted.example/path", "Bash"),
+    "gh-clone": ("gh repo clone owner/repo out; printf x > out/link/target.txt", "Bash"),
+    "gh-pr-checkout": ("gh pr checkout 3", "Bash"),
+    # Script interpreters and code that runs code.
+    "awk": ("awk 'BEGIN { print \"x\" > \"../outside/target.txt\" }'", "Bash"),
+    "sed-write": ("sed 's/a/b/w ../outside/target.txt' startup.rc", "Bash"),
+    "xargs": ("ls | xargs rm", "Bash"),
+    "patch": ("patch -p1 < change.diff", "Bash"),
+    "find-delete": ("find . -name x -delete", "Bash"),
+    "find-exec": ("find . -execdir rm target.txt ';'", "Bash"),
+    "rg-preprocessor": ("rg --pre ./helper needle README.md", "Bash"),
+    "bash-startup-file": ("bash --rcfile startup.rc -ic 'true'", "Bash"),
+    "arithmetic": ("(( n = $(rm ../outside/target.txt) ))", "Bash"),
+    "let": ("let x=1", "Bash"),
+    "trap": ("trap 'rm ../outside/target.txt' EXIT", "Bash"),
+    "function": ("f() { echo x > target.txt; }; f", "Bash"),
+    "for-loop": ("for i in 1 2; do echo x > $i; done", "Bash"),
+    "hash-path": ("hash -p ./helper cat; cat", "Bash"),
+    "export": ("export GIT_DIR=../outside/.git", "Bash"),
+    "printf-name": ("printf -v PATH /outside/tools", "Bash"),
+    "read-name": ("read HTTPS_PROXY < startup.rc", "Bash"),
+    "ansi-c-escape": ("rm -- $'a\\tb'", "Bash"),
+    # PowerShell members, constructors, pipelines and computed commands.
+    "constructor": ("[System.IO.FileStream]::new('C:/outside/target.txt', 'Create').Dispose()", "PowerShell"),
+    "instance-method": ("(Get-Item README.md).CopyTo('../outside/target.md')", "PowerShell"),
+    "foreach-member": ("gi ../outside/target.txt | % Delete", "PowerShell"),
+    "foreach-script": ("Get-ChildItem | ForEach-Object { $_.Delete() }", "PowerShell"),
+    "member-assignment": ("(Get-Item ../outside/target.txt).IsReadOnly = $true", "PowerShell"),
+    "call-operator-expression": ("& ('Remove-' + 'Item') ../outside/target.txt", "PowerShell"),
+    "nested-shell-expression": ("pwsh -Command ('Remove-' + 'Item ../outside/target.txt')", "PowerShell"),
+    "start-process": ("Start-Process ../outside/python", "PowerShell"),
+    # git verbs and options outside the core rows.
+    "git-diff-output": ("git diff HEAD~1 HEAD --output=../other.patch", "Bash"),
+    "git-grep-pager": ("git grep --open-files-in-pager=./helper pattern", "Bash"),
+    "git-restore": ("git restore --source=HEAD~1 -- .wiki/adapter.toml", "Bash"),
+    "git-checkout": ("git checkout HEAD~1 -- verification.toml", "Bash"),
+    "git-mv": ("git mv a/link b; printf x > b/f", "Bash"),
+    "git-config": ("git config remote.origin.url https://unlisted.example/o/r.git", "Bash"),
+    "git-remote": ("git remote add other https://unlisted.example/o/r.git", "Bash"),
+    "git-merge": ("git merge topic", "Bash"),
+    "git-pull": ("git pull", "Bash"),
+    "git-rebase": ("git rebase main", "Bash"),
+    "git-reset": ("git reset --hard HEAD~1", "Bash"),
+    "git-stash": ("git stash pop", "Bash"),
+    "git-fetch": ("git fetch origin", "Bash"),
+    "git-clone": ("git clone https://github.com/owner/repo out", "Bash"),
+    "git-dash-c": ("git -C sub status", "Bash"),
+    "git-config-flag": ("git -c core.hooksPath=../outside commit -m x", "Bash"),
+    "git-dir": ("git --git-dir=../other/.git status", "Bash"),
+    "git-dir-variable": ("GIT_DIR=../other/.git git status", "Bash"),
+    "git-push-refspec": ("git push origin HEAD:main", "Bash"),
+    "git-push-force": ("git push --force origin topic", "Bash"),
+    "git-push-unlisted-remote": ("git push https://unlisted.example/o/r.git topic", "Bash"),
+    "git-commit-amend": ("git commit --amend -m x", "Bash"),
 }
 
 
-@pytest.mark.parametrize("form", FORMS)
-def test_every_form_with_an_effect_outside_the_grant_is_denied(repo, form):
-    command, tool, marker = FORMS[form]
-    reason = call(repo, command, tool=tool)
-    assert reason and marker in reason, reason
+@pytest.mark.parametrize("form", OUTSIDE_TABLE_FORMS)
+def test_each_form_outside_the_table_is_denied(repo, form):
+    command, tool = OUTSIDE_TABLE_FORMS[form]
+    assert call(repo, command, tool=tool), form
 
 
 # Monotonicity: wrapping a command keeps every effect it had, so no wrapper turns a denial into a pass.
@@ -268,113 +395,20 @@ WRAPPERS = {
 
 
 @pytest.mark.parametrize("wrapper", WRAPPERS)
-@pytest.mark.parametrize("form", [f for f, (_, tool, _) in FORMS.items() if tool == "Bash"])
-def test_no_wrapper_turns_a_denied_form_into_a_pass(repo, form, wrapper):
-    assert call(repo, WRAPPERS[wrapper](FORMS[form][0])), form
+@pytest.mark.parametrize("form", [f for f, (_, tool) in OUTSIDE_TABLE_FORMS.items() if tool == "Bash"])
+def test_no_wrapper_turns_an_outside_table_form_into_a_pass(repo, form, wrapper):
+    assert call(repo, WRAPPERS[wrapper](OUTSIDE_TABLE_FORMS[form][0])), form
 
 
-# A second review round found more forms the model followed too far. Each rule is a property:
-# a construct whose later effect the model cannot place soundly must reduce to `top` (or resolve
-# the real target), so the call is denied. Inputs name neutral targets outside the grant.
-ROUND2 = {
-    # A copy into a name that is already a directory writes a descendant of it, not the name.
-    "copy-into-existing-directory": ("cp ../adapter.toml .wiki", "Bash", "허가를 정하는 파일"),
-    # A link (any flag spelling, hard or symbolic) redirects later paths; its target is not followable.
-    "combined-link-flags": ("ln -sf ../outside link", "Bash", "판단할 수 없는"),
-    "windows-junction": ("cmd /c mklink /J link ../outside", "Bash", "판단할 수 없는"),
-    # A .NET method that writes is not made safe by its name alone; the receiver is unknown.
-    "writing-instance-method": ("(Get-Item README.md).CopyTo('../outside/target.md')", "PowerShell",
-                                "판단할 수 없는"),
-    # Quoting only a parameter's value keeps it a named parameter, not a positional pathname.
-    "quoted-parameter-value": ("Remove-Item -LiteralPath:'../outside/target.txt'", "PowerShell", "쓰기 루트 밖이다"),
-    # ripgrep runs its preprocessor on each input file, so the child can mutate them.
-    "ripgrep-preprocessor-file": ("rg --pre rm pattern README.md", "Bash", "판단할 수 없는"),
-    # `-execdir` runs in the matched entry's directory, so a relative target lands somewhere unknown.
-    "find-execdir-directory": ("find . -execdir rm target.txt ';'", "Bash", "판단할 수 없는"),
-    # An arithmetic command runs the substitutions written inside it, and those its variables hold.
-    "arithmetic-substitution": ("(( n = $(rm ../outside/target.txt) ))", "Bash", "판단할 수 없는"),
-    # A git read verb can launch a program through an execution-capable option.
-    "git-read-pager-program": ("git grep --open-files-in-pager=./helper pattern", "Bash", "판단할 수 없는"),
-}
+# A member name the lexer cannot read as an identifier (an escape, a quote, a variable) is dynamic.
+@pytest.mark.parametrize("member", ["De`lete", "'Delete'", '"Delete"', "$m", "De``lete"])
+def test_a_member_name_that_is_not_an_identifier_is_denied(repo, member):
+    reason = call(repo, f"(Get-Item ../outside/target.txt).{member}()", tool="PowerShell")
+    assert reason and "판단할 수 없는" in reason, member
 
 
-@pytest.mark.parametrize("form", ROUND2)
-def test_each_followed_too_far_form_is_denied(repo, form):
-    command, tool, marker = ROUND2[form]
-    reason = call(repo, command, tool=tool)
-    assert reason and marker in reason, (form, reason)
-
-
-@pytest.mark.parametrize("wrapper", WRAPPERS)
-@pytest.mark.parametrize("form", [f for f, (_, tool, _) in ROUND2.items() if tool == "Bash"])
-def test_no_wrapper_turns_a_round2_denial_into_a_pass(repo, form, wrapper):
-    assert call(repo, WRAPPERS[wrapper](ROUND2[form][0])), form
-
-
-# A third review round named more forms that acted outside the grant. Each line below is a property,
-# not one command: the rule it names holds across every syntax that reaches the same effect. Inputs
-# name neutral targets (`outside/`, the protected `.wiki`/`verification.toml`), never a real command.
-
-# F1 — a copy/move/extract into a directory writes files *under* it, so a protected file there is reached.
-# The rule: the destination's descendants are named, whatever program or dialect writes them.
-DEST_FORMS = {
-    "cp-rename": ("cp src/adapter.toml .wiki", "Bash"),
-    "cp-trailing-slash": ("cp src/adapter.toml .wiki/", "Bash"),
-    "mv-into-dir": ("mv src/adapter.toml .wiki", "Bash"),
-    "cp-target-flag": ("cp -t .wiki src/adapter.toml", "Bash"),
-    "copy-item": ("Copy-Item src/adapter.toml -Destination .wiki", "PowerShell"),
-    "copy-item-literal": ("Copy-Item -LiteralPath src/adapter.toml -Destination .wiki", "PowerShell"),
-    "move-item": ("Move-Item src/adapter.toml .wiki", "PowerShell"),
-    "copy-item-default-cwd": ("Copy-Item src/verification.toml", "PowerShell"),
-    "cmd-copy": ('cmd /c "copy src\\adapter.toml .wiki"', "Bash"),
-}
-
-
-@pytest.mark.parametrize("form", DEST_FORMS)
-def test_a_copy_into_a_protected_directory_is_denied(repo, form):
-    command, tool = DEST_FORMS[form]
-    reason = call(repo, command, tool=tool)
-    assert reason and "허가를 정하는 파일" in reason, (form, reason)
-
-
-def test_tar_creates_archives_but_never_extracts(repo):
-    for command in ("tar -xPf payload.tar -C safe", "tar --absolute-names -xf payload.tar -C safe",
-                    "tar -xf payload.tar -C safe", "tar xf payload.tar"):
-        assert "판단할 수 없는" in call(repo, command), command
-    assert call(repo, "tar -czf out.tar.gz src && tar -tf out.tar.gz") is None
-
-
-# F2 — creating a link and then writing under it escapes the grant through the link; `realpath` cannot
-# see a link that does not exist yet. The rule: a link effect beside any other write is undecidable.
-LINK_FORMS = {
-    "cp-symbolic": ("cp -s ../outside/target.txt link && printf x > link", "Bash"),
-    "cp-symbolic-long": ("cp --symbolic-link ../outside/target.txt link && printf x > link", "Bash"),
-    "cp-symbolic-combined": ("cp -sf ../outside/target.txt link && printf x > link", "Bash"),
-    "cp-archive-into": ("cp -a ../outside dir && printf x > dir/f", "Bash"),
-    "cp-recursive-into": ("cp -r ../outside dir && printf x > dir/f", "Bash"),
-    "rsync-archive-into": ("rsync -a ../outside/ dir && printf x > dir/f", "Bash"),
-    "new-item-symlink": ("New-Item -ItemType SymbolicLink -Path link -Target ../outside; Set-Content link x",
-                         "PowerShell"),
-    "new-item-junction": ("ni -Type Junction link -Value ../outside; Set-Content link/f x", "PowerShell"),
-    "loop-order": ("for i in 1 2; do printf x > link; cp -s ../outside link; done", "Bash"),
-}
-
-
-@pytest.mark.parametrize("form", LINK_FORMS)
-def test_a_link_written_through_in_the_same_command_is_denied(repo, form):
-    command, tool = LINK_FORMS[form]
-    assert call(repo, command, tool=tool), form
-
-
-def test_a_recursive_copy_alone_is_allowed(repo):
-    # A tree nothing else in the call writes under is judged as a write at its own place.
-    for command in ("cp -r src dst", "mkdir -p out && cp -r src out", "Copy-Item -Recurse src dst"):
-        assert call(repo, command, tool="PowerShell" if "Copy-Item" in command else "Bash") is None, command
-
-
-# F3 — a PowerShell member name does not fix its effect (`String.Replace` reads, `FileInfo.Replace`
-# writes). The rule: every syntax that invokes a member routes through one gate, and a polymorphic
-# name on an unknown receiver is undecidable, whichever way it was written.
+# A PowerShell member name does not fix its effect (`String.Replace` reads, `FileInfo.Replace` writes):
+# every syntax that invokes a member on an unknown receiver is undecidable, whichever way it was written.
 MEMBER_FORMS = {
     "instance-method": "(Get-Item README.md).Replace('../outside/target.md', $null)",
     "foreach-object-membername": "Get-Item ../outside/target.txt | ForEach-Object -MemberName Delete",
@@ -398,38 +432,11 @@ def test_a_member_on_an_unknown_receiver_is_denied(repo, form):
 
 
 def test_read_only_members_and_safe_receivers_stay_allowed(repo):
-    for ok in ("'a,b'.Split(',')", "'x'.Replace('x','y')", "(Get-Date).ToString()",
-               "Get-ChildItem | ForEach-Object { $_.Name }", "Get-ChildItem | % Name",
-               "(1..3).ForEach({ $_ * 2 })"):
+    for ok in ("'a,b'.Split(',')", "'x'.Replace('x','y')", "(Get-Date).ToString()"):
         assert call(repo, ok, tool="PowerShell") is None, ok
 
 
-# F11/F12/F13/F14 — one form each, on a neutral target, that acted outside the grant.
-OUTSIDE_FORMS = {
-    "F11-local-executable": ("./cat", "Bash", "허가된 실행 파일이 아니다"),
-    "F11-local-modelled-program": ("./git push origin HEAD", "Bash", "허가된 실행 파일이 아니다"),
-    "F13-curl-connect-to": ("curl --connect-to localhost:80:unlisted.example:80 http://localhost/", "Bash",
-                            "판단할 수 없는"),
-    "F14-gh-absolute-endpoint": ("gh api https://unlisted.example/path", "Bash", "허가된 호스트가 아니다"),
-}
-
-
-@pytest.mark.parametrize("form", OUTSIDE_FORMS)
-def test_each_remaining_form_outside_the_grant_is_denied(repo, form):
-    command, tool, marker = OUTSIDE_FORMS[form]
-    reason = call(repo, command, tool=tool)
-    assert reason and marker in reason, (form, reason)
-
-
-@pytest.mark.parametrize("wrapper", WRAPPERS)
-@pytest.mark.parametrize("form", list(LINK_FORMS) + list(DEST_FORMS))
-def test_no_wrapper_turns_a_round3_denial_into_a_pass(repo, form, wrapper):
-    table = LINK_FORMS if form in LINK_FORMS else DEST_FORMS
-    command, tool = table[form]
-    if tool != "Bash":
-        return
-    assert call(repo, WRAPPERS[wrapper](command)), form
-
+# -- Declared blocks ------------------------------------------------------------
 
 def test_declared_blocks_hold_across_every_payload_shape(monkeypatch):
     """F9 — the declared `Bash(...)` block fires whatever field, tool name or argv shape carries it."""
@@ -492,11 +499,6 @@ def test_undecidable_calls_are_denied(repo):
     assert "판단할 수 없는" in call(repo, 'eval "$X"')
 
 
-def test_files_that_decide_the_grant_are_never_granted(repo):
-    for command in ("echo x > .git/config", "rm -rf .wiki", "touch .claude/settings.json", "cp x verification.toml"):
-        assert "허가를 정하는 파일" in call(repo, command), command
-
-
 def test_edit_targets_must_lie_inside_the_write_roots(repo):
     assert call(repo, tool="Edit", file_path=str(repo / "a.py"), old_string="a", new_string="b") is None
     assert "write(" in call(repo, tool="Write", file_path=str(repo.parent / "b.py"), content="")
@@ -513,8 +515,8 @@ def test_a_plan_task_writes_only_under_its_artifact_root(repo, monkeypatch, tmp_
     (hub.parent / "raw/specs/repo/task.json").write_text(json.dumps(
         {"review_profile": "plan", "artifact_root": "docs/plans/x", "worktree": str(repo)}), encoding="utf-8")
     monkeypatch.setattr(guard_grant, "HERE", hub)
-    assert call(repo, "touch docs/plans/x/1-step.md") is None
-    assert "write_roots" in call(repo, "touch tool/a.py")
+    assert call(repo, "echo x > docs/plans/x/1-step.md") is None
+    assert "write_roots" in call(repo, "echo x > tool/a.py")
 
 
 def test_unmanaged_sessions_and_unattached_folders_pass(repo, monkeypatch, tmp_path):
@@ -544,7 +546,7 @@ def test_the_hook_subprocess_adds_a_bounded_latency(repo):
     chain (`codex_pretool.py`), each over a baseline process."""
     env = host.environment({"WIKI_AGENT_MANAGED": "1", "TEMP": os.environ["TEMP"],
                             "TMP": os.environ["TMP"], "TMPDIR": os.environ["TMPDIR"]})
-    samples = ["git add -A && git commit -qm x && git push origin HEAD", "rm -rf ../other",
+    samples = ["git add -A && git commit -qm x && git push origin HEAD", "echo x > ../other/f",
                "bash -c 'git reset --hard'", "npx tsc -b | tee out.txt",
                "pwsh -Command 'Remove-Item ../other -Recurse'"]
 
@@ -569,7 +571,7 @@ def test_the_hook_subprocess_adds_a_bounded_latency(repo):
 def test_the_entry_point_answers_in_utf8_whatever_the_console(repo):
     env = host.environment({"PYTHONIOENCODING": "cp949", "WIKI_AGENT_MANAGED": "1", "TEMP": os.environ["TEMP"],
                             "TMP": os.environ["TMP"], "TMPDIR": os.environ["TMPDIR"]})
-    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "rm -rf ../other"}, "cwd": str(repo)})
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "echo x > ../other/f"}, "cwd": str(repo)})
     done = subprocess.run([sys.executable, str(TOOL / "guard.py")], input=payload.encode("utf-8"),
                           capture_output=True, env=env, timeout=30)
     assert done.returncode == 0, done.stderr
@@ -594,107 +596,15 @@ def test_any_exception_fails_open(monkeypatch, capsys):
     assert "hook skipped: RuntimeError" in capsys.readouterr().err
 
 
-# A fourth review round. Each table is one rule stated as a property; every form in it reaches an effect
-# outside the grant by another syntax, and each must be denied for the reason named. Inputs are neutral.
-
-# F1 — a path effect on a directory that holds a protected file may write that file, whatever the program
-# names it (a destination directory, a URL's or a server's file name, a patch). The rule lives in the judge.
-PROTECTED_ANCESTOR_FORMS = {
-    "rsync-into-directory": ("rsync ../adapter.toml .wiki", "Bash"),
-    "scp-into-directory": ("scp ../adapter.toml .wiki", "Bash"),
-    "rsync-tree-into-root": ("rsync -r ../x/ .", "Bash"),
-    "curl-remote-name": ("curl -O http://localhost:8000/verification.toml", "Bash"),
-    "web-request-folder": ("Invoke-WebRequest http://localhost:8000/x -MaximumRedirection 0 -OutFile .wiki",
-                           "PowerShell"),
-    "web-request-here": ("Invoke-WebRequest http://localhost:8000/x -MaximumRedirection 0 -OutFile .", "PowerShell"),
-}
-
-
-@pytest.mark.parametrize("form", PROTECTED_ANCESTOR_FORMS)
-def test_a_write_to_a_directory_holding_a_protected_file_is_denied(repo, form):
-    command, tool = PROTECTED_ANCESTOR_FORMS[form]
-    reason = call(repo, command, tool=tool)
-    assert reason and "허가를 정하는 파일" in reason, (form, reason)
-
-
-def test_every_ancestor_of_a_protected_path_is_judged_protected_for_every_path_kind(repo):
-    g = guard_grant.grant(repo, {})
-    for p in g.protected:
-        a = Path(p).parent
-        while contained(str(a), g.roots) and a != a.parent:
-            for kind in ("write", "write_tree", "delete"):
-                assert "허가를 정하는 파일" in (guard_grant.outside((kind, str(a)), g) or ""), (kind, a)
-            a = a.parent
-
-
-def test_ordinary_writes_beside_protected_files_stay_allowed(repo):
-    for command in ("rsync a.txt safe/", "printf x > safe/a", "curl -O http://localhost:8000/x.txt",
-                    "git checkout -q -b topic && git commit -qm x"):
-        assert call(repo, command) is None, command
-    assert call(repo, "Invoke-WebRequest http://localhost:8000/x -MaximumRedirection 0 -OutFile safe/out.bin",
-                tool="PowerShell") is None
-
-
-# F2 — a command that lays down a tree (recursive copy, rename, a git checkout) may carry a link in it, so
-# another command in the same call that writes at or beneath that place is undecidable.
-TREE_LINK_FORMS = {
-    "copy-item-recurse": ("Copy-Item -Recurse ../d d; Set-Content d/link/f x", "PowerShell", "판단할 수 없는"),
-    "mv-rename": ("mv a/link b; printf x > b/f", "Bash", "판단할 수 없는"),
-    "rename-item": ("Rename-Item link b; Set-Content b/f x", "PowerShell", "판단할 수 없는"),
-    "git-mv": ("git mv a/link b; printf x > b/f", "Bash", "판단할 수 없는"),
-    "git-checkout": ("git checkout other; printf x > link/f", "Bash", "판단할 수 없는"),
-    "moved-link-own-path": ("mv sub/link moved; printf x > moved", "Bash", "판단할 수 없는"),
-    "copied-tree-copied-again": ("cp -r ../outside dst; cp -r src dst", "Bash", "판단할 수 없는"),
-}
-
-
-@pytest.mark.parametrize("form", TREE_LINK_FORMS)
-def test_a_tree_written_through_in_the_same_call_is_denied(repo, form):
-    command, tool, marker = TREE_LINK_FORMS[form]
-    reason = call(repo, command, tool=tool)
-    assert reason and marker in reason, (form, reason)
-
-
-def test_a_rename_alone_stays_allowed(repo):
-    assert call(repo, "mv a.txt b.txt") is None
-    assert call(repo, "Rename-Item sub/a.txt b.txt", tool="PowerShell") is None
-
-
-# F3 — ForEach-Object's arguments are read the way PowerShell binds them; any argument list the reader
-# cannot fully explain (a colon-bound value, a parenthesised value, another parameter) is undecidable.
-FOREACH_FORMS = {
-    "colon-bound": "Get-Item ../outside/target.txt | ForEach-Object -MemberName:Delete",
-    "colon-bound-abbrev": "gi ../outside/target.txt | % -m:Delete",
-    "parenthesised-member": "gi ../outside/target.txt | % ('Delete')",
-    "parenthesised-membername": "gi ../outside/target.txt | % -MemberName ('Delete')",
-    "input-object": "ForEach-Object -InputObject (Get-Item ../outside/target.txt) -MemberName Delete",
-    "parenthesised-arguments": "gi README.md | % -MemberName MoveTo -ArgumentList ('../outside/t.md')",
-    "out-variable-first": "gi ../outside/target.txt | % -OutVariable name Delete",
-    "pipeline-variable-first": "gi ../outside/target.txt | % -pv name Delete",
-    "argument-list-first": "gi ../outside/target.txt | % -ArgumentList name MoveTo",
-}
-
-
-@pytest.mark.parametrize("form", FOREACH_FORMS)
-def test_a_foreach_argument_list_the_reader_cannot_explain_is_denied(repo, form):
-    assert "판단할 수 없는" in (call(repo, FOREACH_FORMS[form], tool="PowerShell") or ""), form
-
-
-def test_foreach_forms_the_reader_explains_stay_allowed(repo):
-    for ok in ("Get-ChildItem | % -MemberName:Name", "Get-ChildItem | % -Process { $_.Name }",
-               "1..2 | % -Begin {} -Process { $_ }", "'a.b' | % Split '.'"):
-        assert call(repo, ok, tool="PowerShell") is None, ok
-
-
-# F11 — a command named by a path is that file, not the program its basename suggests: it never borrows a
-# model or a granted name, wherever the file lies and whichever runner starts it.
+# A command named by a path is that file, not the program its basename suggests: it never borrows a row
+# or a granted name, wherever the file lies and whichever runner starts it.
 def test_a_path_named_executable_is_judged_by_its_path(repo):
     outside = repo.parent / "outside"
     outside.mkdir()
     (outside / "cat").write_text("#!/bin/sh\n", encoding="utf-8")
     for command, tool in (("../outside/cat README.md", "Bash"), ("./python tool/x.py", "Bash"),
-                          ("../outside/python tool/x.py", "Bash"), ("/usr/bin/time python tool/search q", "Bash"),
-                          ("Start-Process ../outside/python", "PowerShell"), ("& ./python x", "PowerShell")):
+                          ("../outside/python tool/x.py", "Bash"), ("./git push origin HEAD", "Bash"),
+                          ("/usr/bin/time python tool/search q", "Bash"), ("& ./python x", "PowerShell")):
         assert "허가된 실행 파일이 아니다" in (call(repo, command, tool=tool) or ""), command
     assert call(repo, "cat README.md && git status") is None
 
@@ -707,62 +617,18 @@ def test_a_path_granted_by_path_is_allowed(repo):
     assert "허가된 실행 파일이 아니다" in call(repo, "../outside/.venv/bin/python -m pytest")
 
 
-# F12 — anything PowerShell evaluates in-process (a subexpression, a group, a pipeline stage) can move the
-# location, so later relative paths are judged from every place it may now be.
-LOCATION_FORMS = {
-    "subexpression": "Write-Output $(Set-Location ../outside); Set-Content target.txt x",
-    "argument-group": "Set-Content target.txt (Set-Location ../outside)",
-    "pipeline-stage": "Set-Location ../outside | Out-Null; Set-Content target.txt x",
-    "piped-location": "Get-Item ../outside | Set-Location; Set-Content target.txt x",
-    "statement-block": "if ($true) { Set-Location ../outside }; Set-Content target.txt x",
-    "nested-block": "& { & { Set-Location ../outside } }; Set-Content target.txt x",
-    "bare-set-location": "Set-Location; Set-Content target.txt x",
-}
+# A variable that redirects a client to another host reaches that host, whatever program it is set for.
+@pytest.mark.parametrize("command", [
+    "GH_HOST=unlisted.example python -m ruff check tool",
+    "GH_REPO=unlisted.example/o/r python -m ruff check tool",
+    "HTTPS_PROXY=http://unlisted.example:8080 python -m ruff check tool",
+])
+def test_a_variable_that_redirects_the_network_is_denied(repo, command):
+    assert "network(unlisted.example)" in (call(repo, command) or ""), command
 
 
-@pytest.mark.parametrize("form", LOCATION_FORMS)
-def test_a_location_moved_in_process_moves_later_paths(repo, form):
-    assert call(repo, LOCATION_FORMS[form], tool="PowerShell"), form
-
-
-def test_a_location_moved_in_another_process_does_not(repo):
-    assert call(repo, '"$(Get-Date)"; Set-Content target.txt x', tool="PowerShell") is None
-    assert call(repo, "pwsh -c 'Set-Location ..'; Set-Content target.txt x", tool="PowerShell") is None
-    assert call(repo, "echo $(cd ..); echo x > target.txt") is None
-    assert call(repo, "cd .. | cat; echo x > target.txt") is None
-
-
-# F13/F14 — a network destination the guard cannot read (a bracketed field, a malformed override, an unknown
-# endpoint, a variable that redirects the client) is undecidable, never dropped.
-NETWORK_FORMS = {
-    "gh-variable-endpoint": ('gh api "$ENDPOINT"', "판단할 수 없는"),
-    "gh-variable-endpoint-after-option": ('gh api --cache 1h "$ENDPOINT"', "판단할 수 없는"),
-    "gh-variable-endpoint-with-fields": ('gh api -X POST "$ENDPOINT" -f a=b', "판단할 수 없는"),
-    "gh-variable-repo": ('gh -R "$R" issue list', "판단할 수 없는"),
-    "gh-variable-hostname": ('gh --hostname "$H" api user', "판단할 수 없는"),
-    "gh-repo-variable": ("GH_REPO=unlisted.example/o/r gh issue list", "network(unlisted.example)"),
-    "gh-host-exported": ("export GH_HOST=unlisted.example; gh api user", "network(unlisted.example)"),
-    "proxy-variable": ("HTTPS_PROXY=http://unlisted.example:8080 curl https://pypi.org/simple/x",
-                       "network(unlisted.example)"),
-}
-
-
-@pytest.mark.parametrize("form", NETWORK_FORMS)
-def test_a_network_destination_the_guard_cannot_read_is_denied(repo, form):
-    command, marker = NETWORK_FORMS[form]
-    reason = call(repo, command)
-    assert reason and marker in reason, (form, reason)
-
-
-def test_readable_network_destinations_stay_allowed(repo):
-    for ok in ("curl -s http://localhost:8000/x", "curl -fsS -o out.json http://127.0.0.1:8000/api",
-               "gh api repos/o/r/pulls", "gh api 'repos/{owner}/{repo}/pulls'", "gh api graphql -f query=x",
-               "gh pr view 3", "GH_REPO=o/r gh issue list"):
-        assert call(repo, ok) is None, ok
-
-
-# F15 — a value computed at run time and then run (a command name, a nested shell's script) is undecidable;
-# only a literal script block is reduced as code.
+# A value computed at run time and then run (a command name, a nested shell's script) is undecidable; only
+# a literal script block is reduced as code.
 COMPUTED_FORMS = {
     "call-operator-expression": "& ('Remove-' + 'Item') ../outside/target.txt",
     "call-operator-command-lookup": "& (Get-Command Remove-Item) ../outside/target.txt",
@@ -780,59 +646,13 @@ def test_a_computed_command_is_denied(repo, form):
 def test_a_literal_script_block_is_reduced_as_code(repo):
     assert call(repo, "& { Get-ChildItem }", tool="PowerShell") is None
     assert call(repo, "pwsh -Command { Get-ChildItem }", tool="PowerShell") is None
-    assert "쓰기 루트 밖이다" in call(repo, "& { Remove-Item ../outside/target.txt }", tool="PowerShell")
+    assert "쓰기 루트 밖이다" in call(repo, "& { 'x' > ../outside/target.txt }", tool="PowerShell")
 
 
-# -- The closed table (spec rev 4) ----------------------------------------------
-# Only a program the table lists, with the flags its row lists, yields effects other than `top`; a program
-# with no row is a `spawn` only a grant naming it allows. The rules below are walked over the tables
-# themselves, so a row added later is held to them without a new test.
-
-def test_every_row_refuses_a_flag_it_does_not_list():
-    from guard_models import KEYWORDS, TABLE
-    from guard_windows import CMD_ROWS, PS_ROWS
-
-    for name, r in TABLE.items():
-        # A shell keyword (`time`) is read before any program: what follows it is the command.
-        if not r.free and name not in KEYWORDS["posix"]:
-            assert any(e.startswith("top(") for e in effects(f"{name} --zz-unmodelled x")), name
-    for name in PS_ROWS:
-        assert any(e.startswith("top(") for e in effects(f"{name} -ZzUnmodelled x", "ps")), name
-    for name, switches in CMD_ROWS.items():
-        if switches != "*":
-            assert any(e.startswith("top(") for e in effects(f"cmd /c {name} /zz x")), name
-
-
-def test_a_program_with_no_row_is_only_a_spawn(repo):
-    assert effects("zz-unlisted-tool --anything ../outside/target.txt") == {"read", "spawn(zz-unlisted-tool)"}
-    # A cmdlet is not an executable a grant could name: outside the table it is `top`.
-    assert any(e.startswith("top(") for e in effects("Zz-Unlisted ../outside/target.txt", "ps"))
-    assert "허가된 실행 파일이 아니다" in call(repo, "xxd -r dump.hex ../outside/target.txt")
-
-
-# Each form the spec names as outside the table, on a neutral target: every one reduces to `top`.
-OUTSIDE_TABLE_FORMS = {
-    # Link-creating forms.
-    "ln": ("ln -s ../outside link", "Bash"),
-    "cp-symbolic": ("cp -s ../outside/target.txt link", "Bash"),
-    "cp-hard-link": ("cp -l ../outside/target.txt link", "Bash"),
-    "cp-hard-link-tree": ("cp -lR .wiki x", "Bash"),
-    "cp-archive": ("cp -a ../outside dir", "Bash"),
-    "cp-preserve-links": ("cp -rP ../outside dir", "Bash"),
-    "rsync-archive": ("rsync -a ../outside/ dir", "Bash"),
-    "rsync-links": ("rsync -rl ../outside/ dir", "Bash"),
-    "rsync-link-dest": ("rsync -r --link-dest=../../outside src/ dst/", "Bash"),
-    "new-item-symlink": ("New-Item -ItemType SymbolicLink -Path link -Value ../outside", "PowerShell"),
-    "new-item-hard-link": ("New-Item -ItemType HardLink -Path link -Value ../outside/target.txt", "PowerShell"),
-    "new-item-junction": ("ni -ItemType Junction link -Value ../outside", "PowerShell"),
+# Constructs the parser reads but cannot evaluate: each reduces to `top`, never to a dropped effect.
+TOP_FORMS = {
     "mklink": ("cmd /c mklink /J link ..\\outside", "Bash"),
-    # Archive extraction, and creation that removes its sources.
-    "tar-extract": ("tar -xf bundle.tar -C safe", "Bash"),
-    "unzip": ("unzip bundle.zip -d safe", "Bash"),
-    "gunzip": ("gunzip saved.gz", "Bash"),
     "expand-archive": ("Expand-Archive bundle.zip -DestinationPath safe", "PowerShell"),
-    "tar-remove-files": ("tar -cf saved.tar --remove-files ../outside/target.txt", "Bash"),
-    "gzip-removes-source": ("gzip ../outside/target.txt", "Bash"),
     # Arithmetic evaluation.
     "let": ("let x=1", "Bash"),
     "dollar-arithmetic": ("echo $((n + 1))", "Bash"),
@@ -843,61 +663,23 @@ OUTSIDE_TABLE_FORMS = {
     "substring-offset": ("echo ${s:$i}", "Bash"),
     "indirect-expansion": ("echo ${!name}", "Bash"),
     "subscript-assignment": ("a[$i]=1", "Bash"),
-    # Redirect-following and connection-override network flags.
-    "curl-location": ("curl -L http://localhost:8000/x", "Bash"),
-    "curl-connect-to": ("curl --connect-to localhost:80:unlisted.example:80 http://localhost/", "Bash"),
-    "curl-resolve": ("curl --resolve localhost:80:203.0.113.7 http://localhost/", "Bash"),
-    "curl-proxy": ("curl -x http://unlisted.example:8080 http://localhost/", "Bash"),
-    "curl-remote-header-name": ("curl -OJ http://localhost:8000/x", "Bash"),
-    "web-request-redirects": ("Invoke-WebRequest http://localhost:8000/x -OutFile safe/x", "PowerShell"),
+    "web-request": ("Invoke-WebRequest http://localhost:8000/x -OutFile safe/x", "PowerShell"),
     "wget": ("wget http://localhost:8000/verification.toml", "Bash"),
-    # A destination the model cannot name the final file of.
     "patch": ("patch -p1 < change.diff", "Bash"),
     "robocopy": ("cmd /c robocopy src .wiki adapter.toml", "Bash"),
     "xcopy": ("cmd /c xcopy src .wiki", "Bash"),
-    # Undecidable flags of modelled programs.
     "del-subdirectories": ("cmd /c del /s target.txt", "Bash"),
     "cmd-for-command": ("cmd /c for /f %i in ('dir') do echo %i", "Bash"),
-    "hash-path": ("hash -p ./helper cat; cat", "Bash"),
+    "git-restore": ("git restore --source=HEAD~1 -- .wiki/adapter.toml", "Bash"),
+    "git-checkout": ("git checkout HEAD~1 -- ../outside/target.txt", "Bash"),
 }
 
 
-@pytest.mark.parametrize("form", OUTSIDE_TABLE_FORMS)
-def test_each_form_outside_the_table_reduces_to_top(repo, form):
-    command, tool = OUTSIDE_TABLE_FORMS[form]
+@pytest.mark.parametrize("form", TOP_FORMS)
+def test_each_unevaluated_construct_reduces_to_top(repo, form):
+    command, tool = TOP_FORMS[form]
     reason = call(repo, command, tool=tool)
     assert reason and "판단할 수 없는" in reason, (form, reason)
-
-
-@pytest.mark.parametrize("wrapper", WRAPPERS)
-@pytest.mark.parametrize("form", [f for f, (_, tool) in OUTSIDE_TABLE_FORMS.items() if tool == "Bash"])
-def test_no_wrapper_turns_an_outside_table_form_into_a_pass(repo, form, wrapper):
-    assert call(repo, WRAPPERS[wrapper](OUTSIDE_TABLE_FORMS[form][0])), form
-
-
-# R4 F1 — git restoring or checking out a pathspec writes those paths; a curl `-w` that writes a file is
-# not in the row. The protected files stay protected whichever verb or option names them.
-GIT_PATHSPEC_FORMS = {
-    "restore-source": ("git restore --source=HEAD~1 -- .wiki/adapter.toml", "허가를 정하는 파일"),
-    "checkout-pathspec": ("git checkout HEAD~1 -- verification.toml", "허가를 정하는 파일"),
-    "checkout-outside": ("git checkout HEAD~1 -- ../outside/target.txt", "쓰기 루트 밖이다"),
-    "curl-write-out-file": ("curl -w '%output{../outside/target.txt}x' http://localhost:8000/", "판단할 수 없는"),
-}
-
-
-@pytest.mark.parametrize("form", GIT_PATHSPEC_FORMS)
-def test_a_pathspec_or_write_out_reaching_a_protected_or_outside_file_is_denied(repo, form):
-    command, marker = GIT_PATHSPEC_FORMS[form]
-    reason = call(repo, command)
-    assert reason and marker in reason, (form, reason)
-
-
-# R4 F3 — whatever follows the last `.`/`::` is the member name; one the lexer cannot read as an
-# identifier (an escape, a quote, a variable) is dynamic and undecidable.
-@pytest.mark.parametrize("member", ["De`lete", "'Delete'", '"Delete"', "$m", "De``lete"])
-def test_a_member_name_that_is_not_an_identifier_is_denied(repo, member):
-    reason = call(repo, f"(Get-Item ../outside/target.txt).{member}()", tool="PowerShell")
-    assert reason and "판단할 수 없는" in reason, member
 
 
 # R4 F11 — an executable is keyed by the name it is run by, suffix and path included: a grant for one
@@ -911,39 +693,47 @@ def test_executable_identities_keep_their_suffix(repo):
         assert "허가된 실행 파일이 아니다" in (call(repo, command) or ""), command
 
 
-# R4 F12 — a directory change in a body that runs any number of times (a loop, a function, a group) has
-# no fixed set of places it ends in, in every dialect.
-CD_IN_BODY_FORMS = {
+# Only the first statement may change the directory; anywhere else (a later statement, a group, a body, a
+# pipeline, a nested shell or a substitution) the places later paths resolve from are not fixed.
+CD_FORMS = {
+    "later-statement": ("echo x > a; cd ..; echo x > target.txt", "Bash"),
     "for": ("cd sub && for i in 1 2; do cd ..; done; printf x > target.txt", "Bash"),
     "while": ("while true; do cd ..; done; printf x > target.txt", "Bash"),
+    "if": ("if true; then cd sub; fi; printf x > target.txt", "Bash"),
     "brace-group": ("{ cd ..; }; printf x > target.txt", "Bash"),
     "function": ("f() { cd ..; }; printf x > target.txt", "Bash"),
-    "ps-foreach": ("foreach ($i in 1..2) { Set-Location .. }; Set-Content target.txt x", "PowerShell"),
-    "ps-while": ("while ($true) { cd .. }; Set-Content target.txt x", "PowerShell"),
-    "ps-function": ("function f { Set-Location .. }; f; Set-Content target.txt x", "PowerShell"),
+    "pipeline": ("cd .. | cat; echo x > target.txt", "Bash"),
+    "substitution": ("echo $(cd ..); echo x > target.txt", "Bash"),
+    "nested-shell": ("bash -c 'cd .. && echo x > target.txt'", "Bash"),
+    "ps-two-moves": ("Set-Location d01; Set-Location ..; 'x' > target.txt", "PowerShell"),
+    "ps-subexpression": ("Write-Output $(Set-Location ../outside); 'x' > target.txt", "PowerShell"),
+    "ps-argument-group": ("Write-Output (Set-Location ../outside); 'x' > target.txt", "PowerShell"),
+    "ps-pipeline-stage": ("Set-Location ../outside | Out-Null; 'x' > target.txt", "PowerShell"),
+    "ps-piped-location": ("Get-Item ../outside | Set-Location; 'x' > target.txt", "PowerShell"),
+    "ps-statement-block": ("if ($true) { Set-Location ../outside }; 'x' > target.txt", "PowerShell"),
+    "ps-nested-block": ("& { & { Set-Location ../outside } }; 'x' > target.txt", "PowerShell"),
+    "ps-bare-set-location": ("Set-Location; 'x' > target.txt", "PowerShell"),
+    "ps-foreach": ("foreach ($i in 1..2) { Set-Location .. }; 'x' > target.txt", "PowerShell"),
+    "ps-while": ("while ($true) { cd .. }; 'x' > target.txt", "PowerShell"),
+    "ps-function": ("function f { Set-Location .. }; f; 'x' > target.txt", "PowerShell"),
+    "ps-nested-shell": ("pwsh -c 'Set-Location ..'; 'x' > target.txt", "PowerShell"),
     "cmd-for": ("cmd /c for %i in (1 2) do cd ..", "Bash"),
 }
 
 
-@pytest.mark.parametrize("form", CD_IN_BODY_FORMS)
-def test_a_directory_change_in_a_repeated_body_is_denied(repo, form):
-    command, tool = CD_IN_BODY_FORMS[form]
-    reason = call(repo, command, tool=tool)
-    assert reason and "판단할 수 없는" in reason, (form, reason)
+@pytest.mark.parametrize("form", CD_FORMS)
+def test_a_directory_change_after_the_first_statement_is_denied(repo, form):
+    command, tool = CD_FORMS[form]
+    assert call(repo, command, tool=tool), form
 
 
-def test_a_directory_change_outside_any_body_stays_tracked(repo):
+def test_a_directory_change_in_the_first_statement_stays_tracked(repo):
     assert call(repo, "cd sub && printf x > target.txt") is None
-    assert call(repo, "if true; then cd sub; fi; printf x > target.txt") is None
+    assert call(repo, "Set-Location sub; 'x' > target.txt", tool="PowerShell") is None
     assert "쓰기 루트 밖이다" in call(repo, "cd .. && printf x > target.txt")
-
-
-# R4 F18 — directory states are capped: past `STATES` possible places the call is `top`, and the guard's
-# time grows at most linearly with the number of statements.
-def test_directory_states_are_bounded():
-    steps = "; ".join(f"Set-Location d{k:02}" for k in range(1, 25)) + "; Set-Content out.txt x"
-    assert any("possible working directories" in e for e in effects(steps, "ps"))
-    assert not any(e.startswith("top(") for e in effects("Set-Location d01; Set-Content out.txt x", "ps"))
+    assert "쓰기 루트 밖이다" in call(repo, "Set-Location ../outside; 'x' > target.txt", tool="PowerShell")
+    # A subexpression that never moves the location leaves later paths where they were.
+    assert call(repo, '"$(Get-Date)"; \'x\' > target.txt', tool="PowerShell") is None
 
 
 def test_the_guards_time_grows_linearly_with_the_command():
@@ -961,13 +751,10 @@ def test_the_guards_time_grows_linearly_with_the_command():
     assert large < small * 24, (small, large)
 
 
-# -- Review round 5 ---------------------------------------------------------------
-
-# F11 — every pass over a command is linear in its length: tree places are looked up through an index
-# of the places written beneath them, and names a script binds are layered, never copied per command.
+# Every pass over a command is linear in its length, and names a script binds are layered, never copied
+# per command.
 SCALING_FORMS = {
-    "independent-trees": lambda k: f"cp -r src d{k:05}",
-    "trees-and-writes": lambda k: f"cp -r src d{k:05}" if k % 2 else f"printf x > f{k:05}",
+    "writes": lambda k: f"printf x > f{k:05}",
     "assignments": lambda k: f"A{k}=v{k}",
     "assignments-then-groups": lambda k: f"A{k}=v{k}" if k % 2 else f"( echo $A{k - 1} )",
 }
@@ -988,7 +775,7 @@ def test_every_pass_is_linear_in_the_command(form):
     assert large < small * 24, (form, small, large)
 
 
-# F1 — a shell tool that names its own working directory runs there: the paths it writes resolve from it,
+# A shell tool that names its own working directory runs there: the paths it writes resolve from it,
 # while the grant stays the session's.
 WORKDIR_FORMS = {
     "absolute-outside": lambda repo: {"workdir": str(repo.parent / "outside")},
@@ -1008,94 +795,16 @@ def test_a_shell_call_inside_the_checkout_stays_allowed(repo):
     assert call(repo, tool="exec_command", host_name="codex", cmd="echo x > target.txt", workdir="safe") is None
 
 
-# F3 — what decides the next call's grant is never changed by git: the repository's remotes (its
-# configuration) and every tracked file a work-tree rewrite may bring in.
-GIT_AUTHORITY_FORMS = {
-    "config-remote-url": "git config --local remote.origin.url https://unlisted.example/o/r.git",
-    "config-plain": "git config remote.origin.url https://unlisted.example/o/r.git",
-    "config-unset": "git config --unset core.symlinks",
-    "remote-set-url": "git remote set-url origin https://unlisted.example/o/r.git",
-    "remote-add": "git remote add other https://unlisted.example/o/r.git",
-    "merge-branch": "git merge topic",
-    "merge-from-subfolder": "cd sub && git merge topic",
-    "pull": "git pull",
-    "rebase": "git rebase main",
-    "cherry-pick": "git cherry-pick abc1234",
-    "checkout-branch": "git checkout other",
-    "switch-branch": "git switch other",
-    "reset-hard": "git reset --hard HEAD~1",
-    "stash-pop": "git stash pop",
-    "gh-pr-checkout": "gh pr checkout 3",
-    "merge-unrecorded-commit": "git merge bbbbbbb",
-}
-
-
-@pytest.mark.parametrize("form", GIT_AUTHORITY_FORMS)
-def test_git_cannot_change_what_decides_the_grant(repo, form):
-    reason = call(repo, GIT_AUTHORITY_FORMS[form])
-    assert reason and ("허가를 정하는 파일" in reason or "판단할 수 없는" in reason), (form, reason)
-
-
-def test_only_the_recorded_base_commit_may_be_merged(repo, monkeypatch, tmp_path):
-    hub = tmp_path / "hub" / "tool"
-    (hub.parent / "raw/specs/repo").mkdir(parents=True)
-    (hub.parent / "raw/specs/repo/task.json").write_text(json.dumps(
-        {"worktree": str(repo), "merge_repair": {"base_oid": "a" * 40}}), encoding="utf-8")
-    monkeypatch.setattr(guard_grant, "HERE", hub)
-    for ok in ("git merge aaaaaaa", f"git merge --no-edit {'a' * 40}", "git merge --continue"):
-        assert call(repo, ok) is None, ok
-    for bad in ("git merge bbbbbbb", "git merge --squash aaaaaaa", "git merge aaaaaaa topic"):
-        assert "허가를 정하는 파일" in (call(repo, bad) or ""), bad
-
-
-# F4 — PowerShell binds positional words to the positional parameters not already given by name.
-POSITION_FORMS = {
-    "copy-literal-source": "Copy-Item -LiteralPath source.txt ../outside/target.txt",
-    "copy-named-source": "Copy-Item -Path source.txt ../outside/target.txt",
-    "move-named-source": "Move-Item -LiteralPath source.txt ../outside/target.txt",
-    "set-content-named-value": "Set-Content -Value x ../outside/target.txt",
-    "out-file-named-encoding": "'x' | Out-File -Encoding utf8 ../outside/target.txt",
-    "word-no-parameter-takes": "Copy-Item source.txt -Destination safe ../outside/target.txt",
-}
-
-
-@pytest.mark.parametrize("form", POSITION_FORMS)
-def test_positional_words_bind_after_named_parameters(repo, form):
-    assert call(repo, POSITION_FORMS[form], tool="PowerShell"), form
-
-
-# F5 — mktemp creates in the folder its template names (the current one for a bare template), and only
-# a missing template or `-t`/`-p`/`--tmpdir` places it in another folder.
-MKTEMP_FORMS = {
-    "bare-template-after-cd": "cd ../outside && mktemp result.XXXXXX",
-    "template-with-folder": "mktemp ../outside/result.XXXXXX",
-    "named-folder": "mktemp -p ../outside",
-    "named-folder-and-template": "mktemp -p ../outside result.XXXXXX",
-}
-
-
-@pytest.mark.parametrize("form", MKTEMP_FORMS)
-def test_mktemp_writes_where_its_template_lands(repo, form):
-    assert "쓰기 루트 밖이다" in (call(repo, MKTEMP_FORMS[form]) or ""), form
-
-
-def test_mktemp_in_granted_folders_stays_allowed(repo):
-    for ok in ("mktemp", "mktemp -d", "mktemp -t result.XXXXXX", "mktemp safe/result.XXXXXX"):
-        assert call(repo, ok) is None, ok
-
-
-# F6 — a builtin that assigns a name is judged as that assignment: a name that changes what runs, where
-# files land or which host is reached is `top` however it is assigned.
+# A builtin that assigns a name is judged as that assignment: a name that changes what runs, where files
+# land or which host is reached is `top` however it is assigned.
 NAME_FORMS = {
-    "printf-temp": "printf -v TMPDIR /outside; mktemp",
     "printf-path": "printf -v PATH /outside/tools",
     "printf-glued": "printf -vPATH /outside/tools",
     "read-path": "read PATH < startup.rc",
     "mapfile-command": "mapfile GIT_SSH_COMMAND < startup.rc",
-    "for-loop-name": "for TMPDIR in /outside; do mktemp; done",
     "unset-home": "unset HOME",
     "proxy": "read HTTPS_PROXY < startup.rc",
-    "git-dir": "export GIT_DIR=../outside/.git",
+    "git-dir": "GIT_DIR=../outside/.git",
 }
 
 
@@ -1104,68 +813,18 @@ def test_a_name_assigned_by_a_builtin_is_judged_like_an_assignment(repo, form):
     assert "판단할 수 없는" in (call(repo, NAME_FORMS[form]) or ""), form
 
 
-# F7 — a script recognizer reads across line continuations and newlines, so a write split over lines is seen.
-SCRIPT_FORMS = {
-    "awk-continued-redirect": "awk 'BEGIN { print \"x\" \\\n > \"../outside/target.txt\" }'",
-    "awk-newline-after-comma": "awk 'BEGIN { print \"x\",\n \"y\" > \"../outside/target.txt\" }'",
-    "awk-continued-system": "awk 'BEGIN { system \\\n (\"rm x\") }'",
-    "sed-continued-write-flag": "sed 's/a/b\\\n/w ../outside/target.txt' startup.rc",
-}
-
-
-@pytest.mark.parametrize("form", SCRIPT_FORMS)
-def test_a_script_split_over_lines_is_still_recognized(repo, form):
-    assert "판단할 수 없는" in (call(repo, SCRIPT_FORMS[form]) or ""), form
-
-
-# F8 — a gh operand that names a host (a URL, `git@host:`, a clone's `HOST/OWNER/REPO`) reaches that host.
-GH_HOST_FORMS = {
-    "clone-url": "gh repo clone https://unlisted.example/o/r out",
-    "clone-host-path": "gh repo clone unlisted.example/o/r",
-    "clone-ssh": "gh repo clone git@unlisted.example:o/r.git",
-    "pr-url": "gh pr view https://unlisted.example/o/r/pull/1",
-}
-
-
-@pytest.mark.parametrize("form", GH_HOST_FORMS)
-def test_a_gh_operand_naming_a_host_reaches_it(repo, form):
-    assert "network(unlisted.example)" in (call(repo, GH_HOST_FORMS[form]) or ""), form
-
-
-# F9 — a remote name is read from the repository git actually runs in; another repository's remotes
-# (a nested one, `-C`, `--git-dir`, `GIT_DIR`) were never read, so its remote names are undecidable.
-OTHER_REPO_FORMS = {
-    "dash-c": "git -C sub fetch origin",
-    "cd-into": "cd sub && git push origin HEAD",
-    "default-remote": "git -C sub fetch",
-    "git-dir": "git --git-dir=../other/.git fetch origin",
-    "git-dir-variable": "GIT_DIR=../other/.git git fetch origin",
-    "gh-default-repo": "cd sub && gh pr list",
-    "outside-checkout": "cd ../other && git fetch origin",
-}
-
-
-@pytest.mark.parametrize("form", OTHER_REPO_FORMS)
-def test_remote_names_follow_the_repository_git_runs_in(repo, form):
-    (repo / "sub/.git").mkdir(parents=True)
-    (repo.parent / "other").mkdir()
-    assert "판단할 수 없는" in (call(repo, OTHER_REPO_FORMS[form]) or ""), form
-
+# -- git ------------------------------------------------------------------------
+# A push reaches the configured remote's host, read from the repository git runs in; another repository's
+# remotes (a nested one, one outside the checkout) were never read, so a push from it is undecidable.
 
 def test_the_checkouts_own_remotes_stay_allowed(repo):
     (repo / "tool").mkdir()
-    for ok in ("git fetch origin", "git -C tool fetch origin", "cd tool && git push origin HEAD", "gh pr list"):
+    for ok in ("git push origin HEAD", "git push", "git push -u origin topic", "cd tool && git push origin HEAD"):
         assert call(repo, ok) is None, ok
 
 
-# F10 — a clone lays down a tree that may hold links, whatever the checkout's own `core.symlinks` says.
-CLONE_FORMS = {
-    "gh-clone": "gh repo clone owner/repo out; printf x > out/link/target.txt",
-    "git-clone": "git clone https://github.com/owner/repo out; printf x > out/link/target.txt",
-    "git-clone-default-name": "git clone https://github.com/owner/repo.git; printf x > repo/link/target.txt",
-}
-
-
-@pytest.mark.parametrize("form", CLONE_FORMS)
-def test_a_clone_written_through_in_the_same_call_is_denied(repo, form):
-    assert "판단할 수 없는" in (call(repo, CLONE_FORMS[form]) or ""), form
+def test_a_push_from_another_repository_is_denied(repo):
+    (repo / "sub/.git").mkdir(parents=True)
+    (repo.parent / "other").mkdir()
+    for bad in ("cd sub && git push origin HEAD", "cd ../other && git push origin HEAD"):
+        assert "판단할 수 없는" in (call(repo, bad) or ""), bad

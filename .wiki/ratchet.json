@@ -78,8 +78,8 @@
     },
     "tool/guard.py": {
       "dup": 0,
-      "lines": 834,
-      "reason": "The effect guard parses Bash, PowerShell and cmd into one effect lattice in a single hook process, which every tool call pays to start; splitting it would add imports to that path (PR #272)."
+      "lines": 1011,
+      "reason": "Review rounds added the run-time parts the core table rests on: here documents, ANSI-C and member lexing, bound constants, the first-statement directory rule and the shell-tool payload shapes; spec rev 5 then cut the per-program models out to guard_models.py rows (PR #272). Before that: The effect guard parses Bash, PowerShell and cmd into one effect lattice in a single hook process, which every tool call pays to start; splitting it would add imports to that path (PR #272)."
     },
     "tool/host_boundary.py": {
       "dup": 10,

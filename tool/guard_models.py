@@ -1,15 +1,17 @@
 """What each program does: a closed table of modelled programs, each with the flags it understands.
 
-`TABLE` is all the guard knows about programs. A row names a program, the
-flags it understands (`row`'s spec: one-letter flags, flags taking a value,
-long flags) and the model that maps its argv to effects: `rm a b` deletes `a`
-and `b`, `curl URL -o F` reaches the URL's host and writes `F`. `gate` runs
-before every model: a flag the row does not list is `top`, and so is a word
-computed at run time where a flag may stand, unless no option of the program
-writes, runs or connects (`inert`). Some rows exist only to refuse (`refuse`):
-links, extraction, patches, arithmetic. A program with no row is a `spawn` of
-that executable, which only a grant naming it allows. Nothing is modelled one
-form at a time: a denied ordinary command is answered by adding a row.
+`TABLE` is all the guard knows about programs, and it is kept small: programs
+that only read or print, `sort -o`/`uniq` writing their one output, `cd`,
+`find` without actions, nested shells, and git's `status`, `diff`, `log`,
+`show`, `rev-parse`, `add`, `commit` and `push` to a configured remote. A row
+names a program, the flags it understands (`row`'s spec: one-letter flags,
+flags taking a value, long flags) and the model that maps its argv to effects.
+`gate` runs before every model: a flag the row does not list is `top`, and so
+is a word computed at run time where a flag may stand, unless no option of the
+program writes, runs or connects (`inert`). Some rows exist only to refuse
+(`refuse`). A program with no row is a `spawn` of that executable, which only
+a grant naming it allows. A denied ordinary command is answered by adding a
+row in a later change, never by modelling one more form inside this one.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ import os
 import posixpath
 import re
 
-from guard import BLOCK, NULLS, Word, assignment, code, envs, moved_to, names_set, paths, resolve, top
+from guard import BLOCK, Word, code, moved_to, names_set, paths, resolve, top
 
 KEYWORDS = {
     "posix": {"if", "then", "elif", "else", "fi", "do", "done", "while", "until", "{", "}", "!", "time", "for",
@@ -206,15 +208,6 @@ def m_read(name, args, ctx):
     return set(), None
 
 
-def m_delete(name, args, ctx):
-    return writes("delete", parse(name, args)[0], ctx), None
-
-
-def m_create(name, args, ctx):
-    # A new directory is `dir`: making one at a place never writes through what is there.
-    return writes("dir" if name == "mkdir" else "write", parse(name, args)[0], ctx), None
-
-
 def m_output(name, args, ctx):
     """A reader that writes only where `-o`/`--output` points, or (`uniq`) to its second operand."""
     pos, vals, _ = parse(name, args)
@@ -222,176 +215,20 @@ def m_output(name, args, ctx):
     return out | (paths("write", pos[1], ctx) if name == "uniq" and len(pos) > 1 else set()), None
 
 
-def basename(text: str) -> str:
-    return re.split(r"[\\/]", text.rstrip("/\\"))[-1]
-
-
-def into_dir(pos: list, dest: list, ctx, kind: str = "write") -> set:
-    """A directory destination writes `<dir>/<source-basename>`, not just the directory.
-
-    A `-t`/`--target-directory` option, or the last operand of a two-or-more
-    operand copy, may be an existing directory, so the real target is a
-    descendant of it. Naming that descendant catches a copy into a protected
-    file's parent (`cp x .wiki`), which a bare-directory write would miss. A
-    tainted end is already a `top` from the directory write itself.
-    """
-    dirs = list(dest)
-    srcs = list(pos)
-    if not dest:
-        dirs = [w for w in pos if not w.why and re.search(r"[\\/]$", w.text)]
-        if len(pos) >= 2 and not pos[-1].why and pos[-1] not in dirs:
-            dirs.append(pos[-1])
-        srcs = [w for w in pos if w not in dirs]
-    out = set()
-    for d in dirs:
-        if d.why or d.text.replace("\\", "/").rstrip("/").lower() in NULLS:
-            continue
-        for s in srcs:
-            if s.why or not s.text:
-                continue
-            out |= paths(kind, Word(d.text.rstrip("/\\") + "/" + basename(s.text)), ctx)
-    return out
-
-
-def shorts(flags: list) -> str:
-    return "".join(f[1:] for f in flags if not f.startswith("--"))
-
-
-def m_copy(name, args, ctx):
-    """`cp`/`mv` with only the flags their rows list: no link, backup or preserve mode is among them."""
-    pos, vals, flags = parse(name, args)
-    short = shorts(flags)
-    recursive = name == "cp" and ("r" in short or "R" in short or "--recursive" in flags)
-    follow = "L" in short or "--dereference" in flags
-    # A rename moves an entry as it is, a symlink included; a recursive copy that does not dereference
-    # (`-L`) reproduces the links in its source tree. Either lays down a tree that may hold a link.
-    kind = "linktree" if name == "mv" or recursive and not follow else "write_tree" if recursive else "write"
-    dest = vals.get("-t", []) + vals.get("--target-directory", [])
-    out = writes(kind, dest or pos[1:], ctx) | into_dir(pos, dest, ctx, kind)
-    if name == "mv":
-        out |= writes("delete", pos if dest else pos[:-1], ctx)
-    return out, None
-
-
-def m_dd(name, args, ctx):
-    return writes("write", [Word(w.text[3:], w.why) for w in args if w.text.startswith("of=")], ctx), None
-
-
-def m_mktemp(name, args, ctx):
-    """The folder mktemp creates its new file or folder in; the name itself is random, so never an existing file.
-
-    A template alone is relative to the current folder; `-p DIR`/`--tmpdir=DIR` or `-t` place it in that
-    folder or the temporary one; with no template it goes to the temporary folder.
-    """
-    pos, vals, flags = parse(name, args)
-    template = pos[0] if pos else None
-    base = vals.get("-p", []) + vals.get("--tmpdir", [])
-    if template is not None and template.why:
-        return top(f"{template.why} in a mktemp template"), None
-    if base or template is None or "t" in shorts(flags) or any(f.startswith("--tmpdir") for f in flags):
-        folder = base[0] if base else Word(ctx.temp)
-        rel = posixpath.dirname(template.text.replace("\\", "/")) if template is not None else ""
-        where = Word(posixpath.join(folder.text, rel) if rel else folder.text, folder.why)
-    else:
-        where = Word(posixpath.dirname(template.text.replace("\\", "/")) or ".")
-    return paths("write", where, ctx), None
-
-
-TAR = row(None, "-ctvzjJah -f: -C: -T: -X: --create --list --verbose --gzip --bzip2 --xz --auto-compress "
-                "--dereference --file: --directory: --exclude: --files-from: --exclude-from:")
-
-
-def m_tar(name, args, ctx):
-    """Creation and listing only: extraction, source removal and program options are not in `TAR`."""
-    if args and not args[0].why and args[0].text[:1] not in ("-", ""):
-        args = [Word("-" + args[0].text)] + args[1:]     # `tar czf x`: the first word is a flag cluster
-    if stop := gate(name, args, TAR):
-        return stop, None
-    _pos, vals, flags = getopt(args, TAR.takes)
-    if "c" in shorts(flags) or "--create" in flags:
-        return writes("write", vals.get("-f", []) + vals.get("--file", []), ctx), None
-    return set(), None
-
-
-SUFFIX = {"gzip": ".gz", "xz": ".xz", "bzip2": ".bz2", "zstd": ".zst"}
-
-
-def m_compress(name, args, ctx):
-    """A compressor writes `<file><suffix>`; one that removes its sources (no `-k`) is refused."""
-    pos, vals, flags = parse(name, args)
-    short = shorts(flags)
-    if not pos or "c" in short or "t" in short or "l" in short or {"--stdout", "--to-stdout", "--test", "--list"} \
-            & set(flags):
-        return set(), None
-    if not (name == "zstd" or "k" in short or "--keep" in flags):
-        return top(f"{name} removes its sources"), None
-    named = vals.get("-o", [])
-    return writes("write", named or [Word(w.text + SUFFIX[name], w.why) for w in pos], ctx), None
-
-
 def m_cd(name, args, ctx):
     pos = parse(name, args)[0]
-    if name == "popd" or pos and re.fullmatch(r"[+-]\d+", pos[0].text):
-        return set(), frozenset({None})            # a place on the directory stack
     return set(), moved_to(pos[0] if pos else None, ctx)
 
 
-# -- Text tools whose programs can write or run ------------------------------
-
-# A sed `w`/`W`/`e` command after any address or delimiter, or an `s` command with a `w`/`e` flag.
-# Both match across newlines: a backslash-newline continues a line, and an `s` replacement may hold one, so
-# a recognizer that stops at a newline would miss a write the program still performs.
-SED_RUNS = re.compile(r"(?:^|[^A-Za-z])[wWe](?:\s|$)|s(.).*?(?<!\\)\1.*?(?<!\\)\1[gpiImM0-9]*[we]", re.S)
-AWK_RUNS = re.compile(r"\bsystem\s*\(|\|\s*getline|\|&|\bprintf?\b[^;{}]*[>|]|@\s*(?:load|include)")
-
-
-def m_sed(name, args, ctx):
-    pos, vals, flags = parse(name, args)
-    if "-f" in vals or "--file" in vals:
-        return top("a sed script file"), None
-    given = vals.get("-e", []) + vals.get("--expression", [])
-    scripts, files = (given, pos) if given else (pos[:1], pos[1:])
-    out = set()
-    for s in scripts:
-        out |= top(f"{s.why} in a sed script") if s.why else top("a sed script that writes or runs") \
-            if SED_RUNS.search(re.sub(r"\\\r?\n", "\n", s.text)) else set()
-    # `-i[SUFFIX]`/`--in-place[=SUFFIX]` rewrites each file and keeps a backup named `<file>SUFFIX`.
-    suffixes = [f.partition("=")[2] for f in flags if f.startswith("--in-place")]
-    for f in flags:
-        if m := re.match(r"-[nEruzs]*i(.*)", f):       # letters before `-e`/`-f`/`-l` take no value
-            suffixes.append(m.group(1))
-    for suffix in suffixes:
-        if re.search(r"[*/\\]", suffix):
-            out |= top("a sed backup name the guard cannot place")
-        out |= writes("write", files + [Word(f.text + suffix, f.why) for f in files if suffix], ctx)
-    return out, None
-
-
-def m_awk(name, args, ctx):
-    pos, vals, _ = parse(name, args)
-    if "-f" in vals or "--file" in vals:
-        return top("an awk program file"), None
-    include = vals.get("-i", []) + vals.get("--include", [])
-    if any(w.why or w.text != "inplace" for w in include):
-        return top("an awk include file"), None
-    given = vals.get("-e", []) + vals.get("--source", [])
-    progs, files = (given, pos) if given else (pos[:1], pos[1:])
-    out = set()
-    for p in progs:
-        out |= top(f"{p.why} in an awk program") if p.why else top("an awk program that writes or runs") \
-            if AWK_RUNS.search(re.sub(r"\\\r?\n", "", p.text)) else set()
-    return out | (writes("write", files, ctx) if include else set()), None
-
-
 FIND_TESTS = set("""-print -print0 -ls -prune -quit -empty -true -false -readable -writable -executable -depth
--mount -xdev -follow -daystart -nouser -nogroup -noleaf -not -a -and -o -or ! ( ) , -delete""".split())
+-mount -xdev -follow -daystart -nouser -nogroup -noleaf -not -a -and -o -or ! ( ) ,""".split())
 FIND_VALUES = set("""-name -iname -path -ipath -wholename -iwholename -regex -iregex -regextype -type -xtype
 -maxdepth -mindepth -newer -anewer -cnewer -mtime -mmin -atime -amin -ctime -cmin -size -perm -user -group -uid
 -gid -links -inum -samefile -lname -ilname -printf -used -fstype""".split())
 
 
 def m_find(name, args, ctx):
-    """find's expression is its own flag table: every primary is listed, the rest is `top`."""
+    """find without actions: every test is listed; `-delete`, `-exec`, `-fprint`… are not, so they are `top`."""
     i = 0
     while i < len(args) and not args[i].why and args[i].text in ("-L", "-H", "-P"):
         i += 1
@@ -401,72 +238,16 @@ def m_find(name, args, ctx):
             return top(f"{args[i].why} where a find primary may stand"), None
         roots.append(args[i])
         i += 1
-    roots, out = roots or [here(ctx)], set()
     while i < len(args):
         w, t = args[i], args[i].text
         if w.why:
             return top(f"{w.why} in a find expression"), None
-        if t == "-delete":
-            out |= writes("delete", roots, ctx)
-        elif t in ("-exec", "-ok"):
-            j, argv = i + 1, []
-            while j < len(args) and args[j].text not in (";", "+"):
-                argv.append(Word("{}", "variable") if "{}" in args[j].text else args[j])
-                j += 1
-            out |= run_argv(argv, ctx)[0] if argv else set()
-            i = j
-        elif t in ("-fprint", "-fprint0", "-fls", "-fprintf") and i + 1 < len(args):
-            out |= paths("write", args[i + 1], ctx)
-            i += 2 if t == "-fprintf" else 1
-        elif t in FIND_VALUES or re.fullmatch(r"-newer[aBcmt][aBcmt]", t):
+        if t in FIND_VALUES or re.fullmatch(r"-newer[aBcmt][aBcmt]", t):
             i += 1
         elif t not in FIND_TESTS:
             return top(f"find {t}: a primary the table does not model"), None
         i += 1
-    return out, None
-
-
-def m_xargs(name, args, ctx):
-    pos, vals, flags = parse(name, args, stop=True)
-    argv, unknown = pos or [Word("echo")], Word("{xargs}", "variable")
-    rep = (vals.get("-I") or vals.get("--replace") or [None])[0]
-    rep = rep.text if rep else next((f[2:] or "{}" for f in flags if f.startswith("-i")), "")
-    argv = [unknown if w.text and rep and rep in w.text else w for w in argv] if rep else argv + [unknown]
-    return run_argv(argv, ctx)[0], None
-
-
-# -- Programs that run other programs ----------------------------------------
-
-def m_prefix(name, args, ctx):
-    pos, vals, flags = parse(name, args, stop=True)
-    if name == "command" and any(f in ("-v", "-V") for f in flags):
-        return set(), None
-    out = set()
-    if name == "env":
-        for w in vals.get("-S", []) + vals.get("--split-string", []):
-            out |= top(f"{w.why} in env -S") if w.why else code(w.text, "posix", ctx)
-        assigns = []
-        while pos and assignment(pos[0]):
-            assigns.append(pos.pop(0))
-        out |= envs(assigns, ctx)
-        ctx = replace(ctx, env=ctx.env + tuple(w.text for w in assigns))
-        if dirs := vals.get("-C", []) + vals.get("--chdir", []):
-            ctx = replace(ctx, cwds=moved_to(dirs[-1], ctx))
-    if name == "timeout":
-        pos = pos[1:]
-    if name == "time":
-        out |= writes("write", vals.get("-o", []) + vals.get("--output", []), ctx)
-    if not pos:
-        return out, None
-    more, moved = run_argv(pos, ctx)
-    # `command` and `builtin` run a builtin in this shell, so a `cd` behind them moves it.
-    return out | more, moved if name in ("command", "builtin") else None
-
-
-def m_trap(name, args, ctx):
-    if not args or args[0].text.startswith("-"):
-        return set(), None
-    return (top("variable in a trap") if args[0].why else code(args[0].text, "posix", ctx)), None
+    return set(), None
 
 
 def computed(ws: list) -> set | None:
@@ -592,58 +373,10 @@ def m_cmd(name, args, ctx):
     return from_stdin("cmd", ctx, name), None
 
 
-# -- Network -------------------------------------------------------------------
+# -- git -----------------------------------------------------------------------
 
-def m_curl(name, args, ctx):
-    """curl without redirects, proxies or connection overrides: those flags are not in its row."""
-    pos, vals, flags = parse(name, args)
-    urls = pos + vals.get("--url", [])
-    out = set()
-    for w in urls:
-        out |= network(w)
-    for w in vals.get("-w", []) + vals.get("--write-out", []):
-        # `%output{file}` switches the write-out to a file; `@file` reads a format that may do so.
-        if w.why or w.text.startswith("@") or "%output" in w.text.lower():
-            out |= top("a curl --write-out that may name an output file")
-    for w in vals.get("-o", []) + vals.get("--output", []):
-        if w.text != "-":
-            # `#1` is replaced by what a URL glob matched: the final name is not this text.
-            out |= top("a curl output name with a #N placeholder") if "#" in w.text else paths("write", w, ctx)
-    if "O" in shorts(flags) or "--remote-name" in flags:
-        # `-O` names the file after the URL path's last segment, in the current directory.
-        for w in urls:
-            base = re.sub(r"^[a-zA-Z][\w+.-]*://[^/]*", "", w.text).rsplit("/", 1)[-1]
-            if w.why or re.search(r"[?#%\[\]{}]", w.text) or base in ("", ".", ".."):
-                out |= top("a curl -O name the guard cannot read")
-            else:
-                out |= paths("write", Word(base), ctx)
-    return out, None
-
-
-REMOTE = re.compile(r"^(?:[^@/\\:\s]+@)?([^/\\:\s]{2,}|\[[^\]]+\]):")
-
-
-def m_rsync(name, args, ctx):
-    """`rsync`/`scp` without link modes, remote shells or program options: those are not in their rows."""
-    pos, _vals, flags = parse(name, args)
-    kind = "write_tree" if "r" in shorts(flags) or "--recursive" in flags else "write"
-    out = set()
-    for k, w in enumerate(pos):
-        if w.why:
-            out |= top(f"{w.why} in a {name} operand")
-        elif "://" in w.text:
-            out |= network(w)
-        elif REMOTE.match(w.text) or "::" in w.text:
-            out |= {("network", host_of(re.sub(r"^[^@]*@", "", w.text).split("::")[0] + ":"))}
-        elif k == len(pos) - 1 and k:
-            # The destination may be an existing directory the sources land in, by their own names.
-            out |= paths(kind, w, ctx) | into_dir(pos[:-1], [w], ctx, kind)
-    return out, None
-
-
-# -- git and gh ----------------------------------------------------------------
-
-# git's own options before the verb that take no value; `-C`, `-c`, `--git-dir`, `--work-tree` are read in `m_git`.
+# git's own options before the verb that take no value. `-C`, `-c`, `--git-dir`, `--work-tree` and `--exec-path`
+# change which repository, configuration or program runs: they are not here, so they are `top`.
 GIT_GLOBAL = {"--no-pager", "-P", "--no-optional-locks", "--literal-pathspecs", "--no-replace-objects", "--version",
               "--help"}
 # The options the log/diff family shares. `--output` is a write; `--ext-diff`, `--textconv` are not here.
@@ -656,113 +389,23 @@ GIT_LOG = ("-pusczwbRqiEm -M? -B? -C? -U: -n: -S: -G: -L: -O: --patch --no-patch
            "--remotes --author: --committer: --since: --until: --after: --before: --grep: --follow --reverse "
            "--no-merges --merges --first-parent --date: --abbrev-commit --left-right --cherry-pick --cherry-mark "
            "--boundary --topo-order --date-order --max-count: --skip: --source --no-walk --stat-width: "
-           "--output: --cc --full-history --simplify-by-decoration --show-signature --notes --no-notes")
+           "--cc --full-history --simplify-by-decoration --show-signature --notes --no-notes")
 # verb: (the flags its row understands, what its model does). A verb with no row is `top`.
 GIT_VERBS = {
     "status": ("-sbvz -u? --short --branch --porcelain --long --untracked-files --ignored --ahead-behind "
                "--no-ahead-behind --show-stash --column --no-column --renames --no-renames --verbose", "read"),
     "diff": (GIT_LOG, "read"), "log": (GIT_LOG, "read"), "show": (GIT_LOG, "read"),
-    "shortlog": ("-sneci --summary --numbered --email --committer --group: --since: --until: --all --format:", "read"),
     "rev-parse": ("-q --verify --quiet --short --abbrev-ref --symbolic --symbolic-full-name --show-toplevel "
                   "--show-prefix --show-cdup --git-dir --git-common-dir --absolute-git-dir --is-inside-work-tree "
                   "--is-inside-git-dir --is-bare-repository --is-shallow-repository --show-object-format --all "
                   "--branches --tags --remotes --not --default: --since: --until: --path-format: --git-path: --sq "
                   "--local-env-vars --show-superproject-working-tree --revs-only --no-revs --flags --no-flags", "read"),
-    "rev-list": ("-n: --count --all --branches --tags --remotes --left-right --left-only --right-only --cherry-pick "
-                 "--cherry-mark --max-count: --skip: --since: --until: --after: --before: --reverse --first-parent "
-                 "--no-merges --merges --boundary --objects --topo-order --date-order --author: --grep: --format: "
-                 "--pretty: --abbrev-commit --parents --children --quiet --not --ancestry-path", "read"),
-    "ls-files": ("-cdmoiskzutvf -x: -X: --cached --deleted --modified --others --ignored --stage --unmerged --killed "
-                 "--exclude: --exclude-from: --exclude-standard --error-unmatch --full-name --abbrev --directory "
-                 "--no-empty-directory --format: --eol --sparse", "read"),
-    "ls-tree": ("-rtdlz --name-only --name-status --object-only --long --full-name --full-tree --abbrev --format:",
-                "read"),
-    "cat-file": ("-tspe --allow-unknown-type", "read"),
-    "blame": ("-lswepfntc -L: --porcelain --line-porcelain --incremental --root --show-stats --since: --date: "
-              "--abbrev: --first-parent --ignore-rev: --color-lines --color-by-age", "read"),
-    "grep": ("-niwvlLcEFGPhHIqorzaWp -e: -f: -A: -B: -C: -m: --cached --untracked --no-index --exclude-standard "
-             "--no-exclude-standard --heading --break --line-number --column --ignore-case --word-regexp "
-             "--invert-match --files-with-matches --files-without-match --count --name-only --full-name --all-match "
-             "--and --or --not --max-depth: --threads: --only-matching --quiet --null --extended-regexp "
-             "--fixed-strings --perl-regexp --basic-regexp --text --function-context --show-function --color "
-             "--no-color", "read"),
-    "describe": ("--tags --all --always --long --dirty --broken --exact-match --contains --first-parent --abbrev: "
-                 "--match: --exclude: --candidates:", "read"),
-    "merge-base": ("-a --all --octopus --independent --is-ancestor --fork-point", "read"),
-    "show-ref": ("-qsd --heads --tags --head --verify --quiet --hash --dereference --abbrev --exists", "read"),
-    "check-ignore": ("-qvnz --quiet --verbose --non-matching --no-index --stdin", "read"),
-    "check-attr": ("-az --all --cached --stdin --source:", "read"),
-    "for-each-ref": ("--format: --sort: --count: --points-at: --merged: --no-merged: --contains: --no-contains: "
-                     "--shell --perl --python --tcl --exclude: --ignore-case --omit-empty", "read"),
-    "name-rev": ("--name-only --tags --refs: --exclude: --all --no-undefined --always", "read"),
-    "count-objects": ("-vH --verbose --human-readable", "read"),
-    "version": ("", "read"),
-    "ls-remote": ("-htq --heads --tags --refs --quiet --exit-code --get-url --sort: --symref", "ls-remote"),
-    "add": ("-AuNfvn --all --update --intent-to-add --force --verbose --dry-run --renormalize --ignore-errors "
-            "--ignore-removal --no-all --sparse --chmod:", "repo"),
-    "commit": ("-qanvs -F: -m: -C: --all --quiet --amend --no-edit --allow-empty --allow-empty-message --signoff "
-               "--verbose --no-verify --dry-run --author: --date: --fixup: --squash: --cleanup: --trailer: "
-               "--message: --file: --reuse-message: --only --include --reset-author --no-gpg-sign", "repo"),
-    "branch": ("-arvldDmMcCfqt -u: --all --remotes --verbose --list --show-current --delete --move --copy --force "
-               "--contains: --no-contains: --merged: --no-merged: --sort: --format: --points-at: --set-upstream-to: "
-               "--unset-upstream --track --no-track --column --no-column --color --no-color --quiet --abbrev:", "repo"),
-    "tag": ("-adlfni -m: -F: --annotate --delete --list --force --sort: --contains: --no-contains: --merged: "
-            "--points-at: --format: --column", "repo"),
-    "update-index": ("-q --skip-worktree --no-skip-worktree --assume-unchanged --no-assume-unchanged --refresh "
-                     "--really-refresh", "repo"),
-    "reflog": ("-n: --date: --all --format: --pretty: --oneline --expire: --expire-unreachable: --rewrite "
-               "--updateref --stale-fix --dry-run", "repo"),
-    "push": ("-ufdqvn -o: --set-upstream --force --force-with-lease --force-if-includes --tags --follow-tags "
-             "--delete --quiet --verbose --dry-run --no-verify --all --prune --atomic --porcelain --push-option:",
-             "push"),
-    "fetch": ("-qvpPtnfa -j: --quiet --verbose --prune --prune-tags --tags --no-tags --all --multiple --force "
-              "--dry-run --depth: --deepen: --shallow-since: --unshallow --jobs: --refetch --filter: --append "
-              "--atomic --keep --no-recurse-submodules", "fetch"),
-    "pull": ("-qvr -X: --quiet --verbose --ff-only --ff --no-ff --rebase --no-rebase --autostash --no-autostash "
-             "--no-edit --squash --no-squash --commit --no-commit --tags --no-tags --prune --depth: --all "
-             "--strategy-option: --no-recurse-submodules", "pull"),
-    "merge": ("-qvne -m: -F: -X: --stat --no-stat --ff --no-ff --ff-only --squash --no-squash --commit --no-commit "
-              "--edit --no-edit --abort --continue --quit --allow-unrelated-histories --strategy-option: --log "
-              "--no-log --autostash --no-verify --signoff --quiet --verbose", "tree"),
-    "rebase": ("-qvf -X: --onto: --continue --abort --skip --quit --autostash --no-autostash --root --keep-base "
-               "--update-refs --no-update-refs --empty: --rebase-merges --no-verify --force-rebase "
-               "--strategy-option: --committer-date-is-author-date --signoff --fork-point --no-fork-point --quiet",
-               "tree"),
-    "cherry-pick": ("-nxs -m: --no-commit --mainline: --continue --abort --skip --quit --ff --allow-empty "
-                    "--keep-redundant-commits --signoff", "tree"),
-    "revert": ("-ns -m: --no-commit --mainline: --no-edit --edit --continue --abort --skip --quit --signoff", "tree"),
-    "switch": ("-dfmqt -c: -C: --detach --force --discard-changes --merge --quiet --track --no-track --orphan: "
-               "--guess --no-guess --create: --force-create:", "checkout"),
-    "sparse-checkout": ("--cone --no-cone --sparse-index --no-sparse-index --skip-checks", "tree"),
-    "checkout": ("-fqtm -b: -B: --orphan: --detach --force --quiet --track --no-track --merge --ours --theirs",
-                 "checkout"),
-    "restore": ("-SWqm -s: --source: --staged --worktree --quiet --ours --theirs --merge --conflict: "
-                "--ignore-unmerged --overlay --no-overlay", "restore"),
-    "reset": ("-qN --soft --mixed --hard --merge --keep --quiet --no-refresh --refresh", "reset"),
-    "stash": ("-uakqS -m: --include-untracked --all --keep-index --no-keep-index --quiet --message: --staged --index",
-              "stash"),
-    "rm": ("-rfnq --cached --force --dry-run --quiet --ignore-unmatch --sparse", "rm"),
-    "mv": ("-fknv --force --dry-run --verbose", "mv"),
-    "worktree": ("-fqvnz -b: -B: --force --detach --checkout --no-checkout --lock --track --no-track --guess-remote "
-                 "--no-guess-remote --orphan --quiet --verbose --porcelain --dry-run --expire: --reason:", "worktree"),
-    "clone": ("-qn -b: -o: --quiet --no-checkout --branch: --origin: --depth: --shallow-since: --single-branch "
-              "--no-single-branch --no-tags --filter: --bare --sparse", "clone"),
-    "init": ("-q -b: --quiet --bare --initial-branch: --object-format:", "init"),
-    "config": ("-lz -f: --list --get --get-all --get-regexp --unset --unset-all --add --replace-all --rename-section "
-               "--remove-section --global --local --worktree --file: --show-origin --show-scope --name-only --type: "
-               "--bool --int --path --default: --null", "config"),
-    "remote": ("-vf -t: -m: --verbose --tags --no-tags --push --add --delete", "remote"),
-    "clean": ("-fdxXnq -e: --force --dry-run --quiet --exclude:", "clean"),
+    # Writes of the repository it runs in, and the push of its branch to a configured remote.
+    "add": ("-Auv --all --update --verbose", "repo"),
+    "commit": ("-qa -m: -F: --quiet --all --message: --file:", "repo"),
+    "push": ("-uq --set-upstream --quiet", "push"),
 }
 GIT = {verb: (row(None, spec, digits=True), kind) for verb, (spec, kind) in GIT_VERBS.items()}
-GIT_RUNS = re.compile(r"^alias\.|command|editor|pager|hookspath|askpass|program|helper|textconv|^filter\.|"
-                      r"\.cmd$|external|proxy|exec|fsmonitor|gpg|\.tool$|^include|^url\.|^core\.worktree$", re.I)
-
-
-def git_key(w: Word) -> set:
-    if w.why:
-        return top(f"{w.why} in a git config value")
-    return top("a git config key that runs a program") if GIT_RUNS.search(w.text.split("=")[0]) else set()
 
 
 def repo_roots(ctx) -> set | None:
@@ -790,253 +433,42 @@ def own_repo(ctx) -> bool:
     return bool(ctx.repo) and roots is not None and all(r.lower() == ctx.repo.rstrip("/").lower() for r in roots)
 
 
-def remotes_of(pos: list, ctx, push: bool) -> set:
+def pushed(pos: list, ctx) -> set:
+    """`git push [REMOTE [BRANCH]]`: the host of a remote the grant read. A URL, a path, a refspec with
+    `+`, `:` or a revision suffix (a forced push, a deletion, another ref) is not in the row."""
     named = dict(ctx.remotes)
-    own = own_repo(ctx)
-    if not pos:
-        return {("network", h) for h in named.values()} if own else top("the remotes of another repository")
-    w, t = pos[0], pos[0].text
-    if w.why:
-        return top(f"{w.why} in a git remote")
-    if t in named and own:
-        return {("network", named[t])}
-    if "://" in t and not t.startswith("file:"):
-        return network(w)
-    if REMOTE.match(t):
-        return {("network", host_of(t))}
-    if "/" in t or "\\" in t or t.startswith("."):
-        return paths("write", w, ctx) if push else set()
-    return top(f"git remote {t} is not configured" if own else f"git remote {t} of another repository")
-
-
-def cloned(pos: list, ctx) -> set:
-    """The tree a clone lays down: into the named directory, or one named after the repository. A new
-    repository's `core.symlinks` is not the checkout's, so its tree may always hold a link."""
-    base = re.sub(r"\.git$", "", re.split(r"[/:\\]", pos[0].text.rstrip("/"))[-1])
-    return paths("linktree", pos[1] if len(pos) > 1 else Word(base, pos[0].why), ctx)
-
-
-def based(pos: list, flags: list, ctx) -> bool:
-    """`git merge <commit>` naming exactly the base commit the server asked this task to merge."""
-    oid = pos[0].text.lower() if len(pos) == 1 and not pos[0].why else ""
-    return bool(ctx.merge_base) and len(oid) >= 7 and ctx.merge_base.startswith(oid) and not set(flags) - {
-        "--no-edit", "--no-ff", "--no-commit", "--quiet", "-q", "--edit", "--commit", "-m"}
-
-
-def rewritten(g, trusted: bool) -> set:
-    """A verb that moves the work tree to another commit: it may change any tracked file, so it is a tree
-    write of each work tree, which `outside` refuses wherever that tree holds a file deciding the grant.
-    Only a merge of the exact base commit the server recorded is trusted; its links are still tracked."""
-    roots = repo_roots(g)
-    if roots is None:
-        return top("a git verb that rewrites a work tree it cannot place")
-    # Without links (`core.symlinks` off) it writes files under the tree but makes no link to write through.
-    out = set() if trusted else {("write_tree" if g.git_links else "write", r) for r in roots}
-    if g.git_links:
-        # Where git checks symlinks out as links, a rewritten work tree may hold one.
-        out |= {("repolinks", r) for r in roots}
-    return out
+    if not own_repo(ctx):
+        return top("git push from a repository the grant has not read")
+    if len(pos) > 2 or any(w.why for w in pos) or pos and pos[0].text not in named \
+            or len(pos) == 2 and re.search(r"[+:^~@{}]", pos[1].text):
+        return top("git push to anything but a configured remote and a branch")
+    return {("network", named[pos[0].text])} if pos else {("network", h) for h in named.values()}
 
 
 def m_git(name, args, ctx):
-    out, i, g = set(), 0, ctx
+    i = 0
     while i < len(args):
         w, t = args[i], args[i].text
         if w.why:
-            return out | top(f"{w.why} as a git option or verb"), None
-        if t in ("-C", "-c") and i + 1 < len(args):
-            v = args[i + 1]
-            if t == "-C":
-                g = replace(g, cwds=moved_to(v, g))
-            out |= git_key(v) if t == "-c" else set()
-            i += 2
-            continue
-        if t.startswith(("--git-dir", "--work-tree")):
-            # Another repository's directory: its remotes and its work tree are not the ones read.
-            return out | top(f"git {t.split('=')[0]} selects a repository the guard has not read"), None
+            return top(f"{w.why} as a git option or verb"), None
         if t not in GIT_GLOBAL:
             if t.startswith("-"):
-                return out | top(f"git {t}: an option the table does not model"), None
+                return top(f"git {t}: an option the table does not model"), None
             break
         i += 1
     if i >= len(args):
-        return out, None
+        return set(), None
     verb, rest = args[i].text, args[i + 1:]
     if verb not in GIT:
-        return out | top(f"git {verb}: a verb the table does not model"), None
+        return top(f"git {verb}: a verb the table does not model"), None
     r, kind = GIT[verb]
     if stop := gate(f"git {verb}", rest, r):
-        return out | stop, None
-    pos, vals, flags = getopt(rest, r.takes)
-    out |= writes("write", vals.get("--output", []), g)        # `git diff --output=f`
-    if kind == "read":
-        return out, None
-    if kind == "ls-remote":
-        return out | remotes_of(pos, g, False), None
-    # git's write of the repository it runs in is the granted git verb; `outside` judges its place only.
-    out |= paths("repo", here(g), g)
-    sub, short = pos[0].text if pos else "", shorts(flags)
-    pathspec_only = any(w.text == "--" and not w.why for w in rest)
-    rewrites = kind in ("tree", "pull") and not {"--continue", "--quit"} & set(flags) \
-        or kind == "checkout" and not pathspec_only and (
-            pos or not {"-b", "-B", "-c", "-C", "--orphan", "--create", "--force-create"} & set(vals)) \
-        or kind == "reset" and {"--hard", "--merge", "--keep"} & set(flags) \
-        or kind == "stash" and sub in ("", "push", "save", "pop", "apply", "branch")
-    if rewrites:
-        out |= rewritten(g, verb == "merge" and based(pos, flags, ctx))
-    named = "linktree" if ctx.git_links else "write"
-    if kind in ("push", "fetch", "pull"):
-        out |= remotes_of(pos, g, kind == "push")
-    elif kind in ("checkout", "restore"):
-        # Every operand may be a pathspec the verb rewrites from a commit or the index.
-        out |= writes(named, pos, g)
-    elif kind == "rm":
-        out |= writes("delete", pos, g)
-    elif kind == "mv" and len(pos) > 1:
-        # A rename moves a symlink without following it, whatever `core.symlinks` says.
-        out |= writes("linktree", pos[-1:], g) | into_dir(pos[:-1], pos[-1:], g, "linktree")
-        out |= writes("delete", pos[:-1], g)
-    elif kind == "clone" and pos:
-        out |= network(pos[0]) if ("://" in sub or REMOTE.match(sub)) else set()
-        out |= cloned(pos, g)
-    elif kind == "init" and pos:
-        out |= paths("write", pos[0], g)
-    elif kind == "worktree" and len(pos) > 1:
-        k = {"add": named, "move": "write", "remove": "delete"}.get(sub)
-        out |= paths(k, pos[-1] if sub == "move" else pos[1], g) if k else set()
-    elif kind == "config":
-        files = vals.get("-f", []) + vals.get("--file", [])
-        changes = len(pos) > 1 or any(f.startswith(("--add", "--replace", "--unset", "--rename", "--remove"))
-                                      for f in flags)
-        if changes and not files and "--global" not in flags:
-            # The repository's own configuration names its remotes, whose hosts the next call's grant reads.
-            return out | top("git config writes the repository configuration the grant is read from"), None
-        if "--global" in flags:
-            out |= paths("write", Word("~/.gitconfig"), g)
-        out |= writes("write", files, g)
-        out |= git_key(pos[0]) if changes else set()
-    elif kind == "remote":
-        if sub not in ("", "show", "get-url", "update", "prune") or "f" in short or "--add" in flags:
-            # `add`, `set-url`, `rename`…: a remote's URL is a host the next call's grant reads.
-            return out | top(f"git remote {sub}: writes the remotes the grant is read from"), None
-        if sub in ("update", "prune", "show"):
-            out |= remotes_of([], g, False)
-    elif kind == "clean" and "n" not in short and "--dry-run" not in flags:
-        # Untracked files anywhere in the tree go, the protected ones among them.
-        out |= paths("delete", here(g), g)
-    elif kind == "stash":
-        if {"u", "a"} & set(short) or {"--include-untracked", "--all"} & set(flags):
-            out |= paths("delete", here(g), g)
-        out |= writes(named, pos[1:], g) if sub == "push" else set()
-    return out, None
-
-
-GH_OUT = " -q: -t: --jq: --template: --json:"
-# (command, subcommand): the flags its row understands. `--web` (a browser) is in none of them.
-GH_COMMANDS = {
-    ("pr", "view"): "-c --comments" + GH_OUT,
-    ("pr", "list"): "-d -L: -s: -B: -H: -l: -a: -A: -S: --limit: --state: --base: --head: --label: --assignee: "
-                    "--author: --search: --draft" + GH_OUT,
-    ("pr", "diff"): "--name-only --patch --color:",
-    ("pr", "checks"): "-i: --watch --fail-fast --required --interval:" + GH_OUT,
-    ("pr", "status"): "-c --conflict-status" + GH_OUT,
-    ("pr", "create"): "-df -t: -b: -F: -B: -H: -r: -a: -l: -m: -p: --title: --body: --body-file: --base: --head: "
-                      "--reviewer: --assignee: --label: --milestone: --project: --draft --fill --fill-first "
-                      "--fill-verbose --no-maintainer-edit --dry-run",
-    ("pr", "merge"): "-smrd -b: -F: -t: -A: --squash --merge --rebase --delete-branch --auto --disable-auto --admin "
-                     "--match-head-commit: --subject: --body: --body-file: --author-email:",
-    ("pr", "comment"): "-b: -F: --body: --body-file: --edit-last",
-    ("pr", "edit"): "-t: -b: -F: -B: --title: --body: --body-file: --base: --add-label: --remove-label: "
-                    "--add-reviewer: --remove-reviewer: --add-assignee: --remove-assignee: --milestone:",
-    ("pr", "close"): "-c: --comment:",
-    ("pr", "reopen"): "-c: --comment:",
-    ("pr", "ready"): "--undo",
-    ("pr", "review"): "-acr -b: -F: --approve --comment --request-changes --body: --body-file:",
-    ("pr", "checkout"): "-f -b: --branch: --force --detach",
-    ("issue", "view"): "-c --comments" + GH_OUT,
-    ("issue", "list"): "-L: -s: -l: -a: -A: -S: -m: --limit: --state: --label: --assignee: --author: --search: "
-                       "--milestone:" + GH_OUT,
-    ("issue", "create"): "-t: -b: -F: -a: -l: -m: -p: --title: --body: --body-file: --assignee: --label: "
-                         "--milestone: --project:",
-    ("issue", "comment"): "-b: -F: --body: --body-file: --edit-last",
-    ("issue", "edit"): "-t: -b: -F: --title: --body: --body-file: --add-label: --remove-label: --add-assignee: "
-                       "--remove-assignee: --milestone:",
-    ("issue", "close"): "-c: -r: --comment: --reason:",
-    ("issue", "reopen"): "-c: --comment:",
-    ("run", "view"): "-v -j: -a: --job: --attempt: --log --log-failed --exit-status --verbose" + GH_OUT,
-    ("run", "list"): "-a -L: -b: -w: -s: -u: -e: -c: --limit: --branch: --workflow: --status: --user: --event: "
-                     "--commit: --all" + GH_OUT,
-    ("run", "watch"): "-i: --interval: --exit-status --compact",
-    ("run", "rerun"): "-d -j: --failed --debug --job:",
-    ("run", "cancel"): "",
-    ("repo", "view"): "-b: --branch:" + GH_OUT,
-    ("repo", "list"): "-L: --limit: --visibility: --source --fork --archived --no-archived --language: --topic:"
-                      + GH_OUT,
-    ("repo", "clone"): "-u: --upstream-remote-name: --no-upstream",
-    ("release", "view"): GH_OUT,
-    ("release", "list"): "-L: --limit: --exclude-drafts --exclude-pre-releases --order:" + GH_OUT,
-    ("workflow", "view"): "-y -r: --ref: --yaml",
-    ("workflow", "list"): "-a -L: --limit: --all" + GH_OUT,
-    ("workflow", "run"): "-r: -f: -F: --ref: --raw-field: --field: --json",
-    ("api", ""): "-i -X: -H: -f: -F: -p: -q: -t: --method: --header: --raw-field: --field: --preview: --include "
-                 "--paginate --slurp --silent --verbose --cache: --hostname: --input: --jq: --template:",
-    ("auth", "status"): "-at -h: --hostname: --active --show-token",
-}
-GH = {key: row(None, spec + " -R: --repo:") for key, spec in GH_COMMANDS.items()}
-GH_ANY_TAKES = frozenset().union(*(r.takes for r in GH.values()))
-
-
-def m_gh(name, args, ctx):
-    if not args or args[0].text in ("--version", "version", "help", "--help"):
-        return set(), None
-    # gh finds its command among the words that are not flags, wherever the flags stand.
-    pos = getopt(args, GH_ANY_TAKES)[0]
-    verb = pos[0] if pos else Word()
-    sub = pos[1] if len(pos) > 1 and verb.text != "api" else Word()
-    if verb.why or sub.why or (verb.text, sub.text) not in GH:
-        return top(f"gh {verb.text} {sub.text}: a command the table does not model".replace("  ", " ")), None
-    r = GH[(verb.text, sub.text)]
-    rest = [w for w in args if w is not verb and w is not sub]
-    if stop := gate(f"gh {verb.text}", rest, r):
         return stop, None
-    pos, vals, flags = getopt(rest, r.takes)
-    verb, sub = verb.text, sub.text
-    env = dict(a.split("=", 1) for a in ctx.env if "=" in a)
-    out = set()
-    for w in vals.get("--hostname", []) or [Word(env.get("GH_HOST", "github.com"))]:
-        out |= network(w)
-    # `-R`/`--repo` and `GH_REPO` are `[HOST/]OWNER/REPO`: a host when there are three parts, unknown if unread.
-    for repo in vals.get("-R", []) + vals.get("--repo", []) + [Word(env.get("GH_REPO", ""))]:
-        if repo.why:
-            out |= top(f"{repo.why} in a gh repository")
-        elif repo.text.count("/") >= 2:
-            out |= network(Word(repo.text.split("/")[0]))
-    if verb == "api":
-        # `gh api` sends an absolute endpoint to that URL's own host, deciding after expansion, so an
-        # endpoint it cannot read may be one too.
-        for w in pos:
-            out |= network(w) if w.why or "://" in w.text else set()
-    # An operand that is a URL, `git@host:` or (for a clone) `HOST/OWNER/REPO` selects the host gh reaches.
-    for w in pos[:1] if verb == "api" else pos:
-        if w.why and (verb, sub) == ("repo", "clone"):
-            out |= top(f"{w.why} in the repository gh clones")
-        elif "://" in w.text or REMOTE.match(w.text):
-            out |= network(w)
-        elif (verb, sub) == ("repo", "clone") and w is pos[0] and w.text.count("/") >= 2:
-            out |= network(Word(w.text.split("/")[0]))
-    if not (vals.get("-R") or vals.get("--repo") or env.get("GH_REPO")) and verb not in ("api", "auth") \
-            and (verb, sub) not in (("repo", "clone"), ("repo", "list")):
-        # Without `-R`, gh reads the repository from the remotes where it runs.
-        out |= remotes_of([], ctx, False)
-    if (verb, sub) == ("repo", "clone") and pos:
-        if any(w.text == "--" and not w.why for w in rest):
-            return out | top("gh repo clone passes options on to git"), None
-        out |= cloned(pos, ctx)
-    elif (verb, sub) == ("pr", "checkout") or (verb, sub) == ("pr", "merge") and (
-            "-d" in flags or "--delete-branch" in flags or "d" in shorts(flags)):
-        # A checkout of the repository it runs in (deleting the branch switches to and pulls the base).
-        out |= paths("repo", here(ctx), ctx) | rewritten(ctx, False)
-    return out, None
+    if kind == "read":
+        return set(), None
+    # git's write of the repository it runs in is the granted git verb; `outside` judges its place only.
+    out = paths("repo", here(ctx), ctx)
+    return out | (pushed(getopt(rest, r.takes)[0], ctx) if kind == "push" else set()), None
 
 
 def subscripted(ws: list) -> set:
@@ -1044,12 +476,6 @@ def subscripted(ws: list) -> set:
     if any(w.why and w.why != "group" or "[" in w.text for w in ws):
         return top("arithmetic evaluation in a variable subscript")
     return set()
-
-
-def m_export(name, args, ctx):
-    words = parse(name, args)[0]
-    return envs([w for w in words if assignment(w)], ctx) | subscripted(
-        [w for w in words if not assignment(w)]), None
 
 
 def m_names(name, args, ctx):
@@ -1095,8 +521,6 @@ DIFF = ("-uqrNawBbiItcysdpe -U: -C: -x: -X: -L: -I: -F: -W: --unified: --context
         "--label: --exclude: --exclude-from: --color --side-by-side --width: --report-identical-files "
         "--suppress-common-lines --normal --minimal --speed-large-files --ignore-matching-lines: --expand-tabs "
         "--initial-tab --show-c-function --show-function-line: --no-dereference --to-file: --from-file:")
-EXPORT = "-aAfFglrtuxp"                 # no `-i` (arithmetic) and no `-n` (a name reference)
-PREFIX = dict(stop=True)
 
 TABLE = {
     # Readers: no option of these writes, runs or connects (`inert`); every flag they take is still listed.
@@ -1192,77 +616,14 @@ TABLE = {
                           "--ignore-nonprinting --stable --check --zero-terminated --buffer-size: --parallel: --debug"),
     "uniq": row(m_output, "-cdDiuz -f: -s: -w: --count --repeated --unique --ignore-case --skip-fields: "
                           "--skip-chars: --check-chars: --zero-terminated --all-repeated --group", inert=True),
-    "iconv": row(m_output, "-cs -f: -t: -o: --from-code: --to-code: --output: --list --silent"),
-    # Files.
-    "rm": row(m_delete, "-rRfivdI --recursive --force --interactive --verbose --dir --one-file-system "
-                        "--preserve-root", inert=True),
-    "rmdir": row(m_delete, "-pv --parents --ignore-fail-on-non-empty --verbose", inert=True),
-    "unlink": row(m_delete, "", inert=True),
-    "mkdir": row(m_create, "-pv -m: --parents --verbose --mode:", inert=True),
-    "touch": row(m_create, "-acmfh -d: -r: -t: --date: --reference: --no-create --no-dereference --time:",
-                 inert=True),
-    "chmod": row(m_create, "-RvfcrwxXst --recursive --verbose --changes --silent --quiet --reference: "
-                           "--preserve-root", inert=True),
-    "truncate": row(m_create, "-co -s: -r: --size: --reference: --no-create --io-blocks", inert=True),
-    "tee": row(m_create, "-aip --append --ignore-interrupts --output-error", inert=True),
-    "cp": row(m_copy, "-rRfinvuTL -t: --recursive --force --interactive --no-clobber --verbose --update "
-                      "--no-target-directory --dereference --target-directory: --strip-trailing-slashes "
-                      "--remove-destination --debug"),
-    "mv": row(m_copy, "-finvuT -t: --force --interactive --no-clobber --verbose --update --no-target-directory "
-                      "--target-directory: --strip-trailing-slashes --debug"),
-    "dd": row(m_dd, free=True),
-    "mktemp": row(m_mktemp, "-dqut -p: --tmpdir: --suffix: --directory --quiet --dry-run", inert=True),
-    "tar": row(m_tar, free=True),
-    "gzip": row(m_compress, "-kcvfqtlnN --keep --stdout --to-stdout --verbose --force --quiet --test --list "
-                            "--no-name --name --best --fast", digits=True),
-    "xz": row(m_compress, "-kcvfqtle -T: --keep --stdout --to-stdout --verbose --force --quiet --test --list "
-                          "--threads: --extreme", digits=True),
-    "bzip2": row(m_compress, "-kcvfqts --keep --stdout --verbose --force --quiet --test --small --best --fast",
-                 digits=True),
-    "zstd": row(m_compress, "-kcvfqt -o: -T: --keep --stdout --verbose --force --quiet --test --threads: --ultra "
-                            "--long", digits=True),
-    "cd": row(m_cd, "-LPe", inert=True), "pushd": row(m_cd, "-n", inert=True), "popd": row(m_cd, "-n", inert=True),
-    "export": row(m_export, "-fnp"), "declare": row(m_export, EXPORT), "typeset": row(m_export, EXPORT),
-    "local": row(m_export, EXPORT), "readonly": row(m_export, "-aAfp"),
-    # Text tools whose program text is read for writes and runs.
-    "sed": row(m_sed, "-nEruzs -e: -f: -l: -i? --quiet --silent --regexp-extended --null-data --zero-terminated "
-                      "--separate --posix --debug --sandbox --unbuffered --expression: --file: --line-length: "
-                      "--in-place"),
-    **{a: row(m_awk, "-F: -v: -f: -e: -i: --field-separator: --assign: --file: --source: --include:")
-       for a in ("awk", "gawk", "mawk", "nawk")},
+    # The working directory, honoured only in the first statement (`guard.run`).
+    "cd": row(m_cd, "-LP", inert=True),
     "find": row(m_find, free=True),
-    # Programs that run the command they are given.
-    "xargs": row(m_xargs, "-0rtpx -I: -n: -P: -L: -s: -d: -E: -a: -i? --null --no-run-if-empty --verbose "
-                          "--interactive --exit --max-args: --replace: --max-procs: --delimiter: --arg-file: "
-                          "--max-lines: --max-chars: --eof:", stop=True),
-    "env": row(m_prefix, "-i0 -u: -C: -S: --ignore-environment --null --unset: --chdir: --split-string:", **PREFIX),
-    "timeout": row(m_prefix, "-v -k: -s: --kill-after: --signal: --preserve-status --foreground --verbose", **PREFIX),
-    "nice": row(m_prefix, "-n: --adjustment:", digits=True, **PREFIX),
-    "nohup": row(m_prefix, "", **PREFIX), "builtin": row(m_prefix, "", **PREFIX), "winpty": row(m_prefix, "", **PREFIX),
-    "time": row(m_prefix, "-pav -o: -f: --portability --append --verbose --output: --format:", **PREFIX),
-    "command": row(m_prefix, "-pvV", **PREFIX),
-    "exec": row(m_prefix, "-cl -a:", **PREFIX),
-    "stdbuf": row(m_prefix, "-i: -o: -e: --input: --output: --error:", **PREFIX),
-    "trap": row(m_trap, free=True),
+    # Nested shells: the string they run is parsed and judged like the call itself.
     **{s: row(m_sh, free=True) for s in SHELLS},
     **{s: row(m_pwsh, free=True) for s in PS_SHELLS},
     "cmd": row(m_cmd, free=True),
-    # Network.
-    "curl": row(m_curl, "-sSfiIkvgGNOq#46 -o: -m: -w: -H: -X: -d: -A: -u: -e: -b: -F: -T: -r: --silent "
-                        "--show-error --fail --fail-with-body --include --head --insecure --verbose --globoff --get "
-                        "--compressed --no-buffer --no-progress-meter --progress-bar --remote-name --create-dirs "
-                        "--http1.1 --http2 --ipv4 --ipv6 --output: --max-time: --connect-timeout: --retry: "
-                        "--retry-delay: --retry-max-time: --retry-connrefused --retry-all-errors --write-out: "
-                        "--header: --request: --data: --data-raw: --data-binary: --data-urlencode: --json: "
-                        "--user-agent: --user: --referer: --cookie: --form: --form-string: --upload-file: --range: "
-                        "--url: --max-filesize: --limit-rate: --oauth2-bearer:"),
-    "rsync": row(m_rsync, "-rvzncuhqiPLtW --recursive --verbose --compress --dry-run --checksum --update "
-                          "--human-readable --quiet --itemize-changes --progress --partial --stats --delete "
-                          "--delete-after --times --copy-links --whole-file --exclude: --include: --exclude-from: "
-                          "--include-from: --max-size: --min-size: --bwlimit: --timeout: --port:"),
-    "scp": row(m_rsync, "-rqpCv346B -P: -i: -l:"),
     "git": row(m_git, free=True),
-    "gh": row(m_gh, free=True),
     # Listed only to refuse: what these do is decided by data, links or code the argv does not show.
     "ln": row(refuse("creates a link the guard cannot follow"), free=True),
     **{z: row(refuse("extracts an archive into names the archive decides"), free=True)
@@ -1299,20 +660,8 @@ def spawn_of(raw: str, ctx) -> set:
     return out
 
 
-# Kinds that may lay down a tree holding a link: a command carrying one is bundled so `guard.collapse`
-# can tell its own paths from what other commands write through it.
-LINKING = ("linktree", "write_tree", "repolinks")
-
-
 def run_argv(words: list, ctx) -> tuple[set, object]:
-    """Effects of running `words[0]` with the rest as its arguments."""
-    eff, moved = dispatch(words, ctx)
-    if any(e[0] in LINKING for e in eff):
-        eff = {("bundle", frozenset(eff))}
-    return eff, moved
-
-
-def dispatch(words: list, ctx) -> tuple[set, object]:
+    """Effects of running `words[0]` with the rest as its arguments, and where a `cd` moves to."""
     if not words:
         return set(), None
     raw, args = words[0].text, words[1:]
@@ -1324,15 +673,11 @@ def dispatch(words: list, ctx) -> tuple[set, object]:
     if ctx.d in ("ps", "cmd"):
         from guard_windows import CMD_BUILTINS, cmd_builtin, cmdlet, ps_cmdlet
 
-        if ctx.d == "ps" and raw.lower() not in ctx.funcs and (canon := cmdlet(raw)):
+        if ctx.d == "ps" and (canon := cmdlet(raw)):
             return ps_cmdlet(canon, args, ctx)
         if ctx.d == "cmd" and raw.lstrip("@").lower() in CMD_BUILTINS:
             return cmd_builtin(raw.lstrip("@").lower(), args, ctx)
     name = exe(raw)
-    if name in ctx.funcs:
-        # A function's body runs in the caller's context (cwd, variables), not where it
-        # was defined, so its effects cannot be placed from the definition alone.
-        return top(f"the shell function {name}"), None
     r = TABLE.get(name)
     if r is None:
         # No row: the program is only a `spawn`, which a grant naming it allows and nothing else does.

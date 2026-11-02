@@ -67,14 +67,11 @@ class Ctx:
     remotes: tuple = ()                 # ((name, host), ...) of the checkout's git remotes
     stdin: object = None                # a here document's Word, or None
     piped: bool = False
-    funcs: set = field(default_factory=set, compare=False)
-    git_links: str = ""                 # the checkout when its git checks symlinks out as links, else ""
     env: tuple = ()                   # assignments in front of the current command
     # name -> literal the script assigned before here; a read-only view, shared rather than copied per command
     consts: Mapping = field(default_factory=dict, compare=False)
     sink: object = field(default=None, compare=False)   # a list collecting nested shell strings, or None
     repo: str = ""                      # the checkout `remotes` were read from, "" when none was
-    merge_base: str = ""                # the base commit the server asked this task to merge, "" when none
 
     def deeper(self, d: str | None = None, fresh: bool = True, **kw) -> "Ctx":
         # A new shell sees none of this one's unexported variables; `$(...)` and groups do.
@@ -465,8 +462,8 @@ def commands(toks: list, d: str) -> list:
 
 
 OPEN_KW, CLOSE_KW = {"if", "while", "until", "for", "case", "select", "{"}, {"fi", "done", "esac", "}"}
-# Bodies that run any number of times, or (a function's) wherever it is called: a `cd` there is `top`.
-LOOPS = {"while", "until", "for", "select", "{"}
+# Loops, functions and traps run their bodies any number of times, or wherever they are called: not modelled.
+REPEATS = {"while", "until", "for", "select", "foreach", "do", "function", "filter", "trap"}
 # Names whose value changes without an assignment in the script.
 DYNAMIC = {"pwd", "oldpwd", "random", "seconds", "lineno", "bashpid", "reply", "optarg", "optind", "ifs", "_",
            "args", "input", "matches", "this", "psitem", "lastexitcode", "error", "home", "pid", "null", "true",
@@ -582,13 +579,12 @@ def run(toks: list, ctx: Ctx, src: str = "") -> tuple[set, frozenset]:
                     stack.append(it[1].raw)
                 elif it[1].raw in CLOSE_KW and stack:
                     stack.pop()
-        # A PowerShell pipeline runs every stage in this runspace, so a stage that moves moves the session;
-        # a POSIX pipeline stage is a subshell, whose `cd` stays there.
-        if moved is not None and (ctx.d == "ps" or not piped_in and nxt not in ("|", "|&")):
-            if LOOPS.intersection(stack):
-                # Run any number of times, a directory change has no fixed set of places to end in.
-                out |= top("a directory change inside a loop, function or group")
-            pending = moved
+        if moved is not None:
+            if k or ctx.depth or stack or piped_in or nxt in ("|", "|&"):
+                # Only the call's own first statement may set where the rest runs.
+                out |= top("a directory change after the first statement")
+            else:
+                pending = moved
         # Only an assignment that runs at this level, not in a pipeline or a branch, binds what follows it.
         if once and not stack and join in (";", "\n", "&&") and not piped_in and nxt not in ("|", "|&"):
             bound = literal(items, ctx.d, consts, once)
@@ -651,18 +647,15 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
 
     eff, words, stdin, call, consts, redirs = {READ}, [], None, False, ctx.consts, []
     # PowerShell evaluates groups (`(…)`, `{…}` blocks it runs) and subexpressions (`$(…)`) in this
-    # runspace, so one that moves the location moves it for the rest of the command and the statements
-    # after it. A POSIX `(…)` or `$(…)` is a subshell and moves nothing here.
-    ps, start = ctx.d == "ps", ctx.cwds
-    loc = start
+    # runspace, so one that moves the location would move it for the rest of the call: `top`. A POSIX
+    # `(…)` or `$(…)` is a subshell and moves nothing here.
+    ps = ctx.d == "ps"
     for it in items:
         if it[0] == "g":
             if ctx.depth < DEPTH:
-                inner, after = run(it[2], ctx.deeper(fresh=False, cwds=loc))
-                if ps and it[1] == "{" and after != loc:
-                    # A script block is a loop body, a function or a branch: it may run any number of times.
-                    inner |= top("a directory change inside a loop, function or group")
-                loc = states(loc | after) if ps else loc
+                inner, after = run(it[2], ctx.deeper(fresh=False))
+                if ps and after != ctx.cwds:
+                    inner |= top("a directory change inside a group")
             else:
                 inner = top(f"nesting deeper than {DEPTH}")
             eff |= inner
@@ -676,17 +669,13 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
             if (d, text) == ARITH:
                 eff |= top("arithmetic evaluation, which runs what its variables hold")
                 continue
-            inner, after = run_code(text, d, replace(ctx, cwds=loc), fresh=False)
-            eff |= inner
-            loc = states(loc | after) if ps else loc
+            inner, after = run_code(text, d, ctx, fresh=False)
+            eff |= inner | (top("a directory change inside a subexpression") if ps and after != ctx.cwds else set())
         eff |= member_of(w)
         if it[0] == "r":
             redirs.append((it[2], w))
         else:
             words.append(w)
-    # The command's own paths resolve from wherever its expansions may have left the location.
-    ctx = replace(ctx, cwds=loc)
-    moved_here = loc if loc != start else None
     for op, target in redirs:
         if op in ("<<", "<<-", "<<<"):
             stdin = target
@@ -704,12 +693,10 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
         if ctx.d == "ps" and words[0].text.lower() == "foreach" and not (len(words) > 1 and words[1].why == "group"):
             break
         key = words.pop(0).text.lower()
-        if key in ("for", "select", "case", "foreach", "using", "param", "class", "enum", "data"):
-            # `for NAME in …` assigns NAME on every pass.
-            named = names_set(words[:1], ctx) if ctx.d == "posix" and key in ("for", "select") else set()
-            return eff | named | envs(env, ctx), moved_here
-        if key in ("function", "filter") and words:
-            ctx.funcs.add(words.pop(0).text.lower())
+        if key in REPEATS:
+            return eff | top(f"`{key}`: a loop, function or trap the table does not model"), None
+        if key in ("case", "using", "param", "class", "enum", "data"):
+            return eff | envs(env, ctx), None
     eff |= envs(env, ctx)
     ctx = replace(ctx, env=tuple(w.text for w in env))
     if ctx.d == "ps" and not call:
@@ -717,23 +704,18 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
         eff |= stop
     if ctx.d == "posix" and len(words) > 1 and words[1].why == "group" and words[1].text == "(...)" \
             and not words[0].why:
-        # `name() { ...; }` defines a POSIX function; the body follows as its own command. In PowerShell
-        # `name (expr)` passes the expression's value as an argument.
-        ctx.funcs.add(words[0].text.lower())
-        body, moved = simple([("w", w) for w in words[2:]], ctx)
-        if moved is not None:
-            body |= top("a directory change inside a loop, function or group")
-        return eff | body, moved_here
+        # `name() { ...; }` defines a POSIX function. In PowerShell `name (expr)` passes the expression's value.
+        return eff | top(f"the shell function {words[0].text}"), None
     if not words:
-        return eff, moved_here
+        return eff, None
     if words[0].why == "group":
         # `& (expr)` runs whatever command the expression evaluates to; only a literal block is code read here.
         computed = call and words[0].text != BLOCK
-        return eff | (top("a computed command name") if computed else set()), moved_here
+        return eff | (top("a computed command name") if computed else set()), None
     if words[0].why:
-        return eff | top(f"{words[0].why} as the command name"), moved_here
+        return eff | top(f"{words[0].why} as the command name"), None
     more, moved = run_argv(words, ctx)
-    return eff | more, moved_here if moved is None else moved
+    return eff | more, moved
 
 
 def assignment(w: Word) -> re.Match | None:
@@ -871,15 +853,6 @@ def real_path(p: str, windows: bool | None = None) -> str:
     return mod.normcase(p)
 
 
-def ancestors(real: str) -> list[str]:
-    """`real` and every directory above it, as `real_path` spells them."""
-    mod = ntpath if os.name == "nt" else posixpath
-    out = [real]
-    while (up := mod.dirname(out[-1])) != out[-1]:
-        out.append(up)
-    return out
-
-
 def contained(path: str, roots: list[str], windows: bool | None = None) -> bool:
     """Is `path` inside one of `roots` once links, junctions and `..` are resolved?"""
     mod = ntpath if (os.name == "nt" if windows is None else windows) else posixpath
@@ -923,69 +896,15 @@ def derive(command, dialect: str, ctx: Ctx) -> set:
     """Effects of a shell command: a string, or an argv list run without a shell."""
     from guard_models import run_argv
 
-    ctx = replace(ctx, d=dialect, funcs=set())   # functions are this call's own, never carried in
+    ctx = replace(ctx, d=dialect)
     try:
         if isinstance(command, list):
-            return collapse({READ} | run_argv([Word(str(a), quoted=True) for a in command], ctx)[0])
-        return collapse({READ} | reduce(lex(str(command), dialect), ctx, str(command)))
+            return {READ} | run_argv([Word(str(a), quoted=True) for a in command], ctx)[0]
+        return {READ} | reduce(lex(str(command), dialect), ctx, str(command))
     except (Unclosed, Unbounded) as error:
         return {READ} | top(str(error))
     except RecursionError:
         return top("nesting too deep to parse")
-
-
-PATH_KINDS = ("write", "write_tree", "delete", "dir", "linktree", "repo", "repolinks")
-# What each kind is judged as once folded: `repolinks` is a git verb rewriting its own work tree.
-FOLDED = {"dir": "write", "linktree": "write_tree", "repolinks": "repo"}
-
-
-def collapse(effs: set) -> set:
-    """Fold link-holding effects into path effects, judging each command's against the others' writes.
-
-    A link created in a call changes how later paths resolve, and `realpath` cannot see a
-    link that does not exist yet. Commands that create a link outright are not in the table
-    (`top`); what remains is a `linktree` or `write_tree`, a place whose entries the data
-    decides (a recursive copy, a rename, a git checkout), any of which may be a link. When
-    another command in the call writes or deletes at or under such a place, that write may
-    leave the grant through the link: the whole call is undecidable. Only creating a
-    directory (`dir`) at the place itself never writes through what is there. A command's
-    own effects (`run_argv` bundles them) never count against its own trees.
-    """
-    groups, loose = [], set()
-
-    def unpack(es, into):
-        for e in es:
-            if e[0] == "bundle":
-                own = set()
-                groups.append(own)
-                unpack(e[1], own)
-            else:
-                into.add(e)
-
-    unpack(effs, loose)
-    groups.append(loose)
-    trees = ("linktree", "write_tree", "repolinks")
-    # Every directory at or above each path effect, indexed once: a tree place then looks up which
-    # commands write at or beneath it, so the work grows with the effects, not with their pairs.
-    # `under[a]` holds up to two distinct command indices; `loose_under[a]` marks a loose non-tree write.
-    under, loose_under, real = {}, set(), {}
-    for j, g in enumerate(groups):
-        for kind, p in g:
-            if kind not in PATH_KINDS:
-                continue
-            r = real.setdefault(p, real_path(p))
-            for k, a in enumerate(ancestors(r)):
-                if kind == "dir" and k == 0:
-                    continue            # making a directory at a place never writes through what is there
-                hit = under.setdefault(a, [])
-                if j not in hit and len(hit) < 2:
-                    hit.append(j)
-                if g is loose and kind not in trees:
-                    loose_under.add(a)
-    slipped = any(any(j != k for j in under.get(real[p], ())) or (g is loose and real[p] in loose_under)
-                  for k, g in enumerate(groups) for kind, p in g if kind in trees)
-    out = {(FOLDED.get(e[0], e[0]), e[1]) for g in groups for e in g}
-    return out | top("a link is created and a path under it is written in the same command") if slipped else out
 
 
 def nested_bash_commands(command, dialect: str = "posix") -> list:
@@ -1028,8 +947,8 @@ def call_effects(tool: str, given: dict, ctx: Ctx, host: str, payload: dict) -> 
 def render(effect: tuple) -> str:
     if effect == READ:
         return effect[0]
-    # A tree (recursive copy, extraction) and git's write of its repository are writes to the person.
-    kind = "write" if effect[0] in ("write_tree", "repo") else effect[0]
+    # git's write of its repository is a write to the person.
+    kind = "write" if effect[0] == "repo" else effect[0]
     return f"{kind}({effect[1]})"
 
 
@@ -1066,8 +985,7 @@ def verdict(payload: dict, host: str = "claude") -> dict | None:
     if g is None:
         return None
     ctx = Ctx("posix", frozenset({run_dir(cwd, given) if tool in SHELL_TOOLS else posix(cwd)}),
-              posix(Path.home()), temps()[0].as_posix(), os.name == "nt", remotes=g.remotes,
-              git_links=g.git_links, repo=g.top, merge_base=g.merge_base)
+              posix(Path.home()), temps()[0].as_posix(), os.name == "nt", remotes=g.remotes, repo=g.top)
     bad = [(render(e), why) for e in sorted(call_effects(tool, given, ctx, host, payload)) if (why := outside(e, g))]
     if not bad:
         return None

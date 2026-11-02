@@ -13,9 +13,8 @@ def verdict(payload: dict) -> dict | None:
     import guard
     from apply import declared
 
-    # Read the command the one way the guard does: `command` or `cmd`, a string or an argv list,
-    # a `functions.`-prefixed or native tool name, PowerShell on a Codex-on-Windows shell. Checking
-    # the declarations against a different projection is validate-before-canonicalize (CWE-180).
+    # Read the command the one way the guard does (`command` or `cmd`, string or argv, any tool-name
+    # form, Codex's PowerShell); checking another projection is validate-before-canonicalize (CWE-180).
     raw_tool = str(payload.get("tool_name") or "")
     tool, raw, dialect = guard.shell_command(payload)
     command = (" ".join(map(str, raw)) if isinstance(raw, list) else str(raw)).strip()

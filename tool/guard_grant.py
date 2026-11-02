@@ -28,15 +28,12 @@ class Grant:
     executables: set
     hosts: set
     remotes: tuple
-    git_links: str = ""                 # the checkout, when git checks symlinks out as links there
     top: str = ""                       # the checkout the remotes were read from
-    merge_base: str = ""                # the base commit the server asked this task to merge, if any
 
 
 # Inside a write root, but they decide the grant or what runs next: never granted.
 PROTECTED = (".git", ".claude", ".codex", ".wiki/adapter.toml", "verification.toml")
 SEARCH = "python tool/search"
-GUARD_KEYS = ("write_roots", "network_hosts", "executables")
 
 
 def temps() -> list[Path]:
@@ -89,21 +86,6 @@ def remote_hosts(common: Path) -> tuple:
     return tuple(sorted(hosts.items()))
 
 
-def git_links(common: Path, top: Path) -> str:
-    """The checkout when its git writes symlinks as links (git's default), `""` when `core.symlinks` is off."""
-    try:
-        text = (common / "config").read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        text = ""
-    section, value = "", ""
-    for line in text.splitlines():
-        if m := re.match(r"\s*\[\s*([^\]\s]+)", line):
-            section = m.group(1).lower()
-        elif section == "core" and (m := re.match(r"\s*symlinks\s*=\s*(\S+)", line, re.I)):
-            value = m.group(1).lower()
-    return "" if value in ("false", "no", "off", "0") else top.as_posix()
-
-
 def task_spec(top: Path, gitdir: Path, main: Path) -> dict:
     """The hub's spec for the branch checked out here, when it names this checkout; `{}` otherwise."""
     try:
@@ -118,12 +100,6 @@ def task_spec(top: Path, gitdir: Path, main: Path) -> dict:
         return {}
     worktree = spec.get("worktree") if isinstance(spec, dict) else None
     return spec if worktree and Path(worktree).resolve() == top else {}
-
-
-def merge_base(spec: dict) -> str:
-    """The base commit the review loop asked this task to merge (`merge_repair`), as a full object id."""
-    oid = str((spec.get("merge_repair") or {}).get("base_oid") or "")
-    return oid.lower() if re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", oid) else ""
 
 
 def plan_root(top: Path, spec: dict) -> Path | None:
@@ -170,8 +146,7 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
     remotes = remote_hosts(common)
     hosts = {"127.0.0.1"} | {h for _, h in remotes} | {host_of(s) for s in strings("network_hosts")}
     protected = sorted({str(p / x) for p in (top, main) for x in PROTECTED})
-    return Grant([str(r) for r in roots], protected, executables, hosts, remotes, git_links(common, top),
-                 top.as_posix(), merge_base(spec))
+    return Grant([str(r) for r in roots], protected, executables, hosts, remotes, top.as_posix())
 
 
 def outside(effect: tuple, g: Grant) -> str | None:
