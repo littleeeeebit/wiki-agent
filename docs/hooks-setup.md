@@ -132,10 +132,13 @@ builtins, and `tool/guard_git.py` for git. The table holds only:
   `Add-Content`, `Clear-Content`, `Out-File`, `Tee-Object`, `New-Item` of a
   file or a folder, `Remove-Item`, `Copy-Item` (without `-Recurse`),
   `Move-Item`, `Rename-Item`, and cmd's `del`/`erase` (without `/s`),
-  `rd`/`rmdir`, `md`/`mkdir`, `copy` (without `/l`, of a file), `move` and
-  `ren`/`rename`. A copy or move writes its destination and the destination's
-  `<name of the source>` (where it lands when the destination is a folder);
-  a move or rename also deletes its source. A path PowerShell or cmd may read
+  `rd`/`rmdir`, `md`/`mkdir`, `move` and `ren`/`rename`. cmd's `copy` has no
+  row: a source an earlier statement turned into a folder has its files
+  written under names the command does not show. A copy or move writes its
+  destination and the destination's `<name of the source>` (where it lands
+  when the destination is a folder); a move or rename also deletes its
+  source, and a source named by a short (8.3) name, which lands under its
+  long one, is `top`. A path PowerShell or cmd may read
   as more than one file-system path is `top`: a wildcard (`*`, `?`, and in
   PowerShell `[`), a list (`a,b`), a script block, a provider or stream
   (`Env:X`, `Function:f`, `FileSystem::`, `f.txt:s`), cmd's `+`. So is a
@@ -242,7 +245,7 @@ there, not by loosening an existing one.
 | Effect | Granted when |
 |---|---|
 | `write`, `delete` | the path resolves (links, junctions and `..` followed) inside a write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder; each `[guard] write_roots` entry, relative to the checkout |
-| — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (`echo x > .wiki`, `echo x > .`). Below a write root, the same names at any depth, and a folder named `.wiki` (a folder moved onto it would put its `adapter.toml` there). A delete is also denied when anything below it is one of those names, a link or a junction, or when the folder has more than 20,000 entries to look through. Only git's own write of the repository it runs in (`add`, `commit`, `merge`, `push`, …) is judged by place alone |
+| — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (`echo x > .wiki`, `echo x > .`). Below a write root, the same names at any depth (spelled with the trailing dots or spaces Windows drops, too), and a folder named `.wiki` (a folder moved onto it would put its `adapter.toml` there). A delete is also denied when anything below it is one of those names, a link or a junction, or when the folder has more than 20,000 entries to look through. Only git's own write of the repository it runs in (`add`, `commit`, `merge`, `push`, …) is judged by place alone |
 | `spawn` | the executable is one that `gate_cmd`, `verification.toml`'s round and local commands, a `[checks]` command or `python tool/search` runs, or is listed in `[guard] executables`. A bare name is that name; a name with a path (`./tool`, `C:/x/python.exe`, `/usr/bin/time`) is that file, granted only by the same path. A git remote name counts only in the checkout's own repository: a push after a `cd` into another repository is `top` |
 | `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named); a remote at a local path, a URL rewrite (`insteadOf`) or `[include]` in any config file git reads (the repository's, global, XDG or system; the global and XDG files under every home git may take: `HOME`, `HOMEDRIVE`+`HOMEPATH` and `USERPROFILE`), a `[remote]` or `[branch]` section outside the repository's own config, `extensions.worktreeConfig`, or config syntax the guard does not decode (a key on a header's line, a continued, quoted or commented value), makes it `top`. `GH_HOST` and the proxy variables count as reaching their host (`GH_REPO` is `top`); a target whose host cannot be read is `top` |
 | `top` | never |

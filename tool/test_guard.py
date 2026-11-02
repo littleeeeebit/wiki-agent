@@ -308,7 +308,6 @@ HERE_ = C["cwd"]
     ("del /q a.txt", "cmd", {"delete(a.txt)"}),
     ("rd /s /q build", "cmd", {"delete(build)"}),
     ("md a\\b c", "cmd", {"write(a/b)", "write(c)"}),
-    ("copy /y a.txt b", "cmd", {"write(b)", "write(b/a.txt)"}),
     ("move a.txt b", "cmd", {"delete(a.txt)", "write(b)", "write(b/a.txt)"}),
     ("ren a.txt b.txt", "cmd", {"delete(a.txt)", "write(b.txt)"}),
 ])
@@ -328,8 +327,8 @@ def test_windows_write_rows_name_every_path_they_touch(command, dialect, expecte
     ("New-Item -ItemType $t -Path l", "ps"), ("Copy-Item a.txt", "ps"), ("Copy-Item -Recurse a b", "ps"),
     ("Rename-Item a.txt sub/b.txt", "ps"), ("Move-Item . b", "ps"), ("Remove-Item -Stream s a.txt", "ps"),
     ("Set-Content a.txt x y", "ps"),
-    ("del /s a.txt", "cmd"), ("del *.txt", "cmd"), ("copy a+b c", "cmd"), ("copy /l a b", "cmd"),
-    ("copy a.txt", "cmd"), ("move a,b c", "cmd"), ("ren a.txt sub\\b.txt", "cmd"), ("md", "cmd"),
+    ("del /s a.txt", "cmd"), ("del *.txt", "cmd"), ("copy a.txt b", "cmd"), ("copy /l a b", "cmd"),
+    ("Copy-Item -LiteralPath GIT~1 out", "ps"), ("Move-Item VERIFI~1.TOM out", "ps"), ("move a,b c", "cmd"), ("ren a.txt sub\\b.txt", "cmd"), ("md", "cmd"),
 ])
 def test_windows_write_rows_refuse_what_they_cannot_read(command, dialect):
     assert any(e.startswith("top(") for e in effects(command, dialect)), command
@@ -341,7 +340,7 @@ def test_windows_writes_inside_the_grant_pass(repo):
     for command in ("Set-Content out.txt hello", "New-Item -ItemType Directory build", "Remove-Item old -Recurse",
                     "Copy-Item a.txt b.txt", "Move-Item a.txt c.txt", "'x' | Out-File ../shared/f.txt"):
         assert call(repo, command, tool="PowerShell") is None, command
-    assert call(repo, 'cmd /c "md build2 && copy a.txt build2"') is None
+    assert call(repo, 'cmd /c "md build2 && move a.txt build2"') is None
 
 
 def test_a_delete_reaches_every_protected_name_below_it(repo):
@@ -359,9 +358,19 @@ def test_a_delete_reaches_every_protected_name_below_it(repo):
         assert "허가를 정하는 파일" in (call(repo, command, tool="PowerShell") or ""), command
 
 
-def test_a_copy_of_an_existing_folder_by_cmd_is_denied(repo):
-    (repo / "cfg").mkdir()
-    assert "판단할 수 없는" in call(repo, 'cmd /c "copy cfg out"')
+@pytest.mark.skipif(os.name != "nt", reason="Windows' spellings")
+def test_a_trailing_dot_or_space_still_names_a_protected_folder(repo):
+    for command in ("New-Item -ItemType Directory x/.git.", "New-Item -ItemType Directory 'x/.git '",
+                    "New-Item -ItemType Directory 'x/.claude.'", "Rename-Item a.txt .wiki."):
+        assert "허가를 정하는 파일" in (call(repo, command, tool="PowerShell") or ""), command
+    assert "허가를 정하는 파일" in (call(repo, 'cmd /c "md x\\.git."') or "")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows' spellings")
+def test_an_extended_unc_path_is_a_share_not_a_relative_path(repo):
+    for command in ("Set-Content '\\\\?\\UNC\\server\\share\\t.txt' x", "Remove-Item '//?/UNC/server/share/t.txt'"):
+        reason = call(repo, command, tool="PowerShell") or ""
+        assert "server/share/t.txt" in reason and "쓰기 루트 밖" in reason, command
 
 
 def test_a_delete_or_move_of_a_link_is_denied(repo, tmp_path):

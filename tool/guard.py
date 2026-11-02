@@ -782,7 +782,7 @@ def resolve(text: str, cwd: str | None, ctx: Ctx) -> str | None:
         raise ValueError("another user's home")
     if ctx.windows:
         if t.startswith("//?/"):
-            t = t[4:]
+            t = "//" + t[8:] if t[4:8].lower() == "unc/" else t[4:]     # `\\?\UNC\host\share` is a share
         if ctx.d == "posix" and (m := re.match(r"^/([A-Za-z])(/|$)", t)):
             t = m.group(1).upper() + ":/" + t[3:]
         elif ctx.d == "posix" and (t == "/tmp" or t.startswith("/tmp/")):

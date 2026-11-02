@@ -255,8 +255,8 @@ def protected_below(target: str, roots: list) -> bool:
     where = real_path(target)
     for root in roots:
         if contained(target, [root]):
-            parts = re.split(r"[\\/]", os.path.relpath(where, real_path(root)).lower())
-            if {".claude", ".codex", "verification.toml"} & set(parts) or parts[-1] == ".wiki" \
+            parts = [p.rstrip(". ") or p for p in re.split(r"[\\/]", os.path.relpath(where, real_path(root)).lower())]
+            if {".git", ".claude", ".codex", "verification.toml"} & set(parts) or parts[-1] == ".wiki" \
                     or any(parts[i:i + 2] == [".wiki", "adapter.toml"] for i in range(len(parts))):
                 return True
     return False
@@ -314,7 +314,9 @@ def outside(effect: tuple, g: Grant) -> str | None:
     reaches_protected = kind != "repo" and any(contained(p, [target]) for p in g.protected)
     # A `.git` anywhere makes a repository whose configuration git would trust: no write lays one down. And a
     # protected name below any write root is another worktree's copy, which a commit there would carry home.
-    git_dir = kind != "repo" and (".git" in re.split(r"[\\/]", target.lower()) or protected_below(target, g.roots))
+    # Windows drops a name's trailing dots and spaces, so `.git.` makes `.git`.
+    names = {p.rstrip(". ") or p for p in re.split(r"[\\/]", target.lower())}
+    git_dir = kind != "repo" and (".git" in names or protected_below(target, g.roots))
     # A delete reaches whatever lies below it, another worktree's protected copy included.
     holds = kind == "delete" and holds_protected(target)
     if any(contained(target, [p]) for p in g.protected) or reaches_protected or git_dir or holds:

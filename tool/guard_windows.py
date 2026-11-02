@@ -16,9 +16,7 @@ from __future__ import annotations
 
 import re
 
-import os
-
-from guard import Word, envs, moved_to, paths, resolve, top
+from guard import Word, envs, moved_to, paths, top
 
 # Members that only read, whatever the receiver's type. Polymorphic or dispatching names
 # (replace, foreach, where, invoke, add, insert, get, getvalue, item, delete, copyto, …) are
@@ -255,6 +253,9 @@ def moves(src: Word, dest: Word, move: bool, rename: bool, ctx, cmd: bool = Fals
     base = re.split(r"[\\/]+", src.text.rstrip("\\/"))[-1]
     if literal_path(dest, ctx, cmd) is None or base in ("", ".", "..") or re.fullmatch(r"[A-Za-z]:", base):
         return top("a copy or move whose source or destination is not one literal path")
+    if "~" in base:
+        # A short (8.3) name: the copy lands under the long name (`GIT~1` is `.git`), which the text does not show.
+        return top("a copy or move of a short name, which lands under the long one")
     if rename:
         if re.search(r"[\\/]", dest.text):
             return top("a new name that is a path")
@@ -317,12 +318,13 @@ def ps_statement(words: list, ctx) -> tuple[list, set]:
 # cmd.exe builtins that only read or print, whatever their switches; `cd` is the location (`guard.run`).
 CMD_ROWS = {"cd", "chdir", "type", "echo", "dir", "ver", "vol", "cls", "exit", "rem", "where"}
 # Builtins that write, delete, copy or move the literal paths they name, with the switches they understand.
-# `del /s` (every subfolder) and `copy /l` (a link) are not listed.
+# `del /s` (every subfolder) is not listed.
 CMD_WRITES = {"del": "/f /q", "erase": "/f /q", "rd": "/s /q", "rmdir": "/s /q", "md": "", "mkdir": "",
-              "copy": "/y /-y /v", "move": "/y /-y", "ren": "", "rename": ""}
-# Every other builtin links, runs a command or a batch file, or sets the environment.
+              "move": "/y /-y", "ren": "", "rename": ""}
+# Every other builtin links, runs a command or a batch file, or sets the environment. `copy` of a source an
+# earlier statement turned into a folder writes that folder's files under names the command does not show.
 CMD_REFUSED = {"pushd", "popd", "set", "setlocal", "endlocal", "if", "for", "start", "mklink", "xcopy", "robocopy",
-               "call", "title", "color", "prompt", "pause", "break"}
+               "call", "title", "color", "prompt", "pause", "break", "copy"}
 CMD_BUILTINS = CMD_ROWS | set(CMD_WRITES) | CMD_REFUSED
 
 
@@ -350,17 +352,4 @@ def cmd_writes(name: str, args: list, ctx) -> set:
         return {e for w in ops for e in paths(kind, w, ctx)}
     if len(ops) != 2:
         return top(f"{name} without exactly a source and a destination")
-    if name == "copy" and any(os.path.isdir(p) for p in on_disk(ops[0], ctx)):
-        return top("copy of a folder, which writes its files under names the command does not show")
-    return moves(ops[0], ops[1], name != "copy", name in ("ren", "rename"), ctx, cmd=True)
-
-
-def on_disk(w: Word, ctx) -> list:
-    """Where `w` resolves from each directory the command may run in; unknown ones are skipped by the caller."""
-    out = []
-    for cwd in ctx.cwds:
-        try:
-            out.append(resolve(w.text, cwd, ctx) or "")
-        except ValueError:
-            out.append("")
-    return out
+    return moves(ops[0], ops[1], True, name in ("ren", "rename"), ctx, cmd=True)
