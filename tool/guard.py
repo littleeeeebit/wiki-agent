@@ -71,6 +71,7 @@ class Ctx:
     consts: Mapping = field(default_factory=dict, compare=False)
     sink: object = field(default=None, compare=False)   # a list collecting nested shell strings, or None
     repo: str = ""                      # the checkout `remotes` were read from, "" when none was
+    made: set = field(default_factory=set, compare=False)   # folders an earlier `mkdir` may have made, shared
 
     def deeper(self, d: str | None = None, fresh: bool = True, **kw) -> "Ctx":
         # A new shell sees none of this one's unexported variables; `$(...)` and groups do.

@@ -168,45 +168,88 @@ def writes(kind: str, ws: list, ctx) -> set:
     return out
 
 
-# Open default: these write or delete the paths they are given, judged without reading their options. A
-# flag's value is judged like a path too (`truncate -s 0 f` also writes `0`), which only errs inside the root.
-DELETERS, MAKERS, MOVERS = {"rm", "rmdir", "unlink", "shred"}, {"mkdir", "touch", "tee", "truncate"}, \
-    {"cp", "mv", "install", "ln"}
-OUTPUTS = {"curl": ("-o", "--output"), "wget": ("-O", "--output-document", "-P", "--directory-prefix")}
+# Open default: these write or delete the paths they are given, judged without reading their other options.
+DELETERS, MAKERS, MOVERS, OUTPUTS = {"rm", "rmdir", "unlink", "shred"}, {"mkdir", "touch", "tee", "truncate"}, \
+    {"cp", "mv", "install", "ln"}, {"curl", "wget"}
+# Options that take a value, as one-letter flags (`-o x`, `-ox`, the last of `-sSLo x`) and long ones (`--output x`,
+# `--output=x`): the value is the output or `-t`'s folder (GIVES), or no path written at all (SKIPS).
+GIVES = {"curl": ("o", ("--output",)), "wget": ("OP", ("--output-document", "--directory-prefix")),
+         **dict.fromkeys(MOVERS, ("t", ("--target-directory",)))}
+SKIPS = {"touch": ("rdt", ("--reference", "--date")), "truncate": ("rs", ("--reference", "--size")),
+         "mkdir": ("m", ("--mode",)), "install": ("mogS", ("--mode", "--owner", "--group", "--suffix"))}
+
+
+def valued(name: str, t: str):
+    """`(table, attached value or None)` when `t` is an option of `name` taking a value, else None."""
+    for table in (GIVES, SKIPS):
+        short, longs = table.get(name, ("", ()))
+        flag, eq, glued = t.partition("=")
+        if flag in longs:
+            return table, glued if eq else None
+        if short and not t.startswith("--") and (m := re.match(rf"-[A-Za-z]*?[{short}](.*)", t)):
+            return table, m[1] or None
+    return None
 
 
 def m_paths(name, args, ctx):
-    ops, given, i = [], [], 0
+    ops, given, i, dirs = [], [], 0, False
     while i < len(args):
         w, t = args[i], args[i].text
         if t == "--" and not w.why:
             ops += args[i + 1:]
             break
-        flag, _, glued = t.partition("=")
-        if name in OUTPUTS and flag in OUTPUTS[name] or name in MOVERS and flag in ("-t", "--target-directory"):
-            value = Word(glued, w.why) if glued else args[i + 1] if i + 1 < len(args) else None
-            given += [value] if value else []
-            i += 1 if glued else 2
+        if hit := valued(name, t):
+            table, glued = hit
+            value = Word(glued, w.why) if glued is not None else args[i + 1] if i + 1 < len(args) else None
+            given += [value] if value and table is GIVES else []
+            i += 1 if glued is not None else 2
             continue
         if not t.startswith("-") or w.why:
             ops.append(w)
+        # `install -d` makes every operand a folder rather than copying into the last.
+        dirs |= name == "install" and bool(re.match(r"--directory$|-(?!-)[A-Za-z]*d", t))
         i += 1
     if name in OUTPUTS:
-        return writes("write", given, ctx), None
-    if name in DELETERS | MAKERS:
+        return writes("write", [g for g in given if g.text != "-"], ctx), None     # `-` is standard output
+    if name in DELETERS | MAKERS or dirs:
+        if name == "mkdir" or dirs:
+            ctx.made.update(folders(ops, ctx))
         return writes("delete" if name in DELETERS else "write", ops, ctx), None
     # A mover's destination is `-t`'s folder, else its last operand.
     srcs, dests = (ops, given) if given else (ops[:-1], ops[-1:])
     return lands(srcs, dests, bool(given), ctx) | (writes("delete", srcs, ctx) if name == "mv" else set()), None
 
 
+def spots(w: Word, ctx) -> set:
+    """Where a literal path names from each place the command may run, normalised; none when unknown."""
+    out = set()
+    for c in ctx.cwds:
+        try:
+            p = None if w.why or not c else resolve(w.text, c, ctx)
+        except ValueError:
+            continue
+        out |= {os.path.normpath(p)} if p else set()
+    return out
+
+
+def folders(ws: list, ctx) -> set:
+    """The folders a `mkdir` of `ws` may make, with their parents (`mkdir -p a/b` makes `a` too)."""
+    out = set()
+    for p in set().union(*(spots(w, ctx) for w in ws)):
+        while p not in out and p != os.path.dirname(p):
+            out.add(p)
+            p = os.path.dirname(p)
+    return out
+
+
 def lands(srcs: list, dests: list, folder: bool, ctx) -> set:
-    """Where sources land: a folder destination (`-t`, a trailing separator, or one that exists now) takes each
-    source's last name, so `cp x .` writes `./x`, not the checkout; any other destination is written as named."""
+    """Where sources land: a folder destination (`-t`, a trailing separator, one that exists now or one an earlier
+    `mkdir` made) takes each source's last name, so `cp x .` writes `./x`, not the checkout; any other destination
+    is written as named."""
     out = set()
     for d in dests:
         into = folder or not d.why and (re.search(r"[\\/]$", d.text) or any(
-            c and os.path.isdir(resolve(d.text, c, ctx) or "") for c in ctx.cwds))
+            p in ctx.made or os.path.isdir(p) for p in spots(d, ctx)))
         names = [re.split(r"[\\/]+", s.text.rstrip("\\/"))[-1] for s in srcs]
         if into and srcs and all(n not in ("", ".", "..") for n in names) and not any(s.why for s in srcs):
             out |= writes("write", [Word(d.text.rstrip("\\/") + "/" + n, d.why) for n in names], ctx)

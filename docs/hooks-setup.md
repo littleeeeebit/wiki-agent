@@ -119,13 +119,16 @@ Effects come from:
 
 - redirections (`>`, `>>`) to a literal path, in every dialect, with the
   host's null devices discarded;
-- POSIX writers, judged by their path operands without reading their options:
-  `rm`, `rmdir`, `unlink` and `shred` delete them; `mkdir`, `touch`, `tee` and
-  `truncate` write them; `cp`, `mv`, `install` and `ln` write their
+- POSIX writers, judged by their path operands; of their options only those
+  taking a value are read (`-o x`, `-ox`, `-sSLo x`, `--output=x`), so a value
+  such as `touch -r ref` is not taken for a target. `rm`, `rmdir`, `unlink` and
+  `shred` delete their operands; `mkdir`, `touch`, `tee`, `truncate` and
+  `install -d` write them; `cp`, `mv`, `install` and `ln` write their
   destination (`-t`'s folder, else the last operand), and `mv` deletes its
-  sources. A destination that is a folder (`-t`, a trailing separator, or one
-  that exists now) is written as `<folder>/<last name of each source>`, so
-  `cp x .` writes `./x`. `curl -o` and `wget -O`/`-P` write their output;
+  sources. A destination that is a folder (`-t`, a trailing separator, one
+  that exists now, or one an earlier `mkdir` in the call made) is written as
+  `<folder>/<last name of each source>`, so `cp x .` writes `./x`. `curl -o`
+  and `wget -O`/`-P` write their output unless it is `-`;
 - PowerShell and cmd writers of literal paths (`Set-Content`, `Out-File`,
   `New-Item`, `Remove-Item`, `Copy-Item`, `Move-Item`, `Rename-Item`, cmd's
   `del`, `rd`, `md`, `move`, `ren`), in `tool/guard_windows.py`;

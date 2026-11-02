@@ -296,6 +296,9 @@ EXPLICIT_FORMS = {
     "tee": "tee ../outside/target.txt",
     "curl-output": "curl -o ../outside/target.txt https://example.com/x",
     "wget-output": "wget -O ../outside/target.txt https://example.com/x",
+    "curl-cluster": "curl -sSLo ../outside/target.txt https://example.com/x",
+    "install-dir": "install -d ../outside/cache local-cache",
+    "made-folder": "mkdir copy && cp verification.toml copy",
     "later-cd": "echo ok; cd .. && echo x > target.txt",
     "protected": "cp a.txt .wiki/adapter.toml",
     "push-url": "git -c http.followRedirects=false push --no-recurse-submodules https://unlisted.example/o/r.git main",
@@ -317,6 +320,8 @@ def test_a_readable_form_outside_the_grant_is_denied_however_it_is_wrapped(repo,
 def test_a_writer_lands_its_sources_in_a_folder_it_names(repo):
     (repo / "sub").mkdir()
     assert call(repo, "cp ../outside/x . && cp a b sub && mv c sub/") is None
+    # An option's value that is read, or standard output, is not written.
+    assert call(repo, "touch -r ../outside/ref t && cd .. && wget -qO- https://example.com/x") is None
     assert effects("cp a b c dst/") >= {f"write({C['cwd']}/dst/{n})" for n in "abc"}
     assert "허가를 정하는 파일" in (call(repo, "cp adapter.toml .wiki") or "")
 
