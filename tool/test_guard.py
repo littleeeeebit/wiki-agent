@@ -371,6 +371,17 @@ def test_an_extended_unc_path_is_a_share_not_a_relative_path(repo):
     for command in ("Set-Content '\\\\?\\UNC\\server\\share\\t.txt' x", "Remove-Item '//?/UNC/server/share/t.txt'"):
         reason = call(repo, command, tool="PowerShell") or ""
         assert "server/share/t.txt" in reason and "쓰기 루트 밖" in reason, command
+    # Any other device form names no folder of the checkout.
+    reason = call(repo, "Set-Content -LiteralPath '\\\\?\\GLOBALROOT\\Device\\X\\t.txt' x", tool="PowerShell") or ""
+    assert "쓰기 루트 밖" in reason
+
+
+@pytest.mark.parametrize("dash", ["-", "–", "—", "―"])
+def test_every_dash_powershell_reads_names_a_parameter(repo, dash):
+    for command in (f"'x' | Set-Content {dash}Path ../outside/t.txt", f"'x' | Out-File {dash}FilePath ../outside/t.txt",
+                    f"Remove-Item {dash}LiteralPath ../outside/t.txt"):
+        assert "outside/t.txt" in (call(repo, command, tool="PowerShell") or ""), command
+    assert any(e.startswith("top(") for e in effects(f"Set-Content {dash}Zz x", "ps"))
 
 
 def test_a_delete_or_move_of_a_link_is_denied(repo, tmp_path):

@@ -71,6 +71,7 @@ PS_PARAM_ALIASES = {"ea": "erroraction", "wa": "warningaction", "infa": "informa
                     "pv": "pipelinevariable", "proga": "progressaction", "vb": "verbose", "db": "debug",
                     "wi": "whatif", "cf": "confirm", "lp": "literalpath", "pspath": "literalpath"}
 FILTERS = "filter= include= exclude= force"
+DASHES = "[-–—―]"
 # cmdlet: the parameters it understands (`name=` takes a value, `name` is a switch). No row: a `spawn`.
 PS_ROWS = {
     "get-content": "path= literalpath= totalcount= head= first= tail= last= raw encoding= delimiter= readcount= "
@@ -159,8 +160,9 @@ def ps_args(args: list, spec: str) -> tuple[dict, list, str]:
         w, t = args[i], args[i].text
         i += 1
         # A named parameter is one whose own `-Name` was written unquoted; quoting only its
-        # value (`-LiteralPath:'../x'`) does not turn the word into a positional path.
-        if (w.raw or t)[:1] == "-" and re.match(r"^-[A-Za-z]", w.raw or t) and not w.why:
+        # value (`-LiteralPath:'../x'`) does not turn the word into a positional path. PowerShell
+        # takes an en dash, em dash or horizontal bar for the hyphen too.
+        if re.match(f"^{DASHES}[A-Za-z]", w.raw or t) and not w.why:
             k, colon, v = t[1:].partition(":")
             k = PS_PARAM_ALIASES.get(k.lower(), k.lower())
             if k not in names:

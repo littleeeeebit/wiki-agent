@@ -144,7 +144,9 @@ builtins, and `tool/guard_git.py` for git. The table holds only:
   (`Env:X`, `Function:f`, `FileSystem::`, `f.txt:s`), cmd's `+`. So is a
   `New-Item` link type, a `New-Item` fed by a pipeline (it binds its type and
   target from piped objects), and a copy, move or delete with no literal path
-  for one of its places;
+  for one of its places. A parameter's dash may be an en dash, em dash or
+  horizontal bar, as PowerShell reads it, and `\\?\` names a drive, a share
+  (`UNC\`) or else nothing inside a write root (`GLOBALROOT`);
 - git reads (`status`, `diff`, `log`, `show`, `rev-parse`, `rev-list`,
   `ls-files`, `ls-tree`, `check-ignore`, `merge-base`, `cat-file`, `describe`,
   `blame`, `grep`, `remote -v`, `remote get-url`, `config` that only gets or

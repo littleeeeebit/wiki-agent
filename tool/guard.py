@@ -782,7 +782,8 @@ def resolve(text: str, cwd: str | None, ctx: Ctx) -> str | None:
         raise ValueError("another user's home")
     if ctx.windows:
         if t.startswith("//?/"):
-            t = "//" + t[8:] if t[4:8].lower() == "unc/" else t[4:]     # `\\?\UNC\host\share` is a share
+            # `\\?\UNC\host\share` is a share; any other device form but a drive stays absolute (`GLOBALROOT`).
+            t = "//" + t[8:] if t[4:8].lower() == "unc/" else t[4:] if re.match(r"[A-Za-z]:/", t[4:]) else t
         if ctx.d == "posix" and (m := re.match(r"^/([A-Za-z])(/|$)", t)):
             t = m.group(1).upper() + ":/" + t[3:]
         elif ctx.d == "posix" and (t == "/tmp" or t.startswith("/tmp/")):
