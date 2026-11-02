@@ -766,13 +766,14 @@ def names_set(ws: list, ctx: Ctx) -> set:
 
 # -- Paths -------------------------------------------------------------------
 
-NULLS = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "nul", "nul:", "$null", "con", "/dev/stdin"}
+# Devices by the host's rule: `/dev/...` as spelled, and Windows' reserved names whatever their case.
+NULLS = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/stdin"}
 
 
 def resolve(text: str, cwd: str | None, ctx: Ctx) -> str | None:
-    """The absolute path a literal names from `cwd`; `None` for a null device. Raises ValueError."""
+    """The absolute path a literal names from `cwd`; `None` for a device. Raises ValueError."""
     t = text.replace("\\", "/") if ctx.windows else text
-    if t.lower() in NULLS or t.startswith("/dev/fd/"):
+    if t in NULLS or t.startswith("/dev/fd/") or ctx.windows and t.lower() in ("nul", "nul:", "con"):
         return None
     if t == "~" or t.startswith("~/"):
         t = ctx.home + t[1:]
@@ -811,7 +812,7 @@ def resolve(text: str, cwd: str | None, ctx: Ctx) -> str | None:
 
 def paths(kind: str, w: Word, ctx: Ctx) -> set:
     """`kind(path)` for every directory the command may run in, or `top` when the path is unknown."""
-    if w.text.lower() == "$null" and ctx.d == "ps":
+    if w.raw.lower() == "$null" and ctx.d == "ps":     # the variable; a quoted '$null' is a file
         return set()
     if w.why:
         return top(f"{w.why} in a {'delete' if kind == 'delete' else 'write'} path")

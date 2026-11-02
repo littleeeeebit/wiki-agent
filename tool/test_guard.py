@@ -860,6 +860,14 @@ def test_a_repository_differing_only_in_case_is_another_on_posix():
     ('[remote "origin"]\n url = https://read.example/o/r.git\n[url "https://write.example/"]\n'
      ' insteadOf = https://read.example/\n', "rewritten"),
     ('[include]\n path = extra.config\n[remote "origin"]\n url = https://read.example/o/r.git\n', "rewritten"),
+    # Syntax git decodes and this reader does not: each leaves every destination unread.
+    ('[remote "origin"]\n url = https://read.example/o/r.git\n'
+     '[remote "origin"] pushurl = https://write.example/o/r.git\n', "does not decode"),
+    ('[remote "origin"]\n url = https://read.example/o/r.git\n pushurl = https://write.\\\nexample/o/r.git\n',
+     "does not decode"),
+    # With no remote read at all, the name is not a configured remote either way.
+    ('[remote "origin"]\n url = "https://read.example/o/r.git"\n', "git push to"),
+    ('[remote.origin]\n url = https://read.example/o/r.git\n', "git push to"),
 ])
 def test_a_push_reaches_every_destination_git_would_use(tmp_path, monkeypatch, config, expected):
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
@@ -879,5 +887,29 @@ def test_a_branch_upstream_given_as_a_url_is_a_destination(tmp_path, monkeypatch
     assert {"network(read.example)", "network(write.example)"} <= found
 
 
-def test_a_log_option_that_runs_a_verifier_is_not_in_the_row():
-    assert any(e.startswith("top(") for e in effects("git log --show-signature"))
+@pytest.mark.parametrize("command", ["git log --show-signature", 'git log --format="%G?"', "git show --pretty=%GG",
+                                     "git log --format tformat:%GK", "git log --pretty=custom-alias"])
+def test_a_log_option_that_runs_a_verifier_is_not_in_the_row(command):
+    assert any(e.startswith("top(") for e in effects(command)), command
+
+
+def test_built_in_and_literal_formats_stay_reads():
+    for command in ("git log --oneline", "git log --pretty=oneline", "git log --format=%h%x09%s",
+                    "git show --format=format:%an -s"):
+        assert effects(command) == {"read"}, command
+
+
+@pytest.mark.parametrize("command,dialect,ctx,target", [
+    ("echo sample > NUL", "posix", POSIX, "write(/work/repo/NUL)"),
+    ("echo sample > /DEV/NULL", "posix", POSIX, "write(/DEV/NULL)"),
+    ("Write-Output sample > '$null'", "ps", CTX, "write(C:/Users/me/PycharmProjects/wiki-agent/$null)"),
+])
+def test_a_device_name_is_a_device_only_by_the_hosts_rule(command, dialect, ctx, target):
+    assert target in effects(command, dialect, ctx)
+
+
+def test_the_null_devices_stay_devices():
+    assert effects("echo x > /dev/null") == {"read"}
+    assert effects("echo x > NUL") == {"read"}
+    assert effects("echo x > /dev/null", ctx=POSIX) == {"read"}
+    assert effects("Write-Output x > $null", "ps") == {"read"}

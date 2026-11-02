@@ -86,21 +86,33 @@ def remote_hosts(common: Path) -> tuple:
                          (Path.home() / ".gitconfig", Path.home() / ".config/git/config") if p.is_file()]
     # A URL rewrite, or an included file that may hold one or another remote, changes where a push goes.
     rewritten = any(re.search(r"(?im)^\s*(push)?insteadof\s*=|^\s*\[\s*include", t) for t in rewrites)
-    out, section = set(), ""
+    found, section = [], ("", "")
     for line in text.splitlines():
-        if m := re.match(r'\s*\[\s*(\w+)(?:\s+"([^"]*)")?\s*\]', line):
-            section = m.group(1).lower(), m.group(2) or ""
+        if not line.strip() or re.match(r"\s*[#;]", line):
             continue
-        m = re.match(r"\s*(\w+)\s*=\s*(\S+)", line)
-        if not m or not section:
+        # A continued line joins the next one into a value this reader does not decode.
+        rewritten = rewritten or line.rstrip().endswith("\\")
+        if line.lstrip().startswith("["):
+            m = re.fullmatch(r'\s*\[\s*([\w-]+)(?:\s+"([^"\\]*)")?\s*\]\s*', line)
+            # Only a header alone on its line, `[section]` or `[section "sub"]`, is read; anything else
+            # (a key after the header, the old `[section.sub]` form) leaves every destination unread.
+            rewritten = rewritten or not m
+            section = (m.group(1).lower(), m.group(2) or "") if m else ("", "")
             continue
-        key, value = m.group(1).lower(), m.group(2)
+        m = re.match(r"\s*([\w-]+)\s*(?:=\s*(.*))?$", line)
+        key, value = (m.group(1).lower(), (m.group(2) or "").rstrip()) if m else ("", "")
         if section[0] == "remote" and key in ("url", "pushurl"):
             name = section[1]
-        elif section[0] == "branch" and key in ("remote", "pushremote") and re.search(r"[:/\\]", value):
+        elif section[0] == "branch" and key in ("remote", "pushremote"):
             name = ""
         else:
             continue
+        if not re.fullmatch(r"[^\s\"\\;#]+", value):
+            rewritten = True            # a quoted, escaped or commented value git decodes differently
+        elif name or re.search(r"[:/\\]", value):
+            found.append((name, value))
+    out = set()
+    for name, value in found:
         networked = re.match(r"[a-zA-Z][\w+.-]*://", value) and not value.lower().startswith("file:") \
             or re.match(r"[^/\\:\s]+@[^/\\:\s]+:", value)
         out.add((name, host_of(value) if networked and not rewritten else UNREAD))

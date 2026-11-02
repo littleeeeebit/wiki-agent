@@ -132,7 +132,15 @@ builtins. The table holds only:
   with `-m`/`-F` (a write of the repository), and `push` with at most a
   configured remote and a branch name (that remote's host), none of them with
   `-c`, `-C`, `--git-dir`, `--work-tree` or `--exec-path`;
-- plain `>`/`>>` redirection to a literal path, in every dialect.
+- plain `>`/`>>` redirection to a literal path, in every dialect. Only the
+  host's devices are discarded: `/dev/null` and its kin as spelled, and on
+  Windows `NUL` and `CON` in any case; PowerShell's `$null` only unquoted.
+
+A git row's arguments never select a program: `--show-signature` and a
+`--format`/`--pretty` value with a `%G` field or a configured alias name are
+`top`. What git starts from its own configuration (hooks, a text converter,
+the verifier `log.showSignature` asks for) is part of the git row, since that
+configuration is protected or outside the write roots.
 
 Four rules hold across the table:
 
@@ -161,7 +169,7 @@ is answered by adding a row there, not by loosening an existing one.
 | `write`, `delete` | the path resolves (links, junctions and `..` followed) inside a write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder; each `[guard] write_roots` entry, relative to the checkout |
 | — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (`echo x > .wiki`, `echo x > .`). Only git's own write of the repository it runs in (`add`, `commit`, `push`) is judged by place alone |
 | `spawn` | the executable is one that `gate_cmd`, `verification.toml`'s round and local commands, a `[checks]` command or `python tool/search` runs, or is listed in `[guard] executables`. A bare name is that name; a name with a path (`./tool`, `C:/x/python.exe`, `/usr/bin/time`) is that file, granted only by the same path. A git remote name counts only in the checkout's own repository: a push after a `cd` into another repository is `top` |
-| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named); a remote at a local path, or a URL rewrite (`insteadOf`) or `[include]` in git's config, makes it `top`. `GH_HOST`, `GH_REPO` and the proxy variables count as reaching their host; a target whose host cannot be read is `top` |
+| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named); a remote at a local path, a URL rewrite (`insteadOf`) or `[include]` in git's config, or config syntax the guard does not decode (a key on a header's line, a continued, quoted or commented value), makes it `top`. `GH_HOST`, `GH_REPO` and the proxy variables count as reaching their host; a target whose host cannot be read is `top` |
 | `top` | never |
 
 The optional adapter table adds to the grant and never names a command:

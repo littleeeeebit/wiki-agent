@@ -454,8 +454,27 @@ def pushed(pos: list, ctx) -> set:
         return top("git push to anything but a configured remote and a branch")
     hosts = {h for n, h in ctx.remotes if not pos or n == pos[0].text}
     if "\0unread" in hosts:
-        return top("git push to a local path or a rewritten URL")
+        return top("git push to a local path, a rewritten URL or configuration syntax the guard does not decode")
     return {("network", h) for h in hosts}
+
+
+PRETTY = {"oneline", "short", "medium", "full", "fuller", "reference", "email", "mboxrd", "raw"}
+
+
+def formats(args: list) -> set:
+    """A `--format`/`--pretty` value is a built-in format or a literal template. A `%G` field verifies the
+    signature, which runs the configured verifier; any other name is an alias the config defines."""
+    for k, w in enumerate(args):
+        m = re.match(r"--(?:format|pretty)(=?)(.*)", w.text, re.S)
+        if not m:
+            continue
+        value = m.group(2) if m.group(1) else (args[k + 1].text if k + 1 < len(args) else "")
+        if "%G" in value:
+            return top("a git format field that verifies signatures")
+        if "%" not in value and value.removeprefix("format:").removeprefix("tformat:") == value \
+                and value not in PRETTY:
+            return top("a git format alias the configuration defines")
+    return set()
 
 
 def m_git(name, args, ctx):
@@ -478,7 +497,7 @@ def m_git(name, args, ctx):
     if stop := gate(f"git {verb}", rest, r):
         return stop, None
     if kind == "read":
-        return set(), None
+        return formats(rest), None
     # git's write of the repository it runs in is the granted git verb; `outside` judges its place only.
     out = paths("repo", here(ctx), ctx)
     return out | (pushed(getopt(rest, r.takes)[0], ctx) if kind == "push" else set()), None
