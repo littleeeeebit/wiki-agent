@@ -73,7 +73,8 @@ def layout(cwd: Path) -> tuple | None:
 # A destination git reaches that is not a network host the guard can name: a local path, a `file://` URL,
 # or one a URL rewrite may change. A push to it is `top`, and it is never granted as a host.
 UNREAD = "\0unread"
-# A remote name marking a partial clone: reading a missing object fetches it from a promisor remote.
+# A remote name marking a configuration that may make any git call fetch (a partial clone) or append to a
+# file (a Trace2 target), or a file the reader does not open that may say so.
 LAZY = "\0lazy"
 
 
@@ -117,9 +118,10 @@ def remote_hosts(common: Path) -> tuple:
         is not None or any(re.search(r"(?im)insteadof|followredirects|\[\s*(include|remote|branch)|" + others, t)
                            for t in git_configs()) \
         or any(os.environ.get(k) for k in ("http_proxy", "https_proxy", "all_proxy", "HTTPS_PROXY", "ALL_PROXY"))
-    # A promisor remote, or a file this reader does not open that may name one, lets any read fetch.
-    lazy = re.search(r"(?i)partialclone|promisor|\[\s*include|worktreeconfig", text) \
-        or any(re.search(r"(?i)partialclone|promisor|\[\s*include", t) for t in git_configs())
+    # A promisor remote lets any read fetch, and a Trace2 target lets any call append to a file; a file this
+    # reader does not open may hold either.
+    lazy = re.search(r"(?i)partialclone|promisor|trace2|\[\s*include|worktreeconfig", text) \
+        or any(re.search(r"(?i)partialclone|promisor|trace2|\[\s*include", t) for t in git_configs())
     found, section = [], ("", "")
     for line in text.splitlines():
         if not line.strip() or re.match(r"\s*[#;]", line):

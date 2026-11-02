@@ -1004,9 +1004,7 @@ def test_the_null_devices_stay_devices():
 # -- Follow-up (a): git and gh writes and the network ----------------------------
 # Each new row's effects, on a checkout whose one remote is `github.com`.
 ROW_EFFECTS = {
-    "git -c http.followRedirects=false -c protocol.version=1 fetch -q --no-recurse-submodules origin --prune":
-        {"write(/work/repo)", "network(github.com)"},
-    "git -c http.followRedirects=false -c protocol.version=1 pull --ff-only --no-recurse-submodules":
+    "git -c http.followRedirects=false push -u --no-recurse-submodules origin topic":
         {"write(/work/repo)", "network(github.com)"},
     "git merge --no-edit origin/main": {"write(/work/repo)"},
     "git rebase --continue": {"write(/work/repo)"},
@@ -1038,8 +1036,7 @@ def test_each_new_row_has_its_effects(command):
 
 
 def test_the_new_rows_pass_in_an_attached_checkout(repo):
-    for command in ("git -c http.followRedirects=false -c protocol.version=1 fetch --no-recurse-submodules origin && "
-                    "git merge --no-edit origin/main", "git stash && git stash pop", "git branch -D topic"):
+    for command in ("git merge --no-edit origin/main", "git stash && git stash pop", "git branch -D topic"):
         assert call(repo, command) is None, command
 
 
@@ -1055,7 +1052,7 @@ def test_a_worktree_of_the_same_repository_is_the_checkout(repo):
     (other / ".git").mkdir(parents=True)
     w, o = wt.as_posix(), other.as_posix()
     for command in (f"git -C {w} status", f"git -C {w} commit -qm x",
-                    f"git -C {w} -c http.followRedirects=false -c protocol.version=1 fetch --no-recurse-submodules origin"):
+                    f"git -C {w} -c http.followRedirects=false push --no-recurse-submodules origin HEAD"):
         assert call(repo, command) is None, command
     for command in (f"git -C {o} status", f"cd {o} && git fetch origin"):
         assert "판단할 수 없는" in (call(repo, command) or ""), command
@@ -1153,15 +1150,15 @@ def test_a_repository_write_is_placed_at_the_worktree_root():
 
 
 @pytest.mark.parametrize("command", [
-    "git fetch origin", "git pull --ff-only", "git push origin HEAD",
-    "git -c http.followRedirects=false fetch origin", "git fetch --no-recurse-submodules origin",
-    "git -c http.followRedirects=true fetch --no-recurse-submodules origin",
+    "git push origin HEAD", "git -c http.followRedirects=false push origin HEAD",
+    "git push --no-recurse-submodules origin HEAD",
+    "git -c http.followRedirects=true push --no-recurse-submodules origin HEAD",
     # A `-C` value is a directory, whatever it spells.
-    "git -C http.followRedirects=false -c protocol.version=1 fetch --no-recurse-submodules origin",
-    # Protocol v2 takes a packfile URI even unasked; v1 has no section for one.
-    "git -c http.followRedirects=false fetch --no-recurse-submodules origin",
-    "git -c http.followRedirects=false -c protocol.version=2 fetch --no-recurse-submodules origin",
-    "git -c http.followRedirects=false pull --ff-only --no-recurse-submodules",
+    "git -C http.followRedirects=false push --no-recurse-submodules origin HEAD",
+    # A server may answer a fetch in protocol v2, whatever was asked, and name another host for the pack.
+    "git fetch origin", "git pull --ff-only",
+    "git -c http.followRedirects=false -c protocol.version=1 fetch --no-recurse-submodules origin",
+    "git -c http.followRedirects=false -c protocol.version=1 pull --ff-only --no-recurse-submodules",
 ])
 def test_git_network_turns_off_redirects_and_submodules(command):
     # Each lets the server's answer pick a host the grant never read: a redirect, a submodule's remote, a pack URI.
@@ -1203,6 +1200,9 @@ ORIGIN = '[remote "origin"]\n\turl = https://github.com/owner/repo.git\n'
     (ORIGIN + "[extensions]\n\tworktreeConfig = true\n", []),
     (ORIGIN, ['[remote "origin"]\n\tpartialCloneFilter = blob:none\n']),
     (ORIGIN, ["[include]\n\tpath = ~/more.config\n"]),
+    # A Trace2 target makes any git call append to that file (round 10).
+    (ORIGIN, ["[trace2]\n\teventTarget = ../outside/f.txt\n"]),
+    (ORIGIN + "[trace2]\n\tnormalTarget = ../outside/f.txt\n", []),
 ])
 def test_a_promisor_setting_that_may_hide_makes_git_top(tmp_path, monkeypatch, config, configs):
     (tmp_path / "config").write_text(config, encoding="utf-8")

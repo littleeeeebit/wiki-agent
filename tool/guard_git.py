@@ -5,13 +5,14 @@ same repository, and only with the options and verbs listed here. What git
 starts from its configuration (hooks, merge drivers, a pager) is trusted
 because that configuration is protected; per-call configuration (`-c`) is
 limited to keys whose values run nothing. A verb that moves the working tree
-between commits (checkout, switch, merge, pull, rebase, stash) writes what the
+between commits (checkout, switch, merge, rebase, stash) writes what the
 repository's history holds: the agent cannot author a commit that changes a
 protected file or lays down a link, so that history is trusted as a whole.
 A path the agent names (`git restore -- f`) is a write of that path, and a
-write of the repository is a write of the whole worktree it runs in. git's
-network verbs turn off HTTP redirects and submodule recursion on the command
-line, so only the configured remote's own hosts are reached.
+write of the repository is a write of the whole worktree it runs in. A push
+turns off HTTP redirects and submodule recursion on the command line, so only
+the configured remote's own hosts are reached; fetch and pull have no row,
+since a server may answer in protocol v2 and name another host for the pack.
 
 gh and curl have no row, so they are only spawns: their HTTP clients follow
 redirects a response names, and nothing on the command line turns that off,
@@ -37,11 +38,9 @@ GIT_GLOBAL = {"--no-pager", "-P", "--no-optional-locks", "--literal-pathspecs", 
 # Keys whose value git never runs, loads or sends anywhere: identity, whitespace and display.
 GIT_SAFE_KEYS = {"user.name", "user.email", "core.whitespace", "core.autocrlf", "core.safecrlf", "core.quotepath",
                  "color.ui", "color.diff", "color.status", "advice.detachedhead"}
-# A git network verb must turn off what lets the server's answer pick another host: an HTTP redirect, a
-# submodule fetched or pushed through its own remote, and for a fetch a packfile URI, which protocol v2 takes
-# even unasked and v1 has no section for. A setting on the command line overrides every file.
+# A push must turn off what lets the server's answer pick another host: an HTTP redirect, and a submodule
+# pushed through its own remote. A setting on the command line overrides every file.
 NO_REDIRECTS = "http.followRedirects=false"
-REQUIRED = {"fetch": (NO_REDIRECTS, "protocol.version=1"), "push": (NO_REDIRECTS,)}
 # The options the log/diff family shares. `--output` is a write; `--ext-diff`, `--textconv` are not here.
 GIT_LOG = ("-pusczwbRqiEm -M? -B? -C? -U: -n: -S: -G: -L: -O: --patch --no-patch --stat --numstat --shortstat --name-only "
            "--name-status --summary --check --raw --cached --staged --merge-base --no-index --exit-code --quiet "
@@ -107,11 +106,9 @@ GIT_VERBS = {
     "worktree add": ("-qf -b: -B: --quiet --force --detach --no-checkout --checkout --track --no-track --lock "
                      "--guess-remote --no-guess-remote", "worktree"),
     "worktree remove": ("-f --force", "worktree"), "worktree prune": ("-nv --dry-run --verbose --expire:", "repo"),
-    # And the network: a configured remote's hosts.
-    "fetch": ("-qvpt --quiet --verbose --prune --tags --no-tags --all --dry-run --depth: --unshallow "
-              "--no-recurse-submodules", "fetch"),
-    "pull": ("-qv --quiet --verbose --ff --no-ff --ff-only --rebase --no-rebase --no-edit --prune --autostash "
-             "--no-autostash --no-recurse-submodules", "fetch"),
+    # And the network: a push to a configured remote's hosts. No fetch or pull: a server may answer in protocol
+    # v2 whatever version was asked, and v2 takes a packfile URI naming another host unasked; no option
+    # refuses that, so they are left to a later row.
     "push": ("-uq --set-upstream --quiet --no-recurse-submodules", "push"),
 }
 GIT = {verb: (row(None, spec, digits=True), kind) for verb, (spec, kind) in GIT_VERBS.items()}
@@ -185,12 +182,12 @@ def worktrees(ctx) -> set:
 
 
 def reached(verb: str, pos: list, ctx) -> set:
-    """The hosts `git fetch|pull|push [REMOTE [REFSPEC...]]` reaches: every `url` and `pushurl` the grant
-    read for that remote, or for every destination when none is named. A push takes at most a branch; a
-    refspec with `+`, `:` or a revision suffix (a forced push, a deletion, another ref) is not in its row."""
+    """The hosts `git push [REMOTE [BRANCH]]` reaches: every `url` and `pushurl` the grant read for that
+    remote, or for every destination when none is named. A refspec with `+`, `:` or a revision suffix (a
+    forced push, a deletion, another ref) is not in its row."""
     if any(w.why for w in pos) or pos and pos[0].text not in {n for n, _ in ctx.remotes} or not ctx.remotes \
-            or verb == "push" and (len(pos) > 2 or len(pos) == 2 and re.search(r"[+:^~@{}]", pos[1].text)):
-        return top(f"git {verb} to anything but a configured remote" + (" and a branch" if verb == "push" else ""))
+            or len(pos) > 2 or len(pos) == 2 and re.search(r"[+:^~@{}]", pos[1].text):
+        return top(f"git {verb} to anything but a configured remote and a branch")
     hosts = {h for n, h in ctx.remotes if not pos or n == pos[0].text}
     if "\0unread" in hosts:
         return top(f"git {verb} to a local path, a rewritten URL or configuration syntax the guard does not decode")
@@ -250,7 +247,7 @@ def git_options(args: list, ctx):
             if t == "-C":
                 ctx = replace(ctx, cwds=moved_to(value, ctx))
             elif value.text.partition("=")[0].lower() not in GIT_SAFE_KEYS \
-                    and value.text not in REQUIRED["fetch"]:
+                    and value.text != NO_REDIRECTS:
                 return top(f"git -c {value.text.partition('=')[0]}: a key whose value git may run or send"), None
             i += 2
             continue
@@ -298,7 +295,8 @@ def m_git(name, args, ctx):
     if not own_repo(ctx):
         return top("git in a repository other than the checkout"), None
     if any(n == "\0lazy" for n, _ in ctx.remotes):
-        return top("git in what may be a partial clone, where reading an object may fetch it from a remote"), None
+        return top("git whose configuration may make it fetch or write where the guard cannot place: a partial "
+                   "clone, a trace target, or a file the guard does not read"), None
     pos, _, rest_flags = getopt(rest, r.takes)
     if kind == "read":
         return (top("git remote with an operand") if verb == "remote" and pos else formats(rest)), None
@@ -321,9 +319,8 @@ def m_git(name, args, ctx):
         if not pos or verb == "worktree remove" and not re.match(absolute, pos[0].text):
             return top(f"git {verb} without an absolute path"), None
         out |= paths("delete" if verb == "worktree remove" else "write", pos[0], ctx)
-    elif kind in ("fetch", "push"):
-        out |= reached(verb.split()[0], pos, ctx)
-        if not set(REQUIRED[kind]) <= settings(args, i) or "--no-recurse-submodules" not in rest_flags:
-            needed = " ".join(f"-c {s}" for s in REQUIRED[kind])
-            out |= top(f"git {verb} without `{needed}` and `--no-recurse-submodules`")
+    elif kind == "push":
+        out |= reached(verb, pos, ctx)
+        if NO_REDIRECTS not in settings(args, i) or "--no-recurse-submodules" not in rest_flags:
+            out |= top(f"git {verb} without `-c {NO_REDIRECTS}` and `--no-recurse-submodules`")
     return out, None

@@ -551,13 +551,11 @@
    "source": "claude",
    "command": "W=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/contract/wiki-agent\" && git -C \"$W\" status --short && git fetch origin --prune && git status -sb | head -1 && git pull --ff-only && echo \"tree branch: $(git rev-parse fix/refactor-contract-whole-file-removal^{tree})\" && echo \"tree merge:  $(git rev-parse 6ba1e9e^{tree})\" && git diff --stat fix/refactor-contract-whole-file-removal 6ba1e9e && ls \"$W/artifacts/review/\" && cmd //c \"fsutil reparsepoint query $(cygpath -w \"$W/web/node_modules\")\" | head -3",
    "effects": [
-    "network(github.com)",
     "read",
-    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
+    "top(git fetch: a verb the table does not model)",
     "top(git in a repository other than the checkout)",
-    "top(git pull without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
-    "top(variable in a nested shell string)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "top(git pull: a verb the table does not model)",
+    "top(variable in a nested shell string)"
    ]
   },
   {
@@ -565,10 +563,9 @@
    "source": "claude",
    "command": "WT=\"/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/license/wiki-agent\" && git worktree remove \"$WT\" && git branch -D docs/mit-license && git fetch -q --prune && git branch -r | grep mit-license; echo \"remote branch check done\"; git worktree list; git status -sb | head -1; python tool/lint.py --repo . 2>&1 | tail -2; python tool/repo_lint.py --repo . 2>&1 | tail -2",
    "effects": [
-    "network(github.com)",
     "read",
     "spawn(python)",
-    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
+    "top(git fetch: a verb the table does not model)",
     "top(variable where an option of git worktree remove may stand)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -605,10 +602,9 @@
    "command": "cat /c/Users/me/PycharmProjects/wiki-agent-worktrees/omm-incremental/raw/errors.jsonl 2>/dev/null | head -3 | cut -c1-200; git worktree remove --force /c/Users/me/PycharmProjects/wiki-agent-worktrees/omm-incremental && git branch -D omm-incremental; git fetch -q --prune origin; git branch -r | grep omm-incremental && git push -q origin --delete omm-incremental; rm -f artifacts/review/omm-incremental-round-*.md; git worktree list; git branch",
    "effects": [
     "delete(C:/Users/me/PycharmProjects/wiki-agent-worktrees/omm-incremental)",
-    "network(github.com)",
     "read",
     "spawn(rm)",
-    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
+    "top(git fetch: a verb the table does not model)",
     "top(git push --delete: an option the table does not model)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -888,10 +884,8 @@
    "source": "claude",
    "command": "cd /c/Users/me/PycharmProjects/wiki-agent && git fetch -q && git log --oneline main..origin/main | head; git log --oneline -3 origin/main; grep -n \"def ask\\|Near\\|held\\|def main\\|asked\\|before\\b\" laya/joint.py; grep -n \"class Near\" -A25 laya/gate.py | head -40",
    "effects": [
-    "network(github.com)",
     "read",
-    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "top(git fetch: a verb the table does not model)"
    ]
   },
   {
@@ -1335,13 +1329,12 @@
    "source": "claude",
    "command": "gh pr merge 213 --squash --delete-branch 2>&1 | tail -1; git fetch -q origin --prune; M=$(gh pr view 213 --json state,mergeCommit --jq '.state+\" \"+.mergeCommit.oid'); echo $M; git checkout -q main 2>/dev/null; git pull -q --ff-only; git diff b4fee32 ${M#* } -- tool/test_korean.py tool/test_loop.py --stat; git branch --list 'fix-ci-clock*'; git branch -r | grep fix-ci-clock; rm -f artifacts/review/ci-clock-flakes-round-*.md; python tool/lint.py --repo . 2>&1 | tail -1; python tool/repo_lint.py --repo . 2>&1 | tail -1; git status --short; git log --oneline -1",
    "effects": [
-    "network(github.com)",
     "read",
     "spawn(gh)",
     "spawn(python)",
     "spawn(rm)",
-    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
-    "top(git pull without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
+    "top(git fetch: a verb the table does not model)",
+    "top(git pull: a verb the table does not model)",
     "top(variable where an option of git diff may stand)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/main)"
@@ -1352,13 +1345,12 @@
    "source": "claude",
    "command": "gh pr merge 269 --merge --match-head-commit acdc7412cc22c394ea27609e3cf69a7a2f2e6d6c 2>&1 | tail -2; git fetch -q origin --prune; gh pr view 269 --json state,mergeCommit -q '.state+\" \"+.mergeCommit.oid'; git checkout -q main && git pull -q --ff-only && git branch -d fix/next-web-and-candidates; git branch -r | grep next-web; rm -rf artifacts/review; python tool/lint.py --repo . 2>&1 | tail -1; python tool/repo_lint.py --repo . 2>&1 | tail -1; git status --short; git log --oneline -1; git branch",
    "effects": [
-    "network(github.com)",
     "read",
     "spawn(gh)",
     "spawn(python)",
     "spawn(rm)",
-    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
-    "top(git pull without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
+    "top(git fetch: a verb the table does not model)",
+    "top(git pull: a verb the table does not model)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/main)"
    ]
@@ -1389,11 +1381,10 @@
    "source": "claude",
    "command": "git branch --show-current && git pull --ff-only -q && git log -1 --oneline && git diff --stat d9cb626117706fa2484f8ced665fed411261ff5a e99df2a -- tool .wiki/ratchet.json && echo \"diff-empty-check-done\"; git branch --list fix/gate-sets-aside-interrupted-preparation; git branch -r | grep gate-sets-aside; rm -f artifacts/review/setaside-round-*.md; git status --porcelain; python tool/lint.py --repo . > \"$TEMP/lint.txt\" 2>&1; echo lint=$?; tail -n 3 \"$TEMP/lint.txt\"; python tool/repo_lint.py --repo . > \"$TEMP/rlint.txt\" 2>&1; echo repo_lint=$?; tail -n 3 \"$TEMP/rlint.txt\"; git worktree list",
    "effects": [
-    "network(github.com)",
     "read",
     "spawn(python)",
     "spawn(rm)",
-    "top(git pull without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
+    "top(git pull: a verb the table does not model)",
     "top(variable in a write path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -1462,10 +1453,9 @@
    "source": "claude",
    "command": "git checkout -q main && git pull -q --ff-only && git log --oneline -1 && [ \"$(git rev-parse fix/audit-screen-state^{tree})\" = \"$(git rev-parse 8753e884^{tree})\" ] && echo \"trees equal\" && git branch -D fix/audit-screen-state; git branch -r | grep audit-screen || echo \"remote branch gone\"; rm -f artifacts/review/audit-screen-round-*.md; ls artifacts/review | wc -l",
    "effects": [
-    "network(github.com)",
     "read",
     "spawn(rm)",
-    "top(git pull without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
+    "top(git pull: a verb the table does not model)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/main)"
    ]
@@ -1475,11 +1465,10 @@
    "source": "claude",
    "command": "git fetch -q origin && WT=\"/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/contract/wiki-agent\" && git worktree add -q -b fix/refactor-contract-whole-file-removal \"$WT\" origin/main && cd \"$WT\" && grep -n \"def _named\\|def _binds\\|def _head\" tool/main/refactor_run.py && sed -n \"$(grep -n 'def _named' tool/main/refactor_run.py | cut -d: -f1),+8p\" tool/main/refactor_run.py",
    "effects": [
-    "network(github.com)",
     "read",
     "spawn(sed)",
     "top(a directory change after the first statement)",
-    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
+    "top(git fetch: a verb the table does not model)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/contract/wiki-agent)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -1494,7 +1483,7 @@
     "spawn(python)",
     "spawn(ruff)",
     "top(git add of a folder, which stages every untracked file below it)",
-    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
+    "top(git fetch: a verb the table does not model)",
     "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -1504,11 +1493,10 @@
    "source": "claude",
    "command": "git fetch origin --prune -q && git pull --ff-only -q && git log --oneline -1 && echo tree: $(git rev-parse fix/laya-refusal^{tree}) $(git rev-parse 556d2a1^{tree}) && git -C ../wiki-agent-refusal status --porcelain | head && git worktree remove ../wiki-agent-refusal && git branch -D fix/laya-refusal && git branch -r | grep refusal; git push origin --delete fix/laya-refusal 2>&1 | tail -1; git worktree list; git branch",
    "effects": [
-    "network(github.com)",
     "read",
-    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
+    "top(git fetch: a verb the table does not model)",
     "top(git in a repository other than the checkout)",
-    "top(git pull without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
+    "top(git pull: a verb the table does not model)",
     "top(git push --delete: an option the table does not model)",
     "top(git worktree remove without an absolute path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
@@ -1550,12 +1538,11 @@
    "source": "claude",
    "command": "git status --short | head -3; git pull -q --ff-only && git log --oneline -1 && [ \"$(git rev-parse omm-skip-indexes^{tree})\" = \"$(git rev-parse 2ef10e2^{tree})\" ] && echo \"tree identical\"; git -C ../wiki-agent-worktrees/omm-skip-indexes status --short | head -3; git worktree remove ../wiki-agent-worktrees/omm-skip-indexes && git branch -D omm-skip-indexes; git branch -r | grep -c omm-skip-indexes; rm -f artifacts/review/omm-skip-indexes-round-*.md; python tool/lint.py --repo . 2>&1 | tail -1; python tool/repo_lint.py --repo . 2>&1 | tail -1; git worktree list",
    "effects": [
-    "network(github.com)",
     "read",
     "spawn(python)",
     "spawn(rm)",
     "top(git in a repository other than the checkout)",
-    "top(git pull without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
+    "top(git pull: a verb the table does not model)",
     "top(git worktree remove without an absolute path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -1566,11 +1553,10 @@
    "command": "git worktree remove --force \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/v5\" && git branch -D plan/reliability-v5 && (git push -q origin --delete plan/reliability-v5 2>&1 | tail -1); git fetch -q --prune; rm -f artifacts/review/reliability-v5-round-*.md; ls artifacts/review/; git worktree list; git branch -a | grep -v \"remotes/origin/HEAD\"; python tool/lint.py --repo . 2>&1 | tail -1; python tool/repo_lint.py --repo . 2>&1 | tail -1",
    "effects": [
     "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/v5)",
-    "network(github.com)",
     "read",
     "spawn(python)",
     "spawn(rm)",
-    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
+    "top(git fetch: a verb the table does not model)",
     "top(git push --delete: an option the table does not model)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]

@@ -137,18 +137,17 @@ builtins, and `tool/guard_git.py` for git. The table holds only:
   `-i`/`-x`, `stash` without `-a`/`-u`, `worktree add`/`remove`/`prune`).
   `add -A` and a folder to add are `top`, as is `stash -u`: an edited ignore
   rule may stop hiding a protected file, which they would then pick up as an
-  untracked one. And the network (`fetch`, `pull`,
-  and `push` with at most a branch) to a configured remote. A write of the
-  repository is a write of the whole worktree root, wherever below it git
-  runs. The network verbs must carry `-c http.followRedirects=false` and
-  `--no-recurse-submodules`, and `fetch`/`pull` also `-c protocol.version=1`,
-  so a redirect, a submodule's own remote or a packfile URI (which protocol
-  v2 takes even unasked) cannot pick another host. A configuration that
-  mentions `followRedirects`, a bundle URI, `uriProtocols`, a proxy,
-  `curloptResolve` or a cookie file (or a proxy in the environment) adds a
-  host besides the remote's or a file git writes, so it leaves the remotes
-  unread. A path
-  operand of
+  untracked one. And the network: `push` with at most a branch to a
+  configured remote. A write of the repository is a write of the whole
+  worktree root, wherever below it git runs. A push must carry
+  `-c http.followRedirects=false` and `--no-recurse-submodules`, so a
+  redirect or a submodule's own remote cannot pick another host. `fetch` and
+  `pull` have no row: a server may answer in protocol v2 whatever version was
+  asked, and v2 takes a packfile URI naming another host unasked. A
+  configuration that mentions `followRedirects`, a bundle URI,
+  `uriProtocols`, a proxy, `curloptResolve` or a cookie file (or a proxy in
+  the environment) adds a host besides the remote's or a file git writes, so
+  it leaves the remotes unread. A path operand of
   `checkout`, `restore` or `stash push` is also a write of that path, and a
   pathspec pattern (`'*.toml'`, `:(top)`) is `top`; `worktree add` writes its
   folder and `worktree remove` deletes it, named only by a path absolute on
@@ -157,8 +156,9 @@ builtins, and `tool/guard_git.py` for git. The table holds only:
   `-c` takes only identity, whitespace and colour keys. `--git-dir`,
   `--work-tree`, `--exec-path`, `--config-env`, a `GIT_TRACE*` file and every
   other verb are `top`. In a partial clone every git form is `top`, since
-  reading a missing object fetches it, and so it is wherever a promisor
-  setting may hide (an `[include]`, `extensions.worktreeConfig`);
+  reading a missing object fetches it, and so it is with a `trace2` target
+  in any configuration (any call appends to it) and wherever either may hide
+  (an `[include]`, `extensions.worktreeConfig`);
 - no row for gh or curl: their HTTP clients follow a redirect the response
   names, nothing on the command line turns that off, and gh's `pr create` and
   `pr merge` also run git that takes none of the options above. They are only
@@ -186,7 +186,7 @@ relative value (it depends on the worktree that runs it), another syntax, an
 `[include]` or `extensions.worktreeConfig` counts as a writable folder.
 
 A verb that moves the working tree between commits (`checkout`, `merge`,
-`pull`, `rebase`, `stash pop`) writes whatever the repository's history holds,
+`rebase`, `stash pop`) writes whatever the repository's history holds,
 protected files and links included. That history is trusted because the agent
 cannot author such a commit within the table: no row lays down a link, and a
 protected name (`verification.toml`, `.wiki/adapter.toml`, `.claude`,
@@ -225,7 +225,7 @@ existing one.
 | `write`, `delete` | the path resolves (links, junctions and `..` followed) inside a write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder; each `[guard] write_roots` entry, relative to the checkout |
 | — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (`echo x > .wiki`, `echo x > .`). Only git's own write of the repository it runs in (`add`, `commit`, `merge`, `push`, …) is judged by place alone |
 | `spawn` | the executable is one that `gate_cmd`, `verification.toml`'s round and local commands, a `[checks]` command or `python tool/search` runs, or is listed in `[guard] executables`. A bare name is that name; a name with a path (`./tool`, `C:/x/python.exe`, `/usr/bin/time`) is that file, granted only by the same path. A git remote name counts only in the checkout's own repository: a push after a `cd` into another repository is `top` |
-| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A fetch, pull or push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named); a remote at a local path, a URL rewrite (`insteadOf`) or `[include]` in any config file git reads (the repository's, global, XDG or system), a `[remote]` or `[branch]` section outside the repository's own config, `extensions.worktreeConfig`, or config syntax the guard does not decode (a key on a header's line, a continued, quoted or commented value), makes it `top`. `GH_HOST` and the proxy variables count as reaching their host (`GH_REPO` is `top`); a target whose host cannot be read is `top` |
+| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named); a remote at a local path, a URL rewrite (`insteadOf`) or `[include]` in any config file git reads (the repository's, global, XDG or system), a `[remote]` or `[branch]` section outside the repository's own config, `extensions.worktreeConfig`, or config syntax the guard does not decode (a key on a header's line, a continued, quoted or commented value), makes it `top`. `GH_HOST` and the proxy variables count as reaching their host (`GH_REPO` is `top`); a target whose host cannot be read is `top` |
 | `top` | never |
 
 The optional adapter table adds to the grant and never names a command:
