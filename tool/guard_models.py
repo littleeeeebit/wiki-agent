@@ -2,8 +2,8 @@
 
 `TABLE` is all the guard knows about programs, and it is kept small: programs
 that only read or print, `sort -o`/`uniq` writing their one output, `cd`,
-`find` without actions, nested shells, and git's `status`, `diff`, `log`,
-`show`, `rev-parse`, `add`, `commit` and `push` to a configured remote. A row
+`find` without actions, nested shells, and git, gh and curl (their rows are
+in `guard_git`). A row
 names a program, the flags it understands (`row`'s spec: one-letter flags,
 flags taking a value, long flags) and the model that maps its argv to effects.
 `gate` runs before every model: a flag the row does not list is `top`, and so
@@ -17,8 +17,6 @@ row in a later change, never by modelling one more form inside this one.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-import os
-import posixpath
 import re
 
 from guard import BLOCK, Word, code, moved_to, names_set, paths, resolve, top
@@ -377,142 +375,12 @@ def m_cmd(name, args, ctx):
     return from_stdin("cmd", ctx, name), None
 
 
-# -- git -----------------------------------------------------------------------
-
-# git's own options before the verb that take no value. `-C`, `-c`, `--git-dir`, `--work-tree` and `--exec-path`
-# change which repository, configuration or program runs: they are not here, so they are `top`.
-GIT_GLOBAL = {"--no-pager", "-P", "--no-optional-locks", "--literal-pathspecs", "--no-replace-objects", "--version",
-              "--help"}
-# The options the log/diff family shares. `--output` is a write; `--ext-diff`, `--textconv` are not here.
-GIT_LOG = ("-pusczwbRqiEm -M? -B? -C? -U: -n: -S: -G: -L: -O: --patch --no-patch --stat --numstat --shortstat --name-only "
-           "--name-status --summary --check --raw --cached --staged --merge-base --no-index --exit-code --quiet "
-           "--color --no-color --word-diff --diff-filter: --unified: --relative --minimal --patience --histogram "
-           "--ignore-all-space --ignore-space-change --ignore-blank-lines --ignore-space-at-eol --ignore-cr-at-eol "
-           "--abbrev --full-index --binary --no-prefix --src-prefix: --dst-prefix: --find-renames --no-renames "
-           "--dirstat --oneline --format: --pretty: --graph --decorate --no-decorate --all --branches --tags "
-           "--remotes --author: --committer: --since: --until: --after: --before: --grep: --follow --reverse "
-           "--no-merges --merges --first-parent --date: --abbrev-commit --left-right --cherry-pick --cherry-mark "
-           "--boundary --topo-order --date-order --max-count: --skip: --source --no-walk --stat-width: "
-           "--cc --full-history --simplify-by-decoration --notes --no-notes")
-# verb: (the flags its row understands, what its model does). A verb with no row is `top`.
-GIT_VERBS = {
-    "status": ("-sbvz -u? --short --branch --porcelain --long --untracked-files --ignored --ahead-behind "
-               "--no-ahead-behind --show-stash --column --no-column --renames --no-renames --verbose", "read"),
-    "diff": (GIT_LOG, "read"), "log": (GIT_LOG, "read"), "show": (GIT_LOG, "read"),
-    "rev-parse": ("-q --verify --quiet --short --abbrev-ref --symbolic --symbolic-full-name --show-toplevel "
-                  "--show-prefix --show-cdup --git-dir --git-common-dir --absolute-git-dir --is-inside-work-tree "
-                  "--is-inside-git-dir --is-bare-repository --is-shallow-repository --show-object-format --all "
-                  "--branches --tags --remotes --not --default: --since: --until: --path-format: --git-path: --sq "
-                  "--local-env-vars --show-superproject-working-tree --revs-only --no-revs --flags --no-flags", "read"),
-    # Writes of the repository it runs in, and the push of its branch to a configured remote.
-    "add": ("-Auv --all --update --verbose", "repo"),
-    "commit": ("-qa -m: -F: --quiet --all --message: --file:", "repo"),
-    "push": ("-uq --set-upstream --quiet", "push"),
-}
-GIT = {verb: (row(None, spec, digits=True), kind) for verb, (spec, kind) in GIT_VERBS.items()}
-
-
-def same_path(a: str, b: str, ctx) -> bool:
-    """One place by the host's rule: Windows paths ignore case, POSIX paths do not."""
-    a, b = a.rstrip("/"), b.rstrip("/")
-    return a.lower() == b.lower() if ctx.windows else a == b
-
-
-def physical(path: str, ctx) -> str:
-    """Where `path` is once links and junctions are followed, as git finds it from the process's directory.
-    A context modelling the other host's paths is taken as written."""
-    if ctx.windows != (os.name == "nt"):
-        return path.rstrip("/") or "/"
-    return os.path.realpath(path).replace("\\", "/").rstrip("/") or "/"
-
-
-def repo_roots(ctx) -> set | None:
-    """The work tree each place `ctx` may run in belongs to: the nearest folder holding `.git` above where
-    the place really is, or the checkout the grant was read for. `None` when a place is unknown."""
-    roots, repo = set(), ctx.repo and physical(ctx.repo, ctx)
-    for cwd in ctx.cwds:
-        if cwd is None:
-            return None
-        p, found = physical(cwd, ctx), None
-        while found is None:
-            if repo and same_path(p, repo, ctx) or os.path.exists(p + "/.git"):
-                found = p
-            elif (up := posixpath.dirname(p)) == p:
-                return None
-            else:
-                p = up
-        roots.add(found)
-    return roots
-
-
-def own_repo(ctx) -> bool:
-    """Every place `ctx` may run in is inside the checkout whose remotes the grant read."""
-    roots = repo_roots(ctx)
-    return bool(ctx.repo) and roots is not None and all(same_path(r, physical(ctx.repo, ctx), ctx) for r in roots)
-
-
-def pushed(pos: list, ctx) -> set:
-    """`git push [REMOTE [BRANCH]]`: every host the grant read for that remote (each `url` and `pushurl`),
-    or for every destination when none is named. A URL, a path, a refspec with `+`, `:` or a revision
-    suffix (a forced push, a deletion, another ref) is not in the row."""
-    if not own_repo(ctx):
-        return top("git push from a repository the grant has not read")
-    if len(pos) > 2 or any(w.why for w in pos) or pos and pos[0].text not in {n for n, _ in ctx.remotes} \
-            or len(pos) == 2 and re.search(r"[+:^~@{}]", pos[1].text) or not ctx.remotes:
-        return top("git push to anything but a configured remote and a branch")
-    hosts = {h for n, h in ctx.remotes if not pos or n == pos[0].text}
-    if "\0unread" in hosts:
-        return top("git push to a local path, a rewritten URL or configuration syntax the guard does not decode")
-    return {("network", h) for h in hosts}
-
-
-PRETTY = {"oneline", "short", "medium", "full", "fuller", "reference", "email", "mboxrd", "raw"}
-
-
-def formats(args: list) -> set:
-    """A `--format`/`--pretty` value is a built-in format or a literal template. A `%G` field verifies the
-    signature, which runs the configured verifier; any other name is an alias the config defines."""
-    for k, w in enumerate(args):
-        m = re.match(r"--(?:format|pretty)(=?)(.*)", w.text, re.S)
-        if not m:
-            continue
-        value = m.group(2) if m.group(1) else (args[k + 1].text if k + 1 < len(args) else "")
-        if "%G" in value:
-            return top("a git format field that verifies signatures")
-        if "%" not in value and value.removeprefix("format:").removeprefix("tformat:") == value \
-                and value not in PRETTY:
-            return top("a git format alias the configuration defines")
-    return set()
-
-
-def m_git(name, args, ctx):
-    i = 0
-    while i < len(args):
-        w, t = args[i], args[i].text
-        if w.why:
-            return top(f"{w.why} as a git option or verb"), None
-        if t not in GIT_GLOBAL:
-            if t.startswith("-"):
-                return top(f"git {t}: an option the table does not model"), None
-            break
-        i += 1
-    if i >= len(args):
-        return set(), None
-    verb, rest = args[i].text, args[i + 1:]
-    if verb not in GIT:
-        return top(f"git {verb}: a verb the table does not model"), None
-    r, kind = GIT[verb]
-    if stop := gate(f"git {verb}", rest, r):
-        return stop, None
-    # What git starts from its configuration (hooks, a text converter, a verifier) is trusted only because
-    # that configuration is protected: in another repository it may be one the agent wrote.
-    if not own_repo(ctx):
-        return top("git in a repository other than the checkout"), None
-    if kind == "read":
-        return formats(rest), None
-    # git's write of the repository it runs in is the granted git verb; `outside` judges its place only.
-    out = paths("repo", here(ctx), ctx)
-    return out | (pushed(getopt(rest, r.takes)[0], ctx) if kind == "push" else set()), None
+def lazy(model: str):
+    """A row whose model lives in `guard_git`, which builds on this module."""
+    def run(name, args, ctx):
+        import guard_git
+        return getattr(guard_git, model)(name, args, ctx)
+    return run
 
 
 def subscripted(ws: list) -> set:
@@ -667,7 +535,8 @@ TABLE = {
     **{s: row(m_sh, free=True) for s in SHELLS},
     **{s: row(m_pwsh, free=True) for s in PS_SHELLS},
     "cmd": row(m_cmd, free=True),
-    "git": row(m_git, free=True),
+    # git, gh and curl gate their own flags (`guard_git`).
+    **{p: row(lazy(f"m_{p}"), free=True) for p in ("git", "gh", "curl")},
     # Listed only to refuse: what these do is decided by data, links or code the argv does not show.
     "ln": row(refuse("creates a link the guard cannot follow"), free=True),
     **{z: row(refuse("extracts an archive into names the archive decides"), free=True)

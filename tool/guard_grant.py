@@ -30,6 +30,7 @@ class Grant:
     hosts: set
     remotes: tuple
     top: str = ""                       # the checkout the remotes were read from
+    hooks: str = ""                     # a hooks folder git is configured to run from inside a write root
 
 
 # Inside a write root, but they decide the grant or what runs next: never granted.
@@ -139,6 +140,20 @@ def remote_hosts(common: Path) -> tuple:
     return tuple(sorted(out))
 
 
+def hook_folders(top: Path, common: Path) -> list[str]:
+    """Every `core.hooksPath` any configuration git reads sets, relative to the work tree as git takes it.
+    A value this reader cannot decode (quoted, escaped, a variable) counts as the work tree itself."""
+    try:
+        texts = [(common / "config").read_text(encoding="utf-8", errors="replace")]
+    except OSError:
+        texts = []
+    out = []
+    for value in re.findall(r"(?im)^\s*hookspath\s*=\s*(.*?)\s*$", "\n".join(texts + git_configs())):
+        plain = re.fullmatch(r"[^\s\"\\;#$%]+", value)
+        out.append(str(top / Path(value).expanduser()) if plain else str(top))
+    return out
+
+
 def task_spec(top: Path, gitdir: Path, main: Path) -> dict:
     """The hub's spec for the branch checked out here, when it names this checkout; `{}` otherwise."""
     try:
@@ -199,7 +214,10 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
     remotes = remote_hosts(common)
     hosts = {"127.0.0.1"} | {h for _, h in remotes if h != UNREAD} | {host_of(s) for s in strings("network_hosts")}
     protected = sorted({str(p / x) for p in (top, main) for x in PROTECTED})
-    return Grant([str(r) for r in roots], protected, executables, hosts, remotes, top.as_posix())
+    writable = [h for h in hook_folders(top, common) if contained(h, [str(r) for r in roots])
+                and not any(contained(h, [p]) for p in protected)]
+    return Grant([str(r) for r in roots], protected, executables, hosts, remotes, top.as_posix(),
+                 writable[0] if writable else "")
 
 
 def outside(effect: tuple, g: Grant) -> str | None:
@@ -215,6 +233,9 @@ def outside(effect: tuple, g: Grant) -> str | None:
     if kind == "network":
         return None if target in g.hosts else \
             f"허가된 호스트가 아니다 — `.wiki/adapter.toml` 의 `[guard] network_hosts` 에 `{target}` 를 더하면 열린다"
+    if kind == "repo" and g.hooks:
+        return (f"git 이 작업이 고칠 수 있는 훅 폴더({g.hooks})의 훅을 실행한다 — `core.hooksPath` 를 쓰기 루트 "
+                "밖으로 옮기기 전에는 어떤 허가로도 열리지 않으니, 사람이 직접 실행한다")
     # Any path effect on a directory that holds a protected path may reach it: a destination directory, a
     # URL- or server-named download, a patch or an extraction writes names the command does not show, and a
     # write to an existing directory either lands under it or fails. Only git's own write of the repository

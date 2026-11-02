@@ -363,14 +363,45 @@ OUTSIDE_TABLE_FORMS = {
     "git-mv": ("git mv a/link b; printf x > b/f", "Bash"),
     "git-config": ("git config remote.origin.url https://unlisted.example/o/r.git", "Bash"),
     "git-remote": ("git remote add other https://unlisted.example/o/r.git", "Bash"),
-    "git-merge": ("git merge topic", "Bash"),
-    "git-pull": ("git pull", "Bash"),
-    "git-rebase": ("git rebase main", "Bash"),
+    "git-merge-strategy": ("git merge -s helper topic", "Bash"),
+    "git-pull-url": ("git pull https://unlisted.example/o/r.git main", "Bash"),
+    "git-rebase-exec": ("git rebase -x 'rm ../outside/target.txt' main", "Bash"),
+    "git-rebase-interactive": ("git rebase -i main", "Bash"),
     "git-reset": ("git reset --hard HEAD~1", "Bash"),
-    "git-stash": ("git stash pop", "Bash"),
-    "git-fetch": ("git fetch origin", "Bash"),
+    "git-stash-all": ("git stash push -a", "Bash"),
+    "git-fetch-url": ("git fetch https://unlisted.example/o/r.git", "Bash"),
+    "git-fetch-upload-pack": ("git fetch --upload-pack=./helper origin", "Bash"),
     "git-clone": ("git clone https://github.com/owner/repo out", "Bash"),
-    "git-dash-c": ("git -C sub status", "Bash"),
+    "git-dash-c-outside": ("git -C ../outside status", "Bash"),
+    "git-dash-c-variable": ("git -C $W status", "Bash"),
+    "git-checkout-outside": ("git checkout HEAD~1 -- ../outside/target.txt", "Bash"),
+    "git-checkout-pattern": ("git checkout HEAD~1 -- '*.toml'", "Bash"),
+    "git-checkout-tree": ("git checkout HEAD~1 -- .", "Bash"),
+    "git-worktree-add-outside": ("git worktree add ../outside/wt", "Bash"),
+    "git-worktree-remove-outside": ("git worktree remove --force ../outside/wt", "Bash"),
+    "git-worktree-move": ("git worktree move wt ../outside/wt", "Bash"),
+    "git-remote-show": ("git remote show origin", "Bash"),
+    "git-config-pager": ("git -c core.pager=./helper log", "Bash"),
+    "git-branch-format": ("git branch '--format=%(signature)'", "Bash"),
+    "gh-pr-merge-number": ("gh pr merge 3 --squash", "Bash"),
+    "gh-pr-view-url": ("gh pr view https://unlisted.example/o/r/pull/3", "Bash"),
+    "gh-repo-flag": ("gh pr view -R other/repo 3", "Bash"),
+    "gh-repo-env": ("GH_REPO=other/repo gh pr merge --squash", "Bash"),
+    "gh-host-env": ("GH_HOST=unlisted.example gh pr view", "Bash"),
+    "gh-api-field": ("gh api repos/o/r/issues -f title=x", "Bash"),
+    "gh-api-method": ("gh api -X POST repos/o/r/issues", "Bash"),
+    "gh-api-hostname": ("gh api --hostname unlisted.example user", "Bash"),
+    "gh-web": ("gh pr view --web", "Bash"),
+    "gh-extension": ("gh extension install owner/gh-x", "Bash"),
+    "curl-follow": ("curl -L http://localhost:8000/x", "Bash"),
+    "curl-unlisted-host": ("curl -s https://unlisted.example/x", "Bash"),
+    "curl-userinfo-host": ("curl http://127.0.0.1@unlisted.example/x", "Bash"),
+    "curl-output-outside": ("curl -o ../outside/target.txt http://localhost:8000/x", "Bash"),
+    "curl-output-protected": ("curl -o verification.toml http://localhost:8000/x", "Bash"),
+    "curl-config-file": ("curl -K startup.rc http://localhost:8000/", "Bash"),
+    "curl-proxy": ("curl -x unlisted.example:8080 http://localhost:8000/", "Bash"),
+    "curl-proxy-env": ("HTTPS_PROXY=unlisted.example:8080 curl https://github.com/", "Bash"),
+    "curl-variable-host": ("curl -s localhost:$p/api", "Bash"),
     "git-config-flag": ("git -c core.hooksPath=../outside commit -m x", "Bash"),
     "git-dir": ("git --git-dir=../other/.git status", "Bash"),
     "git-dir-variable": ("GIT_DIR=../other/.git git status", "Bash"),
@@ -671,8 +702,6 @@ TOP_FORMS = {
     "xcopy": ("cmd /c xcopy src .wiki", "Bash"),
     "del-subdirectories": ("cmd /c del /s target.txt", "Bash"),
     "cmd-for-command": ("cmd /c for /f %i in ('dir') do echo %i", "Bash"),
-    "git-restore": ("git restore --source=HEAD~1 -- .wiki/adapter.toml", "Bash"),
-    "git-checkout": ("git checkout HEAD~1 -- ../outside/target.txt", "Bash"),
 }
 
 
@@ -965,3 +994,82 @@ def test_the_null_devices_stay_devices():
     assert effects("echo x > NUL") == {"read"}
     assert effects("echo x > /dev/null", ctx=POSIX) == {"read"}
     assert effects("Write-Output x > $null", "ps") == {"read"}
+
+
+# -- Follow-up (a): git and gh writes and the network ----------------------------
+# Each new row's effects, on a checkout whose one remote is `github.com`.
+ROW_EFFECTS = {
+    "git fetch -q origin --prune": {"write(/work/repo/.)", "network(github.com)"},
+    "git pull --ff-only": {"write(/work/repo/.)", "network(github.com)"},
+    "git merge --no-edit origin/main": {"write(/work/repo/.)"},
+    "git rebase --continue": {"write(/work/repo/.)"},
+    "git stash push -q -- notes.md": {"write(/work/repo/.)", "write(/work/repo/notes.md)"},
+    "git stash pop -q": {"write(/work/repo/.)"},
+    "git stash list": set(),
+    "git checkout -q -b topic": {"write(/work/repo/.)"},
+    "git restore --staged -- notes.md": {"write(/work/repo/.)", "write(/work/repo/notes.md)"},
+    "git switch -c topic": {"write(/work/repo/.)"},
+    "git branch -r": set(),
+    "git branch -D topic": {"write(/work/repo/.)"},
+    "git worktree list": set(),
+    "git worktree add --detach /tmp/wt HEAD": {"write(/work/repo/.)", "write(/tmp/wt)"},
+    "git worktree remove --force /tmp/wt": {"write(/work/repo/.)", "delete(/tmp/wt)"},
+    "git -C sub status": set(),
+    "git -c user.name=t -c user.email=t@t commit -qm x": {"write(/work/repo/.)"},
+    "git -c core.whitespace=cr-at-eol diff": set(),
+    "git config --get core.autocrlf": set(),
+    "git config user.email": set(),
+    "git ls-files --others --exclude-standard": set(),
+    "git check-ignore -q artifacts": set(),
+    "git remote -v": set(),
+    "gh pr view 3 --json body -q .body": {"network(github.com)"},
+    "gh pr edit --body-file body.md": {"network(github.com)"},
+    "gh pr merge --squash --delete-branch": {"network(github.com)", "write(/work/repo/.)"},
+    "gh run view 5 --log-failed": {"network(github.com)"},
+    "gh api repos/o/r/pulls --jq .[].number": {"network(github.com)"},
+    "gh api -X GET repos/o/r/pulls": {"network(github.com)"},
+    "curl -s -m 5 http://127.0.0.1:30006/api/x": {"network(127.0.0.1)"},
+    "curl -s -o out.json -w '%{http_code}' localhost:8000/x": {"network(127.0.0.1)", "write(/work/repo/out.json)"},
+    "curl -s -o /dev/null https://github.com/": {"network(github.com)"},
+}
+
+
+@pytest.mark.parametrize("command", ROW_EFFECTS)
+def test_each_new_row_has_its_effects(command):
+    assert effects(command, ctx=POSIX) == {"read"} | ROW_EFFECTS[command]
+
+
+def test_the_new_rows_pass_in_an_attached_checkout(repo):
+    for command in ("git fetch origin && git merge --no-edit origin/main", "git stash && git stash pop",
+                    "gh pr view --json state", "curl -s http://127.0.0.1:8000/x", "git branch -D topic"):
+        assert call(repo, command) is None, command
+
+
+def test_a_worktree_of_the_same_repository_is_the_checkout(repo):
+    """A linked worktree shares the checkout's configuration and remotes; another repository does not."""
+    temp = Path(os.environ["TEMP"])
+    wt = temp / "wt"
+    wt.mkdir()
+    (repo / ".git/worktrees/wt").mkdir(parents=True)
+    (repo / ".git/worktrees/wt/commondir").write_text("../..\n", encoding="utf-8")
+    (wt / ".git").write_text(f"gitdir: {(repo / '.git/worktrees/wt').as_posix()}\n", encoding="utf-8")
+    other = temp / "other"
+    (other / ".git").mkdir(parents=True)
+    w, o = wt.as_posix(), other.as_posix()
+    for command in (f"git -C {w} status", f"git -C {w} commit -qm x", f"git -C {w} fetch origin"):
+        assert call(repo, command) is None, command
+    for command in (f"git -C {o} status", f"cd {o} && git fetch origin", f"cd {o} && gh pr view"):
+        assert "판단할 수 없는" in (call(repo, command) or ""), command
+
+
+def test_git_does_not_write_while_its_hooks_are_writable(repo):
+    """A hooks folder inside a write root holds code the agent may edit and git then runs."""
+    config = repo / ".git/config"
+    base = config.read_text(encoding="utf-8")
+    for setting in ("hooksPath = .githooks", 'hooksPath = "hooks dir"', "hooksPath = ../shared/hooks"):
+        config.write_text(base + f"[core]\n\t{setting}\n", encoding="utf-8")
+        for command in ("git commit -qm x", "git merge --no-edit origin/main", "gh pr merge --squash -d"):
+            assert "훅 폴더" in (call(repo, command) or ""), (setting, command)
+        assert call(repo, "git status") is None
+    config.write_text(base + f"[core]\n\thooksPath = {(repo.parent / 'hooks').as_posix()}\n", encoding="utf-8")
+    assert call(repo, "git commit -qm x") is None
