@@ -296,6 +296,9 @@ def test_a_program_with_no_row_is_only_a_spawn(repo):
     ("bash scripts/check.sh", "Bash"), ("pwsh -File scripts/check.ps1", "Bash"), ("cmd /c call run_user.cmd", "Bash"),
     ("cmd /c start npm run dev", "Bash"), ("command -v npm && export NODE_ENV=test && npm test", "Bash"),
     ("command -pv npm; export \"NODE_ENV=test\" CI; command -- npm test", "Bash"),
+    # One literal assignment, its value quoted or not, still stands for its variable in a later path.
+    ('export S="safe"; echo x > "$S/target.txt"', "Bash"), ("export S='safe' T=b; echo x > $S/t", "Bash"),
+    ('export S=safe; echo x > "$S/target.txt"', "Bash"),
     ("../outside/python x.py", "Bash"),
     # A program with no row runs its own code, as `python -c` always did: what it does is not judged.
     ("rm -rf ../outside", "Bash"), ("curl -o ../outside/x http://localhost:8000/x", "Bash"), ("gh pr view 3", "Bash"),
@@ -311,8 +314,10 @@ def test_any_program_of_any_toolchain_runs(repo, command, tool):
     "command git push --force origin x", "command -- git push --force origin x", "command -p -- git push --force o x",
     "command -x git", 'cmd /c "call cd .. & echo x > target.txt"', 'cmd /c "call set GIT_DIR=..\\o\\.git & git status"',
     # A quoted export rebinds a name a path uses later: the earlier literal no longer stands for it.
-    *[f'S=safe; export {form}; echo x > "$S/target.txt"' for form in
-      ('"S=.."', "'S+=/../..'", '"S"=..', 'S"=.."', "''S=..", "\\S=..", "S\\=..", '"S"+=/../..')],
+    *[f'S=safe; {form}; echo x > "$S/target.txt"' for form in
+      ('export "S=.."', "export 'S+=/../..'", 'export "S"=..', 'export S"=.."', "export ''S=..", "export \\S=..",
+       "export S\\=..", 'export "S"+=/../..', 'export "X=a;b" "S=.."', 'ex"port" "S=.."', 'command export "S=.."',
+       'if true; then export "S=.."; fi')],
 ])
 def test_a_shell_builtin_outside_the_table_stays_denied(repo, command):
     assert call(repo, command), command
