@@ -10,7 +10,8 @@ decided before it runs. The call passes when every effect is inside the grant
 (`grant`); there is no list of command patterns. What an executable does is
 read off a closed table of programs and the flags each understands
 (`guard_models.TABLE`, `guard_windows.PS_ROWS`/`CMD_ROWS`): a flag outside its
-row is `top`, and a name with no row is a `spawn` the grant has to name.
+row is `top`, and a name with no row is a `spawn`, which runs whatever its
+own code does and is never judged (`guard_grant`).
 
 Soundness over completeness: anything the models cannot decide becomes `top`,
 and `top` is never granted. The refusal is read by the person and stays Korean.
@@ -991,8 +992,7 @@ def verdict(payload: dict, host: str = "claude") -> dict | None:
         return None
     lines = ["위키 효과 검사가 이 호출을 막았다 — 작업에 허가된 효과 밖이다."]
     lines += [f"- {effect}: {why}" for effect, why in bad]
-    lines.append(f"허가: 쓰기 루트 {', '.join(g.roots)} · 실행 파일 {', '.join(sorted(g.executables))}"
-                 f" · 호스트 {', '.join(sorted(g.hosts))}")
+    lines.append(f"허가: 쓰기 루트 {', '.join(g.roots)} · 호스트 {', '.join(sorted(g.hosts))}")
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                    "permissionDecisionReason": "\n".join(lines)}}
 

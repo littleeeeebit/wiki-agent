@@ -339,10 +339,11 @@ CMD_ROWS = {"cd", "chdir", "type", "echo", "dir", "ver", "vol", "cls", "exit", "
 # `del /s` (every subfolder) is not listed.
 CMD_WRITES = {"del": "/f /q", "erase": "/f /q", "rd": "/s /q", "rmdir": "/s /q", "md": "", "mkdir": "",
               "move": "/y /-y", "ren": "", "rename": ""}
-# Every other builtin links, runs a command or a batch file, or sets the environment. `copy` of a source an
-# earlier statement turned into a folder writes that folder's files under names the command does not show.
-CMD_REFUSED = {"pushd", "popd", "set", "setlocal", "endlocal", "if", "for", "start", "mklink", "xcopy", "robocopy",
-               "call", "title", "color", "prompt", "pause", "break", "copy"}
+# Every other builtin links or sets the environment. `copy` of a source an earlier statement turned into a
+# folder writes that folder's files under names the command does not show. `call` and `start` run a program
+# or a batch file: they are not builtins here, so they are a `spawn` like any program with no row.
+CMD_REFUSED = {"pushd", "popd", "set", "setlocal", "endlocal", "if", "for", "mklink", "xcopy", "robocopy",
+               "title", "color", "prompt", "pause", "break", "copy"}
 CMD_BUILTINS = CMD_ROWS | set(CMD_WRITES) | CMD_REFUSED
 
 

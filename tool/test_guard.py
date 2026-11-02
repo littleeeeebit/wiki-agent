@@ -54,7 +54,7 @@ def repo(tmp_path, monkeypatch):
     (top / ".wiki/adapter.toml").write_text(
         '[slots]\ngate_cmd = "python -m ruff check tool"\n'
         '[checks.web]\ncmd = "npm --prefix web run build"\n'
-        '[guard]\nwrite_roots = ["../shared"]\nnetwork_hosts = ["pypi.org"]\nexecutables = ["npx"]\n',
+        '[guard]\nwrite_roots = ["../shared"]\nnetwork_hosts = ["pypi.org"]\n',
         encoding="utf-8")
     return top
 
@@ -223,10 +223,10 @@ def test_calls_inside_the_grant_pass(repo):
 
 def test_each_denial_names_the_effect_and_the_grant_that_would_allow_it(repo):
     reason = call(repo, "GH_HOST=unlisted.example cargo build && echo x > ../other/f")
-    assert "spawn(cargo)" in reason and "`[guard] executables` 에 `cargo`" in reason
+    assert "spawn(" not in reason and "실행 파일" not in reason
     assert "network(unlisted.example)" in reason and "`[guard] network_hosts` 에 `unlisted.example`" in reason
     assert "write(" in reason and "other" in reason and "`[guard] write_roots`" in reason
-    assert reason.splitlines()[-1].startswith("허가: 쓰기 루트") and "npx" in reason and "pypi.org" in reason
+    assert reason.splitlines()[-1].startswith("허가: 쓰기 루트") and "pypi.org" in reason
 
 
 def test_a_nested_shell_keeps_the_effects_it_wraps(repo):
@@ -259,9 +259,9 @@ def test_ordinary_writes_beside_protected_files_stay_allowed(repo):
 
 # -- The closed table (spec rev 5) ------------------------------------------------
 # Only a program the table lists, with the flags its row lists, yields effects other than `top`; a program
-# with no row is a `spawn` only a grant naming it allows. Every form outside the table is denied by design,
-# whichever of the two it reduces to. The rules below are walked over the tables themselves, so a row added
-# later is held to them without a new test.
+# with no row is a `spawn`, which passes whatever language the project uses. Every other form outside the
+# table is denied by design. The rules below are walked over the tables themselves, so a row added later is
+# held to them without a new test.
 
 def test_every_row_refuses_a_flag_it_does_not_list():
     from guard_models import KEYWORDS, TABLE
@@ -284,9 +284,30 @@ def test_cmd_rows_only_read_or_move_the_directory():
 
 def test_a_program_with_no_row_is_only_a_spawn(repo):
     assert effects("zz-unlisted-tool --anything ../outside/target.txt") == {"read", "spawn(zz-unlisted-tool)"}
-    # A cmdlet is not an executable a grant could name: outside the table it is `top`.
+    # A cmdlet runs inside the runspace, not as a program: outside the table it is `top`.
     assert any(e.startswith("top(") for e in effects("Zz-Unlisted ../outside/target.txt", "ps"))
-    assert "허가된 실행 파일이 아니다" in call(repo, "xxd -r dump.hex ../outside/target.txt")
+
+
+# P0: the gate's language once decided which programs ran. A Python gate granted `python` and refused
+# npm, a project CLI and a `.cmd` browser launcher, so a web project could not be verified at all.
+@pytest.mark.parametrize("command,tool", [
+    ("npm run typecheck && npx vitest run", "Bash"), ("omm validate", "Bash"), ("cargo test", "Bash"),
+    ("./scripts/run_user.cmd", "Bash"), ("scripts\\run_user.cmd", "PowerShell"), ("& .\\scripts\\x.ps1", "PowerShell"),
+    ("bash scripts/check.sh", "Bash"), ("pwsh -File scripts/check.ps1", "Bash"), ("cmd /c call run_user.cmd", "Bash"),
+    ("cmd /c start npm run dev", "Bash"), ("command -v npm && export NODE_ENV=test && npm test", "Bash"),
+    ("../outside/python x.py", "Bash"),
+    # A program with no row runs its own code, as `python -c` always did: what it does is not judged.
+    ("rm -rf ../outside", "Bash"), ("curl -o ../outside/x http://localhost:8000/x", "Bash"), ("gh pr view 3", "Bash"),
+])
+def test_any_program_of_any_toolchain_runs(repo, command, tool):
+    assert call(repo, command, tool=tool) is None, command
+
+
+# Builtins that set what later statements of this shell run are not programs.
+@pytest.mark.parametrize("command", ["export GIT_DIR=../o/.git", "export -f f", "trap 'x' EXIT", "exec > ../o/f",
+                                     "declare -x PATH=/o", "builtin cd ..", "command git push --force origin x"])
+def test_a_shell_builtin_outside_the_table_stays_denied(repo, command):
+    assert call(repo, command), command
 
 
 # -- PowerShell and cmd rows that write (follow-up b) ---------------------------------
@@ -420,15 +441,10 @@ def test_a_delete_or_move_of_a_link_is_denied(repo, tmp_path):
 
 
 # Forms earlier rounds found acting outside the grant, each on a neutral target. The core table had no row
-# for any of them; rows added since still deny each one, and bring their own effect tests above.
+# for any of them; rows added since still deny each one, and bring their own effect tests above. Programs
+# with no row (rm, cp, tar, curl, gh, awk, sed, xargs, …) left this list: they run as spawns.
 OUTSIDE_TABLE_FORMS = {
     # File writers, copies and moves.
-    "rm": ("rm -rf ../outside", "Bash"),
-    "touch": ("touch .wiki/adapter.toml", "Bash"),
-    "cp-into-directory": ("cp ../adapter.toml .wiki", "Bash"),
-    "cp-target-flag": ("cp -t .wiki src/adapter.toml", "Bash"),
-    "mv-into-dir": ("mv src/adapter.toml .wiki", "Bash"),
-    "mktemp-outside": ("mktemp -p ../outside", "Bash"),
     "copy-item": ("Copy-Item src/adapter.toml -Destination .wiki", "PowerShell"),
     "move-item": ("Move-Item src/adapter.toml .wiki", "PowerShell"),
     "set-content": ("Set-Content ../outside/target.txt x", "PowerShell"),
@@ -437,31 +453,17 @@ OUTSIDE_TABLE_FORMS = {
     "cmd-del": ("cmd /c del /s target.txt", "Bash"),
     # Links and trees.
     "ln": ("ln -s ../outside link", "Bash"),
-    "cp-symbolic": ("cp -s ../outside/target.txt link && printf x > link", "Bash"),
-    "cp-archive": ("cp -a ../outside dir", "Bash"),
-    "rsync-archive": ("rsync -a ../outside/ dir", "Bash"),
     "new-item-symlink": ("New-Item -ItemType SymbolicLink -Path link -Value ../outside", "PowerShell"),
     "new-item-junction": ("ni -ItemType Junction link -Value ../outside", "PowerShell"),
     "mklink": ("cmd /c mklink /J link ..\\outside", "Bash"),
     "rename-item": ("Rename-Item src/adapter.toml .wiki", "PowerShell"),
     # Archives.
-    "tar-extract": ("tar -xf bundle.tar -C safe", "Bash"),
-    "tar-remove-files": ("tar -cf saved.tar --remove-files ../outside/target.txt", "Bash"),
     "unzip": ("unzip bundle.zip -d safe", "Bash"),
-    "gzip": ("gzip ../outside/target.txt", "Bash"),
     "expand-archive": ("Expand-Archive bundle.zip -DestinationPath safe", "PowerShell"),
-    # Network clients.
-    "curl": ("curl -O http://localhost:8000/verification.toml", "Bash"),
-    "curl-connect-to": ("curl --connect-to localhost:80:unlisted.example:80 http://localhost/", "Bash"),
+    # Network clients with a refusing row or a cmdlet.
     "wget": ("wget http://localhost:8000/verification.toml", "Bash"),
     "web-request": ("Invoke-WebRequest http://localhost:8000/x -OutFile .wiki", "PowerShell"),
-    "gh-api": ("gh api https://unlisted.example/path", "Bash"),
-    "gh-clone": ("gh repo clone owner/repo out; printf x > out/link/target.txt", "Bash"),
-    "gh-pr-checkout": ("gh pr checkout 3", "Bash"),
-    # Script interpreters and code that runs code.
-    "awk": ("awk 'BEGIN { print \"x\" > \"../outside/target.txt\" }'", "Bash"),
-    "sed-write": ("sed 's/a/b/w ../outside/target.txt' startup.rc", "Bash"),
-    "xargs": ("ls | xargs rm", "Bash"),
+    # Code that runs code in this shell.
     "patch": ("patch -p1 < change.diff", "Bash"),
     "find-delete": ("find . -name x -delete", "Bash"),
     "find-exec": ("find . -execdir rm target.txt ';'", "Bash"),
@@ -476,7 +478,6 @@ OUTSIDE_TABLE_FORMS = {
     "export": ("export GIT_DIR=../outside/.git", "Bash"),
     "printf-name": ("printf -v PATH /outside/tools", "Bash"),
     "read-name": ("read HTTPS_PROXY < startup.rc", "Bash"),
-    "ansi-c-escape": ("rm -- $'a\\tb'", "Bash"),
     # PowerShell members, constructors, pipelines and computed commands.
     "constructor": ("[System.IO.FileStream]::new('C:/outside/target.txt', 'Create').Dispose()", "PowerShell"),
     "instance-method": ("(Get-Item README.md).CopyTo('../outside/target.md')", "PowerShell"),
@@ -514,25 +515,10 @@ OUTSIDE_TABLE_FORMS = {
     "git-remote-show": ("git remote show origin", "Bash"),
     "git-config-pager": ("git -c core.pager=./helper log", "Bash"),
     "git-branch-format": ("git branch '--format=%(signature)'", "Bash"),
-    "gh-pr-merge-number": ("gh pr merge 3 --squash", "Bash"),
-    "gh-pr-view-url": ("gh pr view https://unlisted.example/o/r/pull/3", "Bash"),
-    "gh-repo-flag": ("gh pr view -R other/repo 3", "Bash"),
+    # A variable naming another repository or host reaches it, whatever program it is set for.
     "gh-repo-env": ("GH_REPO=other/repo gh pr merge --squash", "Bash"),
     "gh-host-env": ("GH_HOST=unlisted.example gh pr view", "Bash"),
-    "gh-api-field": ("gh api repos/o/r/issues -f title=x", "Bash"),
-    "gh-api-method": ("gh api -X POST repos/o/r/issues", "Bash"),
-    "gh-api-hostname": ("gh api --hostname unlisted.example user", "Bash"),
-    "gh-web": ("gh pr view --web", "Bash"),
-    "gh-extension": ("gh extension install owner/gh-x", "Bash"),
-    "curl-follow": ("curl -L http://localhost:8000/x", "Bash"),
-    "curl-unlisted-host": ("curl -s https://unlisted.example/x", "Bash"),
-    "curl-userinfo-host": ("curl http://127.0.0.1@unlisted.example/x", "Bash"),
-    "curl-output-outside": ("curl -o ../outside/target.txt http://localhost:8000/x", "Bash"),
-    "curl-output-protected": ("curl -o verification.toml http://localhost:8000/x", "Bash"),
-    "curl-config-file": ("curl -K startup.rc http://localhost:8000/", "Bash"),
-    "curl-proxy": ("curl -x unlisted.example:8080 http://localhost:8000/", "Bash"),
     "curl-proxy-env": ("HTTPS_PROXY=unlisted.example:8080 curl https://github.com/", "Bash"),
-    "curl-variable-host": ("curl -s localhost:$p/api", "Bash"),
     "git-config-flag": ("git -c core.hooksPath=../outside commit -m x", "Bash"),
     "git-dir": ("git --git-dir=../other/.git status", "Bash"),
     "git-dir-variable": ("GIT_DIR=../other/.git git status", "Bash"),
@@ -759,25 +745,12 @@ def test_any_exception_fails_open(monkeypatch, capsys):
     assert "hook skipped: RuntimeError" in capsys.readouterr().err
 
 
-# A command named by a path is that file, not the program its basename suggests: it never borrows a row
-# or a granted name, wherever the file lies and whichever runner starts it.
-def test_a_path_named_executable_is_judged_by_its_path(repo):
-    outside = repo.parent / "outside"
-    outside.mkdir()
-    (outside / "cat").write_text("#!/bin/sh\n", encoding="utf-8")
-    for command, tool in (("../outside/cat README.md", "Bash"), ("./python tool/x.py", "Bash"),
-                          ("../outside/python tool/x.py", "Bash"), ("./git push origin HEAD", "Bash"),
-                          ("/usr/bin/time python tool/search q", "Bash"), ("& ./python x", "PowerShell")):
-        assert "허가된 실행 파일이 아니다" in (call(repo, command, tool=tool) or ""), command
-    assert call(repo, "cat README.md && git status") is None
-
-
-def test_a_path_granted_by_path_is_allowed(repo):
-    adapter = repo / ".wiki/adapter.toml"
-    adapter.write_text(adapter.read_text(encoding="utf-8").replace(
-        'executables = ["npx"]', 'executables = ["npx", ".venv/bin/python"]'), encoding="utf-8")
-    assert call(repo, ".venv/bin/python -m pytest") is None
-    assert "허가된 실행 파일이 아니다" in call(repo, "../outside/.venv/bin/python -m pytest")
+# A command named by a path is that file, not the program its basename suggests: it never borrows a row,
+# suffix included.
+def test_a_path_named_executable_is_judged_by_its_path():
+    for command in ("./git push origin HEAD", "./cat x", "./helper.cmd --version", "./helper.exe"):
+        name = command.split()[0][2:]
+        assert effects(command) == {"read", f"spawn(c:/users/me/pycharmprojects/wiki-agent/{name})"}, command
 
 
 # A variable that redirects a client to another host reaches that host, whatever program it is set for.
@@ -842,17 +815,6 @@ def test_each_unevaluated_construct_reduces_to_top(repo, form):
     command, tool = TOP_FORMS[form]
     reason = call(repo, command, tool=tool)
     assert reason and "판단할 수 없는" in reason, (form, reason)
-
-
-# R4 F11 — an executable is keyed by the name it is run by, suffix and path included: a grant for one
-# file does not allow another that shares its stem.
-def test_executable_identities_keep_their_suffix(repo):
-    adapter = repo / ".wiki/adapter.toml"
-    adapter.write_text(adapter.read_text(encoding="utf-8").replace(
-        'executables = ["npx"]', 'executables = ["npx", "./helper.exe"]'), encoding="utf-8")
-    assert call(repo, "./helper.exe --version") is None
-    for command in ("./helper.cmd --version", "./helper --version", "./helper.bat"):
-        assert "허가된 실행 파일이 아니다" in (call(repo, command) or ""), command
 
 
 # Only the first statement may change the directory; anywhere else (a later statement, a group, a body, a
