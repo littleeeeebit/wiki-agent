@@ -172,6 +172,11 @@ def writes(kind: str, ws: list, ctx) -> set:
 # parser reads them.
 DELETERS, MAKERS, MOVERS, OUTPUTS = {"rm", "rmdir", "unlink", "shred"}, {"mkdir", "touch", "tee", "truncate"}, \
     {"cp", "mv", "install", "ln"}, {"curl", "wget"}
+# The options whose value is a file curl or wget writes besides the download itself.
+CURL_OUT = ("-D", "--dump-header", "-c", "--cookie-jar", "--trace", "--trace-ascii", "--stderr", "--libcurl",
+            "--etag-save", "--hsts", "--alt-svc", "--ssl-sessions")
+WGET_OUT = ("-o", "--output-file", "-a", "--append-output", "--save-cookies", "--warc-file", "--hsts-file",
+            "--rejected-log")
 # Each writer's options that take a value: its getopt letters (a cluster ends at the first of them, so
 # `-gstaff` is `-g staff` and `-dm755` is `-d -m 755`) and its long names (`--mode x`, `--mode=x`, or a
 # prefix naming one of them). Copied from the programs' own option tables.
@@ -181,16 +186,11 @@ SPEC = {
     "cp": ("tS", ("--target-directory", "--suffix", "--sparse", "--no-preserve")),
     "mv": ("tS", ("--target-directory", "--suffix")), "ln": ("tS", ("--target-directory", "--suffix")),
     "install": ("gmotS", ("--group", "--mode", "--owner", "--target-directory", "--suffix", "--strip-program")),
-    "curl": ("AbcCdDeEFHKmoPQrtTuUwxXyYz", ("--output", "--output-dir", "--dump-header", "--cookie-jar", "--trace",
-                                            "--trace-ascii", "--stderr", "--libcurl", "--etag-save", "--hsts",
-                                            "--alt-svc")),
-    "wget": ("aABDeiIloOPQRtTUwX", ("--output-document", "--directory-prefix", "--output-file", "--append-output",
-                                    "--save-cookies", "--warc-file")),
+    "curl": ("AbcCdDeEFHKmoPQrtTuUwxXyYz",
+             ("--url", "--output", "--output-dir") + tuple(f for f in CURL_OUT if f.startswith("--"))),
+    "wget": ("aABDeiIloOPQRtTUwX",
+             ("--output-document", "--directory-prefix") + tuple(f for f in WGET_OUT if f.startswith("--"))),
 }
-# The options whose value is a file the program writes (curl's and wget's are each a file of their own).
-CURL_OUT = ("-D", "--dump-header", "-c", "--cookie-jar", "--trace", "--trace-ascii", "--stderr", "--libcurl",
-            "--etag-save", "--hsts", "--alt-svc")
-WGET_OUT = ("-o", "--output-file", "-a", "--append-output", "--save-cookies", "--warc-file")
 
 
 def options(name: str, args: list) -> tuple:
@@ -224,12 +224,18 @@ def options(name: str, args: list) -> tuple:
     return opts, ops
 
 
-def fetched(url: Word, folder: Word) -> Word:
-    """The file a download of `url` lands in under `folder`: the URL's last name, else `index.html`."""
+def fetched(url: Word) -> Word:
+    """The file name a download of `url` takes: the URL's last name, else `index.html`."""
     m = re.match(r"[a-zA-Z][\w+.-]*://[^/?#]*(.*)", url.text)
     name = re.split(r"[?#]", m[1] if m else url.text)[0].rsplit("/", 1)[-1]
-    return Word(folder.text.rstrip("\\/") + "/" + (name if name not in ("", ".", "..") else "index.html"),
-                folder.why or url.why)
+    return Word(name if name not in ("", ".", "..") else "index.html", url.why)
+
+
+def under(folder: list, w: Word) -> Word:
+    """`w` placed in the last of `folder` (`--output-dir`, `-P`), unless it is absolute."""
+    if not folder or re.match(r"[\\/~]|[A-Za-z]:", w.text):
+        return w
+    return Word(folder[-1].text.rstrip("\\/") + "/" + w.text, folder[-1].why or w.why)
 
 
 def m_paths(name, args, ctx):
@@ -243,17 +249,17 @@ def m_paths(name, args, ctx):
         return writes("write", [w for w in ws if w.text != "-"], ctx), None    # `-` is standard output
 
     if name == "curl":
-        named = given("-o", "--output")
+        named = [w for w in given("-o", "--output") if w.text != "-"]
         if flags & {"-O", "-J", "--remote-name", "--remote-name-all", "--remote-header-name"}:
-            named += [fetched(u, Word(".")) for u in ops]
-        # `--output-dir` holds every download; the name alone is judged too.
-        return out(named + [Word(d.text.rstrip("\\/") + "/" + n.text, d.why or n.why)
-                            for d in given("--output-dir") for n in named] + given(*CURL_OUT))
+            named += [fetched(u) for u in ops + given("--url")]
+        # `--output-dir` holds every download named relatively.
+        return out([under(given("--output-dir"), w) for w in named] + given(*CURL_OUT))
     if name == "wget":
-        # Without `-O`, each URL lands under `-P`'s folder, else here.
+        # Without `-O`, each URL lands under `-P`'s folder, else here; `--spider` saves none.
         doc = given("-O", "--output-document")
-        folder = (given("-P", "--directory-prefix") or [Word(".")])[-1]
-        return out((doc or [fetched(u, folder) for u in ops]) + given(*WGET_OUT))
+        spider = any(len(f) > 4 and "--spider".startswith(f) for f in flags)
+        pages = [] if spider else [under(given("-P", "--directory-prefix"), fetched(u)) for u in ops]
+        return out((doc or pages) + given(*WGET_OUT))
     # `install -d` makes every operand a folder rather than copying into the last.
     if name in DELETERS | MAKERS or name == "install" and any(
             f == "-d" or len(f) > 4 and "--directory".startswith(f) for f in flags):
