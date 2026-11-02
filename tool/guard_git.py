@@ -280,8 +280,9 @@ def m_git(name, args, ctx):
     if kind == "paths":
         out |= pathspecs(verb, pos, ctx)
     elif kind == "worktree":
-        if not pos:
-            return top(f"git {verb} without a path"), None
+        # git matches a relative `remove` operand as the tail of any registered worktree's path.
+        if not pos or verb == "worktree remove" and not re.match(r"[A-Za-z]:[\\/]|/", pos[0].text):
+            return top(f"git {verb} without an absolute path"), None
         out |= paths("delete" if verb == "worktree remove" else "write", pos[0], ctx)
     elif kind in ("fetch", "push"):
         out |= reached(verb.split()[0], pos, ctx)
@@ -300,7 +301,7 @@ GH_VERBS = {
     "pr list": (f"-d --draft -s: --state: -L: --limit: -B: --base: -H: --head: -A: --author: -l: --label: -S: "
                 f"--search: {JSON}", "read", "none"),
     "pr status": (f"-c --conflict-status {JSON}", "read", "none"),
-    "pr create": ("-df -t: --title: -b: --body: -F: --body-file: -B: --base: -H: --head: -l: --label: -a: "
+    "pr create": ("-df -t: --title: -b: --body: -F: --body-file: -B: --base: -l: --label: -a: "
                   "--assignee: -r: --reviewer: -m: --milestone: --draft --fill --fill-first --fill-verbose "
                   "--no-maintainer-edit --dry-run", "write", "none"),
     "pr edit": ("-t: --title: -b: --body: -F: --body-file: -B: --base: --add-label: --remove-label: --add-reviewer: "
@@ -331,8 +332,6 @@ def m_gh(name, args, ctx):
     r, kind, names = GH[verb]
     if stop := gate(f"gh {verb}", rest, r):
         return stop, None
-    if any(e.partition("=")[0].upper() == "GH_REPO" for e in ctx.env):
-        return top("gh on a repository other than the checkout's"), None
     if not own_repo(ctx):
         return top("gh in a repository other than the checkout"), None
     pos, vals, _ = getopt(rest, r.takes)
@@ -364,8 +363,11 @@ def m_curl(name, args, ctx):
     if stop := gate(name, args, CURL):
         return stop, None
     pos, vals, _ = getopt(args, CURL.takes)
+    # `%output{file}` in a write-out format writes the rest of it to that file; `@file` reads a format.
+    if any(w.why or w.text.startswith("@") or "%output" in w.text.lower()
+           for w in vals.get("-w", []) + vals.get("--write-out", [])):
+        return top("a curl write-out format that may write a file"), None
     out = writes("write", vals.get("-o", []) + vals.get("--output", []), ctx)
     for w in pos + vals.get("--url", []):
         out |= network(w)
     return out, None
-

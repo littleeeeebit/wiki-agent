@@ -138,17 +138,19 @@ builtins, and `tool/guard_git.py` for git, gh and curl. The table holds only:
   and `push` with at most a branch) to a configured remote. A path operand of
   `checkout`, `restore` or `stash push` is also a write of that path, and a
   pathspec pattern (`'*.toml'`, `:(top)`) is `top`; `worktree add` writes its
-  folder and `worktree remove` deletes it. `-C <dir>` moves where git runs, and
+  folder and `worktree remove` deletes it, named only by an absolute path (git
+  matches a relative one as the tail of any registered worktree's path). `-C <dir>` moves where git runs, and
   `-c` takes only identity, whitespace and colour keys. `--git-dir`,
   `--work-tree`, `--exec-path`, `--config-env` and every other verb are `top`;
 - gh `pr view`/`diff`/`checks`/`list`/`status`, `run view`/`watch`/`list`,
   `issue view`/`list` and `api` (one GET of an endpoint) as reads, and
   `pr create`/`edit`/`comment`/`ready`/`merge` on the current branch's pull
-  request only, each reaching the checkout's remote hosts. `-R`/`--repo`,
-  `GH_REPO`, `--web`, `--hostname` and a URL operand are `top`;
+  request only (no `--head`), each reaching the checkout's remote hosts.
+  `-R`/`--repo`, `--web`, `--hostname` and a URL operand are `top`, and so is
+  setting `GH_REPO` in any form;
 - curl to the hosts its URLs name, writing only where `-o` points. `-L`,
-  `-x`, `--resolve`, `--connect-to`, `-O`, `-K` and every other unlisted flag
-  are `top`;
+  `-x`, `--resolve`, `--connect-to`, `-O`, `-K`, a `-w` format with
+  `%output{…}` or read from `@file`, and every other unlisted flag are `top`;
 - plain `>`/`>>` redirection to a literal path, in every dialect. Only the
   host's devices are discarded: `/dev/null` and its kin as spelled where a
   POSIX layer serves them (not in native Windows PowerShell or cmd, where they
@@ -163,15 +165,19 @@ configuration is protected or outside the write roots. That holds only for the
 checkout itself and the worktrees of the same repository (one configuration,
 one set of hooks and remotes): git in any other repository (a nested one
 included) is `top`, and no write or edit may lay down a `.git` anywhere. When
-any configuration git reads points `core.hooksPath` inside a write root, every
-git write of the repository is denied, since git would run hooks the task can
-edit.
+any configuration git reads may point `core.hooksPath` inside a write root,
+every git write of the repository is denied, since git would run hooks the task
+can edit. Only an absolute value on a line of its own is read as written; a
+relative value (it depends on the worktree that runs it), another syntax, an
+`[include]` or `extensions.worktreeConfig` counts as a writable folder.
 
 A verb that moves the working tree between commits (`checkout`, `merge`,
 `pull`, `rebase`, `stash pop`) writes whatever the repository's history holds,
-protected files and links included. That history is trusted: within the table
-the agent cannot change a protected file or lay down a link, so no commit it
-authors carries one, and `gh api` only reads.
+protected files and links included. That history is trusted because the agent
+cannot author such a commit within the table: no row lays down a link, and a
+protected name (`verification.toml`, `.wiki/adapter.toml`, `.claude`,
+`.codex`) is protected at any depth below every write root, so another
+worktree's copy cannot be changed and committed either; `gh api` only reads.
 
 Four rules hold across the table:
 
@@ -202,7 +208,7 @@ existing one.
 | `write`, `delete` | the path resolves (links, junctions and `..` followed) inside a write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder; each `[guard] write_roots` entry, relative to the checkout |
 | — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (`echo x > .wiki`, `echo x > .`). Only git's own write of the repository it runs in (`add`, `commit`, `merge`, `push`, …) is judged by place alone |
 | `spawn` | the executable is one that `gate_cmd`, `verification.toml`'s round and local commands, a `[checks]` command or `python tool/search` runs, or is listed in `[guard] executables`. A bare name is that name; a name with a path (`./tool`, `C:/x/python.exe`, `/usr/bin/time`) is that file, granted only by the same path. A git remote name counts only in the checkout's own repository: a push after a `cd` into another repository is `top` |
-| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A fetch, pull or push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named), and gh every remote's host; a remote at a local path, a URL rewrite (`insteadOf`) or `[include]` in any config file git reads (the repository's, global, XDG or system), a `[remote]` or `[branch]` section outside the repository's own config, or config syntax the guard does not decode (a key on a header's line, a continued, quoted or commented value), makes it `top`. `GH_HOST`, `GH_REPO` and the proxy variables count as reaching their host; a target whose host cannot be read is `top` |
+| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A fetch, pull or push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named), and gh every remote's host; a remote at a local path, a URL rewrite (`insteadOf`) or `[include]` in any config file git reads (the repository's, global, XDG or system), a `[remote]` or `[branch]` section outside the repository's own config, `extensions.worktreeConfig`, or config syntax the guard does not decode (a key on a header's line, a continued, quoted or commented value), makes it `top`. `GH_HOST` and the proxy variables count as reaching their host (`GH_REPO` is `top`); a target whose host cannot be read is `top` |
 | `top` | never |
 
 The optional adapter table adds to the grant and never names a command:

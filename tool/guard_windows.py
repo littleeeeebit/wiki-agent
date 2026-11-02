@@ -193,13 +193,20 @@ def ps_statement(words: list, ctx) -> tuple[list, set]:
         else:
             # `$x.Prop = …`, `$x[0] = …`: a write through a member or element, not a scalar.
             return [], member_assign
-    elif words and not words[0].quoted and re.match(r"^\$?[\w:.-]+=", words[0].text):
+    # `$env:X='v'` is one word, quoted only after the `=`: a word is a string only when it opens with a quote
+    # (a here-string, which keeps no source, is quoted throughout).
+    elif words and not (re.match(r"['\"]", words[0].raw) if words[0].raw else words[0].quoted) \
+            and re.match(r"^\$?[\w:.-]+=", words[0].text):
         target, _, value = words[0].text.partition("=")
+        source = (words[0].raw or words[0].text).partition("=")[2]
+        why = words[0].why if re.search(r"[$(`]", source) else ""
         if "." in target or "[" in target:
             return [], member_assign
         if target.lower().startswith("$env:"):
-            out |= envs([Word(target[5:] + "=" + value, words[0].why)], ctx)
-        words = ([Word(value, words[0].why)] if value else []) + words[1:]
+            out |= envs([Word(target[5:] + "=" + value, why)], ctx)
+        # A quoted value is a string; a bare one runs as its own command.
+        bare = value and source[:1] not in ("'", '"')
+        words = ([Word(value, why)] if bare else []) + words[1:]
     else:
         # `(expr).Member = …` spans several words before the operator.
         for j in range(1, len(words)):

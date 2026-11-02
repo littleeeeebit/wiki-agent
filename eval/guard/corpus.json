@@ -1491,11 +1491,11 @@
    "source": "claude",
    "command": "git fetch origin --prune -q && git pull --ff-only -q && git log --oneline -1 && echo tree: $(git rev-parse fix/laya-refusal^{tree}) $(git rev-parse 556d2a1^{tree}) && git -C ../wiki-agent-refusal status --porcelain | head && git worktree remove ../wiki-agent-refusal && git branch -D fix/laya-refusal && git branch -r | grep refusal; git push origin --delete fix/laya-refusal 2>&1 | tail -1; git worktree list; git branch",
    "effects": [
-    "delete(C:/Users/me/PycharmProjects/wiki-agent-refusal)",
     "network(github.com)",
     "read",
     "top(git in a repository other than the checkout)",
     "top(git push --delete: an option the table does not model)",
+    "top(git worktree remove without an absolute path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -1535,12 +1535,12 @@
    "source": "claude",
    "command": "git status --short | head -3; git pull -q --ff-only && git log --oneline -1 && [ \"$(git rev-parse omm-skip-indexes^{tree})\" = \"$(git rev-parse 2ef10e2^{tree})\" ] && echo \"tree identical\"; git -C ../wiki-agent-worktrees/omm-skip-indexes status --short | head -3; git worktree remove ../wiki-agent-worktrees/omm-skip-indexes && git branch -D omm-skip-indexes; git branch -r | grep -c omm-skip-indexes; rm -f artifacts/review/omm-skip-indexes-round-*.md; python tool/lint.py --repo . 2>&1 | tail -1; python tool/repo_lint.py --repo . 2>&1 | tail -1; git worktree list",
    "effects": [
-    "delete(C:/Users/me/PycharmProjects/wiki-agent-worktrees/omm-skip-indexes)",
     "network(github.com)",
     "read",
     "spawn(python)",
     "spawn(rm)",
     "top(git in a repository other than the checkout)",
+    "top(git worktree remove without an absolute path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },

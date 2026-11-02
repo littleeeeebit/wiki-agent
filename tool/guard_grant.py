@@ -19,7 +19,7 @@ import re
 import shutil
 import tempfile
 
-from guard import HERE, Ctx, contained, derive
+from guard import HERE, Ctx, contained, derive, real_path
 
 
 @dataclass
@@ -105,7 +105,8 @@ def remote_hosts(common: Path) -> tuple:
     # A URL rewrite, or an included file that may hold one or another remote, changes where a push goes, and
     # a remote or branch set outside the repository adds destinations this reader does not take from there.
     # Any mention in any file git reads, in any syntax (a key after a header, a continued line), counts.
-    rewritten = re.search(r"(?i)insteadof|\[\s*include", text) is not None or any(
+    # `worktreeConfig` adds a private file per worktree, which may name its own push URL.
+    rewritten = re.search(r"(?i)insteadof|\[\s*include|worktreeconfig", text) is not None or any(
         re.search(r"(?i)insteadof|\[\s*(include|remote|branch)", t) for t in git_configs())
     found, section = [], ("", "")
     for line in text.splitlines():
@@ -140,17 +141,22 @@ def remote_hosts(common: Path) -> tuple:
     return tuple(sorted(out))
 
 
-def hook_folders(top: Path, common: Path) -> list[str]:
-    """Every `core.hooksPath` any configuration git reads sets, relative to the work tree as git takes it.
-    A value this reader cannot decode (quoted, escaped, a variable) counts as the work tree itself."""
+def hook_folders(common: Path) -> list:
+    """Every folder a `core.hooksPath` in any configuration git reads may name. Only an absolute value on a
+    line of its own is read as written. A relative one depends on which worktree runs it, and a value in
+    another syntax, an include or a per-worktree file is unseen: each is `None`, a folder the task may write."""
     try:
         texts = [(common / "config").read_text(encoding="utf-8", errors="replace")]
     except OSError:
         texts = []
-    out = []
-    for value in re.findall(r"(?im)^\s*hookspath\s*=\s*(.*?)\s*$", "\n".join(texts + git_configs())):
-        plain = re.fullmatch(r"[^\s\"\\;#$%]+", value)
-        out.append(str(top / Path(value).expanduser()) if plain else str(top))
+    texts += git_configs()
+    unseen = any(re.search(r"(?i)\[\s*include|worktreeconfig", t) for t in texts)
+    out = [None] if unseen else []
+    for mention in re.finditer(r"(?i)hookspath", "\n".join(texts)):
+        line = mention.string[mention.string.rfind("\n", 0, mention.start()) + 1:].split("\n", 1)[0]
+        m = re.fullmatch(r"(?i)\s*hookspath\s*=\s*([^\s\"\\;#$%]+)\s*", line)
+        where = m and Path(m.group(1)).expanduser()
+        out.append(str(where) if where and where.is_absolute() else None)
     return out
 
 
@@ -214,10 +220,22 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
     remotes = remote_hosts(common)
     hosts = {"127.0.0.1"} | {h for _, h in remotes if h != UNREAD} | {host_of(s) for s in strings("network_hosts")}
     protected = sorted({str(p / x) for p in (top, main) for x in PROTECTED})
-    writable = [h for h in hook_folders(top, common) if contained(h, [str(r) for r in roots])
-                and not any(contained(h, [p]) for p in protected)]
+    writable = [h or top.as_posix() for h in hook_folders(common) if h is None
+                or contained(h, [str(r) for r in roots]) and not any(contained(h, [p]) for p in protected)]
     return Grant([str(r) for r in roots], protected, executables, hosts, remotes, top.as_posix(),
                  writable[0] if writable else "")
+
+
+def protected_below(target: str, roots: list) -> bool:
+    """`target` is, or lies in, a protected name at any depth below a write root that holds it."""
+    where = real_path(target)
+    for root in roots:
+        if contained(target, [root]):
+            parts = re.split(r"[\\/]", os.path.relpath(where, real_path(root)).lower())
+            if {".claude", ".codex", "verification.toml"} & set(parts) \
+                    or any(parts[i:i + 2] == [".wiki", "adapter.toml"] for i in range(len(parts))):
+                return True
+    return False
 
 
 def outside(effect: tuple, g: Grant) -> str | None:
@@ -241,8 +259,9 @@ def outside(effect: tuple, g: Grant) -> str | None:
     # write to an existing directory either lands under it or fails. Only git's own write of the repository
     # it runs in (`repo`) is granted on the checkout as a whole.
     reaches_protected = kind != "repo" and any(contained(p, [target]) for p in g.protected)
-    # A `.git` anywhere makes a repository whose configuration git would trust: no write lays one down.
-    git_dir = kind != "repo" and ".git" in re.split(r"[\\/]", target.lower())
+    # A `.git` anywhere makes a repository whose configuration git would trust: no write lays one down. And a
+    # protected name below any write root is another worktree's copy, which a commit there would carry home.
+    git_dir = kind != "repo" and (".git" in re.split(r"[\\/]", target.lower()) or protected_below(target, g.roots))
     if any(contained(target, [p]) for p in g.protected) or reaches_protected or git_dir:
         return "허가를 정하는 파일이다 — 어떤 `[guard]` 항목으로도 열리지 않고, 사람이 직접 고친다"
     if contained(target, g.roots):

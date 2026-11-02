@@ -652,11 +652,12 @@ def test_a_path_granted_by_path_is_allowed(repo):
 # A variable that redirects a client to another host reaches that host, whatever program it is set for.
 @pytest.mark.parametrize("command", [
     "GH_HOST=unlisted.example python -m ruff check tool",
-    "GH_REPO=unlisted.example/o/r python -m ruff check tool",
     "HTTPS_PROXY=http://unlisted.example:8080 python -m ruff check tool",
 ])
 def test_a_variable_that_redirects_the_network_is_denied(repo, command):
     assert "network(unlisted.example)" in (call(repo, command) or ""), command
+    # `GH_REPO` also picks the repository gh writes to, on any host: never decidable here.
+    assert "GH_REPO" in (call(repo, "GH_REPO=github.com/o/r python -m ruff check tool") or "")
 
 
 # A value computed at run time and then run (a command name, a nested shell's script) is undecidable; only
@@ -1066,10 +1067,58 @@ def test_git_does_not_write_while_its_hooks_are_writable(repo):
     """A hooks folder inside a write root holds code the agent may edit and git then runs."""
     config = repo / ".git/config"
     base = config.read_text(encoding="utf-8")
-    for setting in ("hooksPath = .githooks", 'hooksPath = "hooks dir"', "hooksPath = ../shared/hooks"):
-        config.write_text(base + f"[core]\n\t{setting}\n", encoding="utf-8")
-        for command in ("git commit -qm x", "git merge --no-edit origin/main", "gh pr merge --squash -d"):
+    # A relative value depends on the worktree that runs it; an inline key, an include or a per-worktree
+    # file is configuration the reader does not see: each counts as a folder the task may write.
+    for setting in ("[core]\n\thooksPath = .githooks", "[core] hooksPath = .githooks", "[core]\n\thooksPath = ../hooks",
+                    '[core]\n\thooksPath = "hooks dir"', f"[core]\n\thooksPath = {(repo / 'hooks').as_posix()}",
+                    "[include]\n\tpath = more.config", "[extensions]\n\tworktreeConfig = true"):
+        config.write_text(base + setting + "\n", encoding="utf-8")
+        for command in ("git commit -qm x", "git merge --no-edit origin/main"):
             assert "훅 폴더" in (call(repo, command) or ""), (setting, command)
+        # gh may stop earlier, at a remote that syntax leaves unread; it is denied either way.
+        assert call(repo, "gh pr merge --squash -d"), setting
         assert call(repo, "git status") is None
     config.write_text(base + f"[core]\n\thooksPath = {(repo.parent / 'hooks').as_posix()}\n", encoding="utf-8")
     assert call(repo, "git commit -qm x") is None
+
+
+# -- Follow-up (a), review round 1 ------------------------------------------------
+
+def test_a_protected_name_is_protected_in_every_worktree(repo):
+    """Another worktree's copy of a protected file, committed there, would reach the checkout by history."""
+    wt = Path(os.environ["TEMP"]).as_posix() + "/wt"
+    for target in ("verification.toml", ".wiki/adapter.toml", ".claude/settings.json", ".codex/config.toml"):
+        for command in (f"printf x > {wt}/{target}", f"curl -s -o {wt}/{target} http://127.0.0.1:8000/x"):
+            assert "허가를 정하는 파일" in (call(repo, command) or ""), command
+    assert call(repo, f"printf x > {wt}/notes.md") is None
+
+
+def test_a_worktree_is_removed_only_by_its_absolute_path():
+    # git matches a relative operand as the tail of any registered worktree's path, wherever it is.
+    assert any(e.startswith("top(") for e in effects("git worktree remove --force sibling", ctx=POSIX))
+
+
+@pytest.mark.parametrize("fmt", ["'%output{../outside/target.txt}x'", "@format.txt", "'%OUTPUT{x}'", "$FMT"])
+def test_a_curl_write_out_that_may_write_is_top(fmt):
+    assert any(e.startswith("top(") for e in effects(f"curl -s -w {fmt} http://127.0.0.1:8000/", ctx=POSIX))
+
+
+@pytest.mark.parametrize("command,dialect", [
+    ("$env:GH_REPO='github.com/owner/other'; gh pr edit --body x", "ps"),
+    ("GH_REPO=owner/other gh pr edit --body x", "posix"),
+    ("gh pr create --head other-topic --title x --body x", "posix"),
+])
+def test_gh_never_targets_another_repository_or_branch(command, dialect):
+    assert any(e.startswith("top(") for e in effects(command, dialect, ctx=replace(POSIX, d=dialect)))
+
+
+def test_a_powershell_assignment_written_as_one_word_is_still_an_assignment():
+    assert any("PATH" in e for e in effects("$env:PATH='C:/tools'; git status", "ps"))
+    assert effects("$env:PYTHONIOENCODING='utf-8'; $x='rm'; git status", "ps") == {"read"}
+
+
+def test_a_per_worktree_configuration_leaves_the_remotes_unread(tmp_path):
+    (tmp_path / "config").write_text('[extensions]\n\tworktreeConfig = true\n[remote "origin"]\n'
+                                     '\turl = https://github.com/owner/repo.git\n', encoding="utf-8")
+    found = effects("git push origin HEAD", ctx=replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path)))
+    assert any(e.startswith("top(") for e in found)

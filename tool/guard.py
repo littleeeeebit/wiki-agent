@@ -746,10 +746,9 @@ def envs(assigns: list, ctx: Ctx) -> set:
             # An array subscript other than a number is evaluated as arithmetic.
             out |= top("arithmetic evaluation, which runs what its variables hold")
         name = name.split("[")[0]
-        if ENV_NETWORK.match(name):
-            if name.upper() == "GH_REPO":
-                # `[HOST/]OWNER/REPO`: a host only when there are three parts.
-                value = value.split("/")[0] if value.count("/") >= 2 else ""
+        if name.upper() == "GH_REPO":
+            out |= top("GH_REPO, which points gh at a repository other than the checkout's")
+        elif ENV_NETWORK.match(name):
             out |= network(Word(value, w.why))
         elif ENV_COMMAND.match(name):
             out |= top(f"{w.why} in {name}") if w.why else code(value, "posix", ctx)
