@@ -418,16 +418,24 @@ def same_path(a: str, b: str, ctx) -> bool:
     return a.lower() == b.lower() if ctx.windows else a == b
 
 
+def physical(path: str, ctx) -> str:
+    """Where `path` is once links and junctions are followed, as git finds it from the process's directory.
+    A context modelling the other host's paths is taken as written."""
+    if ctx.windows != (os.name == "nt"):
+        return path.rstrip("/") or "/"
+    return os.path.realpath(path).replace("\\", "/").rstrip("/") or "/"
+
+
 def repo_roots(ctx) -> set | None:
-    """The work tree each place `ctx` may run in belongs to: the nearest folder holding `.git`, or the
-    checkout the grant was read for when no nearer one exists on disk. `None` when a place is unknown."""
-    roots = set()
+    """The work tree each place `ctx` may run in belongs to: the nearest folder holding `.git` above where
+    the place really is, or the checkout the grant was read for. `None` when a place is unknown."""
+    roots, repo = set(), ctx.repo and physical(ctx.repo, ctx)
     for cwd in ctx.cwds:
         if cwd is None:
             return None
-        p, found = cwd.rstrip("/") or "/", None
+        p, found = physical(cwd, ctx), None
         while found is None:
-            if ctx.repo and same_path(p, ctx.repo, ctx) or os.path.exists(p + "/.git"):
+            if repo and same_path(p, repo, ctx) or os.path.exists(p + "/.git"):
                 found = p
             elif (up := posixpath.dirname(p)) == p:
                 return None
@@ -440,7 +448,7 @@ def repo_roots(ctx) -> set | None:
 def own_repo(ctx) -> bool:
     """Every place `ctx` may run in is inside the checkout whose remotes the grant read."""
     roots = repo_roots(ctx)
-    return bool(ctx.repo) and roots is not None and all(same_path(r, ctx.repo, ctx) for r in roots)
+    return bool(ctx.repo) and roots is not None and all(same_path(r, physical(ctx.repo, ctx), ctx) for r in roots)
 
 
 def pushed(pos: list, ctx) -> set:

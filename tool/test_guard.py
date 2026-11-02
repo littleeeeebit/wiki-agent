@@ -945,6 +945,21 @@ def test_git_runs_only_in_the_checkout_whose_configuration_is_protected(repo):
     assert call(repo, "git diff -- a.txt && echo x > .gitignore-notes") is None
 
 
+def test_a_link_into_another_repository_is_that_repository(repo):
+    other = repo.parent.parent / "other"
+    (other / ".git").mkdir(parents=True)
+    (other / "sub").mkdir()
+    link = repo / "link"
+    if os.name == "nt":
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(other / "sub")], check=True, capture_output=True)
+    else:
+        link.symlink_to(other / "sub", target_is_directory=True)
+    for command in ("cd link && git diff", "cd link && git push origin HEAD"):
+        assert "판단할 수 없는" in (call(repo, command) or ""), command
+    (repo / "tool").mkdir()
+    assert call(repo, "cd tool && git diff") is None
+
+
 def test_the_null_devices_stay_devices():
     assert effects("echo x > /dev/null") == {"read"}
     assert effects("echo x > NUL") == {"read"}
