@@ -2,9 +2,11 @@
 
 `PS_ROWS` lists each modelled cmdlet with the parameters it understands, by
 full name or a listed alias (no abbreviation is guessed): cmdlets that only
-read or print, and `Set-Location`. A parameter outside the row is `top`, and
-so is a cmdlet with no row. `CMD_ROWS` lists the cmd.exe builtins that only
-read or print; every other builtin is `top`.
+read or print, `Set-Location`, and writers of one literal path each
+(`ps_writes`). A parameter outside the row is `top`, and so is a cmdlet with
+no row. `CMD_ROWS` lists the cmd.exe builtins that only read or print and
+`CMD_WRITES` those that write, delete, copy or move literal paths; every other
+builtin is `top`.
 Expressions run nothing except the members they invoke, judged by
 `guard.member_effect`: a name is accepted receiver-free only when it is in
 `SAFE_MEMBERS`, read-only for every type that defines it.
@@ -14,7 +16,9 @@ from __future__ import annotations
 
 import re
 
-from guard import Word, envs, moved_to, top
+import os
+
+from guard import Word, envs, moved_to, paths, resolve, top
 
 # Members that only read, whatever the receiver's type. Polymorphic or dispatching names
 # (replace, foreach, where, invoke, add, insert, get, getvalue, item, delete, copyto, …) are
@@ -113,6 +117,25 @@ PS_ROWS = {
     "get-variable": "name= scope= valueonly include= exclude=",
     # The location, honoured only in the first statement (`guard.run`).
     "set-location": "path= literalpath=",
+    # Rows that write, delete, copy or move one literal path each (`ps_writes`).
+    "set-content": "path= literalpath= value= encoding= nonewline force passthru asbytestream",
+    "add-content": "path= literalpath= value= encoding= nonewline force passthru asbytestream",
+    "clear-content": "path= literalpath= force",
+    "out-file": "filepath= literalpath= inputobject= encoding= append force noclobber width= nonewline",
+    "tee-object": "filepath= literalpath= inputobject= append encoding=",
+    "new-item": "path= name= itemtype= value= force",
+    "remove-item": "path= literalpath= recurse force",
+    "copy-item": "path= literalpath= destination= force container passthru",
+    "move-item": "path= literalpath= destination= force passthru",
+    "rename-item": "path= literalpath= newname= force passthru",
+}
+FILE = ("filepath", "literalpath")
+# The writing rows' parameter slots in the order positional words bind to them.
+PS_POSITIONS = {
+    "set-content": (PATH, ("value",)), "add-content": (PATH, ("value",)), "clear-content": (PATH,),
+    "out-file": (FILE, ("encoding",)), "tee-object": (FILE,), "new-item": (("path",),), "remove-item": (PATH,),
+    "copy-item": (PATH, ("destination",)), "move-item": (PATH, ("destination",)),
+    "rename-item": (PATH, ("newname",)),
 }
 
 
@@ -172,7 +195,77 @@ def ps_cmdlet(canon: str, args: list, ctx):
         if len(given) != 1:
             return top("set-location without exactly one path"), None
         return set(), moved_to(given[0], ctx)
+    if canon in PS_POSITIONS:
+        return ps_writes(canon, named, pos, ctx), None
     return set(), None
+
+
+def literal_path(w: Word, ctx, cmd: bool = False) -> Word | None:
+    """`w` when it names one file-system path literally, `None` when PowerShell or cmd may read it otherwise:
+    a wildcard, a list, a script block bound per input object, or a provider or stream (`Env:X`, `f:s`)."""
+    t = w.text[4:] if w.text[:4] in ("\\\\?\\", "//?/") else w.text
+    if w.why or not t or re.search(r"[*?,]" if cmd else r"[*?\[\],{}]", t) or ":" in t[2 if t[1:2] == ":" else 0:]:
+        return None
+    return w
+
+
+def under(folder: Word, name: str) -> Word:
+    return Word(folder.text.rstrip("\\/") + "/" + name, folder.why)
+
+
+def ps_writes(canon: str, named: dict, pos: list, ctx) -> set:
+    """The paths a writing row names, bound as PowerShell binds them; every one literal, or `top`."""
+    order = PS_POSITIONS[canon]
+    open_ = [s for s in order if not any(k in named for k in s)]
+    if len(pos) > len(open_):
+        return top(f"{canon}: a positional argument the table does not bind")
+    slot = {s[0]: [w for k in s for w in named.get(k, [])] for s in order}
+    for s, w in zip(open_, pos):
+        slot[s[0]] = [w]
+    if any(len(v) > 1 for v in slot.values()):
+        return top(f"{canon}: a parameter given twice")
+    one = {k: v[0] for k, v in slot.items() if v}
+    if canon == "new-item":
+        # Its other parameters bind from piped objects by property name: a link type or target included.
+        kind = named.get("itemtype", [Word("file")])[0]
+        if ctx.piped or kind.why or kind.text.lower() not in ("file", "directory") or len(named.get("itemtype", [])) > 1:
+            return top("new-item that may make a link or bind its parameters from the pipeline")
+        name = named.get("name", [])
+        where = one.get("path", Word("."))
+        target = under(where, name[0].text) if name else where if "path" in one else None
+        if len(name) > 1 or target is None or name and name[0].why:
+            return top("new-item without exactly one path")
+        one = {"path": target}
+    first, rest = order[0][0], order[-1][0]
+    if first not in one or rest in ("destination", "newname") and rest not in one:
+        return top(f"{canon} without a literal path for every place it writes")
+    src = literal_path(one[first], ctx)
+    if src is None:
+        return top(f"{canon}: a path PowerShell reads as a wildcard, list, provider or stream")
+    if canon == "remove-item":
+        return paths("delete", src, ctx)
+    if canon in ("copy-item", "move-item", "rename-item"):
+        return moves(src, one[rest], canon != "copy-item", canon == "rename-item", ctx)
+    return paths("write", src, ctx)
+
+
+def moves(src: Word, dest: Word, move: bool, rename: bool, ctx, cmd: bool = False) -> set:
+    """A copy or move of `src`: a write of `dest` and of `dest/<name of src>` (where it lands in a folder),
+    and for a move a delete of `src`. A rename names only the new name, beside `src`."""
+    base = re.split(r"[\\/]+", src.text.rstrip("\\/"))[-1]
+    if literal_path(dest, ctx, cmd) is None or base in ("", ".", "..") or re.fullmatch(r"[A-Za-z]:", base):
+        return top("a copy or move whose source or destination is not one literal path")
+    if rename:
+        if re.search(r"[\\/]", dest.text):
+            return top("a new name that is a path")
+        parent = src.text.rstrip("\\/")[:-len(base)] or "."
+        targets = [under(Word(parent, src.why), dest.text)]
+    else:
+        targets = [dest, under(dest, base)]
+    out = paths("delete", src, ctx) if move else set()
+    for w in targets:
+        out |= paths("write", w, ctx)
+    return out
 
 
 ASSIGN_OPS = {"=", "+=", "-=", "*=", "/=", "%=", "??="}
@@ -223,11 +316,14 @@ def ps_statement(words: list, ctx) -> tuple[list, set]:
 
 # cmd.exe builtins that only read or print, whatever their switches; `cd` is the location (`guard.run`).
 CMD_ROWS = {"cd", "chdir", "type", "echo", "dir", "ver", "vol", "cls", "exit", "rem", "where"}
-# Every other builtin writes, links, copies, runs a command or a batch file, or sets the environment.
-CMD_REFUSED = {"del", "erase", "rd", "rmdir", "md", "mkdir", "copy", "move", "ren", "rename", "pushd", "popd", "set",
-               "setlocal", "endlocal", "if", "for", "start", "mklink", "xcopy", "robocopy", "call", "title", "color",
-               "prompt", "pause", "break"}
-CMD_BUILTINS = CMD_ROWS | CMD_REFUSED
+# Builtins that write, delete, copy or move the literal paths they name, with the switches they understand.
+# `del /s` (every subfolder) and `copy /l` (a link) are not listed.
+CMD_WRITES = {"del": "/f /q", "erase": "/f /q", "rd": "/s /q", "rmdir": "/s /q", "md": "", "mkdir": "",
+              "copy": "/y /-y /v", "move": "/y /-y", "ren": "", "rename": ""}
+# Every other builtin links, runs a command or a batch file, or sets the environment.
+CMD_REFUSED = {"pushd", "popd", "set", "setlocal", "endlocal", "if", "for", "start", "mklink", "xcopy", "robocopy",
+               "call", "title", "color", "prompt", "pause", "break"}
+CMD_BUILTINS = CMD_ROWS | set(CMD_WRITES) | CMD_REFUSED
 
 
 def cmd_builtin(name: str, args: list, ctx):
@@ -238,4 +334,33 @@ def cmd_builtin(name: str, args: list, ctx):
         if len(ops) != 1 or len(args) > 2 or any(w.text.lower() not in ("/d",) for w in args if w not in ops):
             return top(f"{name} without exactly one path"), None
         return set(), moved_to(ops[0], ctx)
+    if name in CMD_WRITES:
+        return cmd_writes(name, args, ctx), None
     return set(), None
+
+
+def cmd_writes(name: str, args: list, ctx) -> set:
+    ops = [w for w in args if w.why or not w.text.startswith("/")]
+    if any(w.text.lower() not in CMD_WRITES[name].split() for w in args if w not in ops):
+        return top(f"{name}: a switch the table does not model")
+    if not ops or any(literal_path(w, ctx, cmd=True) is None or "+" in w.text for w in ops):
+        return top(f"{name}: a path cmd reads as a wildcard, list, concatenation or stream")
+    if name in ("del", "erase", "rd", "rmdir", "md", "mkdir"):
+        kind = "write" if name in ("md", "mkdir") else "delete"
+        return {e for w in ops for e in paths(kind, w, ctx)}
+    if len(ops) != 2:
+        return top(f"{name} without exactly a source and a destination")
+    if name == "copy" and any(os.path.isdir(p) for p in on_disk(ops[0], ctx)):
+        return top("copy of a folder, which writes its files under names the command does not show")
+    return moves(ops[0], ops[1], name != "copy", name in ("ren", "rename"), ctx, cmd=True)
+
+
+def on_disk(w: Word, ctx) -> list:
+    """Where `w` resolves from each directory the command may run in; unknown ones are skipped by the caller."""
+    out = []
+    for cwd in ctx.cwds:
+        try:
+            out.append(resolve(w.text, cwd, ctx) or "")
+        except ValueError:
+            out.append("")
+    return out

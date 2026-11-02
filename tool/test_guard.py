@@ -289,8 +289,98 @@ def test_a_program_with_no_row_is_only_a_spawn(repo):
     assert "허가된 실행 파일이 아니다" in call(repo, "xxd -r dump.hex ../outside/target.txt")
 
 
-# Forms earlier rounds found acting outside the grant, each on a neutral target. None has a row in the
-# core table, so each is denied; the follow-up specs that add their rows bring their own effect tests.
+# -- PowerShell and cmd rows that write (follow-up b) ---------------------------------
+
+HERE_ = C["cwd"]
+
+
+@pytest.mark.parametrize("command,dialect,expected", [
+    ("Set-Content out.txt hello", "ps", {"write(out.txt)"}),
+    ("'x' | Out-File -FilePath a/b.txt -Encoding utf8", "ps", {"write(a/b.txt)"}),
+    ("'x' | Tee-Object b.txt -Append", "ps", {"write(b.txt)"}),
+    ("Add-Content -Value x -LiteralPath log.txt", "ps", {"write(log.txt)"}),
+    ("New-Item -ItemType Directory -Path sub/x", "ps", {"write(sub/x)"}),
+    ("New-Item -Path sub -Name f.txt -Value hi -Force", "ps", {"write(sub/f.txt)"}),
+    ("Remove-Item old -Recurse -Force", "ps", {"delete(old)"}),
+    ("Copy-Item a.txt b", "ps", {"write(b)", "write(b/a.txt)"}),
+    ("Move-Item -Path a.txt -Destination b", "ps", {"delete(a.txt)", "write(b)", "write(b/a.txt)"}),
+    ("Rename-Item sub/a.txt b.txt", "ps", {"delete(sub/a.txt)", "write(sub/b.txt)"}),
+    ("del /q a.txt", "cmd", {"delete(a.txt)"}),
+    ("rd /s /q build", "cmd", {"delete(build)"}),
+    ("md a\\b c", "cmd", {"write(a/b)", "write(c)"}),
+    ("copy /y a.txt b", "cmd", {"write(b)", "write(b/a.txt)"}),
+    ("move a.txt b", "cmd", {"delete(a.txt)", "write(b)", "write(b/a.txt)"}),
+    ("ren a.txt b.txt", "cmd", {"delete(a.txt)", "write(b.txt)"}),
+])
+def test_windows_write_rows_name_every_path_they_touch(command, dialect, expected):
+    def full(e):
+        kind, _, rest = e.partition("(")
+        return f"{kind}({HERE_}/{rest}"
+    assert effects(command, dialect) == {"read"} | {full(e) for e in expected}
+
+
+@pytest.mark.parametrize("command,dialect", [
+    ("Remove-Item *.txt", "ps"), ("Remove-Item a,b", "ps"), ("Remove-Item 'a[1].txt'", "ps"),
+    ("Set-Content Env:PATH x", "ps"), ("Set-Content Function:prompt x", "ps"), ("Set-Content a.txt:s x", "ps"),
+    ("Remove-Item FileSystem::C:/x", "ps"), ("Set-Content {$_.Name} x", "ps"), ("Set-Content -Path a -Path b x", "ps"),
+    ("Get-ChildItem | Remove-Item", "ps"), ("Get-ChildItem | Copy-Item -Path a.txt", "ps"),
+    ("'x' | New-Item -Path f.txt", "ps"), ("New-Item -ItemType HardLink -Path l -Value x", "ps"),
+    ("New-Item -ItemType $t -Path l", "ps"), ("Copy-Item a.txt", "ps"), ("Copy-Item -Recurse a b", "ps"),
+    ("Rename-Item a.txt sub/b.txt", "ps"), ("Move-Item . b", "ps"), ("Remove-Item -Stream s a.txt", "ps"),
+    ("Set-Content a.txt x y", "ps"),
+    ("del /s a.txt", "cmd"), ("del *.txt", "cmd"), ("copy a+b c", "cmd"), ("copy /l a b", "cmd"),
+    ("copy a.txt", "cmd"), ("move a,b c", "cmd"), ("ren a.txt sub\\b.txt", "cmd"), ("md", "cmd"),
+])
+def test_windows_write_rows_refuse_what_they_cannot_read(command, dialect):
+    assert any(e.startswith("top(") for e in effects(command, dialect)), command
+
+
+def test_windows_writes_inside_the_grant_pass(repo):
+    (repo / "old").mkdir()
+    (repo / "a.txt").write_text("x", encoding="utf-8")
+    for command in ("Set-Content out.txt hello", "New-Item -ItemType Directory build", "Remove-Item old -Recurse",
+                    "Copy-Item a.txt b.txt", "Move-Item a.txt c.txt", "'x' | Out-File ../shared/f.txt"):
+        assert call(repo, command, tool="PowerShell") is None, command
+    assert call(repo, 'cmd /c "md build2 && copy a.txt build2"') is None
+
+
+def test_a_delete_reaches_every_protected_name_below_it(repo):
+    # Another worktree's copy below a write root, or a `.wiki` folder a move would put an `adapter.toml` in.
+    for name in (".claude/settings.json", "verification.toml", ".wiki/adapter.toml", "nested/.git/HEAD"):
+        (repo / "wt" / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / "wt" / name).write_text("x", encoding="utf-8")
+        assert "허가를 정하는 파일" in (call(repo, "Remove-Item wt -Recurse", tool="PowerShell") or ""), name
+        assert "허가를 정하는 파일" in (call(repo, 'cmd /c "rd /s /q wt"') or ""), name
+        assert "허가를 정하는 파일" in (call(repo, "Move-Item wt moved", tool="PowerShell") or ""), name
+        (repo / "wt" / name).unlink()
+    (repo / "cfg").mkdir()
+    for command in ("Move-Item cfg sub/.wiki", "Rename-Item cfg .wiki", "New-Item -ItemType Directory x/.wiki",
+                    "Copy-Item cfg/.claude x"):
+        assert "허가를 정하는 파일" in (call(repo, command, tool="PowerShell") or ""), command
+
+
+def test_a_copy_of_an_existing_folder_by_cmd_is_denied(repo):
+    (repo / "cfg").mkdir()
+    assert "판단할 수 없는" in call(repo, 'cmd /c "copy cfg out"')
+
+
+def test_a_delete_or_move_of_a_link_is_denied(repo, tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    try:
+        (repo / "link").symlink_to(out, target_is_directory=True)
+    except OSError:
+        if os.name != "nt":
+            pytest.skip("symlinks need privileges here")
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(repo / "link"), str(out)], check=True, capture_output=True)
+    (repo / "dir").mkdir()
+    os.replace(repo / "link", repo / "dir" / "link")
+    for command in ("Rename-Item dir/link b", "Move-Item dir/link b", "Remove-Item dir -Recurse"):
+        assert "허가를 정하는 파일" in (call(repo, command, tool="PowerShell") or ""), command
+
+
+# Forms earlier rounds found acting outside the grant, each on a neutral target. The core table had no row
+# for any of them; rows added since still deny each one, and bring their own effect tests above.
 OUTSIDE_TABLE_FORMS = {
     # File writers, copies and moves.
     "rm": ("rm -rf ../outside", "Bash"),
@@ -313,7 +403,7 @@ OUTSIDE_TABLE_FORMS = {
     "new-item-symlink": ("New-Item -ItemType SymbolicLink -Path link -Value ../outside", "PowerShell"),
     "new-item-junction": ("ni -ItemType Junction link -Value ../outside", "PowerShell"),
     "mklink": ("cmd /c mklink /J link ..\\outside", "Bash"),
-    "rename-item": ("Rename-Item link b; Set-Content b/f x", "PowerShell"),
+    "rename-item": ("Rename-Item src/adapter.toml .wiki", "PowerShell"),
     # Archives.
     "tar-extract": ("tar -xf bundle.tar -C safe", "Bash"),
     "tar-remove-files": ("tar -cf saved.tar --remove-files ../outside/target.txt", "Bash"),

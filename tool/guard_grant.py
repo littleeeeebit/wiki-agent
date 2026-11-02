@@ -250,14 +250,44 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
 
 
 def protected_below(target: str, roots: list) -> bool:
-    """`target` is, or lies in, a protected name at any depth below a write root that holds it."""
+    """`target` is, or lies in, a protected name at any depth below a write root that holds it. A folder
+    named `.wiki` counts too: a folder moved or copied onto it would put its `adapter.toml` there."""
     where = real_path(target)
     for root in roots:
         if contained(target, [root]):
             parts = re.split(r"[\\/]", os.path.relpath(where, real_path(root)).lower())
-            if {".claude", ".codex", "verification.toml"} & set(parts) \
+            if {".claude", ".codex", "verification.toml"} & set(parts) or parts[-1] == ".wiki" \
                     or any(parts[i:i + 2] == [".wiki", "adapter.toml"] for i in range(len(parts))):
                 return True
+    return False
+
+
+# The most entries a delete's folder is looked through for protected names; a larger one is denied.
+WALK = 20000
+
+
+def holds_protected(target: str) -> bool:
+    """A delete of `target` may reach a protected name below it: one is there, a link or junction is (its
+    contents are another folder's, which some deleters follow), or the folder is too large to look through."""
+    if os.path.islink(target) or os.path.isjunction(target):
+        return True
+    seen, stack = 0, [real_path(target)]
+    while stack:
+        folder = stack.pop()
+        try:
+            entries = list(os.scandir(folder))
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError:
+            return True
+        for e in entries:
+            seen += 1
+            name = e.name.lower()
+            if seen > WALK or e.is_symlink() or e.is_junction() or name in (".git", ".claude", ".codex", "verification.toml") \
+                    or name == "adapter.toml" and os.path.basename(folder).lower() == ".wiki":
+                return True
+            if e.is_dir(follow_symlinks=False):
+                stack.append(e.path)
     return False
 
 
@@ -285,7 +315,9 @@ def outside(effect: tuple, g: Grant) -> str | None:
     # A `.git` anywhere makes a repository whose configuration git would trust: no write lays one down. And a
     # protected name below any write root is another worktree's copy, which a commit there would carry home.
     git_dir = kind != "repo" and (".git" in re.split(r"[\\/]", target.lower()) or protected_below(target, g.roots))
-    if any(contained(target, [p]) for p in g.protected) or reaches_protected or git_dir:
+    # A delete reaches whatever lies below it, another worktree's protected copy included.
+    holds = kind == "delete" and holds_protected(target)
+    if any(contained(target, [p]) for p in g.protected) or reaches_protected or git_dir or holds:
         return "허가를 정하는 파일이다 — 어떤 `[guard]` 항목으로도 열리지 않고, 사람이 직접 고친다"
     if contained(target, g.roots):
         return None
