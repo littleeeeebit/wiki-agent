@@ -108,10 +108,16 @@ def remote_hosts(common: Path) -> tuple:
     # a remote or branch set outside the repository adds destinations this reader does not take from there.
     # Any mention in any file git reads, in any syntax (a key after a header, a continued line), counts.
     # `worktreeConfig` adds a private file per worktree, which may name its own push URL. A URL-specific
-    # `followRedirects` wins over the `-c http.followRedirects=false` git's network rows require.
-    rewritten = re.search(r"(?i)insteadof|\[\s*include|worktreeconfig|followredirects", text) is not None or any(
-        re.search(r"(?i)insteadof|followredirects|\[\s*(include|remote|branch)", t) for t in git_configs())
-    lazy = re.search(r"(?i)partialclone|promisor", text) or any(re.search(r"(?i)promisor", t) for t in git_configs())
+    # `followRedirects` wins over the `-c http.followRedirects=false` git's network rows require. A bundle
+    # URI, a proxy or a resolve override (in a file or the environment) adds a host besides the remote's.
+    others = r"(?:^|[\s\]])(?:bundleuri|(?:git)?proxy\w*|curloptresolve)\s*=|\[\s*bundle\b"
+    rewritten = re.search(r"(?im)insteadof|\[\s*include|worktreeconfig|followredirects|" + others, text) \
+        is not None or any(re.search(r"(?im)insteadof|followredirects|\[\s*(include|remote|branch)|" + others, t)
+                           for t in git_configs()) \
+        or any(os.environ.get(k) for k in ("http_proxy", "https_proxy", "all_proxy", "HTTPS_PROXY", "ALL_PROXY"))
+    # A promisor remote, or a file this reader does not open that may name one, lets any read fetch.
+    lazy = re.search(r"(?i)partialclone|promisor|\[\s*include|worktreeconfig", text) \
+        or any(re.search(r"(?i)partialclone|promisor|\[\s*include", t) for t in git_configs())
     found, section = [], ("", "")
     for line in text.splitlines():
         if not line.strip() or re.match(r"\s*[#;]", line):

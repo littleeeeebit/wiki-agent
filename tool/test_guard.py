@@ -891,7 +891,8 @@ def test_a_repository_differing_only_in_case_is_another_on_posix():
     ('[remote "origin"]\n url = file:///c/other.git\n', "local path"),
     ('[remote "origin"]\n url = https://read.example/o/r.git\n[url "https://write.example/"]\n'
      ' insteadOf = https://read.example/\n', "rewritten"),
-    ('[include]\n path = extra.config\n[remote "origin"]\n url = https://read.example/o/r.git\n', "rewritten"),
+    # An included file may also make the checkout a partial clone, which stops git earlier.
+    ('[include]\n path = extra.config\n[remote "origin"]\n url = https://read.example/o/r.git\n', "partial clone"),
     # Syntax git decodes and this reader does not: each leaves every destination unread.
     ('[remote "origin"]\n url = https://read.example/o/r.git\n'
      '[remote "origin"] pushurl = https://write.example/o/r.git\n', "does not decode"),
@@ -963,7 +964,8 @@ def test_a_rewrite_in_any_config_git_reads_leaves_pushes_unread(tmp_path, monkey
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     (tmp_path / "config").write_text('[remote "origin"]\n url = https://read.example/o/r.git\n', encoding="utf-8")
     found = effects("git push origin HEAD", ctx=replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path)))
-    assert any("rewritten" in e for e in found), found
+    # An include may also make the checkout a partial clone, which stops git earlier.
+    assert any("rewritten" in e or "partial clone" in e for e in found), found
 
 
 def test_git_runs_only_in_the_checkout_whose_configuration_is_protected(repo):
@@ -1029,7 +1031,6 @@ ROW_EFFECTS = {
     "git remote -v": set(),
     "gh pr view 3 --json body -q .body": {"network(github.com)"},
     "gh pr edit --body-file body.md": {"network(github.com)"},
-    "gh pr merge --squash": {"network(github.com)"},
 }
 
 
@@ -1073,11 +1074,11 @@ def test_git_does_not_write_while_its_hooks_are_writable(repo):
                     '[core]\n\thooksPath = "hooks dir"', f"[core]\n\thooksPath = {(repo / 'hooks').as_posix()}",
                     "[include]\n\tpath = more.config", "[extensions]\n\tworktreeConfig = true"):
         config.write_text(base + setting + "\n", encoding="utf-8")
+        # A file this reader does not open may also hold a promisor remote, which stops every git form earlier.
+        hidden = "include" in setting or "worktreeConfig" in setting
         for command in ("git commit -qm x", "git merge --no-edit origin/main"):
-            assert "훅 폴더" in (call(repo, command) or ""), (setting, command)
-        # gh may stop earlier, at a remote that syntax leaves unread; it is denied either way.
-        assert call(repo, "gh pr merge --squash -d"), setting
-        assert call(repo, "git status") is None
+            assert ("partial clone" if hidden else "훅 폴더") in (call(repo, command) or ""), (setting, command)
+        assert (call(repo, "git status") is None) != hidden, setting
     config.write_text(base + f"[core]\n\thooksPath = {(repo.parent / 'hooks').as_posix()}\n", encoding="utf-8")
     assert call(repo, "git commit -qm x") is None
 
@@ -1156,9 +1157,10 @@ def test_a_repository_write_is_placed_at_the_worktree_root():
 
 
 @pytest.mark.parametrize("command", ["gh pr create --fill", "gh pr merge --squash --delete-branch",
-                                     "gh pr merge --squash -d"])
+                                     "gh pr merge --squash -d", "gh pr merge --squash", "gh pr merge"])
 def test_gh_forms_that_run_git_locally_are_top(command):
-    # pr create may push the branch first; merge -d switches branches and pulls. Neither git takes our options.
+    # pr create may push the branch first; merge may switch branches and pull, with -d or at a prompt.
+    # Neither git takes our options.
     assert any(e.startswith("top(") for e in effects(command, ctx=POSIX)), command
 
 
@@ -1166,6 +1168,8 @@ def test_gh_forms_that_run_git_locally_are_top(command):
     "git fetch origin", "git pull --ff-only", "git push origin HEAD",
     "git -c http.followRedirects=false fetch origin", "git fetch --no-recurse-submodules origin",
     "git -c http.followRedirects=true fetch --no-recurse-submodules origin",
+    # A `-C` value is a directory, whatever it spells.
+    "git -C http.followRedirects=false fetch --no-recurse-submodules origin",
 ])
 def test_git_network_turns_off_redirects_and_submodules(command):
     # Both let the server's answer pick a host the grant never read: a redirect, or a submodule's remote.
@@ -1196,3 +1200,42 @@ def test_every_git_row_is_top_in_a_partial_clone(tmp_path):
     ctx = replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path))
     for command in ("git cat-file -p HEAD:notes.txt", "git status", "git fetch origin", "gh pr view"):
         assert any(e.startswith("top(") for e in effects(command, ctx=ctx)), command
+
+
+# -- Follow-up (a), review round 7 ------------------------------------------------
+ORIGIN = '[remote "origin"]\n\turl = https://github.com/owner/repo.git\n'
+
+
+@pytest.mark.parametrize("config,configs", [
+    (ORIGIN + "[include]\n\tpath = more.config\n", []),
+    (ORIGIN + "[extensions]\n\tworktreeConfig = true\n", []),
+    (ORIGIN, ['[remote "origin"]\n\tpartialCloneFilter = blob:none\n']),
+    (ORIGIN, ["[include]\n\tpath = ~/more.config\n"]),
+])
+def test_a_promisor_setting_that_may_hide_makes_git_top(tmp_path, monkeypatch, config, configs):
+    (tmp_path / "config").write_text(config, encoding="utf-8")
+    monkeypatch.setattr(guard_grant, "git_configs", lambda: configs)
+    remotes = guard_grant.remote_hosts(tmp_path)
+    assert any(e.startswith("top(") for e in effects("git cat-file -p HEAD:notes.txt",
+                                                     ctx=replace(POSIX, remotes=remotes)))
+
+
+@pytest.mark.parametrize("extra", ["[fetch]\n\tbundleURI = https://unlisted.example/r.bundle\n",
+                                   "[bundle]\n\tversion = 1\n", '[remote "origin"]\n\tproxy = http://unlisted.example\n',
+                                   "[http]\n\tproxy = http://unlisted.example\n", "[core]\n\tgitProxy = helper\n",
+                                   "[http]\n\tcurloptResolve = github.com:443:192.0.2.1\n"])
+def test_a_configured_host_besides_the_remote_leaves_the_remotes_unread(tmp_path, monkeypatch, extra):
+    (tmp_path / "config").write_text(ORIGIN + extra, encoding="utf-8")
+    monkeypatch.setattr(guard_grant, "git_configs", lambda: [])
+    assert guard_grant.remote_hosts(tmp_path) == (("origin", guard_grant.UNREAD),)
+
+
+def test_a_proxy_in_the_environment_leaves_the_remotes_unread(tmp_path, monkeypatch):
+    (tmp_path / "config").write_text(ORIGIN, encoding="utf-8")
+    # A certificate file named `ca-bundle.crt` is not a bundle URI.
+    monkeypatch.setattr(guard_grant, "git_configs", lambda: ["[http]\n\tsslCAInfo = C:/ssl/ca-bundle.crt\n"])
+    for name in ("http_proxy", "https_proxy", "all_proxy", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+    assert guard_grant.remote_hosts(tmp_path) == (("origin", "github.com"),)
+    monkeypatch.setenv("HTTPS_PROXY", "http://unlisted.example")
+    assert guard_grant.remote_hosts(tmp_path) == (("origin", guard_grant.UNREAD),)

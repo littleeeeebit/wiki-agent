@@ -1327,7 +1327,7 @@
    "effects": [
     "network(github.com)",
     "read",
-    "top(gh pr merge naming a pull request, run or issue it does not take here)"
+    "top(gh pr merge: a command the table does not model)"
    ]
   },
   {
@@ -1339,7 +1339,7 @@
     "read",
     "spawn(python)",
     "spawn(rm)",
-    "top(gh pr merge --delete-branch: an option the table does not model)",
+    "top(gh pr merge: a command the table does not model)",
     "top(git fetch without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "top(git pull without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "top(variable where an option of git diff may stand)",
@@ -1356,7 +1356,7 @@
     "read",
     "spawn(python)",
     "spawn(rm)",
-    "top(gh pr merge naming a pull request, run or issue it does not take here)",
+    "top(gh pr merge: a command the table does not model)",
     "top(git fetch without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "top(git pull without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)",

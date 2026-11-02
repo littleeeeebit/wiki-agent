@@ -14,8 +14,8 @@ network verbs turn off HTTP redirects and submodule recursion on the command
 line, so only the configured remote's own hosts are reached.
 
 gh works on the checkout's own repository through the hosts its remotes name,
-and a write applies to the current branch's pull request's metadata or merges
-it remotely; it never runs git locally. `gh api` (a host
+and a write changes only the current branch's pull request's metadata; it
+never runs git locally. `gh api` (a host
 from gh's own configuration, redirects and next pages a response names, a cache
 written where a header says), `gh run view --log` (a redirect to log storage)
 and curl are not rows here: what host they reach is not decided by the argv.
@@ -261,6 +261,20 @@ def git_options(args: list, ctx):
     return i, ctx
 
 
+def settings(args: list, end: int) -> set:
+    """The values of the `-c` pairs before the verb, read pair by pair as `git_options` reads them; a `-C`
+    value is a directory, whatever it spells."""
+    out, k = set(), 0
+    while k < end:
+        if args[k].text in ("-C", "-c"):
+            if args[k].text == "-c":
+                out.add(args[k + 1].text)
+            k += 2
+        else:
+            k += 1
+    return out
+
+
 def m_git(name, args, ctx):
     i, ctx = git_options(args, ctx)
     if ctx is None:
@@ -283,7 +297,7 @@ def m_git(name, args, ctx):
     if not own_repo(ctx):
         return top("git in a repository other than the checkout"), None
     if any(n == "\0lazy" for n, _ in ctx.remotes):
-        return top("git in a partial clone, where reading an object may fetch it from a remote"), None
+        return top("git in what may be a partial clone, where reading an object may fetch it from a remote"), None
     pos, _, rest_flags = getopt(rest, r.takes)
     if kind == "read":
         return (top("git remote with an operand") if verb == "remote" and pos else formats(rest)), None
@@ -304,7 +318,7 @@ def m_git(name, args, ctx):
         out |= paths("delete" if verb == "worktree remove" else "write", pos[0], ctx)
     elif kind in ("fetch", "push"):
         out |= reached(verb.split()[0], pos, ctx)
-        if NO_REDIRECTS not in [w.text for w in args[:i]] or "--no-recurse-submodules" not in rest_flags:
+        if NO_REDIRECTS not in settings(args, i) or "--no-recurse-submodules" not in rest_flags:
             out |= top(f"git {verb} without `-c {NO_REDIRECTS}` and `--no-recurse-submodules`")
     return out, None
 
@@ -314,7 +328,7 @@ def m_git(name, args, ctx):
 JSON = "--json: -q: --jq: -t: --template:"
 # `group verb`: (flags, what it does, which pull request or run it may name). No `-R`/`--repo` (another
 # repository), `-w`/`--web` (a browser), `--hostname` or `--log` anywhere. No `pr create` (it may push the
-# branch) and no `pr merge --delete-branch` (it switches branches and pulls): gh runs that git with options
+# branch) and no `pr merge` (with a prompt it may switch branches and pull): gh runs that git with options
 # the call cannot add, so they are left to a later row.
 GH_VERBS = {
     "pr view": (f"-c --comments {JSON}", "read", "one"),
@@ -327,8 +341,6 @@ GH_VERBS = {
                 "--remove-reviewer: --add-assignee: --remove-assignee: -m: --milestone:", "write", "none"),
     "pr comment": ("-b: --body: -F: --body-file: --edit-last", "write", "none"),
     "pr ready": ("", "write", "none"),
-    "pr merge": ("-smr -t: --subject: -b: --body: -F: --body-file: -A: --author-email: --squash --merge --rebase "
-                 "--auto --disable-auto --match-head-commit:", "write", "none"),
     "run view": (f"-v --verbose --exit-status -j: --job: -a: --attempt: {JSON}", "read", "one"),
     "run watch": ("--exit-status --compact -i: --interval:", "read", "one"),
     "run list": (f"-L: --limit: -b: --branch: -w: --workflow: -s: --status: -c: --commit: -e: --event: -u: --user: "
