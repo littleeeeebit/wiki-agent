@@ -370,4 +370,11 @@ def m_curl(name, args, ctx):
     out = writes("write", vals.get("-o", []) + vals.get("--output", []), ctx)
     for w in pos + vals.get("--url", []):
         out |= network(w)
+    # A request that changes something remote may author a commit (a contents API) that a fetch and checkout
+    # then bring home as trusted history: it is admitted only to the loopback.
+    methods = [w.text.upper() for w in vals.get("-X", []) + vals.get("--request", [])]
+    sends = set(vals) & {"-d", "--data", "--data-raw", "--data-binary", "--data-urlencode", "--json"}
+    if (sends or any(m not in ("GET", "HEAD") for m in methods)) and any(
+            e != ("network", "127.0.0.1") for e in out if e[0] in ("network", "top")):
+        return top("a curl request that changes something on a host other than the loopback"), None
     return out, None

@@ -147,8 +147,11 @@ builtins, and `tool/guard_git.py` for git, gh and curl. The table holds only:
   `pr create`/`edit`/`comment`/`ready`/`merge` on the current branch's pull
   request only (no `--head`), each reaching the checkout's remote hosts.
   `-R`/`--repo`, `--web`, `--hostname` and a URL operand are `top`, and so is
-  setting `GH_REPO` in any form;
-- curl to the hosts its URLs name, writing only where `-o` points. `-L`,
+  setting `GH_REPO` in any form (PowerShell's one-word and compound
+  assignments included);
+- curl to the hosts its URLs name, writing only where `-o` points; a request
+  that changes something (`-X` other than GET or HEAD, `-d`, `--json`) only to
+  the loopback, since a remote one may author a commit. `-L`,
   `-x`, `--resolve`, `--connect-to`, `-O`, `-K`, a `-w` format with
   `%output{…}` or read from `@file`, and every other unlisted flag are `top`;
 - plain `>`/`>>` redirection to a literal path, in every dialect. Only the
@@ -177,7 +180,8 @@ protected files and links included. That history is trusted because the agent
 cannot author such a commit within the table: no row lays down a link, and a
 protected name (`verification.toml`, `.wiki/adapter.toml`, `.claude`,
 `.codex`) is protected at any depth below every write root, so another
-worktree's copy cannot be changed and committed either; `gh api` only reads.
+worktree's copy cannot be changed and committed either; `gh api` only reads,
+and curl changes nothing beyond the loopback.
 
 Four rules hold across the table:
 

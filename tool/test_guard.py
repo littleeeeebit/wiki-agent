@@ -1105,6 +1105,8 @@ def test_a_curl_write_out_that_may_write_is_top(fmt):
 
 @pytest.mark.parametrize("command,dialect", [
     ("$env:GH_REPO='github.com/owner/other'; gh pr edit --body x", "ps"),
+    ("$env:GH_REPO+='github.com/owner/other'; gh pr edit --body x", "ps"),
+    ("$env:GH_REPO += 'github.com/owner/other'; gh pr edit --body x", "ps"),
     ("GH_REPO=owner/other gh pr edit --body x", "posix"),
     ("gh pr create --head other-topic --title x --body x", "posix"),
 ])
@@ -1113,8 +1115,25 @@ def test_gh_never_targets_another_repository_or_branch(command, dialect):
 
 
 def test_a_powershell_assignment_written_as_one_word_is_still_an_assignment():
-    assert any("PATH" in e for e in effects("$env:PATH='C:/tools'; git status", "ps"))
-    assert effects("$env:PYTHONIOENCODING='utf-8'; $x='rm'; git status", "ps") == {"read"}
+    for command in ("$env:PATH='C:/tools'; git status", "$env:PATH+=';C:/tools'; git status"):
+        assert any("PATH" in e for e in effects(command, "ps")), command
+    assert effects("$env:PYTHONIOENCODING='utf-8'; $x='rm'; $n+=1; git status", "ps") == {"read"}
+
+
+# A request that changes something remote may author a commit that a fetch and checkout bring home.
+@pytest.mark.parametrize("command", [
+    "curl -s -X PUT -d '{}' https://github.com/api/v3/repos/o/r/contents/verification.toml",
+    "curl -s --json '{}' https://github.com/api",
+    "curl -s --data-binary @body.json https://github.com/api",
+    "curl -s -X DELETE https://github.com/api",
+])
+def test_a_curl_request_that_changes_a_remote_is_top(command):
+    assert any(e.startswith("top(") for e in effects(command, ctx=POSIX)), command
+
+
+def test_a_curl_request_that_changes_the_loopback_is_its_network():
+    for command in ("curl -s -X POST -d x http://127.0.0.1:8000/api", "curl -s --json '{}' localhost:8000/api"):
+        assert effects(command, ctx=POSIX) == {"read", "network(127.0.0.1)"}, command
 
 
 def test_a_per_worktree_configuration_leaves_the_remotes_unread(tmp_path):

@@ -196,10 +196,11 @@ def ps_statement(words: list, ctx) -> tuple[list, set]:
     # `$env:X='v'` is one word, quoted only after the `=`: a word is a string only when it opens with a quote
     # (a here-string, which keeps no source, is quoted throughout).
     elif words and not (re.match(r"['\"]", words[0].raw) if words[0].raw else words[0].quoted) \
-            and re.match(r"^\$?[\w:.-]+=", words[0].text):
-        target, _, value = words[0].text.partition("=")
+            and (m := re.match(r"^(\$?[\w:.-]+?)(\+|-|\*|/|%|\?\?)?=", words[0].text)):
+        target, value = m.group(1), words[0].text[m.end():]
         source = (words[0].raw or words[0].text).partition("=")[2]
-        why = words[0].why if re.search(r"[$(`]", source) else ""
+        # A compound operator (`+=`) combines with a value known only at run time.
+        why = words[0].why if re.search(r"[$(`]", source) else "a value combined at run time" if m.group(2) else ""
         if "." in target or "[" in target:
             return [], member_assign
         if target.lower().startswith("$env:"):
