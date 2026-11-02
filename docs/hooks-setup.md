@@ -119,16 +119,20 @@ Effects come from:
 
 - redirections (`>`, `>>`) to a literal path, in every dialect, with the
   host's null devices discarded;
-- POSIX writers, judged by their path operands; of their options only those
-  taking a value are read (`-o x`, `-ox`, `-sSLo x`, `--output=x`), so a value
-  such as `touch -r ref` is not taken for a target. `rm`, `rmdir`, `unlink` and
-  `shred` delete their operands; `mkdir`, `touch`, `tee`, `truncate` and
+- POSIX writers, their options split the way the program's own parser splits
+  them (its getopt letters and long names, copied into `guard_models.SPEC`:
+  `-gstaff` is `-g staff`, `-dm755` is `-d -m 755`). `rm`, `rmdir`, `unlink`
+  and `shred` delete their operands; `mkdir`, `touch`, `tee`, `truncate` and
   `install -d` write them; `cp`, `mv`, `install` and `ln` write their
   destination (`-t`'s folder, else the last operand), and `mv` deletes its
-  sources. A destination that is a folder (`-t`, a trailing separator, one
-  that exists now, or one an earlier `mkdir` in the call made) is written as
-  `<folder>/<last name of each source>`, so `cp x .` writes `./x`. `curl -o`
-  and `wget -O`/`-P` write their output unless it is `-`;
+  sources. Each source's last name is written below the destination too,
+  since an earlier command may have made it a folder (`cp x .` writes `./x`;
+  `cp verification.toml new` is denied, as it may write
+  `new/verification.toml`); a destination that is a folder now, or ends in a
+  separator, is written only that way. `curl` writes its `-o`, `-D`, `-c`,
+  trace and other file options and, with `-O`, the URL's last name; `wget`
+  writes `-O`, else the URL's last name under `-P` or here, and its log and
+  cookie files. `-` (standard output) is never a file;
 - PowerShell and cmd writers of literal paths (`Set-Content`, `Out-File`,
   `New-Item`, `Remove-Item`, `Copy-Item`, `Move-Item`, `Rename-Item`, cmd's
   `del`, `rd`, `md`, `move`, `ren`), in `tool/guard_windows.py`;

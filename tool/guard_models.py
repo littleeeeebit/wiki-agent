@@ -168,94 +168,126 @@ def writes(kind: str, ws: list, ctx) -> set:
     return out
 
 
-# Open default: these write or delete the paths they are given, judged without reading their other options.
+# Open default: these write or delete the paths they are given, their options read the way the program's own
+# parser reads them.
 DELETERS, MAKERS, MOVERS, OUTPUTS = {"rm", "rmdir", "unlink", "shred"}, {"mkdir", "touch", "tee", "truncate"}, \
     {"cp", "mv", "install", "ln"}, {"curl", "wget"}
-# Options that take a value, as one-letter flags (`-o x`, `-ox`, the last of `-sSLo x`) and long ones (`--output x`,
-# `--output=x`): the value is the output or `-t`'s folder (GIVES), or no path written at all (SKIPS).
-GIVES = {"curl": ("o", ("--output",)), "wget": ("OP", ("--output-document", "--directory-prefix")),
-         **dict.fromkeys(MOVERS, ("t", ("--target-directory",)))}
-SKIPS = {"touch": ("rdt", ("--reference", "--date")), "truncate": ("rs", ("--reference", "--size")),
-         "mkdir": ("m", ("--mode",)), "install": ("mogS", ("--mode", "--owner", "--group", "--suffix"))}
+# Each writer's options that take a value: its getopt letters (a cluster ends at the first of them, so
+# `-gstaff` is `-g staff` and `-dm755` is `-d -m 755`) and its long names (`--mode x`, `--mode=x`, or a
+# prefix naming one of them). Copied from the programs' own option tables.
+SPEC = {
+    "shred": ("ns", ("--iterations", "--size", "--random-source")), "mkdir": ("m", ("--mode",)),
+    "touch": ("drt", ("--date", "--reference", "--time")), "truncate": ("rs", ("--reference", "--size")),
+    "cp": ("tS", ("--target-directory", "--suffix", "--sparse", "--no-preserve")),
+    "mv": ("tS", ("--target-directory", "--suffix")), "ln": ("tS", ("--target-directory", "--suffix")),
+    "install": ("gmotS", ("--group", "--mode", "--owner", "--target-directory", "--suffix", "--strip-program")),
+    "curl": ("AbcCdDeEFHKmoPQrtTuUwxXyYz", ("--output", "--output-dir", "--dump-header", "--cookie-jar", "--trace",
+                                            "--trace-ascii", "--stderr", "--libcurl", "--etag-save", "--hsts",
+                                            "--alt-svc")),
+    "wget": ("aABDeiIloOPQRtTUwX", ("--output-document", "--directory-prefix", "--output-file", "--append-output",
+                                    "--save-cookies", "--warc-file")),
+}
+# The options whose value is a file the program writes (curl's and wget's are each a file of their own).
+CURL_OUT = ("-D", "--dump-header", "-c", "--cookie-jar", "--trace", "--trace-ascii", "--stderr", "--libcurl",
+            "--etag-save", "--hsts", "--alt-svc")
+WGET_OUT = ("-o", "--output-file", "-a", "--append-output", "--save-cookies", "--warc-file")
 
 
-def valued(name: str, t: str):
-    """`(table, attached value or None)` when `t` is an option of `name` taking a value, else None."""
-    for table in (GIVES, SKIPS):
-        short, longs = table.get(name, ("", ()))
-        flag, eq, glued = t.partition("=")
-        if flag in longs:
-            return table, glued if eq else None
-        if short and not t.startswith("--") and (m := re.match(rf"-[A-Za-z]*?[{short}](.*)", t)):
-            return table, m[1] or None
-    return None
+def options(name: str, args: list) -> tuple:
+    """`([(option, value Word or None)], operands)`, splitting `args` as `name`'s option parser does."""
+    letters, longs = SPEC.get(name, ("", ()))
+    opts, ops, i = [], [], 0
+    while i < len(args):
+        w, t = args[i], args[i].text
+        nxt = args[i + 1] if i + 1 < len(args) else None
+        i += 1
+        if w.why or t == "-" or not t.startswith("-"):
+            ops.append(w)
+        elif t == "--":
+            ops += args[i:]
+            break
+        elif t.startswith("--"):
+            flag, eq, glued = t.partition("=")
+            named = [n for n in longs if n == flag] or [n for n in longs if n.startswith(flag)]
+            if len(named) == 1:
+                opts.append((named[0], Word(glued, w.why) if eq else nxt))
+                i += 0 if eq else 1
+            else:
+                opts.append((flag, None))
+        else:
+            for k, c in enumerate(t[1:], 1):
+                if c in letters:
+                    opts.append(("-" + c, Word(t[k + 1:], w.why) if t[k + 1:] else nxt))
+                    i += 0 if t[k + 1:] else 1
+                    break
+                opts.append(("-" + c, None))
+    return opts, ops
+
+
+def fetched(url: Word, folder: Word) -> Word:
+    """The file a download of `url` lands in under `folder`: the URL's last name, else `index.html`."""
+    m = re.match(r"[a-zA-Z][\w+.-]*://[^/?#]*(.*)", url.text)
+    name = re.split(r"[?#]", m[1] if m else url.text)[0].rsplit("/", 1)[-1]
+    return Word(folder.text.rstrip("\\/") + "/" + (name if name not in ("", ".", "..") else "index.html"),
+                folder.why or url.why)
 
 
 def m_paths(name, args, ctx):
-    ops, given, i, dirs = [], [], 0, False
-    while i < len(args):
-        w, t = args[i], args[i].text
-        if t == "--" and not w.why:
-            ops += args[i + 1:]
-            break
-        if hit := valued(name, t):
-            table, glued = hit
-            value = Word(glued, w.why) if glued is not None else args[i + 1] if i + 1 < len(args) else None
-            given += [value] if value and table is GIVES else []
-            i += 1 if glued is not None else 2
-            continue
-        if not t.startswith("-") or w.why:
-            ops.append(w)
-        # `install -d` makes every operand a folder rather than copying into the last.
-        dirs |= name == "install" and bool(re.match(r"--directory$|-(?!-)[A-Za-z]*d", t))
-        i += 1
-    if name in OUTPUTS:
-        return writes("write", [g for g in given if g.text != "-"], ctx), None     # `-` is standard output
-    if name in DELETERS | MAKERS or dirs:
-        if name == "mkdir" or dirs:
-            ctx.made.update(folders(ops, ctx))
+    opts, ops = options(name, args)
+    flags = {f for f, _ in opts}
+
+    def given(*names):
+        return [v for f, v in opts if f in names and v is not None]
+
+    def out(ws):
+        return writes("write", [w for w in ws if w.text != "-"], ctx), None    # `-` is standard output
+
+    if name == "curl":
+        named = given("-o", "--output")
+        if flags & {"-O", "-J", "--remote-name", "--remote-name-all", "--remote-header-name"}:
+            named += [fetched(u, Word(".")) for u in ops]
+        # `--output-dir` holds every download; the name alone is judged too.
+        return out(named + [Word(d.text.rstrip("\\/") + "/" + n.text, d.why or n.why)
+                            for d in given("--output-dir") for n in named] + given(*CURL_OUT))
+    if name == "wget":
+        # Without `-O`, each URL lands under `-P`'s folder, else here.
+        doc = given("-O", "--output-document")
+        folder = (given("-P", "--directory-prefix") or [Word(".")])[-1]
+        return out((doc or [fetched(u, folder) for u in ops]) + given(*WGET_OUT))
+    # `install -d` makes every operand a folder rather than copying into the last.
+    if name in DELETERS | MAKERS or name == "install" and any(
+            f == "-d" or len(f) > 4 and "--directory".startswith(f) for f in flags):
         return writes("delete" if name in DELETERS else "write", ops, ctx), None
     # A mover's destination is `-t`'s folder, else its last operand.
-    srcs, dests = (ops, given) if given else (ops[:-1], ops[-1:])
-    return lands(srcs, dests, bool(given), ctx) | (writes("delete", srcs, ctx) if name == "mv" else set()), None
-
-
-def spots(w: Word, ctx) -> set:
-    """Where a literal path names from each place the command may run, normalised; none when unknown."""
-    out = set()
-    for c in ctx.cwds:
-        try:
-            p = None if w.why or not c else resolve(w.text, c, ctx)
-        except ValueError:
-            continue
-        out |= {os.path.normpath(p)} if p else set()
-    return out
-
-
-def folders(ws: list, ctx) -> set:
-    """The folders a `mkdir` of `ws` may make, with their parents (`mkdir -p a/b` makes `a` too)."""
-    out = set()
-    for p in set().union(*(spots(w, ctx) for w in ws)):
-        while p not in out and p != os.path.dirname(p):
-            out.add(p)
-            p = os.path.dirname(p)
-    return out
+    folder = given("-t", "--target-directory")
+    srcs, dests = (ops, folder) if folder else (ops[:-1], ops[-1:])
+    return lands(srcs, dests, bool(folder), ctx) | (writes("delete", srcs, ctx) if name == "mv" else set()), None
 
 
 def lands(srcs: list, dests: list, folder: bool, ctx) -> set:
-    """Where sources land: a folder destination (`-t`, a trailing separator, one that exists now or one an earlier
-    `mkdir` made) takes each source's last name, so `cp x .` writes `./x`, not the checkout; any other destination
-    is written as named."""
+    """Where sources land. A folder destination (`-t`, a trailing separator, or one that exists now) takes each
+    source's last name, so `cp x .` writes `./x`, not the checkout. Any other destination is written as named and,
+    since an earlier command (`mkdir`, `cp -r`, `install -D`) may make it a folder, with each source's name below
+    it too: `cp verification.toml new` may write `new/verification.toml`."""
     out = set()
     for d in dests:
         into = folder or not d.why and (re.search(r"[\\/]$", d.text) or any(
-            p in ctx.made or os.path.isdir(p) for p in spots(d, ctx)))
+            os.path.isdir(p) for c in ctx.cwds if (p := spot(d, c, ctx))))
         names = [re.split(r"[\\/]+", s.text.rstrip("\\/"))[-1] for s in srcs]
-        if into and srcs and all(n not in ("", ".", "..") for n in names) and not any(s.why for s in srcs):
+        named = srcs and all(n not in ("", ".", "..") for n in names) and not any(s.why for s in srcs)
+        direct = paths("write", d, ctx)     # empty for a device such as `/dev/null`, which holds nothing
+        if named and direct:
             out |= writes("write", [Word(d.text.rstrip("\\/") + "/" + n, d.why) for n in names], ctx)
-        else:
-            out |= paths("write", d, ctx)
+        if not (into and named):
+            out |= direct
     return out
+
+
+def spot(w: Word, cwd: str, ctx):
+    try:
+        return resolve(w.text, cwd, ctx)
+    except ValueError:
+        return None
 
 
 def here(ctx) -> Word:
