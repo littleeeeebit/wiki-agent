@@ -149,9 +149,11 @@ builtins, and `tool/guard_git.py` for git, gh and curl. The table holds only:
   `-R`/`--repo`, `--web`, `--hostname` and a URL operand are `top`, and so is
   setting `GH_REPO` in any form (PowerShell's one-word and compound
   assignments included);
-- curl to the hosts its URLs name, writing only where `-o` points; a request
-  that changes something (`-X` other than GET or HEAD, `-d`, `--json`) only to
-  the loopback, since a remote one may author a commit. `-L`,
+- curl reads only: GET or HEAD over `http`/`https` to the hosts its URLs name,
+  writing only where `-o` points. A request that changes something (another
+  method, a body, a method-override header, a header file) may author a commit,
+  and a proxy decides where even a loopback URL lands, so it is `top` on any
+  host; so is any other protocol. `-L`,
   `-x`, `--resolve`, `--connect-to`, `-O`, `-K`, a `-w` format with
   `%output{…}` or read from `@file`, and every other unlisted flag are `top`;
 - plain `>`/`>>` redirection to a literal path, in every dialect. Only the
@@ -181,7 +183,7 @@ cannot author such a commit within the table: no row lays down a link, and a
 protected name (`verification.toml`, `.wiki/adapter.toml`, `.claude`,
 `.codex`) is protected at any depth below every write root, so another
 worktree's copy cannot be changed and committed either; `gh api` only reads,
-and curl changes nothing beyond the loopback.
+and curl only reads.
 
 Four rules hold across the table:
 

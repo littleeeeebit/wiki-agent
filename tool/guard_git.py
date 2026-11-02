@@ -351,12 +351,14 @@ def m_gh(name, args, ctx):
 
 # -- curl ----------------------------------------------------------------------
 
-# No `-L` (a redirect reaches a host the URL does not name), `-x`/`--proxy`, `--resolve`/`--connect-to`,
-# `-O`/`--output-dir` (a name the server or URL picks), `-K` (options from a file) or `-D`/`-c` (more writes).
-CURL = row(None, "-sSfiIkvq -m: -o: -w: -H: -X: -d: -A: -e: --silent --show-error --fail --fail-with-body --include "
+# A request that changes something may author a commit (a contents API) that a fetch and checkout then bring
+# home as trusted history, and a proxy decides where even a loopback URL lands: the row only reads. No body
+# (`-d`, `--json`), `-L` (a redirect reaches a host the URL does not name), `-x`/`--proxy`,
+# `--resolve`/`--connect-to`, `-O`/`--output-dir` (a name the server or URL picks), `-K` (options from a file)
+# or `-D`/`-c` (more writes).
+CURL = row(None, "-sSfiIkvq -m: -o: -w: -H: -X: -A: -e: --silent --show-error --fail --fail-with-body --include "
                  "--head --insecure --verbose --no-progress-meter --compressed --http1.1 --max-time: --connect-timeout: "
-                 "--output: --write-out: --header: --request: --data: --data-raw: --data-binary: --data-urlencode: "
-                 "--json: --retry: --retry-delay: --url: --user-agent: --referer:")
+                 "--output: --write-out: --header: --request: --retry: --retry-delay: --url: --user-agent: --referer:")
 
 
 def m_curl(name, args, ctx):
@@ -367,14 +369,15 @@ def m_curl(name, args, ctx):
     if any(w.why or w.text.startswith("@") or "%output" in w.text.lower()
            for w in vals.get("-w", []) + vals.get("--write-out", [])):
         return top("a curl write-out format that may write a file"), None
+    if any(w.why or w.text.upper() not in ("GET", "HEAD") for w in vals.get("-X", []) + vals.get("--request", [])) \
+            or any(w.why or w.text.startswith("@") or "method" in w.text.partition(":")[0].lower()
+                   for w in vals.get("-H", []) + vals.get("--header", [])):
+        return top("a curl request other than a read (a method, or a header that overrides it)"), None
+    urls = pos + vals.get("--url", [])
+    # Another protocol (gopher, smtp, ftp upload, ...) carries what it sends in the URL itself.
+    if any(not w.why and re.match(r"(?i)(?!https?://)[a-z][\w+.-]*://", w.text) for w in urls):
+        return top("a curl URL with a protocol other than http or https"), None
     out = writes("write", vals.get("-o", []) + vals.get("--output", []), ctx)
-    for w in pos + vals.get("--url", []):
+    for w in urls:
         out |= network(w)
-    # A request that changes something remote may author a commit (a contents API) that a fetch and checkout
-    # then bring home as trusted history: it is admitted only to the loopback.
-    methods = [w.text.upper() for w in vals.get("-X", []) + vals.get("--request", [])]
-    sends = set(vals) & {"-d", "--data", "--data-raw", "--data-binary", "--data-urlencode", "--json"}
-    if (sends or any(m not in ("GET", "HEAD") for m in methods)) and any(
-            e != ("network", "127.0.0.1") for e in out if e[0] in ("network", "top")):
-        return top("a curl request that changes something on a host other than the loopback"), None
     return out, None

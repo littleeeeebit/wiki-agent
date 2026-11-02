@@ -1126,14 +1126,18 @@ def test_a_powershell_assignment_written_as_one_word_is_still_an_assignment():
     "curl -s --json '{}' https://github.com/api",
     "curl -s --data-binary @body.json https://github.com/api",
     "curl -s -X DELETE https://github.com/api",
+    # A proxy decides where a loopback URL lands, so no request that changes something is a read.
+    "HTTPS_PROXY=socks5h://github.com:1080 curl -sk -X PUT https://127.0.0.1/api/contents/x",
+    "curl -s -X POST -d x http://127.0.0.1:8000/api",
+    "curl -s -H 'X-HTTP-Method-Override: PUT' https://github.com/api",
+    "curl -s -H @headers.txt https://github.com/api",
+    # Another protocol carries what it sends in the URL.
+    "curl -s gophers://github.com:443/_PUT%20%2Fapi%20HTTP%2F1.1",
+    "curl -s ftp://github.com/upload",
+    "curl -s FILE:///etc/hosts",
 ])
-def test_a_curl_request_that_changes_a_remote_is_top(command):
+def test_a_curl_request_that_changes_something_is_top(command):
     assert any(e.startswith("top(") for e in effects(command, ctx=POSIX)), command
-
-
-def test_a_curl_request_that_changes_the_loopback_is_its_network():
-    for command in ("curl -s -X POST -d x http://127.0.0.1:8000/api", "curl -s --json '{}' localhost:8000/api"):
-        assert effects(command, ctx=POSIX) == {"read", "network(127.0.0.1)"}, command
 
 
 def test_a_per_worktree_configuration_leaves_the_remotes_unread(tmp_path):
