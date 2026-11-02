@@ -389,6 +389,11 @@ def test_an_alias_that_may_name_a_native_program_is_not_its_cmdlet():
     assert "write(C:/Users/me/PycharmProjects/wiki-agent/a)" in effects("md a", "ps")
     # PowerShell takes a backslash for a separator there too.
     assert "write(/w/../outside/t.txt)" in effects("Set-Content '..\\outside\\t.txt' x", "ps", posix_host)
+    assert "write(/w/../outside/t.txt)" in effects("'x' > '..\\outside\\t.txt'", "ps", posix_host)
+    # A native program's operand keeps its backslashes: there they are filename characters.
+    assert "write(/outside/..\\w\\t.txt)" in effects("sort -o '/outside/..\\w\\t.txt' a", "ps", posix_host)
+    assert "write(/outside/..\\w\\t.txt)" in {
+        render(e) for e in guard.call_effects("Write", {"file_path": "/outside/..\\w\\t.txt"}, posix_host, "claude", {})}
 
 
 @pytest.mark.parametrize("dash", ["-", "–", "—", "―"])

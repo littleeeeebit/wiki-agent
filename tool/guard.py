@@ -640,7 +640,7 @@ ASSIGN = re.compile(r"^([A-Za-z_]\w*)(?:\[[^\]]*\])?\+?=")
 def simple(items: list, ctx: Ctx) -> tuple[set, object]:
     """Effects of one simple command and, for `cd`, the directories it moves to."""
     from guard_models import KEYWORDS, run_argv
-    from guard_windows import ps_statement
+    from guard_windows import ps_path, ps_statement
 
     eff, words, stdin, call, consts, redirs = {READ}, [], None, False, ctx.consts, []
     # PowerShell evaluates groups (`(…)`, `{…}` blocks it runs) and subexpressions (`$(…)`) in this
@@ -677,7 +677,7 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
         if op in ("<<", "<<-", "<<<"):
             stdin = target
         elif op in (">", ">>", ">|", "<>") or (op == ">&" and not re.fullmatch(r"\d*-?", target.text)):
-            eff |= paths("write", target, ctx)
+            eff |= paths("write", ps_path(target) if ps else target, ctx)   # PowerShell writes the file itself
     ctx, env = replace(ctx, stdin=stdin), []
     while True:
         if ctx.d == "posix":
@@ -771,8 +771,8 @@ NULLS = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/stdin"}
 
 
 def resolve(text: str, cwd: str | None, ctx: Ctx) -> str | None:
-    """The path a literal names from `cwd` (`\\` is `/` on Windows and in PowerShell); `None` for a device."""
-    t = text.replace("\\", "/") if ctx.windows or ctx.d == "ps" else text
+    """The absolute path a literal names from `cwd`; `None` for a device. Raises ValueError."""
+    t = text.replace("\\", "/") if ctx.windows else text
     unix = ctx.d == "posix" or not ctx.windows
     if unix and (t in NULLS or t.startswith("/dev/fd/")) or ctx.windows and t.lower() in ("nul", "nul:", "con"):
         return None

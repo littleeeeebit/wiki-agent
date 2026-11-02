@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import re
 
+from dataclasses import replace
+
 from guard import Word, envs, moved_to, paths, top
 
 # Members that only read, whatever the receiver's type. Polymorphic or dispatching names
@@ -202,10 +204,16 @@ def ps_cmdlet(canon: str, args: list, ctx):
         given = [w for k in PATH for w in named.get(k, [])] + pos
         if len(given) != 1:
             return top("set-location without exactly one path"), None
-        return set(), moved_to(given[0], ctx)
+        return set(), moved_to(ps_path(given[0]), ctx)
     if canon in PS_POSITIONS:
         return ps_writes(canon, named, pos, ctx), None
     return set(), None
+
+
+def ps_path(w: Word) -> Word:
+    """`w` as PowerShell's file-system provider reads it: a backslash is a separator on every host. Only paths
+    PowerShell itself opens (its cmdlets, redirections and location) are read so; a native program's are not."""
+    return replace(w, text=w.text.replace("\\", "/"))
 
 
 def literal_path(w: Word, ctx, cmd: bool = False) -> Word | None:
@@ -227,9 +235,9 @@ def ps_writes(canon: str, named: dict, pos: list, ctx) -> set:
     open_ = [s for s in order if not any(k in named for k in s)]
     if len(pos) > len(open_):
         return top(f"{canon}: a positional argument the table does not bind")
-    slot = {s[0]: [w for k in s for w in named.get(k, [])] for s in order}
+    slot = {s[0]: [ps_path(w) for k in s for w in named.get(k, [])] for s in order}
     for s, w in zip(open_, pos):
-        slot[s[0]] = [w]
+        slot[s[0]] = [ps_path(w)]
     if any(len(v) > 1 for v in slot.values()):
         return top(f"{canon}: a parameter given twice")
     one = {k: v[0] for k, v in slot.items() if v}
@@ -238,7 +246,7 @@ def ps_writes(canon: str, named: dict, pos: list, ctx) -> set:
         kind = named.get("itemtype", [Word("file")])[0]
         if ctx.piped or kind.why or kind.text.lower() not in ("file", "directory") or len(named.get("itemtype", [])) > 1:
             return top("new-item that may make a link or bind its parameters from the pipeline")
-        name = named.get("name", [])
+        name = [ps_path(w) for w in named.get("name", [])]
         where = one.get("path", Word("."))
         target = under(where, name[0].text) if name else where if "path" in one else None
         if len(name) > 1 or target is None or name and name[0].why:
