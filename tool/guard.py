@@ -771,8 +771,8 @@ NULLS = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/stdin"}
 
 
 def resolve(text: str, cwd: str | None, ctx: Ctx) -> str | None:
-    """The absolute path a literal names from `cwd`; `None` for a device. Raises ValueError."""
-    t = text.replace("\\", "/") if ctx.windows else text
+    """The path a literal names from `cwd` (`\\` is `/` on Windows and in PowerShell); `None` for a device."""
+    t = text.replace("\\", "/") if ctx.windows or ctx.d == "ps" else text
     unix = ctx.d == "posix" or not ctx.windows
     if unix and (t in NULLS or t.startswith("/dev/fd/")) or ctx.windows and t.lower() in ("nul", "nul:", "con"):
         return None

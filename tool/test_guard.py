@@ -387,6 +387,8 @@ def test_an_alias_that_may_name_a_native_program_is_not_its_cmdlet():
     assert any(e.startswith("top(") for e in effects("md a", "ps", posix_host))
     assert "delete(/w/a)" in effects("Remove-Item a", "ps", posix_host)
     assert "write(C:/Users/me/PycharmProjects/wiki-agent/a)" in effects("md a", "ps")
+    # PowerShell takes a backslash for a separator there too.
+    assert "write(/w/../outside/t.txt)" in effects("Set-Content '..\\outside\\t.txt' x", "ps", posix_host)
 
 
 @pytest.mark.parametrize("dash", ["-", "–", "—", "―"])
