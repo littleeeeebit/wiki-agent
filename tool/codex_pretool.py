@@ -11,10 +11,11 @@ def verdict(payload: dict) -> dict | None:
     import deny
     import edit_as_diff
     import english_progress
+    import guard
     import markdown_emphasis
     import memory_words
 
-    denied = host_boundary.verdict(payload) or deny.verdict(payload)
+    denied = host_boundary.verdict(payload) or deny.verdict(payload) or guard.verdict(payload, host="codex")
     if denied:
         return denied
     answer = edit_as_diff.verdict(payload, Path(str(payload.get("cwd") or Path.cwd())))

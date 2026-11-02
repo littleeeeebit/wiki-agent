@@ -90,6 +90,122 @@ the app's task and review workflow. Reinstalling removes this wiki's retired
 `keepalive.py` entries; the search daemon never sends keystrokes or paid idle
 turns. The old `keep_alive` adapter value is ignored.
 
+### The effect guard
+
+`tool/guard.py` is a PreToolUse hook on both hosts: Claude runs it as its own
+entry, Codex runs it inside `codex_pretool.py` after `host_boundary.py` and the
+pages' `enforce.deny` rules. It judges only sessions the app started
+(`WIKI_AGENT_MANAGED=1`) in a checkout with an adapter; everywhere else it
+passes. `tool/deny.py` matches each page's `Bash(...)` pattern against not only
+the direct command but every command the guard's parser finds one level down,
+so a block such as `git reset --hard` holds even inside `bash -c '…'`,
+`pwsh -Command '…'` or `$(…)`.
+
+It does not match command patterns. A shell command is parsed into a tree
+(`;`, `&&`, `||`, `|`, `$(...)`, backticks, redirections, here documents, and
+the strings handed to `bash -c`, `sh -c`, `pwsh -Command`, `powershell
+-Command` and `cmd /c`, parsed again up to eight levels deep) and reduced to
+effects: `read`, `write(path)`, `delete(path)`, `spawn(executable)`,
+`network(host)`, and `top(reason)` for what cannot be decided before it runs —
+`eval`, `source`, `-EncodedCommand`, a variable, substitution or glob in a
+written path, a script file, an unclosed quote, nesting past the limit, more
+than 32 possible working directories. An
+Edit, Write, MultiEdit, NotebookEdit or apply_patch call is a `write` (or
+`delete`) of its resolved target. A shell tool that names its own working
+directory (`workdir` or `cwd` in its input) is judged from there; one that
+cannot be read is `top`. Reads, and tools that neither run a shell nor
+edit a file, are not restricted. The call passes when every effect lies inside
+the task's grant, computed again for each call.
+
+What a program does is read off a small closed table, never guessed. `TABLE`
+in `tool/guard_models.py` lists each modelled program with the flags it
+understands (`row(model, "-abc --long -o: --out:")`: one-letter flags, long
+flags, and flags that take a value); `PS_ROWS` and `CMD_ROWS` in
+`tool/guard_windows.py` do the same for PowerShell cmdlets and cmd.exe
+builtins. The table holds only:
+
+- read-only listing, reading and searching programs (`ls`, `cat`, `head`,
+  `grep`, `rg`, `find` without actions, `diff`, `echo`, `Get-Content`,
+  `Get-ChildItem`, `Select-String`, `Test-Path`, cmd's `type`, `dir`, `echo`);
+- `cd` and `Set-Location` in the call's first statement only;
+- git `status`, `diff`, `log`, `show`, `rev-parse` (reads), `add`, `commit`
+  with `-m`/`-F` (a write of the repository), and `push` with at most a
+  configured remote and a branch name (that remote's host), none of them with
+  `-c`, `-C`, `--git-dir`, `--work-tree` or `--exec-path`;
+- plain `>`/`>>` redirection to a literal path, in every dialect. Only the
+  host's devices are discarded: `/dev/null` and its kin as spelled where a
+  POSIX layer serves them (not in native Windows PowerShell or cmd, where they
+  are files under the drive root), `NUL` and `CON` on Windows in any case, and
+  PowerShell's `$null` only unquoted.
+
+A git row's arguments never select a program: `--show-signature` and a
+`--format`/`--pretty` value with a `%G` field or a configured alias name are
+`top`. What git starts from its own configuration (hooks, a text converter,
+the verifier `log.showSignature` asks for) is part of the git row, since that
+configuration is protected or outside the write roots. That holds only for the
+checkout itself: git in any other repository (a nested one included) is `top`,
+and no write or edit may lay down a `.git` anywhere.
+
+Four rules hold across the table:
+
+- A flag or parameter the row does not list is `top`, and so is a variable or
+  substitution standing where an option may stand.
+- A program with no row is only `spawn(name)`, which a grant naming it allows.
+  A path-named program (`./helper.exe`) is that file, suffix included. A
+  PowerShell cmdlet or member with no row is `top`: it runs inside the
+  runspace, so no executable grant can stand for it.
+- A name set by a builtin (`read`, `printf -v`, `mapfile`, `unset`) is judged
+  like an assignment: setting an execution or destination variable (`PATH`,
+  `HOME`, the proxy variables, `GIT_DIR`, `GIT_WORK_TREE`) that way is `top`.
+- A directory change anywhere but the first statement (a later statement, a
+  group, a branch, a pipeline, a substitution, a nested shell) is `top`, and
+  so are loops, functions and traps, whose bodies run any number of times.
+  PowerShell's `using module` and `using assembly` load code and are `top`;
+  only `using namespace` is a declaration.
+
+Everything else is denied in app-managed sessions: file writers such as `rm`,
+`cp`, `mv`, `touch`, `Set-Content` and `Remove-Item`, archives, links, `curl`,
+`gh`, `awk`, `sed`, and every other git verb, `git merge` of a merge repair
+included. Follow-up changes add rows for git and gh writes and network,
+PowerShell and cmd, and shell semantics; a command that is denied but ordinary
+is answered by adding a row there, not by loosening an existing one.
+
+| Effect | Granted when |
+|---|---|
+| `write`, `delete` | the path resolves (links, junctions and `..` followed) inside a write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder; each `[guard] write_roots` entry, relative to the checkout |
+| — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (`echo x > .wiki`, `echo x > .`). Only git's own write of the repository it runs in (`add`, `commit`, `push`) is judged by place alone |
+| `spawn` | the executable is one that `gate_cmd`, `verification.toml`'s round and local commands, a `[checks]` command or `python tool/search` runs, or is listed in `[guard] executables`. A bare name is that name; a name with a path (`./tool`, `C:/x/python.exe`, `/usr/bin/time`) is that file, granted only by the same path. A git remote name counts only in the checkout's own repository: a push after a `cd` into another repository is `top` |
+| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named); a remote at a local path, a URL rewrite (`insteadOf`) or `[include]` in any config file git reads (the repository's, global, XDG or system), a `[remote]` or `[branch]` section outside the repository's own config, or config syntax the guard does not decode (a key on a header's line, a continued, quoted or commented value), makes it `top`. `GH_HOST`, `GH_REPO` and the proxy variables count as reaching their host; a target whose host cannot be read is `top` |
+| `top` | never |
+
+The optional adapter table adds to the grant and never names a command:
+
+```toml
+[guard]
+write_roots = ["../shared-fixtures"]
+network_hosts = ["pypi.org"]
+executables = ["ruff", "npx", ".venv/Scripts/python.exe"]
+```
+
+A denial lists each effect outside the grant, why, and what would open it,
+then the grant itself. The person reads it, so it stays Korean:
+
+```
+위키 효과 검사가 이 호출을 막았다 — 작업에 허가된 효과 밖이다.
+- spawn(cargo): 허가된 실행 파일이 아니다 — `.wiki/adapter.toml` 의 `[guard] executables` 에 `cargo` 를 더하면 열린다
+- delete(C:/work/other): 쓰기 루트 밖이다 — `.wiki/adapter.toml` 의 `[guard] write_roots` 에 이 경로를 담은 디렉터리를 더하면 열린다
+- top(variable in a write path): 판단할 수 없는 형태다(variable in a write path) — 어떤 허가로도 열리지 않으니, 리터럴 경로와 직접 실행하는 명령으로 풀어 쓴다
+허가: 쓰기 루트 C:\work\repo, C:\Users\me\AppData\Local\Temp · 실행 파일 npm, python · 호스트 127.0.0.1, github.com
+```
+
+A `top` is answered by writing the command out: a literal path instead of
+`$TEMP/x`, the program itself instead of `eval` or a script file. A variable
+the same command assigns once, before use and outside a conditional, counts
+as its literal. The guard's limits: what a granted interpreter (`python`,
+`npm`) does inside its own process is not modelled, and the hub's own
+`tool/` is inside its checkout's write root. Any exception in the hook passes
+the call (`craft/hooks-fail-open`).
+
 Run `git rev-parse HEAD` in the wiki folder and store the resulting
 40-character value as a single line in the **target project's**
 `.wiki/wiki-revision`. Use UTF-8 without BOM and LF. That value is how the

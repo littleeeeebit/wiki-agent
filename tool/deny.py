@@ -10,19 +10,26 @@ from pytest_output import held_back, reason as output_reason  # noqa: F401 -- pu
 
 
 def verdict(payload: dict) -> dict | None:
+    import guard
     from apply import declared
 
-    given = payload.get("tool_input") or {}
-    tool = payload.get("tool_name")
-    command = str(given.get("command") or "").strip()
+    # Read the command the one way the guard does (`command` or `cmd`, string or argv, any tool-name
+    # form, Codex's PowerShell); checking another projection is validate-before-canonicalize (CWE-180).
+    raw_tool = str(payload.get("tool_name") or "")
+    tool, raw, dialect = guard.shell_command(payload)
+    command = (" ".join(map(str, raw)) if isinstance(raw, list) else str(raw)).strip()
     denies, _ = declared()
-    # Tools and Bash argument patterns share `enforce.deny` declarations.
-    # ponytail: only the declared pattern of the direct command is matched. A
-    # nested shell can bypass it; a security boundary needs host execution policy.
+    # Tools and Bash argument patterns share `enforce.deny` declarations. A nested shell
+    # (`bash -c '...'`, `$(...)`, `pwsh -Command '...'`) runs commands the direct pattern never
+    # sees, so every command the guard's parser finds one level down is held to them too.
+    inner = guard.nested_bash_commands(raw, dialect) if tool in guard.SHELL_TOOLS else []
     for rule in denies:
-        blocked = rule == tool
-        if tool == "Bash" and rule.startswith("Bash(") and rule.endswith(")"):
-            blocked = fnmatchcase(command, rule[5:-1])
+        blocked = rule == raw_tool
+        if rule.startswith("Bash(") and rule.endswith(")"):
+            pattern = rule[5:-1]
+            if tool in guard.SHELL_TOOLS:
+                blocked = fnmatchcase(command, pattern)
+            blocked = blocked or any(fnmatchcase(c.strip(), pattern) for c in inner)
         if blocked:
             return {"hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
