@@ -135,22 +135,31 @@ builtins, and `tool/guard_git.py` for git and gh. The table holds only:
   writes of the repository (`add`, `commit -m`/`-F`, `branch`, `checkout`,
   `switch`, `restore`, `merge`, `rebase` without `-i`/`-x`, `stash` without
   `-a`, `worktree add`/`remove`/`prune`); and the network (`fetch`, `pull`,
-  and `push` with at most a branch) to a configured remote. A path operand of
+  and `push` with at most a branch) to a configured remote. A write of the
+  repository is a write of the whole worktree root, wherever below it git
+  runs. The network verbs must carry `-c http.followRedirects=false` and
+  `--no-recurse-submodules`, so a redirect or a submodule's own remote cannot
+  pick another host; a configuration that mentions `followRedirects` leaves
+  the remotes unread. A path operand of
   `checkout`, `restore` or `stash push` is also a write of that path, and a
   pathspec pattern (`'*.toml'`, `:(top)`) is `top`; `worktree add` writes its
-  folder and `worktree remove` deletes it, named only by an absolute path (git
-  matches a relative one as the tail of any registered worktree's path). `-C <dir>` moves where git runs, and
+  folder and `worktree remove` deletes it, named only by a path absolute on
+  the host (git matches a relative one, `C:/x` on POSIX included, as the tail
+  of any registered worktree's path). `-C <dir>` moves where git runs, and
   `-c` takes only identity, whitespace and colour keys. `--git-dir`,
-  `--work-tree`, `--exec-path`, `--config-env` and every other verb are `top`;
+  `--work-tree`, `--exec-path`, `--config-env`, a `GIT_TRACE*` file and every
+  other verb are `top`, and in a partial clone every git form is, since
+  reading a missing object fetches it;
 - gh `pr view`/`diff`/`checks`/`list`/`status`, `run view`/`watch`/`list`,
-  `issue view`/`list` as reads, and
-  `pr create`/`edit`/`comment`/`ready`/`merge` on the current branch's pull
-  request only (no `--head`), each reaching the checkout's remote hosts.
-  `-R`/`--repo`, `--web`, `--hostname`, `run view --log` and a URL operand are
-  `top`, and so is setting `GH_REPO` in any form (PowerShell's one-word and
-  compound assignments included). `gh api` and curl have no row: the hosts
-  they reach and what they change are not decided by their arguments alone,
-  so they wait for the shell-semantics follow-up;
+  `issue view`/`list` as reads, and `pr edit`/`comment`/`ready`/`merge` on the
+  current branch's pull request only, each reaching the checkout's remote
+  hosts. `-R`/`--repo`, `--web`, `--hostname`, `run view --log` and a URL
+  operand are `top`, and so is setting `GH_REPO` in any form (PowerShell's
+  one-word and compound assignments included). `pr create` (it may push the
+  branch) and `pr merge --delete-branch` (it switches branches and pulls) run
+  git with options the call cannot add, so they are `top`. `gh api` and curl
+  have no row: the hosts they reach and what they change are not decided by
+  their arguments alone, so they wait for the shell-semantics follow-up;
 - plain `>`/`>>` redirection to a literal path, in every dialect. Only the
   host's devices are discarded: `/dev/null` and its kin as spelled where a
   POSIX layer serves them (not in native Windows PowerShell or cmd, where they
@@ -177,8 +186,9 @@ protected files and links included. That history is trusted because the agent
 cannot author such a commit within the table: no row lays down a link, and a
 protected name (`verification.toml`, `.wiki/adapter.toml`, `.claude`,
 `.codex`) is protected at any depth below every write root, so another
-worktree's copy cannot be changed and committed either; `gh api` and curl
-have no row.
+worktree's copy cannot be changed and committed either; no git setting
+writes a file the guard has not placed (`GIT_TRACE*` is `top`), and gh's
+rows change only pull request metadata or merge remotely.
 
 Four rules hold across the table:
 

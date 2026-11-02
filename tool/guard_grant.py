@@ -107,9 +107,10 @@ def remote_hosts(common: Path) -> tuple:
     # A URL rewrite, or an included file that may hold one or another remote, changes where a push goes, and
     # a remote or branch set outside the repository adds destinations this reader does not take from there.
     # Any mention in any file git reads, in any syntax (a key after a header, a continued line), counts.
-    # `worktreeConfig` adds a private file per worktree, which may name its own push URL.
-    rewritten = re.search(r"(?i)insteadof|\[\s*include|worktreeconfig", text) is not None or any(
-        re.search(r"(?i)insteadof|\[\s*(include|remote|branch)", t) for t in git_configs())
+    # `worktreeConfig` adds a private file per worktree, which may name its own push URL. A URL-specific
+    # `followRedirects` wins over the `-c http.followRedirects=false` git's network rows require.
+    rewritten = re.search(r"(?i)insteadof|\[\s*include|worktreeconfig|followredirects", text) is not None or any(
+        re.search(r"(?i)insteadof|followredirects|\[\s*(include|remote|branch)", t) for t in git_configs())
     lazy = re.search(r"(?i)partialclone|promisor", text) or any(re.search(r"(?i)promisor", t) for t in git_configs())
     found, section = [], ("", "")
     for line in text.splitlines():

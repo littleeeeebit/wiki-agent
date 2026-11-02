@@ -212,7 +212,8 @@ def test_a_symlink_out_of_the_root_is_outside(tmp_path):
 
 def test_calls_inside_the_grant_pass(repo):
     for command in ("python -m ruff check tool", "npm --prefix web run build", "npx tsc -b",
-                    "git add -A && git commit -qm x && git push origin HEAD", "git status --short && git diff --stat",
+                    "git add -A && git commit -qm x && git -c http.followRedirects=false push --no-recurse-submodules "
+                    "origin HEAD", "git status --short && git diff --stat",
                     "echo hi > out.txt", "python tool/search \"query\"", "echo x > ../shared/f",
                     "echo hi > /tmp/x.log", "ls ~ && cat /etc/hosts", "find . -name '*.py'"):
         assert call(repo, command) is None, command
@@ -842,7 +843,8 @@ def test_a_name_assigned_by_a_builtin_is_judged_like_an_assignment(repo, form):
 
 def test_the_checkouts_own_remotes_stay_allowed(repo):
     (repo / "tool").mkdir()
-    for ok in ("git push origin HEAD", "git push", "git push -u origin topic", "cd tool && git push origin HEAD"):
+    push = "git -c http.followRedirects=false push --no-recurse-submodules"
+    for ok in (f"{push} origin HEAD", push, f"{push} -u origin topic", f"cd tool && {push} origin HEAD"):
         assert call(repo, ok) is None, ok
 
 
@@ -1000,8 +1002,10 @@ def test_the_null_devices_stay_devices():
 # -- Follow-up (a): git and gh writes and the network ----------------------------
 # Each new row's effects, on a checkout whose one remote is `github.com`.
 ROW_EFFECTS = {
-    "git fetch -q origin --prune": {"write(/work/repo)", "network(github.com)"},
-    "git pull --ff-only": {"write(/work/repo)", "network(github.com)"},
+    "git -c http.followRedirects=false fetch -q --no-recurse-submodules origin --prune":
+        {"write(/work/repo)", "network(github.com)"},
+    "git -c http.followRedirects=false pull --ff-only --no-recurse-submodules":
+        {"write(/work/repo)", "network(github.com)"},
     "git merge --no-edit origin/main": {"write(/work/repo)"},
     "git rebase --continue": {"write(/work/repo)"},
     "git stash push -q -- notes.md": {"write(/work/repo)", "write(/work/repo/notes.md)"},
@@ -1025,7 +1029,7 @@ ROW_EFFECTS = {
     "git remote -v": set(),
     "gh pr view 3 --json body -q .body": {"network(github.com)"},
     "gh pr edit --body-file body.md": {"network(github.com)"},
-    "gh pr merge --squash --delete-branch": {"network(github.com)", "write(/work/repo)"},
+    "gh pr merge --squash": {"network(github.com)"},
 }
 
 
@@ -1035,7 +1039,8 @@ def test_each_new_row_has_its_effects(command):
 
 
 def test_the_new_rows_pass_in_an_attached_checkout(repo):
-    for command in ("git fetch origin && git merge --no-edit origin/main", "git stash && git stash pop",
+    for command in ("git -c http.followRedirects=false fetch --no-recurse-submodules origin && "
+                    "git merge --no-edit origin/main", "git stash && git stash pop",
                     "gh pr view --json state", "gh run view 5", "git branch -D topic"):
         assert call(repo, command) is None, command
 
@@ -1051,7 +1056,8 @@ def test_a_worktree_of_the_same_repository_is_the_checkout(repo):
     other = temp / "other"
     (other / ".git").mkdir(parents=True)
     w, o = wt.as_posix(), other.as_posix()
-    for command in (f"git -C {w} status", f"git -C {w} commit -qm x", f"git -C {w} fetch origin"):
+    for command in (f"git -C {w} status", f"git -C {w} commit -qm x",
+                    f"git -C {w} -c http.followRedirects=false fetch --no-recurse-submodules origin"):
         assert call(repo, command) is None, command
     for command in (f"git -C {o} status", f"cd {o} && git fetch origin", f"cd {o} && gh pr view"):
         assert "판단할 수 없는" in (call(repo, command) or ""), command
@@ -1144,19 +1150,33 @@ def test_a_per_worktree_configuration_leaves_the_remotes_unread(tmp_path):
 
 def test_a_repository_write_is_placed_at_the_worktree_root():
     # Moving between commits changes the whole worktree, not just the folder git runs in.
-    for command in ("git -C sub switch main", "git -C sub stash pop", "cd sub && git merge --no-edit origin/main",
-                    "cd sub && gh pr merge --squash"):
+    for command in ("git -C sub switch main", "git -C sub stash pop", "cd sub && git merge --no-edit origin/main"):
         found = effects(command, ctx=POSIX)
         assert "write(/work/repo)" in found and "write(/work/repo/sub)" not in found, command
 
 
-def test_gh_pr_create_is_a_repository_write(repo):
-    # It may push the branch first, which runs the pre-push hook.
-    assert effects("gh pr create --fill", ctx=POSIX) == {"read", "network(github.com)", "write(/work/repo)"}
-    config = repo / ".git/config"
-    config.write_text(config.read_text(encoding="utf-8")
-                      + f"[core]\n\thooksPath = {(repo / 'hooks').as_posix()}\n", encoding="utf-8")
-    assert "훅 폴더" in (call(repo, "gh pr create --fill") or "")
+@pytest.mark.parametrize("command", ["gh pr create --fill", "gh pr merge --squash --delete-branch",
+                                     "gh pr merge --squash -d"])
+def test_gh_forms_that_run_git_locally_are_top(command):
+    # pr create may push the branch first; merge -d switches branches and pulls. Neither git takes our options.
+    assert any(e.startswith("top(") for e in effects(command, ctx=POSIX)), command
+
+
+@pytest.mark.parametrize("command", [
+    "git fetch origin", "git pull --ff-only", "git push origin HEAD",
+    "git -c http.followRedirects=false fetch origin", "git fetch --no-recurse-submodules origin",
+    "git -c http.followRedirects=true fetch --no-recurse-submodules origin",
+])
+def test_git_network_turns_off_redirects_and_submodules(command):
+    # Both let the server's answer pick a host the grant never read: a redirect, or a submodule's remote.
+    assert any(e.startswith("top(") for e in effects(command, ctx=POSIX)), command
+
+
+def test_a_configured_redirect_setting_leaves_the_remotes_unread(tmp_path):
+    # A URL-specific setting wins over the one on the command line.
+    (tmp_path / "config").write_text('[remote "origin"]\n\turl = https://github.com/owner/repo.git\n'
+                                     '[http "https://github.com"]\n\tfollowRedirects = true\n', encoding="utf-8")
+    assert guard_grant.remote_hosts(tmp_path) == (("origin", guard_grant.UNREAD),)
 
 
 def test_a_drive_path_is_relative_on_posix():

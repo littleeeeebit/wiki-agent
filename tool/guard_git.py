@@ -8,10 +8,14 @@ limited to keys whose values run nothing. A verb that moves the working tree
 between commits (checkout, switch, merge, pull, rebase, stash) writes what the
 repository's history holds: the agent cannot author a commit that changes a
 protected file or lays down a link, so that history is trusted as a whole.
-A path the agent names (`git restore -- f`) is a write of that path.
+A path the agent names (`git restore -- f`) is a write of that path, and a
+write of the repository is a write of the whole worktree it runs in. git's
+network verbs turn off HTTP redirects and submodule recursion on the command
+line, so only the configured remote's own hosts are reached.
 
 gh works on the checkout's own repository through the hosts its remotes name,
-and a write applies to the current branch's pull request only. `gh api` (a host
+and a write applies to the current branch's pull request's metadata or merges
+it remotely; it never runs git locally. `gh api` (a host
 from gh's own configuration, redirects and next pages a response names, a cache
 written where a header says), `gh run view --log` (a redirect to log storage)
 and curl are not rows here: what host they reach is not decided by the argv.
@@ -36,6 +40,9 @@ GIT_GLOBAL = {"--no-pager", "-P", "--no-optional-locks", "--literal-pathspecs", 
 # Keys whose value git never runs, loads or sends anywhere: identity, whitespace and display.
 GIT_SAFE_KEYS = {"user.name", "user.email", "core.whitespace", "core.autocrlf", "core.safecrlf", "core.quotepath",
                  "color.ui", "color.diff", "color.status", "advice.detachedhead"}
+# A git network verb must turn off what lets the server's answer pick another host: an HTTP redirect, and a
+# submodule fetched or pushed through its own remote. A setting on the command line overrides every file.
+NO_REDIRECTS = "http.followRedirects=false"
 # The options the log/diff family shares. `--output` is a write; `--ext-diff`, `--textconv` are not here.
 GIT_LOG = ("-pusczwbRqiEm -M? -B? -C? -U: -n: -S: -G: -L: -O: --patch --no-patch --stat --numstat --shortstat --name-only "
            "--name-status --summary --check --raw --cached --staged --merge-base --no-index --exit-code --quiet "
@@ -101,10 +108,11 @@ GIT_VERBS = {
                      "--guess-remote --no-guess-remote", "worktree"),
     "worktree remove": ("-f --force", "worktree"), "worktree prune": ("-nv --dry-run --verbose --expire:", "repo"),
     # And the network: a configured remote's hosts.
-    "fetch": ("-qvpt --quiet --verbose --prune --tags --no-tags --all --dry-run --depth: --unshallow", "fetch"),
+    "fetch": ("-qvpt --quiet --verbose --prune --tags --no-tags --all --dry-run --depth: --unshallow "
+              "--no-recurse-submodules", "fetch"),
     "pull": ("-qv --quiet --verbose --ff --no-ff --ff-only --rebase --no-rebase --no-edit --prune --autostash "
-             "--no-autostash", "fetch"),
-    "push": ("-uq --set-upstream --quiet", "push"),
+             "--no-autostash --no-recurse-submodules", "fetch"),
+    "push": ("-uq --set-upstream --quiet --no-recurse-submodules", "push"),
 }
 GIT = {verb: (row(None, spec, digits=True), kind) for verb, (spec, kind) in GIT_VERBS.items()}
 # `git branch` flags that only list.
@@ -241,7 +249,7 @@ def git_options(args: list, ctx):
             value = args[i + 1]
             if t == "-C":
                 ctx = replace(ctx, cwds=moved_to(value, ctx))
-            elif value.text.partition("=")[0].lower() not in GIT_SAFE_KEYS:
+            elif value.text.partition("=")[0].lower() not in GIT_SAFE_KEYS and value.text != NO_REDIRECTS:
                 return top(f"git -c {value.text.partition('=')[0]}: a key whose value git may run or send"), None
             i += 2
             continue
@@ -276,13 +284,12 @@ def m_git(name, args, ctx):
         return top("git in a repository other than the checkout"), None
     if any(n == "\0lazy" for n, _ in ctx.remotes):
         return top("git in a partial clone, where reading an object may fetch it from a remote"), None
-    pos = getopt(rest, r.takes)[0]
+    pos, _, rest_flags = getopt(rest, r.takes)
     if kind == "read":
         return (top("git remote with an operand") if verb == "remote" and pos else formats(rest)), None
     if kind == "config":
         return configured(rest), None
-    if kind == "branch" and not pos and all(set(f[1:]) <= set("avrl") or f in BRANCH_LISTS
-                                            for f in getopt(rest, r.takes)[2]):
+    if kind == "branch" and not pos and all(set(f[1:]) <= set("avrl") or f in BRANCH_LISTS for f in rest_flags):
         return set(), None
     # git's write of the repository it runs in is the granted git verb; `outside` judges its place only.
     out = worktrees(ctx)
@@ -297,6 +304,8 @@ def m_git(name, args, ctx):
         out |= paths("delete" if verb == "worktree remove" else "write", pos[0], ctx)
     elif kind in ("fetch", "push"):
         out |= reached(verb.split()[0], pos, ctx)
+        if NO_REDIRECTS not in [w.text for w in args[:i]] or "--no-recurse-submodules" not in rest_flags:
+            out |= top(f"git {verb} without `-c {NO_REDIRECTS}` and `--no-recurse-submodules`")
     return out, None
 
 
@@ -304,7 +313,9 @@ def m_git(name, args, ctx):
 
 JSON = "--json: -q: --jq: -t: --template:"
 # `group verb`: (flags, what it does, which pull request or run it may name). No `-R`/`--repo` (another
-# repository), `-w`/`--web` (a browser), `--hostname` or `--log` anywhere.
+# repository), `-w`/`--web` (a browser), `--hostname` or `--log` anywhere. No `pr create` (it may push the
+# branch) and no `pr merge --delete-branch` (it switches branches and pulls): gh runs that git with options
+# the call cannot add, so they are left to a later row.
 GH_VERBS = {
     "pr view": (f"-c --comments {JSON}", "read", "one"),
     "pr diff": ("--name-only --patch --color:", "read", "one"),
@@ -312,15 +323,12 @@ GH_VERBS = {
     "pr list": (f"-d --draft -s: --state: -L: --limit: -B: --base: -H: --head: -A: --author: -l: --label: -S: "
                 f"--search: {JSON}", "read", "none"),
     "pr status": (f"-c --conflict-status {JSON}", "read", "none"),
-    "pr create": ("-df -t: --title: -b: --body: -F: --body-file: -B: --base: -l: --label: -a: "
-                  "--assignee: -r: --reviewer: -m: --milestone: --draft --fill --fill-first --fill-verbose "
-                  "--no-maintainer-edit --dry-run", "repo", "none"),
     "pr edit": ("-t: --title: -b: --body: -F: --body-file: -B: --base: --add-label: --remove-label: --add-reviewer: "
                 "--remove-reviewer: --add-assignee: --remove-assignee: -m: --milestone:", "write", "none"),
     "pr comment": ("-b: --body: -F: --body-file: --edit-last", "write", "none"),
     "pr ready": ("", "write", "none"),
-    "pr merge": ("-smrd -t: --subject: -b: --body: -F: --body-file: -A: --author-email: --squash --merge --rebase "
-                 "--delete-branch --auto --disable-auto --match-head-commit:", "repo", "none"),
+    "pr merge": ("-smr -t: --subject: -b: --body: -F: --body-file: -A: --author-email: --squash --merge --rebase "
+                 "--auto --disable-auto --match-head-commit:", "write", "none"),
     "run view": (f"-v --verbose --exit-status -j: --job: -a: --attempt: {JSON}", "read", "one"),
     "run watch": ("--exit-status --compact -i: --interval:", "read", "one"),
     "run list": (f"-L: --limit: -b: --branch: -w: --workflow: -s: --status: -c: --commit: -e: --event: -u: --user: "
@@ -349,7 +357,4 @@ def m_gh(name, args, ctx):
     hosts = {h for _, h in ctx.remotes}
     if not hosts or "\0unread" in hosts:
         return top("gh with no remote the guard has read"), None
-    out = {("network", h) for h in hosts}
-    # `pr create` may push the branch first (running the pre-push hook), and `pr merge --delete-branch` switches
-    # and deletes the local branch: both write the repository, under the same hooks rule as git's writes.
-    return out | (worktrees(ctx) if kind == "repo" else set()), None
+    return {("network", h) for h in hosts}, None
