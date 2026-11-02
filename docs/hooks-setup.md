@@ -148,8 +148,9 @@ builtins, and `tool/guard_git.py` for git. The table holds only:
   horizontal bar, as PowerShell reads it, and `\\?\` names a drive, a share
   (`UNC\`) or else nothing inside a write root (`GLOBALROOT`). An alias that
   may run a native program instead is not its cmdlet: `sc` (`sc.exe` in
-  PowerShell 7) is `top`, and off Windows `rm`, `cp`, `mv`, `tee` and the
-  other names PowerShell 7 drops there are those programs;
+  PowerShell 7) is `top`, and off Windows `rm`, `cp`, `mv`, `tee`, `mkdir`
+  and the other names PowerShell 7 drops there are those programs, while
+  `md` (an alias of the native `mkdir` there) is `top`;
 - git reads (`status`, `diff`, `log`, `show`, `rev-parse`, `rev-list`,
   `ls-files`, `ls-tree`, `check-ignore`, `merge-base`, `cat-file`, `describe`,
   `blame`, `grep`, `remote -v`, `remote get-url`, `config` that only gets or

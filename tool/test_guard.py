@@ -381,9 +381,12 @@ def test_an_alias_that_may_name_a_native_program_is_not_its_cmdlet():
     assert any(e.startswith("top(") for e in effects("sc stop placeholder", "ps"))
     # Off Windows, PowerShell 7 has no `rm`, `cp`, `mv` or `tee` alias: the name runs that program.
     posix_host = replace(CTX, d="ps", windows=False, cwds=frozenset({"/w"}))
-    for name in ("rm", "cp", "mv", "tee"):
+    for name in ("rm", "cp", "mv", "tee", "mkdir"):
         assert f"spawn({name})" in effects(f"{name} a b", "ps", posix_host), name
+    # `md` aliases the native `mkdir` there: a program under another name.
+    assert any(e.startswith("top(") for e in effects("md a", "ps", posix_host))
     assert "delete(/w/a)" in effects("Remove-Item a", "ps", posix_host)
+    assert "write(C:/Users/me/PycharmProjects/wiki-agent/a)" in effects("md a", "ps")
 
 
 @pytest.mark.parametrize("dash", ["-", "–", "—", "―"])

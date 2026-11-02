@@ -63,8 +63,10 @@ PS_TOP = {"invoke-expression", "add-type", "import-module", "set-executionpolicy
           "enable-psremoting", "enter-pssession", "new-pssession", "invoke-item", "start-transcript"}
 PS_REFUSED = {"expand-archive": "extracts an archive into names the archive decides",
               "sc": "is Set-Content in Windows PowerShell but runs sc.exe in PowerShell 7"}
-# Aliases PowerShell 7 drops off Windows, where the name runs the native program of that name.
-POSIX_NAMES = set("ac cat clear compare cp cpp diff kill ls man mount mv ps rm rmdir sleep sort start tee write".split())
+# Aliases PowerShell 7 drops off Windows, where the name runs the native program of that name; `mkdir` is a
+# function only on Windows. `md` stays an alias of `mkdir` everywhere, so off Windows it runs the native one.
+POSIX_NAMES = set("ac cat clear compare cp cpp diff kill ls man mount mv ps rm rmdir sleep sort start tee write "
+                  "mkdir".split())
 PATH = ("path", "literalpath")
 # Common parameters every cmdlet takes, and the aliases PowerShell binds for them and for `-LiteralPath`.
 COMMON = ("erroraction= warningaction= informationaction= errorvariable= warningvariable= informationvariable= "
@@ -145,6 +147,8 @@ def cmdlet(raw: str, windows: bool = True) -> str | None:
     """The cmdlet a PowerShell command name runs, or `None` for an external program."""
     if re.search(r"[\\/]|\.\w+$", raw) or not windows and raw.lower() in POSIX_NAMES:
         return None
+    if not windows and raw.lower() == "md":
+        return "md"                     # no row: `top`, since it runs a program under another name
     canon = PS_ALIAS.get(raw.lower(), raw.lower())
     return canon if canon in PS_ROWS or canon in PS_TOP or canon in PS_REFUSED \
         or re.match(r"^[a-z]+-[a-z]", canon) else None
