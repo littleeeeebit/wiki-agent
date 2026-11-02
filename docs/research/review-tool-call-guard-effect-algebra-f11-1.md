@@ -125,7 +125,17 @@ Add these cases to tool/test_guard.py, then run `pytest tool/test_guard.py`. (1)
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+The hypothesis held, including the basename-grant part. On `1b4df77`:
+
+- `../outside/cat README.md` was allowed as the `cat` reader.
+- `./python tool/x.py`, `../outside/python tool/x.py`, `Start-Process ../outside/python` and `& ./python x` were allowed as the granted `python`.
+- `/usr/bin/time python …` was allowed as the `time` prefix.
+
+The fix is in the commit that adds this result, on top of `1b4df77`. It removes `planted()`. A command name containing a path separator never reaches `READERS` or `MODELS`. Instead, `guard_models.spawn_of` keys it by its resolved path; on Windows the key is lowercased and drops the launcher suffix. Start-Process uses the same helper, and so do path entries in `[guard] executables`, so `.venv/bin/python` granted by path matches the same command. No system-directory list was added, because no gate or verification command of this repository runs a program by path.
+
+After the fix, `test_a_path_named_executable_is_judged_by_its_path` (6 forms) and `test_a_path_granted_by_path_is_allowed` pass, and bare `cat` and `git status` keep their models. The old `/usr/bin/time` test pinned the opposite policy and was removed.
+
+Cost on the corpus: two of the 260 commands go from allowed to denied, `/usr/bin/time python …` and `& C:/…/python.exe`. Six corpus entries now record a path-keyed spawn.
 
 ## Unresolved limits
 

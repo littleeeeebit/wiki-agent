@@ -119,7 +119,16 @@ On 1f77357, add guard cases to the OUTSIDE_FORMS-style table in tool/test_guard.
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+The hypothesis held for the bracketed forms. On `1b4df77` these were allowed: `--connect-to 'localhost:80:[::ffff:203.0.113.7]:80'`, `--connect-to '[::1]:80:unlisted.example:80'`, both bracketed `--resolve` forms, and both malformed overrides. `--resolve '+localhost:80:[2001:db8::1]'` and `-x '[2001:db8::1]'` were already denied, but only by accident: `host_of`'s fallback split produced the bogus host `2001`.
+
+The fix is in the commit that adds this result, on top of `1b4df77`:
+
+- `network()` returns `top` for a non-empty, non-`file:` target with no readable host.
+- `host_of` reads a bare `[v6]` literal.
+- `override_host` matches curl's full grammar and returns `top` for anything else. Fields are bracket-aware. `--connect-to` takes exactly four fields. `--resolve` takes `[+]H:P:A[,A]`, and `-H:P` removes an entry.
+- `ssh -J` hops also go through `network()`.
+
+After the fix, the curl rows of `test_a_network_destination_the_guard_cannot_read_is_denied` pass. `test_readable_network_destinations_stay_allowed` passes as well; it covers both connect-to controls, the empty HOST2, `--resolve`, and its removal form. The empty-host rule changed no existing guard case and no corpus effect.
 
 ## Unresolved limits
 

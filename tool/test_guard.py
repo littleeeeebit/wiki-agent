@@ -414,8 +414,6 @@ def test_read_only_members_and_safe_receivers_stay_allowed(repo):
 OUTSIDE_FORMS = {
     "F11-local-executable": ("./cat", "Bash", "허가된 실행 파일이 아니다"),
     "F11-local-modelled-program": ("./git push origin HEAD", "Bash", "허가된 실행 파일이 아니다"),
-    "F12-in-process-group-cd": ("& { Set-Location ../outside }; Set-Content target.txt x", "PowerShell",
-                                "판단할 수 없는"),
     "F13-curl-connect-to": ("curl --connect-to localhost:80:unlisted.example:80 http://localhost/", "Bash",
                             "허가된 호스트가 아니다"),
     "F14-gh-absolute-endpoint": ("gh api https://unlisted.example/path", "Bash", "허가된 호스트가 아니다"),
@@ -427,11 +425,6 @@ def test_each_remaining_form_outside_the_grant_is_denied(repo, form):
     command, tool, marker = OUTSIDE_FORMS[form]
     reason = call(repo, command, tool=tool)
     assert reason and marker in reason, (form, reason)
-
-
-def test_a_system_executable_by_absolute_path_keeps_its_model(repo):
-    # The planted-binary rule is scoped to paths the task could write: a system path is trusted.
-    assert call(repo, "/usr/bin/time python tool/search q") is None
 
 
 @pytest.mark.parametrize("wrapper", WRAPPERS)
@@ -603,3 +596,221 @@ def test_any_exception_fails_open(monkeypatch, capsys):
     runpy.run_path(str(TOOL / "guard.py"), run_name="__main__")
     assert out.encoding == "utf-8" and sys.stdin.encoding == "utf-8"
     assert "hook skipped: RuntimeError" in capsys.readouterr().err
+
+
+# A fourth review round. Each table is one rule stated as a property; every form in it reaches an effect
+# outside the grant by another syntax, and each must be denied for the reason named. Inputs are neutral.
+
+# F1 — a path effect on a directory that holds a protected file may write that file, whatever the program
+# names it (a destination directory, a URL's or a server's file name, a patch). The rule lives in the judge.
+PROTECTED_ANCESTOR_FORMS = {
+    "rsync-into-directory": ("rsync ../adapter.toml .wiki", "Bash"),
+    "scp-into-directory": ("scp ../adapter.toml .wiki", "Bash"),
+    "rsync-tree-into-root": ("rsync -a ../x/ .", "Bash"),
+    "curl-remote-name": ("curl -O http://localhost:8000/verification.toml", "Bash"),
+    "curl-remote-header-name": ("curl -OJ http://localhost:8000/x", "Bash"),
+    "wget-default-name": ("wget http://localhost:8000/verification.toml", "Bash"),
+    "web-request-folder": ("Invoke-WebRequest http://localhost:8000/x -OutFile .wiki", "PowerShell"),
+    "web-request-here": ("Invoke-WebRequest http://localhost:8000/x -OutFile .", "PowerShell"),
+    "patch-at-root": ("patch -p1 < change.diff", "Bash"),
+    "hard-link-tree-source": ("cp -lR .wiki x", "Bash"),
+}
+
+
+@pytest.mark.parametrize("form", PROTECTED_ANCESTOR_FORMS)
+def test_a_write_to_a_directory_holding_a_protected_file_is_denied(repo, form):
+    command, tool = PROTECTED_ANCESTOR_FORMS[form]
+    reason = call(repo, command, tool=tool)
+    assert reason and "허가를 정하는 파일" in reason, (form, reason)
+
+
+def test_every_ancestor_of_a_protected_path_is_judged_protected_for_every_path_kind(repo):
+    g = guard_grant.grant(repo, {})
+    for p in g.protected:
+        a = Path(p).parent
+        while contained(str(a), g.roots) and a != a.parent:
+            for kind in ("write", "write_tree", "delete"):
+                assert "허가를 정하는 파일" in (guard_grant.outside((kind, str(a)), g) or ""), (kind, a)
+            a = a.parent
+
+
+def test_ordinary_writes_beside_protected_files_stay_allowed(repo):
+    for command in ("rsync a.txt safe/", "printf x > safe/a", "curl -O http://localhost:8000/x.txt",
+                    "git checkout -q -b topic && git commit -qm x", "gh pr checkout 3"):
+        assert call(repo, command) is None, command
+    assert call(repo, "Invoke-WebRequest http://localhost:8000/x -OutFile safe/out.bin", tool="PowerShell") is None
+
+
+# F2 — a command that lays down a tree (extraction, recursive copy, rename, a git checkout) may create a link
+# in it, so another command in the same call that writes beneath it is undecidable; a hard link's source
+# is written through the link, so it is a write of the source.
+TREE_LINK_FORMS = {
+    "tar-extract": ("tar -xf links.tar -C safe; printf x > safe/link/target.txt", "Bash", "판단할 수 없는"),
+    "unzip": ("unzip bundle.zip -d safe; printf x > safe/link/f", "Bash", "판단할 수 없는"),
+    "expand-archive": ("Expand-Archive bundle.zip safe; Set-Content safe/link/f x", "PowerShell", "판단할 수 없는"),
+    "copy-item-recurse": ("Copy-Item -Recurse ../d d; Set-Content d/link/f x", "PowerShell", "판단할 수 없는"),
+    "mv-rename": ("mv a/link b; printf x > b/f", "Bash", "판단할 수 없는"),
+    "rename-item": ("Rename-Item link b; Set-Content b/f x", "PowerShell", "판단할 수 없는"),
+    "git-mv": ("git mv a/link b; printf x > b/f", "Bash", "판단할 수 없는"),
+    "git-checkout": ("git checkout other; printf x > link/f", "Bash", "판단할 수 없는"),
+    "extract-then-extract": ("tar -xf a.tar -C safe && tar -xf b.tar -C safe/link", "Bash", "판단할 수 없는"),
+    "new-item-hard-link": ("New-Item -ItemType HardLink -Path link -Value ../outside/target.txt", "PowerShell",
+                           "쓰기 루트 밖이다"),
+    "rsync-link-dest": ("rsync -a --link-dest=../../outside src/ dst/", "Bash", "쓰기 루트 밖이다"),
+}
+
+
+@pytest.mark.parametrize("form", TREE_LINK_FORMS)
+def test_a_tree_written_through_in_the_same_call_is_denied(repo, form):
+    command, tool, marker = TREE_LINK_FORMS[form]
+    reason = call(repo, command, tool=tool)
+    assert reason and marker in reason, (form, reason)
+
+
+def test_a_tree_alone_or_a_checkout_without_symlinks_stays_allowed(repo):
+    # Extraction and copies alone: `test_a_link_alone_is_allowed`.
+    for command in ("mv a.txt b.txt", "git checkout other"):
+        assert call(repo, command) is None, command
+    assert call(repo, "Rename-Item sub/a.txt b.txt", tool="PowerShell") is None
+    config = repo / ".git/config"
+    config.write_text(config.read_text(encoding="utf-8") + "[core]\n\tsymlinks = false\n", encoding="utf-8")
+    assert call(repo, "git checkout other; printf x > f") is None
+
+
+# F3 — ForEach-Object's arguments are read the way PowerShell binds them; any argument list the reader
+# cannot fully explain (a colon-bound value, a parenthesised value, another parameter) is undecidable.
+FOREACH_FORMS = {
+    "colon-bound": "Get-Item ../outside/target.txt | ForEach-Object -MemberName:Delete",
+    "colon-bound-abbrev": "gi ../outside/target.txt | % -m:Delete",
+    "parenthesised-member": "gi ../outside/target.txt | % ('Delete')",
+    "parenthesised-membername": "gi ../outside/target.txt | % -MemberName ('Delete')",
+    "input-object": "ForEach-Object -InputObject (Get-Item ../outside/target.txt) -MemberName Delete",
+    "parenthesised-arguments": "gi README.md | % -MemberName MoveTo -ArgumentList ('../outside/t.md')",
+    "out-variable-first": "gi ../outside/target.txt | % -OutVariable name Delete",
+    "pipeline-variable-first": "gi ../outside/target.txt | % -pv name Delete",
+    "argument-list-first": "gi ../outside/target.txt | % -ArgumentList name MoveTo",
+}
+
+
+@pytest.mark.parametrize("form", FOREACH_FORMS)
+def test_a_foreach_argument_list_the_reader_cannot_explain_is_denied(repo, form):
+    assert "판단할 수 없는" in (call(repo, FOREACH_FORMS[form], tool="PowerShell") or ""), form
+
+
+def test_foreach_forms_the_reader_explains_stay_allowed(repo):
+    for ok in ("Get-ChildItem | % -MemberName:Name", "Get-ChildItem | % -Process { $_.Name }",
+               "1..2 | % -Begin {} -Process { $_ }", "'a.b' | % Split '.'"):
+        assert call(repo, ok, tool="PowerShell") is None, ok
+
+
+# F11 — a command named by a path is that file, not the program its basename suggests: it never borrows a
+# model or a granted name, wherever the file lies and whichever runner starts it.
+def test_a_path_named_executable_is_judged_by_its_path(repo):
+    outside = repo.parent / "outside"
+    outside.mkdir()
+    (outside / "cat").write_text("#!/bin/sh\n", encoding="utf-8")
+    for command, tool in (("../outside/cat README.md", "Bash"), ("./python tool/x.py", "Bash"),
+                          ("../outside/python tool/x.py", "Bash"), ("/usr/bin/time python tool/search q", "Bash"),
+                          ("Start-Process ../outside/python", "PowerShell"), ("& ./python x", "PowerShell")):
+        assert "허가된 실행 파일이 아니다" in (call(repo, command, tool=tool) or ""), command
+    assert call(repo, "cat README.md && git status") is None
+
+
+def test_a_path_granted_by_path_is_allowed(repo):
+    adapter = repo / ".wiki/adapter.toml"
+    adapter.write_text(adapter.read_text(encoding="utf-8").replace(
+        'executables = ["npx"]', 'executables = ["npx", ".venv/bin/python"]'), encoding="utf-8")
+    assert call(repo, ".venv/bin/python -m pytest") is None
+    assert "허가된 실행 파일이 아니다" in call(repo, "../outside/.venv/bin/python -m pytest")
+
+
+# F12 — anything PowerShell evaluates in-process (a subexpression, a group, a pipeline stage) can move the
+# location, so later relative paths are judged from every place it may now be.
+LOCATION_FORMS = {
+    "subexpression": "Write-Output $(Set-Location ../outside); Set-Content target.txt x",
+    "argument-group": "Set-Content target.txt (Set-Location ../outside)",
+    "pipeline-stage": "Set-Location ../outside | Out-Null; Set-Content target.txt x",
+    "piped-location": "Get-Item ../outside | Set-Location; Set-Content target.txt x",
+    "statement-block": "if ($true) { Set-Location ../outside }; Set-Content target.txt x",
+    "nested-block": "& { & { Set-Location ../outside } }; Set-Content target.txt x",
+    "bare-set-location": "Set-Location; Set-Content target.txt x",
+}
+
+
+@pytest.mark.parametrize("form", LOCATION_FORMS)
+def test_a_location_moved_in_process_moves_later_paths(repo, form):
+    assert call(repo, LOCATION_FORMS[form], tool="PowerShell"), form
+
+
+def test_a_location_moved_in_another_process_does_not(repo):
+    assert call(repo, '"$(Get-Date)"; Set-Content target.txt x', tool="PowerShell") is None
+    assert call(repo, "pwsh -c 'Set-Location ..'; Set-Content target.txt x", tool="PowerShell") is None
+    assert call(repo, "echo $(cd ..); echo x > target.txt") is None
+    assert call(repo, "cd .. | cat; echo x > target.txt") is None
+
+
+# F13/F14 — a network destination the guard cannot read (a bracketed field, a malformed override, an unknown
+# endpoint, a variable that redirects the client) is undecidable, never dropped.
+NETWORK_FORMS = {
+    "connect-to-bracketed": ("curl --connect-to 'localhost:80:[::ffff:203.0.113.7]:80' http://localhost/",
+                             "허가된 호스트가 아니다"),
+    "connect-to-bracketed-source": ("curl --connect-to '[::1]:80:unlisted.example:80' http://localhost/",
+                                    "network(unlisted.example)"),
+    "resolve-bracketed": ("curl --resolve 'localhost:80:[::ffff:203.0.113.7]' http://localhost/",
+                          "허가된 호스트가 아니다"),
+    "resolve-address-list": ("curl --resolve 'localhost:80:[::1],[::ffff:203.0.113.7]' http://localhost/",
+                             "허가된 호스트가 아니다"),
+    "resolve-plus": ("curl --resolve '+localhost:80:[2001:db8::1]' http://localhost/", "허가된 호스트가 아니다"),
+    "proxy-bracketed": ("curl -x '[2001:db8::1]' http://localhost/", "허가된 호스트가 아니다"),
+    "connect-to-unclosed": ("curl --connect-to 'localhost:80:[::1' http://localhost/", "판단할 수 없는"),
+    "connect-to-extra-field": ("curl --connect-to 'a:1:b:2:c' http://localhost/", "판단할 수 없는"),
+    "gh-variable-endpoint": ('gh api "$ENDPOINT"', "판단할 수 없는"),
+    "gh-variable-endpoint-after-option": ('gh api --cache 1h "$ENDPOINT"', "판단할 수 없는"),
+    "gh-variable-endpoint-with-fields": ('gh api -X POST "$ENDPOINT" -f a=b', "판단할 수 없는"),
+    "gh-variable-repo": ('gh -R "$R" issue list', "판단할 수 없는"),
+    "gh-variable-hostname": ('gh --hostname "$H" api user', "판단할 수 없는"),
+    "gh-repo-variable": ("GH_REPO=unlisted.example/o/r gh issue list", "network(unlisted.example)"),
+    "gh-host-exported": ("export GH_HOST=unlisted.example; gh api user", "network(unlisted.example)"),
+    "proxy-variable": ("HTTPS_PROXY=http://unlisted.example:8080 curl https://pypi.org/simple/x",
+                       "network(unlisted.example)"),
+}
+
+
+@pytest.mark.parametrize("form", NETWORK_FORMS)
+def test_a_network_destination_the_guard_cannot_read_is_denied(repo, form):
+    command, marker = NETWORK_FORMS[form]
+    reason = call(repo, command)
+    assert reason and marker in reason, (form, reason)
+
+
+def test_readable_network_destinations_stay_allowed(repo):
+    for ok in ("curl --connect-to localhost:80:127.0.0.1:8000 http://localhost/",
+               "curl --connect-to 'localhost:80:[::1]:8000' http://localhost/",
+               "curl --connect-to localhost:80::8000 http://localhost/",
+               "curl --resolve localhost:8000:127.0.0.1 http://localhost:8000/",
+               "curl --resolve -localhost:80 http://localhost/",
+               "gh api repos/o/r/pulls", "gh api 'repos/{owner}/{repo}/pulls'", "gh api graphql -f query=x",
+               'gh pr view "$N"', "GH_REPO=o/r gh issue list"):
+        assert call(repo, ok) is None, ok
+
+
+# F15 — a value computed at run time and then run (a command name, a nested shell's script) is undecidable;
+# only a literal script block is reduced as code.
+COMPUTED_FORMS = {
+    "call-operator-expression": "& ('Remove-' + 'Item') ../outside/target.txt",
+    "call-operator-command-lookup": "& (Get-Command Remove-Item) ../outside/target.txt",
+    "nested-shell-expression": "pwsh -Command ('Remove-' + 'Item ../outside/target.txt')",
+    "cmd-expression": "cmd /c ('del ..\\outside\\target.txt')",
+    "bash-expression": "bash -c ('rm ../outside/target.txt')",
+}
+
+
+@pytest.mark.parametrize("form", COMPUTED_FORMS)
+def test_a_computed_command_is_denied(repo, form):
+    assert "판단할 수 없는" in (call(repo, COMPUTED_FORMS[form], tool="PowerShell") or ""), form
+
+
+def test_a_literal_script_block_is_reduced_as_code(repo):
+    assert call(repo, "& { Get-ChildItem }", tool="PowerShell") is None
+    assert call(repo, "pwsh -Command { Get-ChildItem }", tool="PowerShell") is None
+    assert "쓰기 루트 밖이다" in call(repo, "& { Remove-Item ../outside/target.txt }", tool="PowerShell")

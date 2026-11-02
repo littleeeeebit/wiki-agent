@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import re
 
-from guard import Word, envs, member_effect, moved_to, top
-from guard_models import PS_SHELLS, SHELLS, exe, here, into_dir, m_cd, network, run_argv, writes
+import posixpath
+
+from guard import BLOCK, Word, envs, member_effect, moved_to, top
+from guard_models import (PS_SHELLS, SHELLS, exe, hard_link_sources, here, into_dir, m_cd, network, run_argv,
+                          spawn_of, writes)
 
 # Members that only read, whatever the receiver's type. Polymorphic or dispatching names
 # (replace, foreach, where, invoke, add, insert, get, getvalue, item, delete, copyto, …) are
@@ -67,7 +70,6 @@ PS_TARGETS = {
     "set-item": [("write", PATH, 0)], "set-itemproperty": [("write", PATH, 0)],
     "new-itemproperty": [("write", PATH, 0)], "remove-itemproperty": [("write", PATH, 0)],
     "clear-item": [("write", PATH, 0)], "set-acl": [("write", PATH, 0)],
-    "rename-item": [("delete", PATH, 0), ("write", ("newname",), 1)],
     "compress-archive": [("write", ("destinationpath",), 1)],
 }
 PS_VALUES = ("path", "literalpath", "destination", "destinationpath", "filepath", "value", "encoding", "itemtype",
@@ -141,7 +143,10 @@ def ps_cmdlet(canon: str, args: list, ctx):
         return top(f"{canon} runs code the guard cannot read"), None
     if canon in ("set-location", "push-location"):
         w = one(*PATH) or (pos[0] if pos else None)
-        return set(), moved_to(w, ctx) if w is not None else ctx.cwds
+        if w is not None:
+            return set(), moved_to(w, ctx)
+        # With no path it moves to the piped item, or (PowerShell 7's `Set-Location`) to the home folder.
+        return set(), frozenset({None}) if ctx.piped else ctx.cwds | {ctx.home}
     if canon == "pop-location":
         return set(), frozenset({None})
     def arrayed(ws) -> set:
@@ -155,7 +160,8 @@ def ps_cmdlet(canon: str, args: list, ctx):
         # Copy-Item/Move-Item default the destination to the current directory when it is omitted.
         target = dests or [here(ctx)]
         recurse = any(not w.why and re.fullmatch(r"-r(ecurse)?", w.text, re.I) for w in args)
-        kind = "write_tree" if recurse else "write"
+        # A move renames entries as they are, links included: what lands is a link holder.
+        kind = "linktree" if canon == "move-item" else "write_tree" if recurse else "write"
         out = arrayed(srcs + target) | writes(kind, target, ctx) | into_dir(srcs, target, ctx, kind)
         if canon == "move-item":
             out |= writes("delete", srcs, ctx)
@@ -169,9 +175,25 @@ def ps_cmdlet(canon: str, args: list, ctx):
         link = itemtype in ("symboliclink", "junction", "hardlink")
         out = arrayed(target) | {("link" if link and k == "write" else k, p)
                                  for k, p in writes("write", target, ctx)}
+        if itemtype == "hardlink":
+            # `-Value`/`-Target` (read as `targetname`) is the file whose inode the link shares.
+            source = named.get("value", []) + named.get("targetname", [])
+            out |= hard_link_sources(source, False, ctx) if source else top("a hard link with no readable source")
         return out, None
-    if canon in ("foreach-object", "where-object"):
-        return foreach_member(canon, args, ctx), None
+    if canon == "rename-item":
+        # `-NewName` is a name beside the item, not a path from the current location.
+        out = set()
+        for item in named.get("path", []) + named.get("literalpath", []) + pos[:1]:
+            for new in named.get("newname", []) + pos[1:2]:
+                beside = posixpath.join(posixpath.dirname(item.text.replace("\\", "/")), new.text)
+                out |= arrayed([item]) | writes("linktree", [Word(beside, item.why or new.why)], ctx)
+        if ambiguous or not out:
+            out |= top("rename-item with a target it cannot place")
+        return out | writes("delete", named.get("path", []) + named.get("literalpath", []) + pos[:1], ctx), None
+    if canon == "foreach-object":
+        return foreach_object(args), None
+    if canon == "where-object":
+        return where_member(args), None
     if canon in PS_TARGETS:
         out = set()
         for kind, keys, index in PS_TARGETS[canon]:
@@ -188,7 +210,7 @@ def ps_cmdlet(canon: str, args: list, ctx):
         if w is None or w.why:
             return out | top("start-process of an unknown program"), None
         name = exe(w.text)
-        return out | (top(f"start-process {name}") if name in SHELLS | PS_SHELLS | {"cmd"} else {("spawn", name)}), None
+        return out | (top(f"start-process {name}") if name in SHELLS | PS_SHELLS | {"cmd"} else spawn_of(w.text, ctx)), None
     if canon in ("invoke-command", "start-job", "start-threadjob"):
         if named.get("filepath") or named.get("session"):
             return top(f"{canon} outside this process"), None
@@ -206,37 +228,102 @@ def ps_cmdlet(canon: str, args: list, ctx):
 
 ASSIGN_OPS = {"=", "+=", "-=", "*=", "/=", "%=", "??="}
 
+# ForEach-Object's parameters, the common ones included, and the aliases PowerShell binds.
+FOREACH_PARAMS = """begin process end remainingscripts parallel membername argumentlist inputobject throttlelimit
+timeoutseconds asjob usenewrunspace confirm whatif verbose debug erroraction warningaction informationaction
+errorvariable warningvariable informationvariable outvariable outbuffer pipelinevariable progressaction""".split()
+FOREACH_ALIASES = {"args": "argumentlist", "ea": "erroraction", "wa": "warningaction", "infa": "informationaction",
+                   "ev": "errorvariable", "wv": "warningvariable", "iv": "informationvariable", "ov": "outvariable",
+                   "ob": "outbuffer", "pv": "pipelinevariable", "proga": "progressaction", "cf": "confirm",
+                   "wi": "whatif", "vb": "verbose", "db": "debug"}
+FOREACH_BLOCKS = {"begin", "process", "end", "remainingscripts", "parallel"}
+FOREACH_SWITCHES = {"asjob", "usenewrunspace", "confirm", "whatif", "verbose", "debug"}
 
-def foreach_member(canon: str, args: list, ctx) -> set:
-    """ForEach-Object/Where-Object given a member name rather than a script block.
 
-    A script-block argument is a group, reduced where it appears. A `-MemberName` or positional
-    member name invokes that member on every pipeline object, so it goes through the member gate;
-    a wildcard name could match a writing member and is undecidable.
+def foreach_param(key: str) -> str | None:
+    """The ForEach-Object parameter `-key` binds to, as PowerShell resolves a name, alias or unique prefix."""
+    if key in FOREACH_ALIASES or key in FOREACH_PARAMS:
+        return FOREACH_ALIASES.get(key, key)
+    hits = [p for p in FOREACH_PARAMS if p.startswith(key)]
+    return hits[0] if key and len(hits) == 1 else None
+
+
+def foreach_object(args: list) -> set:
+    """ForEach-Object read the way PowerShell binds it, and `top` wherever that reading is not certain.
+
+    Two argument lists are explained. Script blocks, positional or under -Begin/-Process/-End/
+    -RemainingScripts/-Parallel, are groups already reduced where they stand. A literal member name
+    (`-MemberName X`, `-MemberName:X` or the first positional word) with literal arguments invokes
+    that member on every piped object, so it goes through the member gate. Anything else — another
+    parameter, a parenthesised value, a variable — can change what is invoked: undecidable.
+    """
+    def block(w: Word) -> bool:
+        return w.why == "group" and w.text == BLOCK
+
+    member, blocks, i = None, False, 0
+    while i < len(args):
+        w, t = args[i], args[i].text
+        i += 1
+        if not w.why and re.match(r"^-[A-Za-z]", w.raw or t):
+            key, colon, value = t[1:].partition(":")
+            p = foreach_param(key.lower())
+            if p in FOREACH_SWITCHES:
+                continue
+            if p not in FOREACH_BLOCKS | {"membername", "argumentlist", "throttlelimit", "timeoutseconds"}:
+                return top(f"foreach-object parameter -{key}")
+            if colon and value:
+                v = Word(value)
+            elif i < len(args):
+                v, i = args[i], i + 1
+            else:
+                return top(f"foreach-object -{key} without a value")
+            if p in FOREACH_BLOCKS:
+                if not block(v):
+                    return top(f"foreach-object -{key} given something other than a script block")
+                blocks = True
+            elif v.why:
+                return top(f"{v.why} in foreach-object -{key}")
+            elif p == "membername":
+                if member is not None:
+                    return top("foreach-object given two member names")
+                member = v
+            elif p != "argumentlist" and not v.text.isdigit():
+                return top(f"foreach-object -{key} {v.text}")
+            continue
+        if block(w):
+            blocks = True
+        elif w.why:
+            return top(f"{w.why} in foreach-object")
+        elif member is None and not blocks:
+            member = w                  # the first positional word names the member
+        elif member is None:
+            return top("foreach-object mixes script blocks and a member name")
+        # Later literal positional words are the member's arguments.
+    if member is None:
+        return set()
+    if blocks:
+        return top("foreach-object mixes script blocks and a member name")
+    # The member name here is the operand, not a receiver literal, so the receiver stays unknown.
+    return top("foreach-object wildcard member name") if re.search(r"[*?\[]", member.text) \
+        else member_effect("", member.text, False)
+
+
+def where_member(args: list) -> set:
+    """Where-Object given a property name rather than a script block.
+
+    A script-block argument is a group, reduced where it appears. The first positional word names
+    the property read on every pipeline object; it goes through the member gate (a name not known
+    to read only is undecidable), and so does a wildcard name.
     """
     if any(w.why == "group" for w in args):
         return set()
-    members, i = [], 0
-    while i < len(args):
-        w, t = args[i], args[i].text
+    for w in args:
         if w.why:
-            return top(f"{w.why} in {canon}")
-        if t.startswith("-"):
-            k = t[1:].lower()
-            if k and "membername".startswith(k) and i + 1 < len(args):
-                members.append(args[i + 1])
-                i += 2
-                continue
-            i += 1
-            continue
-        members.append(w)               # the first positional word is the member name
-        break
-    out = set()
-    for w in members:
-        # The member name here is the operand, not a receiver literal, so the receiver stays unknown.
-        out |= top(f"{canon} wildcard member name") if re.search(r"[*?\[]", w.text) \
-            else member_effect("", w.text, False)
-    return out
+            return top(f"{w.why} in where-object")
+        if not w.text.startswith("-"):
+            return top("where-object wildcard member name") if re.search(r"[*?\[]", w.text) \
+                else member_effect("", w.text, False)
+    return set()
 
 
 def ps_statement(words: list, ctx) -> tuple[list, set]:
@@ -268,7 +355,8 @@ def ps_statement(words: list, ctx) -> tuple[list, set]:
                 return [], member_assign
             if words[j].why or not re.fullmatch(r"[.\w:$\[\]()'\"-]*", words[j].text):
                 break
-    if words and (words[0].text.startswith(("$", "[")) or words[0].quoted or re.match(r"^-?\d", words[0].text)):
+    # An expression statement: a variable, a type, a literal, or a unary operator (`-not (...)`, `!$x`).
+    if words and (words[0].text.startswith(("$", "[", "-", "!")) or words[0].quoted or re.match(r"^\d", words[0].text)):
         return [], out
     return words, out
 
@@ -297,8 +385,13 @@ def cmd_builtin(name: str, args: list, ctx):
         srcs, target = ops[:-1], ops[-1:] if len(ops) > 1 else [here(ctx)]
         return writes("write", target, ctx) | into_dir(srcs, target, ctx), None
     if name in ("move", "ren", "rename"):
+        # A rename moves entries as they are, links included; `ren`'s new name sits beside the source.
         target = ops[1:2]
-        return writes("delete", ops[:1], ctx) | writes("write", target, ctx) | into_dir(ops[:1], target, ctx), None
+        if name != "move" and target and ops[:1]:
+            src = ops[0].text.replace("\\", "/")
+            target = [Word(posixpath.join(posixpath.dirname(src), target[0].text), ops[0].why or target[0].why)]
+        return writes("delete", ops[:1], ctx) | writes("linktree", target, ctx) | into_dir(
+            ops[:1], target, ctx, "linktree"), None
     if name in ("cd", "chdir", "pushd", "popd"):
         return m_cd(name, ops, ctx)
     if name == "set":

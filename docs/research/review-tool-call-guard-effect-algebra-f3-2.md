@@ -140,7 +140,18 @@ Add the following cases to MEMBER_FORMS (tool/test_guard.py:384); each must be d
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+The hypothesis held. On `1b4df77` all nine `FOREACH_FORMS` were allowed: the colon-bound `-MemberName:Delete` and `-m:Delete`, the parenthesised member names and arguments, `-InputObject`, and `-OutVariable`, `-pv` or `-ArgumentList` placed before the member.
+
+`% ('Delete')` showed a second cause. In PowerShell, `simple()` read `name (...)` as a POSIX function definition `name()` and dropped the command, so the group's value never reached any model. That rule now applies only to POSIX.
+
+The fix is in the commit that adds this result, on top of `1b4df77`. `guard_windows.foreach_object` replaces the ForEach-Object reader. It resolves each parameter name as PowerShell does: alias, exact name, or unique prefix, common parameters included. It accepts two argument lists only:
+
+- literal `{...}` script blocks;
+- a literal member name with literal arguments, which goes to `member_effect`.
+
+Anything else is `top`. A group word now carries its opener (`GROUP_TEXT`), so `{` and `(` can be told apart. Where-Object keeps its own reader, `where_member`, because its simplified syntax reads a property and invokes nothing.
+
+After the fix, `test_a_foreach_argument_list_the_reader_cannot_explain_is_denied` (9 forms) passes. So does `test_foreach_forms_the_reader_explains_stay_allowed`, which covers `-MemberName:Name`, `-Process {…}`, `-Begin {} -Process {…}` and `% Split '.'`. The earlier `MEMBER_FORMS` results are unchanged.
 
 ## Unresolved limits
 

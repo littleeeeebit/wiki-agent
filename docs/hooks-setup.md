@@ -117,10 +117,18 @@ the task's grant, computed again for each call:
 | Effect | Granted when |
 |---|---|
 | `write`, `delete` | the path resolves (links, junctions and `..` followed) inside a write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder; each `[guard] write_roots` entry, relative to the checkout |
-| — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and deleting any folder that holds them |
-| `spawn` | the executable is one that `gate_cmd`, `verification.toml`'s round and local commands, a `[checks]` command or `python tool/search` runs, or is listed in `[guard] executables`. `git` and `gh` are modelled by verb: a known verb is its writes and its remote's host, an unknown one is `top` |
-| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts` |
+| — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (a copy into `.wiki`, `curl -O` or `wget` at the checkout root, `patch` there). Only a git verb's own write of the repository it runs in is judged by place alone |
+| `spawn` | the executable is one that `gate_cmd`, `verification.toml`'s round and local commands, a `[checks]` command or `python tool/search` runs, or is listed in `[guard] executables`. A bare name is that name; a name with a path (`./tool`, `C:/x/python.exe`, `/usr/bin/time`) is that file, granted only by the same path. `git` and `gh` are modelled by verb: a known verb is its writes and its remote's host, an unknown one is `top` |
+| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. `GH_HOST`, `GH_REPO` and the proxy variables count as reaching their host; a target whose host cannot be read is `top` |
 | `top` | never |
+
+Links are judged within one call: a command that lays down a tree whose entries
+the data decides (an extraction, a recursive copy, a rename, and a git verb
+rewriting the work tree unless `core.symlinks` is off) may create a link, so
+another command in the same call that writes beneath it is `top`. A hard link's
+source counts as written. In PowerShell, anything evaluated in this runspace (a
+group, a `$(...)`, a pipeline stage) may move the location, so later relative
+paths are judged from every place it may now be.
 
 The optional adapter table adds to the grant and never names a command:
 
@@ -128,7 +136,7 @@ The optional adapter table adds to the grant and never names a command:
 [guard]
 write_roots = ["../shared-fixtures"]
 network_hosts = ["pypi.org"]
-executables = ["ruff", "npx"]
+executables = ["ruff", "npx", ".venv/Scripts/python.exe"]
 ```
 
 A denial lists each effect outside the grant, why, and what would open it,

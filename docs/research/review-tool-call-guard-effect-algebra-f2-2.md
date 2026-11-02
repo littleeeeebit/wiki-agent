@@ -150,7 +150,24 @@ Add parametrised cases to tool/test_guard.py and run them first against 1f77357,
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+The hypothesis held. On `1b4df77`, all eleven forms in `TREE_LINK_FORMS` were allowed:
+
+- tar, unzip, Expand-Archive and `Copy-Item -Recurse`, each followed by a write beneath the tree;
+- mv, Rename-Item and git mv, each followed by a write under the new name;
+- `git checkout` with symlinks on;
+- two extractions, the second landing under the first;
+- New-Item HardLink and `rsync --link-dest`, each on its own.
+
+The fix is in the commit that adds this result, on top of `1b4df77`. It follows the research with one change. Treating every `write_tree` as a link holder across the whole effect set would also flag a command against its own tree: `cp -r src .` names both `.` and `./src`, and `mv sub/x .` deletes under its destination. So `run_argv` now bundles every command whose effects hold a link or a tree, and `guard.collapse` checks each bundle's links only against what other commands write. The other parts of the fix:
+
+- Rename destinations emit `linktree`: mv, Move-Item, cmd move/ren and git mv.
+- Rename-Item's and cmd ren's new name is placed beside the source instead of being resolved from the current directory. This also fixes a misplaced write.
+- Git work-tree verbs emit `repolinks` over the checkout when the repository's `core.symlinks` is not false. `repolinks` is a link holder judged as `repo`. The grant reads the setting as `Grant.git_links`.
+- `hard_link_sources` is the one helper behind `cp -l`, New-Item HardLink and `rsync --link-dest`. Following rsync, the `--link-dest` directory is resolved relative to the destination.
+
+After the fix, `test_a_tree_written_through_in_the_same_call_is_denied` (11 forms) passes. So does `test_a_tree_alone_or_a_checkout_without_symlinks_stays_allowed`, which includes `git checkout other; printf x > f` with `core.symlinks = false`.
+
+The delete-depth refinement was not taken. `tar -xf a.tar && rm a.tar` inside the extraction directory is now `top`, which stays fail-closed. This repository has `core.symlinks = false`, so the git rule changes no verdict on this machine. The real-tar experiment in a POSIX scratch directory was not run.
 
 ## Unresolved limits
 

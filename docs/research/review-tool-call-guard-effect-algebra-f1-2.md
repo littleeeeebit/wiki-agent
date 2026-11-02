@@ -127,7 +127,17 @@ On 1f77357 before the fix, add one test with two parts. (1) A judge-level proper
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+The hypothesis held. On `1b4df77` (guard code as at `1f77357`), `test_every_ancestor_of_a_protected_path_is_judged_protected_for_every_path_kind` failed: `outside(("write", <checkout>/.wiki), g)` returned `None`. All ten forms in `PROTECTED_ANCESTOR_FORMS` were allowed: rsync and scp into `.wiki`, `rsync -a ../x/ .`, `curl -O` and `curl -OJ`, `wget`, Invoke-WebRequest `-OutFile .wiki` and `-OutFile .`, `patch -p1 <` at the root, and `cp -lR .wiki x`.
+
+The fix is in the commit that adds this result, on top of `1b4df77`. `guard_grant.outside` now applies the protected-descendant check to every path kind. The one exception is a new kind, `repo`: git's own write of the repository it runs in (`m_git`, `gh pr checkout`). Without that exception every git write verb would be refused, because `write(<checkout>)` contains `.git`. Three changes add precision without affecting soundness: `curl -O` names `<cwd>/<last URL segment>` (only the directory with `-J`); rsync and scp call `into_dir`; and `gh repo clone` names the repository's directory.
+
+After the fix these pass:
+
+- `test_a_write_to_a_directory_holding_a_protected_file_is_denied` (10 forms).
+- The property test above.
+- `test_ordinary_writes_beside_protected_files_stay_allowed`, which covers `rsync a.txt safe/`, `curl -O …/x.txt` at the root, `git checkout -b` followed by a commit, `gh pr checkout`, and `-OutFile safe/out.bin`.
+
+Corpus verdicts under a synthetic grant, compared between `1b4df77` and the fix in a scratch worktree: no entry went from allowed to denied because of this rule. One entry that was already denied (`mv $W/.wiki/laya*.md .wiki/`) gained the protected-file reason. The corpus does not measure one cost: `wget URL`, `split` and `patch` with no target are now refused at the checkout root. They still work from a subdirectory.
 
 ## Unresolved limits
 

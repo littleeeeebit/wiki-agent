@@ -117,7 +117,26 @@ In pwsh, from a scratch directory with a sibling directory: run `& { Set-Locatio
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+The hypothesis held. On `1b4df77`, five of the seven `LOCATION_FORMS` were allowed:
+
+- a `$(Set-Location …)` subexpression;
+- a group argument;
+- `Set-Location … | Out-Null`;
+- `Get-Item … | Set-Location`;
+- a bare `Set-Location`, which in PowerShell 7 goes to the home folder.
+
+The old text check caught only the two forms with a literal block, `if (…) { Set-Location }` and `& { & { … } }`. The pwsh experiment was not run.
+
+The fix is in the commit that adds this result, on top of `1b4df77`. It follows the research, except that it keeps the union of possible locations instead of `{None}`:
+
+- `guard.run` returns the effects together with every directory the shell may be in afterwards. `reduce` keeps its signature.
+- In PowerShell, `simple()` carries the location through each group, each word's subexpressions and each redirection target's subexpressions, in source order. It judges the command's own paths from that union and returns the union as the command's move.
+- `run` honours a move made by a PowerShell pipeline stage.
+- `Set-Location` with no path moves to the home folder, or to an unknown place when it is piped.
+- POSIX subshells still move nothing.
+- The text check at guard.py:615-617 is removed.
+
+After the fix, `test_a_location_moved_in_process_moves_later_paths` (7 forms) passes. So does `test_a_location_moved_in_another_process_does_not`, which covers `"$(Get-Date)"`, `pwsh -c 'Set-Location ..'`, and bash `$(cd ..)` and `cd .. | cat`. The earlier `F12-in-process-group-cd` case is now the `nested-block` row of the table, because it is denied as outside the roots rather than as `top`.
 
 ## Unresolved limits
 

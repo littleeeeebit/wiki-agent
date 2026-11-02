@@ -63,8 +63,8 @@ class Ctx:
     stdin: object = None                # a here document's Word, or None
     piped: bool = False
     funcs: set = field(default_factory=set, compare=False)
-    roots: tuple = ()                   # the task's write roots, to tell a planted local binary from a system one
-    env: tuple = ()                     # assignments in front of the current command
+    git_links: str = ""                 # the checkout when its git checks symlinks out as links, else ""
+    env: tuple = ()                   # assignments in front of the current command
     consts: tuple = ()                  # ((name, literal), ...) the script assigned before here
     sink: object = field(default=None, compare=False)   # a list collecting nested shell strings, or None
 
@@ -80,8 +80,9 @@ def top(reason: str) -> set:
 
 # A member name the lexer saw after `.`/`::` but could not read: a `$var` or a quoted string.
 DYNAMIC_MEMBER = "\0member"
-# PowerShell commands that move the session location (and so the directory later paths resolve from).
-LOCATION_CMDS = {"set-location", "sl", "cd", "chdir", "push-location", "pushd", "pop-location", "popd"}
+# How a group stands among a command's words: only `{...}` is a literal script block, code the guard reads.
+GROUP_TEXT = {"(": "(...)", "{": "{...}", "@(": "@(...)", "@{": "@{...}"}
+BLOCK = "{...}"
 
 
 class Unclosed(ValueError):
@@ -510,8 +511,13 @@ def literal(items: list, d: str, consts: dict, once: set) -> dict:
 
 
 def reduce(toks: list, ctx: Ctx, src: str = "") -> set:
+    return run(toks, ctx, src)[0]
+
+
+def run(toks: list, ctx: Ctx, src: str = "") -> tuple[set, frozenset]:
+    """Effects of a token list, and every directory the shell may be in once it has run."""
     if ctx.depth > DEPTH:
-        return top(f"nesting deeper than {DEPTH}")
+        return top(f"nesting deeper than {DEPTH}"), ctx.cwds
     out, cwds, pending = set(), ctx.cwds, None
     consts, once, depth, chain = dict(ctx.consts), bound_once(src, ctx.d) if src else set(), 0, set()
     cmds = commands(toks, ctx.d)
@@ -536,7 +542,9 @@ def reduce(toks: list, ctx: Ctx, src: str = "") -> set:
             continue                    # a `case` pattern: words to match, not a command
         eff, moved = simple(items, replace(ctx, cwds=cwds, piped=piped_in, consts=tuple(consts.items())))
         out |= eff
-        if moved is not None and not piped_in and nxt not in ("|", "|&"):
+        # A PowerShell pipeline runs every stage in this runspace, so a stage that moves moves the session;
+        # a POSIX pipeline stage is a subshell, whose `cd` stays there.
+        if moved is not None and (ctx.d == "ps" or not piped_in and nxt not in ("|", "|&")):
             pending = moved
         for it in items:
             if it[0] == "w" and ctx.d == "posix" and not it[1].quoted:
@@ -546,27 +554,27 @@ def reduce(toks: list, ctx: Ctx, src: str = "") -> set:
             bound = literal(items, ctx.d, consts, once)
             consts.update(bound)
             chain |= set(bound) if join == "&&" else set()
-    return out
+    # Where the last command moved, it may or may not have run: every place stays possible.
+    return out, cwds | pending if pending is not None else cwds
 
 
 def code(text: str, d: str, ctx: Ctx, fresh: bool = True, **kw) -> set:
     """Effects of a string parsed again one level down."""
+    return run_code(text, d, ctx, fresh, **kw)[0]
+
+
+def run_code(text: str, d: str, ctx: Ctx, fresh: bool = True, **kw) -> tuple[set, frozenset]:
     if ctx.depth >= DEPTH:
-        return top(f"nesting deeper than {DEPTH}")
-    return reduce(lex(text, d), ctx.deeper(d, fresh, **kw), text)   # `Unclosed` makes the whole call top
+        return top(f"nesting deeper than {DEPTH}"), ctx.cwds
+    return run(lex(text, d), ctx.deeper(d, fresh, **kw), text)   # `Unclosed` makes the whole call top
 
 
-def words_effects(words: list, ctx: Ctx) -> set:
-    out = set()
-    for w in words:
-        for d, text in w.subs:
-            out |= code(text, d, ctx, fresh=False)
-        if w.method:
-            # The receiver is a string literal only when the word begins with a quote (`'x'.Replace`);
-            # a quote later in the word (an index like `.Methods['Delete']`) is not the receiver.
-            literal = bool(re.match(r"^\s*['\"]", w.raw))
-            out |= member_effect(w.recv, w.method, literal)
-    return out
+def member_of(w: Word) -> set:
+    if not w.method:
+        return set()
+    # The receiver is a string literal only when the word begins with a quote (`'x'.Replace`);
+    # a quote later in the word (an index like `.Methods['Delete']`) is not the receiver.
+    return member_effect(w.recv, w.method, bool(re.match(r"^\s*['\"]", w.raw)))
 
 
 def member_effect(recv: str, method: str, literal_recv: bool) -> set:
@@ -601,32 +609,43 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
     from guard_models import KEYWORDS, run_argv
     from guard_windows import ps_statement
 
-    eff, words, stdin, call, consts = {READ}, [], None, False, dict(ctx.consts)
-    group_moved = False
+    eff, words, stdin, call, consts, redirs = {READ}, [], None, False, dict(ctx.consts), []
+    # PowerShell evaluates groups (`(…)`, `{…}` blocks it runs) and subexpressions (`$(…)`) in this
+    # runspace, so one that moves the location moves it for the rest of the command and the statements
+    # after it. A POSIX `(…)` or `$(…)` is a subshell and moves nothing here.
+    ps, start = ctx.d == "ps", ctx.cwds
+    loc = start
     for it in items:
         if it[0] == "g":
-            inner = reduce(it[2], ctx.deeper(fresh=False)) if ctx.depth < DEPTH else top(f"nesting deeper than {DEPTH}")
+            if ctx.depth < DEPTH:
+                inner, after = run(it[2], ctx.deeper(fresh=False, cwds=loc))
+                loc = loc | after if ps else loc
+            else:
+                inner = top(f"nesting deeper than {DEPTH}")
             eff |= inner
-            words.append(Word("(...)", "group"))
-            # A PowerShell group (`& {…}`, `.{…}`, `(…)`, `$(…)`) runs in the same runspace, so a
-            # `Set-Location` inside it moves the location for the statements that follow. A POSIX
-            # `(…)` subshell does not. When such a group may move the location, the next path is
-            # relative to an unknown directory.
-            if ctx.d == "ps" and any(c[0] == "w" and not c[1].why and c[1].text.lower() in LOCATION_CMDS
-                                     for c in it[2]):
-                group_moved = True
-        elif it[0] == "r":
-            _fd, op, target = it[1], it[2], bind(it[3], consts)
-            eff |= words_effects([target], ctx)
-            if op in ("<<", "<<-", "<<<"):
-                stdin = target
-            elif op in (">", ">>", ">|", "<>") or (op == ">&" and not re.fullmatch(r"\d*-?", target.text)):
-                eff |= paths("write", target, ctx)
-        elif it[0] == "call":
+            words.append(Word(GROUP_TEXT.get(it[1], "(...)"), "group"))
+            continue
+        if it[0] == "call":
             call = True
+            continue
+        w = bind(it[3] if it[0] == "r" else it[1], consts)
+        for d, text in w.subs:
+            inner, after = run_code(text, d, replace(ctx, cwds=loc), fresh=False)
+            eff |= inner
+            loc = loc | after if ps else loc
+        eff |= member_of(w)
+        if it[0] == "r":
+            redirs.append((it[2], w))
         else:
-            words.append(bind(it[1], consts))
-    eff |= words_effects(words, ctx)
+            words.append(w)
+    # The command's own paths resolve from wherever its expansions may have left the location.
+    ctx = replace(ctx, cwds=loc)
+    moved_here = loc if loc != start else None
+    for op, target in redirs:
+        if op in ("<<", "<<-", "<<<"):
+            stdin = target
+        elif op in (">", ">>", ">|", "<>") or (op == ">&" and not re.fullmatch(r"\d*-?", target.text)):
+            eff |= paths("write", target, ctx)
     ctx, env = replace(ctx, stdin=stdin), []
     while True:
         if ctx.d == "posix":
@@ -640,7 +659,7 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
             break
         key = words.pop(0).text.lower()
         if key in ("for", "select", "case", "foreach", "using", "param", "class", "enum", "data"):
-            return eff | envs(env, ctx), None
+            return eff | envs(env, ctx), moved_here
         if key in ("function", "filter") and words:
             ctx.funcs.add(words.pop(0).text.lower())
     eff |= envs(env, ctx)
@@ -648,19 +667,22 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
     if ctx.d == "ps" and not call:
         words, stop = ps_statement(words, ctx)
         eff |= stop
-    unknown = frozenset({None}) if group_moved else None
-    if len(words) > 1 and words[1].why == "group" and words[1].text == "(...)" and not words[0].why:
-        # `name() { ...; }` defines a function; the body follows as its own command.
+    if ctx.d == "posix" and len(words) > 1 and words[1].why == "group" and words[1].text == "(...)" \
+            and not words[0].why:
+        # `name() { ...; }` defines a POSIX function; the body follows as its own command. In PowerShell
+        # `name (expr)` passes the expression's value as an argument.
         ctx.funcs.add(words[0].text.lower())
-        return eff | simple([("w", w) for w in words[2:]], ctx)[0], unknown
+        return eff | simple([("w", w) for w in words[2:]], ctx)[0], moved_here
     if not words:
-        return eff, unknown
+        return eff, moved_here
     if words[0].why == "group":
-        return eff, unknown
+        # `& (expr)` runs whatever command the expression evaluates to; only a literal block is code read here.
+        computed = call and words[0].text != BLOCK
+        return eff | (top("a computed command name") if computed else set()), moved_here
     if words[0].why:
-        return eff | top(f"{words[0].why} as the command name"), unknown
+        return eff | top(f"{words[0].why} as the command name"), moved_here
     more, moved = run_argv(words, ctx)
-    return eff | more, unknown if moved is None else moved
+    return eff | more, moved_here if moved is None else moved
 
 
 def assignment(w: Word) -> re.Match | None:
@@ -675,14 +697,23 @@ ENV_COMMAND = re.compile(r"^(?:GIT_EDITOR|GIT_SEQUENCE_EDITOR|EDITOR|VISUAL|PAGE
 ENV_EXEC = re.compile(r"^(?:LD_\w+|DYLD_\w+|BASH_ENV|ENV|PROMPT_COMMAND|PATH|PATHEXT|GIT_(?!AUTHOR_|COMMITTER_|"
                       r"TERMINAL_PROMPT|OPTIONAL_LOCKS|TRACE|DIR$|WORK_TREE$)\w+|NODE_OPTIONS|PYTHONSTARTUP|"
                       r"PERL5OPT|RUBYOPT|SHELLOPTS|PS4|COMSPEC|PSModulePath)$", re.I)
+# Variables that send a later client to another host: the host is reached whichever command reads them.
+ENV_NETWORK = re.compile(r"^(?:GH_HOST|GH_REPO|HTTPS?_PROXY|ALL_PROXY)$", re.I)
 
 
 def envs(assigns: list, ctx: Ctx) -> set:
+    from guard_models import network
+
     out = set()
     for w in assigns:
         name, _, value = w.text.partition("=")
         name = name.rstrip("+").split("[")[0]
-        if ENV_COMMAND.match(name):
+        if ENV_NETWORK.match(name):
+            if name.upper() == "GH_REPO":
+                # `[HOST/]OWNER/REPO`: a host only when there are three parts.
+                value = value.split("/")[0] if value.count("/") >= 2 else ""
+            out |= network(Word(value, w.why))
+        elif ENV_COMMAND.match(name):
             out |= top(f"{w.why} in {name}") if w.why else code(value, "posix", ctx)
         elif ENV_EXEC.match(name):
             out |= top(f"{name} changes what runs")
@@ -741,7 +772,7 @@ def paths(kind: str, w: Word, ctx: Ctx) -> set:
     if w.text.lower() == "$null" and ctx.d == "ps":
         return set()
     if w.why:
-        return top(f"{w.why} in a {'write' if kind == 'write_tree' else kind} path")
+        return top(f"{w.why} in a {'delete' if kind == 'delete' else 'write'} path")
     out = set()
     for cwd in ctx.cwds:
         try:
@@ -829,29 +860,46 @@ def derive(command, dialect: str, ctx: Ctx) -> set:
         return top("nesting too deep to parse")
 
 
-def collapse(effs: set) -> set:
-    """Fold link effects into the command's path effects, order-insensitively.
+PATH_KINDS = ("write", "write_tree", "delete", "link", "linktree", "repo", "repolinks")
+# What each link-holding kind is judged as once folded: `repolinks` is a git verb rewriting its own work tree.
+FOLDED = {"link": "write", "linktree": "write_tree", "repolinks": "repo"}
 
-    A link (symlink, junction or hard link) created in a command changes how the names of
-    later paths resolve, and `realpath` cannot see a link that does not exist yet. So when a
-    command both creates a link and writes, deletes or extracts under where that link sits,
-    the later write may leave the grant through the link: the whole command is undecidable.
-    A link that is not written through in the same command is resolved by `realpath` on the
-    next call, so on its own it is judged as a write (or a tree write) at its own location.
+
+def collapse(effs: set) -> set:
+    """Fold link effects into path effects, judging each command's links against the others' writes.
+
+    A link (symlink, junction or hard link) created in a call changes how the names of later
+    paths resolve, and `realpath` cannot see a link that does not exist yet. A `link` is one
+    made at a known place; a `linktree` or `write_tree` is a tree whose entries the data
+    decides (an archive, a recursive copy, a rename, a git checkout), any of which may be a
+    link. When another command in the call writes, deletes or extracts under such a place,
+    that write may leave the grant through the link: the whole call is undecidable. A
+    command's own effects (`run_argv` bundles them) never count against its own links, and a
+    link nothing else writes through is resolved by `realpath` on the next call.
     """
-    singles = [p for k, p in effs if k == "link"]
-    trees = [p for k, p in effs if k == "linktree"]
-    if not singles and not trees:
-        return effs
-    out = {e for e in effs if e[0] not in ("link", "linktree")}
-    written = [p for k, p in out if k in ("write", "write_tree", "delete")]
-    slipped = False
-    for where in singles:
-        out.add(("write", where))
-        slipped = slipped or any(contained(p, [where]) or contained(where, [p]) for p in written)
-    for root in trees:
-        out.add(("write_tree", root))
-        slipped = slipped or any(p != root and contained(p, [root]) for p in written)
+    groups, loose = [], set()
+
+    def unpack(es, into):
+        for e in es:
+            if e[0] == "bundle":
+                own = set()
+                groups.append(own)
+                unpack(e[1], own)
+            else:
+                into.add(e)
+
+    unpack(effs, loose)
+    groups.append(loose)
+    out, slipped = set(), False
+    for k, own in enumerate(groups):
+        links = [(kind, p) for kind, p in own if kind in ("link", "linktree", "write_tree", "repolinks")]
+        if links:
+            others = [p for j, g in enumerate(groups) if j != k or g is loose
+                      for kind, p in g if kind in PATH_KINDS and (kind, p) not in links]
+            for kind, where in links:
+                slipped = slipped or any(contained(p, [where]) or contained(where, [p]) if kind == "link"
+                                         else p != where and contained(p, [where]) for p in others)
+        out |= {(FOLDED.get(e[0], e[0]), e[1]) for e in own}
     return out | top("a link is created and a path under it is written in the same command") if slipped else out
 
 
@@ -895,8 +943,8 @@ def call_effects(tool: str, given: dict, ctx: Ctx, host: str, payload: dict) -> 
 def render(effect: tuple) -> str:
     if effect == READ:
         return effect[0]
-    # A recursive copy or an extraction writes a whole tree; the person reads it as a write.
-    kind = "write" if effect[0] == "write_tree" else effect[0]
+    # A tree (recursive copy, extraction) and git's write of its repository are writes to the person.
+    kind = "write" if effect[0] in ("write_tree", "repo") else effect[0]
     return f"{kind}({effect[1]})"
 
 
@@ -917,7 +965,7 @@ def verdict(payload: dict, host: str = "claude") -> dict | None:
         return None
     ctx = Ctx("posix", frozenset({str(cwd).replace("\\", "/") if os.name == "nt" else str(cwd)}),
               str(Path.home()).replace("\\", "/"), temps()[0].as_posix(),
-              os.name == "nt", remotes=g.remotes, roots=tuple(g.roots))
+              os.name == "nt", remotes=g.remotes, git_links=g.git_links)
     bad = [(render(e), why) for e in sorted(call_effects(tool, given, ctx, host, payload)) if (why := outside(e, g))]
     if not bad:
         return None

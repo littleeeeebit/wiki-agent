@@ -138,7 +138,16 @@ On 1f77357, add to the OUTSIDE_FORMS-style table in tool/test_guard.py, each of 
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+The hypothesis held. On `1b4df77` these passed, or were denied only through a bogus host: `gh api "$ENDPOINT"`, the same after `--cache 1h` and with `-X POST … -f`, `gh -R "$R"`, `GH_REPO=unlisted.example/o/r`, and `gh --hostname "$H"`. Two siblings outside the research were open too: an exported `GH_HOST` (`export GH_HOST=…; gh api user`) and a proxy variable (`HTTPS_PROXY=… curl …`).
+
+The fix is in the commit that adds this result, on top of `1b4df77`:
+
+- Every `gh api` positional with a `why` goes through `network()` and becomes `top`.
+- `-R`, `--repo` and `GH_REPO` with a `why` are `top`. With three parts they add their host.
+- `--hostname` goes through `network()`.
+- `guard.envs` treats `GH_HOST`, `GH_REPO`, `HTTP(S)_PROXY` and `ALL_PROXY` as reaching their host wherever they are set: a prefix, `export`, `$env:` or cmd `set`.
+
+After the fix, the gh and proxy rows of `test_a_network_destination_the_guard_cannot_read_is_denied` pass. `test_readable_network_destinations_stay_allowed` passes too; it covers `gh api repos/o/r/pulls`, `{owner}/{repo}`, `graphql -f`, `gh pr view "$N"` and `GH_REPO=o/r`. No corpus entry changed. The prefix refinement was not added.
 
 ## Unresolved limits
 

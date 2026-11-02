@@ -536,7 +536,7 @@
    "effects": [
     "network(127.0.0.1)",
     "read",
-    "spawn(wiki-agent)"
+    "spawn(c:/users/me/appdata/local/temp/claude/c--users-me-pycharmprojects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/src-tauri/target/release/wiki-agent)"
    ]
   },
   {
@@ -713,7 +713,7 @@
    "effects": [
     "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/1258396b-a6e6-4a4f-8ce7-64fb0bc75367/scratchpad/tinyrepo)",
     "read",
-    "spawn(python)",
+    "spawn(//msys/usr/bin/time)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/1258396b-a6e6-4a4f-8ce7-64fb0bc75367/scratchpad/tinyrepo)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/1258396b-a6e6-4a4f-8ce7-64fb0bc75367/scratchpad/tinyrepo/a.txt)"
    ]
@@ -984,7 +984,7 @@
    "command": "cd C:/Users/me/PycharmProjects/wiki-agent && SP=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; (web/src-tauri/target/release/wiki-agent.exe > \"$SP/exe.out\" 2> \"$SP/exe.err\"; echo \"exited=$?\" >> \"$SP/exe.out\") & sleep 12; echo \"--- out\"; cat \"$SP/exe.out\"; echo \"--- err\"; cat \"$SP/exe.err\" | head -20; tasklist //FI \"IMAGENAME eq wiki-agent.exe\" //NH; ls -la --time-style=full-iso raw/main.log",
    "effects": [
     "read",
-    "spawn(wiki-agent)",
+    "spawn(c:/users/me/pycharmprojects/wiki-agent/web/src-tauri/target/release/wiki-agent)",
     "top(variable in a write path)"
    ]
   },
@@ -1091,6 +1091,7 @@
    "command": "cd C:/Users/me/PycharmProjects/wiki-agent; T=$(mktemp -d); python -c \"import zipfile,sys; zipfile.ZipFile('laya/data/useful/colab-useful.zip').extractall(sys.argv[1])\" \"$T\"; cd \"$T\"; PYTHONIOENCODING=utf-8 /c/Users/me/PycharmProjects/wiki-agent/laya/.venv/Scripts/python -I -c \"\nimport sys; sys.path.insert(0, r'$T/laya')\nimport label, train, laya\nprint('DATA', label.DATA, 'laya pkg', laya.__file__[-30:])\nfor s in train.SPLITS:\n    p = label.DATA/'useful'/f'{s}.jsonl'\n    if p.exists():\n        rows = label.read(p); print(s, len(rows), sum(len(r['expected']) for r in rows))\nprint(sorted(train.PUBLISHED), train.MAX_LEN)\n\"; cd /; rm -rf \"$T\"",
    "effects": [
     "read",
+    "spawn(c:/users/me/pycharmprojects/wiki-agent/laya/.venv/scripts/python)",
     "spawn(python)",
     "top(variable in a delete path)",
     "write(C:/Users/me/AppData/Local/Temp)"
@@ -1166,7 +1167,7 @@
    "command": "find android/app/src android/app/build.gradle -newer android/app/build/outputs/apk/release/app-release.apk -type f; echo \"newer-check done\"; \"raw/android-sdk/build-tools/36.0.0/apksigner.bat\" verify --print-certs android/app/build/outputs/apk/release/app-release.apk 2>&1 | head -4",
    "effects": [
     "read",
-    "spawn(apksigner)"
+    "spawn(c:/users/me/pycharmprojects/wiki-agent/raw/android-sdk/build-tools/36.0.0/apksigner)"
    ]
   },
   {
@@ -1420,7 +1421,9 @@
    "effects": [
     "read",
     "spawn(perl)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/docs/reference.md)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/docs/reference.md/README.md)"
    ]
   },
   {
@@ -2173,7 +2176,7 @@
    "command": "Get-Content local_services/qwen_clone_tts_server/config.py -TotalCount 105; & C:/Users/me/anaconda3/envs/qwen3-tts-faster/python.exe -c \"import torch, importlib.util; print('cuda_available=', torch.cuda.is_available()); print('faster_qwen3_tts_available=', importlib.util.find_spec('faster_qwen3_tts') is not None)\"",
    "effects": [
     "read",
-    "spawn(python)"
+    "spawn(c:/users/me/anaconda3/envs/qwen3-tts-faster/python)"
    ]
   },
   {

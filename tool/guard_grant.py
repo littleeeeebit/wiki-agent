@@ -28,6 +28,7 @@ class Grant:
     executables: set
     hosts: set
     remotes: tuple
+    git_links: str = ""                 # the checkout, when git checks symlinks out as links there
 
 
 # Inside a write root, but they decide the grant or what runs next: never granted.
@@ -86,6 +87,21 @@ def remote_hosts(common: Path) -> tuple:
     return tuple(sorted(hosts.items()))
 
 
+def git_links(common: Path, top: Path) -> str:
+    """The checkout when its git writes symlinks as links (git's default), `""` when `core.symlinks` is off."""
+    try:
+        text = (common / "config").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    section, value = "", ""
+    for line in text.splitlines():
+        if m := re.match(r"\s*\[\s*([^\]\s]+)", line):
+            section = m.group(1).lower()
+        elif section == "core" and (m := re.match(r"\s*symlinks\s*=\s*(\S+)", line, re.I)):
+            value = m.group(1).lower()
+    return "" if value in ("false", "no", "off", "0") else top.as_posix()
+
+
 def plan_root(top: Path, gitdir: Path, main: Path) -> Path | None:
     """A plan task's artifact root, from the hub's spec for this branch; `None` for any other task."""
     try:
@@ -107,7 +123,7 @@ def plan_root(top: Path, gitdir: Path, main: Path) -> Path | None:
 
 def grant(cwd: Path, payload: dict) -> Grant | None:
     """What this task may do, computed for this call; `None` where no repository is attached."""
-    from guard_models import exe, host_of
+    from guard_models import host_of, spawn_of
 
     found = layout(cwd.resolve())
     if found is None:
@@ -134,11 +150,12 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
     commands += [str(c.get("cmd") or "") for c in checks.values() if isinstance(c, dict)]
     ctx = Ctx("posix", frozenset({top.as_posix()}), Path.home().as_posix(), temps()[0].as_posix(), os.name == "nt")
     executables = {e[1] for c in commands if c.strip() for e in derive(c, "posix", ctx) if e[0] == "spawn"}
-    executables |= {exe(s) for s in strings("executables")}
+    # A path entry names that file (`.venv/bin/python`), keyed the way the judge keys a path-named command.
+    executables |= {e[1] for s in strings("executables") for e in spawn_of(s, ctx) if e[0] == "spawn"}
     remotes = remote_hosts(common)
     hosts = {"127.0.0.1"} | {h for _, h in remotes} | {host_of(s) for s in strings("network_hosts")}
     protected = sorted({str(p / x) for p in (top, main) for x in PROTECTED})
-    return Grant([str(r) for r in roots], protected, executables, hosts, remotes)
+    return Grant([str(r) for r in roots], protected, executables, hosts, remotes, git_links(common, top))
 
 
 def outside(effect: tuple, g: Grant) -> str | None:
@@ -156,8 +173,11 @@ def outside(effect: tuple, g: Grant) -> str | None:
     if kind == "network":
         return None if target in g.hosts else \
             f"허가된 호스트가 아니다 — `.wiki/adapter.toml` 의 `[guard] network_hosts` 에 `{target}` 를 더하면 열린다"
-    # A delete or a tree write (recursive copy, extraction) also reaches a protected path it contains.
-    reaches_protected = kind in ("delete", "write_tree") and any(contained(p, [target]) for p in g.protected)
+    # Any path effect on a directory that holds a protected path may reach it: a destination directory, a
+    # URL- or server-named download, a patch or an extraction writes names the command does not show, and a
+    # write to an existing directory either lands under it or fails. Only git's own write of the repository
+    # it runs in (`repo`) is granted on the checkout as a whole.
+    reaches_protected = kind != "repo" and any(contained(p, [target]) for p in g.protected)
     if any(contained(target, [p]) for p in g.protected) or reaches_protected:
         return "허가를 정하는 파일이다 — 어떤 `[guard]` 항목으로도 열리지 않고, 사람이 직접 고친다"
     if contained(target, g.roots):
