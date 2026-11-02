@@ -53,8 +53,7 @@ def repo(tmp_path, monkeypatch):
     (top / ".wiki").mkdir()
     (top / ".wiki/adapter.toml").write_text(
         '[slots]\ngate_cmd = "python -m ruff check tool"\n'
-        '[checks.web]\ncmd = "npm --prefix web run build"\n'
-        '[guard]\nwrite_roots = ["../shared"]\nnetwork_hosts = ["pypi.org"]\nexecutables = ["npx"]\n',
+        '[checks.web]\ncmd = "npm --prefix web run build"\n',
         encoding="utf-8")
     return top
 
@@ -112,7 +111,6 @@ def test_nesting_is_recursed_to_a_fixed_depth():
     ("echo `rm x", "posix", "unclosed backtick"),
     ("echo \"$(rm x\"", "posix", "unclosed"),
     ("Write-Output 'abc", "ps", "unclosed quote"),
-    ("PATH=/opt/tools:$PATH python x.py", "posix", "PATH"),
     ("git -c core.sshCommand=helper status", "posix", "-c"),
     ("[IO.File]::WriteAllText('a', 'b')", "ps", "WriteAllText"),
 ])
@@ -214,19 +212,19 @@ def test_calls_inside_the_grant_pass(repo):
     for command in ("python -m ruff check tool", "npm --prefix web run build", "npx tsc -b",
                     "git add -u && git commit -qm x && git -c http.followRedirects=false push --no-recurse-submodules "
                     "origin HEAD", "git status --short && git diff --stat",
-                    "echo hi > out.txt", "python tool/search \"query\"", "echo x > ../shared/f",
+                    "echo hi > out.txt", "python tool/search \"query\"",
                     "echo hi > /tmp/x.log", "ls ~ && cat /etc/hosts", "find . -name '*.py'"):
         assert call(repo, command) is None, command
     for command in ("Get-ChildItem; Get-Content README.md", "'x' > out.txt", "'a,b'.Split(',')"):
         assert call(repo, command, tool="PowerShell") is None, command
 
 
-def test_each_denial_names_the_effect_and_the_grant_that_would_allow_it(repo):
-    reason = call(repo, "GH_HOST=unlisted.example cargo build && echo x > ../other/f")
-    assert "spawn(cargo)" in reason and "`[guard] executables` 에 `cargo`" in reason
-    assert "network(unlisted.example)" in reason and "`[guard] network_hosts` 에 `unlisted.example`" in reason
-    assert "write(" in reason and "other" in reason and "`[guard] write_roots`" in reason
-    assert reason.splitlines()[-1].startswith("허가: 쓰기 루트") and "npx" in reason and "pypi.org" in reason
+def test_each_denial_names_the_effect_and_why(repo):
+    reason = call(repo, "cargo build && echo x > ../other/f && git push https://unlisted.example/o/r.git")
+    assert "spawn(cargo)" not in reason
+    assert "network(unlisted.example)" in reason and "원격 저장소가 아닌 호스트" in reason
+    assert "write(" in reason and "other" in reason and "쓰기 루트 밖이다" in reason
+    assert reason.splitlines()[-1].startswith("허가: 쓰기 루트") and "github.com" in reason
 
 
 def test_a_nested_shell_keeps_the_effects_it_wraps(repo):
@@ -257,11 +255,73 @@ def test_ordinary_writes_beside_protected_files_stay_allowed(repo):
         assert call(repo, command) is None, command
 
 
-# -- The closed table (spec rev 5) ------------------------------------------------
-# Only a program the table lists, with the flags its row lists, yields effects other than `top`; a program
-# with no row is a `spawn` only a grant naming it allows. Every form outside the table is denied by design,
-# whichever of the two it reduces to. The rules below are walked over the tables themselves, so a row added
-# later is held to them without a new test.
+# -- Open by default --------------------------------------------------------------
+# The guard denies only what it can read as leaving the grant: a write or delete outside the write roots,
+# a protected file, a push to a host no remote names. A program, option or form it cannot read passes.
+
+# Forms the guard cannot read, or programs with no row: each passes.
+OPEN_FORMS = {
+    "unlisted-program": ("zz-unlisted --anything ../outside/target.txt", "Bash"),
+    "eval": ('eval "$X"', "Bash"),
+    "variable-path": ("echo x > $OUT", "Bash"),
+    "loop": ("for i in 1 2; do echo $i; done", "Bash"),
+    "function": ("f() { cd ..; }; f", "Bash"),
+    "interpreter": ("python -c 'print(1)'", "Bash"),
+    "archive": ("tar -xf bundle.tar -C out", "Bash"),
+    "link": ("ln -s target link", "Bash"),
+    "member": ("(Get-Item README.md).Delete()", "PowerShell"),
+    "computed-command": ("& ('Get-' + 'Date')", "PowerShell"),
+    "unlisted-cmdlet": ("Zz-Unlisted -Path ../outside/target.txt", "PowerShell"),
+    "network-client": ("curl -fsSL https://unlisted.example/x", "Bash"),
+    "path-named-program": ("../outside/tool --version", "Bash"),
+    "env-redirect": ("GIT_DIR=../outside/.git git status", "Bash"),
+}
+
+
+@pytest.mark.parametrize("form", OPEN_FORMS)
+def test_a_form_the_guard_cannot_read_passes(repo, form):
+    command, tool = OPEN_FORMS[form]
+    assert call(repo, command, tool=tool) is None, form
+
+
+# Readable forms that leave the grant: each is denied, and wrapping it keeps every effect it had.
+EXPLICIT_FORMS = {
+    "redirect": "echo x > ../outside/target.txt",
+    "rm": "rm -rf ../outside",
+    "cp": "cp a.txt ../outside/",
+    "cp-target": "cp -t ../outside a.txt",
+    "mv": "mv a.txt ../outside/b.txt",
+    "touch": "touch ../outside/target.txt",
+    "mkdir": "mkdir -p ../outside/d",
+    "tee": "tee ../outside/target.txt",
+    "curl-output": "curl -o ../outside/target.txt https://example.com/x",
+    "wget-output": "wget -O ../outside/target.txt https://example.com/x",
+    "later-cd": "echo ok; cd .. && echo x > target.txt",
+    "protected": "cp a.txt .wiki/adapter.toml",
+    "push-url": "git -c http.followRedirects=false push --no-recurse-submodules https://unlisted.example/o/r.git main",
+}
+WRAPPERS = {
+    "plain": lambda c: c,
+    "bash-c": lambda c: "bash -c " + shlex.quote(c),
+    "sh-lc": lambda c: "ls && sh -lc " + shlex.quote(c),
+    "substitution": lambda c: f"echo $({c})",
+}
+
+
+@pytest.mark.parametrize("wrapper", WRAPPERS)
+@pytest.mark.parametrize("form", EXPLICIT_FORMS)
+def test_a_readable_form_outside_the_grant_is_denied_however_it_is_wrapped(repo, form, wrapper):
+    assert call(repo, WRAPPERS[wrapper](EXPLICIT_FORMS[form])), (form, wrapper)
+
+
+def test_a_writer_lands_its_sources_in_a_folder_it_names(repo):
+    (repo / "sub").mkdir()
+    assert call(repo, "cp ../outside/x . && cp a b sub && mv c sub/") is None
+    assert effects("cp a b c dst/") >= {f"write({C['cwd']}/dst/{n})" for n in "abc"}
+    assert "허가를 정하는 파일" in (call(repo, "cp adapter.toml .wiki") or "")
+
+
+# The rules below are walked over the tables themselves, so a row added later is held to them.
 
 def test_every_row_refuses_a_flag_it_does_not_list():
     from guard_models import KEYWORDS, TABLE
@@ -284,9 +344,9 @@ def test_cmd_rows_only_read_or_move_the_directory():
 
 def test_a_program_with_no_row_is_only_a_spawn(repo):
     assert effects("zz-unlisted-tool --anything ../outside/target.txt") == {"read", "spawn(zz-unlisted-tool)"}
-    # A cmdlet is not an executable a grant could name: outside the table it is `top`.
-    assert any(e.startswith("top(") for e in effects("Zz-Unlisted ../outside/target.txt", "ps"))
-    assert "허가된 실행 파일이 아니다" in call(repo, "xxd -r dump.hex ../outside/target.txt")
+    # Open by default: a program or cmdlet with no row passes, whatever it is given.
+    assert call(repo, "xxd -r dump.hex ../outside/target.txt") is None
+    assert call(repo, "Zz-Unlisted ../outside/target.txt", tool="PowerShell") is None
 
 
 # -- PowerShell and cmd rows that write (follow-up b) ---------------------------------
@@ -338,7 +398,7 @@ def test_windows_writes_inside_the_grant_pass(repo):
     (repo / "old").mkdir()
     (repo / "a.txt").write_text("x", encoding="utf-8")
     for command in ("Set-Content out.txt hello", "New-Item -ItemType Directory build", "Remove-Item old -Recurse",
-                    "Copy-Item a.txt b.txt", "Move-Item a.txt c.txt", "'x' | Out-File ../shared/f.txt"):
+                    "Copy-Item a.txt b.txt", "Move-Item a.txt c.txt", "'x' | Out-File f.txt"):
         assert call(repo, command, tool="PowerShell") is None, command
     assert call(repo, 'cmd /c "md build2 && move a.txt build2"') is None
 
@@ -382,7 +442,8 @@ def test_an_alias_that_may_name_a_native_program_is_not_its_cmdlet():
     # Off Windows, PowerShell 7 has no `rm`, `cp`, `mv` or `tee` alias: the name runs that program.
     posix_host = replace(CTX, d="ps", windows=False, cwds=frozenset({"/w"}))
     for name in ("rm", "cp", "mv", "tee", "mkdir"):
-        assert f"spawn({name})" in effects(f"{name} a b", "ps", posix_host), name
+        assert effects(f"{name} a b", "ps", posix_host) == effects(f"{name} a b", "posix", replace(
+            posix_host, d="posix")), name
     # `md` aliases the native `mkdir` there: a program under another name.
     assert any(e.startswith("top(") for e in effects("md a", "ps", posix_host))
     assert "delete(/w/a)" in effects("Remove-Item a", "ps", posix_host)
@@ -417,186 +478,6 @@ def test_a_delete_or_move_of_a_link_is_denied(repo, tmp_path):
     os.replace(repo / "link", repo / "dir" / "link")
     for command in ("Rename-Item dir/link b", "Move-Item dir/link b", "Remove-Item dir -Recurse"):
         assert "허가를 정하는 파일" in (call(repo, command, tool="PowerShell") or ""), command
-
-
-# Forms earlier rounds found acting outside the grant, each on a neutral target. The core table had no row
-# for any of them; rows added since still deny each one, and bring their own effect tests above.
-OUTSIDE_TABLE_FORMS = {
-    # File writers, copies and moves.
-    "rm": ("rm -rf ../outside", "Bash"),
-    "touch": ("touch .wiki/adapter.toml", "Bash"),
-    "cp-into-directory": ("cp ../adapter.toml .wiki", "Bash"),
-    "cp-target-flag": ("cp -t .wiki src/adapter.toml", "Bash"),
-    "mv-into-dir": ("mv src/adapter.toml .wiki", "Bash"),
-    "mktemp-outside": ("mktemp -p ../outside", "Bash"),
-    "copy-item": ("Copy-Item src/adapter.toml -Destination .wiki", "PowerShell"),
-    "move-item": ("Move-Item src/adapter.toml .wiki", "PowerShell"),
-    "set-content": ("Set-Content ../outside/target.txt x", "PowerShell"),
-    "remove-item": ("Remove-Item -LiteralPath:'../outside/target.txt'", "PowerShell"),
-    "cmd-copy": ('cmd /c "copy src\\adapter.toml .wiki"', "Bash"),
-    "cmd-del": ("cmd /c del /s target.txt", "Bash"),
-    # Links and trees.
-    "ln": ("ln -s ../outside link", "Bash"),
-    "cp-symbolic": ("cp -s ../outside/target.txt link && printf x > link", "Bash"),
-    "cp-archive": ("cp -a ../outside dir", "Bash"),
-    "rsync-archive": ("rsync -a ../outside/ dir", "Bash"),
-    "new-item-symlink": ("New-Item -ItemType SymbolicLink -Path link -Value ../outside", "PowerShell"),
-    "new-item-junction": ("ni -ItemType Junction link -Value ../outside", "PowerShell"),
-    "mklink": ("cmd /c mklink /J link ..\\outside", "Bash"),
-    "rename-item": ("Rename-Item src/adapter.toml .wiki", "PowerShell"),
-    # Archives.
-    "tar-extract": ("tar -xf bundle.tar -C safe", "Bash"),
-    "tar-remove-files": ("tar -cf saved.tar --remove-files ../outside/target.txt", "Bash"),
-    "unzip": ("unzip bundle.zip -d safe", "Bash"),
-    "gzip": ("gzip ../outside/target.txt", "Bash"),
-    "expand-archive": ("Expand-Archive bundle.zip -DestinationPath safe", "PowerShell"),
-    # Network clients.
-    "curl": ("curl -O http://localhost:8000/verification.toml", "Bash"),
-    "curl-connect-to": ("curl --connect-to localhost:80:unlisted.example:80 http://localhost/", "Bash"),
-    "wget": ("wget http://localhost:8000/verification.toml", "Bash"),
-    "web-request": ("Invoke-WebRequest http://localhost:8000/x -OutFile .wiki", "PowerShell"),
-    "gh-api": ("gh api https://unlisted.example/path", "Bash"),
-    "gh-clone": ("gh repo clone owner/repo out; printf x > out/link/target.txt", "Bash"),
-    "gh-pr-checkout": ("gh pr checkout 3", "Bash"),
-    # Script interpreters and code that runs code.
-    "awk": ("awk 'BEGIN { print \"x\" > \"../outside/target.txt\" }'", "Bash"),
-    "sed-write": ("sed 's/a/b/w ../outside/target.txt' startup.rc", "Bash"),
-    "xargs": ("ls | xargs rm", "Bash"),
-    "patch": ("patch -p1 < change.diff", "Bash"),
-    "find-delete": ("find . -name x -delete", "Bash"),
-    "find-exec": ("find . -execdir rm target.txt ';'", "Bash"),
-    "rg-preprocessor": ("rg --pre ./helper needle README.md", "Bash"),
-    "bash-startup-file": ("bash --rcfile startup.rc -ic 'true'", "Bash"),
-    "arithmetic": ("(( n = $(rm ../outside/target.txt) ))", "Bash"),
-    "let": ("let x=1", "Bash"),
-    "trap": ("trap 'rm ../outside/target.txt' EXIT", "Bash"),
-    "function": ("f() { echo x > target.txt; }; f", "Bash"),
-    "for-loop": ("for i in 1 2; do echo x > $i; done", "Bash"),
-    "hash-path": ("hash -p ./helper cat; cat", "Bash"),
-    "export": ("export GIT_DIR=../outside/.git", "Bash"),
-    "printf-name": ("printf -v PATH /outside/tools", "Bash"),
-    "read-name": ("read HTTPS_PROXY < startup.rc", "Bash"),
-    "ansi-c-escape": ("rm -- $'a\\tb'", "Bash"),
-    # PowerShell members, constructors, pipelines and computed commands.
-    "constructor": ("[System.IO.FileStream]::new('C:/outside/target.txt', 'Create').Dispose()", "PowerShell"),
-    "instance-method": ("(Get-Item README.md).CopyTo('../outside/target.md')", "PowerShell"),
-    "foreach-member": ("gi ../outside/target.txt | % Delete", "PowerShell"),
-    "foreach-script": ("Get-ChildItem | ForEach-Object { $_.Delete() }", "PowerShell"),
-    "member-assignment": ("(Get-Item ../outside/target.txt).IsReadOnly = $true", "PowerShell"),
-    "call-operator-expression": ("& ('Remove-' + 'Item') ../outside/target.txt", "PowerShell"),
-    "nested-shell-expression": ("pwsh -Command ('Remove-' + 'Item ../outside/target.txt')", "PowerShell"),
-    "start-process": ("Start-Process ../outside/python", "PowerShell"),
-    # git verbs and options outside the core rows.
-    "git-diff-output": ("git diff HEAD~1 HEAD --output=../other.patch", "Bash"),
-    "git-grep-pager": ("git grep --open-files-in-pager=./helper pattern", "Bash"),
-    "git-restore": ("git restore --source=HEAD~1 -- .wiki/adapter.toml", "Bash"),
-    "git-checkout": ("git checkout HEAD~1 -- verification.toml", "Bash"),
-    "git-mv": ("git mv a/link b; printf x > b/f", "Bash"),
-    "git-config": ("git config remote.origin.url https://unlisted.example/o/r.git", "Bash"),
-    "git-remote": ("git remote add other https://unlisted.example/o/r.git", "Bash"),
-    "git-merge-strategy": ("git merge -s helper topic", "Bash"),
-    "git-pull-url": ("git pull https://unlisted.example/o/r.git main", "Bash"),
-    "git-rebase-exec": ("git rebase -x 'rm ../outside/target.txt' main", "Bash"),
-    "git-rebase-interactive": ("git rebase -i main", "Bash"),
-    "git-reset": ("git reset --hard HEAD~1", "Bash"),
-    "git-stash-all": ("git stash push -a", "Bash"),
-    "git-fetch-url": ("git fetch https://unlisted.example/o/r.git", "Bash"),
-    "git-fetch-upload-pack": ("git fetch --upload-pack=./helper origin", "Bash"),
-    "git-clone": ("git clone https://github.com/owner/repo out", "Bash"),
-    "git-dash-c-outside": ("git -C ../outside status", "Bash"),
-    "git-dash-c-variable": ("git -C $W status", "Bash"),
-    "git-checkout-outside": ("git checkout HEAD~1 -- ../outside/target.txt", "Bash"),
-    "git-checkout-pattern": ("git checkout HEAD~1 -- '*.toml'", "Bash"),
-    "git-checkout-tree": ("git checkout HEAD~1 -- .", "Bash"),
-    "git-worktree-add-outside": ("git worktree add ../outside/wt", "Bash"),
-    "git-worktree-remove-outside": ("git worktree remove --force ../outside/wt", "Bash"),
-    "git-worktree-move": ("git worktree move wt ../outside/wt", "Bash"),
-    "git-remote-show": ("git remote show origin", "Bash"),
-    "git-config-pager": ("git -c core.pager=./helper log", "Bash"),
-    "git-branch-format": ("git branch '--format=%(signature)'", "Bash"),
-    "gh-pr-merge-number": ("gh pr merge 3 --squash", "Bash"),
-    "gh-pr-view-url": ("gh pr view https://unlisted.example/o/r/pull/3", "Bash"),
-    "gh-repo-flag": ("gh pr view -R other/repo 3", "Bash"),
-    "gh-repo-env": ("GH_REPO=other/repo gh pr merge --squash", "Bash"),
-    "gh-host-env": ("GH_HOST=unlisted.example gh pr view", "Bash"),
-    "gh-api-field": ("gh api repos/o/r/issues -f title=x", "Bash"),
-    "gh-api-method": ("gh api -X POST repos/o/r/issues", "Bash"),
-    "gh-api-hostname": ("gh api --hostname unlisted.example user", "Bash"),
-    "gh-web": ("gh pr view --web", "Bash"),
-    "gh-extension": ("gh extension install owner/gh-x", "Bash"),
-    "curl-follow": ("curl -L http://localhost:8000/x", "Bash"),
-    "curl-unlisted-host": ("curl -s https://unlisted.example/x", "Bash"),
-    "curl-userinfo-host": ("curl http://127.0.0.1@unlisted.example/x", "Bash"),
-    "curl-output-outside": ("curl -o ../outside/target.txt http://localhost:8000/x", "Bash"),
-    "curl-output-protected": ("curl -o verification.toml http://localhost:8000/x", "Bash"),
-    "curl-config-file": ("curl -K startup.rc http://localhost:8000/", "Bash"),
-    "curl-proxy": ("curl -x unlisted.example:8080 http://localhost:8000/", "Bash"),
-    "curl-proxy-env": ("HTTPS_PROXY=unlisted.example:8080 curl https://github.com/", "Bash"),
-    "curl-variable-host": ("curl -s localhost:$p/api", "Bash"),
-    "git-config-flag": ("git -c core.hooksPath=../outside commit -m x", "Bash"),
-    "git-dir": ("git --git-dir=../other/.git status", "Bash"),
-    "git-dir-variable": ("GIT_DIR=../other/.git git status", "Bash"),
-    "git-push-refspec": ("git push origin HEAD:main", "Bash"),
-    "git-push-force": ("git push --force origin topic", "Bash"),
-    "git-push-unlisted-remote": ("git push https://unlisted.example/o/r.git topic", "Bash"),
-    "git-commit-amend": ("git commit --amend -m x", "Bash"),
-}
-
-
-@pytest.mark.parametrize("form", OUTSIDE_TABLE_FORMS)
-def test_each_form_outside_the_table_is_denied(repo, form):
-    command, tool = OUTSIDE_TABLE_FORMS[form]
-    assert call(repo, command, tool=tool), form
-
-
-# Monotonicity: wrapping a command keeps every effect it had, so no wrapper turns a denial into a pass.
-WRAPPERS = {
-    "bash-c": lambda c: "bash -c " + shlex.quote(c),
-    "sh-lc": lambda c: "ls && sh -lc " + shlex.quote(c),
-    "substitution": lambda c: f"echo $({c})",
-}
-
-
-@pytest.mark.parametrize("wrapper", WRAPPERS)
-@pytest.mark.parametrize("form", [f for f, (_, tool) in OUTSIDE_TABLE_FORMS.items() if tool == "Bash"])
-def test_no_wrapper_turns_an_outside_table_form_into_a_pass(repo, form, wrapper):
-    assert call(repo, WRAPPERS[wrapper](OUTSIDE_TABLE_FORMS[form][0])), form
-
-
-# A member name the lexer cannot read as an identifier (an escape, a quote, a variable) is dynamic.
-@pytest.mark.parametrize("member", ["De`lete", "'Delete'", '"Delete"', "$m", "De``lete"])
-def test_a_member_name_that_is_not_an_identifier_is_denied(repo, member):
-    reason = call(repo, f"(Get-Item ../outside/target.txt).{member}()", tool="PowerShell")
-    assert reason and "판단할 수 없는" in reason, member
-
-
-# A PowerShell member name does not fix its effect (`String.Replace` reads, `FileInfo.Replace` writes):
-# every syntax that invokes a member on an unknown receiver is undecidable, whichever way it was written.
-MEMBER_FORMS = {
-    "instance-method": "(Get-Item README.md).Replace('../outside/target.md', $null)",
-    "foreach-object-membername": "Get-Item ../outside/target.txt | ForEach-Object -MemberName Delete",
-    "percent-positional": "gi ../outside/target.txt | % Delete",
-    "foreach-abbrev": "gi ../outside/target.txt | foreach -m Delete",
-    "wildcard-member": "gi ../outside/target.txt | % -MemberName Del*",
-    "member-with-arguments": "gi README.md | ForEach-Object -MemberName CopyTo -ArgumentList '../outside/t.md'",
-    "intrinsic-foreach-method": "(Get-Item ../outside/target.txt).ForEach('Delete')",
-    "invoke-member": "(Get-Item ../outside/target.txt).Delete.Invoke()",
-    "psobject-invoke": "(Get-Item ../outside/target.txt).PSObject.Methods['Delete'].Invoke()",
-    "dynamic-member": "(Get-Item ../outside/target.txt).$m()",
-    "quoted-member": "(Get-Item ../outside/target.txt).'Delete'()",
-    "member-assignment": "(Get-Item ../outside/target.txt).IsReadOnly = $true",
-    "setter-method": "(Get-Item ../outside/target.txt).set_IsReadOnly($true)",
-}
-
-
-@pytest.mark.parametrize("form", MEMBER_FORMS)
-def test_a_member_on_an_unknown_receiver_is_denied(repo, form):
-    assert "판단할 수 없는" in call(repo, MEMBER_FORMS[form], tool="PowerShell"), form
-
-
-def test_read_only_members_and_safe_receivers_stay_allowed(repo):
-    for ok in ("'a,b'.Split(',')", "'x'.Replace('x','y')", "(Get-Date).ToString()"):
-        assert call(repo, ok, tool="PowerShell") is None, ok
 
 
 # -- Declared blocks ------------------------------------------------------------
@@ -658,10 +539,6 @@ def test_declared_git_blocks_hold_inside_nested_shells(monkeypatch):
     assert not blocked("bash -c 'echo ready; git status'")
 
 
-def test_undecidable_calls_are_denied(repo):
-    assert "판단할 수 없는" in call(repo, 'eval "$X"')
-
-
 def test_edit_targets_must_lie_inside_the_write_roots(repo):
     assert call(repo, tool="Edit", file_path=str(repo / "a.py"), old_string="a", new_string="b") is None
     assert "write(" in call(repo, tool="Write", file_path=str(repo.parent / "b.py"), content="")
@@ -679,7 +556,7 @@ def test_a_plan_task_writes_only_under_its_artifact_root(repo, monkeypatch, tmp_
         {"review_profile": "plan", "artifact_root": "docs/plans/x", "worktree": str(repo)}), encoding="utf-8")
     monkeypatch.setattr(guard_grant, "HERE", hub)
     assert call(repo, "echo x > docs/plans/x/1-step.md") is None
-    assert "write_roots" in call(repo, "echo x > tool/a.py")
+    assert "쓰기 루트 밖이다" in call(repo, "echo x > tool/a.py")
 
 
 def test_unmanaged_sessions_and_unattached_folders_pass(repo, monkeypatch, tmp_path):
@@ -759,132 +636,31 @@ def test_any_exception_fails_open(monkeypatch, capsys):
     assert "hook skipped: RuntimeError" in capsys.readouterr().err
 
 
-# A command named by a path is that file, not the program its basename suggests: it never borrows a row
-# or a granted name, wherever the file lies and whichever runner starts it.
-def test_a_path_named_executable_is_judged_by_its_path(repo):
-    outside = repo.parent / "outside"
-    outside.mkdir()
-    (outside / "cat").write_text("#!/bin/sh\n", encoding="utf-8")
-    for command, tool in (("../outside/cat README.md", "Bash"), ("./python tool/x.py", "Bash"),
-                          ("../outside/python tool/x.py", "Bash"), ("./git push origin HEAD", "Bash"),
-                          ("/usr/bin/time python tool/search q", "Bash"), ("& ./python x", "PowerShell")):
-        assert "허가된 실행 파일이 아니다" in (call(repo, command, tool=tool) or ""), command
-    assert call(repo, "cat README.md && git status") is None
-
-
-def test_a_path_granted_by_path_is_allowed(repo):
-    adapter = repo / ".wiki/adapter.toml"
-    adapter.write_text(adapter.read_text(encoding="utf-8").replace(
-        'executables = ["npx"]', 'executables = ["npx", ".venv/bin/python"]'), encoding="utf-8")
-    assert call(repo, ".venv/bin/python -m pytest") is None
-    assert "허가된 실행 파일이 아니다" in call(repo, "../outside/.venv/bin/python -m pytest")
-
-
-# A variable that redirects a client to another host reaches that host, whatever program it is set for.
-@pytest.mark.parametrize("command", [
-    "GH_HOST=unlisted.example python -m ruff check tool",
-    "HTTPS_PROXY=http://unlisted.example:8080 python -m ruff check tool",
-])
-def test_a_variable_that_redirects_the_network_is_denied(repo, command):
-    assert "network(unlisted.example)" in (call(repo, command) or ""), command
-    # `GH_REPO` also picks the repository gh writes to, on any host: never decidable here.
-    assert "GH_REPO" in (call(repo, "GH_REPO=github.com/o/r python -m ruff check tool") or "")
-
-
-# A value computed at run time and then run (a command name, a nested shell's script) is undecidable; only
-# a literal script block is reduced as code.
-COMPUTED_FORMS = {
-    "call-operator-expression": "& ('Remove-' + 'Item') ../outside/target.txt",
-    "call-operator-command-lookup": "& (Get-Command Remove-Item) ../outside/target.txt",
-    "nested-shell-expression": "pwsh -Command ('Remove-' + 'Item ../outside/target.txt')",
-    "cmd-expression": "cmd /c ('del ..\\outside\\target.txt')",
-    "bash-expression": "bash -c ('rm ../outside/target.txt')",
-}
-
-
-@pytest.mark.parametrize("form", COMPUTED_FORMS)
-def test_a_computed_command_is_denied(repo, form):
-    assert "판단할 수 없는" in (call(repo, COMPUTED_FORMS[form], tool="PowerShell") or ""), form
-
-
 def test_a_literal_script_block_is_reduced_as_code(repo):
     assert call(repo, "& { Get-ChildItem }", tool="PowerShell") is None
     assert call(repo, "pwsh -Command { Get-ChildItem }", tool="PowerShell") is None
     assert "쓰기 루트 밖이다" in call(repo, "& { 'x' > ../outside/target.txt }", tool="PowerShell")
 
 
-# Constructs the parser reads but cannot evaluate: each reduces to `top`, never to a dropped effect.
-TOP_FORMS = {
-    "mklink": ("cmd /c mklink /J link ..\\outside", "Bash"),
-    "expand-archive": ("Expand-Archive bundle.zip -DestinationPath safe", "PowerShell"),
-    # Arithmetic evaluation.
-    "let": ("let x=1", "Bash"),
-    "dollar-arithmetic": ("echo $((n + 1))", "Bash"),
-    "dollar-bracket": ("echo $[n + 1]", "Bash"),
-    "arithmetic-command": ("(( n > 1 ))", "Bash"),
-    "arithmetic-test": ("[[ $n -eq 1 ]]", "Bash"),
-    "array-subscript": ("echo ${a[$i]}", "Bash"),
-    "substring-offset": ("echo ${s:$i}", "Bash"),
-    "indirect-expansion": ("echo ${!name}", "Bash"),
-    "subscript-assignment": ("a[$i]=1", "Bash"),
-    "web-request": ("Invoke-WebRequest http://localhost:8000/x -OutFile safe/x", "PowerShell"),
-    "wget": ("wget http://localhost:8000/verification.toml", "Bash"),
-    "patch": ("patch -p1 < change.diff", "Bash"),
-    "robocopy": ("cmd /c robocopy src .wiki adapter.toml", "Bash"),
-    "xcopy": ("cmd /c xcopy src .wiki", "Bash"),
-    "del-subdirectories": ("cmd /c del /s target.txt", "Bash"),
-    "cmd-for-command": ("cmd /c for /f %i in ('dir') do echo %i", "Bash"),
-}
-
-
-@pytest.mark.parametrize("form", TOP_FORMS)
-def test_each_unevaluated_construct_reduces_to_top(repo, form):
-    command, tool = TOP_FORMS[form]
-    reason = call(repo, command, tool=tool)
-    assert reason and "판단할 수 없는" in reason, (form, reason)
-
-
-# R4 F11 — an executable is keyed by the name it is run by, suffix and path included: a grant for one
-# file does not allow another that shares its stem.
-def test_executable_identities_keep_their_suffix(repo):
-    adapter = repo / ".wiki/adapter.toml"
-    adapter.write_text(adapter.read_text(encoding="utf-8").replace(
-        'executables = ["npx"]', 'executables = ["npx", "./helper.exe"]'), encoding="utf-8")
-    assert call(repo, "./helper.exe --version") is None
-    for command in ("./helper.cmd --version", "./helper --version", "./helper.bat"):
-        assert "허가된 실행 파일이 아니다" in (call(repo, command) or ""), command
-
-
-# Only the first statement may change the directory; anywhere else (a later statement, a group, a body, a
-# pipeline, a nested shell or a substitution) the places later paths resolve from are not fixed.
+# A readable directory change is followed wherever it stands: every later path is judged from each place
+# the shell may be in. A loop's body, a function or a nested shell's move is not (open by default).
 CD_FORMS = {
     "later-statement": ("echo x > a; cd ..; echo x > target.txt", "Bash"),
-    "for": ("cd sub && for i in 1 2; do cd ..; done; printf x > target.txt", "Bash"),
-    "while": ("while true; do cd ..; done; printf x > target.txt", "Bash"),
-    "if": ("if true; then cd sub; fi; printf x > target.txt", "Bash"),
+    "if": ("if true; then cd ..; fi; printf x > target.txt", "Bash"),
     "brace-group": ("{ cd ..; }; printf x > target.txt", "Bash"),
-    "function": ("f() { cd ..; }; printf x > target.txt", "Bash"),
     "pipeline": ("cd .. | cat; echo x > target.txt", "Bash"),
-    "substitution": ("echo $(cd ..); echo x > target.txt", "Bash"),
     "nested-shell": ("bash -c 'cd .. && echo x > target.txt'", "Bash"),
     "ps-two-moves": ("Set-Location d01; Set-Location ..; 'x' > target.txt", "PowerShell"),
     "ps-subexpression": ("Write-Output $(Set-Location ../outside); 'x' > target.txt", "PowerShell"),
     "ps-argument-group": ("Write-Output (Set-Location ../outside); 'x' > target.txt", "PowerShell"),
     "ps-pipeline-stage": ("Set-Location ../outside | Out-Null; 'x' > target.txt", "PowerShell"),
-    "ps-piped-location": ("Get-Item ../outside | Set-Location; 'x' > target.txt", "PowerShell"),
     "ps-statement-block": ("if ($true) { Set-Location ../outside }; 'x' > target.txt", "PowerShell"),
     "ps-nested-block": ("& { & { Set-Location ../outside } }; 'x' > target.txt", "PowerShell"),
-    "ps-bare-set-location": ("Set-Location; 'x' > target.txt", "PowerShell"),
-    "ps-foreach": ("foreach ($i in 1..2) { Set-Location .. }; 'x' > target.txt", "PowerShell"),
-    "ps-while": ("while ($true) { cd .. }; 'x' > target.txt", "PowerShell"),
-    "ps-function": ("function f { Set-Location .. }; f; 'x' > target.txt", "PowerShell"),
-    "ps-nested-shell": ("pwsh -c 'Set-Location ..'; 'x' > target.txt", "PowerShell"),
-    "cmd-for": ("cmd /c for %i in (1 2) do cd ..", "Bash"),
 }
 
 
 @pytest.mark.parametrize("form", CD_FORMS)
-def test_a_directory_change_after_the_first_statement_is_denied(repo, form):
+def test_a_directory_change_out_of_the_root_is_followed(repo, form):
     command, tool = CD_FORMS[form]
     assert call(repo, command, tool=tool), form
 
@@ -935,7 +711,6 @@ WORKDIR_FORMS = {
     "absolute-outside": lambda repo: {"workdir": str(repo.parent / "outside")},
     "relative-outside": lambda repo: {"workdir": "../outside"},
     "cwd-key": lambda repo: {"cwd": str(repo.parent / "outside")},
-    "unreadable": lambda repo: {"workdir": ["../outside"]},
 }
 
 
@@ -949,24 +724,6 @@ def test_a_shell_call_inside_the_checkout_stays_allowed(repo):
     assert call(repo, tool="exec_command", host_name="codex", cmd="echo x > target.txt", workdir="safe") is None
 
 
-# A builtin that assigns a name is judged as that assignment: a name that changes what runs, where files
-# land or which host is reached is `top` however it is assigned.
-NAME_FORMS = {
-    "printf-path": "printf -v PATH /outside/tools",
-    "printf-glued": "printf -vPATH /outside/tools",
-    "read-path": "read PATH < startup.rc",
-    "mapfile-command": "mapfile GIT_SSH_COMMAND < startup.rc",
-    "unset-home": "unset HOME",
-    "proxy": "read HTTPS_PROXY < startup.rc",
-    "git-dir": "GIT_DIR=../outside/.git",
-}
-
-
-@pytest.mark.parametrize("form", NAME_FORMS)
-def test_a_name_assigned_by_a_builtin_is_judged_like_an_assignment(repo, form):
-    assert "판단할 수 없는" in (call(repo, NAME_FORMS[form]) or ""), form
-
-
 # -- git ------------------------------------------------------------------------
 # A push reaches the configured remote's host, read from the repository git runs in; another repository's
 # remotes (a nested one, one outside the checkout) were never read, so a push from it is undecidable.
@@ -976,13 +733,6 @@ def test_the_checkouts_own_remotes_stay_allowed(repo):
     push = "git -c http.followRedirects=false push --no-recurse-submodules"
     for ok in (f"{push} origin HEAD", push, f"{push} -u origin topic", f"cd tool && {push} origin HEAD"):
         assert call(repo, ok) is None, ok
-
-
-def test_a_push_from_another_repository_is_denied(repo):
-    (repo / "sub/.git").mkdir(parents=True)
-    (repo.parent / "other").mkdir()
-    for bad in ("cd sub && git push origin HEAD", "cd ../other && git push origin HEAD"):
-        assert "판단할 수 없는" in (call(repo, bad) or ""), bad
 
 
 # -- Rev 5 review round 1 -------------------------------------------------------
@@ -1109,8 +859,6 @@ def test_a_rewrite_in_any_config_git_reads_leaves_pushes_unread(tmp_path, monkey
 
 def test_git_runs_only_in_the_checkout_whose_configuration_is_protected(repo):
     (repo / "sub/.git").mkdir(parents=True)
-    for command in ("cd sub && git diff -- sample.dat", "cd sub && git status", "cd sub && git commit -m x"):
-        assert "판단할 수 없는" in (call(repo, command) or ""), command
     # Nothing may lay a repository down for git to trust, by a redirection or an edit tool.
     for command in ("echo x > sub2/.git", "echo x > sub/.git/config", "echo x > sub/.GIT/config"):
         assert "허가를 정하는 파일" in (call(repo, command) or ""), command
@@ -1127,8 +875,6 @@ def test_a_link_into_another_repository_is_that_repository(repo):
         subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(other / "sub")], check=True, capture_output=True)
     else:
         link.symlink_to(other / "sub", target_is_directory=True)
-    for command in ("cd link && git diff", "cd link && git push origin HEAD"):
-        assert "판단할 수 없는" in (call(repo, command) or ""), command
     (repo / "tool").mkdir()
     assert call(repo, "cd tool && git diff") is None
 
@@ -1180,38 +926,30 @@ def test_the_new_rows_pass_in_an_attached_checkout(repo):
 
 
 def test_a_worktree_of_the_same_repository_is_the_checkout(repo):
-    """A linked worktree shares the checkout's configuration and remotes; another repository does not."""
+    """A linked worktree shares the checkout's configuration and remotes."""
     temp = Path(os.environ["TEMP"])
     wt = temp / "wt"
     wt.mkdir()
     (repo / ".git/worktrees/wt").mkdir(parents=True)
     (repo / ".git/worktrees/wt/commondir").write_text("../..\n", encoding="utf-8")
     (wt / ".git").write_text(f"gitdir: {(repo / '.git/worktrees/wt').as_posix()}\n", encoding="utf-8")
-    other = temp / "other"
-    (other / ".git").mkdir(parents=True)
-    w, o = wt.as_posix(), other.as_posix()
+    w = wt.as_posix()
     for command in (f"git -C {w} status", f"git -C {w} commit -qm x",
                     f"git -C {w} -c http.followRedirects=false push --no-recurse-submodules origin HEAD"):
         assert call(repo, command) is None, command
-    for command in (f"git -C {o} status", f"cd {o} && git fetch origin"):
-        assert "판단할 수 없는" in (call(repo, command) or ""), command
 
 
 def test_git_does_not_write_while_its_hooks_are_writable(repo):
     """A hooks folder inside a write root holds code the agent may edit and git then runs."""
     config = repo / ".git/config"
     base = config.read_text(encoding="utf-8")
-    # A relative value depends on the worktree that runs it; an inline key, an include or a per-worktree
-    # file is configuration the reader does not see: each counts as a folder the task may write.
+    # A relative value depends on the worktree that runs it, and an inline key counts the same.
     for setting in ("[core]\n\thooksPath = .githooks", "[core] hooksPath = .githooks", "[core]\n\thooksPath = ../hooks",
-                    '[core]\n\thooksPath = "hooks dir"', f"[core]\n\thooksPath = {(repo / 'hooks').as_posix()}",
-                    "[include]\n\tpath = more.config", "[extensions]\n\tworktreeConfig = true"):
+                    '[core]\n\thooksPath = "hooks dir"', f"[core]\n\thooksPath = {(repo / 'hooks').as_posix()}"):
         config.write_text(base + setting + "\n", encoding="utf-8")
-        # A file this reader does not open may also hold a promisor remote, which stops every git form earlier.
-        hidden = "include" in setting or "worktreeConfig" in setting
         for command in ("git commit -qm x", "git merge --no-edit origin/main"):
-            assert ("partial clone" if hidden else "훅 폴더") in (call(repo, command) or ""), (setting, command)
-        assert (call(repo, "git status") is None) != hidden, setting
+            assert "훅 폴더" in (call(repo, command) or ""), (setting, command)
+        assert call(repo, "git status") is None, setting
     config.write_text(base + f"[core]\n\thooksPath = {(repo.parent / 'hooks').as_posix()}\n", encoding="utf-8")
     assert call(repo, "git commit -qm x") is None
 
@@ -1232,19 +970,7 @@ def test_a_worktree_is_removed_only_by_its_absolute_path():
     assert any(e.startswith("top(") for e in effects("git worktree remove --force sibling", ctx=POSIX))
 
 
-@pytest.mark.parametrize("command,dialect", [
-    ("$env:GH_REPO='github.com/owner/other'; gh pr edit --body x", "ps"),
-    ("$env:GH_REPO+='github.com/owner/other'; gh pr edit --body x", "ps"),
-    ("$env:GH_REPO += 'github.com/owner/other'; gh pr edit --body x", "ps"),
-    ("GH_REPO=owner/other gh pr edit --body x", "posix"),
-])
-def test_gh_never_targets_another_repository(command, dialect):
-    assert any(e.startswith("top(") for e in effects(command, dialect, ctx=replace(POSIX, d=dialect)))
-
-
 def test_a_powershell_assignment_written_as_one_word_is_still_an_assignment():
-    for command in ("$env:PATH='C:/tools'; git status", "$env:PATH+=';C:/tools'; git status"):
-        assert any("PATH" in e for e in effects(command, "ps")), command
     assert effects("$env:PYTHONIOENCODING='utf-8'; $x='rm'; $n+=1; git status", "ps") == {"read"}
 
 
@@ -1257,19 +983,11 @@ def test_gh_is_only_a_spawn(command):
     assert effects(command, ctx=POSIX) == {"read", "spawn(gh)"}, command
 
 
-def test_curl_is_only_a_spawn_again():
-    assert effects("curl -s https://github.com/", ctx=POSIX) == {"read", "spawn(curl)"}
-
-
 def test_a_host_is_read_from_the_authority_alone():
     for target in ("https://unlisted.example?@github.com", "https://unlisted.example#@github.com",
                    "https://unlisted.example/@github.com"):
-        found = effects(f"HTTPS_PROXY='{target}' python -m ruff check tool", ctx=POSIX)
+        found = effects(f"git push '{target}' main", ctx=POSIX)
         assert "network(unlisted.example)" in found and "network(github.com)" not in found, target
-
-
-def test_a_tls_key_log_is_a_write_the_guard_cannot_place():
-    assert any("SSLKEYLOGFILE" in e for e in effects("SSLKEYLOGFILE=verification.toml git fetch origin", ctx=POSIX))
 
 
 def test_a_per_worktree_configuration_leaves_the_remotes_unread(tmp_path):
@@ -1314,11 +1032,6 @@ def test_a_configured_redirect_setting_leaves_the_remotes_unread(tmp_path):
 def test_a_drive_path_is_relative_on_posix():
     assert any(e.startswith("top(") for e in effects("git worktree remove --force C:/work/wt", ctx=POSIX))
     assert "delete(/tmp/wt)" in effects("git worktree remove --force /tmp/wt", ctx=POSIX)
-
-
-@pytest.mark.parametrize("name", ["GIT_TRACE", "GIT_TRACE2_EVENT", "GIT_TRACE_PACKET"])
-def test_a_git_trace_file_is_a_write_the_guard_cannot_place(name):
-    assert any(name in e for e in effects(f"{name}=/tmp/t.txt git worktree list", ctx=POSIX))
 
 
 def test_every_git_row_is_top_in_a_partial_clone(tmp_path):
@@ -1429,7 +1142,6 @@ def test_a_named_file_is_staged_as_a_write_of_it(repo):
     (repo / "notes").mkdir()
     assert effects("git add -u notes.md", ctx=POSIX) == {"read", "write(/work/repo)", "write(/work/repo/notes.md)"}
     assert "허가를 정하는 파일" in (call(repo, "git add .wiki/adapter.toml") or "")
-    assert "of a folder" in (call(repo, "git add notes") or "")
     assert call(repo, "git add notes.md") is None
 
 

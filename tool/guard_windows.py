@@ -1,4 +1,4 @@
-"""PowerShell cmdlets and cmd.exe builtins: the Windows half of the closed table, for `guard`.
+"""PowerShell cmdlets and cmd.exe builtins: the Windows half of the program table, for `guard`.
 
 `PS_ROWS` lists each modelled cmdlet with the parameters it understands, by
 full name or a listed alias (no abbreviation is guessed): cmdlets that only

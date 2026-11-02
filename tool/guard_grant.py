@@ -2,11 +2,14 @@
 
 The grant is read off files, never a model: the checkout's root (or a plan
 task's artifact root), the temporary directories and the session's memory
-folder as write roots; the executables the adapter's gate, verification and
-registered checks spawn, parsed by the same algebra; the git remotes' hosts
-plus the loopback the search daemon answers on; and an optional `[guard]`
-table that adds write roots, network hosts and executables but never a
-command pattern.
+folder as write roots, and the git remotes' hosts plus the loopback the
+search daemon answers on.
+
+The guard is open by default: it denies only what it can read as leaving
+the grant — a write or delete outside the write roots, a protected file, a
+push to a host no remote names. A program, option or form it cannot read
+passes; the agent is not an adversary, and a closed table that opens one
+row at a time cost more than the accidents it caught.
 """
 
 from __future__ import annotations
@@ -19,14 +22,13 @@ import re
 import shutil
 import tempfile
 
-from guard import HERE, Ctx, contained, derive, real_path
+from guard import HERE, contained, real_path
 
 
 @dataclass
 class Grant:
     roots: list
     protected: list
-    executables: set
     hosts: set
     remotes: tuple
     top: str = ""                       # the checkout the remotes were read from
@@ -208,7 +210,6 @@ def plan_root(top: Path, spec: dict) -> Path | None:
 
 def grant(cwd: Path, payload: dict) -> Grant | None:
     """What this task may do, computed for this call; `None` where no repository is attached."""
-    from guard_models import host_of, spawn_of
 
     found = layout(cwd.resolve())
     if found is None:
@@ -217,35 +218,18 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
     adapter = next((p / ".wiki/adapter.toml" for p in (main, top) if (p / ".wiki/adapter.toml").is_file()), None)
     if adapter is None:
         return None
-    data = toml(adapter)
-    table = data.get("guard") if isinstance(data.get("guard"), dict) else {}
-
-    def strings(key: str) -> list:
-        value = table.get(key)
-        return [s for s in value if isinstance(s, str)] if isinstance(value, list) else []
-
     spec = task_spec(top, gitdir, main)
     roots = [plan_root(top, spec) or top, *temps()]
     if payload.get("transcript_path"):
         roots.append(Path(str(payload["transcript_path"])).parent / "memory")
-    roots += [top / Path(r).expanduser() for r in strings("write_roots") if not re.search(r"[$%]", r)]
-    checks = data.get("checks") if isinstance(data.get("checks"), dict) else {}
-    verification = (toml(top / "verification.toml") or toml(main / "verification.toml")).get("verification") or {}
-    commands = [str((data.get("slots") or {}).get("gate_cmd") or ""), SEARCH]
-    commands += [str(verification.get(k) or "") for k in ("round", "local")]
-    commands += [str(c.get("cmd") or "") for c in checks.values() if isinstance(c, dict)]
-    ctx = Ctx("posix", frozenset({top.as_posix()}), Path.home().as_posix(), temps()[0].as_posix(), os.name == "nt")
-    executables = {e[1] for c in commands if c.strip() for e in derive(c, "posix", ctx) if e[0] == "spawn"}
-    # A path entry names that file (`.venv/bin/python`), keyed the way the judge keys a path-named command.
-    executables |= {e[1] for s in strings("executables") for e in spawn_of(s, ctx) if e[0] == "spawn"}
     remotes = remote_hosts(common)
-    hosts = {"127.0.0.1"} | {h for _, h in remotes if h != UNREAD} | {host_of(s) for s in strings("network_hosts")}
+    hosts = {"127.0.0.1"} | {h for _, h in remotes if h != UNREAD}
     # The git directories themselves, whatever they are named: a bare common directory (`shared.git`) holds
     # the configuration and hooks git trusts, with no `.git` in its path.
     protected = sorted({str(p / x) for p in (top, main) for x in PROTECTED} | {str(gitdir), str(common)})
     writable = [h or top.as_posix() for h in hook_folders(common) if h is None
                 or contained(h, [str(r) for r in roots]) and not any(contained(h, [p]) for p in protected)]
-    return Grant([str(r) for r in roots], protected, executables, hosts, remotes, top.as_posix(),
+    return Grant([str(r) for r in roots], protected, hosts, remotes, top.as_posix(),
                  writable[0] if writable else "")
 
 
@@ -294,16 +278,12 @@ def holds_protected(target: str) -> bool:
 def outside(effect: tuple, g: Grant) -> str | None:
     """Why `effect` leaves the grant, naming what would allow it; `None` when it is inside."""
     kind, target = effect
-    if kind == "read":
+    # Open by default: a form the guard cannot read, and any program it starts, pass.
+    if kind in ("read", "top", "spawn"):
         return None
-    if kind == "top":
-        return f"판단할 수 없는 형태다({target}) — 어떤 허가로도 열리지 않으니, 리터럴 경로와 직접 실행하는 명령으로 풀어 쓴다"
-    if kind == "spawn":
-        return None if target in g.executables else \
-            f"허가된 실행 파일이 아니다 — `.wiki/adapter.toml` 의 `[guard] executables` 에 `{target}` 를 더하면 열린다"
     if kind == "network":
         return None if target in g.hosts else \
-            f"허가된 호스트가 아니다 — `.wiki/adapter.toml` 의 `[guard] network_hosts` 에 `{target}` 를 더하면 열린다"
+            f"원격 저장소가 아닌 호스트({target})로 보낸다 — `git remote add` 로 원격을 먼저 더하면 열린다"
     if kind == "repo" and g.hooks:
         return (f"git 이 작업이 고칠 수 있는 훅 폴더({g.hooks})의 훅을 실행한다 — `core.hooksPath` 를 쓰기 루트 "
                 "밖으로 옮기기 전에는 어떤 허가로도 열리지 않으니, 사람이 직접 실행한다")
@@ -320,7 +300,7 @@ def outside(effect: tuple, g: Grant) -> str | None:
     # A delete reaches whatever lies below it, another worktree's protected copy included.
     holds = kind == "delete" and holds_protected(target)
     if any(contained(target, [p]) for p in g.protected) or reaches_protected or git_dir or holds:
-        return "허가를 정하는 파일이다 — 어떤 `[guard]` 항목으로도 열리지 않고, 사람이 직접 고친다"
+        return "허가를 정하는 파일이다 — 어떤 명령으로도 열리지 않고, 사람이 직접 고친다"
     if contained(target, g.roots):
         return None
-    return "쓰기 루트 밖이다 — `.wiki/adapter.toml` 의 `[guard] write_roots` 에 이 경로를 담은 디렉터리를 더하면 열린다"
+    return "쓰기 루트 밖이다 — 체크아웃, 임시 폴더, 세션 메모리 폴더 안에서만 쓰고 지운다"

@@ -1,4 +1,4 @@
-"""git: the row of the closed table that changes the repository or reaches the network, for `guard`.
+"""git: the row of the program table that changes the repository or reaches the network, for `guard`.
 
 git runs only in the checkout the grant was read for, or a worktree of the
 same repository, and only with the options and verbs listed here. What git
@@ -13,10 +13,7 @@ write of the repository is a write of the whole worktree it runs in. A push
 turns off HTTP redirects and submodule recursion on the command line, so only
 the configured remote's own hosts are reached; fetch and pull have no row,
 since a server may answer in protocol v2 and name another host for the pack.
-
-gh and curl have no row, so they are only spawns: their HTTP clients follow
-redirects a response names, and nothing on the command line turns that off,
-so the hosts they reach are not decided by the argv.
+A URL given in place of a remote reaches its host.
 """
 
 from __future__ import annotations
@@ -184,7 +181,12 @@ def worktrees(ctx) -> set:
 def reached(verb: str, pos: list, ctx) -> set:
     """The hosts `git push [REMOTE [BRANCH]]` reaches: every `url` and `pushurl` the grant read for that
     remote, or for every destination when none is named. A refspec with `+`, `:` or a revision suffix (a
-    forced push, a deletion, another ref) is not in its row."""
+    forced push, a deletion, another ref) is not in its row. A URL in place of a remote reaches its host,
+    which the grant allows only when a remote names it."""
+    from guard_models import host_of
+
+    if pos and not pos[0].why and re.match(r"[a-zA-Z][\w+.-]*://|[^/\\:\s]{2,}:(?!\\)", pos[0].text):
+        return {("network", host_of(pos[0].text))}
     if any(w.why for w in pos) or pos and pos[0].text not in {n for n, _ in ctx.remotes} or not ctx.remotes \
             or len(pos) > 2 or len(pos) == 2 and re.search(r"[+:^~@{}]", pos[1].text):
         return top(f"git {verb} to anything but a configured remote and a branch")

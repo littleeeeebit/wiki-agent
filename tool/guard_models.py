@@ -1,22 +1,17 @@
-"""What each program does: a closed table of modelled programs, each with the flags it understands.
+"""What each program does: a table of modelled programs and the effects their argv has.
 
-`TABLE` is all the guard knows about programs, and it is kept small: programs
-that only read or print, `sort -o`/`uniq` writing their one output, `cd`,
-`find` without actions, nested shells, and git (its row is in `guard_git`).
-A row
-names a program, the flags it understands (`row`'s spec: one-letter flags,
-flags taking a value, long flags) and the model that maps its argv to effects.
-`gate` runs before every model: a flag the row does not list is `top`, and so
-is a word computed at run time where a flag may stand, unless no option of the
-program writes, runs or connects (`inert`). Some rows exist only to refuse
-(`refuse`). A program with no row is a `spawn` of that executable, which only
-a grant naming it allows. A denied ordinary command is answered by adding a
-row in a later change, never by modelling one more form inside this one.
+A row names a program, the flags it understands (`row`'s spec: one-letter
+flags, flags taking a value, long flags) and the model that maps its argv to
+effects. `gate` runs before a model: a flag the row does not list is `top`.
+The POSIX writers (`m_paths`) skip the gate and judge their path operands
+whatever the options. A program with no row is a `spawn` of that executable.
+The guard is open by default, so `top` and `spawn` pass (`guard_grant`).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import os
 import re
 
 from guard import BLOCK, Word, code, moved_to, names_set, paths, resolve, top
@@ -170,6 +165,53 @@ def writes(kind: str, ws: list, ctx) -> set:
     out = set()
     for w in ws:
         out |= paths(kind, w, ctx)
+    return out
+
+
+# Open default: these write or delete the paths they are given, judged without reading their options. A
+# flag's value is judged like a path too (`truncate -s 0 f` also writes `0`), which only errs inside the root.
+DELETERS, MAKERS, MOVERS = {"rm", "rmdir", "unlink", "shred"}, {"mkdir", "touch", "tee", "truncate"}, \
+    {"cp", "mv", "install", "ln"}
+OUTPUTS = {"curl": ("-o", "--output"), "wget": ("-O", "--output-document", "-P", "--directory-prefix")}
+
+
+def m_paths(name, args, ctx):
+    ops, given, i = [], [], 0
+    while i < len(args):
+        w, t = args[i], args[i].text
+        if t == "--" and not w.why:
+            ops += args[i + 1:]
+            break
+        flag, _, glued = t.partition("=")
+        if name in OUTPUTS and flag in OUTPUTS[name] or name in MOVERS and flag in ("-t", "--target-directory"):
+            value = Word(glued, w.why) if glued else args[i + 1] if i + 1 < len(args) else None
+            given += [value] if value else []
+            i += 1 if glued else 2
+            continue
+        if not t.startswith("-") or w.why:
+            ops.append(w)
+        i += 1
+    if name in OUTPUTS:
+        return writes("write", given, ctx), None
+    if name in DELETERS | MAKERS:
+        return writes("delete" if name in DELETERS else "write", ops, ctx), None
+    # A mover's destination is `-t`'s folder, else its last operand.
+    srcs, dests = (ops, given) if given else (ops[:-1], ops[-1:])
+    return lands(srcs, dests, bool(given), ctx) | (writes("delete", srcs, ctx) if name == "mv" else set()), None
+
+
+def lands(srcs: list, dests: list, folder: bool, ctx) -> set:
+    """Where sources land: a folder destination (`-t`, a trailing separator, or one that exists now) takes each
+    source's last name, so `cp x .` writes `./x`, not the checkout; any other destination is written as named."""
+    out = set()
+    for d in dests:
+        into = folder or not d.why and (re.search(r"[\\/]$", d.text) or any(
+            c and os.path.isdir(resolve(d.text, c, ctx) or "") for c in ctx.cwds))
+        names = [re.split(r"[\\/]+", s.text.rstrip("\\/"))[-1] for s in srcs]
+        if into and srcs and all(n not in ("", ".", "..") for n in names) and not any(s.why for s in srcs):
+            out |= writes("write", [Word(d.text.rstrip("\\/") + "/" + n, d.why) for n in names], ctx)
+        else:
+            out |= paths("write", d, ctx)
     return out
 
 
@@ -545,7 +587,7 @@ TABLE = {
     "patch": row(refuse("writes the files its patch names"), free=True),
     "split": row(refuse("names its output files itself"), free=True),
     "csplit": row(refuse("names its output files itself"), free=True),
-    "wget": row(refuse("follows redirects and names its downloads itself"), free=True),
+    **{p: row(m_paths, free=True) for p in DELETERS | MAKERS | MOVERS | set(OUTPUTS)},
     "let": row(refuse("evaluates arithmetic, which runs what its variables hold"), free=True),
     "alias": row(refuse("defines a command the guard cannot follow"), free=True),
     **{e: row(refuse("runs code the guard cannot read"), free=True) for e in ("eval", "source", ".")},
