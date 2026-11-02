@@ -295,6 +295,7 @@ def test_a_program_with_no_row_is_only_a_spawn(repo):
     ("./scripts/run_user.cmd", "Bash"), ("scripts\\run_user.cmd", "PowerShell"), ("& .\\scripts\\x.ps1", "PowerShell"),
     ("bash scripts/check.sh", "Bash"), ("pwsh -File scripts/check.ps1", "Bash"), ("cmd /c call run_user.cmd", "Bash"),
     ("cmd /c start npm run dev", "Bash"), ("command -v npm && export NODE_ENV=test && npm test", "Bash"),
+    ("command -pv npm; export \"NODE_ENV=test\" CI; command -- npm test", "Bash"),
     ("../outside/python x.py", "Bash"),
     # A program with no row runs its own code, as `python -c` always did: what it does is not judged.
     ("rm -rf ../outside", "Bash"), ("curl -o ../outside/x http://localhost:8000/x", "Bash"), ("gh pr view 3", "Bash"),
@@ -304,8 +305,12 @@ def test_any_program_of_any_toolchain_runs(repo, command, tool):
 
 
 # Builtins that set what later statements of this shell run are not programs.
-@pytest.mark.parametrize("command", ["export GIT_DIR=../o/.git", "export -f f", "trap 'x' EXIT", "exec > ../o/f",
-                                     "declare -x PATH=/o", "builtin cd ..", "command git push --force origin x"])
+@pytest.mark.parametrize("command", [
+    "export GIT_DIR=../o/.git", "export 'GIT_DIR=../o/.git'", "export \"PATH=/o\"", "export -f f", "export \"$N=1\"",
+    "trap 'x' EXIT", "exec > ../o/f", "declare -x PATH=/o", "builtin cd ..", "compgen -W '$((PATH=1))'; git status",
+    "command git push --force origin x", "command -- git push --force origin x", "command -p -- git push --force o x",
+    "command -x git", 'cmd /c "call cd .. & echo x > target.txt"', 'cmd /c "call set GIT_DIR=..\\o\\.git & git status"',
+])
 def test_a_shell_builtin_outside_the_table_stays_denied(repo, command):
     assert call(repo, command), command
 

@@ -233,16 +233,18 @@ Four rules hold across the table:
   substitution standing where an option may stand.
 - A program with no row is `spawn(name)`, and a spawn always passes, in
   whatever language the project is written. So does a script file a shell
-  runs (`./run.cmd`, `bash x.sh`, `pwsh -File x.ps1`, cmd's `call` and
-  `start`). A path-named program (`./helper.exe`) is that file, suffix
-  included, and never borrows the row of the program its basename names. A
-  PowerShell cmdlet or member with no row is `top`: it runs inside the
-  runspace, not as a program. So is a bash builtin with no row that sets what
-  later statements run, where, or with which variables (`trap`, `exec`,
-  `declare`, `local`, `readonly`, `builtin`, `pushd`, `popd`, `fc`,
-  `getopts`, `enable`). `command -v` only looks a name up, `command CMD` is
-  CMD judged as itself, and `export` of names and `NAME=value` words is judged
-  like those assignments.
+  runs (`./run.cmd`, `bash x.sh`, `pwsh -File x.ps1`, cmd's `start`, and a
+  batch file or program cmd's `call` runs). A path-named program
+  (`./helper.exe`) is that file, suffix included, and never borrows the row
+  of the program its basename names. A PowerShell cmdlet or member with no
+  row is `top`: it runs inside the runspace, not as a program. So is a bash
+  builtin with no row that sets what later statements run, where, or with
+  which variables (`trap`, `exec`, `declare`, `local`, `readonly`, `builtin`,
+  `pushd`, `popd`, `fc`, `getopts`, `enable`, `compgen`, `complete`,
+  `compopt`, `bind`). `command -v` only looks a name up, `command [-p] [--]
+  CMD` is CMD judged as itself, cmd's `call` of a builtin is that builtin
+  (`call cd ..` moves, `call set` is `top`), and `export` of names and literal
+  `NAME=value` words, quoted or not, is judged like those assignments.
 - A name set by a builtin (`read`, `printf -v`, `mapfile`, `unset`) is judged
   like an assignment: setting an execution or destination variable (`PATH`,
   `HOME`, the proxy variables, `GIT_DIR`, `GIT_WORK_TREE`) that way is `top`.

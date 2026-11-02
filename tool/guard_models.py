@@ -34,10 +34,10 @@ KEYWORDS = {
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 # bash builtins with no row that set what later statements of this shell run, where, with which variables
 # or output (`trap … EXIT`, `exec > f`, `declare -x GIT_DIR=…`, `builtin cd`, `fc` rerunning history,
-# `enable -f` loading code). They are not programs, so they are `top`, never a `spawn`. `command` and
-# `export` are read by `posix_builtin`.
-POSIX_BUILTINS = {"builtin", "declare", "enable", "exec", "fc", "getopts", "local", "popd", "pushd", "readonly",
-                  "trap", "typeset"}
+# `enable -f` loading code, `compgen -W` expanding its word list here, `bind -x`). They are not programs,
+# so they are `top`, never a `spawn`. `command` and `export` are read by `posix_builtin`.
+POSIX_BUILTINS = {"bind", "builtin", "compgen", "complete", "compopt", "declare", "enable", "exec", "fc",
+                  "getopts", "local", "popd", "pushd", "readonly", "trap", "typeset"}
 PS_SHELLS = {"pwsh", "powershell"}
 
 
@@ -564,8 +564,8 @@ def spawn_of(raw: str, ctx) -> set:
     """`spawn` of the program `raw` names, keyed by what identifies it.
 
     A bare name is looked up on PATH and keyed by that name. A name with a path is that very
-    file, keyed by where it resolves, so neither a planted `./cat` nor `../outside/python` borrows
-    the model or the grant of the program its basename suggests; the grant names it by path.
+    file, keyed by where it resolves, so neither a planted `./cat` nor `./git` borrows the model of
+    the program its basename suggests.
     """
     if not re.search(r"[\\/]", raw):
         return {("spawn", exe(raw, ctx.windows))}
@@ -583,19 +583,28 @@ def spawn_of(raw: str, ctx) -> set:
 
 
 def posix_builtin(name: str, args: list, ctx) -> tuple[set, object]:
-    """`command -v NAME` looks a name up and `command [-p] CMD …` runs CMD, judged as itself. `export`
-    of names and `NAME=value` words is judged like those assignments; any flag is `top`."""
+    """`command -v NAME` looks a name up and `command [-p] [--] CMD …` runs CMD, judged as itself.
+    `export` of names and literal `NAME=value` words, quoted or not, is judged like those assignments;
+    any flag or computed name is `top`."""
     from guard import assignment, envs
 
     if name == "command":
-        if args[:1] and args[0].text in ("-v", "-V") and not args[0].why:
+        i, lookup = 0, False
+        while i < len(args) and args[i].text.startswith("-") and args[i].text != "-":
+            if args[i].why or not re.fullmatch(r"--|-[pvV]+", args[i].text):
+                return top(f"command {args[i].text}: an option the table does not model"), None
+            i += 1
+            if args[i - 1].text == "--":
+                break
+            lookup = lookup or bool(re.search("[vV]", args[i - 1].text))
+        if lookup or i == len(args):
             return set(), None
-        rest = args[1:] if args[:1] and args[0].text == "-p" and not args[0].why else args
-        return run_argv(rest, ctx) if rest else (set(), None)
-    if any(w.why and not assignment(w) or not assignment(w) and not re.fullmatch(r"[A-Za-z_]\w*", w.text)
-           for w in args):
+        return run_argv(args[i:], ctx)
+    # `export` reads its argument's `NAME=` after quote removal, unlike an assignment before a command.
+    assigned = [w for w in args if assignment(w) or not w.why and re.match(r"[A-Za-z_]\w*\+?=", w.text)]
+    if any(w not in assigned and (w.why or not re.fullmatch(r"[A-Za-z_]\w*", w.text)) for w in args):
         return top("export: a flag or a computed name"), None
-    return envs([w for w in args if assignment(w)], ctx), None
+    return envs(assigned, ctx), None
 
 
 def run_argv(words: list, ctx) -> tuple[set, object]:
