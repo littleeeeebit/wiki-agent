@@ -488,8 +488,10 @@ def bound_once(src: str, d: str) -> set:
         src = re.sub(r"<<-?\s*(['\"])([\w.-]+)\1(.*?\n).*?^\t*\2\r?$", r"\3", src, flags=re.M | re.S)
         if re.search(r"\b(?:eval|source)\b|(?:^|[;&|\s])\.\s", src):
             return set()
-        # A quote may open it (`export "S=.."` rebinds `S`); a quoted `x=` binding nothing only untracks x.
-        counts = Counter(re.findall(r"(?:^|[\s;&|(`{])['\"]?([A-Za-z_]\w*)\+?=", src))
+        counts = Counter(re.findall(r"(?:^|[\s;&|(`{])([A-Za-z_]\w*)\+?=", src))
+        # `export` binds a word's `NAME=` after quote removal (`"S"=..`, `S\=..`): count each quoted one.
+        counts.update(m.group(1) for a in re.findall(r"\bexport\b([^;&|\n]*)", src) for t in a.split()
+                      if re.search(r"['\"\\]", t) and (m := re.match(r"([A-Za-z_]\w*)\+?=", re.sub(r"['\"\\]", "", t))))
         counts.update(re.findall(r"\$\{([A-Za-z_]\w*):?=", src))
         counts.update(re.findall(r"\b(?:for|select)\s+([A-Za-z_]\w*)", src))
         counts.update(re.findall(r"\bprintf\s+-v\s*([A-Za-z_]\w*)", src))

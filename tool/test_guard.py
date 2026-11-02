@@ -311,7 +311,8 @@ def test_any_program_of_any_toolchain_runs(repo, command, tool):
     "command git push --force origin x", "command -- git push --force origin x", "command -p -- git push --force o x",
     "command -x git", 'cmd /c "call cd .. & echo x > target.txt"', 'cmd /c "call set GIT_DIR=..\\o\\.git & git status"',
     # A quoted export rebinds a name a path uses later: the earlier literal no longer stands for it.
-    'S=safe; export "S=.."; echo x > "$S/target.txt"', "S=safe; export 'S+=/../..'; echo x > \"$S/target.txt\"",
+    *[f'S=safe; export {form}; echo x > "$S/target.txt"' for form in
+      ('"S=.."', "'S+=/../..'", '"S"=..', 'S"=.."', "''S=..", "\\S=..", "S\\=..", '"S"+=/../..')],
 ])
 def test_a_shell_builtin_outside_the_table_stays_denied(repo, command):
     assert call(repo, command), command
