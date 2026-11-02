@@ -160,6 +160,8 @@ Four rules hold across the table:
 - A directory change anywhere but the first statement (a later statement, a
   group, a branch, a pipeline, a substitution, a nested shell) is `top`, and
   so are loops, functions and traps, whose bodies run any number of times.
+  PowerShell's `using module` and `using assembly` load code and are `top`;
+  only `using namespace` is a declaration.
 
 Everything else is denied in app-managed sessions: file writers such as `rm`,
 `cp`, `mv`, `touch`, `Set-Content` and `Remove-Item`, archives, links, `curl`,
@@ -173,7 +175,7 @@ is answered by adding a row there, not by loosening an existing one.
 | `write`, `delete` | the path resolves (links, junctions and `..` followed) inside a write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder; each `[guard] write_roots` entry, relative to the checkout |
 | — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (`echo x > .wiki`, `echo x > .`). Only git's own write of the repository it runs in (`add`, `commit`, `push`) is judged by place alone |
 | `spawn` | the executable is one that `gate_cmd`, `verification.toml`'s round and local commands, a `[checks]` command or `python tool/search` runs, or is listed in `[guard] executables`. A bare name is that name; a name with a path (`./tool`, `C:/x/python.exe`, `/usr/bin/time`) is that file, granted only by the same path. A git remote name counts only in the checkout's own repository: a push after a `cd` into another repository is `top` |
-| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named); a remote at a local path, a URL rewrite (`insteadOf`) or `[include]` in any config file git reads (the repository's, global, XDG or system), or config syntax the guard does not decode (a key on a header's line, a continued, quoted or commented value), makes it `top`. `GH_HOST`, `GH_REPO` and the proxy variables count as reaching their host; a target whose host cannot be read is `top` |
+| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named); a remote at a local path, a URL rewrite (`insteadOf`) or `[include]` in any config file git reads (the repository's, global, XDG or system), a `[remote]` or `[branch]` section outside the repository's own config, or config syntax the guard does not decode (a key on a header's line, a continued, quoted or commented value), makes it `top`. `GH_HOST`, `GH_REPO` and the proxy variables count as reaching their host; a target whose host cannot be read is `top` |
 | `top` | never |
 
 The optional adapter table adds to the grant and never names a command:

@@ -101,9 +101,11 @@ def remote_hosts(common: Path) -> tuple:
         text = (common / "config").read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ()
-    # A URL rewrite, or an included file that may hold one or another remote, changes where a push goes.
+    # A URL rewrite, or an included file that may hold one or another remote, changes where a push goes, and
+    # a remote or branch set outside the repository adds destinations this reader does not take from there.
     # Any mention in any file git reads, in any syntax (a key after a header, a continued line), counts.
-    rewritten = any(re.search(r"(?i)insteadof|\[\s*include", t) for t in [text] + git_configs())
+    rewritten = re.search(r"(?i)insteadof|\[\s*include", text) is not None or any(
+        re.search(r"(?i)insteadof|\[\s*(include|remote|branch)", t) for t in git_configs())
     found, section = [], ("", "")
     for line in text.splitlines():
         if not line.strip() or re.match(r"\s*[#;]", line):

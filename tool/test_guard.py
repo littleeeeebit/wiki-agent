@@ -908,6 +908,13 @@ def test_a_device_name_is_a_device_only_by_the_hosts_rule(command, dialect, ctx,
     assert target in effects(command, dialect, ctx)
 
 
+def test_a_using_declaration_that_loads_code_is_top():
+    for command in ("using module ./sample.psm1", "using module ../outside/sample.psm1; Get-ChildItem",
+                    "using assembly ./sample.dll"):
+        assert any(e.startswith("top(") for e in effects(command, "ps")), command
+    assert effects("using namespace System.Text; Get-ChildItem", "ps") == {"read"}
+
+
 def test_unix_device_spellings_are_files_in_native_windows_shells():
     for command in ("Write-Output sample > /dev/null", "Write-Output sample > /dev/fd/target.txt"):
         assert any(e.startswith("write(C:/dev/") for e in effects(command, "ps")), command
@@ -915,7 +922,9 @@ def test_unix_device_spellings_are_files_in_native_windows_shells():
 
 @pytest.mark.parametrize("config", ['[url "https://write.example/"] insteadOf = https://read.example/\n',
                                     '[url "https://write.example/"]\n\tpushInsteadOf = https://read.example/\n',
-                                    '[Include]\n path = more.config\n'])
+                                    '[Include]\n path = more.config\n',
+                                    '[remote "origin"]\n\tpushurl = https://write.example/o/r.git\n',
+                                    '[branch "main"]\n\tpushRemote = https://write.example/o/r.git\n'])
 def test_a_rewrite_in_any_config_git_reads_leaves_pushes_unread(tmp_path, monkeypatch, config):
     (tmp_path / "home").mkdir()
     (tmp_path / "home/.gitconfig").write_text(config, encoding="utf-8")

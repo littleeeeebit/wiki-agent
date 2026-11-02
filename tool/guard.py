@@ -693,7 +693,8 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
         if key in REPEATS:
             return eff | top(f"`{key}`: a loop, function or trap the table does not model"), None
         if key in ("case", "using", "param", "class", "enum", "data"):
-            return eff | envs(env, ctx), None
+            loads = key == "using" and not (words and words[0].text.lower() == "namespace")
+            return eff | envs(env, ctx) | (top("`using` that loads a module or an assembly") if loads else set()), None
     eff |= envs(env, ctx)
     ctx = replace(ctx, env=tuple(w.text for w in env))
     if ctx.d == "ps" and not call:
@@ -766,14 +767,13 @@ def names_set(ws: list, ctx: Ctx) -> set:
 
 # -- Paths -------------------------------------------------------------------
 
-# Devices by the host's rule: `/dev/...` as spelled, and Windows' reserved names whatever their case.
+# Devices by the host's rule: `/dev/...` as spelled where a POSIX layer serves it, Windows' names in any case.
 NULLS = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/stdin"}
 
 
 def resolve(text: str, cwd: str | None, ctx: Ctx) -> str | None:
     """The absolute path a literal names from `cwd`; `None` for a device. Raises ValueError."""
     t = text.replace("\\", "/") if ctx.windows else text
-    # `/dev/...` is a device only where a POSIX layer serves it; native Windows PowerShell and cmd write files.
     unix = ctx.d == "posix" or not ctx.windows
     if unix and (t in NULLS or t.startswith("/dev/fd/")) or ctx.windows and t.lower() in ("nul", "nul:", "con"):
         return None
