@@ -757,7 +757,7 @@
     "read",
     "spawn(python)",
     "spawn(ruff)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent/laya)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/laya/support.py)"
    ]
   },

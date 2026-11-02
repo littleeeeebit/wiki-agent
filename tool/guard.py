@@ -728,7 +728,7 @@ ENV_COMMAND = re.compile(r"^(?:GIT_EDITOR|GIT_SEQUENCE_EDITOR|EDITOR|VISUAL|PAGE
 # Variables that change which code a later program loads or runs, or where `~`, `/tmp` and a client's
 # configuration land: never decidable here.
 ENV_EXEC = re.compile(r"^(?:LD_\w+|DYLD_\w+|BASH_ENV|ENV|PROMPT_COMMAND|PATH|PATHEXT|GIT_(?!AUTHOR_|COMMITTER_|"
-                      r"TERMINAL_PROMPT|OPTIONAL_LOCKS|TRACE|DIR$|WORK_TREE$)\w+|NODE_OPTIONS|PYTHONSTARTUP|"
+                      r"TERMINAL_PROMPT|OPTIONAL_LOCKS|DIR$|WORK_TREE$)\w+|NODE_OPTIONS|PYTHONSTARTUP|"
                       r"PERL5OPT|RUBYOPT|SHELLOPTS|PS4|COMSPEC|PSModulePath|HOME|USERPROFILE|ZDOTDIR|"
                       r"XDG_CONFIG_HOME|CURL_HOME|TMPDIR|TMP|TEMP|GH_CONFIG_DIR|SSLKEYLOGFILE)$", re.I)
 # Variables that send a later client to another host: the host is reached whichever command reads them.

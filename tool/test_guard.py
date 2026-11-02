@@ -1000,23 +1000,23 @@ def test_the_null_devices_stay_devices():
 # -- Follow-up (a): git and gh writes and the network ----------------------------
 # Each new row's effects, on a checkout whose one remote is `github.com`.
 ROW_EFFECTS = {
-    "git fetch -q origin --prune": {"write(/work/repo/.)", "network(github.com)"},
-    "git pull --ff-only": {"write(/work/repo/.)", "network(github.com)"},
-    "git merge --no-edit origin/main": {"write(/work/repo/.)"},
-    "git rebase --continue": {"write(/work/repo/.)"},
-    "git stash push -q -- notes.md": {"write(/work/repo/.)", "write(/work/repo/notes.md)"},
-    "git stash pop -q": {"write(/work/repo/.)"},
+    "git fetch -q origin --prune": {"write(/work/repo)", "network(github.com)"},
+    "git pull --ff-only": {"write(/work/repo)", "network(github.com)"},
+    "git merge --no-edit origin/main": {"write(/work/repo)"},
+    "git rebase --continue": {"write(/work/repo)"},
+    "git stash push -q -- notes.md": {"write(/work/repo)", "write(/work/repo/notes.md)"},
+    "git stash pop -q": {"write(/work/repo)"},
     "git stash list": set(),
-    "git checkout -q -b topic": {"write(/work/repo/.)"},
-    "git restore --staged -- notes.md": {"write(/work/repo/.)", "write(/work/repo/notes.md)"},
-    "git switch -c topic": {"write(/work/repo/.)"},
+    "git checkout -q -b topic": {"write(/work/repo)"},
+    "git restore --staged -- notes.md": {"write(/work/repo)", "write(/work/repo/notes.md)"},
+    "git switch -c topic": {"write(/work/repo)"},
     "git branch -r": set(),
-    "git branch -D topic": {"write(/work/repo/.)"},
+    "git branch -D topic": {"write(/work/repo)"},
     "git worktree list": set(),
-    "git worktree add --detach /tmp/wt HEAD": {"write(/work/repo/.)", "write(/tmp/wt)"},
-    "git worktree remove --force /tmp/wt": {"write(/work/repo/.)", "delete(/tmp/wt)"},
+    "git worktree add --detach /tmp/wt HEAD": {"write(/work/repo)", "write(/tmp/wt)"},
+    "git worktree remove --force /tmp/wt": {"write(/work/repo)", "delete(/tmp/wt)"},
     "git -C sub status": set(),
-    "git -c user.name=t -c user.email=t@t commit -qm x": {"write(/work/repo/.)"},
+    "git -c user.name=t -c user.email=t@t commit -qm x": {"write(/work/repo)"},
     "git -c core.whitespace=cr-at-eol diff": set(),
     "git config --get core.autocrlf": set(),
     "git config user.email": set(),
@@ -1025,7 +1025,7 @@ ROW_EFFECTS = {
     "git remote -v": set(),
     "gh pr view 3 --json body -q .body": {"network(github.com)"},
     "gh pr edit --body-file body.md": {"network(github.com)"},
-    "gh pr merge --squash --delete-branch": {"network(github.com)", "write(/work/repo/.)"},
+    "gh pr merge --squash --delete-branch": {"network(github.com)", "write(/work/repo)"},
 }
 
 
@@ -1138,3 +1138,41 @@ def test_a_per_worktree_configuration_leaves_the_remotes_unread(tmp_path):
                                      '\turl = https://github.com/owner/repo.git\n', encoding="utf-8")
     found = effects("git push origin HEAD", ctx=replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path)))
     assert any(e.startswith("top(") for e in found)
+
+
+# -- Follow-up (a), review round 6 ------------------------------------------------
+
+def test_a_repository_write_is_placed_at_the_worktree_root():
+    # Moving between commits changes the whole worktree, not just the folder git runs in.
+    for command in ("git -C sub switch main", "git -C sub stash pop", "cd sub && git merge --no-edit origin/main",
+                    "cd sub && gh pr merge --squash"):
+        found = effects(command, ctx=POSIX)
+        assert "write(/work/repo)" in found and "write(/work/repo/sub)" not in found, command
+
+
+def test_gh_pr_create_is_a_repository_write(repo):
+    # It may push the branch first, which runs the pre-push hook.
+    assert effects("gh pr create --fill", ctx=POSIX) == {"read", "network(github.com)", "write(/work/repo)"}
+    config = repo / ".git/config"
+    config.write_text(config.read_text(encoding="utf-8")
+                      + f"[core]\n\thooksPath = {(repo / 'hooks').as_posix()}\n", encoding="utf-8")
+    assert "훅 폴더" in (call(repo, "gh pr create --fill") or "")
+
+
+def test_a_drive_path_is_relative_on_posix():
+    assert any(e.startswith("top(") for e in effects("git worktree remove --force C:/work/wt", ctx=POSIX))
+    assert "delete(/tmp/wt)" in effects("git worktree remove --force /tmp/wt", ctx=POSIX)
+
+
+@pytest.mark.parametrize("name", ["GIT_TRACE", "GIT_TRACE2_EVENT", "GIT_TRACE_PACKET"])
+def test_a_git_trace_file_is_a_write_the_guard_cannot_place(name):
+    assert any(name in e for e in effects(f"{name}=/tmp/t.txt git worktree list", ctx=POSIX))
+
+
+def test_every_git_row_is_top_in_a_partial_clone(tmp_path):
+    # Reading a missing object fetches it from the promisor remote, wherever its URL is rewritten to.
+    (tmp_path / "config").write_text('[remote "origin"]\n\turl = https://github.com/owner/repo.git\n'
+                                     '\tpromisor = true\n[extensions]\n\tpartialClone = origin\n', encoding="utf-8")
+    ctx = replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path))
+    for command in ("git cat-file -p HEAD:notes.txt", "git status", "git fetch origin", "gh pr view"):
+        assert any(e.startswith("top(") for e in effects(command, ctx=ctx)), command

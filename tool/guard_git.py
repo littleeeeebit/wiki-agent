@@ -25,8 +25,8 @@ from pathlib import Path
 import posixpath
 import re
 
-from guard import moved_to, paths, top
-from guard_models import gate, getopt, here, row, writes
+from guard import Word, moved_to, paths, top
+from guard_models import gate, getopt, row, writes
 
 # git's own options before the verb that take no value. `-C` (a directory) and `-c` (a listed key) are read
 # by `m_git`; `--git-dir`, `--work-tree`, `--exec-path` and `--config-env` change which repository,
@@ -170,6 +170,12 @@ def own_repo(ctx) -> bool:
                for r in roots)
 
 
+def worktrees(ctx) -> set:
+    """`repo(root)` for the work tree of each place `ctx` may run in: a write moves the whole worktree and
+    its index, wherever below the root git runs. Called once `own_repo` holds, so every root is known."""
+    return writes("repo", [Word(r) for r in repo_roots(ctx)], ctx)
+
+
 def reached(verb: str, pos: list, ctx) -> set:
     """The hosts `git fetch|pull|push [REMOTE [REFSPEC...]]` reaches: every `url` and `pushurl` the grant
     read for that remote, or for every destination when none is named. A push takes at most a branch; a
@@ -268,6 +274,8 @@ def m_git(name, args, ctx):
     # that configuration is protected: in another repository it may be one the agent wrote.
     if not own_repo(ctx):
         return top("git in a repository other than the checkout"), None
+    if any(n == "\0lazy" for n, _ in ctx.remotes):
+        return top("git in a partial clone, where reading an object may fetch it from a remote"), None
     pos = getopt(rest, r.takes)[0]
     if kind == "read":
         return (top("git remote with an operand") if verb == "remote" and pos else formats(rest)), None
@@ -277,12 +285,14 @@ def m_git(name, args, ctx):
                                             for f in getopt(rest, r.takes)[2]):
         return set(), None
     # git's write of the repository it runs in is the granted git verb; `outside` judges its place only.
-    out = paths("repo", here(ctx), ctx)
+    out = worktrees(ctx)
     if kind == "paths":
         out |= pathspecs(verb, pos, ctx)
     elif kind == "worktree":
-        # git matches a relative `remove` operand as the tail of any registered worktree's path.
-        if not pos or verb == "worktree remove" and not re.match(r"[A-Za-z]:[\\/]|/", pos[0].text):
+        # git matches a relative `remove` operand as the tail of any registered worktree's path; `C:/x` is
+        # relative on POSIX.
+        absolute = r"[A-Za-z]:[\\/]|/" if ctx.windows else "/"
+        if not pos or verb == "worktree remove" and not re.match(absolute, pos[0].text):
             return top(f"git {verb} without an absolute path"), None
         out |= paths("delete" if verb == "worktree remove" else "write", pos[0], ctx)
     elif kind in ("fetch", "push"):
@@ -304,13 +314,13 @@ GH_VERBS = {
     "pr status": (f"-c --conflict-status {JSON}", "read", "none"),
     "pr create": ("-df -t: --title: -b: --body: -F: --body-file: -B: --base: -l: --label: -a: "
                   "--assignee: -r: --reviewer: -m: --milestone: --draft --fill --fill-first --fill-verbose "
-                  "--no-maintainer-edit --dry-run", "write", "none"),
+                  "--no-maintainer-edit --dry-run", "repo", "none"),
     "pr edit": ("-t: --title: -b: --body: -F: --body-file: -B: --base: --add-label: --remove-label: --add-reviewer: "
                 "--remove-reviewer: --add-assignee: --remove-assignee: -m: --milestone:", "write", "none"),
     "pr comment": ("-b: --body: -F: --body-file: --edit-last", "write", "none"),
     "pr ready": ("", "write", "none"),
     "pr merge": ("-smrd -t: --subject: -b: --body: -F: --body-file: -A: --author-email: --squash --merge --rebase "
-                 "--delete-branch --auto --disable-auto --match-head-commit:", "merge", "none"),
+                 "--delete-branch --auto --disable-auto --match-head-commit:", "repo", "none"),
     "run view": (f"-v --verbose --exit-status -j: --job: -a: --attempt: {JSON}", "read", "one"),
     "run watch": ("--exit-status --compact -i: --interval:", "read", "one"),
     "run list": (f"-L: --limit: -b: --branch: -w: --workflow: -s: --status: -c: --commit: -e: --event: -u: --user: "
@@ -340,5 +350,6 @@ def m_gh(name, args, ctx):
     if not hosts or "\0unread" in hosts:
         return top("gh with no remote the guard has read"), None
     out = {("network", h) for h in hosts}
-    # `--delete-branch` also switches and deletes the local branch.
-    return out | (paths("repo", here(ctx), ctx) if kind == "merge" else set()), None
+    # `pr create` may push the branch first (running the pre-push hook), and `pr merge --delete-branch` switches
+    # and deletes the local branch: both write the repository, under the same hooks rule as git's writes.
+    return out | (worktrees(ctx) if kind == "repo" else set()), None

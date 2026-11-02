@@ -73,6 +73,8 @@ def layout(cwd: Path) -> tuple | None:
 # A destination git reaches that is not a network host the guard can name: a local path, a `file://` URL,
 # or one a URL rewrite may change. A push to it is `top`, and it is never granted as a host.
 UNREAD = "\0unread"
+# A remote name marking a partial clone: reading a missing object fetches it from a promisor remote.
+LAZY = "\0lazy"
 
 
 def git_configs() -> list:
@@ -108,6 +110,7 @@ def remote_hosts(common: Path) -> tuple:
     # `worktreeConfig` adds a private file per worktree, which may name its own push URL.
     rewritten = re.search(r"(?i)insteadof|\[\s*include|worktreeconfig", text) is not None or any(
         re.search(r"(?i)insteadof|\[\s*(include|remote|branch)", t) for t in git_configs())
+    lazy = re.search(r"(?i)partialclone|promisor", text) or any(re.search(r"(?i)promisor", t) for t in git_configs())
     found, section = [], ("", "")
     for line in text.splitlines():
         if not line.strip() or re.match(r"\s*[#;]", line):
@@ -138,7 +141,7 @@ def remote_hosts(common: Path) -> tuple:
         networked = re.match(r"[a-zA-Z][\w+.-]*://", value) and not value.lower().startswith("file:") \
             or re.match(r"[^/\\:\s]+@[^/\\:\s]+:", value)
         out.add((name, host_of(value) if networked and not rewritten else UNREAD))
-    return tuple(sorted(out))
+    return tuple(sorted(out | ({(LAZY, UNREAD)} if lazy else set())))
 
 
 def hook_folders(common: Path) -> list:
