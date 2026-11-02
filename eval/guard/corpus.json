@@ -49,7 +49,6 @@
    "command": "CARGO=$(command -v cargo || echo \"$USERPROFILE/.cargo/bin/cargo.exe\"); \"$CARGO\" check --quiet --manifest-path web/src-tauri/Cargo.toml 2>&1 | tail -20; echo \"cargo=$?\"; cd web && npx tsc -b 2>&1 | tail -5; echo tsc=$?; npx eslint src/App.tsx src/components/UpdateCard.tsx src/lib/leave.ts 2>&1 | tail -10; echo eslint=$?; cd .. && python tool/debt.py check 2>&1 | tail -5",
    "effects": [
     "read",
-    "spawn(command)",
     "spawn(npx)",
     "spawn(python)",
     "top(a directory change after the first statement)",
@@ -62,7 +61,6 @@
    "command": "CARGO=/c/Users/me/.cargo/bin/cargo.exe; command -v cargo >/dev/null && CARGO=cargo; \"$CARGO\" check --quiet --manifest-path web/src-tauri/Cargo.toml 2>&1 | tail -3; echo cargo=$?; cd web && npm run build 2>&1 | grep -E \"error|built in\" | head -3; npm run lint 2>&1 | grep -c warning; cd .. && python tool/debt.py check; echo debt=$?; python tool/lint.py 2>&1 | tail -2; git diff --stat",
    "effects": [
     "read",
-    "spawn(command)",
     "spawn(npm)",
     "spawn(python)",
     "top(a directory change after the first statement)",
@@ -75,7 +73,6 @@
    "command": "CARGO=/c/Users/me/.cargo/bin/cargo.exe; command -v cargo >/dev/null && CARGO=cargo; \"$CARGO\" check --quiet --manifest-path web/src-tauri/Cargo.toml 2>&1 | tail -3; echo cargo=$?; python tool/lint.py 2>&1 | tail -1; python tool/debt.py check; echo debt=$?; LC_ALL=C grep -c '[^ -~]' tool/app.cmd; git diff --stat",
    "effects": [
     "read",
-    "spawn(command)",
     "spawn(python)",
     "top(variable as the command name)"
    ]
@@ -86,7 +83,6 @@
    "command": "CARGO=/c/Users/me/.cargo/bin/cargo.exe; command -v cargo >/dev/null && CARGO=cargo; \"$CARGO\" check --quiet --manifest-path web/src-tauri/Cargo.toml 2>&1 | tail -8; echo cargo=$?; S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; WT=$S/wt; git worktree add --detach -q \"$WT\" c8d586e && { git diff --name-only --diff-filter=AMR c8d586e; git ls-files --others --exclude-standard; } | sort -u | while read f; do mkdir -p \"$WT/$(dirname \"$f\")\"; cp \"$f\" \"$WT/$f\"; done; cp -r web/dist \"$WT/web/dist\"; diff -q tool/app.cmd $WT/tool/app.cmd && diff -q web/src-tauri/src/main.rs $WT/web/src-tauri/src/main.rs && echo same",
    "effects": [
     "read",
-    "spawn(command)",
     "spawn(cp)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`while`: a loop, function or trap the table does not model)",
@@ -101,7 +97,6 @@
    "command": "CARGO=/c/Users/me/.cargo/bin/cargo.exe; command -v cargo >/dev/null && CARGO=cargo; \"$CARGO\" check --quiet --manifest-path web/src-tauri/Cargo.toml 2>&1 | tail; echo check=$?; grep -n -A12 \"### Updates\" docs/chat-setup.md; grep -n \"update card\\|UpdateCard\" docs/development.md",
    "effects": [
     "read",
-    "spawn(command)",
     "top(variable as the command name)"
    ]
   },
@@ -240,7 +235,6 @@
    "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad\"; export PER=400; ( sh \"$S/label-full.sh\" \"$S/label-val.log\" full1-val validation.candidates.jsonl coverage:1:0.8 route:1:0.25 conflict:1:0.35 redirect:1:0.35 progress:1:0.25 ask:1:0.15 source:1:0.12 analysis:1:0.35 ) & ( sh \"$S/label-full.sh\" \"$S/label-cal.log\" full1-cal calibration.candidates.jsonl coverage:1:0.8 route:1:0.25 conflict:1:0.35 redirect:1:0.35 progress:1:0.25 ask:1:0.15 source:1:0.12 analysis:1:0.35 ) & wait; grep -hE \"^===|\\\"stopped\\\"|usd_in_all\" \"$S/label-val.log\" \"$S/label-cal.log\"",
    "effects": [
     "read",
-    "spawn(export)",
     "top(variable in a shell's arguments)"
    ]
   },
@@ -287,7 +281,7 @@
     "read",
     "spawn(python)",
     "spawn(sed)",
-    "top(a shell script file)"
+    "spawn(sh)"
    ]
   },
   {
@@ -296,7 +290,7 @@
    "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad\"; sh \"$S/calibration-useful.sh\" > \"$S/calibration-useful.log\" 2>&1; echo exit=$?; grep -E \"^==|spent|STOP|stopped|labels|Traceback|Error\" \"$S/calibration-useful.log\" | tail -15",
    "effects": [
     "read",
-    "top(a shell script file)",
+    "spawn(sh)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/calibration-useful.log)"
    ]
   },
@@ -307,7 +301,7 @@
    "effects": [
     "read",
     "spawn(python)",
-    "top(a shell script file)"
+    "spawn(sh)"
    ]
   },
   {
@@ -383,7 +377,6 @@
    "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; CARGO=/c/Users/me/.cargo/bin/cargo.exe; command -v cargo >/dev/null && CARGO=cargo; \"$CARGO\" build --release --quiet --manifest-path $S/wt/web/src-tauri/Cargo.toml 2>&1 | tail -3; echo built; for i in 1 2 3; do timeout 220 python -I -X utf8 -u $S/cycle.py $S > $S/cycle$i.txt 2>&1 < /dev/null; echo \"== $i\"; grep -v \"^ *File\\|^ *~\\|^ *\\^\" $S/cycle$i.txt | tail -3; done",
    "effects": [
     "read",
-    "spawn(command)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)",
     "top(variable as the command name)",
@@ -473,7 +466,6 @@
    "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; taskkill //PID 6732 //F >/dev/null; CARGO=/c/Users/me/.cargo/bin/cargo.exe; command -v cargo >/dev/null && CARGO=cargo; \"$CARGO\" build --release --quiet --manifest-path $S/wt/web/src-tauri/Cargo.toml 2>&1 | tail -3; echo built; for i in 1 2 3; do timeout 220 python -I -X utf8 -u $S/cycle.py $S > $S/cycle$i.txt 2>&1 < /dev/null; echo \"== $i\"; grep -v \"^ *File\\|^ *~\\|^ *\\^\" $S/cycle$i.txt | tail -6; done",
    "effects": [
     "read",
-    "spawn(command)",
     "spawn(taskkill)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)",
@@ -578,7 +570,6 @@
     "read",
     "spawn(curl)",
     "spawn(disown)",
-    "spawn(export)",
     "spawn(nohup)",
     "spawn(tasklist)",
     "top(`do`: a loop, function or trap the table does not model)",
@@ -1920,7 +1911,7 @@
    "command": "sh \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/topup.sh\"",
    "effects": [
     "read",
-    "top(a shell script file)"
+    "spawn(sh)"
    ]
   },
   {

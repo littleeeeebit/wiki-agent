@@ -14,9 +14,9 @@ turns off HTTP redirects and submodule recursion on the command line, so only
 the configured remote's own hosts are reached; fetch and pull have no row,
 since a server may answer in protocol v2 and name another host for the pack.
 
-gh and curl have no row, so they are only spawns: their HTTP clients follow
-redirects a response names, and nothing on the command line turns that off,
-so the hosts they reach are not decided by the argv.
+gh and curl have no row: their HTTP clients follow redirects a response
+names, so the hosts they reach are not decided by the argv. They are spawns,
+which pass like any program with no row (`python` reaches any host as well).
 """
 
 from __future__ import annotations

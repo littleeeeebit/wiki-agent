@@ -339,14 +339,20 @@ CMD_ROWS = {"cd", "chdir", "type", "echo", "dir", "ver", "vol", "cls", "exit", "
 # `del /s` (every subfolder) is not listed.
 CMD_WRITES = {"del": "/f /q", "erase": "/f /q", "rd": "/s /q", "rmdir": "/s /q", "md": "", "mkdir": "",
               "move": "/y /-y", "ren": "", "rename": ""}
-# Every other builtin links, runs a command or a batch file, or sets the environment. `copy` of a source an
-# earlier statement turned into a folder writes that folder's files under names the command does not show.
-CMD_REFUSED = {"pushd", "popd", "set", "setlocal", "endlocal", "if", "for", "start", "mklink", "xcopy", "robocopy",
-               "call", "title", "color", "prompt", "pause", "break", "copy"}
-CMD_BUILTINS = CMD_ROWS | set(CMD_WRITES) | CMD_REFUSED
+# Every other builtin links or sets the environment. `copy` of a source an earlier statement turned into a
+# folder writes that folder's files under names the command does not show. `start` runs a program in a new
+# process: it is not a builtin here, so it is a `spawn` like any program with no row.
+CMD_REFUSED = {"pushd", "popd", "set", "setlocal", "endlocal", "if", "for", "mklink", "xcopy", "robocopy",
+               "title", "color", "prompt", "pause", "break", "copy"}
+CMD_BUILTINS = CMD_ROWS | set(CMD_WRITES) | CMD_REFUSED | {"call"}
 
 
 def cmd_builtin(name: str, args: list, ctx):
+    if name == "call":
+        # `call` runs a builtin in this interpreter (`call cd ..` moves it, `call set` changes its
+        # environment): what it calls is judged as itself. A batch file or program it runs is a spawn.
+        from guard_models import run_argv
+        return run_argv(args, ctx)
     if name in CMD_REFUSED:
         return top(f"{name}: a cmd builtin the table does not model"), None
     if name in ("cd", "chdir"):

@@ -108,8 +108,8 @@ the strings handed to `bash -c`, `sh -c`, `pwsh -Command`, `powershell
 effects: `read`, `write(path)`, `delete(path)`, `spawn(executable)`,
 `network(host)`, and `top(reason)` for what cannot be decided before it runs —
 `eval`, `source`, `-EncodedCommand`, a variable, substitution or glob in a
-written path, a script file, an unclosed quote, nesting past the limit, more
-than 32 possible working directories. An
+written path, an unclosed quote, nesting past the limit, more than 32
+possible working directories. An
 Edit, Write, MultiEdit, NotebookEdit or apply_patch call is a `write` (or
 `delete`) of its resolved target. A shell tool that names its own working
 directory (`workdir` or `cwd` in its input) is judged from there; one that
@@ -190,10 +190,9 @@ builtins, and `tool/guard_git.py` for git. The table holds only:
   configuration still has the global and system files checked;
 - no row for gh or curl: their HTTP clients follow a redirect the response
   names, nothing on the command line turns that off, and gh's `pr create` and
-  `pr merge` also run git that takes none of the options above. They are only
-  spawns, denied unless a grant names them, and wait for the shell-semantics
-  follow-up. Setting `GH_REPO` in any form (PowerShell's one-word and
-  compound assignments included) stays `top`;
+  `pr merge` also run git that takes none of the options above. They are
+  spawns, which pass like any program with no row. Setting `GH_REPO` in any
+  form (PowerShell's one-word and compound assignments included) stays `top`;
 - plain `>`/`>>` redirection to a literal path, in every dialect. Only the
   host's devices are discarded: `/dev/null` and its kin as spelled where a
   POSIX layer serves them (not in native Windows PowerShell or cmd, where they
@@ -232,10 +231,20 @@ Four rules hold across the table:
 
 - A flag or parameter the row does not list is `top`, and so is a variable or
   substitution standing where an option may stand.
-- A program with no row is only `spawn(name)`, which a grant naming it allows.
-  A path-named program (`./helper.exe`) is that file, suffix included. A
-  PowerShell cmdlet or member with no row is `top`: it runs inside the
-  runspace, so no executable grant can stand for it.
+- A program with no row is `spawn(name)`, and a spawn always passes, in
+  whatever language the project is written. So does a script file a shell
+  runs (`./run.cmd`, `bash x.sh`, `pwsh -File x.ps1`, cmd's `start`, and a
+  batch file or program cmd's `call` runs). A path-named program
+  (`./helper.exe`) is that file, suffix included, and never borrows the row
+  of the program its basename names. A PowerShell cmdlet or member with no
+  row is `top`: it runs inside the runspace, not as a program. So is a bash
+  builtin with no row that sets what later statements run, where, or with
+  which variables (`trap`, `exec`, `declare`, `local`, `readonly`, `builtin`,
+  `pushd`, `popd`, `fc`, `getopts`, `enable`, `compgen`, `complete`,
+  `compopt`, `bind`). `command -v` only looks a name up, `command [-p] [--]
+  CMD` is CMD judged as itself, cmd's `call` of a builtin is that builtin
+  (`call cd ..` moves, `call set` is `top`), and `export` of names and literal
+  `NAME=value` words, quoted or not, is judged like those assignments.
 - A name set by a builtin (`read`, `printf -v`, `mapfile`, `unset`) is judged
   like an assignment: setting an execution or destination variable (`PATH`,
   `HOME`, the proxy variables, `GIT_DIR`, `GIT_WORK_TREE`) that way is `top`.
@@ -245,18 +254,24 @@ Four rules hold across the table:
   PowerShell's `using module` and `using assembly` load code and are `top`;
   only `using namespace` is a declaration.
 
-Everything else is denied in app-managed sessions: POSIX file writers such as
-`rm`, `cp`, `mv` and `touch`, archives, links, `awk`, `sed`, `wget`, curl,
-gh, and every git form outside its row. A follow-up change adds shell
-semantics; a command that is denied but ordinary is answered by adding a row
-there, not by loosening an existing one.
+Running a program is never judged. The gate once granted only the programs
+its own commands ran, so a Python gate shut out npm, a project's own CLI and
+a `.cmd` browser launcher, and a web project could not be verified at all. A
+list of executables bounded nothing else: a granted interpreter (`python -c`)
+already ran any code. So programs with no row (`rm`, `cp`, `tar`, `awk`,
+`sed`, curl, gh, `npm`, `node`, `cargo`, any project CLI) pass, and what they
+do inside their own process is theirs. What stays denied is a form of a
+modelled row outside that row: every git form outside its row, the refusing
+rows (`ln`, `wget`, archives, `patch`, `eval`, `source`), cmdlets, and the
+builtins above. A command that is denied but ordinary is answered by adding
+a row, not by loosening an existing one.
 
 | Effect | Granted when |
 |---|---|
 | `write`, `delete` | the path resolves (links, junctions and `..` followed) inside a write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder; each `[guard] write_roots` entry, relative to the checkout |
 | — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (`echo x > .wiki`, `echo x > .`). Below a write root, the same names at any depth (spelled with the trailing dots or spaces Windows drops, too), and a folder named `.wiki` (a folder moved onto it would put its `adapter.toml` there). A delete is also denied when anything below it is one of those names, a link or a junction, or when the folder has more than 20,000 entries to look through. Only git's own write of the repository it runs in (`add`, `commit`, `merge`, `push`, …) is judged by place alone |
-| `spawn` | the executable is one that `gate_cmd`, `verification.toml`'s round and local commands, a `[checks]` command or `python tool/search` runs, or is listed in `[guard] executables`. A bare name is that name; a name with a path (`./tool`, `C:/x/python.exe`, `/usr/bin/time`) is that file, granted only by the same path. A git remote name counts only in the checkout's own repository: a push after a `cd` into another repository is `top` |
-| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named); a remote at a local path, a URL rewrite (`insteadOf`) or `[include]` in any config file git reads (the repository's, global, XDG or system; the global and XDG files under every home git may take: `HOME`, `HOMEDRIVE`+`HOMEPATH` and `USERPROFILE`), a `[remote]` or `[branch]` section outside the repository's own config, `extensions.worktreeConfig`, or config syntax the guard does not decode (a key on a header's line, a continued, quoted or commented value), makes it `top`. `GH_HOST` and the proxy variables count as reaching their host (`GH_REPO` is `top`); a target whose host cannot be read is `top` |
+| `spawn` | always: any program and any script, in any language |
+| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named); a remote at a local path, a URL rewrite (`insteadOf`) or `[include]` in any config file git reads (the repository's, global, XDG or system; the global and XDG files under every home git may take: `HOME`, `HOMEDRIVE`+`HOMEPATH` and `USERPROFILE`), a `[remote]` or `[branch]` section outside the repository's own config, `extensions.worktreeConfig`, or config syntax the guard does not decode (a key on a header's line, a continued, quoted or commented value), makes it `top`. `GH_HOST` and the proxy variables count as reaching their host (`GH_REPO` is `top`); a target whose host cannot be read is `top`. A git remote name counts only in the checkout's own repository: a push after a `cd` into another repository is `top` |
 | `top` | never |
 
 The optional adapter table adds to the grant and never names a command:
@@ -265,25 +280,25 @@ The optional adapter table adds to the grant and never names a command:
 [guard]
 write_roots = ["../shared-fixtures"]
 network_hosts = ["pypi.org"]
-executables = ["ruff", "npx", ".venv/Scripts/python.exe"]
 ```
+
+An `executables` key is no longer read: running a program needs no grant.
 
 A denial lists each effect outside the grant, why, and what would open it,
 then the grant itself. The person reads it, so it stays Korean:
 
 ```
 위키 효과 검사가 이 호출을 막았다 — 작업에 허가된 효과 밖이다.
-- spawn(cargo): 허가된 실행 파일이 아니다 — `.wiki/adapter.toml` 의 `[guard] executables` 에 `cargo` 를 더하면 열린다
 - delete(C:/work/other): 쓰기 루트 밖이다 — `.wiki/adapter.toml` 의 `[guard] write_roots` 에 이 경로를 담은 디렉터리를 더하면 열린다
 - top(variable in a write path): 판단할 수 없는 형태다(variable in a write path) — 어떤 허가로도 열리지 않으니, 리터럴 경로와 직접 실행하는 명령으로 풀어 쓴다
-허가: 쓰기 루트 C:\work\repo, C:\Users\me\AppData\Local\Temp · 실행 파일 npm, python · 호스트 127.0.0.1, github.com
+허가: 쓰기 루트 C:\work\repo, C:\Users\me\AppData\Local\Temp · 호스트 127.0.0.1, github.com
 ```
 
 A `top` is answered by writing the command out: a literal path instead of
-`$TEMP/x`, the program itself instead of `eval` or a script file. A variable
+`$TEMP/x`, the program or a script file instead of `eval`. A variable
 the same command assigns once, before use and outside a conditional, counts
-as its literal. The guard's limits: what a granted interpreter (`python`,
-`npm`) does inside its own process is not modelled, and the hub's own
+as its literal. The guard's limits: what any program with no row (`python`,
+`npm`, `rm`, curl) does inside its own process is not modelled, and the hub's own
 `tool/` is inside its checkout's write root. Any exception in the hook passes
 the call (`craft/hooks-fail-open`).
 

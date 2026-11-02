@@ -2,11 +2,15 @@
 
 The grant is read off files, never a model: the checkout's root (or a plan
 task's artifact root), the temporary directories and the session's memory
-folder as write roots; the executables the adapter's gate, verification and
-registered checks spawn, parsed by the same algebra; the git remotes' hosts
-plus the loopback the search daemon answers on; and an optional `[guard]`
-table that adds write roots, network hosts and executables but never a
-command pattern.
+folder as write roots; the git remotes' hosts plus the loopback the search
+daemon answers on; and an optional `[guard]` table that adds write roots and
+network hosts but never a command pattern.
+
+Running a program is never judged. What a program with no row does is its own
+code, in whatever language the project uses, and a granted interpreter
+(`python -c`) already ran any code: a list of executables bounded nothing but
+which toolchain a project may use, so a Python gate shut out npm, a `.cmd`
+launcher or a project CLI. Only the rows the table models are checked.
 """
 
 from __future__ import annotations
@@ -19,14 +23,13 @@ import re
 import shutil
 import tempfile
 
-from guard import HERE, Ctx, contained, derive, real_path
+from guard import HERE, contained, real_path
 
 
 @dataclass
 class Grant:
     roots: list
     protected: list
-    executables: set
     hosts: set
     remotes: tuple
     top: str = ""                       # the checkout the remotes were read from
@@ -35,7 +38,6 @@ class Grant:
 
 # Inside a write root, but they decide the grant or what runs next: never granted.
 PROTECTED = (".git", ".claude", ".codex", ".wiki/adapter.toml", "verification.toml")
-SEARCH = "python tool/search"
 
 
 def temps() -> list[Path]:
@@ -208,7 +210,7 @@ def plan_root(top: Path, spec: dict) -> Path | None:
 
 def grant(cwd: Path, payload: dict) -> Grant | None:
     """What this task may do, computed for this call; `None` where no repository is attached."""
-    from guard_models import host_of, spawn_of
+    from guard_models import host_of
 
     found = layout(cwd.resolve())
     if found is None:
@@ -229,15 +231,6 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
     if payload.get("transcript_path"):
         roots.append(Path(str(payload["transcript_path"])).parent / "memory")
     roots += [top / Path(r).expanduser() for r in strings("write_roots") if not re.search(r"[$%]", r)]
-    checks = data.get("checks") if isinstance(data.get("checks"), dict) else {}
-    verification = (toml(top / "verification.toml") or toml(main / "verification.toml")).get("verification") or {}
-    commands = [str((data.get("slots") or {}).get("gate_cmd") or ""), SEARCH]
-    commands += [str(verification.get(k) or "") for k in ("round", "local")]
-    commands += [str(c.get("cmd") or "") for c in checks.values() if isinstance(c, dict)]
-    ctx = Ctx("posix", frozenset({top.as_posix()}), Path.home().as_posix(), temps()[0].as_posix(), os.name == "nt")
-    executables = {e[1] for c in commands if c.strip() for e in derive(c, "posix", ctx) if e[0] == "spawn"}
-    # A path entry names that file (`.venv/bin/python`), keyed the way the judge keys a path-named command.
-    executables |= {e[1] for s in strings("executables") for e in spawn_of(s, ctx) if e[0] == "spawn"}
     remotes = remote_hosts(common)
     hosts = {"127.0.0.1"} | {h for _, h in remotes if h != UNREAD} | {host_of(s) for s in strings("network_hosts")}
     # The git directories themselves, whatever they are named: a bare common directory (`shared.git`) holds
@@ -245,7 +238,7 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
     protected = sorted({str(p / x) for p in (top, main) for x in PROTECTED} | {str(gitdir), str(common)})
     writable = [h or top.as_posix() for h in hook_folders(common) if h is None
                 or contained(h, [str(r) for r in roots]) and not any(contained(h, [p]) for p in protected)]
-    return Grant([str(r) for r in roots], protected, executables, hosts, remotes, top.as_posix(),
+    return Grant([str(r) for r in roots], protected, hosts, remotes, top.as_posix(),
                  writable[0] if writable else "")
 
 
@@ -294,13 +287,10 @@ def holds_protected(target: str) -> bool:
 def outside(effect: tuple, g: Grant) -> str | None:
     """Why `effect` leaves the grant, naming what would allow it; `None` when it is inside."""
     kind, target = effect
-    if kind == "read":
+    if kind in ("read", "spawn"):
         return None
     if kind == "top":
         return f"판단할 수 없는 형태다({target}) — 어떤 허가로도 열리지 않으니, 리터럴 경로와 직접 실행하는 명령으로 풀어 쓴다"
-    if kind == "spawn":
-        return None if target in g.executables else \
-            f"허가된 실행 파일이 아니다 — `.wiki/adapter.toml` 의 `[guard] executables` 에 `{target}` 를 더하면 열린다"
     if kind == "network":
         return None if target in g.hosts else \
             f"허가된 호스트가 아니다 — `.wiki/adapter.toml` 의 `[guard] network_hosts` 에 `{target}` 를 더하면 열린다"

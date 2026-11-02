@@ -10,7 +10,7 @@ decided before it runs. The call passes when every effect is inside the grant
 (`grant`); there is no list of command patterns. What an executable does is
 read off a closed table of programs and the flags each understands
 (`guard_models.TABLE`, `guard_windows.PS_ROWS`/`CMD_ROWS`): a flag outside its
-row is `top`, and a name with no row is a `spawn` the grant has to name.
+row is `top`, and a name with no row is a `spawn`, which is never judged.
 
 Soundness over completeness: anything the models cannot decide becomes `top`,
 and `top` is never granted. The refusal is read by the person and stays Korean.
@@ -583,10 +583,15 @@ def run(toks: list, ctx: Ctx, src: str = "") -> tuple[set, frozenset]:
             else:
                 pending = moved
         # Only an assignment that runs at this level, not in a pipeline or a branch, binds what follows it.
-        if once and not stack and join in (";", "\n", "&&") and not piped_in and nxt not in ("|", "|&"):
-            bound = literal(items, ctx.d, consts, once)
-            consts.update(bound)
-            chain |= set(bound) if join == "&&" else set()
+        words = [bind(it[1], consts).text for it in items if it[0] == "w"]   # as `simple` dispatched them
+        here = once and not stack and join in (";", "\n", "&&") and not piped_in and nxt not in ("|", "|&")
+        bound = literal(items, ctx.d, consts, once) if here else {}
+        consts.update(bound)
+        chain |= set(bound) if join == "&&" else set()
+        # `export` binds each word's `NAME=` after quote removal: one `literal` did not bind has no literal.
+        if ctx.d == "posix" and "export" in words:
+            consts.update({m.group(1): None for t in words if (m := re.match(r"([A-Za-z_]\w*)\+?=", t))
+                           and m.group(1) not in bound})
     # Where the last command moved, it may or may not have run: every place stays possible.
     return out, states(cwds | pending) if pending is not None else cwds
 
@@ -991,8 +996,7 @@ def verdict(payload: dict, host: str = "claude") -> dict | None:
         return None
     lines = ["위키 효과 검사가 이 호출을 막았다 — 작업에 허가된 효과 밖이다."]
     lines += [f"- {effect}: {why}" for effect, why in bad]
-    lines.append(f"허가: 쓰기 루트 {', '.join(g.roots)} · 실행 파일 {', '.join(sorted(g.executables))}"
-                 f" · 호스트 {', '.join(sorted(g.hosts))}")
+    lines.append(f"허가: 쓰기 루트 {', '.join(g.roots)} · 호스트 {', '.join(sorted(g.hosts))}")
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                    "permissionDecisionReason": "\n".join(lines)}}
 
