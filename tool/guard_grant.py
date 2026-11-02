@@ -110,8 +110,9 @@ def remote_hosts(common: Path) -> tuple:
     # `worktreeConfig` adds a private file per worktree, which may name its own push URL. A URL-specific
     # `followRedirects` wins over the `-c http.followRedirects=false` git's network rows require. A bundle
     # URI, packfile URIs, a proxy or a resolve override (in a file or the environment) add a host besides
-    # the remote's.
-    others = r"(?:^|[\s\]])(?:bundleuri|uriprotocols|(?:git)?proxy\w*|curloptresolve)\s*=|\[\s*bundle\b"
+    # the remote's, and a cookie file is where git writes what the server sends.
+    others = r"(?:^|[\s\]])(?:bundleuri|uriprotocols|(?:git)?proxy\w*|curloptresolve|cookiefile|savecookies)\s*=" \
+             r"|\[\s*bundle\b"
     rewritten = re.search(r"(?im)insteadof|\[\s*include|worktreeconfig|followredirects|" + others, text) \
         is not None or any(re.search(r"(?im)insteadof|followredirects|\[\s*(include|remote|branch)|" + others, t)
                            for t in git_configs()) \

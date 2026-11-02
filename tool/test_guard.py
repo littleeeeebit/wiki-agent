@@ -1004,9 +1004,9 @@ def test_the_null_devices_stay_devices():
 # -- Follow-up (a): git and gh writes and the network ----------------------------
 # Each new row's effects, on a checkout whose one remote is `github.com`.
 ROW_EFFECTS = {
-    "git -c http.followRedirects=false fetch -q --no-recurse-submodules origin --prune":
+    "git -c http.followRedirects=false -c protocol.version=1 fetch -q --no-recurse-submodules origin --prune":
         {"write(/work/repo)", "network(github.com)"},
-    "git -c http.followRedirects=false pull --ff-only --no-recurse-submodules":
+    "git -c http.followRedirects=false -c protocol.version=1 pull --ff-only --no-recurse-submodules":
         {"write(/work/repo)", "network(github.com)"},
     "git merge --no-edit origin/main": {"write(/work/repo)"},
     "git rebase --continue": {"write(/work/repo)"},
@@ -1038,7 +1038,7 @@ def test_each_new_row_has_its_effects(command):
 
 
 def test_the_new_rows_pass_in_an_attached_checkout(repo):
-    for command in ("git -c http.followRedirects=false fetch --no-recurse-submodules origin && "
+    for command in ("git -c http.followRedirects=false -c protocol.version=1 fetch --no-recurse-submodules origin && "
                     "git merge --no-edit origin/main", "git stash && git stash pop", "git branch -D topic"):
         assert call(repo, command) is None, command
 
@@ -1055,7 +1055,7 @@ def test_a_worktree_of_the_same_repository_is_the_checkout(repo):
     (other / ".git").mkdir(parents=True)
     w, o = wt.as_posix(), other.as_posix()
     for command in (f"git -C {w} status", f"git -C {w} commit -qm x",
-                    f"git -C {w} -c http.followRedirects=false fetch --no-recurse-submodules origin"):
+                    f"git -C {w} -c http.followRedirects=false -c protocol.version=1 fetch --no-recurse-submodules origin"):
         assert call(repo, command) is None, command
     for command in (f"git -C {o} status", f"cd {o} && git fetch origin"):
         assert "판단할 수 없는" in (call(repo, command) or ""), command
@@ -1157,10 +1157,14 @@ def test_a_repository_write_is_placed_at_the_worktree_root():
     "git -c http.followRedirects=false fetch origin", "git fetch --no-recurse-submodules origin",
     "git -c http.followRedirects=true fetch --no-recurse-submodules origin",
     # A `-C` value is a directory, whatever it spells.
-    "git -C http.followRedirects=false fetch --no-recurse-submodules origin",
+    "git -C http.followRedirects=false -c protocol.version=1 fetch --no-recurse-submodules origin",
+    # Protocol v2 takes a packfile URI even unasked; v1 has no section for one.
+    "git -c http.followRedirects=false fetch --no-recurse-submodules origin",
+    "git -c http.followRedirects=false -c protocol.version=2 fetch --no-recurse-submodules origin",
+    "git -c http.followRedirects=false pull --ff-only --no-recurse-submodules",
 ])
 def test_git_network_turns_off_redirects_and_submodules(command):
-    # Both let the server's answer pick a host the grant never read: a redirect, or a submodule's remote.
+    # Each lets the server's answer pick a host the grant never read: a redirect, a submodule's remote, a pack URI.
     assert any(e.startswith("top(") for e in effects(command, ctx=POSIX)), command
 
 
@@ -1211,7 +1215,8 @@ def test_a_promisor_setting_that_may_hide_makes_git_top(tmp_path, monkeypatch, c
 @pytest.mark.parametrize("extra", ["[fetch]\n\tbundleURI = https://unlisted.example/r.bundle\n",
                                    "[bundle]\n\tversion = 1\n", '[remote "origin"]\n\tproxy = http://unlisted.example\n',
                                    "[http]\n\tproxy = http://unlisted.example\n", "[core]\n\tgitProxy = helper\n",
-                                   "[http]\n\tcurloptResolve = github.com:443:192.0.2.1\n"])
+                                   "[http]\n\tcurloptResolve = github.com:443:192.0.2.1\n",
+                                   "[http]\n\tcookieFile = ../outside/f.txt\n\tsaveCookies = true\n"])
 def test_a_configured_host_besides_the_remote_leaves_the_remotes_unread(tmp_path, monkeypatch, extra):
     (tmp_path / "config").write_text(ORIGIN + extra, encoding="utf-8")
     monkeypatch.setattr(guard_grant, "git_configs", lambda: [])

@@ -141,11 +141,13 @@ builtins, and `tool/guard_git.py` for git. The table holds only:
   and `push` with at most a branch) to a configured remote. A write of the
   repository is a write of the whole worktree root, wherever below it git
   runs. The network verbs must carry `-c http.followRedirects=false` and
-  `--no-recurse-submodules`, so a redirect or a submodule's own remote cannot
-  pick another host. A configuration that mentions `followRedirects`, a
-  bundle URI, `uriProtocols` (packfile URIs), a proxy or `curloptResolve`
-  (or a proxy in the environment)
-  adds a host besides the remote's, so it leaves the remotes unread. A path
+  `--no-recurse-submodules`, and `fetch`/`pull` also `-c protocol.version=1`,
+  so a redirect, a submodule's own remote or a packfile URI (which protocol
+  v2 takes even unasked) cannot pick another host. A configuration that
+  mentions `followRedirects`, a bundle URI, `uriProtocols`, a proxy,
+  `curloptResolve` or a cookie file (or a proxy in the environment) adds a
+  host besides the remote's or a file git writes, so it leaves the remotes
+  unread. A path
   operand of
   `checkout`, `restore` or `stash push` is also a write of that path, and a
   pathspec pattern (`'*.toml'`, `:(top)`) is `top`; `worktree add` writes its

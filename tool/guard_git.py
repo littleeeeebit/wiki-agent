@@ -37,9 +37,11 @@ GIT_GLOBAL = {"--no-pager", "-P", "--no-optional-locks", "--literal-pathspecs", 
 # Keys whose value git never runs, loads or sends anywhere: identity, whitespace and display.
 GIT_SAFE_KEYS = {"user.name", "user.email", "core.whitespace", "core.autocrlf", "core.safecrlf", "core.quotepath",
                  "color.ui", "color.diff", "color.status", "advice.detachedhead"}
-# A git network verb must turn off what lets the server's answer pick another host: an HTTP redirect, and a
-# submodule fetched or pushed through its own remote. A setting on the command line overrides every file.
+# A git network verb must turn off what lets the server's answer pick another host: an HTTP redirect, a
+# submodule fetched or pushed through its own remote, and for a fetch a packfile URI, which protocol v2 takes
+# even unasked and v1 has no section for. A setting on the command line overrides every file.
 NO_REDIRECTS = "http.followRedirects=false"
+REQUIRED = {"fetch": (NO_REDIRECTS, "protocol.version=1"), "push": (NO_REDIRECTS,)}
 # The options the log/diff family shares. `--output` is a write; `--ext-diff`, `--textconv` are not here.
 GIT_LOG = ("-pusczwbRqiEm -M? -B? -C? -U: -n: -S: -G: -L: -O: --patch --no-patch --stat --numstat --shortstat --name-only "
            "--name-status --summary --check --raw --cached --staged --merge-base --no-index --exit-code --quiet "
@@ -247,7 +249,8 @@ def git_options(args: list, ctx):
             value = args[i + 1]
             if t == "-C":
                 ctx = replace(ctx, cwds=moved_to(value, ctx))
-            elif value.text.partition("=")[0].lower() not in GIT_SAFE_KEYS and value.text != NO_REDIRECTS:
+            elif value.text.partition("=")[0].lower() not in GIT_SAFE_KEYS \
+                    and value.text not in REQUIRED["fetch"]:
                 return top(f"git -c {value.text.partition('=')[0]}: a key whose value git may run or send"), None
             i += 2
             continue
@@ -320,6 +323,7 @@ def m_git(name, args, ctx):
         out |= paths("delete" if verb == "worktree remove" else "write", pos[0], ctx)
     elif kind in ("fetch", "push"):
         out |= reached(verb.split()[0], pos, ctx)
-        if NO_REDIRECTS not in settings(args, i) or "--no-recurse-submodules" not in rest_flags:
-            out |= top(f"git {verb} without `-c {NO_REDIRECTS}` and `--no-recurse-submodules`")
+        if not set(REQUIRED[kind]) <= settings(args, i) or "--no-recurse-submodules" not in rest_flags:
+            needed = " ".join(f"-c {s}" for s in REQUIRED[kind])
+            out |= top(f"git {verb} without `{needed}` and `--no-recurse-submodules`")
     return out, None

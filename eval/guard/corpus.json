@@ -553,9 +553,9 @@
    "effects": [
     "network(github.com)",
     "read",
-    "top(git fetch without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
     "top(git in a repository other than the checkout)",
-    "top(git pull without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "top(git pull without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
     "top(variable in a nested shell string)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -568,7 +568,7 @@
     "network(github.com)",
     "read",
     "spawn(python)",
-    "top(git fetch without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
     "top(variable where an option of git worktree remove may stand)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -608,7 +608,7 @@
     "network(github.com)",
     "read",
     "spawn(rm)",
-    "top(git fetch without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
     "top(git push --delete: an option the table does not model)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -890,7 +890,7 @@
    "effects": [
     "network(github.com)",
     "read",
-    "top(git fetch without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -1340,8 +1340,8 @@
     "spawn(gh)",
     "spawn(python)",
     "spawn(rm)",
-    "top(git fetch without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
-    "top(git pull without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
+    "top(git pull without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
     "top(variable where an option of git diff may stand)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/main)"
@@ -1357,8 +1357,8 @@
     "spawn(gh)",
     "spawn(python)",
     "spawn(rm)",
-    "top(git fetch without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
-    "top(git pull without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
+    "top(git pull without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/main)"
    ]
@@ -1393,7 +1393,7 @@
     "read",
     "spawn(python)",
     "spawn(rm)",
-    "top(git pull without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "top(git pull without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
     "top(variable in a write path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -1465,7 +1465,7 @@
     "network(github.com)",
     "read",
     "spawn(rm)",
-    "top(git pull without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "top(git pull without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/main)"
    ]
@@ -1479,7 +1479,7 @@
     "read",
     "spawn(sed)",
     "top(a directory change after the first statement)",
-    "top(git fetch without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/contract/wiki-agent)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -1494,7 +1494,7 @@
     "spawn(python)",
     "spawn(ruff)",
     "top(git add of a folder, which stages every untracked file below it)",
-    "top(git fetch without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
     "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -1506,9 +1506,9 @@
    "effects": [
     "network(github.com)",
     "read",
-    "top(git fetch without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
     "top(git in a repository other than the checkout)",
-    "top(git pull without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "top(git pull without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
     "top(git push --delete: an option the table does not model)",
     "top(git worktree remove without an absolute path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
@@ -1555,7 +1555,7 @@
     "spawn(python)",
     "spawn(rm)",
     "top(git in a repository other than the checkout)",
-    "top(git pull without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "top(git pull without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
     "top(git worktree remove without an absolute path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -1570,7 +1570,7 @@
     "read",
     "spawn(python)",
     "spawn(rm)",
-    "top(git fetch without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "top(git fetch without `-c http.followRedirects=false -c protocol.version=1` and `--no-recurse-submodules`)",
     "top(git push --delete: an option the table does not model)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
