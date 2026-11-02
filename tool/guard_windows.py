@@ -45,7 +45,7 @@ PS_ALIAS = {
     "mkdir": "new-item", "md": "new-item", "ni": "new-item", "echo": "write-output", "write": "write-output",
     "cd": "set-location", "sl": "set-location", "chdir": "set-location", "pushd": "push-location",
     "popd": "pop-location", "iwr": "invoke-webrequest", "curl": "invoke-webrequest", "wget": "invoke-webrequest",
-    "irm": "invoke-restmethod", "iex": "invoke-expression", "sc": "set-content", "ac": "add-content",
+    "irm": "invoke-restmethod", "iex": "invoke-expression", "ac": "add-content",
     "clc": "clear-content", "start": "start-process", "saps": "start-process", "kill": "stop-process",
     "spps": "stop-process", "%": "foreach-object", "foreach": "foreach-object", "?": "where-object",
     "where": "where-object", "sls": "select-string", "select": "select-object", "sort": "sort-object",
@@ -61,7 +61,10 @@ PS_ALIAS = {
 PS_TOP = {"invoke-expression", "add-type", "import-module", "set-executionpolicy", "invoke-history", "new-alias",
           "set-alias", "register-scheduledjob", "register-scheduledtask", "new-service", "set-service",
           "enable-psremoting", "enter-pssession", "new-pssession", "invoke-item", "start-transcript"}
-PS_REFUSED = {"expand-archive": "extracts an archive into names the archive decides"}
+PS_REFUSED = {"expand-archive": "extracts an archive into names the archive decides",
+              "sc": "is Set-Content in Windows PowerShell but runs sc.exe in PowerShell 7"}
+# Aliases PowerShell 7 drops off Windows, where the name runs the native program of that name.
+POSIX_NAMES = set("ac cat clear compare cp cpp diff kill ls man mount mv ps rm rmdir sleep sort start tee write".split())
 PATH = ("path", "literalpath")
 # Common parameters every cmdlet takes, and the aliases PowerShell binds for them and for `-LiteralPath`.
 COMMON = ("erroraction= warningaction= informationaction= errorvariable= warningvariable= informationvariable= "
@@ -138,12 +141,13 @@ PS_POSITIONS = {
 }
 
 
-def cmdlet(raw: str) -> str | None:
+def cmdlet(raw: str, windows: bool = True) -> str | None:
     """The cmdlet a PowerShell command name runs, or `None` for an external program."""
-    if re.search(r"[\\/]|\.\w+$", raw):
+    if re.search(r"[\\/]|\.\w+$", raw) or not windows and raw.lower() in POSIX_NAMES:
         return None
     canon = PS_ALIAS.get(raw.lower(), raw.lower())
-    return canon if canon in PS_ROWS or canon in PS_TOP or re.match(r"^[a-z]+-[a-z]", canon) else None
+    return canon if canon in PS_ROWS or canon in PS_TOP or canon in PS_REFUSED \
+        or re.match(r"^[a-z]+-[a-z]", canon) else None
 
 
 def ps_args(args: list, spec: str) -> tuple[dict, list, str]:

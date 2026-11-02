@@ -146,7 +146,10 @@ builtins, and `tool/guard_git.py` for git. The table holds only:
   target from piped objects), and a copy, move or delete with no literal path
   for one of its places. A parameter's dash may be an en dash, em dash or
   horizontal bar, as PowerShell reads it, and `\\?\` names a drive, a share
-  (`UNC\`) or else nothing inside a write root (`GLOBALROOT`);
+  (`UNC\`) or else nothing inside a write root (`GLOBALROOT`). An alias that
+  may run a native program instead is not its cmdlet: `sc` (`sc.exe` in
+  PowerShell 7) is `top`, and off Windows `rm`, `cp`, `mv`, `tee` and the
+  other names PowerShell 7 drops there are those programs;
 - git reads (`status`, `diff`, `log`, `show`, `rev-parse`, `rev-list`,
   `ls-files`, `ls-tree`, `check-ignore`, `merge-base`, `cat-file`, `describe`,
   `blame`, `grep`, `remote -v`, `remote get-url`, `config` that only gets or

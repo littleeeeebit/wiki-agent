@@ -587,7 +587,7 @@ def run_argv(words: list, ctx) -> tuple[set, object]:
     if ctx.d in ("ps", "cmd"):
         from guard_windows import CMD_BUILTINS, cmd_builtin, cmdlet, ps_cmdlet
 
-        if ctx.d == "ps" and (canon := cmdlet(raw)):
+        if ctx.d == "ps" and (canon := cmdlet(raw, ctx.windows)):
             return ps_cmdlet(canon, args, ctx)
         if ctx.d == "cmd" and raw.lstrip("@").lower() in CMD_BUILTINS:
             return cmd_builtin(raw.lstrip("@").lower(), args, ctx)

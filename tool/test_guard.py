@@ -376,6 +376,16 @@ def test_an_extended_unc_path_is_a_share_not_a_relative_path(repo):
     assert "쓰기 루트 밖" in reason
 
 
+def test_an_alias_that_may_name_a_native_program_is_not_its_cmdlet():
+    # `sc` is Set-Content in Windows PowerShell but sc.exe in PowerShell 7.
+    assert any(e.startswith("top(") for e in effects("sc stop placeholder", "ps"))
+    # Off Windows, PowerShell 7 has no `rm`, `cp`, `mv` or `tee` alias: the name runs that program.
+    posix_host = replace(CTX, d="ps", windows=False, cwds=frozenset({"/w"}))
+    for name in ("rm", "cp", "mv", "tee"):
+        assert f"spawn({name})" in effects(f"{name} a b", "ps", posix_host), name
+    assert "delete(/w/a)" in effects("Remove-Item a", "ps", posix_host)
+
+
 @pytest.mark.parametrize("dash", ["-", "–", "—", "―"])
 def test_every_dash_powershell_reads_names_a_parameter(repo, dash):
     for command in (f"'x' | Set-Content {dash}Path ../outside/t.txt", f"'x' | Out-File {dash}FilePath ../outside/t.txt",
