@@ -882,6 +882,15 @@ def test_a_repository_differing_only_in_case_is_another_on_posix():
     assert "network(github.com)" in effects("git push origin HEAD", ctx=POSIX)
 
 
+def home_at(monkeypatch, home: Path):
+    """Every place git may take its home from points at `home`."""
+    monkeypatch.setattr(Path, "home", lambda: home)
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(home))
+    for name in ("HOMEDRIVE", "HOMEPATH", "XDG_CONFIG_HOME"):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.mark.parametrize("config,expected", [
     ('[remote "origin"]\n url = https://read.example/o/r.git\n pushurl = https://write.example/o/r.git\n',
      {"network(read.example)", "network(write.example)"}),
@@ -903,7 +912,7 @@ def test_a_repository_differing_only_in_case_is_another_on_posix():
     ('[remote.origin]\n url = https://read.example/o/r.git\n', "git push to"),
 ])
 def test_a_push_reaches_every_destination_git_would_use(tmp_path, monkeypatch, config, expected):
-    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    home_at(monkeypatch, tmp_path / "home")
     (tmp_path / "config").write_text(config, encoding="utf-8")
     found = effects("git push origin HEAD", ctx=replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path)))
     if isinstance(expected, set):
@@ -913,7 +922,7 @@ def test_a_push_reaches_every_destination_git_would_use(tmp_path, monkeypatch, c
 
 
 def test_a_branch_upstream_given_as_a_url_is_a_destination(tmp_path, monkeypatch):
-    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    home_at(monkeypatch, tmp_path / "home")
     (tmp_path / "config").write_text('[remote "origin"]\n url = https://read.example/o/r.git\n'
                                      '[branch "main"]\n remote = https://write.example/o/r.git\n', encoding="utf-8")
     found = effects("git push", ctx=replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path)))
@@ -961,7 +970,7 @@ def test_unix_device_spellings_are_files_in_native_windows_shells():
 def test_a_rewrite_in_any_config_git_reads_leaves_pushes_unread(tmp_path, monkeypatch, config):
     (tmp_path / "home").mkdir()
     (tmp_path / "home/.gitconfig").write_text(config, encoding="utf-8")
-    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    home_at(monkeypatch, tmp_path / "home")
     (tmp_path / "config").write_text('[remote "origin"]\n url = https://read.example/o/r.git\n', encoding="utf-8")
     found = effects("git push origin HEAD", ctx=replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path)))
     # An include may also make the checkout a partial clone, which stops git earlier.
@@ -1216,6 +1225,17 @@ def test_a_promisor_setting_that_may_hide_makes_git_top(tmp_path, monkeypatch, c
     remotes = guard_grant.remote_hosts(tmp_path)
     assert any(e.startswith("top(") for e in effects("git cat-file -p HEAD:notes.txt",
                                                      ctx=replace(POSIX, remotes=remotes)))
+
+
+@pytest.mark.parametrize("place", [".gitconfig", ".config/git/config"])
+def test_the_global_configuration_is_read_from_gits_home(tmp_path, monkeypatch, place):
+    # Git on Windows takes HOME before USERPROFILE, which Python's home uses (round 12).
+    home_at(monkeypatch, tmp_path / "profile")
+    monkeypatch.setenv("HOME", str(tmp_path / "settings"))
+    (tmp_path / "settings" / place).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "settings" / place).write_text("[trace2]\n\teventTarget = ../outside/f.txt\n", encoding="utf-8")
+    (tmp_path / "config").write_text(ORIGIN, encoding="utf-8")
+    assert (guard_grant.LAZY, guard_grant.UNREAD) in guard_grant.remote_hosts(tmp_path)
 
 
 def test_an_absorbed_submodule_makes_git_top(tmp_path, monkeypatch):

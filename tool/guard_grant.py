@@ -80,9 +80,14 @@ LAZY = "\0lazy"
 
 def git_configs() -> list:
     """The text of every global and system configuration file git reads besides the repository's own."""
-    home, env = Path.home(), os.environ
-    places = [home / ".gitconfig", Path(env.get("XDG_CONFIG_HOME") or home / ".config") / "git/config",
-              Path("/etc/gitconfig"), Path(env.get("PROGRAMDATA") or "C:/ProgramData") / "Git/config"]
+    env = os.environ
+    # Git on Windows takes `HOME`, then `HOMEDRIVE`+`HOMEPATH`, then `USERPROFILE`; Python's home skips `HOME`.
+    # Every candidate is read, since one more file only makes the reader stricter.
+    homes = {Path.home()} | {Path(h) for h in (env.get("HOME"), env.get("USERPROFILE"),
+                                               env.get("HOMEDRIVE", "") + env.get("HOMEPATH", "")) if h}
+    places = [p for home in homes for p in (home / ".gitconfig", home / ".config/git/config")]
+    places += [Path("/etc/gitconfig"), Path(env.get("PROGRAMDATA") or "C:/ProgramData") / "Git/config"]
+    places += [Path(env["XDG_CONFIG_HOME"]) / "git/config"] if env.get("XDG_CONFIG_HOME") else []
     places += [Path(env[k]) for k in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM") if env.get(k)]
     if git := shutil.which("git"):
         # Git for Windows keeps its system file beside its install: `<root>/etc/gitconfig`, `<root>/mingw64/...`.
