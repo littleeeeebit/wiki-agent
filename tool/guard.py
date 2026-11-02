@@ -728,9 +728,9 @@ ENV_COMMAND = re.compile(r"^(?:GIT_EDITOR|GIT_SEQUENCE_EDITOR|EDITOR|VISUAL|PAGE
 # Variables that change which code a later program loads or runs, or where `~`, `/tmp` and a client's
 # configuration land: never decidable here.
 ENV_EXEC = re.compile(r"^(?:LD_\w+|DYLD_\w+|BASH_ENV|ENV|PROMPT_COMMAND|PATH|PATHEXT|GIT_(?!AUTHOR_|COMMITTER_|"
-                      r"TERMINAL_PROMPT|OPTIONAL_LOCKS|TRACE|DIR$|WORK_TREE$)\w+|NODE_OPTIONS|PYTHONSTARTUP|"
+                      r"TERMINAL_PROMPT|OPTIONAL_LOCKS|DIR$|WORK_TREE$)\w+|NODE_OPTIONS|PYTHONSTARTUP|"
                       r"PERL5OPT|RUBYOPT|SHELLOPTS|PS4|COMSPEC|PSModulePath|HOME|USERPROFILE|ZDOTDIR|"
-                      r"XDG_CONFIG_HOME|CURL_HOME|TMPDIR|TMP|TEMP|GH_CONFIG_DIR)$", re.I)
+                      r"XDG_CONFIG_HOME|CURL_HOME|TMPDIR|TMP|TEMP|GH_CONFIG_DIR|SSLKEYLOGFILE)$", re.I)
 # Variables that send a later client to another host: the host is reached whichever command reads them.
 ENV_NETWORK = re.compile(r"^(?:GH_HOST|GH_REPO|HTTPS?_PROXY|ALL_PROXY)$", re.I)
 
@@ -746,10 +746,9 @@ def envs(assigns: list, ctx: Ctx) -> set:
             # An array subscript other than a number is evaluated as arithmetic.
             out |= top("arithmetic evaluation, which runs what its variables hold")
         name = name.split("[")[0]
-        if ENV_NETWORK.match(name):
-            if name.upper() == "GH_REPO":
-                # `[HOST/]OWNER/REPO`: a host only when there are three parts.
-                value = value.split("/")[0] if value.count("/") >= 2 else ""
+        if name.upper() == "GH_REPO":
+            out |= top("GH_REPO, which points gh at a repository other than the checkout's")
+        elif ENV_NETWORK.match(name):
             out |= network(Word(value, w.why))
         elif ENV_COMMAND.match(name):
             out |= top(f"{w.why} in {name}") if w.why else code(value, "posix", ctx)

@@ -122,16 +122,52 @@ in `tool/guard_models.py` lists each modelled program with the flags it
 understands (`row(model, "-abc --long -o: --out:")`: one-letter flags, long
 flags, and flags that take a value); `PS_ROWS` and `CMD_ROWS` in
 `tool/guard_windows.py` do the same for PowerShell cmdlets and cmd.exe
-builtins. The table holds only:
+builtins, and `tool/guard_git.py` for git. The table holds only:
 
 - read-only listing, reading and searching programs (`ls`, `cat`, `head`,
   `grep`, `rg`, `find` without actions, `diff`, `echo`, `Get-Content`,
   `Get-ChildItem`, `Select-String`, `Test-Path`, cmd's `type`, `dir`, `echo`);
 - `cd` and `Set-Location` in the call's first statement only;
-- git `status`, `diff`, `log`, `show`, `rev-parse` (reads), `add`, `commit`
-  with `-m`/`-F` (a write of the repository), and `push` with at most a
-  configured remote and a branch name (that remote's host), none of them with
-  `-c`, `-C`, `--git-dir`, `--work-tree` or `--exec-path`;
+- git reads (`status`, `diff`, `log`, `show`, `rev-parse`, `rev-list`,
+  `ls-files`, `ls-tree`, `check-ignore`, `merge-base`, `cat-file`, `describe`,
+  `blame`, `grep`, `remote -v`, `remote get-url`, `config` that only gets or
+  lists, `stash list`/`show`, `worktree list`, and `branch` that only lists);
+  writes of the repository (`add` of named files or `-u`, `commit -m`/`-F`,
+  `branch`, `checkout`, `switch`, `restore`, `merge`, `rebase` without
+  `-i`/`-x`, `stash` without `-a`/`-u`, `worktree add`/`remove`/`prune`).
+  `add -A` and a folder to add are `top`, as is `stash -u`: an edited ignore
+  rule may stop hiding a protected file, which they would then pick up as an
+  untracked one. And the network: `push` with at most a branch to a
+  configured remote. A write of the repository is a write of the whole
+  worktree root, wherever below it git runs. A push must carry
+  `-c http.followRedirects=false` and `--no-recurse-submodules`, so a
+  redirect or a submodule's own remote cannot pick another host. `fetch` and
+  `pull` have no row: a server may answer in protocol v2 whatever version was
+  asked, and v2 takes a packfile URI naming another host unasked. A
+  configuration that mentions `followRedirects`, a bundle URI,
+  `uriProtocols`, a proxy, `curloptResolve` or a cookie file (or a proxy in
+  the environment) adds a host besides the remote's or a file git writes, so
+  it leaves the remotes unread. A path operand of
+  `checkout`, `restore` or `stash push` is also a write of that path, and a
+  pathspec pattern (`'*.toml'`, `:(top)`) is `top`; `worktree add` writes its
+  folder and `worktree remove` deletes it, named only by a path absolute on
+  the host (git matches a relative one, `C:/x` on POSIX included, as the tail
+  of any registered worktree's path). `-C <dir>` moves where git runs, and
+  `-c` takes only identity, whitespace and colour keys. `--git-dir`,
+  `--work-tree`, `--exec-path`, `--config-env`, a `GIT_TRACE*` file and every
+  other verb are `top`. In a partial clone every git form is `top`, since
+  reading a missing object fetches it, and so it is with a `trace2` target
+  in any configuration (any call appends to it) and wherever either may hide:
+  an `[include]`, `extensions.worktreeConfig`, or a submodule (a
+  `[submodule]` section in any configuration or a `modules` folder), whose
+  own configuration a recursing read uses. A missing repository
+  configuration still has the global and system files checked;
+- no row for gh or curl: their HTTP clients follow a redirect the response
+  names, nothing on the command line turns that off, and gh's `pr create` and
+  `pr merge` also run git that takes none of the options above. They are only
+  spawns, denied unless a grant names them, and wait for the shell-semantics
+  follow-up. Setting `GH_REPO` in any form (PowerShell's one-word and
+  compound assignments included) stays `top`;
 - plain `>`/`>>` redirection to a literal path, in every dialect. Only the
   host's devices are discarded: `/dev/null` and its kin as spelled where a
   POSIX layer serves them (not in native Windows PowerShell or cmd, where they
@@ -143,8 +179,28 @@ A git row's arguments never select a program: `--show-signature` and a
 `top`. What git starts from its own configuration (hooks, a text converter,
 the verifier `log.showSignature` asks for) is part of the git row, since that
 configuration is protected or outside the write roots. That holds only for the
-checkout itself: git in any other repository (a nested one included) is `top`,
-and no write or edit may lay down a `.git` anywhere.
+checkout itself and the worktrees of the same repository (one configuration,
+one set of hooks and remotes): git in any other repository (a nested one
+included) is `top`, and no write or edit may lay down a `.git` anywhere. The
+checkout's git directory and common git directory are protected whatever their
+names, so a worktree of a bare repository (`shared.git`) keeps its
+configuration and hooks out of reach too. When
+any configuration git reads may point `core.hooksPath` inside a write root,
+every git write of the repository is denied, since git would run hooks the task
+can edit. Only an absolute value on a line of its own is read as written; a
+relative value (it depends on the worktree that runs it), another syntax, an
+`[include]` or `extensions.worktreeConfig` counts as a writable folder.
+
+A verb that moves the working tree between commits (`checkout`, `merge`,
+`rebase`, `stash pop`) writes whatever the repository's history holds,
+protected files and links included. That history is trusted because the agent
+cannot author such a commit within the table: no row lays down a link, and a
+protected name (`verification.toml`, `.wiki/adapter.toml`, `.claude`,
+`.codex`) is protected at any depth below every write root, so another
+worktree's copy cannot be changed and committed either; no git setting
+writes a file the guard has not placed (`GIT_TRACE*` is `top`), git never
+stages or stashes a file it was not named (no `add -A`, folder or `stash -u`),
+and no row reaches a remote that could author one.
 
 Four rules hold across the table:
 
@@ -164,18 +220,18 @@ Four rules hold across the table:
   only `using namespace` is a declaration.
 
 Everything else is denied in app-managed sessions: file writers such as `rm`,
-`cp`, `mv`, `touch`, `Set-Content` and `Remove-Item`, archives, links, `curl`,
-`gh`, `awk`, `sed`, and every other git verb, `git merge` of a merge repair
-included. Follow-up changes add rows for git and gh writes and network,
-PowerShell and cmd, and shell semantics; a command that is denied but ordinary
-is answered by adding a row there, not by loosening an existing one.
+`cp`, `mv`, `touch`, `Set-Content` and `Remove-Item`, archives, links, `awk`,
+`sed`, `wget`, curl, gh, and every git form outside its row. Follow-up
+changes add rows for PowerShell and cmd, and shell semantics; a command that is
+denied but ordinary is answered by adding a row there, not by loosening an
+existing one.
 
 | Effect | Granted when |
 |---|---|
 | `write`, `delete` | the path resolves (links, junctions and `..` followed) inside a write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder; each `[guard] write_roots` entry, relative to the checkout |
-| — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (`echo x > .wiki`, `echo x > .`). Only git's own write of the repository it runs in (`add`, `commit`, `push`) is judged by place alone |
+| — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (`echo x > .wiki`, `echo x > .`). Only git's own write of the repository it runs in (`add`, `commit`, `merge`, `push`, …) is judged by place alone |
 | `spawn` | the executable is one that `gate_cmd`, `verification.toml`'s round and local commands, a `[checks]` command or `python tool/search` runs, or is listed in `[guard] executables`. A bare name is that name; a name with a path (`./tool`, `C:/x/python.exe`, `/usr/bin/time`) is that file, granted only by the same path. A git remote name counts only in the checkout's own repository: a push after a `cd` into another repository is `top` |
-| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named); a remote at a local path, a URL rewrite (`insteadOf`) or `[include]` in any config file git reads (the repository's, global, XDG or system), a `[remote]` or `[branch]` section outside the repository's own config, or config syntax the guard does not decode (a key on a header's line, a continued, quoted or commented value), makes it `top`. `GH_HOST`, `GH_REPO` and the proxy variables count as reaching their host; a target whose host cannot be read is `top` |
+| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named); a remote at a local path, a URL rewrite (`insteadOf`) or `[include]` in any config file git reads (the repository's, global, XDG or system; the global and XDG files under every home git may take: `HOME`, `HOMEDRIVE`+`HOMEPATH` and `USERPROFILE`), a `[remote]` or `[branch]` section outside the repository's own config, `extensions.worktreeConfig`, or config syntax the guard does not decode (a key on a header's line, a continued, quoted or commented value), makes it `top`. `GH_HOST` and the proxy variables count as reaching their host (`GH_REPO` is `top`); a target whose host cannot be read is `top` |
 | `top` | never |
 
 The optional adapter table adds to the grant and never names a command:

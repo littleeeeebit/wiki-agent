@@ -19,7 +19,7 @@ import re
 import shutil
 import tempfile
 
-from guard import HERE, Ctx, contained, derive
+from guard import HERE, Ctx, contained, derive, real_path
 
 
 @dataclass
@@ -30,6 +30,7 @@ class Grant:
     hosts: set
     remotes: tuple
     top: str = ""                       # the checkout the remotes were read from
+    hooks: str = ""                     # a hooks folder git is configured to run from inside a write root
 
 
 # Inside a write root, but they decide the grant or what runs next: never granted.
@@ -72,13 +73,21 @@ def layout(cwd: Path) -> tuple | None:
 # A destination git reaches that is not a network host the guard can name: a local path, a `file://` URL,
 # or one a URL rewrite may change. A push to it is `top`, and it is never granted as a host.
 UNREAD = "\0unread"
+# A remote name marking a configuration that may make any git call fetch (a partial clone) or append to a
+# file (a Trace2 target), or a file the reader does not open that may say so.
+LAZY = "\0lazy"
 
 
 def git_configs() -> list:
     """The text of every global and system configuration file git reads besides the repository's own."""
-    home, env = Path.home(), os.environ
-    places = [home / ".gitconfig", Path(env.get("XDG_CONFIG_HOME") or home / ".config") / "git/config",
-              Path("/etc/gitconfig"), Path(env.get("PROGRAMDATA") or "C:/ProgramData") / "Git/config"]
+    env = os.environ
+    # Git on Windows takes `HOME`, then `HOMEDRIVE`+`HOMEPATH`, then `USERPROFILE`; Python's home skips `HOME`.
+    # Every candidate is read, since one more file only makes the reader stricter.
+    homes = {Path.home()} | {Path(h) for h in (env.get("HOME"), env.get("USERPROFILE"),
+                                               env.get("HOMEDRIVE", "") + env.get("HOMEPATH", "")) if h}
+    places = [p for home in homes for p in (home / ".gitconfig", home / ".config/git/config")]
+    places += [Path("/etc/gitconfig"), Path(env.get("PROGRAMDATA") or "C:/ProgramData") / "Git/config"]
+    places += [Path(env["XDG_CONFIG_HOME"]) / "git/config"] if env.get("XDG_CONFIG_HOME") else []
     places += [Path(env[k]) for k in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM") if env.get(k)]
     if git := shutil.which("git"):
         # Git for Windows keeps its system file beside its install: `<root>/etc/gitconfig`, `<root>/mingw64/...`.
@@ -100,12 +109,26 @@ def remote_hosts(common: Path) -> tuple:
     try:
         text = (common / "config").read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return ()
+        text = ""                       # git works without one; the global and system files still apply
     # A URL rewrite, or an included file that may hold one or another remote, changes where a push goes, and
     # a remote or branch set outside the repository adds destinations this reader does not take from there.
     # Any mention in any file git reads, in any syntax (a key after a header, a continued line), counts.
-    rewritten = re.search(r"(?i)insteadof|\[\s*include", text) is not None or any(
-        re.search(r"(?i)insteadof|\[\s*(include|remote|branch)", t) for t in git_configs())
+    # `worktreeConfig` adds a private file per worktree, which may name its own push URL. A URL-specific
+    # `followRedirects` wins over the `-c http.followRedirects=false` git's network rows require. A bundle
+    # URI, packfile URIs, a proxy or a resolve override (in a file or the environment) add a host besides
+    # the remote's, and a cookie file is where git writes what the server sends.
+    others = r"(?:^|[\s\]])(?:bundleuri|uriprotocols|(?:git)?proxy\w*|curloptresolve|cookiefile|savecookies)\s*=" \
+             r"|\[\s*bundle\b"
+    rewritten = re.search(r"(?im)insteadof|\[\s*include|worktreeconfig|followredirects|" + others, text) \
+        is not None or any(re.search(r"(?im)insteadof|followredirects|\[\s*(include|remote|branch)|" + others, t)
+                           for t in git_configs()) \
+        or any(os.environ.get(k) for k in ("http_proxy", "https_proxy", "all_proxy", "HTTPS_PROXY", "ALL_PROXY"))
+    # A promisor remote lets any read fetch, and a Trace2 target lets any call append to a file; a file this
+    # reader does not open may hold either, and so may a submodule's own configuration, which a read that
+    # recurses (by `submodule.recurse`, with no flag) uses for its objects.
+    lazy = re.search(r"(?i)partialclone|promisor|trace2|\[\s*(include|submodule)|worktreeconfig", text) \
+        or any(re.search(r"(?i)partialclone|promisor|trace2|\[\s*(include|submodule)", t) for t in git_configs()) \
+        or (common / "modules").exists()
     found, section = [], ("", "")
     for line in text.splitlines():
         if not line.strip() or re.match(r"\s*[#;]", line):
@@ -136,7 +159,26 @@ def remote_hosts(common: Path) -> tuple:
         networked = re.match(r"[a-zA-Z][\w+.-]*://", value) and not value.lower().startswith("file:") \
             or re.match(r"[^/\\:\s]+@[^/\\:\s]+:", value)
         out.add((name, host_of(value) if networked and not rewritten else UNREAD))
-    return tuple(sorted(out))
+    return tuple(sorted(out | ({(LAZY, UNREAD)} if lazy else set())))
+
+
+def hook_folders(common: Path) -> list:
+    """Every folder a `core.hooksPath` in any configuration git reads may name. Only an absolute value on a
+    line of its own is read as written. A relative one depends on which worktree runs it, and a value in
+    another syntax, an include or a per-worktree file is unseen: each is `None`, a folder the task may write."""
+    try:
+        texts = [(common / "config").read_text(encoding="utf-8", errors="replace")]
+    except OSError:
+        texts = []
+    texts += git_configs()
+    unseen = any(re.search(r"(?i)\[\s*include|worktreeconfig", t) for t in texts)
+    out = [None] if unseen else []
+    for mention in re.finditer(r"(?i)hookspath", "\n".join(texts)):
+        line = mention.string[mention.string.rfind("\n", 0, mention.start()) + 1:].split("\n", 1)[0]
+        m = re.fullmatch(r"(?i)\s*hookspath\s*=\s*([^\s\"\\;#$%]+)\s*", line)
+        where = m and Path(m.group(1)).expanduser()
+        out.append(str(where) if where and where.is_absolute() else None)
+    return out
 
 
 def task_spec(top: Path, gitdir: Path, main: Path) -> dict:
@@ -198,8 +240,25 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
     executables |= {e[1] for s in strings("executables") for e in spawn_of(s, ctx) if e[0] == "spawn"}
     remotes = remote_hosts(common)
     hosts = {"127.0.0.1"} | {h for _, h in remotes if h != UNREAD} | {host_of(s) for s in strings("network_hosts")}
-    protected = sorted({str(p / x) for p in (top, main) for x in PROTECTED})
-    return Grant([str(r) for r in roots], protected, executables, hosts, remotes, top.as_posix())
+    # The git directories themselves, whatever they are named: a bare common directory (`shared.git`) holds
+    # the configuration and hooks git trusts, with no `.git` in its path.
+    protected = sorted({str(p / x) for p in (top, main) for x in PROTECTED} | {str(gitdir), str(common)})
+    writable = [h or top.as_posix() for h in hook_folders(common) if h is None
+                or contained(h, [str(r) for r in roots]) and not any(contained(h, [p]) for p in protected)]
+    return Grant([str(r) for r in roots], protected, executables, hosts, remotes, top.as_posix(),
+                 writable[0] if writable else "")
+
+
+def protected_below(target: str, roots: list) -> bool:
+    """`target` is, or lies in, a protected name at any depth below a write root that holds it."""
+    where = real_path(target)
+    for root in roots:
+        if contained(target, [root]):
+            parts = re.split(r"[\\/]", os.path.relpath(where, real_path(root)).lower())
+            if {".claude", ".codex", "verification.toml"} & set(parts) \
+                    or any(parts[i:i + 2] == [".wiki", "adapter.toml"] for i in range(len(parts))):
+                return True
+    return False
 
 
 def outside(effect: tuple, g: Grant) -> str | None:
@@ -215,13 +274,17 @@ def outside(effect: tuple, g: Grant) -> str | None:
     if kind == "network":
         return None if target in g.hosts else \
             f"허가된 호스트가 아니다 — `.wiki/adapter.toml` 의 `[guard] network_hosts` 에 `{target}` 를 더하면 열린다"
+    if kind == "repo" and g.hooks:
+        return (f"git 이 작업이 고칠 수 있는 훅 폴더({g.hooks})의 훅을 실행한다 — `core.hooksPath` 를 쓰기 루트 "
+                "밖으로 옮기기 전에는 어떤 허가로도 열리지 않으니, 사람이 직접 실행한다")
     # Any path effect on a directory that holds a protected path may reach it: a destination directory, a
     # URL- or server-named download, a patch or an extraction writes names the command does not show, and a
     # write to an existing directory either lands under it or fails. Only git's own write of the repository
     # it runs in (`repo`) is granted on the checkout as a whole.
     reaches_protected = kind != "repo" and any(contained(p, [target]) for p in g.protected)
-    # A `.git` anywhere makes a repository whose configuration git would trust: no write lays one down.
-    git_dir = kind != "repo" and ".git" in re.split(r"[\\/]", target.lower())
+    # A `.git` anywhere makes a repository whose configuration git would trust: no write lays one down. And a
+    # protected name below any write root is another worktree's copy, which a commit there would carry home.
+    git_dir = kind != "repo" and (".git" in re.split(r"[\\/]", target.lower()) or protected_below(target, g.roots))
     if any(contained(target, [p]) for p in g.protected) or reaches_protected or git_dir:
         return "허가를 정하는 파일이다 — 어떤 `[guard]` 항목으로도 열리지 않고, 사람이 직접 고친다"
     if contained(target, g.roots):

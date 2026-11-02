@@ -212,7 +212,8 @@ def test_a_symlink_out_of_the_root_is_outside(tmp_path):
 
 def test_calls_inside_the_grant_pass(repo):
     for command in ("python -m ruff check tool", "npm --prefix web run build", "npx tsc -b",
-                    "git add -A && git commit -qm x && git push origin HEAD", "git status --short && git diff --stat",
+                    "git add -u && git commit -qm x && git -c http.followRedirects=false push --no-recurse-submodules "
+                    "origin HEAD", "git status --short && git diff --stat",
                     "echo hi > out.txt", "python tool/search \"query\"", "echo x > ../shared/f",
                     "echo hi > /tmp/x.log", "ls ~ && cat /etc/hosts", "find . -name '*.py'"):
         assert call(repo, command) is None, command
@@ -252,7 +253,7 @@ def test_every_ancestor_of_a_protected_path_is_judged_protected_for_every_path_k
 
 
 def test_ordinary_writes_beside_protected_files_stay_allowed(repo):
-    for command in ("printf x > safe/a", "echo x > .wiki-notes.md", "git add -A && git commit -qm x"):
+    for command in ("printf x > safe/a", "echo x > .wiki-notes.md", "git add safe/a && git commit -qm x"):
         assert call(repo, command) is None, command
 
 
@@ -363,14 +364,45 @@ OUTSIDE_TABLE_FORMS = {
     "git-mv": ("git mv a/link b; printf x > b/f", "Bash"),
     "git-config": ("git config remote.origin.url https://unlisted.example/o/r.git", "Bash"),
     "git-remote": ("git remote add other https://unlisted.example/o/r.git", "Bash"),
-    "git-merge": ("git merge topic", "Bash"),
-    "git-pull": ("git pull", "Bash"),
-    "git-rebase": ("git rebase main", "Bash"),
+    "git-merge-strategy": ("git merge -s helper topic", "Bash"),
+    "git-pull-url": ("git pull https://unlisted.example/o/r.git main", "Bash"),
+    "git-rebase-exec": ("git rebase -x 'rm ../outside/target.txt' main", "Bash"),
+    "git-rebase-interactive": ("git rebase -i main", "Bash"),
     "git-reset": ("git reset --hard HEAD~1", "Bash"),
-    "git-stash": ("git stash pop", "Bash"),
-    "git-fetch": ("git fetch origin", "Bash"),
+    "git-stash-all": ("git stash push -a", "Bash"),
+    "git-fetch-url": ("git fetch https://unlisted.example/o/r.git", "Bash"),
+    "git-fetch-upload-pack": ("git fetch --upload-pack=./helper origin", "Bash"),
     "git-clone": ("git clone https://github.com/owner/repo out", "Bash"),
-    "git-dash-c": ("git -C sub status", "Bash"),
+    "git-dash-c-outside": ("git -C ../outside status", "Bash"),
+    "git-dash-c-variable": ("git -C $W status", "Bash"),
+    "git-checkout-outside": ("git checkout HEAD~1 -- ../outside/target.txt", "Bash"),
+    "git-checkout-pattern": ("git checkout HEAD~1 -- '*.toml'", "Bash"),
+    "git-checkout-tree": ("git checkout HEAD~1 -- .", "Bash"),
+    "git-worktree-add-outside": ("git worktree add ../outside/wt", "Bash"),
+    "git-worktree-remove-outside": ("git worktree remove --force ../outside/wt", "Bash"),
+    "git-worktree-move": ("git worktree move wt ../outside/wt", "Bash"),
+    "git-remote-show": ("git remote show origin", "Bash"),
+    "git-config-pager": ("git -c core.pager=./helper log", "Bash"),
+    "git-branch-format": ("git branch '--format=%(signature)'", "Bash"),
+    "gh-pr-merge-number": ("gh pr merge 3 --squash", "Bash"),
+    "gh-pr-view-url": ("gh pr view https://unlisted.example/o/r/pull/3", "Bash"),
+    "gh-repo-flag": ("gh pr view -R other/repo 3", "Bash"),
+    "gh-repo-env": ("GH_REPO=other/repo gh pr merge --squash", "Bash"),
+    "gh-host-env": ("GH_HOST=unlisted.example gh pr view", "Bash"),
+    "gh-api-field": ("gh api repos/o/r/issues -f title=x", "Bash"),
+    "gh-api-method": ("gh api -X POST repos/o/r/issues", "Bash"),
+    "gh-api-hostname": ("gh api --hostname unlisted.example user", "Bash"),
+    "gh-web": ("gh pr view --web", "Bash"),
+    "gh-extension": ("gh extension install owner/gh-x", "Bash"),
+    "curl-follow": ("curl -L http://localhost:8000/x", "Bash"),
+    "curl-unlisted-host": ("curl -s https://unlisted.example/x", "Bash"),
+    "curl-userinfo-host": ("curl http://127.0.0.1@unlisted.example/x", "Bash"),
+    "curl-output-outside": ("curl -o ../outside/target.txt http://localhost:8000/x", "Bash"),
+    "curl-output-protected": ("curl -o verification.toml http://localhost:8000/x", "Bash"),
+    "curl-config-file": ("curl -K startup.rc http://localhost:8000/", "Bash"),
+    "curl-proxy": ("curl -x unlisted.example:8080 http://localhost:8000/", "Bash"),
+    "curl-proxy-env": ("HTTPS_PROXY=unlisted.example:8080 curl https://github.com/", "Bash"),
+    "curl-variable-host": ("curl -s localhost:$p/api", "Bash"),
     "git-config-flag": ("git -c core.hooksPath=../outside commit -m x", "Bash"),
     "git-dir": ("git --git-dir=../other/.git status", "Bash"),
     "git-dir-variable": ("GIT_DIR=../other/.git git status", "Bash"),
@@ -621,11 +653,12 @@ def test_a_path_granted_by_path_is_allowed(repo):
 # A variable that redirects a client to another host reaches that host, whatever program it is set for.
 @pytest.mark.parametrize("command", [
     "GH_HOST=unlisted.example python -m ruff check tool",
-    "GH_REPO=unlisted.example/o/r python -m ruff check tool",
     "HTTPS_PROXY=http://unlisted.example:8080 python -m ruff check tool",
 ])
 def test_a_variable_that_redirects_the_network_is_denied(repo, command):
     assert "network(unlisted.example)" in (call(repo, command) or ""), command
+    # `GH_REPO` also picks the repository gh writes to, on any host: never decidable here.
+    assert "GH_REPO" in (call(repo, "GH_REPO=github.com/o/r python -m ruff check tool") or "")
 
 
 # A value computed at run time and then run (a command name, a nested shell's script) is undecidable; only
@@ -671,8 +704,6 @@ TOP_FORMS = {
     "xcopy": ("cmd /c xcopy src .wiki", "Bash"),
     "del-subdirectories": ("cmd /c del /s target.txt", "Bash"),
     "cmd-for-command": ("cmd /c for /f %i in ('dir') do echo %i", "Bash"),
-    "git-restore": ("git restore --source=HEAD~1 -- .wiki/adapter.toml", "Bash"),
-    "git-checkout": ("git checkout HEAD~1 -- ../outside/target.txt", "Bash"),
 }
 
 
@@ -812,7 +843,8 @@ def test_a_name_assigned_by_a_builtin_is_judged_like_an_assignment(repo, form):
 
 def test_the_checkouts_own_remotes_stay_allowed(repo):
     (repo / "tool").mkdir()
-    for ok in ("git push origin HEAD", "git push", "git push -u origin topic", "cd tool && git push origin HEAD"):
+    push = "git -c http.followRedirects=false push --no-recurse-submodules"
+    for ok in (f"{push} origin HEAD", push, f"{push} -u origin topic", f"cd tool && {push} origin HEAD"):
         assert call(repo, ok) is None, ok
 
 
@@ -850,6 +882,15 @@ def test_a_repository_differing_only_in_case_is_another_on_posix():
     assert "network(github.com)" in effects("git push origin HEAD", ctx=POSIX)
 
 
+def home_at(monkeypatch, home: Path):
+    """Every place git may take its home from points at `home`."""
+    monkeypatch.setattr(Path, "home", lambda: home)
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(home))
+    for name in ("HOMEDRIVE", "HOMEPATH", "XDG_CONFIG_HOME"):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.mark.parametrize("config,expected", [
     ('[remote "origin"]\n url = https://read.example/o/r.git\n pushurl = https://write.example/o/r.git\n',
      {"network(read.example)", "network(write.example)"}),
@@ -859,7 +900,8 @@ def test_a_repository_differing_only_in_case_is_another_on_posix():
     ('[remote "origin"]\n url = file:///c/other.git\n', "local path"),
     ('[remote "origin"]\n url = https://read.example/o/r.git\n[url "https://write.example/"]\n'
      ' insteadOf = https://read.example/\n', "rewritten"),
-    ('[include]\n path = extra.config\n[remote "origin"]\n url = https://read.example/o/r.git\n', "rewritten"),
+    # An included file may also make the checkout a partial clone, which stops git earlier.
+    ('[include]\n path = extra.config\n[remote "origin"]\n url = https://read.example/o/r.git\n', "partial clone"),
     # Syntax git decodes and this reader does not: each leaves every destination unread.
     ('[remote "origin"]\n url = https://read.example/o/r.git\n'
      '[remote "origin"] pushurl = https://write.example/o/r.git\n', "does not decode"),
@@ -870,7 +912,7 @@ def test_a_repository_differing_only_in_case_is_another_on_posix():
     ('[remote.origin]\n url = https://read.example/o/r.git\n', "git push to"),
 ])
 def test_a_push_reaches_every_destination_git_would_use(tmp_path, monkeypatch, config, expected):
-    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    home_at(monkeypatch, tmp_path / "home")
     (tmp_path / "config").write_text(config, encoding="utf-8")
     found = effects("git push origin HEAD", ctx=replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path)))
     if isinstance(expected, set):
@@ -880,7 +922,7 @@ def test_a_push_reaches_every_destination_git_would_use(tmp_path, monkeypatch, c
 
 
 def test_a_branch_upstream_given_as_a_url_is_a_destination(tmp_path, monkeypatch):
-    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    home_at(monkeypatch, tmp_path / "home")
     (tmp_path / "config").write_text('[remote "origin"]\n url = https://read.example/o/r.git\n'
                                      '[branch "main"]\n remote = https://write.example/o/r.git\n', encoding="utf-8")
     found = effects("git push", ctx=replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path)))
@@ -928,10 +970,11 @@ def test_unix_device_spellings_are_files_in_native_windows_shells():
 def test_a_rewrite_in_any_config_git_reads_leaves_pushes_unread(tmp_path, monkeypatch, config):
     (tmp_path / "home").mkdir()
     (tmp_path / "home/.gitconfig").write_text(config, encoding="utf-8")
-    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    home_at(monkeypatch, tmp_path / "home")
     (tmp_path / "config").write_text('[remote "origin"]\n url = https://read.example/o/r.git\n', encoding="utf-8")
     found = effects("git push origin HEAD", ctx=replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path)))
-    assert any("rewritten" in e for e in found), found
+    # An include may also make the checkout a partial clone, which stops git earlier.
+    assert any("rewritten" in e or "partial clone" in e for e in found), found
 
 
 def test_git_runs_only_in_the_checkout_whose_configuration_is_protected(repo):
@@ -965,3 +1008,302 @@ def test_the_null_devices_stay_devices():
     assert effects("echo x > NUL") == {"read"}
     assert effects("echo x > /dev/null", ctx=POSIX) == {"read"}
     assert effects("Write-Output x > $null", "ps") == {"read"}
+
+
+# -- Follow-up (a): git and gh writes and the network ----------------------------
+# Each new row's effects, on a checkout whose one remote is `github.com`.
+ROW_EFFECTS = {
+    "git -c http.followRedirects=false push -u --no-recurse-submodules origin topic":
+        {"write(/work/repo)", "network(github.com)"},
+    "git merge --no-edit origin/main": {"write(/work/repo)"},
+    "git rebase --continue": {"write(/work/repo)"},
+    "git stash push -q -- notes.md": {"write(/work/repo)", "write(/work/repo/notes.md)"},
+    "git stash pop -q": {"write(/work/repo)"},
+    "git stash list": set(),
+    "git checkout -q -b topic": {"write(/work/repo)"},
+    "git restore --staged -- notes.md": {"write(/work/repo)", "write(/work/repo/notes.md)"},
+    "git switch -c topic": {"write(/work/repo)"},
+    "git branch -r": set(),
+    "git branch -D topic": {"write(/work/repo)"},
+    "git worktree list": set(),
+    "git worktree add --detach /tmp/wt HEAD": {"write(/work/repo)", "write(/tmp/wt)"},
+    "git worktree remove --force /tmp/wt": {"write(/work/repo)", "delete(/tmp/wt)"},
+    "git -C sub status": set(),
+    "git -c user.name=t -c user.email=t@t commit -qm x": {"write(/work/repo)"},
+    "git -c core.whitespace=cr-at-eol diff": set(),
+    "git config --get core.autocrlf": set(),
+    "git config user.email": set(),
+    "git ls-files --others --exclude-standard": set(),
+    "git check-ignore -q artifacts": set(),
+    "git remote -v": set(),
+}
+
+
+@pytest.mark.parametrize("command", ROW_EFFECTS)
+def test_each_new_row_has_its_effects(command):
+    assert effects(command, ctx=POSIX) == {"read"} | ROW_EFFECTS[command]
+
+
+def test_the_new_rows_pass_in_an_attached_checkout(repo):
+    for command in ("git merge --no-edit origin/main", "git stash && git stash pop", "git branch -D topic"):
+        assert call(repo, command) is None, command
+
+
+def test_a_worktree_of_the_same_repository_is_the_checkout(repo):
+    """A linked worktree shares the checkout's configuration and remotes; another repository does not."""
+    temp = Path(os.environ["TEMP"])
+    wt = temp / "wt"
+    wt.mkdir()
+    (repo / ".git/worktrees/wt").mkdir(parents=True)
+    (repo / ".git/worktrees/wt/commondir").write_text("../..\n", encoding="utf-8")
+    (wt / ".git").write_text(f"gitdir: {(repo / '.git/worktrees/wt').as_posix()}\n", encoding="utf-8")
+    other = temp / "other"
+    (other / ".git").mkdir(parents=True)
+    w, o = wt.as_posix(), other.as_posix()
+    for command in (f"git -C {w} status", f"git -C {w} commit -qm x",
+                    f"git -C {w} -c http.followRedirects=false push --no-recurse-submodules origin HEAD"):
+        assert call(repo, command) is None, command
+    for command in (f"git -C {o} status", f"cd {o} && git fetch origin"):
+        assert "판단할 수 없는" in (call(repo, command) or ""), command
+
+
+def test_git_does_not_write_while_its_hooks_are_writable(repo):
+    """A hooks folder inside a write root holds code the agent may edit and git then runs."""
+    config = repo / ".git/config"
+    base = config.read_text(encoding="utf-8")
+    # A relative value depends on the worktree that runs it; an inline key, an include or a per-worktree
+    # file is configuration the reader does not see: each counts as a folder the task may write.
+    for setting in ("[core]\n\thooksPath = .githooks", "[core] hooksPath = .githooks", "[core]\n\thooksPath = ../hooks",
+                    '[core]\n\thooksPath = "hooks dir"', f"[core]\n\thooksPath = {(repo / 'hooks').as_posix()}",
+                    "[include]\n\tpath = more.config", "[extensions]\n\tworktreeConfig = true"):
+        config.write_text(base + setting + "\n", encoding="utf-8")
+        # A file this reader does not open may also hold a promisor remote, which stops every git form earlier.
+        hidden = "include" in setting or "worktreeConfig" in setting
+        for command in ("git commit -qm x", "git merge --no-edit origin/main"):
+            assert ("partial clone" if hidden else "훅 폴더") in (call(repo, command) or ""), (setting, command)
+        assert (call(repo, "git status") is None) != hidden, setting
+    config.write_text(base + f"[core]\n\thooksPath = {(repo.parent / 'hooks').as_posix()}\n", encoding="utf-8")
+    assert call(repo, "git commit -qm x") is None
+
+
+# -- Follow-up (a), review round 1 ------------------------------------------------
+
+def test_a_protected_name_is_protected_in_every_worktree(repo):
+    """Another worktree's copy of a protected file, committed there, would reach the checkout by history."""
+    wt = Path(os.environ["TEMP"]).as_posix() + "/wt"
+    for target in ("verification.toml", ".wiki/adapter.toml", ".claude/settings.json", ".codex/config.toml"):
+        for command in (f"printf x > {wt}/{target}", f"echo x >> {wt}/{target}"):
+            assert "허가를 정하는 파일" in (call(repo, command) or ""), command
+    assert call(repo, f"printf x > {wt}/notes.md") is None
+
+
+def test_a_worktree_is_removed_only_by_its_absolute_path():
+    # git matches a relative operand as the tail of any registered worktree's path, wherever it is.
+    assert any(e.startswith("top(") for e in effects("git worktree remove --force sibling", ctx=POSIX))
+
+
+@pytest.mark.parametrize("command,dialect", [
+    ("$env:GH_REPO='github.com/owner/other'; gh pr edit --body x", "ps"),
+    ("$env:GH_REPO+='github.com/owner/other'; gh pr edit --body x", "ps"),
+    ("$env:GH_REPO += 'github.com/owner/other'; gh pr edit --body x", "ps"),
+    ("GH_REPO=owner/other gh pr edit --body x", "posix"),
+])
+def test_gh_never_targets_another_repository(command, dialect):
+    assert any(e.startswith("top(") for e in effects(command, dialect, ctx=replace(POSIX, d=dialect)))
+
+
+def test_a_powershell_assignment_written_as_one_word_is_still_an_assignment():
+    for command in ("$env:PATH='C:/tools'; git status", "$env:PATH+=';C:/tools'; git status"):
+        assert any("PATH" in e for e in effects(command, "ps")), command
+    assert effects("$env:PYTHONIOENCODING='utf-8'; $x='rm'; $n+=1; git status", "ps") == {"read"}
+
+
+# -- Follow-up (a), review round 5 ------------------------------------------------
+# gh's and curl's HTTP clients follow a redirect the response names, which nothing on the command line turns
+# off, and gh's pr create and pr merge also run git without the network options. Neither has a row (round 8).
+@pytest.mark.parametrize("command", ["gh api user", "gh run view 5 --log", "gh pr view 3", "gh pr diff 3",
+                                     "gh pr edit --body x", "gh pr create --fill", "gh pr merge --squash"])
+def test_gh_is_only_a_spawn(command):
+    assert effects(command, ctx=POSIX) == {"read", "spawn(gh)"}, command
+
+
+def test_curl_is_only_a_spawn_again():
+    assert effects("curl -s https://github.com/", ctx=POSIX) == {"read", "spawn(curl)"}
+
+
+def test_a_host_is_read_from_the_authority_alone():
+    for target in ("https://unlisted.example?@github.com", "https://unlisted.example#@github.com",
+                   "https://unlisted.example/@github.com"):
+        found = effects(f"HTTPS_PROXY='{target}' python -m ruff check tool", ctx=POSIX)
+        assert "network(unlisted.example)" in found and "network(github.com)" not in found, target
+
+
+def test_a_tls_key_log_is_a_write_the_guard_cannot_place():
+    assert any("SSLKEYLOGFILE" in e for e in effects("SSLKEYLOGFILE=verification.toml git fetch origin", ctx=POSIX))
+
+
+def test_a_per_worktree_configuration_leaves_the_remotes_unread(tmp_path):
+    (tmp_path / "config").write_text('[extensions]\n\tworktreeConfig = true\n[remote "origin"]\n'
+                                     '\turl = https://github.com/owner/repo.git\n', encoding="utf-8")
+    found = effects("git push origin HEAD", ctx=replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path)))
+    assert any(e.startswith("top(") for e in found)
+
+
+# -- Follow-up (a), review round 6 ------------------------------------------------
+
+def test_a_repository_write_is_placed_at_the_worktree_root():
+    # Moving between commits changes the whole worktree, not just the folder git runs in.
+    for command in ("git -C sub switch main", "git -C sub stash pop", "cd sub && git merge --no-edit origin/main"):
+        found = effects(command, ctx=POSIX)
+        assert "write(/work/repo)" in found and "write(/work/repo/sub)" not in found, command
+
+
+@pytest.mark.parametrize("command", [
+    "git push origin HEAD", "git -c http.followRedirects=false push origin HEAD",
+    "git push --no-recurse-submodules origin HEAD",
+    "git -c http.followRedirects=true push --no-recurse-submodules origin HEAD",
+    # A `-C` value is a directory, whatever it spells.
+    "git -C http.followRedirects=false push --no-recurse-submodules origin HEAD",
+    # A server may answer a fetch in protocol v2, whatever was asked, and name another host for the pack.
+    "git fetch origin", "git pull --ff-only",
+    "git -c http.followRedirects=false -c protocol.version=1 fetch --no-recurse-submodules origin",
+    "git -c http.followRedirects=false -c protocol.version=1 pull --ff-only --no-recurse-submodules",
+])
+def test_git_network_turns_off_redirects_and_submodules(command):
+    # Each lets the server's answer pick a host the grant never read: a redirect, a submodule's remote, a pack URI.
+    assert any(e.startswith("top(") for e in effects(command, ctx=POSIX)), command
+
+
+def test_a_configured_redirect_setting_leaves_the_remotes_unread(tmp_path):
+    # A URL-specific setting wins over the one on the command line.
+    (tmp_path / "config").write_text('[remote "origin"]\n\turl = https://github.com/owner/repo.git\n'
+                                     '[http "https://github.com"]\n\tfollowRedirects = true\n', encoding="utf-8")
+    assert guard_grant.remote_hosts(tmp_path) == (("origin", guard_grant.UNREAD),)
+
+
+def test_a_drive_path_is_relative_on_posix():
+    assert any(e.startswith("top(") for e in effects("git worktree remove --force C:/work/wt", ctx=POSIX))
+    assert "delete(/tmp/wt)" in effects("git worktree remove --force /tmp/wt", ctx=POSIX)
+
+
+@pytest.mark.parametrize("name", ["GIT_TRACE", "GIT_TRACE2_EVENT", "GIT_TRACE_PACKET"])
+def test_a_git_trace_file_is_a_write_the_guard_cannot_place(name):
+    assert any(name in e for e in effects(f"{name}=/tmp/t.txt git worktree list", ctx=POSIX))
+
+
+def test_every_git_row_is_top_in_a_partial_clone(tmp_path):
+    # Reading a missing object fetches it from the promisor remote, wherever its URL is rewritten to.
+    (tmp_path / "config").write_text('[remote "origin"]\n\turl = https://github.com/owner/repo.git\n'
+                                     '\tpromisor = true\n[extensions]\n\tpartialClone = origin\n', encoding="utf-8")
+    ctx = replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path))
+    for command in ("git cat-file -p HEAD:notes.txt", "git status", "git fetch origin"):
+        assert any(e.startswith("top(") for e in effects(command, ctx=ctx)), command
+
+
+# -- Follow-up (a), review round 7 ------------------------------------------------
+ORIGIN = '[remote "origin"]\n\turl = https://github.com/owner/repo.git\n'
+
+
+@pytest.mark.parametrize("config,configs", [
+    (ORIGIN + "[include]\n\tpath = more.config\n", []),
+    (ORIGIN + "[extensions]\n\tworktreeConfig = true\n", []),
+    (ORIGIN, ['[remote "origin"]\n\tpartialCloneFilter = blob:none\n']),
+    (ORIGIN, ["[include]\n\tpath = ~/more.config\n"]),
+    # A Trace2 target makes any git call append to that file (round 10).
+    (ORIGIN, ["[trace2]\n\teventTarget = ../outside/f.txt\n"]),
+    (ORIGIN + "[trace2]\n\tnormalTarget = ../outside/f.txt\n", []),
+    # A submodule's own configuration, which a recursing read uses, may hold a promisor remote (round 11).
+    (ORIGIN + '[submodule "child"]\n\turl = https://unlisted.example/child.git\n', []),
+    (ORIGIN, ["[submodule]\n\trecurse = true\n"]),
+    # Without the repository's own file, the global ones still apply.
+    (None, ["[trace2]\n\teventTarget = ../outside/f.txt\n"]),
+])
+def test_a_promisor_setting_that_may_hide_makes_git_top(tmp_path, monkeypatch, config, configs):
+    if config is not None:
+        (tmp_path / "config").write_text(config, encoding="utf-8")
+    monkeypatch.setattr(guard_grant, "git_configs", lambda: configs)
+    remotes = guard_grant.remote_hosts(tmp_path)
+    assert any(e.startswith("top(") for e in effects("git cat-file -p HEAD:notes.txt",
+                                                     ctx=replace(POSIX, remotes=remotes)))
+
+
+@pytest.mark.parametrize("place", [".gitconfig", ".config/git/config"])
+def test_the_global_configuration_is_read_from_gits_home(tmp_path, monkeypatch, place):
+    # Git on Windows takes HOME before USERPROFILE, which Python's home uses (round 12).
+    home_at(monkeypatch, tmp_path / "profile")
+    monkeypatch.setenv("HOME", str(tmp_path / "settings"))
+    (tmp_path / "settings" / place).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "settings" / place).write_text("[trace2]\n\teventTarget = ../outside/f.txt\n", encoding="utf-8")
+    (tmp_path / "config").write_text(ORIGIN, encoding="utf-8")
+    assert (guard_grant.LAZY, guard_grant.UNREAD) in guard_grant.remote_hosts(tmp_path)
+
+
+def test_a_bare_common_directory_is_protected(repo, tmp_path):
+    # A worktree of a bare repository: its configuration and hooks have no `.git` in their path (round 13).
+    temp = Path(os.environ["TEMP"])
+    shared = temp / "shared.git"
+    (shared / "worktrees/wt").mkdir(parents=True)
+    (shared / "hooks").mkdir()
+    (shared / "config").write_text((repo / ".git/config").read_text(encoding="utf-8"), encoding="utf-8")
+    (shared / "worktrees/wt/commondir").write_text("../..\n", encoding="utf-8")
+    wt = tmp_path / "work" / "wt"
+    (wt / ".wiki").mkdir(parents=True)
+    (wt / ".wiki/adapter.toml").write_text((repo / ".wiki/adapter.toml").read_text(encoding="utf-8"),
+                                           encoding="utf-8")
+    (wt / ".git").write_text(f"gitdir: {(shared / 'worktrees/wt').as_posix()}\n", encoding="utf-8")
+    for target in (shared / "hooks/pre-commit", shared / "config", shared / "worktrees/wt/config.worktree"):
+        assert call(wt, f"echo x > {target.as_posix()}"), target
+    assert call(wt, f"echo x > {(temp / 'notes.md').as_posix()}") is None
+
+
+def test_an_absorbed_submodule_makes_git_top(tmp_path, monkeypatch):
+    (tmp_path / "config").write_text(ORIGIN, encoding="utf-8")
+    monkeypatch.setattr(guard_grant, "git_configs", lambda: [])
+    assert guard_grant.remote_hosts(tmp_path) == (("origin", "github.com"),)
+    (tmp_path / "modules/child").mkdir(parents=True)
+    remotes = guard_grant.remote_hosts(tmp_path)
+    assert any(e.startswith("top(") for e in effects("git grep --cached x", ctx=replace(POSIX, remotes=remotes)))
+
+
+@pytest.mark.parametrize("extra", ["[fetch]\n\tbundleURI = https://unlisted.example/r.bundle\n",
+                                   "[bundle]\n\tversion = 1\n", '[remote "origin"]\n\tproxy = http://unlisted.example\n',
+                                   "[http]\n\tproxy = http://unlisted.example\n", "[core]\n\tgitProxy = helper\n",
+                                   "[http]\n\tcurloptResolve = github.com:443:192.0.2.1\n",
+                                   "[http]\n\tcookieFile = ../outside/f.txt\n\tsaveCookies = true\n"])
+def test_a_configured_host_besides_the_remote_leaves_the_remotes_unread(tmp_path, monkeypatch, extra):
+    (tmp_path / "config").write_text(ORIGIN + extra, encoding="utf-8")
+    monkeypatch.setattr(guard_grant, "git_configs", lambda: [])
+    assert guard_grant.remote_hosts(tmp_path) == (("origin", guard_grant.UNREAD),)
+
+
+def test_a_proxy_in_the_environment_leaves_the_remotes_unread(tmp_path, monkeypatch):
+    (tmp_path / "config").write_text(ORIGIN, encoding="utf-8")
+    # A certificate file named `ca-bundle.crt` is not a bundle URI.
+    monkeypatch.setattr(guard_grant, "git_configs", lambda: ["[http]\n\tsslCAInfo = C:/ssl/ca-bundle.crt\n"])
+    for name in ("http_proxy", "https_proxy", "all_proxy", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+    assert guard_grant.remote_hosts(tmp_path) == (("origin", "github.com"),)
+    monkeypatch.setenv("HTTPS_PROXY", "http://unlisted.example")
+    assert guard_grant.remote_hosts(tmp_path) == (("origin", guard_grant.UNREAD),)
+
+
+# -- Follow-up (a), review round 8 ------------------------------------------------
+# An edited ignore rule can stop hiding a protected file; git then stages or stashes it like any other.
+@pytest.mark.parametrize("command", ["git add -A", "git add --all", "git add .", "git add .wiki/", "git add sub/..",
+                                     "git stash push -u", "git stash -u", "git stash --include-untracked"])
+def test_git_never_picks_up_untracked_files_it_was_not_named(command):
+    assert any(e.startswith("top(") for e in effects(command, ctx=POSIX)), command
+
+
+def test_a_named_file_is_staged_as_a_write_of_it(repo):
+    (repo / "notes").mkdir()
+    assert effects("git add -u notes.md", ctx=POSIX) == {"read", "write(/work/repo)", "write(/work/repo/notes.md)"}
+    assert "허가를 정하는 파일" in (call(repo, "git add .wiki/adapter.toml") or "")
+    assert "of a folder" in (call(repo, "git add notes") or "")
+    assert call(repo, "git add notes.md") is None
+
+
+def test_packfile_uris_leave_the_remotes_unread(tmp_path, monkeypatch):
+    (tmp_path / "config").write_text(ORIGIN + "[fetch]\n\turiProtocols = https\n", encoding="utf-8")
+    monkeypatch.setattr(guard_grant, "git_configs", lambda: [])
+    assert guard_grant.remote_hosts(tmp_path) == (("origin", guard_grant.UNREAD),)

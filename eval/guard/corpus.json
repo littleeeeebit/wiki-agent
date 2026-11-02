@@ -40,8 +40,7 @@
    "effects": [
     "read",
     "spawn(rm)",
-    "top(git branch: a verb the table does not model)",
-    "top(git worktree: a verb the table does not model)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -91,9 +90,9 @@
     "spawn(cp)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`while`: a loop, function or trap the table does not model)",
-    "top(git ls-files: a verb the table does not model)",
-    "top(git worktree: a verb the table does not model)",
-    "top(variable as the command name)"
+    "top(variable as the command name)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -115,7 +114,6 @@
     "spawn(mkdir)",
     "spawn(rm)",
     "top(a directory change after the first statement)",
-    "top(git -c: an option the table does not model)",
     "top(git add -f: an option the table does not model)",
     "top(git init: a verb the table does not model)",
     "top(git update-index: a verb the table does not model)",
@@ -134,8 +132,9 @@
     "spawn(rm)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)",
-    "top(git checkout: a verb the table does not model)",
-    "top(variable in a write path)"
+    "top(variable in a write path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/tool/test_review_contract.py)"
    ]
   },
   {
@@ -218,7 +217,8 @@
     "read",
     "spawn(npx)",
     "top(a directory change after the first statement)",
-    "top(git checkout: a verb the table does not model)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/refactor-purpose-modes-3)"
    ]
   },
   {
@@ -230,7 +230,7 @@
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)",
     "top(a directory change after the first statement)",
-    "top(git -C: an option the table does not model)",
+    "top(git -C with a value known only at run time)",
     "top(variable in a nested shell string)"
    ]
   },
@@ -327,9 +327,9 @@
     "read",
     "spawn(cp)",
     "spawn(mkdir)",
-    "top(git branch: a verb the table does not model)",
-    "top(git worktree: a verb the table does not model)",
-    "top(variable in a nested shell string)"
+    "top(variable in a nested shell string)",
+    "top(variable where an option of git worktree remove may stand)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -348,9 +348,10 @@
    "source": "claude",
    "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad\"; git worktree remove \"$S/site/wiki-agent\" && git worktree remove --force \"$S/demo/wiki-agent\" && git branch -D docs/korean-help-pages && git worktree prune && git worktree list && git branch --list 'docs/*'; ls \"$S/site\" \"$S/demo\"",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/demo/wiki-agent)",
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/site/wiki-agent)",
     "read",
-    "top(git branch: a verb the table does not model)",
-    "top(git worktree: a verb the table does not model)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -400,9 +401,9 @@
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`while`: a loop, function or trap the table does not model)",
     "top(a directory change after the first statement)",
-    "top(git ls-files: a verb the table does not model)",
-    "top(git worktree: a verb the table does not model)",
-    "top(variable in a nested shell string)"
+    "top(variable in a nested shell string)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -415,8 +416,8 @@
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`while`: a loop, function or trap the table does not model)",
     "top(a directory change after the first statement)",
-    "top(git ls-files: a verb the table does not model)",
-    "top(git worktree: a verb the table does not model)"
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -448,8 +449,8 @@
     "read",
     "spawn(python)",
     "spawn(rm)",
-    "top(git worktree: a verb the table does not model)",
-    "top(variable in a nested shell string)"
+    "top(variable in a nested shell string)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -457,12 +458,13 @@
    "source": "claude",
    "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; taskkill //PID 10168 //F >/dev/null; python -c \"\nimport psutil,time\nfor _ in range(60):\n    if not any('scratchpad' in ' '.join(q.info['cmdline'] or []) for q in psutil.process_iter(['cmdline']) if q.info['cmdline'] and 'tool' in ' '.join(q.info['cmdline'])): break\n    time.sleep(1)\n\"; find $S/wt -maxdepth 3 -type l; cd /c/Users/me/PycharmProjects/wiki-agent && git worktree remove --force \"$S/wt\" && git worktree prune && rm -rf \"$S/wv2\"; git worktree list; git status --short",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
     "read",
     "spawn(python)",
     "spawn(rm)",
     "spawn(taskkill)",
     "top(a directory change after the first statement)",
-    "top(git worktree: a verb the table does not model)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -538,9 +540,9 @@
    "source": "claude",
    "command": "W=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pr2-fix\"; cd \"$W\" && git status --short && git commit -qam \"Keep the refactoring focus prompt in English\n\nCo-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\" && git log --oneline -1 && cd /c/Users/me/PycharmProjects/wiki-agent && git worktree remove \"$W\" && git worktree list | head -5",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pr2-fix)",
     "read",
     "top(a directory change after the first statement)",
-    "top(git worktree: a verb the table does not model)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -550,8 +552,8 @@
    "command": "W=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/contract/wiki-agent\" && git -C \"$W\" status --short && git fetch origin --prune && git status -sb | head -1 && git pull --ff-only && echo \"tree branch: $(git rev-parse fix/refactor-contract-whole-file-removal^{tree})\" && echo \"tree merge:  $(git rev-parse 6ba1e9e^{tree})\" && git diff --stat fix/refactor-contract-whole-file-removal 6ba1e9e && ls \"$W/artifacts/review/\" && cmd //c \"fsutil reparsepoint query $(cygpath -w \"$W/web/node_modules\")\" | head -3",
    "effects": [
     "read",
-    "top(git -C: an option the table does not model)",
     "top(git fetch: a verb the table does not model)",
+    "top(git in a repository other than the checkout)",
     "top(git pull: a verb the table does not model)",
     "top(variable in a nested shell string)"
    ]
@@ -563,9 +565,9 @@
    "effects": [
     "read",
     "spawn(python)",
-    "top(git branch: a verb the table does not model)",
     "top(git fetch: a verb the table does not model)",
-    "top(git worktree: a verb the table does not model)"
+    "top(variable where an option of git worktree remove may stand)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -599,12 +601,12 @@
    "source": "claude",
    "command": "cat /c/Users/me/PycharmProjects/wiki-agent-worktrees/omm-incremental/raw/errors.jsonl 2>/dev/null | head -3 | cut -c1-200; git worktree remove --force /c/Users/me/PycharmProjects/wiki-agent-worktrees/omm-incremental && git branch -D omm-incremental; git fetch -q --prune origin; git branch -r | grep omm-incremental && git push -q origin --delete omm-incremental; rm -f artifacts/review/omm-incremental-round-*.md; git worktree list; git branch",
    "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent-worktrees/omm-incremental)",
     "read",
     "spawn(rm)",
-    "top(git branch: a verb the table does not model)",
     "top(git fetch: a verb the table does not model)",
     "top(git push --delete: an option the table does not model)",
-    "top(git worktree: a verb the table does not model)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -650,8 +652,7 @@
    "effects": [
     "read",
     "spawn(ruff)",
-    "top(git in a repository other than the checkout)",
-    "top(git rebase: a verb the table does not model)"
+    "top(git in a repository other than the checkout)"
    ]
   },
   {
@@ -713,7 +714,7 @@
    "effects": [
     "read",
     "top(GIT_CONFIG_GLOBAL changes what runs or where files land)",
-    "top(git config: a verb the table does not model)"
+    "top(git in a repository other than the checkout)"
    ]
   },
   {
@@ -756,7 +757,8 @@
     "read",
     "spawn(python)",
     "spawn(ruff)",
-    "top(git stash: a verb the table does not model)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/laya/support.py)"
    ]
   },
   {
@@ -770,7 +772,7 @@
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)",
     "top(a directory change after the first statement)",
-    "top(git -c: an option the table does not model)",
+    "top(git add -A: an option the table does not model)",
     "top(git in a repository other than the checkout)",
     "top(git init: a verb the table does not model)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/1258396b-a6e6-4a4f-8ce7-64fb0bc75367/scratchpad/a.txt)"
@@ -784,11 +786,8 @@
     "read",
     "spawn(awk)",
     "top(a directory change after the first statement)",
-    "top(git config: a verb the table does not model)",
     "top(git in a repository other than the checkout)",
-    "top(git ls-files: a verb the table does not model)",
-    "top(git sparse-checkout: a verb the table does not model)",
-    "top(git worktree: a verb the table does not model)"
+    "top(git sparse-checkout: a verb the table does not model)"
    ]
   },
   {
@@ -800,8 +799,8 @@
     "spawn(python)",
     "spawn(rm)",
     "top(a directory change after the first statement)",
-    "top(git checkout: a verb the table does not model)",
-    "top(git worktree: a verb the table does not model)"
+    "top(git in a repository other than the checkout)",
+    "top(variable where an option of git worktree add may stand)"
    ]
   },
   {
@@ -813,8 +812,8 @@
     "spawn(python)",
     "spawn(rm)",
     "top(a directory change after the first statement)",
-    "top(git checkout: a verb the table does not model)",
-    "top(git worktree: a verb the table does not model)"
+    "top(git in a repository other than the checkout)",
+    "top(variable where an option of git worktree add may stand)"
    ]
   },
   {
@@ -824,7 +823,7 @@
    "effects": [
     "read",
     "top(a directory change after the first statement)",
-    "top(git -c: an option the table does not model)",
+    "top(git in a repository other than the checkout)",
     "top(variable in a write path)"
    ]
   },
@@ -835,7 +834,7 @@
    "effects": [
     "read",
     "top(git in a repository other than the checkout)",
-    "top(git worktree: a verb the table does not model)"
+    "top(variable where an option of git worktree remove may stand)"
    ]
   },
   {
@@ -854,7 +853,6 @@
    "effects": [
     "read",
     "spawn(timeout)",
-    "top(git branch: a verb the table does not model)",
     "top(git in a repository other than the checkout)",
     "top(variable in a write path)"
    ]
@@ -898,7 +896,8 @@
     "read",
     "spawn(npm)",
     "spawn(timeout)",
-    "top(git stash: a verb the table does not model)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/web/src/components/Run.tsx)"
    ]
   },
   {
@@ -909,7 +908,9 @@
     "network(github.com)",
     "read",
     "spawn(ruff)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/tool/test_refactor_run.py)"
    ]
   },
   {
@@ -1026,8 +1027,8 @@
     "read",
     "spawn(mv)",
     "spawn(python)",
-    "top(git branch: a verb the table does not model)",
-    "top(git worktree: a verb the table does not model)"
+    "top(variable where an option of git worktree remove may stand)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -1092,8 +1093,7 @@
    "effects": [
     "read",
     "spawn(python)",
-    "spawn(rm)",
-    "top(git branch: a verb the table does not model)"
+    "spawn(rm)"
    ]
   },
   {
@@ -1242,8 +1242,7 @@
    "command": "find artifacts -type l | head -3; git check-ignore -q artifacts && echo ignored; rm -rf artifacts && echo \"artifacts removed\"; P=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad\"; rm -rf \"${P:?}/wprobe\" \"${P:?}/r1fixed.py\" \"${P:?}/r2fixed.py\" \"${P:?}\"/*_browser.log; ls \"${P:?}\"",
    "effects": [
     "read",
-    "spawn(rm)",
-    "top(git check-ignore: a verb the table does not model)"
+    "spawn(rm)"
    ]
   },
   {
@@ -1252,8 +1251,7 @@
    "command": "find artifacts -type l | head; git check-ignore -q artifacts && echo ignored; rm -rf artifacts && ls -d artifacts 2>&1 | head -1; P=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad\"; rm -rf \"$P/wprobe\" \"$P/r1fixed.py\" \"$P/r2fixed.py\" \"$P\"/*_browser.log; ls \"$P\"",
    "effects": [
     "read",
-    "spawn(rm)",
-    "top(git check-ignore: a verb the table does not model)"
+    "spawn(rm)"
    ]
   },
   {
@@ -1335,11 +1333,11 @@
     "spawn(gh)",
     "spawn(python)",
     "spawn(rm)",
-    "top(git branch: a verb the table does not model)",
-    "top(git checkout: a verb the table does not model)",
     "top(git fetch: a verb the table does not model)",
     "top(git pull: a verb the table does not model)",
-    "top(variable where an option of git diff may stand)"
+    "top(variable where an option of git diff may stand)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/main)"
    ]
   },
   {
@@ -1351,10 +1349,10 @@
     "spawn(gh)",
     "spawn(python)",
     "spawn(rm)",
-    "top(git branch: a verb the table does not model)",
-    "top(git checkout: a verb the table does not model)",
     "top(git fetch: a verb the table does not model)",
-    "top(git pull: a verb the table does not model)"
+    "top(git pull: a verb the table does not model)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/main)"
    ]
   },
   {
@@ -1386,10 +1384,9 @@
     "read",
     "spawn(python)",
     "spawn(rm)",
-    "top(git branch: a verb the table does not model)",
     "top(git pull: a verb the table does not model)",
-    "top(git worktree: a verb the table does not model)",
-    "top(variable in a write path)"
+    "top(variable in a write path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -1400,8 +1397,7 @@
     "read",
     "spawn(python)",
     "spawn(rm)",
-    "top(git branch: a verb the table does not model)",
-    "top(git worktree: a verb the table does not model)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -1412,8 +1408,7 @@
     "read",
     "spawn(mv)",
     "spawn(ruff)",
-    "top(a directory change after the first statement)",
-    "top(git check-ignore: a verb the table does not model)"
+    "top(a directory change after the first statement)"
    ]
   },
   {
@@ -1422,7 +1417,7 @@
    "command": "git checkout -q -b docs/v6-design && grep -n \"The held-out answers were therefore not run\" -A4 docs/plans/reliability/5-english-baseline.md; grep -n \"Answer support and added latency are not measured\" docs/plans/reliability/5-english-baseline.md",
    "effects": [
     "read",
-    "top(git checkout: a verb the table does not model)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -1435,8 +1430,9 @@
     "spawn(python)",
     "spawn(tee)",
     "top(a directory change after the first statement)",
-    "top(git checkout: a verb the table does not model)",
-    "top(git worktree: a verb the table does not model)"
+    "top(variable where an option of git worktree remove may stand)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -1449,7 +1445,7 @@
     "spawn(ruff)",
     "spawn(tee)",
     "spawn(timeout)",
-    "top(git checkout: a verb the table does not model)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -1459,9 +1455,9 @@
    "effects": [
     "read",
     "spawn(rm)",
-    "top(git branch: a verb the table does not model)",
-    "top(git checkout: a verb the table does not model)",
-    "top(git pull: a verb the table does not model)"
+    "top(git pull: a verb the table does not model)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/main)"
    ]
   },
   {
@@ -1473,7 +1469,8 @@
     "spawn(sed)",
     "top(a directory change after the first statement)",
     "top(git fetch: a verb the table does not model)",
-    "top(git worktree: a verb the table does not model)"
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/contract/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -1485,7 +1482,9 @@
     "read",
     "spawn(python)",
     "spawn(ruff)",
+    "top(git add of a folder, which stages every untracked file below it)",
     "top(git fetch: a verb the table does not model)",
+    "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -1495,12 +1494,12 @@
    "command": "git fetch origin --prune -q && git pull --ff-only -q && git log --oneline -1 && echo tree: $(git rev-parse fix/laya-refusal^{tree}) $(git rev-parse 556d2a1^{tree}) && git -C ../wiki-agent-refusal status --porcelain | head && git worktree remove ../wiki-agent-refusal && git branch -D fix/laya-refusal && git branch -r | grep refusal; git push origin --delete fix/laya-refusal 2>&1 | tail -1; git worktree list; git branch",
    "effects": [
     "read",
-    "top(git -C: an option the table does not model)",
-    "top(git branch: a verb the table does not model)",
     "top(git fetch: a verb the table does not model)",
+    "top(git in a repository other than the checkout)",
     "top(git pull: a verb the table does not model)",
     "top(git push --delete: an option the table does not model)",
-    "top(git worktree: a verb the table does not model)"
+    "top(git worktree remove without an absolute path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -1520,7 +1519,7 @@
    "effects": [
     "read",
     "spawn(wmic)",
-    "top(git stash: a verb the table does not model)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -1530,7 +1529,8 @@
    "effects": [
     "read",
     "spawn(wsl)",
-    "top(git stash: a verb the table does not model)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/tool/common/process.py)"
    ]
   },
   {
@@ -1541,10 +1541,10 @@
     "read",
     "spawn(python)",
     "spawn(rm)",
-    "top(git -C: an option the table does not model)",
-    "top(git branch: a verb the table does not model)",
+    "top(git in a repository other than the checkout)",
     "top(git pull: a verb the table does not model)",
-    "top(git worktree: a verb the table does not model)"
+    "top(git worktree remove without an absolute path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -1552,13 +1552,13 @@
    "source": "claude",
    "command": "git worktree remove --force \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/v5\" && git branch -D plan/reliability-v5 && (git push -q origin --delete plan/reliability-v5 2>&1 | tail -1); git fetch -q --prune; rm -f artifacts/review/reliability-v5-round-*.md; ls artifacts/review/; git worktree list; git branch -a | grep -v \"remotes/origin/HEAD\"; python tool/lint.py --repo . 2>&1 | tail -1; python tool/repo_lint.py --repo . 2>&1 | tail -1",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/v5)",
     "read",
     "spawn(python)",
     "spawn(rm)",
-    "top(git branch: a verb the table does not model)",
     "top(git fetch: a verb the table does not model)",
     "top(git push --delete: an option the table does not model)",
-    "top(git worktree: a verb the table does not model)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -1646,8 +1646,7 @@
    "effects": [
     "read",
     "spawn(python)",
-    "spawn(rm)",
-    "top(git worktree: a verb the table does not model)"
+    "spawn(rm)"
    ]
   },
   {
@@ -1784,8 +1783,10 @@
     "network(github.com)",
     "read",
     "spawn(python)",
+    "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "top(variable in a write path)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/laya/test_laya.py)"
    ]
   },
   {
@@ -1796,7 +1797,11 @@
     "network(github.com)",
     "read",
     "spawn(python)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.wiki/ratchet.json)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/tool/main/refactor_run.py)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/tool/test_refactor_run.py)"
    ]
   },
   {
@@ -1807,7 +1812,10 @@
     "network(github.com)",
     "read",
     "spawn(python)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/DESIGN.md)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/overview.html)"
    ]
   },
   {
@@ -2055,7 +2063,6 @@
     "read",
     "spawn(omm)",
     "top(`foreach`: a loop, function or trap the table does not model)",
-    "top(git ls-files: a verb the table does not model)",
     "top(method Replace)",
     "top(method WriteAllText)"
    ]
@@ -2066,7 +2073,6 @@
    "command": "$newTests = @(git ls-files --others --exclude-standard -- 'tests/*preserve*.py' 'tests/**/*preserve*.py' | Where-Object { $_ -ne 'tests/integration/test_character_activation_isolation_preserve.py' })\n& \"$env:USERPROFILE/anaconda3/Scripts/conda.exe\" run --no-capture-output -n ai-voice-agent python -m pytest $newTests -q --tb=short",
    "effects": [
     "read",
-    "top(git ls-files: a verb the table does not model)",
     "top(variable as the command name)",
     "top(where-object: a cmdlet the table does not model)"
    ]
@@ -2089,10 +2095,12 @@
    "effects": [
     "network(github.com)",
     "read",
-    "top(git -c: an option the table does not model)",
+    "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "top(method Replace)",
     "top(method WriteAllText)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.wiki/corpus.json)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.wiki/graph.json)"
    ]
   },
   {
@@ -2173,7 +2181,8 @@
    "effects": [
     "read",
     "top(variable as the command name)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/conversation/meta.yaml)"
    ]
   },
   {
@@ -2282,8 +2291,6 @@
    "command": "Get-Content local_services/qwen_clone_tts_server/app.py | Select-Object -Skip 490 -First 145; Get-Content tests/unit/qwen_clone_tts_server/test_qwen_clone_tts_server.py | Select-Object -Skip 280 -First 100; git grep -n _elapsed_ms -- local_services/qwen_clone_tts_server tests; git ls-files '*AGENTS.md' '*verification.toml'; & \"$env:USERPROFILE\\anaconda3\\Scripts\\conda.exe\" run --no-capture-output -n ai-voice-agent python -m pytest tests/unit/qwen_clone_tts_server/test_qwen_clone_tts_server.py tests/unit/qwen_clone_tts_server/test_warmup.py tests/unit/qwen_clone_tts_server/test_incremental_protocol.py",
    "effects": [
     "read",
-    "top(git grep: a verb the table does not model)",
-    "top(git ls-files: a verb the table does not model)",
     "top(variable as the command name)"
    ]
   },
@@ -2336,9 +2343,7 @@
    "command": "Test-Path .omm/data-flow/diagram.mmd; git status --short --untracked-files=all | Select-Object -First 12; git check-ignore .omm/data-flow/diagram.mmd; git config --get core.autocrlf; omm validate --help",
    "effects": [
     "read",
-    "spawn(omm)",
-    "top(git check-ignore: a verb the table does not model)",
-    "top(git config: a verb the table does not model)"
+    "spawn(omm)"
    ]
   },
   {
@@ -2375,7 +2380,10 @@
    "effects": [
     "read",
     "spawn(omm)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.gitignore)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/conversation/models/constraint.md)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/conversation/models/meta.yaml)"
    ]
   },
   {
@@ -2385,7 +2393,13 @@
    "effects": [
     "network(github.com)",
     "read",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/proactive-system/diagram.mmd)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/proactive-system/meta.yaml)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/proactive-system/request-context/description.md)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/proactive-system/request-context/meta.yaml)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/proactive-system/routes/description.md)"
    ]
   },
   {
@@ -2394,7 +2408,9 @@
    "command": "git add -- src/ai_companion_voice_agent/api/routes_proactive.py .omm/overall-architecture/proactive-system/routes/description.md; git commit -m \"refactor: share proactive eligibility wiring\"; git diff --exit-code HEAD; git status --short",
    "effects": [
     "read",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/proactive-system/routes/description.md)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/src/ai_companion_voice_agent/api/routes_proactive.py)"
    ]
   },
   {
@@ -2404,9 +2420,9 @@
    "effects": [
     "read",
     "spawn(omm)",
-    "top(git -c: an option the table does not model)",
     "top(where-object: a cmdlet the table does not model)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm)"
    ]
   },
   {
@@ -2416,7 +2432,8 @@
    "effects": [
     "read",
     "spawn(omm)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm)"
    ]
   },
   {
@@ -2425,7 +2442,8 @@
    "command": "git add tests/automation/adult-persona-acceptance.test.js; git commit -m \"test: characterize adult account release error handling\"; git status --short",
    "effects": [
     "read",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/tests/automation/adult-persona-acceptance.test.js)"
    ]
   },
   {
@@ -2435,6 +2453,7 @@
    "effects": [
     "network(github.com)",
     "read",
+    "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -2445,9 +2464,11 @@
    "effects": [
     "read",
     "spawn(omm)",
-    "top(git -c: an option the table does not model)",
     "top(git push to anything but a configured remote and a branch)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/characters)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/memory)"
    ]
   },
   {
@@ -2456,7 +2477,11 @@
    "command": "git diff -- src/ai_companion_voice_agent/api/routes_characters.py | Select-Object -First 100; rg -n 'skip|xfail|^def test_' tests/integration/test_character_routes.py tests/integration/test_character_isolation.py tests/integration/test_rejected_requests_leave_no_trace.py; git add src/ai_companion_voice_agent/api/routes_characters.py src/ai_companion_voice_agent/api/routes_character_catalog.py src/ai_companion_voice_agent/api/character_route_authority.py .omm/overall-architecture/fastapi-api/routes-characters/description.md; git commit -m \"Separate character catalog routes from studio execution\"; git status --short",
    "effects": [
     "read",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/fastapi-api/routes-characters/description.md)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/src/ai_companion_voice_agent/api/character_route_authority.py)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/src/ai_companion_voice_agent/api/routes_character_catalog.py)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/src/ai_companion_voice_agent/api/routes_characters.py)"
    ]
   },
   {
@@ -2465,9 +2490,9 @@
    "command": "git diff --cached -- .gitignore; @'\nfrom pathlib import Path\np=Path('.omm/overall-architecture/conversation/models/meta.yaml')\np.write_text(p.read_text(encoding='utf-8'),encoding='utf-8',newline='\\n')\n'@ | & \"$env:USERPROFILE/anaconda3/envs/ai-voice-agent/python.exe\" -\ngit add -- .omm/overall-architecture/conversation/models/meta.yaml\ngit diff --cached --check\ngit check-ignore --no-index models/example.bin .omm/overall-architecture/conversation/models/meta.yaml",
    "effects": [
     "read",
-    "top(git check-ignore: a verb the table does not model)",
     "top(variable as the command name)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/conversation/models/meta.yaml)"
    ]
   },
   {
@@ -2475,8 +2500,7 @@
    "source": "codex",
    "command": "git diff --cached -- tests/integration\n git branch --show-current",
    "effects": [
-    "read",
-    "top(git branch: a verb the table does not model)"
+    "read"
    ]
   },
   {
@@ -2486,6 +2510,7 @@
    "effects": [
     "network(github.com)",
     "read",
+    "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -2496,7 +2521,9 @@
    "effects": [
     "network(github.com)",
     "read",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/state-transitions/diagram.mmd)"
    ]
   },
   {
@@ -2516,7 +2543,7 @@
    "effects": [
     "read",
     "spawn(upstream)",
-    "top(git rev-list: a verb the table does not model)"
+    "top(group where an option of git rev-list may stand)"
    ]
   },
   {
@@ -2535,7 +2562,9 @@
    "effects": [
     "network(github.com)",
     "read",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm)"
    ]
   },
   {
@@ -2545,6 +2574,7 @@
    "effects": [
     "network(github.com)",
     "read",
+    "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -2555,6 +2585,7 @@
    "effects": [
     "network(github.com)",
     "read",
+    "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -2564,7 +2595,8 @@
    "command": "git restore --source=7587a04e --worktree -- .omm; Get-Content .omm/overall-architecture/memory/meta.yaml -TotalCount 25; Get-Command omm | Format-List Name,CommandType,Definition; Get-Content src/ai_companion_voice_agent/memory/profile_reset_operation.py; Get-Content .omm/overall-architecture/memory/writers/meta.yaml",
    "effects": [
     "read",
-    "top(git restore: a verb the table does not model)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm)"
    ]
   },
   {
