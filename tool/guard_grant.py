@@ -240,7 +240,9 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
     executables |= {e[1] for s in strings("executables") for e in spawn_of(s, ctx) if e[0] == "spawn"}
     remotes = remote_hosts(common)
     hosts = {"127.0.0.1"} | {h for _, h in remotes if h != UNREAD} | {host_of(s) for s in strings("network_hosts")}
-    protected = sorted({str(p / x) for p in (top, main) for x in PROTECTED})
+    # The git directories themselves, whatever they are named: a bare common directory (`shared.git`) holds
+    # the configuration and hooks git trusts, with no `.git` in its path.
+    protected = sorted({str(p / x) for p in (top, main) for x in PROTECTED} | {str(gitdir), str(common)})
     writable = [h or top.as_posix() for h in hook_folders(common) if h is None
                 or contained(h, [str(r) for r in roots]) and not any(contained(h, [p]) for p in protected)]
     return Grant([str(r) for r in roots], protected, executables, hosts, remotes, top.as_posix(),

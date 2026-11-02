@@ -181,7 +181,10 @@ the verifier `log.showSignature` asks for) is part of the git row, since that
 configuration is protected or outside the write roots. That holds only for the
 checkout itself and the worktrees of the same repository (one configuration,
 one set of hooks and remotes): git in any other repository (a nested one
-included) is `top`, and no write or edit may lay down a `.git` anywhere. When
+included) is `top`, and no write or edit may lay down a `.git` anywhere. The
+checkout's git directory and common git directory are protected whatever their
+names, so a worktree of a bare repository (`shared.git`) keeps its
+configuration and hooks out of reach too. When
 any configuration git reads may point `core.hooksPath` inside a write root,
 every git write of the repository is denied, since git would run hooks the task
 can edit. Only an absolute value on a line of its own is read as written; a

@@ -1238,6 +1238,24 @@ def test_the_global_configuration_is_read_from_gits_home(tmp_path, monkeypatch, 
     assert (guard_grant.LAZY, guard_grant.UNREAD) in guard_grant.remote_hosts(tmp_path)
 
 
+def test_a_bare_common_directory_is_protected(repo, tmp_path):
+    # A worktree of a bare repository: its configuration and hooks have no `.git` in their path (round 13).
+    temp = Path(os.environ["TEMP"])
+    shared = temp / "shared.git"
+    (shared / "worktrees/wt").mkdir(parents=True)
+    (shared / "hooks").mkdir()
+    (shared / "config").write_text((repo / ".git/config").read_text(encoding="utf-8"), encoding="utf-8")
+    (shared / "worktrees/wt/commondir").write_text("../..\n", encoding="utf-8")
+    wt = tmp_path / "work" / "wt"
+    (wt / ".wiki").mkdir(parents=True)
+    (wt / ".wiki/adapter.toml").write_text((repo / ".wiki/adapter.toml").read_text(encoding="utf-8"),
+                                           encoding="utf-8")
+    (wt / ".git").write_text(f"gitdir: {(shared / 'worktrees/wt').as_posix()}\n", encoding="utf-8")
+    for target in (shared / "hooks/pre-commit", shared / "config", shared / "worktrees/wt/config.worktree"):
+        assert call(wt, f"echo x > {target.as_posix()}"), target
+    assert call(wt, f"echo x > {(temp / 'notes.md').as_posix()}") is None
+
+
 def test_an_absorbed_submodule_makes_git_top(tmp_path, monkeypatch):
     (tmp_path / "config").write_text(ORIGIN, encoding="utf-8")
     monkeypatch.setattr(guard_grant, "git_configs", lambda: [])
