@@ -10,8 +10,7 @@ decided before it runs. The call passes when every effect is inside the grant
 (`grant`); there is no list of command patterns. What an executable does is
 read off a closed table of programs and the flags each understands
 (`guard_models.TABLE`, `guard_windows.PS_ROWS`/`CMD_ROWS`): a flag outside its
-row is `top`, and a name with no row is a `spawn`, which runs whatever its
-own code does and is never judged (`guard_grant`).
+row is `top`, and a name with no row is a `spawn`, which is never judged.
 
 Soundness over completeness: anything the models cannot decide becomes `top`,
 and `top` is never granted. The refusal is read by the person and stays Korean.
@@ -489,7 +488,8 @@ def bound_once(src: str, d: str) -> set:
         src = re.sub(r"<<-?\s*(['\"])([\w.-]+)\1(.*?\n).*?^\t*\2\r?$", r"\3", src, flags=re.M | re.S)
         if re.search(r"\b(?:eval|source)\b|(?:^|[;&|\s])\.\s", src):
             return set()
-        counts = Counter(re.findall(r"(?:^|[\s;&|(`{])([A-Za-z_]\w*)\+?=", src))
+        # A quote may open it (`export "S=.."` rebinds `S`); a quoted `x=` binding nothing only untracks x.
+        counts = Counter(re.findall(r"(?:^|[\s;&|(`{])['\"]?([A-Za-z_]\w*)\+?=", src))
         counts.update(re.findall(r"\$\{([A-Za-z_]\w*):?=", src))
         counts.update(re.findall(r"\b(?:for|select)\s+([A-Za-z_]\w*)", src))
         counts.update(re.findall(r"\bprintf\s+-v\s*([A-Za-z_]\w*)", src))
