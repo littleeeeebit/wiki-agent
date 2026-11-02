@@ -122,7 +122,7 @@ in `tool/guard_models.py` lists each modelled program with the flags it
 understands (`row(model, "-abc --long -o: --out:")`: one-letter flags, long
 flags, and flags that take a value); `PS_ROWS` and `CMD_ROWS` in
 `tool/guard_windows.py` do the same for PowerShell cmdlets and cmd.exe
-builtins, and `tool/guard_git.py` for git, gh and curl. The table holds only:
+builtins, and `tool/guard_git.py` for git and gh. The table holds only:
 
 - read-only listing, reading and searching programs (`ls`, `cat`, `head`,
   `grep`, `rg`, `find` without actions, `diff`, `echo`, `Get-Content`,
@@ -143,21 +143,14 @@ builtins, and `tool/guard_git.py` for git, gh and curl. The table holds only:
   `-c` takes only identity, whitespace and colour keys. `--git-dir`,
   `--work-tree`, `--exec-path`, `--config-env` and every other verb are `top`;
 - gh `pr view`/`diff`/`checks`/`list`/`status`, `run view`/`watch`/`list`,
-  `issue view`/`list` and `api` (one GET of an endpoint) as reads, and
+  `issue view`/`list` as reads, and
   `pr create`/`edit`/`comment`/`ready`/`merge` on the current branch's pull
   request only (no `--head`), each reaching the checkout's remote hosts.
-  `-R`/`--repo`, `--web`, `--hostname` and a URL operand are `top`, and so is
-  setting `GH_REPO` in any form (PowerShell's one-word and compound
-  assignments included);
-- curl reads only: GET or HEAD over `http`/`https` to the hosts its URLs name,
-  writing only where `-o` points. A request that changes something (another
-  method, a body, a method-override header, a header file) may author a commit,
-  and a proxy decides where even a loopback URL lands, so it is `top` on any
-  host; so is any other protocol, a scheme-less URL curl would guess as one
-  (`ftp.`), `--url @file`, a URL glob, `#` in `-o`, and a header, user agent or
-  referer that is computed or spans lines. `-L`,
-  `-x`, `--resolve`, `--connect-to`, `-O`, `-K`, a `-w` format with
-  `%output{…}` or read from `@file`, and every other unlisted flag are `top`;
+  `-R`/`--repo`, `--web`, `--hostname`, `run view --log` and a URL operand are
+  `top`, and so is setting `GH_REPO` in any form (PowerShell's one-word and
+  compound assignments included). `gh api` and curl have no row: the hosts
+  they reach and what they change are not decided by their arguments alone,
+  so they wait for the shell-semantics follow-up;
 - plain `>`/`>>` redirection to a literal path, in every dialect. Only the
   host's devices are discarded: `/dev/null` and its kin as spelled where a
   POSIX layer serves them (not in native Windows PowerShell or cmd, where they
@@ -184,8 +177,8 @@ protected files and links included. That history is trusted because the agent
 cannot author such a commit within the table: no row lays down a link, and a
 protected name (`verification.toml`, `.wiki/adapter.toml`, `.claude`,
 `.codex`) is protected at any depth below every write root, so another
-worktree's copy cannot be changed and committed either; `gh api` only reads,
-and curl only reads.
+worktree's copy cannot be changed and committed either; `gh api` and curl
+have no row.
 
 Four rules hold across the table:
 
@@ -206,7 +199,7 @@ Four rules hold across the table:
 
 Everything else is denied in app-managed sessions: file writers such as `rm`,
 `cp`, `mv`, `touch`, `Set-Content` and `Remove-Item`, archives, links, `awk`,
-`sed`, `wget`, and every git, gh and curl form outside their rows. Follow-up
+`sed`, `wget`, curl, and every git and gh form outside their rows. Follow-up
 changes add rows for PowerShell and cmd, and shell semantics; a command that is
 denied but ordinary is answered by adding a row there, not by loosening an
 existing one.

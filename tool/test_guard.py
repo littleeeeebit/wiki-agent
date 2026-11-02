@@ -1026,12 +1026,6 @@ ROW_EFFECTS = {
     "gh pr view 3 --json body -q .body": {"network(github.com)"},
     "gh pr edit --body-file body.md": {"network(github.com)"},
     "gh pr merge --squash --delete-branch": {"network(github.com)", "write(/work/repo/.)"},
-    "gh run view 5 --log-failed": {"network(github.com)"},
-    "gh api repos/o/r/pulls --jq .[].number": {"network(github.com)"},
-    "gh api -X GET repos/o/r/pulls": {"network(github.com)"},
-    "curl -s -m 5 http://127.0.0.1:30006/api/x": {"network(127.0.0.1)"},
-    "curl -s -o out.json -w '%{http_code}' localhost:8000/x": {"network(127.0.0.1)", "write(/work/repo/out.json)"},
-    "curl -s -o /dev/null https://github.com/": {"network(github.com)"},
 }
 
 
@@ -1042,7 +1036,7 @@ def test_each_new_row_has_its_effects(command):
 
 def test_the_new_rows_pass_in_an_attached_checkout(repo):
     for command in ("git fetch origin && git merge --no-edit origin/main", "git stash && git stash pop",
-                    "gh pr view --json state", "curl -s http://127.0.0.1:8000/x", "git branch -D topic"):
+                    "gh pr view --json state", "gh run view 5", "git branch -D topic"):
         assert call(repo, command) is None, command
 
 
@@ -1088,7 +1082,7 @@ def test_a_protected_name_is_protected_in_every_worktree(repo):
     """Another worktree's copy of a protected file, committed there, would reach the checkout by history."""
     wt = Path(os.environ["TEMP"]).as_posix() + "/wt"
     for target in ("verification.toml", ".wiki/adapter.toml", ".claude/settings.json", ".codex/config.toml"):
-        for command in (f"printf x > {wt}/{target}", f"curl -s -o {wt}/{target} http://127.0.0.1:8000/x"):
+        for command in (f"printf x > {wt}/{target}", f"echo x >> {wt}/{target}"):
             assert "허가를 정하는 파일" in (call(repo, command) or ""), command
     assert call(repo, f"printf x > {wt}/notes.md") is None
 
@@ -1096,11 +1090,6 @@ def test_a_protected_name_is_protected_in_every_worktree(repo):
 def test_a_worktree_is_removed_only_by_its_absolute_path():
     # git matches a relative operand as the tail of any registered worktree's path, wherever it is.
     assert any(e.startswith("top(") for e in effects("git worktree remove --force sibling", ctx=POSIX))
-
-
-@pytest.mark.parametrize("fmt", ["'%output{../outside/target.txt}x'", "@format.txt", "'%OUTPUT{x}'", "$FMT"])
-def test_a_curl_write_out_that_may_write_is_top(fmt):
-    assert any(e.startswith("top(") for e in effects(f"curl -s -w {fmt} http://127.0.0.1:8000/", ctx=POSIX))
 
 
 @pytest.mark.parametrize("command,dialect", [
@@ -1120,31 +1109,28 @@ def test_a_powershell_assignment_written_as_one_word_is_still_an_assignment():
     assert effects("$env:PYTHONIOENCODING='utf-8'; $x='rm'; $n+=1; git status", "ps") == {"read"}
 
 
-# A request that changes something remote may author a commit that a fetch and checkout bring home.
-@pytest.mark.parametrize("command", [
-    "curl -s -X PUT -d '{}' https://github.com/api/v3/repos/o/r/contents/verification.toml",
-    "curl -s --json '{}' https://github.com/api",
-    "curl -s --data-binary @body.json https://github.com/api",
-    "curl -s -X DELETE https://github.com/api",
-    # A proxy decides where a loopback URL lands, so no request that changes something is a read.
-    "HTTPS_PROXY=socks5h://github.com:1080 curl -sk -X PUT https://127.0.0.1/api/contents/x",
-    "curl -s -X POST -d x http://127.0.0.1:8000/api",
-    "curl -s -H 'X-HTTP-Method-Override: PUT' https://github.com/api",
-    "curl -s -H @headers.txt https://github.com/api",
-    # Another protocol carries what it sends in the URL.
-    "curl -s gophers://github.com:443/_PUT%20%2Fapi%20HTTP%2F1.1",
-    "curl -s ftp://github.com/upload",
-    "curl -s FILE:///etc/hosts",
-    # A header value is one literal line; a URL is one http or https address.
-    "curl -s -H $'Accept: x\\r\\nX-HTTP-Method-Override: PUT' https://github.com/api",
-    "curl -s -A \"$AGENT\" https://github.com/api",
-    "curl -s --url @urls.txt",
-    "curl -s ftp.github.com/sample",
-    "curl -s 'https://github.com/[1-3]' -o 'out#1'",
-    "curl -s 'https://github.com/{a,b}'",
-])
-def test_a_curl_request_that_changes_something_is_top(command):
+# -- Follow-up (a), review round 5 ------------------------------------------------
+# gh's API command and its log download reach hosts the argv does not decide: gh's own default host, a
+# redirect or a next page the response names. They have no row, and curl is again only a spawn.
+@pytest.mark.parametrize("command", ["gh api user", "gh api --paginate repos/o/r/issues",
+                                     "gh api --cache 1h repos/o/r", "gh run view 5 --log", "gh run view 5 --log-failed"])
+def test_gh_forms_whose_hosts_the_argv_does_not_decide_are_top(command):
     assert any(e.startswith("top(") for e in effects(command, ctx=POSIX)), command
+
+
+def test_curl_is_only_a_spawn_again():
+    assert effects("curl -s https://github.com/", ctx=POSIX) == {"read", "spawn(curl)"}
+
+
+def test_a_host_is_read_from_the_authority_alone():
+    for target in ("https://unlisted.example?@github.com", "https://unlisted.example#@github.com",
+                   "https://unlisted.example/@github.com"):
+        found = effects(f"HTTPS_PROXY='{target}' python -m ruff check tool", ctx=POSIX)
+        assert "network(unlisted.example)" in found and "network(github.com)" not in found, target
+
+
+def test_a_tls_key_log_is_a_write_the_guard_cannot_place():
+    assert any("SSLKEYLOGFILE" in e for e in effects("SSLKEYLOGFILE=verification.toml git fetch origin", ctx=POSIX))
 
 
 def test_a_per_worktree_configuration_leaves_the_remotes_unread(tmp_path):

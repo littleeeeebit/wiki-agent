@@ -2,8 +2,8 @@
 
 `TABLE` is all the guard knows about programs, and it is kept small: programs
 that only read or print, `sort -o`/`uniq` writing their one output, `cd`,
-`find` without actions, nested shells, and git, gh and curl (their rows are
-in `guard_git`). A row
+`find` without actions, nested shells, and git and gh (their rows are in
+`guard_git`). A row
 names a program, the flags it understands (`row`'s spec: one-letter flags,
 flags taking a value, long flags) and the model that maps its argv to effects.
 `gate` runs before every model: a flag the row does not list is `top`, and so
@@ -182,7 +182,8 @@ LOOPBACK = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "[::1]"}
 
 def host_of(text: str) -> str:
     t = text.strip()
-    if m := re.match(r"^[a-zA-Z][\w+.-]*://(?:[^@/]*@)?(\[[^\]]*\]|[^/:?#]*)", t):
+    # The authority ends at the first `/`, `?` or `#`; only an `@` before that ends a user name.
+    if m := re.match(r"^[a-zA-Z][\w+.-]*://(?:[^@/?#]*@)?(\[[^\]]*\]|[^/:?#]*)", t):
         host = m.group(1)
     elif m := re.match(r"^\[([^\]]+)\](?:[/:?#]|$)", t):
         host = m.group(1)              # a bare IPv6 literal, `[::1]` or `[::1]:80`
@@ -535,8 +536,8 @@ TABLE = {
     **{s: row(m_sh, free=True) for s in SHELLS},
     **{s: row(m_pwsh, free=True) for s in PS_SHELLS},
     "cmd": row(m_cmd, free=True),
-    # git, gh and curl gate their own flags (`guard_git`).
-    **{p: row(lazy(f"m_{p}"), free=True) for p in ("git", "gh", "curl")},
+    # git and gh gate their own flags (`guard_git`).
+    **{p: row(lazy(f"m_{p}"), free=True) for p in ("git", "gh")},
     # Listed only to refuse: what these do is decided by data, links or code the argv does not show.
     "ln": row(refuse("creates a link the guard cannot follow"), free=True),
     **{z: row(refuse("extracts an archive into names the archive decides"), free=True)

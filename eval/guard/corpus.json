@@ -161,9 +161,9 @@
    "source": "claude",
    "command": "D=raw/review-evidence/mobile-p0-20261009 && mkdir -p $D && cp artifacts/review/*.md $D/ && ls $D | wc -l && rm -rf \"$(pwd)/artifacts\" && test ! -e artifacts && echo \"artifacts removed\"; ls -la raw/android/; curl -s -m5 http://127.0.0.1:49932/api/mobile/status; echo",
    "effects": [
-    "network(127.0.0.1)",
     "read",
     "spawn(cp)",
+    "spawn(curl)",
     "spawn(mkdir)",
     "spawn(rm)"
    ]
@@ -184,8 +184,8 @@
    "command": "P=$(grep -o \"127.0.0.1:[0-9]*\" C:/Users/me/PycharmProjects/wiki-agent/raw/main.log | head -1); curl -s \"http://$P/api/refactors/7357ebbe\" | python -c \"\nimport json,sys; r=json.load(sys.stdin)\nprint(r.get('state'), r.get('phase'), r.get('spent'))\nm=r.get('map') or {}\nnames=[p.get('name') or p.get('id') for p in (m.get('pipelines') or [])]\nprint('pipelines in map:', len(names)); print('done:', list((r.get('pipelines') or {}).keys()))\"",
    "effects": [
     "read",
-    "spawn(python)",
-    "top(variable in a network target)"
+    "spawn(curl)",
+    "spawn(python)"
    ]
   },
   {
@@ -194,8 +194,8 @@
    "command": "P=$(python -c \"import urllib.parse;print(urllib.parse.quote(r'C:\\Users\\me\\PycharmProjects\\ai-generation'))\"); curl -s -m 10 -H \"x-project: ai-generation\" \"http://127.0.0.1:9656/api/work/log?path=$P\" | python -c \"\nimport sys,json\nd=json.load(sys.stdin); print('busy',d['busy'],'running',d['running'],'queued',d['queued'], 'rows',len(d['rows']))\"",
    "effects": [
     "read",
-    "spawn(python)",
-    "top(variable in a network target)"
+    "spawn(curl)",
+    "spawn(python)"
    ]
   },
   {
@@ -359,10 +359,9 @@
    "source": "claude",
    "command": "S=$(curl -s -m5 http://127.0.0.1:49932/api/mobile/status); echo \"$S\"; O=$(echo \"$S\" | python -c \"import json,sys;print(json.load(sys.stdin)['origin'])\"); [ -n \"$O\" ] && curl -s -m20 -o /dev/null -w 'install %{http_code}\\n' $O/mobile-install && curl -s -m30 -o /dev/null -w 'apk %{http_code} %{content_type} %{size_download}\\n' $O/mobile-install.apk",
    "effects": [
-    "network(127.0.0.1)",
     "read",
-    "spawn(python)",
-    "top(variable where an option of curl may stand)"
+    "spawn(curl)",
+    "spawn(python)"
    ]
   },
   {
@@ -576,8 +575,8 @@
    "source": "claude",
    "command": "WT=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt; export WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333; nohup \"$WT/web/src-tauri/target/release/wiki-agent.exe\" >/dev/null 2>&1 & disown; for i in $(seq 1 60); do curl -s http://127.0.0.1:9333/json 2>/dev/null | grep -q '127.0.0.1' && break; sleep 1; done; curl -s http://127.0.0.1:9333/json | grep '\"url\"'; tasklist //FI \"IMAGENAME eq wiki-agent.exe\" | tail -2",
    "effects": [
-    "network(127.0.0.1)",
     "read",
+    "spawn(curl)",
     "spawn(disown)",
     "spawn(export)",
     "spawn(nohup)",
@@ -745,8 +744,8 @@
    "source": "claude",
    "command": "cd \"C:/Users/me/PycharmProjects/wiki-agent\" && timeout 600 npm --prefix web run build 2>&1 | tail -6; stat -c '%y %n' web/dist/index.html; git status --short | head -5; curl -s -m 5 http://127.0.0.1:1373/ | grep -o 'assets/index-[^\"]*\\.js' | head -1; grep -o 'assets/index-[^\"]*\\.js' web/dist/index.html | head -1",
    "effects": [
-    "network(127.0.0.1)",
     "read",
+    "spawn(curl)",
     "spawn(timeout)"
    ]
   },
@@ -1200,8 +1199,8 @@
    "source": "claude",
    "command": "curl -s -m 5 http://127.0.0.1:9656/api/loops | python -c \"\nimport sys,json\nfor t in json.load(sys.stdin)['turns']: print('turn', t.get('path'))\"",
    "effects": [
-    "network(127.0.0.1)",
     "read",
+    "spawn(curl)",
     "spawn(python)"
    ]
   },
@@ -1210,8 +1209,8 @@
    "source": "claude",
    "command": "curl -s -m 5 http://127.0.0.1:9656/api/worktrees | python -c \"\nimport sys,json\nd=json.load(sys.stdin); print(d['project'], d['repo'])\nfor w in d['rows'][:40]:\n  print({k:v for k,v in w.items() if k in ('branch','busy','running','live','state','kind','turn','active')})\n\"; wmic process where \"ProcessId=54700\" get CreationDate,CommandLine 2>/dev/null | head -3",
    "effects": [
-    "network(127.0.0.1)",
     "read",
+    "spawn(curl)",
     "spawn(python)",
     "spawn(wmic)"
    ]
@@ -1274,11 +1273,11 @@
    "effects": [
     "read",
     "spawn(awk)",
+    "spawn(curl)",
     "spawn(sed)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)",
-    "top(glob as the command name)",
-    "top(variable in a network target)"
+    "top(glob as the command name)"
    ]
   },
   {
@@ -1298,11 +1297,10 @@
    "source": "claude",
    "command": "for p in overview.html overview/guide.html overview/site.css overview/img/guide-connect.webp; do echo \"$p $(curl -s -o /dev/null -w '%{http_code}' https://owner.github.io/wiki-agent/$p)\"; done; curl -s https://owner.github.io/wiki-agent/overview.html | grep -o \"<title>[^<]*\"",
    "effects": [
-    "network(owner.github.io)",
     "read",
+    "spawn(curl)",
     "top(`do`: a loop, function or trap the table does not model)",
-    "top(`for`: a loop, function or trap the table does not model)",
-    "top(variable in a network target)"
+    "top(`for`: a loop, function or trap the table does not model)"
    ]
   },
   {
@@ -1372,8 +1370,8 @@
    "source": "claude",
    "command": "gh run view 41158469347 --log-failed > \"$TEMP/ci264f.log\" 2>&1; grep -nE \"Error|error|FAIL|넘었다|failed|::error\" \"$TEMP/ci264f.log\" | head -30",
    "effects": [
-    "network(github.com)",
     "read",
+    "top(gh run view --log-failed: an option the table does not model)",
     "top(variable in a write path)"
    ]
   },
@@ -1603,9 +1601,9 @@
    "command": "grep -n \"free port\\|bind\\|--port\\|getsockname\" tool/main/app.py tool/app.cmd web/src-tauri/src/main.rs 2>/dev/null | head; for p in 8791 10534 16106 16107 16116 24313; do echo \"$p: $(curl -s -m 2 http://127.0.0.1:$p/api/worktrees -o /dev/null -w '%{http_code}')\"; done",
    "effects": [
     "read",
+    "spawn(curl)",
     "top(`do`: a loop, function or trap the table does not model)",
-    "top(`for`: a loop, function or trap the table does not model)",
-    "top(variable in a network target)"
+    "top(`for`: a loop, function or trap the table does not model)"
    ]
   },
   {
@@ -1651,12 +1649,10 @@
    "source": "claude",
    "command": "mkdir -p raw/android artifacts && cp android/app/build/outputs/apk/release/app-release.apk raw/android/wiki-agent.apk && cp android/app/build/outputs/bundle/release/app-release.aab raw/android/wiki-agent.aab && cp raw/android/wiki-agent.apk artifacts/wiki-agent.apk && curl -s -m5 http://127.0.0.1:21570/api/mobile/status; echo; O=https://intermediate-titled-compaq-biblical.trycloudflare.com; curl -s -m15 -o /dev/null -w 'install page %{http_code}\\n' $O/mobile-install; curl -s -m30 -o \"$TEMP/dl.apk\" -w 'apk %{http_code} %{content_type} %{size_download}\\n' $O/mobile-install.apk; sha256sum \"$TEMP/dl.apk\" raw/android/wiki-agent.apk | cut -c1-16",
    "effects": [
-    "network(127.0.0.1)",
-    "network(intermediate-titled-compaq-biblical.trycloudflare.com)",
     "read",
     "spawn(cp)",
-    "spawn(mkdir)",
-    "top(variable in a write path)"
+    "spawn(curl)",
+    "spawn(mkdir)"
    ]
   },
   {
@@ -1931,14 +1927,14 @@
    "command": "taskkill //PID 26984 //F 2>&1 | iconv -f cp949 -t utf-8; cd C:/Users/me/PycharmProjects/wiki-agent && explorer.exe \"$(cygpath -w tool/app.cmd)\"; for i in $(seq 1 30); do tasklist //FI \"IMAGENAME eq wiki-agent.exe\" //NH 2>/dev/null | grep -q wiki-agent && break; sleep 2; done; tasklist //FI \"IMAGENAME eq wiki-agent.exe\" //NH 2>&1 | iconv -f cp949 -t utf-8; sleep 8; ls -la --time-style=full-iso raw/main.log; P=$(grep -o \"127.0.0.1:[0-9]*\" raw/main.log | head -1); echo \"port=$P $(curl -s -o /dev/null -w '%{http_code}' \"http://$P/\")\"",
    "effects": [
     "read",
+    "spawn(curl)",
     "spawn(explorer)",
     "spawn(iconv)",
     "spawn(taskkill)",
     "spawn(tasklist)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)",
-    "top(a directory change after the first statement)",
-    "top(variable in a network target)"
+    "top(a directory change after the first statement)"
    ]
   },
   {
@@ -2010,8 +2006,8 @@
    "source": "claude",
    "command": "wmic process where \"ProcessId=24764\" get CommandLine,ParentProcessId 2>&1 | cut -c1-300; curl -s -m 5 http://127.0.0.1:8791/api/options | head -c 300",
    "effects": [
-    "network(127.0.0.1)",
     "read",
+    "spawn(curl)",
     "spawn(wmic)"
    ]
   },
@@ -2337,8 +2333,8 @@
    "source": "codex",
    "command": "gh api repos/owner/ai-companion-voice-agent/commits/d2563f3d800df8dd4c5fe7021793a2323eecf334/check-runs --jq '{total_count: .total_count, checks: [.check_runs[] | {name, status, conclusion, details_url}]}'",
    "effects": [
-    "network(github.com)",
-    "read"
+    "read",
+    "top(gh api repos/owner/ai-companion-voice-agent/commits/d2563f3d800df8dd4c5fe7021793a2323eecf334/check-runs: a command the table does not model)"
    ]
   },
   {
@@ -2346,8 +2342,8 @@
    "source": "codex",
    "command": "gh api repos/owner/ai-companion-voice-agent/commits/d2563f3d800df8dd4c5fe7021793a2323eecf334/status --jq '{state, statuses: [.statuses[] | {context, state, description, target_url}]}'\ngit status --porcelain --untracked-files=no",
    "effects": [
-    "network(github.com)",
-    "read"
+    "read",
+    "top(gh api repos/owner/ai-companion-voice-agent/commits/d2563f3d800df8dd4c5fe7021793a2323eecf334/status: a command the table does not model)"
    ]
   },
   {

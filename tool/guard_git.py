@@ -1,4 +1,4 @@
-"""git, gh and curl: the rows of the closed table that change the repository or reach the network, for `guard`.
+"""git and gh: the rows of the closed table that change the repository or reach the network, for `guard`.
 
 git runs only in the checkout the grant was read for, or a worktree of the
 same repository, and only with the options and verbs listed here. What git
@@ -10,10 +10,11 @@ repository's history holds: the agent cannot author a commit that changes a
 protected file or lays down a link, so that history is trusted as a whole.
 A path the agent names (`git restore -- f`) is a write of that path.
 
-gh works on the checkout's own repository through the hosts its remotes name;
-a write applies to the current branch's pull request only, and `gh api` only
-reads. curl reaches the hosts its URLs name and writes only where `-o` points;
-redirects, proxies, other resolutions and remote file names are not listed.
+gh works on the checkout's own repository through the hosts its remotes name,
+and a write applies to the current branch's pull request only. `gh api` (a host
+from gh's own configuration, redirects and next pages a response names, a cache
+written where a header says), `gh run view --log` (a redirect to log storage)
+and curl are not rows here: what host they reach is not decided by the argv.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ import posixpath
 import re
 
 from guard import moved_to, paths, top
-from guard_models import gate, getopt, here, network, row, writes
+from guard_models import gate, getopt, here, row, writes
 
 # git's own options before the verb that take no value. `-C` (a directory) and `-c` (a listed key) are read
 # by `m_git`; `--git-dir`, `--work-tree`, `--exec-path` and `--config-env` change which repository,
@@ -293,7 +294,7 @@ def m_git(name, args, ctx):
 
 JSON = "--json: -q: --jq: -t: --template:"
 # `group verb`: (flags, what it does, which pull request or run it may name). No `-R`/`--repo` (another
-# repository), `-w`/`--web` (a browser) or `--hostname` anywhere.
+# repository), `-w`/`--web` (a browser), `--hostname` or `--log` anywhere.
 GH_VERBS = {
     "pr view": (f"-c --comments {JSON}", "read", "one"),
     "pr diff": ("--name-only --patch --color:", "read", "one"),
@@ -310,22 +311,19 @@ GH_VERBS = {
     "pr ready": ("", "write", "none"),
     "pr merge": ("-smrd -t: --subject: -b: --body: -F: --body-file: -A: --author-email: --squash --merge --rebase "
                  "--delete-branch --auto --disable-auto --match-head-commit:", "merge", "none"),
-    "run view": (f"-v --verbose --log --log-failed --exit-status -j: --job: -a: --attempt: {JSON}", "read", "one"),
+    "run view": (f"-v --verbose --exit-status -j: --job: -a: --attempt: {JSON}", "read", "one"),
     "run watch": ("--exit-status --compact -i: --interval:", "read", "one"),
     "run list": (f"-L: --limit: -b: --branch: -w: --workflow: -s: --status: -c: --commit: -e: --event: -u: --user: "
                  f"{JSON}", "read", "none"),
     "issue view": (f"-c --comments {JSON}", "read", "one"),
     "issue list": (f"-s: --state: -L: --limit: -l: --label: -A: --author: -a: --assignee: -S: --search: {JSON}",
                    "read", "none"),
-    "api": ("-i --include --paginate --slurp --silent --verbose -H: --header: -q: --jq: -t: --template: -X: "
-            "--method: --cache:", "read", "endpoint"),
 }
 GH = {verb: (row(None, spec, digits=True), kind, names) for verb, (spec, kind, names) in GH_VERBS.items()}
 
 
 def m_gh(name, args, ctx):
-    words = [w.text for w in args[:2]]
-    verb = words[0] if words[:1] == ["api"] else " ".join(words)
+    verb = " ".join(w.text for w in args[:2])
     if any(w.why for w in args[:2]) or verb not in GH:
         return top(f"gh {verb}: a command the table does not model"), None
     rest = args[len(verb.split()):]
@@ -338,53 +336,9 @@ def m_gh(name, args, ctx):
     if names == "none" and pos or names == "one" and (len(pos) > 1 or pos and (pos[0].why or ":" in pos[0].text)):
         # A number or branch names this repository's pull request; a URL may name another host's.
         return top(f"gh {verb} naming a pull request, run or issue it does not take here"), None
-    if names == "endpoint" and (len(pos) != 1 or pos[0].why or "://" in pos[0].text
-                                or any(m.text.upper() != "GET" for m in vals.get("-X", []) + vals.get("--method", []))):
-        return top("gh api other than one GET of an endpoint"), None
     hosts = {h for _, h in ctx.remotes}
     if not hosts or "\0unread" in hosts:
         return top("gh with no remote the guard has read"), None
     out = {("network", h) for h in hosts}
     # `--delete-branch` also switches and deletes the local branch.
     return out | (paths("repo", here(ctx), ctx) if kind == "merge" else set()), None
-
-
-# -- curl ----------------------------------------------------------------------
-
-# A request that changes something may author a commit (a contents API) that a fetch and checkout then bring
-# home as trusted history, and a proxy decides where even a loopback URL lands: the row only reads. No body
-# (`-d`, `--json`), `-L` (a redirect reaches a host the URL does not name), `-x`/`--proxy`,
-# `--resolve`/`--connect-to`, `-O`/`--output-dir` (a name the server or URL picks), `-K` (options from a file)
-# or `-D`/`-c` (more writes).
-CURL = row(None, "-sSfiIkvq -m: -o: -w: -H: -X: -A: -e: --silent --show-error --fail --fail-with-body --include "
-                 "--head --insecure --verbose --no-progress-meter --compressed --http1.1 --max-time: --connect-timeout: "
-                 "--output: --write-out: --header: --request: --retry: --retry-delay: --url: --user-agent: --referer:")
-
-
-def m_curl(name, args, ctx):
-    if stop := gate(name, args, CURL):
-        return stop, None
-    pos, vals, _ = getopt(args, CURL.takes)
-    # `%output{file}` in a write-out format writes the rest of it to that file; `@file` reads a format.
-    if any(w.why or w.text.startswith("@") or "%output" in w.text.lower()
-           for w in vals.get("-w", []) + vals.get("--write-out", [])):
-        return top("a curl write-out format that may write a file"), None
-    # A header-like value is literal and one line: a line break would start another header (a method override).
-    sent = [w for k in ("-H", "--header", "-A", "--user-agent", "-e", "--referer") for w in vals.get(k, [])]
-    if any(w.why or w.text.upper() not in ("GET", "HEAD") for w in vals.get("-X", []) + vals.get("--request", [])) \
-            or any(w.why or w.text.startswith("@") or re.search(r"[\r\n]", w.text) for w in sent) \
-            or any("method" in w.text.partition(":")[0].lower() for w in vals.get("-H", []) + vals.get("--header", [])):
-        return top("a curl request other than a read (a method, or a header that overrides it)"), None
-    urls = pos + vals.get("--url", [])
-    outputs = vals.get("-o", []) + vals.get("--output", [])
-    # Another protocol (gopher, smtp, ftp upload, ...) carries what it sends in the URL itself, and a URL without
-    # one is guessed from its host (`ftp.`, `dict.`, ...). `@file` is a list of URLs saved under their own names;
-    # a glob (`[1-3]`, `{a,b}`) makes several requests and `#1` in `-o` names their files.
-    if any(not w.why and (re.match(r"(?i)(?!https?://)[a-z][\w+.-]*://", w.text) or w.text.startswith("@")
-                          or re.match(r"(?i)(ftp|dict|ldap|imap|smtp|pop3)\.", w.text) or re.search(r"[\[\]{}]", w.text))
-           for w in urls) or any("#" in w.text for w in outputs):
-        return top("a curl URL other than one http or https address"), None
-    out = writes("write", outputs, ctx)
-    for w in urls:
-        out |= network(w)
-    return out, None
