@@ -2815,7 +2815,7 @@
    "command": "rg -n '_DISPOSABLE_CLUSTER_PREFIXES|directory_prefix=' src/ai_companion_voice_agent/evaluation/product_validation_local_runtime.py; $mappingTemp = (Resolve-Path -LiteralPath '.tmp/postgres-index-mapping-v7o3a_mb').Path; $mappingRoot = (Resolve-Path -LiteralPath '.tmp').Path; if ((Split-Path -Parent $mappingTemp) -ne $mappingRoot -or (Test-Path -LiteralPath (Join-Path $mappingTemp 'cluster/postmaster.pid'))) { throw 'Unsafe cleanup target' }; Remove-Item -LiteralPath $mappingTemp -Recurse -Force",
    "effects": [
     "read",
-    "top(remove-item: a cmdlet the table does not model)"
+    "top(remove-item: a path PowerShell reads as a wildcard, list, provider or stream)"
    ]
   },
   {

@@ -640,7 +640,7 @@ ASSIGN = re.compile(r"^([A-Za-z_]\w*)(?:\[[^\]]*\])?\+?=")
 def simple(items: list, ctx: Ctx) -> tuple[set, object]:
     """Effects of one simple command and, for `cd`, the directories it moves to."""
     from guard_models import KEYWORDS, run_argv
-    from guard_windows import ps_statement
+    from guard_windows import ps_path, ps_statement
 
     eff, words, stdin, call, consts, redirs = {READ}, [], None, False, ctx.consts, []
     # PowerShell evaluates groups (`(…)`, `{…}` blocks it runs) and subexpressions (`$(…)`) in this
@@ -677,7 +677,7 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
         if op in ("<<", "<<-", "<<<"):
             stdin = target
         elif op in (">", ">>", ">|", "<>") or (op == ">&" and not re.fullmatch(r"\d*-?", target.text)):
-            eff |= paths("write", target, ctx)
+            eff |= paths("write", ps_path(target) if ps else target, ctx)   # PowerShell writes the file itself
     ctx, env = replace(ctx, stdin=stdin), []
     while True:
         if ctx.d == "posix":
@@ -782,7 +782,8 @@ def resolve(text: str, cwd: str | None, ctx: Ctx) -> str | None:
         raise ValueError("another user's home")
     if ctx.windows:
         if t.startswith("//?/"):
-            t = t[4:]
+            # `\\?\UNC\host\share` is a share; any other device form but a drive stays absolute (`GLOBALROOT`).
+            t = "//" + t[8:] if t[4:8].lower() == "unc/" else t[4:] if re.match(r"[A-Za-z]:/", t[4:]) else t
         if ctx.d == "posix" and (m := re.match(r"^/([A-Za-z])(/|$)", t)):
             t = m.group(1).upper() + ":/" + t[3:]
         elif ctx.d == "posix" and (t == "/tmp" or t.startswith("/tmp/")):
