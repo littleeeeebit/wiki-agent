@@ -1029,8 +1029,6 @@ ROW_EFFECTS = {
     "git ls-files --others --exclude-standard": set(),
     "git check-ignore -q artifacts": set(),
     "git remote -v": set(),
-    "gh pr view 3 --json body -q .body": {"network(github.com)"},
-    "gh pr edit --body-file body.md": {"network(github.com)"},
 }
 
 
@@ -1041,8 +1039,7 @@ def test_each_new_row_has_its_effects(command):
 
 def test_the_new_rows_pass_in_an_attached_checkout(repo):
     for command in ("git -c http.followRedirects=false fetch --no-recurse-submodules origin && "
-                    "git merge --no-edit origin/main", "git stash && git stash pop",
-                    "gh pr view --json state", "gh run view 5", "git branch -D topic"):
+                    "git merge --no-edit origin/main", "git stash && git stash pop", "git branch -D topic"):
         assert call(repo, command) is None, command
 
 
@@ -1060,7 +1057,7 @@ def test_a_worktree_of_the_same_repository_is_the_checkout(repo):
     for command in (f"git -C {w} status", f"git -C {w} commit -qm x",
                     f"git -C {w} -c http.followRedirects=false fetch --no-recurse-submodules origin"):
         assert call(repo, command) is None, command
-    for command in (f"git -C {o} status", f"cd {o} && git fetch origin", f"cd {o} && gh pr view"):
+    for command in (f"git -C {o} status", f"cd {o} && git fetch origin"):
         assert "판단할 수 없는" in (call(repo, command) or ""), command
 
 
@@ -1104,9 +1101,8 @@ def test_a_worktree_is_removed_only_by_its_absolute_path():
     ("$env:GH_REPO+='github.com/owner/other'; gh pr edit --body x", "ps"),
     ("$env:GH_REPO += 'github.com/owner/other'; gh pr edit --body x", "ps"),
     ("GH_REPO=owner/other gh pr edit --body x", "posix"),
-    ("gh pr create --head other-topic --title x --body x", "posix"),
 ])
-def test_gh_never_targets_another_repository_or_branch(command, dialect):
+def test_gh_never_targets_another_repository(command, dialect):
     assert any(e.startswith("top(") for e in effects(command, dialect, ctx=replace(POSIX, d=dialect)))
 
 
@@ -1117,12 +1113,12 @@ def test_a_powershell_assignment_written_as_one_word_is_still_an_assignment():
 
 
 # -- Follow-up (a), review round 5 ------------------------------------------------
-# gh's API command and its log download reach hosts the argv does not decide: gh's own default host, a
-# redirect or a next page the response names. They have no row, and curl is again only a spawn.
-@pytest.mark.parametrize("command", ["gh api user", "gh api --paginate repos/o/r/issues",
-                                     "gh api --cache 1h repos/o/r", "gh run view 5 --log", "gh run view 5 --log-failed"])
-def test_gh_forms_whose_hosts_the_argv_does_not_decide_are_top(command):
-    assert any(e.startswith("top(") for e in effects(command, ctx=POSIX)), command
+# gh's and curl's HTTP clients follow a redirect the response names, which nothing on the command line turns
+# off, and gh's pr create and pr merge also run git without the network options. Neither has a row (round 8).
+@pytest.mark.parametrize("command", ["gh api user", "gh run view 5 --log", "gh pr view 3", "gh pr diff 3",
+                                     "gh pr edit --body x", "gh pr create --fill", "gh pr merge --squash"])
+def test_gh_is_only_a_spawn(command):
+    assert effects(command, ctx=POSIX) == {"read", "spawn(gh)"}, command
 
 
 def test_curl_is_only_a_spawn_again():
@@ -1154,14 +1150,6 @@ def test_a_repository_write_is_placed_at_the_worktree_root():
     for command in ("git -C sub switch main", "git -C sub stash pop", "cd sub && git merge --no-edit origin/main"):
         found = effects(command, ctx=POSIX)
         assert "write(/work/repo)" in found and "write(/work/repo/sub)" not in found, command
-
-
-@pytest.mark.parametrize("command", ["gh pr create --fill", "gh pr merge --squash --delete-branch",
-                                     "gh pr merge --squash -d", "gh pr merge --squash", "gh pr merge"])
-def test_gh_forms_that_run_git_locally_are_top(command):
-    # pr create may push the branch first; merge may switch branches and pull, with -d or at a prompt.
-    # Neither git takes our options.
-    assert any(e.startswith("top(") for e in effects(command, ctx=POSIX)), command
 
 
 @pytest.mark.parametrize("command", [
@@ -1198,7 +1186,7 @@ def test_every_git_row_is_top_in_a_partial_clone(tmp_path):
     (tmp_path / "config").write_text('[remote "origin"]\n\turl = https://github.com/owner/repo.git\n'
                                      '\tpromisor = true\n[extensions]\n\tpartialClone = origin\n', encoding="utf-8")
     ctx = replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path))
-    for command in ("git cat-file -p HEAD:notes.txt", "git status", "git fetch origin", "gh pr view"):
+    for command in ("git cat-file -p HEAD:notes.txt", "git status", "git fetch origin"):
         assert any(e.startswith("top(") for e in effects(command, ctx=ctx)), command
 
 

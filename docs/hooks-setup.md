@@ -122,7 +122,7 @@ in `tool/guard_models.py` lists each modelled program with the flags it
 understands (`row(model, "-abc --long -o: --out:")`: one-letter flags, long
 flags, and flags that take a value); `PS_ROWS` and `CMD_ROWS` in
 `tool/guard_windows.py` do the same for PowerShell cmdlets and cmd.exe
-builtins, and `tool/guard_git.py` for git and gh. The table holds only:
+builtins, and `tool/guard_git.py` for git. The table holds only:
 
 - read-only listing, reading and searching programs (`ls`, `cat`, `head`,
   `grep`, `rg`, `find` without actions, `diff`, `echo`, `Get-Content`,
@@ -157,16 +157,12 @@ builtins, and `tool/guard_git.py` for git and gh. The table holds only:
   other verb are `top`. In a partial clone every git form is `top`, since
   reading a missing object fetches it, and so it is wherever a promisor
   setting may hide (an `[include]`, `extensions.worktreeConfig`);
-- gh `pr view`/`diff`/`checks`/`list`/`status`, `run view`/`watch`/`list`,
-  `issue view`/`list` as reads, and `pr edit`/`comment`/`ready` on the
-  current branch's pull request only, each reaching the checkout's remote
-  hosts. `-R`/`--repo`, `--web`, `--hostname`, `run view --log` and a URL
-  operand are `top`, and so is setting `GH_REPO` in any form (PowerShell's
-  one-word and compound assignments included). `pr create` (it may push the
-  branch) and `pr merge` (at a prompt it may switch branches and pull) run
-  git with options the call cannot add, so they are `top`. `gh api` and curl
-  have no row: the hosts they reach and what they change are not decided by
-  their arguments alone, so they wait for the shell-semantics follow-up;
+- no row for gh or curl: their HTTP clients follow a redirect the response
+  names, nothing on the command line turns that off, and gh's `pr create` and
+  `pr merge` also run git that takes none of the options above. They are only
+  spawns, denied unless a grant names them, and wait for the shell-semantics
+  follow-up. Setting `GH_REPO` in any form (PowerShell's one-word and
+  compound assignments included) stays `top`;
 - plain `>`/`>>` redirection to a literal path, in every dialect. Only the
   host's devices are discarded: `/dev/null` and its kin as spelled where a
   POSIX layer serves them (not in native Windows PowerShell or cmd, where they
@@ -194,8 +190,9 @@ cannot author such a commit within the table: no row lays down a link, and a
 protected name (`verification.toml`, `.wiki/adapter.toml`, `.claude`,
 `.codex`) is protected at any depth below every write root, so another
 worktree's copy cannot be changed and committed either; no git setting
-writes a file the guard has not placed (`GIT_TRACE*` is `top`), and gh's
-rows change only pull request metadata.
+writes a file the guard has not placed (`GIT_TRACE*` is `top`), git never
+stages or stashes a file it was not named (no `add -A`, folder or `stash -u`),
+and no row reaches a remote that could author one.
 
 Four rules hold across the table:
 
@@ -216,7 +213,7 @@ Four rules hold across the table:
 
 Everything else is denied in app-managed sessions: file writers such as `rm`,
 `cp`, `mv`, `touch`, `Set-Content` and `Remove-Item`, archives, links, `awk`,
-`sed`, `wget`, curl, and every git and gh form outside their rows. Follow-up
+`sed`, `wget`, curl, gh, and every git form outside its row. Follow-up
 changes add rows for PowerShell and cmd, and shell semantics; a command that is
 denied but ordinary is answered by adding a row there, not by loosening an
 existing one.
@@ -226,7 +223,7 @@ existing one.
 | `write`, `delete` | the path resolves (links, junctions and `..` followed) inside a write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder; each `[guard] write_roots` entry, relative to the checkout |
 | — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (`echo x > .wiki`, `echo x > .`). Only git's own write of the repository it runs in (`add`, `commit`, `merge`, `push`, …) is judged by place alone |
 | `spawn` | the executable is one that `gate_cmd`, `verification.toml`'s round and local commands, a `[checks]` command or `python tool/search` runs, or is listed in `[guard] executables`. A bare name is that name; a name with a path (`./tool`, `C:/x/python.exe`, `/usr/bin/time`) is that file, granted only by the same path. A git remote name counts only in the checkout's own repository: a push after a `cd` into another repository is `top` |
-| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A fetch, pull or push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named), and gh every remote's host; a remote at a local path, a URL rewrite (`insteadOf`) or `[include]` in any config file git reads (the repository's, global, XDG or system), a `[remote]` or `[branch]` section outside the repository's own config, `extensions.worktreeConfig`, or config syntax the guard does not decode (a key on a header's line, a continued, quoted or commented value), makes it `top`. `GH_HOST` and the proxy variables count as reaching their host (`GH_REPO` is `top`); a target whose host cannot be read is `top` |
+| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A fetch, pull or push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named); a remote at a local path, a URL rewrite (`insteadOf`) or `[include]` in any config file git reads (the repository's, global, XDG or system), a `[remote]` or `[branch]` section outside the repository's own config, `extensions.worktreeConfig`, or config syntax the guard does not decode (a key on a header's line, a continued, quoted or commented value), makes it `top`. `GH_HOST` and the proxy variables count as reaching their host (`GH_REPO` is `top`); a target whose host cannot be read is `top` |
 | `top` | never |
 
 The optional adapter table adds to the grant and never names a command:

@@ -29,8 +29,8 @@
    "command": "B=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/pr-105-body.md\" && sed -i 's/전체 게이트는 1804 passed, 4 skipped다\\./전체 게이트는 리뷰가 허용한 헤드 95b3e6c에서 1815 passed, 5 skipped다./' \"$B\" && grep -n \"전체 게이트\" \"$B\" && gh pr edit 105 --body-file \"$B\" >/dev/null && echo edited",
    "effects": [
     "read",
-    "spawn(sed)",
-    "top(gh pr edit naming a pull request, run or issue it does not take here)"
+    "spawn(gh)",
+    "spawn(sed)"
    ]
   },
   {
@@ -274,9 +274,9 @@
    "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad\"; sed -i 's/63 passed/62 passed/' \"$S/pr-absence.md\" && gh pr edit 151 --body-file \"$S/pr-absence.md\" >/dev/null && echo ok; cd /c/Users/me/PycharmProjects/wiki-agent && grep -n \"def pack\" -A30 laya/train.py | head -45",
    "effects": [
     "read",
+    "spawn(gh)",
     "spawn(sed)",
-    "top(a directory change after the first statement)",
-    "top(gh pr edit naming a pull request, run or issue it does not take here)"
+    "top(a directory change after the first statement)"
    ]
   },
   {
@@ -726,8 +726,8 @@
    "source": "claude",
    "command": "cd \"C:/Users/me/PycharmProjects/wiki-agent\" && gh pr view 82 --json baseRefName,headRefOid && ls artifacts/review/ && rm -f artifacts/review/refactor-full-round-*.md && ls artifacts/review/; python tool/corpus.py --project \"C:\\Users\\me\\PycharmProjects\\wiki-agent\" --write 2>&1 | tail -2; python tool/lint.py --repo . 2>&1 | tail -3; python tool/repo_lint.py --repo . 2>&1 | tail -3; git status --porcelain | head",
    "effects": [
-    "network(github.com)",
     "read",
+    "spawn(gh)",
     "spawn(python)",
     "spawn(rm)"
    ]
@@ -1228,10 +1228,9 @@
    "source": "claude",
    "command": "f='C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/ff175329-3ac4-4464-b95e-e2f8de92f59b/scratchpad/pr84-body.md' && test -s \"$f\" && gh pr edit 84 --body-file \"$f\" >/dev/null && gh pr view 84 --json body -q .body | wc -c && gh pr view 84 --json body -q .body | grep -c \"1587 passed\"; rm -f /tmp/pr84.md",
    "effects": [
-    "network(github.com)",
     "read",
-    "spawn(rm)",
-    "top(gh pr edit naming a pull request, run or issue it does not take here)"
+    "spawn(gh)",
+    "spawn(rm)"
    ]
   },
   {
@@ -1327,9 +1326,8 @@
    "source": "claude",
    "command": "gh pr merge 112 --squash --match-head-commit dc7a48ffd01c5345857ce99e8ae0aba06201376a && gh pr view 112 --json state,mergeCommit -q '.state+\" \"+.mergeCommit.oid'",
    "effects": [
-    "network(github.com)",
     "read",
-    "top(gh pr merge: a command the table does not model)"
+    "spawn(gh)"
    ]
   },
   {
@@ -1339,9 +1337,9 @@
    "effects": [
     "network(github.com)",
     "read",
+    "spawn(gh)",
     "spawn(python)",
     "spawn(rm)",
-    "top(gh pr merge: a command the table does not model)",
     "top(git fetch without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "top(git pull without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "top(variable where an option of git diff may stand)",
@@ -1356,9 +1354,9 @@
    "effects": [
     "network(github.com)",
     "read",
+    "spawn(gh)",
     "spawn(python)",
     "spawn(rm)",
-    "top(gh pr merge: a command the table does not model)",
     "top(git fetch without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "top(git pull without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)",
@@ -1370,10 +1368,9 @@
    "source": "claude",
    "command": "gh pr view 265 --json body -q .body > \"$TEMP/pr265.md\" && python - \"$TEMP/pr265.md\" <<'EOF'\nimport sys\np = sys.argv[1]\ns = open(p, encoding=\"utf-8\").read()\na = \"`.<작업트리>-held-<카드>` 로 같은 드라이브 안에서 이름만 바꿔 옮기고(옮기기 전에 카드에 기록)\"\nb = \"매번 새로 만드는 빈 폴더 `.<작업트리>-held-<임의>` 로 같은 드라이브 안에서 이름만 바꿔 옮기고(옮기기 전에 카드에 기록, 옮기기와 되돌리기 모두 대상이 있으면 실패하고 덮어쓰지 않음)\"\nc = \"빌드 결과물 관련 3개 통과\"\nd = \"빌드 결과물 관련 6개 통과(이미 있는 보관본·되돌리는 사이 다시 생긴 빌드를 덮어쓰지 않는 경우 포함)\"\nassert a in s and c in s\nopen(p, \"w\", encoding=\"utf-8\").write(s.replace(a, b).replace(c, d))\nEOF\ngh pr edit 265 --body-file \"$TEMP/pr265.md\"",
    "effects": [
-    "network(github.com)",
     "read",
+    "spawn(gh)",
     "spawn(python)",
-    "top(gh pr edit naming a pull request, run or issue it does not take here)",
     "top(variable in a write path)"
    ]
   },
@@ -1383,7 +1380,7 @@
    "command": "gh run view 41158469347 --log-failed > \"$TEMP/ci264f.log\" 2>&1; grep -nE \"Error|error|FAIL|넘었다|failed|::error\" \"$TEMP/ci264f.log\" | head -30",
    "effects": [
     "read",
-    "top(gh run view --log-failed: an option the table does not model)",
+    "spawn(gh)",
     "top(variable in a write path)"
    ]
   },
@@ -2369,7 +2366,7 @@
    "command": "gh api repos/owner/ai-companion-voice-agent/commits/d2563f3d800df8dd4c5fe7021793a2323eecf334/check-runs --jq '{total_count: .total_count, checks: [.check_runs[] | {name, status, conclusion, details_url}]}'",
    "effects": [
     "read",
-    "top(gh api repos/owner/ai-companion-voice-agent/commits/d2563f3d800df8dd4c5fe7021793a2323eecf334/check-runs: a command the table does not model)"
+    "spawn(gh)"
    ]
   },
   {
@@ -2378,7 +2375,7 @@
    "command": "gh api repos/owner/ai-companion-voice-agent/commits/d2563f3d800df8dd4c5fe7021793a2323eecf334/status --jq '{state, statuses: [.statuses[] | {context, state, description, target_url}]}'\ngit status --porcelain --untracked-files=no",
    "effects": [
     "read",
-    "top(gh api repos/owner/ai-companion-voice-agent/commits/d2563f3d800df8dd4c5fe7021793a2323eecf334/status: a command the table does not model)"
+    "spawn(gh)"
    ]
   },
   {

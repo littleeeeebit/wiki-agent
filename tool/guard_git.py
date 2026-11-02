@@ -1,4 +1,4 @@
-"""git and gh: the rows of the closed table that change the repository or reach the network, for `guard`.
+"""git: the row of the closed table that changes the repository or reaches the network, for `guard`.
 
 git runs only in the checkout the grant was read for, or a worktree of the
 same repository, and only with the options and verbs listed here. What git
@@ -13,12 +13,9 @@ write of the repository is a write of the whole worktree it runs in. git's
 network verbs turn off HTTP redirects and submodule recursion on the command
 line, so only the configured remote's own hosts are reached.
 
-gh works on the checkout's own repository through the hosts its remotes name,
-and a write changes only the current branch's pull request's metadata; it
-never runs git locally. `gh api` (a host
-from gh's own configuration, redirects and next pages a response names, a cache
-written where a header says), `gh run view --log` (a redirect to log storage)
-and curl are not rows here: what host they reach is not decided by the argv.
+gh and curl have no row, so they are only spawns: their HTTP clients follow
+redirects a response names, and nothing on the command line turns that off,
+so the hosts they reach are not decided by the argv.
 """
 
 from __future__ import annotations
@@ -326,52 +323,3 @@ def m_git(name, args, ctx):
         if NO_REDIRECTS not in settings(args, i) or "--no-recurse-submodules" not in rest_flags:
             out |= top(f"git {verb} without `-c {NO_REDIRECTS}` and `--no-recurse-submodules`")
     return out, None
-
-
-# -- gh ------------------------------------------------------------------------
-
-JSON = "--json: -q: --jq: -t: --template:"
-# `group verb`: (flags, what it does, which pull request or run it may name). No `-R`/`--repo` (another
-# repository), `-w`/`--web` (a browser), `--hostname` or `--log` anywhere. No `pr create` (it may push the
-# branch) and no `pr merge` (with a prompt it may switch branches and pull): gh runs that git with options
-# the call cannot add, so they are left to a later row.
-GH_VERBS = {
-    "pr view": (f"-c --comments {JSON}", "read", "one"),
-    "pr diff": ("--name-only --patch --color:", "read", "one"),
-    "pr checks": (f"--watch --fail-fast --required -i: --interval: {JSON}", "read", "one"),
-    "pr list": (f"-d --draft -s: --state: -L: --limit: -B: --base: -H: --head: -A: --author: -l: --label: -S: "
-                f"--search: {JSON}", "read", "none"),
-    "pr status": (f"-c --conflict-status {JSON}", "read", "none"),
-    "pr edit": ("-t: --title: -b: --body: -F: --body-file: -B: --base: --add-label: --remove-label: --add-reviewer: "
-                "--remove-reviewer: --add-assignee: --remove-assignee: -m: --milestone:", "write", "none"),
-    "pr comment": ("-b: --body: -F: --body-file: --edit-last", "write", "none"),
-    "pr ready": ("", "write", "none"),
-    "run view": (f"-v --verbose --exit-status -j: --job: -a: --attempt: {JSON}", "read", "one"),
-    "run watch": ("--exit-status --compact -i: --interval:", "read", "one"),
-    "run list": (f"-L: --limit: -b: --branch: -w: --workflow: -s: --status: -c: --commit: -e: --event: -u: --user: "
-                 f"{JSON}", "read", "none"),
-    "issue view": (f"-c --comments {JSON}", "read", "one"),
-    "issue list": (f"-s: --state: -L: --limit: -l: --label: -A: --author: -a: --assignee: -S: --search: {JSON}",
-                   "read", "none"),
-}
-GH = {verb: (row(None, spec, digits=True), kind, names) for verb, (spec, kind, names) in GH_VERBS.items()}
-
-
-def m_gh(name, args, ctx):
-    verb = " ".join(w.text for w in args[:2])
-    if any(w.why for w in args[:2]) or verb not in GH:
-        return top(f"gh {verb}: a command the table does not model"), None
-    rest = args[len(verb.split()):]
-    r, kind, names = GH[verb]
-    if stop := gate(f"gh {verb}", rest, r):
-        return stop, None
-    if not own_repo(ctx):
-        return top("gh in a repository other than the checkout"), None
-    pos, vals, _ = getopt(rest, r.takes)
-    if names == "none" and pos or names == "one" and (len(pos) > 1 or pos and (pos[0].why or ":" in pos[0].text)):
-        # A number or branch names this repository's pull request; a URL may name another host's.
-        return top(f"gh {verb} naming a pull request, run or issue it does not take here"), None
-    hosts = {h for _, h in ctx.remotes}
-    if not hosts or "\0unread" in hosts:
-        return top("gh with no remote the guard has read"), None
-    return {("network", h) for h in hosts}, None

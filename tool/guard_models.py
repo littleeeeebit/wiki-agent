@@ -2,8 +2,8 @@
 
 `TABLE` is all the guard knows about programs, and it is kept small: programs
 that only read or print, `sort -o`/`uniq` writing their one output, `cd`,
-`find` without actions, nested shells, and git and gh (their rows are in
-`guard_git`). A row
+`find` without actions, nested shells, and git (its row is in `guard_git`).
+A row
 names a program, the flags it understands (`row`'s spec: one-letter flags,
 flags taking a value, long flags) and the model that maps its argv to effects.
 `gate` runs before every model: a flag the row does not list is `top`, and so
@@ -536,8 +536,8 @@ TABLE = {
     **{s: row(m_sh, free=True) for s in SHELLS},
     **{s: row(m_pwsh, free=True) for s in PS_SHELLS},
     "cmd": row(m_cmd, free=True),
-    # git and gh gate their own flags (`guard_git`).
-    **{p: row(lazy(f"m_{p}"), free=True) for p in ("git", "gh")},
+    # git gates its own flags (`guard_git`).
+    "git": row(lazy("m_git"), free=True),
     # Listed only to refuse: what these do is decided by data, links or code the argv does not show.
     "ln": row(refuse("creates a link the guard cannot follow"), free=True),
     **{z: row(refuse("extracts an archive into names the archive decides"), free=True)
