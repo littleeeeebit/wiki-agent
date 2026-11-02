@@ -30,7 +30,7 @@
    "effects": [
     "network(github.com)",
     "read",
-    "top(sed script writes or runs)",
+    "top(a sed script that writes or runs)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/pr-105-body.md)"
    ]
   },
@@ -85,7 +85,7 @@
     "read",
     "top(substitution in a write path)",
     "top(variable as the command name)",
-    "top(variable in a write path)",
+    "top(variable where an option of cp may stand)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/dist)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/dist/dist)",
@@ -121,7 +121,8 @@
     "spawn(python)",
     "top(variable in a delete path)",
     "top(variable in a write path)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/tool/test_review_contract.py)"
    ]
   },
   {
@@ -161,7 +162,7 @@
    "effects": [
     "read",
     "spawn(python)",
-    "top(GIT_CONFIG_GLOBAL changes what runs)"
+    "top(GIT_CONFIG_GLOBAL changes what runs or where files land)"
    ]
   },
   {
@@ -190,7 +191,7 @@
    "command": "S=\"/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad\"; D=\"$S/res-support-1020\"; mkdir -p \"$D\" && cd \"$D\" && unzip -o -q /c/Users/me/Downloads/res/result-support-20261020-072747.zip && unzip -o -q /c/Users/me/Downloads/res/result-setup-20261020-072747.zip -d setup && find . -type f | head -50 && ls -la",
    "effects": [
     "read",
-    "top(relative path after an unknown cd)",
+    "top(unzip extracts an archive into names the archive decides)",
     "top(variable in a write path)"
    ]
   },
@@ -201,7 +202,8 @@
    "effects": [
     "read",
     "spawn(npx)",
-    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pr3-live)"
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pr3-live)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pr3-live/refactor-purpose-modes-3)"
    ]
   },
   {
@@ -251,7 +253,7 @@
    "effects": [
     "network(github.com)",
     "read",
-    "top(sed script writes or runs)",
+    "top(a sed script that writes or runs)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/pr-absence.md)"
    ]
   },
@@ -301,8 +303,8 @@
    "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad\" && W=\"$S/contract/wiki-agent\" && mkdir -p \"$S/review-252\" && cp \"$W\"/artifacts/review/contract-file-removal-* \"$S/review-252/\" && cmd //c \"rmdir $(cygpath -w \"$W/web/node_modules\")\" && ls web/node_modules | head -2 && git worktree remove \"$W\" && git branch -D fix/refactor-contract-whole-file-removal && git worktree list && git branch && git branch -r | grep -c fix/refactor-contract || true; git status -sb | head -1",
    "effects": [
     "read",
-    "top(variable in a delete path)",
     "top(variable in a nested shell string)",
+    "top(variable where an option of git worktree may stand)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/review-252)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -335,7 +337,7 @@
     "network(127.0.0.1)",
     "read",
     "spawn(python)",
-    "top(variable in a network target)"
+    "top(variable where an option of curl may stand)"
    ]
   },
   {
@@ -344,6 +346,7 @@
    "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad; D=$S/res-policy; mkdir -p $D; cd $D && for z in /c/Users/me/Downloads/res/*.zip; do n=$(basename $z .zip); mkdir -p $n; unzip -oq $z -d $n; done; ls $D/*; cat $D/result-setup-*/*.json 2>/dev/null | head -50",
    "effects": [
     "read",
+    "top(unzip extracts an archive into names the archive decides)",
     "top(variable in a write path)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/res-policy)"
    ]
@@ -368,7 +371,7 @@
     "spawn(npm)",
     "top(substitution in a write path)",
     "top(variable in a nested shell string)",
-    "top(variable in a write path)",
+    "top(variable where an option of cp may stand)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -381,7 +384,7 @@
     "read",
     "top(substitution in a write path)",
     "top(variable in a delete path)",
-    "top(variable in a write path)",
+    "top(variable where an option of cp may stand)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/dist)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/dist/dist)",
@@ -404,6 +407,7 @@
    "effects": [
     "read",
     "spawn(python)",
+    "spawn(tasklist)",
     "top(variable in a nested shell string)"
    ]
   },
@@ -482,7 +486,7 @@
    "command": "SP=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; sed -e 's|set \"ROOT=%~dp0..\"|set \"ROOT=C:\\\\Users\\\\me\\\\PycharmProjects\\\\wiki-agent\"|' -e 's|^start \"\" |echo WOULD START |' -e 's|^setlocal|setlocal\\necho STEP setlocal|' /c/Users/me/PycharmProjects/wiki-agent/tool/app.cmd > \"$SP/app-probe.cmd\"; grep -n \"ROOT=\\|WOULD\\|STEP\" \"$SP/app-probe.cmd\"; cd \"$SP\" && cmd.exe //c \"app-probe.cmd\" < /dev/null 2>&1 | head -20; echo \"cmd exit=$?\"",
    "effects": [
     "read",
-    "spawn(app-probe)",
+    "spawn(app-probe.cmd)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/app-probe.cmd)"
    ]
   },
@@ -525,7 +529,7 @@
     "network(github.com)",
     "read",
     "spawn(python)",
-    "top(variable in a delete path)",
+    "top(variable where an option of git worktree may stand)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -536,7 +540,9 @@
    "effects": [
     "network(127.0.0.1)",
     "read",
-    "spawn(c:/users/me/appdata/local/temp/claude/c--users-me-pycharmprojects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/src-tauri/target/release/wiki-agent)"
+    "spawn(c:/users/me/appdata/local/temp/claude/c--users-me-pycharmprojects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/src-tauri/target/release/wiki-agent.exe)",
+    "spawn(disown)",
+    "spawn(tasklist)"
    ]
   },
   {
@@ -611,7 +617,7 @@
    "effects": [
     "read",
     "spawn(python)",
-    "top(substitution in a sed script)"
+    "top(substitution where an option of sed may stand)"
    ]
   },
   {
@@ -659,8 +665,8 @@
    "command": "cd \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad\" && echo \"with global: $(git config user.email)\"; echo \"without: [$(GIT_CONFIG_GLOBAL=/dev/null git config user.email)]\"; git config --system user.email; echo system-exit=$?",
    "effects": [
     "read",
-    "top(GIT_CONFIG_GLOBAL changes what runs)",
-    "top(git config --system)",
+    "top(GIT_CONFIG_GLOBAL changes what runs or where files land)",
+    "top(git config --system: an option the table does not model)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad)"
    ]
   },
@@ -703,7 +709,8 @@
     "read",
     "spawn(python)",
     "spawn(ruff)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent/laya)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent/laya)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/laya/support.py)"
    ]
   },
   {
@@ -737,8 +744,7 @@
     "spawn(python)",
     "top(relative path after an unknown cd)",
     "top(variable in a delete path)",
-    "top(variable in a write path)",
-    "write(C:/Users/me/PycharmProjects/ai-companion-voice-agent)"
+    "top(variable where an option of git worktree may stand)"
    ]
   },
   {
@@ -750,8 +756,7 @@
     "spawn(python)",
     "top(relative path after an unknown cd)",
     "top(variable in a delete path)",
-    "top(variable in a write path)",
-    "write(C:/Users/me/PycharmProjects/ai-companion-voice-agent)"
+    "top(variable where an option of git worktree may stand)"
    ]
   },
   {
@@ -769,7 +774,7 @@
    "command": "cd /c/Users/me/PycharmProjects/ai-companion-voice-agent && git worktree remove --force \"$TEMP/omm-main-check\" && git worktree list | grep -c omm-main-check; git status --short | grep -v \"^?? .wiki/decisions\" | head -3",
    "effects": [
     "read",
-    "top(variable in a delete path)",
+    "top(variable where an option of git worktree may stand)",
     "write(C:/Users/me/PycharmProjects/ai-companion-voice-agent)"
    ]
   },
@@ -800,7 +805,7 @@
    "effects": [
     "read",
     "spawn(python)",
-    "top(variable in a write path)",
+    "top(variable where an option of cp may stand)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/tool/agent/chat_session.py)"
    ]
   },
@@ -832,7 +837,8 @@
     "read",
     "spawn(npm)",
     "spawn(python)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/web/src/components/Run.tsx)"
    ]
   },
   {
@@ -861,7 +867,7 @@
    "command": "cd /c/Users/me/PycharmProjects/wiki-agent-jev11 && n=$(grep -n \"^def test_each_jev_question_arm\" tool/test_evaluation.py | cut -d: -f1) && { printf '\"\"\"Stage 11 of docs/plans/jev: each question arm'\"'\"'s requests and its offline comparison (`tool/eval/arms.py`).\"\"\"\\n\\nimport json\\n\\nimport pytest\\n\\n\\n'; sed -n \"${n},\\$p\" tool/test_evaluation.py; } > tool/test_jev_arms.py && echo $n && head -12 tool/test_jev_arms.py",
    "effects": [
     "read",
-    "top(variable in a sed script)",
+    "top(variable where an option of sed may stand)",
     "write(C:/Users/me/PycharmProjects/wiki-agent-jev11/tool/test_jev_arms.py)"
    ]
   },
@@ -882,7 +888,7 @@
     "read",
     "spawn(npx)",
     "spawn(python)",
-    "top(mklink creates a link the guard cannot follow)"
+    "top(mklink creates a link)"
    ]
   },
   {
@@ -891,8 +897,7 @@
    "command": "cd /c/Users/me/PycharmProjects/wiki-agent/laya/data && for k in route source useful conflict redirect coverage ask analysis progress repair; do [ -f $k/pilot1-train.candidates.jsonl ] && { echo \"exists $k\"; continue; }; mv $k/train.candidates.jsonl $k/pilot1-train.candidates.jsonl && printf \"%s %s\\n\" $k \"$(wc -l < $k/pilot1-train.candidates.jsonl)\"; done",
    "effects": [
     "read",
-    "top(variable in a delete path)",
-    "top(variable in a write path)"
+    "top(variable where an option of mv may stand)"
    ]
   },
   {
@@ -951,10 +956,9 @@
    "effects": [
     "read",
     "spawn(python)",
-    "top(glob in a delete path)",
-    "top(variable in a delete path)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent/.wiki)"
+    "top(glob where an option of mv may stand)",
+    "top(variable where an option of git worktree may stand)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -984,7 +988,8 @@
    "command": "cd C:/Users/me/PycharmProjects/wiki-agent && SP=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; (web/src-tauri/target/release/wiki-agent.exe > \"$SP/exe.out\" 2> \"$SP/exe.err\"; echo \"exited=$?\" >> \"$SP/exe.out\") & sleep 12; echo \"--- out\"; cat \"$SP/exe.out\"; echo \"--- err\"; cat \"$SP/exe.err\" | head -20; tasklist //FI \"IMAGENAME eq wiki-agent.exe\" //NH; ls -la --time-style=full-iso raw/main.log",
    "effects": [
     "read",
-    "spawn(c:/users/me/pycharmprojects/wiki-agent/web/src-tauri/target/release/wiki-agent)",
+    "spawn(c:/users/me/pycharmprojects/wiki-agent/web/src-tauri/target/release/wiki-agent.exe)",
+    "spawn(tasklist)",
     "top(variable in a write path)"
    ]
   },
@@ -1103,7 +1108,7 @@
    "command": "cd C:/Users/me/PycharmProjects/wiki-agent; sed -i 's/return min(4, os.cpu_count() or 1) if full and not focused else 0/return min(8, os.cpu_count() or 1) if full and not focused else 0/' tool/conftest.py && sed -i '27s/assert pytest_xdist_auto_num_workers(config) == 4$/assert pytest_xdist_auto_num_workers(config) == 8/' tool/test_verification_runtime.py && sed -i '26s/use up to four isolated pytest-xdist workers\\./use up to eight isolated pytest-xdist workers./' docs/development.md && git diff --stat",
    "effects": [
     "read",
-    "top(sed script writes or runs)",
+    "top(a sed script that writes or runs)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/docs/development.md)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/tool/conftest.py)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/tool/test_verification_runtime.py)"
@@ -1116,7 +1121,8 @@
    "effects": [
     "read",
     "spawn(claude)",
-    "spawn(npm)"
+    "spawn(npm)",
+    "top(substitution where a find primary may stand)"
    ]
   },
   {
@@ -1167,7 +1173,7 @@
    "command": "find android/app/src android/app/build.gradle -newer android/app/build/outputs/apk/release/app-release.apk -type f; echo \"newer-check done\"; \"raw/android-sdk/build-tools/36.0.0/apksigner.bat\" verify --print-certs android/app/build/outputs/apk/release/app-release.apk 2>&1 | head -4",
    "effects": [
     "read",
-    "spawn(c:/users/me/pycharmprojects/wiki-agent/raw/android-sdk/build-tools/36.0.0/apksigner)"
+    "spawn(c:/users/me/pycharmprojects/wiki-agent/raw/android-sdk/build-tools/36.0.0/apksigner.bat)"
    ]
   },
   {
@@ -1248,7 +1254,8 @@
    "command": "gh pr merge 112 --squash --match-head-commit dc7a48ffd01c5345857ce99e8ae0aba06201376a && gh pr view 112 --json state,mergeCommit -q '.state+\" \"+.mergeCommit.oid'",
    "effects": [
     "network(github.com)",
-    "read"
+    "read",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
   {
@@ -1260,7 +1267,9 @@
     "read",
     "spawn(python)",
     "top(glob in a delete path)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "top(variable where an option of git diff may stand)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/main)"
    ]
   },
   {
@@ -1272,7 +1281,8 @@
     "network(github.com)",
     "read",
     "spawn(python)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/main)"
    ]
   },
   {
@@ -1348,7 +1358,7 @@
    "effects": [
     "read",
     "spawn(python)",
-    "top(variable in a delete path)",
+    "top(variable where an option of git worktree may stand)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity.log)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity/tool/test_agent_events.py)",
@@ -1376,7 +1386,8 @@
     "network(github.com)",
     "read",
     "top(glob in a delete path)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/main)"
    ]
   },
   {
@@ -1386,7 +1397,7 @@
    "effects": [
     "network(github.com)",
     "read",
-    "top(substitution in a sed script)",
+    "top(substitution where an option of sed may stand)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/contract/wiki-agent)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -1419,6 +1430,7 @@
    "source": "claude",
    "command": "git mv README.md docs/reference.md && perl -pi -e 's{\\]\\((?!https?:|#|docs/)}{](../}g; s{\\]\\(docs/}{](}g' docs/reference.md && grep -no \"\\]([^)]*)\" docs/reference.md | grep -v http",
    "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/README.md)",
     "read",
     "spawn(perl)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)",
@@ -1443,7 +1455,8 @@
    "effects": [
     "read",
     "spawn(wsl)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/tool/common/process.py)"
    ]
   },
   {
@@ -1488,7 +1501,7 @@
    "command": "grep -n \"^## Steps\\|^| 6 | v7\" docs/plans/reliability/5-english-baseline.md; sed -n \"$(grep -n '^### Draft set' docs/plans/reliability/5-english-baseline.md | head -1 | cut -d: -f1),+26p\" docs/plans/reliability/5-english-baseline.md",
    "effects": [
     "read",
-    "top(substitution in a sed script)"
+    "top(substitution where an option of sed may stand)"
    ]
   },
   {
@@ -1505,7 +1518,8 @@
    "command": "grep -n \"def integrate_conflict\\|def fix_and_change\\|def finish_repair\\|def cancelled\" tool/test_loop.py; for f in integrate_conflict fix_and_change; do n=$(grep -n \"def $f\" tool/test_loop.py | head -1 | cut -d: -f1); sed -n \"${n},$((n+14))p\" tool/test_loop.py; echo ----; done; sed -n 226,230p tool/test_loop.py",
    "effects": [
     "read",
-    "top(variable in a sed script)"
+    "top(arithmetic evaluation, which runs what its variables hold)",
+    "top(variable where an option of sed may stand)"
    ]
   },
   {
@@ -1614,7 +1628,8 @@
    "effects": [
     "read",
     "spawn(python)",
-    "top(sed script writes or runs)"
+    "top(a sed script that writes or runs)",
+    "write(//msys/dev/null.bak)"
    ]
   },
   {
@@ -1797,7 +1812,7 @@
    "effects": [
     "read",
     "spawn(python)",
-    "top(sed script writes or runs)",
+    "top(a sed script that writes or runs)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/tool/test_task_workflow.py)"
    ]
   },
@@ -1839,6 +1854,7 @@
     "read",
     "spawn(explorer)",
     "spawn(taskkill)",
+    "spawn(tasklist)",
     "top(variable in a network target)"
    ]
   },
@@ -1859,7 +1875,8 @@
     "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/marker.txt)",
     "read",
     "spawn(explorer)",
-    "spawn(taskkill)"
+    "spawn(taskkill)",
+    "spawn(tasklist)"
    ]
   },
   {
@@ -1898,6 +1915,7 @@
    "command": "which python && python -c \"import sys;print(sys.version)\"; python -c \"import torch;print('torch',torch.__version__,torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else '')\" 2>&1 | tail -1; python -c \"import transformers;print('transformers',transformers.__version__)\" 2>&1 | tail -1; pip index versions laya 2>&1 | head -2; nvidia-smi --query-gpu=name,memory.total,memory.used --format=csv 2>&1 | tail -2; ls /c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/laya-src/ 2>&1",
    "effects": [
     "read",
+    "spawn(nvidia-smi)",
     "spawn(pip)",
     "spawn(python)"
    ]
@@ -2133,6 +2151,7 @@
    "command": "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like '*artifacts/preserve-live/browser.mjs*' } | ForEach-Object { Stop-Process -Id $_.ProcessId }\nnode artifacts/preserve-live/browser.mjs",
    "effects": [
     "read",
+    "spawn(get-ciminstance)",
     "spawn(node)",
     "spawn(stop-process)"
    ]
@@ -2176,7 +2195,7 @@
    "command": "Get-Content local_services/qwen_clone_tts_server/config.py -TotalCount 105; & C:/Users/me/anaconda3/envs/qwen3-tts-faster/python.exe -c \"import torch, importlib.util; print('cuda_available=', torch.cuda.is_available()); print('faster_qwen3_tts_available=', importlib.util.find_spec('faster_qwen3_tts') is not None)\"",
    "effects": [
     "read",
-    "spawn(c:/users/me/anaconda3/envs/qwen3-tts-faster/python)"
+    "spawn(c:/users/me/anaconda3/envs/qwen3-tts-faster/python.exe)"
    ]
   },
   {
@@ -2393,7 +2412,8 @@
    "command": "git diff --exit-code; git log -1 --format=\"%h %s\"; git status --porcelain --untracked-files=no; git rev-list --left-right --count HEAD...@{upstream}",
    "effects": [
     "read",
-    "spawn(upstream)"
+    "spawn(upstream)",
+    "top(group where an option of git rev-list may stand)"
    ]
   },
   {
@@ -2441,7 +2461,8 @@
    "command": "git restore --source=7587a04e --worktree -- .omm; Get-Content .omm/overall-architecture/memory/meta.yaml -TotalCount 25; Get-Command omm | Format-List Name,CommandType,Definition; Get-Content src/ai_companion_voice_agent/memory/profile_reset_operation.py; Get-Content .omm/overall-architecture/memory/writers/meta.yaml",
    "effects": [
     "read",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm)"
    ]
   },
   {
@@ -2458,7 +2479,8 @@
    "command": "git status --short; Get-Content src/ai_companion_voice_agent/conversation/activities/base.py; rg -n 'build_activity_plan|def _resolution|self._resolution' src/ai_companion_voice_agent/conversation/activities/{choose_together,ideal_type_worldcup,twenty_questions}.py; if (Test-Path verification.toml) { Get-Content verification.toml }; rg --files --hidden -g AGENTS.md -g verification.toml",
    "effects": [
     "read",
-    "spawn(choose_together,ideal_type_worldcup,twenty_questions)"
+    "spawn(choose_together,ideal_type_worldcup,twenty_questions)",
+    "top(group where an option of rg may stand)"
    ]
   },
   {
@@ -2677,7 +2699,8 @@
    "command": "rg -n 'resolve_requested_|_SAMPLING|_MEMORY|math\\.|normalize_dialogue_provider|DIALOGUE_PROVIDERS|DEFAULT_MEMORY_BUDGET_RATIOS|MEMORY_RANKED_FACT_CAP|MemoryBudgetRatios' src/ai_companion_voice_agent/api/browser_turn_execution.py\nrg -n -A18 -B2 'browser_turn_execution import' src/ai_companion_voice_agent/api/routes_{voice,proactive,memory}.py\nGet-Content src/ai_companion_voice_agent/api/browser_turn_execution.py | Select-Object -Skip 430 -First 300",
    "effects": [
     "read",
-    "spawn(voice,proactive,memory)"
+    "spawn(voice,proactive,memory)",
+    "top(group where an option of rg may stand)"
    ]
   },
   {

@@ -1,10 +1,11 @@
-"""PowerShell cmdlets and cmd.exe builtins as models of their arguments, for `guard`.
+"""PowerShell cmdlets and cmd.exe builtins: the Windows half of the closed table, for `guard`.
 
-PowerShell binds parameters by name or position and lets a name be
-abbreviated, so `ps_args` reads both; a parameter it does not know may or may
-not have taken the next word, and then every positional word counts as a
-possible target. Expressions run nothing except the members they invoke, judged
-by `guard.member_effect`: a name is accepted receiver-free only when it is in
+`PS_ROWS` lists each modelled cmdlet with the parameters it understands, by
+full name or a listed alias (no abbreviation is guessed); a parameter outside
+the row is `top`, and a cmdlet with no row is a `spawn` only a grant naming it
+allows. `CMD_ROWS` does the same for cmd.exe's builtins and their switches.
+Expressions run nothing except the members they invoke, judged by
+`guard.member_effect`: a name is accepted receiver-free only when it is in
 `SAFE_MEMBERS`, read-only for every type that defines it.
 """
 
@@ -14,9 +15,8 @@ import re
 
 import posixpath
 
-from guard import BLOCK, Word, envs, member_effect, moved_to, top
-from guard_models import (PS_SHELLS, SHELLS, exe, hard_link_sources, here, into_dir, m_cd, network, run_argv,
-                          spawn_of, writes)
+from guard import BLOCK, Word, envs, member_effect, moved_to, states, top
+from guard_models import PS_SHELLS, SHELLS, exe, here, into_dir, m_cd, network, run_argv, spawn_of, writes
 
 # Members that only read, whatever the receiver's type. Polymorphic or dispatching names
 # (replace, foreach, where, invoke, add, insert, get, getvalue, item, delete, copyto, …) are
@@ -61,37 +61,91 @@ PS_ALIAS = {
 PS_TOP = {"invoke-expression", "add-type", "import-module", "set-executionpolicy", "invoke-history", "new-alias",
           "set-alias", "register-scheduledjob", "register-scheduledtask", "new-service", "set-service",
           "enable-psremoting", "enter-pssession", "new-pssession", "invoke-item", "start-transcript"}
+PS_REFUSED = {"expand-archive": "extracts an archive into names the archive decides"}
 PATH = ("path", "literalpath")
-PS_TARGETS = {
-    "remove-item": [("delete", PATH, 0)], "set-content": [("write", PATH, 0)], "add-content": [("write", PATH, 0)],
-    "clear-content": [("write", PATH, 0)], "out-file": [("write", ("filepath", "literalpath"), 0)],
-    "tee-object": [("write", ("filepath", "literalpath"), 0)], "export-csv": [("write", PATH, 0)],
-    "export-clixml": [("write", PATH, 0)], "new-item": [("write", ("path", "name"), 0)],
-    "set-item": [("write", PATH, 0)], "set-itemproperty": [("write", PATH, 0)],
-    "new-itemproperty": [("write", PATH, 0)], "remove-itemproperty": [("write", PATH, 0)],
-    "clear-item": [("write", PATH, 0)], "set-acl": [("write", PATH, 0)],
-    "compress-archive": [("write", ("destinationpath",), 1)],
+# Common parameters every cmdlet takes, and the aliases PowerShell binds for them and for `-LiteralPath`.
+COMMON = ("erroraction= warningaction= informationaction= errorvariable= warningvariable= informationvariable= "
+          "outvariable= outbuffer= pipelinevariable= progressaction= verbose debug whatif confirm")
+PS_PARAM_ALIASES = {"ea": "erroraction", "wa": "warningaction", "infa": "informationaction", "ev": "errorvariable",
+                    "wv": "warningvariable", "iv": "informationvariable", "ov": "outvariable", "ob": "outbuffer",
+                    "pv": "pipelinevariable", "proga": "progressaction", "vb": "verbose", "db": "debug",
+                    "wi": "whatif", "cf": "confirm", "lp": "literalpath", "pspath": "literalpath"}
+FILTERS = "filter= include= exclude= force"
+# cmdlet: the parameters it understands (`name=` takes a value, `name` is a switch). No row: a `spawn`.
+PS_ROWS = {
+    "get-content": "path= literalpath= totalcount= head= first= tail= last= raw encoding= delimiter= readcount= "
+                   "wait stream= asbytestream " + FILTERS,
+    "get-childitem": "path= literalpath= recurse depth= name directory file hidden readonly system attributes= "
+                     "followsymlink " + FILTERS,
+    "get-item": "path= literalpath= stream= " + FILTERS,
+    "get-itemproperty": "path= literalpath= name= " + FILTERS,
+    "test-path": "path= literalpath= pathtype= isvalid newerthan= olderthan= " + FILTERS,
+    "resolve-path": "path= literalpath= relative relativebasepath=",
+    "split-path": "path= literalpath= parent leaf leafbase extension qualifier noqualifier isabsolute resolve",
+    "join-path": "path= childpath= additionalchildpath= resolve",
+    "get-location": "stack stackname=",
+    "select-object": "property= expandproperty= excludeproperty= first= last= skip= skiplast= unique index= wait "
+                     "inputobject=",
+    "where-object": "property= value= filterscript= inputobject= eq ne gt ge lt le like notlike match notmatch "
+                    "contains notcontains in notin is isnot not ceq cne cgt cge clt cle clike cnotlike cmatch "
+                    "cnotmatch ccontains cnotcontains cin cnotin",
+    "sort-object": "property= descending unique casesensitive culture= top= bottom= stable inputobject=",
+    "group-object": "property= noelement ashashtable asstring casesensitive culture= inputobject=",
+    "measure-object": "property= sum average maximum minimum line word character ignorewhitespace allstats "
+                      "inputobject=",
+    "format-list": "property= groupby= view= force expand= inputobject=",
+    "format-table": "property= autosize wrap groupby= hidetableheaders view= force expand= inputobject=",
+    "out-string": "stream width= nonewline inputobject=",
+    "out-null": "inputobject=", "out-host": "paging inputobject=", "out-default": "inputobject=",
+    "write-output": "inputobject= noenumerate",
+    "write-host": "object= nonewline separator= foregroundcolor= backgroundcolor=",
+    "write-error": "message= category= errorid= targetobject=",
+    "write-warning": "message=", "write-verbose": "message=", "write-debug": "message=",
+    "write-information": "messagedata= tags=",
+    "convertfrom-json": "inputobject= ashashtable depth= noenumerate",
+    "convertto-json": "inputobject= depth= compress asarray enumsasstrings escapehandling=",
+    "get-command": "name= commandtype= module= all syntax",
+    "get-date": "date= format= uformat= year= month= day= hour= minute= second= millisecond= displayhint= asutc",
+    "get-process": "name= id= includeusername",
+    "get-member": "membertype= name= force static inputobject=",
+    "select-string": "pattern= path= literalpath= simplematch casesensitive context= notmatch allmatches list quiet "
+                     "raw encoding= include= exclude= inputobject= noemphasis",
+    "measure-command": "expression= inputobject=",
+    "start-sleep": "seconds= milliseconds= duration=",
+    "get-filehash": "path= literalpath= algorithm= inputstream=",
+    "compare-object": "referenceobject= differenceobject= property= includeequal excludedifferent passthru "
+                      "syncwindow= casesensitive",
+    "new-timespan": "start= end= days= hours= minutes= seconds= milliseconds=",
+    "set-variable": "name= value= scope= option= passthru description= visibility= force",
+    "get-variable": "name= scope= valueonly include= exclude=",
+    "foreach-object": "",               # its own binder, `foreach_object`
+    # Writers and the location.
+    "remove-item": "path= literalpath= recurse stream= " + FILTERS,
+    "set-content": "path= literalpath= value= encoding= nonewline passthru stream= asbytestream " + FILTERS,
+    "add-content": "path= literalpath= value= encoding= nonewline passthru stream= asbytestream " + FILTERS,
+    "clear-content": "path= literalpath= stream= " + FILTERS,
+    "out-file": "filepath= literalpath= encoding= append force noclobber nonewline width= inputobject=",
+    "tee-object": "filepath= literalpath= append variable= inputobject= encoding=",
+    "export-csv": "path= literalpath= notypeinformation encoding= append force delimiter= noclobber inputobject= "
+                  "usequotes=",
+    "new-item": "path= name= itemtype= value= force",
+    "copy-item": "path= literalpath= destination= recurse container passthru " + FILTERS,
+    "move-item": "path= literalpath= destination= passthru " + FILTERS,
+    "rename-item": "path= literalpath= newname= passthru force",
+    "set-location": "path= literalpath= stackname= passthru",
+    "push-location": "path= literalpath= stackname= passthru",
+    "pop-location": "stackname= passthru",
+    "invoke-webrequest": "uri= method= headers= body= contenttype= outfile= usebasicparsing timeoutsec= "
+                         "maximumredirection= useragent= skiphttperrorcheck infile=",
+    "invoke-restmethod": "uri= method= headers= body= contenttype= outfile= usebasicparsing timeoutsec= "
+                         "maximumredirection= useragent= skiphttperrorcheck infile=",
+    "start-process": "filepath= argumentlist= workingdirectory= wait nonewwindow passthru redirectstandardoutput= "
+                     "redirectstandarderror= redirectstandardinput= windowstyle=",
+    "new-object": "typename= argumentlist= property= strict",
 }
-PS_VALUES = ("path", "literalpath", "destination", "destinationpath", "filepath", "value", "encoding", "itemtype",
-             "name", "newname", "filter", "include", "exclude", "uri", "outfile", "infile", "method", "body",
-             "headers", "contenttype", "argumentlist", "workingdirectory", "credential", "delimiter", "depth",
-             "first", "last", "skip", "property", "pattern", "id", "processname", "seconds", "milliseconds",
-             "scriptblock", "inputobject", "erroraction", "warningaction", "outvariable", "errorvariable",
-             "informationaction", "computername", "hostname", "targetname", "port", "timeoutsec", "typename",
-             "comobject", "proxy", "session", "count", "tail", "totalcount", "readcount", "stream", "verb",
-             "windowstyle", "redirectstandardoutput", "redirectstandarderror", "redirectstandardinput",
-             "maximumredirection", "useragent", "format", "attributes", "jobname", "expandproperty", "groupby",
-             "culture", "width", "context")
-PS_SWITCHES = ("force", "recurse", "raw", "nonewline", "append", "passthru", "whatif", "confirm", "verbose",
-               "debug", "noclobber", "asbytestream", "wait", "nonewwindow", "usebasicparsing", "skipcertificatecheck",
-               "file", "directory", "hidden", "readonly", "system", "container", "allmatches", "casesensitive",
-               "quiet", "unique", "descending", "notmatch", "list", "asjob", "compress", "asstring", "ashashtable")
-PS_READ_PREFIX = ("get-", "test-", "select-", "format-", "convertto-", "convertfrom-", "measure-", "write-",
-                  "wait-", "read-", "out-string", "out-null", "out-host", "out-default", "group-", "sort-",
-                  "where-", "foreach-", "compare-", "join-", "split-", "resolve-", "start-sleep", "clear-host",
-                  "receive-job", "remove-job", "set-variable", "new-variable", "remove-variable", "clear-variable",
-                  "set-strictmode", "import-csv", "import-clixml", "import-powershelldatafile", "new-timespan",
-                  "new-guid", "add-member", "update-typedata", "update-formatdata", "out-gridview", "show-")
+# Where the cmdlet's first positional word binds, for the writers above.
+PS_TARGETS = {"remove-item": "delete", "set-content": "write", "add-content": "write", "clear-content": "write",
+              "out-file": "write", "tee-object": "write", "export-csv": "write"}
 
 
 def cmdlet(raw: str) -> str | None:
@@ -99,131 +153,124 @@ def cmdlet(raw: str) -> str | None:
     if re.search(r"[\\/]|\.\w+$", raw):
         return None
     canon = PS_ALIAS.get(raw.lower(), raw.lower())
-    return canon if canon in PS_TARGETS or canon in PS_TOP or re.match(r"^[a-z]+-[a-z]", canon) else None
+    return canon if canon in PS_ROWS or canon in PS_TOP or re.match(r"^[a-z]+-[a-z]", canon) else None
 
 
-def ps_args(args: list) -> tuple[dict, list, bool]:
-    """`(named, positional, ambiguous)`; an unknown parameter may or may not have taken the next word."""
-    named, pos, ambiguous, i = {}, [], False, 0
+def ps_args(args: list, spec: str) -> tuple[dict, list, str]:
+    """`(named, positional, unknown)`: parameters bound by their full name or a listed alias.
+
+    A switch is recorded as `[Word("true")]`. `unknown` is the first parameter the row does not
+    list ("" when there is none): PowerShell may bind it anywhere, so the cmdlet is `top`.
+    """
+    params = (spec + " " + COMMON).split()
+    values = {p[:-1] for p in params if p.endswith("=")}
+    names = values | {p for p in params if not p.endswith("=")}
+    named, pos, i = {}, [], 0
     while i < len(args):
         w, t = args[i], args[i].text
+        i += 1
         # A named parameter is one whose own `-Name` was written unquoted; quoting only its
         # value (`-LiteralPath:'../x'`) does not turn the word into a positional path.
         if (w.raw or t)[:1] == "-" and re.match(r"^-[A-Za-z]", w.raw or t) and not w.why:
             k, colon, v = t[1:].partition(":")
-            k = k.lower()
-            full = next((p for p in PS_VALUES if p.startswith(k)), None)
+            k = PS_PARAM_ALIASES.get(k.lower(), k.lower())
+            if k not in names:
+                return named, pos, t
             if colon:
-                named.setdefault(full or k, []).append(Word(v, w.why))
-            elif full and i + 1 < len(args):
-                named.setdefault(full, []).append(args[i + 1])
+                named.setdefault(k, []).append(Word(v, w.why))
+            elif k in values and i < len(args):
+                named.setdefault(k, []).append(args[i])
                 i += 1
-            elif not any(s.startswith(k) for s in PS_SWITCHES):
-                ambiguous = True
-            i += 1
+            else:
+                named.setdefault(k, []).append(Word("true"))
             continue
         pos.append(w)
-        i += 1
-    return named, pos, ambiguous
+    return named, pos, ""
 
 
 def ps_cmdlet(canon: str, args: list, ctx):
-    named, pos, ambiguous = ps_args(args)
-
-    def one(*keys):
-        return next((named[k][0] for k in keys if named.get(k)), None)
-
-    def reach(*keys) -> set:
-        out = set()
-        for w in [w for k in keys for w in named.get(k, [])] + pos[:1]:
-            out |= network(w)
-        return out
-
     if canon in PS_TOP:
         return top(f"{canon} runs code the guard cannot read"), None
-    if canon in ("set-location", "push-location"):
-        w = one(*PATH) or (pos[0] if pos else None)
-        if w is not None:
-            return set(), moved_to(w, ctx)
-        # With no path it moves to the piped item, or (PowerShell 7's `Set-Location`) to the home folder.
-        return set(), frozenset({None}) if ctx.piped else ctx.cwds | {ctx.home}
-    if canon == "pop-location":
-        return set(), frozenset({None})
+    if canon in PS_REFUSED:
+        return top(f"{canon} {PS_REFUSED[canon]}"), None
+    if canon not in PS_ROWS:
+        return {("spawn", canon)}, None
+    if canon == "foreach-object":
+        return foreach_object(args), None
+    named, pos, unknown = ps_args(args, PS_ROWS[canon])
+    if unknown:
+        return top(f"{canon} {unknown}: a parameter the table does not model"), None
+
+    def given(*keys) -> list:
+        return [w for k in keys for w in named.get(k, [])]
+
     def arrayed(ws) -> set:
         # `'a','b'` is two paths; the lexer joined them into one word, so the elements
         # cannot be told apart. A comma in a path is left undecided.
         return top(f"{canon} path array") if any("," in w.text and not w.why for w in ws) else set()
 
+    if canon in ("set-location", "push-location"):
+        w = (given(*PATH) + pos[:1] or [None])[0]
+        if w is not None:
+            return set(), moved_to(w, ctx)
+        # With no path it moves to the piped item, or (PowerShell 7's `Set-Location`) to the home folder.
+        return set(), frozenset({None}) if ctx.piped else states(ctx.cwds | {ctx.home})
+    if canon == "pop-location":
+        return set(), frozenset({None})
     if canon in ("copy-item", "move-item"):
-        srcs = named.get("path", []) + named.get("literalpath", []) or (pos if ambiguous else pos[:1])
-        dests = named.get("destination", []) or (pos if ambiguous else pos[1:2])
+        srcs = given(*PATH) or pos[:1]
         # Copy-Item/Move-Item default the destination to the current directory when it is omitted.
-        target = dests or [here(ctx)]
-        recurse = any(not w.why and re.fullmatch(r"-r(ecurse)?", w.text, re.I) for w in args)
+        target = given("destination") or pos[1:2] or [here(ctx)]
         # A move renames entries as they are, links included: what lands is a link holder.
-        kind = "linktree" if canon == "move-item" else "write_tree" if recurse else "write"
+        kind = "linktree" if canon == "move-item" else "write_tree" if "recurse" in named else "write"
         out = arrayed(srcs + target) | writes(kind, target, ctx) | into_dir(srcs, target, ctx, kind)
-        if canon == "move-item":
-            out |= writes("delete", srcs, ctx)
-        return out, None
-    if canon == "expand-archive":
-        dest = named.get("destinationpath", []) or (pos if ambiguous else pos[1:2]) or [here(ctx)]
-        return arrayed(dest) | writes("write_tree", dest, ctx), None
+        return out | (writes("delete", srcs, ctx) if canon == "move-item" else set()), None
     if canon == "new-item":
-        target = named.get("path", []) + named.get("name", []) or (pos if ambiguous else pos[:1])
-        itemtype = (named.get("itemtype", []) + named.get("typename", []) + [Word("")])[0].text.lower()
-        link = itemtype in ("symboliclink", "junction", "hardlink")
-        out = arrayed(target) | {("link" if link and k == "write" else k, p)
-                                 for k, p in writes("write", target, ctx)}
-        if itemtype == "hardlink":
-            # `-Value`/`-Target` (read as `targetname`) is the file whose inode the link shares.
-            source = named.get("value", []) + named.get("targetname", [])
-            out |= hard_link_sources(source, False, ctx) if source else top("a hard link with no readable source")
-        return out, None
+        itemtype = (given("itemtype") or [Word("file")])[0]
+        if itemtype.why or itemtype.text.lower() not in ("file", "directory"):
+            # A symbolic link, junction or hard link redirects later paths: not in the row.
+            return top(f"new-item -ItemType {itemtype.text}"), None
+        where, leaf = given("path") or pos[:1], given("name")
+        if where and leaf:
+            # `-Path dir -Name leaf` creates `dir/leaf`.
+            where = [Word(posixpath.join(where[0].text.replace("\\", "/"), leaf[0].text), where[0].why or leaf[0].why)]
+        target, kind = where or leaf, "dir" if itemtype.text.lower() == "directory" else "write"
+        return arrayed(target) | writes(kind, target, ctx) | (top("new-item with no path") if not target else set()), \
+            None
     if canon == "rename-item":
         # `-NewName` is a name beside the item, not a path from the current location.
-        out = set()
-        for item in named.get("path", []) + named.get("literalpath", []) + pos[:1]:
-            for new in named.get("newname", []) + pos[1:2]:
+        items, out = given(*PATH) + pos[:1], set()
+        for item in items:
+            for new in given("newname") + pos[1:2]:
                 beside = posixpath.join(posixpath.dirname(item.text.replace("\\", "/")), new.text)
                 out |= arrayed([item]) | writes("linktree", [Word(beside, item.why or new.why)], ctx)
-        if ambiguous or not out:
-            out |= top("rename-item with a target it cannot place")
-        return out | writes("delete", named.get("path", []) + named.get("literalpath", []) + pos[:1], ctx), None
-    if canon == "foreach-object":
-        return foreach_object(args), None
+        return (out or top("rename-item with a target it cannot place")) | writes("delete", items, ctx), None
     if canon == "where-object":
         return where_member(args), None
     if canon in PS_TARGETS:
-        out = set()
-        for kind, keys, index in PS_TARGETS[canon]:
-            found = [w for k in keys for w in named.get(k, [])] + (pos if ambiguous else pos[index:index + 1])
-            if not found and ctx.piped and (kind == "delete" or index == 0):
-                out |= top(f"{canon} takes its path from the pipeline")
-            out |= arrayed(found) | writes(kind, found, ctx)
-        return out, None
+        found = given(*PATH, "filepath") + pos[:1]
+        if not found and ctx.piped:
+            return top(f"{canon} takes its path from the pipeline"), None
+        return arrayed(found) | writes(PS_TARGETS[canon], found, ctx), None
     if canon in ("invoke-webrequest", "invoke-restmethod"):
-        return reach("uri", "proxy") | writes("write", named.get("outfile", []), ctx), None
+        out = set().union(*(network(w) for w in given("uri") + pos[:1]))
+        # Redirects are followed unless `-MaximumRedirection 0`: the host reached would not be this one.
+        if [w.text for w in given("maximumredirection")] != ["0"]:
+            out |= top(f"{canon} follows redirects")
+        return out | writes("write", given("outfile"), ctx), None
     if canon == "start-process":
-        w = one("filepath") or (pos[0] if pos else None)
-        out = writes("write", named.get("redirectstandardoutput", []) + named.get("redirectstandarderror", []), ctx)
+        w = (given("filepath") + pos[:1] or [None])[0]
+        out = writes("write", given("redirectstandardoutput", "redirectstandarderror"), ctx)
         if w is None or w.why:
             return out | top("start-process of an unknown program"), None
         name = exe(w.text)
-        return out | (top(f"start-process {name}") if name in SHELLS | PS_SHELLS | {"cmd"} else spawn_of(w.text, ctx)), None
-    if canon in ("invoke-command", "start-job", "start-threadjob"):
-        if named.get("filepath") or named.get("session"):
-            return top(f"{canon} outside this process"), None
-        return set().union(*(network(w) for w in named.get("computername", []) + named.get("hostname", []))), None
+        return out | (top(f"start-process {name}") if name in SHELLS | PS_SHELLS | {"cmd"}
+                      else spawn_of(w.text, ctx)), None
     if canon == "new-object":
-        w = None if named.get("comobject") else one("typename") or (pos[0] if pos else None)
+        w = (given("typename") + pos[:1] or [None])[0]
         safe = w is not None and not w.why and SAFE_TYPES.match(w.text.lower())
         return (set() if safe else top(f"new-object {w.text if w else ''}".strip())), None
-    if canon in ("test-netconnection", "test-connection", "resolve-dnsname"):
-        return reach("computername", "targetname", "name"), None
-    if canon.startswith(PS_READ_PREFIX):
-        return set(), None
-    return {("spawn", canon)}, None
+    return set(), None
 
 
 ASSIGN_OPS = {"=", "+=", "-=", "*=", "/=", "%=", "??="}
@@ -361,27 +408,34 @@ def ps_statement(words: list, ctx) -> tuple[list, set]:
     return words, out
 
 
-CMD_BUILTINS = {"del", "erase", "rd", "rmdir", "md", "mkdir", "copy", "xcopy", "robocopy", "move", "ren", "rename",
-                "cd", "chdir", "pushd", "popd", "set", "start", "if", "for", "call", "type", "echo", "dir",
-                "setlocal", "endlocal", "title", "ver", "vol", "cls", "pause", "exit", "rem", "break", "color",
-                "prompt", "where", "mklink"}
+# cmd.exe builtin: the switches it understands (`*` = any; the read-only ones ignore theirs).
+CMD_ROWS = {"del": "q f p a", "erase": "q f p a", "rd": "s q", "rmdir": "s q", "md": "", "mkdir": "",
+            "copy": "y -y b a v", "move": "y -y", "ren": "", "rename": "", "cd": "d", "chdir": "d", "pushd": "",
+            "popd": "", "set": "p", "if": "i", "for": "d l",
+            "start": "b wait min max i low normal high belownormal abovenormal",
+            **{n: "*" for n in ("type", "echo", "dir", "setlocal", "endlocal", "title", "ver", "vol", "cls", "pause",
+                                "exit", "rem", "break", "color", "prompt", "where")}}
+# Builtins in no row: a link, a tree copy whose file set the switches decide, or a batch file.
+CMD_REFUSED = {"mklink": "creates a link", "xcopy": "copies a tree its switches select",
+               "robocopy": "copies a tree its switches select", "call": "runs a batch file"}
+CMD_BUILTINS = set(CMD_ROWS) | set(CMD_REFUSED)
 
 
 def cmd_builtin(name: str, args: list, ctx):
+    if name in CMD_REFUSED:
+        return top(f"{name} {CMD_REFUSED[name]}"), None
+    allowed = CMD_ROWS[name].split()
+    for w in args:
+        switch = w.text[1:].lower().partition(":")[0]
+        if not w.why and w.text.startswith("/") and "*" not in allowed and switch not in allowed:
+            # `/s` on `del`, `/a` on `set`, `/f` on `for`: what they reach is not modelled.
+            return top(f"{name} {w.text}: a switch the table does not model"), None
     ops = [w for w in args if w.why or not w.text.startswith("/")]
     if name in ("del", "erase", "rd", "rmdir"):
         return writes("delete", ops, ctx), None
-    if name == "mklink":
-        # A symlink, junction or hardlink redirects later paths through it; not followable here.
-        return top("mklink creates a link the guard cannot follow"), None
     if name in ("md", "mkdir"):
-        return writes("write", ops, ctx), None
-    if name == "robocopy":
-        # `robocopy <src> <dst> [files…]`: named files land as <dst>/<file>; with none it copies a tree.
-        target, files = ops[1:2] or [here(ctx)], ops[2:]
-        return (writes("write", target, ctx) | into_dir(files, target, ctx)) if files \
-            else writes("write_tree", target, ctx), None
-    if name in ("copy", "xcopy"):
+        return writes("dir", ops, ctx), None
+    if name == "copy":
         srcs, target = ops[:-1], ops[-1:] if len(ops) > 1 else [here(ctx)]
         return writes("write", target, ctx) | into_dir(srcs, target, ctx), None
     if name in ("move", "ren", "rename"):
@@ -403,10 +457,16 @@ def cmd_builtin(name: str, args: list, ctx):
         rest = [w for w in ops if w.text.lower() != "not"]
         skip = 2 if rest and rest[0].text.lower() in ("exist", "defined", "errorlevel", "cmdextversion") else \
             3 if len(rest) > 2 and rest[1].text.lower() in ("==", "equ", "neq", "lss", "leq", "gtr", "geq") else 1
-        return run_argv(rest[skip:], ctx)[0] if rest[skip:] else set(), None
+        if not rest[skip:]:
+            return set(), None
+        # The branch may or may not run: where it moves joins where the shell already is.
+        eff, moved = run_argv(rest[skip:], ctx)
+        return eff, None if moved is None else states(ctx.cwds | moved)
     if name == "for":
         at = next((k for k, w in enumerate(args) if w.text.lower() == "do"), len(args))
-        return run_argv(args[at + 1:], ctx)[0] if args[at + 1:] else set(), None
-    if name == "call":
-        return top("call runs a batch file"), None
+        if not args[at + 1:]:
+            return set(), None
+        eff, moved = run_argv(args[at + 1:], ctx)
+        return eff | (top("a directory change inside a loop, function or group") if moved is not None else set()), \
+            None
     return set(), None

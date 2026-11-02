@@ -7,9 +7,10 @@ documents as children, and the strings `bash -c`, `sh -c`, `pwsh -Command`,
 node reduces to effects: `read`, `write(path)`, `delete(path)`,
 `spawn(executable)`, `network(host)`, and `top(reason)` for what cannot be
 decided before it runs. The call passes when every effect is inside the grant
-(`grant`); there is no list of command patterns. What an executable does is a
-model of its arguments (`guard_models`); a name with no model is a `spawn` the
-grant has to name.
+(`grant`); there is no list of command patterns. What an executable does is
+read off a closed table of programs and the flags each understands
+(`guard_models.TABLE`, `guard_windows.PS_ROWS`/`CMD_ROWS`): a flag outside its
+row is `top`, and a name with no row is a `spawn` the grant has to name.
 
 Soundness over completeness: anything the models cannot decide becomes `top`,
 and `top` is never granted. The refusal is read by the person and stays Korean.
@@ -28,6 +29,8 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 DEPTH = 8
+# The most directories a command may be in at once; past it the call is `top`, so work stays linear.
+STATES = 32
 READ = ("read", "")
 
 
@@ -87,6 +90,21 @@ BLOCK = "{...}"
 
 class Unclosed(ValueError):
     """A quote, substitution or here-string left open: the shell refuses the string, the guard cannot read it."""
+
+
+class Unbounded(ValueError):
+    """More possible directories than `STATES`: the call is `top` rather than tracked further."""
+
+
+def states(cwds) -> frozenset:
+    cwds = frozenset(cwds)
+    if len(cwds) > STATES:
+        raise Unbounded(f"more than {STATES} possible working directories")
+    return cwds
+
+
+# Arithmetic evaluation expands what a variable holds as an expression, and `a[$(…)]` in that value runs.
+ARITH = ("arith", "")
 
 
 def find(s: str, sub: str, i: int, what: str) -> int:
@@ -155,9 +173,14 @@ def dollar(s: str, i: int, w: Word, buf: list, d: str, mark: str = "") -> int:
         return i + 1 + plain.end()
     if d == "posix" and s.startswith("$((", i):
         end = close_paren(s, close_paren(s, i + 3, d) + 1, d)
-        scan(s[i + 3:end], w, d)        # a `$(...)` the shell runs inside the arithmetic still counts
+        w.subs.append(ARITH)
         w.taint("variable")
         return end + 1
+    if d == "posix" and nxt == "[":
+        j = find(s, "]", i, "an unclosed $[")
+        w.subs.append(ARITH)
+        w.taint("variable")
+        return j + 1
     if nxt == "(":
         j = close_paren(s, i + 2, d)
         w.subs.append((d, s[i + 2:j]))
@@ -166,7 +189,12 @@ def dollar(s: str, i: int, w: Word, buf: list, d: str, mark: str = "") -> int:
         return j + 1
     if nxt == "{":
         j = find(s, "}", i, "an unclosed ${")
-        scan(s[i + 2:j], w, d)
+        body = s[i + 2:j]
+        # `${a[i]}` evaluates `i`, `${x:i}` evaluates its offset and `${!x}` expands the name `x` holds.
+        if d == "posix" and (body.startswith("!") or re.match(r"#?\w+\[(?![@*]\]|\d+\])", body)
+                             or re.match(r"#?\w+:(?![-=?+])", body)):
+            w.subs.append(ARITH)
+        scan(body, w, d)
         w.taint("variable")
         buf.append(s[i:j + 1])
         return j + 1
@@ -298,9 +326,12 @@ def read_word(s: str, i: int, d: str) -> tuple[Word, int]:
         w.why = ""                      # Where-Object and ForEach-Object
     if d == "ps" and s[i:i + 1] == "(":
         tail = s[start:i]
-        if m := re.search(r"(?:\[([\w.`\[\]]+)\])?(?:\.|::)([A-Za-z_]\w*)$", tail):
-            w.recv, w.method = m.group(1) or "", m.group(2)
-            if m.group(2).lower() in ("foreach", "where", "psforeach", "pswhere"):
+        # Whatever follows the last `.`/`::` is the member: an identifier is judged by its name, anything
+        # else (an escape, a quote, a variable, nothing) names a member only known at run time.
+        if m := re.search(r"(?:\[([\w.`\[\]]+)\])?(?:\.|::)([^.:]*)$", tail):
+            name = m.group(2)
+            w.recv, w.method = m.group(1) or "", name if re.fullmatch(r"[A-Za-z_]\w*", name) else DYNAMIC_MEMBER
+            if name.lower() in ("foreach", "where", "psforeach", "pswhere"):
                 j = i + 1
                 while j < len(s) and s[j] in " \t`\r\n":
                     j += 1
@@ -308,9 +339,6 @@ def read_word(s: str, i: int, d: str) -> tuple[Word, int]:
                 # `.ForEach('Delete')` names a method on each item and must be judged (left as a method).
                 if s[j:j + 1] == "{":
                     w.method = ""
-        elif re.search(r"(?:\.|::)\s*(?:\$|['\"])", tail):
-            # `.$name()` / `.'Delete'()`: a member bound to a name only known at run time.
-            w.method = DYNAMIC_MEMBER
     return w, i
 
 
@@ -355,9 +383,7 @@ def lex(s: str, d: str) -> list:
             continue
         if d == "posix" and s.startswith("((", i):
             j = find(s, "))", i, "an unclosed ((")
-            inner = Word()
-            scan(s[i + 2:j], inner, d)   # a `$(...)` the arithmetic runs still has its effects
-            out.append(("w", Word("true", subs=inner.subs)))
+            out.append(("w", Word("true", subs=[ARITH])))
             i = j + 2
             continue
         if d == "posix" and s[i:i + 2] in ("<(", ">("):
@@ -434,6 +460,8 @@ def commands(toks: list, d: str) -> list:
 
 
 OPEN_KW, CLOSE_KW = {"if", "while", "until", "for", "case", "select", "{"}, {"fi", "done", "esac", "}"}
+# Bodies that run any number of times, or (a function's) wherever it is called: a `cd` there is `top`.
+LOOPS = {"while", "until", "for", "select", "{"}
 # Names whose value changes without an assignment in the script.
 DYNAMIC = {"pwd", "oldpwd", "random", "seconds", "lineno", "bashpid", "reply", "optarg", "optind", "ifs", "_",
            "args", "input", "matches", "this", "psitem", "lastexitcode", "error", "home", "pid", "null", "true",
@@ -519,7 +547,7 @@ def run(toks: list, ctx: Ctx, src: str = "") -> tuple[set, frozenset]:
     if ctx.depth > DEPTH:
         return top(f"nesting deeper than {DEPTH}"), ctx.cwds
     out, cwds, pending = set(), ctx.cwds, None
-    consts, once, depth, chain = dict(ctx.consts), bound_once(src, ctx.d) if src else set(), 0, set()
+    consts, once, stack, chain = dict(ctx.consts), bound_once(src, ctx.d) if src else set(), [], set()
     cmds = commands(toks, ctx.d)
     for k, (join, items) in enumerate(cmds):
         if ctx.sink is not None:
@@ -529,7 +557,7 @@ def run(toks: list, ctx: Ctx, src: str = "") -> tuple[set, frozenset]:
             if words:
                 ctx.sink.append(words)
         if pending is not None:
-            cwds = pending if join == "&&" else cwds | pending
+            cwds = pending if join == "&&" else states(cwds | pending)
             pending = None
         if join != "&&":
             # An assignment behind `&&` holds only while the chain does.
@@ -542,20 +570,26 @@ def run(toks: list, ctx: Ctx, src: str = "") -> tuple[set, frozenset]:
             continue                    # a `case` pattern: words to match, not a command
         eff, moved = simple(items, replace(ctx, cwds=cwds, piped=piped_in, consts=tuple(consts.items())))
         out |= eff
+        for it in items:
+            if it[0] == "w" and ctx.d == "posix" and not it[1].quoted:
+                if it[1].raw in OPEN_KW:
+                    stack.append(it[1].raw)
+                elif it[1].raw in CLOSE_KW and stack:
+                    stack.pop()
         # A PowerShell pipeline runs every stage in this runspace, so a stage that moves moves the session;
         # a POSIX pipeline stage is a subshell, whose `cd` stays there.
         if moved is not None and (ctx.d == "ps" or not piped_in and nxt not in ("|", "|&")):
+            if LOOPS.intersection(stack):
+                # Run any number of times, a directory change has no fixed set of places to end in.
+                out |= top("a directory change inside a loop, function or group")
             pending = moved
-        for it in items:
-            if it[0] == "w" and ctx.d == "posix" and not it[1].quoted:
-                depth += (it[1].raw in OPEN_KW) - (it[1].raw in CLOSE_KW)
         # Only an assignment that runs at this level, not in a pipeline or a branch, binds what follows it.
-        if once and depth <= 0 and join in (";", "\n", "&&") and not piped_in and nxt not in ("|", "|&"):
+        if once and not stack and join in (";", "\n", "&&") and not piped_in and nxt not in ("|", "|&"):
             bound = literal(items, ctx.d, consts, once)
             consts.update(bound)
             chain |= set(bound) if join == "&&" else set()
     # Where the last command moved, it may or may not have run: every place stays possible.
-    return out, cwds | pending if pending is not None else cwds
+    return out, states(cwds | pending) if pending is not None else cwds
 
 
 def code(text: str, d: str, ctx: Ctx, fresh: bool = True, **kw) -> set:
@@ -619,7 +653,10 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
         if it[0] == "g":
             if ctx.depth < DEPTH:
                 inner, after = run(it[2], ctx.deeper(fresh=False, cwds=loc))
-                loc = loc | after if ps else loc
+                if ps and it[1] == "{" and after != loc:
+                    # A script block is a loop body, a function or a branch: it may run any number of times.
+                    inner |= top("a directory change inside a loop, function or group")
+                loc = states(loc | after) if ps else loc
             else:
                 inner = top(f"nesting deeper than {DEPTH}")
             eff |= inner
@@ -630,9 +667,12 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
             continue
         w = bind(it[3] if it[0] == "r" else it[1], consts)
         for d, text in w.subs:
+            if (d, text) == ARITH:
+                eff |= top("arithmetic evaluation, which runs what its variables hold")
+                continue
             inner, after = run_code(text, d, replace(ctx, cwds=loc), fresh=False)
             eff |= inner
-            loc = loc | after if ps else loc
+            loc = states(loc | after) if ps else loc
         eff |= member_of(w)
         if it[0] == "r":
             redirs.append((it[2], w))
@@ -672,7 +712,10 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
         # `name() { ...; }` defines a POSIX function; the body follows as its own command. In PowerShell
         # `name (expr)` passes the expression's value as an argument.
         ctx.funcs.add(words[0].text.lower())
-        return eff | simple([("w", w) for w in words[2:]], ctx)[0], moved_here
+        body, moved = simple([("w", w) for w in words[2:]], ctx)
+        if moved is not None:
+            body |= top("a directory change inside a loop, function or group")
+        return eff | body, moved_here
     if not words:
         return eff, moved_here
     if words[0].why == "group":
@@ -692,11 +735,14 @@ def assignment(w: Word) -> re.Match | None:
 
 # Variables whose value is a command line: what it runs is derived like any command.
 ENV_COMMAND = re.compile(r"^(?:GIT_EDITOR|GIT_SEQUENCE_EDITOR|EDITOR|VISUAL|PAGER|GIT_PAGER|GIT_SSH_COMMAND|"
-                         r"GIT_SSH|GIT_ASKPASS|SSH_ASKPASS|GIT_EXTERNAL_DIFF|GIT_PROXY_COMMAND)$", re.I)
-# Variables that change which code a later program loads or runs: never decidable here.
+                         r"GIT_SSH|GIT_ASKPASS|SSH_ASKPASS|GIT_EXTERNAL_DIFF|GIT_PROXY_COMMAND|GH_PAGER|GH_BROWSER|"
+                         r"BROWSER|GH_EDITOR)$", re.I)
+# Variables that change which code a later program loads or runs, or where `~`, `/tmp` and a client's
+# configuration land: never decidable here.
 ENV_EXEC = re.compile(r"^(?:LD_\w+|DYLD_\w+|BASH_ENV|ENV|PROMPT_COMMAND|PATH|PATHEXT|GIT_(?!AUTHOR_|COMMITTER_|"
                       r"TERMINAL_PROMPT|OPTIONAL_LOCKS|TRACE|DIR$|WORK_TREE$)\w+|NODE_OPTIONS|PYTHONSTARTUP|"
-                      r"PERL5OPT|RUBYOPT|SHELLOPTS|PS4|COMSPEC|PSModulePath)$", re.I)
+                      r"PERL5OPT|RUBYOPT|SHELLOPTS|PS4|COMSPEC|PSModulePath|HOME|USERPROFILE|ZDOTDIR|"
+                      r"XDG_CONFIG_HOME|CURL_HOME|TMPDIR|TMP|TEMP|GH_CONFIG_DIR)$", re.I)
 # Variables that send a later client to another host: the host is reached whichever command reads them.
 ENV_NETWORK = re.compile(r"^(?:GH_HOST|GH_REPO|HTTPS?_PROXY|ALL_PROXY)$", re.I)
 
@@ -707,7 +753,11 @@ def envs(assigns: list, ctx: Ctx) -> set:
     out = set()
     for w in assigns:
         name, _, value = w.text.partition("=")
-        name = name.rstrip("+").split("[")[0]
+        name = name.rstrip("+")
+        if "[" in name and not re.fullmatch(r"\w+\[\d+\]", name):
+            # An array subscript other than a number is evaluated as arithmetic.
+            out |= top("arithmetic evaluation, which runs what its variables hold")
+        name = name.split("[")[0]
         if ENV_NETWORK.match(name):
             if name.upper() == "GH_REPO":
                 # `[HOST/]OWNER/REPO`: a host only when there are three parts.
@@ -716,7 +766,7 @@ def envs(assigns: list, ctx: Ctx) -> set:
         elif ENV_COMMAND.match(name):
             out |= top(f"{w.why} in {name}") if w.why else code(value, "posix", ctx)
         elif ENV_EXEC.match(name):
-            out |= top(f"{name} changes what runs")
+            out |= top(f"{name} changes what runs or where files land")
         elif name.upper() in ("GIT_DIR", "GIT_WORK_TREE"):
             out |= paths("write", Word(value, w.why), ctx)
     return out
@@ -854,28 +904,28 @@ def derive(command, dialect: str, ctx: Ctx) -> set:
         if isinstance(command, list):
             return collapse({READ} | run_argv([Word(str(a), quoted=True) for a in command], ctx)[0])
         return collapse({READ} | reduce(lex(str(command), dialect), ctx, str(command)))
-    except Unclosed as error:
+    except (Unclosed, Unbounded) as error:
         return {READ} | top(str(error))
     except RecursionError:
         return top("nesting too deep to parse")
 
 
-PATH_KINDS = ("write", "write_tree", "delete", "link", "linktree", "repo", "repolinks")
-# What each link-holding kind is judged as once folded: `repolinks` is a git verb rewriting its own work tree.
-FOLDED = {"link": "write", "linktree": "write_tree", "repolinks": "repo"}
+PATH_KINDS = ("write", "write_tree", "delete", "dir", "linktree", "repo", "repolinks")
+# What each kind is judged as once folded: `repolinks` is a git verb rewriting its own work tree.
+FOLDED = {"dir": "write", "linktree": "write_tree", "repolinks": "repo"}
 
 
 def collapse(effs: set) -> set:
-    """Fold link effects into path effects, judging each command's links against the others' writes.
+    """Fold link-holding effects into path effects, judging each command's against the others' writes.
 
-    A link (symlink, junction or hard link) created in a call changes how the names of later
-    paths resolve, and `realpath` cannot see a link that does not exist yet. A `link` is one
-    made at a known place; a `linktree` or `write_tree` is a tree whose entries the data
-    decides (an archive, a recursive copy, a rename, a git checkout), any of which may be a
-    link. When another command in the call writes, deletes or extracts under such a place,
-    that write may leave the grant through the link: the whole call is undecidable. A
-    command's own effects (`run_argv` bundles them) never count against its own links, and a
-    link nothing else writes through is resolved by `realpath` on the next call.
+    A link created in a call changes how later paths resolve, and `realpath` cannot see a
+    link that does not exist yet. Commands that create a link outright are not in the table
+    (`top`); what remains is a `linktree` or `write_tree`, a place whose entries the data
+    decides (a recursive copy, a rename, a git checkout), any of which may be a link. When
+    another command in the call writes or deletes at or under such a place, that write may
+    leave the grant through the link: the whole call is undecidable. Only creating a
+    directory (`dir`) at the place itself never writes through what is there. A command's
+    own effects (`run_argv` bundles them) never count against its own trees.
     """
     groups, loose = [], set()
 
@@ -892,13 +942,13 @@ def collapse(effs: set) -> set:
     groups.append(loose)
     out, slipped = set(), False
     for k, own in enumerate(groups):
-        links = [(kind, p) for kind, p in own if kind in ("link", "linktree", "write_tree", "repolinks")]
+        links = [(kind, p) for kind, p in own if kind in ("linktree", "write_tree", "repolinks")]
         if links:
-            others = [p for j, g in enumerate(groups) if j != k or g is loose
+            others = [(kind, p) for j, g in enumerate(groups) if j != k or g is loose
                       for kind, p in g if kind in PATH_KINDS and (kind, p) not in links]
-            for kind, where in links:
-                slipped = slipped or any(contained(p, [where]) or contained(where, [p]) if kind == "link"
-                                         else p != where and contained(p, [where]) for p in others)
+            for _, where in links:
+                slipped = slipped or any(contained(p, [where]) and not (kind == "dir" and p == where)
+                                         for kind, p in others)
         out |= {(FOLDED.get(e[0], e[0]), e[1]) for e in own}
     return out | top("a link is created and a path under it is written in the same command") if slipped else out
 

@@ -108,25 +108,53 @@ the strings handed to `bash -c`, `sh -c`, `pwsh -Command`, `powershell
 effects: `read`, `write(path)`, `delete(path)`, `spawn(executable)`,
 `network(host)`, and `top(reason)` for what cannot be decided before it runs —
 `eval`, `source`, `-EncodedCommand`, a variable, substitution or glob in a
-written path, a script file, an unclosed quote, nesting past the limit. An
+written path, a script file, an unclosed quote, nesting past the limit, more
+than 32 possible working directories. An
 Edit, Write, MultiEdit, NotebookEdit or apply_patch call is a `write` (or
 `delete`) of its resolved target. Reads, and tools that neither run a shell nor
 edit a file, are not restricted. The call passes when every effect lies inside
-the task's grant, computed again for each call:
+the task's grant, computed again for each call.
+
+What a program does is read off a closed table, never guessed. `TABLE` in
+`tool/guard_models.py` lists each modelled program with the flags it
+understands (`row(model, "-abc --long -o: --out:")`: one-letter flags, long
+flags, and flags that take a value); `PS_ROWS` and `CMD_ROWS` in
+`tool/guard_windows.py` do the same for PowerShell cmdlets with their
+parameters and for cmd.exe builtins with their switches. Three rules hold
+across those tables:
+
+- A flag or parameter the row does not list is `top`, and so is a variable or
+  substitution standing where an option may stand.
+- A program with no row is only `spawn(name)`, which a grant naming it allows.
+  A path-named program (`./helper.exe`) is that file, suffix included.
+- Some rows exist only to refuse (`top`): forms whose effect the argv cannot
+  show. These are links (`ln`, `cp -s/-l/-a/-P`, `rsync -a/-l/--link-dest`,
+  `New-Item -ItemType SymbolicLink/Junction/HardLink`, `mklink`), extraction
+  (`tar -x`, `unzip`, `gunzip`, `Expand-Archive`), and archivers that remove
+  their sources (`tar --remove-files`, `gzip` without `-k`). They also cover
+  arithmetic (`let`, `$((…))`, `((…))`, `[[ -eq ]]`, `${a[i]}`), redirects and
+  connection overrides (`curl -L/-x/--resolve/--connect-to`, `wget`,
+  `Invoke-WebRequest` without `-MaximumRedirection 0`), and destinations whose
+  final file the model cannot name (`patch`, `robocopy`, `xcopy`, `curl -J`).
+
+A directory change inside a loop, a function or a group is `top`, because the
+body may run any number of times. A command that is denied but ordinary is
+answered by adding a row in a later change, not by loosening an existing one.
 
 | Effect | Granted when |
 |---|---|
 | `write`, `delete` | the path resolves (links, junctions and `..` followed) inside a write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder; each `[guard] write_roots` entry, relative to the checkout |
-| — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (a copy into `.wiki`, `curl -O` or `wget` at the checkout root, `patch` there). Only a git verb's own write of the repository it runs in is judged by place alone |
+| — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (a copy into `.wiki`, `curl -O` at the checkout root, a `git restore`/`checkout` pathspec naming them). Only a git verb's own write of the repository it runs in is judged by place alone |
 | `spawn` | the executable is one that `gate_cmd`, `verification.toml`'s round and local commands, a `[checks]` command or `python tool/search` runs, or is listed in `[guard] executables`. A bare name is that name; a name with a path (`./tool`, `C:/x/python.exe`, `/usr/bin/time`) is that file, granted only by the same path. `git` and `gh` are modelled by verb: a known verb is its writes and its remote's host, an unknown one is `top` |
 | `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. `GH_HOST`, `GH_REPO` and the proxy variables count as reaching their host; a target whose host cannot be read is `top` |
 | `top` | never |
 
-Links are judged within one call: a command that lays down a tree whose entries
-the data decides (an extraction, a recursive copy, a rename, and a git verb
-rewriting the work tree unless `core.symlinks` is off) may create a link, so
-another command in the same call that writes beneath it is `top`. A hard link's
-source counts as written. In PowerShell, anything evaluated in this runspace (a
+Trees are judged within one call: a command that lays down a tree whose entries
+the data decides (a recursive copy, a rename, and a git verb rewriting the work
+tree unless `core.symlinks` is off) may carry a link, so another command in the
+same call that writes at or beneath that place is `top`. Only creating a
+directory there (`mkdir`) is not, since it never writes through what is there.
+In PowerShell, anything evaluated in this runspace (a
 group, a `$(...)`, a pipeline stage) may move the location, so later relative
 paths are judged from every place it may now be.
 
