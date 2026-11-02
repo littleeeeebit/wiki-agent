@@ -104,7 +104,7 @@ def remote_hosts(common: Path) -> tuple:
     try:
         text = (common / "config").read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return ()
+        text = ""                       # git works without one; the global and system files still apply
     # A URL rewrite, or an included file that may hold one or another remote, changes where a push goes, and
     # a remote or branch set outside the repository adds destinations this reader does not take from there.
     # Any mention in any file git reads, in any syntax (a key after a header, a continued line), counts.
@@ -119,9 +119,11 @@ def remote_hosts(common: Path) -> tuple:
                            for t in git_configs()) \
         or any(os.environ.get(k) for k in ("http_proxy", "https_proxy", "all_proxy", "HTTPS_PROXY", "ALL_PROXY"))
     # A promisor remote lets any read fetch, and a Trace2 target lets any call append to a file; a file this
-    # reader does not open may hold either.
-    lazy = re.search(r"(?i)partialclone|promisor|trace2|\[\s*include|worktreeconfig", text) \
-        or any(re.search(r"(?i)partialclone|promisor|trace2|\[\s*include", t) for t in git_configs())
+    # reader does not open may hold either, and so may a submodule's own configuration, which a read that
+    # recurses (by `submodule.recurse`, with no flag) uses for its objects.
+    lazy = re.search(r"(?i)partialclone|promisor|trace2|\[\s*(include|submodule)|worktreeconfig", text) \
+        or any(re.search(r"(?i)partialclone|promisor|trace2|\[\s*(include|submodule)", t) for t in git_configs()) \
+        or (common / "modules").exists()
     found, section = [], ("", "")
     for line in text.splitlines():
         if not line.strip() or re.match(r"\s*[#;]", line):

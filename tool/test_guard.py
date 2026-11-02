@@ -1203,13 +1203,28 @@ ORIGIN = '[remote "origin"]\n\turl = https://github.com/owner/repo.git\n'
     # A Trace2 target makes any git call append to that file (round 10).
     (ORIGIN, ["[trace2]\n\teventTarget = ../outside/f.txt\n"]),
     (ORIGIN + "[trace2]\n\tnormalTarget = ../outside/f.txt\n", []),
+    # A submodule's own configuration, which a recursing read uses, may hold a promisor remote (round 11).
+    (ORIGIN + '[submodule "child"]\n\turl = https://unlisted.example/child.git\n', []),
+    (ORIGIN, ["[submodule]\n\trecurse = true\n"]),
+    # Without the repository's own file, the global ones still apply.
+    (None, ["[trace2]\n\teventTarget = ../outside/f.txt\n"]),
 ])
 def test_a_promisor_setting_that_may_hide_makes_git_top(tmp_path, monkeypatch, config, configs):
-    (tmp_path / "config").write_text(config, encoding="utf-8")
+    if config is not None:
+        (tmp_path / "config").write_text(config, encoding="utf-8")
     monkeypatch.setattr(guard_grant, "git_configs", lambda: configs)
     remotes = guard_grant.remote_hosts(tmp_path)
     assert any(e.startswith("top(") for e in effects("git cat-file -p HEAD:notes.txt",
                                                      ctx=replace(POSIX, remotes=remotes)))
+
+
+def test_an_absorbed_submodule_makes_git_top(tmp_path, monkeypatch):
+    (tmp_path / "config").write_text(ORIGIN, encoding="utf-8")
+    monkeypatch.setattr(guard_grant, "git_configs", lambda: [])
+    assert guard_grant.remote_hosts(tmp_path) == (("origin", "github.com"),)
+    (tmp_path / "modules/child").mkdir(parents=True)
+    remotes = guard_grant.remote_hosts(tmp_path)
+    assert any(e.startswith("top(") for e in effects("git grep --cached x", ctx=replace(POSIX, remotes=remotes)))
 
 
 @pytest.mark.parametrize("extra", ["[fetch]\n\tbundleURI = https://unlisted.example/r.bundle\n",

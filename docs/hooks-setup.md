@@ -157,8 +157,11 @@ builtins, and `tool/guard_git.py` for git. The table holds only:
   `--work-tree`, `--exec-path`, `--config-env`, a `GIT_TRACE*` file and every
   other verb are `top`. In a partial clone every git form is `top`, since
   reading a missing object fetches it, and so it is with a `trace2` target
-  in any configuration (any call appends to it) and wherever either may hide
-  (an `[include]`, `extensions.worktreeConfig`);
+  in any configuration (any call appends to it) and wherever either may hide:
+  an `[include]`, `extensions.worktreeConfig`, or a submodule (a
+  `[submodule]` section in any configuration or a `modules` folder), whose
+  own configuration a recursing read uses. A missing repository
+  configuration still has the global and system files checked;
 - no row for gh or curl: their HTTP clients follow a redirect the response
   names, nothing on the command line turns that off, and gh's `pr create` and
   `pr merge` also run git that takes none of the options above. They are only
