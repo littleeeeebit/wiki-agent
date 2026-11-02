@@ -153,7 +153,9 @@ builtins, and `tool/guard_git.py` for git, gh and curl. The table holds only:
   writing only where `-o` points. A request that changes something (another
   method, a body, a method-override header, a header file) may author a commit,
   and a proxy decides where even a loopback URL lands, so it is `top` on any
-  host; so is any other protocol. `-L`,
+  host; so is any other protocol, a scheme-less URL curl would guess as one
+  (`ftp.`), `--url @file`, a URL glob, `#` in `-o`, and a header, user agent or
+  referer that is computed or spans lines. `-L`,
   `-x`, `--resolve`, `--connect-to`, `-O`, `-K`, a `-w` format with
   `%output{…}` or read from `@file`, and every other unlisted flag are `top`;
 - plain `>`/`>>` redirection to a literal path, in every dialect. Only the

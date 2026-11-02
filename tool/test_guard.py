@@ -1135,6 +1135,13 @@ def test_a_powershell_assignment_written_as_one_word_is_still_an_assignment():
     "curl -s gophers://github.com:443/_PUT%20%2Fapi%20HTTP%2F1.1",
     "curl -s ftp://github.com/upload",
     "curl -s FILE:///etc/hosts",
+    # A header value is one literal line; a URL is one http or https address.
+    "curl -s -H $'Accept: x\\r\\nX-HTTP-Method-Override: PUT' https://github.com/api",
+    "curl -s -A \"$AGENT\" https://github.com/api",
+    "curl -s --url @urls.txt",
+    "curl -s ftp.github.com/sample",
+    "curl -s 'https://github.com/[1-3]' -o 'out#1'",
+    "curl -s 'https://github.com/{a,b}'",
 ])
 def test_a_curl_request_that_changes_something_is_top(command):
     assert any(e.startswith("top(") for e in effects(command, ctx=POSIX)), command

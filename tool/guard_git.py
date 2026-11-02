@@ -369,15 +369,22 @@ def m_curl(name, args, ctx):
     if any(w.why or w.text.startswith("@") or "%output" in w.text.lower()
            for w in vals.get("-w", []) + vals.get("--write-out", [])):
         return top("a curl write-out format that may write a file"), None
+    # A header-like value is literal and one line: a line break would start another header (a method override).
+    sent = [w for k in ("-H", "--header", "-A", "--user-agent", "-e", "--referer") for w in vals.get(k, [])]
     if any(w.why or w.text.upper() not in ("GET", "HEAD") for w in vals.get("-X", []) + vals.get("--request", [])) \
-            or any(w.why or w.text.startswith("@") or "method" in w.text.partition(":")[0].lower()
-                   for w in vals.get("-H", []) + vals.get("--header", [])):
+            or any(w.why or w.text.startswith("@") or re.search(r"[\r\n]", w.text) for w in sent) \
+            or any("method" in w.text.partition(":")[0].lower() for w in vals.get("-H", []) + vals.get("--header", [])):
         return top("a curl request other than a read (a method, or a header that overrides it)"), None
     urls = pos + vals.get("--url", [])
-    # Another protocol (gopher, smtp, ftp upload, ...) carries what it sends in the URL itself.
-    if any(not w.why and re.match(r"(?i)(?!https?://)[a-z][\w+.-]*://", w.text) for w in urls):
-        return top("a curl URL with a protocol other than http or https"), None
-    out = writes("write", vals.get("-o", []) + vals.get("--output", []), ctx)
+    outputs = vals.get("-o", []) + vals.get("--output", [])
+    # Another protocol (gopher, smtp, ftp upload, ...) carries what it sends in the URL itself, and a URL without
+    # one is guessed from its host (`ftp.`, `dict.`, ...). `@file` is a list of URLs saved under their own names;
+    # a glob (`[1-3]`, `{a,b}`) makes several requests and `#1` in `-o` names their files.
+    if any(not w.why and (re.match(r"(?i)(?!https?://)[a-z][\w+.-]*://", w.text) or w.text.startswith("@")
+                          or re.match(r"(?i)(ftp|dict|ldap|imap|smtp|pop3)\.", w.text) or re.search(r"[\[\]{}]", w.text))
+           for w in urls) or any("#" in w.text for w in outputs):
+        return top("a curl URL other than one http or https address"), None
+    out = writes("write", outputs, ctx)
     for w in urls:
         out |= network(w)
     return out, None
