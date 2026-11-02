@@ -496,6 +496,10 @@ def m_git(name, args, ctx):
     r, kind = GIT[verb]
     if stop := gate(f"git {verb}", rest, r):
         return stop, None
+    # What git starts from its configuration (hooks, a text converter, a verifier) is trusted only because
+    # that configuration is protected: in another repository it may be one the agent wrote.
+    if not own_repo(ctx):
+        return top("git in a repository other than the checkout"), None
     if kind == "read":
         return formats(rest), None
     # git's write of the repository it runs in is the granted git verb; `outside` judges its place only.

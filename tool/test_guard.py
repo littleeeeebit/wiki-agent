@@ -846,7 +846,7 @@ def test_a_posix_program_name_is_looked_up_exactly():
 
 def test_a_repository_differing_only_in_case_is_another_on_posix():
     other = replace(POSIX, cwds=frozenset({"/work/Repo"}))
-    assert any("not read" in e for e in effects("git push origin HEAD", ctx=other))
+    assert any("repository other than the checkout" in e for e in effects("git push origin HEAD", ctx=other))
     assert "network(github.com)" in effects("git push origin HEAD", ctx=POSIX)
 
 
@@ -906,6 +906,34 @@ def test_built_in_and_literal_formats_stay_reads():
 ])
 def test_a_device_name_is_a_device_only_by_the_hosts_rule(command, dialect, ctx, target):
     assert target in effects(command, dialect, ctx)
+
+
+def test_unix_device_spellings_are_files_in_native_windows_shells():
+    for command in ("Write-Output sample > /dev/null", "Write-Output sample > /dev/fd/target.txt"):
+        assert any(e.startswith("write(C:/dev/") for e in effects(command, "ps")), command
+
+
+@pytest.mark.parametrize("config", ['[url "https://write.example/"] insteadOf = https://read.example/\n',
+                                    '[url "https://write.example/"]\n\tpushInsteadOf = https://read.example/\n',
+                                    '[Include]\n path = more.config\n'])
+def test_a_rewrite_in_any_config_git_reads_leaves_pushes_unread(tmp_path, monkeypatch, config):
+    (tmp_path / "home").mkdir()
+    (tmp_path / "home/.gitconfig").write_text(config, encoding="utf-8")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    (tmp_path / "config").write_text('[remote "origin"]\n url = https://read.example/o/r.git\n', encoding="utf-8")
+    found = effects("git push origin HEAD", ctx=replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path)))
+    assert any("rewritten" in e for e in found), found
+
+
+def test_git_runs_only_in_the_checkout_whose_configuration_is_protected(repo):
+    (repo / "sub/.git").mkdir(parents=True)
+    for command in ("cd sub && git diff -- sample.dat", "cd sub && git status", "cd sub && git commit -m x"):
+        assert "판단할 수 없는" in (call(repo, command) or ""), command
+    # Nothing may lay a repository down for git to trust, by a redirection or an edit tool.
+    for command in ("echo x > sub2/.git", "echo x > sub/.git/config", "echo x > sub/.GIT/config"):
+        assert "허가를 정하는 파일" in (call(repo, command) or ""), command
+    assert "허가를 정하는 파일" in call(repo, tool="Write", file_path=str(repo / "sub/.git/config"), content="")
+    assert call(repo, "git diff -- a.txt && echo x > .gitignore-notes") is None
 
 
 def test_the_null_devices_stay_devices():

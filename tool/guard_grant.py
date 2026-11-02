@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import tempfile
 
 from guard import HERE, Ctx, contained, derive
@@ -73,6 +74,24 @@ def layout(cwd: Path) -> tuple | None:
 UNREAD = "\0unread"
 
 
+def git_configs() -> list:
+    """The text of every global and system configuration file git reads besides the repository's own."""
+    home, env = Path.home(), os.environ
+    places = [home / ".gitconfig", Path(env.get("XDG_CONFIG_HOME") or home / ".config") / "git/config",
+              Path("/etc/gitconfig"), Path(env.get("PROGRAMDATA") or "C:/ProgramData") / "Git/config"]
+    places += [Path(env[k]) for k in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM") if env.get(k)]
+    if git := shutil.which("git"):
+        # Git for Windows keeps its system file beside its install: `<root>/etc/gitconfig`, `<root>/mingw64/...`.
+        places += [p / "etc/gitconfig" for p in Path(git).resolve().parents[:3]]
+    out = []
+    for p in places:
+        try:
+            out.append(p.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            pass
+    return out
+
+
 def remote_hosts(common: Path) -> tuple:
     """`((remote, host), ...)` for every `url` and `pushurl` of every remote, and for a branch's upstream
     given as a URL (`("", host)`), since a push may reach any of them."""
@@ -82,10 +101,9 @@ def remote_hosts(common: Path) -> tuple:
         text = (common / "config").read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ()
-    rewrites = [text] + [p.read_text(encoding="utf-8", errors="replace") for p in
-                         (Path.home() / ".gitconfig", Path.home() / ".config/git/config") if p.is_file()]
     # A URL rewrite, or an included file that may hold one or another remote, changes where a push goes.
-    rewritten = any(re.search(r"(?im)^\s*(push)?insteadof\s*=|^\s*\[\s*include", t) for t in rewrites)
+    # Any mention in any file git reads, in any syntax (a key after a header, a continued line), counts.
+    rewritten = any(re.search(r"(?i)insteadof|\[\s*include", t) for t in [text] + git_configs())
     found, section = [], ("", "")
     for line in text.splitlines():
         if not line.strip() or re.match(r"\s*[#;]", line):
@@ -200,7 +218,9 @@ def outside(effect: tuple, g: Grant) -> str | None:
     # write to an existing directory either lands under it or fails. Only git's own write of the repository
     # it runs in (`repo`) is granted on the checkout as a whole.
     reaches_protected = kind != "repo" and any(contained(p, [target]) for p in g.protected)
-    if any(contained(target, [p]) for p in g.protected) or reaches_protected:
+    # A `.git` anywhere makes a repository whose configuration git would trust: no write lays one down.
+    git_dir = kind != "repo" and ".git" in re.split(r"[\\/]", target.lower())
+    if any(contained(target, [p]) for p in g.protected) or reaches_protected or git_dir:
         return "허가를 정하는 파일이다 — 어떤 `[guard]` 항목으로도 열리지 않고, 사람이 직접 고친다"
     if contained(target, g.roots):
         return None

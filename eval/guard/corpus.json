@@ -639,6 +639,7 @@
     "spawn(cp)",
     "spawn(rm)",
     "spawn(timeout)",
+    "top(git in a repository other than the checkout)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/wa/tool/main/refactor.py)"
    ]
   },
@@ -649,8 +650,8 @@
    "effects": [
     "read",
     "spawn(ruff)",
-    "top(git rebase: a verb the table does not model)",
-    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/wa)"
+    "top(git in a repository other than the checkout)",
+    "top(git rebase: a verb the table does not model)"
    ]
   },
   {
@@ -679,7 +680,8 @@
    "effects": [
     "read",
     "spawn(timeout)",
-    "top(a directory change after the first statement)"
+    "top(a directory change after the first statement)",
+    "top(git in a repository other than the checkout)"
    ]
   },
   {
@@ -700,7 +702,8 @@
     "read",
     "spawn(npx)",
     "spawn(python)",
-    "top(a directory change after the first statement)"
+    "top(a directory change after the first statement)",
+    "top(git in a repository other than the checkout)"
    ]
   },
   {
@@ -768,8 +771,8 @@
     "top(`for`: a loop, function or trap the table does not model)",
     "top(a directory change after the first statement)",
     "top(git -c: an option the table does not model)",
+    "top(git in a repository other than the checkout)",
     "top(git init: a verb the table does not model)",
-    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/1258396b-a6e6-4a4f-8ce7-64fb0bc75367/scratchpad)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/1258396b-a6e6-4a4f-8ce7-64fb0bc75367/scratchpad/a.txt)"
    ]
   },
@@ -782,6 +785,7 @@
     "spawn(awk)",
     "top(a directory change after the first statement)",
     "top(git config: a verb the table does not model)",
+    "top(git in a repository other than the checkout)",
     "top(git ls-files: a verb the table does not model)",
     "top(git sparse-checkout: a verb the table does not model)",
     "top(git worktree: a verb the table does not model)"
@@ -830,6 +834,7 @@
    "command": "cd /c/Users/me/PycharmProjects/ai-companion-voice-agent && git worktree remove --force \"$TEMP/omm-main-check\" && git worktree list | grep -c omm-main-check; git status --short | grep -v \"^?? .wiki/decisions\" | head -3",
    "effects": [
     "read",
+    "top(git in a repository other than the checkout)",
     "top(git worktree: a verb the table does not model)"
    ]
   },
@@ -850,6 +855,7 @@
     "read",
     "spawn(timeout)",
     "top(git branch: a verb the table does not model)",
+    "top(git in a repository other than the checkout)",
     "top(variable in a write path)"
    ]
   },
