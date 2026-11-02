@@ -116,10 +116,14 @@ def gate(name: str, args: list, r: Row) -> set:
     return set()
 
 
-def exe(raw: str) -> str:
-    """A bare program's identity: its name, lowercased. `.exe` is how Windows spells the same program;
-    any other suffix (`.cmd`, `.bat`, `.com`) names a different file."""
-    name = re.split(r"[\\/]", raw)[-1].lower()
+def exe(raw: str, windows: bool) -> str:
+    """A bare program's identity as the host looks it up. On Windows that is its name lowercased, and
+    `.exe` is how it spells the same program; any other suffix (`.cmd`, `.bat`, `.com`) names a different
+    file. A POSIX lookup is exact: `CAT` and `cat.exe` are other files than `cat`."""
+    name = re.split(r"[\\/]", raw)[-1]
+    if not windows:
+        return name
+    name = name.lower()
     return name[:-4] if name.endswith(".exe") else name
 
 
@@ -389,7 +393,7 @@ GIT_LOG = ("-pusczwbRqiEm -M? -B? -C? -U: -n: -S: -G: -L: -O: --patch --no-patch
            "--remotes --author: --committer: --since: --until: --after: --before: --grep: --follow --reverse "
            "--no-merges --merges --first-parent --date: --abbrev-commit --left-right --cherry-pick --cherry-mark "
            "--boundary --topo-order --date-order --max-count: --skip: --source --no-walk --stat-width: "
-           "--cc --full-history --simplify-by-decoration --show-signature --notes --no-notes")
+           "--cc --full-history --simplify-by-decoration --notes --no-notes")
 # verb: (the flags its row understands, what its model does). A verb with no row is `top`.
 GIT_VERBS = {
     "status": ("-sbvz -u? --short --branch --porcelain --long --untracked-files --ignored --ahead-behind "
@@ -408,6 +412,12 @@ GIT_VERBS = {
 GIT = {verb: (row(None, spec, digits=True), kind) for verb, (spec, kind) in GIT_VERBS.items()}
 
 
+def same_path(a: str, b: str, ctx) -> bool:
+    """One place by the host's rule: Windows paths ignore case, POSIX paths do not."""
+    a, b = a.rstrip("/"), b.rstrip("/")
+    return a.lower() == b.lower() if ctx.windows else a == b
+
+
 def repo_roots(ctx) -> set | None:
     """The work tree each place `ctx` may run in belongs to: the nearest folder holding `.git`, or the
     checkout the grant was read for when no nearer one exists on disk. `None` when a place is unknown."""
@@ -417,7 +427,7 @@ def repo_roots(ctx) -> set | None:
             return None
         p, found = cwd.rstrip("/") or "/", None
         while found is None:
-            if ctx.repo and p.lower() == ctx.repo.rstrip("/").lower() or os.path.exists(p + "/.git"):
+            if ctx.repo and same_path(p, ctx.repo, ctx) or os.path.exists(p + "/.git"):
                 found = p
             elif (up := posixpath.dirname(p)) == p:
                 return None
@@ -430,19 +440,22 @@ def repo_roots(ctx) -> set | None:
 def own_repo(ctx) -> bool:
     """Every place `ctx` may run in is inside the checkout whose remotes the grant read."""
     roots = repo_roots(ctx)
-    return bool(ctx.repo) and roots is not None and all(r.lower() == ctx.repo.rstrip("/").lower() for r in roots)
+    return bool(ctx.repo) and roots is not None and all(same_path(r, ctx.repo, ctx) for r in roots)
 
 
 def pushed(pos: list, ctx) -> set:
-    """`git push [REMOTE [BRANCH]]`: the host of a remote the grant read. A URL, a path, a refspec with
-    `+`, `:` or a revision suffix (a forced push, a deletion, another ref) is not in the row."""
-    named = dict(ctx.remotes)
+    """`git push [REMOTE [BRANCH]]`: every host the grant read for that remote (each `url` and `pushurl`),
+    or for every destination when none is named. A URL, a path, a refspec with `+`, `:` or a revision
+    suffix (a forced push, a deletion, another ref) is not in the row."""
     if not own_repo(ctx):
         return top("git push from a repository the grant has not read")
-    if len(pos) > 2 or any(w.why for w in pos) or pos and pos[0].text not in named \
-            or len(pos) == 2 and re.search(r"[+:^~@{}]", pos[1].text):
+    if len(pos) > 2 or any(w.why for w in pos) or pos and pos[0].text not in {n for n, _ in ctx.remotes} \
+            or len(pos) == 2 and re.search(r"[+:^~@{}]", pos[1].text) or not ctx.remotes:
         return top("git push to anything but a configured remote and a branch")
-    return {("network", named[pos[0].text])} if pos else {("network", h) for h in named.values()}
+    hosts = {h for n, h in ctx.remotes if not pos or n == pos[0].text}
+    if "\0unread" in hosts:
+        return top("git push to a local path or a rewritten URL")
+    return {("network", h) for h in hosts}
 
 
 def m_git(name, args, ctx):
@@ -646,7 +659,7 @@ def spawn_of(raw: str, ctx) -> set:
     the model or the grant of the program its basename suggests; the grant names it by path.
     """
     if not re.search(r"[\\/]", raw):
-        return {("spawn", exe(raw))}
+        return {("spawn", exe(raw, ctx.windows))}
     out = set()
     for cwd in ctx.cwds:
         try:
@@ -677,7 +690,7 @@ def run_argv(words: list, ctx) -> tuple[set, object]:
             return ps_cmdlet(canon, args, ctx)
         if ctx.d == "cmd" and raw.lstrip("@").lower() in CMD_BUILTINS:
             return cmd_builtin(raw.lstrip("@").lower(), args, ctx)
-    name = exe(raw)
+    name = exe(raw, ctx.windows)
     r = TABLE.get(name)
     if r is None:
         # No row: the program is only a `spawn`, which a grant naming it allows and nothing else does.

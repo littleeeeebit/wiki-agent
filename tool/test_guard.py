@@ -3,6 +3,7 @@
 import io
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 import random
 import runpy
@@ -736,42 +737,34 @@ def test_a_directory_change_in_the_first_statement_stays_tracked(repo):
     assert call(repo, '"$(Get-Date)"; \'x\' > target.txt', tool="PowerShell") is None
 
 
-def test_the_guards_time_grows_linearly_with_the_command():
-    def best(n: int) -> float:
-        command = "; ".join(f"Set-Location d{k}" if k % 2 else "Get-ChildItem" for k in range(n))
-        took = []
-        for _ in range(3):
-            start = time.perf_counter()
-            derive(command, "ps", CTX)
-            took.append(time.perf_counter() - start)
-        return min(took)
-
-    small, large = best(200), best(1600)
-    # Eight times the statements: linear work is about eight times the time, exponential is unbounded.
-    assert large < small * 24, (small, large)
-
-
-# Every pass over a command is linear in its length, and names a script binds are layered, never copied
-# per command.
+# Every pass over a command is linear in its length: names a script binds are layered, never copied per
+# command, and a long literal is scanned in place. (dialect, the command of size n, the small n.)
 SCALING_FORMS = {
-    "writes": lambda k: f"printf x > f{k:05}",
-    "assignments": lambda k: f"A{k}=v{k}",
-    "assignments-then-groups": lambda k: f"A{k}=v{k}" if k % 2 else f"( echo $A{k - 1} )",
+    "locations": ("ps", lambda n: "; ".join(f"Set-Location d{k}" if k % 2 else "Get-ChildItem" for k in range(n)),
+                  200),
+    "writes": ("posix", lambda n: "; ".join(f"printf x > f{k:05}" for k in range(n)), 200),
+    "assignments": ("posix", lambda n: "; ".join(f"A{k}=v{k}" for k in range(n)), 200),
+    "assignments-then-groups": ("posix", lambda n: "; ".join(
+        f"A{k}=v{k}" if k % 2 else f"( echo $A{k - 1} )" for k in range(n)), 200),
+    "literal-in-substitution": ("posix", lambda n: "echo $(echo " + "x" * n + ")", 20000),
 }
 
 
 @pytest.mark.parametrize("form", SCALING_FORMS)
 def test_every_pass_is_linear_in_the_command(form):
-    def best(n: int) -> float:
-        command = "; ".join(SCALING_FORMS[form](k) for k in range(n))
+    dialect, build, n = SCALING_FORMS[form]
+
+    def best(size: int) -> float:
+        command = build(size)
         took = []
         for _ in range(3):
             start = time.perf_counter()
-            derive(command, "posix", CTX)
+            derive(command, dialect, CTX)
             took.append(time.perf_counter() - start)
         return min(took)
 
-    small, large = best(200), best(1600)
+    small, large = best(n), best(8 * n)
+    # Eight times the input: linear work is about eight times the time, quadratic or worse is far more.
     assert large < small * 24, (form, small, large)
 
 
@@ -828,3 +821,63 @@ def test_a_push_from_another_repository_is_denied(repo):
     (repo.parent / "other").mkdir()
     for bad in ("cd sub && git push origin HEAD", "cd ../other && git push origin HEAD"):
         assert "판단할 수 없는" in (call(repo, bad) or ""), bad
+
+
+# -- Rev 5 review round 1 -------------------------------------------------------
+# Each admitted row and identity check is held to what the host actually runs and where git actually pushes.
+POSIX = Ctx("posix", frozenset({"/work/repo"}), "/home/sample", "/tmp", False, remotes=(("origin", "github.com"),),
+            repo="/work/repo")
+
+
+def test_a_script_block_built_at_run_time_is_never_inert():
+    wrapped = ("Select-Object -InputObject sample -Property @{Name='n'; "
+               "Expression=[System.Management.Automation.ScriptBlock]::Create('Zz-Unlisted sample')}")
+    assert any(e.startswith("top(") for e in effects(wrapped, "ps"))
+    assert any(e.startswith("top(") for e in effects("[scriptblock]::Create('x').Invoke()", "ps"))
+
+
+def test_a_posix_program_name_is_looked_up_exactly():
+    assert effects("CAT note.txt", ctx=POSIX) == {"read", "spawn(CAT)"}
+    assert effects("cat.exe note.txt", ctx=POSIX) == {"read", "spawn(cat.exe)"}
+    assert effects("cat note.txt", ctx=POSIX) == {"read"}
+    # Windows finds the same program whatever the case, and `.exe` is how it spells it.
+    assert effects("CAT.EXE note.txt") == {"read"}
+
+
+def test_a_repository_differing_only_in_case_is_another_on_posix():
+    other = replace(POSIX, cwds=frozenset({"/work/Repo"}))
+    assert any("not read" in e for e in effects("git push origin HEAD", ctx=other))
+    assert "network(github.com)" in effects("git push origin HEAD", ctx=POSIX)
+
+
+@pytest.mark.parametrize("config,expected", [
+    ('[remote "origin"]\n url = https://read.example/o/r.git\n pushurl = https://write.example/o/r.git\n',
+     {"network(read.example)", "network(write.example)"}),
+    ('[remote "origin"]\n url = https://read.example/o/r.git\n url = git@write.example:o/r.git\n',
+     {"network(read.example)", "network(write.example)"}),
+    ('[remote "origin"]\n url = ../other.git\n', "local path"),
+    ('[remote "origin"]\n url = file:///c/other.git\n', "local path"),
+    ('[remote "origin"]\n url = https://read.example/o/r.git\n[url "https://write.example/"]\n'
+     ' insteadOf = https://read.example/\n', "rewritten"),
+    ('[include]\n path = extra.config\n[remote "origin"]\n url = https://read.example/o/r.git\n', "rewritten"),
+])
+def test_a_push_reaches_every_destination_git_would_use(tmp_path, monkeypatch, config, expected):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    (tmp_path / "config").write_text(config, encoding="utf-8")
+    found = effects("git push origin HEAD", ctx=replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path)))
+    if isinstance(expected, set):
+        assert {e for e in found if e.startswith("network(")} == expected
+    else:
+        assert any(expected in e for e in found if e.startswith("top(")), found
+
+
+def test_a_branch_upstream_given_as_a_url_is_a_destination(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    (tmp_path / "config").write_text('[remote "origin"]\n url = https://read.example/o/r.git\n'
+                                     '[branch "main"]\n remote = https://write.example/o/r.git\n', encoding="utf-8")
+    found = effects("git push", ctx=replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path)))
+    assert {"network(read.example)", "network(write.example)"} <= found
+
+
+def test_a_log_option_that_runs_a_verifier_is_not_in_the_row():
+    assert any(e.startswith("top(") for e in effects("git log --show-signature"))

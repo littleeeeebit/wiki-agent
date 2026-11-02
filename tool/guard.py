@@ -126,6 +126,7 @@ REDIRS = {"posix": re.compile(r"(\d+|&)?(<<<|<<-|<<|<>|<&|>>|>&|>\||>|<)"),
           "cmd": re.compile(r"(\d)?(>>|>&|<&|>|<)")}
 STOP = {"posix": set(" \t\r\n;&|()<>"), "ps": set(" \t\r\n;&|(){}<>"), "cmd": set(" \t\r\n&|()<>")}
 OPENERS = {"posix": {"("}, "ps": {"(", "{", "@{", "@("}, "cmd": {"("}}
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)([\w.-]+)\1")
 
 
 def close_paren(s: str, i: int, d: str) -> int:
@@ -136,9 +137,9 @@ def close_paren(s: str, i: int, d: str) -> int:
         if c == esc:
             i += 2
             continue
-        if d == "posix" and (m := re.match(r"<<-?\s*(['\"]?)([\w.-]+)\1", s[i:])):
+        if d == "posix" and c == "<" and (m := HEREDOC.match(s, i)):     # in place: a slice would copy
             bodies.append(m.group(2))
-            i += m.end()
+            i = m.end()
             continue
         if c == "\n" and bodies:
             # A here document's body is data: its quotes and parentheses close nothing.
@@ -540,10 +541,6 @@ def literal(items: list, d: str, consts: dict, once: set) -> dict:
     return out
 
 
-def reduce(toks: list, ctx: Ctx, src: str = "") -> set:
-    return run(toks, ctx, src)[0]
-
-
 def run(toks: list, ctx: Ctx, src: str = "") -> tuple[set, frozenset]:
     """Effects of a token list, and every directory the shell may be in once it has run."""
     if ctx.depth > DEPTH:
@@ -900,7 +897,7 @@ def derive(command, dialect: str, ctx: Ctx) -> set:
     try:
         if isinstance(command, list):
             return {READ} | run_argv([Word(str(a), quoted=True) for a in command], ctx)[0]
-        return {READ} | reduce(lex(str(command), dialect), ctx, str(command))
+        return {READ} | run(lex(str(command), dialect), ctx, str(command))[0]
     except (Unclosed, Unbounded) as error:
         return {READ} | top(str(error))
     except RecursionError:
@@ -922,7 +919,7 @@ def nested_bash_commands(command, dialect: str = "posix") -> list:
             from guard_models import run_argv
             run_argv([Word(str(a), quoted=True) for a in command], ctx)
         else:
-            reduce(lex(str(command), dialect), ctx, str(command))
+            run(lex(str(command), dialect), ctx, str(command))
     except Exception:
         pass
     return found

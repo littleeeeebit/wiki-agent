@@ -33,7 +33,7 @@ getencoding fromfiletime haskey test values keys getfiles getdirectories enumera
 getrelativepath ispathrooted haschanged indexofany length name fullname directoryname basename extension""".split())
 SAFE_TYPES = re.compile(r"^(system\.)?(text\.stringbuilder|collections\.[\w.`\[\]]+|object|psobject|pscustomobject|"
                         r"diagnostics\.stopwatch|random|datetime|timespan|version|uri|guid|text\.utf8encoding|"
-                        r"text\.regularexpressions\.regex|management\.automation\.[\w.]+)$")
+                        r"text\.regularexpressions\.regex)$")
 
 PS_ALIAS = {
     "ls": "get-childitem", "dir": "get-childitem", "gci": "get-childitem", "cat": "get-content", "gc": "get-content",

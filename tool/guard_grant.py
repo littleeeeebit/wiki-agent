@@ -68,22 +68,43 @@ def layout(cwd: Path) -> tuple | None:
     return top, gitdir, common, common.parent if common.name == ".git" else common
 
 
+# A destination git reaches that is not a network host the guard can name: a local path, a `file://` URL,
+# or one a URL rewrite may change. A push to it is `top`, and it is never granted as a host.
+UNREAD = "\0unread"
+
+
 def remote_hosts(common: Path) -> tuple:
+    """`((remote, host), ...)` for every `url` and `pushurl` of every remote, and for a branch's upstream
+    given as a URL (`("", host)`), since a push may reach any of them."""
     from guard_models import host_of
 
-    hosts, name = {}, None
     try:
         text = (common / "config").read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ()
+    rewrites = [text] + [p.read_text(encoding="utf-8", errors="replace") for p in
+                         (Path.home() / ".gitconfig", Path.home() / ".config/git/config") if p.is_file()]
+    # A URL rewrite, or an included file that may hold one or another remote, changes where a push goes.
+    rewritten = any(re.search(r"(?im)^\s*(push)?insteadof\s*=|^\s*\[\s*include", t) for t in rewrites)
+    out, section = set(), ""
     for line in text.splitlines():
-        if m := re.match(r'\s*\[remote\s+"([^"]+)"\]', line):
-            name = m.group(1)
-        elif line.strip().startswith("["):
-            name = None
-        elif name and (m := re.match(r"\s*(?:push)?url\s*=\s*(\S+)", line)):
-            hosts.setdefault(name, host_of(m.group(1)))
-    return tuple(sorted(hosts.items()))
+        if m := re.match(r'\s*\[\s*(\w+)(?:\s+"([^"]*)")?\s*\]', line):
+            section = m.group(1).lower(), m.group(2) or ""
+            continue
+        m = re.match(r"\s*(\w+)\s*=\s*(\S+)", line)
+        if not m or not section:
+            continue
+        key, value = m.group(1).lower(), m.group(2)
+        if section[0] == "remote" and key in ("url", "pushurl"):
+            name = section[1]
+        elif section[0] == "branch" and key in ("remote", "pushremote") and re.search(r"[:/\\]", value):
+            name = ""
+        else:
+            continue
+        networked = re.match(r"[a-zA-Z][\w+.-]*://", value) and not value.lower().startswith("file:") \
+            or re.match(r"[^/\\:\s]+@[^/\\:\s]+:", value)
+        out.add((name, host_of(value) if networked and not rewritten else UNREAD))
+    return tuple(sorted(out))
 
 
 def task_spec(top: Path, gitdir: Path, main: Path) -> dict:
@@ -144,7 +165,7 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
     # A path entry names that file (`.venv/bin/python`), keyed the way the judge keys a path-named command.
     executables |= {e[1] for s in strings("executables") for e in spawn_of(s, ctx) if e[0] == "spawn"}
     remotes = remote_hosts(common)
-    hosts = {"127.0.0.1"} | {h for _, h in remotes} | {host_of(s) for s in strings("network_hosts")}
+    hosts = {"127.0.0.1"} | {h for _, h in remotes if h != UNREAD} | {host_of(s) for s in strings("network_hosts")}
     protected = sorted({str(p / x) for p in (top, main) for x in PROTECTED})
     return Grant([str(r) for r in roots], protected, executables, hosts, remotes, top.as_posix())
 
