@@ -15,9 +15,11 @@ form at a time: a denied ordinary command is answered by adding a row.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import os
+import posixpath
 import re
 
-from guard import BLOCK, NULLS, Word, assignment, code, envs, moved_to, paths, resolve, top
+from guard import BLOCK, NULLS, Word, assignment, code, envs, moved_to, names_set, paths, resolve, top
 
 KEYWORDS = {
     "posix": {"if", "then", "elif", "else", "fi", "do", "done", "while", "until", "{", "}", "!", "time", "for",
@@ -276,10 +278,23 @@ def m_dd(name, args, ctx):
 
 
 def m_mktemp(name, args, ctx):
-    pos, vals, _ = parse(name, args)
-    where = vals.get("-p", []) + vals.get("--tmpdir", []) or [w for w in pos if "/" in w.text or "\\" in w.text] \
-        or [Word(ctx.temp)]
-    return writes("write", where, ctx), None
+    """The folder mktemp creates its new file or folder in; the name itself is random, so never an existing file.
+
+    A template alone is relative to the current folder; `-p DIR`/`--tmpdir=DIR` or `-t` place it in that
+    folder or the temporary one; with no template it goes to the temporary folder.
+    """
+    pos, vals, flags = parse(name, args)
+    template = pos[0] if pos else None
+    base = vals.get("-p", []) + vals.get("--tmpdir", [])
+    if template is not None and template.why:
+        return top(f"{template.why} in a mktemp template"), None
+    if base or template is None or "t" in shorts(flags) or any(f.startswith("--tmpdir") for f in flags):
+        folder = base[0] if base else Word(ctx.temp)
+        rel = posixpath.dirname(template.text.replace("\\", "/")) if template is not None else ""
+        where = Word(posixpath.join(folder.text, rel) if rel else folder.text, folder.why)
+    else:
+        where = Word(posixpath.dirname(template.text.replace("\\", "/")) or ".")
+    return paths("write", where, ctx), None
 
 
 TAR = row(None, "-ctvzjJah -f: -C: -T: -X: --create --list --verbose --gzip --bzip2 --xz --auto-compress "
@@ -324,8 +339,10 @@ def m_cd(name, args, ctx):
 # -- Text tools whose programs can write or run ------------------------------
 
 # A sed `w`/`W`/`e` command after any address or delimiter, or an `s` command with a `w`/`e` flag.
-SED_RUNS = re.compile(r"(?:^|[^A-Za-z])[wWe](?:\s|$)|s(.).*?(?<!\\)\1.*?(?<!\\)\1[gpiImM0-9]*[we]")
-AWK_RUNS = re.compile(r"\bsystem\s*\(|\|\s*getline|\|&|\bprintf?\b[^;{}\n]*[>|]|@\s*(?:load|include)")
+# Both match across newlines: a backslash-newline continues a line, and an `s` replacement may hold one, so
+# a recognizer that stops at a newline would miss a write the program still performs.
+SED_RUNS = re.compile(r"(?:^|[^A-Za-z])[wWe](?:\s|$)|s(.).*?(?<!\\)\1.*?(?<!\\)\1[gpiImM0-9]*[we]", re.S)
+AWK_RUNS = re.compile(r"\bsystem\s*\(|\|\s*getline|\|&|\bprintf?\b[^;{}]*[>|]|@\s*(?:load|include)")
 
 
 def m_sed(name, args, ctx):
@@ -337,7 +354,7 @@ def m_sed(name, args, ctx):
     out = set()
     for s in scripts:
         out |= top(f"{s.why} in a sed script") if s.why else top("a sed script that writes or runs") \
-            if SED_RUNS.search(s.text) else set()
+            if SED_RUNS.search(re.sub(r"\\\r?\n", "\n", s.text)) else set()
     # `-i[SUFFIX]`/`--in-place[=SUFFIX]` rewrites each file and keeps a backup named `<file>SUFFIX`.
     suffixes = [f.partition("=")[2] for f in flags if f.startswith("--in-place")]
     for f in flags:
@@ -362,7 +379,7 @@ def m_awk(name, args, ctx):
     out = set()
     for p in progs:
         out |= top(f"{p.why} in an awk program") if p.why else top("an awk program that writes or runs") \
-            if AWK_RUNS.search(p.text) else set()
+            if AWK_RUNS.search(re.sub(r"\\\r?\n", "", p.text)) else set()
     return out | (writes("write", files, ctx) if include else set()), None
 
 
@@ -748,14 +765,40 @@ def git_key(w: Word) -> set:
     return top("a git config key that runs a program") if GIT_RUNS.search(w.text.split("=")[0]) else set()
 
 
+def repo_roots(ctx) -> set | None:
+    """The work tree each place `ctx` may run in belongs to: the nearest folder holding `.git`, or the
+    checkout the grant was read for when no nearer one exists on disk. `None` when a place is unknown."""
+    roots = set()
+    for cwd in ctx.cwds:
+        if cwd is None:
+            return None
+        p, found = cwd.rstrip("/") or "/", None
+        while found is None:
+            if ctx.repo and p.lower() == ctx.repo.rstrip("/").lower() or os.path.exists(p + "/.git"):
+                found = p
+            elif (up := posixpath.dirname(p)) == p:
+                return None
+            else:
+                p = up
+        roots.add(found)
+    return roots
+
+
+def own_repo(ctx) -> bool:
+    """Every place `ctx` may run in is inside the checkout whose remotes the grant read."""
+    roots = repo_roots(ctx)
+    return bool(ctx.repo) and roots is not None and all(r.lower() == ctx.repo.rstrip("/").lower() for r in roots)
+
+
 def remotes_of(pos: list, ctx, push: bool) -> set:
     named = dict(ctx.remotes)
+    own = own_repo(ctx)
     if not pos:
-        return {("network", h) for h in named.values()}
+        return {("network", h) for h in named.values()} if own else top("the remotes of another repository")
     w, t = pos[0], pos[0].text
     if w.why:
         return top(f"{w.why} in a git remote")
-    if t in named:
+    if t in named and own:
         return {("network", named[t])}
     if "://" in t and not t.startswith("file:"):
         return network(w)
@@ -763,7 +806,36 @@ def remotes_of(pos: list, ctx, push: bool) -> set:
         return {("network", host_of(t))}
     if "/" in t or "\\" in t or t.startswith("."):
         return paths("write", w, ctx) if push else set()
-    return top(f"git remote {t} is not configured")
+    return top(f"git remote {t} is not configured" if own else f"git remote {t} of another repository")
+
+
+def cloned(pos: list, ctx) -> set:
+    """The tree a clone lays down: into the named directory, or one named after the repository. A new
+    repository's `core.symlinks` is not the checkout's, so its tree may always hold a link."""
+    base = re.sub(r"\.git$", "", re.split(r"[/:\\]", pos[0].text.rstrip("/"))[-1])
+    return paths("linktree", pos[1] if len(pos) > 1 else Word(base, pos[0].why), ctx)
+
+
+def based(pos: list, flags: list, ctx) -> bool:
+    """`git merge <commit>` naming exactly the base commit the server asked this task to merge."""
+    oid = pos[0].text.lower() if len(pos) == 1 and not pos[0].why else ""
+    return bool(ctx.merge_base) and len(oid) >= 7 and ctx.merge_base.startswith(oid) and not set(flags) - {
+        "--no-edit", "--no-ff", "--no-commit", "--quiet", "-q", "--edit", "--commit", "-m"}
+
+
+def rewritten(g, trusted: bool) -> set:
+    """A verb that moves the work tree to another commit: it may change any tracked file, so it is a tree
+    write of each work tree, which `outside` refuses wherever that tree holds a file deciding the grant.
+    Only a merge of the exact base commit the server recorded is trusted; its links are still tracked."""
+    roots = repo_roots(g)
+    if roots is None:
+        return top("a git verb that rewrites a work tree it cannot place")
+    # Without links (`core.symlinks` off) it writes files under the tree but makes no link to write through.
+    out = set() if trusted else {("write_tree" if g.git_links else "write", r) for r in roots}
+    if g.git_links:
+        # Where git checks symlinks out as links, a rewritten work tree may hold one.
+        out |= {("repolinks", r) for r in roots}
+    return out
 
 
 def m_git(name, args, ctx):
@@ -772,16 +844,17 @@ def m_git(name, args, ctx):
         w, t = args[i], args[i].text
         if w.why:
             return out | top(f"{w.why} as a git option or verb"), None
-        if t in ("-C", "-c", "--git-dir", "--work-tree") and i + 1 < len(args):
+        if t in ("-C", "-c") and i + 1 < len(args):
             v = args[i + 1]
             if t == "-C":
                 g = replace(g, cwds=moved_to(v, g))
-            out |= git_key(v) if t == "-c" else paths("write", v, g) if t != "-C" else set()
+            out |= git_key(v) if t == "-c" else set()
             i += 2
             continue
-        if t.startswith(("--git-dir=", "--work-tree=")):
-            out |= paths("write", Word(t.split("=", 1)[1]), g)
-        elif t not in GIT_GLOBAL:
+        if t.startswith(("--git-dir", "--work-tree")):
+            # Another repository's directory: its remotes and its work tree are not the ones read.
+            return out | top(f"git {t.split('=')[0]} selects a repository the guard has not read"), None
+        if t not in GIT_GLOBAL:
             if t.startswith("-"):
                 return out | top(f"git {t}: an option the table does not model"), None
             break
@@ -803,12 +876,14 @@ def m_git(name, args, ctx):
     # git's write of the repository it runs in is the granted git verb; `outside` judges its place only.
     out |= paths("repo", here(g), g)
     sub, short = pos[0].text if pos else "", shorts(flags)
-    rewrites = kind in ("tree", "pull") or kind == "checkout" and (pos or not {"-b", "-B", "-c", "-C", "--orphan", "--create", "--force-create"} & set(vals)) \
+    pathspec_only = any(w.text == "--" and not w.why for w in rest)
+    rewrites = kind in ("tree", "pull") and not {"--continue", "--quit"} & set(flags) \
+        or kind == "checkout" and not pathspec_only and (
+            pos or not {"-b", "-B", "-c", "-C", "--orphan", "--create", "--force-create"} & set(vals)) \
         or kind == "reset" and {"--hard", "--merge", "--keep"} & set(flags) \
         or kind == "stash" and sub in ("", "push", "save", "pop", "apply", "branch")
-    if rewrites and ctx.git_links:
-        # Where git checks symlinks out as links, a verb that rewrites the work tree may lay one down.
-        out |= paths("repolinks", Word(ctx.git_links) if g is ctx else here(g), g)
+    if rewrites:
+        out |= rewritten(g, verb == "merge" and based(pos, flags, ctx))
     named = "linktree" if ctx.git_links else "write"
     if kind in ("push", "fetch", "pull"):
         out |= remotes_of(pos, g, kind == "push")
@@ -823,22 +898,29 @@ def m_git(name, args, ctx):
         out |= writes("delete", pos[:-1], g)
     elif kind == "clone" and pos:
         out |= network(pos[0]) if ("://" in sub or REMOTE.match(sub)) else set()
-        base = re.sub(r"\.git$", "", re.split(r"[/:\\]", sub.rstrip("/"))[-1])
-        out |= paths(named, pos[1] if len(pos) > 1 else Word(base, pos[0].why), g)
+        out |= cloned(pos, g)
     elif kind == "init" and pos:
         out |= paths("write", pos[0], g)
     elif kind == "worktree" and len(pos) > 1:
         k = {"add": named, "move": "write", "remove": "delete"}.get(sub)
         out |= paths(k, pos[-1] if sub == "move" else pos[1], g) if k else set()
     elif kind == "config":
+        files = vals.get("-f", []) + vals.get("--file", [])
+        changes = len(pos) > 1 or any(f.startswith(("--add", "--replace", "--unset", "--rename", "--remove"))
+                                      for f in flags)
+        if changes and not files and "--global" not in flags:
+            # The repository's own configuration names its remotes, whose hosts the next call's grant reads.
+            return out | top("git config writes the repository configuration the grant is read from"), None
         if "--global" in flags:
             out |= paths("write", Word("~/.gitconfig"), g)
-        out |= writes("write", vals.get("-f", []) + vals.get("--file", []), g)
-        out |= git_key(pos[0]) if len(pos) > 1 or any(f.startswith(("--add", "--replace")) for f in flags) \
-            else set()
-    elif kind == "remote" and (sub in ("update", "prune", "show") or "f" in short):
-        out |= {("network", h) for h in dict(g.remotes).values()}
-        out |= network(pos[2]) if sub == "add" and len(pos) > 2 else set()
+        out |= writes("write", files, g)
+        out |= git_key(pos[0]) if changes else set()
+    elif kind == "remote":
+        if sub not in ("", "show", "get-url", "update", "prune") or "f" in short or "--add" in flags:
+            # `add`, `set-url`, `rename`…: a remote's URL is a host the next call's grant reads.
+            return out | top(f"git remote {sub}: writes the remotes the grant is read from"), None
+        if sub in ("update", "prune", "show"):
+            out |= remotes_of([], g, False)
     elif kind == "clean" and "n" not in short and "--dry-run" not in flags:
         # Untracked files anywhere in the tree go, the protected ones among them.
         out |= paths("delete", here(g), g)
@@ -934,17 +1016,26 @@ def m_gh(name, args, ctx):
         # endpoint it cannot read may be one too.
         for w in pos:
             out |= network(w) if w.why or "://" in w.text else set()
+    # An operand that is a URL, `git@host:` or (for a clone) `HOST/OWNER/REPO` selects the host gh reaches.
+    for w in pos[:1] if verb == "api" else pos:
+        if w.why and (verb, sub) == ("repo", "clone"):
+            out |= top(f"{w.why} in the repository gh clones")
+        elif "://" in w.text or REMOTE.match(w.text):
+            out |= network(w)
+        elif (verb, sub) == ("repo", "clone") and w is pos[0] and w.text.count("/") >= 2:
+            out |= network(Word(w.text.split("/")[0]))
+    if not (vals.get("-R") or vals.get("--repo") or env.get("GH_REPO")) and verb not in ("api", "auth") \
+            and (verb, sub) not in (("repo", "clone"), ("repo", "list")):
+        # Without `-R`, gh reads the repository from the remotes where it runs.
+        out |= remotes_of([], ctx, False)
     if (verb, sub) == ("repo", "clone") and pos:
         if any(w.text == "--" and not w.why for w in rest):
             return out | top("gh repo clone passes options on to git"), None
-        # Like git clone: into the named directory, or one named after the repository.
-        base = re.sub(r"\.git$", "", re.split(r"[/:\\]", pos[0].text.rstrip("/"))[-1])
-        out |= paths("write", pos[1] if len(pos) > 1 else Word(base, pos[0].why), ctx)
-    elif (verb, sub) in (("pr", "checkout"), ("pr", "merge")):
-        # A git checkout of the repository it runs in (a merge may switch to and pull the base branch).
-        out |= paths("repo", here(ctx), ctx)
-        if ctx.git_links:
-            out |= paths("repolinks", Word(ctx.git_links), ctx)
+        out |= cloned(pos, ctx)
+    elif (verb, sub) == ("pr", "checkout") or (verb, sub) == ("pr", "merge") and (
+            "-d" in flags or "--delete-branch" in flags or "d" in shorts(flags)):
+        # A checkout of the repository it runs in (deleting the branch switches to and pulls the base).
+        out |= paths("repo", here(ctx), ctx) | rewritten(ctx, False)
     return out, None
 
 
@@ -969,7 +1060,8 @@ def m_names(name, args, ctx):
     else:
         pos, vals, _ = parse(name, args)
         named = pos + vals.get("-a", [])
-    return subscripted(named), None
+    # The name is assigned (or unset) like `NAME=…`: `PATH`, `TMPDIR`, `GIT_SSH_COMMAND`… change later effects.
+    return subscripted(named) | names_set(named, ctx), None
 
 
 ARITHMETIC = {"-eq", "-ne", "-lt", "-le", "-gt", "-ge"}

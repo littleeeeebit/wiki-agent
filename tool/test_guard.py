@@ -22,7 +22,9 @@ from guard import DEPTH, Ctx, contained, derive, render, verdict
 TOOL = Path(__file__).parent
 CORPUS = json.loads((TOOL.parent / "eval/guard/corpus.json").read_text(encoding="utf-8"))
 C = CORPUS["context"]
-CTX = Ctx("posix", frozenset({C["cwd"]}), C["home"], C["temp"], True, remotes=tuple(map(tuple, C["remotes"])))
+# The corpus runs in its checkout: the remotes are that checkout's.
+CTX = Ctx("posix", frozenset({C["cwd"]}), C["home"], C["temp"], True, remotes=tuple(map(tuple, C["remotes"])),
+          repo=C["cwd"])
 
 
 def effects(command: str, dialect: str = "posix", ctx: Ctx = CTX) -> set:
@@ -538,7 +540,8 @@ def test_the_guard_answers_each_corpus_call_within_200ms(repo):
 
 
 def test_the_hook_subprocess_adds_a_bounded_latency(repo):
-    """What the PreToolUse hook costs end to end: the guard process over a baseline process."""
+    """What the PreToolUse hook costs end to end on each host: Claude's guard process and Codex's whole
+    chain (`codex_pretool.py`), each over a baseline process."""
     env = host.environment({"WIKI_AGENT_MANAGED": "1", "TEMP": os.environ["TEMP"],
                             "TMP": os.environ["TMP"], "TMPDIR": os.environ["TMPDIR"]})
     samples = ["git add -A && git commit -qm x && git push origin HEAD", "rm -rf ../other",
@@ -555,7 +558,8 @@ def test_the_hook_subprocess_adds_a_bounded_latency(repo):
     for command in samples:
         payload = json.dumps({"tool_name": "PowerShell" if "pwsh" in command else "Bash",
                               "tool_input": {"command": command}, "cwd": str(repo)}).encode("utf-8")
-        worst = max(worst, min(run([sys.executable, str(TOOL / "guard.py")], payload) for _ in range(3)))
+        for script in ("guard.py", "codex_pretool.py"):
+            worst = max(worst, min(run([sys.executable, str(TOOL / script)], payload) for _ in range(3)))
     # The hook's own work (process start aside) stays well under a second per call.
     assert worst - baseline < 1.0, (baseline, worst)
 
@@ -625,7 +629,7 @@ def test_every_ancestor_of_a_protected_path_is_judged_protected_for_every_path_k
 
 def test_ordinary_writes_beside_protected_files_stay_allowed(repo):
     for command in ("rsync a.txt safe/", "printf x > safe/a", "curl -O http://localhost:8000/x.txt",
-                    "git checkout -q -b topic && git commit -qm x", "gh pr checkout 3"):
+                    "git checkout -q -b topic && git commit -qm x"):
         assert call(repo, command) is None, command
     assert call(repo, "Invoke-WebRequest http://localhost:8000/x -MaximumRedirection 0 -OutFile safe/out.bin",
                 tool="PowerShell") is None
@@ -651,14 +655,9 @@ def test_a_tree_written_through_in_the_same_call_is_denied(repo, form):
     assert reason and marker in reason, (form, reason)
 
 
-def test_a_tree_alone_or_a_checkout_without_symlinks_stays_allowed(repo):
-    # Extraction and copies alone: `test_a_link_alone_is_allowed`.
-    for command in ("mv a.txt b.txt", "git checkout other"):
-        assert call(repo, command) is None, command
+def test_a_rename_alone_stays_allowed(repo):
+    assert call(repo, "mv a.txt b.txt") is None
     assert call(repo, "Rename-Item sub/a.txt b.txt", tool="PowerShell") is None
-    config = repo / ".git/config"
-    config.write_text(config.read_text(encoding="utf-8") + "[core]\n\tsymlinks = false\n", encoding="utf-8")
-    assert call(repo, "git checkout other; printf x > f") is None
 
 
 # F3 — ForEach-Object's arguments are read the way PowerShell binds them; any argument list the reader
@@ -806,7 +805,8 @@ def test_every_row_refuses_a_flag_it_does_not_list():
 
 def test_a_program_with_no_row_is_only_a_spawn(repo):
     assert effects("zz-unlisted-tool --anything ../outside/target.txt") == {"read", "spawn(zz-unlisted-tool)"}
-    assert effects("Zz-Unlisted ../outside/target.txt", "ps") == {"read", "spawn(zz-unlisted)"}
+    # A cmdlet is not an executable a grant could name: outside the table it is `top`.
+    assert any(e.startswith("top(") for e in effects("Zz-Unlisted ../outside/target.txt", "ps"))
     assert "허가된 실행 파일이 아니다" in call(repo, "xxd -r dump.hex ../outside/target.txt")
 
 
@@ -959,3 +959,213 @@ def test_the_guards_time_grows_linearly_with_the_command():
     small, large = best(200), best(1600)
     # Eight times the statements: linear work is about eight times the time, exponential is unbounded.
     assert large < small * 24, (small, large)
+
+
+# -- Review round 5 ---------------------------------------------------------------
+
+# F11 — every pass over a command is linear in its length: tree places are looked up through an index
+# of the places written beneath them, and names a script binds are layered, never copied per command.
+SCALING_FORMS = {
+    "independent-trees": lambda k: f"cp -r src d{k:05}",
+    "trees-and-writes": lambda k: f"cp -r src d{k:05}" if k % 2 else f"printf x > f{k:05}",
+    "assignments": lambda k: f"A{k}=v{k}",
+    "assignments-then-groups": lambda k: f"A{k}=v{k}" if k % 2 else f"( echo $A{k - 1} )",
+}
+
+
+@pytest.mark.parametrize("form", SCALING_FORMS)
+def test_every_pass_is_linear_in_the_command(form):
+    def best(n: int) -> float:
+        command = "; ".join(SCALING_FORMS[form](k) for k in range(n))
+        took = []
+        for _ in range(3):
+            start = time.perf_counter()
+            derive(command, "posix", CTX)
+            took.append(time.perf_counter() - start)
+        return min(took)
+
+    small, large = best(200), best(1600)
+    assert large < small * 24, (form, small, large)
+
+
+# F1 — a shell tool that names its own working directory runs there: the paths it writes resolve from it,
+# while the grant stays the session's.
+WORKDIR_FORMS = {
+    "absolute-outside": lambda repo: {"workdir": str(repo.parent / "outside")},
+    "relative-outside": lambda repo: {"workdir": "../outside"},
+    "cwd-key": lambda repo: {"cwd": str(repo.parent / "outside")},
+    "unreadable": lambda repo: {"workdir": ["../outside"]},
+}
+
+
+@pytest.mark.parametrize("form", WORKDIR_FORMS)
+def test_a_shell_call_is_judged_where_it_runs(repo, form):
+    given = {"cmd": "echo x > target.txt", **WORKDIR_FORMS[form](repo)}
+    assert call(repo, tool="exec_command", host_name="codex", **given), form
+
+
+def test_a_shell_call_inside_the_checkout_stays_allowed(repo):
+    assert call(repo, tool="exec_command", host_name="codex", cmd="echo x > target.txt", workdir="safe") is None
+
+
+# F3 — what decides the next call's grant is never changed by git: the repository's remotes (its
+# configuration) and every tracked file a work-tree rewrite may bring in.
+GIT_AUTHORITY_FORMS = {
+    "config-remote-url": "git config --local remote.origin.url https://unlisted.example/o/r.git",
+    "config-plain": "git config remote.origin.url https://unlisted.example/o/r.git",
+    "config-unset": "git config --unset core.symlinks",
+    "remote-set-url": "git remote set-url origin https://unlisted.example/o/r.git",
+    "remote-add": "git remote add other https://unlisted.example/o/r.git",
+    "merge-branch": "git merge topic",
+    "merge-from-subfolder": "cd sub && git merge topic",
+    "pull": "git pull",
+    "rebase": "git rebase main",
+    "cherry-pick": "git cherry-pick abc1234",
+    "checkout-branch": "git checkout other",
+    "switch-branch": "git switch other",
+    "reset-hard": "git reset --hard HEAD~1",
+    "stash-pop": "git stash pop",
+    "gh-pr-checkout": "gh pr checkout 3",
+    "merge-unrecorded-commit": "git merge bbbbbbb",
+}
+
+
+@pytest.mark.parametrize("form", GIT_AUTHORITY_FORMS)
+def test_git_cannot_change_what_decides_the_grant(repo, form):
+    reason = call(repo, GIT_AUTHORITY_FORMS[form])
+    assert reason and ("허가를 정하는 파일" in reason or "판단할 수 없는" in reason), (form, reason)
+
+
+def test_only_the_recorded_base_commit_may_be_merged(repo, monkeypatch, tmp_path):
+    hub = tmp_path / "hub" / "tool"
+    (hub.parent / "raw/specs/repo").mkdir(parents=True)
+    (hub.parent / "raw/specs/repo/task.json").write_text(json.dumps(
+        {"worktree": str(repo), "merge_repair": {"base_oid": "a" * 40}}), encoding="utf-8")
+    monkeypatch.setattr(guard_grant, "HERE", hub)
+    for ok in ("git merge aaaaaaa", f"git merge --no-edit {'a' * 40}", "git merge --continue"):
+        assert call(repo, ok) is None, ok
+    for bad in ("git merge bbbbbbb", "git merge --squash aaaaaaa", "git merge aaaaaaa topic"):
+        assert "허가를 정하는 파일" in (call(repo, bad) or ""), bad
+
+
+# F4 — PowerShell binds positional words to the positional parameters not already given by name.
+POSITION_FORMS = {
+    "copy-literal-source": "Copy-Item -LiteralPath source.txt ../outside/target.txt",
+    "copy-named-source": "Copy-Item -Path source.txt ../outside/target.txt",
+    "move-named-source": "Move-Item -LiteralPath source.txt ../outside/target.txt",
+    "set-content-named-value": "Set-Content -Value x ../outside/target.txt",
+    "out-file-named-encoding": "'x' | Out-File -Encoding utf8 ../outside/target.txt",
+    "word-no-parameter-takes": "Copy-Item source.txt -Destination safe ../outside/target.txt",
+}
+
+
+@pytest.mark.parametrize("form", POSITION_FORMS)
+def test_positional_words_bind_after_named_parameters(repo, form):
+    assert call(repo, POSITION_FORMS[form], tool="PowerShell"), form
+
+
+# F5 — mktemp creates in the folder its template names (the current one for a bare template), and only
+# a missing template or `-t`/`-p`/`--tmpdir` places it in another folder.
+MKTEMP_FORMS = {
+    "bare-template-after-cd": "cd ../outside && mktemp result.XXXXXX",
+    "template-with-folder": "mktemp ../outside/result.XXXXXX",
+    "named-folder": "mktemp -p ../outside",
+    "named-folder-and-template": "mktemp -p ../outside result.XXXXXX",
+}
+
+
+@pytest.mark.parametrize("form", MKTEMP_FORMS)
+def test_mktemp_writes_where_its_template_lands(repo, form):
+    assert "쓰기 루트 밖이다" in (call(repo, MKTEMP_FORMS[form]) or ""), form
+
+
+def test_mktemp_in_granted_folders_stays_allowed(repo):
+    for ok in ("mktemp", "mktemp -d", "mktemp -t result.XXXXXX", "mktemp safe/result.XXXXXX"):
+        assert call(repo, ok) is None, ok
+
+
+# F6 — a builtin that assigns a name is judged as that assignment: a name that changes what runs, where
+# files land or which host is reached is `top` however it is assigned.
+NAME_FORMS = {
+    "printf-temp": "printf -v TMPDIR /outside; mktemp",
+    "printf-path": "printf -v PATH /outside/tools",
+    "printf-glued": "printf -vPATH /outside/tools",
+    "read-path": "read PATH < startup.rc",
+    "mapfile-command": "mapfile GIT_SSH_COMMAND < startup.rc",
+    "for-loop-name": "for TMPDIR in /outside; do mktemp; done",
+    "unset-home": "unset HOME",
+    "proxy": "read HTTPS_PROXY < startup.rc",
+    "git-dir": "export GIT_DIR=../outside/.git",
+}
+
+
+@pytest.mark.parametrize("form", NAME_FORMS)
+def test_a_name_assigned_by_a_builtin_is_judged_like_an_assignment(repo, form):
+    assert "판단할 수 없는" in (call(repo, NAME_FORMS[form]) or ""), form
+
+
+# F7 — a script recognizer reads across line continuations and newlines, so a write split over lines is seen.
+SCRIPT_FORMS = {
+    "awk-continued-redirect": "awk 'BEGIN { print \"x\" \\\n > \"../outside/target.txt\" }'",
+    "awk-newline-after-comma": "awk 'BEGIN { print \"x\",\n \"y\" > \"../outside/target.txt\" }'",
+    "awk-continued-system": "awk 'BEGIN { system \\\n (\"rm x\") }'",
+    "sed-continued-write-flag": "sed 's/a/b\\\n/w ../outside/target.txt' startup.rc",
+}
+
+
+@pytest.mark.parametrize("form", SCRIPT_FORMS)
+def test_a_script_split_over_lines_is_still_recognized(repo, form):
+    assert "판단할 수 없는" in (call(repo, SCRIPT_FORMS[form]) or ""), form
+
+
+# F8 — a gh operand that names a host (a URL, `git@host:`, a clone's `HOST/OWNER/REPO`) reaches that host.
+GH_HOST_FORMS = {
+    "clone-url": "gh repo clone https://unlisted.example/o/r out",
+    "clone-host-path": "gh repo clone unlisted.example/o/r",
+    "clone-ssh": "gh repo clone git@unlisted.example:o/r.git",
+    "pr-url": "gh pr view https://unlisted.example/o/r/pull/1",
+}
+
+
+@pytest.mark.parametrize("form", GH_HOST_FORMS)
+def test_a_gh_operand_naming_a_host_reaches_it(repo, form):
+    assert "network(unlisted.example)" in (call(repo, GH_HOST_FORMS[form]) or ""), form
+
+
+# F9 — a remote name is read from the repository git actually runs in; another repository's remotes
+# (a nested one, `-C`, `--git-dir`, `GIT_DIR`) were never read, so its remote names are undecidable.
+OTHER_REPO_FORMS = {
+    "dash-c": "git -C sub fetch origin",
+    "cd-into": "cd sub && git push origin HEAD",
+    "default-remote": "git -C sub fetch",
+    "git-dir": "git --git-dir=../other/.git fetch origin",
+    "git-dir-variable": "GIT_DIR=../other/.git git fetch origin",
+    "gh-default-repo": "cd sub && gh pr list",
+    "outside-checkout": "cd ../other && git fetch origin",
+}
+
+
+@pytest.mark.parametrize("form", OTHER_REPO_FORMS)
+def test_remote_names_follow_the_repository_git_runs_in(repo, form):
+    (repo / "sub/.git").mkdir(parents=True)
+    (repo.parent / "other").mkdir()
+    assert "판단할 수 없는" in (call(repo, OTHER_REPO_FORMS[form]) or ""), form
+
+
+def test_the_checkouts_own_remotes_stay_allowed(repo):
+    (repo / "tool").mkdir()
+    for ok in ("git fetch origin", "git -C tool fetch origin", "cd tool && git push origin HEAD", "gh pr list"):
+        assert call(repo, ok) is None, ok
+
+
+# F10 — a clone lays down a tree that may hold links, whatever the checkout's own `core.symlinks` says.
+CLONE_FORMS = {
+    "gh-clone": "gh repo clone owner/repo out; printf x > out/link/target.txt",
+    "git-clone": "git clone https://github.com/owner/repo out; printf x > out/link/target.txt",
+    "git-clone-default-name": "git clone https://github.com/owner/repo.git; printf x > repo/link/target.txt",
+}
+
+
+@pytest.mark.parametrize("form", CLONE_FORMS)
+def test_a_clone_written_through_in_the_same_call_is_denied(repo, form):
+    assert "판단할 수 없는" in (call(repo, CLONE_FORMS[form]) or ""), form

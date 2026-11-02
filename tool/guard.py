@@ -18,6 +18,8 @@ and `top` is never granted. The refusal is read by the person and stays Korean.
 
 # First, so the wait on the other imports and on stdin is already being watched.
 import hook_diagnostics  # noqa: F401
+from collections import ChainMap
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 import json
 import ntpath
@@ -68,13 +70,16 @@ class Ctx:
     funcs: set = field(default_factory=set, compare=False)
     git_links: str = ""                 # the checkout when its git checks symlinks out as links, else ""
     env: tuple = ()                   # assignments in front of the current command
-    consts: tuple = ()                  # ((name, literal), ...) the script assigned before here
+    # name -> literal the script assigned before here; a read-only view, shared rather than copied per command
+    consts: Mapping = field(default_factory=dict, compare=False)
     sink: object = field(default=None, compare=False)   # a list collecting nested shell strings, or None
+    repo: str = ""                      # the checkout `remotes` were read from, "" when none was
+    merge_base: str = ""                # the base commit the server asked this task to merge, "" when none
 
     def deeper(self, d: str | None = None, fresh: bool = True, **kw) -> "Ctx":
         # A new shell sees none of this one's unexported variables; `$(...)` and groups do.
         return replace(self, d=d or self.d, depth=self.depth + 1, stdin=None, piped=False, env=(),
-                       consts=() if fresh else self.consts, **kw)
+                       consts={} if fresh else self.consts, **kw)
 
 
 def top(reason: str) -> set:
@@ -547,7 +552,8 @@ def run(toks: list, ctx: Ctx, src: str = "") -> tuple[set, frozenset]:
     if ctx.depth > DEPTH:
         return top(f"nesting deeper than {DEPTH}"), ctx.cwds
     out, cwds, pending = set(), ctx.cwds, None
-    consts, once, stack, chain = dict(ctx.consts), bound_once(src, ctx.d) if src else set(), [], set()
+    # A layer over the enclosing script's names: entering a group copies nothing, so work stays linear.
+    consts, once, stack, chain = ChainMap({}, ctx.consts), bound_once(src, ctx.d) if src else set(), [], set()
     cmds = commands(toks, ctx.d)
     for k, (join, items) in enumerate(cmds):
         if ctx.sink is not None:
@@ -568,7 +574,7 @@ def run(toks: list, ctx: Ctx, src: str = "") -> tuple[set, frozenset]:
         nxt = cmds[k + 1][0] if k + 1 < len(cmds) else ""
         if nxt == ")" and ctx.d == "posix":
             continue                    # a `case` pattern: words to match, not a command
-        eff, moved = simple(items, replace(ctx, cwds=cwds, piped=piped_in, consts=tuple(consts.items())))
+        eff, moved = simple(items, replace(ctx, cwds=cwds, piped=piped_in, consts=consts))
         out |= eff
         for it in items:
             if it[0] == "w" and ctx.d == "posix" and not it[1].quoted:
@@ -643,7 +649,7 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
     from guard_models import KEYWORDS, run_argv
     from guard_windows import ps_statement
 
-    eff, words, stdin, call, consts, redirs = {READ}, [], None, False, dict(ctx.consts), []
+    eff, words, stdin, call, consts, redirs = {READ}, [], None, False, ctx.consts, []
     # PowerShell evaluates groups (`(…)`, `{…}` blocks it runs) and subexpressions (`$(…)`) in this
     # runspace, so one that moves the location moves it for the rest of the command and the statements
     # after it. A POSIX `(…)` or `$(…)` is a subshell and moves nothing here.
@@ -699,7 +705,9 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
             break
         key = words.pop(0).text.lower()
         if key in ("for", "select", "case", "foreach", "using", "param", "class", "enum", "data"):
-            return eff | envs(env, ctx), moved_here
+            # `for NAME in …` assigns NAME on every pass.
+            named = names_set(words[:1], ctx) if ctx.d == "posix" and key in ("for", "select") else set()
+            return eff | named | envs(env, ctx), moved_here
         if key in ("function", "filter") and words:
             ctx.funcs.add(words.pop(0).text.lower())
     eff |= envs(env, ctx)
@@ -765,11 +773,16 @@ def envs(assigns: list, ctx: Ctx) -> set:
             out |= network(Word(value, w.why))
         elif ENV_COMMAND.match(name):
             out |= top(f"{w.why} in {name}") if w.why else code(value, "posix", ctx)
-        elif ENV_EXEC.match(name):
+        elif ENV_EXEC.match(name) or name.upper() in ("GIT_DIR", "GIT_WORK_TREE"):
+            # `GIT_DIR`/`GIT_WORK_TREE` move git to another repository, whose remotes the guard has not read.
             out |= top(f"{name} changes what runs or where files land")
-        elif name.upper() in ("GIT_DIR", "GIT_WORK_TREE"):
-            out |= paths("write", Word(value, w.why), ctx)
     return out
+
+
+def names_set(ws: list, ctx: Ctx) -> set:
+    """A builtin that assigns or unsets names (`printf -v`, `read`, `for NAME`) is judged like `NAME=…`
+    with a value known only at run time."""
+    return envs([Word(w.text + "=", w.why or "a value assigned at run time") for w in ws], ctx)
 
 
 # -- Paths -------------------------------------------------------------------
@@ -848,20 +861,31 @@ def moved_to(w: Word | None, ctx: Ctx) -> frozenset:
     return frozenset(out)
 
 
+def real_path(p: str, windows: bool | None = None) -> str:
+    """`p` with links, junctions and `..` resolved, in the platform's case."""
+    mod = ntpath if (os.name == "nt" if windows is None else windows) else posixpath
+    try:
+        p = mod.realpath(p)
+    except (OSError, ValueError):
+        p = mod.abspath(p)
+    return mod.normcase(p)
+
+
+def ancestors(real: str) -> list[str]:
+    """`real` and every directory above it, as `real_path` spells them."""
+    mod = ntpath if os.name == "nt" else posixpath
+    out = [real]
+    while (up := mod.dirname(out[-1])) != out[-1]:
+        out.append(up)
+    return out
+
+
 def contained(path: str, roots: list[str], windows: bool | None = None) -> bool:
     """Is `path` inside one of `roots` once links, junctions and `..` are resolved?"""
     mod = ntpath if (os.name == "nt" if windows is None else windows) else posixpath
-
-    def real(p: str) -> str:
-        try:
-            p = mod.realpath(p)
-        except (OSError, ValueError):
-            p = mod.abspath(p)
-        return mod.normcase(p)
-
-    where = real(path)
+    where = real_path(path, windows)
     for root in roots:
-        base = real(root)
+        base = real_path(root, windows)
         try:
             if mod.commonpath([where, base]) == base:
                 return True
@@ -940,16 +964,27 @@ def collapse(effs: set) -> set:
 
     unpack(effs, loose)
     groups.append(loose)
-    out, slipped = set(), False
-    for k, own in enumerate(groups):
-        links = [(kind, p) for kind, p in own if kind in ("linktree", "write_tree", "repolinks")]
-        if links:
-            others = [(kind, p) for j, g in enumerate(groups) if j != k or g is loose
-                      for kind, p in g if kind in PATH_KINDS and (kind, p) not in links]
-            for _, where in links:
-                slipped = slipped or any(contained(p, [where]) and not (kind == "dir" and p == where)
-                                         for kind, p in others)
-        out |= {(FOLDED.get(e[0], e[0]), e[1]) for e in own}
+    trees = ("linktree", "write_tree", "repolinks")
+    # Every directory at or above each path effect, indexed once: a tree place then looks up which
+    # commands write at or beneath it, so the work grows with the effects, not with their pairs.
+    # `under[a]` holds up to two distinct command indices; `loose_under[a]` marks a loose non-tree write.
+    under, loose_under, real = {}, set(), {}
+    for j, g in enumerate(groups):
+        for kind, p in g:
+            if kind not in PATH_KINDS:
+                continue
+            r = real.setdefault(p, real_path(p))
+            for k, a in enumerate(ancestors(r)):
+                if kind == "dir" and k == 0:
+                    continue            # making a directory at a place never writes through what is there
+                hit = under.setdefault(a, [])
+                if j not in hit and len(hit) < 2:
+                    hit.append(j)
+                if g is loose and kind not in trees:
+                    loose_under.add(a)
+    slipped = any(any(j != k for j in under.get(real[p], ())) or (g is loose and real[p] in loose_under)
+                  for k, g in enumerate(groups) for kind, p in g if kind in trees)
+    out = {(FOLDED.get(e[0], e[0]), e[1]) for g in groups for e in g}
     return out | top("a link is created and a path under it is written in the same command") if slipped else out
 
 
@@ -1000,6 +1035,23 @@ def render(effect: tuple) -> str:
 
 # -- The hook ----------------------------------------------------------------
 
+def posix(p: Path) -> str:
+    return str(p).replace("\\", "/") if os.name == "nt" else str(p)
+
+
+def run_dir(cwd: Path, given: dict) -> str | None:
+    """Where a shell call runs: its own `workdir` (Codex), relative to the session's folder; else that folder.
+
+    The grant stays the session's; only the paths the command names resolve from here. A `workdir`
+    that is not a plain string is a place the guard cannot read: `None`, so relative paths are `top`.
+    """
+    for key in ("workdir", "cwd"):
+        if key in given:
+            wd = given[key]
+            return posix(cwd / wd) if isinstance(wd, str) and wd and "\0" not in wd else None
+    return posix(cwd)
+
+
 def verdict(payload: dict, host: str = "claude") -> dict | None:
     from guard_grant import grant, outside, temps
 
@@ -1013,9 +1065,9 @@ def verdict(payload: dict, host: str = "claude") -> dict | None:
     g = grant(cwd, payload)
     if g is None:
         return None
-    ctx = Ctx("posix", frozenset({str(cwd).replace("\\", "/") if os.name == "nt" else str(cwd)}),
-              str(Path.home()).replace("\\", "/"), temps()[0].as_posix(),
-              os.name == "nt", remotes=g.remotes, git_links=g.git_links)
+    ctx = Ctx("posix", frozenset({run_dir(cwd, given) if tool in SHELL_TOOLS else posix(cwd)}),
+              posix(Path.home()), temps()[0].as_posix(), os.name == "nt", remotes=g.remotes,
+              git_links=g.git_links, repo=g.top, merge_base=g.merge_base)
     bad = [(render(e), why) for e in sorted(call_effects(tool, given, ctx, host, payload)) if (why := outside(e, g))]
     if not bad:
         return None

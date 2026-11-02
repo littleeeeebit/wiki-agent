@@ -29,6 +29,8 @@ class Grant:
     hosts: set
     remotes: tuple
     git_links: str = ""                 # the checkout, when git checks symlinks out as links there
+    top: str = ""                       # the checkout the remotes were read from
+    merge_base: str = ""                # the base commit the server asked this task to merge, if any
 
 
 # Inside a write root, but they decide the grant or what runs next: never granted.
@@ -102,20 +104,32 @@ def git_links(common: Path, top: Path) -> str:
     return "" if value in ("false", "no", "off", "0") else top.as_posix()
 
 
-def plan_root(top: Path, gitdir: Path, main: Path) -> Path | None:
-    """A plan task's artifact root, from the hub's spec for this branch; `None` for any other task."""
+def task_spec(top: Path, gitdir: Path, main: Path) -> dict:
+    """The hub's spec for the branch checked out here, when it names this checkout; `{}` otherwise."""
     try:
         head = (gitdir / "HEAD").read_text(encoding="utf-8").strip()
     except OSError:
-        return None
+        return {}
     branch = head.removeprefix("ref: refs/heads/") if head.startswith("ref: ") else ""
     sid = re.sub(r"-{2,}", "-", re.sub(r"[^a-z0-9-]+", "-", branch.lower())).strip("-")[:64].rstrip("-")
     try:
         spec = json.loads((HERE.parent / "raw/specs" / main.name / f"{sid}.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return None
-    root, worktree = str(spec.get("artifact_root") or "").strip("/"), spec.get("worktree")
-    if spec.get("review_profile") != "plan" or not root or not worktree or Path(worktree).resolve() != top:
+        return {}
+    worktree = spec.get("worktree") if isinstance(spec, dict) else None
+    return spec if worktree and Path(worktree).resolve() == top else {}
+
+
+def merge_base(spec: dict) -> str:
+    """The base commit the review loop asked this task to merge (`merge_repair`), as a full object id."""
+    oid = str((spec.get("merge_repair") or {}).get("base_oid") or "")
+    return oid.lower() if re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", oid) else ""
+
+
+def plan_root(top: Path, spec: dict) -> Path | None:
+    """A plan task's artifact root, from the hub's spec for this branch; `None` for any other task."""
+    root = str(spec.get("artifact_root") or "").strip("/")
+    if spec.get("review_profile") != "plan" or not root:
         return None
     # A root that would leave the checkout narrows nothing: the checkout stays the bound.
     return top / root if contained(str(top / root), [str(top)]) else top
@@ -139,7 +153,8 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
         value = table.get(key)
         return [s for s in value if isinstance(s, str)] if isinstance(value, list) else []
 
-    roots = [plan_root(top, gitdir, main) or top, *temps()]
+    spec = task_spec(top, gitdir, main)
+    roots = [plan_root(top, spec) or top, *temps()]
     if payload.get("transcript_path"):
         roots.append(Path(str(payload["transcript_path"])).parent / "memory")
     roots += [top / Path(r).expanduser() for r in strings("write_roots") if not re.search(r"[$%]", r)]
@@ -155,7 +170,8 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
     remotes = remote_hosts(common)
     hosts = {"127.0.0.1"} | {h for _, h in remotes} | {host_of(s) for s in strings("network_hosts")}
     protected = sorted({str(p / x) for p in (top, main) for x in PROTECTED})
-    return Grant([str(r) for r in roots], protected, executables, hosts, remotes, git_links(common, top))
+    return Grant([str(r) for r in roots], protected, executables, hosts, remotes, git_links(common, top),
+                 top.as_posix(), merge_base(spec))
 
 
 def outside(effect: tuple, g: Grant) -> str | None:

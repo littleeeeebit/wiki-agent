@@ -143,7 +143,18 @@ PS_ROWS = {
                      "redirectstandarderror= redirectstandardinput= windowstyle=",
     "new-object": "typename= argumentlist= property= strict",
 }
-# Where the cmdlet's first positional word binds, for the writers above.
+# The positional parameters of each cmdlet whose positions decide an effect, in order. A word binds to the
+# first one not already given by name (`ALIKE` names one parameter's spellings), as PowerShell binds it.
+PS_POSITIONS = {
+    "set-location": ("path",), "push-location": ("path",), "copy-item": ("path", "destination"),
+    "move-item": ("path", "destination"), "rename-item": ("path", "newname"), "new-item": ("path",),
+    "remove-item": ("path",), "set-content": ("path", "value"), "add-content": ("path", "value"),
+    "clear-content": ("path",), "out-file": ("filepath", "encoding"), "tee-object": ("filepath",),
+    "export-csv": ("path", "delimiter"), "invoke-webrequest": ("uri",), "invoke-restmethod": ("uri",),
+    "start-process": ("filepath", "argumentlist"), "new-object": ("typename", "argumentlist"),
+}
+ALIKE = {"path": ("path", "literalpath"), "filepath": ("filepath", "literalpath")}
+# What each writer does to the path it is given.
 PS_TARGETS = {"remove-item": "delete", "set-content": "write", "add-content": "write", "clear-content": "write",
               "out-file": "write", "tee-object": "write", "export-csv": "write"}
 
@@ -194,12 +205,19 @@ def ps_cmdlet(canon: str, args: list, ctx):
     if canon in PS_REFUSED:
         return top(f"{canon} {PS_REFUSED[canon]}"), None
     if canon not in PS_ROWS:
-        return {("spawn", canon)}, None
+        # A cmdlet runs in this process, not as an executable a grant could name: outside the table is `top`.
+        return top(f"{canon}: a cmdlet the table does not model"), None
     if canon == "foreach-object":
         return foreach_object(args), None
     named, pos, unknown = ps_args(args, PS_ROWS[canon])
     if unknown:
         return top(f"{canon} {unknown}: a parameter the table does not model"), None
+    # PowerShell binds positional words, in order, to the positional parameters not already given by name.
+    free = [p for p in PS_POSITIONS.get(canon, ()) if not any(named.get(a) for a in ALIKE.get(p, (p,)))]
+    for k, w in zip(free, pos):
+        named.setdefault(k, []).append(w)
+    if canon in PS_POSITIONS and len(pos) > len(free):
+        return top(f"{canon}: a positional word no parameter takes"), None
 
     def given(*keys) -> list:
         return [w for k in keys for w in named.get(k, [])]
@@ -210,7 +228,7 @@ def ps_cmdlet(canon: str, args: list, ctx):
         return top(f"{canon} path array") if any("," in w.text and not w.why for w in ws) else set()
 
     if canon in ("set-location", "push-location"):
-        w = (given(*PATH) + pos[:1] or [None])[0]
+        w = (given(*PATH) or [None])[0]
         if w is not None:
             return set(), moved_to(w, ctx)
         # With no path it moves to the piped item, or (PowerShell 7's `Set-Location`) to the home folder.
@@ -218,9 +236,9 @@ def ps_cmdlet(canon: str, args: list, ctx):
     if canon == "pop-location":
         return set(), frozenset({None})
     if canon in ("copy-item", "move-item"):
-        srcs = given(*PATH) or pos[:1]
+        srcs = given(*PATH)
         # Copy-Item/Move-Item default the destination to the current directory when it is omitted.
-        target = given("destination") or pos[1:2] or [here(ctx)]
+        target = given("destination") or [here(ctx)]
         # A move renames entries as they are, links included: what lands is a link holder.
         kind = "linktree" if canon == "move-item" else "write_tree" if "recurse" in named else "write"
         out = arrayed(srcs + target) | writes(kind, target, ctx) | into_dir(srcs, target, ctx, kind)
@@ -230,7 +248,7 @@ def ps_cmdlet(canon: str, args: list, ctx):
         if itemtype.why or itemtype.text.lower() not in ("file", "directory"):
             # A symbolic link, junction or hard link redirects later paths: not in the row.
             return top(f"new-item -ItemType {itemtype.text}"), None
-        where, leaf = given("path") or pos[:1], given("name")
+        where, leaf = given("path"), given("name")
         if where and leaf:
             # `-Path dir -Name leaf` creates `dir/leaf`.
             where = [Word(posixpath.join(where[0].text.replace("\\", "/"), leaf[0].text), where[0].why or leaf[0].why)]
@@ -239,27 +257,27 @@ def ps_cmdlet(canon: str, args: list, ctx):
             None
     if canon == "rename-item":
         # `-NewName` is a name beside the item, not a path from the current location.
-        items, out = given(*PATH) + pos[:1], set()
+        items, out = given(*PATH), set()
         for item in items:
-            for new in given("newname") + pos[1:2]:
+            for new in given("newname"):
                 beside = posixpath.join(posixpath.dirname(item.text.replace("\\", "/")), new.text)
                 out |= arrayed([item]) | writes("linktree", [Word(beside, item.why or new.why)], ctx)
         return (out or top("rename-item with a target it cannot place")) | writes("delete", items, ctx), None
     if canon == "where-object":
         return where_member(args), None
     if canon in PS_TARGETS:
-        found = given(*PATH, "filepath") + pos[:1]
+        found = given(*PATH, "filepath")
         if not found and ctx.piped:
             return top(f"{canon} takes its path from the pipeline"), None
         return arrayed(found) | writes(PS_TARGETS[canon], found, ctx), None
     if canon in ("invoke-webrequest", "invoke-restmethod"):
-        out = set().union(*(network(w) for w in given("uri") + pos[:1]))
+        out = set().union(*(network(w) for w in given("uri")))
         # Redirects are followed unless `-MaximumRedirection 0`: the host reached would not be this one.
         if [w.text for w in given("maximumredirection")] != ["0"]:
             out |= top(f"{canon} follows redirects")
         return out | writes("write", given("outfile"), ctx), None
     if canon == "start-process":
-        w = (given("filepath") + pos[:1] or [None])[0]
+        w = (given("filepath") or [None])[0]
         out = writes("write", given("redirectstandardoutput", "redirectstandarderror"), ctx)
         if w is None or w.why:
             return out | top("start-process of an unknown program"), None
@@ -267,7 +285,7 @@ def ps_cmdlet(canon: str, args: list, ctx):
         return out | (top(f"start-process {name}") if name in SHELLS | PS_SHELLS | {"cmd"}
                       else spawn_of(w.text, ctx)), None
     if canon == "new-object":
-        w = (given("typename") + pos[:1] or [None])[0]
+        w = (given("typename") or [None])[0]
         safe = w is not None and not w.why and SAFE_TYPES.match(w.text.lower())
         return (set() if safe else top(f"new-object {w.text if w else ''}".strip())), None
     return set(), None

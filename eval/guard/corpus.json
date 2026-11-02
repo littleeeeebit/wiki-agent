@@ -202,6 +202,7 @@
    "effects": [
     "read",
     "spawn(npx)",
+    "top(a git verb that rewrites a work tree it cannot place)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pr3-live)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pr3-live/refactor-purpose-modes-3)"
    ]
@@ -709,6 +710,7 @@
     "read",
     "spawn(python)",
     "spawn(ruff)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/laya)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/laya/support.py)"
    ]
@@ -731,6 +733,7 @@
    "command": "cd /c/Users/me/PycharmProjects && ls -d ai-companion-voice-agent* 2>/dev/null; P=$(cd /c/Users/me/PycharmProjects/ai-companion-voice-agent && git worktree list | grep -i 32916e65 | awk '{print $1}'); echo \"wt=$P\"; cd \"$P\" && git status -sb | head -5; git ls-files -v | grep -E \"^[Ssh] \" | head; git config --get core.sparseCheckout; git sparse-checkout list 2>&1 | head -3; cat .wiki/ratchet.json 2>/dev/null | head -3; git ls-files -v .wiki | head",
    "effects": [
     "read",
+    "top(a git verb that rewrites a work tree it cannot place)",
     "top(relative path after an unknown cd)",
     "write(C:/Users/me/PycharmProjects/ai-companion-voice-agent)"
    ]
@@ -1254,8 +1257,7 @@
    "command": "gh pr merge 112 --squash --match-head-commit dc7a48ffd01c5345857ce99e8ae0aba06201376a && gh pr view 112 --json state,mergeCommit -q '.state+\" \"+.mergeCommit.oid'",
    "effects": [
     "network(github.com)",
-    "read",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "read"
    ]
   },
   {
@@ -2151,9 +2153,9 @@
    "command": "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like '*artifacts/preserve-live/browser.mjs*' } | ForEach-Object { Stop-Process -Id $_.ProcessId }\nnode artifacts/preserve-live/browser.mjs",
    "effects": [
     "read",
-    "spawn(get-ciminstance)",
     "spawn(node)",
-    "spawn(stop-process)"
+    "top(get-ciminstance: a cmdlet the table does not model)",
+    "top(stop-process: a cmdlet the table does not model)"
    ]
   },
   {
@@ -2229,7 +2231,7 @@
    "command": "Stop-Process -Id 47016\nGet-Content artifacts/preserve-live/runtime.py | Select-Object -Skip 65 -First 55",
    "effects": [
     "read",
-    "spawn(stop-process)"
+    "top(stop-process: a cmdlet the table does not model)"
    ]
   },
   {

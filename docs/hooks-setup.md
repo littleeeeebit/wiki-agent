@@ -111,7 +111,9 @@ effects: `read`, `write(path)`, `delete(path)`, `spawn(executable)`,
 written path, a script file, an unclosed quote, nesting past the limit, more
 than 32 possible working directories. An
 Edit, Write, MultiEdit, NotebookEdit or apply_patch call is a `write` (or
-`delete`) of its resolved target. Reads, and tools that neither run a shell nor
+`delete`) of its resolved target. A shell tool that names its own working
+directory (`workdir` or `cwd` in its input) is judged from there; one that
+cannot be read is `top`. Reads, and tools that neither run a shell nor
 edit a file, are not restricted. The call passes when every effect lies inside
 the task's grant, computed again for each call.
 
@@ -126,7 +128,17 @@ across those tables:
 - A flag or parameter the row does not list is `top`, and so is a variable or
   substitution standing where an option may stand.
 - A program with no row is only `spawn(name)`, which a grant naming it allows.
-  A path-named program (`./helper.exe`) is that file, suffix included.
+  A path-named program (`./helper.exe`) is that file, suffix included. A
+  PowerShell cmdlet with no row is `top`: it runs inside the runspace, so no
+  executable grant can stand for it.
+- Positional words bind to the parameters a cmdlet's row lists in order, after
+  the named ones; a positional word no free parameter takes is `top`.
+- A name set by a builtin (`read`, `printf -v`, `mapfile`, `for`, `unset`,
+  `declare`, `export`) is judged like an assignment: setting an execution or
+  destination variable (`PATH`, `HOME`, the proxy variables, `GIT_DIR`,
+  `GIT_WORK_TREE`) that way is `top`.
+- `mktemp` writes where its template lands: a bare template in the current
+  directory, `-p`/`-t` or no template in that folder or the temporary one.
 - Some rows exist only to refuse (`top`): forms whose effect the argv cannot
   show. These are links (`ln`, `cp -s/-l/-a/-P`, `rsync -a/-l/--link-dest`,
   `New-Item -ItemType SymbolicLink/Junction/HardLink`, `mklink`), extraction
@@ -145,7 +157,7 @@ answered by adding a row in a later change, not by loosening an existing one.
 |---|---|
 | `write`, `delete` | the path resolves (links, junctions and `..` followed) inside a write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder; each `[guard] write_roots` entry, relative to the checkout |
 | — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (a copy into `.wiki`, `curl -O` at the checkout root, a `git restore`/`checkout` pathspec naming them). Only a git verb's own write of the repository it runs in is judged by place alone |
-| `spawn` | the executable is one that `gate_cmd`, `verification.toml`'s round and local commands, a `[checks]` command or `python tool/search` runs, or is listed in `[guard] executables`. A bare name is that name; a name with a path (`./tool`, `C:/x/python.exe`, `/usr/bin/time`) is that file, granted only by the same path. `git` and `gh` are modelled by verb: a known verb is its writes and its remote's host, an unknown one is `top` |
+| `spawn` | the executable is one that `gate_cmd`, `verification.toml`'s round and local commands, a `[checks]` command or `python tool/search` runs, or is listed in `[guard] executables`. A bare name is that name; a name with a path (`./tool`, `C:/x/python.exe`, `/usr/bin/time`) is that file, granted only by the same path. `git` and `gh` are modelled by verb: a known verb is its writes and its remote's host, an unknown one is `top`. A verb that moves the work tree (`merge`, `pull`, `rebase`, `cherry-pick`, `checkout`/`switch` to a commit, `reset --hard`, `stash pop`, `gh pr checkout`) writes the whole tree, so at the checkout, which holds `.git`, it is denied; the one exception is `git merge` of exactly the base commit the server recorded in the task spec (`merge_repair.base_oid`). `git config` and `git remote` changes are `top`. A remote name counts only in the checkout's own repository: after `-C`, a `cd` into another repository, or `--git-dir`, it is `top` |
 | `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. `GH_HOST`, `GH_REPO` and the proxy variables count as reaching their host; a target whose host cannot be read is `top` |
 | `top` | never |
 
