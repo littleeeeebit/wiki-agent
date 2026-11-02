@@ -317,7 +317,7 @@ def test_any_program_of_any_toolchain_runs(repo, command, tool):
     *[f'S=safe; {form}; echo x > "$S/target.txt"' for form in
       ('export "S=.."', "export 'S+=/../..'", 'export "S"=..', 'export S"=.."', "export ''S=..", "export \\S=..",
        "export S\\=..", 'export "S"+=/../..', 'export "X=a;b" "S=.."', 'ex"port" "S=.."', 'command export "S=.."',
-       'if true; then export "S=.."; fi')],
+       'if true; then export "S=.."; fi', 'E=export; "$E" "S=.."', "A='S=..'; export \"$A\"", 'N=S; export "$N=.."')],
 ])
 def test_a_shell_builtin_outside_the_table_stays_denied(repo, command):
     assert call(repo, command), command

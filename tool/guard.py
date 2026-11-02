@@ -583,12 +583,12 @@ def run(toks: list, ctx: Ctx, src: str = "") -> tuple[set, frozenset]:
             else:
                 pending = moved
         # Only an assignment that runs at this level, not in a pipeline or a branch, binds what follows it.
+        words = [bind(it[1], consts).text for it in items if it[0] == "w"]   # as `simple` dispatched them
         here = once and not stack and join in (";", "\n", "&&") and not piped_in and nxt not in ("|", "|&")
         bound = literal(items, ctx.d, consts, once) if here else {}
         consts.update(bound)
         chain |= set(bound) if join == "&&" else set()
-        # `export` binds each parsed word's `NAME=` after quote removal: one `literal` did not bind has no literal.
-        words = [it[1].text for it in items if it[0] == "w"]
+        # `export` binds each word's `NAME=` after quote removal: one `literal` did not bind has no literal.
         if ctx.d == "posix" and "export" in words:
             consts.update({m.group(1): None for t in words if (m := re.match(r"([A-Za-z_]\w*)\+?=", t))
                            and m.group(1) not in bound})
