@@ -109,8 +109,9 @@ def remote_hosts(common: Path) -> tuple:
     # Any mention in any file git reads, in any syntax (a key after a header, a continued line), counts.
     # `worktreeConfig` adds a private file per worktree, which may name its own push URL. A URL-specific
     # `followRedirects` wins over the `-c http.followRedirects=false` git's network rows require. A bundle
-    # URI, a proxy or a resolve override (in a file or the environment) adds a host besides the remote's.
-    others = r"(?:^|[\s\]])(?:bundleuri|(?:git)?proxy\w*|curloptresolve)\s*=|\[\s*bundle\b"
+    # URI, packfile URIs, a proxy or a resolve override (in a file or the environment) add a host besides
+    # the remote's.
+    others = r"(?:^|[\s\]])(?:bundleuri|uriprotocols|(?:git)?proxy\w*|curloptresolve)\s*=|\[\s*bundle\b"
     rewritten = re.search(r"(?im)insteadof|\[\s*include|worktreeconfig|followredirects|" + others, text) \
         is not None or any(re.search(r"(?im)insteadof|followredirects|\[\s*(include|remote|branch)|" + others, t)
                            for t in git_configs()) \

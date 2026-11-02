@@ -88,7 +88,9 @@ GIT_VERBS = {
     "stash show": ("-pu --stat --patch --name-only --name-status --include-untracked", "read"),
     "worktree list": ("-vz --porcelain --verbose", "read"),
     # Writes of the repository it runs in; a path operand is also a write of that path.
-    "add": ("-Auv --all --update --verbose", "repo"),
+    # No `-A`/`--all`, `stash -u`, or a folder to add: each picks up untracked files, a protected one included
+    # once an edited ignore rule stops hiding it. Only named files, each a write of that path.
+    "add": ("-uv --update --verbose", "stage"),
     "commit": ("-qa -m: -F: --quiet --all --message: --file: --no-edit", "repo"),
     "branch": ("-avrdDmMfql -u: --all --remotes --verbose --list --show-current --delete --move --force --quiet "
                "--contains: --no-contains: --merged --no-merged --sort: --points-at: --set-upstream-to: "
@@ -100,8 +102,7 @@ GIT_VERBS = {
               "--quit --no-verify --message: --file: --stat --no-stat --log --no-log --autostash", "repo"),
     "rebase": ("-q --quiet --continue --abort --skip --quit --onto: --autostash --no-autostash --keep-base "
                "--update-refs", "repo"),
-    # No `-a`/`--all`: it would stash the ignored files the grant is read from.
-    "stash push": ("-qku -m: --message: --keep-index --no-keep-index --include-untracked --quiet --staged", "paths"),
+    "stash push": ("-qk -m: --message: --keep-index --no-keep-index --quiet --staged", "paths"),
     "stash pop": ("-q --index --quiet", "repo"), "stash apply": ("-q --index --quiet", "repo"),
     "stash drop": ("-q --quiet", "repo"),
     "worktree add": ("-qf -b: -B: --quiet --force --detach --no-checkout --checkout --track --no-track --lock "
@@ -307,8 +308,12 @@ def m_git(name, args, ctx):
         return set(), None
     # git's write of the repository it runs in is the granted git verb; `outside` judges its place only.
     out = worktrees(ctx)
-    if kind == "paths":
+    if kind in ("paths", "stage"):
         out |= pathspecs(verb, pos, ctx)
+        folders = any(re.fullmatch(r"\.{1,2}|.*[/\\]\.{0,2}", w.text) for w in pos) \
+            or native(ctx) and any(e[0] == "write" and os.path.isdir(e[1]) for e in out)
+        if kind == "stage" and folders:
+            return top(f"git {verb} of a folder, which stages every untracked file below it"), None
     elif kind == "worktree":
         # git matches a relative `remove` operand as the tail of any registered worktree's path; `C:/x` is
         # relative on POSIX.

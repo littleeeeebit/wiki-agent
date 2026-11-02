@@ -776,6 +776,7 @@
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)",
     "top(a directory change after the first statement)",
+    "top(git add -A: an option the table does not model)",
     "top(git in a repository other than the checkout)",
     "top(git init: a verb the table does not model)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/1258396b-a6e6-4a4f-8ce7-64fb0bc75367/scratchpad/a.txt)"
@@ -914,7 +915,8 @@
     "read",
     "spawn(ruff)",
     "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/tool/test_refactor_run.py)"
    ]
   },
   {
@@ -1494,6 +1496,7 @@
     "read",
     "spawn(python)",
     "spawn(ruff)",
+    "top(git add of a folder, which stages every untracked file below it)",
     "top(git fetch without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
@@ -1799,7 +1802,8 @@
     "spawn(python)",
     "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "top(variable in a write path)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/laya/test_laya.py)"
    ]
   },
   {
@@ -1811,7 +1815,10 @@
     "read",
     "spawn(python)",
     "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.wiki/ratchet.json)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/tool/main/refactor_run.py)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/tool/test_refactor_run.py)"
    ]
   },
   {
@@ -1823,7 +1830,9 @@
     "read",
     "spawn(python)",
     "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/DESIGN.md)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/overview.html)"
    ]
   },
   {
@@ -2106,7 +2115,9 @@
     "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
     "top(method Replace)",
     "top(method WriteAllText)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.wiki/corpus.json)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.wiki/graph.json)"
    ]
   },
   {
@@ -2187,7 +2198,8 @@
    "effects": [
     "read",
     "top(variable as the command name)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/conversation/meta.yaml)"
    ]
   },
   {
@@ -2385,7 +2397,10 @@
    "effects": [
     "read",
     "spawn(omm)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.gitignore)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/conversation/models/constraint.md)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/conversation/models/meta.yaml)"
    ]
   },
   {
@@ -2396,7 +2411,12 @@
     "network(github.com)",
     "read",
     "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/proactive-system/diagram.mmd)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/proactive-system/meta.yaml)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/proactive-system/request-context/description.md)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/proactive-system/request-context/meta.yaml)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/proactive-system/routes/description.md)"
    ]
   },
   {
@@ -2405,7 +2425,9 @@
    "command": "git add -- src/ai_companion_voice_agent/api/routes_proactive.py .omm/overall-architecture/proactive-system/routes/description.md; git commit -m \"refactor: share proactive eligibility wiring\"; git diff --exit-code HEAD; git status --short",
    "effects": [
     "read",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/proactive-system/routes/description.md)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/src/ai_companion_voice_agent/api/routes_proactive.py)"
    ]
   },
   {
@@ -2416,7 +2438,8 @@
     "read",
     "spawn(omm)",
     "top(where-object: a cmdlet the table does not model)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm)"
    ]
   },
   {
@@ -2426,7 +2449,8 @@
    "effects": [
     "read",
     "spawn(omm)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm)"
    ]
   },
   {
@@ -2435,7 +2459,8 @@
    "command": "git add tests/automation/adult-persona-acceptance.test.js; git commit -m \"test: characterize adult account release error handling\"; git status --short",
    "effects": [
     "read",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/tests/automation/adult-persona-acceptance.test.js)"
    ]
   },
   {
@@ -2458,7 +2483,9 @@
     "spawn(omm)",
     "top(git push to anything but a configured remote and a branch)",
     "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/characters)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/memory)"
    ]
   },
   {
@@ -2467,7 +2494,11 @@
    "command": "git diff -- src/ai_companion_voice_agent/api/routes_characters.py | Select-Object -First 100; rg -n 'skip|xfail|^def test_' tests/integration/test_character_routes.py tests/integration/test_character_isolation.py tests/integration/test_rejected_requests_leave_no_trace.py; git add src/ai_companion_voice_agent/api/routes_characters.py src/ai_companion_voice_agent/api/routes_character_catalog.py src/ai_companion_voice_agent/api/character_route_authority.py .omm/overall-architecture/fastapi-api/routes-characters/description.md; git commit -m \"Separate character catalog routes from studio execution\"; git status --short",
    "effects": [
     "read",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/fastapi-api/routes-characters/description.md)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/src/ai_companion_voice_agent/api/character_route_authority.py)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/src/ai_companion_voice_agent/api/routes_character_catalog.py)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/src/ai_companion_voice_agent/api/routes_characters.py)"
    ]
   },
   {
@@ -2477,7 +2508,8 @@
    "effects": [
     "read",
     "top(variable as the command name)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/overall-architecture/conversation/models/meta.yaml)"
    ]
   },
   {
@@ -2507,7 +2539,8 @@
     "network(github.com)",
     "read",
     "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm/state-transitions/diagram.mmd)"
    ]
   },
   {
@@ -2547,7 +2580,8 @@
     "network(github.com)",
     "read",
     "top(git push without `-c http.followRedirects=false` and `--no-recurse-submodules`)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.omm)"
    ]
   },
   {

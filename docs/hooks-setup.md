@@ -132,15 +132,19 @@ builtins, and `tool/guard_git.py` for git and gh. The table holds only:
   `ls-files`, `ls-tree`, `check-ignore`, `merge-base`, `cat-file`, `describe`,
   `blame`, `grep`, `remote -v`, `remote get-url`, `config` that only gets or
   lists, `stash list`/`show`, `worktree list`, and `branch` that only lists);
-  writes of the repository (`add`, `commit -m`/`-F`, `branch`, `checkout`,
-  `switch`, `restore`, `merge`, `rebase` without `-i`/`-x`, `stash` without
-  `-a`, `worktree add`/`remove`/`prune`); and the network (`fetch`, `pull`,
+  writes of the repository (`add` of named files or `-u`, `commit -m`/`-F`,
+  `branch`, `checkout`, `switch`, `restore`, `merge`, `rebase` without
+  `-i`/`-x`, `stash` without `-a`/`-u`, `worktree add`/`remove`/`prune`).
+  `add -A` and a folder to add are `top`, as is `stash -u`: an edited ignore
+  rule may stop hiding a protected file, which they would then pick up as an
+  untracked one. And the network (`fetch`, `pull`,
   and `push` with at most a branch) to a configured remote. A write of the
   repository is a write of the whole worktree root, wherever below it git
   runs. The network verbs must carry `-c http.followRedirects=false` and
   `--no-recurse-submodules`, so a redirect or a submodule's own remote cannot
   pick another host. A configuration that mentions `followRedirects`, a
-  bundle URI, a proxy or `curloptResolve` (or a proxy in the environment)
+  bundle URI, `uriProtocols` (packfile URIs), a proxy or `curloptResolve`
+  (or a proxy in the environment)
   adds a host besides the remote's, so it leaves the remotes unread. A path
   operand of
   `checkout`, `restore` or `stash push` is also a write of that path, and a

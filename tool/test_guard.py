@@ -212,7 +212,7 @@ def test_a_symlink_out_of_the_root_is_outside(tmp_path):
 
 def test_calls_inside_the_grant_pass(repo):
     for command in ("python -m ruff check tool", "npm --prefix web run build", "npx tsc -b",
-                    "git add -A && git commit -qm x && git -c http.followRedirects=false push --no-recurse-submodules "
+                    "git add -u && git commit -qm x && git -c http.followRedirects=false push --no-recurse-submodules "
                     "origin HEAD", "git status --short && git diff --stat",
                     "echo hi > out.txt", "python tool/search \"query\"", "echo x > ../shared/f",
                     "echo hi > /tmp/x.log", "ls ~ && cat /etc/hosts", "find . -name '*.py'"):
@@ -253,7 +253,7 @@ def test_every_ancestor_of_a_protected_path_is_judged_protected_for_every_path_k
 
 
 def test_ordinary_writes_beside_protected_files_stay_allowed(repo):
-    for command in ("printf x > safe/a", "echo x > .wiki-notes.md", "git add -A && git commit -qm x"):
+    for command in ("printf x > safe/a", "echo x > .wiki-notes.md", "git add safe/a && git commit -qm x"):
         assert call(repo, command) is None, command
 
 
@@ -1238,4 +1238,26 @@ def test_a_proxy_in_the_environment_leaves_the_remotes_unread(tmp_path, monkeypa
         monkeypatch.delenv(name, raising=False)
     assert guard_grant.remote_hosts(tmp_path) == (("origin", "github.com"),)
     monkeypatch.setenv("HTTPS_PROXY", "http://unlisted.example")
+    assert guard_grant.remote_hosts(tmp_path) == (("origin", guard_grant.UNREAD),)
+
+
+# -- Follow-up (a), review round 8 ------------------------------------------------
+# An edited ignore rule can stop hiding a protected file; git then stages or stashes it like any other.
+@pytest.mark.parametrize("command", ["git add -A", "git add --all", "git add .", "git add .wiki/", "git add sub/..",
+                                     "git stash push -u", "git stash -u", "git stash --include-untracked"])
+def test_git_never_picks_up_untracked_files_it_was_not_named(command):
+    assert any(e.startswith("top(") for e in effects(command, ctx=POSIX)), command
+
+
+def test_a_named_file_is_staged_as_a_write_of_it(repo):
+    (repo / "notes").mkdir()
+    assert effects("git add -u notes.md", ctx=POSIX) == {"read", "write(/work/repo)", "write(/work/repo/notes.md)"}
+    assert "허가를 정하는 파일" in (call(repo, "git add .wiki/adapter.toml") or "")
+    assert "of a folder" in (call(repo, "git add notes") or "")
+    assert call(repo, "git add notes.md") is None
+
+
+def test_packfile_uris_leave_the_remotes_unread(tmp_path, monkeypatch):
+    (tmp_path / "config").write_text(ORIGIN + "[fetch]\n\turiProtocols = https\n", encoding="utf-8")
+    monkeypatch.setattr(guard_grant, "git_configs", lambda: [])
     assert guard_grant.remote_hosts(tmp_path) == (("origin", guard_grant.UNREAD),)
