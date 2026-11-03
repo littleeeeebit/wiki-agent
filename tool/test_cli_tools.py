@@ -49,11 +49,10 @@ def test_the_hook_puts_an_installed_tool_on_path_and_leaves_text_alone(no_path):
     assert "not on this session's PATH" in notes[0]
     path = f"$env:PATH += ';{exe.parent.as_posix()}'; "
     assert command_repair.repaired(command, "ps")[0] == path + command
-    using = "using namespace System.Text\nusing module X; jq ."   # `using` stays first (R3-1)
-    assert command_repair.repaired(using, "ps")[0] == using.replace("; jq", f";{path} jq")
-    fixed, notes = command_repair.repaired("param($a)\njq .", "ps")
-    assert fixed == "param($a)\njq ." and "Call it by that path" in notes[0], "`param` comes first too"
-    assert command_repair.repaired("[CmdletBinding()] param()\njq .", "ps")[0] == "[CmdletBinding()] param()\njq ."
+    for first in ["# types\nUsing namespace System.Text\njq .", "using namespace A\n# more\nusing namespace B\njq .",
+                  "[OutputType([string])]\nparam()\njq .", "param($a)\njq .", "begin { }\nend { jq . }"]:
+        fixed, notes = command_repair.repaired(first, "ps")   # what must come first stays first (R3-1, R4-1)
+        assert fixed == first and "call it by that path" in notes[0], first
     typed = "[Text.Encoding]::UTF8 | Out-Null; jq ."
     assert command_repair.repaired(typed, "ps")[0] == path + typed, "a type literal is not an attribute"
     assert command_repair.repaired("cat <<'TXT'\njq .x\nTXT")[0] == "cat <<'TXT'\njq .x\nTXT"

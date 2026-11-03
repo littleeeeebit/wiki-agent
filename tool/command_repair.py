@@ -38,7 +38,7 @@ def _pwsh(command: str, dialect: str) -> str:
 # its install folder goes on the end of PATH for this command; when it is not there at all, it is
 # installed in the background. The command itself is never edited, so the shell, not this
 # pattern, decides what is a command: a word it takes wrongly only adds a folder to PATH.
-TOOL = re.compile(r"(?:^|[;&|(\n])\s*(?P<name>fd|jq)(?:\.exe)?(?=[\s;&|)]|$)")
+TOOL = re.compile(r"(?:^|[;&|({\n])\s*(?P<name>fd|jq)(?:\.exe)?(?=[\s;&|)}]|$)")
 
 
 def _tools(command: str, dialect: str) -> tuple[str, list[str]]:
@@ -104,21 +104,19 @@ def repaired(command: str, dialect: str = "posix") -> tuple[str, list[str]]:
     return _prefixed(teed_, path, dialect, notes), notes
 
 
-# PowerShell takes `using` only at the start of a script, and `param(...)` (with its attributes)
-# only before any statement.
-USING = re.compile(r"(?:\s*using\s[^\n;]*(?:;|\n|$))*")
-PARAM = re.compile(r"\s*(?:\[[^\]\n]*\]\s*)*param\s*\(", re.IGNORECASE)
+# PowerShell wants `using`, `param(...)` with its attributes and named blocks before any statement.
+# Placing a prefix after them needs PowerShell's parser (comments, case, nested brackets), so a
+# script that has one anywhere, even in a comment or a string, gets no prefix.
+FIRST = re.compile(r"(?i)\b(?:using|param)\b|^\s*(?:begin|process|end|dynamicparam|clean)\s*\{", re.MULTILINE)
 
 
 def _prefixed(command: str, prefix: str, dialect: str, notes: list[str]) -> str:
-    if not prefix or dialect != "ps":
+    if not prefix or dialect != "ps" or not FIRST.search(command):
         return prefix + command
-    head = USING.match(command).end()
-    if PARAM.match(command, head):
-        notes[:] = [n.replace("this command ran with", "add") + " Call it by that path: a `param` block "
-                    "has to come first, so the hook left PATH alone." if "ran with" in n else n for n in notes]
-        return command
-    return command[:head] + ("\n" if head and command[head - 1] not in "\n;" else "") + prefix + command[head:]
+    notes[:] = [n.replace("; this command ran with", " at").replace("added to it.", "; call it by that "
+                "path: this script's `using`, `param` or named block has to come first, so the hook left "
+                "PATH alone.") if "ran with" in n else n for n in notes]
+    return command
 
 
 def repair(payload: dict, host: str = "claude") -> tuple[dict, list[str]]:
