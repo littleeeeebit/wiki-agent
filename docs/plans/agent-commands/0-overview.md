@@ -65,8 +65,8 @@ Interpretation is not the cost; process creation is.
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
 | 1 | Hook speed, same results | `hook.py` finds the project without `git`; one PreToolUse process runs every check; replay of three weeks of recorded tool calls through old and new gives identical decisions and reasons; latency measured before and after | Done — project lookup agrees on 1,585 folders; replay 0 differ on 5,000 unmanaged and 7,932 app-managed calls; 200-call latency median 1,063 ms → 241 ms, p90 2,255 ms → 503 ms |
-| 2 | Rule changes | Automatic repair for pytest pipes and `powershell`, narrowed rewrite rule, batch `sed -i`, Codex parity | Done — of 3,200 refused calls in three weeks, 881 now run repaired (810 pytest pipes, 71 `powershell`) and 479 pass (400 untracked rewrites, 79 `sed -i` on scratch or batches); every refusal left was already there behind the first; both hosts checked live |
-| 3 | Research rule | `tool/main/recovery.py` reduced to the fourth-occurrence trigger with default limits | Not started |
+| 2 | Rule changes | Automatic repair for pytest pipes and `powershell`, narrowed rewrite rule, batch `sed -i`, Codex parity | Done — of 3,200 refused calls in three weeks, 881 now run repaired (810 pytest pipes, 71 `powershell`) and 475 pass (400 untracked rewrites, 75 `sed -i` on scratch or batches); every refusal left was already there behind the first; both hosts checked live; merged as #284 (968d398) |
+| 3 | Research rule | `tool/main/recovery.py` reduced to the fourth-occurrence trigger with default limits | In progress — `recovery.trigger` fires on the fourth raise of one P0/P1 id (`recurrence`); cycles start with `recovery.SETTINGS` (600 s, 40 calls, 200k tokens), set in the settings window's review part through `/api/recovery/settings` |
 | 4 | Tools and guide | `fd`/`jq` install at setup and on demand, Playwright as the scenario runner, the command guide page | Not started |
 
 Step 1 ships alone so that "results unchanged" stays provable: the later steps

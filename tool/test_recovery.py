@@ -60,39 +60,75 @@ def rnd(n: int, *items, stale=False) -> dict:
 F2 = item("F2", head=OTHER)
 
 
+def raised(*ids_per_round) -> list[dict]:
+    """Counted rounds 1, 2, ... raising the serious finding ids given for each."""
+    return [rnd(n, *(item(fid, "fixed", head=f"[P1] {fid}:1 — x") for fid in ids)) for n, ids in
+            enumerate(ids_per_round, 1)]
+
+
 @pytest.mark.parametrize("rounds, state, expected", [
-    # A-A: the fix said fixed, the next round raises it again.
-    ([rnd(1, item("F1", "fixed")), rnd(2, item("F1"))], {}, [("F1", "repeat", [1, 2])]),
-    # Disagreeing or not reproducing, with evidence, is not a fix.
-    ([rnd(1, item("F1", "disagree")), rnd(2, item("F1"))], {}, []),
-    ([rnd(1, item("F1", "not-reproduced")), rnd(2, item("F1"))], {}, []),
-    # A-B-A: gone for a round that raised something else, then back.
-    ([rnd(1, item("F1", "fixed")), rnd(2, {**F2, "disposition": "fixed"}), rnd(3, item("F1"))], {},
-     [("F1", "oscillation", [1, 2, 3])]),
-    # Distinct findings that keep improving never trigger.
-    ([rnd(1, item("F1", "fixed")), rnd(2, {**F2, "disposition": "fixed"}), rnd(3, item("F3", head="[P1] c:1 — x"))],
-     {}, []),
-    # Two issues repeating at once: both are owed, in the round's order.
-    ([rnd(1, item("F1", "fixed"), {**F2, "disposition": "fixed"}), rnd(2, F2, item("F1"))], {},
-     [("F2", "repeat", [1, 2]), ("F1", "repeat", [1, 2])]),
+    # Three times is still fixing; the fourth raise researches, in whatever rounds it came.
+    (raised(["F1"], ["F1"], ["F1"]), {}, []),
+    (raised(["F1"], ["F1"], ["F1"], ["F1"]), {}, [("F1", "recurrence", [1, 2, 3, 4])]),
+    (raised(["F1"], ["F2"], ["F1"], [], ["F1"], ["F1"]), {}, [("F1", "recurrence", [1, 3, 5, 6])]),
+    # A repeat after a researched fix researches again; `prepared` stops it past `CYCLES`.
+    (raised(["F1"], ["F1"], ["F1"], ["F1"], ["F1"]), {}, [("F1", "recurrence", [1, 2, 3, 4, 5])]),
+    # Only the last round's findings are owed; one raised four times earlier and gone is not.
+    (raised(["F1"], ["F1"], ["F1"], ["F1"], ["F2"]), {}, []),
+    # Two issues at their fourth at once: both are owed, in the round's order.
+    (raised(["F1", "F2"], ["F1", "F2"], ["F1", "F2"], ["F2", "F1"]), {},
+     [("F2", "recurrence", [1, 2, 3, 4]), ("F1", "recurrence", [1, 2, 3, 4])]),
     # P2 is never serious; a finding without an id never matches another.
-    ([rnd(1, item("F1", "fixed", grade="P2")), rnd(2, item("F1", grade="P2"))], {}, []),
-    ([rnd(1, item(None, "fixed")), rnd(2, item(None))], {}, []),
+    ([rnd(n, item("F1", grade="P2")) for n in range(1, 5)], {}, []),
+    ([rnd(n, item(None)) for n in range(1, 5)], {}, []),
     # A ruled issue is the person's call now.
-    ([rnd(1, item("F1", "fixed")), rnd(2, item("F1"))], {"F1": {"phase": "ruled"}}, []),
-    # The round-7 backstop, unidentified findings sharing one issue.
-    ([rnd(n, item(f"F{n}", "fixed")) for n in range(1, 7)] + [rnd(7, item(None))], {},
-     [("unidentified", "backstop", [7])]),
-    ([rnd(n, item(f"F{n}", "fixed")) for n in range(1, 7)] + [rnd(7, item(None))],
-     {"unidentified": {"attempts": [{"status": "fixed"}]}}, []),
+    (raised(["F1"], ["F1"], ["F1"], ["F1"]), {"F1": {"phase": "ruled"}}, []),
 ])
-def test_the_triggers_read_counted_rounds_and_server_ids(rounds, state, expected):
+def test_the_fourth_raise_of_one_serious_id_triggers(rounds, state, expected):
     assert [(t["issue"], t["kind"], t["rounds"]) for t in recovery.trigger(rounds, state)] == expected
 
 
-def test_a_stale_round_is_not_a_round_between():
-    spec = {"rounds": [rnd(1, item("F1", "fixed")), rnd(2, item("F1"), stale=True), rnd(2, item("F1"))]}
-    assert recovery.trigger(loop.counted(spec), {})[0]["kind"] == "repeat"
+def test_a_stale_round_is_not_counted():
+    rounds = raised(["F1"], ["F1"], ["F1"])
+    spec = {"rounds": [*rounds, {**rnd(4, item("F1")), "stale": True}]}
+    assert recovery.trigger(loop.counted(spec), {}) == []
+    spec["rounds"].append(rnd(4, item("F1")))
+    assert recovery.trigger(loop.counted(spec), {})[0]["rounds"] == [1, 2, 3, 4]
+
+
+def test_each_new_cycle_reads_the_settings_unless_a_person_gave_limits(world):
+    fifth = [*FOUR[:3], rnd(4, item("F1", "fixed")), rnd(5, item("F1"))]
+    auto = {**recovery.fresh("F1"), "cycles_started": 1, "phase": "fixed", "limits": dict(LIMITS),
+            "limits_from": "settings"}
+    for name, state, expected in (("auto", auto, {"seconds": 1200, "calls": 80, "tokens": 400_000}),
+                                  ("person", {**auto, "limits_from": "person"}, LIMITS),
+                                  ("legacy", {k: v for k, v in auto.items() if k != "limits_from"}, LIMITS)):
+        lp, spec = correcting(world, f"cycle-{name}", {"F1": state}, rounds=fifth)
+        with patch.object(recovery, "defaults", return_value={"seconds": 1200, "calls": 80, "tokens": 400_000}), \
+                patch.object(recovery, "research", return_value=False) as research:
+            recovery.prepared(lp, spec, Path(spec["worktree"]))
+        got = research.call_args.args[4]
+        assert got["cycles_started"] == 2 and got["limits"] == expected, name
+
+
+def test_a_cycle_claimed_for_unnamed_findings_before_still_resumes_on_them():
+    spec = {"rounds": [rnd(7, item(None, head="[P1] original issue"))],
+            "recovery": {recovery.LEGACY: {**recovery.fresh(recovery.LEGACY), "trigger": {"kind": "backstop", "rounds": [7]},
+                                           "active": {"cycle": 1, "round": 7, "head": rnd(7)["head"]}}}}
+    s = spec["recovery"][recovery.LEGACY]
+    assert "original issue" in recovery.asked(spec, recovery.LEGACY, s)
+    assert recovery.trigger(loop.counted({"rounds": [rnd(n, item(None)) for n in range(1, 6)]}), {}) == []
+
+
+def test_the_settings_give_the_limits_and_take_only_positive_ones():
+    assert recovery.defaults() == {"seconds": 600, "calls": 40, "tokens": 200_000}
+    web = client()
+    assert web.get("/api/recovery/settings").json() == recovery.SETTINGS
+    body = {"research_seconds": 300, "research_calls": 10, "research_tokens": 50_000}
+    assert web.post("/api/recovery/settings", json=body).json() == body
+    assert recovery.defaults() == {"seconds": 300, "calls": 10, "tokens": 50_000}
+    assert web.post("/api/recovery/settings", json={**body, "research_calls": 0}).status_code == 400
+    assert recovery.defaults()["calls"] == 10
 
 
 def test_limits_are_positive_finite_and_never_assumed():
@@ -174,16 +210,16 @@ def test_the_stop_reason_is_the_loop_s():
 # -- the barrier, end to end ------------------------------------------------------------
 
 
-def test_a_repeated_finding_is_researched_and_committed_before_the_fix(world):
+def test_the_fourth_raise_is_researched_with_the_settings_limits_and_committed_before_the_fix(world):
     spec = pr_spec(world, "recur", 7)
     sid, page = spec["id"], "docs/research/review-recur-f1-1.md"
     order = []
-    Reviewer.replies = [denied([FINDING], meta(("loader", "reads its file"))),
-                        denied([FINDING], meta(("loader", "reads its file", "F1"))), allow]
+    again = denied([FINDING], meta(("loader", "reads its file", "F1")))
+    Reviewer.replies = [denied([FINDING], meta(("loader", "reads its file"))), again, again, again, allow]
 
     def research(text, halt):
         order.append("research")
-        assert "Round 2" in text and "Correction then: fixed" in text
+        assert "Round 4" in text and "Correction then: fixed" in text
         return researched()
 
     def recorded(path, halt):
@@ -195,30 +231,20 @@ def test_a_repeated_finding_is_researched_and_committed_before_the_fix(world):
                                               "with test_fix.py at the fix commit."), encoding="utf-8")
         return fixed((FINDING, "fixed"), name="fix-cwd.txt")(path, halt)
 
-    Worker.replies = [fixed((FINDING, "fixed")), recorded]
+    Worker.replies = [fixed((FINDING, "fixed")), fixed((FINDING, "fixed")), fixed((FINDING, "fixed")), recorded]
     Host.replies = [research]
     with patch.object(recovery, "ChatSession", Host):
         loop.kick("proj", sid)
         waited(lambda: not loop._loops)
-        stopped = specs.load("proj", sid)
-        assert stopped["state"] == "멈춤" and stopped["stopped"]["reason"] == recovery.WHY
-        assert stopped["recovery"]["F1"]["phase"] == "limits"
-        assert stopped["recovery"]["F1"]["trigger"]["kind"] == "repeat"
-        assert sum(len(w.heard) for w in Worker.made) == 1, "no correction went out while research is owed"
-        assert not Host.made
-
-        web = client()
-        assert web.post(f"/api/specs/{sid}/resume", json={"limits": {**LIMITS, "tokens": 0}}).status_code == 400
-        web.post(f"/api/specs/{sid}/resume", json={"limits": LIMITS}).raise_for_status()
-        waited(lambda: not loop._loops)
     done = specs.load("proj", sid)
-    assert done["state"] == "머지 가능" and len(done["rounds"]) == 3, done["stopped"]
-    assert order == ["research", "fix"]
+    assert done["state"] == "머지 가능" and len(done["rounds"]) == 5, done["stopped"]
+    assert order == ["research", "fix"], "no person was asked for limits; the fourth fix waited for the page"
     assert Host.made[0].tools == recovery.TOOLS
-    assert "`F1` (repeat, rounds [1, 2]), cycle 1 of 2" in Worker.made[-1].heard[-1]
+    assert "`F1` (recurrence, rounds [1, 2, 3, 4]), cycle 1 of 2" in Worker.made[-1].heard[-1]
     assert page in git(world.origin, "diff", "--name-only", "main", sid).splitlines(), "the page is in the fix PR"
     s = done["recovery"]["F1"]
     assert s["phase"] == "fixed" and s["cycles_started"] == 1 and s["active"] is None
+    assert s["limits"] == recovery.defaults()
     assert s["attempts"][0]["outcome"]["result"] == "cleared" and s["attempts"][0]["page"] == page
     assert s["spent"]["calls"] == 1 and s["spent"]["tokens"] == 15 and not s["spent"]["unknown"]
 
@@ -226,10 +252,12 @@ def test_a_repeated_finding_is_researched_and_committed_before_the_fix(world):
 # -- the stops, against a spec the loop left mid-correction ------------------------------
 
 
+FOUR = [rnd(1, item("F1", "fixed")), rnd(2, item("F1", "fixed")), rnd(3, item("F1", "fixed")), rnd(4, item("F1"))]
+
+
 def correcting(w, name: str, recovery_state: dict, rounds=None) -> tuple[SimpleNamespace, dict]:
     spec = pr_spec(w, name, 7)
-    spec.update(state="고치는 중 R2", recovery=recovery_state,
-                rounds=rounds or [rnd(1, item("F1", "fixed")), rnd(2, item("F1"))])
+    spec.update(state=f"고치는 중 R{len(rounds or FOUR)}", recovery=recovery_state, rounds=rounds or FOUR)
     specs.save(spec)
     return SimpleNamespace(repo="proj", sid=name, halt=threading.Event(), run=None), spec
 
@@ -249,7 +277,7 @@ def test_two_cycles_then_the_person_decides(world):
 
 
 def test_a_cut_turn_s_spend_is_unknown_until_the_person_accepts_it(world):
-    active = {"cycle": 1, "round": 2, "head": rnd(2)["head"], "status": "researching", "inflight": True}
+    active = {"cycle": 1, "round": 4, "head": rnd(4)["head"], "status": "researching", "inflight": True}
     lp, spec = correcting(world, "cut", {"F1": {**recovery.fresh("F1"), "cycles_started": 1, "limits": LIMITS,
                                                 "active": active, "phase": "researching"}})
     got, after = prepared(lp, spec)
@@ -302,27 +330,25 @@ def test_a_good_answer_past_its_spend_keeps_its_page_and_stops_before_the_fix(wo
     assert got is None and s["phase"] == phase and s["active"]["status"] == "researched"
     assert git(Path(spec["worktree"]), "log", "-1", "--format=%s").startswith("docs: research F1"), "the page stays"
     fields = recovery.resumed(after, {**LIMITS, "tokens": 2000} if phase == "budget" else None, "")
-    specs.update("proj", lp.sid, **fields, state="고치는 중 R2")
+    specs.update("proj", lp.sid, **fields, state="고치는 중 R4")
     assert fields["recovery"]["F1"]["phase"] == "fixing"
     got, _ = prepared(lp, specs.load("proj", lp.sid))
     assert [s["issue_id"] for s in got] == ["F1"] and len(Host.made) == 1, "the page is not researched again"
 
 
 def test_every_owed_issue_is_researched_before_the_one_fix(world):
-    rounds = [rnd(1, item("F1", "fixed"), {**F2, "disposition": "fixed"}), rnd(2, item("F1"), F2)]
+    both = (item("F1", "fixed"), {**F2, "disposition": "fixed"})
+    rounds = [rnd(1, *both), rnd(2, *both), rnd(3, *both), rnd(4, item("F1"), F2)]
     lp, spec = correcting(world, "two", {}, rounds=rounds)
-    got, after = prepared(lp, spec)
-    assert got is None and {k: s["phase"] for k, s in after["recovery"].items()} == {"F1": "limits", "F2": "limits"}
-    assert after["stopped"]["detail"].startswith("F1, F2 · "), "one stop names both"
-    specs.update("proj", "two", **recovery.resumed(after, LIMITS, ""), state="고치는 중 R2")
     Host.replies = [researched(), researched()]
-    got, after = prepared(lp, specs.load("proj", "two"))
+    got, after = prepared(lp, spec)
     assert [s["issue_id"] for s in got] == ["F1", "F2"] and len(Host.made) == 2
+    assert all(s["limits"] == recovery.defaults() for s in got), "each issue starts with the settings' limits"
     path = Path(spec["worktree"])
     assert git(path, "log", "-2", "--format=%s").splitlines() == [
         "docs: research F2 before fixing it again (cycle 1)", "docs: research F1 before fixing it again (cycle 1)"]
     text = recovery.briefed(after, got)
-    assert "`F1` (repeat" in text and "`F2` (repeat" in text
+    assert "`F1` (recurrence" in text and "`F2` (recurrence" in text
     state = recovery.finished(after, got, path)
     assert all(state[k]["active"] is None and state[k]["attempts"][-1]["status"] == "fixed" for k in ("F1", "F2"))
 

@@ -16,8 +16,9 @@ Planner A researches and creates only a new plan folder. The implementation mode
 revises documents; an independent reviewer checks them. Planning and recovery
 require submitted time/call/token limits before starting.
 
-Recurring P0/P1 or oscillation requires research before the next fix; round 7 is
-the backstop. Allow two research-and-fix cycles per issue, then pause. Research and
+A P0/P1 finding raised a fourth time requires research before the next fix
+(since 2026-11-03; it replaced the repeat, oscillation and round-7 triggers).
+Allow two research-and-fix cycles per issue, then pause. Research and
 fix share one PR. Existing host web tools provide research; missing capability
 stops visibly.
 

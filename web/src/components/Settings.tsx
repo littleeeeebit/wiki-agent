@@ -27,6 +27,8 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
   const [savedSurvey, setSavedSurvey] = useState<SurveySettings | null>(null)
   const [structure, setStructure] = useState<api.StructureSettings | null>(null)
   const [savedStructure, setSavedStructure] = useState<api.StructureSettings | null>(null)
+  const [research, setResearch] = useState<api.ResearchSettings | null>(null)
+  const [savedResearch, setSavedResearch] = useState<api.ResearchSettings | null>(null)
   const [hub, setHub] = useState<Hub | null>(null)
   const [rounds, setRounds] = useState(0)
   const [seats, setSeats] = useState(0)
@@ -44,6 +46,9 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
       .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
     api.getStructureSettings()
       .then((s) => { setStructure(s); setSavedStructure(s) })
+      .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
+    api.getResearchSettings()
+      .then((s) => { setResearch(s); setSavedResearch(s) })
       .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
   }, [])
 
@@ -70,9 +75,10 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
   const loopEdited = !!loop && (rounds !== loop.rounds || seats !== loop.concurrent)
   const surveyEdited = JSON.stringify(survey) !== JSON.stringify(savedSurvey)
   const structureEdited = JSON.stringify(structure) !== JSON.stringify(savedStructure)
+  const researchEdited = JSON.stringify(research) !== JSON.stringify(savedResearch)
   // Jev's part keeps its own form and hands up how to save it while it differs from the server's.
   const [jevSave, setJevSave] = useState<(() => Promise<void>) | null>(null)
-  const edited = loopEdited || surveyEdited || structureEdited || !!jevSave
+  const edited = loopEdited || surveyEdited || structureEdited || researchEdited || !!jevSave
   // One [저장] for the window: each part that differs goes to its own endpoint.
   const save = () => act('save', async () => {
     if (survey && surveyEdited) {
@@ -83,6 +89,10 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
     if (structure && structureEdited) {
       const saved = await api.setStructureSettings(structure)
       setStructure(saved); setSavedStructure(saved)
+    }
+    if (research && researchEdited) {
+      const saved = await api.setResearchSettings(research)
+      setResearch(saved); setSavedResearch(saved)
     }
     await jevSave?.()
   })
@@ -190,6 +200,21 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
             </span>
           </Row>
           </>)}
+          {research && (
+          <Row label="반복 발견 리서치 한도" note="같은 P0/P1 발견이 4번째 나오면 웹으로 조사한다 · 분 · 호출 · 토큰">
+            <span className="flex gap-1.5">
+              <input type="number" min={1} step="any" aria-label="리서치 분" className={`${field} w-14`}
+                value={research.research_seconds / 60}
+                onChange={(e) => setResearch({ ...research, research_seconds: Math.round(Number(e.target.value) * 60) })} />
+              <input type="number" min={1} aria-label="리서치 호출" className={`${field} w-14`}
+                value={research.research_calls}
+                onChange={(e) => setResearch({ ...research, research_calls: Number(e.target.value) })} />
+              <input type="number" min={1} step={10000} aria-label="리서치 토큰" className={`${field} w-24`}
+                value={research.research_tokens}
+                onChange={(e) => setResearch({ ...research, research_tokens: Number(e.target.value) })} />
+            </span>
+          </Row>
+          )}
         </Part>
 
         {fault && <p role="alert" className="whitespace-pre-wrap text-destructive">{fault}</p>}

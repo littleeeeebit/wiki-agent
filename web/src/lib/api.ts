@@ -527,7 +527,7 @@ export type Recovery = {
   issue_id: string
   /** required · limits · researching · fixing · fixed · exhausted · ruled, or why research stopped. */
   phase: string
-  trigger: { issue: string; kind: 'repeat' | 'oscillation' | 'backstop'; rounds: number[]; evidence?: string[] } | null
+  trigger: { issue: string; kind: 'recurrence' | 'repeat' | 'oscillation' | 'backstop'; rounds: number[]; evidence?: string[] } | null
   cycles_started: number
   limits: ResearchLimits | null
   spent: { seconds: number; calls: number; tokens: number; unknown: boolean; accepted?: boolean }
@@ -824,6 +824,13 @@ export const getStructureSettings = () =>
   get('/api/architecture/settings').then((r) => json<StructureSettings>(r, '구조 문서 새로 고침 설정'))
 export const setStructureSettings = (body: StructureSettings) =>
   post('/api/architecture/settings', body).then((r) => json<StructureSettings>(r, '구조 문서 새로 고침 설정'))
+
+/** The limits a review research cycle starts with (`recovery.SETTINGS`). */
+export type ResearchSettings = { research_seconds: number; research_calls: number; research_tokens: number }
+export const getResearchSettings = () =>
+  get('/api/recovery/settings').then((r) => json<ResearchSettings>(r, '반복 발견 리서치 한도'))
+export const setResearchSettings = (body: ResearchSettings) =>
+  post('/api/recovery/settings', body).then((r) => json<ResearchSettings>(r, '반복 발견 리서치 한도'))
 
 /** What the server changed on its own: a spec moved, it started a turn, or a
  *  repository's connection changed. */
