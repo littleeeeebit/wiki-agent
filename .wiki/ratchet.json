@@ -13,8 +13,8 @@
     },
     "tool/apply.py": {
       "dup": 6,
-      "lines": 873,
-      "reason": "RETIRED_DENIES: an install that carries a deny a page dropped (sed -i) has it removed"
+      "lines": 884,
+      "reason": "RETIRED_DENIES and retire_denies: a checkout's settings lose a deny a page dropped (sed -i) through apply and the global install alike; user-level files keep theirs"
     },
     "tool/census.py": {
       "dup": 19,
@@ -38,8 +38,8 @@
     },
     "tool/edit_as_diff.py": {
       "dup": 12,
-      "lines": 321,
-      "reason": "Narrowed to git-tracked files (tracked) and took sed -i over from enforce.deny (in_place counts its files, follows cd, one assignment and line continuations). Before that: baseline at adoption"
+      "lines": 340,
+      "reason": "Narrowed to git-tracked files (tracked, literal pathspecs) and took sed -i over from enforce.deny (in_place counts its files, follows cd, one assignment and line continuations, skips data heredocs via blank_data_heredocs). Before that: baseline at adoption"
     },
     "tool/english_progress.py": {
       "dup": 17,
@@ -213,8 +213,8 @@
     },
     "tool/test_edit_as_diff.py": {
       "dup": 11,
-      "lines": 232,
-      "reason": "A git-tracking fixture, sed -i batch and single-file cases, untracked Write. Before that: baseline at adoption"
+      "lines": 249,
+      "reason": "A git-tracking fixture, sed -i batch and single-file cases, untracked Write, literal pathspecs, data heredocs. Before that: baseline at adoption"
     },
     "tool/test_jev_contract.py": {
       "dup": 23,

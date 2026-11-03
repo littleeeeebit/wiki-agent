@@ -114,8 +114,19 @@ def strip_data_heredocs(command: str) -> str:
     is data and must not be. Redirection on the command line itself sits
     outside the body either way, so `cat > file <<'PY'` is still caught.
     """
+    return _data_heredocs(command, lambda body: "")
+
+
+def blank_data_heredocs(command: str) -> str:
+    """`strip_data_heredocs` that keeps every offset: the body's characters become spaces, its newlines stay."""
+    return _data_heredocs(command, lambda body: re.sub(r"[^\n]", " ", body))
+
+
+def _data_heredocs(command: str, put) -> str:
     out, cursor = [], 0
     for opener in HEREDOC.finditer(command):
+        if opener.start() < cursor:
+            continue  # inside a body already put aside
         line_start = command.rfind("\n", 0, opener.start()) + 1
         receiver = command[line_start : opener.start()]
         out.append(command[cursor : opener.end()])
@@ -128,6 +139,7 @@ def strip_data_heredocs(command: str) -> str:
         )
         if closing is None:
             continue  # no closing line found: judge nothing
+        out.append(put(command[cursor : cursor + closing.end()]))
         cursor += closing.end()
     out.append(command[cursor:])
     return "".join(out)
@@ -179,7 +191,8 @@ def in_place(command: str, root: Path) -> list[str]:
 
     # A continued line is one stage; `F=path ... sed -i ... "$F"` and a `cd` before it name the
     # file as surely as a literal does. ponytail: the last plain assignment of a name wins.
-    command = command.replace("\\\n", "  ")
+    # A data heredoc's body is text, not commands, as for `targets`.
+    command = blank_data_heredocs(command.replace("\\\n", "  "))
     names = dict(re.findall(r"(?:^|[\s;&(])([A-Za-z_]\w*)=(\"[^\"$]*\"|'[^']*'|[^\s;&|$\"'`]+)", command))
     names = {k: v.strip("\"'") for k, v in names.items()}
     found, start, here = [], 0, root
@@ -192,14 +205,19 @@ def in_place(command: str, root: Path) -> list[str]:
         while words and re.fullmatch(r"[A-Za-z_]\w*=.*", words[0]):
             words.pop(0)
         if words[:1] == ["cd"] and len(words) > 1:
-            here = here / re.sub(r"^/([A-Za-z])/", r"\1:/", words[1])  # Git Bash's `/c/` is `C:/`
+            moved = here / re.sub(r"^/([A-Za-z])/", r"\1:/", words[1])  # Git Bash's `/c/` is `C:/`
+            # After `||`, and after a `cd` that will fail, the next command runs where it was.
+            if (mark is None or mark[0] != "||") and moved.is_dir():
+                here = moved
             continue
         if not words or words[0].replace("\\", "/").rsplit("/", 1)[-1] not in {"sed", "sed.exe"}:
             continue
         files, script, inplace, args = [], False, False, iter(words[1:])
         for word in args:
             if word == "--":
-                files += list(args)
+                rest = list(args)
+                files += rest[0 if script else 1:]  # without `-e`/`-f` the first one is still the script
+                script = True
             elif word.startswith("--"):
                 inplace |= word.startswith("--in-place")
                 script |= word.startswith(("--expression", "--file"))
@@ -234,7 +252,8 @@ def tracked(paths: list[str], root: Path) -> list[str]:
     for path in paths:
         candidate = Path(path) if os.path.isabs(path) else root / path
         try:
-            listed = subprocess.run(["git", "ls-files", "--error-unmatch", "--", candidate.name],
+            # A literal pathspec: `file[1].txt` must not answer for a tracked `file1.txt`.
+            listed = subprocess.run(["git", "--literal-pathspecs", "ls-files", "--error-unmatch", "--", candidate.name],
                                     cwd=candidate.parent, capture_output=True, timeout=5, **background_options())
         except (OSError, subprocess.SubprocessError):
             continue

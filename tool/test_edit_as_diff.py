@@ -120,6 +120,9 @@ def test_what_it_must_not_block(repo: Path, command: str) -> None:
     "sed -Ei 's/x/y/' src/existing.py",
     'F=src/existing.py; sed -i "s/x/y/" "$F"; git checkout -- $F',
     "sed -i \\\n  's/x/y/' \\\n  README.md",
+    "sed -i -- 's/x/y/' README.md src/a.py",  # the script after `--` is not a file
+    "cd .no_such_dir || sed -i 's/x/y/' README.md",  # a failed cd leaves it here
+    "cd src || sed -i 's/x/y/' README.md",  # `||` runs it only where it was
 ])
 def test_sed_in_place_on_one_or_two_tracked_files_is_refused(repo: Path, command: str) -> None:
     answer = verdict(bash(command), repo)
@@ -129,6 +132,20 @@ def test_sed_in_place_on_one_or_two_tracked_files_is_refused(repo: Path, command
 def test_write_onto_an_untracked_file_passes(repo: Path) -> None:
     payload = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "run.log"), "content": "x"}}
     assert verdict(payload, repo) is None
+    # A pathspec is read literally: `file[1].py` is not the tracked `file1.py`.
+    (repo / "src" / "file1.py").write_text("x\n", encoding="utf-8")
+    (repo / "src" / "file[1].py").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "add", "src/file1.py"], cwd=repo, check=True)
+    payload["tool_input"]["file_path"] = "src/file[1].py"
+    assert verdict(payload, repo) is None
+
+
+def test_sed_quoted_in_a_data_heredoc_is_text(repo: Path) -> None:
+    for command in ("cat <<'TXT'\nsed -i 's/x/y/' README.md\nTXT",
+                    "git commit -F - <<'MSG'\nsed -i 's/x/y/' README.md\nMSG"):
+        assert verdict(bash(command), repo) is None, command
+    code = "bash <<'SH'\nsed -i 's/x/y/' README.md\nSH"
+    assert verdict(bash(code), repo) is not None, "인터프리터가 받는 본문은 명령이다"
 
 
 def test_a_commit_message_that_quotes_a_command_is_not_a_command(repo: Path) -> None:

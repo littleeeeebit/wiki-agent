@@ -54,8 +54,11 @@ def _tee(stage: str) -> bool:
 
 
 def _blank(command: str) -> str:
-    """Quoted operators blanked, same length, so patterns and messages cannot introduce pipelines."""
-    return _QUOTED.sub(lambda match: re.sub(r"[|;&\n]", " ", match[0]), command)
+    """Quoted operators and data heredoc bodies blanked, same length, so patterns, messages and
+    documents cannot introduce pipelines."""
+    from edit_as_diff import blank_data_heredocs
+
+    return _QUOTED.sub(lambda match: re.sub(r"[|;&\n]", " ", match[0]), blank_data_heredocs(command))
 
 
 def held_back(command: str) -> str:

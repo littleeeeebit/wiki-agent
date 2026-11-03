@@ -65,12 +65,19 @@ def test_an_empty_settings_file_gets_everything():
     assert len(changes) == 4, changes
 
 
-def test_a_deny_no_page_declares_any_more_leaves_the_install():
-    old = {"permissions": {"deny": ["Bash(sed -i*)", "Bash(mine*)"]}}
-    changes = merge(old, ["Bash(git reset --hard*)"], HOOK, SCRIPTS)
-    assert old["permissions"]["deny"] == ["Bash(mine*)", "Bash(git reset --hard*)"]
-    assert "deny 제거: Bash(sed -i*)" in changes
-    assert merge(old, ["Bash(git reset --hard*)"], HOOK, SCRIPTS) == []
+def test_a_deny_no_page_declares_any_more_leaves_checkouts_but_never_the_users_own_settings():
+    from apply import configure, keep_denies
+
+    def old():
+        return {"permissions": {"deny": ["Bash(sed -i*)", "Bash(mine*)"]}}
+
+    for settings, changes in ((s := old(), configure(s, Path("C:/proj"), None, PY, "claude")),
+                              (t := old(), keep_denies(t))):  # `apply` and the global install's checkouts
+        assert "Bash(sed -i*)" not in settings["permissions"]["deny"], changes
+        assert "Bash(mine*)" in settings["permissions"]["deny"] and "deny 제거: Bash(sed -i*)" in changes
+    user = old()
+    configure(user, None, None, PY, "claude")
+    assert user["permissions"]["deny"] == old()["permissions"]["deny"], "사용자 설정의 deny 는 그 사람의 것이다"
 
 
 def test_lived_in_settings_keep_everything_and_a_second_run_changes_nothing():

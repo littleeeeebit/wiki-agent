@@ -245,6 +245,11 @@ def test_a_test_run_whose_output_stays_readable_passes(command):
     ('git commit -m "x; powershell -c 1 | pytest | tail"', None),
     ("echo powershell -c 1", None),
     ("pytest -q $(ls tool/test_a*.py | sort -u)", None),
+    ("Write-Output '(powershell -c 1)'", None),
+    ("git commit -m 'fix (powershell -c 1)'", None),
+    ("echo '$(powershell -c 1)'", None),
+    ("cat <<'TXT'\npowershell -c 1\npytest | tail -1\nTXT", None),
+    ("(powershell -c 1)", "(pwsh -NoProfile -c 1)"),
     ("python -m pip install pytest | tail -3", None),
 ])
 def test_a_command_the_hook_can_fix_is_fixed_not_refused(command, expected, monkeypatch):

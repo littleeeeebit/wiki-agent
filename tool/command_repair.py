@@ -10,18 +10,22 @@ import tempfile
 import time
 from pathlib import Path
 
-from pytest_output import _blank, teed
+from pytest_output import _QUOTED, teed
 
 # `powershell` is Windows PowerShell 5.1, another product than `pwsh` 7; nothing here needs it
 # (`operator/run-inside-this-session`). Only a command word is renamed: the start, or after an
-# operator or `$(`, found in the copy with quoted operators blanked, so a message mentioning it
-# keeps its text. ponytail: a heredoc line that starts with it is renamed too; quote it if that matters.
+# operator or `(`, found in a copy where quoted text and data heredoc bodies are all blanks, so a
+# message or a document mentioning it keeps its text. One inside `bash -c "..."` is left to the
+# pages' deny rules, which read nested commands.
 POWERSHELL = re.compile(r"(?i)(^|[;&|(\n]\s*)powershell(?:\.exe)?(?=\s|$)")
 NO_PROFILE = re.compile(r"(?i)\s+-(?:NoProfile|nop)\b")
 
 
 def _pwsh(command: str) -> str:
-    bare, out, cursor = _blank(command), [], 0
+    from edit_as_diff import blank_data_heredocs
+
+    bare = _QUOTED.sub(lambda m: " " * len(m[0]), blank_data_heredocs(command))
+    out, cursor = [], 0
     for match in POWERSHELL.finditer(bare):
         out.append(command[cursor:match.end(1)])
         cursor = match.end()
