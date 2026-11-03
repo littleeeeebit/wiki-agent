@@ -522,7 +522,10 @@ function VerificationPanel({ spec }: { spec: Spec }) {
 const RECOVERY = '반복 발견 재조사'
 /** The recovery phases a `[계속]` acts on; the others run or wait for the next round. */
 const STOPPED = ['limits', 'budget', 'deadline', 'unknown', 'exhausted', 'host', 'web_unavailable', 'format', 'page']
-const KIND: Record<string, string> = { repeat: '고쳤다고 한 뒤 같은 발견', oscillation: '사라졌다 다시 나온 발견', backstop: '7라운드 이후 거절' }
+// `recurrence` since 2026-11-03; the other kinds stay readable on specs recorded before it.
+const KIND: Record<string, string> = {
+  recurrence: '같은 발견이 4번째', repeat: '고쳤다고 한 뒤 같은 발견', oscillation: '사라졌다 다시 나온 발견', backstop: '7라운드 이후 거절',
+}
 const PHASE: Record<string, string> = {
   required: '리서치 필요', limits: '한도 입력 대기', researching: '리서치 중', fixing: '리서치 반영 수정 중', fixed: '다음 라운드 대기',
   exhausted: '두 번 뒤에도 반복 — 결정 대기', ruled: '사람이 정함', budget: '한도 소진', deadline: '시간 한도', unknown: '사용량 모름',

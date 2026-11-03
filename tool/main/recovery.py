@@ -1,18 +1,18 @@
 """recovery — research before another nonconverging fix
-(`docs/plans/reliability/8-recovery.md`).
+(`docs/plans/reliability/8-recovery.md`, `docs/plans/agent-commands/0-overview.md`).
 
-A refused review that repeats a serious finding the last fix said it fixed
-(A-A), brings one back after a round without it (A-B-A), or refuses at round
-`BACKSTOP` or later, requires research before the next correction turn. The
+A refused review that raises the same P0/P1 finding id for the `FOURTH` time
+in a pull request requires research before the next correction turn. The
 barrier is `loop.corrected`: it asks `prepared` before any correction goes
 out, and nothing sends an ordinary fix while an issue's research is owed.
 
 The research is one bounded read-only turn with web tools, on the work cell's
-model, within limits the person gives for that issue (positive and finite;
-none are assumed). Its page is written and committed in the task's worktree
-before the fix, as a draft; the fix records the observed result on it, so the
-review reads both in one pull request. Two cycles per issue, then the loop
-stops with the evidence and the options.
+model, within the settings' limits (`SETTINGS`: 10 minutes, 40 calls, 200k
+tokens unless changed). Its page is written and committed in the task's
+worktree before the fix, as a draft; the fix records the observed result on
+it, so the review reads both in one pull request. A repeat after a researched
+fix researches once more; `CYCLES` cycles per issue, then the loop stops with
+the evidence and the options.
 
 State lives in the spec's additive `recovery` field, one entry per issue id,
 read and written only through `specs` under `specs._files`. A restart keeps
@@ -31,6 +31,8 @@ from pathlib import Path
 
 from agent import ChatSession
 from common.budget import Budget, Cancelled, Exhausted
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from . import planning, specs
 from .query import ROOT
@@ -38,9 +40,10 @@ from .query import ROOT
 PROMPT = (ROOT / "tool/prompts/recovery-research.md").read_text(encoding="utf-8")
 TOOLS = "Read,Glob,Grep,WebSearch,WebFetch"   # read-only: the research edits nothing
 SERIOUS = ("P0", "P1")
-BACKSTOP = 7     # a refusal at this round or later researches before fixing again
+FOURTH = 4       # the round that raises one serious finding id this many times researches before fixing
 CYCLES = 2       # research-and-fix cycles per issue, then a person decides
-UNNAMED = "unidentified"   # serious findings with no server id share one backstop issue
+# The research limits a cycle starts with, beside the loop's settings in `raw/chat/main.json`.
+SETTINGS = {"research_seconds": 600, "research_calls": 40, "research_tokens": 200_000}
 PENDING = "pending — the fix records what it observed here, with the tests and the commit."
 LISTS = ("failed_fixes", "counterevidence", "alternatives")
 TEXTS = ("problem", "hypothesis", "theory", "applicability", "experiment", "limits")
@@ -53,49 +56,68 @@ def serious(record: dict) -> list[dict]:
     return [f for f in record.get("items") or [] if f["grade"] in SERIOUS]
 
 
-def _fixed(record: dict, fid: str) -> bool:
-    """The round raised `fid` and its correction said it was fixed. A finding
-    disagreed with or not reproduced, with evidence, was not fixed."""
-
-    return any(f.get("id") == fid and f.get("disposition") == "fixed" for f in serious(record))
-
-
 def trigger(rounds: list[dict], state: dict) -> list[dict]:
     """Every issue the last counted round requires research for, in the
-    round's order. `rounds` are the counted rounds; the last is the refusal
-    about to be corrected. Stale rounds never reach here, P2 is never
-    serious, and a finding without a validated id never matches another."""
+    round's order: a serious finding id it raises for the `FOURTH` time or
+    later. `rounds` are the counted rounds; the last is the refusal about to
+    be corrected. Stale rounds never reach here, P2 is never serious, and a
+    finding without a validated id never matches another."""
 
-    last = rounds[-1]
-    n = last["n"]
     ruled = {k for k, s in state.items() if s.get("phase") == "ruled"}
     out: dict[str, dict] = {}
-    for f in serious(last):
+    for f in serious(rounds[-1]):
         fid = f.get("id")
         if not fid or fid in ruled or fid in out:
             continue
-        if len(rounds) >= 2 and _fixed(rounds[-2], fid):
-            out[fid] = {"issue": fid, "kind": "repeat", "rounds": [rounds[-2]["n"], n],
-                        "heads": [rounds[-2]["head"], last["head"]]}
-        elif (len(rounds) >= 3 and _fixed(rounds[-3], fid)
-                and not any(g.get("id") == fid for g in rounds[-2].get("items") or [])
-                and any(g.get("id") != fid for g in serious(rounds[-2]))):
-            out[fid] = {"issue": fid, "kind": "oscillation", "rounds": [r["n"] for r in rounds[-3:]],
-                        "heads": [r["head"] for r in rounds[-3:]]}
-    if n >= BACKSTOP:
-        for f in serious(last):
-            key = f.get("id") or UNNAMED
-            done = any(a.get("status") == "fixed" for a in (state.get(key) or {}).get("attempts", []))
-            if key not in ruled and key not in out and not done:
-                out[key] = {"issue": key, "kind": "backstop", "rounds": [n], "heads": [last["head"]]}
+        seen = [r for r in rounds if any(g.get("id") == fid for g in serious(r))]
+        if len(seen) >= FOURTH:
+            out[fid] = {"issue": fid, "kind": "recurrence", "rounds": [r["n"] for r in seen],
+                        "heads": [r["head"] for r in seen]}
     return list(out.values())
+
+
+def defaults() -> dict:
+    """The research limits a new cycle starts with, from the settings."""
+    from . import loop   # `loop` imports this module lazily
+
+    saved = loop.settings(SETTINGS)
+    return {k: saved[f"research_{k}"] for k in ("seconds", "calls", "tokens")}
+
+
+router = APIRouter()
+
+
+class Settings(BaseModel):
+    research_seconds: int
+    research_calls: int
+    research_tokens: int
+
+
+@router.get("/api/recovery/settings")
+def get_settings() -> dict:
+    from . import loop
+
+    return loop.settings(SETTINGS)
+
+
+@router.post("/api/recovery/settings")
+def set_settings(body: Settings) -> dict:
+    from . import loop
+
+    try:
+        given = limited({"seconds": body.research_seconds, "calls": body.research_calls,
+                         "tokens": body.research_tokens})
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    loop.store(**{f"research_{k}": int(v) for k, v in given.items()})
+    return loop.settings(SETTINGS)
 
 
 def observed(spec: dict, last: dict) -> dict | None:
     """The recovery state with each researched fix's outcome closed by `last`,
     the first counted round after it; `None` when nothing changed."""
 
-    raised = {f.get("id") or UNNAMED for f in serious(last)}
+    raised = {f.get("id") for f in serious(last)}
     state, changed = {}, False
     for key, s in (spec.get("recovery") or {}).items():
         attempts = []
@@ -191,7 +213,7 @@ def prepared(lp, spec: dict, path: Path) -> list[dict] | None:
     for k in new:
         s = state[k] = state.get(k) or fresh(k)
         s["trigger"] = {**owed[k], "evidence": [f"[{f['grade']}] {f['head']}" for f in serious(record)
-                                                if (f.get("id") or UNNAMED) == k]}
+                                                if f.get("id") == k]}
     spent = {k: state[k] for k in new if state[k]["cycles_started"] >= CYCLES}
     if spent:
         halt(lp, spent, "exhausted", f"리서치 {CYCLES}번 뒤에도 같은 발견으로 거절됐다 (라운드 {record['n']}). "
@@ -199,8 +221,8 @@ def prepared(lp, spec: dict, path: Path) -> list[dict] | None:
         return None
     missing = {}
     for k in new:
-        try:
-            state[k]["limits"] = limited(state[k]["limits"])
+        try:   # a person's limits from an earlier `[계속]` stand; otherwise the settings'
+            state[k]["limits"] = limited(state[k]["limits"] or defaults())
         except ValueError as exc:
             missing[k], why = state[k], exc
     if missing:
@@ -250,7 +272,7 @@ def asked(spec: dict, key: str, s: dict) -> str:
              f"cycle {s['active']['cycle']} of {CYCLES}.", "", "## The finding as the reviews raised it", ""]
     for r in rounds:
         for f in r.get("items") or []:
-            if (f.get("id") or UNNAMED) == key and f["grade"] in SERIOUS:
+            if f.get("id") == key and f["grade"] in SERIOUS:
                 lines += [f"Round {r['n']} at `{r['head'][:7]}`: {f['head']}", f.get("body") or "",
                           f"Correction then: {f.get('disposition') or 'none yet'}", ""]
     earlier = [a for a in s.get("attempts", []) if a.get("page")]

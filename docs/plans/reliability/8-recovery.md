@@ -168,8 +168,17 @@ write lands inside its artifact root.
 
 - `tool/main/recovery.py` holds the trigger, the barrier and the research turn.
   State is the spec's additive `recovery` field, one entry per issue id, written
-  under `specs._files`. Findings without a server id share the backstop issue
-  `unidentified`; they never match each other for A-A or A-B-A.
+  under `specs._files`.
+- Since 2026-11-03 (`docs/plans/agent-commands/0-overview.md` step 3), one rule
+  replaces the A-A, A-B-A and round-7 triggers. The trigger fires on a P0/P1
+  finding id that a pull request raises for the fourth time (`recovery.FOURTH`,
+  kind `recurrence`). A cycle starts with the settings' limits
+  (`recovery.SETTINGS`, `/api/recovery/settings`: 600 seconds, 40 calls,
+  200,000 tokens), so no person is asked first.
+
+  A finding without a server id never matches another and is never researched.
+  Specs recorded before then keep their old kinds, and the screen still names
+  them.
 - The barrier is code, not a Jev candidate list. `loop.corrected` asks
   `recovery.prepared` before `decisions.fix_turn`, and `prepared` researches
   every issue the round owes, one page each, before the one correction turn.
@@ -182,8 +191,8 @@ write lands inside its artifact root.
   Codex's web search on. PR 7's planner uses the same tool list and gets the
   same boundary. `planning.NAME` takes `research-<issue>-<cycle>.md`, so the
   plan reviser can record a result on its page.
-- Missing limits stop with `반복 발견 재조사`; `[계속]` takes `limits`
-  (`POST /api/specs/{id}/resume`). The same stop covers spent limits, a deadline,
+- A stop with `반복 발견 재조사` takes new `limits` on `[계속]`
+  (`POST /api/specs/{id}/resume`). That stop covers spent limits, a deadline,
   an unknown spend (`unknown` replaces `budget_unknown`), missing web tools, a
   malformed answer after one retry, a page that could not be committed, and two
   exhausted cycles, which resume only with a note that becomes a ruling.
