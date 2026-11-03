@@ -387,6 +387,10 @@ def install_global(choice, check, projects, trust):
                 if untrusted:
                     broken.append(f"{path.parent}: Codex 신뢰 대기 {len(untrusted)}개. "
                                   "`--trust-codex` 로 신뢰하거나 Codex /hooks 에서 검토하세요")
+    import cli_tools   # `fd` and `jq`, which `operator/command-guide` sends the agent to; reported, never fatal
+
+    for line in cli_tools.install(check):
+        print(line)
     # A named project has to come out injected. The current folder is only
     # looked at: it may be a checkout that never attached the wiki.
     for project in projects or [Path.cwd()]:

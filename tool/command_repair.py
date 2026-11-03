@@ -34,6 +34,35 @@ def _pwsh(command: str, dialect: str) -> str:
     return "".join(out) + command[cursor:]
 
 
+# `fd` or `jq` as a command word (`cli_tools`): run from its install folder when this session's PATH
+# misses it, or installed in the background when it is not there at all.
+TOOL = re.compile(r"(^|[;&|(\n]\s*)(fd|jq)(?:\.exe)?(?=\s|$)")
+
+
+def _tools(command: str, dialect: str) -> tuple[str, list[str]]:
+    import shutil
+
+    import cli_tools
+    from edit_as_diff import blank_data_heredocs
+
+    text = blank_data_heredocs(command) if dialect == "posix" else command   # a document naming one is text
+    bare = _QUOTED[dialect].sub(lambda m: " " * len(m[0]), text)
+    out, cursor, notes = [], 0, []
+    for match in TOOL.finditer(bare):
+        name = match[2]
+        if shutil.which(name):
+            continue
+        if path := cli_tools.found(name):
+            word = path if " " not in path else f'"{path}"' if dialect == "posix" else f'& "{path}"'
+            out += [command[cursor:match.start(2)], word]
+            cursor = match.end()
+            notes.append(f"`{name}` is installed but not on this session's PATH; it ran from {path}.")
+        elif cli_tools.started(name):
+            notes.append(f"`{name}` is not installed; it is being installed in the background (a few "
+                         "minutes). Until then use `rg --files` to list files or Python's `json` for JSON.")
+    return "".join(out) + command[cursor:], list(dict.fromkeys(notes))
+
+
 def _unread_heredoc(command: str) -> bool:
     """A `<<` outside quotes that `HEREDOC` does not read as an opener, or one whose body never
     closes (arithmetic `<<` included)."""
@@ -53,9 +82,9 @@ def repaired(command: str, dialect: str = "posix") -> tuple[str, list[str]]:
 
     if dialect == "posix" and _unread_heredoc(command):
         return command, []  # a body it cannot place may be data: no repair, the old refusals stand
-    notes = []
-    fixed = _pwsh(command, dialect)
-    if fixed != command:
+    found, notes = _tools(command, dialect)
+    fixed = _pwsh(found, dialect)
+    if fixed != found:
         notes.append("`powershell` (Windows PowerShell 5.1) ran as `pwsh -NoProfile` (PowerShell 7). "
                      "Call `pwsh` directly.")
     log = (Path(tempfile.gettempdir()) / f"pytest-{time.time_ns() // 1_000_000}.log").as_posix()
@@ -68,7 +97,8 @@ def repaired(command: str, dialect: str = "posix") -> tuple[str, list[str]]:
 
 
 def repair(payload: dict, host: str = "claude") -> tuple[dict, list[str]]:
-    """`payload` with its shell command repaired, and the notes; the same payload when nothing changed."""
+    """`payload` with its shell command repaired, and the notes; the same payload when nothing changed,
+    with any notes still (a background install's). Codex drops those: it takes context only with `allow`."""
 
     import guard
 
@@ -77,7 +107,7 @@ def repair(payload: dict, host: str = "claude") -> tuple[dict, list[str]]:
         return payload, []
     fixed, notes = repaired(command, dialect)
     if fixed == command:
-        return payload, []
+        return payload, notes
     given = dict(payload["tool_input"])
     given["command" if "command" in given else "cmd"] = fixed
     return {**payload, "tool_input": given}, notes
