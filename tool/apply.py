@@ -471,14 +471,10 @@ def configure(settings: dict, project: Path | None, adapter: str | None, python:
                 entry["hooks"][0]["additionalContextLimit"] = 12000
             changes += put_hook(settings, event, mark, entry)
     else:
-        # One process runs every check `claude_pretool` holds; a page's script it does not hold
-        # keeps a hook of its own.
-        pre = {s: wrap(script_entry(python, s, "진행 설명 확인")) for s in scripts if s not in MEMBERS}
+        pre ={s: wrap(script_entry(python, s, "진행 설명 확인")) for s in scripts if s not in MEMBERS}
         pre["claude_pretool.py"] = wrap(script_entry(python, "claude_pretool.py", "위키: 도구 실행 검사"))
         if project is not None:
-            # `permissions.deny` in the project's settings binds that project. In the user
-            # settings it would bind every repository on the machine, so there `deny.py`
-            # behind the dispatcher binds only the attached ones.
+            # A project's `permissions.deny` binds it; user-level `deny.py` binds only attached repos.
             pre["claude_pretool.py"]["hooks"][0]["command"] += " --without deny.py"
         changes = merge(
             settings,
