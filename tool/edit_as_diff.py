@@ -123,26 +123,29 @@ def blank_data_heredocs(command: str) -> str:
 
 
 def _data_heredocs(command: str, put) -> str:
-    out, cursor = [], 0
-    for opener in HEREDOC.finditer(command):
-        if opener.start() < cursor:
-            continue  # inside a body already put aside
-        line_start = command.rfind("\n", 0, opener.start()) + 1
-        receiver = command[line_start : opener.start()]
-        out.append(command[cursor : opener.end()])
-        cursor = opener.end()
-        if INTERPRETERS.search(receiver):
-            continue  # code: the body stays in
-        delimiter = opener.group("delim")
-        closing = re.search(
-            rf"^\s*{re.escape(delimiter)}\s*$", command[cursor:], re.MULTILINE
-        )
-        if closing is None:
-            continue  # no closing line found: judge nothing
-        out.append(put(command[cursor : cursor + closing.end()]))
-        cursor += closing.end()
-    out.append(command[cursor:])
-    return "".join(out)
+    """Each data body line through `put`; the opener's line, code bodies and the rest stay.
+
+    A body starts on the line after its opener — the rest of that line is still a command —
+    and the bodies of `<<A <<B` follow in that order. A code body is read as commands, so a
+    heredoc opened inside it nests; a data body's text opens nothing. A body that never
+    closes is left in: judge nothing rather than hide a command."""
+
+    lines = command.split("\n")
+    stack: list[tuple[str, bool, int]] = []  # (delimiter, is code, first body line), innermost last
+    hidden = set()
+    for n, line in enumerate(lines):
+        if stack and line.strip() == stack[-1][0]:
+            delim, code, first = stack.pop()
+            if not code:
+                hidden.update(range(first, n + 1))
+            if stack and stack[-1][2] <= n:  # the next body of the same line starts after this one
+                stack[-1] = (*stack[-1][:2], n + 1)
+            continue
+        if stack and not stack[-1][1]:
+            continue
+        openers = [(m["delim"], bool(INTERPRETERS.search(line[:m.start()]))) for m in HEREDOC.finditer(line)]
+        stack += [(delim, code, n + 1) for delim, code in reversed(openers)]
+    return "\n".join(put(line) if n in hidden else line for n, line in enumerate(lines))
 
 
 def _through_variables(command: str) -> list[str]:
@@ -195,7 +198,7 @@ def in_place(command: str, root: Path) -> list[str]:
     command = blank_data_heredocs(command.replace("\\\n", "  "))
     names = dict(re.findall(r"(?:^|[\s;&(])([A-Za-z_]\w*)=(\"[^\"$]*\"|'[^']*'|[^\s;&|$\"'`]+)", command))
     names = {k: v.strip("\"'") for k, v in names.items()}
-    found, start, here = [], 0, root
+    found, start, heres = [], 0, [root]  # every folder the next command can be running in
     for mark in [*re.finditer(r"&&|\|\||;|\n|\|", _blank(command)), None]:
         stage, start = command[start:mark.start() if mark else len(command)], mark.end() if mark else 0
         try:
@@ -205,10 +208,11 @@ def in_place(command: str, root: Path) -> list[str]:
         while words and re.fullmatch(r"[A-Za-z_]\w*=.*", words[0]):
             words.pop(0)
         if words[:1] == ["cd"] and len(words) > 1:
-            moved = here / re.sub(r"^/([A-Za-z])/", r"\1:/", words[1])  # Git Bash's `/c/` is `C:/`
-            # After `||`, and after a `cd` that will fail, the next command runs where it was.
-            if (mark is None or mark[0] != "||") and moved.is_dir():
-                here = moved
+            target = re.sub(r"^/([A-Za-z])/", r"\1:/", words[1])  # Git Bash's `/c/` is `C:/`
+            moved = [h / target for h in heres if (h / target).is_dir()]
+            # A `cd` that will fail leaves it where it was; `cd X || exit 1; sed` runs in
+            # either, depending on what follows `||`, so both are judged.
+            heres = [*heres, *moved] if mark is not None and mark[0] == "||" else moved or heres
             continue
         if not words or words[0].replace("\\", "/").rsplit("/", 1)[-1] not in {"sed", "sed.exe"}:
             continue
@@ -237,10 +241,11 @@ def in_place(command: str, root: Path) -> list[str]:
                 script = True
             else:
                 files.append(word)
-        named = [p for f in files for p in (sorted(glob.glob(f, root_dir=here)) if set(f) & set("*?[") else [f])]
-        if inplace and len(named) < BATCH:
-            found += [s for p in named if not EXEMPT.search(p)
-                      and (s := p if here == root else str(here / p)) not in found]
+        for here in heres if inplace else []:
+            named = [p for f in files for p in (sorted(glob.glob(f, root_dir=here)) if set(f) & set("*?[") else [f])]
+            if len(named) < BATCH:
+                found += [s for p in named if not EXEMPT.search(p)
+                          and (s := p if here == root else str(here / p)) not in found]
     return found
 
 

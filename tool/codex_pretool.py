@@ -12,7 +12,7 @@ def verdict(payload: dict) -> dict | None:
     # Codex takes `updatedInput` only with `allow`, which there lets the call through without
     # blocking; the approval policy still decides. The checks judge the repaired command.
     try:
-        fixed, notes = repair(payload)
+        fixed, notes = repair(payload, "codex")
     except Exception:  # noqa: BLE001 -- `craft/hooks-fail-open`
         fixed, notes = payload, []
     answer = checked(fixed)

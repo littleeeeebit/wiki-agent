@@ -123,6 +123,8 @@ def test_what_it_must_not_block(repo: Path, command: str) -> None:
     "sed -i -- 's/x/y/' README.md src/a.py",  # the script after `--` is not a file
     "cd .no_such_dir || sed -i 's/x/y/' README.md",  # a failed cd leaves it here
     "cd src || sed -i 's/x/y/' README.md",  # `||` runs it only where it was
+    "cd src || exit 1; sed -i 's/x/y/' a.py",  # ... and the next line where it went
+    "cat <<'TXT'; sed -i 's/x/y/' README.md\nhello\nTXT",  # the opener's line is still a command
 ])
 def test_sed_in_place_on_one_or_two_tracked_files_is_refused(repo: Path, command: str) -> None:
     answer = verdict(bash(command), repo)
@@ -142,7 +144,8 @@ def test_write_onto_an_untracked_file_passes(repo: Path) -> None:
 
 def test_sed_quoted_in_a_data_heredoc_is_text(repo: Path) -> None:
     for command in ("cat <<'TXT'\nsed -i 's/x/y/' README.md\nTXT",
-                    "git commit -F - <<'MSG'\nsed -i 's/x/y/' README.md\nMSG"):
+                    "git commit -F - <<'MSG'\nsed -i 's/x/y/' README.md\nMSG",
+                    "cat <<'A' <<'B'\nignored\nA\nsed -i 's/x/y/' README.md\nB"):
         assert verdict(bash(command), repo) is None, command
     code = "bash <<'SH'\nsed -i 's/x/y/' README.md\nSH"
     assert verdict(bash(code), repo) is not None, "인터프리터가 받는 본문은 명령이다"

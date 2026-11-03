@@ -38,8 +38,8 @@
     },
     "tool/edit_as_diff.py": {
       "dup": 12,
-      "lines": 340,
-      "reason": "Narrowed to git-tracked files (tracked, literal pathspecs) and took sed -i over from enforce.deny (in_place counts its files, follows cd, one assignment and line continuations, skips data heredocs via blank_data_heredocs). Before that: baseline at adoption"
+      "lines": 345,
+      "reason": "Narrowed to git-tracked files (tracked, literal pathspecs) and took sed -i over from enforce.deny (in_place counts its files, follows every folder a cd can leave it in, one assignment and line continuations, skips data heredocs via blank_data_heredocs, which reads bodies line by line). Before that: baseline at adoption"
     },
     "tool/english_progress.py": {
       "dup": 17,
@@ -213,8 +213,8 @@
     },
     "tool/test_edit_as_diff.py": {
       "dup": 11,
-      "lines": 249,
-      "reason": "A git-tracking fixture, sed -i batch and single-file cases, untracked Write, literal pathspecs, data heredocs. Before that: baseline at adoption"
+      "lines": 252,
+      "reason": "A git-tracking fixture, sed -i batch and single-file cases, untracked Write, literal pathspecs, data heredocs (one and two per line), cd || exit. Before that: baseline at adoption"
     },
     "tool/test_jev_contract.py": {
       "dup": 23,

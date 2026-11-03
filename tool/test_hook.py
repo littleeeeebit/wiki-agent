@@ -254,10 +254,22 @@ def test_a_test_run_whose_output_stays_readable_passes(command):
 ])
 def test_a_command_the_hook_can_fix_is_fixed_not_refused(command, expected, monkeypatch):
     import command_repair
-    monkeypatch.setattr(command_repair, "teed", lambda c, _log, real=command_repair.teed: real(c, "L"))
+    real = command_repair.teed
+    monkeypatch.setattr(command_repair, "teed", lambda c, _log, dialect: real(c, "L", dialect))
     fixed, notes = command_repair.repaired(command)
     assert fixed == (expected or command)
     assert bool(notes) == bool(expected)
+
+
+def test_text_stays_text_by_the_shells_own_quoting():
+    import command_repair
+    ps = "power" + "shell"
+    for command, dialect in ((f'Write-Output "say `"({ps} -c 1)`""', "ps"),
+                             (f'echo "say \\"({ps} -c 1)\\""', "posix"),
+                             (f"cat <<'A' <<'B'\nignored\nA\n{ps} -c 1\nB", "posix")):
+        assert command_repair.repaired(command, dialect)[0] == command, command
+    # The rest of the opener's line is a command, not the body.
+    assert "| tee " in command_repair.repaired("cat <<'TXT' | pytest -q | tail -1\nhello\nTXT")[0]
 
 
 def test_both_hosts_run_the_fixed_command_and_say_so():

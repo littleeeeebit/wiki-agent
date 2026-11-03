@@ -3,7 +3,12 @@
 import re
 import shlex
 
-_QUOTED = re.compile(r'"[^"]*"|\'[^\']*\'')
+# A quoted string, by the shell's own escapes: `\"` in Git Bash, `` `" `` in PowerShell, whose
+# single quotes double (`''`) rather than escape.
+_QUOTED = {
+    "posix": re.compile(r'"(?:[^"\\]|\\.)*"|\'[^\']*\''),
+    "ps": re.compile(r'"(?:[^"`]|`.)*"|\'(?:[^\']|\'\')*\''),
+}
 
 
 def runs_pytest(stage: str) -> bool:
@@ -53,12 +58,12 @@ def _tee(stage: str) -> bool:
     return stage.split()[:1] in (["tee"], ["Tee-Object"], ["tee-object"])
 
 
-def _blank(command: str) -> str:
+def _blank(command: str, dialect: str = "posix") -> str:
     """Quoted operators and data heredoc bodies blanked, same length, so patterns, messages and
     documents cannot introduce pipelines."""
     from edit_as_diff import blank_data_heredocs
 
-    return _QUOTED.sub(lambda match: re.sub(r"[|;&\n]", " ", match[0]), blank_data_heredocs(command))
+    return _QUOTED[dialect].sub(lambda match: re.sub(r"[|;&\n]", " ", match[0]), blank_data_heredocs(command))
 
 
 def held_back(command: str) -> str:
@@ -74,14 +79,14 @@ def held_back(command: str) -> str:
     return ""
 
 
-def teed(command: str, log: str) -> str:
+def teed(command: str, log: str, dialect: str = "posix") -> str:
     """`command` with every pytest run that feeds a filter also writing `log` as it goes.
 
     `pytest -q | tail -5` becomes `pytest -q 2>&1 | tee <log> | tail -5`: the
     filter still gets what it asked for, and the log shows whether a run that
     prints nothing is hung or slow."""
 
-    bare = _blank(command)
+    bare = _blank(command, dialect)
     marks = list(re.finditer(r"&&|\|\||;|\n|\|", bare))
     out, cursor = [], 0
     for i, mark in enumerate(marks):
@@ -89,8 +94,8 @@ def teed(command: str, log: str) -> str:
             continue
         before = bare[marks[i - 1].end() if i else 0:mark.start()]
         after = bare[mark.end():marks[i + 1].start() if i + 1 < len(marks) else len(bare)]
-        # A pipe inside `$(...)` or backticks belongs to the substitution, not to the run.
-        inside = "$(" in before or "`" in before
+        # A pipe inside `$(...)` (or Git Bash's backticks) belongs to the substitution, not to the run.
+        inside = "$(" in before or (dialect == "posix" and "`" in before)
         if runs_pytest(before.strip()) and not _tee(after.strip()) and not inside:
             joint = " |" if before.rstrip().endswith("2>&1") else " 2>&1 |"
             out.append(f"{command[cursor:mark.start()].rstrip()}{joint} tee {log} |")
