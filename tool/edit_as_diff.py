@@ -88,6 +88,7 @@ REASON = (
     "세 파일 이상에 하는 `sed -i` 한 번은 통과한다."
 )
 BATCH = 3
+FOLDERS = 8
 
 
 def _unquote(raw: str) -> str:
@@ -97,7 +98,8 @@ def _unquote(raw: str) -> str:
 # The receivers that take a heredoc body as *code*. A body going anywhere else
 # is data, and is dropped before the scan.
 INTERPRETERS = re.compile(r"\b(?:python[23]?|node|deno|bash|sh|zsh|perl|ruby)\b")
-HEREDOC = re.compile(r"<<-?\s*(?P<quote>['\"]?)(?P<delim>\w+)(?P=quote)")
+# `<<<` is a here-string, not an opener.
+HEREDOC = re.compile(r"(?<!<)<<(?P<dash>-?)(?!<)\s*(?P<quote>['\"]?)(?P<delim>\w+)(?P=quote)")
 
 
 def strip_data_heredocs(command: str) -> str:
@@ -131,20 +133,24 @@ def _data_heredocs(command: str, put) -> str:
     closes is left in: judge nothing rather than hide a command."""
 
     lines = command.split("\n")
-    stack: list[tuple[str, bool, int]] = []  # (delimiter, is code, first body line), innermost last
+    # (delimiter, `<<-`, is code, first body line), innermost last
+    stack: list[tuple[str, bool, bool, int]] = []
     hidden = set()
     for n, line in enumerate(lines):
-        if stack and line.strip() == stack[-1][0]:
-            delim, code, first = stack.pop()
+        # As Bash closes it: the whole line is the delimiter; `<<-` strips leading tabs only.
+        bare = line.rstrip("\r")
+        if stack and (bare.lstrip("\t") if stack[-1][1] else bare) == stack[-1][0]:
+            delim, dash, code, first = stack.pop()
             if not code:
                 hidden.update(range(first, n + 1))
-            if stack and stack[-1][2] <= n:  # the next body of the same line starts after this one
-                stack[-1] = (*stack[-1][:2], n + 1)
+            if stack and stack[-1][3] <= n:  # the next body of the same line starts after this one
+                stack[-1] = (*stack[-1][:3], n + 1)
             continue
-        if stack and not stack[-1][1]:
+        if stack and not stack[-1][2]:
             continue
-        openers = [(m["delim"], bool(INTERPRETERS.search(line[:m.start()]))) for m in HEREDOC.finditer(line)]
-        stack += [(delim, code, n + 1) for delim, code in reversed(openers)]
+        openers = [(m["delim"], bool(m["dash"]), bool(INTERPRETERS.search(line[:m.start()])))
+                   for m in HEREDOC.finditer(line)]
+        stack += [(*opener, n + 1) for opener in reversed(openers)]
     return "\n".join(put(line) if n in hidden else line for n, line in enumerate(lines))
 
 
@@ -213,6 +219,9 @@ def in_place(command: str, root: Path) -> list[str]:
             # A `cd` that will fail leaves it where it was; `cd X || exit 1; sed` runs in
             # either, depending on what follows `||`, so both are judged.
             heres = [*heres, *moved] if mark is not None and mark[0] == "||" else moved or heres
+            # The same folder once; and a bound, as the guard's `STATES`, so no chain of `cd`s
+            # grows past the hook's time. ponytail: past it the first few folders are judged.
+            heres = list(dict.fromkeys(heres))[:FOLDERS]
             continue
         if not words or words[0].replace("\\", "/").rsplit("/", 1)[-1] not in {"sed", "sed.exe"}:
             continue

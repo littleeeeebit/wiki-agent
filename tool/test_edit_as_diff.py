@@ -142,6 +142,13 @@ def test_write_onto_an_untracked_file_passes(repo: Path) -> None:
     assert verdict(payload, repo) is None
 
 
+def test_repeated_cd_or_does_not_multiply_the_folders(repo: Path) -> None:
+    import time
+    start = time.perf_counter()
+    assert verdict(bash("cd . || exit 1; " * 40 + "cd src || exit 1; sed -i 's/x/y/' a.py"), repo)
+    assert time.perf_counter() - start < 1.0
+
+
 def test_sed_quoted_in_a_data_heredoc_is_text(repo: Path) -> None:
     for command in ("cat <<'TXT'\nsed -i 's/x/y/' README.md\nTXT",
                     "git commit -F - <<'MSG'\nsed -i 's/x/y/' README.md\nMSG",

@@ -266,7 +266,10 @@ def test_text_stays_text_by_the_shells_own_quoting():
     ps = "power" + "shell"
     for command, dialect in ((f'Write-Output "say `"({ps} -c 1)`""', "ps"),
                              (f'echo "say \\"({ps} -c 1)\\""', "posix"),
-                             (f"cat <<'A' <<'B'\nignored\nA\n{ps} -c 1\nB", "posix")):
+                             (f"cat <<'A' <<'B'\nignored\nA\n{ps} -c 1\nB", "posix"),
+                             # Bash closes only on the whole line; `<<-` strips leading tabs, not spaces.
+                             (f"cat <<'TXT'\n TXT\nTXT \n\tTXT\n{ps} -c 1\nTXT", "posix"),
+                             (f"cat <<-'TXT'\n  TXT\n{ps} -c 1\n\tTXT", "posix")):
         assert command_repair.repaired(command, dialect)[0] == command, command
     # The rest of the opener's line is a command, not the body.
     assert "| tee " in command_repair.repaired("cat <<'TXT' | pytest -q | tail -1\nhello\nTXT")[0]
