@@ -38,8 +38,8 @@
     },
     "tool/edit_as_diff.py": {
       "dup": 12,
-      "lines": 354,
-      "reason": "Narrowed to git-tracked files (tracked, literal pathspecs) and took sed -i over from enforce.deny (in_place counts its files, follows every folder a cd can leave it in, deduplicated and bounded by FOLDERS, one assignment and line continuations, skips data heredocs via blank_data_heredocs, which reads bodies line by line and closes them as Bash does). Before that: baseline at adoption"
+      "lines": 372,
+      "reason": "Narrowed to git-tracked files (tracked, literal pathspecs) and took sed -i over from enforce.deny (in_place counts its files, follows every folder a cd can leave it in, deduplicated and bounded by FOLDERS, one assignment and line continuations, skips data heredocs via blank_data_heredocs, which reads bodies line by line, reads a delimiter as a shell word and closes it as Bash does, and tells an unclosed one apart). Before that: baseline at adoption"
     },
     "tool/english_progress.py": {
       "dup": 17,

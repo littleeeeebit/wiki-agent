@@ -98,8 +98,15 @@ def _unquote(raw: str) -> str:
 # The receivers that take a heredoc body as *code*. A body going anywhere else
 # is data, and is dropped before the scan.
 INTERPRETERS = re.compile(r"\b(?:python[23]?|node|deno|bash|sh|zsh|perl|ruby)\b")
-# `<<<` is a here-string, not an opener.
-HEREDOC = re.compile(r"(?<!<)<<(?P<dash>-?)(?!<)\s*(?P<quote>['\"]?)(?P<delim>\w+)(?P=quote)")
+# `<<<` is a here-string, not an opener. The delimiter is a shell word — `'EOF-TEXT'`, `EOF-TEXT`,
+# `\TXT`, `E"O"F` — and closes on that word with its quoting taken off (`delimiter`).
+HEREDOC = re.compile(r"(?<!<)<<(?P<dash>-?)(?!<)[ \t]*"
+                     r"(?P<word>(?:'[^'\n]*'|\"[^\"\n]*\"|\\.|[^\s;&|<>()'\"\\])+)")
+UNQUOTE = re.compile(r"'([^']*)'|\"([^\"]*)\"|\\(.)")
+
+
+def delimiter(opener: re.Match) -> str:
+    return UNQUOTE.sub(lambda m: next(g for g in m.groups() if g is not None), opener["word"])
 
 
 def strip_data_heredocs(command: str) -> str:
@@ -133,6 +140,17 @@ def _data_heredocs(command: str, put) -> str:
     closes is left in: judge nothing rather than hide a command."""
 
     lines = command.split("\n")
+    hidden, _ = _bodies(lines)
+    return "\n".join(put(line) if n in hidden else line for n, line in enumerate(lines))
+
+
+def unclosed_heredoc(command: str) -> bool:
+    """An opener whose body never closes: a body that cannot be placed, possibly data."""
+    return bool(_bodies(command.split("\n"))[1])
+
+
+def _bodies(lines: list[str]) -> tuple[set, list]:
+    """The data body line numbers, and the openers still open at the end."""
     # (delimiter, `<<-`, is code, first body line), innermost last
     stack: list[tuple[str, bool, bool, int]] = []
     hidden = set()
@@ -148,10 +166,10 @@ def _data_heredocs(command: str, put) -> str:
             continue
         if stack and not stack[-1][2]:
             continue
-        openers = [(m["delim"], bool(m["dash"]), bool(INTERPRETERS.search(line[:m.start()])))
+        openers = [(delimiter(m), bool(m["dash"]), bool(INTERPRETERS.search(line[:m.start()])))
                    for m in HEREDOC.finditer(line)]
         stack += [(*opener, n + 1) for opener in reversed(openers)]
-    return "\n".join(put(line) if n in hidden else line for n, line in enumerate(lines))
+    return hidden, stack
 
 
 def _through_variables(command: str) -> list[str]:

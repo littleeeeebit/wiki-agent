@@ -269,7 +269,14 @@ def test_text_stays_text_by_the_shells_own_quoting():
                              (f"cat <<'A' <<'B'\nignored\nA\n{ps} -c 1\nB", "posix"),
                              # Bash closes only on the whole line; `<<-` strips leading tabs, not spaces.
                              (f"cat <<'TXT'\n TXT\nTXT \n\tTXT\n{ps} -c 1\nTXT", "posix"),
-                             (f"cat <<-'TXT'\n  TXT\n{ps} -c 1\n\tTXT", "posix")):
+                             (f"cat <<-'TXT'\n  TXT\n{ps} -c 1\n\tTXT", "posix"),
+                             # A delimiter is a shell word, quoting taken off.
+                             (f"cat <<'EOF-TEXT'\n{ps} -c 1\nEOF-TEXT", "posix"),
+                             (f"cat <<EOF-TEXT\n{ps} -c 1\nEOF-TEXT", "posix"),
+                             (f"cat <<\\TXT\n{ps} -c 1\nTXT", "posix"),
+                             # One it cannot read is not repaired at all.
+                             ("echo $((1<<2)); pytest | tail -1", "posix"),
+                             (f"@'\nsay 'it'\n{ps} -c 1\n'@ | Set-Content x.txt", "ps")):
         assert command_repair.repaired(command, dialect)[0] == command, command
     # The rest of the opener's line is a command, not the body.
     assert "| tee " in command_repair.repaired("cat <<'TXT' | pytest -q | tail -1\nhello\nTXT")[0]

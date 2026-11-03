@@ -33,10 +33,25 @@ def _pwsh(command: str, dialect: str) -> str:
     return "".join(out) + command[cursor:]
 
 
+def _unread_heredoc(command: str) -> bool:
+    """A `<<` outside quotes that `HEREDOC` does not read as an opener, or one whose body never
+    closes (arithmetic `<<` included)."""
+    from edit_as_diff import HEREDOC, blank_data_heredocs, unclosed_heredoc
+
+    if unclosed_heredoc(command):
+        return True
+    text = blank_data_heredocs(command)  # a `<<` written inside a body it did read is text
+    read = {m.start() for m in HEREDOC.finditer(text)}
+    bare = _QUOTED["posix"].sub(lambda m: " " * len(m[0]), text)
+    return any(m.start() not in read for m in re.finditer(r"(?<!<)<<(?!<)", bare))
+
+
 def repaired(command: str, dialect: str = "posix") -> tuple[str, list[str]]:
     """The command to run instead, and a line for the agent per repair; `command` itself when none applies.
     `dialect` is the shell's (`guard.shell_command`): its quotes decide what is text."""
 
+    if dialect == "posix" and _unread_heredoc(command):
+        return command, []  # a body it cannot place may be data: no repair, the old refusals stand
     notes = []
     fixed = _pwsh(command, dialect)
     if fixed != command:
