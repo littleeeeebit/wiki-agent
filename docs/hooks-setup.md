@@ -99,7 +99,11 @@ tool call holds every check, because starting an interpreter (and, before,
 `git`) per check was most of a hook's time; `hook.py` reads the project off
 `.git` instead of running `git rev-parse`. Before any check, `tool/command_repair.py`
 fixes what needs no refusal — `powershell` becomes `pwsh -NoProfile`, a pytest run
-piped into a filter gets `2>&1 | tee <temp log>` — and every check judges the
+piped into a filter gets `2>&1 | tee <temp log>`, and `fd` or `jq` missing from
+the session's PATH gets its install folder added to PATH in front of the
+command, which is otherwise left as written, or starts one background
+install, winget first and the pinned release file when winget stalls
+(`tool/cli_tools.py`) — and every check judges the
 fixed command, which goes back as `updatedInput`: with no decision on Claude, so
 its approval rules apply to the new command, and with `allow` on Codex, its only
 rewrite shape. The guard judges only sessions the app started

@@ -14,7 +14,7 @@ enforce:
   pretooluse: edit_as_diff.py
 sources: []
 sources_withheld: true
-links: [destructive-git-guards]
+links: [destructive-git-guards, command-guide]
 ---
 
 # Edit files as diffs — do not rewrite them with a script

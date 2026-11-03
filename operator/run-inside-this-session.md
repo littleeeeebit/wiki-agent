@@ -8,7 +8,7 @@ enforce:
   deny: ["Bash(powershell -*)", "Bash(powershell.exe*)"]
 sources: []
 sources_withheld: true
-links: [after-merge-cleanup, pick-up-async-results, hooks-fail-open, name-the-build-on-screen]
+links: [after-merge-cleanup, pick-up-async-results, hooks-fail-open, name-the-build-on-screen, command-guide]
 ---
 
 # The shell is `pwsh`, and servers start inside this cell

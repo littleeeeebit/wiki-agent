@@ -34,6 +34,43 @@ def _pwsh(command: str, dialect: str) -> str:
     return "".join(out) + command[cursor:]
 
 
+# `fd` or `jq` that looks like a command word (`cli_tools`): when this session's PATH misses it,
+# its install folder goes on the end of PATH for this command; when it is not there at all, it is
+# installed in the background. The command itself is never edited, so the shell, not this
+# pattern, decides what is a command: a word it takes wrongly only adds a folder to PATH.
+TOOL = re.compile(r"(?:^|[;&|({\n])\s*(?P<name>fd|jq)(?:\.exe)?(?=[\s;&|)}]|$)")
+
+
+def _tools(command: str, dialect: str) -> tuple[str, list[str]]:
+    """The prefix that puts missing tools' folders on PATH, and the notes."""
+
+    import shutil
+
+    import cli_tools
+    from edit_as_diff import blank_data_heredocs
+
+    text = blank_data_heredocs(command) if dialect == "posix" else command   # a document naming one is text
+    bare = _QUOTED[dialect].sub(lambda m: " " * len(m[0]), text)
+    folders, notes = [], []
+    for name in dict.fromkeys(m["name"] for m in TOOL.finditer(bare)):
+        if shutil.which(name):
+            continue
+        if path := cli_tools.found(name):
+            folders.append(path.rsplit("/", 1)[0])
+            notes.append(f"`{name}` is installed but not on this session's PATH; this command ran with "
+                         f"{folders[-1]} added to it.")
+        elif cli_tools.started(name):
+            notes.append(f"`{name}` is not installed; it is being installed in the background (a few "
+                         "minutes). Until then use `rg --files` to list files or Python's `json` for JSON.")
+    if not folders:
+        return "", notes
+    if dialect == "ps":
+        return "".join(f"$env:PATH += ';{f.replace(chr(39), chr(39) * 2)}'; " for f in folders), notes
+    # Git Bash reads `C:/x` in PATH as two entries split at the colon: it wants `/c/x`.
+    posix = [re.sub(r"^([A-Za-z]):", lambda m: "/" + m[1].lower(), f).replace("'", "'\\''") for f in folders]
+    return "".join(f"PATH=\"$PATH\":'{f}'; " for f in posix), notes
+
+
 def _unread_heredoc(command: str) -> bool:
     """A `<<` outside quotes that `HEREDOC` does not read as an opener, or one whose body never
     closes (arithmetic `<<` included)."""
@@ -53,7 +90,7 @@ def repaired(command: str, dialect: str = "posix") -> tuple[str, list[str]]:
 
     if dialect == "posix" and _unread_heredoc(command):
         return command, []  # a body it cannot place may be data: no repair, the old refusals stand
-    notes = []
+    path, notes = _tools(command, dialect)
     fixed = _pwsh(command, dialect)
     if fixed != command:
         notes.append("`powershell` (Windows PowerShell 5.1) ran as `pwsh -NoProfile` (PowerShell 7). "
@@ -64,11 +101,27 @@ def repaired(command: str, dialect: str = "posix") -> tuple[str, list[str]]:
     if teed_ != fixed:
         notes.append(f"pytest output piped into a filter also goes to {log} as it runs. "
                      "Nothing to do now; if the run seems stuck, that file tells hung from slow.")
-    return teed_, notes
+    return _prefixed(teed_, path, dialect, notes), notes
+
+
+# PowerShell wants `using`, `param(...)` with its attributes and named blocks before any statement.
+# Placing a prefix after them needs PowerShell's parser (comments, case, nested brackets), so a
+# script that has one anywhere, even in a comment or a string, gets no prefix.
+FIRST = re.compile(r"(?i)\b(?:using|param|begin|process|end|dynamicparam|clean)\b")
+
+
+def _prefixed(command: str, prefix: str, dialect: str, notes: list[str]) -> str:
+    if not prefix or dialect != "ps" or not FIRST.search(command):
+        return prefix + command
+    notes[:] = [n.replace("; this command ran with", " at").replace("added to it.", "; call it by that "
+                "path: this script's `using`, `param` or named block has to come first, so the hook left "
+                "PATH alone.") if "ran with" in n else n for n in notes]
+    return command
 
 
 def repair(payload: dict, host: str = "claude") -> tuple[dict, list[str]]:
-    """`payload` with its shell command repaired, and the notes; the same payload when nothing changed."""
+    """`payload` with its shell command repaired, and the notes; the same payload when nothing changed,
+    with any notes still (a background install's). Codex drops those: it takes context only with `allow`."""
 
     import guard
 
@@ -77,7 +130,7 @@ def repair(payload: dict, host: str = "claude") -> tuple[dict, list[str]]:
         return payload, []
     fixed, notes = repaired(command, dialect)
     if fixed == command:
-        return payload, []
+        return payload, notes
     given = dict(payload["tool_input"])
     given["command" if "command" in given else "cmd"] = fixed
     return {**payload, "tool_input": given}, notes
