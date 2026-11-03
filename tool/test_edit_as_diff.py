@@ -118,10 +118,11 @@ def test_what_it_must_not_block(repo: Path, command: str) -> None:
     "sed -i.bak -e 's/x/y/' README.md src/a.py",
     "cd src && sed --in-place 's/x/y/' a.py",
     "sed -Ei 's/x/y/' src/existing.py",
+    'F=src/existing.py; sed -i "s/x/y/" "$F"; git checkout -- $F',
+    "sed -i \\\n  's/x/y/' \\\n  README.md",
 ])
 def test_sed_in_place_on_one_or_two_tracked_files_is_refused(repo: Path, command: str) -> None:
-    root = repo / "src" if command.startswith("cd src") else repo
-    answer = verdict(bash(command), root)
+    answer = verdict(bash(command), repo)
     assert answer and answer["hookSpecificOutput"]["permissionDecision"] == "deny", command
 
 

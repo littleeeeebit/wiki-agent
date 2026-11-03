@@ -177,15 +177,23 @@ def in_place(command: str, root: Path) -> list[str]:
 
     from pytest_output import _blank
 
-    found, start = [], 0
+    # A continued line is one stage; `F=path ... sed -i ... "$F"` and a `cd` before it name the
+    # file as surely as a literal does. ponytail: the last plain assignment of a name wins.
+    command = command.replace("\\\n", "  ")
+    names = dict(re.findall(r"(?:^|[\s;&(])([A-Za-z_]\w*)=(\"[^\"$]*\"|'[^']*'|[^\s;&|$\"'`]+)", command))
+    names = {k: v.strip("\"'") for k, v in names.items()}
+    found, start, here = [], 0, root
     for mark in [*re.finditer(r"&&|\|\||;|\n|\|", _blank(command)), None]:
         stage, start = command[start:mark.start() if mark else len(command)], mark.end() if mark else 0
         try:
-            words = shlex.split(stage)
+            words = [re.sub(r"\$\{?([A-Za-z_]\w*)\}?", lambda m: names.get(m[1], m[0]), w) for w in shlex.split(stage)]
         except ValueError:
             continue
         while words and re.fullmatch(r"[A-Za-z_]\w*=.*", words[0]):
             words.pop(0)
+        if words[:1] == ["cd"] and len(words) > 1:
+            here = here / re.sub(r"^/([A-Za-z])/", r"\1:/", words[1])  # Git Bash's `/c/` is `C:/`
+            continue
         if not words or words[0].replace("\\", "/").rsplit("/", 1)[-1] not in {"sed", "sed.exe"}:
             continue
         files, script, inplace, args = [], False, False, iter(words[1:])
@@ -211,9 +219,10 @@ def in_place(command: str, root: Path) -> list[str]:
                 script = True
             else:
                 files.append(word)
-        named = [p for f in files for p in (sorted(glob.glob(f, root_dir=root)) if set(f) & set("*?[") else [f])]
+        named = [p for f in files for p in (sorted(glob.glob(f, root_dir=here)) if set(f) & set("*?[") else [f])]
         if inplace and len(named) < BATCH:
-            found += [p for p in named if not EXEMPT.search(p) and p not in found]
+            found += [s for p in named if not EXEMPT.search(p)
+                      and (s := p if here == root else str(here / p)) not in found]
     return found
 
 
