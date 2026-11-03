@@ -34,15 +34,16 @@ def _pwsh(command: str, dialect: str) -> str:
     return "".join(out) + command[cursor:]
 
 
-# `fd` or `jq` as a command word (`cli_tools`): run from its install folder when this session's PATH
-# misses it, or installed in the background when it is not there at all. A command word follows
-# the start, an unescaped operator, a subshell's `(` or `$(`; never `((`/`$((` arithmetic, an
-# assignment (`jq=2`) or an escaped `\;`. What it cannot place is left as written.
-TOOL = re.compile(r"(?:^|(?<![\\`])[;&|\n]|(?<![\\`$(])\(|\$\()[ \t]*(?P<name>fd|jq)(?:\.exe)?(?=[\s;&|)]|$)")
-CALLED = re.compile(r"(?<!&)&[ \t]*$")   # PowerShell's call operator already in front
+# `fd` or `jq` that looks like a command word (`cli_tools`): when this session's PATH misses it,
+# its install folder goes on the end of PATH for this command; when it is not there at all, it is
+# installed in the background. The command itself is never edited, so the shell, not this
+# pattern, decides what is a command: a word it takes wrongly only adds a folder to PATH.
+TOOL = re.compile(r"(?:^|[;&|(\n])\s*(?P<name>fd|jq)(?:\.exe)?(?=[\s;&|)]|$)")
 
 
 def _tools(command: str, dialect: str) -> tuple[str, list[str]]:
+    """The prefix that puts missing tools' folders on PATH, and the notes."""
+
     import shutil
 
     import cli_tools
@@ -50,21 +51,24 @@ def _tools(command: str, dialect: str) -> tuple[str, list[str]]:
 
     text = blank_data_heredocs(command) if dialect == "posix" else command   # a document naming one is text
     bare = _QUOTED[dialect].sub(lambda m: " " * len(m[0]), text)
-    out, cursor, notes = [], 0, []
-    for match in TOOL.finditer(bare):
-        name = match["name"]
+    folders, notes = [], []
+    for name in dict.fromkeys(m["name"] for m in TOOL.finditer(bare)):
         if shutil.which(name):
             continue
         if path := cli_tools.found(name):
-            called = dialect == "posix" or CALLED.search(bare, 0, match.start("name"))
-            word = path if " " not in path else f'"{path}"' if called else f'& "{path}"'
-            out += [command[cursor:match.start("name")], word]
-            cursor = match.end()
-            notes.append(f"`{name}` is installed but not on this session's PATH; it ran from {path}.")
+            folders.append(path.rsplit("/", 1)[0])
+            notes.append(f"`{name}` is installed but not on this session's PATH; this command ran with "
+                         f"{folders[-1]} added to it.")
         elif cli_tools.started(name):
             notes.append(f"`{name}` is not installed; it is being installed in the background (a few "
                          "minutes). Until then use `rg --files` to list files or Python's `json` for JSON.")
-    return "".join(out) + command[cursor:], list(dict.fromkeys(notes))
+    if not folders:
+        return "", notes
+    if dialect == "ps":
+        return "".join(f"$env:PATH += ';{f.replace(chr(39), chr(39) * 2)}'; " for f in folders), notes
+    # Git Bash reads `C:/x` in PATH as two entries split at the colon: it wants `/c/x`.
+    posix = [re.sub(r"^([A-Za-z]):", lambda m: "/" + m[1].lower(), f).replace("'", "'\\''") for f in folders]
+    return "".join(f"PATH=\"$PATH\":'{f}'; " for f in posix), notes
 
 
 def _unread_heredoc(command: str) -> bool:
@@ -86,9 +90,9 @@ def repaired(command: str, dialect: str = "posix") -> tuple[str, list[str]]:
 
     if dialect == "posix" and _unread_heredoc(command):
         return command, []  # a body it cannot place may be data: no repair, the old refusals stand
-    found, notes = _tools(command, dialect)
-    fixed = _pwsh(found, dialect)
-    if fixed != found:
+    path, notes = _tools(command, dialect)
+    fixed = _pwsh(command, dialect)
+    if fixed != command:
         notes.append("`powershell` (Windows PowerShell 5.1) ran as `pwsh -NoProfile` (PowerShell 7). "
                      "Call `pwsh` directly.")
     log = (Path(tempfile.gettempdir()) / f"pytest-{time.time_ns() // 1_000_000}.log").as_posix()
@@ -97,7 +101,7 @@ def repaired(command: str, dialect: str = "posix") -> tuple[str, list[str]]:
     if teed_ != fixed:
         notes.append(f"pytest output piped into a filter also goes to {log} as it runs. "
                      "Nothing to do now; if the run seems stuck, that file tells hung from slow.")
-    return teed_, notes
+    return path + teed_, notes
 
 
 def repair(payload: dict, host: str = "claude") -> tuple[dict, list[str]]:

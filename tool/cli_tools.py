@@ -2,7 +2,7 @@
 reading JSON, installed with winget (`docs/plans/agent-commands/0-overview.md`, step 4).
 
 Setup installs them (`setup_agents.py --global`). A command that needs one this session cannot
-find runs it from where it was put, since a session keeps the PATH it started with; one not
+find runs with that folder added to PATH, since a session keeps the PATH it started with; one not
 installed at all starts an install in the background, once (`command_repair`).
 
 winget updates its source by adding an app package first, and on a PC whose app deployment
@@ -11,6 +11,7 @@ gets `WAIT` seconds, and after that the official release file, checked against a
 goes into `BIN`.
 """
 
+import contextlib
 import hashlib
 import io
 import os
@@ -101,34 +102,43 @@ def started(name: str) -> bool:
     if sys.platform != "win32":
         return False   # both installs are Windows builds; elsewhere the package manager has them
     marker = Path(tempfile.gettempdir()) / f"wiki-agent-install-{name}"
-    if not _claimed(marker):
-        return marker.exists()   # another call holds it: that install runs
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
-        subprocess.Popen([sys.executable, str(Path(__file__)), name], stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
-    except OSError:
-        marker.unlink(missing_ok=True)   # ours, and nothing runs: the next call tries again
-        return False
-    return True
-
-
-def _claimed(marker: Path) -> bool:
-    """Whether this call created `marker`, after moving aside one older than `HELD`. Creating
-    and moving aside are each atomic, so of calls arriving together exactly one claims it."""
-
-    try:
-        if time.time() - marker.stat().st_mtime >= HELD:
-            aside = marker.with_name(f"{marker.name}.{os.getpid()}")
-            marker.rename(aside)   # only one call moves it; the rest find it gone
-            aside.unlink(missing_ok=True)
-    except OSError:
-        pass
-    try:
-        os.close(os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        with _lock(marker.with_name(f"{marker.name}.lock")):   # reading and writing the marker are one step
+            if marker.exists() and time.time() - marker.stat().st_mtime < HELD:
+                return True
+            marker.write_text(str(os.getpid()), encoding="utf-8")
+            try:
+                subprocess.Popen([sys.executable, str(Path(__file__)), name], stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+            except OSError:
+                marker.unlink(missing_ok=True)   # nothing runs: the next call tries again
+                return False
     except OSError:
         return False
     return True
+
+
+@contextlib.contextmanager
+def _lock(path: Path):
+    """Hold an exclusive lock on `path` across processes; `OSError` when it cannot be had."""
+
+    fd = os.open(path, os.O_CREAT | os.O_RDWR)
+    try:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)   # retries for about ten seconds, then raises
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    finally:
+        os.close(fd)
 
 
 def install(check: bool = False) -> list[str]:

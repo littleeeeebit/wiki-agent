@@ -32,7 +32,8 @@ or repair the rest, and each refusal costs a turn.
 `fd` and `jq` are installed by `setup_agents.py --global` with winget, or
 from their pinned release files when winget does not finish in three
 minutes. When a command needs one that this session cannot find, the hook
-runs it from where it was put: a session keeps the PATH it started with. When
+adds the folder it was put in to that command's PATH: a session keeps the
+PATH it started with, and the release folder is never on it. When
 the tool is not installed at all, the hook starts that install in the
 background and says so; meanwhile use `rg --files` or Python's `json`.
 
