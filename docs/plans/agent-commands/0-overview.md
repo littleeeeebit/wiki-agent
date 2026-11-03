@@ -63,7 +63,7 @@ Interpretation is not the cost; process creation is.
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Hook speed, same results | `hook.py` finds the project without `git`; one PreToolUse process runs every check; replay of three weeks of recorded tool calls through old and new gives identical decisions and reasons; latency measured before and after | In progress |
+| 1 | Hook speed, same results | `hook.py` finds the project without `git`; one PreToolUse process runs every check; replay of three weeks of recorded tool calls through old and new gives identical decisions and reasons; latency measured before and after | Done — project lookup agrees on 1,585 folders; replay 0 differ on 5,000 unmanaged and 7,932 app-managed calls; 200-call latency median 1,063 ms → 241 ms, p90 2,255 ms → 503 ms |
 | 2 | Rule changes | Automatic repair for pytest pipes and `powershell`, narrowed rewrite rule, batch `sed -i`, Codex parity | Not started |
 | 3 | Research rule | `tool/main/recovery.py` reduced to the fourth-occurrence trigger with default limits | Not started |
 | 4 | Tools and guide | `fd`/`jq` install at setup and on demand, Playwright as the scenario runner, the command guide page | Not started |
