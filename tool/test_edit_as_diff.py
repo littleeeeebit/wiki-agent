@@ -168,7 +168,9 @@ def test_powershell_here_strings_are_text_and_its_other_strings_are_read(repo: P
     for command in ('echo x > "author\'s notes.md"',
                     "python -c \"from pathlib import Path; Path('README.md').write_text('x')\"",
                     "@'\nit's\n'@ | Out-Null; echo x > README.md",
-                    f"@'\n{code}\n'@ | python -", f"python -c @'\n{code}\n'@", f"& python.exe -c @'\n{code}\n'@"):
+                    f"@'\n{code}\n'@ | python -", f"python -c @'\n{code}\n'@", f"& python.exe -c @'\n{code}\n'@",
+                    f"& 'C:/Program Files/Python/python.exe' -c @'\n{code}\n'@", f"@'\n{code}\n'@ | & 'C:/py.exe' -",
+                    f"@'\n{code}\n'@ | Some-Unknown-Runner"):
         assert verdict(bash(command), repo, "ps") is not None, command
 
 
