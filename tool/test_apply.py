@@ -102,19 +102,22 @@ def test_a_renamed_hook_is_retired_only_when_its_replacement_is_wired():
     # Without this the old entry stayed in `settings.json`, and deleting the
     # script failed every tool call with "can't open file" until the shim
     # went back.
-    old = {"hooks": {"PreToolUse": [script_entry(PY, "korean_progress.py", "옛것")]}}
-    merge(old, [], HOOK, SCRIPTS)
+    # `claude_pretool` now holds both the renamed check and its replacement.
+    merged = {"claude_pretool.py": script_entry(PY, "claude_pretool.py", "확인")}
+    old = {"hooks": {"PreToolUse": [script_entry(PY, "korean_progress.py", "옛것"),
+                                    script_entry(PY, "english_progress.py", "옛것")]}}
+    merge(old, [], HOOK, merged)
     left = commands(old, "PreToolUse")
-    assert not any("korean_progress.py" in c for c in left), left
-    assert any("english_progress.py" in c for c in left), left
+    assert not any("korean_progress.py" in c or "english_progress.py" in c for c in left), left
+    assert any("claude_pretool.py" in c for c in left), left
     # Twice has to give the same answer: an upgrade reads an existing install.
-    merge(old, [], HOOK, SCRIPTS)
+    merge(old, [], HOOK, merged)
     assert commands(old, "PreToolUse") == left
 
     # No replacement wired means no removal. Removing it would turn the
     # enforcement off without saying so.
     alone = {"hooks": {"PreToolUse": [script_entry(PY, "korean_progress.py", "옛것")]}}
-    assert retire(alone, "korean_progress.py", "english_progress.py") == []
+    assert retire(alone, "korean_progress.py", "claude_pretool.py") == []
     assert len(alone["hooks"]["PreToolUse"]) == 1
 
     # The person's own hook that merely names the retired script. Matching on

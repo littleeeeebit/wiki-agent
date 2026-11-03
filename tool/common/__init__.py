@@ -7,8 +7,29 @@ drift apart: a worktree created by another tool is not ours.
 
 import os
 from pathlib import Path
+import re
 import sys
 import time
+
+
+def layout(cwd: Path) -> tuple | None:
+    """`(checkout, git dir, common dir, main clone)` read off git's own files, without running git.
+
+    Every hook asks this once per tool call, and starting `git` on Windows costs more than the
+    hook's own work; `guard_grant` reads the same answer for the grant."""
+    top = next((p for p in (cwd, *cwd.parents) if (p / ".git").exists()), None)
+    if top is None:
+        return None
+    gitdir = top / ".git"
+    if gitdir.is_file():
+        m = re.match(r"gitdir:\s*(.+)", gitdir.read_text(encoding="utf-8", errors="replace").strip())
+        if not m:
+            return None
+        gitdir = (top / m.group(1).strip()).resolve()
+    common = gitdir
+    if (gitdir / "commondir").is_file():
+        common = (gitdir / (gitdir / "commondir").read_text(encoding="utf-8").strip()).resolve()
+    return top, gitdir, common, common.parent if common.name == ".git" else common
 
 
 def swap(temporary: Path, file: Path) -> None:

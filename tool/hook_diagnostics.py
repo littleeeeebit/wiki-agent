@@ -71,7 +71,7 @@ def arm(hook: str, after: float) -> None:
 # pytest import this module too, and arming there would write a diagnostic for
 # a run nobody is waiting on.
 _thresholds = {
-    "codex_pretool.py": 8, "inject.py": 8, "declared_continuation.py": 8,
+    "codex_pretool.py": 8, "claude_pretool.py": 8, "inject.py": 8, "declared_continuation.py": 8,
     "session_state.py": 13, "sync.py": 28, "host_boundary.py": 8,
     "guard.py": 8,
 }
