@@ -334,6 +334,7 @@ def test_a_writer_lands_its_sources_in_a_folder_it_names(repo):
     assert call(repo, "cd .. && wget --spider https://example.com/x") is None
     assert call(repo, 'curl --hsts "" --alt-svc "" https://example.com/x') is None
     assert effects("curl --output-dir d -o r.txt https://example.com/x") - {"read"} == {f"write({C['cwd']}/d/r.txt)"}
+    assert effects('curl --output-dir "" -o r.txt https://example.com/x') - {"read"} == {f"write({C['cwd']}/r.txt)"}
     assert effects("cp a b c dst/") >= {f"write({C['cwd']}/dst/{n})" for n in "abc"}
     assert "허가를 정하는 파일" in (call(repo, "cp adapter.toml .wiki") or "")
 

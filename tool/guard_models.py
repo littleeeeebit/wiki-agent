@@ -241,8 +241,9 @@ def fetched(url: Word) -> Word:
 
 
 def under(folder: list, w: Word) -> Word:
-    """`w` placed in the last of `folder` (`--output-dir`, `-P`); curl prefixes even an absolute name."""
-    if not folder:
+    """`w` placed in the last of `folder` (`--output-dir`, `-P`); curl prefixes even an absolute name, and an
+    empty folder places nothing."""
+    if not folder or folder[-1].text == "" and not folder[-1].why:
         return w
     return Word(folder[-1].text.rstrip("\\/") + "/" + w.text, folder[-1].why or w.why)
 
