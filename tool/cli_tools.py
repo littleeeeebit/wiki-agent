@@ -69,7 +69,7 @@ def downloaded(name: str) -> str:
             payload = archive.read(member)
     target = bin_dir() / f"{name}.exe"
     target.parent.mkdir(parents=True, exist_ok=True)
-    partial = target.with_suffix(".part")
+    partial = target.with_suffix(f".{os.getpid()}.part")   # setup and a background install may overlap
     partial.write_bytes(payload)
     partial.replace(target)
     return target.as_posix()
@@ -101,13 +101,31 @@ def started(name: str) -> bool:
     if sys.platform != "win32":
         return False   # both installs are Windows builds; elsewhere the package manager has them
     marker = Path(tempfile.gettempdir()) / f"wiki-agent-install-{name}"
+    if not _claimed(marker):
+        return marker.exists()   # another call holds it: that install runs
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
-        if marker.exists() and time.time() - marker.stat().st_mtime < HELD:
-            return True
-        marker.write_text(str(os.getpid()), encoding="utf-8")
         subprocess.Popen([sys.executable, str(Path(__file__)), name], stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+    except OSError:
+        marker.unlink(missing_ok=True)   # ours, and nothing runs: the next call tries again
+        return False
+    return True
+
+
+def _claimed(marker: Path) -> bool:
+    """Whether this call created `marker`, after moving aside one older than `HELD`. Creating
+    and moving aside are each atomic, so of calls arriving together exactly one claims it."""
+
+    try:
+        if time.time() - marker.stat().st_mtime >= HELD:
+            aside = marker.with_name(f"{marker.name}.{os.getpid()}")
+            marker.rename(aside)   # only one call moves it; the rest find it gone
+            aside.unlink(missing_ok=True)
+    except OSError:
+        pass
+    try:
+        os.close(os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
     except OSError:
         return False
     return True

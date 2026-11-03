@@ -3,10 +3,14 @@ from a session whose PATH predates the install (`cli_tools`, `command_repair`)."
 
 import hashlib
 import io
+import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -42,6 +46,45 @@ def test_the_hook_runs_an_installed_tool_by_path_and_leaves_text_alone(no_path):
     assert "not on this session's PATH" in notes[0]
     assert command_repair.repaired("cat <<'TXT'\njq .x\nTXT")[0] == "cat <<'TXT'\njq .x\nTXT"
     assert command_repair.repaired("rg -n jq src")[0] == "rg -n jq src", "an argument is not a command"
+
+
+def test_only_a_command_word_is_rewritten(no_path, monkeypatch):
+    """Data that looks like an operator is not a boundary; a word after a real one is (R1-1, R1-2)."""
+
+    monkeypatch.setattr(cli_tools, "found", lambda name: "C:/tools/jq.exe")
+    for kept in [r"printf '%s\n' foo\;jq bar", "jq=2; echo $((jq + 1))", "(( jq + 1 ))", "echo jq"]:
+        assert command_repair.repaired(kept)[0] == kept
+    for given, fixed in [("  jq .", "  C:/tools/jq.exe ."), ("echo $(jq)", "echo $(C:/tools/jq.exe)"),
+                         ("(jq .)", "(C:/tools/jq.exe .)"), ("a|jq .", "a|C:/tools/jq.exe .")]:
+        assert command_repair.repaired(given)[0] == fixed
+    monkeypatch.setattr(cli_tools, "found", lambda name: "C:/Program Files/jq.exe")
+    assert command_repair.repaired("& jq .", "ps")[0] == '& "C:/Program Files/jq.exe" .'
+    assert command_repair.repaired("gc a.json | jq .", "ps")[0] == 'gc a.json | & "C:/Program Files/jq.exe" .'
+    assert command_repair.repaired("a && jq .", "ps")[0] == 'a && & "C:/Program Files/jq.exe" .'
+
+
+def test_calls_arriving_together_start_one_install_and_a_failed_start_frees_it(no_path, monkeypatch):
+    """Of two calls that both find no marker one starts the install (R1-3); a start that fails
+    removes its marker so the next call tries again (R1-4); a marker past `HELD` is taken over."""
+
+    monkeypatch.setattr(cli_tools.sys, "platform", "win32")
+    started = []
+    monkeypatch.setattr(cli_tools.subprocess, "Popen", lambda argv, **_: started.append(argv))
+    gate = threading.Barrier(2)
+    real = cli_tools._claimed
+    monkeypatch.setattr(cli_tools, "_claimed", lambda marker: gate.wait(5) is None or real(marker))
+    with ThreadPoolExecutor(2) as pool:
+        assert list(pool.map(lambda _: cli_tools.started("jq"), range(2))) == [True, True]
+    assert len(started) == 1
+    monkeypatch.setattr(cli_tools, "_claimed", real)
+
+    marker = no_path.parents[2] / "wiki-agent-install-fd"
+    monkeypatch.setattr(cli_tools.subprocess, "Popen", lambda argv, **_: (_ for _ in ()).throw(OSError("spawn")))
+    assert cli_tools.started("fd") is False and not marker.exists()
+    monkeypatch.setattr(cli_tools.subprocess, "Popen", lambda argv, **_: started.append(argv))
+    assert cli_tools.started("fd") and len(started) == 2
+    os.utime(marker, (time.time() - cli_tools.HELD - 1,) * 2)
+    assert cli_tools.started("fd") and len(started) == 3
 
 
 def test_a_missing_tool_starts_one_background_install_and_says_so(no_path, monkeypatch):

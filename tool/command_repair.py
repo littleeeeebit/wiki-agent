@@ -35,8 +35,11 @@ def _pwsh(command: str, dialect: str) -> str:
 
 
 # `fd` or `jq` as a command word (`cli_tools`): run from its install folder when this session's PATH
-# misses it, or installed in the background when it is not there at all.
-TOOL = re.compile(r"(^|[;&|(\n]\s*)(fd|jq)(?:\.exe)?(?=\s|$)")
+# misses it, or installed in the background when it is not there at all. A command word follows
+# the start, an unescaped operator, a subshell's `(` or `$(`; never `((`/`$((` arithmetic, an
+# assignment (`jq=2`) or an escaped `\;`. What it cannot place is left as written.
+TOOL = re.compile(r"(?:^|(?<![\\`])[;&|\n]|(?<![\\`$(])\(|\$\()[ \t]*(?P<name>fd|jq)(?:\.exe)?(?=[\s;&|)]|$)")
+CALLED = re.compile(r"(?<!&)&[ \t]*$")   # PowerShell's call operator already in front
 
 
 def _tools(command: str, dialect: str) -> tuple[str, list[str]]:
@@ -49,12 +52,13 @@ def _tools(command: str, dialect: str) -> tuple[str, list[str]]:
     bare = _QUOTED[dialect].sub(lambda m: " " * len(m[0]), text)
     out, cursor, notes = [], 0, []
     for match in TOOL.finditer(bare):
-        name = match[2]
+        name = match["name"]
         if shutil.which(name):
             continue
         if path := cli_tools.found(name):
-            word = path if " " not in path else f'"{path}"' if dialect == "posix" else f'& "{path}"'
-            out += [command[cursor:match.start(2)], word]
+            called = dialect == "posix" or CALLED.search(bare, 0, match.start("name"))
+            word = path if " " not in path else f'"{path}"' if called else f'& "{path}"'
+            out += [command[cursor:match.start("name")], word]
             cursor = match.end()
             notes.append(f"`{name}` is installed but not on this session's PATH; it ran from {path}.")
         elif cli_tools.started(name):
