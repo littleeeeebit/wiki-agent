@@ -914,7 +914,6 @@ def test_the_shell_s_pipe_neither_blocks_the_server_nor_outlives_it(tmp_path):
     """
 
     import socket
-    import time
     import urllib.request
 
     with socket.socket() as probe:
@@ -946,7 +945,10 @@ def test_the_shell_s_pipe_neither_blocks_the_server_nor_outlives_it(tmp_path):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/channels", timeout=20) as reply:
             assert json.loads(reply.read())
         server.stdin.close()
-        assert server.wait(timeout=20) == 0
+        try:    # a bare timeout once on a loaded CI runner (run 41557814228): keep what the server said
+            assert server.wait(timeout=20) == 0, log.read_text(encoding="utf-8")
+        except subprocess.TimeoutExpired:
+            pytest.fail("the server outlived its closed stdin:\n" + log.read_text(encoding="utf-8"))
     finally:
         server.kill()
         server.wait(timeout=10)
