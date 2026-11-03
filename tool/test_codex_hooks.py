@@ -142,7 +142,10 @@ def test_question_policy_before_agent_decides_to_ask(connected):
     *([("@'\nit's documentation\nsed -i 's/x/y/' README.md\n'@", "", False),
        ("@'\nit's documentation\npytest -q | Select-Object -Last 1\n'@", "", False),
        ("@'\npytest -q | Select-Object -Last 1\n<<pwd\n'@\npwd", "", False),
-       ("@'\nit's\n'@ | Out-Null; sed -i 's/a/b/' README.md", "", True)] if os.name == "nt" else []),
+       ("@'\nit's\n'@ | Out-Null; sed -i 's/a/b/' README.md", "", True),
+       # A string outside a here-string is still read for the path or script it holds.
+       ("python -c \"from pathlib import Path; Path('README.md').write_text('x')\"", "", True)]
+      if os.name == "nt" else []),
 ])
 def test_installed_pretool(installed, command, description, blocked):
     answer = run_hook(installed, "PreToolUse", {

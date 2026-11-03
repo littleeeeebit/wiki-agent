@@ -213,8 +213,8 @@
     },
     "tool/test_edit_as_diff.py": {
       "dup": 11,
-      "lines": 259,
-      "reason": "A git-tracking fixture, sed -i batch and single-file cases, untracked Write, literal pathspecs, data heredocs (one and two per line), cd || exit and its bound. Before that: baseline at adoption"
+      "lines": 269,
+      "reason": "PowerShell here-strings as text with real paths and scripts in other strings still refused. Before that: A git-tracking fixture, sed -i batch and single-file cases, untracked Write, literal pathspecs, data heredocs (one and two per line), cd || exit and its bound. Before that: baseline at adoption"
     },
     "tool/test_jev_contract.py": {
       "dup": 23,

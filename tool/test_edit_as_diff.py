@@ -158,6 +158,16 @@ def test_sed_quoted_in_a_data_heredoc_is_text(repo: Path) -> None:
     assert verdict(bash(code), repo) is not None, "인터프리터가 받는 본문은 명령이다"
 
 
+def test_powershell_here_strings_are_text_and_its_other_strings_are_read(repo: Path) -> None:
+    (repo / "author's notes.md").write_text("old\n", encoding="utf-8")
+    subprocess.run(["git", "add", "author's notes.md"], cwd=repo, check=True)
+    assert verdict(bash("@'\nit's\nsed -i 's/x/y/' README.md\n'@"), repo, "ps") is None
+    for command in ('echo x > "author\'s notes.md"',
+                    "python -c \"from pathlib import Path; Path('README.md').write_text('x')\"",
+                    "@'\nit's\n'@ | Out-Null; echo x > README.md"):
+        assert verdict(bash(command), repo, "ps") is not None, command
+
+
 def test_a_commit_message_that_quotes_a_command_is_not_a_command(repo: Path) -> None:
     """The hook's own false positive, caught the first time it was used.
 

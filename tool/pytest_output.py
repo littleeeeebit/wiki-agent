@@ -69,16 +69,12 @@ def _blank(command: str, dialect: str = "posix") -> str:
 
 
 def as_posix(command: str, dialect: str) -> str:
-    """A PowerShell command's strings read as PowerShell and rewritten for the checks that parse
-    Bash: a here-string is data and goes blank (its lines kept), any other string is single-quoted."""
+    """A PowerShell command for the checks that parse Bash: its here-strings are data and go blank
+    (their lines kept). Any other string is left as written, so a path or script in it is still
+    judged; ponytail: read as Bash's quotes, as before, until a PowerShell escape misleads one."""
     if dialect == "posix":
         return command
-
-    def plain(match):
-        if match[0].startswith("@"):
-            return re.sub(r"[^\n]", " ", match[0])
-        return "'" + re.sub(r"['\"`\n]", " ", match[0][1:-1]) + "'"
-    return _QUOTED["ps"].sub(plain, command)
+    return _QUOTED["ps"].sub(lambda m: re.sub(r"[^\n]", " ", m[0]) if m[0].startswith("@") else m[0], command)
 
 
 def held_back(command: str, dialect: str = "posix") -> str:
