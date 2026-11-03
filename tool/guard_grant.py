@@ -37,7 +37,6 @@ class Grant:
 
 # Inside a write root, but they decide the grant or what runs next: never granted.
 PROTECTED = (".git", ".claude", ".codex", ".wiki/adapter.toml", "verification.toml")
-SEARCH = "python tool/search"
 
 
 def temps() -> list[Path]:

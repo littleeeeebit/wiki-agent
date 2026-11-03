@@ -26,6 +26,12 @@ KEYWORDS = {
 }
 
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+# bash builtins with no row that set what later statements of this shell run, where, with which variables
+# or output (`trap … EXIT`, `exec > f`, `declare -x GIT_DIR=…`, `builtin cd`, `fc` rerunning history,
+# `enable -f` loading code, `compgen -W` expanding its word list here, `bind -x`). They are not programs,
+# so they are `top`, never a `spawn`. `command` and `export` are read by `posix_builtin`.
+POSIX_BUILTINS = {"bind", "builtin", "compgen", "complete", "compopt", "declare", "enable", "exec", "fc",
+                  "getopts", "local", "popd", "pushd", "readonly", "trap", "typeset"}
 PS_SHELLS = {"pwsh", "powershell"}
 
 
@@ -425,7 +431,8 @@ def m_sh(name, args, ctx):
         elif t.startswith(("-", "+")):
             return top(f"{name} {t}: an option the table does not model"), None
         else:
-            return top("a shell script file"), None
+            # A script file is the shell running a program it reads at run time: a spawn, like `python x.py`.
+            return {("spawn", name)}, None
     return from_stdin("posix", ctx, name), None
 
 
@@ -477,7 +484,7 @@ def m_pwsh(name, args, ctx):
             if p == "file":
                 if args[i + 1:i + 2] and args[i + 1].text == "-":
                     return from_stdin("ps", ctx, name), None
-                return top("a PowerShell script file"), None
+                return {("spawn", name)}, None   # a script file: a spawn, like `python x.py`
             if p in PWSH_VALUES and i + 1 < len(args):
                 if p == "workingdirectory":
                     ctx = replace(ctx, cwds=moved_to(args[i + 1], ctx))
@@ -488,7 +495,7 @@ def m_pwsh(name, args, ctx):
         if w.why:
             return top(f"{w.why} in {name}'s arguments"), None
         if name == "pwsh":
-            return top("a PowerShell script file"), None
+            return {("spawn", name)}, None
         return joined(args[i:], "ps", ctx), None
     return from_stdin("ps", ctx, name), None
 
@@ -683,8 +690,8 @@ def spawn_of(raw: str, ctx) -> set:
     """`spawn` of the program `raw` names, keyed by what identifies it.
 
     A bare name is looked up on PATH and keyed by that name. A name with a path is that very
-    file, keyed by where it resolves, so neither a planted `./cat` nor `../outside/python` borrows
-    the model or the grant of the program its basename suggests; the grant names it by path.
+    file, keyed by where it resolves, so neither a planted `./cat` nor `./git` borrows the model of
+    the program its basename suggests.
     """
     if not re.search(r"[\\/]", raw):
         return {("spawn", exe(raw, ctx.windows))}
@@ -699,6 +706,31 @@ def spawn_of(raw: str, ctx) -> set:
         # The file as written, suffix and all: `helper.cmd` and `helper.exe` are different programs.
         out.add(("spawn", where.lower() if ctx.windows else where))
     return out
+
+
+def posix_builtin(name: str, args: list, ctx) -> tuple[set, object]:
+    """`command -v NAME` looks a name up and `command [-p] [--] CMD …` runs CMD, judged as itself.
+    `export` of names and literal `NAME=value` words, quoted or not, is judged like those assignments;
+    any flag or computed name is `top`."""
+    from guard import assignment, envs
+
+    if name == "command":
+        i, lookup = 0, False
+        while i < len(args) and args[i].text.startswith("-") and args[i].text != "-":
+            if args[i].why or not re.fullmatch(r"--|-[pvV]+", args[i].text):
+                return top(f"command {args[i].text}: an option the table does not model"), None
+            i += 1
+            if args[i - 1].text == "--":
+                break
+            lookup = lookup or bool(re.search("[vV]", args[i - 1].text))
+        if lookup or i == len(args):
+            return set(), None
+        return run_argv(args[i:], ctx)
+    # `export` reads its argument's `NAME=` after quote removal, unlike an assignment before a command.
+    assigned = [w for w in args if assignment(w) or not w.why and re.match(r"[A-Za-z_]\w*\+?=", w.text)]
+    if any(w not in assigned and (w.why or not re.fullmatch(r"[A-Za-z_]\w*", w.text)) for w in args):
+        return top("export: a flag or a computed name"), None
+    return envs(assigned, ctx), None
 
 
 def run_argv(words: list, ctx) -> tuple[set, object]:
@@ -720,8 +752,12 @@ def run_argv(words: list, ctx) -> tuple[set, object]:
             return cmd_builtin(raw.lstrip("@").lower(), args, ctx)
     name = exe(raw, ctx.windows)
     r = TABLE.get(name)
+    if r is None and ctx.d == "posix" and raw in ("command", "export"):
+        return posix_builtin(raw, args, ctx)
+    if r is None and ctx.d == "posix" and raw in POSIX_BUILTINS:
+        return top(f"{raw}: a shell builtin the table does not model"), None
     if r is None:
-        # No row: the program is only a `spawn`, which a grant naming it allows and nothing else does.
+        # No row: a program, whatever its language, runs its own code. A `spawn`, which is not judged.
         return {("spawn", name)}, None
     if stop := gate(name, args, r):
         return stop, None

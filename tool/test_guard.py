@@ -366,6 +366,25 @@ def test_a_program_with_no_row_is_only_a_spawn(repo):
     assert call(repo, "Zz-Unlisted ../outside/target.txt", tool="PowerShell") is None
 
 
+# P0: the gate's language once decided which programs ran. A Python gate granted `python` and refused
+# npm, a project CLI and a `.cmd` browser launcher, so a web project could not be verified at all.
+@pytest.mark.parametrize("command,tool", [
+    ("npm run typecheck && npx vitest run", "Bash"), ("omm validate", "Bash"), ("cargo test", "Bash"),
+    ("./scripts/run_user.cmd", "Bash"), ("scripts\\run_user.cmd", "PowerShell"), ("& .\\scripts\\x.ps1", "PowerShell"),
+    ("bash scripts/check.sh", "Bash"), ("pwsh -File scripts/check.ps1", "Bash"), ("cmd /c call run_user.cmd", "Bash"),
+    ("cmd /c start npm run dev", "Bash"), ("command -v npm && export NODE_ENV=test && npm test", "Bash"),
+    ("command -pv npm; export \"NODE_ENV=test\" CI; command -- npm test", "Bash"),
+    # One literal assignment, its value quoted or not, still stands for its variable in a later path.
+    ('export S="safe"; echo x > "$S/target.txt"', "Bash"), ("export S='safe' T=b; echo x > $S/t", "Bash"),
+    ('export S=safe; echo x > "$S/target.txt"', "Bash"),
+    ("../outside/python x.py", "Bash"),
+    # A program with no row runs its own code, as `python -c` always did: what it does is not judged.
+    ("gh pr view 3", "Bash"),
+])
+def test_any_program_of_any_toolchain_runs(repo, command, tool):
+    assert call(repo, command, tool=tool) is None, command
+
+
 # -- PowerShell and cmd rows that write (follow-up b) ---------------------------------
 
 HERE_ = C["cwd"]

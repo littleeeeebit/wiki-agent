@@ -580,10 +580,15 @@ def run(toks: list, ctx: Ctx, src: str = "") -> tuple[set, frozenset]:
             # is not followed: the guard is open by default.
             pending = moved
         # Only an assignment that runs at this level, not in a pipeline or a branch, binds what follows it.
-        if once and not stack and join in (";", "\n", "&&") and not piped_in and nxt not in ("|", "|&"):
-            bound = literal(items, ctx.d, consts, once)
-            consts.update(bound)
-            chain |= set(bound) if join == "&&" else set()
+        words = [bind(it[1], consts).text for it in items if it[0] == "w"]   # as `simple` dispatched them
+        here = once and not stack and join in (";", "\n", "&&") and not piped_in and nxt not in ("|", "|&")
+        bound = literal(items, ctx.d, consts, once) if here else {}
+        consts.update(bound)
+        chain |= set(bound) if join == "&&" else set()
+        # `export` binds each word's `NAME=` after quote removal: one `literal` did not bind has no literal.
+        if ctx.d == "posix" and "export" in words:
+            consts.update({m.group(1): None for t in words if (m := re.match(r"([A-Za-z_]\w*)\+?=", t))
+                           and m.group(1) not in bound})
     # Where the last command moved, it may or may not have run: every place stays possible.
     return out, states(cwds | pending) if pending is not None else cwds
 
