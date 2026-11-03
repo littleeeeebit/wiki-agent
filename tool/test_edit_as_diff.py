@@ -161,11 +161,14 @@ def test_sed_quoted_in_a_data_heredoc_is_text(repo: Path) -> None:
 def test_powershell_here_strings_are_text_and_its_other_strings_are_read(repo: Path) -> None:
     (repo / "author's notes.md").write_text("old\n", encoding="utf-8")
     subprocess.run(["git", "add", "author's notes.md"], cwd=repo, check=True)
-    assert verdict(bash("@'\nit's\nsed -i 's/x/y/' README.md\n'@"), repo, "ps") is None
+    code = "open('README.md', 'w').write('x')"
+    for command in ("@'\nit's\nsed -i 's/x/y/' README.md\n'@", f"@'\n{code}\n'@ | Select-String python",
+                    f"@'\n{code}\n'@ | Out-Null; python --version"):
+        assert verdict(bash(command), repo, "ps") is None, command
     for command in ('echo x > "author\'s notes.md"',
                     "python -c \"from pathlib import Path; Path('README.md').write_text('x')\"",
                     "@'\nit's\n'@ | Out-Null; echo x > README.md",
-                    "@'\nopen('README.md', 'w').write('x')\n'@ | python -"):
+                    f"@'\n{code}\n'@ | python -", f"python -c @'\n{code}\n'@", f"& python.exe -c @'\n{code}\n'@"):
         assert verdict(bash(command), repo, "ps") is not None, command
 
 

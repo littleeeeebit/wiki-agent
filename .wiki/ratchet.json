@@ -213,8 +213,8 @@
     },
     "tool/test_edit_as_diff.py": {
       "dup": 11,
-      "lines": 270,
-      "reason": "PowerShell here-strings as text (code when piped into an interpreter) with real paths and scripts in other strings still refused. Before that: A git-tracking fixture, sed -i batch and single-file cases, untracked Write, literal pathspecs, data heredocs (one and two per line), cd || exit and its bound. Before that: baseline at adoption"
+      "lines": 273,
+      "reason": "PowerShell here-strings as text (code when an interpreter consumes one, as argument or first command of the pipe) with real paths and scripts in other strings still refused. Before that: A git-tracking fixture, sed -i batch and single-file cases, untracked Write, literal pathspecs, data heredocs (one and two per line), cd || exit and its bound. Before that: baseline at adoption"
     },
     "tool/test_jev_contract.py": {
       "dup": 23,

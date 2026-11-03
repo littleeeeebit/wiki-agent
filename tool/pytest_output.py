@@ -70,19 +70,28 @@ def _blank(command: str, dialect: str = "posix") -> str:
 
 def as_posix(command: str, dialect: str) -> str:
     """A PowerShell command for the checks that parse Bash: its here-strings are data and go blank
-    (their lines kept), unless the closing line pipes one into an interpreter, as a Bash heredoc
-    is code there. Any other string is left as written, so a path or script in it is still
-    judged; ponytail: read as Bash's quotes, as before, until a PowerShell escape misleads one.
-    A here-string held in a variable and run later is read as data."""
+    (their lines kept), unless an interpreter consumes one, as a Bash heredoc is code there: the
+    command it is an argument of (`python -c @'`), or the first command of the pipe after `'@`.
+    Any other string is left as written, so a path or script in it is still judged; ponytail:
+    read as Bash's quotes, as before, until a PowerShell escape misleads one. A here-string held
+    in a variable and run later is read as data."""
     from edit_as_diff import INTERPRETERS
 
     if dialect == "posix":
         return command
 
+    def runs(stage: str) -> bool:
+        word = (stage.strip().lstrip("&").split() or [""])[0]
+        return bool(INTERPRETERS.fullmatch(word.removesuffix(".exe"))
+                    or re.fullmatch(r"(?i)pwsh|powershell|iex|invoke-expression", word.removesuffix(".exe")))
+
     def plain(match):
-        tail = command[match.end():].split("\n", 1)[0]
-        code = INTERPRETERS.search(tail) or re.search(r"(?i)\b(?:pwsh|powershell|iex|invoke-expression)\b", tail)
-        return match[0] if code or not match[0].startswith("@") else re.sub(r"[^\n]", " ", match[0])
+        if not match[0].startswith("@"):
+            return match[0]
+        stage = re.split(r"[;|&\n]\s*(?=\S)", command[:match.start()].rsplit("\n", 1)[-1])[-1]
+        tail = re.match(r"\s*\|([^;|\n]*)", command[match.end():])
+        code = runs(stage) or (tail and runs(tail[1]))
+        return match[0] if code else re.sub(r"[^\n]", " ", match[0])
     return _QUOTED["ps"].sub(plain, command)
 
 
