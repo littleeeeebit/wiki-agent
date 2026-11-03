@@ -170,7 +170,8 @@ def test_powershell_here_strings_are_text_and_its_other_strings_are_read(repo: P
                     "@'\nit's\n'@ | Out-Null; echo x > README.md",
                     f"@'\n{code}\n'@ | python -", f"python -c @'\n{code}\n'@", f"& python.exe -c @'\n{code}\n'@",
                     f"& 'C:/Program Files/Python/python.exe' -c @'\n{code}\n'@", f"@'\n{code}\n'@ | & 'C:/py.exe' -",
-                    f"@'\n{code}\n'@ | Some-Unknown-Runner"):
+                    f"@'\n{code}\n'@ | Some-Unknown-Runner", f"gh probe @'\n{code}\n'@",
+                    f'Write-Output @"\n$(python -c "{code}")\n"@'):
         assert verdict(bash(command), repo, "ps") is not None, command
 
 

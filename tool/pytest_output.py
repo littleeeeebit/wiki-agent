@@ -84,17 +84,17 @@ def as_posix(command: str, dialect: str) -> str:
         return not word or re.fullmatch(r"\$[\w:]+\s*=", stage.strip()) is not None or name in DATA_SINKS
 
     def plain(match):
-        if not match[0].startswith("@"):
-            return match[0]
+        if not match[0].startswith("@") or (match[0].startswith('@"') and "$(" in match[0]):
+            return match[0]  # an expandable here-string runs its `$(...)` wherever it goes
         stage = re.split(r"[;|\n]|&&", command[:match.start()].rsplit("\n", 1)[-1])[-1]
         tail = re.match(r"[ \t]*\|([^;|\n]*)", command[match.end():])
         return re.sub(r"[^\n]", " ", match[0]) if data(stage) and (not tail or data(tail[1])) else match[0]
     return _QUOTED["ps"].sub(plain, command)
 
 
-# Commands that take a here-string as text and never run it.
+# Commands that take a here-string as text and never run it. Not `git` or `gh`: their aliases run shells.
 DATA_SINKS = {"echo", "write-output", "write-host", "out-null", "out-file", "set-content", "add-content",
-              "select-string", "select-object", "measure-object", "out-string", "clip", "git", "gh"}
+              "select-string", "select-object", "measure-object", "out-string", "clip"}
 
 
 def held_back(command: str, dialect: str = "posix") -> str:
