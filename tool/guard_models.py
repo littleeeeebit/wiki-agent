@@ -194,7 +194,8 @@ SPEC = {
 
 
 def options(name: str, args: list) -> tuple:
-    """`([(option, value Word or None)], operands)`, splitting `args` as `name`'s option parser does."""
+    """`([(option, value Word or None)], operands, the args after curl's `--next`)`, splitting `args` as
+    `name`'s option parser does."""
     letters, longs = SPEC.get(name, ("", ()))
     opts, ops, i = [], [], 0
     while i < len(args):
@@ -206,6 +207,8 @@ def options(name: str, args: list) -> tuple:
         elif t == "--":
             ops += args[i:]
             break
+        elif name == "curl" and t in ("--next", "-:"):     # a new operation, with its own local options
+            return opts, ops, args[i:]
         elif t.startswith("--"):
             flag, eq, glued = t.partition("=")
             named = [n for n in longs if n == flag] or [n for n in longs if n.startswith(flag)]
@@ -221,7 +224,7 @@ def options(name: str, args: list) -> tuple:
                     i += 0 if t[k + 1:] else 1
                     break
                 opts.append(("-" + c, None))
-    return opts, ops
+    return opts, ops, []
 
 
 def fetched(url: Word) -> Word:
@@ -232,28 +235,29 @@ def fetched(url: Word) -> Word:
 
 
 def under(folder: list, w: Word) -> Word:
-    """`w` placed in the last of `folder` (`--output-dir`, `-P`), unless it is absolute."""
-    if not folder or re.match(r"[\\/~]|[A-Za-z]:", w.text):
+    """`w` placed in the last of `folder` (`--output-dir`, `-P`); curl prefixes even an absolute name."""
+    if not folder:
         return w
     return Word(folder[-1].text.rstrip("\\/") + "/" + w.text, folder[-1].why or w.why)
 
 
 def m_paths(name, args, ctx):
-    opts, ops = options(name, args)
+    opts, ops, rest = options(name, args)
     flags = {f for f, _ in opts}
 
     def given(*names):
         return [v for f, v in opts if f in names and v is not None]
 
     def out(ws):
-        return writes("write", [w for w in ws if w.text != "-"], ctx), None    # `-` is standard output
+        # `-` is standard output; an empty name keeps curl's `--hsts`/`--alt-svc` cache in memory.
+        return writes("write", [w for w in ws if w.text not in ("-", "")], ctx), None
 
     if name == "curl":
         named = [w for w in given("-o", "--output") if w.text != "-"]
         if flags & {"-O", "-J", "--remote-name", "--remote-name-all", "--remote-header-name"}:
             named += [fetched(u) for u in ops + given("--url")]
-        # `--output-dir` holds every download named relatively.
-        return out([under(given("--output-dir"), w) for w in named] + given(*CURL_OUT))
+        eff = out([under(given("--output-dir"), w) for w in named] + given(*CURL_OUT))[0]
+        return eff | (m_paths(name, rest, ctx)[0] if rest else set()), None
     if name == "wget":
         # Without `-O`, each URL lands under `-P`'s folder, else here; `--spider` saves none.
         doc = given("-O", "--output-document")

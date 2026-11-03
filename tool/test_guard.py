@@ -306,6 +306,8 @@ EXPLICIT_FORMS = {
     "wget-here": "cd .. && wget https://example.com/x.tgz",
     "wget-hsts": "wget --hsts-file ../outside/hsts -O response.txt https://example.com/x",
     "curl-url": "curl --output-dir ../outside -O --url=https://example.com/x",
+    "curl-dir-prefix": "curl --output-dir ../outside -o /tmp/r.txt https://example.com/x",
+    "curl-next": "curl --output-dir ../outside -O https://example.com/a --next --output-dir d -O https://example.com/b",
     "later-cd": "echo ok; cd .. && echo x > target.txt",
     "protected": "cp a.txt .wiki/adapter.toml",
     "push-url": "git -c http.followRedirects=false push --no-recurse-submodules https://unlisted.example/o/r.git main",
@@ -330,6 +332,7 @@ def test_a_writer_lands_its_sources_in_a_folder_it_names(repo):
     # An option's value that is read, or standard output, is not written.
     assert call(repo, "touch -r ../outside/ref t && cd .. && wget -qO- https://example.com/x") is None
     assert call(repo, "cd .. && wget --spider https://example.com/x") is None
+    assert call(repo, 'curl --hsts "" --alt-svc "" https://example.com/x') is None
     assert effects("curl --output-dir d -o r.txt https://example.com/x") - {"read"} == {f"write({C['cwd']}/d/r.txt)"}
     assert effects("cp a b c dst/") >= {f"write({C['cwd']}/dst/{n})" for n in "abc"}
     assert "허가를 정하는 파일" in (call(repo, "cp adapter.toml .wiki") or "")

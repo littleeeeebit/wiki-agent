@@ -131,9 +131,10 @@ Effects come from:
   `new/verification.toml`); a destination that is a folder now, or ends in a
   separator, is written only that way. `curl` writes its `-o`, `-D`, `-c`,
   trace and other file options and, with `-O`, the last name of each URL
-  (`--url` too), a relative download under `--output-dir`; `wget` writes
-  `-O`, else each URL's last name under `-P` or here (none with `--spider`),
-  and its log, cookie and HSTS files. `-` (standard output) is never a file;
+  (`--url` too), each prefixed with its operation's `--output-dir` (an
+  operation ends at `--next`); `wget` writes `-O`, else each URL's last name
+  under `-P` or here (none with `--spider`), and its log, cookie and HSTS
+  files. `-` (standard output) and an empty name are never a file;
 - PowerShell and cmd writers of literal paths (`Set-Content`, `Out-File`,
   `New-Item`, `Remove-Item`, `Copy-Item`, `Move-Item`, `Rename-Item`, cmd's
   `del`, `rd`, `md`, `move`, `ren`), in `tool/guard_windows.py`;
