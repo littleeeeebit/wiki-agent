@@ -101,206 +101,78 @@ the direct command but every command the guard's parser finds one level down,
 so a block such as `git reset --hard` holds even inside `bash -c '…'`,
 `pwsh -Command '…'` or `$(…)`.
 
-It does not match command patterns. A shell command is parsed into a tree
-(`;`, `&&`, `||`, `|`, `$(...)`, backticks, redirections, here documents, and
-the strings handed to `bash -c`, `sh -c`, `pwsh -Command`, `powershell
--Command` and `cmd /c`, parsed again up to eight levels deep) and reduced to
-effects: `read`, `write(path)`, `delete(path)`, `spawn(executable)`,
-`network(host)`, and `top(reason)` for what cannot be decided before it runs —
-`eval`, `source`, `-EncodedCommand`, a variable, substitution or glob in a
-written path, an unclosed quote, nesting past the limit, more than 32
-possible working directories. An
-Edit, Write, MultiEdit, NotebookEdit or apply_patch call is a `write` (or
-`delete`) of its resolved target. A shell tool that names its own working
-directory (`workdir` or `cwd` in its input) is judged from there; one that
-cannot be read is `top`. Reads, and tools that neither run a shell nor
-edit a file, are not restricted. The call passes when every effect lies inside
-the task's grant, computed again for each call.
+The guard is open by default. It denies only what it can read as leaving the
+grant, and lets everything else run. The agent is not an adversary: a closed
+table that denied every unlisted program and option, then opened one row at a
+time, cost far more in false denials than the accidents it caught.
 
-What a program does is read off a small closed table, never guessed. `TABLE`
-in `tool/guard_models.py` lists each modelled program with the flags it
-understands (`row(model, "-abc --long -o: --out:")`: one-letter flags, long
-flags, and flags that take a value); `PS_ROWS` and `CMD_ROWS` in
-`tool/guard_windows.py` do the same for PowerShell cmdlets and cmd.exe
-builtins, and `tool/guard_git.py` for git. The table holds only:
+A shell command is parsed into a tree (`;`, `&&`, `||`, `|`, `$(...)`,
+backticks, redirections, here documents, and the strings handed to `bash -c`,
+`sh -c`, `pwsh -Command`, `powershell -Command` and `cmd /c`, parsed again up
+to eight levels deep) and reduced to effects: `read`, `write(path)`,
+`delete(path)`, `spawn(executable)`, `network(host)`, and `top(reason)` for
+what it cannot read. An Edit, Write, MultiEdit, NotebookEdit or apply_patch
+call is a `write` (or `delete`) of its resolved target. A shell tool that names
+its own working directory (`workdir` or `cwd`) is judged from there.
 
-- read-only listing, reading and searching programs (`ls`, `cat`, `head`,
-  `grep`, `rg`, `find` without actions, `diff`, `echo`, `Get-Content`,
-  `Get-ChildItem`, `Select-String`, `Test-Path`, cmd's `type`, `dir`, `echo`);
-- `cd` and `Set-Location` in the call's first statement only;
-- PowerShell and cmd writers of one literal path each: `Set-Content`,
-  `Add-Content`, `Clear-Content`, `Out-File`, `Tee-Object`, `New-Item` of a
-  file or a folder, `Remove-Item`, `Copy-Item` (without `-Recurse`),
-  `Move-Item`, `Rename-Item`, and cmd's `del`/`erase` (without `/s`),
-  `rd`/`rmdir`, `md`/`mkdir`, `move` and `ren`/`rename`. cmd's `copy` has no
-  row: a source an earlier statement turned into a folder has its files
-  written under names the command does not show. A copy or move writes its
-  destination and the destination's `<name of the source>` (where it lands
-  when the destination is a folder); a move or rename also deletes its
-  source, and a source named by a short (8.3) name, which lands under its
-  long one, is `top`. A path PowerShell or cmd may read
-  as more than one file-system path is `top`: a wildcard (`*`, `?`, and in
-  PowerShell `[`), a list (`a,b`), a script block, a provider or stream
-  (`Env:X`, `Function:f`, `FileSystem::`, `f.txt:s`), cmd's `+`. So is a
-  `New-Item` link type, a `New-Item` fed by a pipeline (it binds its type and
-  target from piped objects), and a copy, move or delete with no literal path
-  for one of its places. A parameter's dash may be an en dash, em dash or
-  horizontal bar, as PowerShell reads it, and `\\?\` names a drive, a share
-  (`UNC\`) or else nothing inside a write root (`GLOBALROOT`). An alias that
-  may run a native program instead is not its cmdlet: `sc` (`sc.exe` in
-  PowerShell 7) is `top`, and off Windows `rm`, `cp`, `mv`, `tee`, `mkdir`
-  and the other names PowerShell 7 drops there are those programs, while
-  `md` (an alias of the native `mkdir` there) is `top`. A path PowerShell
-  opens itself (a cmdlet's, a redirection's, the location) takes a backslash
-  for a separator on every host; a native program's operand and an edit
-  tool's path keep the host's reading;
-- git reads (`status`, `diff`, `log`, `show`, `rev-parse`, `rev-list`,
-  `ls-files`, `ls-tree`, `check-ignore`, `merge-base`, `cat-file`, `describe`,
-  `blame`, `grep`, `remote -v`, `remote get-url`, `config` that only gets or
-  lists, `stash list`/`show`, `worktree list`, and `branch` that only lists);
-  writes of the repository (`add` of named files or `-u`, `commit -m`/`-F`,
-  `branch`, `checkout`, `switch`, `restore`, `merge`, `rebase` without
-  `-i`/`-x`, `stash` without `-a`/`-u`, `worktree add`/`remove`/`prune`).
-  `add -A` and a folder to add are `top`, as is `stash -u`: an edited ignore
-  rule may stop hiding a protected file, which they would then pick up as an
-  untracked one. And the network: `push` with at most a branch to a
-  configured remote. A write of the repository is a write of the whole
-  worktree root, wherever below it git runs. A push must carry
-  `-c http.followRedirects=false` and `--no-recurse-submodules`, so a
-  redirect or a submodule's own remote cannot pick another host. `fetch` and
-  `pull` have no row: a server may answer in protocol v2 whatever version was
-  asked, and v2 takes a packfile URI naming another host unasked. A
-  configuration that mentions `followRedirects`, a bundle URI,
-  `uriProtocols`, a proxy, `curloptResolve` or a cookie file (or a proxy in
-  the environment) adds a host besides the remote's or a file git writes, so
-  it leaves the remotes unread. A path operand of
-  `checkout`, `restore` or `stash push` is also a write of that path, and a
-  pathspec pattern (`'*.toml'`, `:(top)`) is `top`; `worktree add` writes its
-  folder and `worktree remove` deletes it, named only by a path absolute on
-  the host (git matches a relative one, `C:/x` on POSIX included, as the tail
-  of any registered worktree's path). `-C <dir>` moves where git runs, and
-  `-c` takes only identity, whitespace and colour keys. `--git-dir`,
-  `--work-tree`, `--exec-path`, `--config-env`, a `GIT_TRACE*` file and every
-  other verb are `top`. In a partial clone every git form is `top`, since
-  reading a missing object fetches it, and so it is with a `trace2` target
-  in any configuration (any call appends to it) and wherever either may hide:
-  an `[include]`, `extensions.worktreeConfig`, or a submodule (a
-  `[submodule]` section in any configuration or a `modules` folder), whose
-  own configuration a recursing read uses. A missing repository
-  configuration still has the global and system files checked;
-- no row for gh or curl: their HTTP clients follow a redirect the response
-  names, nothing on the command line turns that off, and gh's `pr create` and
-  `pr merge` also run git that takes none of the options above. They are
-  spawns, which pass like any program with no row. Setting `GH_REPO` in any
-  form (PowerShell's one-word and compound assignments included) stays `top`;
-- plain `>`/`>>` redirection to a literal path, in every dialect. Only the
-  host's devices are discarded: `/dev/null` and its kin as spelled where a
-  POSIX layer serves them (not in native Windows PowerShell or cmd, where they
-  are files under the drive root), `NUL` and `CON` on Windows in any case, and
-  PowerShell's `$null` only unquoted.
+Effects come from:
 
-A git row's arguments never select a program: `--show-signature` and a
-`--format`/`--pretty` value with a `%G` field or a configured alias name are
-`top`. What git starts from its own configuration (hooks, a text converter,
-the verifier `log.showSignature` asks for) is part of the git row, since that
-configuration is protected or outside the write roots. That holds only for the
-checkout itself and the worktrees of the same repository (one configuration,
-one set of hooks and remotes): git in any other repository (a nested one
-included) is `top`, and no write or edit may lay down a `.git` anywhere. The
-checkout's git directory and common git directory are protected whatever their
-names, so a worktree of a bare repository (`shared.git`) keeps its
-configuration and hooks out of reach too. When
-any configuration git reads may point `core.hooksPath` inside a write root,
-every git write of the repository is denied, since git would run hooks the task
-can edit. Only an absolute value on a line of its own is read as written; a
-relative value (it depends on the worktree that runs it), another syntax, an
-`[include]` or `extensions.worktreeConfig` counts as a writable folder.
+- redirections (`>`, `>>`) to a literal path, in every dialect, with the
+  host's null devices discarded;
+- POSIX writers, their options split the way the program's own parser splits
+  them (its getopt letters and long names, copied into `guard_models.SPEC`:
+  `-gstaff` is `-g staff`, `-dm755` is `-d -m 755`). `rm`, `rmdir`, `unlink`
+  and `shred` delete their operands; `mkdir`, `touch`, `tee`, `truncate` and
+  `install -d` write them; `cp`, `mv`, `install` and `ln` write their
+  destination (`-t`'s folder, else the last operand), and `mv` deletes its
+  sources. Each source's last name is written below the destination too,
+  since an earlier command may have made it a folder (`cp x .` writes `./x`;
+  `cp verification.toml new` is denied, as it may write
+  `new/verification.toml`); a destination that is a folder now, or ends in a
+  separator, is written only that way. `curl` writes its `-o`, `-D`, `-c`,
+  trace and other file options and, with `-O`, the last name of each URL
+  (`--url` too), each prefixed with its operation's `--output-dir` (an
+  operation ends at `--next`); `wget` writes `-O`, else each URL's last name
+  under `-P` or here (none with `--spider`), and its log, cookie and HSTS
+  files. `-` (standard output) and an empty name are never a file;
+- PowerShell and cmd writers of literal paths (`Set-Content`, `Out-File`,
+  `New-Item`, `Remove-Item`, `Copy-Item`, `Move-Item`, `Rename-Item`, cmd's
+  `del`, `rd`, `md`, `move`, `ren`), in `tool/guard_windows.py`;
+- git, in `tool/guard_git.py`: a write of the repository is a write of its
+  worktree root, a path operand of `checkout`, `restore` or `stash push` is a
+  write of that path, `worktree add`/`remove` write or delete their folder,
+  and `push` reaches each host its remote names, or the host of a URL given in
+  its place;
+- `cd`, `Set-Location` and cmd's `cd`, followed wherever they stand: every
+  later path is judged from each place the shell may be in (a `cd` that may
+  fail, or sits in a branch, leaves both). A subshell, a substitution and a
+  nested shell move only themselves; a PowerShell group or subexpression
+  moves the runspace.
 
-A verb that moves the working tree between commits (`checkout`, `merge`,
-`rebase`, `stash pop`) writes whatever the repository's history holds,
-protected files and links included. That history is trusted because the agent
-cannot author such a commit within the table: no row lays down a link, and a
-protected name (`verification.toml`, `.wiki/adapter.toml`, `.claude`,
-`.codex`) is protected at any depth below every write root, so another
-worktree's copy cannot be changed and committed either; no git setting
-writes a file the guard has not placed (`GIT_TRACE*` is `top`), git never
-stages or stashes a file it was not named (no `add -A`, folder or `stash -u`),
-and no row reaches a remote that could author one.
-
-Four rules hold across the table:
-
-- A flag or parameter the row does not list is `top`, and so is a variable or
-  substitution standing where an option may stand.
-- A program with no row is `spawn(name)`, and a spawn always passes, in
-  whatever language the project is written. So does a script file a shell
-  runs (`./run.cmd`, `bash x.sh`, `pwsh -File x.ps1`, cmd's `start`, and a
-  batch file or program cmd's `call` runs). A path-named program
-  (`./helper.exe`) is that file, suffix included, and never borrows the row
-  of the program its basename names. A PowerShell cmdlet or member with no
-  row is `top`: it runs inside the runspace, not as a program. So is a bash
-  builtin with no row that sets what later statements run, where, or with
-  which variables (`trap`, `exec`, `declare`, `local`, `readonly`, `builtin`,
-  `pushd`, `popd`, `fc`, `getopts`, `enable`, `compgen`, `complete`,
-  `compopt`, `bind`). `command -v` only looks a name up, `command [-p] [--]
-  CMD` is CMD judged as itself, cmd's `call` of a builtin is that builtin
-  (`call cd ..` moves, `call set` is `top`), and `export` of names and literal
-  `NAME=value` words, quoted or not, is judged like those assignments.
-- A name set by a builtin (`read`, `printf -v`, `mapfile`, `unset`) is judged
-  like an assignment: setting an execution or destination variable (`PATH`,
-  `HOME`, the proxy variables, `GIT_DIR`, `GIT_WORK_TREE`) that way is `top`.
-- A directory change anywhere but the first statement (a later statement, a
-  group, a branch, a pipeline, a substitution, a nested shell) is `top`, and
-  so are loops, functions and traps, whose bodies run any number of times.
-  PowerShell's `using module` and `using assembly` load code and are `top`;
-  only `using namespace` is a declaration.
-
-Running a program is never judged. The gate once granted only the programs
-its own commands ran, so a Python gate shut out npm, a project's own CLI and
-a `.cmd` browser launcher, and a web project could not be verified at all. A
-list of executables bounded nothing else: a granted interpreter (`python -c`)
-already ran any code. So programs with no row (`rm`, `cp`, `tar`, `awk`,
-`sed`, curl, gh, `npm`, `node`, `cargo`, any project CLI) pass, and what they
-do inside their own process is theirs. What stays denied is a form of a
-modelled row outside that row: every git form outside its row, the refusing
-rows (`ln`, `wget`, archives, `patch`, `eval`, `source`), cmdlets, and the
-builtins above. A command that is denied but ordinary is answered by adding
-a row, not by loosening an existing one.
-
-| Effect | Granted when |
+| Effect | Denied when |
 |---|---|
-| `write`, `delete` | the path resolves (links, junctions and `..` followed) inside a write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder; each `[guard] write_roots` entry, relative to the checkout |
-| — never | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (`echo x > .wiki`, `echo x > .`). Below a write root, the same names at any depth (spelled with the trailing dots or spaces Windows drops, too), and a folder named `.wiki` (a folder moved onto it would put its `adapter.toml` there). A delete is also denied when anything below it is one of those names, a link or a junction, or when the folder has more than 20,000 entries to look through. Only git's own write of the repository it runs in (`add`, `commit`, `merge`, `push`, …) is judged by place alone |
-| `spawn` | always: any program and any script, in any language |
-| `network` | the host is the loopback, a configured git remote's host, or listed in `[guard] network_hosts`. A push reaches every `url` and `pushurl` of its remote (every remote and URL upstream when none is named); a remote at a local path, a URL rewrite (`insteadOf`) or `[include]` in any config file git reads (the repository's, global, XDG or system; the global and XDG files under every home git may take: `HOME`, `HOMEDRIVE`+`HOMEPATH` and `USERPROFILE`), a `[remote]` or `[branch]` section outside the repository's own config, `extensions.worktreeConfig`, or config syntax the guard does not decode (a key on a header's line, a continued, quoted or commented value), makes it `top`. `GH_HOST` and the proxy variables count as reaching their host (`GH_REPO` is `top`); a target whose host cannot be read is `top`. A git remote name counts only in the checkout's own repository: a push after a `cd` into another repository is `top` |
-| `top` | never |
+| `write`, `delete` | the path resolves (links, junctions and `..` followed) outside every write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder |
+| — always | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (`echo x > .wiki`). Below a write root, the same names at any depth (with the trailing dots or spaces Windows drops, too), and a folder named `.wiki`. A delete is also denied when anything below it is one of those names, a link or a junction, or when the folder has more than 20,000 entries to look through. Only git's own write of the repository it runs in is judged by place alone, and every git write is denied while `core.hooksPath` may point inside a write root |
+| `network` | the host is neither the loopback nor a host a configured git remote names |
+| `spawn`, `top` | never |
 
-The optional adapter table adds to the grant and never names a command:
+So a program with no row, an option a row does not know, a variable or glob in
+a path, `eval`, a loop, a function, an interpreter's own work (`python -c`),
+an archive or an environment variable that sends a program elsewhere all pass.
+That is the trade the open default makes; the guard catches the ordinary,
+readable accident, not a deliberately hidden one.
 
-```toml
-[guard]
-write_roots = ["../shared-fixtures"]
-network_hosts = ["pypi.org"]
-```
-
-An `executables` key is no longer read: running a program needs no grant.
-
-A denial lists each effect outside the grant, why, and what would open it,
-then the grant itself. The person reads it, so it stays Korean:
+A denial lists each effect outside the grant and why, then the grant itself.
+The person reads it, so it stays Korean:
 
 ```
 위키 효과 검사가 이 호출을 막았다 — 작업에 허가된 효과 밖이다.
-- delete(C:/work/other): 쓰기 루트 밖이다 — `.wiki/adapter.toml` 의 `[guard] write_roots` 에 이 경로를 담은 디렉터리를 더하면 열린다
-- top(variable in a write path): 판단할 수 없는 형태다(variable in a write path) — 어떤 허가로도 열리지 않으니, 리터럴 경로와 직접 실행하는 명령으로 풀어 쓴다
+- delete(C:/work/other): 쓰기 루트 밖이다 — 체크아웃, 임시 폴더, 세션 메모리 폴더 안에서만 쓰고 지운다
+- network(unlisted.example): 원격 저장소가 아닌 호스트(unlisted.example)로 보낸다 — `git remote add` 로 원격을 먼저 더하면 열린다
 허가: 쓰기 루트 C:\work\repo, C:\Users\me\AppData\Local\Temp · 호스트 127.0.0.1, github.com
 ```
 
-A `top` is answered by writing the command out: a literal path instead of
-`$TEMP/x`, the program or a script file instead of `eval`. A variable
-the same command assigns once, before use and outside a conditional, counts
-as its literal. The guard's limits: what any program with no row (`python`,
-`npm`, `rm`, curl) does inside its own process is not modelled, and the hub's own
-`tool/` is inside its checkout's write root. Any exception in the hook passes
-the call (`craft/hooks-fail-open`).
+Any exception in the hook passes the call (`craft/hooks-fail-open`).
 
 Run `git rev-parse HEAD` in the wiki folder and store the resulting
 40-character value as a single line in the **target project's**

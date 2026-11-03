@@ -6,14 +6,13 @@ documents as children, and the strings `bash -c`, `sh -c`, `pwsh -Command`,
 `powershell -Command` and `cmd /c` hand on parsed again one level down. Every
 node reduces to effects: `read`, `write(path)`, `delete(path)`,
 `spawn(executable)`, `network(host)`, and `top(reason)` for what cannot be
-decided before it runs. The call passes when every effect is inside the grant
-(`grant`); there is no list of command patterns. What an executable does is
-read off a closed table of programs and the flags each understands
-(`guard_models.TABLE`, `guard_windows.PS_ROWS`/`CMD_ROWS`): a flag outside its
-row is `top`, and a name with no row is a `spawn`, which is never judged.
+decided before it runs. What an executable does is read off a table of
+programs (`guard_models.TABLE`, `guard_windows.PS_ROWS`/`CMD_ROWS`); a name
+with no row is only a `spawn`.
 
-Soundness over completeness: anything the models cannot decide becomes `top`,
-and `top` is never granted. The refusal is read by the person and stays Korean.
+Open by default (`guard_grant.outside`): a write or delete outside the write
+roots, a protected file or a push to an unknown host is denied; `top` and
+`spawn` pass. The refusal is read by the person and stays Korean.
 """
 
 # First, so the wait on the other imports and on stdin is already being watched.
@@ -577,11 +576,9 @@ def run(toks: list, ctx: Ctx, src: str = "") -> tuple[set, frozenset]:
                 elif it[1].raw in CLOSE_KW and stack:
                     stack.pop()
         if moved is not None:
-            if k or ctx.depth or stack or piped_in or nxt in ("|", "|&"):
-                # Only the call's own first statement may set where the rest runs.
-                out |= top("a directory change after the first statement")
-            else:
-                pending = moved
+            # Every later statement may run where this one moved to. A loop's body moving again on each pass
+            # is not followed: the guard is open by default.
+            pending = moved
         # Only an assignment that runs at this level, not in a pipeline or a branch, binds what follows it.
         words = [bind(it[1], consts).text for it in items if it[0] == "w"]   # as `simple` dispatched them
         here = once and not stack and join in (";", "\n", "&&") and not piped_in and nxt not in ("|", "|&")
@@ -649,15 +646,15 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
 
     eff, words, stdin, call, consts, redirs = {READ}, [], None, False, ctx.consts, []
     # PowerShell evaluates groups (`(…)`, `{…}` blocks it runs) and subexpressions (`$(…)`) in this
-    # runspace, so one that moves the location would move it for the rest of the call: `top`. A POSIX
+    # runspace, so one that moves the location may move it for the rest of the call (`grouped`). A POSIX
     # `(…)` or `$(…)` is a subshell and moves nothing here.
-    ps = ctx.d == "ps"
+    ps, grouped = ctx.d == "ps", None
     for it in items:
         if it[0] == "g":
             if ctx.depth < DEPTH:
                 inner, after = run(it[2], ctx.deeper(fresh=False))
                 if ps and after != ctx.cwds:
-                    inner |= top("a directory change inside a group")
+                    grouped = states(after | ctx.cwds | (grouped or frozenset()))
             else:
                 inner = top(f"nesting deeper than {DEPTH}")
             eff |= inner
@@ -672,7 +669,9 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
                 eff |= top("arithmetic evaluation, which runs what its variables hold")
                 continue
             inner, after = run_code(text, d, ctx, fresh=False)
-            eff |= inner | (top("a directory change inside a subexpression") if ps and after != ctx.cwds else set())
+            eff |= inner
+            if ps and after != ctx.cwds:
+                grouped = states(after | ctx.cwds | (grouped or frozenset()))
         eff |= member_of(w)
         if it[0] == "r":
             redirs.append((it[2], w))
@@ -710,15 +709,15 @@ def simple(items: list, ctx: Ctx) -> tuple[set, object]:
         # `name() { ...; }` defines a POSIX function. In PowerShell `name (expr)` passes the expression's value.
         return eff | top(f"the shell function {words[0].text}"), None
     if not words:
-        return eff, None
+        return eff, grouped
     if words[0].why == "group":
         # `& (expr)` runs whatever command the expression evaluates to; only a literal block is code read here.
         computed = call and words[0].text != BLOCK
-        return eff | (top("a computed command name") if computed else set()), None
+        return eff | (top("a computed command name") if computed else set()), grouped
     if words[0].why:
         return eff | top(f"{words[0].why} as the command name"), None
     more, moved = run_argv(words, ctx)
-    return eff | more, moved
+    return eff | more, moved if moved is not None else grouped
 
 
 def assignment(w: Word) -> re.Match | None:
@@ -730,19 +729,11 @@ def assignment(w: Word) -> re.Match | None:
 ENV_COMMAND = re.compile(r"^(?:GIT_EDITOR|GIT_SEQUENCE_EDITOR|EDITOR|VISUAL|PAGER|GIT_PAGER|GIT_SSH_COMMAND|"
                          r"GIT_SSH|GIT_ASKPASS|SSH_ASKPASS|GIT_EXTERNAL_DIFF|GIT_PROXY_COMMAND|GH_PAGER|GH_BROWSER|"
                          r"BROWSER|GH_EDITOR)$", re.I)
-# Variables that change which code a later program loads or runs, or where `~`, `/tmp` and a client's
-# configuration land: never decidable here.
-ENV_EXEC = re.compile(r"^(?:LD_\w+|DYLD_\w+|BASH_ENV|ENV|PROMPT_COMMAND|PATH|PATHEXT|GIT_(?!AUTHOR_|COMMITTER_|"
-                      r"TERMINAL_PROMPT|OPTIONAL_LOCKS|DIR$|WORK_TREE$)\w+|NODE_OPTIONS|PYTHONSTARTUP|"
-                      r"PERL5OPT|RUBYOPT|SHELLOPTS|PS4|COMSPEC|PSModulePath|HOME|USERPROFILE|ZDOTDIR|"
-                      r"XDG_CONFIG_HOME|CURL_HOME|TMPDIR|TMP|TEMP|GH_CONFIG_DIR|SSLKEYLOGFILE)$", re.I)
-# Variables that send a later client to another host: the host is reached whichever command reads them.
-ENV_NETWORK = re.compile(r"^(?:GH_HOST|GH_REPO|HTTPS?_PROXY|ALL_PROXY)$", re.I)
 
 
 def envs(assigns: list, ctx: Ctx) -> set:
-    from guard_models import network
-
+    """What assignments in front of a command run. A variable that sends a program elsewhere (`PATH`,
+    `GIT_DIR`, a proxy) is not followed: the guard is open by default."""
     out = set()
     for w in assigns:
         name, _, value = w.text.partition("=")
@@ -750,16 +741,8 @@ def envs(assigns: list, ctx: Ctx) -> set:
         if "[" in name and not re.fullmatch(r"\w+\[\d+\]", name):
             # An array subscript other than a number is evaluated as arithmetic.
             out |= top("arithmetic evaluation, which runs what its variables hold")
-        name = name.split("[")[0]
-        if name.upper() == "GH_REPO":
-            out |= top("GH_REPO, which points gh at a repository other than the checkout's")
-        elif ENV_NETWORK.match(name):
-            out |= network(Word(value, w.why))
-        elif ENV_COMMAND.match(name):
+        if ENV_COMMAND.match(name.split("[")[0]):
             out |= top(f"{w.why} in {name}") if w.why else code(value, "posix", ctx)
-        elif ENV_EXEC.match(name) or name.upper() in ("GIT_DIR", "GIT_WORK_TREE"):
-            # `GIT_DIR`/`GIT_WORK_TREE` move git to another repository, whose remotes the guard has not read.
-            out |= top(f"{name} changes what runs or where files land")
     return out
 
 

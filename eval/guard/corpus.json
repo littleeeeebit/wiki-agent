@@ -39,7 +39,8 @@
    "command": "B=fix/refactor-freeze-ignores-app-memory; diff <(git diff --name-only $B adccaaa) <(git diff --name-only f786e1a 3c97ce3) && echo \"only #262 differs\" && git branch -D $B && git branch -r | grep -c refactor-freeze; rm -f artifacts/review/pr263-round-*.md \"$TEMP/fixrun.log\" \"$TEMP/oldcheck.log\" \"$TEMP/ci263.log\" \"$TEMP/ci263b.log\"; ls artifacts/review artifacts 2>&1 | head; git status --short; git worktree list | wc -l",
    "effects": [
     "read",
-    "spawn(rm)",
+    "top(glob in a delete path)",
+    "top(variable in a delete path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -51,7 +52,6 @@
     "read",
     "spawn(npx)",
     "spawn(python)",
-    "top(a directory change after the first statement)",
     "top(variable as the command name)"
    ]
   },
@@ -63,7 +63,6 @@
     "read",
     "spawn(npm)",
     "spawn(python)",
-    "top(a directory change after the first statement)",
     "top(variable as the command name)"
    ]
   },
@@ -83,11 +82,13 @@
    "command": "CARGO=/c/Users/me/.cargo/bin/cargo.exe; command -v cargo >/dev/null && CARGO=cargo; \"$CARGO\" check --quiet --manifest-path web/src-tauri/Cargo.toml 2>&1 | tail -8; echo cargo=$?; S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; WT=$S/wt; git worktree add --detach -q \"$WT\" c8d586e && { git diff --name-only --diff-filter=AMR c8d586e; git ls-files --others --exclude-standard; } | sort -u | while read f; do mkdir -p \"$WT/$(dirname \"$f\")\"; cp \"$f\" \"$WT/$f\"; done; cp -r web/dist \"$WT/web/dist\"; diff -q tool/app.cmd $WT/tool/app.cmd && diff -q web/src-tauri/src/main.rs $WT/web/src-tauri/src/main.rs && echo same",
    "effects": [
     "read",
-    "spawn(cp)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`while`: a loop, function or trap the table does not model)",
     "top(variable as the command name)",
+    "top(variable in a write path)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/dist)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/dist/dist)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -106,14 +107,13 @@
    "command": "D=\"$TEMP/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/swt\"; rm -rf \"$D\"; mkdir -p \"$D\" && cd \"$D\" && git init -q && echo a > f && git add f && git -c user.name=t -c user.email=t@t commit -qm a && git update-index --skip-worktree f && echo b > f && git add -f -- f; echo \"add rc $?\"; cd .. && rm -rf \"$D\"",
    "effects": [
     "read",
-    "spawn(mkdir)",
-    "spawn(rm)",
-    "top(a directory change after the first statement)",
     "top(git add -f: an option the table does not model)",
+    "top(git in a repository other than the checkout)",
     "top(git init: a verb the table does not model)",
     "top(git update-index: a verb the table does not model)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent/f)"
+    "top(relative path after an unknown cd)",
+    "top(variable in a delete path)",
+    "top(variable in a write path)"
    ]
   },
   {
@@ -122,11 +122,10 @@
    "command": "D=\"$TEMP/flake1b\"; rm -rf \"$D\"; mkdir -p \"$D\"; for i in $(seq 1 16); do (python -m pytest -q -p no:cacheprovider -n 0 -s tool/test_review_contract.py::test_zz_probe_timing > \"$D/$i.log\" 2>&1) & done; wait; git checkout -- tool/test_review_contract.py; git status --short; grep -ah PROBE \"$D\"/*.log | sort -t' ' -k4 -n | tail -6",
    "effects": [
     "read",
-    "spawn(mkdir)",
     "spawn(python)",
-    "spawn(rm)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)",
+    "top(variable in a delete path)",
     "top(variable in a write path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/tool/test_review_contract.py)"
@@ -138,8 +137,8 @@
    "command": "D=\"/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/8f8b8d46-6d21-49a5-ba11-8a71b8cabbd0/scratchpad/audit\"; mkdir -p \"$D\"; pdftotext -layout \"/c/Users/me/Downloads/wiki-agent-audit-2026-10-10.pdf\" \"$D/audit.txt\"; wc -l \"$D/audit.txt\"",
    "effects": [
     "read",
-    "spawn(mkdir)",
-    "spawn(pdftotext)"
+    "spawn(pdftotext)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/8f8b8d46-6d21-49a5-ba11-8a71b8cabbd0/scratchpad/audit)"
    ]
   },
   {
@@ -157,10 +156,8 @@
    "command": "D=raw/review-evidence/mobile-p0-20261009 && mkdir -p $D && cp artifacts/review/*.md $D/ && ls $D | wc -l && rm -rf \"$(pwd)/artifacts\" && test ! -e artifacts && echo \"artifacts removed\"; ls -la raw/android/; curl -s -m5 http://127.0.0.1:49932/api/mobile/status; echo",
    "effects": [
     "read",
-    "spawn(cp)",
-    "spawn(curl)",
-    "spawn(mkdir)",
-    "spawn(rm)"
+    "top(substitution in a delete path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/review-evidence/mobile-p0-20261009)"
    ]
   },
   {
@@ -169,8 +166,7 @@
    "command": "GIT_CONFIG_GLOBAL=/dev/null timeout 300 python -m pytest -q test_refactor_run.py -k \"approved_blob_frees_only or worktree_bytes_are_not\" -p no:randomly",
    "effects": [
     "read",
-    "spawn(timeout)",
-    "top(GIT_CONFIG_GLOBAL changes what runs or where files land)"
+    "spawn(timeout)"
    ]
   },
   {
@@ -179,7 +175,6 @@
    "command": "P=$(grep -o \"127.0.0.1:[0-9]*\" C:/Users/me/PycharmProjects/wiki-agent/raw/main.log | head -1); curl -s \"http://$P/api/refactors/7357ebbe\" | python -c \"\nimport json,sys; r=json.load(sys.stdin)\nprint(r.get('state'), r.get('phase'), r.get('spent'))\nm=r.get('map') or {}\nnames=[p.get('name') or p.get('id') for p in (m.get('pipelines') or [])]\nprint('pipelines in map:', len(names)); print('done:', list((r.get('pipelines') or {}).keys()))\"",
    "effects": [
     "read",
-    "spawn(curl)",
     "spawn(python)"
    ]
   },
@@ -189,7 +184,6 @@
    "command": "P=$(python -c \"import urllib.parse;print(urllib.parse.quote(r'C:\\Users\\me\\PycharmProjects\\ai-generation'))\"); curl -s -m 10 -H \"x-project: ai-generation\" \"http://127.0.0.1:9656/api/work/log?path=$P\" | python -c \"\nimport sys,json\nd=json.load(sys.stdin); print('busy',d['busy'],'running',d['running'],'queued',d['queued'], 'rows',len(d['rows']))\"",
    "effects": [
     "read",
-    "spawn(curl)",
     "spawn(python)"
    ]
   },
@@ -199,9 +193,8 @@
    "command": "S=\"/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad\"; D=\"$S/res-support-1020\"; mkdir -p \"$D\" && cd \"$D\" && unzip -o -q /c/Users/me/Downloads/res/result-support-20261020-072747.zip && unzip -o -q /c/Users/me/Downloads/res/result-setup-20261020-072747.zip -d setup && find . -type f | head -50 && ls -la",
    "effects": [
     "read",
-    "spawn(mkdir)",
-    "top(a directory change after the first statement)",
-    "top(unzip extracts an archive into names the archive decides)"
+    "top(unzip extracts an archive into names the archive decides)",
+    "top(variable in a write path)"
    ]
   },
   {
@@ -211,9 +204,7 @@
    "effects": [
     "read",
     "spawn(npx)",
-    "top(a directory change after the first statement)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent/refactor-purpose-modes-3)"
+    "top(git in a repository other than the checkout)"
    ]
   },
   {
@@ -224,7 +215,6 @@
     "read",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)",
-    "top(a directory change after the first statement)",
     "top(git -C with a value known only at run time)",
     "top(variable in a nested shell string)"
    ]
@@ -269,8 +259,7 @@
    "effects": [
     "read",
     "spawn(gh)",
-    "spawn(sed)",
-    "top(a directory change after the first statement)"
+    "spawn(sed)"
    ]
   },
   {
@@ -319,10 +308,9 @@
    "command": "S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad\" && W=\"$S/contract/wiki-agent\" && mkdir -p \"$S/review-252\" && cp \"$W\"/artifacts/review/contract-file-removal-* \"$S/review-252/\" && cmd //c \"rmdir $(cygpath -w \"$W/web/node_modules\")\" && ls web/node_modules | head -2 && git worktree remove \"$W\" && git branch -D fix/refactor-contract-whole-file-removal && git worktree list && git branch && git branch -r | grep -c fix/refactor-contract || true; git status -sb | head -1",
    "effects": [
     "read",
-    "spawn(cp)",
-    "spawn(mkdir)",
     "top(variable in a nested shell string)",
     "top(variable where an option of git worktree remove may stand)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/review-252)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -354,7 +342,6 @@
    "command": "S=$(curl -s -m5 http://127.0.0.1:49932/api/mobile/status); echo \"$S\"; O=$(echo \"$S\" | python -c \"import json,sys;print(json.load(sys.stdin)['origin'])\"); [ -n \"$O\" ] && curl -s -m20 -o /dev/null -w 'install %{http_code}\\n' $O/mobile-install && curl -s -m30 -o /dev/null -w 'apk %{http_code} %{content_type} %{size_download}\\n' $O/mobile-install.apk",
    "effects": [
     "read",
-    "spawn(curl)",
     "spawn(python)"
    ]
   },
@@ -364,11 +351,11 @@
    "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad; D=$S/res-policy; mkdir -p $D; cd $D && for z in /c/Users/me/Downloads/res/*.zip; do n=$(basename $z .zip); mkdir -p $n; unzip -oq $z -d $n; done; ls $D/*; cat $D/result-setup-*/*.json 2>/dev/null | head -50",
    "effects": [
     "read",
-    "spawn(mkdir)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)",
-    "top(a directory change after the first statement)",
-    "top(unzip extracts an archive into names the archive decides)"
+    "top(unzip extracts an archive into names the archive decides)",
+    "top(variable in a write path)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/res-policy)"
    ]
   },
   {
@@ -389,12 +376,11 @@
    "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; WT=$S/wt; git worktree add --detach -q \"$WT\" c8d586e && { git diff --name-only --diff-filter=AMR c8d586e; git ls-files --others --exclude-standard; } | sort -u | while read f; do mkdir -p \"$WT/$(dirname \"$f\")\"; cp \"$f\" \"$WT/$f\"; done; cmd //c mklink //J \"$(cygpath -w $WT/web/node_modules)\" \"$(cygpath -w $PWD/web/node_modules)\" >/dev/null && cd $WT/web && npm run build 2>&1 | grep -E \"built in|error\" ; ls $WT/web/dist/index.html",
    "effects": [
     "read",
-    "spawn(cp)",
     "spawn(npm)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`while`: a loop, function or trap the table does not model)",
-    "top(a directory change after the first statement)",
     "top(variable in a nested shell string)",
+    "top(variable in a write path)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -405,11 +391,13 @@
    "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; WT=$S/wt; git worktree add --detach -q \"$WT\" origin/main~1 && { git diff --name-only --diff-filter=AMR origin/main~1; git ls-files --others --exclude-standard; } | sort -u | while read f; do mkdir -p \"$WT/$(dirname \"$f\")\"; cp \"$f\" \"$WT/$f\"; done; git diff --name-only --diff-filter=D origin/main~1 | while read f; do rm -f \"$WT/$f\"; done; cp -r web/dist \"$WT/web/dist\"; cd \"$WT\" && git status --short | wc -l && git log --oneline -1",
    "effects": [
     "read",
-    "spawn(cp)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`while`: a loop, function or trap the table does not model)",
-    "top(a directory change after the first statement)",
+    "top(git in a repository other than the checkout)",
+    "top(variable in a write path)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/dist)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt/web/dist/dist)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -430,8 +418,7 @@
     "read",
     "spawn(python)",
     "spawn(tasklist)",
-    "spawn(timeout)",
-    "top(a directory change after the first statement)"
+    "spawn(timeout)"
    ]
   },
   {
@@ -439,9 +426,9 @@
    "source": "claude",
    "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; python -c \"\nimport psutil; print([p.pid for p in psutil.process_iter(['cmdline']) if 'scratchpad' in ' '.join(p.info['cmdline'] or []) and 'main' in ' '.join(p.info['cmdline'] or []) and 'psutil' not in ' '.join(p.info['cmdline'] or [])])\"; cmd //c rmdir \"$(cygpath -w $S/wt/web/node_modules)\" && ls web/node_modules | head -2 && rm -rf \"$S/wt\" && git worktree prune && git worktree list",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
     "read",
     "spawn(python)",
-    "spawn(rm)",
     "top(variable in a nested shell string)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -452,11 +439,10 @@
    "command": "S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; taskkill //PID 10168 //F >/dev/null; python -c \"\nimport psutil,time\nfor _ in range(60):\n    if not any('scratchpad' in ' '.join(q.info['cmdline'] or []) for q in psutil.process_iter(['cmdline']) if q.info['cmdline'] and 'tool' in ' '.join(q.info['cmdline'])): break\n    time.sleep(1)\n\"; find $S/wt -maxdepth 3 -type l; cd /c/Users/me/PycharmProjects/wiki-agent && git worktree remove --force \"$S/wt\" && git worktree prune && rm -rf \"$S/wv2\"; git worktree list; git status --short",
    "effects": [
     "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt)",
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wv2)",
     "read",
     "spawn(python)",
-    "spawn(rm)",
     "spawn(taskkill)",
-    "top(a directory change after the first statement)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -478,8 +464,8 @@
    "source": "claude",
    "command": "SP=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; P=$(cygpath -w \"$SP/probe-dbl.cmd\"); rm -f \"$SP/marker.txt\"; cmd.exe //c start \"\" \"$P\"; sleep 6; echo \"start (default terminal): $(cat \"$SP/marker.txt\" 2>&1 | head -c 60)\"; rm -f \"$SP/marker.txt\"; cmd.exe //c start \"\" conhost.exe cmd.exe /c \"$P\"; sleep 6; echo \"start via conhost: $(cat \"$SP/marker.txt\" 2>&1 | head -c 60)\"",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/marker.txt)",
     "read",
-    "spawn(rm)",
     "top(variable in a nested shell string)"
    ]
   },
@@ -488,9 +474,9 @@
    "source": "claude",
    "command": "SP=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; P=$(cygpath -w \"$SP/probe-dbl.cmd\"); rm -f \"$SP/marker.txt\"; conhost.exe cmd.exe //c \"$P\"; sleep 3; echo \"conhost: $(cat \"$SP/marker.txt\" 2>&1 | head -c 80)\"; rm -f \"$SP/marker.txt\"; \"$LOCALAPPDATA/Microsoft/WindowsApps/wt.exe\" cmd.exe //c \"$P\"; echo \"wt exit=$?\"; sleep 6; echo \"wt: $(cat \"$SP/marker.txt\" 2>&1 | head -c 80)\"",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/marker.txt)",
     "read",
     "spawn(conhost)",
-    "spawn(rm)",
     "top(variable as the command name)"
    ]
   },
@@ -499,9 +485,9 @@
    "source": "claude",
    "command": "SP=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; rm -f \"$SP/marker.txt\"; W=$(cygpath -w \"$SP\"); printf '@echo off\\r\\necho ran %%date%% %%time%% > \"%s\\\\marker.txt\"\\r\\n' \"$W\" > \"$SP/probe-dbl.cmd\"; cat \"$SP/probe-dbl.cmd\"; explorer.exe \"$(cygpath -w \"$SP/probe-dbl.cmd\")\"; sleep 6; cat \"$SP/marker.txt\" 2>&1; ls \"$LOCALAPPDATA/Microsoft/WindowsApps/\" 2>/dev/null | grep -i \"wt\\|terminal\"",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/marker.txt)",
     "read",
     "spawn(explorer)",
-    "spawn(rm)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/probe-dbl.cmd)"
    ]
   },
@@ -513,7 +499,6 @@
     "read",
     "spawn(app-probe.cmd)",
     "spawn(sed)",
-    "top(a directory change after the first statement)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/app-probe.cmd)"
    ]
   },
@@ -534,7 +519,7 @@
    "effects": [
     "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pr2-fix)",
     "read",
-    "top(a directory change after the first statement)",
+    "top(git in a repository other than the checkout)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -568,7 +553,6 @@
    "command": "WT=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wt; export WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333; nohup \"$WT/web/src-tauri/target/release/wiki-agent.exe\" >/dev/null 2>&1 & disown; for i in $(seq 1 60); do curl -s http://127.0.0.1:9333/json 2>/dev/null | grep -q '127.0.0.1' && break; sleep 1; done; curl -s http://127.0.0.1:9333/json | grep '\"url\"'; tasklist //FI \"IMAGENAME eq wiki-agent.exe\" | tail -2",
    "effects": [
     "read",
-    "spawn(curl)",
     "spawn(disown)",
     "spawn(nohup)",
     "spawn(tasklist)",
@@ -594,9 +578,9 @@
    "effects": [
     "delete(C:/Users/me/PycharmProjects/wiki-agent-worktrees/omm-incremental)",
     "read",
-    "spawn(rm)",
     "top(git fetch: a verb the table does not model)",
     "top(git push --delete: an option the table does not model)",
+    "top(glob in a delete path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -617,10 +601,9 @@
    "command": "cd \"/c/Users/Public/Documents/ESTsoft/CreatorTemp\" && for d in tmp*/; do [ -d \"$d/drive/MyDrive/laya\" ] && rm -rf \"$d\" && echo \"removed $d\"; done; cd /c/Users/me/PycharmProjects/wiki-agent && grep -n \"MICRO_BATCH\" docs/plans/laya/4-training.md",
    "effects": [
     "read",
-    "spawn(rm)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)",
-    "top(a directory change after the first statement)"
+    "top(variable in a delete path)"
    ]
   },
   {
@@ -628,12 +611,14 @@
    "source": "claude",
    "command": "cd \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/wa\" && cp tool/main/refactor.py ../refactor.bak && git show HEAD:tool/main/refactor.py > tool/main/refactor.py && timeout 600 python -m pytest -q -p no:cacheprovider tool/test_refactor.py -k \"full_plans\" 2>&1 | grep -E \"assert|passed|failed\" | head -5; cp ../refactor.bak tool/main/refactor.py && rm ../refactor.bak && git diff --stat",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/refactor.bak)",
     "read",
-    "spawn(cp)",
-    "spawn(rm)",
     "spawn(timeout)",
     "top(git in a repository other than the checkout)",
-    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/wa/tool/main/refactor.py)"
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/refactor.bak)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/refactor.bak/refactor.py)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/wa/tool/main/refactor.py)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/wa/tool/main/refactor.py/refactor.bak)"
    ]
   },
   {
@@ -672,7 +657,6 @@
    "effects": [
     "read",
     "spawn(timeout)",
-    "top(a directory change after the first statement)",
     "top(git in a repository other than the checkout)"
    ]
   },
@@ -681,9 +665,9 @@
    "source": "claude",
    "command": "cd \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad\" && rm -rf look && python shoot.py look 390x844 overview.html overview/review.html && python shoot.py look 1280x800 overview.html",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/look)",
     "read",
-    "spawn(python)",
-    "spawn(rm)"
+    "spawn(python)"
    ]
   },
   {
@@ -694,7 +678,6 @@
     "read",
     "spawn(npx)",
     "spawn(python)",
-    "top(a directory change after the first statement)",
     "top(git in a repository other than the checkout)"
    ]
   },
@@ -704,7 +687,6 @@
    "command": "cd \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad\" && echo \"with global: $(git config user.email)\"; echo \"without: [$(GIT_CONFIG_GLOBAL=/dev/null git config user.email)]\"; git config --system user.email; echo system-exit=$?",
    "effects": [
     "read",
-    "top(GIT_CONFIG_GLOBAL changes what runs or where files land)",
     "top(git in a repository other than the checkout)"
    ]
   },
@@ -716,7 +698,7 @@
     "read",
     "spawn(gh)",
     "spawn(python)",
-    "spawn(rm)"
+    "top(glob in a delete path)"
    ]
   },
   {
@@ -736,7 +718,6 @@
    "command": "cd \"C:/Users/me/PycharmProjects/wiki-agent\" && timeout 600 npm --prefix web run build 2>&1 | tail -6; stat -c '%y %n' web/dist/index.html; git status --short | head -5; curl -s -m 5 http://127.0.0.1:1373/ | grep -o 'assets/index-[^\"]*\\.js' | head -1; grep -o 'assets/index-[^\"]*\\.js' web/dist/index.html | head -1",
    "effects": [
     "read",
-    "spawn(curl)",
     "spawn(timeout)"
    ]
   },
@@ -757,16 +738,15 @@
    "source": "claude",
    "command": "cd /c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/1258396b-a6e6-4a4f-8ce7-64fb0bc75367/scratchpad && rm -rf tinyrepo && mkdir tinyrepo && cd tinyrepo && git init -q && echo x > a.txt && git add -A && git -c user.email=a@a -c user.name=a commit -qm a && for i in 1 2 3; do /usr/bin/time -f \"%e s debt\" python /c/Users/me/PycharmProjects/wiki-agent/tool/debt.py check; echo \"exit=$?\"; done 2>&1; for i in 1 2 3; do /usr/bin/time -f \"%e s bare python\" python -c \"pass\"; done 2>&1",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/1258396b-a6e6-4a4f-8ce7-64fb0bc75367/scratchpad/tinyrepo)",
     "read",
-    "spawn(mkdir)",
-    "spawn(rm)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)",
-    "top(a directory change after the first statement)",
     "top(git add -A: an option the table does not model)",
     "top(git in a repository other than the checkout)",
     "top(git init: a verb the table does not model)",
-    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/1258396b-a6e6-4a4f-8ce7-64fb0bc75367/scratchpad/a.txt)"
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/1258396b-a6e6-4a4f-8ce7-64fb0bc75367/scratchpad/tinyrepo)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/1258396b-a6e6-4a4f-8ce7-64fb0bc75367/scratchpad/tinyrepo/a.txt)"
    ]
   },
   {
@@ -776,7 +756,6 @@
    "effects": [
     "read",
     "spawn(awk)",
-    "top(a directory change after the first statement)",
     "top(git in a repository other than the checkout)",
     "top(git sparse-checkout: a verb the table does not model)"
    ]
@@ -788,9 +767,8 @@
    "effects": [
     "read",
     "spawn(python)",
-    "spawn(rm)",
-    "top(a directory change after the first statement)",
     "top(git in a repository other than the checkout)",
+    "top(variable in a delete path)",
     "top(variable where an option of git worktree add may stand)"
    ]
   },
@@ -801,9 +779,8 @@
    "effects": [
     "read",
     "spawn(python)",
-    "spawn(rm)",
-    "top(a directory change after the first statement)",
     "top(git in a repository other than the checkout)",
+    "top(variable in a delete path)",
     "top(variable where an option of git worktree add may stand)"
    ]
   },
@@ -813,7 +790,6 @@
    "command": "cd /c/Users/me/PycharmProjects/ai-companion-voice-agent && git -c core.whitespace=cr-at-eol diff --check 13c11f093661e5ca7fe8372c6b30f33ae91ccc9c HEAD -- . \":(exclude).wiki/decisions/\" > \"$TEMP/crcheck.txt\" 2>&1; echo rc=$?; grep -v \"^+\" \"$TEMP/crcheck.txt\" | head -20; cd /c/Users/me/PycharmProjects/wiki-agent && grep -n \"diff\\\", \\\"--check\\|diff --check\" tool/main/specs.py tool/*.py tool/main/*.py | head",
    "effects": [
     "read",
-    "top(a directory change after the first statement)",
     "top(git in a repository other than the checkout)",
     "top(variable in a write path)"
    ]
@@ -854,9 +830,8 @@
    "command": "cd /c/Users/me/PycharmProjects/wiki-agent && cp tool/agent/chat_session.py \"$TEMP/cs_new.py\" && git show HEAD:tool/agent/chat_session.py > tool/agent/chat_session.py && (cd tool && timeout 300 python -m pytest test_agent.py -q -k \"silent_past or owes_no_followup or closing_answer\" 2>&1 | tail -6); cp \"$TEMP/cs_new.py\" tool/agent/chat_session.py && git diff --stat",
    "effects": [
     "read",
-    "spawn(cp)",
     "spawn(timeout)",
-    "top(a directory change after the first statement)",
+    "top(variable in a write path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/tool/agent/chat_session.py)"
    ]
   },
@@ -940,7 +915,6 @@
     "read",
     "spawn(npx)",
     "spawn(python)",
-    "top(a directory change after the first statement)",
     "top(mklink: a cmd builtin the table does not model)"
    ]
   },
@@ -950,9 +924,10 @@
    "command": "cd /c/Users/me/PycharmProjects/wiki-agent/laya/data && for k in route source useful conflict redirect coverage ask analysis progress repair; do [ -f $k/pilot1-train.candidates.jsonl ] && { echo \"exists $k\"; continue; }; mv $k/train.candidates.jsonl $k/pilot1-train.candidates.jsonl && printf \"%s %s\\n\" $k \"$(wc -l < $k/pilot1-train.candidates.jsonl)\"; done",
    "effects": [
     "read",
-    "spawn(mv)",
     "top(`do`: a loop, function or trap the table does not model)",
-    "top(`for`: a loop, function or trap the table does not model)"
+    "top(`for`: a loop, function or trap the table does not model)",
+    "top(variable in a delete path)",
+    "top(variable in a write path)"
    ]
   },
   {
@@ -964,8 +939,7 @@
     "spawn(python)",
     "spawn(sed)",
     "top(`do`: a loop, function or trap the table does not model)",
-    "top(`for`: a loop, function or trap the table does not model)",
-    "top(a directory change after the first statement)"
+    "top(`for`: a loop, function or trap the table does not model)"
    ]
   },
   {
@@ -975,8 +949,7 @@
    "effects": [
     "read",
     "spawn(npm)",
-    "spawn(python)",
-    "top(a directory change after the first statement)"
+    "spawn(python)"
    ]
   },
   {
@@ -995,8 +968,7 @@
    "effects": [
     "read",
     "spawn(npx)",
-    "spawn(python)",
-    "top(a directory change after the first statement)"
+    "spawn(python)"
    ]
   },
   {
@@ -1006,8 +978,7 @@
    "effects": [
     "read",
     "spawn(npx)",
-    "spawn(ruff)",
-    "top(a directory change after the first statement)"
+    "spawn(ruff)"
    ]
   },
   {
@@ -1016,10 +987,11 @@
    "command": "cd /c/Users/me/PycharmProjects/wiki-agent; W=../wiki-agent-worktrees/laya-wiki; ls .wiki/laya*.md 2>/dev/null; mv $W/.wiki/laya*.md .wiki/; git worktree remove $W && git branch -D docs/laya-wiki; ls .wiki/*.md; python tool/repo_lint.py --repo . | tail -2; python tool/repo_graph.py --repo . 2>&1 | tail -3; python -c \"\nimport json;g=json.load(open('.wiki/graph.json',encoding='utf-8'))\ne=[x for x in g['edges'] if 'laya' in x['a'] and x['a'].startswith('.wiki')]; print(len(e)); [print(x) for x in e[:30]]; print(g['counts'], [o for o in g['orphans'] if 'laya' in o])\"",
    "effects": [
     "read",
-    "spawn(mv)",
     "spawn(python)",
+    "top(glob in a delete path)",
     "top(variable where an option of git worktree remove may stand)",
-    "write(C:/Users/me/PycharmProjects/wiki-agent)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/.wiki)"
    ]
   },
   {
@@ -1037,9 +1009,9 @@
    "source": "claude",
    "command": "cd C:/Users/me/PycharmProjects/wiki-agent && S=C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad; python web/tests/task_browser.py > $S/tb2.log 2>&1; echo \"task_browser $?\"; tail -1 $S/tb2.log | cut -c1-200; rm -f artifacts/refactor-survey.png; python -m ruff check tool laya | tail -1; python tool/lint.py --check > /dev/null 2>&1; echo \"lint $?\"; python tool/debt.py check --base main 2>&1 | tail -4",
    "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/refactor-survey.png)",
     "read",
     "spawn(python)",
-    "spawn(rm)",
     "top(variable in a write path)"
    ]
   },
@@ -1061,7 +1033,7 @@
    "effects": [
     "read",
     "spawn(python)",
-    "spawn(tee)"
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pytest-main-pr3.log)"
    ]
   },
   {
@@ -1069,12 +1041,11 @@
    "source": "claude",
    "command": "cd C:/Users/me/PycharmProjects/wiki-agent && python tool/lint.py --check > /dev/null 2>&1; echo \"lint $?\"; rm -f artifacts/refactor-survey.png; cd web && npx tsc --noEmit -p . > /dev/null 2>&1; echo \"tsc $?\"; npm run lint > /dev/null 2>&1; echo \"web lint $?\"",
    "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/refactor-survey.png)",
     "read",
     "spawn(npm)",
     "spawn(npx)",
-    "spawn(python)",
-    "spawn(rm)",
-    "top(a directory change after the first statement)"
+    "spawn(python)"
    ]
   },
   {
@@ -1082,9 +1053,10 @@
    "source": "claude",
    "command": "cd C:/Users/me/PycharmProjects/wiki-agent && rm -- artifacts/review/refactor-runner-cleanup-round-*.md; rm -f \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/suite-79.log\"; ls artifacts/review | grep -c refactor; python tool/lint.py --repo . 2>&1 | tail -1; python tool/repo_lint.py --repo . 2>&1 | tail -2; git status --short | head -3; git branch | cat",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/suite-79.log)",
     "read",
     "spawn(python)",
-    "spawn(rm)"
+    "top(glob in a delete path)"
    ]
   },
   {
@@ -1092,10 +1064,10 @@
    "source": "claude",
    "command": "cd C:/Users/me/PycharmProjects/wiki-agent && rm -- artifacts/review/refactor-scanner-round-*.md && ls artifacts/review/ | grep -c refactor-scanner; mv \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/suite-77.log\" /dev/null 2>/dev/null; rm -f \"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/suite-77.log\"; python tool/lint.py --repo . 2>&1 | tail -3; python tool/repo_lint.py --repo . 2>&1 | tail -3",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/28113b25-efac-46d0-ab5e-e65858ab2658/scratchpad/suite-77.log)",
     "read",
-    "spawn(mv)",
     "spawn(python)",
-    "spawn(rm)"
+    "top(glob in a delete path)"
    ]
   },
   {
@@ -1106,7 +1078,7 @@
     "read",
     "spawn(python)",
     "spawn(ruff)",
-    "spawn(tee)"
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/pytest-r1-pr2.log)"
    ]
   },
   {
@@ -1125,9 +1097,9 @@
    "source": "claude",
    "command": "cd C:/Users/me/PycharmProjects/wiki-agent/web && npx vite build > ../../vb.log 2>&1; echo \"build exit $?\"; tail -3 ../../vb.log; rm -f ../../vb.log",
    "effects": [
+    "delete(C:/Users/me/PycharmProjects/vb.log)",
     "read",
     "spawn(npx)",
-    "spawn(rm)",
     "write(C:/Users/me/PycharmProjects/vb.log)"
    ]
   },
@@ -1136,10 +1108,13 @@
    "source": "claude",
    "command": "cd C:/Users/me/PycharmProjects/wiki-agent; D=raw/review-evidence/debt-20261008/review; mkdir -p $D && cp artifacts/review/debt-round-*.md artifacts/review/debt-round-3-*.xml artifacts/review/debt-pr-body.md artifacts/review/test-necessity-20261008.md artifacts/review/heavy83*.tsv $D/ && ls $D | wc -l && rm -rf artifacts/debt-baseline && rm -f artifacts/review/debt-*.md artifacts/review/debt-*.xml artifacts/review/debt-equivalence.py artifacts/review/test-necessity-20261008.md artifacts/review/heavy83* && rm -rf artifacts/review/__pycache__ && ls artifacts/review; ls artifacts | grep -c .",
    "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/debt-baseline)",
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/review/__pycache__)",
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/review/debt-equivalence.py)",
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/review/test-necessity-20261008.md)",
     "read",
-    "spawn(cp)",
-    "spawn(mkdir)",
-    "spawn(rm)"
+    "top(glob in a delete path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/review-evidence/debt-20261008/review)"
    ]
   },
   {
@@ -1151,8 +1126,7 @@
     "spawn(c:/users/me/pycharmprojects/wiki-agent/laya/.venv/scripts/python)",
     "spawn(mktemp)",
     "spawn(python)",
-    "spawn(rm)",
-    "top(a directory change after the first statement)"
+    "top(variable in a delete path)"
    ]
   },
   {
@@ -1193,7 +1167,6 @@
    "command": "curl -s -m 5 http://127.0.0.1:9656/api/loops | python -c \"\nimport sys,json\nfor t in json.load(sys.stdin)['turns']: print('turn', t.get('path'))\"",
    "effects": [
     "read",
-    "spawn(curl)",
     "spawn(python)"
    ]
   },
@@ -1203,7 +1176,6 @@
    "command": "curl -s -m 5 http://127.0.0.1:9656/api/worktrees | python -c \"\nimport sys,json\nd=json.load(sys.stdin); print(d['project'], d['repo'])\nfor w in d['rows'][:40]:\n  print({k:v for k,v in w.items() if k in ('branch','busy','running','live','state','kind','turn','active')})\n\"; wmic process where \"ProcessId=54700\" get CreationDate,CommandLine 2>/dev/null | head -3",
    "effects": [
     "read",
-    "spawn(curl)",
     "spawn(python)",
     "spawn(wmic)"
    ]
@@ -1213,9 +1185,9 @@
    "source": "claude",
    "command": "f='C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/ff175329-3ac4-4464-b95e-e2f8de92f59b/scratchpad/pr84-body.md' && test -s \"$f\" && gh pr edit 84 --body-file \"$f\" >/dev/null && gh pr view 84 --json body -q .body | wc -c && gh pr view 84 --json body -q .body | grep -c \"1587 passed\"; rm -f /tmp/pr84.md",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/pr84.md)",
     "read",
-    "spawn(gh)",
-    "spawn(rm)"
+    "spawn(gh)"
    ]
   },
   {
@@ -1232,8 +1204,9 @@
    "source": "claude",
    "command": "find artifacts -type l | head -3; git check-ignore -q artifacts && echo ignored; rm -rf artifacts && echo \"artifacts removed\"; P=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad\"; rm -rf \"${P:?}/wprobe\" \"${P:?}/r1fixed.py\" \"${P:?}/r2fixed.py\" \"${P:?}\"/*_browser.log; ls \"${P:?}\"",
    "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts)",
     "read",
-    "spawn(rm)"
+    "top(variable in a delete path)"
    ]
   },
   {
@@ -1241,8 +1214,12 @@
    "source": "claude",
    "command": "find artifacts -type l | head; git check-ignore -q artifacts && echo ignored; rm -rf artifacts && ls -d artifacts 2>&1 | head -1; P=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad\"; rm -rf \"$P/wprobe\" \"$P/r1fixed.py\" \"$P/r2fixed.py\" \"$P\"/*_browser.log; ls \"$P\"",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad/r1fixed.py)",
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad/r2fixed.py)",
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad/wprobe)",
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts)",
     "read",
-    "spawn(rm)"
+    "top(glob in a delete path)"
    ]
   },
   {
@@ -1265,7 +1242,6 @@
    "effects": [
     "read",
     "spawn(awk)",
-    "spawn(curl)",
     "spawn(sed)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)",
@@ -1290,7 +1266,6 @@
    "command": "for p in overview.html overview/guide.html overview/site.css overview/img/guide-connect.webp; do echo \"$p $(curl -s -o /dev/null -w '%{http_code}' https://owner.github.io/wiki-agent/$p)\"; done; curl -s https://owner.github.io/wiki-agent/overview.html | grep -o \"<title>[^<]*\"",
    "effects": [
     "read",
-    "spawn(curl)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)"
    ]
@@ -1323,9 +1298,9 @@
     "read",
     "spawn(gh)",
     "spawn(python)",
-    "spawn(rm)",
     "top(git fetch: a verb the table does not model)",
     "top(git pull: a verb the table does not model)",
+    "top(glob in a delete path)",
     "top(variable where an option of git diff may stand)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/main)"
@@ -1336,10 +1311,10 @@
    "source": "claude",
    "command": "gh pr merge 269 --merge --match-head-commit acdc7412cc22c394ea27609e3cf69a7a2f2e6d6c 2>&1 | tail -2; git fetch -q origin --prune; gh pr view 269 --json state,mergeCommit -q '.state+\" \"+.mergeCommit.oid'; git checkout -q main && git pull -q --ff-only && git branch -d fix/next-web-and-candidates; git branch -r | grep next-web; rm -rf artifacts/review; python tool/lint.py --repo . 2>&1 | tail -1; python tool/repo_lint.py --repo . 2>&1 | tail -1; git status --short; git log --oneline -1; git branch",
    "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/review)",
     "read",
     "spawn(gh)",
     "spawn(python)",
-    "spawn(rm)",
     "top(git fetch: a verb the table does not model)",
     "top(git pull: a verb the table does not model)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)",
@@ -1374,8 +1349,8 @@
    "effects": [
     "read",
     "spawn(python)",
-    "spawn(rm)",
     "top(git pull: a verb the table does not model)",
+    "top(glob in a delete path)",
     "top(variable in a write path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
@@ -1387,7 +1362,7 @@
    "effects": [
     "read",
     "spawn(python)",
-    "spawn(rm)",
+    "top(glob in a delete path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -1396,10 +1371,11 @@
    "source": "claude",
    "command": "git check-ignore -v data/joint/picks.jsonl; mv -n data/joint/picks.jsonl data/joint/picks-validation.jsonl && ls data/joint; ruff check . && ruff format --check joint.py support.py train.py test_laya.py; cd .. && grep -n \"picks\" docs/plans/laya/4-training.md | head -20",
    "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/data/joint/picks.jsonl)",
     "read",
-    "spawn(mv)",
     "spawn(ruff)",
-    "top(a directory change after the first statement)"
+    "write(C:/Users/me/PycharmProjects/wiki-agent/data/joint/picks-validation.jsonl)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/data/joint/picks-validation.jsonl/picks.jsonl)"
    ]
   },
   {
@@ -1417,12 +1393,12 @@
    "command": "git checkout -q -b fix/capacity-cut-mid-turn-continues && git status --porcelain && S=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity\" && git worktree add -q --detach \"$S\" HEAD && cp tool/test_agent_events.py \"$S/tool/test_agent_events.py\" && (cd \"$S\" && python -m pytest -q -p no:cacheprovider tool/test_agent_events.py -k cut_off 2>&1 | tee \"$S.log\" >/dev/null); grep -E \"passed|failed|^E \" \"$S.log\" | head -4; git worktree remove --force \"$S\" && git worktree list | grep -c old-capacity",
    "effects": [
     "read",
-    "spawn(cp)",
     "spawn(python)",
-    "spawn(tee)",
-    "top(a directory change after the first statement)",
     "top(variable where an option of git worktree remove may stand)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity.log)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity/tool/test_agent_events.py)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/old-capacity/tool/test_agent_events.py/test_agent_events.py)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -1434,8 +1410,8 @@
     "read",
     "spawn(python)",
     "spawn(ruff)",
-    "spawn(tee)",
     "spawn(timeout)",
+    "top(variable in a write path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -1445,8 +1421,8 @@
    "command": "git checkout -q main && git pull -q --ff-only && git log --oneline -1 && [ \"$(git rev-parse fix/audit-screen-state^{tree})\" = \"$(git rev-parse 8753e884^{tree})\" ] && echo \"trees equal\" && git branch -D fix/audit-screen-state; git branch -r | grep audit-screen || echo \"remote branch gone\"; rm -f artifacts/review/audit-screen-round-*.md; ls artifacts/review | wc -l",
    "effects": [
     "read",
-    "spawn(rm)",
     "top(git pull: a verb the table does not model)",
+    "top(glob in a delete path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)",
     "write(C:/Users/me/PycharmProjects/wiki-agent/main)"
    ]
@@ -1458,7 +1434,6 @@
    "effects": [
     "read",
     "spawn(sed)",
-    "top(a directory change after the first statement)",
     "top(git fetch: a verb the table does not model)",
     "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/d14aa290-9f79-42cd-aca8-991fd548a9ed/scratchpad/contract/wiki-agent)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
@@ -1531,10 +1506,10 @@
    "effects": [
     "read",
     "spawn(python)",
-    "spawn(rm)",
     "top(git in a repository other than the checkout)",
     "top(git pull: a verb the table does not model)",
     "top(git worktree remove without an absolute path)",
+    "top(glob in a delete path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -1546,9 +1521,9 @@
     "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/3161e665-ba83-41ce-98b2-0b9287426c86/scratchpad/v5)",
     "read",
     "spawn(python)",
-    "spawn(rm)",
     "top(git fetch: a verb the table does not model)",
     "top(git push --delete: an option the table does not model)",
+    "top(glob in a delete path)",
     "write(C:/Users/me/PycharmProjects/wiki-agent)"
    ]
   },
@@ -1597,7 +1572,6 @@
    "command": "grep -n \"free port\\|bind\\|--port\\|getsockname\" tool/main/app.py tool/app.cmd web/src-tauri/src/main.rs 2>/dev/null | head; for p in 8791 10534 16106 16107 16116 24313; do echo \"$p: $(curl -s -m 2 http://127.0.0.1:$p/api/worktrees -o /dev/null -w '%{http_code}')\"; done",
    "effects": [
     "read",
-    "spawn(curl)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)"
    ]
@@ -1635,9 +1609,10 @@
    "source": "claude",
    "command": "ls artifacts artifacts/review; P=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/f65cf784-249b-457a-8842-663dbc6f151d/scratchpad\"; rm -rf artifacts && echo \"artifacts removed\"; rm -f \"${P:?}/aigen-durations.log\" \"${P:?}/pr-watchdog.md\"; python tool/lint.py --repo . 2>&1 | tail -2; python tool/repo_lint.py --repo . 2>&1 | tail -2; git status --short | head -3; git worktree list | wc -l",
    "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts)",
     "read",
     "spawn(python)",
-    "spawn(rm)"
+    "top(variable in a delete path)"
    ]
   },
   {
@@ -1646,9 +1621,15 @@
    "command": "mkdir -p raw/android artifacts && cp android/app/build/outputs/apk/release/app-release.apk raw/android/wiki-agent.apk && cp android/app/build/outputs/bundle/release/app-release.aab raw/android/wiki-agent.aab && cp raw/android/wiki-agent.apk artifacts/wiki-agent.apk && curl -s -m5 http://127.0.0.1:21570/api/mobile/status; echo; O=https://intermediate-titled-compaq-biblical.trycloudflare.com; curl -s -m15 -o /dev/null -w 'install page %{http_code}\\n' $O/mobile-install; curl -s -m30 -o \"$TEMP/dl.apk\" -w 'apk %{http_code} %{content_type} %{size_download}\\n' $O/mobile-install.apk; sha256sum \"$TEMP/dl.apk\" raw/android/wiki-agent.apk | cut -c1-16",
    "effects": [
     "read",
-    "spawn(cp)",
-    "spawn(curl)",
-    "spawn(mkdir)"
+    "top(variable in a write path)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/artifacts)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/artifacts/wiki-agent.apk)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/artifacts/wiki-agent.apk/wiki-agent.apk)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/android)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/android/wiki-agent.aab)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/android/wiki-agent.aab/app-release.aab)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/android/wiki-agent.apk)",
+    "write(C:/Users/me/PycharmProjects/wiki-agent/raw/android/wiki-agent.apk/app-release.apk)"
    ]
   },
   {
@@ -1710,7 +1691,6 @@
     "read",
     "spawn(npx)",
     "spawn(python)",
-    "top(a directory change after the first statement)",
     "top(variable in a write path)"
    ]
   },
@@ -1722,7 +1702,6 @@
     "read",
     "spawn(npx)",
     "spawn(python)",
-    "top(a directory change after the first statement)",
     "top(variable in a write path)"
    ]
   },
@@ -1735,7 +1714,6 @@
     "spawn(npm)",
     "spawn(npx)",
     "spawn(python)",
-    "top(a directory change after the first statement)",
     "top(variable in a write path)"
    ]
   },
@@ -1747,8 +1725,8 @@
     "read",
     "spawn(python)",
     "spawn(ruff)",
-    "spawn(tee)",
-    "spawn(timeout)"
+    "spawn(timeout)",
+    "top(variable in a write path)"
    ]
   },
   {
@@ -1757,12 +1735,11 @@
    "command": "python tool/debt.py check >/dev/null 2>&1; echo \"debt exit=$?\"; D=\"$TEMP/stress\"; rm -rf \"$D\"; mkdir -p \"$D\"; for i in $(seq 1 8); do (python -m pytest -q -p no:cacheprovider -n 0 \"tool/test_review_contract.py::test_slow_manifest_git_is_reaped_at_shared_deadline_without_a_request\" > \"$D/rc$i.log\" 2>&1) & (python -m pytest -q -p no:cacheprovider -n 0 \"tool/test_verification_runtime.py::test_setup_and_flows_share_budget_and_cleanup_runs_after_timeout\" > \"$D/vr$i.log\" 2>&1) & done; wait; for k in rc vr; do echo \"$k:\"; grep -h 'passed\\|failed' \"$D\"/$k*.log | sed 's/ in .*//' | sort | uniq -c; done",
    "effects": [
     "read",
-    "spawn(mkdir)",
     "spawn(python)",
-    "spawn(rm)",
     "spawn(sed)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)",
+    "top(variable in a delete path)",
     "top(variable in a write path)"
    ]
   },
@@ -1815,7 +1792,7 @@
    "command": "realpath artifacts && rm -rf artifacts/* && ls -A artifacts | wc -l",
    "effects": [
     "read",
-    "spawn(rm)"
+    "top(glob in a delete path)"
    ]
   },
   {
@@ -1823,11 +1800,11 @@
    "source": "claude",
    "command": "reg query 'HKCU\\Console\\%%Startup' 2>&1 | iconv -f cp949 -t utf-8 | grep Delegation; SP=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; rm -f \"$SP/marker.txt\"; explorer.exe \"$(cygpath -w \"$SP/probe-dbl.cmd\")\"; sleep 8; echo \"double-click probe: $(cat \"$SP/marker.txt\" 2>&1 | head -c 60)\"",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/marker.txt)",
     "read",
     "spawn(explorer)",
     "spawn(iconv)",
-    "spawn(reg)",
-    "spawn(rm)"
+    "spawn(reg)"
    ]
   },
   {
@@ -1845,10 +1822,12 @@
    "source": "claude",
    "command": "rm -f artifacts/t1.log artifacts/t2.log artifacts/t3.log; L=$(mktemp -d); timeout 600 python -m pytest tool/test_file_filter.py tool/test_agent_decisions.py tool/test_specs.py tool/test_decision.py tool/test_decision_flow.py tool/test_jev_contract.py -q -n 2 -p no:cacheprovider > $L/t.log 2>&1; grep -E \"passed|failed|^FAILED|^E \" $L/t.log | head -40; python -m pytest tool/test_specs.py tool/test_agent_decisions.py --collect-only -q -p no:cacheprovider > $L/c.log 2>&1; grep -E \"tests? collected|error\" $L/c.log; echo $L",
    "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/t1.log)",
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/t2.log)",
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/artifacts/t3.log)",
     "read",
     "spawn(mktemp)",
     "spawn(python)",
-    "spawn(rm)",
     "spawn(timeout)",
     "top(variable in a write path)"
    ]
@@ -1860,7 +1839,7 @@
    "effects": [
     "read",
     "spawn(python)",
-    "spawn(rm)"
+    "top(glob in a delete path)"
    ]
   },
   {
@@ -1868,8 +1847,8 @@
    "source": "claude",
    "command": "rm laya/__init__.py && for m in kinds notes loop pool train label; do ls tool/$m.py tool/$m 2>/dev/null; done; grep -n \"from laya\\|import laya\\|python -m laya\" laya/*.py laya/prompts/*.md",
    "effects": [
+    "delete(C:/Users/me/PycharmProjects/wiki-agent/laya/__init__.py)",
     "read",
-    "spawn(rm)",
     "top(`do`: a loop, function or trap the table does not model)",
     "top(`for`: a loop, function or trap the table does not model)"
    ]
@@ -1881,8 +1860,8 @@
    "effects": [
     "read",
     "spawn(ruff)",
-    "spawn(tee)",
-    "spawn(timeout)"
+    "spawn(timeout)",
+    "top(variable in a write path)"
    ]
   },
   {
@@ -1920,10 +1899,10 @@
    "command": "taskkill //PID 26740 //F >/dev/null; S=/c/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad; mkdir -p $S/wv2; cat > $S/launch.cmd <<EOF\n@echo off\nset WEBVIEW2_USER_DATA_FOLDER=$(cygpath -w $S/wv2)\nset WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333\nstart \"\" \"$(cygpath -w $S/wt/web/src-tauri/target/release/wiki-agent.exe)\"\nEOF\ncmd //c \"$(cygpath -w $S/launch.cmd)\"; echo launched",
    "effects": [
     "read",
-    "spawn(mkdir)",
     "spawn(taskkill)",
     "top(variable in a nested shell string)",
-    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/launch.cmd)"
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/launch.cmd)",
+    "write(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/7ae28d6f-d710-4748-85a5-d266d14a0529/scratchpad/wv2)"
    ]
   },
   {
@@ -1932,14 +1911,12 @@
    "command": "taskkill //PID 26984 //F 2>&1 | iconv -f cp949 -t utf-8; cd C:/Users/me/PycharmProjects/wiki-agent && explorer.exe \"$(cygpath -w tool/app.cmd)\"; for i in $(seq 1 30); do tasklist //FI \"IMAGENAME eq wiki-agent.exe\" //NH 2>/dev/null | grep -q wiki-agent && break; sleep 2; done; tasklist //FI \"IMAGENAME eq wiki-agent.exe\" //NH 2>&1 | iconv -f cp949 -t utf-8; sleep 8; ls -la --time-style=full-iso raw/main.log; P=$(grep -o \"127.0.0.1:[0-9]*\" raw/main.log | head -1); echo \"port=$P $(curl -s -o /dev/null -w '%{http_code}' \"http://$P/\")\"",
    "effects": [
     "read",
-    "spawn(curl)",
     "spawn(explorer)",
     "spawn(iconv)",
     "spawn(taskkill)",
     "spawn(tasklist)",
     "top(`do`: a loop, function or trap the table does not model)",
-    "top(`for`: a loop, function or trap the table does not model)",
-    "top(a directory change after the first statement)"
+    "top(`for`: a loop, function or trap the table does not model)"
    ]
   },
   {
@@ -1956,10 +1933,10 @@
    "source": "claude",
    "command": "tasklist //FI \"PID eq 21684\" //NH 2>&1 | iconv -f cp949 -t utf-8; taskkill //PID 21684 //F 2>&1 | iconv -f cp949 -t utf-8; sleep 2; SP=\"C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad\"; rm -f \"$SP/marker.txt\"; explorer.exe \"$(cygpath -w \"$SP/probe-dbl.cmd\")\"; sleep 8; echo \"double-click probe: $(cat \"$SP/marker.txt\" 2>&1 | head -c 60)\"; tasklist //FI \"IMAGENAME eq WindowsTerminal.exe\" //V //FO LIST 2>&1 | iconv -f cp949 -t utf-8 | grep -E \"PID|상태\"",
    "effects": [
+    "delete(C:/Users/me/AppData/Local/Temp/claude/C--Users-me-PycharmProjects-wiki-agent/0948f81c-d3f2-48b1-8a23-2264519d7ec2/scratchpad/marker.txt)",
     "read",
     "spawn(explorer)",
     "spawn(iconv)",
-    "spawn(rm)",
     "spawn(taskkill)",
     "spawn(tasklist)"
    ]
@@ -2012,7 +1989,6 @@
    "command": "wmic process where \"ProcessId=24764\" get CommandLine,ParentProcessId 2>&1 | cut -c1-300; curl -s -m 5 http://127.0.0.1:8791/api/options | head -c 300",
    "effects": [
     "read",
-    "spawn(curl)",
     "spawn(wmic)"
    ]
   },
@@ -2023,8 +1999,7 @@
    "effects": [
     "read",
     "spawn(timeout)",
-    "spawn(wmic)",
-    "top(a directory change after the first statement)"
+    "spawn(wmic)"
    ]
   },
   {

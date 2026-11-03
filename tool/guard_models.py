@@ -1,23 +1,17 @@
-"""What each program does: a closed table of modelled programs, each with the flags it understands.
+"""What each program does: a table of modelled programs and the effects their argv has.
 
-`TABLE` is all the guard knows about programs, and it is kept small: programs
-that only read or print, `sort -o`/`uniq` writing their one output, `cd`,
-`find` without actions, nested shells, and git (its row is in `guard_git`).
-A row
-names a program, the flags it understands (`row`'s spec: one-letter flags,
-flags taking a value, long flags) and the model that maps its argv to effects.
-`gate` runs before every model: a flag the row does not list is `top`, and so
-is a word computed at run time where a flag may stand, unless no option of the
-program writes, runs or connects (`inert`). Some rows exist only to refuse
-(`refuse`). A program with no row, and a script file a shell runs, is a
-`spawn` of that executable, which passes: the guard judges the rows it models,
-never which toolchain a project runs. A denied ordinary command is answered by
-adding a row in a later change, never by modelling one more form inside this one.
+A row names a program, the flags it understands (`row`'s spec: one-letter
+flags, flags taking a value, long flags) and the model that maps its argv to
+effects. `gate` runs before a model: a flag the row does not list is `top`.
+The POSIX writers (`m_paths`) skip the gate and judge their path operands
+whatever the options. A program with no row is a `spawn` of that executable.
+The guard is open by default, so `top` and `spawn` pass (`guard_grant`).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import os
 import re
 
 from guard import BLOCK, Word, code, moved_to, names_set, paths, resolve, top
@@ -178,6 +172,138 @@ def writes(kind: str, ws: list, ctx) -> set:
     for w in ws:
         out |= paths(kind, w, ctx)
     return out
+
+
+# Open default: these write or delete the paths they are given, their options read the way the program's own
+# parser reads them.
+DELETERS, MAKERS, MOVERS, OUTPUTS = {"rm", "rmdir", "unlink", "shred"}, {"mkdir", "touch", "tee", "truncate"}, \
+    {"cp", "mv", "install", "ln"}, {"curl", "wget"}
+# The options whose value is a file curl or wget writes besides the download itself.
+CURL_OUT = ("-D", "--dump-header", "-c", "--cookie-jar", "--trace", "--trace-ascii", "--stderr", "--libcurl",
+            "--etag-save", "--hsts", "--alt-svc", "--ssl-sessions")
+WGET_OUT = ("-o", "--output-file", "-a", "--append-output", "--save-cookies", "--warc-file", "--hsts-file",
+            "--rejected-log")
+# Each writer's options that take a value: its getopt letters (a cluster ends at the first of them, so
+# `-gstaff` is `-g staff` and `-dm755` is `-d -m 755`) and its long names (`--mode x`, `--mode=x`, or a
+# prefix naming one of them). Copied from the programs' own option tables.
+SPEC = {
+    "shred": ("ns", ("--iterations", "--size", "--random-source")), "mkdir": ("m", ("--mode",)),
+    "touch": ("drt", ("--date", "--reference", "--time")), "truncate": ("rs", ("--reference", "--size")),
+    "cp": ("tS", ("--target-directory", "--suffix", "--sparse", "--no-preserve")),
+    "mv": ("tS", ("--target-directory", "--suffix")), "ln": ("tS", ("--target-directory", "--suffix")),
+    "install": ("gmotS", ("--group", "--mode", "--owner", "--target-directory", "--suffix", "--strip-program")),
+    "curl": ("AbcCdDeEFHKmoPQrtTuUwxXyYz",
+             ("--url", "--output", "--output-dir") + tuple(f for f in CURL_OUT if f.startswith("--"))),
+    "wget": ("aABDeiIloOPQRtTUwX",
+             ("--output-document", "--directory-prefix") + tuple(f for f in WGET_OUT if f.startswith("--"))),
+}
+
+
+def options(name: str, args: list) -> tuple:
+    """`([(option, value Word or None)], operands, the args after curl's `--next`)`, splitting `args` as
+    `name`'s option parser does."""
+    letters, longs = SPEC.get(name, ("", ()))
+    opts, ops, i = [], [], 0
+    while i < len(args):
+        w, t = args[i], args[i].text
+        nxt = args[i + 1] if i + 1 < len(args) else None
+        i += 1
+        if w.why or t == "-" or not t.startswith("-"):
+            ops.append(w)
+        elif t == "--":
+            ops += args[i:]
+            break
+        elif name == "curl" and t in ("--next", "-:"):     # a new operation, with its own local options
+            return opts, ops, args[i:]
+        elif t.startswith("--"):
+            flag, eq, glued = t.partition("=")
+            named = [n for n in longs if n == flag] or [n for n in longs if n.startswith(flag)]
+            if len(named) == 1:
+                opts.append((named[0], Word(glued, w.why) if eq else nxt))
+                i += 0 if eq else 1
+            else:
+                opts.append((flag, None))
+        else:
+            for k, c in enumerate(t[1:], 1):
+                if c in letters:
+                    opts.append(("-" + c, Word(t[k + 1:], w.why) if t[k + 1:] else nxt))
+                    i += 0 if t[k + 1:] else 1
+                    break
+                opts.append(("-" + c, None))
+    return opts, ops, []
+
+
+def fetched(url: Word) -> Word:
+    """The file name a download of `url` takes: the URL's last name, else `index.html`."""
+    m = re.match(r"[a-zA-Z][\w+.-]*://[^/?#]*(.*)", url.text)
+    name = re.split(r"[?#]", m[1] if m else url.text)[0].rsplit("/", 1)[-1]
+    return Word(name if name not in ("", ".", "..") else "index.html", url.why)
+
+
+def under(folder: list, w: Word) -> Word:
+    """`w` placed in the last of `folder` (`--output-dir`, `-P`); curl prefixes even an absolute name."""
+    if not folder:
+        return w
+    return Word(folder[-1].text.rstrip("\\/") + "/" + w.text, folder[-1].why or w.why)
+
+
+def m_paths(name, args, ctx):
+    opts, ops, rest = options(name, args)
+    flags = {f for f, _ in opts}
+
+    def given(*names):
+        return [v for f, v in opts if f in names and v is not None]
+
+    def out(ws):
+        # `-` is standard output; an empty name keeps curl's `--hsts`/`--alt-svc` cache in memory.
+        return writes("write", [w for w in ws if w.text not in ("-", "")], ctx), None
+
+    if name == "curl":
+        named = [w for w in given("-o", "--output") if w.text != "-"]
+        if flags & {"-O", "-J", "--remote-name", "--remote-name-all", "--remote-header-name"}:
+            named += [fetched(u) for u in ops + given("--url")]
+        eff = out([under(given("--output-dir"), w) for w in named] + given(*CURL_OUT))[0]
+        return eff | (m_paths(name, rest, ctx)[0] if rest else set()), None
+    if name == "wget":
+        # Without `-O`, each URL lands under `-P`'s folder, else here; `--spider` saves none.
+        doc = given("-O", "--output-document")
+        spider = any(len(f) > 4 and "--spider".startswith(f) for f in flags)
+        pages = [] if spider else [under(given("-P", "--directory-prefix"), fetched(u)) for u in ops]
+        return out((doc or pages) + given(*WGET_OUT))
+    # `install -d` makes every operand a folder rather than copying into the last.
+    if name in DELETERS | MAKERS or name == "install" and any(
+            f == "-d" or len(f) > 4 and "--directory".startswith(f) for f in flags):
+        return writes("delete" if name in DELETERS else "write", ops, ctx), None
+    # A mover's destination is `-t`'s folder, else its last operand.
+    folder = given("-t", "--target-directory")
+    srcs, dests = (ops, folder) if folder else (ops[:-1], ops[-1:])
+    return lands(srcs, dests, bool(folder), ctx) | (writes("delete", srcs, ctx) if name == "mv" else set()), None
+
+
+def lands(srcs: list, dests: list, folder: bool, ctx) -> set:
+    """Where sources land. A folder destination (`-t`, a trailing separator, or one that exists now) takes each
+    source's last name, so `cp x .` writes `./x`, not the checkout. Any other destination is written as named and,
+    since an earlier command (`mkdir`, `cp -r`, `install -D`) may make it a folder, with each source's name below
+    it too: `cp verification.toml new` may write `new/verification.toml`."""
+    out = set()
+    for d in dests:
+        into = folder or not d.why and (re.search(r"[\\/]$", d.text) or any(
+            os.path.isdir(p) for c in ctx.cwds if (p := spot(d, c, ctx))))
+        names = [re.split(r"[\\/]+", s.text.rstrip("\\/"))[-1] for s in srcs]
+        named = srcs and all(n not in ("", ".", "..") for n in names) and not any(s.why for s in srcs)
+        direct = paths("write", d, ctx)     # empty for a device such as `/dev/null`, which holds nothing
+        if named and direct:
+            out |= writes("write", [Word(d.text.rstrip("\\/") + "/" + n, d.why) for n in names], ctx)
+        if not (into and named):
+            out |= direct
+    return out
+
+
+def spot(w: Word, cwd: str, ctx):
+    try:
+        return resolve(w.text, cwd, ctx)
+    except ValueError:
+        return None
 
 
 def here(ctx) -> Word:
@@ -553,7 +679,7 @@ TABLE = {
     "patch": row(refuse("writes the files its patch names"), free=True),
     "split": row(refuse("names its output files itself"), free=True),
     "csplit": row(refuse("names its output files itself"), free=True),
-    "wget": row(refuse("follows redirects and names its downloads itself"), free=True),
+    **{p: row(m_paths, free=True) for p in DELETERS | MAKERS | MOVERS | set(OUTPUTS)},
     "let": row(refuse("evaluates arithmetic, which runs what its variables hold"), free=True),
     "alias": row(refuse("defines a command the guard cannot follow"), free=True),
     **{e: row(refuse("runs code the guard cannot read"), free=True) for e in ("eval", "source", ".")},
