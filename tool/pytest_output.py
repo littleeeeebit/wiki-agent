@@ -70,11 +70,20 @@ def _blank(command: str, dialect: str = "posix") -> str:
 
 def as_posix(command: str, dialect: str) -> str:
     """A PowerShell command for the checks that parse Bash: its here-strings are data and go blank
-    (their lines kept). Any other string is left as written, so a path or script in it is still
-    judged; ponytail: read as Bash's quotes, as before, until a PowerShell escape misleads one."""
+    (their lines kept), unless the closing line pipes one into an interpreter, as a Bash heredoc
+    is code there. Any other string is left as written, so a path or script in it is still
+    judged; ponytail: read as Bash's quotes, as before, until a PowerShell escape misleads one.
+    A here-string held in a variable and run later is read as data."""
+    from edit_as_diff import INTERPRETERS
+
     if dialect == "posix":
         return command
-    return _QUOTED["ps"].sub(lambda m: re.sub(r"[^\n]", " ", m[0]) if m[0].startswith("@") else m[0], command)
+
+    def plain(match):
+        tail = command[match.end():].split("\n", 1)[0]
+        code = INTERPRETERS.search(tail) or re.search(r"(?i)\b(?:pwsh|powershell|iex|invoke-expression)\b", tail)
+        return match[0] if code or not match[0].startswith("@") else re.sub(r"[^\n]", " ", match[0])
+    return _QUOTED["ps"].sub(plain, command)
 
 
 def held_back(command: str, dialect: str = "posix") -> str:

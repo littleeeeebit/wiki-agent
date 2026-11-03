@@ -164,7 +164,8 @@ def test_powershell_here_strings_are_text_and_its_other_strings_are_read(repo: P
     assert verdict(bash("@'\nit's\nsed -i 's/x/y/' README.md\n'@"), repo, "ps") is None
     for command in ('echo x > "author\'s notes.md"',
                     "python -c \"from pathlib import Path; Path('README.md').write_text('x')\"",
-                    "@'\nit's\n'@ | Out-Null; echo x > README.md"):
+                    "@'\nit's\n'@ | Out-Null; echo x > README.md",
+                    "@'\nopen('README.md', 'w').write('x')\n'@ | python -"):
         assert verdict(bash(command), repo, "ps") is not None, command
 
 
