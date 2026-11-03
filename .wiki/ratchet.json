@@ -233,8 +233,8 @@
     },
     "tool/test_main.py": {
       "dup": 61,
-      "lines": 1848,
-      "reason": "baseline at adoption"
+      "lines": 1850,
+      "reason": "The closed-stdin shutdown test failed once on a loaded CI runner with a bare TimeoutExpired; it now fails with server.log so a slow shutdown can be told from a stuck one. Before that: baseline at adoption."
     },
     "tool/test_markdown_emphasis.py": {
       "dup": 11,
