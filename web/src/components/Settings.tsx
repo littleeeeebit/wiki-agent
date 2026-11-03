@@ -203,9 +203,9 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
           {research && (
           <Row label="반복 발견 리서치 한도" note="같은 P0/P1 발견이 4번째 나오면 웹으로 조사한다 · 분 · 호출 · 토큰">
             <span className="flex gap-1.5">
-              <input type="number" min={1} aria-label="리서치 분" className={`${field} w-14`}
-                value={Math.round(research.research_seconds / 60)}
-                onChange={(e) => setResearch({ ...research, research_seconds: Number(e.target.value) * 60 })} />
+              <input type="number" min={1} step="any" aria-label="리서치 분" className={`${field} w-14`}
+                value={research.research_seconds / 60}
+                onChange={(e) => setResearch({ ...research, research_seconds: Math.round(Number(e.target.value) * 60) })} />
               <input type="number" min={1} aria-label="리서치 호출" className={`${field} w-14`}
                 value={research.research_calls}
                 onChange={(e) => setResearch({ ...research, research_calls: Number(e.target.value) })} />

@@ -44,6 +44,13 @@ FOURTH = 4       # the round that raises one serious finding id this many times 
 CYCLES = 2       # research-and-fix cycles per issue, then a person decides
 # The research limits a cycle starts with, beside the loop's settings in `raw/chat/main.json`.
 SETTINGS = {"research_seconds": 600, "research_calls": 40, "research_tokens": 200_000}
+# The issue the round-7 backstop gave findings without an id, before 2026-11-03: a cycle claimed
+# then still resumes on them. No new issue gets it (`trigger` reads ids only).
+LEGACY = "unidentified"
+
+
+def issue_of(finding: dict) -> str:
+    return finding.get("id") or LEGACY
 PENDING = "pending — the fix records what it observed here, with the tests and the commit."
 LISTS = ("failed_fixes", "counterevidence", "alternatives")
 TEXTS = ("problem", "hypothesis", "theory", "applicability", "experiment", "limits")
@@ -117,7 +124,7 @@ def observed(spec: dict, last: dict) -> dict | None:
     """The recovery state with each researched fix's outcome closed by `last`,
     the first counted round after it; `None` when nothing changed."""
 
-    raised = {f.get("id") for f in serious(last)}
+    raised = {issue_of(f) for f in serious(last)}
     state, changed = {}, False
     for key, s in (spec.get("recovery") or {}).items():
         attempts = []
@@ -213,7 +220,7 @@ def prepared(lp, spec: dict, path: Path) -> list[dict] | None:
     for k in new:
         s = state[k] = state.get(k) or fresh(k)
         s["trigger"] = {**owed[k], "evidence": [f"[{f['grade']}] {f['head']}" for f in serious(record)
-                                                if f.get("id") == k]}
+                                                if issue_of(f) == k]}
     spent = {k: state[k] for k in new if state[k]["cycles_started"] >= CYCLES}
     if spent:
         halt(lp, spent, "exhausted", f"리서치 {CYCLES}번 뒤에도 같은 발견으로 거절됐다 (라운드 {record['n']}). "
@@ -221,8 +228,11 @@ def prepared(lp, spec: dict, path: Path) -> list[dict] | None:
         return None
     missing = {}
     for k in new:
-        try:   # a person's limits from an earlier `[계속]` stand; otherwise the settings'
-            state[k]["limits"] = limited(state[k]["limits"] or defaults())
+        try:   # a person's limits from an earlier `[계속]` stand; the settings' are read again each cycle
+            s = state[k]
+            auto = s["limits"] is None or s.get("limits_from") == "settings"
+            s["limits"] = limited(defaults() if auto else s["limits"])
+            s["limits_from"] = "settings" if auto else s.get("limits_from")
         except ValueError as exc:
             missing[k], why = state[k], exc
     if missing:
@@ -272,7 +282,7 @@ def asked(spec: dict, key: str, s: dict) -> str:
              f"cycle {s['active']['cycle']} of {CYCLES}.", "", "## The finding as the reviews raised it", ""]
     for r in rounds:
         for f in r.get("items") or []:
-            if f.get("id") == key and f["grade"] in SERIOUS:
+            if issue_of(f) == key and f["grade"] in SERIOUS:
                 lines += [f"Round {r['n']} at `{r['head'][:7]}`: {f['head']}", f.get("body") or "",
                           f"Correction then: {f.get('disposition') or 'none yet'}", ""]
     earlier = [a for a in s.get("attempts", []) if a.get("page")]
@@ -531,7 +541,7 @@ def resumed(spec: dict, limits: dict | None, note: str) -> dict:
             given = limited(limits)
             if any(given[x] <= s["spent"][x] for x in given):
                 raise ValueError(f"`{k}` 의 새 한도는 이미 쓴 양보다 커야 한다")
-            s["limits"] = given
+            s["limits"], s["limits_from"] = given, "person"
         if s["phase"] == "unknown":
             s["spent"]["accepted"] = True    # the spend so far stands as a lower bound
         a = s.get("active")

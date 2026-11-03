@@ -96,6 +96,30 @@ def test_a_stale_round_is_not_counted():
     assert recovery.trigger(loop.counted(spec), {})[0]["rounds"] == [1, 2, 3, 4]
 
 
+def test_each_new_cycle_reads_the_settings_unless_a_person_gave_limits(world):
+    fifth = [*FOUR[:3], rnd(4, item("F1", "fixed")), rnd(5, item("F1"))]
+    auto = {**recovery.fresh("F1"), "cycles_started": 1, "phase": "fixed", "limits": dict(LIMITS),
+            "limits_from": "settings"}
+    for name, state, expected in (("auto", auto, {"seconds": 1200, "calls": 80, "tokens": 400_000}),
+                                  ("person", {**auto, "limits_from": "person"}, LIMITS),
+                                  ("legacy", {k: v for k, v in auto.items() if k != "limits_from"}, LIMITS)):
+        lp, spec = correcting(world, f"cycle-{name}", {"F1": state}, rounds=fifth)
+        with patch.object(recovery, "defaults", return_value={"seconds": 1200, "calls": 80, "tokens": 400_000}), \
+                patch.object(recovery, "research", return_value=False) as research:
+            recovery.prepared(lp, spec, Path(spec["worktree"]))
+        got = research.call_args.args[4]
+        assert got["cycles_started"] == 2 and got["limits"] == expected, name
+
+
+def test_a_cycle_claimed_for_unnamed_findings_before_still_resumes_on_them():
+    spec = {"rounds": [rnd(7, item(None, head="[P1] original issue"))],
+            "recovery": {recovery.LEGACY: {**recovery.fresh(recovery.LEGACY), "trigger": {"kind": "backstop", "rounds": [7]},
+                                           "active": {"cycle": 1, "round": 7, "head": rnd(7)["head"]}}}}
+    s = spec["recovery"][recovery.LEGACY]
+    assert "original issue" in recovery.asked(spec, recovery.LEGACY, s)
+    assert recovery.trigger(loop.counted({"rounds": [rnd(n, item(None)) for n in range(1, 6)]}), {}) == []
+
+
 def test_the_settings_give_the_limits_and_take_only_positive_ones():
     assert recovery.defaults() == {"seconds": 600, "calls": 40, "tokens": 200_000}
     web = client()
