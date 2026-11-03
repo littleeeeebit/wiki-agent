@@ -3,9 +3,9 @@
 import re
 import shlex
 
-# A quoted string, by the shell's own escapes: `\"` in Git Bash, `` `" `` in PowerShell, whose
-# single quotes double (`''`) rather than escape, and whose here-strings (`@'` ... `'@` on lines
-# of their own) hold quotes freely.
+# A quoted string, by the shell's own escapes: backslash-quote in Git Bash, backtick-quote in PowerShell.
+# PowerShell's single quotes double (`''`) rather than escape,
+# and its here-strings (`@'` ... `'@` on lines of their own) hold quotes freely.
 _QUOTED = {
     "posix": re.compile(r'"(?:[^"\\]|\\.)*"|\'[^\']*\''),
     "ps": re.compile(r'(?s:@\'\r?\n.*?\n\'@)|(?s:@"\r?\n.*?\n"@)|"(?:[^"`]|`.)*"|\'(?:[^\']|\'\')*\''),
