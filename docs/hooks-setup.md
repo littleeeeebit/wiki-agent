@@ -97,7 +97,12 @@ host after `host_boundary.py` and the pages' `enforce.deny` rules:
 `claude_pretool.py` on Claude, `codex_pretool.py` on Codex. One process per
 tool call holds every check, because starting an interpreter (and, before,
 `git`) per check was most of a hook's time; `hook.py` reads the project off
-`.git` instead of running `git rev-parse`. It judges only sessions the app started
+`.git` instead of running `git rev-parse`. Before any check, `tool/command_repair.py`
+fixes what needs no refusal — `powershell` becomes `pwsh -NoProfile`, a pytest run
+piped into a filter gets `2>&1 | tee <temp log>` — and every check judges the
+fixed command, which goes back as `updatedInput`: with no decision on Claude, so
+its approval rules apply to the new command, and with `allow` on Codex, its only
+rewrite shape. The guard judges only sessions the app started
 (`WIKI_AGENT_MANAGED=1`) in a checkout with an adapter; everywhere else it
 passes. `tool/deny.py` matches each page's `Bash(...)` pattern against not only
 the direct command but every command the guard's parser finds one level down,

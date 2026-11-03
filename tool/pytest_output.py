@@ -48,19 +48,51 @@ def runs_pytest(stage: str) -> bool:
     return False
 
 
+def _tee(stage: str) -> bool:
+    # `tee` is also PowerShell's alias of `Tee-Object`, so Codex's shell reads it the same.
+    return stage.split()[:1] in (["tee"], ["Tee-Object"], ["tee-object"])
+
+
+def _blank(command: str) -> str:
+    """Quoted operators blanked, same length, so patterns and messages cannot introduce pipelines."""
+    return _QUOTED.sub(lambda match: re.sub(r"[|;&\n]", " ", match[0]), command)
+
+
 def held_back(command: str) -> str:
     """The pipe stage a pytest run's output is fed into, unless it is `tee`.
     `| tail` or `| grep` hold the run's progress until it ends, so a gate hung
-    on one test reads exactly like a slow one and nobody can tell which. Quoted
-    operators are blanked so patterns and messages cannot introduce pipelines."""
+    on one test reads exactly like a slow one and nobody can tell which."""
 
-    bare = _QUOTED.sub(lambda match: re.sub(r"[|;&\n]", " ", match[0]), command)
-    for chain in re.split(r"&&|\|\||;|\n", bare):
+    for chain in re.split(r"&&|\|\||;|\n", _blank(command)):
         stages = [s.strip() for s in chain.split("|")]
         for before, after in zip(stages, stages[1:]):
-            if runs_pytest(before) and after.split()[:1] != ["tee"]:
+            if runs_pytest(before) and not _tee(after):
                 return after
     return ""
+
+
+def teed(command: str, log: str) -> str:
+    """`command` with every pytest run that feeds a filter also writing `log` as it goes.
+
+    `pytest -q | tail -5` becomes `pytest -q 2>&1 | tee <log> | tail -5`: the
+    filter still gets what it asked for, and the log shows whether a run that
+    prints nothing is hung or slow."""
+
+    bare = _blank(command)
+    marks = list(re.finditer(r"&&|\|\||;|\n|\|", bare))
+    out, cursor = [], 0
+    for i, mark in enumerate(marks):
+        if mark[0] != "|":
+            continue
+        before = bare[marks[i - 1].end() if i else 0:mark.start()]
+        after = bare[mark.end():marks[i + 1].start() if i + 1 < len(marks) else len(bare)]
+        # A pipe inside `$(...)` or backticks belongs to the substitution, not to the run.
+        inside = "$(" in before or "`" in before
+        if runs_pytest(before.strip()) and not _tee(after.strip()) and not inside:
+            joint = " |" if before.rstrip().endswith("2>&1") else " 2>&1 |"
+            out.append(f"{command[cursor:mark.start()].rstrip()}{joint} tee {log} |")
+            cursor = mark.end()
+    return "".join(out) + command[cursor:]
 
 
 def reason(command: str) -> str:

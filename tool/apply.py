@@ -357,6 +357,9 @@ def put_hook(settings: dict, event: str, script: str, entry: dict) -> list[str]:
 #
 # Only what this table names gets removed.
 RETIRED = {"korean_progress.py": "claude_pretool.py", **{s: "claude_pretool.py" for s in MEMBERS}}
+# Denies a page stopped declaring; the same rule, only what is named is removed. `sed -i` went
+# to `edit_as_diff`, which can count its files and ask git.
+RETIRED_DENIES = ("Bash(sed -i*)",)
 
 
 def retire(settings: dict, gone: str, instead: str) -> list[str]:
@@ -406,6 +409,10 @@ def merge(
         if rule not in existing:
             existing.append(rule)
             changes.append(f"deny 추가: {rule}")
+    for rule in RETIRED_DENIES:
+        if rule in existing and rule not in denies:
+            existing.remove(rule)
+            changes.append(f"deny 제거: {rule}")
 
     changes += put_hook(settings, "UserPromptSubmit", HOOK_MARK, hook)
     for script, entry in sorted((scripts or {}).items()):

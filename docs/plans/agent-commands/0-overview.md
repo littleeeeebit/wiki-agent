@@ -39,8 +39,9 @@ Interpretation is not the cost; process creation is.
   Logs, generated files, gitignored paths and memory pass. Whole-file `Write`
   on a tracked file stays refused.
 - pytest pipes: the hook inserts `2>&1 | tee <temp log>` before the filter and
-  runs it. Where the host cannot rewrite input (Codex, to be checked), it warns
-  instead of refusing.
+  runs it. Checked 2026-11-03: both hosts rewrite input. Claude applies
+  `updatedInput` with no decision and still runs its own approval rules on the
+  new command; Codex takes it only with `allow`.
 - `sed -i`: allowed when one command applies the same substitution to three or
   more files; a single file goes through Edit.
 - `powershell`: rewritten to `pwsh -NoProfile`.

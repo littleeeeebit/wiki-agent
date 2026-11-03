@@ -1,4 +1,9 @@
-"""PreToolUse hook — block rewriting a file that already exists.
+"""PreToolUse hook — block rewriting a file git tracks.
+
+Only a tracked file has a diff to lose. A log, a generated file, an ignored
+path or memory is written however is convenient. `sed -i` is judged here too:
+one substitution over three or more files is the batch Edit cannot do, and
+passes; on fewer it is a rewrite like any other.
 
 The refusal and the `systemMessage` are read by the person and stay Korean.
 Everything else here is written for whoever maintains it.
@@ -6,9 +11,12 @@ Everything else here is written for whoever maintains it.
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import re
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -75,9 +83,11 @@ REASON = (
     "Edit 은 소리 내며 실패하지만 스크립트는 아무것도 안 바꾸고 조용히 성공한다.\n"
     "\n"
     "대신 이렇게. 바꿀 텍스트와 바꿀 내용을 짝지어 Edit 을 호출하라. 여러 자리면\n"
-    "Edit 을 여러 번 호출한다. 새 파일이면 Write 를, 저장소 밖 스크래치면 그대로\n"
-    "셸을 써도 된다 — 이 훅은 이미 있는 저장소 파일만 본다."
+    "Edit 을 여러 번 호출한다. 새 파일이면 Write 를 쓴다. 이 훅은 git 이 추적하는\n"
+    "파일만 본다 — 로그·생성 파일·무시된 파일·스크래치는 셸로 써도 되고, 같은 치환을\n"
+    "세 파일 이상에 하는 `sed -i` 한 번은 통과한다."
 )
+BATCH = 3
 
 
 def _unquote(raw: str) -> str:
@@ -159,6 +169,71 @@ def targets(command: str) -> list[str]:
     return found
 
 
+def in_place(command: str, root: Path) -> list[str]:
+    """Files a `sed -i` stage rewrites, leaving out a batch of `BATCH` or more (globs counted in `root`).
+
+    ponytail: direct `sed` stages only; `xargs sed -i` and `find -exec sed -i` take their files
+    from elsewhere and are batches by shape, and pass."""
+
+    from pytest_output import _blank
+
+    found, start = [], 0
+    for mark in [*re.finditer(r"&&|\|\||;|\n|\|", _blank(command)), None]:
+        stage, start = command[start:mark.start() if mark else len(command)], mark.end() if mark else 0
+        try:
+            words = shlex.split(stage)
+        except ValueError:
+            continue
+        while words and re.fullmatch(r"[A-Za-z_]\w*=.*", words[0]):
+            words.pop(0)
+        if not words or words[0].replace("\\", "/").rsplit("/", 1)[-1] not in {"sed", "sed.exe"}:
+            continue
+        files, script, inplace, args = [], False, False, iter(words[1:])
+        for word in args:
+            if word == "--":
+                files += list(args)
+            elif word.startswith("--"):
+                inplace |= word.startswith("--in-place")
+                script |= word.startswith(("--expression", "--file"))
+                if word in {"--expression", "--file"}:
+                    next(args, None)
+            elif word.startswith("-") and len(word) > 1:
+                for j, letter in enumerate(word[1:]):
+                    if letter == "i":  # the rest of the word is its backup suffix
+                        inplace = True
+                        break
+                    if letter in "efl":  # the rest of the word, or the next one, is its argument
+                        script |= letter != "l"
+                        if j == len(word) - 2:
+                            next(args, None)
+                        break
+            elif not script:
+                script = True
+            else:
+                files.append(word)
+        named = [p for f in files for p in (sorted(glob.glob(f, root_dir=root)) if set(f) & set("*?[") else [f])]
+        if inplace and len(named) < BATCH:
+            found += [p for p in named if not EXEMPT.search(p) and p not in found]
+    return found
+
+
+def tracked(paths: list[str], root: Path) -> list[str]:
+    """Of those, the ones git tracks. A git that cannot answer passes, `craft/hooks-fail-open`."""
+    from common.process import background_options
+
+    kept = []
+    for path in paths:
+        candidate = Path(path) if os.path.isabs(path) else root / path
+        try:
+            listed = subprocess.run(["git", "ls-files", "--error-unmatch", "--", candidate.name],
+                                    cwd=candidate.parent, capture_output=True, timeout=5, **background_options())
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if listed.returncode == 0:
+            kept.append(path)
+    return kept
+
+
 def existing(paths: list[str], root: Path) -> list[str]:
     """Of those, the ones that exist. A path that does not is a new file, and passes."""
     live = []
@@ -189,10 +264,12 @@ def verdict(payload: dict, root: Path) -> dict | None:
         command = str(given.get("command") or "")
         if not command:
             return None
-        hits = existing(targets(command), root)
+        hits = existing([*targets(command), *in_place(command, root)], root)
     else:
         return None
 
+    # git runs only here, on the rare call that writes an existing file.
+    hits = tracked(hits, root) if hits else []
     if not hits:
         return None
     return {
@@ -201,7 +278,7 @@ def verdict(payload: dict, root: Path) -> dict | None:
             "permissionDecision": "deny",
             "permissionDecisionReason": REASON.format(paths=", ".join(hits)),
         },
-        "systemMessage": f"이미 있는 파일을 되쓰려 해서 막았다: {', '.join(hits)}",
+        "systemMessage": f"git 이 추적하는 파일을 되쓰려 해서 막았다: {', '.join(hits)}",
     }
 
 

@@ -6,7 +6,6 @@ triggers: ["edit\\s*(만|diff)", "diff\\s*(로|형태|방식)", "ran\\s*(형식|
 slots: []
 enforce:
   deny:
-    - "Bash(sed -i*)"
     - "Bash(perl -pi*)"
     - "Bash(perl -i*)"
     - "Bash(perl -0pi*)"
@@ -20,10 +19,14 @@ links: [destructive-git-guards]
 
 # Edit files as diffs — do not rewrite them with a script
 
-Rule. An existing file is changed by pairing the text to replace with what
+Rule. A file git tracks is changed by pairing the text to replace with what
 replaces it. Writing the whole thing is for a new file only. No shell
-redirection, no here-strings, no `sed -i`, and no one-line script that reads a
-file, substitutes and writes it back.
+redirection, no here-strings, no `sed -i` on one or two files, and no one-line
+script that reads a file, substitutes and writes it back. One `sed -i` that
+applies the same substitution to three or more files is the batch Edit cannot
+do, and is fine. A file git does not track — a log, a generated file, an
+ignored path, scratch, memory — has no diff to lose and is written however is
+convenient.
 
 Rewriting with a script makes three things worse at once. A whole file is
 rewritten to change one line, what changed does not survive in the diff, and
@@ -35,9 +38,11 @@ nothing.
 
 ## Enforcement — this page uses layer 1 and layer 4
 
-The `sed -i` family looks like a command, so `permissions.deny` blocks it.
+The `perl -i` family looks like a command, so `permissions.deny` blocks it.
 `apply` merges this page's `enforce.deny` into the target repository's
-`.claude/settings.json`.
+`.claude/settings.json`. `sed -i` left that list on 2026-11-03: a pattern
+cannot count files or ask git, and 185 refusals in three weeks were mostly
+scratch files and batches.
 
 `Bash(perl -i*)` does not match `perl -0pi`, because the front is `-0pi`.
 
@@ -45,18 +50,20 @@ So the deny list here holds only the shapes that were actually measured, as
 literals. An uncounted combination such as `perl -0777pi` still gets through —
 when one shows up, a line is added then.
 
-`tool/edit_as_diff.py` is layer 4, and it looks only at files that already exist.
+`tool/edit_as_diff.py` is layer 4, and it looks only at files that already
+exist and that git tracks (`git ls-files`, asked only when such a path turns up).
 
 - `Bash`: among the paths named by `cat >`, `cat >>`, `tee`, a redirection,
-  `Path(...).write_*` or `open(..., "w")`, the ones present right now
+  `Path(...).write_*`, `open(..., "w")` or a `sed -i` stage naming fewer than
+  three files (globs counted), the ones present right now
 - `Write`: when the target path already exists — since writing whole is for
   new files only
 
-Half of it is what it lets through: new files, scratch outside the repository,
-`/dev/null`, `2>&1`, and `Edit` itself.
+Half of it is what it lets through: new files, untracked and ignored files,
+scratch outside the repository, `/dev/null`, `2>&1`, and `Edit` itself.
 **A false positive that stops the work is a hook the user switches off.**
-Then enforcement is zero. `tool/test_edit_as_diff.py` holds eight blocking
-cases and nine passing ones.
+Then enforcement is zero. `tool/test_edit_as_diff.py` holds both the blocking
+cases and the passing ones.
 
 Command shapes are still infinite. What it cannot catch, the prose below holds.
 

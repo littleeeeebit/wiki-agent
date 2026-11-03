@@ -16,10 +16,15 @@ HOOK = Path(__file__).with_name("edit_as_diff.py")
 
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
-    """A repository holding one file that already exists."""
+    """A repository tracking two files, with an untracked log and three tracked modules beside them."""
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "existing.py").write_text("x = 1\n", encoding="utf-8")
     (tmp_path / "README.md").write_text("# 제목\n", encoding="utf-8")
+    for name in ("a", "b", "c"):
+        (tmp_path / "src" / f"{name}.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "run.log").write_text("old\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "README.md", "src"], cwd=tmp_path, check=True)
     return tmp_path
 
 
@@ -91,10 +96,38 @@ def test_rewriting_a_file_that_is_already_there_is_refused(
         # Reads a repository file and writes into the scratch directory. What
         # is being written is not in the repository.
         "python - <<'PY'\nimport pathlib\nsrc = pathlib.Path('src/existing.py')\nout = pathlib.Path('/tmp/copy.py')\nout.write_text(src.read_text())\nPY",
+        # A file git does not track has no diff to lose: a log, generated output, ignored paths.
+        "echo new > run.log",
+        "sed -i 's/old/new/' run.log",
+        # One substitution over three or more tracked files is the batch Edit cannot do.
+        "sed -i 's/x = 1/x = 2/' src/a.py src/b.py src/c.py",
+        "sed -i -E 's/x/y/g' src/*.py",
+        "rg -l 'x = 1' src | xargs sed -i 's/x = 1/x = 2/'",
+        "find src -name '*.py' -exec sed -i 's/x/y/' {} +",
+        # Not in place.
+        "sed -n '1,5p' src/existing.py",
+        "sed 's/x/y/' src/existing.py > /dev/null",
     ],
 )
 def test_what_it_must_not_block(repo: Path, command: str) -> None:
     assert verdict(bash(command), repo) is None, command
+
+
+@pytest.mark.parametrize("command", [
+    "sed -i 's/x = 1/x = 2/' src/existing.py",
+    "sed -i.bak -e 's/x/y/' README.md src/a.py",
+    "cd src && sed --in-place 's/x/y/' a.py",
+    "sed -Ei 's/x/y/' src/existing.py",
+])
+def test_sed_in_place_on_one_or_two_tracked_files_is_refused(repo: Path, command: str) -> None:
+    root = repo / "src" if command.startswith("cd src") else repo
+    answer = verdict(bash(command), root)
+    assert answer and answer["hookSpecificOutput"]["permissionDecision"] == "deny", command
+
+
+def test_write_onto_an_untracked_file_passes(repo: Path) -> None:
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "run.log"), "content": "x"}}
+    assert verdict(payload, repo) is None
 
 
 def test_a_commit_message_that_quotes_a_command_is_not_a_command(repo: Path) -> None:

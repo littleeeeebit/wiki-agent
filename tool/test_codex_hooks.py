@@ -26,6 +26,7 @@ def connect(root: Path):
     project.mkdir()
     subprocess.run(["git", "init", "-q", str(project)], check=True)
     (project / "README.md").write_text("# 시험 문서\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(project), "add", "README.md"], check=True)  # rewrites are refused only on tracked files
     (project / ".wiki").mkdir()
     (project / ".wiki" / ".sync").write_text(str(time.time()), encoding="utf-8")
     (project / ".claude").mkdir()

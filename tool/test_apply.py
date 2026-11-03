@@ -65,6 +65,14 @@ def test_an_empty_settings_file_gets_everything():
     assert len(changes) == 4, changes
 
 
+def test_a_deny_no_page_declares_any_more_leaves_the_install():
+    old = {"permissions": {"deny": ["Bash(sed -i*)", "Bash(mine*)"]}}
+    changes = merge(old, ["Bash(git reset --hard*)"], HOOK, SCRIPTS)
+    assert old["permissions"]["deny"] == ["Bash(mine*)", "Bash(git reset --hard*)"]
+    assert "deny 제거: Bash(sed -i*)" in changes
+    assert merge(old, ["Bash(git reset --hard*)"], HOOK, SCRIPTS) == []
+
+
 def test_lived_in_settings_keep_everything_and_a_second_run_changes_nothing():
     lived = json.loads(json.dumps(LIVED_IN))
     merge(lived, DENIES, HOOK, SCRIPTS)

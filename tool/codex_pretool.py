@@ -7,6 +7,25 @@ from pathlib import Path
 import sys
 
 def verdict(payload: dict) -> dict | None:
+    from command_repair import repair
+
+    # Codex takes `updatedInput` only with `allow`, which there lets the call through without
+    # blocking; the approval policy still decides. The checks judge the repaired command.
+    try:
+        fixed, notes = repair(payload)
+    except Exception:  # noqa: BLE001 -- `craft/hooks-fail-open`
+        fixed, notes = payload, []
+    answer = checked(fixed)
+    if fixed is payload or ((answer or {}).get("hookSpecificOutput") or {}).get("permissionDecision") == "deny":
+        return answer
+    answer = answer or {}
+    output = answer.setdefault("hookSpecificOutput", {"hookEventName": "PreToolUse"})
+    output.update(permissionDecision="allow", updatedInput=fixed["tool_input"])
+    output["additionalContext"] = "\n\n".join(filter(None, [output.get("additionalContext"), *notes]))
+    return answer
+
+
+def checked(payload: dict) -> dict | None:
     import host_boundary
     import deny
     import edit_as_diff
