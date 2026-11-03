@@ -101,7 +101,24 @@ def repaired(command: str, dialect: str = "posix") -> tuple[str, list[str]]:
     if teed_ != fixed:
         notes.append(f"pytest output piped into a filter also goes to {log} as it runs. "
                      "Nothing to do now; if the run seems stuck, that file tells hung from slow.")
-    return path + teed_, notes
+    return _prefixed(teed_, path, dialect, notes), notes
+
+
+# PowerShell takes `using` only at the start of a script, and `param(...)` (with its attributes)
+# only before any statement.
+USING = re.compile(r"(?:\s*using\s[^\n;]*(?:;|\n|$))*")
+PARAM = re.compile(r"\s*(?:\[[^\]\n]*\]\s*)*param\s*\(", re.IGNORECASE)
+
+
+def _prefixed(command: str, prefix: str, dialect: str, notes: list[str]) -> str:
+    if not prefix or dialect != "ps":
+        return prefix + command
+    head = USING.match(command).end()
+    if PARAM.match(command, head):
+        notes[:] = [n.replace("this command ran with", "add") + " Call it by that path: a `param` block "
+                    "has to come first, so the hook left PATH alone." if "ran with" in n else n for n in notes]
+        return command
+    return command[:head] + ("\n" if head and command[head - 1] not in "\n;" else "") + prefix + command[head:]
 
 
 def repair(payload: dict, host: str = "claude") -> tuple[dict, list[str]]:

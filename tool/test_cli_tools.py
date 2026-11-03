@@ -47,7 +47,15 @@ def test_the_hook_puts_an_installed_tool_on_path_and_leaves_text_alone(no_path):
     folder = re.sub(r"^([A-Za-z]):", lambda m: "/" + m[1].lower(), exe.parent.as_posix())
     assert fixed == f"PATH=\"$PATH\":'{folder}'; {command}", "Git Bash reads /c/..., not C:/..."
     assert "not on this session's PATH" in notes[0]
-    assert command_repair.repaired(command, "ps")[0] == f"$env:PATH += ';{exe.parent.as_posix()}'; {command}"
+    path = f"$env:PATH += ';{exe.parent.as_posix()}'; "
+    assert command_repair.repaired(command, "ps")[0] == path + command
+    using = "using namespace System.Text\nusing module X; jq ."   # `using` stays first (R3-1)
+    assert command_repair.repaired(using, "ps")[0] == using.replace("; jq", f";{path} jq")
+    fixed, notes = command_repair.repaired("param($a)\njq .", "ps")
+    assert fixed == "param($a)\njq ." and "Call it by that path" in notes[0], "`param` comes first too"
+    assert command_repair.repaired("[CmdletBinding()] param()\njq .", "ps")[0] == "[CmdletBinding()] param()\njq ."
+    typed = "[Text.Encoding]::UTF8 | Out-Null; jq ."
+    assert command_repair.repaired(typed, "ps")[0] == path + typed, "a type literal is not an attribute"
     assert command_repair.repaired("cat <<'TXT'\njq .x\nTXT")[0] == "cat <<'TXT'\njq .x\nTXT"
     assert command_repair.repaired("rg -n jq src")[0] == "rg -n jq src", "an argument is not a command"
 
