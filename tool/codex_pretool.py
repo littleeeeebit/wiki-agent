@@ -34,10 +34,11 @@ def checked(payload: dict) -> dict | None:
     import markdown_emphasis
     import memory_words
 
-    denied = host_boundary.verdict(payload) or deny.verdict(payload) or guard.verdict(payload, host="codex")
+    denied = host_boundary.verdict(payload) or deny.verdict(payload, "codex") or guard.verdict(payload, host="codex")
     if denied:
         return denied
-    answer = edit_as_diff.verdict(payload, Path(str(payload.get("cwd") or Path.cwd())))
+    dialect = guard.shell_command(payload, "codex")[2]  # PowerShell on Windows: its strings are its own
+    answer = edit_as_diff.verdict(payload, Path(str(payload.get("cwd") or Path.cwd())), dialect)
     if answer:
         output = answer["hookSpecificOutput"]
         output["permissionDecisionReason"] = output["permissionDecisionReason"].replace(

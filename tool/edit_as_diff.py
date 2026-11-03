@@ -307,8 +307,9 @@ def existing(paths: list[str], root: Path) -> list[str]:
     return live
 
 
-def verdict(payload: dict, root: Path) -> dict | None:
-    """The hook output when this has to be blocked, otherwise `None`."""
+def verdict(payload: dict, root: Path, dialect: str = "posix") -> dict | None:
+    """The hook output when this has to be blocked, otherwise `None`. `dialect` is the shell's."""
+    from pytest_output import as_posix
 
     tool = str(payload.get("tool_name"))
     given = payload.get("tool_input") or {}
@@ -321,7 +322,7 @@ def verdict(payload: dict, root: Path) -> dict | None:
             return None
         hits = existing([path], root)
     elif tool == "Bash":
-        command = str(given.get("command") or "")
+        command = as_posix(str(given.get("command") or ""), dialect)
         if not command:
             return None
         hits = existing([*targets(command), *in_place(command, root)], root)

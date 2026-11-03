@@ -68,12 +68,25 @@ def _blank(command: str, dialect: str = "posix") -> str:
     return _QUOTED[dialect].sub(lambda match: re.sub(r"[|;&\n]", " ", match[0]), text)
 
 
-def held_back(command: str) -> str:
+def as_posix(command: str, dialect: str) -> str:
+    """A PowerShell command's strings read as PowerShell and rewritten for the checks that parse
+    Bash: a here-string is data and goes blank (its lines kept), any other string is single-quoted."""
+    if dialect == "posix":
+        return command
+
+    def plain(match):
+        if match[0].startswith("@"):
+            return re.sub(r"[^\n]", " ", match[0])
+        return "'" + re.sub(r"['\"`\n]", " ", match[0][1:-1]) + "'"
+    return _QUOTED["ps"].sub(plain, command)
+
+
+def held_back(command: str, dialect: str = "posix") -> str:
     """The pipe stage a pytest run's output is fed into, unless it is `tee`.
     `| tail` or `| grep` hold the run's progress until it ends, so a gate hung
     on one test reads exactly like a slow one and nobody can tell which."""
 
-    for chain in re.split(r"&&|\|\||;|\n", _blank(command)):
+    for chain in re.split(r"&&|\|\||;|\n", _blank(command, dialect)):
         stages = [s.strip() for s in chain.split("|")]
         for before, after in zip(stages, stages[1:]):
             if runs_pytest(before) and not _tee(after):
@@ -105,8 +118,8 @@ def teed(command: str, log: str, dialect: str = "posix") -> str:
     return "".join(out) + command[cursor:]
 
 
-def reason(command: str) -> str:
-    stage = held_back(command)
+def reason(command: str, dialect: str = "posix") -> str:
+    stage = held_back(command, dialect)
     if not stage:
         return ""
     return (
