@@ -22,6 +22,7 @@ import re
 import shutil
 import tempfile
 
+from common import layout  # noqa: F401 -- `guard_git.common_dir` reads it from here
 from guard import HERE, contained, real_path
 
 
@@ -52,23 +53,6 @@ def toml(path: Path) -> dict:
         return tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-
-
-def layout(cwd: Path) -> tuple | None:
-    """`(checkout, git dir, common dir, main clone)` read off git's own files, without running git."""
-    top = next((p for p in (cwd, *cwd.parents) if (p / ".git").exists()), None)
-    if top is None:
-        return None
-    gitdir = top / ".git"
-    if gitdir.is_file():
-        m = re.match(r"gitdir:\s*(.+)", gitdir.read_text(encoding="utf-8", errors="replace").strip())
-        if not m:
-            return None
-        gitdir = (top / m.group(1).strip()).resolve()
-    common = gitdir
-    if (gitdir / "commondir").is_file():
-        common = (gitdir / (gitdir / "commondir").read_text(encoding="utf-8").strip()).resolve()
-    return top, gitdir, common, common.parent if common.name == ".git" else common
 
 
 # A destination git reaches that is not a network host the guard can name: a local path, a `file://` URL,

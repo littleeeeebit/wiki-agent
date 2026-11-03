@@ -29,7 +29,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from workspace import checkout  # noqa: E402
+from common import layout  # noqa: E402
 
 # The scripts that read a target repository and need to be told which one.
 PROJECT = {"inject.py", "session_state.py", "sync.py"}
@@ -37,12 +37,27 @@ LEGACY = {"claude": ".claude/settings.json", "codex": ".codex/hooks.json"}
 
 
 def project_for(cwd: Path) -> tuple[Path, Path] | None:
-    """`(project, checkout)` for a directory, or `None` when it is not attached."""
+    """`(project, checkout)` for a directory, or `None` when it is not attached.
 
-    top, repo, _branch = checkout(cwd)
+    Read off `.git` rather than asked of `git rev-parse`: every hook of every tool call
+    comes through here, and starting `git` was most of a hook's time."""
+
+    try:
+        cwd = cwd.resolve()
+        # git could not start in a folder that is missing or refuses listing, and the hooks passed.
+        os.scandir(cwd).close()
+        found = layout(cwd)
+    except OSError:
+        return None
+    if found is None:
+        return None
+    top, _gitdir, _common, repo = found
+    # Inside `.git` git answers "not a work tree", and the hooks passed there.
+    if (top / ".git") in (cwd, *cwd.parents):
+        return None
     for candidate in (repo, top):
-        if candidate and (Path(candidate) / ".wiki/adapter.toml").is_file():
-            return Path(candidate), Path(top)
+        if (candidate / ".wiki/adapter.toml").is_file():
+            return candidate, top
     return None
 
 
@@ -94,6 +109,12 @@ def main(argv: list[str]) -> int:
     project, top = found
     if legacy(top, host, script):
         return 0
+    if script == "claude_pretool.py":
+        # Each check it holds keeps the rule it had as a hook of its own.
+        from claude_pretool import MEMBERS
+
+        if old := [s for s in MEMBERS if legacy(top, host, s)]:
+            extra += ["--without", ",".join(old)]
     if script in PROJECT:
         extra += ["--project", str(project)]
     if script == "session_state.py":

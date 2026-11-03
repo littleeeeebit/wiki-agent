@@ -15,6 +15,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+from claude_pretool import MEMBERS  # noqa: E402
 from markdown_emphasis import recovery  # noqa: E402
 from wiki import WIKI, adapter_path, front_matter, slots_for  # noqa: E402
 
@@ -38,7 +39,7 @@ SYNC_MARK = "sync.py"
 CONTINUATION_MARK = "declared_continuation.py"
 # Every script this wiki wires by name, besides the pages' `enforce.pretooluse`.
 OWNED = (HOOK_MARK, SESSION_MARK, SYNC_MARK, CONTINUATION_MARK, "keepalive.py",
-         "codex_pretool.py", "host_boundary.py", "deny.py", "guard.py")
+         "codex_pretool.py", "claude_pretool.py", "host_boundary.py", "deny.py", "guard.py")
 
 # Recognize the retired bridge by its executable/script, never by an
 # account-home path: CODEX_HOME still holds the selected CLI login.
@@ -355,7 +356,7 @@ def put_hook(settings: dict, event: str, script: str, entry: dict) -> list[str]:
 # open file". That is not a hypothetical; it happened while writing this.
 #
 # Only what this table names gets removed.
-RETIRED = {"korean_progress.py": "english_progress.py"}
+RETIRED = {"korean_progress.py": "claude_pretool.py", **{s: "claude_pretool.py" for s in MEMBERS}}
 
 
 def retire(settings: dict, gone: str, instead: str) -> list[str]:
@@ -470,12 +471,15 @@ def configure(settings: dict, project: Path | None, adapter: str | None, python:
                 entry["hooks"][0]["additionalContextLimit"] = 12000
             changes += put_hook(settings, event, mark, entry)
     else:
-        pre = {s: wrap(script_entry(python, s, "위키: 효과 검사" if s == "guard.py" else "진행 설명 확인")) for s in [*scripts, "guard.py"]}
-        if project is None:
-            # `permissions.deny` in the user settings would bind every
-            # repository on the machine. `deny.py` behind the dispatcher
-            # binds only the attached ones.
-            pre["deny.py"] = wrap(script_entry(python, "deny.py", "위키: 차단 규칙"))
+        # One process runs every check `claude_pretool` holds; a page's script it does not hold
+        # keeps a hook of its own.
+        pre = {s: wrap(script_entry(python, s, "진행 설명 확인")) for s in scripts if s not in MEMBERS}
+        pre["claude_pretool.py"] = wrap(script_entry(python, "claude_pretool.py", "위키: 도구 실행 검사"))
+        if project is not None:
+            # `permissions.deny` in the project's settings binds that project. In the user
+            # settings it would bind every repository on the machine, so there `deny.py`
+            # behind the dispatcher binds only the attached ones.
+            pre["claude_pretool.py"]["hooks"][0]["command"] += " --without deny.py"
         changes = merge(
             settings,
             list(denies) if project else [],

@@ -92,9 +92,12 @@ turns. The old `keep_alive` adapter value is ignored.
 
 ### The effect guard
 
-`tool/guard.py` is a PreToolUse hook on both hosts: Claude runs it as its own
-entry, Codex runs it inside `codex_pretool.py` after `host_boundary.py` and the
-pages' `enforce.deny` rules. It judges only sessions the app started
+`tool/guard.py` is a PreToolUse check on both hosts, run inside one hook per
+host after `host_boundary.py` and the pages' `enforce.deny` rules:
+`claude_pretool.py` on Claude, `codex_pretool.py` on Codex. One process per
+tool call holds every check, because starting an interpreter (and, before,
+`git`) per check was most of a hook's time; `hook.py` reads the project off
+`.git` instead of running `git rev-parse`. It judges only sessions the app started
 (`WIKI_AGENT_MANAGED=1`) in a checkout with an adapter; everywhere else it
 passes. `tool/deny.py` matches each page's `Bash(...)` pattern against not only
 the direct command but every command the guard's parser finds one level down,

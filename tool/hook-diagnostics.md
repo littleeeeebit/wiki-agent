@@ -20,7 +20,7 @@ Records excluding files from the last 60 seconds are kept for 7 days or up to th
 
 ## Current Installation and Operation
 
-The five wiki entry points turn on the collector at the first import. Existing hooks command, limit, and trust settings are maintained. Even if the log directory cannot be written to, existing P0 tool blocking still functions.
+The wiki entry points named in `hook_diagnostics._thresholds` turn on the collector at the first import. Existing hooks command, limit, and trust settings are maintained. Even if the log directory cannot be written to, existing P0 tool blocking still functions.
 
 `pwsh -NoProfile -NonInteractive -WindowStyle Hidden -File <위키>/tool/watch_hook_timeouts.ps1`
 Collectors in the same log directory are executed one at a time via mutex.

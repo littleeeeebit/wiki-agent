@@ -46,6 +46,42 @@ def test_worktree_resolves_to_the_attached_clone():
         assert hook.project_for(Path(raw)) is None, "저장소가 아니면 붙지 않는다"
 
 
+def test_project_is_not_found_inside_dot_git_or_a_missing_folder():
+    # `git rev-parse` answered neither, and the hooks passed there.
+    with tempfile.TemporaryDirectory() as raw:
+        main, _tree = attached_repo(Path(raw))
+        assert hook.project_for(main / "sub") is None
+        assert hook.project_for(main / ".git") is None
+        assert hook.project_for(main / ".git/refs") is None
+        (main / "sub").mkdir()
+        assert hook.project_for(main / "sub")[0].resolve() == main.resolve()
+
+
+def test_one_process_answers_as_the_separate_hooks_did():
+    """Two checks deny one call: the first in `MEMBERS` gives the reason, and
+    every check's on-screen message is still shown, as Claude showed them."""
+
+    import claude_pretool
+
+    with tempfile.TemporaryDirectory() as raw:
+        main, _tree = attached_repo(Path(raw))
+        (main / "notes.txt").write_text("x\n", encoding="utf-8")
+        git(main, "add", "notes.txt")
+        payload = {"tool_name": "Bash", "cwd": str(main),
+                   "tool_input": {"command": "echo y > notes.txt", "description": "파일 덮어쓰기"}}
+        answer = claude_pretool.verdict(payload)
+        assert answer["hookSpecificOutput"]["permissionDecision"] == "deny"
+        alone = [n for n in claude_pretool.MEMBERS if claude_pretool.check(n, payload)]
+        assert alone[:2] == ["edit_as_diff.py", "english_progress.py"], alone
+        first = claude_pretool.check(alone[0], payload)
+        assert answer["hookSpecificOutput"]["permissionDecisionReason"] == \
+            first["hookSpecificOutput"]["permissionDecisionReason"]
+        assert answer["systemMessage"].split("\n") == \
+            [claude_pretool.check(n, payload)["systemMessage"] for n in alone]
+        without = claude_pretool.verdict(payload, frozenset(alone))
+        assert without is None, "a check left out is not run"
+
+
 def test_the_injector_is_told_which_host_it_runs_on():
     """Without `--host` the injector knows no ceiling and deduplicates
     nothing — every page goes out in full on every turn, silently."""
@@ -136,7 +172,12 @@ def test_user_level_claude_carries_no_machine_wide_deny():
     apply.configure(settings, None, None, "C:/py.exe", "claude")
     assert not settings.get("permissions", {}).get("deny"), "전역 deny 는 위키 없는 저장소까지 막는다"
     pre = [h["command"] for g in settings["hooks"]["PreToolUse"] for h in g["hooks"]]
-    assert any(apply.runs(c, "deny.py") for c in pre), "차단 규칙은 디스패처 뒤 deny.py 로 간다"
+    held = [c for c in pre if apply.runs(c, "claude_pretool.py")]
+    assert held and "--without" not in held[0], "차단 규칙은 디스패처 뒤 claude_pretool 의 deny.py 로 간다"
+    project = {}
+    apply.configure(project, Path("C:/proj"), None, "C:/py.exe", "claude")
+    ours = [h["command"] for g in project["hooks"]["PreToolUse"] for h in g["hooks"]]
+    assert any(c.endswith("--without deny.py") for c in ours), "프로젝트 설치는 permissions.deny 가 맡는다"
     import deny
     blocked = deny.verdict({"tool_name": "Bash", "tool_input": {"command": "sed -i s/a/b/ x"}})
     assert blocked and blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
