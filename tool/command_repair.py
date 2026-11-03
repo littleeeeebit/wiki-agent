@@ -107,7 +107,7 @@ def repaired(command: str, dialect: str = "posix") -> tuple[str, list[str]]:
 # PowerShell wants `using`, `param(...)` with its attributes and named blocks before any statement.
 # Placing a prefix after them needs PowerShell's parser (comments, case, nested brackets), so a
 # script that has one anywhere, even in a comment or a string, gets no prefix.
-FIRST = re.compile(r"(?i)\b(?:using|param)\b|^\s*(?:begin|process|end|dynamicparam|clean)\s*\{", re.MULTILINE)
+FIRST = re.compile(r"(?i)\b(?:using|param|begin|process|end|dynamicparam|clean)\b")
 
 
 def _prefixed(command: str, prefix: str, dialect: str, notes: list[str]) -> str:
