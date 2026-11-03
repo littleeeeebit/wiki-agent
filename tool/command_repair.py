@@ -24,7 +24,8 @@ NO_PROFILE = re.compile(r"(?i)\s+-(?:NoProfile|nop)\b")
 def _pwsh(command: str, dialect: str) -> str:
     from edit_as_diff import blank_data_heredocs
 
-    bare = _QUOTED[dialect].sub(lambda m: " " * len(m[0]), blank_data_heredocs(command))
+    text = blank_data_heredocs(command) if dialect == "posix" else command  # `<<` is Bash's
+    bare = _QUOTED[dialect].sub(lambda m: " " * len(m[0]), text)
     out, cursor = [], 0
     for match in POWERSHELL.finditer(bare):
         out.append(command[cursor:match.end(1)])

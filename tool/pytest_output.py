@@ -61,10 +61,11 @@ def _tee(stage: str) -> bool:
 
 def _blank(command: str, dialect: str = "posix") -> str:
     """Quoted operators and data heredoc bodies blanked, same length, so patterns, messages and
-    documents cannot introduce pipelines."""
+    documents cannot introduce pipelines. Heredocs are Bash's: PowerShell reads `<<` as text."""
     from edit_as_diff import blank_data_heredocs
 
-    return _QUOTED[dialect].sub(lambda match: re.sub(r"[|;&\n]", " ", match[0]), blank_data_heredocs(command))
+    text = blank_data_heredocs(command) if dialect == "posix" else command
+    return _QUOTED[dialect].sub(lambda match: re.sub(r"[|;&\n]", " ", match[0]), text)
 
 
 def held_back(command: str) -> str:

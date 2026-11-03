@@ -276,8 +276,14 @@ def test_text_stays_text_by_the_shells_own_quoting():
                              (f"cat <<\\TXT\n{ps} -c 1\nTXT", "posix"),
                              # One it cannot read is not repaired at all.
                              ("echo $((1<<2)); pytest | tail -1", "posix"),
-                             (f"@'\nsay 'it'\n{ps} -c 1\n'@ | Set-Content x.txt", "ps")):
+                             (f"@'\nsay 'it'\n{ps} -c 1\n'@ | Set-Content x.txt", "ps"),
+                             # PowerShell has no heredocs: a `<<` in a here-string is text.
+                             (f"@'\n{ps} -c 1\n<<pwd\n'@\npwd", "ps"),
+                             (f'@"\n{ps} -c 1\n<<pwd\n"@\npwd', "ps"),
+                             ("@'\npytest -q | Select-Object -Last 1\n<<pwd\n'@\npwd", "ps")):
         assert command_repair.repaired(command, dialect)[0] == command, command
+    # A real command after that here-string is still repaired.
+    assert "pwsh -NoProfile" in command_repair.repaired(f"@'\n<<pwd\n'@\n{ps} -c 1", "ps")[0]
     # The rest of the opener's line is a command, not the body.
     assert "| tee " in command_repair.repaired("cat <<'TXT' | pytest -q | tail -1\nhello\nTXT")[0]
 
