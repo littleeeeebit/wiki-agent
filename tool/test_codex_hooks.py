@@ -26,6 +26,7 @@ def connect(root: Path):
     project.mkdir()
     subprocess.run(["git", "init", "-q", str(project)], check=True)
     (project / "README.md").write_text("# 시험 문서\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(project), "add", "README.md"], check=True)  # rewrites are refused only on tracked files
     (project / ".wiki").mkdir()
     (project / ".wiki" / ".sync").write_text(str(time.time()), encoding="utf-8")
     (project / ".claude").mkdir()
@@ -137,6 +138,14 @@ def test_question_policy_before_agent_decides_to_ask(connected):
     # the other host.
     ("git status", "Check status", False),
     ("git status", "상태 확인", True),
+    # A PowerShell here-string is data, read by PowerShell's quoting in every check.
+    *([("@'\nit's documentation\nsed -i 's/x/y/' README.md\n'@", "", False),
+       ("@'\nit's documentation\npytest -q | Select-Object -Last 1\n'@", "", False),
+       ("@'\npytest -q | Select-Object -Last 1\n<<pwd\n'@\npwd", "", False),
+       ("@'\nit's\n'@ | Out-Null; sed -i 's/a/b/' README.md", "", True),
+       # A string outside a here-string is still read for the path or script it holds.
+       ("python -c \"from pathlib import Path; Path('README.md').write_text('x')\"", "", True)]
+      if os.name == "nt" else []),
 ])
 def test_installed_pretool(installed, command, description, blocked):
     answer = run_hook(installed, "PreToolUse", {

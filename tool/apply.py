@@ -357,6 +357,9 @@ def put_hook(settings: dict, event: str, script: str, entry: dict) -> list[str]:
 #
 # Only what this table names gets removed.
 RETIRED = {"korean_progress.py": "claude_pretool.py", **{s: "claude_pretool.py" for s in MEMBERS}}
+# Denies a page stopped declaring, removed from checkouts by `retire_denies`; only what is named
+# goes. `sed -i` went to `edit_as_diff`, which can count its files and ask git.
+RETIRED_DENIES = ("Bash(sed -i*)",)
 
 
 def retire(settings: dict, gone: str, instead: str) -> list[str]:
@@ -484,7 +487,7 @@ def configure(settings: dict, project: Path | None, adapter: str | None, python:
             wrap(session_entry(python, where)),
             wrap(sync_entry(python, where)),
             wrap(continuation_entry(python)),
-        )
+        ) + (retire_denies(settings, denies) if project else [])
     # Native wiring and terminal transport removal are applied together so
     # an upgrade cannot leave a missing script in a host event.
     for event, groups in settings.get("hooks", {}).items():
@@ -636,13 +639,28 @@ def keep_denies(settings: dict) -> list[str]:
     The user-level install judges them in `deny.py`, which passes when the
     hook fails or times out. The host enforces `permissions.deny` itself, so
     the checkouts named at install keep it; worktrees fall back to `deny.py`.
-    Only added, never removed — a rule a person wrote there stays.
+    Only added, never removed — a rule a person wrote there stays — except
+    the few the pages dropped (`retire_denies`).
     """
 
     existing = settings.setdefault("permissions", {}).setdefault("deny", [])
     missing = [rule for rule in declared()[0] if rule not in existing]
     existing.extend(missing)
-    return [f"deny 추가: {rule}" for rule in missing]
+    return [f"deny 추가: {rule}" for rule in missing] + retire_denies(settings, declared()[0])
+
+
+def retire_denies(settings: dict, denies) -> list[str]:
+    """Take `RETIRED_DENIES` out of a checkout's own settings, where `apply` put the pages' rules.
+
+    Never the user-level files: there the wiki writes no deny, so one found there is the person's.
+    ponytail: a checkout's copy is taken as the wiki's; nothing records who wrote it.
+    """
+
+    existing = (settings.get("permissions") or {}).get("deny") or []
+    gone = [rule for rule in RETIRED_DENIES if rule in existing and rule not in denies]
+    for rule in gone:
+        existing.remove(rule)
+    return [f"deny 제거: {rule}" for rule in gone]
 
 
 def unwire(settings: dict) -> list[str]:

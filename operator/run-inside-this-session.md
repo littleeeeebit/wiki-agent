@@ -85,8 +85,10 @@ but that the response came from this project.
 
 ## What layer 1 blocks and what it cannot
 
-Only `powershell` is shaped like a command. `permissions.deny` stops it by
-prefix, and the ladder ends there.
+Only `powershell` is shaped like a command. Since 2026-11-03 the PreToolUse
+hook (`tool/command_repair.py`) does not refuse it: it renames the command word
+to `pwsh -NoProfile`, runs that, and tells the agent. `permissions.deny` keeps
+the prefix rules as the backstop for a shape the rename misses.
 
 The other two cannot ride on layer 1. `Start-Process` goes inside
 `pwsh -Command "..."`, where a prefix rule cannot reach. Calling a `.cmd`

@@ -179,7 +179,7 @@ def test_user_level_claude_carries_no_machine_wide_deny():
     ours = [h["command"] for g in project["hooks"]["PreToolUse"] for h in g["hooks"]]
     assert any(c.endswith("--without deny.py") for c in ours), "프로젝트 설치는 permissions.deny 가 맡는다"
     import deny
-    blocked = deny.verdict({"tool_name": "Bash", "tool_input": {"command": "sed -i s/a/b/ x"}})
+    blocked = deny.verdict({"tool_name": "Bash", "tool_input": {"command": "dos2unix x"}})
     assert blocked and blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert deny.verdict({"tool_name": "Bash", "tool_input": {"command": "git status"}}) is None
 
@@ -229,6 +229,81 @@ def test_a_test_run_piped_where_its_progress_cannot_be_read_is_refused(command):
 def test_a_test_run_whose_output_stays_readable_passes(command):
     import deny
     assert deny.verdict({"tool_name": "Bash", "tool_input": {"command": command}}) is None
+
+
+@pytest.mark.parametrize("command,expected", [
+    ("pytest -q | tail -3", "pytest -q 2>&1 | tee L | tail -3"),
+    ("cd x && python -m pytest tool -q 2>&1 | tail -4", "cd x && python -m pytest tool -q 2>&1 | tee L | tail -4"),
+    ('pytest tool | grep -E "passed|failed" | tail -1', 'pytest tool 2>&1 | tee L | grep -E "passed|failed" | tail -1'),
+    ("pytest tool | Select-Object -Last 5", "pytest tool 2>&1 | tee L | Select-Object -Last 5"),
+    ("powershell -Command Get-Date", "pwsh -NoProfile -Command Get-Date"),
+    ("cd a && powershell.exe -NoProfile -File x.ps1", "cd a && pwsh -NoProfile -File x.ps1"),
+    ("POWERSHELL -c 1; powershell -nop -c 2", "pwsh -NoProfile -c 1; pwsh -nop -c 2"),
+    # Already readable, or not a command word: untouched.
+    ("pytest -q 2>&1 | tee gate.log | tail -5", None),
+    ("pytest tool | Tee-Object -FilePath g.log", None),
+    ('git commit -m "x; powershell -c 1 | pytest | tail"', None),
+    ("echo powershell -c 1", None),
+    ("pytest -q $(ls tool/test_a*.py | sort -u)", None),
+    ("Write-Output '(powershell -c 1)'", None),
+    ("git commit -m 'fix (powershell -c 1)'", None),
+    ("echo '$(powershell -c 1)'", None),
+    ("cat <<'TXT'\npowershell -c 1\npytest | tail -1\nTXT", None),
+    ("(powershell -c 1)", "(pwsh -NoProfile -c 1)"),
+    ("python -m pip install pytest | tail -3", None),
+])
+def test_a_command_the_hook_can_fix_is_fixed_not_refused(command, expected, monkeypatch):
+    import command_repair
+    real = command_repair.teed
+    monkeypatch.setattr(command_repair, "teed", lambda c, _log, dialect: real(c, "L", dialect))
+    fixed, notes = command_repair.repaired(command)
+    assert fixed == (expected or command)
+    assert bool(notes) == bool(expected)
+
+
+def test_text_stays_text_by_the_shells_own_quoting():
+    import command_repair
+    ps = "power" + "shell"
+    for command, dialect in ((f'Write-Output "say `"({ps} -c 1)`""', "ps"),
+                             (f'echo "say \\"({ps} -c 1)\\""', "posix"),
+                             (f"cat <<'A' <<'B'\nignored\nA\n{ps} -c 1\nB", "posix"),
+                             # Bash closes only on the whole line; `<<-` strips leading tabs, not spaces.
+                             (f"cat <<'TXT'\n TXT\nTXT \n\tTXT\n{ps} -c 1\nTXT", "posix"),
+                             (f"cat <<-'TXT'\n  TXT\n{ps} -c 1\n\tTXT", "posix"),
+                             # A delimiter is a shell word, quoting taken off.
+                             (f"cat <<'EOF-TEXT'\n{ps} -c 1\nEOF-TEXT", "posix"),
+                             (f"cat <<EOF-TEXT\n{ps} -c 1\nEOF-TEXT", "posix"),
+                             (f"cat <<\\TXT\n{ps} -c 1\nTXT", "posix"),
+                             # One it cannot read is not repaired at all.
+                             ("echo $((1<<2)); pytest | tail -1", "posix"),
+                             (f"@'\nsay 'it'\n{ps} -c 1\n'@ | Set-Content x.txt", "ps"),
+                             # PowerShell has no heredocs: a `<<` in a here-string is text.
+                             (f"@'\n{ps} -c 1\n<<pwd\n'@\npwd", "ps"),
+                             (f'@"\n{ps} -c 1\n<<pwd\n"@\npwd', "ps"),
+                             ("@'\npytest -q | Select-Object -Last 1\n<<pwd\n'@\npwd", "ps")):
+        assert command_repair.repaired(command, dialect)[0] == command, command
+    # A real command after that here-string is still repaired.
+    assert "pwsh -NoProfile" in command_repair.repaired(f"@'\n<<pwd\n'@\n{ps} -c 1", "ps")[0]
+    # The rest of the opener's line is a command, not the body.
+    assert "| tee " in command_repair.repaired("cat <<'TXT' | pytest -q | tail -1\nhello\nTXT")[0]
+
+
+def test_both_hosts_run_the_fixed_command_and_say_so():
+    import claude_pretool
+    import codex_pretool
+    payload = {"tool_name": "Bash", "cwd": str(hook.HERE),
+               "tool_input": {"command": "python -m pytest tool -q | tail -4", "description": "Run the tests"}}
+    out = claude_pretool.verdict(payload)["hookSpecificOutput"]
+    assert "permissionDecision" not in out, "Claude 가 새 명령에 자기 승인 규칙을 그대로 적용해야 한다"
+    assert out["updatedInput"]["description"] == "Run the tests"
+    assert "| tee " in out["updatedInput"]["command"] and "pytest-" in out["additionalContext"]
+    out = codex_pretool.verdict(payload)["hookSpecificOutput"]
+    assert out["permissionDecision"] == "allow" and "| tee " in out["updatedInput"]["command"]
+    denied = dict(payload, tool_input={"command": "pytest -q | tail -1", "description": "테스트 실행"})
+    for host in (claude_pretool, codex_pretool):
+        out = host.verdict(denied)["hookSpecificOutput"]
+        assert out["permissionDecision"] == "deny" and "updatedInput" not in out
+    assert claude_pretool.verdict(dict(payload, tool_input={"command": "git status", "description": "Show status"})) is None
 
 
 def test_a_path_named_as_data_is_not_an_old_install():

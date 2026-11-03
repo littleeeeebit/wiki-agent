@@ -16,10 +16,15 @@ HOOK = Path(__file__).with_name("edit_as_diff.py")
 
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
-    """A repository holding one file that already exists."""
+    """A repository tracking two files, with an untracked log and three tracked modules beside them."""
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "existing.py").write_text("x = 1\n", encoding="utf-8")
     (tmp_path / "README.md").write_text("# 제목\n", encoding="utf-8")
+    for name in ("a", "b", "c"):
+        (tmp_path / "src" / f"{name}.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "run.log").write_text("old\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "README.md", "src"], cwd=tmp_path, check=True)
     return tmp_path
 
 
@@ -91,10 +96,83 @@ def test_rewriting_a_file_that_is_already_there_is_refused(
         # Reads a repository file and writes into the scratch directory. What
         # is being written is not in the repository.
         "python - <<'PY'\nimport pathlib\nsrc = pathlib.Path('src/existing.py')\nout = pathlib.Path('/tmp/copy.py')\nout.write_text(src.read_text())\nPY",
+        # A file git does not track has no diff to lose: a log, generated output, ignored paths.
+        "echo new > run.log",
+        "sed -i 's/old/new/' run.log",
+        # One substitution over three or more tracked files is the batch Edit cannot do.
+        "sed -i 's/x = 1/x = 2/' src/a.py src/b.py src/c.py",
+        "sed -i -E 's/x/y/g' src/*.py",
+        "rg -l 'x = 1' src | xargs sed -i 's/x = 1/x = 2/'",
+        "find src -name '*.py' -exec sed -i 's/x/y/' {} +",
+        # Not in place.
+        "sed -n '1,5p' src/existing.py",
+        "sed 's/x/y/' src/existing.py > /dev/null",
     ],
 )
 def test_what_it_must_not_block(repo: Path, command: str) -> None:
     assert verdict(bash(command), repo) is None, command
+
+
+@pytest.mark.parametrize("command", [
+    "sed -i 's/x = 1/x = 2/' src/existing.py",
+    "sed -i.bak -e 's/x/y/' README.md src/a.py",
+    "cd src && sed --in-place 's/x/y/' a.py",
+    "sed -Ei 's/x/y/' src/existing.py",
+    'F=src/existing.py; sed -i "s/x/y/" "$F"; git checkout -- $F',
+    "sed -i \\\n  's/x/y/' \\\n  README.md",
+    "sed -i -- 's/x/y/' README.md src/a.py",  # the script after `--` is not a file
+    "cd .no_such_dir || sed -i 's/x/y/' README.md",  # a failed cd leaves it here
+    "cd src || sed -i 's/x/y/' README.md",  # `||` runs it only where it was
+    "cd src || exit 1; sed -i 's/x/y/' a.py",  # ... and the next line where it went
+    "cat <<'TXT'; sed -i 's/x/y/' README.md\nhello\nTXT",  # the opener's line is still a command
+])
+def test_sed_in_place_on_one_or_two_tracked_files_is_refused(repo: Path, command: str) -> None:
+    answer = verdict(bash(command), repo)
+    assert answer and answer["hookSpecificOutput"]["permissionDecision"] == "deny", command
+
+
+def test_write_onto_an_untracked_file_passes(repo: Path) -> None:
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(repo / "run.log"), "content": "x"}}
+    assert verdict(payload, repo) is None
+    # A pathspec is read literally: `file[1].py` is not the tracked `file1.py`.
+    (repo / "src" / "file1.py").write_text("x\n", encoding="utf-8")
+    (repo / "src" / "file[1].py").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "add", "src/file1.py"], cwd=repo, check=True)
+    payload["tool_input"]["file_path"] = "src/file[1].py"
+    assert verdict(payload, repo) is None
+
+
+def test_repeated_cd_or_does_not_multiply_the_folders(repo: Path) -> None:
+    import time
+    start = time.perf_counter()
+    assert verdict(bash("cd . || exit 1; " * 40 + "cd src || exit 1; sed -i 's/x/y/' a.py"), repo)
+    assert time.perf_counter() - start < 1.0
+
+
+def test_sed_quoted_in_a_data_heredoc_is_text(repo: Path) -> None:
+    for command in ("cat <<'TXT'\nsed -i 's/x/y/' README.md\nTXT",
+                    "git commit -F - <<'MSG'\nsed -i 's/x/y/' README.md\nMSG",
+                    "cat <<'A' <<'B'\nignored\nA\nsed -i 's/x/y/' README.md\nB"):
+        assert verdict(bash(command), repo) is None, command
+    code = "bash <<'SH'\nsed -i 's/x/y/' README.md\nSH"
+    assert verdict(bash(code), repo) is not None, "인터프리터가 받는 본문은 명령이다"
+
+
+def test_powershell_here_strings_are_text_and_its_other_strings_are_read(repo: Path) -> None:
+    (repo / "author's notes.md").write_text("old\n", encoding="utf-8")
+    subprocess.run(["git", "add", "author's notes.md"], cwd=repo, check=True)
+    code = "open('README.md', 'w').write('x')"
+    for command in ("@'\nit's\nsed -i 's/x/y/' README.md\n'@", f"@'\n{code}\n'@ | Select-String python",
+                    f"@'\n{code}\n'@ | Out-Null; python --version"):
+        assert verdict(bash(command), repo, "ps") is None, command
+    for command in ('echo x > "author\'s notes.md"',
+                    "python -c \"from pathlib import Path; Path('README.md').write_text('x')\"",
+                    "@'\nit's\n'@ | Out-Null; echo x > README.md",
+                    f"@'\n{code}\n'@ | python -", f"python -c @'\n{code}\n'@", f"& python.exe -c @'\n{code}\n'@",
+                    f"& 'C:/Program Files/Python/python.exe' -c @'\n{code}\n'@", f"@'\n{code}\n'@ | & 'C:/py.exe' -",
+                    f"@'\n{code}\n'@ | Some-Unknown-Runner", f"gh probe @'\n{code}\n'@",
+                    f'Write-Output @"\n$(python -c "{code}")\n"@'):
+        assert verdict(bash(command), repo, "ps") is not None, command
 
 
 def test_a_commit_message_that_quotes_a_command_is_not_a_command(repo: Path) -> None:

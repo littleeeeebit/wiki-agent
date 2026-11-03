@@ -7,6 +7,10 @@ what Claude made of the separate answers: any `deny` denies, and the
 denial's reason Claude showed depended on which process finished first; here
 it is the first in `MEMBERS`, the order `codex_pretool` already uses.
 
+Before them `command_repair` fixes what it can (`powershell`, a pytest run
+piped into a filter); the checks judge the fixed command and it goes back
+as `updatedInput`.
+
 `--without a.py,b.py` leaves checks out: `deny.py` where `permissions.deny`
 does its job (a per-project install), and whatever a checkout's own old
 install still runs (`hook.legacy`).
@@ -32,6 +36,15 @@ def check(name: str, payload: dict) -> dict | None:
 
 
 def verdict(payload: dict, without: frozenset = frozenset()) -> dict | None:
+    from command_repair import repair
+
+    # The checks judge the command that will run. A repair goes back as `updatedInput` with no
+    # decision: Claude still asks, or not, by its own rules for the new command.
+    given = payload
+    try:
+        payload, notes = repair(payload)
+    except Exception:  # noqa: BLE001 -- `craft/hooks-fail-open`
+        notes = []
     answers = []
     for name in MEMBERS:
         if name in without:
@@ -42,9 +55,11 @@ def verdict(payload: dict, without: frozenset = frozenset()) -> dict | None:
             answer = None
         if answer:
             answers.append(answer)
+    denied = [a for a in answers if (a.get("hookSpecificOutput") or {}).get("permissionDecision") == "deny"]
+    if not denied:
+        answers += [{"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": n}} for n in notes]
     if not answers:
         return None
-    denied = [a for a in answers if (a.get("hookSpecificOutput") or {}).get("permissionDecision") == "deny"]
     out = json.loads(json.dumps(denied[0] if denied else {}))
     messages = [a["systemMessage"] for a in answers if a.get("systemMessage")]
     if messages:
@@ -52,6 +67,8 @@ def verdict(payload: dict, without: frozenset = frozenset()) -> dict | None:
     contexts = [c for a in answers if (c := (a.get("hookSpecificOutput") or {}).get("additionalContext"))]
     if contexts:
         out.setdefault("hookSpecificOutput", {"hookEventName": "PreToolUse"})["additionalContext"] = "\n\n".join(contexts)
+    if payload is not given and not denied:
+        out["hookSpecificOutput"]["updatedInput"] = payload["tool_input"]
     return out
 
 

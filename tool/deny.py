@@ -9,14 +9,14 @@ import sys
 from pytest_output import held_back, reason as output_reason  # noqa: F401 -- public hook helper
 
 
-def verdict(payload: dict) -> dict | None:
+def verdict(payload: dict, host: str = "claude") -> dict | None:
     import guard
     from apply import declared
 
     # Read the command the one way the guard does (`command` or `cmd`, string or argv, any tool-name
     # form, Codex's PowerShell); checking another projection is validate-before-canonicalize (CWE-180).
     raw_tool = str(payload.get("tool_name") or "")
-    tool, raw, dialect = guard.shell_command(payload)
+    tool, raw, dialect = guard.shell_command(payload, host)
     command = (" ".join(map(str, raw)) if isinstance(raw, list) else str(raw)).strip()
     denies, _ = declared()
     # Tools and Bash argument patterns share `enforce.deny` declarations. A nested shell
@@ -36,7 +36,7 @@ def verdict(payload: dict) -> dict | None:
                 "permissionDecision": "deny",
                 "permissionDecisionReason": f"공유 위키의 차단 규칙: {rule}",
             }}
-    reason = output_reason(command) if tool == "Bash" else ""
+    reason = output_reason(command, dialect) if tool == "Bash" else ""
     if reason:
         return {"hookSpecificOutput": {
             "hookEventName": "PreToolUse",

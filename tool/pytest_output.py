@@ -3,7 +3,13 @@
 import re
 import shlex
 
-_QUOTED = re.compile(r'"[^"]*"|\'[^\']*\'')
+# A quoted string, by the shell's own escapes: backslash-quote in Git Bash, backtick-quote in PowerShell.
+# PowerShell's single quotes double (`''`) rather than escape,
+# and its here-strings (`@'` ... `'@` on lines of their own) hold quotes freely.
+_QUOTED = {
+    "posix": re.compile(r'"(?:[^"\\]|\\.)*"|\'[^\']*\''),
+    "ps": re.compile(r'(?s:@\'\r?\n.*?\n\'@)|(?s:@"\r?\n.*?\n"@)|"(?:[^"`]|`.)*"|\'(?:[^\']|\'\')*\''),
+}
 
 
 def runs_pytest(stage: str) -> bool:
@@ -48,23 +54,88 @@ def runs_pytest(stage: str) -> bool:
     return False
 
 
-def held_back(command: str) -> str:
+def _tee(stage: str) -> bool:
+    # `tee` is also PowerShell's alias of `Tee-Object`, so Codex's shell reads it the same.
+    return stage.split()[:1] in (["tee"], ["Tee-Object"], ["tee-object"])
+
+
+def _blank(command: str, dialect: str = "posix") -> str:
+    """Quoted operators and data heredoc bodies blanked, same length, so patterns, messages and
+    documents cannot introduce pipelines. Heredocs are Bash's: PowerShell reads `<<` as text."""
+    from edit_as_diff import blank_data_heredocs
+
+    text = blank_data_heredocs(command) if dialect == "posix" else command
+    return _QUOTED[dialect].sub(lambda match: re.sub(r"[|;&\n]", " ", match[0]), text)
+
+
+def as_posix(command: str, dialect: str) -> str:
+    """A PowerShell command for the checks that parse Bash: a here-string is data and goes blank
+    (its lines kept) only when nothing that could run it touches it: the command it is an argument
+    of, and the first command of the pipe after `'@`, are each absent, a variable assignment, or
+    in `DATA_SINKS`. Any other here-string, and every other string, is left as written and judged
+    as main judged it; ponytail: read with Bash's quotes, until a PowerShell escape misleads one.
+    A here-string held in a variable and run later is read as data."""
+    if dialect == "posix":
+        return command
+
+    def data(stage: str) -> bool:
+        word = (stage.strip().lstrip("&").split() or [""])[0].strip("'\"")
+        name = word.replace("\\", "/").rsplit("/", 1)[-1].lower().removesuffix(".exe")
+        return not word or re.fullmatch(r"\$[\w:]+\s*=", stage.strip()) is not None or name in DATA_SINKS
+
+    def plain(match):
+        if not match[0].startswith("@") or (match[0].startswith('@"') and "$(" in match[0]):
+            return match[0]  # an expandable here-string runs its `$(...)` wherever it goes
+        stage = re.split(r"[;|\n]|&&", command[:match.start()].rsplit("\n", 1)[-1])[-1]
+        tail = re.match(r"[ \t]*\|([^;|\n]*)", command[match.end():])
+        return re.sub(r"[^\n]", " ", match[0]) if data(stage) and (not tail or data(tail[1])) else match[0]
+    return _QUOTED["ps"].sub(plain, command)
+
+
+# Commands that take a here-string as text and never run it. Not `git` or `gh`: their aliases run shells.
+DATA_SINKS = {"echo", "write-output", "write-host", "out-null", "out-file", "set-content", "add-content",
+              "select-string", "select-object", "measure-object", "out-string", "clip"}
+
+
+def held_back(command: str, dialect: str = "posix") -> str:
     """The pipe stage a pytest run's output is fed into, unless it is `tee`.
     `| tail` or `| grep` hold the run's progress until it ends, so a gate hung
-    on one test reads exactly like a slow one and nobody can tell which. Quoted
-    operators are blanked so patterns and messages cannot introduce pipelines."""
+    on one test reads exactly like a slow one and nobody can tell which."""
 
-    bare = _QUOTED.sub(lambda match: re.sub(r"[|;&\n]", " ", match[0]), command)
-    for chain in re.split(r"&&|\|\||;|\n", bare):
+    for chain in re.split(r"&&|\|\||;|\n", _blank(command, dialect)):
         stages = [s.strip() for s in chain.split("|")]
         for before, after in zip(stages, stages[1:]):
-            if runs_pytest(before) and after.split()[:1] != ["tee"]:
+            if runs_pytest(before) and not _tee(after):
                 return after
     return ""
 
 
-def reason(command: str) -> str:
-    stage = held_back(command)
+def teed(command: str, log: str, dialect: str = "posix") -> str:
+    """`command` with every pytest run that feeds a filter also writing `log` as it goes.
+
+    `pytest -q | tail -5` becomes `pytest -q 2>&1 | tee <log> | tail -5`: the
+    filter still gets what it asked for, and the log shows whether a run that
+    prints nothing is hung or slow."""
+
+    bare = _blank(command, dialect)
+    marks = list(re.finditer(r"&&|\|\||;|\n|\|", bare))
+    out, cursor = [], 0
+    for i, mark in enumerate(marks):
+        if mark[0] != "|":
+            continue
+        before = bare[marks[i - 1].end() if i else 0:mark.start()]
+        after = bare[mark.end():marks[i + 1].start() if i + 1 < len(marks) else len(bare)]
+        # A pipe inside `$(...)` (or Git Bash's backticks) belongs to the substitution, not to the run.
+        inside = "$(" in before or (dialect == "posix" and "`" in before)
+        if runs_pytest(before.strip()) and not _tee(after.strip()) and not inside:
+            joint = " |" if before.rstrip().endswith("2>&1") else " 2>&1 |"
+            out.append(f"{command[cursor:mark.start()].rstrip()}{joint} tee {log} |")
+            cursor = mark.end()
+    return "".join(out) + command[cursor:]
+
+
+def reason(command: str, dialect: str = "posix") -> str:
+    stage = held_back(command, dialect)
     if not stage:
         return ""
     return (
