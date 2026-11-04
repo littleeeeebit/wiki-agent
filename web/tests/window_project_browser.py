@@ -119,8 +119,14 @@ def main():
         shell = page_of(context, errors)
         shell.add_init_script(SHELL)
         shell.goto(base)
-        shell.get_by_role("button", name="새 창").click()
-        shell.wait_for_function("window.__shell.calls.includes('new_window')")
+        # Review R2-1: the folded rail (below 1280px, down to the 960px minimum) had no button.
+        for n, width in enumerate((1440, 1200, 960), 1):
+            shell.set_viewport_size({"width": width, "height": 900})
+            shell.wait_for_function("mode => document.documentElement.dataset.mobileLayout === mode",
+                                    arg="portrait" if width <= 1100 else "desktop")
+            shell.get_by_role("button", name="새 창").click()
+            shell.wait_for_function("n => window.__shell.calls.filter(c => c === 'new_window').length === n", arg=n)
+        shell.set_viewport_size({"width": 1440, "height": 900})
         shell.wait_for_function("'tauri://close-requested' in window.__shell.listeners")
         close = "window.__shell.listeners['tauri://close-requested']({ event: 'tauri://close-requested', id: 1 })"
 

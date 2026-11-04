@@ -70,8 +70,10 @@ the desktop app.
   #264's recovery needs the screen to follow it. No other 409 moves the screen.
 - `new_window` opens `main-2`, `main-3`, … on the calling window's origin. It
   is async, because a window built in a synchronous command deadlocks on
-  Windows. The capability's `windows` is `["main", "main-*"]`. The rail header
-  has its button, in the desktop app only.
+  Windows. The capability's `windows` is `["main", "main-*"]`. The rail offers
+  it in the desktop app only, in each of its three layouts: the header when
+  wide, the icon column when folded below 1280px, and beside 새 작업 in the
+  portrait layout a window under 1100px gets (review R2-1).
 - `Pty` records its window's label. Its output goes to that window alone
   (`emit_to`), and `WindowEvent::Destroyed` kills that window's shells.
 - `leave(closing)` asks nothing when another window is open

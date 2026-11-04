@@ -114,8 +114,8 @@ pull by hand then. A paired phone sees the card but cannot update.
 
 ### Windows
 
-The window button beside the settings gear opens another window on the same
-server. Each window keeps its own project, through a reload too; a new one
+The 새 창 button in the rail (beside the settings gear, or among the icons of a
+narrow window) opens another window on the same server. Each window keeps its own project, through a reload too; a new one
 starts on the project picked last. A terminal belongs to the window that opened
 it and ends when that window closes. Closing one of several windows asks
 nothing and stops nothing. Closing the last one stops the server, so it asks

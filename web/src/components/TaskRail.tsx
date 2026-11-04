@@ -47,6 +47,11 @@ const GROUPS: { id: Group; label: string }[] = [
 const WIDE = 'rail-expanded max-[1280px]:hidden'
 const NARROW = 'rail-folded min-[1280px]:hidden'
 
+// Another window on the same server, in the desktop app only (a browser opens another tab
+// instead; each keeps its own project either way). Offered wide and folded (review R2-1).
+const WINDOWS = '__TAURI_INTERNALS__' in window
+const newWindow = () => void invoke('new_window').catch((err) => window.alert(String(err)))
+
 /** The project, the window's settings and review loop, and the project's
  *  tasks in the order a person reads them: what they have to do, what runs,
  *  what waits to be started. Finished work is not shown at all. */
@@ -117,10 +122,8 @@ export function TaskRail(props: Props) {
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-sidebar-border px-3 max-[1280px]:justify-center max-[1280px]:px-0">
         <span className={cn('font-heading text-[15px] font-semibold', WIDE)}>wiki-agent</span>
         <span className="flex items-center">
-          {/* A browser opens another tab instead; each keeps its own project either way. */}
-          {'__TAURI_INTERNALS__' in window && (
-            <button type="button" aria-label="새 창" title="새 창 — 다른 프로젝트를 나란히 본다"
-              onClick={() => void invoke('new_window').catch((err) => window.alert(String(err)))}
+          {WINDOWS && (
+            <button type="button" aria-label="새 창" title="새 창 — 다른 프로젝트를 나란히 본다" onClick={newWindow}
               className={cn('grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground', WIDE)}>
               <AppWindow className="size-4" />
             </button>
@@ -141,6 +144,13 @@ export function TaskRail(props: Props) {
           title="다음 작업 대화에 한 줄 명세 틀을 넣는다. 명세의 [시작] 이 작업트리를 만든다">
           <Plus className="size-3.5" /> <span className="rail-new-task-label">새 작업</span>
         </button>
+        {/* The portrait layout (a desktop window under 1100px too) hides the header above. */}
+        {WINDOWS && (
+          <button type="button" aria-label="새 창" title="새 창 — 다른 프로젝트를 나란히 본다" onClick={newWindow}
+            className="mobile-only hidden h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-sidebar-border px-2 text-[12.5px] hover:bg-sidebar-accent">
+            <AppWindow className="size-3.5" /> 새 창
+          </button>
+        )}
         </div>
         <button type="button" className="mobile-only hidden w-full items-center justify-between rounded-md px-2 text-[14px] text-muted-foreground"
           aria-expanded={toolsOpen} aria-controls="rail-tools" onClick={() => setToolsOpen((open) => !open)}>
@@ -169,6 +179,12 @@ export function TaskRail(props: Props) {
           className="grid size-8 place-items-center rounded-md hover:bg-sidebar-accent">
           <Plus className="size-4" />
         </button>
+        {WINDOWS && (
+          <button type="button" aria-label="새 창" title="새 창 — 다른 프로젝트를 나란히 본다" onClick={newWindow}
+            className="grid size-8 place-items-center rounded-md hover:bg-sidebar-accent">
+            <AppWindow className="size-4" />
+          </button>
+        )}
         <button type="button" aria-pressed={view === 'projects'} aria-label="프로젝트 · 연결"
           title={`프로젝트 · 연결 — 지금 ${repo}${unwired ? ` (위키 ${unwired})` : ''}`}
           onClick={() => props.onView(view === 'projects' ? 'chat' : 'projects')}
