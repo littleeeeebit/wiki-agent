@@ -169,7 +169,7 @@ The merge is bound to the commit allowed by the review. Not the screen's commit.
 7. Cleanup. `git fetch` in original checkout. If original is on base branch and `git status --porcelain` is empty, `git merge --ff-only origin/<base>`. Otherwise, leave as "Original is behind" and move on
 8. `workspace.remove`. If original moved forward, `merged` becomes true and deletes even the branch. If original is behind, delete only the worktree and leave the branch — judgment as now
 9. Delete remote branch only when it is still on the merged commit. `git push --force-with-lease=refs/heads/<branch>:<approved> origin --delete <branch>`. If someone pushed to the same branch after merge, git rejects it, and the branch remains. Rejection is not a failure but "New commit on remote branch — kept". If deleted unconditionally, unmerged commits are lost on remote (review round 1)
-10. Close the review cell. `raw/review/<repo>/<pr>/` remains
+10. Close the review cell. Since the cleanup rework, a clean merge also deletes `raw/review/<repo>/<pr>/`; the folder stays only when cleanup leaves something pending (`loop.py`, "리뷰 아티팩트를 지웠다")
 
 Base cannot be blocked, only noticed. GitHub's merge binds only the head commit atomically. The guard of GraphQL `MergePullRequestInput` is only `expectedHeadOid` (confirmed with 2026-09-25 `gh api graphql`), and REST is also only `sha`. If someone does `gh pr edit -B` between 2's confirmation and 3's merge, that merge stands (review round 3). If the server pushes a squash commit directly to the base, it can bind up to the base atomically with `--force-with-lease`, but the PR becomes not merged on GitHub, so the merge record that `harvest` reads disappears and it skips the base's protection rules. So narrow the gap to a few seconds, and if it occurs, 4 catches it
 
@@ -293,7 +293,7 @@ branch can remain checked out elsewhere without blocking adoption.
 ## Confirmation
 
 - `pytest tool/`, `python tool/lint.py --check`, `ruff check tool/`, `npm run build`
-- From window to this repository. One specification to PR in step 3 → loop starts itself → work cell fix and approval in three or more rounds → refresh window in middle and attach again → [Stop] and [Continue] → `머지 가능` → [Merge] → cleanup
+- From window to this repository. One specification to PR in step 3 → the person starts the loop from "Review Loop" (publication now ends at "PR 준비 완료 · 리뷰 시작을 기다린다", `specs.reviewed`) → work cell fix and approval in three or more rounds → refresh window in middle and attach again → [Stop] and [Continue] → `머지 가능` → [Merge] → cleanup
 - Receive PR uploaded by hand with "Review Loop" and see if worktree stands on PR's head commit
 - See if decision record is created in next `sync` after merge
 
@@ -306,4 +306,37 @@ branch can remain checked out elsewhere without blocking adoption.
 | 3 | PR | List, `adopt`, minimal specification | Done |
 | 4 | Merge | [Merge], P2 selection and comment, cleanup | Done |
 | 5 | Screen | Button and modal, rail, review tab, notification, temporary settings | Done |
-| 6 | Gate | All confirmation above | In progress — auto confirmation passed, window confirmation remaining |
+| 6 | Gate | All confirmation above | Done — window run 2026-11-04 on a scratch repository (below); OS notification not exercised (browser tab) |
+
+## Window run (2026-11-04)
+
+The running app's server (`127.0.0.1:35901`) driven from a Chrome tab, on
+`wiki-agent-refactor-scratch` (a disposable repository with its own GitHub
+remote), by the person's choice: this repository's own PRs are reviewed in
+Orca, not through the app's loop. Desktop-only parts (OS notification, the
+new-window command) were not exercised. The same run covers stage 5's
+surveyed [Connect] and stage 6's rail check.
+
+| Check | What held |
+| --- | --- |
+| Spec to PR | [Connect] with the survey on made `wiki-bootstrap`; six turns, 97k tokens; the gate ran `deferred` (`git diff --check`) and PR #2 went up |
+| Loop start | Started from "Review Loop" with PR #2 alone ticked; PR #1 (another task's) left untouched |
+| Refresh | Reloading the tab during R1 kept the window's project, the rail row and the live review stream |
+| [Stop] / [Continue] | R1 stopped as `멈춤 — 사람이 멈춤`, moved to the top of the rail, and [Continue] went back to `리뷰 대기` |
+| Rounds and a fix | R1 allowed merge with two P2; the work cell fixed both (`c4dba7e`); R2 on `c4dba7e` allowed merge; merge preparation pushed `5596a0f`, reviewed as R3 |
+| Merge bound to the approved head | After the fix commit, [Merge] on the old approval stopped with "머지 준비 실패 — 작업 폴더가 리뷰한 커밋에 있지 않다"; PR stayed `OPEN` |
+| Merge and cleanup | Squash `2b57dfd`; original back on `main` at `origin/main`; local and remote `wiki-bootstrap` deleted; the adapter handed over as a tracked file |
+| Hand-made PR | PR #3 pushed by hand, adopted from "Review Loop": worktree `…-worktrees/manual-readme-run-note` on the PR head `15a36a1`; R1 → merge `2e76eda` → worktree and remote branch removed |
+| Decision record | The next `sync` harvested `2026-11-04-002-wiki-bootstrap` |
+
+Follow-ups found on the way:
+
+- A commit pushed while the spec is `머지 가능` (an instruction to the work
+  cell) keeps the old approval. The screen still offers [Merge] for the old
+  head; the merge stops with the working-folder message above, and a new
+  round waits for "다음 리뷰 라운드". The new head should drop the approval
+  and queue the round, as `merge_spec` already does when the screen's head
+  differs.
+- After a person's stop, the review stream shows the Codex process's startup
+  warning (unrecognised config keys) with raw ANSI codes as if it were why
+  the process closed.

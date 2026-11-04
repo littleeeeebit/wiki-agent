@@ -99,7 +99,7 @@ One specification of Step 3. Created by the server.
 - `done` — `gate_cmd` (if exists), hub's `lint --check`, `repo_lint`
 - `out` — Fix existing files, fix code
 
-After creating the work tree, the server writes the original's `adapter.toml` to the work tree and leaves it as the first commit. Then launch the investigation session.
+The survey works in `branch` mode: `specs.fork` switches the original checkout to the `wiki-bootstrap` branch (no linked worktree) and returns it to the previous branch afterwards. The server commits the original's `adapter.toml` there as the first commit, then launches the investigation session.
 
 To keep the limit, it must be measured between turns. Claude gives the token count when the turn ends. Therefore, the investigation is divided into one turn per step, not one turn.
 
@@ -113,7 +113,7 @@ To keep the limit, it must be measured between turns. Claude gives the token cou
 
 Every time a turn ends, compare the tokens used and elapsed time with the limit. If reached, stop there and receive `done-report` for the amount used and upload a PR. The time limit is reached even during a turn — at that time, cut the turn with [Stop] of Step 2 and go with what was committed up to the previous turn.
 
-When the PR is established, the loop of Step 4 runs.
+When the PR is established, the person starts Step 4's loop from "Review Loop".
 
 ### Invariants
 
@@ -178,7 +178,22 @@ Temporary. Step 6 rebuilds it into the project list on the center face.
 | 5 | Investigation | Estimate, investigation specification, turn division, limit | Complete |
 | 6 | Handover | `handover` and six tests | Complete |
 | 7 | Screen | Temporary list, two confirmation windows, temporary settings | Complete |
-| 8 | Gate | All of the above confirmation | In progress — auto confirmation passed. [Connection] with investigation turned on for discarded repository remaining |
+| 8 | Gate | All of the above confirmation | Done — surveyed [Connect] on `wiki-agent-refactor-scratch` 2026-11-04, through merge and handover (stage 4, "Window run") |
+
+### Surveyed [Connect] (2026-11-04)
+
+The confirmation window listed the same eleven `deny` lines and estimate as
+`/api/connect/<name>/plan` (13 files, 6 turns, 9k tokens, 3 minutes). Both
+hosts' tests passed and the row went from `일부` to `연결 완료`. The survey
+ran six turns and used 97,147 tokens, about ten times the estimate; the
+coefficient this stage promised to adjust from the first measurement still
+needs that adjustment. After PR #2 merged, `.wiki/adapter.toml` was tracked
+and the row stayed `연결 완료`.
+
+Follow-up: the wiki check that runs after each turn and in `sync` reports
+the eleven project-level `deny` lines [Connect] just wrote as "훅 배선
+드리프트 … 전역 설치가 있다". [Connect] and the check disagree on whether
+those lines belong in the project.
 
 ## Decisions in Implementation
 
