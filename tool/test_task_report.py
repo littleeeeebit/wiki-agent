@@ -95,3 +95,26 @@ def test_a_report_request_a_person_kept_from_going_out_is_not_counted_as_asked(r
         saved = specs.load(repo.name, sid)
         assert saved["report_asked"] and not saved["fault"]
     work.close_all()
+
+
+def test_a_commit_after_the_approval_queues_the_next_round(repo):
+    # Loop stage 4 window run: an instruction committed in `머지 가능`, the merge button stayed bound to the
+    # approved head, and the merge stopped at prep with the worktree off the reviewed commit.
+    web = client()
+    Worker.replies = ["Working"]
+    with patch.object(work, "ChatSession", Worker):
+        sid = made(repo, spec_block())[0]["id"]
+        started(web, sid)
+        settled(str(repo))
+        head = git(repo, "rev-parse", "HEAD").strip()
+        spec = specs.moved(specs.load(repo.name, sid), "머지 가능",
+                           rounds=[{"n": 1, "verdict": "allow", "head": head, "base": head}])
+        specs.save(spec)
+        person = work.Run(Worker(repo), person=True)
+        assert specs.check(repo, person, "Explained.") is None, "nothing committed, the approval stands"
+        committed("")(repo, None)
+        follow = specs.check(repo, person, "Committed the fix.")
+        with patch("main.loop.kick") as kick:
+            follow()
+        kick.assert_called_once_with(repo.name, sid)
+    work.close_all()
