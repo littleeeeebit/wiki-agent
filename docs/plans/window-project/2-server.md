@@ -62,9 +62,13 @@ the other's sessions.
   `(str(repo), "refactor")`.
 - The idle limit is `IDLE_SECONDS`, from `idle_minutes` in the machine
   settings, 30 by default. Conversations past it are closed when someone asks,
-  not on a timer. A closed conversation stays in `_sessions` with its
-  `session_id`. Only the question sessions (`query._sessions`) are swept. Work
-  and review sessions were never closed by a switch.
+  not on a timer. They leave `_sessions` under the lock before they are closed
+  (review R1-1). A question that arrives during the close therefore gets a new
+  process, which resumes from the recorded `session_id` as it does after a
+  restart. Only the question sessions (`query._sessions`) are swept. Work and
+  review sessions were never closed by a switch.
+- A switch that carries a refactor mode waits for that project's refactor
+  answer, as a setting does (review R1-2).
 
 ## Done when
 

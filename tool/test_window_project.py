@@ -92,7 +92,55 @@ def test_an_idle_conversation_ends_but_an_answering_one_never_does(tmp_path):
         chat._busy[key("next")] = object()
         chat.session("wiki")
         assert idle.closed and not answering.closed and not recent.closed
-        assert chat._sessions[key("retro")] is idle, "closed, not dropped: the next question resumes it"
+        assert key("retro") not in chat._sessions, "dropped: the next question starts a process and resumes"
+
+
+def test_a_question_that_arrives_while_an_idle_conversation_closes_gets_a_new_one(tmp_path):
+    """Review R1-1: the sweep chose a conversation under the lock and closed it outside. A question
+    taking its hold in between got the closing process and lost its answer."""
+
+    repos = _two_projects(tmp_path)
+    closing, finish = threading.Event(), threading.Event()
+
+    class Closing(Live):
+        def close(self):
+            closing.set()
+            assert finish.wait(10)
+            super().close()
+
+    old = Closing()
+    key = (str(repos["a"]), "retro")
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get), patch.object(chat, "IDLE_SECONDS", 60):
+        client().post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        chat._sessions[key] = old
+        chat._used[key] = time.monotonic() - 120
+        sweeping = threading.Thread(target=chat.session, args=("wiki",))
+        sweeping.start()
+        assert closing.wait(10)
+        release = chat.hold(chat._busy, chat._lock, key, "busy")
+        try:
+            assert chat.session("retro") is not old, "the question got the process being closed"
+        finally:
+            finish.set()
+            sweeping.join(10)
+            release()
+
+
+def test_a_switch_carrying_a_mode_waits_for_that_projects_answer(tmp_path):
+    """Review R1-2: a switch skips the busy check, and one sent from B with `repo=a` and a refactor
+    mode changed A's mode and generation while A's refactor conversation answered."""
+
+    repos = _two_projects(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get):
+        web.post("/api/config/refactor", json={"repo": "b"}).raise_for_status()
+        before = dict(chat.config("refactor", "a"))
+        with patch.object(chat, "_busy", {(str(repos["a"]), "refactor"): object()}):
+            carried = web.post("/api/config/refactor", json={"repo": "a", "refactor_mode": "rework"},
+                               headers={"X-Project": "b"})
+            assert carried.status_code == 409
+            assert chat.config("refactor", "a") == before and chat.project() == "b"
+            web.post("/api/config/refactor", json={"repo": "a"}, headers={"X-Project": "b"}).raise_for_status()
 
 
 def test_the_jev_shadow_records_into_its_turns_repository_after_a_switch(tmp_path):
