@@ -171,15 +171,15 @@ def session(cid: str) -> ChatSession:
     the `session_id` that object was holding, leaving `--resume` nothing to
     attach to, and the conversation then disappeared quietly on every model or
     effort change. Reviving it is `ensure`'s job. Asking also ends conversations idle past
-    `IDLE_SECONDS` (a switch no longer closes them): they leave `_sessions` under the lock, so a
-    question before the close gets a new process resumed from the record, never the closing one."""
+    `IDLE_SECONDS` (a switch no longer closes them). Each is held while it closes, so a question
+    then is refused for that moment and the same object, `session_id` and all, revives after."""
 
     with _lock:
         key, now = session_key(cid), time.monotonic()
         _used[key] = now
         # ponytail: swept when someone asks, not on a timer; a server nobody asks keeps its idle processes.
         idle = [k for k, c in _sessions.items() if c.alive and k not in _busy and now - _used.get(k, now) > IDLE_SECONDS]
-        stale = [_sessions.pop(k) for k in idle]
+        stale = [(_sessions[k], hold(_busy, _lock, k, "")) for k in idle]
         chat = _sessions.get(key)
         if chat is None:
             cfg = config(cid)
@@ -192,8 +192,11 @@ def session(cid: str) -> ChatSession:
             # Only the same CLI, after an explicit reset, is resumed.
             chat.session_id = resumable(recall(cid, include_context=True), chat.is_codex)
             _sessions[key] = chat
-    for old in stale:
-        old.close()
+    for old, release in stale:
+        try:
+            old.close()
+        finally:
+            release()
     return chat
 
 
@@ -582,10 +585,9 @@ def shadow(cid: str, query: str, repo: Path, context: str, cfg: decision.Config,
 def focuses() -> list[dict]:
     return [
         {"id": c.id, "label": c.label, "blurb": c.blurb,
-         "live": session_key(c.id) in _sessions and _sessions[session_key(c.id)].alive,
-         "model_name": _sessions[session_key(c.id)].model_name if session_key(c.id) in _sessions else "",
-         # Used to turn a SHA in an answer into a commit link. Empty with no
-         # remote.
+         "live": (chat := _sessions.get(session_key(c.id))) is not None and chat.alive,
+         "model_name": chat.model_name if chat is not None else "",
+         # Used to turn a SHA in an answer into a commit link. Empty with no remote.
          "remote": repo_url(current_repo()),
          **config(c.id)}
         for c in channels.CHANNELS
@@ -621,10 +623,8 @@ def configure(cid: str, body: Config) -> dict:
 
     with _lock:
         switched = body.repo != project()
-        # A switch changes nothing another request reads; a setting, or a mode a switch carries,
-        # waits for that focus's answer in the project it changes.
-        target = (str(channels.repo_for(body.repo)), cid)
-        if (not switched or body.refactor_mode is not None) and target in _busy:
+        # A switch changes nothing others read; a setting, or a mode a switch carries, waits for that answer.
+        if (not switched or body.refactor_mode is not None) and (str(channels.repo_for(body.repo)), cid) in _busy:
             raise HTTPException(409, "답변 생성이 끝난 뒤 설정을 바꿔 주세요")
         if switched:
             # The default moves only after what can fail: `config` (Codex listing) and the disk write.

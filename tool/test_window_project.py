@@ -18,6 +18,8 @@ from test_main import Agent, Answering, _made, _two_projects, client, until, no_
 class Live:
     """A focus's live conversation that records being closed."""
 
+    model_name = ""
+
     def __init__(self):
         self.alive, self.closed = True, False
 
@@ -92,17 +94,23 @@ def test_an_idle_conversation_ends_but_an_answering_one_never_does(tmp_path):
         chat._busy[key("next")] = object()
         chat.session("wiki")
         assert idle.closed and not answering.closed and not recent.closed
-        assert key("retro") not in chat._sessions, "dropped: the next question starts a process and resumes"
+        assert chat._sessions[key("retro")] is idle, "closed, not dropped: the next question revives it"
 
 
-def test_a_question_that_arrives_while_an_idle_conversation_closes_gets_a_new_one(tmp_path):
-    """Review R1-1: the sweep chose a conversation under the lock and closed it outside. A question
-    taking its hold in between got the closing process and lost its answer."""
+def test_a_question_that_arrives_while_an_idle_conversation_closes_waits_for_the_close(tmp_path):
+    """Review R1-1: the sweep chose a conversation under the lock and closed it outside, and a
+    question taking its hold in between lost its answer to the close. R2-1/R2-2: dropping it
+    instead lost a `session_id` only the object knew, and broke the channel listing. It stays,
+    held while it closes."""
+
+    from fastapi import HTTPException
 
     repos = _two_projects(tmp_path)
     closing, finish = threading.Event(), threading.Event()
 
     class Closing(Live):
+        session_id = "only-in-memory"
+
         def close(self):
             closing.set()
             assert finish.wait(10)
@@ -111,19 +119,26 @@ def test_a_question_that_arrives_while_an_idle_conversation_closes_gets_a_new_on
     old = Closing()
     key = (str(repos["a"]), "retro")
     with patch.object(chat_channels, "repo_for", side_effect=repos.get), patch.object(chat, "IDLE_SECONDS", 60):
-        client().post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        web = client()
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
         chat._sessions[key] = old
         chat._used[key] = time.monotonic() - 120
         sweeping = threading.Thread(target=chat.session, args=("wiki",))
         sweeping.start()
-        assert closing.wait(10)
-        release = chat.hold(chat._busy, chat._lock, key, "busy")
         try:
-            assert chat.session("retro") is not old, "the question got the process being closed"
+            assert closing.wait(10)
+            try:
+                chat.hold(chat._busy, chat._lock, key, "busy")
+                raise AssertionError("a question took the conversation being closed")
+            except HTTPException as refused:
+                assert refused.status_code == 409
+            assert web.get("/api/channels").status_code == 200
         finally:
             finish.set()
             sweeping.join(10)
-            release()
+        release = chat.hold(chat._busy, chat._lock, key, "busy")
+        release()
+        assert chat.session("retro") is old and old.session_id == "only-in-memory"
 
 
 def test_a_switch_carrying_a_mode_waits_for_that_projects_answer(tmp_path):
