@@ -141,6 +141,43 @@ def test_a_question_that_arrives_while_an_idle_conversation_closes_waits_for_the
         assert chat.session("retro") is old and old.session_id == "only-in-memory"
 
 
+def test_a_failed_close_or_a_failed_start_leaves_no_conversation_held(tmp_path):
+    """Review R3-1: the sweep took every hold first and released only the one whose close raised,
+    so a later idle conversation stayed busy for good; a question whose own start failed left
+    every hold behind."""
+
+    repos = _two_projects(tmp_path)
+
+    class Failing(Live):
+        def close(self):
+            super().close()
+            raise OSError("fixture close failure")
+
+    def key(cid):
+        return (str(repos["a"]), cid)
+
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get), patch.object(chat, "IDLE_SECONDS", 60):
+        client().post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        failing, later = Failing(), Live()
+        chat._sessions.update({key("retro"): failing, key("next"): later})
+        chat._used.update({key("retro"): time.monotonic() - 120, key("next"): time.monotonic() - 120})
+        chat.session("wiki")
+        assert failing.closed and later.closed and not chat._busy
+        assert "fixture close failure" in (tmp_path / "errors.jsonl").read_text(encoding="utf-8")
+
+        idle = Live()
+        chat._sessions.clear()
+        chat._sessions[key("retro")] = idle
+        chat._used[key("retro")] = time.monotonic() - 120
+        with patch.object(chat, "recall", side_effect=OSError("fixture record read failure")):
+            try:
+                chat.session("wiki")
+                raise AssertionError("the start was meant to fail")
+            except OSError:
+                pass
+        assert not chat._busy and not idle.closed
+
+
 def test_a_switch_carrying_a_mode_waits_for_that_projects_answer(tmp_path):
     """Review R1-2: a switch skips the busy check, and one sent from B with `repo=a` and a refactor
     mode changed A's mode and generation while A's refactor conversation answered."""

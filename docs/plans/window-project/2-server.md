@@ -66,7 +66,9 @@ the other's sessions.
   a question that arrives then gets 409 for that moment. A closed one stays in
   `_sessions`, and its object revives with its in-memory `session_id`. Dropping
   it instead lost an ID the record never got, such as one from a first turn
-  that failed (R2-1), and it broke `/api/channels` mid-listing (R2-2). Only the
+  that failed (R2-1), and it broke `/api/channels` mid-listing (R2-2). The
+  holds are taken only after the asking conversation has started. A close that
+  raises is recorded in the error log, and every hold is released (R3-1). Only the
   question sessions (`query._sessions`) are swept. Work and review sessions
   were never closed by a switch.
 - A switch that carries a refactor mode waits for that project's refactor

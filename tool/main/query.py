@@ -25,6 +25,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from agent import ChatSession, explain
+from common import errorlog
 from search import refresh
 from session_state import run
 from wiki import label, match_pages, pages
@@ -177,9 +178,6 @@ def session(cid: str) -> ChatSession:
     with _lock:
         key, now = session_key(cid), time.monotonic()
         _used[key] = now
-        # ponytail: swept when someone asks, not on a timer; a server nobody asks keeps its idle processes.
-        idle = [k for k, c in _sessions.items() if c.alive and k not in _busy and now - _used.get(k, now) > IDLE_SECONDS]
-        stale = [(_sessions[k], hold(_busy, _lock, k, "")) for k in idle]
         chat = _sessions.get(key)
         if chat is None:
             cfg = config(cid)
@@ -192,9 +190,14 @@ def session(cid: str) -> ChatSession:
             # Only the same CLI, after an explicit reset, is resumed.
             chat.session_id = resumable(recall(cid, include_context=True), chat.is_codex)
             _sessions[key] = chat
+        # ponytail: swept when someone asks, after all that can fail here, not on a timer (an unasked server keeps them).
+        idle = [k for k, c in _sessions.items() if c.alive and k not in _busy and now - _used.get(k, now) > IDLE_SECONDS]
+        stale = [(_sessions[k], hold(_busy, _lock, k, "")) for k in idle]
     for old, release in stale:
         try:
             old.close()
+        except Exception as exc:  # noqa: BLE001 — one failed close must not keep the others held
+            errorlog.record("query.idle", exc)
         finally:
             release()
     return chat
