@@ -445,9 +445,7 @@ def clear(body: Removal) -> dict:
 
 def busy() -> bool:
     """Is a short request — making, removing, resetting — holding a worktree?
-    The project stays put while one is. A running turn does not count: it
-    took its repository with its hold, and its session keeps its path
-    reachable after a switch."""
+    A running turn does not count."""
 
     with _lock:
         return any(h.kind == "short" for h in _busy.values())

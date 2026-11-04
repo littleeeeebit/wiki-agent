@@ -68,7 +68,7 @@ def no_machine_settings(tmp_path):
 
     with patch.object(chat_channels, "LOCAL", {}), patch.object(chat, "LOGS", tmp_path), \
          patch.object(chat, "_project", None), patch.object(chat, "_config", {}), \
-         patch.object(chat, "_sessions", {}), patch.object(chat, "_busy", {}), \
+         patch.object(chat, "_sessions", {}), patch.object(chat, "_busy", {}), patch.object(chat, "_used", {}), \
          patch.object(main_app, "SWITCH", tmp_path / "main.json"), \
          patch.object(work, "LOGS", tmp_path / "work"), \
          patch.object(work, "_sessions", {}), patch.object(work, "_busy", {}), \
@@ -141,7 +141,7 @@ def test_stream_persists_both_and_keeps_original_on_rewrite_failure(tmp_path):
         saved = web.get("/api/log/wiki").json()[-1]
         assert saved["text"] == "정확한 원문 13건" and saved["simple_text"] == "쉬운 설명 13건"
         assert saved["session_id"] == "answer-session"
-        assert "wiki" not in chat._busy
+        assert not chat._busy
         with patch.object(chat, "explain", return_value=iter([Event("error", "설명 호출 실패")])):
             response = web.post("/api/say/wiki", json={"text": "다시?"})
             assert '"kind": "simple_error"' in response.text
@@ -149,7 +149,7 @@ def test_stream_persists_both_and_keeps_original_on_rewrite_failure(tmp_path):
             assert saved["text"] == "정확한 원문 13건" and not saved["simple_text"]
             assert "설명 호출 실패" in saved["simple_error"]
             assert not saved.get("error")
-        assert "wiki" not in chat._busy
+        assert not chat._busy
 
 
 def test_failed_original_never_rewritten(tmp_path):
@@ -356,7 +356,7 @@ def test_provider_switch_and_config_validation(tmp_path):
         # A Claude name typed by hand goes through; a shell-shaped one does not.
         assert web.post("/api/config/wiki", json={"repo": "sample", "model": "claude-opus-5-5"}).status_code == 200
         assert web.post("/api/config/wiki", json={"repo": "sample", "model": "opus; rm -rf"}).status_code == 400
-        with patch.object(chat, "_busy", {"wiki": object()}):
+        with patch.object(chat, "_busy", {chat.session_key("wiki"): object()}):
             assert web.post("/api/reset/wiki", json={"keep": "delete"}).status_code == 409
 
 
@@ -379,8 +379,10 @@ def test_project_shared_sessions_and_records_isolated(tmp_path):
         assert {c["repo"] for c in web.get("/api/channels").json()} == {"a"}
         assert chat.session("retro") is a and a.session_id == "a-context"
         assert [r["text"] for r in web.get("/api/log/retro").json()] == ["a 회고"]
-        with patch.object(chat, "_busy", {"next": object()}):
-            assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
+        # Another focus answering in `a` does not hold this window in it.
+        with patch.object(chat, "_busy", {chat.session_key("next"): object()}):
+            web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
         assert chat.project() == "a"
         chat._project = None
         assert chat.project() == "a", "서버 재시작 때 프로젝트 선택을 복원해야 한다"
@@ -1062,10 +1064,10 @@ def test_a_forced_delete_stays_with_the_project_it_checked(tmp_path):
     assert halted == [("proj", "t1")] and not Path(path).exists()
 
 
-def test_a_switch_waits_for_a_short_request_and_not_for_a_turn(tmp_path):
-    """Making, removing and resetting read the project partway through, and a
-    switch waits for them. A turn took its repository with its hold, and its
-    session keeps its approvals reachable; a switch does not wait for it."""
+def test_a_switch_waits_for_neither_a_short_request_nor_a_turn(tmp_path):
+    """Making, removing and resetting read the project partway through, from
+    their own request's `X-Project`, so a switch in a window changes nothing
+    they read. A turn's session keeps its approvals reachable."""
 
     repos = {name: tmp_path / name for name in ("a", "b")}
     for repo in repos.values():
@@ -1074,8 +1076,8 @@ def test_a_switch_waits_for_a_short_request_and_not_for_a_turn(tmp_path):
     with patch.object(chat_channels, "repo_for", side_effect=repos.get):
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
         with patch.object(work, "_busy", {str(repos["a"] / "x"): chat.Held("short")}):
-            assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
-            assert web.post("/api/config/wiki", json={"repo": "a", "effort": "high"}).status_code == 200
+            web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
+            web.post("/api/config/wiki", json={"repo": "a", "effort": "high"}).raise_for_status()
         with patch.object(work, "_busy", {str(repos["a"] / "x"): chat.Held("turn")}):
             web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
 
@@ -1084,7 +1086,7 @@ def test_an_accepted_instruction_holds_its_worktree_before_its_body_starts(tmp_p
     """Between accepting a request and the first byte of its body, the project
     switched away and the worktree could be removed. Held from acceptance.
     Neither a work turn nor a question (stage 9) is its body: each holds
-    until it ends, and a question's hold blocks a switch meanwhile."""
+    until it ends, and a switch in the window does not wait for either."""
 
     import gc
 
@@ -1104,10 +1106,10 @@ def test_an_accepted_instruction_holds_its_worktree_before_its_body_starts(tmp_p
         assert web.post("/api/worktrees/remove", json={"path": path}).status_code == 409
         assert web.post("/api/work/reset", json={"path": path, "keep": "delete"}).status_code == 409
         asking = chat.say("next", chat.Say(text="x"))
-        assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
+        web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
         del waiting, asking
         gc.collect()
-        assert "next" in chat._busy, "a question is not its response: it runs on"
+        assert (str(repos["a"]), "next") in chat._busy, "a question is not its response: it runs on"
         answering.go.set()
         until(lambda: not chat._busy)
         # The work turn is not its body: it holds until it ends.
@@ -1207,7 +1209,6 @@ def test_a_removal_holds_its_worktree_until_it_is_done(tmp_path):
                 threading.Event().wait(0.05)
             assert web.post("/api/work/say", json={"path": path, "text": "x"}).status_code == 409
             assert web.post("/api/work/reset", json={"path": path, "keep": "delete"}).status_code == 409
-            assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
         finally:
             gate.set()
             removing.join(10)
@@ -1295,34 +1296,6 @@ def test_a_switch_answers_with_the_project_and_the_list_names_its_own(tmp_path):
         assert web.get("/api/worktrees").json()["project"] == "b"
 
 
-def test_a_screen_that_missed_a_switch_writes_nothing_into_the_new_project(tmp_path):
-    """Another window moved the server from A to B. A screen still showing A
-    sent a question and it went into B's conversation. Each request now says
-    which project its screen shows, and a mismatch is refused before any
-    record, session or worktree is touched."""
-
-    from urllib.parse import unquote
-
-    repos = _two_projects(tmp_path)
-    web = client()
-    showing_a = {"X-Project": "a"}
-    with (patch.object(chat_channels, "repo_for", side_effect=repos.get),
-          patch.object(work, "ChatSession", Agent)):
-        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
-        path = _made()
-        web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()   # the other window
-
-        asked = web.post("/api/say/wiki", json={"text": "A 에 묻는다"}, headers=showing_a)
-        assert asked.status_code == 409 and unquote(asked.headers["X-Project-Moved"]) == "b"
-        assert web.get("/api/log/wiki").json() == []
-        assert web.get("/api/worktrees", headers=showing_a).status_code == 409
-        assert web.post("/api/work/say", json={"path": path, "text": "x"}, headers=showing_a).status_code == 409
-        assert not work._busy and not chat._busy
-        assert [r["name"] for r in web.get("/api/worktrees", headers={"X-Project": "b"}).json()["rows"]] == ["main"]
-        # The switch itself names its project in the body.
-        assert web.post("/api/config/wiki", json={"repo": "a"}, headers={"X-Project": "b"}).status_code == 200
-
-
 def test_a_write_that_names_no_project_is_refused(tmp_path):
     """Phase 6, review 11: a question sent before the first channel list came back
     carried no project, and the check that stops a stale screen let it
@@ -1336,19 +1309,21 @@ def test_a_write_that_names_no_project_is_refused(tmp_path):
     assert bare.get("/api/log/wiki").json() == []
 
 
-def test_a_stale_screen_cannot_switch_or_configure(tmp_path):
-    """The model change travels on the same route as the switch. Left out of
-    the check, a screen still showing A changed its focus's model and the
-    server went back to A without a word."""
+def test_a_model_change_in_one_window_moves_no_other(tmp_path):
+    """The model change travels on the same route as the switch. A screen
+    still showing A once changed its focus's model and moved the server back
+    to A without a word. Now it changes A's model only, and the next new
+    window still opens on B."""
 
     repos = _two_projects(tmp_path)
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=repos.get):
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
         web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()   # the other window
-        stale = web.post("/api/config/wiki", json={"repo": "a", "model": "haiku", "effort": ""},
-                         headers={"X-Project": "a"})
-        assert stale.status_code == 409 and chat.project() == "b"
+        changed = web.post("/api/config/wiki", json={"repo": "a", "model": "haiku", "effort": ""},
+                           headers={"X-Project": "a"})
+        assert changed.status_code == 200 and not changed.json()["switched"] and chat.project() == "b"
+        assert chat.config("wiki", "a")["model"] == "haiku" != chat.config("wiki", "b")["model"]
         assert web.post("/api/config/wiki", json={"repo": "a"}, headers={"X-Project": "b"}).status_code == 200
         assert chat.project() == "a"
 
@@ -1636,70 +1611,6 @@ def test_a_turn_is_reachable_after_the_project_moves(tmp_path):
         nowhere = {"path": str(tmp_path / "nowhere"), "turn": said[0]["turn"]}
         assert web.get("/api/work/events", params=nowhere).status_code == 404
         assert web.post("/api/work/stop", json=nowhere).status_code == 404
-
-
-def test_the_jev_shadow_records_into_its_turns_repository_after_a_switch(tmp_path):
-    """The shadow's record runs on a thread with no request context, and a switch does not wait
-    for it. It names the turn's repository, so a switch while Jev decides moves nothing."""
-
-    repos = _two_projects(tmp_path)
-    web = client()
-    deciding, switched = threading.Event(), threading.Event()
-
-    def prepare(text, repo, state, cfg, audiences=None):
-        deciding.set()
-        switched.wait(10)
-        return {"status": "supported", "evidence": [], "trace": []}
-
-    with patch.object(chat_channels, "repo_for", side_effect=repos.get), patch.object(chat, "prepare", prepare):
-        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
-        chat.shadow("wiki", "q", repos["a"], "", chat.decision.config())
-        assert deciding.wait(10)
-        web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
-        switched.set()
-        log = tmp_path / "wiki.jsonl"
-        until(lambda: log.exists() and '"retrieval"' in log.read_text(encoding="utf-8"))
-        rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
-        assert [r["repo"] for r in rows if r["role"] == "retrieval"] == [str(repos["a"])]
-        assert not [r for r in chat.recall("wiki", include_context=True) if r["role"] == "retrieval"]
-
-
-# Functions outside a route that read the selected project, each reviewed in
-# docs/plans/window-project/1-audit.md: reached from routes only, or from the question's thread,
-# which copies its request's context and holds a switch until it ends.
-SELECTION_READERS = {
-    "query.current_repo", "query.session_key", "query.config", "query.session",
-    "query.remember", "query.recall", "query.hits_for", "loop.mine", "planning.begun", "work.ours",
-}
-
-
-def test_only_routes_and_reviewed_helpers_read_the_selected_project():
-    """Stage 2 makes the selection per window; a thread that read it would act on whichever
-    repository a window picked last. A nested function is its own reader, since a route may
-    start it on a thread."""
-
-    import ast
-
-    found = set()
-
-    def visit(node, where, scope):
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-                name = getattr(child, "name", "<lambda>")
-                route = any(isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
-                            and d.func.attr in ("get", "post", "put", "delete", "patch", "websocket")
-                            for d in getattr(child, "decorator_list", []))
-                visit(child, where, None if route else f"{where}.{name}")
-                continue
-            if isinstance(child, ast.Call) and scope is not None:
-                fn = child.func
-                if (fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)) in ("project", "current_repo"):
-                    found.add(scope)
-            visit(child, where, scope)
-
-    for path in sorted(Path(chat.__file__).parent.glob("*.py")):
-        visit(ast.parse(path.read_text(encoding="utf-8")), path.stem, f"{path.stem}.<module>")
-    assert found == SELECTION_READERS
 
 
 class Asker(Slow):

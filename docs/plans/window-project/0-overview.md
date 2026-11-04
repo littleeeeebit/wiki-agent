@@ -82,6 +82,6 @@ outside a route.
 | --- | --- | --- | --- |
 | 0 | Picker follows the server | The picker no longer locks while a turn or loop runs (`web/src/App.tsx`, this PR) | Done — browser check passes, and fails on the old condition |
 | 1 | [Audit](1-audit.md) | Every `project()` and `current_repo()` call classified as request or background, with background ones passing their repository | Done — 60 calls, 10 outside a route and all reached from routes or the question's copied context; an `ast` test pins the list and a test pins the shadow's repository |
-| 2 | [Server per request](2-server.md) | `project()` from `X-Project`, holds keyed by repository, switch closes nothing, idle limit | Not started |
+| 2 | [Server per request](2-server.md) | `project()` from `X-Project`, holds keyed by repository, switch closes nothing, idle limit | Done — `test_two_windows_on_two_projects_work_side_by_side` and `test_an_idle_conversation_ends_but_an_answering_one_never_does`; a vanished repository still sends the screen to the hub (#264) |
 | 3 | [Screen per window](3-screen.md) | Window-owned project, no following on 409, a second window from the desktop app, rail rows named by their owner and showing waiting approvals | Not started |
 | 4 | [Verification](4-verification.md) | Two windows on two repositories: a task in each, a review loop in one, a switch in the other, nothing refused or crossed | Not started |

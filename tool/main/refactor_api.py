@@ -115,7 +115,7 @@ def pinned(repo: Path, role: dict) -> None:
     from . import query
 
     with _lock:
-        if "refactor" in query._busy:
+        if (str(repo), "refactor") in query._busy:
             raise HTTPException(409, "리팩터링 대화의 답변이 끝난 뒤 시작해라 — 대화가 조사 모델로 바뀐다")
         cfg = query.config("refactor", repo.name)
         query.refactor_mode(cfg["repo"], cfg["refactor_mode"], cfg["refactor_generation"], role)
@@ -173,7 +173,7 @@ def surveyed(repo: Path, body: Start, roles: Roles, recheck: str | None = None) 
     cfg = config("refactor", repo.name)
     if body.mode != cfg.get("refactor_mode"):
         raise HTTPException(409, "상단에서 고른 모드와 요청 모드가 다르다 — 화면을 새로 고쳐라")
-    if recheck is None and "refactor" in _busy:
+    if recheck is None and (str(repo), "refactor") in _busy:
         raise HTTPException(409, "리팩터링 대화의 답변이 끝난 뒤 시작해라 — 대화가 조사 모델로 바뀐다")
     # A short request from the record to its worker: the project stays put, so the record never outlives its start.
     release = hold(work._busy, _lock, f"{repo}#refactor", "이 저장소의 조사를 시작하는 중이다")

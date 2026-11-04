@@ -45,6 +45,27 @@ the other's sessions.
 - The idle limit changes when a CLI process ends. A test pins that a busy,
   waiting or loop-held session is never closed.
 
+## As built (2026-11-04)
+
+- `project()` returns the request's `X-Project`. A name that resolves to no
+  repository is still 409 with `X-Project-Moved` to the hub, not 400: #264's
+  screen for a moved folder recovers that way, and `/api/channels` would
+  otherwise refuse the screen that has to pick the folder again. The default
+  goes back to the hub too.
+- `query.default()` holds the default (`raw/chat/project.json`). A request
+  without the header and a background owner read it.
+- `configure` with a new `repo` moves only the default and this window, and
+  closes nothing. A setting waits only for this focus's answer in this project.
+  The short-request wait (`work.busy()`) is gone, because a short request reads
+  its own header.
+- `_busy` is keyed by `session_key(cid)`, `(repo, cid)`. `refactor_api` checks
+  `(str(repo), "refactor")`.
+- The idle limit is `IDLE_SECONDS`, from `idle_minutes` in the machine
+  settings, 30 by default. Conversations past it are closed when someone asks,
+  not on a timer. A closed conversation stays in `_sessions` with its
+  `session_id`. Only the question sessions (`query._sessions`) are swept. Work
+  and review sessions were never closed by a switch.
+
 ## Done when
 
 - A test drives two clients with different `X-Project` headers: each asks the

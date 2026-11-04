@@ -34,7 +34,7 @@ selection now.
 
 1. A test walks `tool/main` with `ast`. It fails when a function outside a
    route calls `project()` or `current_repo()` and is not on the reviewed list
-   (`test_main.py` `SELECTION_READERS`). A nested function counts as its own
+   (`test_window_project.py` `SELECTION_READERS`). A nested function counts as its own
    reader, since a route may start it on a thread. Done.
 2. A test pins that the shadow's record keeps the turn's repository when a
    switch lands while Jev decides
