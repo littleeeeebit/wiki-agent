@@ -1,9 +1,29 @@
-/** What dies with the server when the window goes: the turns still running
- *  and the review loops. App keeps the counts; closing the window and the
- *  update card's restart ask the same question. */
-export const running = { turns: 0, loops: 0 }
+import { getLoops } from '@/lib/api'
+import { LOOPING } from '@/lib/tasks'
 
-export function leave(): boolean {
-  const what = [running.turns && `도는 작업 ${running.turns}개`, running.loops && `리뷰 루프 ${running.loops}개`].filter(Boolean).join('와 ')
-  return !what || window.confirm(`${what}가 멈춘다. 다시 띄우면 루프는 [계속] 으로 잇는다. 닫을까?`)
+/** Asks before the shared server goes down, with what dies with it in every window: running
+ *  turns, review loops and answers being generated (`/api/loops`). Closing one of several
+ *  windows takes nothing down and asks nothing; closing the last one and the update card's
+ *  restart ask the same question. */
+export async function leave(closing = false): Promise<boolean> {
+  if (closing) {
+    try {
+      const { getAllWindows } = await import('@tauri-apps/api/window')
+      if ((await getAllWindows()).length > 1) return true
+    } catch {
+      // Not knowing about other windows only means asking, as for the last one.
+    }
+  }
+  let what = '도는 작업이 있는지 읽지 못했다. 있다면 멈춘다'
+  try {
+    const { loops, turns, answers } = await getLoops()
+    const looping = loops.filter((l) => LOOPING.test(l.state)).length
+    what = [turns.length && `도는 작업 ${turns.length}개`, looping && `리뷰 루프 ${looping}개`,
+      answers && `만드는 답 ${answers}개`].filter(Boolean).join(', ')
+    if (!what) return true
+    what += '가 멈춘다'
+  } catch {
+    // Unread is asked about: a turn may still be running.
+  }
+  return window.confirm(`${what}. 다시 띄우면 루프는 [계속] 으로 잇는다. 닫을까?`)
 }

@@ -49,7 +49,7 @@ export function UpdateCard() {
   }
   // The shell runs the launcher once the server is down (`restart` in main.rs).
   const restart = async () => {
-    if (!leave()) return
+    if (!await leave()) return
     setBusy(true)
     try {
       await invoke('restart')

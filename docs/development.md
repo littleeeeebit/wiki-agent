@@ -411,6 +411,10 @@ normal browser tabs keep their native link behavior.
 and tabs, translated specification reading and original editing, all CLI quota
 windows, task tokens, native notification dispatch, compaction progress and
 deletion across reload, plus file citations and link dispatch using synthetic data.
+`python web/tests/window_project_browser.py` checks that two pages on one server
+keep their own projects, that the rail names another project's running turn by
+the server's answer and shows its waiting approval, and that the close question
+skips a window with another still open and counts every window's work.
 `python web/tests/screen_state_browser.py` checks that a theme change repaints
 the terminal without reopening its shell (stubbed `pty_open`/`pty_close`) and
 that run details recover from a failed read with 다시 읽기.

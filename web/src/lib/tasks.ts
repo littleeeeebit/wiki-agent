@@ -110,20 +110,27 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
   return out
 }
 
-/** A task of another project that the rail still shows: its loop or its turn. */
-export function elsewhere(loops: LoopRow[], turns: TurnRow[], repo: string) {
+/** A task of another project that the rail still shows: its loop or its turn, with the
+ *  approvals `approvals` already knows for its path. */
+export function elsewhere(loops: LoopRow[], turns: TurnRow[], repo: string, approvals: (path: string) => number) {
   return [
-    ...loops.filter((l) => l.repo !== repo && l.worktree).map((l) => ({
-      path: l.worktree!, repo: l.repo, spec: { repo: l.repo, id: l.id } as TurnRow['spec'],
-      name: l.id, pr: l.pr, round: l.round, phase: phase(l.state),
-      waiting: l.waiting,
-      line: [word(l.state), l.waiting && '승인 대기', l.stopped?.reason, l.state === '머지 대기' && (l.queued || '대기열')]
-        .filter(Boolean).join(' · '),
-    })),
-    ...turns.filter((t) => t.repo !== repo && !loops.some((l) => l.worktree === t.path)).map((t) => ({
-      path: t.path, repo: t.repo, spec: t.spec, name: t.path.split(/[\\/]/).pop() ?? '', pr: null, round: 0,
-      phase: 'work' as Phase, waiting: false, line: '도는 중',
-    })),
+    ...loops.filter((l) => l.repo !== repo && l.worktree).map((l) => {
+      const asks = approvals(l.worktree!)
+      return {
+        path: l.worktree!, repo: l.repo, spec: { repo: l.repo, id: l.id } as TurnRow['spec'],
+        name: l.id, pr: l.pr, round: l.round, phase: phase(l.state),
+        waiting: l.waiting || asks > 0,
+        line: [word(l.state), asks ? `승인 ${asks}` : l.waiting && '승인 대기', l.stopped?.reason,
+          l.state === '머지 대기' && (l.queued || '대기열')].filter(Boolean).join(' · '),
+      }
+    }),
+    ...turns.filter((t) => t.repo !== repo && !loops.some((l) => l.worktree === t.path)).map((t) => {
+      const asks = approvals(t.path)
+      return {
+        path: t.path, repo: t.repo, spec: t.spec, name: t.path.split(/[\\/]/).pop() ?? '', pr: null, round: 0,
+        phase: 'work' as Phase, waiting: asks > 0, line: asks ? `도는 중 · 승인 ${asks}` : '도는 중',
+      }
+    }),
   ]
 }
 

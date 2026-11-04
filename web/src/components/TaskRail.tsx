@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { MouseEvent, ReactNode } from 'react'
-import { FolderGit2, Plus, Repeat, Settings as Gear } from 'lucide-react'
+import { invoke } from '@tauri-apps/api/core'
+import { AppWindow, FolderGit2, Plus, Repeat, Settings as Gear } from 'lucide-react'
 import { Btn, Modal } from '@/components/Modal'
 import { Picker } from '@/components/Toolbar'
 import type { Item } from '@/components/Toolbar'
@@ -115,10 +116,20 @@ export function TaskRail(props: Props) {
     <aside className="flex h-full min-h-0 flex-col border-r border-sidebar-border bg-sidebar">
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-sidebar-border px-3 max-[1280px]:justify-center max-[1280px]:px-0">
         <span className={cn('font-heading text-[15px] font-semibold', WIDE)}>wiki-agent</span>
-        <button type="button" onClick={props.onSettings} aria-label="설정" title="설정"
-          className="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground">
-          <Gear className="size-4" />
-        </button>
+        <span className="flex items-center">
+          {/* A browser opens another tab instead; each keeps its own project either way. */}
+          {'__TAURI_INTERNALS__' in window && (
+            <button type="button" aria-label="새 창" title="새 창 — 다른 프로젝트를 나란히 본다"
+              onClick={() => void invoke('new_window').catch((err) => window.alert(String(err)))}
+              className={cn('grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground', WIDE)}>
+              <AppWindow className="size-4" />
+            </button>
+          )}
+          <button type="button" onClick={props.onSettings} aria-label="설정" title="설정"
+            className="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground">
+            <Gear className="size-4" />
+          </button>
+        </span>
       </div>
 
       <div className={cn('shrink-0 space-y-2 border-b border-sidebar-border p-3', WIDE)}>
