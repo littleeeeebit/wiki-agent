@@ -590,28 +590,35 @@ def test_the_survey_sends_no_further_turn_once_the_tokens_reach_the_limit(survey
     assert "repo_lint.py" in spec["done"][0] and "--no-wiring" in spec["done"][0]
 
 
-def test_a_persons_uncommitted_edit_keeps_the_survey_from_starting(surveyed):
-    # Loop stage 7: ml-interactive-lab's edited how_to.md went into the survey's first commit, then was put back.
+def test_a_persons_uncommitted_edit_or_file_keeps_the_survey_from_starting(surveyed):
+    # Loop stage 7: ml-interactive-lab's edited how_to.md went into the survey's first commit, then was put back;
+    # an untracked file outside `.wiki/` would have been published, then deleted.
     (surveyed / "README.md").write_text("mine\n", encoding="utf-8")
+    (surveyed / "notes.txt").write_text("private\n", encoding="utf-8")
     loop.store(survey=True, survey_tokens=10_000, survey_minutes=60, survey_model="opus")
     assert survey.start(surveyed) is None
     now = connect.record("proj")["survey"]
-    assert now["state"] == "실패" and "README.md" in now["reason"], now
+    assert now["state"] == "실패" and "README.md" in now["reason"] and "notes.txt" in now["reason"], now
     assert git(surveyed, "branch", "--show-current") == "main" and not Spender.heard
-    assert (surveyed / "README.md").read_text(encoding="utf-8") == "mine\n"
+    assert (surveyed / "README.md").read_text(encoding="utf-8") == "mine\n" and (surveyed / "notes.txt").exists()
 
 
-def test_an_untracked_file_from_before_the_survey_is_neither_committed_nor_removed(surveyed):
-    # Loop stage 7: the `.claude/settings.json` that `[연결]` wrote was committed by the first turn, then deleted.
-    (surveyed / ".claude").mkdir()
-    (surveyed / ".claude/settings.json").write_text("{}\n", encoding="utf-8")
+def test_the_wiring_connect_wrote_goes_up_with_the_wiki_and_the_report_passes_the_gate(surveyed):
+    # Loop stage 7: the `.claude/settings.json` that `[연결]` wrote was committed by the first turn, then deleted;
+    # PR #296 round 1: left untracked instead, it failed the report's gate as a dirty checkout.
+    connect.unwire(surveyed)
     loop.store(survey=True, survey_tokens=10_000, survey_minutes=60, survey_model="opus")
     Spender.tokens = 50_000
     sid = survey.start(surveyed)
     assert ended("proj")["state"] == "끝"
-    path = Path(specs.load("proj", sid)["worktree"])
-    assert (path / ".claude/settings.json").read_text(encoding="utf-8") == "{}\n"
-    assert git(path, "log", "--all", "--format=%h", "--", ".claude") == ""
+    spec = specs.load("proj", sid)
+    path = Path(spec["worktree"])
+    assert (path / ".claude/settings.json").is_file() and "deny" in (path / ".claude/settings.json").read_text("utf-8")
+    assert git(path, "log", "--format=%s", "--", ".claude/settings.json") == "wiki: [연결] 배선"
+    report = "```done-report\n" + json.dumps([{"item": spec["done"][0], "pass": True}]) + "\n```"
+    report += '\n```test-cleanup\n{"audited": ["test_fixture.py"], "removed": []}\n```'
+    specs.check(path, work.Run(Spender(path)), report)
+    assert specs.load("proj", sid)["gate"]["ok"], specs.load("proj", sid)["gate"]
 
 
 def test_an_adapter_that_was_there_before_gets_the_hash_the_handover_compares(surveyed):
@@ -684,6 +691,17 @@ def test_a_turn_cut_by_the_time_limit_leaves_nothing_it_committed(surveyed):
     assert git(path, "log", "--format=%s", "-1") == "wiki: adapter", "끊긴 턴의 커밋은 HEAD 에 남지 않는다"
     assert not (path / ".wiki/late.md").exists()
     assert "late.md" in git(path, "stash", "show", "--include-untracked", "--name-only", "stash@{0}"), "stash 에 남는다"
+
+
+def test_a_cut_turn_s_stash_leaves_the_wiring_connect_wrote(surveyed):
+    # PR #296 round 1: a pre-existing untracked `.claude/settings.json` went into the cut turn's stash.
+    connect.unwire(surveyed)
+    limits = {**survey.DEFAULTS, "survey": True, "survey_tokens": 10_000_000, "survey_minutes": 2 / 60}
+    with patch.object(work, "ChatSession", Cutter), patch.object(survey, "settings", return_value=limits):
+        survey.start(surveyed)
+        assert ended("proj")["why"] == "시간 한도"
+    assert (surveyed / ".claude/settings.json").is_file()
+    assert ".claude" not in git(surveyed, "stash", "show", "--include-untracked", "--name-only", "stash@{0}")
 
 
 def test_a_record_read_while_it_is_kept_does_not_fail_the_write():
