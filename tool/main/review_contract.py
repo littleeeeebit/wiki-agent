@@ -640,7 +640,8 @@ def shadow_recommendations(req: dict, res: dict, policy=POLICY) -> list[dict]:
             continue
         basis = res["answers"][f"basis:{cid}"]["choice"]
         trusted = res["verdicts"].get(f"basis:{cid}") == "yes" and basis != decision.DEFER
-        add_at = policy.rules["action"].get("add_at")
+        # 3320c45 (PR #289's first head) applied 0.25 to shadow-3 without recording it in the rules.
+        add_at = policy.rules["action"].get("add_at", 0.25 if policy.version == "review-contract-shadow-3" else None)
         add = add_at is not None and answer["probabilities"].get("add", 0) >= add_at
         rows.append({"candidate_id": cid, "choice": "add" if add else answer["choice"],
                      "verdict": "yes" if add else res["verdicts"][cid], "basis_refs": [basis] if trusted else [],

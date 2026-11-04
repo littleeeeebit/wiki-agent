@@ -917,10 +917,13 @@ def test_a_candidate_is_added_unless_jev_is_three_quarters_sure_and_replays_unde
     with patch.object(contract, "POLICY", decision.Policy("review-contract-shadow-4", {"action": {
             "confidence": 0.6, "margin": 0.2}})):
         assert pick() == ("add", "yes", "skip")
-    # A record frozen under a policy without the rule keeps its own choice.
-    before = decision.Policy("review-contract-shadow-2", {"action": {"confidence": 0.6, "margin": 0.2}})
-    rows = {r["candidate_id"]: r for r in contract.shadow_recommendations(record["request"], record["result"], before)}
-    assert rows["criteria:data"]["choice"] == "skip"
+    # A record frozen under a policy without the rule keeps its own choice; shadow-3 records from
+    # PR #289's first head applied 0.25 without recording it, and replay as they were decided.
+    rules = {"action": {"confidence": 0.6, "margin": 0.2}}
+    for version, choice in (("review-contract-shadow-2", "skip"), ("review-contract-shadow-3", "add")):
+        rows = {r["candidate_id"]: r for r in contract.shadow_recommendations(
+            record["request"], record["result"], decision.Policy(version, rules))}
+        assert rows["criteria:data"]["choice"] == choice
 
 
 def body(state):

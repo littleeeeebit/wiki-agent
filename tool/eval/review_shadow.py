@@ -76,8 +76,9 @@ def sample(case: dict, cfg=None, rebuild: bool = False) -> dict:
            "unsupported": sorted(unsupported), "decision": result, "trace": trace,
            "baseline_disagreement": any(predicted[a] != set(baseline.get(a, []) if a != "flows" else
                req["state_en"].get("selected_flows", [])) for a in AXES)}
-    if cfg is not None and stale:
-        # The request actually asked; the frozen record's identity stays as `source_*`.
+    if cfg is not None:
+        # The request actually asked, which a fit can change with the questions unchanged; the frozen
+        # record's identity stays as `source_*`.
         row.update(source_context_digest=row["context_digest"], source_prompt_version=row["prompt_version"],
                    source_policy_version=row["policy_version"], context_digest=verification.sha(state),
                    prompt_version=version, policy_version=contract.POLICY.version, request=current)

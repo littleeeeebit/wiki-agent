@@ -163,6 +163,39 @@ def test_production_prompt_replay_isolated_labels_frozen_families_and_live_reque
         production.load(path)
 
 
+def test_a_rebuild_that_only_fits_the_state_records_the_state_it_sent():
+    """Same questions, a shorter diff: the row names what was asked, not the frozen context."""
+    from decision.contract import result
+
+    smile = chr(0x1F600)
+    state = {"baseline": {"criteria": ["code"], "evidence": ["offline"]}, "selected_flows": [],
+             "registered_flows": [], "observations": {}, "goal": "Implement emoji support " + smile * 8500}
+    state["grounds"] = [{"id": "s", "kind": "spec", "text": state["goal"]}, {"id": "d", "kind": "diff", "text": smile * 6000}]
+    qs, version = contract.shadow_questions(state)
+    req = decision.request("action", state, qs, allowed=["add", "skip", "s", "d"], model="test", prompt_version=version,
+        policy_version=contract.POLICY.version, normalization_version="english",
+        budget=contract.Budget(**contract.SHADOW_LIMITS))
+    res = result(req, "unavailable", "state_too_large")
+    record = {"request": req, "result": res, "input_identity": "fixture", "status": res["status"],
+              "policy": contract.POLICY.record(), "context_digest": verification.sha(state),
+              "frozen_digest": verification.sha({"request": req, "result": res})}
+    sent = []
+
+    def answers(cfg, state, questions, *rest):
+        sent.append(copy.deepcopy(state))
+        pick = lambda cid: "s" if cid.startswith("basis:") else "skip"  # noqa: E731
+        return {cid: {"choice": pick(cid), "confidence": 0.9, "probabilities": {
+            k: 0.9 if k == pick(cid) else 0.1 / (len(q["criteria"]) - 1) for k in q["criteria"]}}
+            for cid, q in questions.items()}
+
+    case = {"id": "fit", "family": "fit", "split": "heldout", "record": record}
+    with patch.object(decision, "evaluate", side_effect=answers):
+        row = production.sample(case, decision.Config("active", "test", "default", key="test"), rebuild=True)
+    assert contract.shadow_questions(sent[0])[1] == version and sent[0] != state
+    assert row["context_digest"] == verification.sha(sent[0]) != row["source_context_digest"]
+    assert row["request"]["state_en"] == sent[0]
+
+
 def test_one_cut_off_label_reply_keeps_the_other_paid_answers(tmp_path):
     import http.client
 
