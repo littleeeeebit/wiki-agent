@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The window loads the Python server's page, so IPC is opened to that origin and no other. `allow-destroy` finishes a close the page confirmed: with a close listener, the page closes the window itself. `notification:default` is the review loop's OS notification. `allow-restart` is the update card's relaunch.",
-  "windows": ["main"],
+  "description": "The window loads the Python server's page, so IPC is opened to that origin and no other. `allow-destroy` finishes a close the page confirmed: with a close listener, the page closes the window itself. `notification:default` is the review loop's OS notification. `allow-restart` is the update card's relaunch. `allow-new-window` opens another window, labelled `main-2` and on, which the windows pattern covers.",
+  "windows": ["main", "main-*"],
   "remote": { "urls": ["http://127.0.0.1:*"] },
   "permissions": [
     "core:default",
@@ -13,6 +13,7 @@
     "allow-pty-resize",
     "allow-pty-close",
     "allow-open-url",
-    "allow-restart"
+    "allow-restart",
+    "allow-new-window"
   ]
 }

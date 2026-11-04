@@ -7,6 +7,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
@@ -135,11 +137,10 @@ def test_the_root_readme_is_the_way_in_not_an_orphan():
     assert data["orphans"] == ["docs/README.md"], "루트 README 만 입구다"
 
 
-def test_a_pr_worktree_writes_what_the_original_checkout_writes(tmp_path):
-    """Merge preparation builds in a PR worktree named after its branch, and
-    rfg_rag ignores `.wiki/decisions/`. The committed file flipped between
-    `rfg_rag` with the original's records and the branch name with none
-    (rfg_rag #70, F4)."""
+@pytest.mark.parametrize("local_state", ["ignored", "untracked"])
+@pytest.mark.parametrize("injectable", [False, True])
+def test_a_pr_worktree_writes_what_the_original_checkout_writes(tmp_path, local_state, injectable):
+    """Only tracked decisions belong in a published graph, in either checkout."""
 
     def git(cwd, *args):
         subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True)
@@ -147,15 +148,26 @@ def test_a_pr_worktree_writes_what_the_original_checkout_writes(tmp_path):
     root = repo({"docs/a.md": ""})
     original = tmp_path / "rfg_rag"
     root.rename(original)
-    (original / ".wiki" / ".gitignore").write_text("/decisions/\n", encoding="utf-8")
+    if local_state == "ignored":
+        (original / ".wiki" / ".gitignore").write_text("/decisions/local.md\n", encoding="utf-8")
+    decisions = original / ".wiki" / "decisions"
+    decisions.mkdir()
+    (decisions / "tracked.md").write_text("# Published decision\n", encoding="utf-8")
+    rule = "---\ntriggers: [example]\n---\n\n# Published rule\n"
+    (decisions / "tracked-rule.md").write_text(rule, encoding="utf-8")
     git(original, "init", "-q")
     git(original, "add", "-A")
     git(original, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
-    (original / ".wiki" / "decisions").mkdir()
-    (original / ".wiki" / "decisions" / "local.md").write_text("# local\n", encoding="utf-8")
+    local = decisions / "local.md"
+    local_text = rule if injectable else "# Local decision\n"
+    local.write_text(local_text, encoding="utf-8")
     branch = tmp_path / "retrieval-port-requirement-links"
     git(original, "worktree", "add", "-q", "-b", "feature", str(branch))
 
-    built = [repo_graph.build(path) for path in (original, branch)]
+    built = [repo_graph.write(path) for path in (original, branch)]
     assert built[0] == built[1]
-    assert built[0]["repo"] == "rfg_rag" and built[0]["counts"]["decisions"] == 0
+    assert built[0]["repo"] == "rfg_rag"
+    assert built[0]["counts"]["decisions"] == 2
+    assert built[0]["counts"]["injectable_decisions"] == 1
+    assert (original / ".wiki/graph.json").read_bytes() == (branch / ".wiki/graph.json").read_bytes()
+    assert local.read_text(encoding="utf-8") == local_text

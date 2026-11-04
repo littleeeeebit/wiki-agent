@@ -59,3 +59,36 @@ the desktop app.
 - On the built app, `invoke('new_window')` from the page opens a window whose
   terminal IPC is allowed. Closing that window ends its shell, and the first
   window's shell and the server's work go on.
+
+## As built (2026-11-04)
+
+- `web/src/lib/api.ts` keeps `claimed` in `sessionStorage` under `project`. A
+  stored one releases the request wait at once and goes with the first
+  `/api/channels`; a new window has none and takes the default that list names.
+- The `project-moved` listener stays. Since stage 2 the server sends
+  `X-Project-Moved` only for a repository gone from disk, naming the hub, and
+  #264's recovery needs the screen to follow it. No other 409 moves the screen.
+- `new_window` opens `main-2`, `main-3`, … on the calling window's origin. It
+  is async, because a window built in a synchronous command deadlocks on
+  Windows. The capability's `windows` is `["main", "main-*"]`. The rail offers
+  it in the desktop app only, in each of its three layouts: the header when
+  wide, the icon column when folded below 1280px, and beside 새 작업 in the
+  portrait layout a window under 1100px gets (review R2-1).
+- `Pty` records its window's label. Its output goes to that window alone
+  (`emit_to`), and `WindowEvent::Destroyed` kills that window's shells.
+- `leave(closing)` asks nothing when another window is open
+  (`getAllWindows`, granted by `core:default`). Otherwise it reads
+  `/api/loops`: every running turn, the looping specs, and the new `answers`
+  (the `knowledge.LIVE` runs not done). A failed read still asks, and so does
+  one that has not answered in three seconds: a window whose first channel
+  list failed never names its project, so its read would wait for good
+  (review R1-2). A session store that throws on a read or a full write only
+  leaves the window not remembering its project (review R1-1).
+- `/api/loops` names a turn by its task's `repo`, else by the main clone git
+  reports (`workspace.sessions.checkout`). `elsewhere` takes the screen's
+  approval count per path, so a row shows `승인 N`.
+- Checks: `test_a_running_turn_is_named_by_its_repository_and_every_live_answer_is_counted`
+  in `tool/test_window_project.py`, and `web/tests/window_project_browser.py`
+  (in CI), which drives two pages and a stand-in for the shell's IPC. Each
+  fails with its fix reverted. The built app's checks (a second window's
+  terminal IPC, a closed window ending its shell) are stage 4's scenario.

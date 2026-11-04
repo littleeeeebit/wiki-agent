@@ -178,19 +178,20 @@ export type Peek = {
   lines: string[]
 }
 
-// The project the screen shows, sent with every request. The server's
-// selection is one for all windows; a screen that missed another window's
-// switch is refused (409) instead of writing into the other project, and the
-// refusal names where the server is, so the screen can follow.
-let claimed = ''
-// Until the first channel list names the project, a request would go out
-// with no `X-Project` and land in whichever project the server is on. So
-// everything but that list waits for it; the server refuses a write without it.
+// This window's project, sent as `X-Project` with every request and kept in its own `sessionStorage`:
+// a reload keeps it, and a new window takes the default its first channel list names. A repository
+// gone from disk is refused (409) with `X-Project-Moved` naming the hub, and the screen follows.
+// Blocked or full, the store only means a window that does not remember its project (review R1-1).
+const keep = (name: string) => { try { sessionStorage.setItem('project', name) } catch { /* as above */ } }
+let claimed = (() => { try { return sessionStorage.getItem('project') ?? '' } catch { return '' } })()
+// Until a project is known, all but the channel list waits: a request would land in the server's default.
 let known: () => void = () => {}
 const claimedOnce = new Promise<void>((resolve) => (known = resolve))
+if (claimed) known()
 
 export const claim = (name: string) => {
   claimed = name
+  keep(name)
   if (name) known()
 }
 
@@ -200,8 +201,7 @@ async function scoped(url: string, owner?: string): Promise<Record<string, strin
   return repo ? { 'X-Project': encodeURIComponent(repo) } : {}
 }
 
-/** The project the server is on, when it refused this screen's. Announced as
- *  a window event so the one place that follows the server hears it. */
+/** The hub, when the server refused this screen's project as gone, for the one place that follows. */
 function moved(res: Response) {
   const to = res.headers.get('X-Project-Moved')
   if (to) window.dispatchEvent(new CustomEvent('project-moved', { detail: decodeURIComponent(to) }))
@@ -713,7 +713,7 @@ export const startLoops = (prs: number[], implementation_environment: 'local' | 
   post('/api/loops', { prs, implementation_environment, cell }, 'POST', owner).then((r) =>
     json<{ results: { number: number; id?: string; error?: string }[] }>(r, '리뷰 루프'))
 export const getLoops = () =>
-  get('/api/loops').then((r) => json<{ loops: LoopRow[]; turns: TurnRow[] }>(r, '루프'))
+  get('/api/loops').then((r) => json<{ loops: LoopRow[]; turns: TurnRow[]; answers: number }>(r, '루프'))
 /** A running turn in any project; `spec` is the task that owns its worktree, if one does. */
 export type TurnRow = { path: string; repo: string; spec: { repo: string; id: string } | null }
 export const mergeSpec = (id: string, head: string, owner?: string) =>

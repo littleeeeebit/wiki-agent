@@ -20,7 +20,7 @@ import { Terminal, closed } from '@/components/Terminal'
 import * as api from '@/lib/api'
 import type { Channel, LoopRow, LoopSettings, Options, Peek as PeekData, Pr, RunSummary, Spec, Switch, Worktree } from '@/lib/api'
 import { LOOPING, elsewhere, phase, tasks as taskList } from '@/lib/tasks'
-import { leave, running as leaving } from '@/lib/leave'
+import { leave } from '@/lib/leave'
 import { cn } from '@/lib/utils'
 import { useWork } from '@/lib/work'
 import { notify, requestNotifications } from '@/lib/notifications'
@@ -133,8 +133,8 @@ export default function App() {
     setChannels(list)
   }, [])
 
-  /** The screen moves to the server's project `now`, however it learned of it
-   *  — its own switch, or a list showing that another window switched. The
+  /** The screen moves to project `now`, however it learned of it — its own
+   *  switch, or the hub after its repository left the disk. The
    *  old project's worktrees and selection go at that moment, not when the
    *  new list arrives: until then, or if it never does, they stood under the
    *  new name and could be picked. The channels are read again after. */
@@ -149,8 +149,8 @@ export default function App() {
     return api.getChannels().then(accept)
   }, [accept])
 
-  // The server refused a request because this screen shows another project
-  // than it is on. Whatever asked, the screen follows here.
+  // The server refused this screen's project because its repository left the
+  // disk. Whatever asked, the screen follows to the hub it named.
   useEffect(() => {
     const onMoved = (e: Event) => {
       const to = (e as CustomEvent<string>).detail
@@ -368,26 +368,21 @@ export default function App() {
     if (path) work.load(path)
   }, [path, work])
 
-  // Closing the app window takes the server down, and every running turn with
-  // it. A browser tab is not asked: closing it leaves the server and the turns.
   const running = Object.values(work.turns).filter((turns) => turns.at(-1)?.pending).length
   const runningNow = useRef(running)
   useEffect(() => {
     if (running < runningNow.current) readSpecs()
     runningNow.current = running
-    leaving.turns = running
   }, [running, readSpecs])
-  // A loop dies with the server too; it is counted with the turns.
-  useEffect(() => {
-    leaving.loops = loopRows.filter((l) => LOOPING.test(l.state)).length
-  }, [loopRows])
+  // Closing the last app window takes the server down, and every window's work
+  // with it (`leave`). A browser tab is not asked: closing it leaves the server.
   useEffect(() => {
     if (!('__TAURI_INTERNALS__' in window)) return
     let off: (() => void) | undefined
     let gone = false
     import('@tauri-apps/api/window').then(({ getCurrentWindow }) =>
-      getCurrentWindow().onCloseRequested((event) => {
-        if (!leave()) event.preventDefault()
+      getCurrentWindow().onCloseRequested(async (event) => {
+        if (!await leave(true)) event.preventDefault()
       }),
     ).then((unlisten) => {
       if (gone) unlisten()
@@ -437,7 +432,7 @@ export default function App() {
   if (moved) setSelected(moved)
   const pickedId = task?.spec?.id ?? null
   useEffect(() => { picked.current = pickedId }, [pickedId])
-  const others = elsewhere(loopRows, turnsElsewhere, repo)
+  const others = elsewhere(loopRows, turnsElsewhere, repo, asks)
   // A task's work model is keyed by its spec's repository and id, the same
   // from draft to worktree and under another project. Several tasks share a
   // checkout path, and spec ids repeat across repositories, so neither alone names one task.

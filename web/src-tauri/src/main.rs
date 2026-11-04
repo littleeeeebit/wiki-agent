@@ -17,7 +17,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
-use tauri::{AppHandle, Emitter, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 /// How long the server gets to answer before the window says it did not.
 /// The first start imports FastAPI and reads the wiki; seconds, not minutes.
@@ -29,6 +29,8 @@ struct Pty {
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    /// The label of the window that opened it: that window's output, and ended with it.
+    window: String,
 }
 
 #[derive(Default)]
@@ -36,6 +38,9 @@ struct Ptys {
     next: AtomicU32,
     open: Mutex<HashMap<u32, Pty>>,
 }
+
+/// The numbers of windows opened after the first (`main-2`, ...).
+static WINDOWS: AtomicU32 = AtomicU32::new(1);
 
 /// The repository this was built from. A dev-run app, so the build's own
 /// location is where the wiki is.
@@ -120,14 +125,43 @@ fn open_window(app: AppHandle, port: u16, log: PathBuf) {
         }
         thread::sleep(Duration::from_millis(150));
     };
-    let built = WebviewWindowBuilder::new(&app, "main", WebviewUrl::External(url))
+    if let Err(err) = window(&app, "main", url) {
+        eprintln!("창을 못 열었다: {err}");
+        app.exit(1);
+    }
+}
+
+fn window(app: &AppHandle, label: &str, url: Url) -> tauri::Result<tauri::WebviewWindow> {
+    WebviewWindowBuilder::new(app, label, WebviewUrl::External(url))
         .title("wiki-agent")
         .inner_size(1480.0, 920.0)
         .min_inner_size(960.0, 600.0)
-        .build();
-    if let Err(err) = built {
-        eprintln!("창을 못 열었다: {err}");
-        app.exit(1);
+        .build()
+}
+
+/// Another window on the same server page. It starts on the server's default
+/// project and keeps its own after (`sessionStorage`). Async: a window built
+/// inside a synchronous command deadlocks on Windows.
+#[tauri::command]
+async fn new_window(app: AppHandle, from: tauri::WebviewWindow) -> Result<(), String> {
+    let mut url = from.url().map_err(|e| e.to_string())?;
+    url.set_path("/");
+    url.set_query(None);
+    url.set_fragment(None);
+    let label = format!("main-{}", WINDOWS.fetch_add(1, Ordering::SeqCst) + 1);
+    window(&app, &label, url).map(|_| ()).map_err(|err| format!("창을 못 열었다: {err}"))
+}
+
+/// A closed window's terminals end with it. With another window still open
+/// the app goes on, so neither `pty_close` nor `RunEvent::Exit` runs for them.
+fn end_terminals(app: &AppHandle, label: &str) {
+    let ptys = app.state::<Ptys>();
+    let mut open = ptys.open.lock().unwrap();
+    let ids: Vec<u32> = open.iter().filter(|(_, pty)| pty.window == label).map(|(id, _)| *id).collect();
+    for id in ids {
+        if let Some(mut pty) = open.remove(&id) {
+            let _ = pty.child.kill();
+        }
     }
 }
 
@@ -209,7 +243,8 @@ fn open_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn pty_open(app: AppHandle, ptys: State<Ptys>, cwd: String, cols: u16, rows: u16) -> Result<u32, String> {
+fn pty_open(app: AppHandle, from: tauri::WebviewWindow, ptys: State<Ptys>, cwd: String, cols: u16, rows: u16)
+    -> Result<u32, String> {
     if !Path::new(&cwd).is_dir() {
         return Err(format!("그런 폴더가 없다: {cwd}"));
     }
@@ -223,7 +258,8 @@ fn pty_open(app: AppHandle, ptys: State<Ptys>, cwd: String, cols: u16, rows: u16
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     let id = ptys.next.fetch_add(1, Ordering::SeqCst) + 1;
-    ptys.open.lock().unwrap().insert(id, Pty { writer, master: pair.master, child });
+    let window = from.label().to_string();
+    ptys.open.lock().unwrap().insert(id, Pty { writer, master: pair.master, child, window: window.clone() });
 
     thread::spawn(move || {
         let mut buf = [0u8; 16 * 1024];
@@ -231,11 +267,11 @@ fn pty_open(app: AppHandle, ptys: State<Ptys>, cwd: String, cols: u16, rows: u16
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    let _ = app.emit("pty-out", (id, buf[..n].to_vec()));
+                    let _ = app.emit_to(window.as_str(), "pty-out", (id, buf[..n].to_vec()));
                 }
             }
         }
-        let _ = app.emit("pty-exit", id);
+        let _ = app.emit_to(window.as_str(), "pty-exit", id);
     });
     Ok(id)
 }
@@ -276,7 +312,12 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .manage(Ptys::default())
         .manage(Sidecar(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![pty_open, pty_write, pty_resize, pty_close, open_url, restart])
+        .invoke_handler(tauri::generate_handler![pty_open, pty_write, pty_resize, pty_close, open_url, restart, new_window])
+        .on_window_event(|window, event| {
+            if let WindowEvent::Destroyed = event {
+                end_terminals(window.app_handle(), window.label());
+            }
+        })
         .setup(move |app| {
             let (child, port) = spawn_sidecar(&root, &log)?;
             app.state::<Sidecar>().0.lock().unwrap().replace(child);

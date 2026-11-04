@@ -53,10 +53,8 @@ def name_of(repo: Path) -> str:
 
 
 def decisions_of(repo: Path) -> list[dict]:
-    # Only published records. A repository that ignores `.wiki/decisions/`
-    # keeps them in the original checkout alone, so counting what happens to
-    # be on disk made the committed file differ between checkouts.
-    listed = git(repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", ".wiki/decisions")
+    # Untracked records, ignored or not, are absent from a clean checkout.
+    listed = git(repo, "ls-files", "--cached", "-z", "--", ".wiki/decisions")
     published = None if listed is None else set(listed.split("\0"))
     found = []
     for path in sorted((repo / ".wiki" / "decisions").glob("*.md")):

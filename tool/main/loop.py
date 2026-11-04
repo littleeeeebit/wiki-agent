@@ -23,9 +23,9 @@ from agent import ChatSession, read_tools
 from common import errorlog, worktree_home
 from common import settings as settings_file
 from common.budget import Budget, Cancelled, Exhausted
-from workspace import adopt, base_branch, folder_for, holder, merged, remove, worktrees
+from workspace import adopt, base_branch, checkout, folder_for, holder, merged, remove, worktrees
 
-from . import channels, connect, decisions, maintenance, pr_text, query, review_contract, runtime, specs, sweep, verification, work
+from . import channels, connect, decisions, knowledge, maintenance, pr_text, query, review_contract, runtime, specs, sweep, verification, work
 from .query import ROOT, _lock, current_repo, hold, project, streaming
 from .review_result import (  # noqa: F401 -- preserve the loop protocol API
     FIRST, FINDING, FENCE, META, bare, parse, described, block, disposed,
@@ -2793,17 +2793,18 @@ def loops() -> dict:
              if LOOPING.fullmatch(s["state"]) or s["state"] in ("머지 가능", "머지 대기", "멈춤")]
     with _lock:
         running = [path for path, run in work._runs.items() if not run.done]
-    # The owning spec names the task as its own project does; the screen keys the work model by it.
+    # The owning spec names the task as its own project does; the screen keys the work model by it. Without one, the
+    # turn's project is the main clone git reports: its parent folder named a shared checkout `C:/repos/a` `repos`.
     def owning(path: str) -> dict | None:
         try:
             owned = specs.owner(Path(path))
         except (OSError, subprocess.SubprocessError):   # optional: one failed lookup never empties the list
             return None
         return {"repo": owned["repo"], "id": owned["id"]} if owned else None
-
-    turns = [{"path": path, "repo": Path(path).parent.name.removesuffix("-worktrees"), "spec": owning(path)}
-             for path in running]
-    return {"loops": found, "turns": turns}
+    turns = [{"path": p, "repo": s["repo"] if s else Path(checkout(Path(p))[1] or p).name, "spec": s}
+             for p in running for s in [owning(p)]]
+    with knowledge._LIVE:   # `answers`: what a restart would cut in every window's conversations
+        return {"loops": found, "turns": turns, "answers": sum(not r.done for r in knowledge.LIVE.values())}
 
 
 @router.get("/api/loops/events")

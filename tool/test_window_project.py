@@ -4,6 +4,7 @@ request for the `X-Project` it names, and nothing outside a request reads a wind
 import ast
 import json
 from pathlib import Path
+import subprocess
 import threading
 import time
 from unittest.mock import patch
@@ -219,6 +220,30 @@ def test_the_jev_shadow_records_into_its_turns_repository_after_a_switch(tmp_pat
         rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
         assert [r["repo"] for r in rows if r["role"] == "retrieval"] == [str(repos["a"])]
         assert not [r for r in chat.recall("wiki", include_context=True) if r["role"] == "retrieval"]
+
+
+def test_a_running_turn_is_named_by_its_repository_and_every_live_answer_is_counted(tmp_path):
+    """The rail named a turn by its path's parent folder: a primary checkout `C:/repos/a` came
+    out as project `repos`, and so did every worktree under one folder. The restart question
+    counted only the window's own turns, never an answer another window was waiting for."""
+
+    from types import SimpleNamespace
+
+    from main import knowledge
+    from test_main import _repo
+
+    primary = _repo(tmp_path / "shared")
+    linked = tmp_path / "elsewhere" / "feature"
+    subprocess.run(["git", "-C", str(primary), "worktree", "add", "-q", "-b", "feature", str(linked)], check=True)
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    running = {str(p): SimpleNamespace(done=False) for p in (primary, linked, plain)}
+    live = {"going": SimpleNamespace(done=False), "ended": SimpleNamespace(done=True)}
+    with patch.dict(work._runs, running), patch.dict(knowledge.LIVE, live, clear=True):
+        found = client().get("/api/loops").json()
+    assert {t["path"]: t["repo"] for t in found["turns"]} == {
+        str(primary): "proj", str(linked): "proj", str(plain): "plain"}
+    assert found["answers"] == 1
 
 
 # Functions outside a route that read the selected project, each reviewed in
