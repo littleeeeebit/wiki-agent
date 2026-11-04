@@ -1638,6 +1638,70 @@ def test_a_turn_is_reachable_after_the_project_moves(tmp_path):
         assert web.post("/api/work/stop", json=nowhere).status_code == 404
 
 
+def test_the_jev_shadow_records_into_its_turns_repository_after_a_switch(tmp_path):
+    """The shadow's record runs on a thread with no request context, and a switch does not wait
+    for it. It names the turn's repository, so a switch while Jev decides moves nothing."""
+
+    repos = _two_projects(tmp_path)
+    web = client()
+    deciding, switched = threading.Event(), threading.Event()
+
+    def prepare(text, repo, state, cfg, audiences=None):
+        deciding.set()
+        switched.wait(10)
+        return {"status": "supported", "evidence": [], "trace": []}
+
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get), patch.object(chat, "prepare", prepare):
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        chat.shadow("wiki", "q", repos["a"], "", chat.decision.config())
+        assert deciding.wait(10)
+        web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
+        switched.set()
+        log = tmp_path / "wiki.jsonl"
+        until(lambda: log.exists() and '"retrieval"' in log.read_text(encoding="utf-8"))
+        rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        assert [r["repo"] for r in rows if r["role"] == "retrieval"] == [str(repos["a"])]
+        assert not [r for r in chat.recall("wiki", include_context=True) if r["role"] == "retrieval"]
+
+
+# Functions outside a route that read the selected project, each reviewed in
+# docs/plans/window-project/1-audit.md: reached from routes only, or from the question's thread,
+# which copies its request's context and holds a switch until it ends.
+SELECTION_READERS = {
+    "query.current_repo", "query.session_key", "query.config", "query.session",
+    "query.remember", "query.recall", "query.hits_for", "loop.mine", "planning.begun", "work.ours",
+}
+
+
+def test_only_routes_and_reviewed_helpers_read_the_selected_project():
+    """Stage 2 makes the selection per window; a thread that read it would act on whichever
+    repository a window picked last. A nested function is its own reader, since a route may
+    start it on a thread."""
+
+    import ast
+
+    found = set()
+
+    def visit(node, where, scope):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                name = getattr(child, "name", "<lambda>")
+                route = any(isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
+                            and d.func.attr in ("get", "post", "put", "delete", "patch", "websocket")
+                            for d in getattr(child, "decorator_list", []))
+                visit(child, where, None if route else f"{where}.{name}")
+                continue
+            if isinstance(child, ast.Call) and scope is not None:
+                fn = child.func
+                if (fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)) in ("project", "current_repo"):
+                    found.add(scope)
+            visit(child, where, scope)
+
+    for path in sorted(Path(chat.__file__).parent.glob("*.py")):
+        visit(ast.parse(path.read_text(encoding="utf-8")), path.stem, f"{path.stem}.<module>")
+    assert found == SELECTION_READERS
+
+
 class Asker(Slow):
     """Two writes asked of a person, one outside the worktree refused unasked,
     and one still waiting when the turn is stopped."""

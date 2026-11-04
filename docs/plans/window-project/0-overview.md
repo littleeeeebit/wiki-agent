@@ -51,8 +51,8 @@ The project is a property of the window, not the server.
 | `query.configure` | Writes the global, closes other projects' sessions, refuses while any focus answers | Records the window's choice and the default for new windows; closes nothing; refuses only while this project's focus answers |
 | Focus holds | `_busy` keyed by `cid` | Keyed by `(repo, cid)` |
 | `app.only_this_screen` | Refuses a write that names no project | Unchanged; a write still has to name its project |
-| `refactor.charted` | Stops a run with `moved` when the selection changed, and calls `planning.begun`, which reads the selection | Passes the worker's repository to planning; the `moved` stop goes away |
-| `work.ours` and `loop.mine` | Default to the selected repository | Callers pass the request's repository; check no thread calls them without one |
+| `work.ours` and `loop.mine` | Default to the selected repository | Unchanged; stage 1 found them reached only from routes, which the request's `X-Project` answers |
+| The question's thread (`query.ask`) | Copies its request's context; its hold refuses every switch | The copied `X-Project` answers its reads once a switch in another project no longer waits for it |
 | Screen (`web/src/lib/api.ts`, `App.tsx`) | Follows `X-Project-Moved` and the server's choice | Keeps its own project per window (session storage), opens on the default, and treats 409 as an error, not a move |
 | Tauri (`web/src-tauri/src/main.rs`) | One window labelled `main` | A command that opens another window with its own label |
 | Feed events | One stream for all | Unchanged; each window refetches with its own `X-Project`, and events already carry their path or repository |
@@ -61,9 +61,10 @@ The project is a property of the window, not the server.
 The rail rows were found by the review of step 0 (round 1, both P2). They
 predate it, but a picker that switches during work shows them more often.
 
-About 54 call sites read `project()` or `current_repo()`. Nearly all are route
-handlers, where the request's header answers them. The ones above are the
-exceptions found so far; the first step is to confirm that list.
+There are 60 calls to `project()` or `current_repo()`, and 50 sit directly in
+route handlers, where the request's header answers them. Stage 1 classified
+the other 10 ([audit](1-audit.md)), and a test now fails on any new reader
+outside a route.
 
 ## Risks
 
@@ -80,7 +81,7 @@ exceptions found so far; the first step is to confirm that list.
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
 | 0 | Picker follows the server | The picker no longer locks while a turn or loop runs (`web/src/App.tsx`, this PR) | Done — browser check passes, and fails on the old condition |
-| 1 | [Audit](1-audit.md) | Every `project()` and `current_repo()` call classified as request or background, with background ones passing their repository | Not started |
+| 1 | [Audit](1-audit.md) | Every `project()` and `current_repo()` call classified as request or background, with background ones passing their repository | Done — 60 calls, 10 outside a route and all reached from routes or the question's copied context; an `ast` test pins the list and a test pins the shadow's repository |
 | 2 | [Server per request](2-server.md) | `project()` from `X-Project`, holds keyed by repository, switch closes nothing, idle limit | Not started |
 | 3 | [Screen per window](3-screen.md) | Window-owned project, no following on 409, a second window from the desktop app, rail rows named by their owner and showing waiting approvals | Not started |
 | 4 | [Verification](4-verification.md) | Two windows on two repositories: a task in each, a review loop in one, a switch in the other, nothing refused or crossed | Not started |
