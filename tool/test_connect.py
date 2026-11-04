@@ -603,6 +603,32 @@ def test_a_persons_uncommitted_edit_or_file_keeps_the_survey_from_starting(surve
     assert (surveyed / "README.md").read_text(encoding="utf-8") == "mine\n" and (surveyed / "notes.txt").exists()
 
 
+@pytest.mark.parametrize("tracked", [False, True])
+def test_a_persons_own_settings_beside_the_wiring_keep_the_survey_from_starting(surveyed, tracked):
+    # PR #296 round 2: the whole settings file was committed, a person's local `env` with it.
+    file = surveyed / ".claude/settings.json"
+    file.parent.mkdir()
+    if tracked:
+        file.write_text("{}\n", encoding="utf-8")
+        git(surveyed, "add", "-f", ".claude/settings.json")
+        git(surveyed, "commit", "-qm", "shared settings")
+    file.write_text(json.dumps({"env": {"LOCAL_ONLY": "fixture"}}) + "\n", encoding="utf-8")
+    connect.unwire(surveyed)
+    loop.store(survey=True, survey_tokens=10_000, survey_minutes=60, survey_model="opus")
+    assert survey.start(surveyed) is None
+    assert ".claude/settings.json" in connect.record("proj")["survey"]["reason"]
+    assert "LOCAL_ONLY" not in git(surveyed, "log", "--all", "--format=", "-p")
+
+
+def test_an_untracked_wiki_page_with_a_space_does_not_keep_the_survey_from_starting(surveyed):
+    # PR #296 round 2: git quotes the name, and the `.wiki/` exception read the quote.
+    (surveyed / ".wiki/first notes.md").write_text("page\n", encoding="utf-8")
+    loop.store(survey=True, survey_tokens=10_000, survey_minutes=60, survey_model="opus")
+    Spender.tokens = 50_000
+    assert survey.start(surveyed) == "wiki-bootstrap", connect.record("proj")["survey"]
+    ended("proj")
+
+
 def test_the_wiring_connect_wrote_goes_up_with_the_wiki_and_the_report_passes_the_gate(surveyed):
     # Loop stage 7: the `.claude/settings.json` that `[연결]` wrote was committed by the first turn, then deleted;
     # PR #296 round 1: left untracked instead, it failed the report's gate as a dirty checkout.

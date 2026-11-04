@@ -30,15 +30,14 @@ from fastapi import HTTPException
 
 import setup_agents
 
-from . import channels, loop, query, specs, work
+from . import channels, connect, loop, query, specs, work
 from .connect import ADAPTER, RECORDS, digest, git, keep, record, tracked
 
 DEFAULTS = {"survey": False, "survey_tokens": 2_000_000, "survey_minutes": 90, "survey_model": "opus",
             "survey_effort": ""}
 RATES = RECORDS / "survey" / "rates.json"
 BOOTSTRAP = "wiki-bootstrap"
-WIRING = tuple(setup_agents.SETTINGS.values())   # what `connect.unwire` writes into the repository
-OWN = (ADAPTER, *WIRING)
+WIRING = {file: host for host, file in setup_agents.SETTINGS.items()}   # what `connect.unwire` writes
 PER_SECOND = 200.0     # tokens a second, until a survey on this machine measures it
 TURN_TOKENS = 30_000   # a turn's own share: the system prompt, the instruction, tool calls
 PAGE_TOKENS = 3_000    # one page written
@@ -235,8 +234,9 @@ def start(repo: Path) -> str | None:
         # The survey switches this checkout and each turn commits the whole tree: a person's edit or an
         # untracked file went into the pull request, then was put back or deleted (loop stage 7,
         # ml-interactive-lab). Only what `[연결]` wrote, and the wiki's own outputs, may be there.
-        stray = [line[3:].strip('"') for line in specs.status(repo).stdout.splitlines()
-                 if line[3:].strip('"') not in OWN and not (line.startswith("?? ") and line[3:].startswith(".wiki/"))]
+        rows = [(line[:3], line[3:].strip('"')) for line in specs.status(repo).stdout.splitlines()]
+        stray = [p for kind, p in rows if not (p == ADAPTER or kind == "?? " and p.startswith(".wiki/")
+                                               or p in WIRING and authored(repo, p))]
         if stray:
             progress(repo.name, state="실패", reason="커밋하지 않은 변경이 있다 — 커밋하거나 치운 뒤 다시 [연결] 하라: "
                                                   + ", ".join(stray[:5]) + (f" 외 {len(stray) - 5}개" if len(stray) > 5 else ""))
@@ -244,6 +244,19 @@ def start(repo: Path) -> str | None:
         return prepare(repo)
     finally:
         release()
+
+
+def authored(repo: Path, file: str) -> bool:
+    """`file`'s uncommitted text is exactly what `[연결]` makes of its committed one (or of none): a
+    person's own settings in it would go up with the wiki (PR #296 round 2)."""
+
+    shown = git(repo, "show", f"HEAD:{file}")
+    try:
+        settings = json.loads(shown.stdout) if shown.returncode == 0 else {}
+        connect.rewired(settings, WIRING[file])
+        return (repo / file).read_text(encoding="utf-8") == connect.settled(settings)
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def prepare(repo: Path) -> str | None:

@@ -113,8 +113,9 @@ checkout returned to `main`, the edit reapplied from a saved diff, and the
 local branch kept as a bundle.
 
 Fixed. `survey.start` refuses while anything but the adapter, the wiring
-[Connect] wrote (`.claude/settings.json`, `.codex/hooks.json`) and untracked
-`.wiki/` outputs is uncommitted, and names it. The wiring is committed on the
+[Connect] wrote (`.claude/settings.json`, `.codex/hooks.json`, only while
+their text is exactly what [Connect] makes of the committed one) and
+untracked `.wiki/` outputs is uncommitted, and names it. The wiring is committed on the
 survey branch right after the adapter (`wiki: [연결] 배선`), so it goes up
 with the wiki instead of being swept, stashed by a cut turn or read as a
 dirty checkout by the report's gate (PR #296 round 1).
