@@ -124,7 +124,12 @@ No screen test framework. Server-side only.
 | 2 | Map Server | `/api/graph?repo=`, layers, metrics | Done |
 | 3 | design-pass 1–3 | Layout, measurement, font | Done |
 | 4 | design-pass 4–5 | Palette selection, empty spaces | Done — "Vivid" |
-| 5 | Gate | All verifications above | In progress — Auto-check passed, window verification remaining |
+| 5 | Gate | All verifications above | Done — 2026-11-04: a second tab on ai-generation showed the scratch loop's row turn from 리뷰 중 (purple) to 머지 가능 (green) (stage 4, "Window run") |
+
+Follow-ups from that run: rows under "다른 프로젝트" keep the server's order
+instead of people-first (`TaskRail.tsx`, `props.others`); merged tasks leave
+the rail with no "끝 N" row; the project list shows "연결 완료 0 · 일부 0"
+with no loading sign until `/api/connect` answers.
 
 ## Done
 

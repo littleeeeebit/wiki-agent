@@ -237,9 +237,9 @@ Answers the three questions of `craft/screen-ownership-before-wiring` in advance
 | 1 | Cleaning up discrepancies | Plan status judgment bug, old documents and comments, unused exports, small deferred tasks | Complete |
 | 2 | Agent's deferred tasks | Turn reconnection (event buffer per session), approval records and "allow during this session", Codex reading session before `app-server` and token count | Complete |
 | 3 | Specification and handover | Specification contract and storage, next task focus, [Start], system prompt of work session, returning result summary, `변경 이유` of PR body, `plan-active` update in PR | Complete |
-| 4 | Review cell and loop | Review cell, round parser, loop state machine, concurrent execution limit, PR list, receiving existing PR branch, [Merge] | In progress |
-| 5 | Connection and full investigation | Connection status judgment, SessionStart test per host, hub migration, [Connect], slot estimation, estimate and limit, investigation session | In progress |
-| 6 | Screen and map | Work-centered 3-column with `design-pass`, settings modal, project list, review modal, map per repository | In progress — auto-test passed, window verification remaining |
+| 4 | Review cell and loop | Review cell, round parser, loop state machine, concurrent execution limit, PR list, receiving existing PR branch, [Merge] | Done — window run 2026-11-04 on a scratch repository (stage 4, "Window run"); follow-ups listed there |
+| 5 | Connection and full investigation | Connection status judgment, SessionStart test per host, hub migration, [Connect], slot estimation, estimate and limit, investigation session | Done — surveyed [Connect] to merge and handover 2026-11-04; estimate ran 10× low |
+| 6 | Screen and map | Work-centered 3-column with `design-pass`, settings modal, project list, review modal, map per repository | Done — rail checked from a second window 2026-11-04; follow-ups listed in stage 6 |
 | 7 | Verification | Two cycles in the window — new repository with investigation on and repository with it off | Not started |
 
 Reason why step 2 is before steps 3 and 4. Work started with a specification and the review loop are long. If an automatic loop is placed on top of a turn that dies when the window is refreshed, the loop is tied to the lifespan of the window.
