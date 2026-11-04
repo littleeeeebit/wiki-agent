@@ -81,7 +81,13 @@ def test_suite_reads_history_and_live_cells_only_for_the_selected_repository(tmp
     assert next(r for r in cells if r["id"] == "linked-history")["task"] == "linked"
     assert next(r for r in cells if r["id"] == "primary-history")["path"] == str(repo)
     assert not any("private" in r["text"] for r in cells)
-    assert web.get("/api/suite", headers={"X-Project": "other"}).status_code == 409
+    # A window on another project is answered for that project, never with this one's rows. The
+    # fakes above answer every repository with this one's checkout and live run; scope them first.
+    monkeypatch.setattr(suite, "worktrees", lambda root: [{"path": root}])
+    monkeypatch.setattr(knowledge, "running", lambda root: [{"run_id": live.id}] if root == repo else [])
+    other = web.get("/api/suite", headers={"X-Project": "other"}).json()
+    assert other["repo"] == "other"
+    assert not any(r["id"] in {c["id"] for c in cells} for r in other["rows"])
 
 
 def test_live_branch_owner_wins_over_historical_tasks_in_the_same_checkout(tmp_path, monkeypatch):
