@@ -475,6 +475,8 @@ def test_masked_normalization_sends_a_failed_string_without_its_hangul_while_mos
     assert "masked:1" in version and not decisions.HANGUL.search(json.dumps(sent, ensure_ascii=False))
     assert decisions.normalized({"done": ["섞인 하나", "섞인 둘", "One"]}, 5, mask=True) == (None, ""), \
         "more than half failing is not a context any more"
+    chinese = {"goal": "섞인 保持调用者的连接池 open", "done": ["Keep the pool open", "Tests pass"]}
+    assert decisions.normalized(chinese, 5, mask=True)[0]["goal"] == "… … open", "every script is masked (R1-1)"
 
 
 def test_shadow_rechecks_moved_base_tip_even_when_merge_base_is_unchanged(world):

@@ -70,6 +70,7 @@ CHECK_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
 # State fields that are identifiers, commands or paths: sent as they are, never translated.
 LITERAL = ("id", "pages", "files", "path", "command", "source", "changed_files")
 HANGUL = re.compile(r"[ᄀ-ᇿ㄰-㆏가-힯]+")
+NOT_LATIN = re.compile(r"[^\W\d_A-Za-z]+")
 DEFERRED = "None of these clearly; leave it to the server's usual step."
 
 PROMPTS = {
@@ -301,9 +302,9 @@ def session_of(path: Path) -> str | None:
 
 def normalized(state: dict, seconds: float, *, cancel: threading.Event | None = None,
                mask: bool = False) -> tuple[dict | None, str]:
-    """`state` with every prose string in English, and the normalization's version; `None` when
-    any has no English — Jev reads English only. With `mask` (the review shadow, where one such
-    string sent nothing 384 times in Oct–Nov 2026) it goes Hangul-masked while at most half fail."""
+    """`state` with every prose string in English, and the normalization's version; `None` when any has
+    no English — Jev reads English only. With `mask` (the review shadow, where one such string sent
+    nothing 384 times in Oct–Nov 2026) it goes with non-Latin letters masked while at most half fail."""
 
     texts: list[str] = []
 
@@ -331,7 +332,7 @@ def normalized(state: dict, seconds: float, *, cancel: threading.Event | None = 
         return None, ""
     version = "|".join(sorted({str(o.get("version") or o["status"]) for o, bad in zip(outcomes, failed) if not bad}
                               | ({f"masked:{sum(failed)}"} if any(failed) else set())))
-    return walk(state, "", iter(t if bad else o["text"] for t, o, bad in zip(texts, outcomes, failed))), version  # masked
+    return walk(state, "", iter(NOT_LATIN.sub("…", t) if bad else o["text"] for t, o, bad in zip(texts, outcomes, failed))), version
 
 
 # -- asking -----------------------------------------------------------------
