@@ -216,7 +216,7 @@ reliability desktop matrix retains its own additional requirements.
 | 1 | Existing validation | Registered receipt checks and sanitized ordinary-loop handoff | Done — current focused suite |
 | 2 | Generalize execution | Shared selected-flow collection and owner-specific failure routing | Done — automatic isolated API/browser collection, selected-flow approval and local/external/Cloud ownership implemented |
 | 3 | Native collection | Versioned target contract, native runner and receipt validator | Done — Windows Win32 owned desktop/target, measured build/control/event receipts and configuration approval implemented; actual native fixture exercised |
-| 4 | Verify end to end | Local/API/browser/native identity, lifecycle and handoff evidence | In progress — actual fixtures passed; initial full suite 1,743 passed and 4 skipped; review repairs passed focused checks; follow-up cleanup clears the five ratchet violations, but a passing full final gate on the reviewed revision remains required |
+| 4 | Verify end to end | Local/API/browser/native identity, lifecycle and handoff evidence | Done — actual fixtures passed; the follow-up cleanup merged as #97 (`38489da`); since then every merge to main passes the full hosted gate (`verify.yml`) with this code, most recently run 41738154225 on 2026-11-04 |
 
 ## Migration and rollback
 
@@ -304,7 +304,7 @@ At implementation time the final repository gate was held by baseline violations
 (2,374; 2,328) and `web/tests/desktop_browser.py` (6 duplicate lines; ceiling 0).
 These files and their ceilings were not changed by the original stage PR.
 The follow-up cleanup below clears those violations without changing their ceilings.
-Stage completion remains open until the full final gate passes on the reviewed revision.
+Stage completion remained open until the full final gate passed on the reviewed revision; it now passes on main (see the step table).
 
 ### PR 95 — first independent review and focused repairs
 

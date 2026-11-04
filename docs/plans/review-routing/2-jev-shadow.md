@@ -199,7 +199,38 @@ Active mode is not required to complete this stage and is not enabled by it.
 | 1 | Baseline shadow | Closed facet advice, bounded call and non-interference | Done — current focused suite |
 | 2 | Ground context | Scoped retrieval and registered flow candidates | Done — bounded v2 context and closed flow/ground questions implemented |
 | 3 | Persist lifecycle | Preparation/stale observations, ground refs and replay | Done — spec-owned attempts, identity recheck, unsupported grounds and offline replay implemented; live transport acceptance remains part of evaluation |
-| 4 | Evaluate | Human-reviewed labels and production-prompt validation | In progress — exact production-request replay/evaluation harness implemented; human-reviewed real cases and live validation remain |
+| 4 | Evaluate | Human-reviewed labels and production-prompt validation | In progress — exact production-request replay/evaluation harness implemented; real tasks gave almost nothing to evaluate until the fit and masking below; human-reviewed real cases and live validation wait for advice to accumulate |
+
+## Observed in production (2026-11-04)
+
+Spec records from 170 real tasks across six repositories held about 2,600 shadow
+observations. Only 2 were `decided`, and 187 were `uncertain` with answers. The
+rest sent no request:
+
+| Outcome | Oct | Nov 1–4 |
+| --- | ---: | ---: |
+| `context_too_large` | 692 | 200 |
+| `normalization_failed` | 211 | 173 |
+| `stale` | 232 | 0 |
+| `uncertain` (answered) | 152 | 35 |
+| `decided` | 2 | 0 |
+
+Two causes:
+
+- Size. The eight retrieved passages (1,600 characters each) and the 6,000-character
+  diff alone came near the 24,000-character ceiling, and the goal and done items
+  appear twice: in the state and as grounds. Anything over sent nothing.
+  `review_contract.fitted` now drops the lowest-ranked retrieved passages, then
+  shortens the diff. It runs before and after normalization, and records what it cut
+  in `observations.fit`. The ceiling itself is unchanged.
+- Normalization was all or nothing. In one real task, 13 of 14 strings were English
+  or translated, and the last came back `uncertain` (`not_english`). That made the
+  whole context unavailable. `decisions.normalized(mask=True)` now sends such a
+  string with its Hangul masked, as a path is sent, while at most half of the
+  strings fail. Other callers keep the refusal. Jev still receives English only.
+
+Labels wait until these changes have produced real advice. Labelling a set that
+is almost all `unavailable` would measure nothing.
 
 ## Implementation verification
 

@@ -429,6 +429,54 @@ def test_normalization_expansion_cannot_exceed_sent_context_ceiling(world):
     send.assert_not_called()
 
 
+def test_an_oversized_context_drops_low_ranked_passages_and_is_still_asked(world):
+    """892 observations sent nothing as `context_too_large`; eight passages and a diff came near the ceiling."""
+    spec = pr_spec(world, "oversized", 1, "code.py", goal="Keep the caller's pool open. " * 300)
+    result = selected(world, spec)
+    passages =[knowledge.evidence.contract({"repo_id": knowledge.evidence.repo_id(world.repo),
+        "source_id": "a" * 64, "revision": "b" * 64, "chunk_id": f"{i:x}" * 64, "kind": "decision",
+        "locator": {"path": f".wiki/decisions/{i}.md", "start_line": 1, "end_line": 2},
+        "heading_path": [], "visibility": "repository", "completeness": "whole", "text": f"Passage {i}. " * 400})
+        for i in range(1, 9)]
+    sent = []
+    with patch.object(decision, "config", return_value=decision.Config("active", "test", "default", key="test")), \
+         patch.object(knowledge, "prepare", return_value={"evidence": passages, "limits": []}), \
+         patch.object(contract.decisions, "normalized", side_effect=lambda s, _, **kw: (s, "test")), \
+         patch.object(decision, "evaluate", side_effect=lambda cfg, s, q, *a: sent.append(s) or shadow_answers(q)):
+        record = contract.shadow(spec, ["code.py"], result, threading.Event())
+    assert record["status"] == "decided" and len(sent) == 1
+    assert len(json.dumps(sent[0], ensure_ascii=False)) <= contract.CONTEXT_CHARS
+    kept = [g["locator"]["path"] for g in record["grounds"] if g["kind"] == "retrieved"]
+    assert 0 < len(kept) < 8 and kept == [f".wiki/decisions/{i}.md" for i in range(1, len(kept) + 1)], \
+        "the highest-ranked passages stay"
+    assert record["preparation"]["fit"]["dropped"] == 8 - len(kept)
+    assert set(record["context_refs"]) == {g["id"] for g in record["grounds"]}
+
+
+def test_fitting_shortens_the_diff_after_the_passages_and_gives_up_only_past_both():
+    state = {"goal": "g", "observations": {}, "grounds": [
+        {"id": "d", "kind": "diff", "text": "+line\n" * 3000}, {"id": "r", "kind": "retrieved", "text": "x" * 5000}]}
+    assert contract.fitted(state, 6000) is state and [g["id"] for g in state["grounds"]] == ["d"]
+    assert state["grounds"][0]["truncated"] and state["observations"]["fit"]["dropped"] == 1
+    assert len(json.dumps(state, ensure_ascii=False)) <= 6000
+    assert contract.fitted({"goal": "x" * 7000, "observations": {}, "grounds": []}, 6000) is None
+
+
+def test_masked_normalization_sends_a_failed_string_without_its_hangul_while_most_succeed(monkeypatch):
+    """The shadow's mode: one uncertain string sent nothing 384 times; the default still refuses."""
+    decisions = contract.decisions
+    failed = {"status": "uncertain", "reason": "not_english", "text": "섞인 결과"}
+    monkeypatch.setattr(decisions.knowledge, "english", lambda texts, seconds, **kw: [
+        failed if "섞인" in t else {"status": "original_english", "text": t} for t in texts])
+    state = {"goal": "Keep the caller's pool", "done": ["섞인 요구 v2", "Tests pass", "Docs updated"]}
+    assert decisions.normalized(state, 5) == (None, "")
+    sent, version = decisions.normalized(state, 5, mask=True)
+    assert sent == {"goal": "Keep the caller's pool", "done": ["… … v2", "Tests pass", "Docs updated"]}
+    assert "masked:1" in version and not decisions.HANGUL.search(json.dumps(sent, ensure_ascii=False))
+    assert decisions.normalized({"done": ["섞인 하나", "섞인 둘", "One"]}, 5, mask=True) == (None, ""), \
+        "more than half failing is not a context any more"
+
+
 def test_shadow_rechecks_moved_base_tip_even_when_merge_base_is_unchanged(world):
     spec = pr_spec(world, "moved-base", 1, "code.py")
     other = world.hub.elsewhere()

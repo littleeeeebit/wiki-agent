@@ -564,9 +564,27 @@ def shadow_context(repo: Path, path: Path, spec: dict, paths: list[str] | None,
     # Hashes, kept as read: `observe_shadow` compares them with Git again, and a
     # short `.env` value (`FLOOR=3`) redacted inside one never matched (ai-coding-wiki #158).
     state = {**verification.sanitize(state, settings), "manifest": state["manifest"], "base_identity": state["base_identity"]}
-    if len(json.dumps(state, ensure_ascii=False)) > CONTEXT_CHARS or len(grounds) > 32 or len(catalog) > 16:
+    if fitted(state, CONTEXT_CHARS) is None or len(grounds) > 32 or len(catalog) > 16:
         raise ValueError("context_too_large")
-    return state, grounds
+    kept = {g["id"] for g in state["grounds"]}
+    return state, [g for g in grounds if g["id"] in kept]
+
+
+def fitted(state: dict, limit: int) -> dict | None:
+    """`state` cut to `limit` characters in place, lowest-ranked retrieved passages first, then
+    the diff; `None` when still over. Refusing instead sent nothing 892 times in Oct–Nov 2026."""
+    size = lambda: len(json.dumps(state, ensure_ascii=False))  # noqa: E731
+    grounds = state["grounds"]
+    fit = state["observations"].setdefault("fit", {"dropped": 0, "diff_cut": 0})
+    while size() > limit and (retrieved := [i for i, g in enumerate(grounds) if g["kind"] == "retrieved"]):
+        grounds.pop(retrieved[-1])
+        fit["dropped"] += 1
+    for g in grounds:
+        while g["kind"] == "diff" and g["text"] and size() > limit:
+            cut = min(len(g["text"]), max(256, size() - limit))
+            g["text"], g["truncated"] = g["text"][:-cut], True
+            fit["diff_cut"] += cut
+    return state if size() <= limit else None
 
 
 def shadow_questions(state: dict) -> tuple[dict, str]:
@@ -650,15 +668,19 @@ def shadow(spec: dict, paths: list[str] | None, contract: dict, halt, *, budget=
         out.update(context_refs=[g["id"] for g in grounds], grounds=grounds,
                    preparation=state["observations"], manifest=state["manifest"], base_identity=state["base_identity"])
         budget.check(budget.call_seconds)
-        state_en, normalization = decisions.normalized(state, max(0, budget.left() - budget.call_seconds), cancel=halt)
+        state_en, normalization = decisions.normalized(state, max(0, budget.left() - budget.call_seconds),
+                                                       cancel=halt, mask=True)
         budget.check()
         if state_en is None:
             return {**out, "status": "unavailable", "reason": "normalization_failed", "budget": budget.record()}
         # Normalization changes prose, never which original ground an answer names.
         for original, normalized in zip(grounds, state_en["grounds"]):
             normalized["id"] = original["id"]
-        if len(json.dumps(state_en, ensure_ascii=False)) > CONTEXT_CHARS:
+        if fitted(state_en, CONTEXT_CHARS) is None:   # English can run longer than the Korean it came from
             raise ValueError("normalized_context_too_large")
+        kept = {g["id"] for g in state_en["grounds"]}
+        out.update(context_refs=[r for r in out["context_refs"] if r in kept],
+                   grounds=[g for g in out["grounds"] if g["id"] in kept])
         questions, prompt_version = shadow_questions(state_en)
         req = decision.request("action", state_en, questions, allowed=["add", "skip", *out["context_refs"]], model=cfg.model,
                                prompt_version=prompt_version, policy_version=POLICY.version,
