@@ -1,5 +1,5 @@
 """recovery — research before another nonconverging fix
-(`docs/plans/reliability/8-recovery.md`, `docs/plans/agent-commands/0-overview.md`).
+(`docs/plans/reliability/8-recovery.md`, `docs/plans/done/agent-commands/0-overview.md`).
 
 A refused review that raises the same P0/P1 finding id for the `FOURTH` time
 in a pull request requires research before the next correction turn. The

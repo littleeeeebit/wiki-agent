@@ -38,6 +38,6 @@ the tool is not installed at all, the hook starts that install in the
 background and says so; meanwhile use `rg --files` or Python's `json`.
 
 Why. The audit of 2026-11-03 counted about 3,200 refused calls in three weeks
-(`docs/plans/agent-commands/0-overview.md`). Most of them were the agent
+(`docs/plans/done/agent-commands/0-overview.md`). Most of them were the agent
 starting with a command a rule later turned away. A guide read at the start
 costs nothing; a refusal costs a turn every time.

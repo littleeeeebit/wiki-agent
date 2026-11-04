@@ -169,7 +169,7 @@ write lands inside its artifact root.
 - `tool/main/recovery.py` holds the trigger, the barrier and the research turn.
   State is the spec's additive `recovery` field, one entry per issue id, written
   under `specs._files`.
-- Since 2026-11-03 (`docs/plans/agent-commands/0-overview.md` step 3), one rule
+- Since 2026-11-03 (`docs/plans/done/agent-commands/0-overview.md` step 3), one rule
   replaces the A-A, A-B-A and round-7 triggers. The trigger fires on a P0/P1
   finding id that a pull request raises for the fourth time (`recovery.FOURTH`,
   kind `recurrence`). A cycle starts with the settings' limits
