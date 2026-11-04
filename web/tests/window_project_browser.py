@@ -1,4 +1,4 @@
-"""Two windows on one server keep their own projects (docs/plans/window-project, stage 3).
+"""Two windows on one server keep their own projects (docs/plans/done/window-project, stage 3).
 
 Run after building: python web/tests/window_project_browser.py
 Page A shows `fixture-a`; page B starts on the server's default and picks `fixture-b`, which

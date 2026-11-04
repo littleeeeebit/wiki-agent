@@ -1,4 +1,4 @@
-"""Each window works in its own repository (docs/plans/window-project): the server answers every
+"""Each window works in its own repository (docs/plans/done/window-project): the server answers every
 request for the `X-Project` it names, and nothing outside a request reads a window's pick."""
 
 import ast
@@ -247,7 +247,7 @@ def test_a_running_turn_is_named_by_its_repository_and_every_live_answer_is_coun
 
 
 # Functions outside a route that read the selected project, each reviewed in
-# docs/plans/window-project/1-audit.md: reached from routes only, or from the question's thread,
+# docs/plans/done/window-project/1-audit.md: reached from routes only, or from the question's thread,
 # which copies its request's context and so reads that request's `X-Project`.
 SELECTION_READERS = {
     "query.current_repo", "query.session_key", "query.config", "query.session",

@@ -1,5 +1,5 @@
 """`fd` and `jq`, the commands `operator/command-guide` sends the agent to for finding files and
-reading JSON, installed with winget (`docs/plans/agent-commands/0-overview.md`, step 4).
+reading JSON, installed with winget (`docs/plans/done/agent-commands/0-overview.md`, step 4).
 
 Setup installs them (`setup_agents.py --global`). A command that needs one this session cannot
 find runs with that folder added to PATH, since a session keeps the PATH it started with; one not
