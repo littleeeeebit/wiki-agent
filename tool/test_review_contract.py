@@ -147,7 +147,7 @@ def test_jev_additions_are_recorded_but_never_applied_and_cancel_sends_nothing(w
          patch.object(decision, "evaluate", side_effect=additions) as sent:
         observation = contract.shadow(spec, ["a.py"], result, threading.Event())
         assert observation["status"] == "decided" and "evidence:api" in observation["additions"]
-        assert observation["prompt_version"].startswith("review-contract-shadow-2:")
+        assert observation["prompt_version"].startswith("review-contract-shadow-3:")
         assert result == before and result["evidence"] == ["offline"]
         halt = threading.Event()
         halt.set()
@@ -285,8 +285,9 @@ def test_shadow_rejects_invented_flow_or_ground_and_marks_unsupported_advice(wor
             answers["basis:" + key] = {"choice": decision.DEFER, "confidence": 0.9,
                 "probabilities": {k: 0.9 if k == decision.DEFER else 0.1 / (len(q["criteria"]) - 1)
                                   for k in q["criteria"]}}
-        else:
-            answers[key]["confidence"] = 0.4
+        else:   # leaning away from adding, below `ADD_AT`
+            answers[key] = {"choice": "skip", "confidence": 0.4,
+                            "probabilities": {"add": 0.2, "skip": 0.7, decision.DEFER: 0.1}}
         return answers
 
     with patch.object(decision, "config", return_value=decision.Config("active", "test", "default", key="test")), \
@@ -894,3 +895,71 @@ def test_offered_catalog_changes_are_audit_rejections_without_execution_effects(
     assert current["shadow"]["status"] == "stale" and current["candidate"] == current["enforced"]
     assert current["digest"] == baseline["digest"] and not current["problems"]
     assert not contract.ready(world.repo, Path(spec["worktree"]), spec, current)
+
+
+BARE = {"profile": "code", "criteria": ["code"], "evidence": ["offline"], "problems": [], "flows": [],
+        "manifest_digest": "", "digest": "bare"}
+
+
+def test_a_candidate_is_added_unless_jev_is_three_quarters_sure_and_replays_under_its_own_threshold():
+    record = audit_record(BARE)
+    answer = record["result"]["answers"]["criteria:data"]
+    answer.update(choice="skip", confidence=0.69, probabilities={"add": 0.3, "skip": 0.69, decision.DEFER: 0.01})
+    record["result"]["verdicts"]["criteria:data"] = decision.verdict(contract.POLICY, "action", answer)
+    record["frozen_digest"] = verification.sha({"request": record["request"], "result": record["result"]})
+
+    def pick():
+        rows = {r["candidate_id"]: r for r in contract.replay_shadow(record)["recommendations"]}
+        return rows["criteria:data"]["choice"], rows["criteria:data"]["verdict"], rows["criteria:async"]["choice"]
+
+    assert pick() == ("add", "yes", "skip")
+    # The threshold is a rule of the recorded policy: a later global policy leaves the record as decided.
+    with patch.object(contract, "POLICY", decision.Policy("review-contract-shadow-4", {"action": {
+            "confidence": 0.6, "margin": 0.2}})):
+        assert pick() == ("add", "yes", "skip")
+    # A record frozen under a policy without the rule keeps its own choice; shadow-3 records from
+    # PR #289's first head applied 0.25 without recording it, and replay as they were decided.
+    rules = {"action": {"confidence": 0.6, "margin": 0.2}}
+    for version, choice in (("review-contract-shadow-2", "skip"), ("review-contract-shadow-3", "add")):
+        rows = {r["candidate_id"]: r for r in contract.shadow_recommendations(
+            record["request"], record["result"], decision.Policy(version, rules))}
+        assert rows["criteria:data"]["choice"] == choice
+
+
+def body(state):
+    qs, _ = contract.shadow_questions(state)
+    return len(decision.wire("jev-1.13.0", state, {k: q["question"] for k, q in qs.items()}))
+
+
+def test_many_registered_flows_still_fit_one_jev_request_body():
+    flows = [{"id": f"flow-{i}", "kind": "api", "about": "x" * 600} for i in range(15)]
+    state = {"baseline": {k: BARE[k] for k in ("profile", "criteria", "evidence", "problems")},
+             "selected_flows": [], "registered_flows": flows, "observations": {},
+             "grounds": [{"id": "ground:diff", "kind": "diff", "locator": "diff", "text": "+" * 40000}]}
+    assert contract.fit_body(state) is not None
+    assert "x" * 600 not in json.dumps(contract.shadow_questions(state)[0])
+    assert body(state) <= decision.MAX_BODY
+
+
+def test_dropping_grounds_shrinks_the_questions_and_the_body_is_measured_again():
+    """Every basis question lists each ground: a limit taken before the cut refused a request that fits."""
+    flows = [{"id": f"f{i}", "title": f"Flow {i}", "kind": "api", "paths": ["x.py"], "environments": ["local"],
+              "assertions": [{"id": "a", "expected": "Responds successfully"}]} for i in range(16)]
+    kinds = ["spec"] * 13 + ["flow", "diff"] + ["retrieved"] * 8
+    state = {"baseline": {"criteria": ["code"], "evidence": ["offline"]}, "selected_flows": [], "observations": {},
+             "registered_flows": flows,
+             "grounds": [{"id": "ground:" + str(i).zfill(64), "kind": k, "text": "x" * 100} for i, k in enumerate(kinds)]}
+    assert body(state) > decision.MAX_BODY
+    assert contract.fit_body(state) is not None
+    # Only as many passages go as the body needs.
+    assert body(state) <= decision.MAX_BODY and 0 < [g["kind"] for g in state["grounds"]].count("retrieved") < 8
+
+
+def test_the_body_limit_is_counted_in_utf8_bytes_not_characters():
+    smile = chr(0x1F600)
+    state = {"baseline": {"criteria": ["code"], "evidence": ["offline"]}, "selected_flows": [], "registered_flows": [],
+             "observations": {}, "goal": "Implement emoji support " + smile * 8500}
+    state["grounds"] = [{"id": "s", "kind": "spec", "text": state["goal"]}, {"id": "d", "kind": "diff", "text": smile * 6000}]
+    assert len(json.dumps(state, ensure_ascii=False)) <= contract.CONTEXT_CHARS < body(state) // 4
+    assert contract.fit_body(state) is not None
+    assert body(state) <= decision.MAX_BODY
