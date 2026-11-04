@@ -334,9 +334,11 @@ Follow-ups found on the way:
 - A commit pushed while the spec is `머지 가능` (an instruction to the work
   cell) keeps the old approval. The screen still offers [Merge] for the old
   head; the merge stops with the working-folder message above, and a new
-  round waits for "다음 리뷰 라운드". The new head should drop the approval
-  and queue the round, as `merge_spec` already does when the screen's head
-  differs.
+  round waits for "다음 리뷰 라운드". Fixed: a work turn that ends in
+  `머지 가능` with the worktree off the approved head queues the next round
+  (`specs._check` → `loop.kick`), as `merge_spec` already did when the
+  screen's head differed. A commit made outside a turn (the terminal tab) is
+  still not caught until [Merge].
 - After a person's stop, the review stream shows the Codex process's startup
   warning (unrecognised config keys) with raw ANSI codes as if it were why
   the process closed.

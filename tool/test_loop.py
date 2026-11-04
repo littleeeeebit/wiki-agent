@@ -1987,6 +1987,24 @@ def test_the_round_cap_stops_and_continue_adds_four_to_this_spec(world):
     assert spec["extra"] == 4 and spec["state"] == "머지 가능" and loop.cap(spec) == 6
 
 
+@pytest.mark.parametrize("limit", [8, 1])
+def test_a_commit_after_the_approval_is_reviewed_even_on_the_last_round(world, limit):
+    # Loop stage 4 window run: an instruction committed in `머지 가능`, the merge button stayed bound to the
+    # approved head, and the merge stopped at prep. PR #295 round 1: an approval on the last round shipped the
+    # new head and stopped at the cap without reviewing it.
+    loop.store(rounds=limit)
+    spec = looped(pr_spec(world, "post-approval", 7)["id"])
+    path = Path(spec["worktree"])
+    person = work.Run(Worker(path), person=True)
+    assert specs.check(path, person, "Explained.") is None, "nothing committed, the approval stands"
+    new = commit(path, "late.txt")
+    specs.check(path, person, "Committed.")()
+    waited(lambda: ("proj", spec["id"]) not in loop._loops)
+    fresh = specs.load("proj", spec["id"])
+    assert fresh["state"] == "머지 가능", fresh.get("stopped")
+    assert len(fresh["rounds"]) == 2 and specs.approved(fresh)["head"] == new == world.hub.head(7)
+
+
 def test_the_same_finding_disputed_twice_stops_for_a_person(world):
     pr_spec(world, "fix-e", 7)
     finding = "[P1] a.txt:1 — 경계가 틀렸다"
