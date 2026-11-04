@@ -5,7 +5,9 @@ Page A shows `fixture-a`; page B starts on the server's default and picks `fixtu
 moves the default. A reload of A still asks for `fixture-a`. A's rail names B's running turn in
 a shared checkout by the project the server gives, and shows the approval it waits on. With a
 stand-in for the desktop shell, closing one of two windows asks nothing, and closing the last
-asks about the answer another window is waiting for; cancelling leaves the window open.
+asks about the answer another window is waiting for; cancelling leaves the window open. A status
+read that never answers still lets the question come, and a session store that throws still
+lets a window start.
 """
 
 import asyncio
@@ -14,7 +16,7 @@ import sys
 from urllib.parse import unquote
 
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from playwright.sync_api import expect, sync_playwright
 
@@ -45,7 +47,7 @@ window.__TAURI_INTERNALS__ = {
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     fake, default, asked = FastAPI(), ["fixture-a"], []
-    live = {"answers": 0}
+    live, faults = {"answers": 0}, {"stall": False, "channels": False}
 
     @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
     async def api(path: str, request: Request):
@@ -53,6 +55,8 @@ def main():
         asked.append((path, named))
         project = named or default[0]
         if path == "channels":
+            if faults["channels"]:
+                return JSONResponse({"detail": "fixture channel failure"}, status_code=500)
             return [{**c, "repo": project} for c in fixture(path, request.method)]
         if path == "config/wiki" and request.method == "POST":
             default[0] = (await request.json())["repo"]
@@ -66,6 +70,8 @@ def main():
                      "merged": False, "live": False, "busy": False}]
             return {"project": project, "repo": project, "rows": rows, "specs": []}
         if path == "loops":
+            if faults["stall"]:
+                await asyncio.sleep(30)
             return {"loops": [], "turns": [{"path": SHARED, "repo": "fixture-b", "spec": None}], **live}
         if path == "work/log" and request.query_params["path"] == SHARED:
             return {"rows": [], "session_id": "b", "busy": True, "running": {"turn": "turn-b", "session_id": "b", "seq": 0},
@@ -125,17 +131,51 @@ def main():
         shell.wait_for_function("window.__shell.calls.includes('plugin:window|destroy')")
         assert not dialogs, f"closing one of two windows asked {dialogs}"
 
-        shell.evaluate("window.__shell.windows = ['main']; window.__shell.calls = []")
+        def last_close(page, dialogs):
+            """Closes `page` as the last window and cancels: the question it asked."""
+            dialogs.clear()
+            page.evaluate("window.__shell.windows = ['main']; window.__shell.calls = []")
+            page.evaluate(close)
+            for _ in range(80):   # the status read gives up after three seconds
+                if dialogs:
+                    break
+                page.wait_for_timeout(100)
+            page.wait_for_timeout(300)
+            assert "plugin:window|destroy" not in page.evaluate("window.__shell.calls"), "a cancelled close closed"
+            return dialogs[0] if dialogs else ""
+
         live["answers"] = 1
-        shell.evaluate(close)
-        shell.wait_for_function("window.__shell.calls.includes('plugin:window|get_all_windows')")
-        for _ in range(50):
-            if dialogs:
-                break
-            shell.wait_for_timeout(100)
-        assert dialogs and "도는 작업 1개" in dialogs[0] and "만드는 답 1개" in dialogs[0], dialogs
-        shell.wait_for_timeout(300)
-        assert "plugin:window|destroy" not in shell.evaluate("window.__shell.calls"), "a cancelled close closed"
+        asked_now = last_close(shell, dialogs)
+        assert "도는 작업 1개" in asked_now and "만드는 답 1개" in asked_now, asked_now
+        # Review R1-2: a status read that never answers held the close for good.
+        faults["stall"] = True
+        assert "읽지 못했다" in last_close(shell, dialogs)
+        faults["stall"], faults["channels"] = False, True
+        fresh = page_of(context, errors)   # no project stored, and its first channel list fails
+        fresh.add_init_script(SHELL)
+        fresh.on("dialog", lambda d: (dialogs.append(d.message), d.dismiss()))
+        fresh.goto(base)
+        fresh.wait_for_function("'tauri://close-requested' in window.__shell.listeners")
+        assert "읽지 못했다" in last_close(fresh, dialogs)
+        faults["channels"] = False
+
+        # Review R1-1: a session store that throws, on reading or on a full write, kept the window
+        # from starting. It only forgets the project.
+        broken = page_of(context, errors)
+        broken.add_init_script("""for (const name of ['getItem', 'setItem']) {
+          const real = Storage.prototype[name]
+          Storage.prototype[name] = function (...args) {
+            if (this === window.sessionStorage) throw new DOMException('fixture', 'QuotaExceededError')
+            return real.apply(this, args)
+          }
+        }""")
+        broken.goto(base)
+        expect(picker(broken)).to_contain_text("fixture-b")
+        expect(picker(broken)).to_be_enabled()
+        picker(broken).click()
+        broken.get_by_role("option", name="fixture-a", exact=True).click()
+        expect(picker(broken)).to_contain_text("fixture-a")
+        broken.get_by_text("fixture-a-task").first.wait_for()
         browser.close()
     assert not errors, errors
     print("PASS: two windows keep their own projects; the rail and the close question cover every window")

@@ -181,17 +181,17 @@ export type Peek = {
 // This window's project, sent as `X-Project` with every request and kept in its own `sessionStorage`:
 // a reload keeps it, and a new window takes the default its first channel list names. A repository
 // gone from disk is refused (409) with `X-Project-Moved` naming the hub, and the screen follows.
-const session = (() => { try { return sessionStorage } catch { return null } })()   // null when blocked
-let claimed = session?.getItem('project') ?? ''
-// Until a project is known, a request would land in the server's default. So
-// everything but the channel list waits for it; the server refuses a write without it.
+// Blocked or full, the store only means a window that does not remember its project (review R1-1).
+const keep = (name: string) => { try { sessionStorage.setItem('project', name) } catch { /* as above */ } }
+let claimed = (() => { try { return sessionStorage.getItem('project') ?? '' } catch { return '' } })()
+// Until a project is known, all but the channel list waits: a request would land in the server's default.
 let known: () => void = () => {}
 const claimedOnce = new Promise<void>((resolve) => (known = resolve))
 if (claimed) known()
 
 export const claim = (name: string) => {
   claimed = name
-  session?.setItem('project', name)
+  keep(name)
   if (name) known()
 }
 

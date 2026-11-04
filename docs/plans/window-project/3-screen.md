@@ -77,7 +77,11 @@ the desktop app.
 - `leave(closing)` asks nothing when another window is open
   (`getAllWindows`, granted by `core:default`). Otherwise it reads
   `/api/loops`: every running turn, the looping specs, and the new `answers`
-  (the `knowledge.LIVE` runs not done). A failed read still asks.
+  (the `knowledge.LIVE` runs not done). A failed read still asks, and so does
+  one that has not answered in three seconds: a window whose first channel
+  list failed never names its project, so its read would wait for good
+  (review R1-2). A session store that throws on a read or a full write only
+  leaves the window not remembering its project (review R1-1).
 - `/api/loops` names a turn by its task's `repo`, else by the main clone git
   reports (`workspace.sessions.checkout`). `elsewhere` takes the screen's
   approval count per path, so a row shows `승인 N`.
