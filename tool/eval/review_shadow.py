@@ -38,17 +38,21 @@ def load(path: Path) -> dict:
     return data
 
 
-def sample(case: dict, cfg=None) -> dict:
+def sample(case: dict, cfg=None, rebuild: bool = False) -> dict:
     record = case["record"]
     replay = contract.replay_shadow(record)
     req = record["request"]
     result, trace = record["result"], []
     if cfg is not None:
-        qs, version = contract.shadow_questions(req["state_en"])
-        if qs != req["questions"] or version != req["prompt_version"] or req["policy_version"] != contract.POLICY.version:
+        state = copy.deepcopy(req["state_en"])
+        if rebuild and contract.fitted(state, contract.room(state)) is None:
+            raise ValueError("frozen state does not fit the current request body")
+        qs, version = contract.shadow_questions(state)
+        stale =qs != req["questions"] or version != req["prompt_version"] or req["policy_version"] != contract.POLICY.version
+        if stale and not rebuild:
             raise ValueError("frozen request differs from the current production prompt/catalog/policy")
         budget = Budget(**contract.SHADOW_LIMITS)
-        current = decision.request(req["decision_kind"], copy.deepcopy(req["state_en"]), qs,
+        current = decision.request(req["decision_kind"], state, qs,
             allowed=req["allowed_candidate_ids"], model=cfg.model, prompt_version=version,
             policy_version=contract.POLICY.version, normalization_version=req["normalization_version"], budget=budget)
         result = decision.checked(current, decision.decide(current, decisions.transport(cfg), budget, trace, contract.POLICY))
@@ -91,6 +95,8 @@ def main(argv=None) -> int:
     source.add_argument("--dataset", type=Path)
     source.add_argument("--spec", type=Path, help="Replay recorded spec attempts without labels")
     parser.add_argument("--live", action="store_true")
+    parser.add_argument("--rebuild", action="store_true",
+                        help="With --live, ask each frozen state with the current questions instead of refusing")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
     path = args.dataset or args.spec
@@ -107,7 +113,7 @@ def main(argv=None) -> int:
     cfg = decision.config() if args.live else None
     if cfg is not None and (cfg.problem or not cfg.key):
         parser.error("Jev is not configured")
-    rows = [sample(c, cfg) for c in data["cases"]]
+    rows = [sample(c, cfg, args.rebuild) for c in data["cases"]]
     calls = [t for r in rows for t in r["trace"]]
     elapsed = [r["decision"]["elapsed_ms"] for r in rows if args.live]
     output = {"schema": "review-shadow-results/1", "dataset_sha256": digest, "labels": data.get("labels"),

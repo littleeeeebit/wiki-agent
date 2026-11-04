@@ -147,7 +147,7 @@ def test_jev_additions_are_recorded_but_never_applied_and_cancel_sends_nothing(w
          patch.object(decision, "evaluate", side_effect=additions) as sent:
         observation = contract.shadow(spec, ["a.py"], result, threading.Event())
         assert observation["status"] == "decided" and "evidence:api" in observation["additions"]
-        assert observation["prompt_version"].startswith("review-contract-shadow-2:")
+        assert observation["prompt_version"].startswith("review-contract-shadow-3:")
         assert result == before and result["evidence"] == ["offline"]
         halt = threading.Event()
         halt.set()
@@ -285,8 +285,9 @@ def test_shadow_rejects_invented_flow_or_ground_and_marks_unsupported_advice(wor
             answers["basis:" + key] = {"choice": decision.DEFER, "confidence": 0.9,
                 "probabilities": {k: 0.9 if k == decision.DEFER else 0.1 / (len(q["criteria"]) - 1)
                                   for k in q["criteria"]}}
-        else:
-            answers[key]["confidence"] = 0.4
+        else:   # leaning away from adding, below `ADD_AT`
+            answers[key] = {"choice": "skip", "confidence": 0.4,
+                            "probabilities": {"add": 0.2, "skip": 0.7, decision.DEFER: 0.1}}
         return answers
 
     with patch.object(decision, "config", return_value=decision.Config("active", "test", "default", key="test")), \
@@ -894,3 +895,31 @@ def test_offered_catalog_changes_are_audit_rejections_without_execution_effects(
     assert current["shadow"]["status"] == "stale" and current["candidate"] == current["enforced"]
     assert current["digest"] == baseline["digest"] and not current["problems"]
     assert not contract.ready(world.repo, Path(spec["worktree"]), spec, current)
+
+
+BARE = {"profile": "code", "criteria": ["code"], "evidence": ["offline"], "problems": [], "flows": [],
+        "manifest_digest": "", "digest": "bare"}
+
+
+def test_a_candidate_is_added_unless_jev_is_three_quarters_sure_it_is_not_needed():
+    record = audit_record(BARE)
+    req, res = record["request"], record["result"]
+    res["answers"]["criteria:data"]["probabilities"] = {"add": 0.3, "skip": 0.69, decision.DEFER: 0.01}
+    rows = {r["candidate_id"]: r for r in contract.shadow_recommendations(req, res)}
+    assert (rows["criteria:data"]["choice"], rows["criteria:data"]["verdict"]) == ("add", "yes")
+    assert rows["criteria:async"]["choice"] == "skip"
+    # A record frozen under an earlier policy replays as it was decided.
+    req["policy_version"] = res["policy_version"] = "review-contract-shadow-2"
+    old = {r["candidate_id"]: r for r in contract.shadow_recommendations(req, res)}
+    assert old["criteria:data"]["choice"] == "skip"
+
+
+def test_many_registered_flows_still_fit_one_jev_request_body():
+    flows = [{"id": f"flow-{i}", "kind": "api", "about": "x" * 600} for i in range(15)]
+    state = {"baseline": {k: BARE[k] for k in ("profile", "criteria", "evidence", "problems")},
+             "selected_flows": [], "registered_flows": flows, "observations": {},
+             "grounds": [{"id": "ground:diff", "kind": "diff", "locator": "diff", "text": "+" * 40000}]}
+    assert contract.fitted(state, contract.room(state)) is not None
+    qs, _ = contract.shadow_questions(state)
+    assert "x" * 600 not in json.dumps(qs)
+    assert len(decision.wire("jev-1.13.0", state, qs)) <= decision.MAX_BODY

@@ -199,7 +199,7 @@ Active mode is not required to complete this stage and is not enabled by it.
 | 1 | Baseline shadow | Closed facet advice, bounded call and non-interference | Done — current focused suite |
 | 2 | Ground context | Scoped retrieval and registered flow candidates | Done — bounded v2 context and closed flow/ground questions implemented |
 | 3 | Persist lifecycle | Preparation/stale observations, ground refs and replay | Done — spec-owned attempts, identity recheck, unsupported grounds and offline replay implemented; live transport acceptance remains part of evaluation |
-| 4 | Evaluate | Human-reviewed labels and production-prompt validation | In progress — exact production-request replay/evaluation harness implemented; real tasks gave almost nothing to evaluate until the fit and masking below; human-reviewed real cases and live validation wait for advice to accumulate |
+| 4 | Evaluate | Human-reviewed labels and production-prompt validation | In progress — on Claude-labelled real tasks, shadow-3 reached 0.97 held-out accuracy and 0.98 required recall (below); human-reviewed labels and a fresh set of tasks remain |
 
 ## Observed in production (2026-11-04)
 
@@ -229,8 +229,68 @@ Two causes:
   string with its Hangul masked, as a path is sent, while at most half of the
   strings fail. Other callers keep the refusal. Jev still receives English only.
 
-Labels wait until these changes have produced real advice. Labelling a set that
-is almost all `unavailable` would measure nothing.
+## Claude-labelled evaluation (2026-11-04)
+
+The 55 tasks whose records held a sent request gave one case each: the latest
+request. `tool/eval/review_shadow_labels.py` had Claude Opus 5.5 label every
+offered candidate from the same English state Jev was given, never from Jev's
+answers: `required`, `acceptable`, `wrong` or `unresolved`. These labels are
+Claude's, not human-reviewed. Families split 30 calibration and 25 held-out, by
+a hash of the task id. Each labelling run cost about $3.
+
+The measure, agreed with the owner, has two parts on the held-out families.
+Accuracy counts a candidate as right when a `required` one is added, a `wrong`
+or `unresolved` one is not, and an `acceptable` one either way. Required recall
+is the share of `required` candidates that were added. Both must reach 0.9.
+Answering "not needed" to every candidate already scores 0.82 accuracy.
+
+Jev with the shadow-2 questions, on labels made against them:
+
+| Held-out | Accuracy | Required recall |
+| --- | ---: | ---: |
+| Frozen production answers | 0.83 | 1/38 |
+| Live, 0.6 confidence bar | 0.83 | 1/38 |
+| Live, Jev's top choice | 0.79 | 21/38 |
+
+Jev was not choosing badly so much as not choosing: the median confidence was
+0.2–0.3, and almost no answer cleared 0.6. Its probability of adding still
+ranked required candidates above wrong ones (AUC 0.80 on both splits). The
+cause was the question. Every candidate offered the same pair, "Additional
+attention is needed" / "No additional attention is needed", after a paragraph
+of prohibitions. The synthetic experiment that worked gave each option its own
+condition. Jev's documentation says the same: wording and irrelevant context
+change its answers.
+
+The changes, all fitted on calibration families only:
+
+- Shadow-3 questions. Each candidate asks whether that facet is required, with
+  its own "required when" and "not required when" conditions. The conditions
+  live in `tool/prompts/review-shadow.json`; the labeller shows Claude the same
+  ones. A registered flow is named by id, not copied into every question.
+- `room`. The state is fitted beside its questions inside Jev's 100 kB request
+  body. A task with fifteen registered flows had sent nothing
+  (`state_too_large`).
+- `ADD_AT = 0.25`. A candidate is added unless Jev puts more than three
+  quarters on not adding it. A record frozen under shadow-2 still replays as it
+  was decided.
+
+On calibration, the questions alone gave 0.92 accuracy and 0.77 recall at the
+0.6 bar. Lowering the bar was the larger lever: 0.94 and 0.96. Sharpening
+the weak conditions (documentation and plans, security, data, api, desktop,
+differential) moved little. The conditions, the threshold and a third set of
+labels were then frozen, and the held-out families were run once:
+
+| Held-out, shadow-3, `ADD_AT` | Value | 95% Wilson lower bound |
+| --- | ---: | ---: |
+| Accuracy | 216/223 = 0.969 | 0.937 |
+| Required recall | 59/60 = 0.983 | 0.911 |
+| Wrong candidates added | 5 | — |
+
+Limits: Claude wrote the labels and the conditions both, so this measures how
+well Jev applies Claude's reading of the conditions. One label set is
+correlated with the conditions it was made under. Each task gave one case, and
+the 55 come from six repositories. Before anything is enabled, human-reviewed
+labels on real advice and a fresh set of tasks remain the gate.
 
 ## Implementation verification
 
@@ -289,7 +349,12 @@ a second model, another agent, a wider permission set or a readiness bypass.
 ```powershell
 python tool/eval/review_shadow.py --spec raw/specs/<repo>/<task>.json --out raw/eval/review-shadow-replay.json
 python tool/eval/review_shadow.py --dataset <frozen-labelled-dataset>.json --out raw/eval/review-shadow-evaluation.json
+python tool/eval/review_shadow_labels.py --out raw/eval/review-shadow-golden.json
+python tool/eval/review_shadow.py --dataset raw/eval/review-shadow-golden.json --live --rebuild --out raw/eval/review-shadow-live.json
 ```
+
+`--rebuild` asks each frozen state with the current questions, fitted as
+production fits it, instead of refusing a record made under an earlier prompt.
 
 The dataset schema is `review-shadow-evaluation/1`. Each case has `id`, `family`,
 `split` (`calibration` or `heldout`) and an unchanged v2 `record` containing its

@@ -1,0 +1,55 @@
+{
+  "question": "For the CURRENT task in the state, is the {name} {axis} facet required in addition to the baseline? Judge from its goal, acceptance (done), changed paths and diff. A plan for future work does not implement that work now.",
+  "flow": "For the CURRENT task in the state, is registered flow {name} required in addition to the selected flows? Judge from its goal, acceptance (done), changed paths and diff.",
+  "defer": "Insufficient information to select one option reliably.",
+  "facets": {
+    "criteria:refactor": [
+      "The task's acceptance claims behavior-preserving restructuring: a refactor, move, rename or cleanup that must not change observable behavior, contracts, errors or side effects.",
+      "The task adds features, fixes a defect, changes intended behavior, or only writes plans or prose; it makes no behavior-preservation claim."
+    ],
+    "criteria:documentation": [
+      "The task changes or adds ordinary prose documentation (README, guides, docs pages, design notes, research or decision records) whose facts, examples or links must be checked against their sources.",
+      "No ordinary prose documentation is changed. Plan and roadmap documents (docs/plans, phase plans, overview status rows), code, tests, data, configuration and executable prompts are not ordinary prose documentation."
+    ],
+    "criteria:security": [
+      "The change touches authentication, authorization, credentials or secrets, permissions, sandboxing, or untrusted input crossing a trust boundary: parsing externally supplied files or data, loading third-party code or model weights, or sending user-derived input to an external service.",
+      "The change touches none of authentication, authorization, secrets, permissions, sandboxing, external input parsing, third-party code loading or outbound use of user input."
+    ],
+    "criteria:data": [
+      "The change alters persisted data: a stored schema, file format or record fields (state files, ledgers, run records, databases), a migration, or writes or deletions that could lose or corrupt existing data.",
+      "No stored schema, record field, file format, migration, persisted write or deletion is changed."
+    ],
+    "criteria:async": [
+      "The change touches concurrency or lifetime: background jobs, threads, async tasks, locks, retries, cancellation, timeouts, restarts or resources that must be released.",
+      "The change involves no concurrency, background work, retries, cancellation, timeouts or resource lifetime."
+    ],
+    "criteria:performance": [
+      "The task's acceptance claims a speed, latency, memory or cost improvement, or sets a performance budget.",
+      "The task makes no performance claim and sets no performance budget; correctness is the goal."
+    ],
+    "evidence:offline": [
+      "The task has local tests, contracts, document or scenario checks that must pass on the current head.",
+      "The task is exempt from every local check."
+    ],
+    "evidence:api": [
+      "Acceptance depends on a running service, process or external provider: deployed endpoints, real provider or model calls, a smoke check of a running service, or authentication or persistence that local tests and fixtures cannot prove.",
+      "Local tests, fixtures or static checks prove the whole acceptance; no running service, process or external provider call is part of it."
+    ],
+    "evidence:browser": [
+      "Acceptance concerns a web UI a person uses in a browser now: rendering, layout, navigation, focus, keyboard or a browser user flow.",
+      "No current browser UI behavior is part of acceptance: backend, API, CLI, data, prose, or a plan for future UI."
+    ],
+    "evidence:desktop": [
+      "Acceptance concerns a native desktop or mobile app, packaged host, OS process, CLI host hook or notification behavior now.",
+      "No native desktop, mobile, packaged-app, OS process or host hook behavior is part of current acceptance."
+    ],
+    "evidence:differential": [
+      "The task claims behavior preservation (a refactor or test cleanup), so frozen before/after characterization checks must match on this head.",
+      "The task intentionally changes behavior, content, data or models, adds features, or only writes plans or prose. Keeping some invariants or hashes while intentionally changing content is not a preservation claim."
+    ]
+  },
+  "flows": [
+    "Current acceptance depends on what registered flow {flow} (in state.registered_flows) verifies.",
+    "The change does not affect what registered flow {flow} (in state.registered_flows) verifies."
+  ]
+}
