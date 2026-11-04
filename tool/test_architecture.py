@@ -232,9 +232,11 @@ def test_selected_repository_add_is_explicit_and_reads_are_passive(tmp_path, cli
     assert web.post("/api/architecture", headers=headers).json() == snapshot
     assert cli == [first] and not (second / ".omm").exists()
     assert web.post("/api/architecture").status_code == 400
+    # Another window picked `second`; this one still names `first` and is answered for it alone.
     monkeypatch.setattr(query, "_project", "second")
-    assert web.post("/api/architecture", headers=headers).status_code == 409
-    assert web.get("/api/architecture", headers=headers).status_code == 409
+    assert web.get("/api/architecture", headers=headers).json() == snapshot
+    assert web.post("/api/architecture", headers=headers).json() == snapshot
+    assert cli == [first] and not (second / ".omm").exists()
 
 
 def test_a_merge_refresh_reads_only_what_the_pull_request_changed(tmp_path, cli, monkeypatch):

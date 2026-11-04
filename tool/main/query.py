@@ -25,6 +25,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from agent import ChatSession, explain
+from common import errorlog
 from search import refresh
 from session_state import run
 from wiki import label, match_pages, pages
@@ -48,7 +49,9 @@ _sessions: dict[tuple[str, str], ChatSession] = {}
 # Reentrant: a stream's release can run from garbage collection while this
 # very thread is inside `with _lock:`, and a plain lock waited on itself.
 _lock = threading.RLock()
-_busy: dict[str, object] = {}   # focus -> the hold of the answer running in it
+_busy: dict[tuple[str, str], object] = {}   # `session_key` -> the hold of the answer running in it
+_used: dict[tuple[str, str], float] = {}   # `session_key` -> when its conversation was last asked
+IDLE_SECONDS = 60 * float(channels.LOCAL.get("idle_minutes", 30))
 
 
 def close_all() -> None:
@@ -59,7 +62,7 @@ def close_all() -> None:
         chat.close()
 
 
-# Every focus shares the project selection, and so does the work pane. The
+# Each window names its project with every request (`project`). The
 # conversation and the model settings are per project and per focus.
 _config: dict[tuple[str, str], dict] = {}
 _project: str | None = None
@@ -72,15 +75,9 @@ claimed: ContextVar[str | None] = ContextVar("claimed", default=None)
 screened: ContextVar[bool] = ContextVar("screened", default=False)
 
 
-def project() -> str:
-    """The selected project — and the check that the asking screen shows it.
+def default() -> str:
+    """The project a new window opens on: the last one a window picked (`raw/chat/project.json`)."""
 
-    The selection is one for the whole server, and another window can move
-    it. A screen that had not noticed yet sent a question into the other
-    project's conversation. Every project-scoped path reads the project here,
-    and those that hold (`say`, `make`, `reset`, `remove`) read it under or
-    after their hold, so the check and the work cannot be split by a switch.
-    """
     global _project
     if _project is None:
         path = LOGS / "project.json"
@@ -90,11 +87,21 @@ def project() -> str:
         _project = name
     if screened.get() and _project != channels.WIKI.name and channels.repo_for(_project) is None:
         _project = channels.WIKI.name   # moved or gone: a fresh screen loads the hub and picks it again
-    screen = claimed.get()
-    if screen is not None and screen != _project:
-        raise HTTPException(409, f"다른 창이 프로젝트를 {_project} 로 바꿨다. 화면을 맞춘다",
-                            headers={"X-Project-Moved": quote(_project)})
     return _project
+
+
+def project() -> str:
+    """The project of the window that sent this request (`X-Project`); the default for one that names
+    none (`/api/channels` before a screen knows its project, a background owner). One selection for
+    the server let a second window move the first one's, or be refused with 409."""
+    screen = claimed.get()
+    if screen is None:
+        return default()
+    if screen != channels.WIKI.name and channels.repo_for(screen) is None:
+        default()   # moved or gone (#264): the screen and a default naming it go back to the hub
+        raise HTTPException(409, f"{screen} 저장소를 찾을 수 없다. 허브로 돌아간다",
+                            headers={"X-Project-Moved": quote(channels.WIKI.name)})
+    return screen
 
 
 def current_repo() -> Path:
@@ -164,11 +171,13 @@ def session(cid: str) -> ChatSession:
     A dead process is never swapped for a new object. Swapping it throws away
     the `session_id` that object was holding, leaving `--resume` nothing to
     attach to, and the conversation then disappeared quietly on every model or
-    effort change. Reviving it is `ensure`'s job.
-    """
+    effort change. Reviving it is `ensure`'s job. Asking also ends conversations idle past
+    `IDLE_SECONDS` (a switch no longer closes them). Each is held while it closes, so a question
+    then is refused for that moment and the same object, `session_id` and all, revives after."""
 
     with _lock:
-        key = session_key(cid)
+        key, now = session_key(cid), time.monotonic()
+        _used[key] = now
         chat = _sessions.get(key)
         if chat is None:
             cfg = config(cid)
@@ -181,7 +190,17 @@ def session(cid: str) -> ChatSession:
             # Only the same CLI, after an explicit reset, is resumed.
             chat.session_id = resumable(recall(cid, include_context=True), chat.is_codex)
             _sessions[key] = chat
-        return chat
+        # ponytail: swept when someone asks, after all that can fail here, not on a timer (an unasked server keeps them).
+        idle = [k for k, c in _sessions.items() if c.alive and k not in _busy and now - _used.get(k, now) > IDLE_SECONDS]
+        stale = [(_sessions[k], hold(_busy, _lock, k, "")) for k in idle]
+    for old, release in stale:
+        try:
+            old.close()
+        except Exception as exc:  # noqa: BLE001 — one failed close must not keep the others held
+            errorlog.record("query.idle", exc)
+        finally:
+            release()
+    return chat
 
 
 ASK_FIRST = ("먼저 물어라 — 이 대화에서 아직 선택지를 묻지 않았다. Ask the open decisions (scope, "
@@ -569,10 +588,9 @@ def shadow(cid: str, query: str, repo: Path, context: str, cfg: decision.Config,
 def focuses() -> list[dict]:
     return [
         {"id": c.id, "label": c.label, "blurb": c.blurb,
-         "live": session_key(c.id) in _sessions and _sessions[session_key(c.id)].alive,
-         "model_name": _sessions[session_key(c.id)].model_name if session_key(c.id) in _sessions else "",
-         # Used to turn a SHA in an answer into a commit link. Empty with no
-         # remote.
+         "live": (chat := _sessions.get(session_key(c.id))) is not None and chat.alive,
+         "model_name": chat.model_name if chat is not None else "",
+         # Used to turn a SHA in an answer into a commit link. Empty with no remote.
          "remote": repo_url(current_repo()),
          **config(c.id)}
         for c in channels.CHANNELS
@@ -581,8 +599,8 @@ def focuses() -> list[dict]:
 
 @router.post("/api/config/{cid}")
 def configure(cid: str, body: Config) -> dict:
-    """The project applies to every focus and to the work pane; the model and
-    effort apply to this focus of the selected project."""
+    """A new `repo` moves this window, and is the project the next new window opens on; the model and
+    effort apply to this focus of the window's project."""
     global _project
 
     known(cid)
@@ -606,25 +624,13 @@ def configure(cid: str, body: Config) -> dict:
     if body.effort not in efforts:
         raise HTTPException(400, "이 모델이 지원하지 않는 effort")
 
-    from . import work  # `work` imports this module; the project is shared
-
     with _lock:
         switched = body.repo != project()
-        if cid in _busy or (switched and _busy):
+        # A switch changes nothing others read; a setting, or a mode a switch carries, waits for that answer.
+        if (not switched or body.refactor_mode is not None) and (str(channels.repo_for(body.repo)), cid) in _busy:
             raise HTTPException(409, "답변 생성이 끝난 뒤 설정을 바꿔 주세요")
-        # A running turn or loop is not waited for: it took its repository
-        # when it was held, and its events, stop and approvals follow the
-        # session, not the selection. A short request — making, removing,
-        # resetting — reads the project partway through, and is waited for.
-        if switched and work.busy():
-            raise HTTPException(409, "작업트리를 만들거나 지우는 중에는 프로젝트를 바꾸지 않는다")
         if switched:
-            # Changed only while no turn is being recorded, and only once
-            # everything that can fail has been done against the new project by
-            # name. `config` fails when Codex cannot list its models; the
-            # selection used to move first, and a listing that reads without
-            # the lock saw a project the switch was about to refuse. A failed
-            # disk write keeps the old selection too.
+            # The default moves only after what can fail: `config` (Codex listing) and the disk write.
             cfg = config(cid, body.repo)
             LOGS.mkdir(parents=True, exist_ok=True)
             path = LOGS / "project.json"
@@ -655,9 +661,6 @@ def configure(cid: str, body: Config) -> dict:
         if moved:
             remember(cid, "context", "CLI 변경")
         chat = _sessions.pop(key, None) if moved else _sessions.get(key)
-        inactive = [s for (repo, _), s in _sessions.items() if repo != key[0]] if switched else []
-    for old in inactive:
-        old.close()  # the session_id is kept, so coming back resumes it
     if chat is not None:
         if moved:
             chat.close()
@@ -684,7 +687,7 @@ class Clear(BaseModel):
 def reset(cid: str, body: Clear) -> dict:
     known(cid)
     with _lock:
-        if cid in _busy:
+        if session_key(cid) in _busy:
             raise HTTPException(409, "답변 생성이 끝난 뒤 대화를 초기화해 주세요")
         repo, cfg = current_repo(), dict(config(cid))
         rows = memory.clear(LOGS / f"{cid}.jsonl", lambda r: r.get("repo") == str(repo),
@@ -736,7 +739,7 @@ def say(cid: str, body: Say) -> StreamingResponse:
     # release — a focus stayed busy for good that way.
     with _lock:
         cfg = dict(config(cid))
-        release = hold(_busy, _lock, cid, "이 초점의 답변을 생성하고 있습니다")
+        release = hold(_busy, _lock, session_key(cid), "이 초점의 답변을 생성하고 있습니다")
     try:
         repo = current_repo()
         # What Jev leaves uncertain goes to the model this conversation answers with.

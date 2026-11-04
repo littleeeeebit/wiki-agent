@@ -141,14 +141,13 @@ def test_websocket_runs_existing_guards_and_delivers_each_chunk(companion):
                           "body": json.dumps({"translate": False})})
             assert ws.receive_json()["status"] == 200
             assert json.loads(ws.receive_bytes())["translate"] is False
-        # A selection that names a repository: one that names none falls back to the hub (#264).
-        with patch.object(query, "_project", "new-project"), \
-                patch.object(query.channels, "repo_for", lambda name: Path(name)):
+        # The phone's request carries its project; one that names no repository any more goes to the hub (#264).
+        with patch.object(query.channels, "repo_for", lambda name: None if name == "old-project" else Path(name)):
             with phone.websocket_connect("wss://fixture.trycloudflare.com/api/mobile/request") as ws:
                 ws.send_json({"url": "/api/knowledge/status", "project": "old-project"})
                 response = ws.receive_json()
                 assert response["status"] == 409
-                assert dict(response["headers"])["x-project-moved"] == "new-project"
+                assert dict(response["headers"])["x-project-moved"] == query.channels.WIKI.name
         with phone.websocket_connect("wss://fixture.trycloudflare.com/api/mobile/request") as ws:
             ws.send_json({"url": "/api/mobile-fixture-stream"})
             assert ws.receive_json()["status"] == 200
