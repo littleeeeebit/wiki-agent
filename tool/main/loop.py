@@ -2522,13 +2522,18 @@ def review_again(sid: str) -> dict:
         raise HTTPException(409, "이 상태에서는 새 리뷰를 시작하지 않는다")
     if spec.get("plan_commit") == "asked":
         raise HTTPException(409, "계획 행 커밋이 아직이다")
-    with specs._files:
-        extra = spec.get("extra", 0)
-        if len(counted(spec)) >= cap(spec):
-            extra += MORE
-        specs.update(repo.name, sid, review_again=True, extra=extra)
-    kick(repo.name, sid)
+    rereview(repo.name, spec)
     return specs.view(repo, specs.load(repo.name, sid))
+
+
+def rereview(repo: str, spec: dict) -> None:
+    """Another independent round for a `머지 가능` or PR spec; four more rounds when its cap is used up,
+    or the loop ships the new head and stops at the cap before reviewing it."""
+
+    with specs._files:
+        specs.update(repo, spec["id"], review_again=True,
+                     extra=spec.get("extra", 0) + (MORE if len(counted(spec)) >= cap(spec) else 0))
+    kick(repo, spec["id"])
 
 
 @router.post("/api/specs/{sid}/halt")
@@ -2724,9 +2729,7 @@ def take(repo: Path, n: int, environment: str = "local", cell: dict | None = Non
             kick(repo.name, spec["id"])
             return spec["id"]
         if spec["state"] == "머지 가능":
-            specs.update(repo.name, spec["id"], review_again=True,
-                         extra=spec.get("extra", 0) + (MORE if len(counted(spec)) >= cap(spec) else 0))
-            kick(repo.name, spec["id"])
+            rereview(repo.name, spec)
             return spec["id"]
         if stalled(spec):
             kick(repo.name, spec["id"])   # `리뷰 대기`, and the fault is cleared there

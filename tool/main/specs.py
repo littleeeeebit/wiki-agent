@@ -1635,7 +1635,7 @@ def _check(path: Path, run, final: str):
             # A commit after the approval: the merge button would stay bound to the old head and stop at
             # merge prep. The loop ships the new head and reviews it.
             note(run, "리뷰 뒤 새 커밋 — 승인을 내리고 다음 리뷰 라운드를 받는다")
-            return lambda: loop.kick(spec["repo"], spec["id"])
+            return lambda: loop.rereview(spec["repo"], spec)
         return None
     if spec.get("writing"):
         # The pull request's text was asked for. A person's plain talk in between is not the answer; a
