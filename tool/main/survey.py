@@ -229,6 +229,14 @@ def start(repo: Path) -> str | None:
         progress(repo.name, state="실패", reason=exc.detail)
         return None
     try:
+        # The survey switches this checkout and commits what each turn leaves: a person's edit would go into
+        # the pull request and then be put back (loop stage 7, ml-interactive-lab).
+        moved = [line[3:] for line in specs.status(repo, "--untracked-files=no").stdout.splitlines()
+                 if line[3:] != ADAPTER]
+        if moved:
+            progress(repo.name, state="실패", reason="커밋하지 않은 변경이 있다 — 커밋하거나 치운 뒤 다시 [연결] 하라: "
+                                                  + ", ".join(moved[:5]))
+            return None
         return prepare(repo)
     finally:
         release()
@@ -263,6 +271,10 @@ def prepare(repo: Path) -> str | None:
             progress(name, sid=sid, state="실패", reason=f"adapter 를 커밋하지 못했다 — {specs.said(made)}")
             return None
     first = git(path, "rev-parse", "HEAD").stdout.strip()
+    # Untracked outside `.wiki/` before the first turn — `[연결]`'s own `.claude/settings.json` among them:
+    # never committed by a turn, so never removed as out of bounds either.
+    kept = [p.rstrip("/") for p in git(path, "-c", "core.quotepath=off", "ls-files", "--others", "--exclude-standard",
+                                       "--directory").stdout.splitlines() if not p.startswith(".wiki/")]
     limits, guessed = settings(), estimate(path)
     now = time.time()
     specs.save({
@@ -276,12 +288,12 @@ def prepare(repo: Path) -> str | None:
         "return_branch": previous,
         "pr": None, "report": None, "gate": None, "fault": None,
         "cell": {"model": limits["survey_model"], "effort": limits["survey_effort"]},
-        "survey": {"handover": handover, "first": first, "running": True},
+        "survey": {"handover": handover, "first": first, "kept": kept, "running": True},
         "history": [{"ts": now, "state": "정리됨"}, {"ts": now, "state": "작업 중"}],
     })
     progress(name, sid=sid, state="도는 중", turn=0, turns=guessed["turns"], label="", tokens=0,
              limit=limits["survey_tokens"], why="", reason="")
-    threading.Thread(target=drive, args=(repo, sid, first, guessed["raw"], limits), daemon=True).start()
+    threading.Thread(target=drive, args=(repo, sid, first, guessed["raw"], limits, kept), daemon=True).start()
     return sid
 
 
@@ -335,13 +347,13 @@ def turn(path: Path, spec: dict, text: str, deadline: float | None) -> tuple[str
     return "done", tokens, ""
 
 
-def settle(path: Path, first: str) -> list[str]:
+def settle(path: Path, first: str, kept: list[str] = ()) -> list[str]:
     """After a turn: what it left uncommitted is committed, and what it
     changed outside its bounds — a file that was there before (the adapter
     aside), anything outside `.wiki/` — is put back and committed. The paths
-    put back."""
+    put back. `kept`: untracked before the survey, left as they are."""
 
-    git(path, "add", "-A")
+    git(path, "add", "-A", "--", ".", *(f":(exclude,literal){p}" for p in kept))
     # A repository may ignore `.wiki/*` and keep only what it lists; the
     # pages are forced in, or `modules/` would silently never reach the PR.
     git(path, "add", "-f", "--", ":(glob).wiki/**/*.md")
@@ -362,7 +374,7 @@ def settle(path: Path, first: str) -> list[str]:
     return bad
 
 
-def drive(repo: Path, sid: str, first: str, raw: float, limits: dict) -> None:
+def drive(repo: Path, sid: str, first: str, raw: float, limits: dict, kept: list[str] = ()) -> None:
     """The survey's turns in order, the limits read between them; then the
     report turn, whatever stopped the writing. Its end is where the gate
     runs and the pull request goes up (`specs.check`)."""
@@ -395,7 +407,7 @@ def drive(repo: Path, sid: str, first: str, raw: float, limits: dict) -> None:
                 git(path, "stash", "push", "-u", "-m", "wiki: 시간 한도에 끊긴 조사 턴")
                 why = said
                 break
-            reverted = settle(path, first)
+            reverted = settle(path, first, kept)
             if reverted:
                 progress(name, reverted=[*(record(name).get("survey") or {}).get("reverted", []), *reverted])
         progress(name, turn=len(plan) + 1, label="완료 보고", tokens=used, why=why)

@@ -590,6 +590,30 @@ def test_the_survey_sends_no_further_turn_once_the_tokens_reach_the_limit(survey
     assert "repo_lint.py" in spec["done"][0] and "--no-wiring" in spec["done"][0]
 
 
+def test_a_persons_uncommitted_edit_keeps_the_survey_from_starting(surveyed):
+    # Loop stage 7: ml-interactive-lab's edited how_to.md went into the survey's first commit, then was put back.
+    (surveyed / "README.md").write_text("mine\n", encoding="utf-8")
+    loop.store(survey=True, survey_tokens=10_000, survey_minutes=60, survey_model="opus")
+    assert survey.start(surveyed) is None
+    now = connect.record("proj")["survey"]
+    assert now["state"] == "실패" and "README.md" in now["reason"], now
+    assert git(surveyed, "branch", "--show-current") == "main" and not Spender.heard
+    assert (surveyed / "README.md").read_text(encoding="utf-8") == "mine\n"
+
+
+def test_an_untracked_file_from_before_the_survey_is_neither_committed_nor_removed(surveyed):
+    # Loop stage 7: the `.claude/settings.json` that `[연결]` wrote was committed by the first turn, then deleted.
+    (surveyed / ".claude").mkdir()
+    (surveyed / ".claude/settings.json").write_text("{}\n", encoding="utf-8")
+    loop.store(survey=True, survey_tokens=10_000, survey_minutes=60, survey_model="opus")
+    Spender.tokens = 50_000
+    sid = survey.start(surveyed)
+    assert ended("proj")["state"] == "끝"
+    path = Path(specs.load("proj", sid)["worktree"])
+    assert (path / ".claude/settings.json").read_text(encoding="utf-8") == "{}\n"
+    assert git(path, "log", "--all", "--format=%h", "--", ".claude") == ""
+
+
 def test_an_adapter_that_was_there_before_gets_the_hash_the_handover_compares(surveyed):
     theirs = 'agents = ["claude"]\n\n[slots]\ngate_cmd = "make test"\n'
     (surveyed / ".wiki/adapter.toml").write_text(theirs, encoding="utf-8", newline="\n")
