@@ -45,10 +45,10 @@ def sample(case: dict, cfg=None, rebuild: bool = False) -> dict:
     result, trace = record["result"], []
     if cfg is not None:
         state = copy.deepcopy(req["state_en"])
-        if rebuild and contract.fitted(state, contract.room(state)) is None:
+        if rebuild and contract.fit_body(state) is None:
             raise ValueError("frozen state does not fit the current request body")
         qs, version = contract.shadow_questions(state)
-        stale =qs != req["questions"] or version != req["prompt_version"] or req["policy_version"] != contract.POLICY.version
+        stale = qs != req["questions"] or version != req["prompt_version"] or req["policy_version"] != contract.POLICY.version
         if stale and not rebuild:
             raise ValueError("frozen request differs from the current production prompt/catalog/policy")
         budget = Budget(**contract.SHADOW_LIMITS)
@@ -76,6 +76,11 @@ def sample(case: dict, cfg=None, rebuild: bool = False) -> dict:
            "unsupported": sorted(unsupported), "decision": result, "trace": trace,
            "baseline_disagreement": any(predicted[a] != set(baseline.get(a, []) if a != "flows" else
                req["state_en"].get("selected_flows", [])) for a in AXES)}
+    if cfg is not None and stale:
+        # The request actually asked; the frozen record's identity stays as `source_*`.
+        row.update(source_context_digest=row["context_digest"], source_prompt_version=row["prompt_version"],
+                   source_policy_version=row["policy_version"], context_digest=verification.sha(state),
+                   prompt_version=version, policy_version=contract.POLICY.version, request=current)
     if expected := case.get("expected"):
         missing = {a: sorted(set(expected[a]) - predicted[a]) for a in AXES}
         extra = {a: sorted(predicted[a] - set(expected[a]) - {

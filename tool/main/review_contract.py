@@ -38,10 +38,10 @@ EVIDENCE = {
 # Each candidate is asked against its own required/unneeded conditions: one generic "is attention
 # needed" pair left jev-1.13 near uniform (median confidence 0.2-0.3, 2026-11-04 golden set).
 SHADOW = json.loads((query.ROOT / "tool/prompts/review-shadow.json").read_text(encoding="utf-8"))
-POLICY = decision.Policy("review-contract-shadow-3", {"action": {"confidence": 0.6, "margin": 0.2}})
-# A candidate is added unless Jev puts more than three quarters on not adding it. The 0.6 confidence bar
-# alone recalled 0.77 of the required candidates on the 2026-11-04 calibration families; this, 0.96.
-ADD_AT = 0.25
+# `add_at`: a candidate is added unless Jev puts more than three quarters on not adding it. The 0.6
+# confidence bar alone recalled 0.77 of the required candidates on the 2026-11-04 calibration families;
+# this, 0.96. A rule of the recorded policy, so a frozen record replays under its own threshold.
+POLICY = decision.Policy("review-contract-shadow-3", {"action": {"confidence": 0.6, "margin": 0.2, "add_at": 0.25}})
 SHADOW_LIMITS = {"seconds": 15, "calls": 1, "candidates": 8}
 CONTEXT_CHARS = 24000
 RUBRIC = {name: (query.ROOT / f"tool/prompts/review-{name}.md").read_text(encoding="utf-8").strip()
@@ -612,10 +612,19 @@ def shadow_questions(state: dict) -> tuple[dict, str]:
     return qs, "review-contract-shadow-3:" + verification.sha({"rubric": SHADOW, "questions": qs})[:16]
 
 
-def room(state: dict) -> int:
-    """State characters that still fit Jev's request body beside this state's questions: 24,000
-    alone sent nothing for a task with fifteen registered flows (`state_too_large`)."""
-    return min(CONTEXT_CHARS, decision.MAX_BODY - len(json.dumps(shadow_questions(state)[0])) - 8000)
+def fit_body(state: dict) -> dict | None:
+    """`state` fitted in place until it and its own questions fit Jev's request body in UTF-8 bytes;
+    `None` when they cannot. The questions shrink with the grounds, so each cut is measured again:
+    24,000 characters alone sent nothing for a task with fifteen registered flows (`state_too_large`)."""
+    while True:
+        qs = {k: q["question"] for k, q in shadow_questions(state)[0].items()}
+        over = len(decision.wire("m" * 64, state, qs)) - decision.MAX_BODY
+        chars = len(json.dumps(state, ensure_ascii=False))
+        if over <= 0 and chars <= CONTEXT_CHARS:
+            return state
+        # One passage or 256 diff characters per pass: the excess counts questions that shrink with it.
+        if fitted(state, min(CONTEXT_CHARS, chars - 1 if over > 0 else chars)) is None:
+            return None
 
 
 def shadow_recommendations(req: dict, res: dict, policy=POLICY) -> list[dict]:
@@ -631,7 +640,8 @@ def shadow_recommendations(req: dict, res: dict, policy=POLICY) -> list[dict]:
             continue
         basis = res["answers"][f"basis:{cid}"]["choice"]
         trusted = res["verdicts"].get(f"basis:{cid}") == "yes" and basis != decision.DEFER
-        add = req["policy_version"] == POLICY.version and answer["probabilities"].get("add", 0) >= ADD_AT
+        add_at = policy.rules["action"].get("add_at")
+        add = add_at is not None and answer["probabilities"].get("add", 0) >= add_at
         rows.append({"candidate_id": cid, "choice": "add" if add else answer["choice"],
                      "verdict": "yes" if add else res["verdicts"][cid], "basis_refs": [basis] if trusted else [],
                      "ground_status": "cited" if trusted else "unsupported"})
@@ -688,7 +698,7 @@ def shadow(spec: dict, paths: list[str] | None, contract: dict, halt, *, budget=
         # Normalization changes prose, never which original ground an answer names.
         for original, normalized in zip(grounds, state_en["grounds"]):
             normalized["id"] = original["id"]
-        if fitted(state_en, room(state_en)) is None:   # English can run longer than the Korean it came from
+        if fit_body(state_en) is None:   # English can run longer than the Korean it came from
             raise ValueError("normalized_context_too_large")
         kept = {g["id"] for g in state_en["grounds"]}
         out.update(context_refs=[r for r in out["context_refs"] if r in kept],

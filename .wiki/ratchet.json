@@ -108,8 +108,8 @@
     },
     "tool/main/review_contract.py": {
       "dup": 0,
-      "lines": 820,
-      "reason": "The review shadow asks each candidate against its own required/unneeded conditions (rubric text moved out to tool/prompts/review-shadow.json), fits its state beside the questions in Jev's 100 kB body (`room`), and adds a candidate unless Jev is three quarters sure it is unneeded (`ADD_AT`): on 2026-11-04 Claude-labelled real tasks the held-out required recall went from 0.03 to 0.98 (review-shadow-golden). Before that, `fitted` was added because 892 Oct–Nov 2026 observations sent nothing as `context_too_large`."
+      "lines": 830,
+      "reason": "The review shadow asks each candidate against its own required/unneeded conditions (rubric text moved out to tool/prompts/review-shadow.json), fits its state beside the questions in Jev's 100 kB body in UTF-8 bytes (`fit_body`), and adds a candidate unless Jev is three quarters sure it is unneeded (the policy's `add_at`): on 2026-11-04 Claude-labelled real tasks the held-out required recall went from 0.03 to 0.97 (review-shadow-golden). Before that, `fitted` was added because 892 Oct–Nov 2026 observations sent nothing as `context_too_large`."
     },
     "tool/main/decisions.py": {
       "dup": 0,

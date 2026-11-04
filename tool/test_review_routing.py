@@ -125,6 +125,21 @@ def test_production_prompt_replay_isolated_labels_frozen_families_and_live_reque
     with patch.object(decision, "evaluate", side_effect=live):
         live_row = production.sample(case, decision.Config("active", "test", "default", key="test"))
     assert live_row["predicted"] == row["predicted"] and sent == [(state, {k: v["question"] for k, v in qs.items()})]
+    # A record frozen under an earlier prompt is asked again only with --rebuild, and the row names the
+    # request actually sent, keeping the record's own identity apart.
+    earlier = copy.deepcopy(case)
+    frozen = earlier["record"]
+    next(iter(frozen["request"]["questions"].values()))["question"]["instructions"] = "An earlier prompt."
+    frozen["request"]["prompt_version"] = "review-contract-shadow-2:earlier"
+    frozen["frozen_digest"] = verification.sha({"request": frozen["request"], "result": frozen["result"]})
+    cfg = decision.Config("active", "test", "default", key="test")
+    with patch.object(decision, "evaluate", side_effect=live):
+        with pytest.raises(ValueError, match="differs"):
+            production.sample(earlier, cfg)
+        rebuilt = production.sample(earlier, cfg, rebuild=True)
+    assert (rebuilt["source_prompt_version"], rebuilt["prompt_version"]) == ("review-contract-shadow-2:earlier", version)
+    assert rebuilt["request"]["questions"] == qs
+    assert rebuilt["context_digest"] == verification.sha(rebuilt["request"]["state_en"])
     path = tmp_path / "evaluation.json"
     data = {"schema": "review-shadow-evaluation/1", "labels": {"reviewed_by": None}, "cases": [case]}
     path.write_text(json.dumps(data), encoding="utf-8")
@@ -146,3 +161,42 @@ def test_production_prompt_replay_isolated_labels_frozen_families_and_live_reque
     path.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(ValueError, match="leaks"):
         production.load(path)
+
+
+def test_one_cut_off_label_reply_keeps_the_other_paid_answers(tmp_path):
+    import http.client
+
+    from eval import review_shadow_labels as labeller
+
+    class CutOff:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self):
+            raise http.client.IncompleteRead(b"{", 100)
+
+    offered = {"criteria:async": ("a", "b")}
+    with patch.object(labeller, "candidates", return_value=offered), patch.object(labeller, "prompt", return_value="x"), \
+         patch.object(labeller.urllib.request, "urlopen", return_value=CutOff()), patch.object(labeller.time, "sleep"):
+        assert labeller.answered("fixture-key", {})["error"].startswith("transport: IncompleteRead")
+
+    def ask(key, request):
+        if not request["ok"]:
+            raise StopIteration   # a reply without the expected text block
+        return {"labels": {"criteria:async": {"id": "criteria:async", "label": "required", "reason": "Fixture."}},
+                "usage": {"input_tokens": 1, "output_tokens": 1}}
+
+    state = {"baseline": {"criteria": ["code"], "evidence": ["offline"]}, "selected_flows": []}
+    records = [("r", "ok", {"attempt_id": "a", "request": {"ok": True, "state_en": state}}),
+               ("r", "bad", {"attempt_id": "b", "request": {"ok": False, "state_en": state}})]
+    out = tmp_path / "labels.json"
+    with patch.object(labeller.settings, "pick", return_value=("fixture-key", "fixture")), \
+         patch.object(labeller, "records", return_value=records), patch.object(labeller, "candidates", return_value=offered), \
+         patch.object(contract, "replay_shadow"), patch.object(labeller, "ask", side_effect=ask):
+        assert labeller.main(["--out", str(out)]) == 1
+    written = json.loads(out.read_text(encoding="utf-8"))
+    assert [c["family"] for c in written["cases"]] == ["ok"]
+    assert [f["spec"] for f in written["labels"]["failed"]] == ["bad"]

@@ -901,17 +901,31 @@ BARE = {"profile": "code", "criteria": ["code"], "evidence": ["offline"], "probl
         "manifest_digest": "", "digest": "bare"}
 
 
-def test_a_candidate_is_added_unless_jev_is_three_quarters_sure_it_is_not_needed():
+def test_a_candidate_is_added_unless_jev_is_three_quarters_sure_and_replays_under_its_own_threshold():
     record = audit_record(BARE)
-    req, res = record["request"], record["result"]
-    res["answers"]["criteria:data"]["probabilities"] = {"add": 0.3, "skip": 0.69, decision.DEFER: 0.01}
-    rows = {r["candidate_id"]: r for r in contract.shadow_recommendations(req, res)}
-    assert (rows["criteria:data"]["choice"], rows["criteria:data"]["verdict"]) == ("add", "yes")
-    assert rows["criteria:async"]["choice"] == "skip"
-    # A record frozen under an earlier policy replays as it was decided.
-    req["policy_version"] = res["policy_version"] = "review-contract-shadow-2"
-    old = {r["candidate_id"]: r for r in contract.shadow_recommendations(req, res)}
-    assert old["criteria:data"]["choice"] == "skip"
+    answer = record["result"]["answers"]["criteria:data"]
+    answer.update(choice="skip", confidence=0.69, probabilities={"add": 0.3, "skip": 0.69, decision.DEFER: 0.01})
+    record["result"]["verdicts"]["criteria:data"] = decision.verdict(contract.POLICY, "action", answer)
+    record["frozen_digest"] = verification.sha({"request": record["request"], "result": record["result"]})
+
+    def pick():
+        rows = {r["candidate_id"]: r for r in contract.replay_shadow(record)["recommendations"]}
+        return rows["criteria:data"]["choice"], rows["criteria:data"]["verdict"], rows["criteria:async"]["choice"]
+
+    assert pick() == ("add", "yes", "skip")
+    # The threshold is a rule of the recorded policy: a later global policy leaves the record as decided.
+    with patch.object(contract, "POLICY", decision.Policy("review-contract-shadow-4", {"action": {
+            "confidence": 0.6, "margin": 0.2}})):
+        assert pick() == ("add", "yes", "skip")
+    # A record frozen under a policy without the rule keeps its own choice.
+    before = decision.Policy("review-contract-shadow-2", {"action": {"confidence": 0.6, "margin": 0.2}})
+    rows = {r["candidate_id"]: r for r in contract.shadow_recommendations(record["request"], record["result"], before)}
+    assert rows["criteria:data"]["choice"] == "skip"
+
+
+def body(state):
+    qs, _ = contract.shadow_questions(state)
+    return len(decision.wire("jev-1.13.0", state, {k: q["question"] for k, q in qs.items()}))
 
 
 def test_many_registered_flows_still_fit_one_jev_request_body():
@@ -919,7 +933,30 @@ def test_many_registered_flows_still_fit_one_jev_request_body():
     state = {"baseline": {k: BARE[k] for k in ("profile", "criteria", "evidence", "problems")},
              "selected_flows": [], "registered_flows": flows, "observations": {},
              "grounds": [{"id": "ground:diff", "kind": "diff", "locator": "diff", "text": "+" * 40000}]}
-    assert contract.fitted(state, contract.room(state)) is not None
-    qs, _ = contract.shadow_questions(state)
-    assert "x" * 600 not in json.dumps(qs)
-    assert len(decision.wire("jev-1.13.0", state, qs)) <= decision.MAX_BODY
+    assert contract.fit_body(state) is not None
+    assert "x" * 600 not in json.dumps(contract.shadow_questions(state)[0])
+    assert body(state) <= decision.MAX_BODY
+
+
+def test_dropping_grounds_shrinks_the_questions_and_the_body_is_measured_again():
+    """Every basis question lists each ground: a limit taken before the cut refused a request that fits."""
+    flows = [{"id": f"f{i}", "title": f"Flow {i}", "kind": "api", "paths": ["x.py"], "environments": ["local"],
+              "assertions": [{"id": "a", "expected": "Responds successfully"}]} for i in range(16)]
+    kinds = ["spec"] * 13 + ["flow", "diff"] + ["retrieved"] * 8
+    state = {"baseline": {"criteria": ["code"], "evidence": ["offline"]}, "selected_flows": [], "observations": {},
+             "registered_flows": flows,
+             "grounds": [{"id": "ground:" + str(i).zfill(64), "kind": k, "text": "x" * 100} for i, k in enumerate(kinds)]}
+    assert body(state) > decision.MAX_BODY
+    assert contract.fit_body(state) is not None
+    # Only as many passages go as the body needs.
+    assert body(state) <= decision.MAX_BODY and 0 < [g["kind"] for g in state["grounds"]].count("retrieved") < 8
+
+
+def test_the_body_limit_is_counted_in_utf8_bytes_not_characters():
+    smile = chr(0x1F600)
+    state = {"baseline": {"criteria": ["code"], "evidence": ["offline"]}, "selected_flows": [], "registered_flows": [],
+             "observations": {}, "goal": "Implement emoji support " + smile * 8500}
+    state["grounds"] = [{"id": "s", "kind": "spec", "text": state["goal"]}, {"id": "d", "kind": "diff", "text": smile * 6000}]
+    assert len(json.dumps(state, ensure_ascii=False)) <= contract.CONTEXT_CHARS < body(state) // 4
+    assert contract.fit_body(state) is not None
+    assert body(state) <= decision.MAX_BODY

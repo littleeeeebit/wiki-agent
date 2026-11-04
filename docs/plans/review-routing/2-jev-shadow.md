@@ -199,7 +199,7 @@ Active mode is not required to complete this stage and is not enabled by it.
 | 1 | Baseline shadow | Closed facet advice, bounded call and non-interference | Done — current focused suite |
 | 2 | Ground context | Scoped retrieval and registered flow candidates | Done — bounded v2 context and closed flow/ground questions implemented |
 | 3 | Persist lifecycle | Preparation/stale observations, ground refs and replay | Done — spec-owned attempts, identity recheck, unsupported grounds and offline replay implemented; live transport acceptance remains part of evaluation |
-| 4 | Evaluate | Human-reviewed labels and production-prompt validation | In progress — on Claude-labelled real tasks, shadow-3 reached 0.97 held-out accuracy and 0.98 required recall (below); human-reviewed labels and a fresh set of tasks remain |
+| 4 | Evaluate | Human-reviewed labels and production-prompt validation | In progress — on Claude-labelled real tasks, shadow-3 reached 0.95 held-out accuracy and 0.97 required recall (below); human-reviewed labels and a fresh set of tasks remain |
 
 ## Observed in production (2026-11-04)
 
@@ -267,12 +267,13 @@ The changes, all fitted on calibration families only:
   its own "required when" and "not required when" conditions. The conditions
   live in `tool/prompts/review-shadow.json`; the labeller shows Claude the same
   ones. A registered flow is named by id, not copied into every question.
-- `room`. The state is fitted beside its questions inside Jev's 100 kB request
-  body. A task with fifteen registered flows had sent nothing
-  (`state_too_large`).
-- `ADD_AT = 0.25`. A candidate is added unless Jev puts more than three
-  quarters on not adding it. A record frozen under shadow-2 still replays as it
-  was decided.
+- `fit_body`. The state is fitted beside its questions inside Jev's 100 kB
+  request body, counted in UTF-8 bytes. The body is measured again after each
+  passage or diff cut, since the basis questions list every ground. A task with
+  fifteen registered flows had sent nothing (`state_too_large`).
+- `add_at = 0.25`, a rule of the recorded policy. A candidate is added unless
+  Jev puts more than three quarters on not adding it. Each record replays under
+  its own policy, so a record frozen under shadow-2 replays as it was decided.
 
 On calibration, the questions alone gave 0.92 accuracy and 0.77 recall at the
 0.6 bar. Lowering the bar was the larger lever: 0.94 and 0.96. Sharpening
@@ -280,11 +281,21 @@ the weak conditions (documentation and plans, security, data, api, desktop,
 differential) moved little. The conditions, the threshold and a third set of
 labels were then frozen, and the held-out families were run once:
 
-| Held-out, shadow-3, `ADD_AT` | Value | 95% Wilson lower bound |
-| --- | ---: | ---: |
-| Accuracy | 216/223 = 0.969 | 0.937 |
-| Required recall | 59/60 = 0.983 | 0.911 |
-| Wrong candidates added | 5 | — |
+| Held-out, shadow-3, `add_at` | First run | After review fixes | 95% Wilson lower bound (after) |
+| --- | ---: | ---: | ---: |
+| Accuracy | 216/223 = 0.969 | 212/223 = 0.951 | 0.914 |
+| Required recall | 59/60 = 0.983 | 59/61 = 0.967 | 0.888 |
+| Wrong candidates added | 5 | 7 | — |
+
+Both runs meet the agreed 0.9 point targets; the recall lower bound does not,
+with 61 required candidates. The second run followed the round 1 fixes (the
+body fitted in UTF-8 bytes, measured again after each cut; the threshold as a
+rule of the recorded policy). It also followed one label change. The reviewer
+spot-checked 15 held-out labels and agreed with 14. One `criteria:performance`
+became required, because acceptance set a one-minute trace latency budget. The
+fits left every labelled state as it was. The two runs differ by that label
+and by Jev's run-to-run variation. Calibration in the second run: accuracy
+0.940, recall 87/92.
 
 Limits: Claude wrote the labels and the conditions both, so this measures how
 well Jev applies Claude's reading of the conditions. One label set is

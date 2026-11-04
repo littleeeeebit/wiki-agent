@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import http.client
 import json
 import sys
 import time
@@ -58,7 +59,8 @@ def records() -> list[tuple[str, str, dict]]:
 def shown(request: dict) -> dict:
     """The state as the current shadow question would send it."""
     state = copy.deepcopy(request["state_en"])
-    contract.fitted(state, contract.room(state))
+    if contract.fit_body(state) is None:
+        raise ValueError("state does not fit the shadow request body")
     return state
 
 
@@ -94,9 +96,9 @@ def ask(key: str, request: dict) -> dict:
             with urllib.request.urlopen(req, timeout=600) as got:
                 reply = json.loads(got.read())
             break
-        except OSError as e:  # one dropped connection must not lose the other paid answers
+        except (OSError, http.client.HTTPException, ValueError) as e:  # a cut-off body included
             if attempt == 2:
-                return {"error": f"transport: {e}"}
+                return {"error": f"transport: {type(e).__name__}: {e}"}
             time.sleep(10 * (attempt + 1))
     if reply.get("stop_reason") != "end_turn":
         return {"error": reply.get("stop_reason"), "usage": reply.get("usage")}
@@ -105,6 +107,14 @@ def ask(key: str, request: dict) -> dict:
     if set(labelled) != set(offered):
         return {"error": "candidates_mismatch", "usage": reply["usage"]}
     return {"labels": labelled, "usage": reply["usage"]}
+
+
+def answered(key: str, request: dict) -> dict:
+    """`ask`, with any failure kept as that case's error, so the other paid answers are still written."""
+    try:
+        return ask(key, request)
+    except Exception as e:  # noqa: BLE001 — a malformed reply is one failed case, never a lost run
+        return {"error": f"{type(e).__name__}: {e}"}
 
 
 def expected(request: dict, labels: dict[str, dict]) -> dict:
@@ -134,7 +144,7 @@ def main(argv=None) -> int:
     for _, _, r in chosen:
         contract.replay_shadow(r)
     with ThreadPoolExecutor(4) as pool:
-        answers = list(pool.map(lambda c: ask(key, c[2]["request"]), chosen))
+        answers = list(pool.map(lambda c: answered(key, c[2]["request"]), chosen))
     cases, failed, tokens = [], [], [0, 0]
     for (repo, sid, record), got in zip(chosen, answers):
         usage = got.get("usage") or {}
