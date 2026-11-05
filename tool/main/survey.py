@@ -314,6 +314,7 @@ def prepare(repo: Path) -> str | None:
         "pr": None, "report": None, "gate": None, "fault": None,
         "cell": {"model": limits["survey_model"], "effort": limits["survey_effort"]},
         "survey": {"handover": handover, "first": first, "running": True},
+        "adapter": True,   # its slot turn corrects `.wiki/adapter.toml`; `guard_grant` lets it
         "history": [{"ts": now, "state": "정리됨"}, {"ts": now, "state": "작업 중"}],
     })
     progress(name, sid=sid, state="도는 중", turn=0, turns=guessed["turns"], label="", tokens=0,

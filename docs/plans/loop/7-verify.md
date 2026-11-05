@@ -71,7 +71,7 @@ Measure for each wheel.
 | # | Step | What | Status |
 | --- | --- | --- | --- |
 | 1 | Selection | Two repositories, measure size | Done — 2026-11-05, below |
-| 2 | Wheel A | From connection with investigation on to second specification | In progress — the first run stopped on a caught bug (below); restarts after its fix |
+| 2 | Wheel A | From connection with investigation on to second specification | In progress — the second run passed steps 1–7 and stopped at step 8 on two catches (below) |
 | 3 | Wheel B | One wheel of repository with investigation off | Not started |
 | 4 | Fix | What was caught | Not started |
 | 5 | Gate and cleanup | All confirmations, move to `done/` | Not started |
@@ -119,3 +119,44 @@ untracked `.wiki/` outputs is uncommitted, and names it. The wiring is committed
 survey branch right after the adapter (`wiki: [연결] 배선`), so it goes up
 with the wiki instead of being swept, stashed by a cut turn or read as a
 dirty checkout by the report's gate (PR #296 round 1).
+
+### Wheel A, second run (2026-11-05, app on `aabc20d`)
+
+| Step | Seen |
+| --- | --- |
+| 1–4 | As in the first run: folder added and [Connect] answered through the page's requests, both probes passed, `gate_cmd 빈 칸` left |
+| 5 | Estimate 6 turns, 121,234 tokens, 658 seconds; actual 6 turns, 130,119 tokens (30,207 / 36,449 / 34,777 / 7,597 / 17,582 / 3,507), 731 seconds from the first turn to the pull request. The branch started with `wiki: adapter` and `wiki: [연결] 배선`; no turn's settle commit touched anything outside `.wiki/`, and no revert commit appeared |
+| 6 | PR #1 at `cde3f0b`: 39 files, the only one outside `.wiki/` the wiring `.claude/settings.json`. The loop did not start by itself; [Review loop] → [Start (1)] started it. R1 allowed with no findings (137 s). [Merge] pushed the preparation commit `60fe2b3` (`.wiki/graph.json` only), R2 allowed it with no findings (44 s) and the merge went on without another click: squash `4e39c44`. The original is back on a clean `main`, `wiki-bootstrap` is gone locally and on the remote, `.wiki/adapter.toml` is tracked, `.git/wiki-connect/` is absent and the handover is `완료`. Human clicks: 3 |
+| 7 | The map shows 36 pages, 0 orphans, 0 warnings: the `src` and `public` modules, `how_to`, `README`, `README-KO`, `project` and six rule pages. Decision records show only as commit hashes |
+| 8 | [Propose candidates] vanished before it could be pressed (below); the same request sent from the page returned four candidates in 31 s, one of them "Fill gate_cmd, live_cmd and server_stop in `.wiki/adapter.toml`". Picking it returned no spec (below) |
+
+Caught.
+
+- The next-task focus shows [Propose candidates] only while it is empty
+  (`Query.tsx` `empty`). The survey pull request's result rows land there
+  first, so the button showed for a moment after the focus opened and was
+  gone once the log loaded; no control on the screen asks for candidates
+  after that.
+- Every spec, plan, refactor and spec edit is refused while `gate_cmd` is
+  empty (`specs.py:651`, `planning.py:1210`, `refactor_api.py:91`), so the
+  candidate that fills the empty slots can never become a spec: the wheel
+  dead-ends at step 8. The survey wrote `.wiki/gate-lint-and-build.md`
+  (CI runs `npm run lint` then `npm run build`) but left `gate_cmd` empty,
+  though the overview lets it correct the slots: its slot turn found
+  that value and was refused by the guard, which lets no agent write
+  `.wiki/adapter.toml` (`guard_grant.PROTECTED`).
+
+Fixed (the person chose to open the guard to these sessions only).
+
+- [Propose candidates] also follows the conversation once the focus has
+  rows (`Query.tsx`).
+- A spec in a repository with no `gate_cmd` is accepted with the survey's
+  wiki checks standing in as its gate, carries "`gate_cmd` in
+  `.wiki/adapter.toml` names what must pass before a change here…" as a
+  done item, and is flagged `adapter` (`specs.answered`, `specs.gated`
+  for revisions). The survey spec carries the same flag.
+- `guard_grant` opens exactly that checkout's `.wiki/adapter.toml` to a
+  task whose hub spec is flagged, for writes only, and only while no link
+  stands at that path; every other protected file stays closed. Review and
+  [Merge] judge the slots it wrote, and once filled the server's worktree
+  gate reads them (`specs.py` `gate_of(repo, path)`).

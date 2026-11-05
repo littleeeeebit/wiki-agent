@@ -297,6 +297,11 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
 
   const here = channels.find((c) => c.id === active)
   const busy = busyOn.includes(slot(active)) || configuring
+  // Result rows (a pull request opened or merged) land here too, so the button stays after the focus fills.
+  const propose = (
+    <Btn tone="primary" disabled={busy} onClick={() => void send('', true)}
+      title="계획의 남은 행, 열린 PR, 최근 결정, 경고를 모아 다음 작업 후보를 낸다">후보 내기</Btn>
+  )
   const latestSpec = new Map(messages.flatMap((m) => (m.blocks ?? [])
     .flatMap((b) => b.name === 'spec' && 'id' in b ? [[b.id, m] as const] : [])))
   // Every card, refactoring included, starts on the work model, not this conversation's.
@@ -455,7 +460,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
                   specs={specs} korean={on} busy={busy} refactorMode={here.refactor_mode ?? 'preserve'}
                   refactorGeneration={here.refactor_generation} options={options}
                   onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} />)}
-            </div>}
+            </div> || active === 'next' && messages.length > 0 && propose}
             messages={active === 'next' && selectedSpec && !selectedSpec.refactor?.mode && !messages.some((m) => m.blocks?.some((b) => b.name === 'spec' && 'id' in b && b.id === selectedSpec.id))
               ? [...messages, { role: 'assistant', text: '', tools: [], blocks: [{ name: 'spec', id: selectedSpec.id }] }]
               : messages}
@@ -473,10 +478,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
                 refactorGeneration={here?.refactor_generation} options={options}
                 onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} />
             ) : undefined}
-            empty={active === 'next' ? (
-              <Btn tone="primary" disabled={busy} onClick={() => void send('', true)}
-                title="계획의 남은 행, 열린 PR, 최근 결정, 경고를 모아 다음 작업 후보를 낸다">후보 내기</Btn>
-            ) : active === 'refactor' ? <span /> : undefined}
+            empty={active === 'next' ? propose : active === 'refactor' ? <span /> : undefined}
           />
           <Composer busy={busy} onSend={send} seed={typed} />
         </div>

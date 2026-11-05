@@ -596,6 +596,35 @@ def test_a_plan_task_writes_only_under_its_artifact_root(repo, monkeypatch, tmp_
     assert "쓰기 루트 밖이다" in call(repo, "echo x > tool/a.py")
 
 
+@pytest.mark.parametrize("fills", [True, False])
+def test_a_task_that_fills_the_slots_may_write_the_adapter_and_nothing_else_protected(repo, monkeypatch, tmp_path,
+                                                                                       fills):
+    hub = tmp_path / "hub" / "tool"
+    (hub.parent / "raw/specs/repo").mkdir(parents=True)
+    (hub.parent / "raw/specs/repo/task.json").write_text(json.dumps(
+        {"worktree": str(repo), **({"adapter": True} if fills else {})}), encoding="utf-8")
+    monkeypatch.setattr(guard_grant, "HERE", hub)
+    adapter = str(repo / ".wiki/adapter.toml")
+    for denied in (call(repo, tool="Edit", file_path=adapter, old_string="a", new_string="b"),
+                   call(repo, "git add .wiki/adapter.toml")):
+        assert (denied is None) is fills, denied
+    for protected in (".claude/settings.json", "verification.toml", ".git/config"):
+        assert "허가를 정하는 파일" in call(repo, tool="Write", file_path=str(repo / protected), content="")
+    assert "허가를 정하는 파일" in call(repo, "rm .wiki/adapter.toml"), "열린 것은 쓰기뿐이다"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a symbolic link needs a privilege Windows withholds by default")
+def test_an_adapter_that_is_a_link_stays_protected_for_a_task_that_fills_the_slots(repo, monkeypatch, tmp_path):
+    hub = tmp_path / "hub" / "tool"
+    (hub.parent / "raw/specs/repo").mkdir(parents=True)
+    (hub.parent / "raw/specs/repo/task.json").write_text(json.dumps({"worktree": str(repo), "adapter": True}),
+                                                          encoding="utf-8")
+    monkeypatch.setattr(guard_grant, "HERE", hub)
+    (repo / ".wiki/adapter.toml").unlink()
+    (repo / ".wiki/adapter.toml").symlink_to(repo / ".git/config")
+    assert "허가를 정하는 파일" in call(repo, tool="Write", file_path=str(repo / ".wiki/adapter.toml"), content="")
+
+
 def test_unmanaged_sessions_and_unattached_folders_pass(repo, monkeypatch, tmp_path):
     assert call(tmp_path, "rm -rf /c/x") is None
     monkeypatch.delenv("WIKI_AGENT_MANAGED")
