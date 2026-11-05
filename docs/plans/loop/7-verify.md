@@ -71,7 +71,7 @@ Measure for each wheel.
 | # | Step | What | Status |
 | --- | --- | --- | --- |
 | 1 | Selection | Two repositories, measure size | Done — 2026-11-05, below |
-| 2 | Wheel A | From connection with investigation on to second specification | Done — the second run reached the second spec, and it merged on 2026-11-05 after #297; three catches remain for step 4 (below) |
+| 2 | Wheel A | From connection with investigation on to second specification | Done — the second run reached the second spec, and it merged on 2026-11-05 after #297; two catches remain for step 4 (below) |
 | 3 | Wheel B | One wheel of repository with investigation off | Not started |
 | 4 | Fix | What was caught | Not started |
 | 5 | Gate and cleanup | All confirmations, move to `done/` | Not started |
@@ -178,8 +178,9 @@ Caught.
   in the log the proposal reads.
 - The loop again waited for [Review loop] after the pull request opened,
   as in step 6.
-- The merge's final gate ran only the stand-in `git diff --check`
-  (selection `deferred`). The `npm run lint && npm run build` the task had
-  just filled never ran on the change that filled it. The next spec reads
-  the filled gate, but the change that defines a gate merges without
-  running it.
+
+Checked, not a catch. The round gate ran the stand-in `git diff --check`
+(selection `deferred`). The final validation before [Merge] ran the
+filled `npm run lint && npm run build` with the debt check, and it passed
+on the approved head `7ccfa62` at 13:45, before the merge at 13:49
+(`validation.final` in the spec record).
