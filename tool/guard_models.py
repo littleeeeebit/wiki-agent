@@ -767,11 +767,14 @@ def run_argv(words: list, ctx) -> tuple[set, object]:
 
 def modelled(model, name: str, args: list, ctx) -> tuple[set, object]:
     """A model that fails on what it reads (a decode, a resolver, a missing file) makes only this command
-    unreadable: the rest of the call is still judged, rather than the whole hook giving up. Parse limits keep
+    unreadable: the rest of the call is still judged, rather than the whole hook giving up. What it may
+    write is still what its words name, so each word that is not a flag is judged as a write: a protected
+    name or a place outside the roots is refused, an ordinary word lands in the checkout. Parse limits keep
     their own meaning for the whole call."""
     try:
         return model(name, args, ctx)
     except (Unclosed, Unbounded, RecursionError):
         raise
     except Exception as error:
-        return top(f"{name}: the guard could not read it ({type(error).__name__})"), None
+        named = set().union(*(paths("write", w, ctx) for w in args if not w.text.startswith("-")))
+        return top(f"{name}: the guard could not read it ({type(error).__name__})") | named, None
