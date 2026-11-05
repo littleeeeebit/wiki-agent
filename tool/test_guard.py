@@ -1124,6 +1124,43 @@ def test_a_linked_worktree_is_removed_with_its_copies_and_nothing_else(repo, mon
     assert "링크나 접합점" in (call(repo, remove) or "")
 
 
+def test_one_part_that_fails_to_read_leaves_the_rest_of_the_call_judged(repo, monkeypatch):
+    """A failure while collecting one command's effects, or while judging one effect, used to escape and
+    skip the hook for the whole call, a protected write beside it included."""
+    protected = "printf x > .wiki/adapter.toml"
+
+    def broken(*_args):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    own_repo = guard_git.own_repo
+    monkeypatch.setattr(guard_git, "own_repo", broken)       # the source checkout's metadata will not decode
+    # Its destinations went with the failure (option values, a `-C` base), so the command itself refuses.
+    for command in ("git status", "git restore -- .wiki/adapter.toml", "git -C sub worktree add ../../x HEAD"):
+        assert "읽다 실패했다" in (call(repo, command) or ""), command
+    assert call(repo, "echo ok") is None
+    reason = call(repo, f"git status; {protected}") or ""
+    assert "읽다 실패했다" in reason and "허가를 정하는 파일" in reason
+    monkeypatch.setattr(guard_git, "own_repo", own_repo)
+
+    def unresolvable(*_args, **_kw):
+        raise ValueError("embedded null character in path")
+
+    monkeypatch.setattr(guard_grant, "holds_protected", unresolvable)   # a NUL, a lost cwd, a moved root
+    reason = call(repo, f"rm -rf build; {protected}") or ""
+    assert "확인하지 못했다(ValueError)" in reason and "허가를 정하는 파일" in reason
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junctions are Windows'")
+def test_a_junction_is_found_without_the_312_entry_api(repo, tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    out.mkdir()
+    (repo / "dir").mkdir()
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(repo / "dir" / "link"), str(out)], check=True, capture_output=True)
+    monkeypatch.setattr(guard_grant, "TYPED_JUNCTIONS", False)          # Python 3.11
+    assert guard_grant.holds_protected(str(repo / "dir")) is True
+    assert guard_grant.holds_protected(str(repo / "dir" / "link")) is True
+
+
 def test_a_powershell_assignment_written_as_one_word_is_still_an_assignment():
     assert effects("$env:PYTHONIOENCODING='utf-8'; $x='rm'; $n+=1; git status", "ps") == {"read"}
 

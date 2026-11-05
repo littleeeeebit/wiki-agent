@@ -959,8 +959,19 @@ def run_dir(cwd: Path, given: dict) -> str | None:
     return posix(cwd)
 
 
+def judged(effect: tuple, g) -> str | None:
+    """`outside(effect, g)`, where a check that fails on the place it looks at (a NUL, a lost directory, a
+    root moved between two looks) refuses that one effect instead of skipping the whole call."""
+    from guard_grant import outside
+
+    try:
+        return outside(effect, g)
+    except Exception as error:
+        return f"가드가 이 경로를 확인하지 못했다({type(error).__name__}) — 경로를 바로잡거나 사람이 직접 실행한다"
+
+
 def verdict(payload: dict, host: str = "claude") -> dict | None:
-    from guard_grant import grant, outside, temps
+    from guard_grant import grant, temps
 
     if os.environ.get("WIKI_AGENT_MANAGED") != "1":
         return None
@@ -974,7 +985,7 @@ def verdict(payload: dict, host: str = "claude") -> dict | None:
         return None
     ctx = Ctx("posix", frozenset({run_dir(cwd, given) if tool in SHELL_TOOLS else posix(cwd)}),
               posix(Path.home()), temps()[0].as_posix(), os.name == "nt", remotes=g.remotes, repo=g.top)
-    bad = [(render(e), why) for e in sorted(call_effects(tool, given, ctx, host, payload)) if (why := outside(e, g))]
+    bad = [(render(e), why) for e in sorted(call_effects(tool, given, ctx, host, payload)) if (why := judged(e, g))]
     if not bad:
         return None
     lines = ["위키 효과 검사가 이 호출을 막았다 — 작업에 허가된 효과 밖이다."]

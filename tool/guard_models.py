@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 import os
 import re
 
-from guard import BLOCK, Word, code, moved_to, names_set, paths, resolve, top
+from guard import BLOCK, Unbounded, Unclosed, Word, code, moved_to, names_set, paths, resolve, top
 
 KEYWORDS = {
     "posix": {"if", "then", "elif", "else", "fi", "do", "done", "while", "until", "{", "}", "!", "time", "for",
@@ -748,9 +748,9 @@ def run_argv(words: list, ctx) -> tuple[set, object]:
         from guard_windows import CMD_BUILTINS, cmd_builtin, cmdlet, ps_cmdlet
 
         if ctx.d == "ps" and (canon := cmdlet(raw, ctx.windows)):
-            return ps_cmdlet(canon, args, ctx)
+            return modelled(ps_cmdlet, canon, args, ctx)
         if ctx.d == "cmd" and raw.lstrip("@").lower() in CMD_BUILTINS:
-            return cmd_builtin(raw.lstrip("@").lower(), args, ctx)
+            return modelled(cmd_builtin, raw.lstrip("@").lower(), args, ctx)
     name = exe(raw, ctx.windows)
     r = TABLE.get(name)
     if r is None and ctx.d == "posix" and raw in ("command", "export"):
@@ -762,4 +762,17 @@ def run_argv(words: list, ctx) -> tuple[set, object]:
         return {("spawn", name)}, None
     if stop := gate(name, args, r):
         return stop, None
-    return r.model(name, args, ctx)
+    return modelled(r.model, name, args, ctx)
+
+
+def modelled(model, name: str, args: list, ctx) -> tuple[set, object]:
+    """A model that fails on what it reads (a decode, a resolver, a missing file) refuses only this command,
+    and the rest of the call is still judged rather than the whole hook giving up. Its destinations went
+    with the failure (option values, a `-C` base), so passing it could pass a protected write. Parse
+    limits keep their own meaning for the whole call."""
+    try:
+        return model(name, args, ctx)
+    except (Unclosed, Unbounded, RecursionError):
+        raise
+    except Exception as error:
+        return {("unread", f"{name}: {type(error).__name__}")}, None

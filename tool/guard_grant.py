@@ -22,7 +22,7 @@ import re
 import shutil
 import tempfile
 
-from common import layout  # noqa: F401 -- `guard_git.common_dir` reads it from here
+from common import is_junction, layout  # noqa: F401 -- `guard_git.common_dir` reads `layout` from here
 from guard import HERE, contained, real_path
 
 
@@ -237,6 +237,8 @@ def protected_below(target: str, roots: list) -> bool:
 
 # The most entries a delete's folder is looked through for protected names; a larger one is denied.
 WALK = 20000
+# `DirEntry.is_junction` arrives in 3.12; before it, the entry's reparse tag answers.
+TYPED_JUNCTIONS = hasattr(os.DirEntry, "is_junction")
 
 
 def holds_protected(target: str, copies: bool = False) -> bool:
@@ -244,8 +246,9 @@ def holds_protected(target: str, copies: bool = False) -> bool:
     contents are another folder's, which some deleters follow), or the folder is too large to look through.
     With `copies`, `target` is a linked worktree: its own `.git` file and its copies of the other names go
     with it, and only a link, a junction or a repository below it counts."""
-    if os.path.islink(target) or os.path.isjunction(target):
+    if os.path.islink(target) or is_junction(target):
         return True
+    typed = TYPED_JUNCTIONS
     seen, stack = 0, [top := real_path(target)]
     while stack:
         folder = stack.pop()
@@ -259,7 +262,7 @@ def holds_protected(target: str, copies: bool = False) -> bool:
             for e in entries:
                 seen += 1
                 name = e.name.lower()
-                if seen > WALK or e.is_symlink() or e.is_junction() or name == ".git" and not (copies and folder == top) \
+                if seen > WALK or e.is_symlink() or (e.is_junction() if typed else is_junction(e.path)) or name == ".git" and not (copies and folder == top) \
                         or not copies and (name in (".claude", ".codex", "verification.toml")
                                            or name == "adapter.toml" and os.path.basename(folder).lower() == ".wiki"):
                     return True
@@ -291,6 +294,8 @@ def outside(effect: tuple, g: Grant) -> str | None:
     # Open by default: a form the guard cannot read, and any program it starts, pass.
     if kind in ("read", "top", "spawn"):
         return None
+    if kind == "unread":
+        return "가드가 이 명령을 읽다 실패했다 — 다시 실행해 보고, 계속되면 사람이 직접 실행한다"
     if kind == "network":
         return None if target in g.hosts else \
             f"원격 저장소가 아닌 호스트({target})로 보낸다 — `git remote add` 로 원격을 먼저 더하면 열린다"
