@@ -3155,3 +3155,13 @@ def test_the_rail_reads_again_only_the_spec_files_that_changed(tmp_path, monkeyp
     (tmp_path / "a" / "fix-old.json").unlink()
     assert [(r["repo"], r["id"]) for r in loop.looping()] == [("a", "fix-new"), ("b", "fix-done")]
     assert read == ["fix-done"] and len(loop._rows) == 2
+
+    # A refused read (Windows mid-replace) is asked again, and a known row stays shown meanwhile.
+    put("a", "fix-new", "멈춤", 2.0)
+    monkeypatch.setattr(specs, "load", lambda repo, sid: None)
+    assert [r["id"] for r in loop.looping()] == ["fix-new", "fix-done"]
+    put("c", "fix-late", "리뷰 R1", 4.0)
+    assert [r["id"] for r in loop.looping()] == ["fix-new", "fix-done"]
+    monkeypatch.setattr(specs, "load", real)
+    assert [(r["id"], r["state"]) for r in loop.looping()] == [
+        ("fix-new", "멈춤"), ("fix-done", "리뷰 대기"), ("fix-late", "리뷰 R1")]

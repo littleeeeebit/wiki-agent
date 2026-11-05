@@ -271,14 +271,14 @@ export default function App() {
     const stop = new AbortController()
     const seen = new Map<string, LoopRow>()
     let timer: number | undefined
-    // One burst of reads at a time: on a busy server bursts 800 ms apart piled up and a
-    // project switch waited behind them all. Changes during a burst read once after it.
+    // One burst of reads at a time (bursts 800 ms apart piled up on a busy server and a switch waited
+    // behind them); changes during one are read once after it, spending any debounce still pending.
     let reading = false, again = false
     const burst = () => {
       reading = true
       void Promise.allSettled([refresh(), readSpecs(), readLoops(), readPrs()]).finally(() => {
         reading = false
-        if (again && !stop.signal.aborted) { again = false; burst() }
+        if (again && !stop.signal.aborted) { again = false; window.clearTimeout(timer); burst() }
       })
     }
     const soon = () => {

@@ -2790,28 +2790,35 @@ def start(body: Pick) -> dict:
 # Spec file -> ((mtime_ns, size), its rail row without `waiting`, its birth). Every screen reads `/api/loops` after
 # each spec change; parsing every project's specs (over 100 MB) each time held a core and stalled project switches.
 _rows: dict[Path, tuple[tuple[int, int], dict | None, float]] = {}
+_rows_lock = threading.Lock()   # one reader fills a miss; the others wait for it instead of parsing it again
 
 
 def looping() -> list[dict]:
     """Every project's specs in a loop state, newest first per project; only changed files are read again."""
 
     found, seen = [], set()
-    for file in specs.SPECS.glob("*/*.json"):
-        try:
-            stat = file.stat()
-        except OSError:
-            continue
-        key, seen_row = (stat.st_mtime_ns, stat.st_size), _rows.get(file)
-        seen.add(file)
-        if seen_row is None or seen_row[0] != key:
-            spec = specs.load(file.parent.name, file.stem) if specs.TASK.fullmatch(file.stem) else None
-            row = {k: v for k, v in specs.summary(spec).items() if k != "waiting"} if spec and (
-                LOOPING.fullmatch(spec["state"]) or spec["state"] in ("머지 가능", "머지 대기", "멈춤")) else None
-            seen_row = _rows[file] = (key, row, spec["history"][0]["ts"] if spec else 0.0)
-        if seen_row[1]:
-            found.append(seen_row)
-    for gone in set(_rows) - seen:
-        _rows.pop(gone, None)
+    with _rows_lock:
+        for file in specs.SPECS.glob("*/*.json"):
+            try:
+                stat = file.stat()
+            except OSError:
+                continue
+            key, seen_row = (stat.st_mtime_ns, stat.st_size), _rows.get(file)
+            seen.add(file)
+            if seen_row is None or seen_row[0] != key:
+                task = specs.TASK.fullmatch(file.stem)
+                spec = specs.load(file.parent.name, file.stem) if task else None
+                if task and spec is None:   # a refused read (Windows mid-replace): asked again next time
+                    if seen_row and seen_row[1]:
+                        found.append(seen_row)
+                    continue
+                row = {k: v for k, v in specs.summary(spec).items() if k != "waiting"} if spec and (
+                    LOOPING.fullmatch(spec["state"]) or spec["state"] in ("머지 가능", "머지 대기", "멈춤")) else None
+                seen_row = _rows[file] = (key, row, spec["history"][0]["ts"] if spec else 0.0)
+            if seen_row[1]:
+                found.append(seen_row)
+        for gone in set(_rows) - seen:
+            _rows.pop(gone, None)
     found.sort(key=lambda r: (r[1]["repo"], -r[2]))
     return [{**row, "waiting": bool(row["worktree"]) and work.waiting(row["worktree"])} for _, row, _ in found]
 
