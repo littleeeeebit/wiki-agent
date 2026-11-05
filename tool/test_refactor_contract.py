@@ -48,7 +48,8 @@ SEED = ('"""Seed invariants."""\nfrom graphlib import TopologicalSorter\nimport 
 
 
 def test_what_only_the_declared_tests_read_goes_with_them(repo):
-    new = ('"""Seed invariants."""\nimport sqlalchemy as sa\n\nPARENTS = {"graph": "algorithm"}\n\n\n'
+    # The module docstring was rewritten to describe the new tests, as on the real card.
+    new = ('"""Seed invariants, by parent."""\nimport sqlalchemy as sa\n\nPARENTS = {"graph": "algorithm"}\n\n\n'
            "def test_parents():\n    assert PARENTS\n\n\n"
            "def test_milestone():\n    assert sa\n")
     assert refactor_run.contract(repo, card(repo, SEED, new, "test_acyclic", "test_branches")) == ""
@@ -76,6 +77,29 @@ def test_what_an_undeclared_test_still_reads_stays_pinned(repo):
     # `pytestmark` marks every test in the module.
     ("import pytest\n\npytestmark = pytest.mark.slow\n\n\ndef test_a():\n    pass\n\n\ndef test_b():\n    pass\n",
      "import pytest\n\n\ndef test_a():\n    pass\n"),
+    # #305 round 1, F1: a helper the head still defines may be imported by another file, so changing it is held.
+    ("def helper():\n    return True\n\n\ndef test_b():\n    assert helper()\n",
+     "def helper():\n    return False\n"),
+    # F2: a helper's `global` names a test it could replace; deleting the helper frees that test nothing.
+    ("def helper():\n    global test_a\n\n\ndef test_b():\n    helper()\n\n\ndef test_a():\n    assert False\n",
+     "def test_a():\n    assert True\n"),
+    # F3: an import of `pytestmark`, or of a test class pytest collects, is read by pytest itself.
+    ("from marks import pytestmark\n\n\ndef test_b():\n    assert pytestmark\n\n\ndef test_a():\n    assert False\n",
+     "from marks import pytestmark\npytestmark = 1\n\n\ndef test_a():\n    assert False\n"),
+    ("from support import TestKept\n\n\ndef test_b():\n    assert TestKept\n\n\ndef test_a():\n    pass\n",
+     "def test_a():\n    pass\n"),
+    # A project import runs that module; only the standard library's go.
+    ("import support\n\n\ndef test_b():\n    assert support\n\n\ndef test_a():\n    pass\n", "def test_a():\n    pass\n"),
+    # F4: a decorated helper may be a fixture registered under another name.
+    ("import pytest\n\n\n@pytest.fixture(name='db')\ndef helper():\n    return False\n\n\n"
+     "def test_b():\n    assert helper\n\n\ndef test_a(db):\n    assert db\n",
+     "import pytest\n\n\ndef test_a(db):\n    assert db\n"),
+    # A module docstring holding a doctest is a test `--doctest-modules` collects.
+    ('""">>> 1\n1\n"""\n\n\ndef test_b():\n    pass\n', '""">>> 1\n2\n"""\n'),
+    # F5: an assignment that calls something may change what an undeclared test reads.
+    ("import os\n\nREMOVED = os.environ.pop('SKIP', None)\n\n\ndef test_b():\n    assert REMOVED\n\n\n"
+     "def test_a():\n    assert os.environ.get('SKIP')\n",
+     "import os\n\n\ndef test_a():\n    assert os.environ.get('SKIP')\n"),
 ])
 def test_what_pytest_reads_by_itself_stays_pinned(repo, old, new):
     assert "기존 테스트 변경" in refactor_run.contract(repo, card(repo, old, new, "test_b"))
