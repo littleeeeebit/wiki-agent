@@ -173,6 +173,21 @@ def test_a_squash_that_main_reverted_is_not_merged(repo):
     assert "남겼다" in remove(repo, path)
 
 
+def test_the_answer_for_a_pair_of_commits_is_read_once(repo, monkeypatch):
+    # Every listing read three whole trees per worktree after each spec save; commits never change.
+    path = create(repo, "kept")
+    (path / "work.txt").write_text("work\n")
+    git(path, "add", "work.txt")
+    git(path, "commit", "-q", "-m", "work")
+    assert not worktrees(repo)[0]["merged"]
+    real, reads = subprocess.run, []
+    monkeypatch.setattr(subprocess, "run", lambda args, *a, **k: reads.append("ls-tree" in args) or real(args, *a, **k))
+    assert not worktrees(repo)[0]["merged"] and not any(reads)
+    git(repo, "merge", "-q", "--squash", "kept")
+    git(repo, "commit", "-q", "-m", "squash")
+    assert worktrees(repo)[0]["merged"] and any(reads), "a new HEAD is a new pair, read again"
+
+
 def test_the_same_change_elsewhere_in_the_file_is_not_merged(repo):
     """Two identical blocks: the branch changed one, HEAD the other."""
 

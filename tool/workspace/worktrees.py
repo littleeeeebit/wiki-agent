@@ -201,14 +201,26 @@ def merged(repo: Path, branch: str) -> bool:
 
     if not branch:
         return False
-    base = _git(repo, "merge-base", "HEAD", branch).stdout.strip()
-    if not base:
+    done = _git(repo, "rev-parse", "HEAD", f"refs/heads/{branch}")
+    oids = done.stdout.split()
+    if done.returncode or len(oids) != 2:
         return False
-    old, ours, head = _tree(repo, base), _tree(repo, branch), _tree(repo, "HEAD")
-    if old is None or ours is None or head is None:
-        return False
-    return all(head.get(path) == ours.get(path)
-               for path in old.keys() | ours.keys() if old.get(path) != ours.get(path))
+    key = (str(repo), *oids)
+    if key not in _merges:
+        base = _git(repo, "merge-base", *oids).stdout.strip()
+        if not base:
+            return False
+        old, ours, head = _tree(repo, base), _tree(repo, oids[1]), _tree(repo, oids[0])
+        if old is None or ours is None or head is None:
+            return False   # a failed read is not kept: asked again next time
+        _merges[key] = all(head.get(path) == ours.get(path)
+                           for path in old.keys() | ours.keys() if old.get(path) != ours.get(path))
+    return _merges[key]
+
+
+# Commits never change, so the answer for a pair of them is kept: every worktree listing read three whole
+# trees per worktree, after each spec save. ponytail: unbounded, one entry per (HEAD, branch) pair seen.
+_merges: dict[tuple[str, str, str], bool] = {}
 
 
 def worktrees(repo: Path, *, details: bool = True) -> list[dict]:
