@@ -34,6 +34,7 @@ class Grant:
     remotes: tuple
     top: str = ""                       # the checkout the remotes were read from
     hooks: str = ""                     # a hooks folder git is configured to run from inside a write root
+    adapter: str = ""                   # this checkout's adapter, when the task fills its slots
 
 
 # Inside a write root, but they decide the grant or what runs next: never granted.
@@ -179,7 +180,9 @@ def task_spec(top: Path, gitdir: Path, main: Path) -> dict:
     except (OSError, ValueError):
         return {}
     worktree = spec.get("worktree") if isinstance(spec, dict) else None
-    return spec if worktree and Path(worktree).resolve() == top else {}
+    # The id is the branch folded to a file name, so `fix/slots` finds `fix-slots`: a recorded branch must match.
+    named = spec.get("branch") if isinstance(spec, dict) else None
+    return spec if worktree and Path(worktree).resolve() == top and named in (None, branch) else {}
 
 
 def plan_root(top: Path, spec: dict) -> Path | None:
@@ -212,8 +215,11 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
     protected = sorted({str(p / x) for p in (top, main) for x in PROTECTED} | {str(gitdir), str(common)})
     writable = [h or top.as_posix() for h in hook_folders(common) if h is None
                 or contained(h, [str(r) for r in roots]) and not any(contained(h, [p]) for p in protected)]
+    # The survey and a spec in a repository with no `gate_cmd` exist to fill the slots: the hub's spec
+    # (never a model) opens this checkout's adapter to them, and review and [Merge] judge what they wrote.
+    fills = str(top / ".wiki/adapter.toml") if spec.get("adapter") is True else ""
     return Grant([str(r) for r in roots], protected, hosts, remotes, top.as_posix(),
-                 writable[0] if writable else "")
+                 writable[0] if writable else "", fills)
 
 
 def protected_below(target: str, roots: list) -> bool:
@@ -258,6 +264,21 @@ def holds_protected(target: str) -> bool:
     return False
 
 
+def plain(p: str) -> str:
+    """`p` absolute, `..` folded, in the platform's case; links left as they are."""
+    return os.path.normcase(os.path.abspath(p))
+
+
+def single(p: str) -> bool:
+    """`p` is absent or has one name: a hard link shares its contents with another file, `.git/config` say."""
+    try:
+        return os.stat(p, follow_symlinks=False).st_nlink <= 1
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+
+
 def outside(effect: tuple, g: Grant) -> str | None:
     """Why `effect` leaves the grant, naming what would allow it; `None` when it is inside."""
     kind, target = effect
@@ -274,6 +295,9 @@ def outside(effect: tuple, g: Grant) -> str | None:
     # URL- or server-named download, a patch or an extraction writes names the command does not show, and a
     # write to an existing directory either lands under it or fails. Only git's own write of the repository
     # it runs in (`repo`) is granted on the checkout as a whole.
+    if g.adapter and kind == "write" and plain(target) == plain(g.adapter) == real_path(g.adapter) \
+            and single(g.adapter) and contained(target, g.roots):
+        return None   # the adapter itself, reached through no link: a link there would carry the write elsewhere
     reaches_protected = kind != "repo" and any(contained(p, [target]) for p in g.protected)
     # A `.git` anywhere makes a repository whose configuration git would trust: no write lays one down. And a
     # protected name below any write root is another worktree's copy, which a commit there would carry home.

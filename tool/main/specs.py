@@ -319,14 +319,31 @@ def fork(repo: Path, sid: str, ready=lambda source: None) -> tuple[Path, str, st
 # -- Checking what a person settles -----------------------------------------
 
 def gate_of(repo: Path, path: Path | None = None) -> str:
-    """The adapter's `gate_cmd`, or empty: a repository not connected yet."""
+    """The adapter's `gate_cmd` — the task checkout's own first, where a slot spec fills it — or empty."""
 
     if cfg := verify.policy(path or repo, project=repo):
         return cfg["round"]
+    place = path if path and (path / ".wiki/adapter.toml").is_file() else repo
     try:
-        return slots_for(repo.name, repo).get("gate_cmd", "").strip()
+        return slots_for(repo.name, place).get("gate_cmd", "").strip()
     except (OSError, ValueError):
         return ""
+
+
+# A spec in a repository whose adapter names no gate also fills it. Its session may write
+# `.wiki/adapter.toml` (`guard_grant`), and until it does the survey's wiki checks stand in.
+FILL_GATE = ("`gate_cmd` in `.wiki/adapter.toml` names what must pass before a change here, "
+             "and the other empty slots hold what the repository establishes")
+
+
+def stand_in(repo: Path) -> str:
+    from . import survey
+    return survey.gate(repo)
+
+
+def gated(repo: Path, spec: dict) -> str:
+    """The gate a revision of `spec` carries first; empty while nothing stands in for a missing one."""
+    return gate_of(repo) or (stand_in(repo) if spec.get("adapter") else "")
 
 
 def slugged(raw) -> str:
@@ -647,9 +664,15 @@ def answered(repo: Path, found: list[dict], source: dict, accepted: dict | None 
         value = block["value"]
         for one in value if isinstance(value, list) else [value]:
             try:
-                if not gate:
-                    raise ValueError("연결 먼저 — 이 저장소의 `.wiki/adapter.toml` 에 `gate_cmd` 가 없다")
-                out.append({"name": "spec", "id": card(repo, one, gate, source, accepted)})
+                if gate:
+                    out.append({"name": "spec", "id": card(repo, one, gate, source, accepted)})
+                    continue
+                if not isinstance(one, dict):
+                    raise ValueError("명세는 JSON 객체여야 한다")
+                done = [d for d in strings(one.get("done"), "done") if d != FILL_GATE]
+                sid = card(repo, {**one, "done": [*done, FILL_GATE]}, stand_in(repo), source, accepted)
+                update(repo.name, sid, adapter=True)
+                out.append({"name": "spec", "id": sid})
             except ValueError as exc:
                 out.append({"name": "spec", "error": str(exc)})
     return out
@@ -856,11 +879,11 @@ def edit(sid: str, body: Edit) -> dict:
     """Revise a draft or an idle active task, preserving prior requirements."""
 
     repo = current_repo()
-    gate = gate_of(repo)
-    if not gate:
-        raise HTTPException(409, "연결 먼저 — 이 저장소의 adapter 에 `gate_cmd` 가 없다")
     with _lock, _files:
         spec = editable_task(load(repo.name, sid))
+        gate = gated(repo, spec)
+        if not gate:
+            raise HTTPException(409, "연결 먼저 — 이 저장소의 adapter 에 `gate_cmd` 가 없다")
         if spec["rev"] != body.rev:
             raise HTTPException(409, f"다른 곳에서 먼저 고쳤다 — 지금은 판 {spec['rev']}")
         if spec.get("worktree") in work._busy:
@@ -912,7 +935,7 @@ def revise(repo: Path, spec: dict, change: dict) -> None:
         raise ValueError(f"`reason` 은 글줄 하나여야 한다 — {type(reason).__name__} 이 왔다")
     if not reason or not reason.strip() or not all(k in change for k in ("goal", "out", "done")):
         raise ValueError("명세 변경에는 reason, goal, out, done 이 필요하다")
-    gate = gate_of(repo)
+    gate = gated(repo, spec)
     if not gate:
         raise ValueError("저장소의 gate_cmd 를 먼저 연결해라")
     made = fields(repo, {**spec, **{k: change[k] for k in (

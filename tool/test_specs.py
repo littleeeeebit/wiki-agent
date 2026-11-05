@@ -233,8 +233,33 @@ def test_the_checks_refuse_an_empty_goal_keep_the_gate_first_and_want_an_adapter
     assert spec["grounds"]["files"] == ["a.txt:1", "nope.py"]
     assert specs.view(repo, spec)["missing"] == ["nope.py"], "없는 경로는 지우지 않고 표시한다"
 
+    assert not spec.get("adapter"), "게이트가 있는 저장소의 명세는 adapter 를 열지 않는다"
+
+
+def test_a_spec_in_a_repository_with_no_gate_fills_the_slots_under_the_survey_checks(repo):
+    """loop step 7: refusing every spec until `gate_cmd` was filled left the candidate that fills it unrunnable."""
+
     _adapter(repo, None)
-    assert "연결 먼저" in made(repo, spec_block(slug="other"))[0]["error"]
+    spec = specs.load("proj", made(repo, spec_block(slug="slots", done=[specs.FILL_GATE]))[0]["id"])
+    assert spec["adapter"] is True, "이 명세의 세션은 adapter 를 고칠 수 있다 (guard_grant)"
+    assert spec["done"] == [specs.stand_in(repo), specs.FILL_GATE], "조사의 위키 검사가 게이트 자리에, 채우기는 한 번"
+    assert "lint.py" in spec["done"][0] and "repo_lint.py" in spec["done"][0]
+    assert "명세는 JSON 객체" in made(repo, ["not a spec"])[0]["error"]
+
+
+def test_the_gate_a_slot_spec_fills_in_its_linked_worktree_is_the_one_the_server_runs(repo, tmp_path):
+    """PR #297 round 1: `gate_of(repo, path)` read the original's adapter, so the linked worktree's filled gate
+    never replaced the stand-in."""
+
+    _adapter(repo, None)
+    sid = made(repo, spec_block(slug="slots"))[0]["id"]
+    linked = tmp_path / "linked"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-qb", sid, str(linked)], check=True)
+    spec = specs.update(repo.name, sid, worktree=str(linked), branch=sid, return_branch="main")
+    assert specs.gate_of(repo, linked) == "", "채우기 전에는 원본도 작업 폴더도 비었다"
+    _adapter(linked, FAIL)
+    assert specs.gate_of(repo, linked) == FAIL and specs.gate_of(repo) == ""
+    assert FAIL in specs.local_required(repo, spec)
 
 
 def test_a_spec_names_its_review_profile_and_an_old_one_is_code(repo):

@@ -740,7 +740,9 @@ def test_a_turn_cut_by_the_time_limit_leaves_nothing_it_committed(surveyed):
         survey.start(surveyed)
         now = ended("proj")
     assert now["why"] == "시간 한도", now
-    path = Path(specs.load("proj", "wiki-bootstrap")["worktree"])
+    survey_spec = specs.load("proj", "wiki-bootstrap")
+    assert survey_spec["adapter"] is True, "조사의 슬롯 턴은 adapter 를 고친다 — guard_grant 가 연다"
+    path = Path(survey_spec["worktree"])
     assert git(path, "log", "--format=%s", "-1") == "wiki: adapter", "끊긴 턴의 커밋은 HEAD 에 남지 않는다"
     assert not (path / ".wiki/late.md").exists()
     assert "late.md" in git(path, "stash", "show", "--include-untracked", "--name-only", "stash@{0}"), "stash 에 남는다"

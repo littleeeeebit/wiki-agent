@@ -596,6 +596,52 @@ def test_a_plan_task_writes_only_under_its_artifact_root(repo, monkeypatch, tmp_
     assert "쓰기 루트 밖이다" in call(repo, "echo x > tool/a.py")
 
 
+@pytest.mark.parametrize("fills", [True, False])
+def test_a_task_that_fills_the_slots_may_write_the_adapter_and_nothing_else_protected(repo, monkeypatch, tmp_path,
+                                                                                       fills):
+    hub = tmp_path / "hub" / "tool"
+    (hub.parent / "raw/specs/repo").mkdir(parents=True)
+    (hub.parent / "raw/specs/repo/task.json").write_text(json.dumps(
+        {"worktree": str(repo), **({"adapter": True} if fills else {})}), encoding="utf-8")
+    monkeypatch.setattr(guard_grant, "HERE", hub)
+    adapter = str(repo / ".wiki/adapter.toml")
+    for denied in (call(repo, tool="Edit", file_path=adapter, old_string="a", new_string="b"),
+                   call(repo, "git add .wiki/adapter.toml")):
+        assert (denied is None) is fills, denied
+    for protected in (".claude/settings.json", "verification.toml", ".git/config"):
+        assert "허가를 정하는 파일" in call(repo, tool="Write", file_path=str(repo / protected), content="")
+    assert "허가를 정하는 파일" in call(repo, "rm .wiki/adapter.toml"), "열린 것은 쓰기뿐이다"
+
+
+def flag_slots(repo: Path, monkeypatch, tmp_path: Path, sid: str = "task") -> None:
+    hub = tmp_path / "hub" / "tool"
+    (hub.parent / "raw/specs/repo").mkdir(parents=True)
+    (hub.parent / "raw/specs/repo" / f"{sid}.json").write_text(json.dumps(
+        {"worktree": str(repo), "branch": sid, "adapter": True}), encoding="utf-8")
+    monkeypatch.setattr(guard_grant, "HERE", hub)
+
+
+@pytest.mark.parametrize("link", ["hard", pytest.param("symbolic", marks=pytest.mark.skipif(
+    os.name == "nt", reason="a symbolic link needs a privilege Windows withholds by default"))])
+def test_an_adapter_that_is_a_link_stays_protected_for_a_task_that_fills_the_slots(repo, monkeypatch, tmp_path,
+                                                                                    link):
+    flag_slots(repo, monkeypatch, tmp_path)
+    adapter = repo / ".wiki/adapter.toml"
+    adapter.unlink()
+    (os.link if link == "hard" else os.symlink)(repo / ".git/config", adapter)
+    assert "허가를 정하는 파일" in call(repo, tool="Write", file_path=str(adapter), content="")
+    assert "허가를 정하는 파일" in call(repo, "echo x > .wiki/adapter.toml")
+
+
+def test_a_branch_that_only_folds_to_a_flagged_task_s_id_gets_no_adapter(repo, monkeypatch, tmp_path):
+    """PR #297 round 1: `fix/slots` and `fix-slots` share a spec file name; only the recorded branch opens it."""
+    flag_slots(repo, monkeypatch, tmp_path, "fix-slots")
+    for head, opened in (("fix-slots", True), ("fix/slots", False)):
+        (repo / ".git/HEAD").write_text(f"ref: refs/heads/{head}\n", encoding="utf-8")
+        answer = call(repo, tool="Write", file_path=str(repo / ".wiki/adapter.toml"), content="")
+        assert (answer is None) is opened, (head, answer)
+
+
 def test_unmanaged_sessions_and_unattached_folders_pass(repo, monkeypatch, tmp_path):
     assert call(tmp_path, "rm -rf /c/x") is None
     monkeypatch.delenv("WIKI_AGENT_MANAGED")
