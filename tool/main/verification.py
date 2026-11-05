@@ -219,11 +219,14 @@ def hidden_values(settings: dict) -> list[str]:
     return sorted({v for v in values if v}, key=len, reverse=True)
 
 
-def redact(text: str, settings: dict) -> str:
-    for value in hidden_values(settings):
-        # Logs can contain JSON-escaped values as well as literal values.
-        for representation in {value, json.dumps(value, ensure_ascii=False)[1:-1]}:
-            text = text.replace(representation, "[redacted]")
+def _forms(settings: dict) -> list[str]:
+    """Each hidden value as written and JSON-escaped (logs carry both), longest value first."""
+    return [f for v in hidden_values(settings) for f in dict.fromkeys((v, json.dumps(v, ensure_ascii=False)[1:-1]))]
+
+
+def redact(text: str, settings: dict, forms: list[str] | None = None) -> str:
+    for form in _forms(settings) if forms is None else forms:
+        text = text.replace(form, "[redacted]")
     text = re.sub(r"(?i)(authorization\s*[:=]\s*|bearer\s+)[^\s,\"']+", r"\1[redacted]", text)
     text = re.sub(r"(?i)((?:password|token|secret|api[_-]?key)\s*[\"']?\s*[:=]\s*[\"']?)[^\s,\"']+",
                   r"\1[redacted]", text)
@@ -236,14 +239,15 @@ def redaction(settings: dict, path: Path) -> dict:
             *hidden_values({**settings, "env_file": str(path / ".env")})]}
 
 
-def sanitize(value, settings: dict):
-    """Redact strings without damaging JSON types or escaped content."""
+def sanitize(value, settings: dict, forms: list[str] | None = None):
+    """Redact strings without damaging JSON types or escaped content; hidden values read once per call."""
+    forms = _forms(settings) if forms is None else forms
     if isinstance(value, str):
-        return redact(value, settings)
+        return redact(value, settings, forms)
     if isinstance(value, list):
-        return [sanitize(v, settings) for v in value]
+        return [sanitize(v, settings, forms) for v in value]
     if isinstance(value, dict):
-        return {k: sanitize(v, settings) for k, v in value.items()}
+        return {k: sanitize(v, settings, forms) for k, v in value.items()}
     return value
 
 

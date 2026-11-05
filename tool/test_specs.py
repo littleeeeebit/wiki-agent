@@ -322,6 +322,17 @@ def test_an_id_from_the_screen_is_a_task_name_never_a_path(repo, tmp_path):
     assert web.get("/api/specs").json()["specs"] == []
 
 
+def test_the_listing_leaves_out_what_no_screen_reads(repo):
+    # Each round's frozen contract and the shadow attempts were 25 of 30 MB in one repository's listing.
+    sid = made(repo, spec_block())[0]["id"]
+    rounds = [{"n": 1, "head": "a" * 40, "verdict": "deny", "review_contract": {"big": "x" * 1000}}]
+    specs.update("proj", sid, rounds=rounds, review_shadow_attempts=[{"attempt_id": "1"}])
+    row = next(s for s in client().get("/api/specs").json()["specs"] if s["id"] == sid)
+    assert row["rounds"] == [{"n": 1, "head": "a" * 40, "verdict": "deny"}] and "review_shadow_attempts" not in row
+    whole = specs.view(repo, specs.load("proj", sid))
+    assert whole["rounds"][0]["review_contract"] and whole["review_shadow_attempts"]
+
+
 # -- blocks ----------------------------------------------------------------------
 
 

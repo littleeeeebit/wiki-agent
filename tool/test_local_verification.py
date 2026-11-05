@@ -724,6 +724,15 @@ def test_redaction_preserves_json_types_and_handles_escaped_secrets(cloud_world)
     assert "first-secret" not in verification.redact("first-secret", world.settings)
     assert 'a\\"b\\\\c' not in verification.redact(json.dumps(data), world.settings)
 
+    # The values are read once per call: a listing sanitized every task's contract string by string,
+    # re-reading the env file each time, and one repository's listing took 7 s.
+    reads, real = [], verification.hidden_values
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(verification, "hidden_values", lambda s: reads.append(1) or real(s))
+        assert verification.sanitize({"rows": [{"said": "first-secret"}] * 50}, world.settings) == {
+            "rows": [{"said": "[redacted]"}] * 50}
+    assert len(reads) == 1
+
 
 def test_missing_test_dataset_waits_without_a_cloud_failure_cycle(cloud_world):
     world = cloud_world

@@ -871,7 +871,18 @@ def specs() -> dict:
     with _lock:
         name, repo = project(), current_repo()
     return {"project": name, "gate": gate_of(repo),
-            "specs": [view(repo, current) for s in listing(name) if (current := noticed(repo, s)) is not None]}
+            "specs": [listed(view(repo, current)) for s in listing(name) if (current := noticed(repo, s)) is not None]}
+
+
+def listed(viewed: dict) -> dict:
+    """A task as the listing sends it, without what no screen reads: each round's frozen review contract
+    and the shadow attempts. They were 25 of 30 MB for one repository, re-sent after every spec save, and
+    held the browser's few connections so the overlay's translations queued behind them. A single task's
+    response still carries them; this strips only after `view` has judged the merge from them."""
+    out = {k: v for k, v in viewed.items() if k != "review_shadow_attempts"}
+    if out.get("rounds"):
+        out["rounds"] = [{k: v for k, v in r.items() if k != "review_contract"} for r in out["rounds"]]
+    return out
 
 
 @router.put("/api/specs/{sid}")
