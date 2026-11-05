@@ -1053,6 +1053,28 @@ def test_a_worktree_is_removed_only_by_its_absolute_path():
     assert any(e.startswith("top(") for e in effects("git worktree remove --force sibling", ctx=POSIX))
 
 
+def test_a_linked_worktree_is_removed_with_its_copies_and_nothing_else(repo):
+    """A scratch worktree holds the checkout's copies of every protected name; `git worktree remove` takes
+    them with it. The main checkout, a folder git does not register, and a link inside stay refused."""
+    wt = Path(os.environ["TEMP"]) / "scratch"
+    admin = repo / ".git/worktrees/scratch"
+    admin.mkdir(parents=True)
+    (admin / "commondir").write_text("../..\n", encoding="utf-8")
+    (admin / "gitdir").write_text(f"{(wt / '.git').as_posix()}\n", encoding="utf-8")
+    for name in (".wiki/adapter.toml", "verification.toml", ".claude/settings.json"):
+        (wt / name).parent.mkdir(parents=True, exist_ok=True)
+        (wt / name).write_text("x", encoding="utf-8")
+    (wt / ".git").write_text(f"gitdir: {admin.as_posix()}\n", encoding="utf-8")
+    remove = f"git worktree remove --force {wt.as_posix()}"
+    assert call(repo, remove) is None
+    assert "허가를 정하는 파일" in (call(repo, f"git worktree remove --force {repo.as_posix()}") or "")
+    (admin / "gitdir").write_text("/elsewhere/.git\n", encoding="utf-8")       # not the worktree git registers
+    assert "링크나 접합점" in (call(repo, remove) or "")
+    (admin / "gitdir").write_text(f"{(wt / '.git').as_posix()}\n", encoding="utf-8")
+    (wt / "nested/.git").mkdir(parents=True)                                    # another repository below
+    assert "링크나 접합점" in (call(repo, remove) or "")
+
+
 def test_a_powershell_assignment_written_as_one_word_is_still_an_assignment():
     assert effects("$env:PYTHONIOENCODING='utf-8'; $x='rm'; $n+=1; git status", "ps") == {"read"}
 

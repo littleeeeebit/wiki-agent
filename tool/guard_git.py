@@ -172,6 +172,25 @@ def own_repo(ctx) -> bool:
                for r in roots)
 
 
+def linked(path: str, ctx) -> bool:
+    """`path` is a linked worktree of the repository `ctx` runs in, as git registers one: its `.git` file
+    names a folder of the common directory's, which names it back. Never the main checkout, whose `.git`
+    is the repository itself."""
+    from guard_grant import layout
+
+    if not native(ctx) or not own_repo(ctx):
+        return False
+    found = layout(Path(path))
+    if found is None or found[1] == found[2] or not same_path(physical(str(found[0]), ctx), physical(path, ctx), ctx) \
+            or not same_path(found[2].as_posix(), common_dir(physical(ctx.repo, ctx)) or "", ctx):
+        return False
+    try:
+        back = (found[1] / "gitdir").read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    return same_path(physical(back, ctx), physical(path + "/.git", ctx), ctx)
+
+
 def worktrees(ctx) -> set:
     """`repo(root)` for the work tree of each place `ctx` may run in: a write moves the whole worktree and
     its index, wherever below the root git runs. Called once `own_repo` holds, so every root is known."""
@@ -320,7 +339,8 @@ def m_git(name, args, ctx):
         absolute = r"[A-Za-z]:[\\/]|/" if ctx.windows else "/"
         if not pos or verb == "worktree remove" and not re.match(absolute, pos[0].text):
             return top(f"git {verb} without an absolute path"), None
-        out |= paths("delete" if verb == "worktree remove" else "write", pos[0], ctx)
+        found = paths("delete" if verb == "worktree remove" else "write", pos[0], ctx)
+        out |= {("worktree", e[1]) if e[0] == "delete" and linked(e[1], ctx) else e for e in found}
     elif kind == "push":
         out |= reached(verb, pos, ctx)
         if NO_REDIRECTS not in settings(args, i) or "--no-recurse-submodules" not in rest_flags:

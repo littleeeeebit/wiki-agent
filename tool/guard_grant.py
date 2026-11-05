@@ -239,12 +239,14 @@ def protected_below(target: str, roots: list) -> bool:
 WALK = 20000
 
 
-def holds_protected(target: str) -> bool:
+def holds_protected(target: str, copies: bool = False) -> bool:
     """A delete of `target` may reach a protected name below it: one is there, a link or junction is (its
-    contents are another folder's, which some deleters follow), or the folder is too large to look through."""
+    contents are another folder's, which some deleters follow), or the folder is too large to look through.
+    With `copies`, `target` is a linked worktree: its own `.git` file and its copies of the other names go
+    with it, and only a link, a junction or a repository below it counts."""
     if os.path.islink(target) or os.path.isjunction(target):
         return True
-    seen, stack = 0, [real_path(target)]
+    seen, stack = 0, [top := real_path(target)]
     while stack:
         folder = stack.pop()
         try:
@@ -256,8 +258,9 @@ def holds_protected(target: str) -> bool:
         for e in entries:
             seen += 1
             name = e.name.lower()
-            if seen > WALK or e.is_symlink() or e.is_junction() or name in (".git", ".claude", ".codex", "verification.toml") \
-                    or name == "adapter.toml" and os.path.basename(folder).lower() == ".wiki":
+            if seen > WALK or e.is_symlink() or e.is_junction() or name == ".git" and not (copies and folder == top) \
+                    or not copies and (name in (".claude", ".codex", "verification.toml")
+                                       or name == "adapter.toml" and os.path.basename(folder).lower() == ".wiki"):
                 return True
             if e.is_dir(follow_symlinks=False):
                 stack.append(e.path)
@@ -305,9 +308,14 @@ def outside(effect: tuple, g: Grant) -> str | None:
     names = {p.rstrip(". ") or p for p in re.split(r"[\\/]", target.lower())}
     git_dir = kind != "repo" and (".git" in names or protected_below(target, g.roots))
     # A delete reaches whatever lies below it, another worktree's protected copy included.
-    holds = kind == "delete" and holds_protected(target)
-    if any(contained(target, [p]) for p in g.protected) or reaches_protected or git_dir or holds:
+    # `git worktree remove` of a linked worktree takes that checkout's copies with it; a link inside could
+    # carry git's delete into another folder.
+    holds = kind in ("delete", "worktree") and holds_protected(target, copies=kind == "worktree")
+    if any(contained(target, [p]) for p in g.protected) or reaches_protected or git_dir:
         return "허가를 정하는 파일이다 — 어떤 명령으로도 열리지 않고, 사람이 직접 고친다"
+    if holds:
+        return ("지울 폴더 안에 허가를 정하는 파일, 링크나 접합점이 있다 — 사람이 직접 지운다. 이 저장소의 연결된 "
+                "worktree 는 안의 링크를 푼 뒤 `git worktree remove` 로 지울 수 있다")
     if contained(target, g.roots):
         return None
     return "쓰기 루트 밖이다 — 체크아웃, 임시 폴더, 세션 메모리 폴더 안에서만 쓰고 지운다"
