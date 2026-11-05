@@ -723,6 +723,8 @@ def test_redaction_preserves_json_types_and_handles_escaped_secrets(cloud_world)
     assert cleaned == {"text": "[redacted]", "status": 200, "ok": True}
     assert "first-secret" not in verification.redact("first-secret", world.settings)
     assert 'a\\"b\\\\c' not in verification.redact(json.dumps(data), world.settings)
+    trailing = {"redact_values": ["credential-secret\\"]}
+    assert json.loads(verification.redact(json.dumps({"command": "credential-secret\\"}), trailing)) == {"command": "[redacted]"}
 
     # The values are read once per call: a listing sanitized every task's contract string by string,
     # re-reading the env file each time, and one repository's listing took 7 s.

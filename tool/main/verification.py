@@ -220,8 +220,10 @@ def hidden_values(settings: dict) -> list[str]:
 
 
 def _forms(settings: dict) -> list[str]:
-    """Each hidden value as written and JSON-escaped (logs carry both), longest value first."""
-    return [f for v in hidden_values(settings) for f in dict.fromkeys((v, json.dumps(v, ensure_ascii=False)[1:-1]))]
+    """Each hidden value as written and JSON-escaped (logs carry both), longest value first and, within a
+    value, its longer form first: a literal ending in a backslash would split its escaped form."""
+    return [f for v in hidden_values(settings)
+            for f in sorted({v, json.dumps(v, ensure_ascii=False)[1:-1]}, key=len, reverse=True)]
 
 
 def redact(text: str, settings: dict, forms: list[str] | None = None) -> str:

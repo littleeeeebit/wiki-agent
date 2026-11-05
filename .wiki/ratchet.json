@@ -148,8 +148,8 @@
     },
     "tool/main/verification.py": {
       "dup": 12,
-      "lines": 994,
-      "reason": "`sanitize` reads the hidden values once per call (`_forms`), not once per string: every listing sanitized each task's contract re-reading the env file per string, 7 s for one repository (four lines). Before that: `checkout_proven` leaves out the start hook's receipt-matching rebuilt indexes, as `specs.status` does (one line). Before that: Stage 4 extends the existing verifier with selected-flow/spec binding, owner outcomes, approved native contracts, native receipt validation and setup cancellation outcomes."
+      "lines": 996,
+      "reason": "`sanitize` reads the hidden values once per call (`_forms`), not once per string: every listing sanitized each task's contract re-reading the env file per string, 7 s for one repository; within a value the longer form goes first, since a literal ending in a backslash split its escaped form (#299 round 1; six lines). Before that: `checkout_proven` leaves out the start hook's receipt-matching rebuilt indexes, as `specs.status` does (one line). Before that: Stage 4 extends the existing verifier with selected-flow/spec binding, owner outcomes, approved native contracts, native receipt validation and setup cancellation outcomes."
     },
     "tool/main/work.py": {
       "dup": 0,
@@ -228,8 +228,8 @@
     },
     "tool/test_local_verification.py": {
       "dup": 6,
-      "lines": 1407,
-      "reason": "Pins that `sanitize` reads the hidden values once per call (nine lines). Before that: Pins that a refused cloud review's handoff carries no environment secret (#175 round 1). Before that: Stage 4 verifies actual automatic local/external API and browser collection, owner routing, subset approval, cleanup, process ownership and setup cancellation in every implementation owner's executor and loop."
+      "lines": 1409,
+      "reason": "Pins that `sanitize` reads the hidden values once per call, and that a secret ending in a backslash leaves valid JSON (#299 round 1; eleven lines). Before that: Pins that a refused cloud review's handoff carries no environment secret (#175 round 1). Before that: Stage 4 verifies actual automatic local/external API and browser collection, owner routing, subset approval, cleanup, process ownership and setup cancellation in every implementation owner's executor and loop."
     },
     "tool/test_loop.py": {
       "dup": 19,
