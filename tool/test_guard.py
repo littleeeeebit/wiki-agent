@@ -1099,6 +1099,18 @@ def test_a_linked_worktree_is_removed_with_its_copies_and_nothing_else(repo, mon
     monkeypatch.setattr(guard_git, "physical", posix_resolve)
     assert "허가를 정하는 파일" in (call(repo, f"{remove}; printf x > .wiki/adapter.toml") or "")
     monkeypatch.setattr(guard_git, "physical", resolve)
+    # Python 3.11 and 3.12 resolve a link loop in `.git` or `commondir` with RuntimeError.
+    (admin / "gitdir").write_text(f"{(wt / '.git').as_posix()}\n", encoding="utf-8")
+    layout = guard_grant.layout
+
+    def looping(top):
+        if Path(top) == wt:
+            raise RuntimeError(f"Symlink loop from {top}")
+        return layout(top)
+
+    monkeypatch.setattr(guard_grant, "layout", looping)
+    assert "허가를 정하는 파일" in (call(repo, f"{remove}; printf x > .wiki/adapter.toml") or "")
+    monkeypatch.setattr(guard_grant, "layout", layout)
     # An admin folder outside the common directory's `worktrees` is one the agent may have laid down.
     forged = Path(os.environ["TEMP"]) / "forged-admin"
     forged.mkdir()

@@ -191,7 +191,7 @@ def linked(path: str, ctx) -> bool:
             return False
         back = (found[1] / "gitdir").read_text(encoding="utf-8").strip()
         return same_path(physical(back, ctx), physical(path + "/.git", ctx), ctx)
-    except (OSError, ValueError):
+    except Exception:   # any failure (a decode, a NUL, a link loop on 3.11/3.12) only means "not recognised"
         return False
 
 
