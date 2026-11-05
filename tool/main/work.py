@@ -344,15 +344,16 @@ def listing() -> dict:
     with _lock:
         name, repo = project(), current_repo()
     try:
-        rows = worktrees(repo)
+        rows = worktrees(repo, kept=True)   # display only: a removal judges `merged` afresh
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     from . import specs
 
     # A re-freeze has its card's worktree detached on the old code for minutes; the row keeps the branch it
     # returns to, so the card still owns it instead of the rail showing a second, spec-less task (ai-coding-wiki #162).
+    # Only a detached row asks, so the specs are read only then: parsing every one was half of each listing.
     refreezing = {Path(s["worktree"]).resolve(): s["refreezing"]["branch"] for s in specs.listing(repo.name)
-                  if s.get("refreezing") and s.get("worktree")}
+                  if s.get("refreezing") and s.get("worktree")} if any(not r["branch"] for r in rows) else {}
     out, home = [], repo.resolve()
     for row in rows:
         real = row["path"].resolve()   # once per row: every screen reads this list after each spec change
