@@ -1070,6 +1070,17 @@ def test_a_linked_worktree_is_removed_with_its_copies_and_nothing_else(repo):
     assert "허가를 정하는 파일" in (call(repo, f"git worktree remove --force {repo.as_posix()}") or "")
     (admin / "gitdir").write_text("/elsewhere/.git\n", encoding="utf-8")       # not the worktree git registers
     assert "링크나 접합점" in (call(repo, remove) or "")
+    # Unreadable metadata is no worktree, and the rest of the call is still checked.
+    (admin / "gitdir").write_bytes(b"\xff\n")
+    assert "허가를 정하는 파일" in (call(repo, f"{remove}; printf x > .wiki/adapter.toml") or "")
+    # An admin folder outside the common directory's `worktrees` is one the agent may have laid down.
+    forged = Path(os.environ["TEMP"]) / "forged-admin"
+    forged.mkdir()
+    (forged / "commondir").write_text(f"{(repo / '.git').as_posix()}\n", encoding="utf-8")
+    (forged / "gitdir").write_text(f"{(wt / '.git').as_posix()}\n", encoding="utf-8")
+    (wt / ".git").write_text(f"gitdir: {forged.as_posix()}\n", encoding="utf-8")
+    assert "링크나 접합점" in (call(repo, remove) or "")
+    (wt / ".git").write_text(f"gitdir: {admin.as_posix()}\n", encoding="utf-8")
     (admin / "gitdir").write_text(f"{(wt / '.git').as_posix()}\n", encoding="utf-8")
     (wt / "nested/.git").mkdir(parents=True)                                    # another repository below
     assert "링크나 접합점" in (call(repo, remove) or "")

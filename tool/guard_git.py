@@ -174,19 +174,21 @@ def own_repo(ctx) -> bool:
 
 def linked(path: str, ctx) -> bool:
     """`path` is a linked worktree of the repository `ctx` runs in, as git registers one: its `.git` file
-    names a folder of the common directory's, which names it back. Never the main checkout, whose `.git`
-    is the repository itself."""
+    names a folder in the common directory's `worktrees`, which names it back. Never the main checkout,
+    whose `.git` is the repository itself. Files the agent may write decide this, so one that cannot be
+    read is no worktree, and the target stays an ordinary delete."""
     from guard_grant import layout
 
     if not native(ctx) or not own_repo(ctx):
         return False
-    found = layout(Path(path))
-    if found is None or found[1] == found[2] or not same_path(physical(str(found[0]), ctx), physical(path, ctx), ctx) \
-            or not same_path(found[2].as_posix(), common_dir(physical(ctx.repo, ctx)) or "", ctx):
-        return False
     try:
+        found = layout(Path(path))
+        if found is None or not same_path(physical(str(found[0]), ctx), physical(path, ctx), ctx) \
+                or not same_path(found[2].as_posix(), common_dir(physical(ctx.repo, ctx)) or "", ctx) \
+                or not same_path(found[1].parent.as_posix(), (found[2] / "worktrees").as_posix(), ctx):
+            return False
         back = (found[1] / "gitdir").read_text(encoding="utf-8").strip()
-    except OSError:
+    except (OSError, ValueError):
         return False
     return same_path(physical(back, ctx), physical(path + "/.git", ctx), ctx)
 
