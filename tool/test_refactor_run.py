@@ -861,6 +861,14 @@ def test_a_test_contract_frees_only_what_it_names(surveyed, new, declared, why):
     assert (why in found) if why else found == "", found
 
 
+def test_a_double_a_test_defines_is_a_definition_of_the_start(surveyed):
+    # ai-coding-wiki reference-staging: naming `test::NoCalls` was refused as missing, though it stood there.
+    old = "def test_guard():\n    class NoCalls:\n        pass\n    assert NoCalls\n\n\ndef test_other():\n    assert True\n"
+    new, at = "def test_other():\n    assert True\n", "tests/test_guard.py::test_guard"
+    assert contracted(surveyed, new, at, at + "::NoCalls", old=old) == ""
+    assert "기존 테스트 변경" in contracted(surveyed, new, at + "::NoCalls", old=old), "the double alone frees nothing"
+
+
 # emotion-state-cleanup-97d92512: the survey named the one test, whose helper read a renamed attribute.
 HELPED = ("import pytest\n\n\ndef _entries(engine):\n    return engine._persistent\n\n\n"
           "@pytest.mark.parametrize('n', [1, 2])\ndef test_parity(n):\n    assert _entries(n)\n")

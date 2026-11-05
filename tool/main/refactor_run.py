@@ -582,8 +582,11 @@ def _kept(old: list, new: list, allowed: set, at: tuple = ()) -> bool:
 
 
 def _defines(body: list, parts: tuple) -> bool:
+    """Whether the start commit defines `parts`, looking into a test function's body as well as a class's:
+    a double a test defines is named `test::Double`, and a read of classes only called it missing. Naming it
+    frees nothing; only the function named whole may change, since `_kept` compares a function as one."""
     found = next((s for s in body if _named(s) == parts[0]), None)
-    return found is not None and (len(parts) == 1 or isinstance(found, ast.ClassDef) and _defines(found.body, parts[1:]))
+    return found is not None and (len(parts) == 1 or _defines(found.body, parts[1:]))
 
 
 def _declared(spec: dict) -> tuple[set, dict, dict]:
