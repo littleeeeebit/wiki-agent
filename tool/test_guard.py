@@ -16,6 +16,7 @@ import time
 import pytest
 
 import guard
+import guard_git
 import guard_grant
 from common import host
 from guard import DEPTH, Ctx, contained, derive, render, verdict
@@ -1053,7 +1054,7 @@ def test_a_worktree_is_removed_only_by_its_absolute_path():
     assert any(e.startswith("top(") for e in effects("git worktree remove --force sibling", ctx=POSIX))
 
 
-def test_a_linked_worktree_is_removed_with_its_copies_and_nothing_else(repo):
+def test_a_linked_worktree_is_removed_with_its_copies_and_nothing_else(repo, monkeypatch):
     """A scratch worktree holds the checkout's copies of every protected name; `git worktree remove` takes
     them with it. The main checkout, a folder git does not register, and a link inside stay refused."""
     wt = Path(os.environ["TEMP"]) / "scratch"
@@ -1070,9 +1071,21 @@ def test_a_linked_worktree_is_removed_with_its_copies_and_nothing_else(repo):
     assert "허가를 정하는 파일" in (call(repo, f"git worktree remove --force {repo.as_posix()}") or "")
     (admin / "gitdir").write_text("/elsewhere/.git\n", encoding="utf-8")       # not the worktree git registers
     assert "링크나 접합점" in (call(repo, remove) or "")
-    # Unreadable metadata is no worktree, and the rest of the call is still checked.
+    # Unreadable metadata is no worktree, and the rest of the call is still checked: invalid UTF-8, and a
+    # path POSIX's resolver refuses (Windows' takes a NUL, so the resolver is made to refuse it here).
     (admin / "gitdir").write_bytes(b"\xff\n")
     assert "허가를 정하는 파일" in (call(repo, f"{remove}; printf x > .wiki/adapter.toml") or "")
+    (admin / "gitdir").write_text(f"{wt.as_posix()}/bad\0name/.git\n", encoding="utf-8")
+    resolve = guard_git.physical
+
+    def posix_resolve(path, ctx):
+        if "\0" in path:
+            raise ValueError("embedded null character in path")
+        return resolve(path, ctx)
+
+    monkeypatch.setattr(guard_git, "physical", posix_resolve)
+    assert "허가를 정하는 파일" in (call(repo, f"{remove}; printf x > .wiki/adapter.toml") or "")
+    monkeypatch.setattr(guard_git, "physical", resolve)
     # An admin folder outside the common directory's `worktrees` is one the agent may have laid down.
     forged = Path(os.environ["TEMP"]) / "forged-admin"
     forged.mkdir()

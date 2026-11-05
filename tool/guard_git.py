@@ -188,9 +188,9 @@ def linked(path: str, ctx) -> bool:
                 or not same_path(found[1].parent.as_posix(), (found[2] / "worktrees").as_posix(), ctx):
             return False
         back = (found[1] / "gitdir").read_text(encoding="utf-8").strip()
+        return same_path(physical(back, ctx), physical(path + "/.git", ctx), ctx)
     except (OSError, ValueError):
         return False
-    return same_path(physical(back, ctx), physical(path + "/.git", ctx), ctx)
 
 
 def worktrees(ctx) -> set:
