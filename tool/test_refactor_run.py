@@ -803,11 +803,11 @@ def test_an_existing_test_changes_only_within_the_contract(running):
     _git(repo, "commit", "-qm", "billing test")
     _git(repo, "push", "-q", "origin", "main")
     run = surveyed_in("simplify", spec("billing-names", "billing", files=["src/billing.py"]))
-    Worker.replies = [edited("tests/test_billing.py", "assert 2 == 2\n")]
-    started(client(), run["specs"][0])
-    card = specs.load("proj", run["specs"][0])
-    assert "테스트 계약 밖의 변경" in card["fault"] and "test_billing.py" in card["fault"]
-    assert not remote.created()
+    Worker.replies = [edited("tests/test_billing.py", "assert 2 == 2\n"), *[report(True, True)] * refactor_run.REPAIRS]
+    started(client(), run["specs"][0])   # a worker that reports again unchanged is asked REPAIRS times, then it stops
+    until(lambda: "테스트 계약 밖의 변경 — `tests/test_billing.py`" in (specs.load("proj", run["specs"][0]).get("fault") or ""))
+    asked = [h for w in Worker.made for h in w.heard if "test-contract check refused" in h and "test_billing.py" in h]
+    assert len(asked) == refactor_run.REPAIRS and not remote.created()
 
 
 OLD_TESTS = "def test_guard():\n    assert True\n\n\ndef test_other():\n    assert True\n"
@@ -1020,10 +1020,10 @@ def test_a_person_declares_the_changed_definitions_in_the_test_contract(running)
     _git(repo, "commit", "-qm", "cleanup test")
     _git(repo, "push", "-q", "origin", "main")
     sid, = surveyed_in("simplify", spec("cleanup-names", "billing", files=["src/billing.py"]))["specs"]
-    Worker.replies = [edited("tests/test_cleanup.py", UNFAKED)]
-    started(client(), sid)
-    card = specs.load("proj", sid)
-    assert "[테스트 계약 변경 승인]" in card["fault"] and not remote.created()
+    Worker.replies = [edited("tests/test_cleanup.py", UNFAKED), *[report(True, True)] * refactor_run.REPAIRS]
+    started(client(), sid)   # the worker kept its edit through the repair turns, so it is the person's to approve
+    until(lambda: "[테스트 계약 변경 승인]" in (specs.load("proj", sid).get("fault") or ""))
+    assert (card := specs.load("proj", sid)) and not remote.created()
     api = client()
     seen = api.get(f"/api/refactors/specs/{sid}/amendments").json()
     names = ["_Repository::list_bindings", "_Repository::record_deleted"]

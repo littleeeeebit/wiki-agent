@@ -589,6 +589,64 @@ def _defines(body: list, parts: tuple) -> bool:
     return found is not None and (len(parts) == 1 or _defines(found.body, parts[1:]))
 
 
+# Names pytest reads off a module by themselves, never through a test's own reference.
+IMPLICIT = {"pytestmark", "pytest_plugins", "__all__", "*"}
+
+
+def _loose(stmt) -> bool:
+    """A top-level statement that only matters through the names it binds: an import, a plain-name
+    assignment, a bare string, or a helper that is neither a test, a pytest hook nor an autouse fixture."""
+    if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+        return not any(a.name == "*" for a in stmt.names)
+    if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+        targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+        return all(isinstance(t, ast.Name) and t.id not in IMPLICIT for t in targets)
+    if isinstance(stmt, ast.Expr):
+        return isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str)
+    if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return not stmt.name.lower().startswith(("test", "pytest_")) \
+            and "autouse" not in "".join(ast.unparse(d) for d in stmt.decorator_list)
+    return False
+
+
+def _reads(stmt) -> set:
+    """Every name `stmt` may reach: loaded names, argument names (a fixture is asked for by its parameter)
+    and string constants (`usefixtures`, `getfixturevalue`, `indirect` name one as text)."""
+    found = set()
+    for node in ast.walk(stmt):
+        if isinstance(node, ast.Name):
+            found.add(node.id)
+        elif isinstance(node, ast.arg):
+            found.add(node.arg)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            found.update(node.value.replace(",", " ").split())
+    return found
+
+
+def _orphans(body: list, allowed: set, file: str) -> tuple[list, set]:
+    """The start's top-level body without what only the freed tests read, and the names that frees. Removing
+    or rewriting a declared test leaves its imports, constants and helpers unused; tidying them was refused,
+    and no definition could name an import for a person to approve, so the card stopped on every such edit.
+    A statement goes free once every statement that read a name it binds went free; one nothing read stays
+    pinned, so a change to it is still the contract's. A conftest's fixtures serve other files, so nothing
+    in one goes free."""
+    if file.rsplit("/", 1)[-1] == "conftest.py":
+        return body, set()
+    freed = {i for i, s in enumerate(body) if (_named(s),) in allowed}
+    binds = [set(_binds([s])) for s in body]
+    reads = [_reads(s) for s in body]
+    readers = [{j for j in range(len(body)) if j != i and binds[i] & reads[j]} for i in range(len(body))]
+    grown = True
+    while grown:
+        grown = False
+        for i, s in enumerate(body):
+            if i not in freed and _loose(s) and readers[i] and readers[i] <= freed:
+                freed.add(i)
+                grown = True
+    dropped = {i for i in freed if (_named(body[i]),) not in allowed}
+    return [s for i, s in enumerate(body) if i not in dropped], {(n,) for i in dropped for n in binds[i]}
+
+
 def _declared(spec: dict) -> tuple[set, dict, dict]:
     """The files a spec's test contract frees whole, the tests it frees by name, per file, and the files a
     person approved at one content, by blob: no syntax compares a test file that is not Python by name."""
@@ -677,10 +735,50 @@ def contract(path: Path, spec: dict) -> str:
             continue
         if missing := sorted("::".join(p) for p in allowed if not _defines(before, p)):
             broken.append(f"`{name}` 에 선언한 테스트가 시작 커밋에 없다: {', '.join(missing)}")
-        elif not _kept(before, after, allowed):
-            broken.append(f"`{name}` 의 기존 테스트 변경{CHANGED if _amendable(before, after, allowed) else ''}")
+            continue
+        before, freed = _orphans(before, allowed, name)
+        if not _kept(before, after, allowed | freed):
+            broken.append(f"`{name}` 의 기존 테스트 변경{CHANGED if _amendable(before, after, allowed | freed) else ''}")
     return "" if not broken else ("테스트 계약 밖의 변경 — " + ", ".join(broken[:10])
                                   + " (명세의 tests.remove·tests.contract 에 없다)")
+
+
+def restoring(path: Path, spec: dict, refusal: str) -> str:
+    """The turn that hands a contract refusal back to the worker with what to put back: told only the
+    refusal, workers read it as a rule they must not touch and stopped. The definitions named are the ones
+    outside the contract that changed; the rest of each file's start text stands as well."""
+
+    whole, named, _ = _declared(spec)
+    start, files = spec["start_head"], []
+    listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", start, "HEAD"], path)
+    for name in listed.stdout.splitlines():
+        if not debt.TEST.search(name.lower()) or name in whole or not name.endswith(".py") \
+                or not (path / name).is_file():
+            continue
+        old = subprocess.run(["git", "show", f"{start}:{name}"], cwd=path, capture_output=True)
+        try:
+            before, after = ast.parse(old.stdout).body, ast.parse((path / name).read_bytes()).body
+        except (SyntaxError, ValueError):
+            continue
+        allowed = named.get(name, set())
+        before, freed = _orphans(before, allowed, name)
+        if old.returncode or _kept(before, after, allowed | freed):
+            continue
+        strays = sorted("::".join(p) for p in _changed(before, after) - allowed - freed)
+        free = sorted("::".join(p) for p in allowed)
+        files.append(f"- `{name}`: put back to its start text "
+                     f"{'`' + '`, `'.join(strays) + '`' if strays else 'the module-level statements you changed'}"
+                     f"; the contract frees {'`' + '`, `'.join(free) + '`' if free else 'no test in it'}.")
+    if not files:   # a deleted file or one that is not Python is the person's to declare (`removals`, `amendments`)
+        return ""
+    listing = "\n".join(files)
+    return (f"The server's test-contract check refused this branch:\n\n{refusal}\n\n"
+            "This is yours to fix now, without a person and without changing the spec. The contract frees only "
+            f"the tests the spec names; every other line of an existing test file must read as it did at the start "
+            f"commit `{start[:12]}` (`git show {start[:12]}:<file>`).\n\n{listing}\n\n"
+            "Keep your changes to the freed tests. Test data or a helper they need goes under a new name, never into "
+            "an existing one another test reads; imports, constants and helpers only the freed tests used may go. "
+            "Commit, then send the completion report again.")
 
 
 def removals(spec: dict) -> dict:
@@ -715,6 +813,8 @@ def amendments(spec: dict) -> dict:
                 before, after = (ast.parse(t, type_comments=True).body for t in texts)
             except (SyntaxError, ValueError):
                 continue   # `contract` says it could not read it
+            before, freed = _orphans(before, allowed, name)
+            allowed = allowed | freed
             if _kept(before, after, allowed):
                 continue
         else:
@@ -952,11 +1052,22 @@ def measuring(path: Path, spec: dict, head: str, halt) -> str:
     return ""
 
 
+# How many times a contract refusal goes back to the worker before the card stops for a person.
+REPAIRS = 2
+
+
 def published(repo: Path, path: Path, run, spec: dict):
     """`specs._check`'s end for a survey spec: `verified`, then the ordinary pull request."""
 
     if why := verified(repo, path, run, specs.load(spec["repo"], spec["id"]) or spec):
+        # The worker can put back what the contract does not free; a person is needed only when it did not.
+        if why.startswith("테스트 계약 밖의 변경") and (asked := spec.get("contract_repairs", 0)) < REPAIRS \
+                and (turn := restoring(path, spec, why)):
+            specs.update(spec["repo"], spec["id"], contract_repairs=asked + 1)
+            specs.note(run, "테스트 계약 밖의 변경을 되돌리도록 작업자에게 돌려보낸다")
+            return lambda: specs.again(path, run.chat, turn, spec)
         return specs.failed(run, spec, why)
+    specs.update(spec["repo"], spec["id"], contract_repairs=0)
     specs.note(run, "리팩터링 검증 통과")
     return specs.pr_turn(repo, path, run, specs.load(spec["repo"], spec["id"]) or spec)
 
