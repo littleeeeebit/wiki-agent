@@ -255,15 +255,18 @@ def holds_protected(target: str, copies: bool = False) -> bool:
             continue
         except OSError:
             return True
-        for e in entries:
-            seen += 1
-            name = e.name.lower()
-            if seen > WALK or e.is_symlink() or e.is_junction() or name == ".git" and not (copies and folder == top) \
-                    or not copies and (name in (".claude", ".codex", "verification.toml")
-                                       or name == "adapter.toml" and os.path.basename(folder).lower() == ".wiki"):
-                return True
-            if e.is_dir(follow_symlinks=False):
-                stack.append(e.path)
+        try:   # an entry's type may need its own lookup, which can fail like the listing
+            for e in entries:
+                seen += 1
+                name = e.name.lower()
+                if seen > WALK or e.is_symlink() or e.is_junction() or name == ".git" and not (copies and folder == top) \
+                        or not copies and (name in (".claude", ".codex", "verification.toml")
+                                           or name == "adapter.toml" and os.path.basename(folder).lower() == ".wiki"):
+                    return True
+                if e.is_dir(follow_symlinks=False):
+                    stack.append(e.path)
+        except OSError:
+            return True
     return False
 
 

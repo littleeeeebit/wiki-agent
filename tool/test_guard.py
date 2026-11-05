@@ -1068,6 +1068,19 @@ def test_a_linked_worktree_is_removed_with_its_copies_and_nothing_else(repo, mon
     (wt / ".git").write_text(f"gitdir: {admin.as_posix()}\n", encoding="utf-8")
     remove = f"git worktree remove --force {wt.as_posix()}"
     assert call(repo, remove) is None
+    # An entry whose type cannot be looked up counts as unreadable, like a listing that fails.
+    scan = guard_grant.os.scandir
+
+    class Unknown:
+        def __init__(self, e):
+            self.name, self.path, self.is_symlink, self.is_junction = e.name, e.path, e.is_symlink, e.is_junction
+
+        def is_dir(self, follow_symlinks=True):
+            raise PermissionError("entry stat denied")
+
+    monkeypatch.setattr(guard_grant.os, "scandir", lambda p: [Unknown(e) if e.name == ".wiki" else e for e in scan(p)])
+    assert "링크나 접합점" in (call(repo, f"{remove}; printf x > .wiki/adapter.toml") or "")
+    monkeypatch.setattr(guard_grant.os, "scandir", scan)
     assert "허가를 정하는 파일" in (call(repo, f"git worktree remove --force {repo.as_posix()}") or "")
     (admin / "gitdir").write_text("/elsewhere/.git\n", encoding="utf-8")       # not the worktree git registers
     assert "링크나 접합점" in (call(repo, remove) or "")

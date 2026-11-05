@@ -179,9 +179,11 @@ def linked(path: str, ctx) -> bool:
     read is no worktree, and the target stays an ordinary delete."""
     from guard_grant import layout
 
-    if not native(ctx) or not own_repo(ctx):
+    if not native(ctx):
         return False
     try:
+        if not own_repo(ctx):
+            return False
         found = layout(Path(path))
         if found is None or not same_path(physical(str(found[0]), ctx), physical(path, ctx), ctx) \
                 or not same_path(found[2].as_posix(), common_dir(physical(ctx.repo, ctx)) or "", ctx) \
