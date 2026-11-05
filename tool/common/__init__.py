@@ -8,8 +8,19 @@ drift apart: a worktree created by another tool is not ours.
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import time
+
+
+def is_junction(path) -> bool:
+    """`os.path.isjunction` arrives only in 3.12; the reparse tag reads the same
+    from 3.8 on. Off Windows neither the tag nor its constant exists."""
+    mount = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)
+    try:
+        return mount is not None and getattr(os.lstat(path), "st_reparse_tag", 0) == mount
+    except (OSError, ValueError):
+        return False
 
 
 def layout(cwd: Path) -> tuple | None:

@@ -11,9 +11,10 @@ import os
 from pathlib import Path
 import re
 import shutil
-import stat
 import subprocess
 import sys
+
+from common import is_junction  # tests and callers read it from here too
 
 WIKI = Path(__file__).resolve().parents[1]
 SETTINGS = {"claude": ".claude/settings.json", "codex": ".codex/hooks.json"}
@@ -324,16 +325,6 @@ def skill_links(home=None):
         mine = WIKI / "skills" / target.name
         found.append((link, target, mine if mine.is_dir() else None))
     return found
-
-
-def is_junction(path):
-    """`Path.is_junction` arrives only in 3.12; the reparse tag reads the same
-    from 3.8 on. Off Windows neither the tag nor its constant exists."""
-    mount = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)
-    try:
-        return mount is not None and getattr(os.lstat(path), "st_reparse_tag", 0) == mount
-    except OSError:
-        return False
 
 
 def relink(link, target):
