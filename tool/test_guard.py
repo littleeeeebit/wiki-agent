@@ -16,6 +16,7 @@ import time
 import pytest
 
 import guard
+import guard_git
 import guard_grant
 from common import host
 from guard import DEPTH, Ctx, contained, derive, render, verdict
@@ -1051,6 +1052,76 @@ def test_a_protected_name_is_protected_in_every_worktree(repo):
 def test_a_worktree_is_removed_only_by_its_absolute_path():
     # git matches a relative operand as the tail of any registered worktree's path, wherever it is.
     assert any(e.startswith("top(") for e in effects("git worktree remove --force sibling", ctx=POSIX))
+
+
+def test_a_linked_worktree_is_removed_with_its_copies_and_nothing_else(repo, monkeypatch):
+    """A scratch worktree holds the checkout's copies of every protected name; `git worktree remove` takes
+    them with it. The main checkout, a folder git does not register, and a link inside stay refused."""
+    wt = Path(os.environ["TEMP"]) / "scratch"
+    admin = repo / ".git/worktrees/scratch"
+    admin.mkdir(parents=True)
+    (admin / "commondir").write_text("../..\n", encoding="utf-8")
+    (admin / "gitdir").write_text(f"{(wt / '.git').as_posix()}\n", encoding="utf-8")
+    for name in (".wiki/adapter.toml", "verification.toml", ".claude/settings.json"):
+        (wt / name).parent.mkdir(parents=True, exist_ok=True)
+        (wt / name).write_text("x", encoding="utf-8")
+    (wt / ".git").write_text(f"gitdir: {admin.as_posix()}\n", encoding="utf-8")
+    remove = f"git worktree remove --force {wt.as_posix()}"
+    assert call(repo, remove) is None
+    # An entry whose type cannot be looked up counts as unreadable, like a listing that fails.
+    scan = guard_grant.os.scandir
+
+    class Unknown:
+        def __init__(self, e):
+            self.name, self.path, self.is_symlink, self.is_junction = e.name, e.path, e.is_symlink, e.is_junction
+
+        def is_dir(self, follow_symlinks=True):
+            raise PermissionError("entry stat denied")
+
+    monkeypatch.setattr(guard_grant.os, "scandir", lambda p: [Unknown(e) if e.name == ".wiki" else e for e in scan(p)])
+    assert "링크나 접합점" in (call(repo, f"{remove}; printf x > .wiki/adapter.toml") or "")
+    monkeypatch.setattr(guard_grant.os, "scandir", scan)
+    assert "허가를 정하는 파일" in (call(repo, f"git worktree remove --force {repo.as_posix()}") or "")
+    (admin / "gitdir").write_text("/elsewhere/.git\n", encoding="utf-8")       # not the worktree git registers
+    assert "링크나 접합점" in (call(repo, remove) or "")
+    # Unreadable metadata is no worktree, and the rest of the call is still checked: invalid UTF-8, and a
+    # path POSIX's resolver refuses (Windows' takes a NUL, so the resolver is made to refuse it here).
+    (admin / "gitdir").write_bytes(b"\xff\n")
+    assert "허가를 정하는 파일" in (call(repo, f"{remove}; printf x > .wiki/adapter.toml") or "")
+    (admin / "gitdir").write_text(f"{wt.as_posix()}/bad\0name/.git\n", encoding="utf-8")
+    resolve = guard_git.physical
+
+    def posix_resolve(path, ctx):
+        if "\0" in path:
+            raise ValueError("embedded null character in path")
+        return resolve(path, ctx)
+
+    monkeypatch.setattr(guard_git, "physical", posix_resolve)
+    assert "허가를 정하는 파일" in (call(repo, f"{remove}; printf x > .wiki/adapter.toml") or "")
+    monkeypatch.setattr(guard_git, "physical", resolve)
+    # Python 3.11 and 3.12 resolve a link loop in `.git` or `commondir` with RuntimeError.
+    (admin / "gitdir").write_text(f"{(wt / '.git').as_posix()}\n", encoding="utf-8")
+    layout = guard_grant.layout
+
+    def looping(top):
+        if Path(top) == wt:
+            raise RuntimeError(f"Symlink loop from {top}")
+        return layout(top)
+
+    monkeypatch.setattr(guard_grant, "layout", looping)
+    assert "허가를 정하는 파일" in (call(repo, f"{remove}; printf x > .wiki/adapter.toml") or "")
+    monkeypatch.setattr(guard_grant, "layout", layout)
+    # An admin folder outside the common directory's `worktrees` is one the agent may have laid down.
+    forged = Path(os.environ["TEMP"]) / "forged-admin"
+    forged.mkdir()
+    (forged / "commondir").write_text(f"{(repo / '.git').as_posix()}\n", encoding="utf-8")
+    (forged / "gitdir").write_text(f"{(wt / '.git').as_posix()}\n", encoding="utf-8")
+    (wt / ".git").write_text(f"gitdir: {forged.as_posix()}\n", encoding="utf-8")
+    assert "링크나 접합점" in (call(repo, remove) or "")
+    (wt / ".git").write_text(f"gitdir: {admin.as_posix()}\n", encoding="utf-8")
+    (admin / "gitdir").write_text(f"{(wt / '.git').as_posix()}\n", encoding="utf-8")
+    (wt / "nested/.git").mkdir(parents=True)                                    # another repository below
+    assert "링크나 접합점" in (call(repo, remove) or "")
 
 
 def test_a_powershell_assignment_written_as_one_word_is_still_an_assignment():
