@@ -180,7 +180,9 @@ def task_spec(top: Path, gitdir: Path, main: Path) -> dict:
     except (OSError, ValueError):
         return {}
     worktree = spec.get("worktree") if isinstance(spec, dict) else None
-    return spec if worktree and Path(worktree).resolve() == top else {}
+    # The id is the branch folded to a file name, so `fix/slots` finds `fix-slots`: a recorded branch must match.
+    named = spec.get("branch") if isinstance(spec, dict) else None
+    return spec if worktree and Path(worktree).resolve() == top and named in (None, branch) else {}
 
 
 def plan_root(top: Path, spec: dict) -> Path | None:
@@ -267,6 +269,16 @@ def plain(p: str) -> str:
     return os.path.normcase(os.path.abspath(p))
 
 
+def single(p: str) -> bool:
+    """`p` is absent or has one name: a hard link shares its contents with another file, `.git/config` say."""
+    try:
+        return os.stat(p, follow_symlinks=False).st_nlink <= 1
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+
+
 def outside(effect: tuple, g: Grant) -> str | None:
     """Why `effect` leaves the grant, naming what would allow it; `None` when it is inside."""
     kind, target = effect
@@ -284,7 +296,7 @@ def outside(effect: tuple, g: Grant) -> str | None:
     # write to an existing directory either lands under it or fails. Only git's own write of the repository
     # it runs in (`repo`) is granted on the checkout as a whole.
     if g.adapter and kind == "write" and plain(target) == plain(g.adapter) == real_path(g.adapter) \
-            and contained(target, g.roots):
+            and single(g.adapter) and contained(target, g.roots):
         return None   # the adapter itself, reached through no link: a link there would carry the write elsewhere
     reaches_protected = kind != "repo" and any(contained(p, [target]) for p in g.protected)
     # A `.git` anywhere makes a repository whose configuration git would trust: no write lays one down. And a

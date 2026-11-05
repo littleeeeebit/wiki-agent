@@ -156,7 +156,8 @@ Fixed (the person chose to open the guard to these sessions only).
   done item, and is flagged `adapter` (`specs.answered`, `specs.gated`
   for revisions). The survey spec carries the same flag.
 - `guard_grant` opens exactly that checkout's `.wiki/adapter.toml` to a
-  task whose hub spec is flagged, for writes only, and only while no link
-  stands at that path; every other protected file stays closed. Review and
-  [Merge] judge the slots it wrote, and once filled the server's worktree
-  gate reads them (`specs.py` `gate_of(repo, path)`).
+  task whose hub spec is flagged and records the branch checked out, for
+  writes only, and only while no symbolic or hard link stands at that path;
+  every other protected file stays closed. Review and [Merge] judge the
+  slots it wrote, and once filled the server's gate reads them from the
+  task checkout, linked worktree included (`specs.gate_of(repo, path)`).

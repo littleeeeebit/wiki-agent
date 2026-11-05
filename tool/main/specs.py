@@ -319,12 +319,13 @@ def fork(repo: Path, sid: str, ready=lambda source: None) -> tuple[Path, str, st
 # -- Checking what a person settles -----------------------------------------
 
 def gate_of(repo: Path, path: Path | None = None) -> str:
-    """The adapter's `gate_cmd`, or empty: a repository not connected yet."""
+    """The adapter's `gate_cmd` — the task checkout's own first, where a slot spec fills it — or empty."""
 
     if cfg := verify.policy(path or repo, project=repo):
         return cfg["round"]
+    place = path if path and (path / ".wiki/adapter.toml").is_file() else repo
     try:
-        return slots_for(repo.name, repo).get("gate_cmd", "").strip()
+        return slots_for(repo.name, place).get("gate_cmd", "").strip()
     except (OSError, ValueError):
         return ""
 

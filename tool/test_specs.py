@@ -247,6 +247,21 @@ def test_a_spec_in_a_repository_with_no_gate_fills_the_slots_under_the_survey_ch
     assert "명세는 JSON 객체" in made(repo, ["not a spec"])[0]["error"]
 
 
+def test_the_gate_a_slot_spec_fills_in_its_linked_worktree_is_the_one_the_server_runs(repo, tmp_path):
+    """PR #297 round 1: `gate_of(repo, path)` read the original's adapter, so the linked worktree's filled gate
+    never replaced the stand-in."""
+
+    _adapter(repo, None)
+    sid = made(repo, spec_block(slug="slots"))[0]["id"]
+    linked = tmp_path / "linked"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-qb", sid, str(linked)], check=True)
+    spec = specs.update(repo.name, sid, worktree=str(linked), branch=sid, return_branch="main")
+    assert specs.gate_of(repo, linked) == "", "채우기 전에는 원본도 작업 폴더도 비었다"
+    _adapter(linked, FAIL)
+    assert specs.gate_of(repo, linked) == FAIL and specs.gate_of(repo) == ""
+    assert FAIL in specs.local_required(repo, spec)
+
+
 def test_a_spec_names_its_review_profile_and_an_old_one_is_code(repo):
     """`docs/plans/reliability/6-review-profiles.md`: the spec names the
     profile, the code checks it, and nothing infers a plan from a suffix."""
