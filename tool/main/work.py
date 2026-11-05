@@ -344,7 +344,7 @@ def listing() -> dict:
     with _lock:
         name, repo = project(), current_repo()
     try:
-        rows = worktrees(repo)
+        rows = worktrees(repo, kept=True)   # display only: a removal judges `merged` afresh
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     from . import specs

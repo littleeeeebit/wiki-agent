@@ -173,19 +173,38 @@ def test_a_squash_that_main_reverted_is_not_merged(repo):
     assert "남겼다" in remove(repo, path)
 
 
-def test_the_answer_for_a_pair_of_commits_is_read_once(repo, monkeypatch):
-    # Every listing read three whole trees per worktree after each spec save; commits never change.
+def test_a_listing_reads_the_answer_for_a_pair_of_commits_once(repo, monkeypatch):
+    # Every listing read three whole trees per worktree after each spec save.
     path = create(repo, "kept")
     (path / "work.txt").write_text("work\n")
     git(path, "add", "work.txt")
     git(path, "commit", "-q", "-m", "work")
-    assert not worktrees(repo)[0]["merged"]
+    def shown():
+        return list_workspaces(repo, kept=True)[1]["merged"]
+
+    assert not shown()
     real, reads = subprocess.run, []
     monkeypatch.setattr(subprocess, "run", lambda args, *a, **k: reads.append("ls-tree" in args) or real(args, *a, **k))
-    assert not worktrees(repo)[0]["merged"] and not any(reads)
+    assert not shown() and not any(reads)
     git(repo, "merge", "-q", "--squash", "kept")
     git(repo, "commit", "-q", "-m", "squash")
-    assert worktrees(repo)[0]["merged"] and any(reads), "a new HEAD is a new pair, read again"
+    assert shown() and any(reads), "a new HEAD is a new pair, read again"
+
+
+def test_a_removal_never_trusts_a_kept_answer(repo):
+    # A replacement ref changes what the same ids mean; a True kept under it deleted an unmerged branch (#301 R1).
+    base = git(repo, "rev-parse", "HEAD").strip()
+    path = create(repo, "precious")
+    (path / "only-here.txt").write_text("unmerged\n")
+    git(path, "add", "only-here.txt")
+    git(path, "commit", "-q", "-m", "work")
+    tip = git(repo, "rev-parse", "refs/heads/precious").strip()
+    empty = git(repo, "commit-tree", git(repo, "rev-parse", "HEAD^{tree}").strip(), "-p", base, "-m", "r").strip()
+    git(repo, "replace", tip, empty)
+    assert list_workspaces(repo, kept=True)[1]["merged"]
+    git(repo, "replace", "-d", tip)
+    assert "남겼다" in remove(repo, path)
+    assert git(repo, "rev-parse", "refs/heads/precious").strip() == tip
 
 
 def test_the_same_change_elsewhere_in_the_file_is_not_merged(repo):

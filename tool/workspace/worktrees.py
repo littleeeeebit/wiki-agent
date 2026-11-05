@@ -172,7 +172,7 @@ def _tree(repo: Path, rev: str) -> dict[bytes, bytes] | None:
     return entries
 
 
-def merged(repo: Path, branch: str) -> bool:
+def merged(repo: Path, branch: str, *, kept: bool = False) -> bool:
     """Would deleting `branch` lose anything the original checkout's HEAD lacks?
 
     True when every path the branch changed since its merge base holds, in
@@ -206,25 +206,29 @@ def merged(repo: Path, branch: str) -> bool:
     if done.returncode or len(oids) != 2:
         return False
     key = (str(repo), *oids)
-    if key not in _merges:
-        base = _git(repo, "merge-base", *oids).stdout.strip()
-        if not base:
-            return False
-        old, ours, head = _tree(repo, base), _tree(repo, oids[1]), _tree(repo, oids[0])
-        if old is None or ours is None or head is None:
-            return False   # a failed read is not kept: asked again next time
-        _merges[key] = all(head.get(path) == ours.get(path)
-                           for path in old.keys() | ours.keys() if old.get(path) != ours.get(path))
+    if kept and key in _merges:
+        return _merges[key]
+    base = _git(repo, "merge-base", *oids).stdout.strip()
+    if not base:
+        return False
+    old, ours, head = _tree(repo, base), _tree(repo, oids[1]), _tree(repo, oids[0])
+    if old is None or ours is None or head is None:
+        return False   # a failed read is not kept: asked again next time
+    _merges[key] = all(head.get(path) == ours.get(path)
+                       for path in old.keys() | ours.keys() if old.get(path) != ours.get(path))
     return _merges[key]
 
 
-# Commits never change, so the answer for a pair of them is kept: every worktree listing read three whole
-# trees per worktree, after each spec save. ponytail: unbounded, one entry per (HEAD, branch) pair seen.
+# A screen's listing (`kept`) reuses the answer for a pair of commit ids: it read three whole trees per
+# worktree after each spec save. A deletion never does: replacement refs or grafts can change what the same
+# ids mean, and a stale True deleted an unmerged branch (#301 round 1). ponytail: unbounded, one entry per
+# (HEAD, branch) pair seen.
 _merges: dict[tuple[str, str, str], bool] = {}
 
 
-def worktrees(repo: Path, *, details: bool = True) -> list[dict]:
-    """The selected checkout and legacy task trees; enrich only for status consumers."""
+def worktrees(repo: Path, *, details: bool = True, kept: bool = False) -> list[dict]:
+    """The selected checkout and legacy task trees; enrich only for status consumers. `kept` lets a
+    display reuse `merged` answers; anything that deletes on `merged` leaves it off."""
 
     top, _, _ = checkout(Path(repo))
     if not top or Path(top) != Path(repo).resolve():
@@ -246,7 +250,7 @@ def worktrees(repo: Path, *, details: bool = True) -> list[dict]:
             if row["path"] == repo or row["path"].parent == root and not survey:
                 if details:
                     row["dirty"] = bool(_git(row["path"], "status", "--porcelain").stdout.strip())
-                    row["merged"] = row["path"] != repo and merged(repo, row["branch"])
+                    row["merged"] = row["path"] != repo and merged(repo, row["branch"], kept=kept)
                 rows.append(row)
             row = {}
     return rows
