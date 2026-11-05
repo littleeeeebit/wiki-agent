@@ -168,7 +168,7 @@ export default function App() {
 
   const refresh = useCallback(() => {
     const mine = ++listing.current
-    api.getWorktrees()
+    return api.getWorktrees()
       .then(({ project, rows }) => {
         if (mine !== listing.current) return
         if (project !== expected.current) {
@@ -189,7 +189,7 @@ export default function App() {
   // Read when the worktrees are, and after a turn ends: a turn is where a
   // spec's pull request goes up. Merged on GitHub is noticed by this read.
   const readSpecs = useCallback(() => {
-    api.getSpecs()
+    return api.getSpecs()
       .then(({ project, specs }) => project === expected.current && setSpecs(specs))
       .catch(() => {})
   }, [])
@@ -197,12 +197,12 @@ export default function App() {
   // The pull requests the loop button counts, and every project's loops for
   // the rail's other-projects group.
   const readPrs = useCallback(() => {
-    api.getPrs()
+    return api.getPrs()
       .then(({ project, rows }) => project === expected.current && setPrs({ project, rows }))
       .catch(() => {})
   }, [])
   const readLoops = useCallback(() => {
-    api.getLoops()
+    return api.getLoops()
       .then(({ loops, turns }) => {
         setLoopRows(loops)
         setTurnsElsewhere(turns)
@@ -271,14 +271,19 @@ export default function App() {
     const stop = new AbortController()
     const seen = new Map<string, LoopRow>()
     let timer: number | undefined
+    // One burst of reads at a time: on a busy server bursts 800 ms apart piled up and a
+    // project switch waited behind them all. Changes during a burst read once after it.
+    let reading = false, again = false
+    const burst = () => {
+      reading = true
+      void Promise.allSettled([refresh(), readSpecs(), readLoops(), readPrs()]).finally(() => {
+        reading = false
+        if (again && !stop.signal.aborted) { again = false; burst() }
+      })
+    }
     const soon = () => {
       window.clearTimeout(timer)
-      timer = window.setTimeout(() => {
-        refresh()
-        readSpecs()
-        readLoops()
-        readPrs()
-      }, 800)
+      timer = window.setTimeout(() => (reading ? (again = true) : burst()), 800)
     }
     const resync = () => {
       soon()

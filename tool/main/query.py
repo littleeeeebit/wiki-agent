@@ -276,13 +276,13 @@ def recall(cid: str, legacy: bool = False, include_context: bool = False) -> lis
     path = LOGS / f"{cid}.jsonl"
     if not path.exists():
         return []
-    rows = []
+    rows, repo = [], str(current_repo())   # once: resolved per row, it was most of a read of a long log
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if (not row.get("repo")) if legacy else row.get("repo") == str(current_repo()):
+        if (not row.get("repo")) if legacy else row.get("repo") == repo:
             rows.append(row)
     rows = memory.since_clear(rows)
     if not include_context:

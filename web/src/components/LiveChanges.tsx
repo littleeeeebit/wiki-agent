@@ -19,7 +19,8 @@ export function LiveChanges({ path, busy, turn }: {
       } catch (err) {
         if (alive) setError(String(err instanceof Error ? err.message : err))
       } finally {
-        if (alive) timer = setTimeout(poll, busy ? 1000 : 5000)
+        // Each read runs git several times; every second during a turn held the server's core.
+        if (alive) timer = setTimeout(poll, busy ? 3000 : 5000)
       }
     }
     void poll()
