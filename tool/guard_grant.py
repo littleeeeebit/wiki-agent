@@ -294,6 +294,8 @@ def outside(effect: tuple, g: Grant) -> str | None:
     # Open by default: a form the guard cannot read, and any program it starts, pass.
     if kind in ("read", "top", "spawn"):
         return None
+    if kind == "unread":
+        return "가드가 이 명령을 읽다 실패했다 — 다시 실행해 보고, 계속되면 사람이 직접 실행한다"
     if kind == "network":
         return None if target in g.hosts else \
             f"원격 저장소가 아닌 호스트({target})로 보낸다 — `git remote add` 로 원격을 먼저 더하면 열린다"

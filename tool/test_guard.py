@@ -1134,10 +1134,12 @@ def test_one_part_that_fails_to_read_leaves_the_rest_of_the_call_judged(repo, mo
 
     own_repo = guard_git.own_repo
     monkeypatch.setattr(guard_git, "own_repo", broken)       # the source checkout's metadata will not decode
-    assert call(repo, "git status") is None                  # that command alone is unreadable, so it passes
-    assert "허가를 정하는 파일" in (call(repo, f"git status; {protected}") or "")
-    # The failed command's own words are still judged as places it may write.
-    assert "허가를 정하는 파일" in (call(repo, "git restore -- .wiki/adapter.toml") or "")
+    # Its destinations went with the failure (option values, a `-C` base), so the command itself refuses.
+    for command in ("git status", "git restore -- .wiki/adapter.toml", "git -C sub worktree add ../../x HEAD"):
+        assert "읽다 실패했다" in (call(repo, command) or ""), command
+    assert call(repo, "echo ok") is None
+    reason = call(repo, f"git status; {protected}") or ""
+    assert "읽다 실패했다" in reason and "허가를 정하는 파일" in reason
     monkeypatch.setattr(guard_git, "own_repo", own_repo)
 
     def unresolvable(*_args, **_kw):
