@@ -71,7 +71,7 @@ Measure for each wheel.
 | # | Step | What | Status |
 | --- | --- | --- | --- |
 | 1 | Selection | Two repositories, measure size | Done — 2026-11-05, below |
-| 2 | Wheel A | From connection with investigation on to second specification | In progress — the second run passed steps 1–7 and stopped at step 8 on two catches (below) |
+| 2 | Wheel A | From connection with investigation on to second specification | Done — the second run reached the second spec, and it merged on 2026-11-05 after #297; two catches remain for step 4 (below) |
 | 3 | Wheel B | One wheel of repository with investigation off | Not started |
 | 4 | Fix | What was caught | Not started |
 | 5 | Gate and cleanup | All confirmations, move to `done/` | Not started |
@@ -161,3 +161,26 @@ Fixed (the person chose to open the guard to these sessions only).
   every other protected file stays closed. Review and [Merge] judge the
   slots it wrote, and once filled the server's gate reads them from the
   task checkout, linked worktree included (`specs.gate_of(repo, path)`).
+
+### Wheel A, step 8 again (2026-11-05, app on `2502a3d`)
+
+| Step | Seen |
+| --- | --- |
+| 8 | [Propose candidates] showed and worked. The first proposal came back as hand instructions instead of a spec (below); after the conversation was cleared, the fill-the-slots candidate became the spec `declare-adapter-slots`, flagged `adapter`, with the stand-in gate |
+| 9 | The task ran from 13:10 and opened PR #2 at 13:17. The guard let it write `.wiki/adapter.toml` and nothing else protected. It filled `gate_cmd = "npm run lint && npm run build"`, `live_cmd = "npm run build && node scripts/preview-owned.mjs start"` and `server_stop = "node scripts/preview-owned.mjs stop"`, with `scripts/preview-owned.mjs` recording which preview this checkout started |
+| 10 | The loop did not start by itself again; [Review loop] started it at 13:31. R1 denied with one P1: cleanup could stop a preview this session did not start. The round went stale on the repair push and R1 was re-shown with two P1s: a stale record could name another checkout's preview, and cleanup reported success while the owned preview was still running. R2 allowed with no findings at 13:44. [Merge] squashed it as `350cf07` at 13:49. The original is on a clean `main` with all three slots filled |
+
+Caught.
+
+- The next-task conversation still held the refusal from the dead end
+  above, and the model answered the candidate with steps for a person
+  instead of a spec. Clearing the conversation fixed it. The refusal stays
+  in the log the proposal reads.
+- The loop again waited for [Review loop] after the pull request opened,
+  as in step 6.
+
+Checked, not a catch. The round gate ran the stand-in `git diff --check`
+(selection `deferred`). The final validation before [Merge] ran the
+filled `npm run lint && npm run build` with the debt check, and it passed
+on the approved head `7ccfa62` at 13:45, before the merge at 13:49
+(`validation.final` in the spec record).
