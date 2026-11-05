@@ -235,8 +235,9 @@ def start(repo: Path) -> str | None:
         # untracked file went into the pull request, then was put back or deleted (loop stage 7,
         # ml-interactive-lab). Only what `[연결]` wrote, and the wiki's own outputs, may be there.
         rows = [(line[:3], line[3:].strip('"')) for line in specs.status(repo).stdout.splitlines()]
+        # `[연결]` writes wiring into the working file only: anything staged there is a person's (round 3).
         stray = [p for kind, p in rows if not (p == ADAPTER or kind == "?? " and p.startswith(".wiki/")
-                                               or p in WIRING and authored(repo, p))]
+                                               or p in WIRING and kind in (" M ", "?? ") and authored(repo, p))]
         if stray:
             progress(repo.name, state="실패", reason="커밋하지 않은 변경이 있다 — 커밋하거나 치운 뒤 다시 [연결] 하라: "
                                                   + ", ".join(stray[:5]) + (f" 외 {len(stray) - 5}개" if len(stray) > 5 else ""))
@@ -250,13 +251,15 @@ def authored(repo: Path, file: str) -> bool:
     """`file`'s uncommitted text is exactly what `[연결]` makes of its committed one (or of none): a
     person's own settings in it would go up with the wiki (PR #296 round 2)."""
 
-    shown = git(repo, "show", f"HEAD:{file}")
     try:
+        if WIRING[file] not in connect.hosts(connect.adapter_of(repo)[0]):
+            return False   # a host `unwire` leaves alone: the change is not its own
+        shown = git(repo, "show", f"HEAD:{file}")
         settings = json.loads(shown.stdout) if shown.returncode == 0 else {}
         connect.rewired(settings, WIRING[file])
         return (repo / file).read_text(encoding="utf-8") == connect.settled(settings)
-    except (OSError, ValueError, AttributeError):
-        return False
+    except (OSError, ValueError, TypeError, AttributeError, KeyError):
+        return False   # settings `unwire` could not have produced; refused like any other change
 
 
 def prepare(repo: Path) -> str | None:

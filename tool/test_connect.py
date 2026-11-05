@@ -603,21 +603,48 @@ def test_a_persons_uncommitted_edit_or_file_keeps_the_survey_from_starting(surve
     assert (surveyed / "README.md").read_text(encoding="utf-8") == "mine\n" and (surveyed / "notes.txt").exists()
 
 
-@pytest.mark.parametrize("tracked", [False, True])
-def test_a_persons_own_settings_beside_the_wiring_keep_the_survey_from_starting(surveyed, tracked):
-    # PR #296 round 2: the whole settings file was committed, a person's local `env` with it.
-    file = surveyed / ".claude/settings.json"
+def refused_with_settings(repo: Path, tracked: bool, staged: bool) -> None:
+    """A person's local `env` in `.claude/settings.json` (committed `{}` first when `tracked`; staged and the
+    working file put back to `{}` when `staged`), then `[연결]`: the survey refuses and never commits it."""
+
+    file = repo / ".claude/settings.json"
     file.parent.mkdir()
     if tracked:
         file.write_text("{}\n", encoding="utf-8")
-        git(surveyed, "add", "-f", ".claude/settings.json")
-        git(surveyed, "commit", "-qm", "shared settings")
+        git(repo, "add", "-f", ".claude/settings.json")
+        git(repo, "commit", "-qm", "shared settings")
     file.write_text(json.dumps({"env": {"LOCAL_ONLY": "fixture"}}) + "\n", encoding="utf-8")
-    connect.unwire(surveyed)
+    if staged:
+        git(repo, "add", "-f", ".claude/settings.json")
+        file.write_text("{}\n", encoding="utf-8")
+    connect.unwire(repo)
     loop.store(survey=True, survey_tokens=10_000, survey_minutes=60, survey_model="opus")
-    assert survey.start(surveyed) is None
+    assert survey.start(repo) is None
     assert ".claude/settings.json" in connect.record("proj")["survey"]["reason"]
-    assert "LOCAL_ONLY" not in git(surveyed, "log", "--all", "--format=", "-p")
+    assert "LOCAL_ONLY" not in git(repo, "log", "--all", "--format=", "-p")
+
+
+@pytest.mark.parametrize("tracked", [False, True])
+@pytest.mark.parametrize("staged", [False, True])
+def test_a_persons_own_settings_beside_the_wiring_keep_the_survey_from_starting(surveyed, tracked, staged):
+    # PR #296 round 2: the whole settings file was committed, a person's local `env` with it. Round 3: the
+    # working file matched the output of `[연결]`, but the staged blob went into `wiki: adapter`.
+    refused_with_settings(surveyed, tracked, staged)
+
+
+def test_a_host_the_adapter_does_not_name_is_refused_even_with_settings_unwire_cannot_read(surveyed):
+    # PR #296 round 3: transforming an unselected host's malformed file raised instead of refusing.
+    (surveyed / ".wiki/adapter.toml").write_text('agents = ["claude"]\n[slots]\ngate_cmd = "git --version"\n',
+                                                 encoding="utf-8")
+    file = surveyed / ".codex/hooks.json"
+    file.parent.mkdir()
+    file.write_text('{"hooks":{"UserPromptSubmit":null}}\n', encoding="utf-8")
+    git(surveyed, "add", "-f", ".codex/hooks.json")
+    git(surveyed, "commit", "-qm", "unused host settings")
+    file.write_text('{"hooks":{"UserPromptSubmit":null},"local":true}\n', encoding="utf-8")
+    connect.unwire(surveyed)
+    assert survey.start(surveyed) is None
+    assert ".codex/hooks.json" in connect.record("proj")["survey"]["reason"]
 
 
 def test_an_untracked_wiki_page_with_a_space_does_not_keep_the_survey_from_starting(surveyed):
