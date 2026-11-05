@@ -590,6 +590,90 @@ def test_the_survey_sends_no_further_turn_once_the_tokens_reach_the_limit(survey
     assert "repo_lint.py" in spec["done"][0] and "--no-wiring" in spec["done"][0]
 
 
+def test_a_persons_uncommitted_edit_or_file_keeps_the_survey_from_starting(surveyed):
+    # Loop stage 7: ml-interactive-lab's edited how_to.md went into the survey's first commit, then was put back;
+    # an untracked file outside `.wiki/` would have been published, then deleted.
+    (surveyed / "README.md").write_text("mine\n", encoding="utf-8")
+    (surveyed / "notes.txt").write_text("private\n", encoding="utf-8")
+    loop.store(survey=True, survey_tokens=10_000, survey_minutes=60, survey_model="opus")
+    assert survey.start(surveyed) is None
+    now = connect.record("proj")["survey"]
+    assert now["state"] == "실패" and "README.md" in now["reason"] and "notes.txt" in now["reason"], now
+    assert git(surveyed, "branch", "--show-current") == "main" and not Spender.heard
+    assert (surveyed / "README.md").read_text(encoding="utf-8") == "mine\n" and (surveyed / "notes.txt").exists()
+
+
+def refused_with_settings(repo: Path, tracked: bool, staged: bool) -> None:
+    """A person's local `env` in `.claude/settings.json` (committed `{}` first when `tracked`; staged and the
+    working file put back to `{}` when `staged`), then `[연결]`: the survey refuses and never commits it."""
+
+    file = repo / ".claude/settings.json"
+    file.parent.mkdir()
+    if tracked:
+        file.write_text("{}\n", encoding="utf-8")
+        git(repo, "add", "-f", ".claude/settings.json")
+        git(repo, "commit", "-qm", "shared settings")
+    file.write_text(json.dumps({"env": {"LOCAL_ONLY": "fixture"}}) + "\n", encoding="utf-8")
+    if staged:
+        git(repo, "add", "-f", ".claude/settings.json")
+        file.write_text("{}\n", encoding="utf-8")
+    connect.unwire(repo)
+    loop.store(survey=True, survey_tokens=10_000, survey_minutes=60, survey_model="opus")
+    assert survey.start(repo) is None
+    assert ".claude/settings.json" in connect.record("proj")["survey"]["reason"]
+    assert "LOCAL_ONLY" not in git(repo, "log", "--all", "--format=", "-p")
+
+
+@pytest.mark.parametrize("tracked", [False, True])
+@pytest.mark.parametrize("staged", [False, True])
+def test_a_persons_own_settings_beside_the_wiring_keep_the_survey_from_starting(surveyed, tracked, staged):
+    # PR #296 round 2: the whole settings file was committed, a person's local `env` with it. Round 3: the
+    # working file matched the output of `[연결]`, but the staged blob went into `wiki: adapter`.
+    refused_with_settings(surveyed, tracked, staged)
+
+
+def test_a_host_the_adapter_does_not_name_is_refused_even_with_settings_unwire_cannot_read(surveyed):
+    # PR #296 round 3: transforming an unselected host's malformed file raised instead of refusing.
+    (surveyed / ".wiki/adapter.toml").write_text('agents = ["claude"]\n[slots]\ngate_cmd = "git --version"\n',
+                                                 encoding="utf-8")
+    file = surveyed / ".codex/hooks.json"
+    file.parent.mkdir()
+    file.write_text('{"hooks":{"UserPromptSubmit":null}}\n', encoding="utf-8")
+    git(surveyed, "add", "-f", ".codex/hooks.json")
+    git(surveyed, "commit", "-qm", "unused host settings")
+    file.write_text('{"hooks":{"UserPromptSubmit":null},"local":true}\n', encoding="utf-8")
+    connect.unwire(surveyed)
+    assert survey.start(surveyed) is None
+    assert ".codex/hooks.json" in connect.record("proj")["survey"]["reason"]
+
+
+def test_an_untracked_wiki_page_with_a_space_does_not_keep_the_survey_from_starting(surveyed):
+    # PR #296 round 2: git quotes the name, and the `.wiki/` exception read the quote.
+    (surveyed / ".wiki/first notes.md").write_text("page\n", encoding="utf-8")
+    loop.store(survey=True, survey_tokens=10_000, survey_minutes=60, survey_model="opus")
+    Spender.tokens = 50_000
+    assert survey.start(surveyed) == "wiki-bootstrap", connect.record("proj")["survey"]
+    ended("proj")
+
+
+def test_the_wiring_connect_wrote_goes_up_with_the_wiki_and_the_report_passes_the_gate(surveyed):
+    # Loop stage 7: the `.claude/settings.json` that `[연결]` wrote was committed by the first turn, then deleted;
+    # PR #296 round 1: left untracked instead, it failed the report's gate as a dirty checkout.
+    connect.unwire(surveyed)
+    loop.store(survey=True, survey_tokens=10_000, survey_minutes=60, survey_model="opus")
+    Spender.tokens = 50_000
+    sid = survey.start(surveyed)
+    assert ended("proj")["state"] == "끝"
+    spec = specs.load("proj", sid)
+    path = Path(spec["worktree"])
+    assert (path / ".claude/settings.json").is_file() and "deny" in (path / ".claude/settings.json").read_text("utf-8")
+    assert git(path, "log", "--format=%s", "--", ".claude/settings.json") == "wiki: [연결] 배선"
+    report = "```done-report\n" + json.dumps([{"item": spec["done"][0], "pass": True}]) + "\n```"
+    report += '\n```test-cleanup\n{"audited": ["test_fixture.py"], "removed": []}\n```'
+    specs.check(path, work.Run(Spender(path)), report)
+    assert specs.load("proj", sid)["gate"]["ok"], specs.load("proj", sid)["gate"]
+
+
 def test_an_adapter_that_was_there_before_gets_the_hash_the_handover_compares(surveyed):
     theirs = 'agents = ["claude"]\n\n[slots]\ngate_cmd = "make test"\n'
     (surveyed / ".wiki/adapter.toml").write_text(theirs, encoding="utf-8", newline="\n")
@@ -660,6 +744,17 @@ def test_a_turn_cut_by_the_time_limit_leaves_nothing_it_committed(surveyed):
     assert git(path, "log", "--format=%s", "-1") == "wiki: adapter", "끊긴 턴의 커밋은 HEAD 에 남지 않는다"
     assert not (path / ".wiki/late.md").exists()
     assert "late.md" in git(path, "stash", "show", "--include-untracked", "--name-only", "stash@{0}"), "stash 에 남는다"
+
+
+def test_a_cut_turn_s_stash_leaves_the_wiring_connect_wrote(surveyed):
+    # PR #296 round 1: a pre-existing untracked `.claude/settings.json` went into the cut turn's stash.
+    connect.unwire(surveyed)
+    limits = {**survey.DEFAULTS, "survey": True, "survey_tokens": 10_000_000, "survey_minutes": 2 / 60}
+    with patch.object(work, "ChatSession", Cutter), patch.object(survey, "settings", return_value=limits):
+        survey.start(surveyed)
+        assert ended("proj")["why"] == "시간 한도"
+    assert (surveyed / ".claude/settings.json").is_file()
+    assert ".claude" not in git(surveyed, "stash", "show", "--include-untracked", "--name-only", "stash@{0}")
 
 
 def test_a_record_read_while_it_is_kept_does_not_fail_the_write():

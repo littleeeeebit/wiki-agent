@@ -70,8 +70,52 @@ Measure for each wheel.
 
 | # | Step | What | Status |
 | --- | --- | --- | --- |
-| 1 | Selection | Two repositories, measure size | Not started |
-| 2 | Wheel A | From connection with investigation on to second specification | Not started |
+| 1 | Selection | Two repositories, measure size | Done — 2026-11-05, below |
+| 2 | Wheel A | From connection with investigation on to second specification | In progress — the first run stopped on a caught bug (below); restarts after its fix |
 | 3 | Wheel B | One wheel of repository with investigation off | Not started |
 | 4 | Fix | What was caught | Not started |
 | 5 | Gate and cleanup | All confirmations, move to `done/` | Not started |
+
+## Runs
+
+### Selection (2026-11-05)
+
+| Repository | Tracked files | Lines | State |
+| --- | --- | --- | --- |
+| fresh-labeler | 44 | 7,200 | No remote; nearly every tracked file shows as modified |
+| ml-interactive-lab | 40 | 10,636 | Remote `LittleBitAI/ml-interactive-lab`; one edited file (`how_to.md`) |
+
+fresh-labeler is smaller, but with no remote it cannot reach the pull
+request, loop and merge steps, so Wheel A uses ml-interactive-lab (the
+user's choice). Wheel B uses `wiki-agent-refactor-scratch` instead of
+`ai-generation`, whose checkout is on a feature branch with uncommitted
+work, or `ai-nara-shop` (the user's choice).
+
+### Wheel A, first run (2026-11-05)
+
+| Step | Seen |
+| --- | --- |
+| 1 | There is no survey switch in settings any more; the [Connect] confirmation asks every time. Settings keep only the limits (2,000,000 tokens, 90 minutes, Opus) |
+| 2 | A registered but unconnected repository never shows in the project list, so the confirmation exists only right after [Find folder]; closed, it cannot be reopened. The folder was added and the confirmation answered through the same requests from the page (`/api/folders`, `/api/connect/<name>/plan`, `/api/connect/<name>`) |
+| 3 | The guessed adapter left `gate_cmd`, `live_cmd` and `server_stop` empty; the row listed `gate_cmd 빈 칸` |
+| 4 | Both hosts' tests passed; only `gate_cmd 빈 칸` stayed missing |
+| 5 | Estimate 6 turns, 121,234 tokens, 658 seconds. Turn 1 used 38,797 tokens. Stopped during turn 2 for the catch below |
+
+Caught. The survey switches the original checkout to `wiki-bootstrap`, and
+`survey.settle` committed the whole tree after turn 1: the person's edited
+`how_to.md` (945 lines) and the untracked `.claude/settings.json` that
+[Connect] had just written went into `wiki: 조사 턴이 남긴 것`, then
+`wiki: 조사 범위 밖의 변경을 되돌림` put `how_to.md` back to `main` and
+deleted `.claude/`. Pushed with the pull request, the person's edit would
+have been published; the scratch repository's earlier survey had lost its
+`.claude/` the same way. Nothing was pushed: the run was stopped, the
+checkout returned to `main`, the edit reapplied from a saved diff, and the
+local branch kept as a bundle.
+
+Fixed. `survey.start` refuses while anything but the adapter, the wiring
+[Connect] wrote (`.claude/settings.json`, `.codex/hooks.json`, only while
+their text is exactly what [Connect] makes of the committed one) and
+untracked `.wiki/` outputs is uncommitted, and names it. The wiring is committed on the
+survey branch right after the adapter (`wiki: [연결] 배선`), so it goes up
+with the wiki instead of being swept, stashed by a cut turn or read as a
+dirty checkout by the report's gate (PR #296 round 1).

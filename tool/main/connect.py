@@ -508,12 +508,21 @@ def unwire(path: Path, write: bool = True) -> list[str]:
         if not file.exists() and host != "claude":
             continue
         settings = apply.read_json(file)
-        changes = apply.unwire(settings) + (apply.keep_denies(settings) if host == "claude" else [])
+        changes = rewired(settings, host)
         changed += [f"{file}: {change}" for change in changes]
         if changes and write:
             file.parent.mkdir(parents=True, exist_ok=True)
-            file.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+            file.write_text(settled(settings), encoding="utf-8", newline="\n")
     return changed
+
+
+def rewired(settings: dict, host: str) -> list[str]:
+    """What `unwire` changes in one host's settings, in place."""
+    return apply.unwire(settings) + (apply.keep_denies(settings) if host == "claude" else [])
+
+
+def settled(settings: dict) -> str:
+    return json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
 
 
 def repo_of(name: str) -> Path:
