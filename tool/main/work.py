@@ -353,15 +353,16 @@ def listing() -> dict:
     # returns to, so the card still owns it instead of the rail showing a second, spec-less task (ai-coding-wiki #162).
     refreezing = {Path(s["worktree"]).resolve(): s["refreezing"]["branch"] for s in specs.listing(repo.name)
                   if s.get("refreezing") and s.get("worktree")}
-    out = []
+    out, home = [], repo.resolve()
     for row in rows:
-        if back := not row["branch"] and refreezing.get(row["path"].resolve()):
+        real = row["path"].resolve()   # once per row: every screen reads this list after each spec change
+        if back := not row["branch"] and refreezing.get(real):
             row = {**row, "branch": back, "refreezing": True}
-        if row["path"].resolve() == repo.resolve() and specs.dismissed(repo.name, row["branch"]):
+        if real == home and specs.dismissed(repo.name, row["branch"]):
             continue
         chat = _sessions.get(str(row["path"]))
         out.append({**row, "path": str(row["path"]), "name": row["branch"] or row["path"].name,
-                    "primary": row["path"].resolve() == repo.resolve(),
+                    "primary": real == home,
                     "live": bool(chat and chat.alive), "busy": str(row["path"]) in _busy})
     return {"project": name, "repo": str(repo), "rows": out}
 

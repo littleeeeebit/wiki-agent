@@ -3130,3 +3130,38 @@ def test_a_switch_leaves_the_loop_and_its_approvals_where_they_are(world, tmp_pa
         assert web.post("/api/work/say", json={"path": path, "text": "새 지시"}).status_code == 404
     spec = specs.load("proj", "fix-s")
     assert spec["state"] == "머지 가능" and [r["verdict"] for r in spec["rounds"]] == ["deny", "allow"]
+
+
+def test_the_rail_reads_again_only_the_spec_files_that_changed(tmp_path, monkeypatch):
+    monkeypatch.setattr(specs, "SPECS", tmp_path)
+    monkeypatch.setattr(loop, "_rows", {})
+    def put(repo: str, sid: str, state: str, ts: float) -> None:
+        (tmp_path / repo).mkdir(exist_ok=True)
+        (tmp_path / repo / f"{sid}.json").write_text(json.dumps(
+            {"repo": repo, "id": sid, "state": state, "history": [{"ts": ts}], "worktree": None}), encoding="utf-8")
+    put("a", "fix-old", "리뷰 R1", 1.0)
+    put("a", "fix-new", "머지 가능", 2.0)
+    put("b", "fix-done", "머지됨", 3.0)
+    read = []
+    real = specs.load
+    monkeypatch.setattr(specs, "load", lambda repo, sid: read.append(sid) or real(repo, sid))
+
+    assert [(r["repo"], r["id"]) for r in loop.looping()] == [("a", "fix-new"), ("a", "fix-old")]
+    assert sorted(read) == ["fix-done", "fix-new", "fix-old"]
+    read.clear()
+    assert [r["id"] for r in loop.looping()] == ["fix-new", "fix-old"] and read == []
+
+    put("b", "fix-done", "리뷰 대기", 3.0)
+    (tmp_path / "a" / "fix-old.json").unlink()
+    assert [(r["repo"], r["id"]) for r in loop.looping()] == [("a", "fix-new"), ("b", "fix-done")]
+    assert read == ["fix-done"] and len(loop._rows) == 2
+
+    # A refused read (Windows mid-replace) is asked again, and a known row stays shown meanwhile.
+    put("a", "fix-new", "멈춤", 2.0)
+    monkeypatch.setattr(specs, "load", lambda repo, sid: None)
+    assert [r["id"] for r in loop.looping()] == ["fix-new", "fix-done"]
+    put("c", "fix-late", "리뷰 R1", 4.0)
+    assert [r["id"] for r in loop.looping()] == ["fix-new", "fix-done"]
+    monkeypatch.setattr(specs, "load", real)
+    assert [(r["id"], r["state"]) for r in loop.looping()] == [
+        ("fix-new", "멈춤"), ("fix-done", "리뷰 대기"), ("fix-late", "리뷰 R1")]

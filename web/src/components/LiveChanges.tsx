@@ -19,7 +19,8 @@ export function LiveChanges({ path, busy, turn }: {
       } catch (err) {
         if (alive) setError(String(err instanceof Error ? err.message : err))
       } finally {
-        if (alive) timer = setTimeout(poll, busy ? 1000 : 5000)
+        // Each read runs git several times; every second during a turn held the server's core.
+        if (alive) timer = setTimeout(poll, busy ? 3000 : 5000)
       }
     }
     void poll()
@@ -68,7 +69,7 @@ function FileChange({ file, path, busy, turn }: { file: api.ChangedFile; path: s
       } catch (err) {
         if (generation) setError(err instanceof Error ? err.message : String(err))
       } finally {
-        if (generation) timer = setTimeout(poll, busy ? 1000 : 5000)
+        if (generation) timer = setTimeout(poll, busy ? 3000 : 5000)   // the same whole-checkout scan as above
       }
     }
     void poll()
