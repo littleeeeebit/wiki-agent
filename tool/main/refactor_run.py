@@ -698,16 +698,17 @@ def restoring(path: Path, spec: dict, refusal: str) -> str:
                 or not (path / name).is_file():
             continue
         old = subprocess.run(["git", "show", f"{start}:{name}"], cwd=path, capture_output=True)
-        try:
-            before, after = ast.parse(old.stdout).body, ast.parse((path / name).read_bytes()).body
-        except (SyntaxError, ValueError):
+        try:   # parsed as `contract` parses, so a changed `# type:` comment is seen here too
+            before, after = (ast.parse(t, type_comments=True).body for t in (old.stdout, (path / name).read_bytes()))
+        except (SyntaxError, ValueError, RecursionError):
             continue
         allowed = named.get(name, set())
         if old.returncode or _kept(before, after, allowed):
             continue
-        dumps = {ast.dump(t) for t in after}
+        dumps, lines = {ast.dump(t) for t in after}, old.stdout.decode("utf-8", "replace").splitlines()
+        # The start's own line, never `ast.unparse`, which can run out of recursion on a statement it parsed.
         what = [f"`{'::'.join(p)}`" for p in sorted(_changed(before, after) - allowed)] + [
-            f"start line {s.lineno} `{ast.unparse(s).splitlines()[0][:80]}`"
+            f"start line {s.lineno} `{lines[s.lineno - 1].strip()[:80]}`"
             for s in before if not _named(s) and ast.dump(s) not in dumps]
         free = sorted("::".join(p) for p in allowed)
         files.append(f"- `{name}`: put back to its start text {', '.join(what) or 'the statements you changed'}"

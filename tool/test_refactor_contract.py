@@ -63,8 +63,20 @@ def test_tidying_it_away_is_refused_and_sent_back_line_by_line(repo):
     assert "기존 테스트 변경" in refusal
     text = refactor_run.restoring(repo, spec, refusal)
     assert all(f"start line {n} `{s}" in text for n, s in [
-        (1, "'Seed invariants.'"), (2, "from graphlib import TopologicalSorter"), (5, "BRANCHES = {")]), text
+        (1, '"""Seed invariants."""'), (2, "from graphlib import TopologicalSorter"), (5, "BRANCHES = {")]), text
     assert "# noqa: F401" in text
+
+
+@pytest.mark.parametrize("old, new", [
+    # Round 4, F1: `contract` compares `# type:` comments, so the turn must see them as well.
+    ("VALUE = 1  # type: int\n\n\ndef test_b():\n    pass\n", "VALUE = 1  # type: str\n"),
+    # Round 4, F2: a statement `ast.unparse` cannot render within the recursion limit.
+    ("TOTAL = " + " + ".join(["1"] * 450) + "\n\n\ndef test_b():\n    pass\n", ""),
+])
+def test_every_refused_file_gets_a_turn(repo, old, new):
+    spec = card(repo, old, new or '"""Rest."""\n', "test_b")
+    refusal = refactor_run.contract(repo, spec)
+    assert "기존 테스트 변경" in refusal and "start line 1 `" in refactor_run.restoring(repo, spec, refusal)
 
 
 # Every shape PR #305's review rounds raised against freeing statements by reading the module stays refused.
