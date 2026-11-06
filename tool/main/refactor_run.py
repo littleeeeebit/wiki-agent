@@ -621,6 +621,26 @@ def _changed(old: list, new: list, at: tuple = ()) -> set:
     return found
 
 
+def _strays(old: list, new: list, allowed: set, at: tuple = ()) -> list:
+    """The start statements not at head unchanged and not freed, as (path or None, statement): one a
+    declared definition encloses is freed with it, and each statement is matched on its own, so of an
+    `@overload` group only the one that changed is named. A class whose header stayed is looked into when
+    the contract names something inside it."""
+
+    dumps, classes = {ast.dump(t) for t in new}, {t.name: t for t in new if isinstance(t, ast.ClassDef)}
+    found = []
+    for s in old:
+        path = (*at, s.name) if (name := _named(s)) else None
+        if ast.dump(s) in dumps or path and any(path[:k] in allowed for k in range(1, len(path) + 1)):
+            continue
+        t = classes.get(name) if isinstance(s, ast.ClassDef) else None
+        if t is not None and _head(s) == _head(t) and any(p[:len(path)] == path for p in allowed):
+            found += _strays(s.body, t.body, allowed, path)
+        else:
+            found.append((path, s))
+    return found
+
+
 def _amendable(before: list, after: list, allowed: set) -> set | None:
     """The names that, declared beside `allowed`, explain every change: None when no names do."""
 
@@ -710,10 +730,9 @@ def restoring(path: Path, spec: dict, refusal: str) -> str:
             # The start's own line, never `ast.unparse`, which can run out of recursion on a statement it parsed,
             # decoded as the parser decodes it: its coding cookie and newlines (`splitlines` also splits on `\f`).
             text = importlib.util.decode_source(old.stdout).split("\n")
-            dumps = {ast.dump(t) for t in after}
-            what = [f"`{'::'.join(p)}`" for p in sorted(_changed(before, after) - allowed)] + [
-                f"start line {s.lineno} `{text[s.lineno - 1].strip()[:80] if s.lineno <= len(text) else ''}`"
-                for s in before if not _named(s) and ast.dump(s) not in dumps]
+            what = [f"`{'::'.join(p)}`" if p else
+                    f"start line {s.lineno} `{text[s.lineno - 1].strip()[:80] if s.lineno <= len(text) else ''}`"
+                    for p, s in _strays(before, after, allowed)]
         except (RecursionError, ValueError, LookupError, SyntaxError):
             what = []   # still a turn: the file goes back whole to its start text
 

@@ -172,6 +172,22 @@ def test_a_refusal_goes_back_naming_what_to_put_back(repo):
     assert loop.contract_repair(repo, spec, {"cmd": "pytest", "reason": "x"}) == ""
 
 
+@pytest.mark.parametrize("old, new, declared, wrong", [
+    # Round 6, F1: a class declared whole frees its methods, so none is to be put back.
+    ("import os\n\n\nclass TestAllowed:\n    def test_a(self):\n        assert 1\n",
+     "class TestAllowed:\n    def test_a(self):\n        assert 2\n", "TestAllowed", "TestAllowed::test_a"),
+    # Round 6, F2: an unchanged `@overload` group is not named because its names repeat.
+    ("import os\nfrom typing import overload\n\n\n@overload\ndef helper(x: int) -> int: ...\n\n\n"
+     "@overload\ndef helper(x: str) -> str: ...\n\n\ndef helper(x):\n    return x\n\n\ndef test_b():\n    pass\n",
+     "from typing import overload\n\n\n@overload\ndef helper(x: int) -> int: ...\n\n\n"
+     "@overload\ndef helper(x: str) -> str: ...\n\n\ndef helper(x):\n    return x\n", "test_b", "`helper`"),
+])
+def test_only_what_the_contract_refused_is_named(repo, old, new, declared, wrong):
+    spec = card(repo, old, new, declared)
+    text = refactor_run.restoring(repo, spec, refactor_run.contract(repo, spec))
+    assert "start line 1 `import os`" in text and wrong not in text
+
+
 def test_a_deleted_test_file_stays_the_persons_to_declare(repo):
     # #252: which tests pytest collects from a file is not settled by its syntax, so no turn undoes the deletion.
     spec = card(repo, SEED, "", "test_acyclic")
