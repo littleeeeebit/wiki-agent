@@ -13,7 +13,7 @@ import threading
 import uuid
 
 from . import process
-from .powershell_syntax import arguments, syntax
+from .powershell_syntax import arguments, command_position, syntax
 from .shell_catalogue import COMMANDS
 
 INSTALL_CONTROL = "PowerShell 7 설치"
@@ -99,12 +99,19 @@ def command_syntax(text: str) -> tuple[str, list[tuple[int, int]]]:
     return bare, strings
 
 
+def invocations(text: str):
+    """Shared literal shell discovery, retaining executable and argument source spans."""
+    bare, _ = command_syntax(text)
+    target = r"(?P<target>(?:[^\s;&|(){}]+[/\\])?(?P<program>powershell|pwsh)(?:\.exe)?)(?=\s|$)\s*"
+    for match in re.finditer(target, bare, re.I):
+        if command_position(bare[:match.start()]):
+            yield match
+
+
 def nested_commands(text: str):
     """Read literal command bodies passed to an explicitly named PowerShell."""
-    bare, _ = command_syntax(text)
     options = {name[:length].lower() for name in ("Command", "EncodedCommand") for length in range(1, len(name) + 1)} | {"ec"}
-    wrapper = r"(?:^|[;&|{(\n])\s*(?:&\s*)?(?:[^\s;&|(){}]+[/\\])?(?P<program>powershell|pwsh)(?:\.exe)?\s+"
-    for nested in re.finditer(wrapper, bare, re.I):
+    for nested in invocations(text):
         argv = arguments(text[nested.end():])
         for index, value in enumerate(argv):
             option = value[1:].lower() if value.startswith(("-", "/")) else ""

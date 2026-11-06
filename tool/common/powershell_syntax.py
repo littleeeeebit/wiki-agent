@@ -5,6 +5,31 @@ import re
 ESCAPES = dict(zip("0abefnrtv", "\0\a\b\x1b\f\n\r\t\v"))
 
 
+def command_position(prefix: str) -> bool:
+    """Statement starts and complete assignment LHSs admit a command; arguments do not."""
+    boundary = r"(?:^|[;&|{(\n])\s*"
+    end = r"(?:(?:return|throw|exit)\s+)?(?:&\s*)?$"
+    if re.search(boundary + end, prefix, re.I):
+        return True
+    variable = r"(?:\[[\w.,\s\[\]]+\]\s*)*\$(?:\{[^{}]+\}|[\w:]+)(?:\.[\w]+|\[[^\]\n;]*\])*"
+    assignment = rf"{variable}(?:\s*,\s*{variable})*\s*(?:\?\?=|[-+*/%]?=)\s*"
+    if re.search(boundary + rf"(?:{assignment})+" + end, prefix, re.I):
+        return True
+    if re.search(boundary + rf"foreach\s*\(\s*{variable}\s+in\s*" + end, prefix, re.I):
+        return True
+    stack = []
+    for index, char in enumerate(prefix):
+        if char in "([{":
+            stack.append((index, char == "{" and prefix[index - 1:index] == "@"))
+        elif char in ")]}" and stack:
+            stack.pop()
+    if stack and stack[-1][1]:
+        tail = prefix[stack[-1][0] + 1:]
+        key = rf"(?:[\w.-]+|{variable})"
+        return re.search(rf"(?:^|[;\n])\s*{key}\s*=\s*(?:{assignment})*" + end, tail, re.I) is not None
+    return False
+
+
 def expanded(value: str) -> str:
     def replace(match):
         token = match[0]

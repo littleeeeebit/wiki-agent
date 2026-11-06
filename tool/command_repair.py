@@ -15,10 +15,8 @@ from pytest_output import _QUOTED, teed
 from common import shell
 
 # The resolver owns the version choice (`operator/run-inside-this-session`).
-# Only a command word is renamed: the start, or after an
-# operator or `(`, found in a copy where quoted text and data heredoc bodies are all blanks, so a
-# message or a document mentioning it keeps its text. One inside `bash -c "..."` is left to the
-# pages' deny rules, which read nested commands.
+# PowerShell discovery is shared with capability inspection. This legacy pattern
+# remains for POSIX, whose quoting and heredoc rules are separate.
 POWERSHELL = re.compile(r"(?i)(^|[;&|(\n]\s*)powershell(?:\.exe)?(?=\s|$)")
 NO_PROFILE = re.compile(r"(?i)\s+-(?:NoProfile|nop)\b")
 
@@ -26,6 +24,17 @@ NO_PROFILE = re.compile(r"(?i)\s+-(?:NoProfile|nop)\b")
 def _pwsh(command: str, dialect: str) -> str:
     from edit_as_diff import blank_data_heredocs
 
+    if dialect == "ps":
+        if os.name == "nt" and shell.chosen().major < 7:
+            return command
+        replacements = []
+        for match in shell.invocations(command):
+            start, end = match.span("target")
+            if re.fullmatch(r"powershell(?:\.exe)?", command[start:end], re.I):
+                replacements.append((start, end, "pwsh" if NO_PROFILE.match(command, end) else "pwsh -NoProfile"))
+        for start, end, replacement in reversed(replacements):
+            command = command[:start] + replacement + command[end:]
+        return command
     text = blank_data_heredocs(command) if dialect == "posix" else command  # `<<` is Bash's
     bare = _QUOTED[dialect].sub(lambda m: " " * len(m[0]), text)
     if not POWERSHELL.search(bare):

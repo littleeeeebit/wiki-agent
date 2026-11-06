@@ -2,7 +2,11 @@
 
 Draft research before the fix of review round 5 of PR #307, written 2026-11-07. It is not a verified fact or a shared rule: the review reads it with the fix.
 
+Finding: F6. Invariant: child-shell capability enforcement.
+
 ## Problem
+
+F6's invariant is child-shell capability enforcement. F4's separate invariant is catalogue coverage; the F7 correction to the earlier F4 draft records that distinction.
 
 F6 repeatedly breaks the same boundary: executable child PowerShell code must be checked against the child's version, even when its parent is PowerShell 7, while ordinary quoted data remains data. The current reproducer, $result = powershell -Command 'Get-Error', places a literal child invocation on an assignment's right-hand side. Command discovery misses it, so neither recursive capability inspection nor executable repair reaches it. The code therefore predicts acceptance of the unchanged Windows PowerShell child under either selected parent version. This is a static finding, not a runtime observation from this turn. [C1, C2]
 
@@ -163,9 +167,9 @@ Trigger: recurrence, rounds 2, 3, 4, 5.
 
 - URL: docs/research/review-powershell-version-resolver-and-install-f4-1.md
 - Retrieved: 2026-11-07
-- Locator: Applicability, Hypothesis and Result, lines 143-169
+- Locator: Historical tree 20823ef, Applicability, Hypothesis and Result, lines 143-169; the current F4 page is the F7 provenance correction.
 - Fragment: "Replace the single-span child-body extraction"; "The proposed hypothesis addresses the additional child-argument gap; the named F4 finding is separately covered"; "This result is draft evidence for independent review, not a verified finding or shared rule."
-- Applicability: Explains the prior move toward argument reconstruction and distinguishes its additional hypothesis from the named F4 finding.
+- Applicability: Historical F6 argument-reconstruction evidence that was misfiled under F4. It explains the prior repair but does not establish F4 catalogue coverage; F7 corrects that attribution in the current F4 page.
 - Counterevidence: It is draft historical evidence, not an independently verified F6 round history. Current code already joins the argument tail.
 - Validation: Keep split-tail regressions while independently testing the earlier command-discovery stage.
 
@@ -214,12 +218,16 @@ The recurring cause is incomplete reconstruction of invocation semantics in succ
 
 ## Experiment
 
+This section preserves the original proposed experiment. The repair-turn observations appear under Result.
+
 Before editing, record nested_commands(), seven_only(), classic_seven_only(), launch('gate', ...), refusal() and executable repair for the exact assignment reproducer. Static prediction: extraction is empty, seven_only() is empty, classic_seven_only() is false, launch accepts under mocked parent versions 5 and 7, and repair leaves powershell unchanged. Compare with the same child at command start. Independently parse both strings with PowerShell Parser.ParseInput and enumerate CommandAst nodes; a powershell command beneath the assignment should appear without executing the supplied code. Confirm actual assignment execution separately with a harmless body such as Write-Output F6-child-ran; exit 17, comparing captured output and child status with the standalone equivalent. Then build a context matrix: simple, compact, typed, chained and compound assignments; parentheses, subexpressions and script blocks; bare and grouped literal targets; quoted and unquoted options; Command, split Command tails and EncodedCommand. Admit each generated positive case only after the native parser confirms its command structure. Include negative controls for quoted shell text, quoted path assignments, comments and Write-Output x=powershell -Command 'Get-Error'. After the fix, supported literal forms must yield the same reconstructed child body and capability decision across contexts. launch() must reject an unchanged classic child containing a recognized 7-only feature under either parent version. Exercise the actual Claude and Codex verdict functions as well as refusal(): on a 5.1-only selection the incompatible child must be denied; with 7 selected, acceptance requires that the executed child really has been rewritten to 7, otherwise denial remains required. Preserve all grouped-target, encoded, malformed-encoding, quoted-option, split-tail and safe-data regressions. Refute or revise the hypothesis if native parsing finds no assignment-position child, or if current extraction already returns it. These checks are proposed and have not been executed. [C1, C2, C7, C9, C10, C12]
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Observed in the repair commit titled `Recognize assignment-position child shells and correct research provenance`: before the fix, the reported assignment produced no child, no recognized feature and no classic-child restriction; launch accepted it under selected parent versions 5 and 7, both refusal paths passed it, and executable repair left it unchanged. The standalone control was inspected and refused. `test_native_parser_confirms_the_context_matrix_without_execution` parses the supplied strings without executing them; the native parser confirms the generated positive command contexts and rejects the negative controls as child invocations. `test_assignment_and_standalone_fixture_children_preserve_output_and_status` runs only a harmless fixture body: both forms print the same line and preserve status 17. `test_literal_children_have_context_independent_capability_decisions` checks extraction, features, direct launch, refusal and both actual host verdict functions across contexts, targets, body modes and selected parent versions. An unchanged incompatible classic child is denied; acceptance on 7 requires a rewritten child. `test_noncommand_equals_and_literal_shell_data_remain_unchanged` preserves argument and literal controls. Inspection and PowerShell executable repair now share discovery; POSIX discovery is unchanged. F7 separately corrects the earlier F4 record's identity. This remains draft evidence for independent review, not a verified finding or shared rule.
+
+The final differential table contains 132 positive scripts across 22 contexts, two target forms and three body modes, plus nine negative controls. The additional return, throw, exit, foreach-collection and dictionary-value contexts were admitted only after native parsing confirmed their command nodes. Their supplied child bodies were never executed. The 264 parent-version/context cases exercise both actual host verdict functions; the native execution experiment uses only the harmless fixture described above.
 
 ## Unresolved limits
 
-This is draft research for F6 cycle 1 of 2. Round numbers, commit identifiers and correction dispositions come from the supplied review history; historical commit trees were not independently inspected. Current tracked source and regression files support the mechanism described here. No files were written, no shell commands or tests were run, and no runtime success is claimed. AST integration cost and behavior across installed parser versions remain unmeasured. Recognizing literal PowerShell children does not prove compatibility for arbitrary computed invocation targets, script files, standard-input programs or every PowerShell 7 feature. Those forms require explicit scope and policy rather than an inferred universal guarantee.
+This remains draft research for F6 cycle 1 of 2. Round history comes from the supplied review messages; it is not an independently certified ledger. The Result records repair-turn experiments, distinct from the original read-only research. The bounded literal assignment grammar is compared with the installed Windows PowerShell parser; runtime AST service cost and every parser-version combination are not measured. Recognizing these literal children does not prove compatibility for arbitrary computed invocation targets, script files, standard-input programs or every PowerShell 7 feature. Those limits remain explicit rather than an inferred universal guarantee.
