@@ -1,6 +1,8 @@
 """One version-aware boundary for PowerShell text and launches."""
 
 from dataclasses import dataclass
+import base64
+import binascii
 import os
 from pathlib import Path
 import re
@@ -101,9 +103,12 @@ def nested_commands(text: str):
     """Read literal command bodies passed to an explicitly named PowerShell."""
     bare, strings = command_syntax(text)
     bodies = dict(strings)
-    wrapper = r"(?:^|[;&|{(\n])\s*(?:&\s*)?(?:[^\s;&|(){}]+[/\\])?(?P<program>powershell|pwsh)(?:\.exe)?\s+[^;\n|]*?-(?:Command|c)\s+"
+    options = "|".join(name[:length] for name in ("Command", "EncodedCommand") for length in range(1, len(name) + 1))
+    wrapper = (r"(?:^|[;&|{(\n])\s*(?:&\s*)?(?:[^\s;&|(){}]+[/\\])?(?P<program>powershell|pwsh)(?:\.exe)?\s+"
+               r"[^;\n|]*?-(?P<option>" + options + r"|ec)\s+")
     for nested in re.finditer(wrapper, bare, re.I):
         start = nested.end()
+        encoded = nested["option"].lower().startswith("e")
         if (end := bodies.get(start)) is not None:
             value = text[start:end]
             if value.startswith("@"):
@@ -113,6 +118,13 @@ def nested_commands(text: str):
         else:
             end = re.search(r"[;\n|]", bare[start:])
             body = text[start:start + end.start()] if end else text[start:]
+            if encoded:
+                body = body.split(maxsplit=1)[0] if body.strip() else ""
+        if encoded:
+            try:
+                body = base64.b64decode(re.sub(r"\s+", "", body), validate=True).decode("utf-16-le")
+            except (binascii.Error, UnicodeError) as exc:
+                raise ValueError("인코딩된 PowerShell 명령을 읽을 수 없다.") from exc
         yield nested["program"].lower(), body
 
 
@@ -165,7 +177,7 @@ def invoked(line: str) -> str:
         if before.endswith("&") and not before.endswith("&&"):
             continue
         tail = bare[end:].lstrip(" \t")
-        argument = re.match(r"[ \t]+\S", bare[end:]) and tail[0] not in ";|&})],+*/.\n" and not re.match(
+        argument = re.match(r"[ \t]+\S", bare[end:]) and tail[0] not in ";|&})],+*/.?\n" and not re.match(
             r"-(?:[ic]?(?:eq|ne|lt|le|gt|ge|like|notlike|match|notmatch|contains|notcontains|in|notin|is|isnot)|"
             r"as|replace|split|join|and|or|xor|f|band|bor|bxor|shl|shr)\b|-(?=\s|\d|$)", tail, re.I)
         depth = sum(char in "([{" for char in before) - sum(char in ")]}" for char in before)

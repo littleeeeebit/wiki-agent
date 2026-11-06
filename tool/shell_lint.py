@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import re
 
+from markdown_it import MarkdownIt
+
 from common.shell import seven_only
 from common.shell_catalogue import COMMANDS
 
@@ -16,10 +18,16 @@ START = re.compile(
 
 def instructions(text: str, *, raw: bool = False):
     """Fenced PowerShell and executable inline examples, including prompt strings."""
-    fenced = re.compile(r"^[ \t]*```(?:powershell|pwsh|ps1)[ \t\r]*\n(.*?)^[ \t]*```", re.M | re.S | re.I)
-    for match in fenced.finditer(text):
+    rest = text.splitlines(keepends=True)
+    for token in MarkdownIt("commonmark").parse(text):
+        if token.type != "fence":
+            continue
+        start, end = token.map
+        rest[start:end] = ["\n"] * (end - start)
+        if not token.info.split() or token.info.split()[0].casefold() not in ("powershell", "pwsh", "ps1"):
+            continue
         pending = ""
-        for line in match[1].splitlines():
+        for line in token.content.splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
@@ -31,7 +39,7 @@ def instructions(text: str, *, raw: bool = False):
             pending = ""
         if pending:
             yield pending
-    rest = re.sub(r"^[ \t]*```[^\n]*\n.*?^[ \t]*```", "", text, flags=re.M | re.S)
+    rest = "".join(rest)
     for match in re.finditer(r"(?<!`)`([^`\n]+)`(?!`)", rest):
         if START.match(match[1]):
             yield match[1]
