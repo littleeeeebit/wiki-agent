@@ -1,8 +1,10 @@
-"""The test contract frees what only its declared tests read, and a refusal goes back to the worker.
+"""A contract refusal goes back to the worker with what to put back, before the card stops for a person.
 
 ai-coding-wiki's schema-seed card removed two declared duplicate tests and rewrote a third: the imports and
-the constant only they used were tidied away, and the contract refused the file. No definition names an import,
-so a person's approval had nothing to approve either, and the card stopped on every such edit.
+the constant only they used were tidied away, and the contract refused the file. Ruff's F401 flags such an
+import, so the worker could not keep it either, and the card stopped on every such edit. The contract still
+frees nothing beyond the declared tests (PR #305: three review rounds found that no reading of a module
+proves nothing else observes a statement); the worker is told what to restore and how to keep it past F401.
 """
 
 import subprocess
@@ -47,20 +49,25 @@ SEED = ('"""Seed invariants."""\nfrom graphlib import TopologicalSorter\nimport 
         "def test_milestone():\n    assert sa\n")
 
 
-def test_what_only_the_declared_tests_read_goes_with_them(repo):
-    # The module docstring was rewritten to describe the new tests, as on the real card.
-    new = ('"""Seed invariants, by parent."""\nimport sqlalchemy as sa\n\nPARENTS = {"graph": "algorithm"}\n\n\n'
-           "def test_parents():\n    assert PARENTS\n\n\n"
-           "def test_milestone():\n    assert sa\n")
-    assert refactor_run.contract(repo, card(repo, SEED, new, "test_acyclic", "test_branches")) == ""
+def test_what_the_declared_tests_leave_unused_stays_with_a_comment_for_the_linter(repo):
+    kept = SEED.replace("import TopologicalSorter", "import TopologicalSorter  # noqa: F401")
+    kept = kept[:kept.index("def test_acyclic")] + "def test_milestone():\n    assert sa\n"
+    assert refactor_run.contract(repo, card(repo, SEED, kept, "test_acyclic", "test_branches")) == ""
 
 
-def test_what_an_undeclared_test_still_reads_stays_pinned(repo):
-    # `sa` is read by `test_milestone`, which the contract does not free.
-    new = SEED.replace("import sqlalchemy as sa", "sa = None")
-    assert "기존 테스트 변경" in refactor_run.contract(repo, card(repo, SEED, new, "test_acyclic"))
+def test_tidying_it_away_is_refused_and_sent_back_line_by_line(repo):
+    # The real card also rewrote the docstring to describe the new tests.
+    tidied = '"""Seed invariants, by parent."""\nimport sqlalchemy as sa\n\n\ndef test_milestone():\n    assert sa\n'
+    spec = card(repo, SEED, tidied, "test_acyclic", "test_branches")
+    refusal = refactor_run.contract(repo, spec)
+    assert "기존 테스트 변경" in refusal
+    text = refactor_run.restoring(repo, spec, refusal)
+    assert all(f"start line {n} `{s}" in text for n, s in [
+        (1, "'Seed invariants.'"), (2, "from graphlib import TopologicalSorter"), (5, "BRANCHES = {")]), text
+    assert "# noqa: F401" in text
 
 
+# Every shape PR #305's review rounds raised against freeing statements by reading the module stays refused.
 @pytest.mark.parametrize("old, new", [
     # A fixture asked for by parameter name.
     ("import pytest\n\n\n@pytest.fixture\ndef db():\n    return 1\n\n\ndef test_a(db):\n    assert db\n\n\n"
@@ -113,7 +120,7 @@ def test_what_an_undeclared_test_still_reads_stays_pinned(repo):
      "def test_a():\n    assert os.environ.get('SKIP')\n",
      "import os\n\n\ndef test_a():\n    assert os.environ.get('SKIP')\n"),
 ])
-def test_what_pytest_reads_by_itself_stays_pinned(repo, old, new):
+def test_nothing_beyond_the_declared_tests_goes(repo, old, new):
     assert "기존 테스트 변경" in refactor_run.contract(repo, card(repo, old, new, "test_b"))
 
 

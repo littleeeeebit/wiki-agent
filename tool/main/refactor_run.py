@@ -589,101 +589,6 @@ def _defines(body: list, parts: tuple) -> bool:
     return found is not None and (len(parts) == 1 or _defines(found.body, parts[1:]))
 
 
-# Names pytest reads off a module by themselves, never through a test's own reference.
-IMPLICIT = {"pytestmark", "pytest_plugins", "__all__", "*"}
-
-
-# Standard-library modules whose import binds names and nothing else observable: no output, no registry,
-# no module `__getattr__`. ponytail: a fixed list; a module a test file imports and this lacks stays pinned.
-INERT = {"abc", "bisect", "collections", "copy", "dataclasses", "datetime", "decimal", "enum", "fractions",
-         "functools", "graphlib", "heapq", "itertools", "json", "math", "operator", "os", "pathlib", "re",
-         "string", "sys", "textwrap", "types"}
-# A literal: building one runs no code, since hashing a constant is the builtin's.
-LITERAL = (ast.Constant, ast.Tuple, ast.List, ast.Set, ast.Dict, ast.Load, ast.UnaryOp, ast.USub)
-
-
-def _literal(*nodes) -> bool:
-    return all(isinstance(n, LITERAL) for node in nodes if node is not None for n in ast.walk(node))
-
-
-def _loose(stmt) -> bool:
-    """A top-level statement whose only effect is the names it binds, none of which pytest reads by itself:
-    an import from `INERT`, a plain assignment of a literal, or an undecorated helper whose defaults are
-    literals and whose annotations are bare names. A decorator may register a fixture under another name,
-    another import runs its module, and an attribute, a name inside a set or a call may run code that
-    changes what an undeclared test reads, so each of those stays pinned."""
-    if isinstance(stmt, (ast.Import, ast.ImportFrom)):
-        if isinstance(stmt, ast.ImportFrom) and (stmt.level or not stmt.module):
-            return False
-        modules = [a.name for a in stmt.names] if isinstance(stmt, ast.Import) else [stmt.module]
-        bound = [(a.asname or a.name).split(".")[0] for a in stmt.names]
-        return all(m.split(".")[0] in INERT for m in modules) \
-            and all(n not in IMPLICIT and not n.lower().startswith("test") for n in bound)
-    if isinstance(stmt, ast.Assign):
-        return all(isinstance(t, ast.Name) and t.id not in IMPLICIT and not t.id.lower().startswith("test")
-                   for t in stmt.targets) and _literal(stmt.value)
-    if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        a = stmt.args
-        notes = [stmt.returns, *(x.annotation for x in (*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg)
-                                 if x)]
-        return not stmt.decorator_list and not stmt.name.lower().startswith(("test", "pytest_")) \
-            and _literal(*a.defaults, *a.kw_defaults) and all(n is None or isinstance(n, ast.Name) for n in notes)
-    return False
-
-
-def _exported(path: Path, rev: str, file: str) -> bool:
-    """Whether another source or configuration file at `rev` names this test module, so it may import, or
-    load as a plugin, what the module defines: then nothing in it goes. A failed search says it does."""
-    stem = posixpath.splitext(posixpath.basename(file))[0]
-    found = subprocess.run(["git", "grep", "-q", "-w", "-F", stem, rev, "--", "*.py", "*.ini", "*.toml", "*.cfg",
-                            f":(exclude,literal){file}"], cwd=path, capture_output=True)
-    return found.returncode != 1
-
-
-def _reads(stmt) -> set:
-    """Every name `stmt` may reach: loaded names, argument names (a fixture is asked for by its parameter)
-    and string constants (`usefixtures`, `getfixturevalue`, `indirect` name one as text)."""
-    found = set()
-    for node in ast.walk(stmt):
-        if isinstance(node, ast.Name):
-            found.add(node.id)
-        elif isinstance(node, ast.arg):
-            found.add(node.arg)
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            found.update(node.value.replace(",", " ").split())
-    return found
-
-
-def _orphans(path: Path, start: str, file: str, body: list, head: list, allowed: set) -> list:
-    """The start's top-level body without what only the declared tests read and the head no longer binds.
-    Removing or rewriting a declared test leaves its imports, constants and helpers unused; tidying them was
-    refused, and no definition could name an import for a person to approve, so the card stopped on every
-    such edit. A statement goes once every statement that read a name it binds went, and only by being
-    deleted: changing one the head still binds stays the contract's. It frees no name, so `_kept` judges
-    whatever binds one at head as before. Nothing goes from a conftest, whose fixtures serve other files,
-    nor from a module another file names (`_exported`). The module docstring may be rewritten to match,
-    unless it holds a doctest or the module reads its `__doc__`."""
-    if file.rsplit("/", 1)[-1] == "conftest.py" or _exported(path, start, file):
-        return body
-    if body and isinstance(body[0], ast.Expr) and isinstance(doc := body[0].value, ast.Constant) \
-            and isinstance(doc.value, str) and ">>>" not in doc.value \
-            and not any("__doc__" in _reads(s) for s in body):
-        body = body[1:]
-    gone = {i for i, s in enumerate(body) if (_named(s),) in allowed}
-    binds = [set(_binds([s])) for s in body]
-    reads = [_reads(s) for s in body]
-    readers = [{j for j in range(len(body)) if j != i and binds[i] & reads[j]} for i in range(len(body))]
-    kept = set(_binds(head))
-    grown = True
-    while grown:
-        grown = False
-        for i, s in enumerate(body):
-            if i not in gone and _loose(s) and not binds[i] & kept and readers[i] and readers[i] <= gone:
-                gone.add(i)
-                grown = True
-    return [s for i, s in enumerate(body) if i not in gone or (_named(s),) in allowed]
-
-
 def _declared(spec: dict) -> tuple[set, dict, dict]:
     """The files a spec's test contract frees whole, the tests it frees by name, per file, and the files a
     person approved at one content, by blob: no syntax compares a test file that is not Python by name."""
@@ -772,9 +677,7 @@ def contract(path: Path, spec: dict) -> str:
             continue
         if missing := sorted("::".join(p) for p in allowed if not _defines(before, p)):
             broken.append(f"`{name}` 에 선언한 테스트가 시작 커밋에 없다: {', '.join(missing)}")
-            continue
-        before = _orphans(path, start, name, before, after, allowed)
-        if not _kept(before, after, allowed):
+        elif not _kept(before, after, allowed):
             broken.append(f"`{name}` 의 기존 테스트 변경{CHANGED if _amendable(before, after, allowed) else ''}")
     return "" if not broken else ("테스트 계약 밖의 변경 — " + ", ".join(broken[:10])
                                   + " (명세의 tests.remove·tests.contract 에 없다)")
@@ -782,8 +685,10 @@ def contract(path: Path, spec: dict) -> str:
 
 def restoring(path: Path, spec: dict, refusal: str) -> str:
     """The turn that hands a contract refusal back to the worker with what to put back: told only the
-    refusal, workers read it as a rule they must not touch and stopped. The definitions named are the ones
-    outside the contract that changed; the rest of each file's start text stands as well."""
+    refusal, workers read it as a rule they must not touch and stopped. It names the changed definitions
+    outside the contract and the start statements no longer at head by line; the most common were imports,
+    constants and the docstring a removed test left unused, which the contract does not free (#305: no
+    reading of a module proves nothing else observes them), so the turn says how to keep them past a linter."""
 
     whole, named, _ = _declared(spec)
     start, files = spec["start_head"], []
@@ -798,13 +703,14 @@ def restoring(path: Path, spec: dict, refusal: str) -> str:
         except (SyntaxError, ValueError):
             continue
         allowed = named.get(name, set())
-        before = _orphans(path, start, name, before, after, allowed)
         if old.returncode or _kept(before, after, allowed):
             continue
-        strays = sorted("::".join(p) for p in _changed(before, after) - allowed)
+        dumps = {ast.dump(t) for t in after}
+        what = [f"`{'::'.join(p)}`" for p in sorted(_changed(before, after) - allowed)] + [
+            f"start line {s.lineno} `{ast.unparse(s).splitlines()[0][:80]}`"
+            for s in before if not _named(s) and ast.dump(s) not in dumps]
         free = sorted("::".join(p) for p in allowed)
-        files.append(f"- `{name}`: put back to its start text "
-                     f"{'`' + '`, `'.join(strays) + '`' if strays else 'the module-level statements you changed'}"
+        files.append(f"- `{name}`: put back to its start text {', '.join(what) or 'the statements you changed'}"
                      f"; the contract frees {'`' + '`, `'.join(free) + '`' if free else 'no test in it'}.")
     if not files:   # a deleted file or one that is not Python is the person's to declare (`removals`, `amendments`)
         return ""
@@ -814,10 +720,9 @@ def restoring(path: Path, spec: dict, refusal: str) -> str:
             f"the tests the spec names; every other line of an existing test file must read as it did at the start "
             f"commit `{start[:12]}` (`git show {start[:12]}:<file>`).\n\n{listing}\n\n"
             "Keep your changes to the freed tests. Test data or a helper they need goes under a new name, never into "
-            "an existing one another test reads. An import of a plain standard-library module, a literal constant "
-            "or an undecorated helper only the freed tests used may be deleted; anything else stays as it was, "
-            "even if now unused. "
-            "Commit, then send the completion report again.")
+            "an existing one another test reads. The module docstring and every import, constant and helper a "
+            "freed test leaves unused stay as they were; when a linter flags such an import, add `# noqa: F401` "
+            "to its line, since comments are not compared. Commit, then send the completion report again.")
 
 
 def removals(spec: dict) -> dict:
@@ -852,7 +757,6 @@ def amendments(spec: dict) -> dict:
                 before, after = (ast.parse(t, type_comments=True).body for t in texts)
             except (SyntaxError, ValueError):
                 continue   # `contract` says it could not read it
-            before = _orphans(path, start, name, before, after, allowed)
             if _kept(before, after, allowed):
                 continue
         else:
