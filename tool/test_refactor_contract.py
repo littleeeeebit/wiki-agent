@@ -76,6 +76,12 @@ def test_tidying_it_away_is_refused_and_sent_back_line_by_line(repo):
      "start line 1 `TOTAL = 1 + 1"),
     # A form feed or `\x1c` in a comment is a line break to `str.splitlines`, not to the parser.
     ("A = 1  # a\x0cb\x1cc\nB = 2\n\n\ndef test_b():\n    pass\n", "A = 1  # a\x0cb\x1cc\n", "start line 2 `B = 2`"),
+    # Round 5, F2: a coding cookie can decode ASCII bytes to a newline the parser counts.
+    ("# -*- coding: utf-7 -*-\nA = 1+AAo-B = 2\nC = 3\n\n\ndef test_b():\n    pass\n",
+     "# -*- coding: utf-7 -*-\nA = 1\nC = 3\n", "start line 3 `B = 2`"),
+    # Round 5, F1: a new helper too deep to dump still leaves a turn that sends the file back whole.
+    ("V = 1\n\n\ndef test_b():\n    pass\n", "def helper():\n    return " + " + ".join(["1"] * 1100) + "\n",
+     "put back to its start text the statements you changed"),
 ])
 def test_every_refused_file_gets_a_turn(repo, old, new, shown):
     spec = card(repo, old, new, "test_b")

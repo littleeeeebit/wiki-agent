@@ -15,6 +15,7 @@ import ast
 import contextlib
 import copy
 import hashlib
+import importlib.util
 import json
 import os
 import posixpath
@@ -705,13 +706,17 @@ def restoring(path: Path, spec: dict, refusal: str) -> str:
         allowed = named.get(name, set())
         if old.returncode or _kept(before, after, allowed):
             continue
-        # The start's own line, never `ast.unparse`, which can run out of recursion on a statement it parsed;
-        # split only where the parser counts lines (`splitlines` also splits on `\f` and `\x1c` in a comment).
-        text = old.stdout.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n").split("\n")
-        dumps = {ast.dump(t) for t in after}
-        what = [f"`{'::'.join(p)}`" for p in sorted(_changed(before, after) - allowed)] + [
-            f"start line {s.lineno} `{text[s.lineno - 1].strip()[:80] if s.lineno <= len(text) else ''}`"
-            for s in before if not _named(s) and ast.dump(s) not in dumps]
+        try:
+            # The start's own line, never `ast.unparse`, which can run out of recursion on a statement it parsed,
+            # decoded as the parser decodes it: its coding cookie and newlines (`splitlines` also splits on `\f`).
+            text = importlib.util.decode_source(old.stdout).split("\n")
+            dumps = {ast.dump(t) for t in after}
+            what = [f"`{'::'.join(p)}`" for p in sorted(_changed(before, after) - allowed)] + [
+                f"start line {s.lineno} `{text[s.lineno - 1].strip()[:80] if s.lineno <= len(text) else ''}`"
+                for s in before if not _named(s) and ast.dump(s) not in dumps]
+        except (RecursionError, ValueError, LookupError, SyntaxError):
+            what = []   # still a turn: the file goes back whole to its start text
+
         free = sorted("::".join(p) for p in allowed)
         files.append(f"- `{name}`: put back to its start text {', '.join(what) or 'the statements you changed'}"
                      f"; the contract frees {'`' + '`, `'.join(free) + '`' if free else 'no test in it'}.")
