@@ -107,14 +107,18 @@ def sh(argv: list[str], cwd: Path, shell: bool = False, seconds: float | None = 
     `seconds` or on `halt`. Output goes to a file, so a descendant holding it
     open cannot hold the wait, and the whole tree is killed when this returns."""
 
+    from common import shell as shells
+
+    command, use_shell = shells.launch("gate", command=argv[0]) if shell else (argv, False)
     if not shell:
         # `npm` is `npm.cmd` on Windows, which a shell-less spawn does not find by itself.
         argv = [shutil.which(argv[0]) or argv[0], *argv[1:]]
+        command = argv
     options = background_options()
     if os.name == "nt":
         options["creationflags"] |= SUSPENDED   # in its job before its first instruction
     with tempfile.TemporaryFile() as out:
-        proc = subprocess.Popen(argv[0] if shell else argv, cwd=cwd, shell=shell, stdin=subprocess.DEVNULL,
+        proc = subprocess.Popen(command, cwd=cwd, shell=use_shell, stdin=subprocess.DEVNULL,
                                 stdout=out, stderr=subprocess.STDOUT,
                                 start_new_session=os.name != "nt" and process_group, **options)
         job, deadline, code = _contained(proc), time.monotonic() + seconds if seconds is not None else float("inf"), CUT

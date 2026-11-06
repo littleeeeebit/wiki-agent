@@ -11,7 +11,7 @@ import tempfile
 import threading
 import time
 
-from common import process
+from common import process, shell
 from common.budget import Budget
 
 
@@ -112,7 +112,11 @@ def _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, reader=No
     cut, shown = "", time.monotonic()
     size, grew = 0, shown
     env = {**(os.environ if env is None else env), "PYTHONUNBUFFERED": "1"}
-    proc = subprocess.Popen(cmd, shell=True, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+    try:
+        argv, use_shell = shell.launch("gate", command=cmd)
+    except ValueError as exc:
+        return None, "", str(exc)
+    proc = subprocess.Popen(argv, shell=use_shell, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                             stdout=output, stderr=subprocess.STDOUT, start_new_session=os.name != "nt",
                             **{**process.background_options(), "creationflags":
                                process.background_options().get("creationflags", 0) | process.SUSPENDED})

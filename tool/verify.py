@@ -13,6 +13,7 @@ import threading
 import time
 import tomllib
 
+
 POLICY = "verification.toml"
 # Untracked files the app itself writes into a checkout, never the task's work: the start hook's records
 # (`tool/sync.py`) and a cleared conversation's memory pair (`main/memory.py`). Left out, a memory written
@@ -66,15 +67,13 @@ def local_full_run(config):
 
 
 def command(repo, base, local, *, local_only=False):
+    from common import shell
+
     args = [sys.executable, str(Path(__file__).resolve()), "final", "--base", base,
             "--project", str(repo), "--local-command", local]
     if local_only:
         args.append("--local-only")
-    if os.name == "nt":
-        return subprocess.list2cmdline(args)
-    import shlex
-
-    return shlex.join(args)
+    return shell.command_line(args)
 
 
 def environment_digest(repo, path, cmd, locks, adapter=None):

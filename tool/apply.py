@@ -16,6 +16,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from claude_pretool import MEMBERS  # noqa: E402
+from common import shell  # noqa: E402
 from markdown_emphasis import recovery  # noqa: E402
 from wiki import WIKI, adapter_path, front_matter, slots_for  # noqa: E402
 
@@ -359,7 +360,7 @@ def put_hook(settings: dict, event: str, script: str, entry: dict) -> list[str]:
 RETIRED = {"korean_progress.py": "claude_pretool.py", **{s: "claude_pretool.py" for s in MEMBERS}}
 # Denies a page stopped declaring, removed from checkouts by `retire_denies`; only what is named
 # goes. `sed -i` went to `edit_as_diff`, which can count its files and ask git.
-RETIRED_DENIES = ("Bash(sed -i*)",)
+RETIRED_DENIES = ("Bash(sed -i*)", "Bash(powershell -*)", "Bash(powershell.exe*)")
 
 
 def retire(settings: dict, gone: str, instead: str) -> list[str]:
@@ -462,9 +463,8 @@ def configure(settings: dict, project: Path | None, adapter: str | None, python:
         for event, mark, entry in entries:
             wrap(entry)
             if sys.platform == "win32":
-                # Codex runs this through PowerShell, where a quoted path
-                # without `&` in front of it is just a string.
-                entry["hooks"][0]["command"] = "& " + entry["hooks"][0]["command"]
+                # The resolver supplies the chosen version's invocation form.
+                entry["hooks"][0]["command"] = shell.resolve("hook", command=entry["hooks"][0]["command"])
             if mark == CONTINUATION_MARK:
                 entry["hooks"][0]["command"] += " --codex"
             if event in ("SessionStart", "UserPromptSubmit"):

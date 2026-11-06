@@ -6,14 +6,16 @@ checks judge what will really run, and the agent is told what changed.
 """
 
 import re
+import os
 import tempfile
 import time
 from pathlib import Path
 
 from pytest_output import _QUOTED, teed
+from common import shell
 
-# `powershell` is Windows PowerShell 5.1, another product than `pwsh` 7; nothing here needs it
-# (`operator/run-inside-this-session`). Only a command word is renamed: the start, or after an
+# The resolver owns the version choice (`operator/run-inside-this-session`).
+# Only a command word is renamed: the start, or after an
 # operator or `(`, found in a copy where quoted text and data heredoc bodies are all blanks, so a
 # message or a document mentioning it keeps its text. One inside `bash -c "..."` is left to the
 # pages' deny rules, which read nested commands.
@@ -26,12 +28,41 @@ def _pwsh(command: str, dialect: str) -> str:
 
     text = blank_data_heredocs(command) if dialect == "posix" else command  # `<<` is Bash's
     bare = _QUOTED[dialect].sub(lambda m: " " * len(m[0]), text)
+    if not POWERSHELL.search(bare):
+        return command
+    if os.name == "nt" and shell.chosen().major < 7:
+        return command
     out, cursor = [], 0
     for match in POWERSHELL.finditer(bare):
         out.append(command[cursor:match.end(1)])
         cursor = match.end()
         out.append("pwsh" if NO_PROFILE.match(command, cursor) else "pwsh -NoProfile")
     return "".join(out) + command[cursor:]
+
+
+def refusal(payload: dict, host: str = "claude") -> dict | None:
+    """A 5.1 session cannot execute a known 7-only construct."""
+    import guard
+
+    tool, command, dialect = guard.shell_command(payload, host)
+    if os.name != "nt" or tool not in guard.SHELL_TOOLS or not isinstance(command, str):
+        return None
+    if dialect != "ps" and not POWERSHELL.search(command):
+        return None
+    try:
+        if shell.chosen().major >= 7:
+            return None
+        # Nested -Command strings are code, so inspect their contents too.
+        text = command.replace("'", "").replace('"', "") if POWERSHELL.search(command) else command
+        shell.resolve("gate", form="ps5", command=text)
+        if dialect == "ps":
+            from pytest_output import held_back
+            if held_back(command, dialect):
+                shell.resolve("pytest-tee", form="ps5", log="fixture.log")
+    except ValueError as exc:
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": str(exc)}}
+    return None
 
 
 # `fd` or `jq` that looks like a command word (`cli_tools`): when this session's PATH misses it,

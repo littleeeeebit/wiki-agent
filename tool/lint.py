@@ -58,6 +58,8 @@ def check(
     findings += missing_hook_guards(wiki, loaded)
     findings += pipeline_imports(wiki)
     findings += pipeline_surface(wiki)
+    from shell_lint import check as shell_check
+    findings += shell_check(wiki)
 
     # --- 1. Broken links
     inbound: dict[str, set[str]] = {name: set() for name in names}
