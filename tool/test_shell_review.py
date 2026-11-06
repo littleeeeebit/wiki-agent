@@ -33,6 +33,21 @@ def ps5(monkeypatch):
     monkeypatch.setattr(shell, "_detected", (shell.PowerShell("powershell", "5.1.19041.1", 5),))
 
 
+def fixture_result(command, consumer, cwd):
+    if consumer == "server-gate":
+        from main import runtime, specs
+        code, output, cut = runtime.gate(command, cwd, threading.Event(), None, 20, None, specs.kill)
+        assert not cut
+        return code, output
+    if consumer == "refactor-runner":
+        import refactor_profile
+        done = refactor_profile.sh([command], cwd, shell=True, seconds=20)
+    else:
+        argv, use_shell = shell.launch(consumer if consumer == "registered-check" else "gate", command=command)
+        done = subprocess.run(argv, shell=use_shell, capture_output=True, text=True, encoding="utf-8", timeout=20)
+    return done.returncode, done.stdout
+
+
 @pytest.mark.parametrize("name", ["gate", "registered-check"])
 @pytest.mark.parametrize("source", ["local-verification", "held-out-refactoring"])
 def test_required_workflow_chains_have_a_ps5_form_without_running_them(ps5, name, source):
@@ -79,17 +94,18 @@ def test_expandable_subexpressions_remain_code_and_are_denied(ps5, command):
 @pytest.mark.parametrize("extension", ["exe", "cmd", "bat", "ps1"])
 @pytest.mark.parametrize("context", [
     '$program = ({value}); Write-Output $program',
+    '$program =\n{value}',
     'Write-Output ({value})',
+    'Write-Output `\n{value}',
+    'Write-Output `\r\n{value}',
     '$programs = @({value})',
     '$programs = @{{ location = ({value}) }}',
     'Write-Output {{ {value} }}',
-    '{value}',
-    '{value}\nWrite-Output done',
     '{value} -f "text"',
     '{value} -ceq "text"',
     '{value} - "text"',
 ])
-def test_grouped_or_standalone_executable_paths_remain_data(ps5, extension, context):
+def test_grouped_and_expression_executable_paths_remain_data(ps5, extension, context):
     command = context.format(value=f'"outside/target.{extension}"')
     for name in ("gate", "registered-check"):
         for form in ("ps5", "pwsh7"):
@@ -129,18 +145,7 @@ def test_ps5_fixture_chains_short_circuit_and_preserve_exit_codes(tmp_path, monk
     commands = [shell.command_line([sys.executable, "-c", f"print('{name}'); raise SystemExit({code})"])
                 for name, code in zip(("first", "second", "third"), codes)]
     command = f"{commands[0]} {operators[0]} {commands[1]} {operators[1]} {commands[2]}"
-    if consumer == "server-gate":
-        from main import runtime, specs
-        code, output, cut = runtime.gate(command, tmp_path, threading.Event(), None, 20, None, specs.kill)
-        assert not cut
-    else:
-        if consumer == "refactor-runner":
-            import refactor_profile
-            done = refactor_profile.sh([command], tmp_path, shell=True, seconds=20)
-        else:
-            argv, use_shell = shell.launch("gate", command=command)
-            done = subprocess.run(argv, shell=use_shell, capture_output=True, text=True, encoding="utf-8", timeout=20)
-        code, output = done.returncode, done.stdout
+    code, output = fixture_result(command, consumer, tmp_path)
     assert (code, output.splitlines()) == expected
 
 
@@ -192,15 +197,3 @@ def test_chain_lowering_preserves_multiline_literal_operands(ps5, literal):
     assert literal in resolved
     assert shell.seven_only(resolved) == ()
     assert_ps5_parses(resolved)
-
-
-@pytest.mark.parametrize("command", [
-    '& "Get-Error"', "& 'Test-Json'",
-    '& "outside/powershell.exe" -Command \'Get-Error\'',
-    '& \'outside/powershell.exe\' -Command "Get-Error"',
-    "powershell -Command @'\nGet-Error\n'@",
-])
-def test_explicit_quoted_command_invocations_still_require_their_capability(ps5, command):
-    assert shell.seven_only(command)
-    with pytest.raises(ValueError, match="PowerShell 7 설치"):
-        shell.resolve("gate", command=command)

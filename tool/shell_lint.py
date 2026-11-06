@@ -16,7 +16,7 @@ START = re.compile(
 
 def instructions(text: str, *, raw: bool = False):
     """Fenced PowerShell and executable inline examples, including prompt strings."""
-    fenced = re.compile(r"^[ \t]*```(?:powershell|pwsh|ps1)[ \t]*\n(.*?)^[ \t]*```", re.M | re.S)
+    fenced = re.compile(r"^[ \t]*```(?:powershell|pwsh|ps1)[ \t\r]*\n(.*?)^[ \t]*```", re.M | re.S | re.I)
     for match in fenced.finditer(text):
         pending = ""
         for line in match[1].splitlines():

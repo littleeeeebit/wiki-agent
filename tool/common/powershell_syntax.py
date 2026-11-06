@@ -60,14 +60,15 @@ def syntax(text: str) -> tuple[str, list[tuple[int, int]]]:
                     else:
                         cursor += 1
                 hide(start, cursor)
-            elif char == "#" and (cursor == 0 or text[cursor - 1].isspace() or text[cursor - 1] in ";|&({"):
+            elif char == "#" and (cursor == 0 or text[cursor - 1].isspace() or text[cursor - 1] in ";|&({)]}"):
                 end = text.find("\n", cursor)
                 end = size if end < 0 else end
                 hide(cursor, end)
                 cursor = end
             elif char == "`":
-                hide(cursor, min(cursor + 2, size))
-                cursor += 2
+                end = min(cursor + (3 if text.startswith("`\r\n", cursor) else 2), size)
+                view[cursor:end] = [" "] * (end - cursor)
+                cursor = end
             elif text[cursor:cursor + 2] in ("@'", '@"') and text[cursor + 2:cursor + 3] in ("\n", "\r"):
                 cursor = string(cursor, True)
             elif char in "'\"":

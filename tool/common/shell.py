@@ -74,16 +74,57 @@ def chosen() -> PowerShell:
     return max(found, key=lambda item: item.major)
 
 
-def seven_only(text: str) -> tuple[str, ...]:
-    """Conservatively recognize unsupported syntax, including encoding defaults."""
+def command_syntax(text: str) -> tuple[str, list[tuple[int, int]]]:
+    """Expose literal call targets, including transparent parenthesized targets."""
     bare, strings = syntax(text)
     for start, end in strings:
-        before = bare[:start].rstrip()
+        if text[start] not in "'\"" or bare[start:end].strip() != "0":
+            continue
+        left, right = start, end
+        before = bare[:left].rstrip()
+        while before.endswith("("):
+            after = bare[right:].lstrip()
+            if not after.startswith(")"):
+                break
+            left = len(before) - 1
+            right = len(bare) - len(after) + 1
+            before = bare[:left].rstrip()
         word = text[start + 1:end - 1].replace("\\", "/").rsplit("/", 1)[-1]
         if before.endswith("&") and not before.endswith("&&") and re.fullmatch(
             r"(?:Get-Error|Test-Json|powershell|pwsh)(?:\.exe)?", word, re.I
         ):
-            bare = bare[:start] + word + " " * (end - start - len(word)) + bare[end:]
+            bare = bare[:left] + word + " " * (right - left - len(word)) + bare[right:]
+    return bare, strings
+
+
+def nested_commands(text: str):
+    """Read literal command bodies passed to an explicitly named PowerShell."""
+    bare, strings = command_syntax(text)
+    bodies = dict(strings)
+    wrapper = r"(?:^|[;&|{(\n])\s*(?:&\s*)?(?:[^\s;&|(){}]+[/\\])?(?P<program>powershell|pwsh)(?:\.exe)?\s+[^;\n|]*?-(?:Command|c)\s+"
+    for nested in re.finditer(wrapper, bare, re.I):
+        start = nested.end()
+        if (end := bodies.get(start)) is not None:
+            value = text[start:end]
+            if value.startswith("@"):
+                body = value.partition("\n")[2].rsplit("\n", 1)[0]
+            else:
+                body = value[1:-1].replace("''", "'") if value[0] == "'" else value[1:-1].replace('`"', '"').replace("``", "`")
+        else:
+            end = re.search(r"[;\n|]", bare[start:])
+            body = text[start:start + end.start()] if end else text[start:]
+        yield nested["program"].lower(), body
+
+
+def classic_seven_only(text: str) -> bool:
+    """An explicit Windows PowerShell child stays on 5.1 even under a 7 host."""
+    return any(program == "powershell" and seven_only(body) or classic_seven_only(body)
+               for program, body in nested_commands(text))
+
+
+def seven_only(text: str) -> tuple[str, ...]:
+    """Conservatively recognize unsupported syntax, including encoding defaults."""
+    bare, _ = command_syntax(text)
     patterns = {
         "?.": r"\?\.", "??": r"\?\?", "ternary": r"(?<!\$)\?(?![?.])[^;{}]*?:",
         "ForEach-Object -Parallel": r"\bForEach-Object\b[^;|]*-Parallel\b",
@@ -91,16 +132,8 @@ def seven_only(text: str) -> tuple[str, ...]:
         "-SkipCertificateCheck": r"-SkipCertificateCheck\b", "pipeline chain": r"&&|\|\|",
     }
     found = [name for name, pattern in patterns.items() if re.search(pattern, bare, re.I)]
-    bodies = dict(strings)
-    wrapper = r"(?:^|[;&|{(\n])\s*(?:&\s*)?(?:[^\s;&|(){}]+[/\\])?(?:powershell|pwsh)(?:\.exe)?\s+[^;\n|]*?-(?:Command|c)\s+"
-    for nested in re.finditer(wrapper, bare, re.I):
-        if (end := bodies.get(nested.end())) is not None:
-            value = text[nested.end():end]
-            if value.startswith("@"):
-                body = value.partition("\n")[2].rsplit("\n", 1)[0]
-            else:
-                body = value[1:-1].replace("''", "'") if value[0] == "'" else value[1:-1].replace('`"', '"').replace("``", "`")
-            found.extend(feature for feature in seven_only(body) if feature not in found)
+    for _, body in nested_commands(text):
+        found.extend(feature for feature in seven_only(body) if feature not in found)
     if re.search(r"(?<![>=])>>(?![=&])|(?<![>=])>(?![=&])", bare) or any(
         not re.search(r"(?:^|\s)-Encoding\b", re.sub(r'"(?:[^"`]|`.)*"', "", statement), re.I)
         for statement in re.findall(r"\b(?:Get-Content|Set-Content|Add-Content|Out-File|Tee-Object|tee)\b[^;\n|]*", bare, re.I)
@@ -122,7 +155,7 @@ def command_line(argv: list[str]) -> str:
 
 
 def invoked(line: str) -> str:
-    """Repair legacy quoted programs with arguments; expressions remain data."""
+    """Repair legacy gate command positions; grouped and assigned paths remain data."""
     bare, quoted = syntax(line)
     starts = []
     for start, end in quoted:
@@ -135,7 +168,10 @@ def invoked(line: str) -> str:
         argument = re.match(r"[ \t]+\S", bare[end:]) and tail[0] not in ";|&})],+*/.\n" and not re.match(
             r"-(?:[ic]?(?:eq|ne|lt|le|gt|ge|like|notlike|match|notmatch|contains|notcontains|in|notin|is|isnot)|"
             r"as|replace|split|join|and|or|xor|f|band|bor|bxor|shl|shr)\b|-(?=\s|\d|$)", tail, re.I)
-        if argument and re.search(r"(?:^|[;|&{\n])\s*$", bare[:start]) and re.search(
+        depth = sum(char in "([{" for char in before) - sum(char in ")]}" for char in before)
+        standalone = (depth == 0 and re.match(r"[ \t\r]*(?:$|[;|\n]|&&)", bare[end:])
+                      and not before.endswith(("=", ",", "`")))
+        if (argument or standalone) and re.search(r"(?:^|[;|&{\n])\s*$", bare[:start]) and re.search(
             r"(?:\.(?:exe|cmd|bat|ps1)|[/\\]python[\d.]*)$", line[start + 1:end - 1], re.I
         ):
             starts.append(start)
@@ -197,11 +233,11 @@ def resolve(name: str, *, form: str | None = None, **values: str) -> str:
         raise ValueError(f"Unknown shell form: {form}")
     command = getattr(COMMANDS[name], form)
     if command is not None:
+        if form != "bash" and name in ("gate", "registered-check"):
+            values["command"] = invoked(values["command"])
         if form == "ps5" and name in ("gate", "registered-check"):
             values["ps5_command"] = ps5_chains(values["command"])
         command = re.sub(r"\{(\w+)\}", lambda match: values.get(match[1], match[0]), command)
-        if form != "bash" and name in ("gate", "registered-check"):
-            command = invoked(command)
     if command is None or form == "ps5" and seven_only(command):
         raise ValueError(f"이 명령은 PowerShell 7이 필요하다. 연결 화면의 '{INSTALL_CONTROL}'을 사용하세요.")
     return command
@@ -213,7 +249,7 @@ def launch(name: str, **values: str) -> tuple[str | list[str], bool]:
         return resolve(name, form="bash", **values), True
     ps = chosen()
     line = resolve(name, form=ps.form, **values)
-    if re.search(r"\bpowershell(?:\.exe)?[\"']?\s+-", line, re.I) and seven_only(line):
+    if classic_seven_only(line):
         raise ValueError(f"Windows PowerShell에는 7 전용 명령을 넘길 수 없다. '{INSTALL_CONTROL}'에서 확인하세요.")
     # Preserve native exit codes; a PowerShell statement failure is also a
     # failed check. Both versions support these explicit encoding settings.

@@ -50,6 +50,8 @@ def refusal(payload: dict, host: str = "claude") -> dict | None:
     if dialect != "ps" and not POWERSHELL.search(command):
         return None
     try:
+        if shell.classic_seven_only(command):
+            raise ValueError(f"Windows PowerShell에는 7 전용 명령을 넘길 수 없다. '{shell.INSTALL_CONTROL}'에서 확인하세요.")
         if shell.chosen().major >= 7:
             return None
         shell.resolve("gate", form="ps5", command=command)
