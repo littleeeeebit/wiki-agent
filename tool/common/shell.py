@@ -8,8 +8,10 @@ import shlex
 import shutil
 import subprocess
 import threading
+import uuid
 
 from . import process
+from .powershell_syntax import syntax
 from .shell_catalogue import COMMANDS
 
 INSTALL_CONTROL = "PowerShell 7 설치"
@@ -74,20 +76,31 @@ def chosen() -> PowerShell:
 
 def seven_only(text: str) -> tuple[str, ...]:
     """Conservatively recognize unsupported syntax, including encoding defaults."""
-    # Single-quoted data cannot contain operators. Double-quoted expressions
-    # can execute subexpressions, so keep those visible to the check.
-    bare = re.sub(r"""'(?:[^']|'')*'|"(?:[^"`]|`.)*"|\#[^\n]*""",
-                  lambda match: match[0] if match[0].startswith('"') else "", text)
+    bare, strings = syntax(text)
+    for start, end in strings:
+        before = bare[:start].rstrip()
+        word = text[start + 1:end - 1].replace("\\", "/").rsplit("/", 1)[-1]
+        if before.endswith("&") and not before.endswith("&&") and re.fullmatch(
+            r"(?:Get-Error|Test-Json|powershell|pwsh)(?:\.exe)?", word, re.I
+        ):
+            bare = bare[:start] + word + " " * (end - start - len(word)) + bare[end:]
     patterns = {
-        "?.": r"\?\.", "??": r"\?\?", "ternary": r"\?(?![?.])[\s\S]*?:",
+        "?.": r"\?\.", "??": r"\?\?", "ternary": r"(?<!\$)\?(?![?.])[^;{}]*?:",
         "ForEach-Object -Parallel": r"\bForEach-Object\b[^;|]*-Parallel\b",
         "Test-Json": r"\bTest-Json\b", "Get-Error": r"\bGet-Error\b",
         "-SkipCertificateCheck": r"-SkipCertificateCheck\b", "pipeline chain": r"&&|\|\|",
     }
     found = [name for name, pattern in patterns.items() if re.search(pattern, bare, re.I)]
-    for nested in re.finditer(r"\b(?:powershell|pwsh)(?:\.exe)?[\"']?[^\n]*?-(?:Command|c)\s+(['\"])(.*?)\1",
-                              text, re.I | re.S):
-        found.extend(feature for feature in seven_only(nested[2]) if feature not in found)
+    bodies = dict(strings)
+    wrapper = r"(?:^|[;&|{(\n])\s*(?:&\s*)?(?:[^\s;&|(){}]+[/\\])?(?:powershell|pwsh)(?:\.exe)?\s+[^;\n|]*?-(?:Command|c)\s+"
+    for nested in re.finditer(wrapper, bare, re.I):
+        if (end := bodies.get(nested.end())) is not None:
+            value = text[nested.end():end]
+            if value.startswith("@"):
+                body = value.partition("\n")[2].rsplit("\n", 1)[0]
+            else:
+                body = value[1:-1].replace("''", "'") if value[0] == "'" else value[1:-1].replace('`"', '"').replace("``", "`")
+            found.extend(feature for feature in seven_only(body) if feature not in found)
     if re.search(r"(?<![>=])>>(?![=&])|(?<![>=])>(?![=&])", bare) or any(
         not re.search(r"(?:^|\s)-Encoding\b", re.sub(r'"(?:[^"`]|`.)*"', "", statement), re.I)
         for statement in re.findall(r"\b(?:Get-Content|Set-Content|Add-Content|Out-File|Tee-Object|tee)\b[^;\n|]*", bare, re.I)
@@ -109,21 +122,73 @@ def command_line(argv: list[str]) -> str:
 
 
 def invoked(line: str) -> str:
-    """Old adapter commands quoted executables for cmd; PowerShell needs &."""
-    quoted = re.compile(r'"(?:[^"`]|`.)*"|\'(?:[^\']|\'\')*\'')
-    bare = quoted.sub(lambda match: "x" * len(match[0]), line)
+    """Repair legacy quoted programs with arguments; expressions remain data."""
+    bare, quoted = syntax(line)
     starts = []
-    for match in quoted.finditer(line):
-        before = bare[:match.start()].rstrip()
+    for start, end in quoted:
+        if line[start] not in "'\"":
+            continue
+        before = bare[:start].rstrip()
         if before.endswith("&") and not before.endswith("&&"):
             continue
-        if (not before or before[-1] in ";|&{(\n") and re.search(
-            r"(?:\.(?:exe|cmd|bat|ps1)|[/\\]python[\d.]*)$", match[0][1:-1], re.I
+        tail = bare[end:].lstrip(" \t")
+        argument = re.match(r"[ \t]+\S", bare[end:]) and tail[0] not in ";|&})],+*/.\n" and not re.match(
+            r"-(?:[ic]?(?:eq|ne|lt|le|gt|ge|like|notlike|match|notmatch|contains|notcontains|in|notin|is|isnot)|"
+            r"as|replace|split|join|and|or|xor|f|band|bor|bxor|shl|shr)\b|-(?=\s|\d|$)", tail, re.I)
+        if argument and re.search(r"(?:^|[;|&{\n])\s*$", bare[:start]) and re.search(
+            r"(?:\.(?:exe|cmd|bat|ps1)|[/\\]python[\d.]*)$", line[start + 1:end - 1], re.I
         ):
-            starts.append(match.start())
+            starts.append(start)
     for start in reversed(starts):
         line = line[:start] + "& " + line[start:]
     return line
+
+
+def ps5_chains(text: str) -> str:
+    """Lower statement-level pipeline chains, retaining left-to-right short circuiting."""
+    bare, _ = syntax(text)
+    segments, operators, operands = [], [], []
+    depth, start, cursor = 0, 0, 0
+
+    def finish(end):
+        nonlocal start, operators, operands
+        if operators and bare[start:end].strip():
+            operands.append(text[start:end])
+            operands = [operand.rstrip().removesuffix("`") for operand in operands]
+            token = uuid.uuid4().hex
+            ok, code = f"$wiki_ok_{token}", f"$wiki_code_{token}"
+            capture = f"{ok} = $?; {code} = if ({ok}) {{ 0 }} elseif ($LASTEXITCODE) {{ $LASTEXITCODE }} else {{ 1 }};"
+            result = operands[0] + "\n" + capture
+            for operator, operand in zip(operators, operands[1:]):
+                condition = ok if operator == "&&" else "-not " + ok
+                result += f"\nif ({condition}) {{ {operand}\n{capture} }}"
+            result += f"\n$global:LASTEXITCODE = {code}; if (-not {ok}) {{ Write-Error 'Command failed' -ErrorAction SilentlyContinue }}"
+            segments.append(result)
+        else:
+            segments.append("".join(operand + operator for operand, operator in zip(operands, operators)) + text[start:end])
+        start, operators, operands = end, [], []
+
+    while cursor < len(bare):
+        char = bare[cursor]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif not depth and bare[cursor:cursor + 2] in ("&&", "||"):
+            if not bare[start:cursor].strip():
+                return text
+            operands.append(text[start:cursor])
+            operators.append(bare[cursor:cursor + 2])
+            start = cursor + 2
+            cursor += 1
+        elif not depth and (char == ";" or char == "\n" and bare[start:cursor].strip()
+                            and not text[:cursor].rstrip("\r").endswith("`")):
+            finish(cursor)
+            segments.append(char)
+            start = cursor + 1
+        cursor += 1
+    finish(len(text))
+    return "".join(segments)
 
 
 def resolve(name: str, *, form: str | None = None, **values: str) -> str:
@@ -132,6 +197,8 @@ def resolve(name: str, *, form: str | None = None, **values: str) -> str:
         raise ValueError(f"Unknown shell form: {form}")
     command = getattr(COMMANDS[name], form)
     if command is not None:
+        if form == "ps5" and name in ("gate", "registered-check"):
+            values["ps5_command"] = ps5_chains(values["command"])
         command = re.sub(r"\{(\w+)\}", lambda match: values.get(match[1], match[0]), command)
         if form != "bash" and name in ("gate", "registered-check"):
             command = invoked(command)

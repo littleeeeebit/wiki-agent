@@ -39,9 +39,10 @@ def instructions(text: str, *, raw: bool = False):
         match = re.match(r"\s*(?:In PowerShell|PowerShell):\s*(.+)", line, re.I)
         if match and not re.fullmatch(r"\{\w+\}.*", match[1]):
             yield match[1]
-    native = re.match(r"^(?:python[\d.]*|git|gh|npm|npx|winget|pytest|ruff|rg|adb|codex|claude)\s", text.strip())
-    if raw and START.match(text.strip()) and (not native or seven_only(text)):
-        yield text.strip()
+        line = line.strip()
+        native = re.match(r"^(?:python[\d.]*|git|gh|npm|npx|winget|pytest|ruff|rg|adb|codex|claude)\s", line)
+        if START.match(line) and (not native or raw and seven_only(line)):
+            yield line
 
 
 def normalized(line: str) -> str:
@@ -51,7 +52,7 @@ def normalized(line: str) -> str:
 def catalogued(line: str) -> bool:
     for entry in COMMANDS.values():
         for form in (entry.pwsh7, entry.ps5):
-            if not form or "{command}" in form or "{argv}" in form:
+            if not form or any(field in form for field in ("{command}", "{ps5_command}", "{argv}")):
                 continue
             if normalized(line) == normalized(form):
                 return True

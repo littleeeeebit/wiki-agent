@@ -26,8 +26,8 @@ COMMANDS = {
     "hook": Command("{command}", "& {command}", "& {command}"),
     "terminal": Command("", "-NoLogo -NoProfile", "-NoLogo -NoProfile"),
     # Repository-owned gate/registered-check text is validated after substitution.
-    "gate": Command("{command}", "{command}", "{command}"),
-    "registered-check": Command("{command}", "{command}", "{command}"),
+    "gate": Command("{command}", "{command}", "{ps5_command}"),
+    "registered-check": Command("{command}", "{command}", "{ps5_command}"),
     "argv": Command("{argv}", "& {argv}", "& {argv}"),
     "pytest-tee": Command("tee {log}", "tee {log}", None, ("UTF-8 default encoding",)),
     "install-powershell": native("winget install --id Microsoft.PowerShell --source winget"),

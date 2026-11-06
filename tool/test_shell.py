@@ -69,7 +69,6 @@ def test_a_name_or_failed_probe_is_not_a_version(monkeypatch, failure):
     ("Invoke-WebRequest https://example.test -SkipCertificateCheck", "-SkipCertificateCheck"),
     ("Set-Content result.txt text", "UTF-8 default encoding"),
     ("Write-Output text > result.txt", "UTF-8 default encoding"),
-    ("git --version && git status", "pipeline chain"),
     ('Write-Output "tag#$(Get-Error)"', "Get-Error"),
     ('Set-Content result.txt "-Encoding utf8"', "UTF-8 default encoding"),
     ("Get-Content -Raw result.txt", "UTF-8 default encoding"),

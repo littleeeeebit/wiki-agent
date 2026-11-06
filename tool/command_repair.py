@@ -52,9 +52,7 @@ def refusal(payload: dict, host: str = "claude") -> dict | None:
     try:
         if shell.chosen().major >= 7:
             return None
-        # Nested -Command strings are code, so inspect their contents too.
-        text = command.replace("'", "").replace('"', "") if POWERSHELL.search(command) else command
-        shell.resolve("gate", form="ps5", command=text)
+        shell.resolve("gate", form="ps5", command=command)
         if dialect == "ps":
             from pytest_output import held_back
             if held_back(command, dialect):
@@ -126,6 +124,11 @@ def repaired(command: str, dialect: str = "posix") -> tuple[str, list[str]]:
     if fixed != command:
         notes.append("`powershell` (Windows PowerShell 5.1) ran as `pwsh -NoProfile` (PowerShell 7). "
                      "Call `pwsh` directly.")
+    if dialect == "ps" and os.name == "nt" and shell.chosen().major < 7:
+        compatible = shell.resolve("gate", form="ps5", command=fixed)
+        if compatible != fixed:
+            notes.append("The command used the compatible PowerShell 5.1 form.")
+        fixed = compatible
     log = (Path(tempfile.gettempdir()) / f"pytest-{time.time_ns() // 1_000_000}.log").as_posix()
     log = f'"{log}"' if " " in log else log
     teed_ = teed(fixed, log, dialect)
