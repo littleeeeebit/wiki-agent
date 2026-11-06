@@ -1,7 +1,7 @@
 """Shell forms owned by the app, its focuses and the setup instructions.
 
 Native CLI lines have identical forms. Shell syntax belongs in an explicit
-entry; a missing ps5 form is an intentional PowerShell 7 requirement.
+entry; missing forms are refused. Inspection examples may lack both PowerShell forms.
 """
 
 from dataclasses import dataclass
@@ -10,9 +10,10 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Command:
     bash: str
-    pwsh7: str
+    pwsh7: str | None
     ps5: str | None
     seven_only: tuple[str, ...] = ()
+    example: str = ""
 
 
 def native(line: str) -> Command:
@@ -49,6 +50,16 @@ COMMANDS = {
 # Exact CLI and PowerShell examples in current and historical documentation.
 # These are an inventory, not permission to execute a research example.
 DOCUMENTED = (
+    "$map = @{ powershell = 'value' }",
+    "$map = @{ pwsh -NoProfile = 'value' }",
+    '$program = ({value}); Write-Output $program',
+    'Write-Output ({value})',
+    '$programs = @({value})',
+    '$programs = @{{ location = ({value}) }}',
+    '$map = @{{ value = {child} }}',
+    'Write-Output x= powershell',
+    "$map = @{ powershell = powershell -Command 'Write-Output ok' }",
+    "$target = 'powershell'",
     '$_.Delete(',
     '$a[0] =',
     '$env:X =',
@@ -374,6 +385,10 @@ DOCUMENTED = (
     'winget install Anthropic.ClaudeCode',
 )
 COMMANDS.update({line: native(line) for line in DOCUMENTED})
+
+# An inspection input is inventoried, but cannot be handed out as an executable form.
+COMMANDS["unresolved-target-example"] = Command("", None, None,
+    example="$target = 'powershell'; & $target -Command 'Get-Error'")
 
 # Examples whose output/syntax requires 7 have no ps5 form.
 REQUIRES_SEVEN = (

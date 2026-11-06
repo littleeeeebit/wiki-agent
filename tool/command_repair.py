@@ -29,7 +29,7 @@ def _pwsh(command: str, dialect: str) -> str:
             return command
         replacements = []
         for match in shell.invocations(command):
-            start, end = match.span("target")
+            start, end = match.target_start, match.target_end
             if re.fullmatch(r"powershell(?:\.exe)?", command[start:end], re.I):
                 replacements.append((start, end, "pwsh" if NO_PROFILE.match(command, end) else "pwsh -NoProfile"))
         for start, end, replacement in reversed(replacements):
@@ -71,6 +71,9 @@ def refusal(payload: dict, host: str = "claude") -> dict | None:
     except ValueError as exc:
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                        "permissionDecisionReason": str(exc)}}
+    except Exception as exc:  # noqa: BLE001 -- a compatibility analysis failure is an explicit refusal
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": f"PowerShell 명령을 확인하지 못했다 ({type(exc).__name__}). 리터럴 실행 대상을 사용하세요."}}
     return None
 
 

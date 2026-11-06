@@ -7,6 +7,23 @@ ESCAPES = dict(zip("0abefnrtv", "\0\a\b\x1b\f\n\r\t\v"))
 
 def command_position(prefix: str) -> bool:
     """Statement starts and complete assignment LHSs admit a command; arguments do not."""
+    stack = []
+    for index, char in enumerate(prefix):
+        if char in "([{":
+            stack.append([index, char == "{" and prefix[index - 1:index] == "@", None])
+        elif char in ")]}" and stack:
+            stack.pop()
+        elif stack and stack[-1][1]:
+            frame = stack[-1]
+            if char == "=" and frame[2] is None:
+                frame[2] = index + 1
+            elif char == ";" or char == "\n" and frame[2] is not None and prefix[frame[2]:index].strip() \
+                    and prefix[:index].rstrip()[-1:] not in ("|", "=", ",", "+", "-", "*", "/"):
+                frame[2] = None
+    if stack and stack[-1][1]:
+        # An entry separator starts a key, not a statement. Values have their own statement context.
+        start = stack[-1][2]
+        return start is not None and command_position(prefix[start:])
     boundary = r"(?:^|[;&|{(\n])\s*"
     end = r"(?:(?:return|throw|exit)\s+)?(?:&\s*)?$"
     if re.search(boundary + end, prefix, re.I):
@@ -17,16 +34,6 @@ def command_position(prefix: str) -> bool:
         return True
     if re.search(boundary + rf"foreach\s*\(\s*{variable}\s+in\s*" + end, prefix, re.I):
         return True
-    stack = []
-    for index, char in enumerate(prefix):
-        if char in "([{":
-            stack.append((index, char == "{" and prefix[index - 1:index] == "@"))
-        elif char in ")]}" and stack:
-            stack.pop()
-    if stack and stack[-1][1]:
-        tail = prefix[stack[-1][0] + 1:]
-        key = rf"(?:[\w.-]+|{variable})"
-        return re.search(rf"(?:^|[;\n])\s*{key}\s*=\s*(?:{assignment})*" + end, tail, re.I) is not None
     return False
 
 

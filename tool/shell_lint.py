@@ -63,7 +63,7 @@ def normalized(line: str) -> str:
 
 def catalogued(line: str) -> bool:
     for entry in COMMANDS.values():
-        for form in (entry.pwsh7, entry.ps5):
+        for form in (entry.pwsh7, entry.ps5, entry.example):
             if not form or any(field in form for field in ("{command}", "{ps5_command}", "{argv}")):
                 continue
             if normalized(line) == normalized(form):
@@ -84,7 +84,7 @@ def check(root: Path = ROOT) -> list[tuple[str, str]]:
         ps5 = re.sub(r"<[^>\n]+>", "placeholder", entry.ps5 or "")
         if entry.ps5 is not None and (features := seven_only(ps5)):
             findings.append(("PowerShell 목록", f"{name}: ps5 — {', '.join(features)}"))
-        features = set(seven_only(re.sub(r"<[^>\n]+>", "placeholder", entry.pwsh7)))
+        features = set(seven_only(re.sub(r"<[^>\n]+>", "placeholder", entry.pwsh7 or "")))
         if features != set(entry.seven_only):
             findings.append(("PowerShell 목록", f"{name}: seven_only 선언이 다르다 — {sorted(features)}"))
     for directory in ("tool/prompts", "tool/main", "docs"):

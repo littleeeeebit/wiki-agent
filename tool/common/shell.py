@@ -92,27 +92,100 @@ def command_syntax(text: str) -> tuple[str, list[tuple[int, int]]]:
             right = len(bare) - len(after) + 1
             before = bare[:left].rstrip()
         word = text[start + 1:end - 1].replace("\\", "/").rsplit("/", 1)[-1]
-        if before.endswith("&") and not before.endswith("&&") and re.fullmatch(
+        call = before.endswith("&") and not before.endswith("&&") or before.endswith(".") and command_position(before[:-1])
+        if call and re.fullmatch(
             r"(?:Get-Error|Test-Json|powershell|pwsh)(?:\.exe)?", word, re.I
         ):
             bare = bare[:left] + word + " " * (right - left - len(word)) + bare[right:]
     return bare, strings
 
 
+@dataclass(frozen=True)
+class Invocation:
+    program: str | None
+    target_start: int
+    target_end: int
+    kind: str
+
+
 def invocations(text: str):
-    """Shared literal shell discovery, retaining executable and argument source spans."""
+    """Retain literal children, literal blocks and unresolved executable targets."""
     bare, _ = command_syntax(text)
+    masked, spans = syntax(text)
+    quoted = dict(spans)
+    found = {}
+
+    def enclosed(value, opening, closing):
+        code, _ = syntax(value)
+        if not code.startswith(opening):
+            return False
+        depth = 0
+        for index, char in enumerate(code):
+            if char == opening:
+                depth += 1
+            elif char == closing:
+                depth -= 1
+                if not depth:
+                    return index == len(code) - 1
+        return False
+
+    def record(start):
+        cursor, depth = start, 0
+        while cursor < len(text):
+            if cursor in quoted:
+                cursor = quoted[cursor]
+                continue
+            if text[cursor] == "`":
+                cursor += 2
+                continue
+            char = masked[cursor]
+            if not depth and (char.isspace() or char in ";|&)]}<>"):
+                break
+            if char in "([{":
+                depth += 1
+            elif char in ")]}":
+                depth -= 1
+            cursor += 1
+        value = text[start:cursor].strip()
+        grouped = False
+        while enclosed(value, "(", ")"):
+            grouped = True
+            value = value[1:-1].strip()
+        if enclosed(value, "{", "}"):
+            return Invocation(None, start, cursor, "scriptblock")
+        if grouped and syntax(value)[1] != [(0, len(value))]:
+            return Invocation(None, start, cursor, "unresolved")
+        try:
+            words = arguments(value)
+        except ValueError:
+            words = []
+        if len(words) != 1:
+            return Invocation(None, start, cursor, "unresolved")
+        program = words[0].replace("\\", "/").rsplit("/", 1)[-1].lower().removesuffix(".exe")
+        return Invocation(program, start, cursor, "literal")
+
+    for call in re.finditer(r"(?<!&)&(?!&)|\.(?=\s)", bare):
+        if command_position(bare[:call.start()]):
+            start = call.end()
+            while start < len(bare) and bare[start].isspace():
+                start += 1
+            found[start] = record(start)
     target = r"(?P<target>(?:[^\s;&|(){}]+[/\\])?(?P<program>powershell|pwsh)(?:\.exe)?)(?=\s|$)\s*"
     for match in re.finditer(target, bare, re.I):
         if command_position(bare[:match.start()]):
-            yield match
+            found.setdefault(match.start(), record(match.start()))
+    yield from (found[start] for start in sorted(found))
 
 
 def nested_commands(text: str):
     """Read literal command bodies passed to an explicitly named PowerShell."""
     options = {name[:length].lower() for name in ("Command", "EncodedCommand") for length in range(1, len(name) + 1)} | {"ec"}
     for nested in invocations(text):
-        argv = arguments(text[nested.end():])
+        if nested.kind == "unresolved":
+            raise ValueError("PowerShell 실행 대상을 확정할 수 없다. 리터럴 실행 대상을 사용하세요.")
+        if nested.program not in ("powershell", "pwsh"):
+            continue
+        argv = arguments(text[nested.target_end:])
         for index, value in enumerate(argv):
             option = value[1:].lower() if value.startswith(("-", "/")) else ""
             if option not in options:
@@ -124,7 +197,7 @@ def nested_commands(text: str):
                     body = base64.b64decode(re.sub(r"\s+", "", rest[0] if rest else ""), validate=True).decode("utf-16-le")
                 except (binascii.Error, UnicodeError) as exc:
                     raise ValueError("인코딩된 PowerShell 명령을 읽을 수 없다.") from exc
-            yield nested["program"].lower(), body
+            yield nested.program, body
             break
 
 
@@ -243,7 +316,10 @@ def resolve(name: str, *, form: str | None = None, **values: str) -> str:
     form = form or (chosen().form if os.name == "nt" else "bash")
     if form not in ("bash", "pwsh7", "ps5"):
         raise ValueError(f"Unknown shell form: {form}")
-    command = getattr(COMMANDS[name], form)
+    entry = COMMANDS[name]
+    command = getattr(entry, form)
+    if command is None and entry.example:
+        raise ValueError("PowerShell 실행 대상을 확정할 수 없다. 리터럴 실행 대상을 사용하세요.")
     if command is not None:
         if form != "bash" and name in ("gate", "registered-check"):
             values["command"] = invoked(values["command"])
@@ -252,6 +328,8 @@ def resolve(name: str, *, form: str | None = None, **values: str) -> str:
         command = re.sub(r"\{(\w+)\}", lambda match: values.get(match[1], match[0]), command)
     if command is None or form == "ps5" and seven_only(command):
         raise ValueError(f"이 명령은 PowerShell 7이 필요하다. 연결 화면의 '{INSTALL_CONTROL}'을 사용하세요.")
+    if form != "bash" and classic_seven_only(command):
+        raise ValueError(f"Windows PowerShell에는 7 전용 명령을 넘길 수 없다. '{INSTALL_CONTROL}'에서 확인하세요.")
     return command
 
 
@@ -261,8 +339,6 @@ def launch(name: str, **values: str) -> tuple[str | list[str], bool]:
         return resolve(name, form="bash", **values), True
     ps = chosen()
     line = resolve(name, form=ps.form, **values)
-    if classic_seven_only(line):
-        raise ValueError(f"Windows PowerShell에는 7 전용 명령을 넘길 수 없다. '{INSTALL_CONTROL}'에서 확인하세요.")
     # Preserve native exit codes; a PowerShell statement failure is also a
     # failed check. Both versions support these explicit encoding settings.
     script = ("$ErrorActionPreference = 'Stop'; "

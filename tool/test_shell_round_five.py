@@ -57,7 +57,18 @@ def native_commands(scripts):
             }
             if ($target -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $target.Value }
         })
-        [PSCustomObject]@{ errors = @($errors).Count; targets = $targets }
+        $records = @(foreach ($command in $commands) {
+            $target = $command.CommandElements[0]
+            [PSCustomObject]@{ name = $command.GetCommandName(); kind = $target.GetType().Name;
+                start = $target.Extent.StartOffset; end = $target.Extent.EndOffset; text = $target.Extent.Text }
+        })
+        $pairs = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.HashtableAst] }, $true) |
+            ForEach-Object { foreach ($pair in $_.KeyValuePairs) {
+                [PSCustomObject]@{ keyStart = $pair.Item1.Extent.StartOffset; keyEnd = $pair.Item1.Extent.EndOffset;
+                    valueStart = $pair.Item2.Extent.StartOffset; valueEnd = $pair.Item2.Extent.EndOffset }
+            } })
+        [PSCustomObject]@{ errors = @($errors).Count; targets = $targets; commands = $records; pairs = $pairs;
+            version = $PSVersionTable.PSVersion.ToString() }
     })
     ConvertTo-Json -InputObject $rows -Compress -Depth 5
     """
