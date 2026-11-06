@@ -265,6 +265,7 @@ DOCUMENTED = (
     'python -m ruff check tool',
     'python -m ruff check tool laya',
     'python laya/generate.py train --rebuild redirect full2-train',
+    'python laya/generate.py <split> --rebuild useful full1-val',
     'python laya/train.py pack <kind>...',
     'python tool/<파일>',
     'python tool/apply.py --project . --agent claude --check',
@@ -323,6 +324,7 @@ DOCUMENTED = (
     'python tool/omm_scan.py --repo <path> --model <model>',
     'python tool/relations.py [--project <repo>] check',
     'python tool/relations.py [--project <repo>] health',
+    'python tool/relations.py --project . health',
     'python tool/relations.py [--project <repo>] retire',
     'python tool/search "<query>" --project <repo>',
     "python tool/search 'Why was this design chosen?' --project . --jev --state 'Reviewing the retrieval design'",
@@ -375,6 +377,7 @@ COMMANDS.update({line: native(line) for line in DOCUMENTED})
 
 # Examples whose output/syntax requires 7 have no ps5 form.
 REQUIRES_SEVEN = (
+    ('New-Item -ItemType SymbolicLink … ; Set-Content link x', ('UTF-8 default encoding',)),
     ('Copy-Item -Recurse ..\\d d; Set-Content d\\link\\f x', ('UTF-8 default encoding',)),
     ('Copy-Item -Recurse a b; Set-Content b\\x y', ('UTF-8 default encoding',)),
     ('Get-Item ../outside | Set-Location; Set-Content target.txt x', ('UTF-8 default encoding',)),

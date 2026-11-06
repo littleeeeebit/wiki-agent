@@ -13,7 +13,7 @@ import threading
 import uuid
 
 from . import process
-from .powershell_syntax import syntax
+from .powershell_syntax import arguments, syntax
 from .shell_catalogue import COMMANDS
 
 INSTALL_CONTROL = "PowerShell 7 설치"
@@ -101,31 +101,24 @@ def command_syntax(text: str) -> tuple[str, list[tuple[int, int]]]:
 
 def nested_commands(text: str):
     """Read literal command bodies passed to an explicitly named PowerShell."""
-    bare, strings = command_syntax(text)
-    bodies = dict(strings)
-    options = "|".join(name[:length] for name in ("Command", "EncodedCommand") for length in range(1, len(name) + 1))
-    wrapper = (r"(?:^|[;&|{(\n])\s*(?:&\s*)?(?:[^\s;&|(){}]+[/\\])?(?P<program>powershell|pwsh)(?:\.exe)?\s+"
-               r"[^;\n|]*?-(?P<option>" + options + r"|ec)\s+")
+    bare, _ = command_syntax(text)
+    options = {name[:length].lower() for name in ("Command", "EncodedCommand") for length in range(1, len(name) + 1)} | {"ec"}
+    wrapper = r"(?:^|[;&|{(\n])\s*(?:&\s*)?(?:[^\s;&|(){}]+[/\\])?(?P<program>powershell|pwsh)(?:\.exe)?\s+"
     for nested in re.finditer(wrapper, bare, re.I):
-        start = nested.end()
-        encoded = nested["option"].lower().startswith("e")
-        if (end := bodies.get(start)) is not None:
-            value = text[start:end]
-            if value.startswith("@"):
-                body = value.partition("\n")[2].rsplit("\n", 1)[0]
-            else:
-                body = value[1:-1].replace("''", "'") if value[0] == "'" else value[1:-1].replace('`"', '"').replace("``", "`")
-        else:
-            end = re.search(r"[;\n|]", bare[start:])
-            body = text[start:start + end.start()] if end else text[start:]
-            if encoded:
-                body = body.split(maxsplit=1)[0] if body.strip() else ""
-        if encoded:
-            try:
-                body = base64.b64decode(re.sub(r"\s+", "", body), validate=True).decode("utf-16-le")
-            except (binascii.Error, UnicodeError) as exc:
-                raise ValueError("인코딩된 PowerShell 명령을 읽을 수 없다.") from exc
-        yield nested["program"].lower(), body
+        argv = arguments(text[nested.end():])
+        for index, value in enumerate(argv):
+            option = value[1:].lower() if value.startswith(("-", "/")) else ""
+            if option not in options:
+                continue
+            rest = argv[index + 1:]
+            body = " ".join(rest)
+            if option.startswith("e"):
+                try:
+                    body = base64.b64decode(re.sub(r"\s+", "", rest[0] if rest else ""), validate=True).decode("utf-16-le")
+                except (binascii.Error, UnicodeError) as exc:
+                    raise ValueError("인코딩된 PowerShell 명령을 읽을 수 없다.") from exc
+            yield nested["program"].lower(), body
+            break
 
 
 def classic_seven_only(text: str) -> bool:

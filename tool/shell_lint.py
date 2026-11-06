@@ -20,6 +20,13 @@ def instructions(text: str, *, raw: bool = False):
     """Fenced PowerShell and executable inline examples, including prompt strings."""
     rest = text.splitlines(keepends=True)
     for token in MarkdownIt("commonmark").parse(text):
+        if token.type == "inline":
+            children = list(reversed(token.children or []))
+            while children:
+                child = children.pop()
+                children.extend(reversed(child.children or []))
+                if child.type == "code_inline" and START.match(child.content.strip()):
+                    yield child.content.strip()
         if token.type != "fence":
             continue
         start, end = token.map
@@ -40,9 +47,6 @@ def instructions(text: str, *, raw: bool = False):
         if pending:
             yield pending
     rest = "".join(rest)
-    for match in re.finditer(r"(?<!`)`([^`\n]+)`(?!`)", rest):
-        if START.match(match[1]):
-            yield match[1]
     for line in rest.splitlines():
         match = re.match(r"\s*(?:In PowerShell|PowerShell):\s*(.+)", line, re.I)
         if match and not re.fullmatch(r"\{\w+\}.*", match[1]):

@@ -166,7 +166,7 @@ On Windows, first compare powershell -NoProfile -NonInteractive -Command 'Write-
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Observed in the repair commit titled `Inspect native child arguments and CommonMark inline instructions`: the harmless Windows experiment `test_native_split_command_experiment_matches_single_argument` produced the same two output lines and exit status 17 for split and single arguments. The initial regression table had 69 failures and 8 passes; inspection missed quoted options, split child-command tails and CommonMark inline spans. The repair tests `test_quoted_native_options_preserve_child_capability_checks` and `test_split_and_single_child_commands_have_the_same_denial` check extraction, capability classification, launch refusal and both hosts under selected parent versions 5 and 7. Quoted finding inputs were only inspected, never executed. The proposed hypothesis addresses the additional child-argument gap; the named F4 finding is separately covered by `test_commonmark_inline_instructions_are_catalogue_checked`. Safe literal, grouped-target, encoded and malformed-encoding controls remain. This result is draft evidence for independent review, not a verified finding or shared rule.
 
 ## Unresolved limits
 

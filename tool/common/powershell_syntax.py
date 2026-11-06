@@ -1,5 +1,68 @@
 """Locate PowerShell code without treating string data as executable syntax."""
 
+import re
+
+ESCAPES = dict(zip("0abefnrtv", "\0\a\b\x1b\f\n\r\t\v"))
+
+
+def expanded(value: str) -> str:
+    def replace(match):
+        token = match[0]
+        if token.startswith("$"):
+            raise ValueError("실행 전에 PowerShell 명령 인수를 확정할 수 없다.")
+        if token.startswith("`u{"):
+            try:
+                return chr(int(token[3:-1], 16))
+            except ValueError as exc:
+                raise ValueError("실행 전에 PowerShell 명령 인수를 확정할 수 없다.") from exc
+        return ESCAPES.get(token[1], token[1])
+    return re.sub(r"`(?:u\{[\da-fA-F]{1,6}\}|[\s\S])|\$[\w({]", replace, value)
+
+
+def arguments(text: str) -> list[str]:
+    """Read literal native arguments until the outer command ends; refuse computed values."""
+    bare, spans = syntax(text)
+    quoted = dict(spans)
+    words, word, cursor, active = [], "", 0, False
+    while cursor < len(text):
+        if text[cursor] == "`":
+            end = cursor + (3 if text.startswith("`\r\n", cursor) else 2)
+            escaped = text[cursor + 1:end]
+            if escaped not in ("\n", "\r\n"):
+                word += ESCAPES.get(escaped, escaped)
+                active = True
+            cursor = end
+            continue
+        if (end := quoted.get(cursor)) is not None:
+            value = text[cursor:end]
+            quote = value[int(value.startswith("@"))]
+            value = value.partition("\n")[2].rsplit("\n", 1)[0] if value.startswith("@") else value[1:-1]
+            if quote == '"':
+                if bare[cursor:end].strip() != "0":
+                    raise ValueError("실행 전에 PowerShell 명령 인수를 확정할 수 없다.")
+                value = expanded(value)
+            else:
+                value = value.replace("''", "'")
+            word += value
+            active, cursor = True, end
+            continue
+        char = bare[cursor]
+        if char in ";|&\n)]}<>":
+            break
+        if char in "$({[":
+            raise ValueError("실행 전에 PowerShell 명령 인수를 확정할 수 없다.")
+        if char.isspace():
+            if active:
+                words.append(word)
+            word, active = "", False
+        else:
+            word += char
+            active = True
+        cursor += 1
+    if active:
+        words.append(word)
+    return words
+
 
 def syntax(text: str) -> tuple[str, list[tuple[int, int]]]:
     """A same-length code view and quoted spans, retaining only string subexpressions."""
