@@ -188,6 +188,16 @@ def test_only_what_the_contract_refused_is_named(repo, old, new, declared, wrong
     assert "start line 1 `import os`" in text and wrong not in text
 
 
+def test_a_refusal_the_worker_cannot_clear_stops_at_once(repo, monkeypatch):
+    # Round 7: a declared test the start lacks is not fixed at head, and a deep new helper made `_kept` raise.
+    new = "def helper():\n    return " + " + ".join(["1"] * 1100) + "\n\n\nV = 1\n"
+    spec = card(repo, "V = 1\n", new, "test_missing")
+    refusal = refactor_run.contract(repo, spec)
+    assert "시작 커밋에 없다" in refusal and refactor_run.restoring(repo, spec, refusal) == ""
+    monkeypatch.setattr(refactor_run, "_restoring", lambda *a: 1 / 0)
+    assert refactor_run.restoring(repo, spec, refusal) == "", "a failure here falls back to the person's stop"
+
+
 def test_a_deleted_test_file_stays_the_persons_to_declare(repo):
     # #252: which tests pytest collects from a file is not settled by its syntax, so no turn undoes the deletion.
     spec = card(repo, SEED, "", "test_acyclic")

@@ -709,22 +709,42 @@ def restoring(path: Path, spec: dict, refusal: str) -> str:
     refusal, workers read it as a rule they must not touch and stopped. It names the changed definitions
     outside the contract and the start statements no longer at head by line; the most common were imports,
     constants and the docstring a removed test left unused, which the contract does not free (#305: no
-    reading of a module proves nothing else observes them), so the turn says how to keep them past a linter."""
+    reading of a module proves nothing else observes them), so the turn says how to keep them past a linter.
+    Empty when the refusal names a file the worker cannot put back, and on any failure here: the card then
+    stops for the person at once, as it did before this turn existed."""
 
+    try:
+        return _restoring(path, spec, refusal)
+    except Exception:   # noqa: BLE001 - guidance only; the stop it would have delayed is the safe answer
+        return ""
+
+
+def _restoring(path: Path, spec: dict, refusal: str) -> str:
     whole, named, _ = _declared(spec)
     start, files = spec["start_head"], []
     listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", start, "HEAD"], path)
     for name in listed.stdout.splitlines():
-        if not debt.TEST.search(name.lower()) or name in whole or not name.endswith(".py") \
-                or not (path / name).is_file():
+        if not debt.TEST.search(name.lower()) or name in whole:
+            continue
+        # Deleted, not Python, unreadable, or declaring a test the start lacks: the person's, not the worker's.
+        person = f"`{name}`" in refusal
+        if not name.endswith(".py") or not (path / name).is_file():
+            if person:
+                return ""
             continue
         old = subprocess.run(["git", "show", f"{start}:{name}"], cwd=path, capture_output=True)
+        if old.returncode:
+            continue   # a new test file
         try:   # parsed as `contract` parses, so a changed `# type:` comment is seen here too
             before, after = (ast.parse(t, type_comments=True).body for t in (old.stdout, (path / name).read_bytes()))
         except (SyntaxError, ValueError, RecursionError):
+            if person:
+                return ""
             continue
         allowed = named.get(name, set())
-        if old.returncode or _kept(before, after, allowed):
+        if not all(_defines(before, p) for p in allowed):
+            return ""
+        if _kept(before, after, allowed):
             continue
         try:
             # The start's own line, never `ast.unparse`, which can run out of recursion on a statement it parsed,
