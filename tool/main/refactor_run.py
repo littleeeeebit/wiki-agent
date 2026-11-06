@@ -705,10 +705,12 @@ def restoring(path: Path, spec: dict, refusal: str) -> str:
         allowed = named.get(name, set())
         if old.returncode or _kept(before, after, allowed):
             continue
-        dumps, lines = {ast.dump(t) for t in after}, old.stdout.decode("utf-8", "replace").splitlines()
-        # The start's own line, never `ast.unparse`, which can run out of recursion on a statement it parsed.
+        # The start's own line, never `ast.unparse`, which can run out of recursion on a statement it parsed;
+        # split only where the parser counts lines (`splitlines` also splits on `\f` and `\x1c` in a comment).
+        text = old.stdout.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        dumps = {ast.dump(t) for t in after}
         what = [f"`{'::'.join(p)}`" for p in sorted(_changed(before, after) - allowed)] + [
-            f"start line {s.lineno} `{lines[s.lineno - 1].strip()[:80]}`"
+            f"start line {s.lineno} `{text[s.lineno - 1].strip()[:80] if s.lineno <= len(text) else ''}`"
             for s in before if not _named(s) and ast.dump(s) not in dumps]
         free = sorted("::".join(p) for p in allowed)
         files.append(f"- `{name}`: put back to its start text {', '.join(what) or 'the statements you changed'}"

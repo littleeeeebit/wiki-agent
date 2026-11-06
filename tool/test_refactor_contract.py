@@ -67,16 +67,20 @@ def test_tidying_it_away_is_refused_and_sent_back_line_by_line(repo):
     assert "# noqa: F401" in text
 
 
-@pytest.mark.parametrize("old, new", [
+@pytest.mark.parametrize("old, new, shown", [
     # Round 4, F1: `contract` compares `# type:` comments, so the turn must see them as well.
-    ("VALUE = 1  # type: int\n\n\ndef test_b():\n    pass\n", "VALUE = 1  # type: str\n"),
+    ("VALUE = 1  # type: int\n\n\ndef test_b():\n    pass\n", "VALUE = 1  # type: str\n",
+     "start line 1 `VALUE = 1  # type: int`"),
     # Round 4, F2: a statement `ast.unparse` cannot render within the recursion limit.
-    ("TOTAL = " + " + ".join(["1"] * 450) + "\n\n\ndef test_b():\n    pass\n", ""),
+    ("TOTAL = " + " + ".join(["1"] * 450) + "\n\n\ndef test_b():\n    pass\n", '"""Rest."""\n',
+     "start line 1 `TOTAL = 1 + 1"),
+    # A form feed or `\x1c` in a comment is a line break to `str.splitlines`, not to the parser.
+    ("A = 1  # a\x0cb\x1cc\nB = 2\n\n\ndef test_b():\n    pass\n", "A = 1  # a\x0cb\x1cc\n", "start line 2 `B = 2`"),
 ])
-def test_every_refused_file_gets_a_turn(repo, old, new):
-    spec = card(repo, old, new or '"""Rest."""\n', "test_b")
+def test_every_refused_file_gets_a_turn(repo, old, new, shown):
+    spec = card(repo, old, new, "test_b")
     refusal = refactor_run.contract(repo, spec)
-    assert "기존 테스트 변경" in refusal and "start line 1 `" in refactor_run.restoring(repo, spec, refusal)
+    assert "기존 테스트 변경" in refusal and shown in refactor_run.restoring(repo, spec, refusal)
 
 
 # Every shape PR #305's review rounds raised against freeing statements by reading the module stays refused.
