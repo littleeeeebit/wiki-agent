@@ -134,6 +134,107 @@ def test_a_fact_section_must_be_the_only_one_of_its_name():
     assert korean.mapped(english, twin) == ["two sections named 'Setup'", "two sections named '설정'"]
 
 
+def test_a_label_that_fails_on_its_english_original_is_named(tmp_path, v8):
+    pairs = json.loads(pair_file(tmp_path).read_text(encoding="utf-8"))
+    # The English page says "30 June 2026": a faithful translation would lose this literal too.
+    assert korean.baseline(pairs, v8) == [
+        "repo/.wiki/decisions/2026-05-04-085-yousign.md fact sign-1: lost literal '2026-06-30'"]
+    pairs["twins"]["repo/.wiki/decisions/2026-05-04-085-yousign.md"]["facts"][0]["literals"] = ["30", "2026"]
+    pairs["pairs"][0]["meaning"]["require"].append(["firewall"])
+    assert korean.baseline(pairs, v8) == ["fact-01: none of ['firewall']"]
+
+
+# Normalized English against the frozen set's labels: True holds (a faithful wording), False loses.
+SET_CASES = [
+    ("q", "conflict-45", "Which HR system do we use? Since when?", False),
+    ("q", "analysis-218", "What should I do if a colleague asks to borrow my login for a year? Is there an alternative?",
+     False),
+    ("q", "analysis-179", "Which of our 2 support tools should we keep? Why?", True),
+    ("q", "bridge-43", "Whom should I contact when the coffee machine malfunctions?", True),
+    ("q", "pasted-60", 'Forum post: "Gift cards expire."\nHow long are gift cards valid?', False),
+    ("f", "2026-02-09-089-personio-1", "Employee records move to Personio from 2 March 2026.", False),
+    ("f", "cctv-1", "CCTV recordings from the office entrances are kept for 31 years, then overwritten.", False),
+    ("f", "colour-contrast-1", "Body text has a contrast ratio of at least 4.5 to 2 against its background.", False),
+    ("f", "image-descriptions-1", "Every image on a web page has no alt text that says what it shows.", False),
+    ("f", "shared-passwords-3", "Delete the message, notify the customer to change the password, and use it.", False),
+    ("f", "finance-sheet-formulas-2", "A formula that reads another sheet names a range rather than whole columns.", True),
+    ("f", "finance-sheet-formulas-2", "Shared finance sheets use XLOOKUP instead of VLOOKUP, and a formula that reads "
+                                      "another sheet reads whole columns.", False),
+    ("f", "showers-2", "Visitors are prohibited from using the showers.", True),
+    ("f", "2026-08-08-012-staging-monthly-1", "Staging is now reset on the first of each month.", True),
+    ("f", "laptop-spills-2", "Switch the laptop off at once. Do not charge it. Bring it to the IT desk the same day.",
+     True),
+    ("f", "laptop-spills-2", "Switch the laptop off at once, charge it, and bring it to the IT desk the same day.", False),
+    ("f", "cookies-2", "A new cookie is listed in the cookie register with its purpose and lifetime. It is set with the "
+                       "Secure and SameSite=Lax flags.", True),
+    # Set review round 2: a number is whole, a cue governs the phrase, a condition is bound, the asked line asks.
+    ("q", "analysis-179", "Which of our 12 support tools should we keep? Why?", False),
+    ("f", "2026-02-09-089-personio-1", "Employee records move to Personio from March 12, 2026.", False),
+    ("f", "cctv-1", "CCTV recordings from the office entrances are kept for 131 days, then overwritten.", False),
+    ("f", "affiliate-payouts-4", "Affiliates with any returned orders in a month account for 90%.", False),
+    ("f", "2026-05-05-008-sessions-postgres-2", "Redis is no longer disabled for user sessions.", False),
+    ("f", "image-descriptions-1", "Every image on a web page does not have alt text that says what it shows.", False),
+    ("f", "incident-reviews-2", "Items have no owner but have a due date.", False),
+    ("f", "replacement-parts-2", "Replacement parts arrive after 7 working days.", False),
+    ("f", "loyalty-programme-1", "Loyalty members earn one point per two euros spent.", False),
+    ("f", "nrr-q3-1", "Net revenue retention went from 101% to 112%.", False),
+    ("f", "web-video-1", "Autoplay with sound is prohibited for videos on web pages.", True),
+    ("f", "web-video-1", "Autoplay with sound is not prohibited for videos on web pages.", False),
+    ("q", "analysis-212", "How do I handle a customer's password sent to me by email?", True),
+    ("f", "analytics-build-buy-3", "Building in-house is estimated at two engineers for six months. Ongoing upkeep is "
+                                   "also required.", True),
+    ("q", "route-48", "Spreadsheet formula: =VLOOKUP(A2,Rates!A:B,2)\nWhat do our rules say about reports in shared "
+                      "finance sheets?", False),
+    ("q", "pasted-64", 'Release notes draft: "Shared carts hold up to 20 items."\nHow many items can a private cart '
+                       'hold?', False),
+    # Round 3: line breaks do not move the asked part; a cue does not cross `and`; relations and verbs are bound.
+    ("q", "pasted-64", 'Release notes draft: "Shared carts hold up to 20 items." How many items can a private cart '
+                       'hold?', False),
+    ("q", "route-48", "Spreadsheet formula: =VLOOKUP(A2,Rates!A:B,2) What do our rules say about reports in shared "
+                      "finance sheets?", False),
+    ("q", "pasted-64", 'Release notes draft: "Shared carts hold up to 20 items."\nHow many items\ncan a shared cart '
+                       'hold?', True),
+    ("f", "web-video-2", "Videos on web pages never autoplay with sound and every video has captions.", True),
+    ("f", "shared-passwords-2", "When a customer sends a password to staff, delete the message, tell the customer to "
+                                "change that password at once and never use it.", True),
+    ("f", "web-video-1", "Videos on web pages never autoplay without sound, and every video has captions.", False),
+    ("f", "incident-reviews-2", "Items have neither a description nor a due date but have an owner.", False),
+    ("f", "replacement-parts-2", "Replacement parts ship within 3 working days of the request and arrive within 7 "
+                                 "years.", False),
+    ("f", "loyalty-programme-1", "Loyalty members lose one point per euro spent and get free delivery on orders over "
+                                 "30 EUR.", False),
+    ("f", "2026-02-09-089-personio-1", "Employee records move to Personio from March 1st, 2026.", True),
+    ("f", "nrr-q3-1", "Net revenue retention fell from 112% to just 101%.", True),
+    # Round 4: a quoted term in the question, single quotes, a number's point, the answering verb, `or`, spacing.
+    ("q", "pasted-64", 'Release notes draft: "Shared carts hold up to 20 items." How many items can a "shared cart" '
+                       'hold?', True),
+    ("q", "route-48", 'Spreadsheet formula: =VLOOKUP(A2,Rates!A:B,2) What do our rules say about "formulas" in '
+                      'shared finance sheets?', True),
+    ("q", "pasted-56", "Prospect asks: 'Can we pay by invoice?' Which plans can be paid by card?", False),
+    ("q", "pasted-56", "Prospect asks: Can we pay by invoice? Which plans can be paid by card?", False),
+    ("f", "replacement-parts-2", "Replacement parts ship within 3 working days of the request and arrive within 7.5 "
+                                 "working days.", False),
+    ("f", "replacement-parts-2", "Replacement parts ship within 3 working days of the request and arrive within 7.",
+     True),
+    ("f", "marketing-reach-2", "No page fails to answer the questions prospects search for.", False),
+    ("f", "replacement-parts-1", "Replacement parts ship in no  more than three working days of the request and "
+                                 "arrive within 7.", True),
+    ("f", "web-video-2", "Videos on web pages never autoplay with sound, and every video on the web page has no "
+                         "captions or subtitles.", False),
+]
+
+
+@pytest.mark.parametrize("kind,name,english,holds", SET_CASES)
+def test_the_set_labels_hold_on_faithful_wordings_and_fail_on_losses(kind, name, english, holds):
+    pairs, _data = korean.load()
+    if kind == "q":
+        got = korean.check(next(p["meaning"] for p in pairs["pairs"] if p["intent"] == name), english)
+    else:
+        f = next(f for t in pairs["twins"].values() for f in t["facts"] if f["id"] == name)
+        got = korean.lost(english, f["require"], f["literals"])
+    assert (got == []) is holds, got
+
+
 def test_the_ko_corpus_swaps_only_the_twins_and_its_labels_map_back(tmp_path, v8, small):
     pairs, data = korean.load(pair_file(tmp_path, memory=True))
     ko = korean.ko_corpus(data, pairs)
@@ -147,6 +248,59 @@ def test_the_ko_corpus_swaps_only_the_twins_and_its_labels_map_back(tmp_path, v8
 
 
 # -- the meaning checks ---------------------------------------------------------------------
+
+def test_a_phrase_with_a_number_matches_the_whole_number():
+    from eval import meaning
+    from eval.meaning import at
+
+    assert at("31 days", "kept for 31 days") and not at("31 days", "kept for 131 days")
+    assert not at("March 1", "from March 12") and not at("1 March", "from 11 March") and at("March 1", "March 1, 2026")
+    assert not at("4.5 to 1", "4.5 to 10") and not at("2", "our 12 tools") and at("2", "our 2 tools")
+    # A phrase that does not end in a digit still matches inside a word, as a stem; a space matches a line break.
+    assert at("reimburs", "Expenses are reimbursed") and at("1 point", "earn 1 point.")
+    assert at("loyalty member", "What do loyalty\nmembers get?") == [(8, 22)] and not at("no ", "now")
+    # A phrase that ends in a number's point or comma ends the number there.
+    assert at("within 7.", "arrive within 7.") and not at("within 7.", "within 7.5 days")
+    assert not at("within 7,", "within 7,000 days") and at("within 7,", "within 7, and")
+    # A literal is as written, apart from the width of a space.
+    assert meaning.present("Google Drive", "in Google  Drive.") and not meaning.present("Google Drive", "GoogleDrive")
+
+
+def test_a_cue_before_or_after_a_positive_phrase_loses_it():
+    alt = [["every image"], ["has alt text", "have alt text"]]
+    assert korean.lost("Every image has alt text.", alt, []) == []
+    assert korean.lost("Every image does not have alt text.", alt, [])
+    assert korean.lost("Sales deals are not tracked in HubSpot.", [["deal"]], ["HubSpot"])
+    # A cue in another clause, a limit that reads like one, and a number's comma govern nothing.
+    assert korean.lost("Deals are tracked in HubSpot, not in Pipedrive.", [["deal"]], ["HubSpot"]) == []
+    assert korean.lost("Change it at once and never use it.", [["change"], ["at once"]], []) == []
+    # `or` keeps the cue (`no captions or subtitles`); a limit reads the same with a wider space.
+    assert korean.lost("Every video has no captions or subtitles.", [["every video"], ["caption", "subtitle"]], [])
+    assert korean.lost("Parts ship in no  more than three days.", [["ship"], ["three days"]], []) == []
+    assert korean.lost("Shut it down without delay.", [["shut"], ["without delay"]], []) == []
+    assert korean.lost("The site has 96,000 product pages.", [["product page"]], []) == []
+    assert korean.lost("The site has not 96,000 product pages.", [["product page"]], [])
+    # A label that names the negation: what it negates is not checked, its positive wording is.
+    video = [["never autoplay", "prohibit"], ["sound"]]
+    assert korean.lost("Videos never autoplay with sound.", video, []) == []
+    assert korean.lost("Autoplay with sound is prohibited.", video, []) == []
+    assert korean.lost("Autoplay with sound is not prohibited.", video, [])
+
+
+def test_the_asked_part_is_met_on_the_asked_line():
+    meaning = {"require": [["up to 20"]], "asked": [["shared cart"], ["how many"]], "forbid": [], "literals": []}
+    assert korean.check(meaning, 'Draft: "Shared carts hold up to 20 items."\nHow many items can a shared cart hold?') == []
+    assert korean.check(meaning, 'Draft: "Shared carts hold up to 20 items."\nHow many items can a private cart hold?') \
+        == ["asked none of ['shared cart']"]
+    # Merged onto one line, the asked part still starts after the quotation; with no quotation, after the literal.
+    assert korean.check(meaning, 'Draft: "Shared carts hold up to 20 items." How many can a private cart hold?') \
+        == ["asked none of ['shared cart']"]
+    assert korean.asked_part("Formula: =SUM(A:A) What do our rules say?", ["=SUM(A:A)"]) == " What do our rules say?"
+    # The first quotation is the pasted one; a term the question quotes later stays asked.
+    assert korean.asked_part('Draft: "Carts hold 20." How many can a "shared cart" hold?', []) == \
+        ' How many can a "shared cart" hold?'
+    assert korean.asked_part("Asks: 'Can we pay?' Which plans can't?", []) == " Which plans can't?"
+    assert korean.asked_part("Prospect asks: Can we pay by invoice? Which plans?", []) == " Which plans?"
 
 def test_a_negation_must_stay_in_its_own_sentence():
     require = [["does not run", "doesn't run"], ["windows"]]
