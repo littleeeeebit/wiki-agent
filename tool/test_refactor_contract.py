@@ -96,6 +96,18 @@ def test_what_an_undeclared_test_still_reads_stays_pinned(repo):
      "import pytest\n\n\ndef test_a(db):\n    assert db\n"),
     # A module docstring holding a doctest is a test `--doctest-modules` collects.
     ('""">>> 1\n1\n"""\n\n\ndef test_b():\n    pass\n', '""">>> 1\n2\n"""\n'),
+    # Round 2, F2: an attribute, a name hashed into a set, or a default that is not a literal may run code.
+    ("import os\n\nX = os.sep\n\n\ndef test_b():\n    assert X\n\n\ndef test_a():\n    assert os\n",
+     "import os\n\n\ndef test_a():\n    assert os\n"),
+    ("P = 1\nX = {P}\n\n\ndef test_b():\n    assert X\n\n\ndef test_a():\n    assert P\n",
+     "P = 1\n\n\ndef test_a():\n    assert P\n"),
+    ("def helper(a=print):\n    return a\n\n\ndef test_b():\n    assert helper()\n\n\ndef test_a():\n    pass\n",
+     "def test_a():\n    pass\n"),
+    # Round 2, F3: being in the standard library does not make an import inert; `this` prints.
+    ("import this\n\n\ndef test_b():\n    assert this\n\n\ndef test_a():\n    pass\n", "def test_a():\n    pass\n"),
+    # Round 2, F4: a module that reads its own `__doc__` uses the docstring as data.
+    ('"""old"""\n\n\ndef test_b():\n    pass\n\n\ndef test_a():\n    assert __doc__ == "new"\n',
+     '"""new"""\n\n\ndef test_a():\n    assert __doc__ == "new"\n'),
     # F5: an assignment that calls something may change what an undeclared test reads.
     ("import os\n\nREMOVED = os.environ.pop('SKIP', None)\n\n\ndef test_b():\n    assert REMOVED\n\n\n"
      "def test_a():\n    assert os.environ.get('SKIP')\n",
@@ -103,6 +115,14 @@ def test_what_an_undeclared_test_still_reads_stays_pinned(repo):
 ])
 def test_what_pytest_reads_by_itself_stays_pinned(repo, old, new):
     assert "기존 테스트 변경" in refactor_run.contract(repo, card(repo, old, new, "test_b"))
+
+
+def test_a_module_another_file_names_frees_nothing_beyond_its_declared_tests(repo):
+    # Round 2, F1: another file imports the helper, and may fall back quietly once it is gone.
+    (repo / "tests").mkdir()
+    (repo / "tests/test_other.py").write_text("from tests.test_seed import helper\n", encoding="utf-8")
+    old = "def helper():\n    return True\n\n\ndef test_b():\n    assert helper()\n"
+    assert "기존 테스트 변경" in refactor_run.contract(repo, card(repo, old, '"""Rest."""\n', "test_b"))
 
 
 def test_a_conftest_frees_nothing_beyond_its_declared_tests(repo):
