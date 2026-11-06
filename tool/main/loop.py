@@ -25,7 +25,8 @@ from common import settings as settings_file
 from common.budget import Budget, Cancelled, Exhausted
 from workspace import adopt, base_branch, checkout, folder_for, holder, merged, remove, worktrees
 
-from . import channels, connect, decisions, knowledge, maintenance, pr_text, query, review_contract, runtime, specs, sweep, verification, work
+from . import (channels, connect, decisions, knowledge, maintenance, pr_text, query, refactor_run, review_contract, runtime,
+               specs, sweep, verification, work)
 from .query import ROOT, _lock, current_repo, hold, project, streaming
 from .review_result import (  # noqa: F401 -- preserve the loop protocol API
     FIRST, FINDING, FENCE, META, bare, parse, described, block, disposed,
@@ -1087,6 +1088,11 @@ def repair(cmd: str, verdict: dict) -> str:
             f"of its output:\n\n```\n{verdict['tail']}\n```\n\nFix it, commit, and push the task branch.")
 
 
+def contract_repair(path: Path, spec: dict, verdict: dict) -> str:
+    """A refused test contract goes back with what to restore; the gate's tail alone read as a rule to obey."""
+    return refactor_run.restoring(path, spec, verdict["reason"]) if verdict.get("cmd") == "테스트 계약" else ""
+
+
 def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str) -> bool:
     """Fast-forward external changes, reuse or run round checks, then push.
 
@@ -1123,7 +1129,7 @@ def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str
             return True
         if attempt == 2:
             return stop(loop, loop.repo, loop.sid, Why.GATE, f"게이트가 두 번 연속 실패했다 — {verdict['reason']}")
-        if told(loop, spec, path, repair(verdict["cmd"], verdict)) is None:
+        if told(loop, spec, path, contract_repair(path, spec, verdict) or repair(verdict["cmd"], verdict)) is None:
             return False
         spec = specs.load(loop.repo, loop.sid) or spec
     return False

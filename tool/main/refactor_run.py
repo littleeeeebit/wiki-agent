@@ -15,6 +15,7 @@ import ast
 import contextlib
 import copy
 import hashlib
+import importlib.util
 import json
 import os
 import posixpath
@@ -620,6 +621,26 @@ def _changed(old: list, new: list, at: tuple = ()) -> set:
     return found
 
 
+def _strays(old: list, new: list, allowed: set, at: tuple = ()) -> list:
+    """The start statements not at head unchanged and not freed, as (path or None, statement): one a
+    declared definition encloses is freed with it, and each statement is matched on its own, so of an
+    `@overload` group only the one that changed is named. A class whose header stayed is looked into when
+    the contract names something inside it."""
+
+    dumps, classes = {ast.dump(t) for t in new}, {t.name: t for t in new if isinstance(t, ast.ClassDef)}
+    found = []
+    for s in old:
+        path = (*at, s.name) if (name := _named(s)) else None
+        if ast.dump(s) in dumps or path and any(path[:k] in allowed for k in range(1, len(path) + 1)):
+            continue
+        t = classes.get(name) if isinstance(s, ast.ClassDef) else None
+        if t is not None and _head(s) == _head(t) and any(p[:len(path)] == path for p in allowed):
+            found += _strays(s.body, t.body, allowed, path)
+        else:
+            found.append((path, s))
+    return found
+
+
 def _amendable(before: list, after: list, allowed: set) -> set | None:
     """The names that, declared beside `allowed`, explain every change: None when no names do."""
 
@@ -681,6 +702,74 @@ def contract(path: Path, spec: dict) -> str:
             broken.append(f"`{name}` 의 기존 테스트 변경{CHANGED if _amendable(before, after, allowed) else ''}")
     return "" if not broken else ("테스트 계약 밖의 변경 — " + ", ".join(broken[:10])
                                   + " (명세의 tests.remove·tests.contract 에 없다)")
+
+
+def restoring(path: Path, spec: dict, refusal: str) -> str:
+    """The turn that hands a contract refusal back to the worker with what to put back: told only the
+    refusal, workers read it as a rule they must not touch and stopped. It names the changed definitions
+    outside the contract and the start statements no longer at head by line; the most common were imports,
+    constants and the docstring a removed test left unused, which the contract does not free (#305: no
+    reading of a module proves nothing else observes them), so the turn says how to keep them past a linter.
+    Empty when the refusal names a file the worker cannot put back, and on any failure here: the card then
+    stops for the person at once, as it did before this turn existed."""
+
+    try:
+        return _restoring(path, spec, refusal)
+    except Exception:   # noqa: BLE001 - guidance only; the stop it would have delayed is the safe answer
+        return ""
+
+
+def _restoring(path: Path, spec: dict, refusal: str) -> str:
+    whole, named, _ = _declared(spec)
+    start, files = spec["start_head"], []
+    listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", start, "HEAD"], path)
+    for name in listed.stdout.splitlines():
+        if not debt.TEST.search(name.lower()) or name in whole:
+            continue
+        # Deleted, not Python, unreadable, or declaring a test the start lacks: the person's, not the worker's.
+        person = f"`{name}`" in refusal
+        if not name.endswith(".py") or not (path / name).is_file():
+            if person:
+                return ""
+            continue
+        old = subprocess.run(["git", "show", f"{start}:{name}"], cwd=path, capture_output=True)
+        if old.returncode:
+            continue   # a new test file
+        try:   # parsed as `contract` parses, so a changed `# type:` comment is seen here too
+            before, after = (ast.parse(t, type_comments=True).body for t in (old.stdout, (path / name).read_bytes()))
+        except (SyntaxError, ValueError, RecursionError):
+            if person:
+                return ""
+            continue
+        allowed = named.get(name, set())
+        if not all(_defines(before, p) for p in allowed):
+            return ""
+        if _kept(before, after, allowed):
+            continue
+        try:
+            # The start's own line, never `ast.unparse`, which can run out of recursion on a statement it parsed,
+            # decoded as the parser decodes it: its coding cookie and newlines (`splitlines` also splits on `\f`).
+            text = importlib.util.decode_source(old.stdout).split("\n")
+            what = [f"`{'::'.join(p)}`" if p else
+                    f"start line {s.lineno} `{text[s.lineno - 1].strip()[:80] if s.lineno <= len(text) else ''}`"
+                    for p, s in _strays(before, after, allowed)]
+        except (RecursionError, ValueError, LookupError, SyntaxError):
+            what = []   # still a turn: the file goes back whole to its start text
+
+        free = sorted("::".join(p) for p in allowed)
+        files.append(f"- `{name}`: put back to its start text {', '.join(what) or 'the statements you changed'}"
+                     f"; the contract frees {'`' + '`, `'.join(free) + '`' if free else 'no test in it'}.")
+    if not files:   # a deleted file or one that is not Python is the person's to declare (`removals`, `amendments`)
+        return ""
+    listing = "\n".join(files)
+    return (f"The server's test-contract check refused this branch:\n\n{refusal}\n\n"
+            "This is yours to fix now, without a person and without changing the spec. The contract frees only "
+            f"the tests the spec names; every other line of an existing test file must read as it did at the start "
+            f"commit `{start[:12]}` (`git show {start[:12]}:<file>`).\n\n{listing}\n\n"
+            "Keep your changes to the freed tests. Test data or a helper they need goes under a new name, never into "
+            "an existing one another test reads. The module docstring and every import, constant and helper a "
+            "freed test leaves unused stay as they were; when a linter flags such an import, add `# noqa: F401` "
+            "to its line, since comments are not compared. Commit, then send the completion report again.")
 
 
 def removals(spec: dict) -> dict:
@@ -952,11 +1041,22 @@ def measuring(path: Path, spec: dict, head: str, halt) -> str:
     return ""
 
 
+# How many times a contract refusal goes back to the worker before the card stops for a person.
+REPAIRS = 2
+
+
 def published(repo: Path, path: Path, run, spec: dict):
     """`specs._check`'s end for a survey spec: `verified`, then the ordinary pull request."""
 
     if why := verified(repo, path, run, specs.load(spec["repo"], spec["id"]) or spec):
+        # The worker can put back what the contract does not free; a person is needed only when it did not.
+        if why.startswith("테스트 계약 밖의 변경") and (asked := spec.get("contract_repairs", 0)) < REPAIRS \
+                and (turn := restoring(path, spec, why)):
+            specs.update(spec["repo"], spec["id"], contract_repairs=asked + 1)
+            specs.note(run, "테스트 계약 밖의 변경을 되돌리도록 작업자에게 돌려보낸다")
+            return lambda: specs.again(path, run.chat, turn, spec)
         return specs.failed(run, spec, why)
+    specs.update(spec["repo"], spec["id"], contract_repairs=0)
     specs.note(run, "리팩터링 검증 통과")
     return specs.pr_turn(repo, path, run, specs.load(spec["repo"], spec["id"]) or spec)
 

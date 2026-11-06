@@ -16,7 +16,10 @@ When the spec turns out wrong, stop and ask instead of widening it.
   is a new test beside it, even where `tests.add` says to extend. The test cleanup
   pass removes nothing else; report other candidates in its `reason`. Before
   the gate the server compares every existing test file with the task's start
-  and stops the task on any other edit or deletion. A `spec-update` cannot
+  and stops the task on any other edit or deletion. That includes the module
+  docstring and the imports, constants and helpers a removed test leaves
+  unused: keep each as it was, and when a linter flags such an import, add
+  `# noqa: F401` to its line, since comments are not compared. A `spec-update` cannot
   change the test contract. When this spec's change has to edit a test or test
   double the contract does not list, make only that edit, commit, and name each
   changed definition (`path::name`, `path::Class::method`) in your answer: the
