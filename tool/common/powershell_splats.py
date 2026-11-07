@@ -51,6 +51,25 @@ def parameters(source, position, name):
         start += len(bare[start:end]) - len(bare[start:end].lstrip())
         return start, start + len(bare[start:end].rstrip())
 
+    def map_entries(start, end):
+        start, end = trim(start, end)
+        if source[start:end].lower().startswith("[ordered]"):
+            start, end = trim(start + len("[ordered]"), end)
+        text = source[start:end]
+        if not text.startswith("@{") or not enclosed(text[1:], "{", "}"):
+            return None
+        result = []
+        for first, last in parts(start + 2, end - 1, ";\n"):
+            equal = bare.find("=", first, last)
+            if equal < 0:
+                raise Refusal("스플랫 매개 변수 이름을 실행 전에 확정할 수 없다.")
+            names = arguments(source[first:equal])
+            value = literal(equal + 1, last)
+            if len(names) != 1 or value is None:
+                raise Refusal("스플랫 매개 변수의 값을 실행 전에 확정할 수 없다.")
+            result.append((names[0].lower(), *trim(equal + 1, last), *value))
+        return result
+
     def literal(start, end):
         start, end = trim(start, end)
         text, code = source[start:end], bare[start:end]
@@ -65,6 +84,9 @@ def parameters(source, position, name):
             return literal(*captured) if captured is not None else None
         if enclosed(text, "(", ")"):
             return literal(start + 1, end - 1)
+        if map_entries(start, end) is not None:
+            # Entries are validated recursively, but their blocks and keys remain data.
+            return "0", []
         if text.startswith("@(") and enclosed(text[1:], "(", ")"):
             values = [literal(a, b) for a, b in parts(start + 2, end - 1, ",")]
             if all(value is not None for value in values):
@@ -74,20 +96,11 @@ def parameters(source, position, name):
     start, end = span
     while enclosed(source[start:end], "(", ")"):
         start, end = trim(start + 1, end - 1)
-    if source[start:end].lower().startswith("[ordered]"):
-        start += len("[ordered]")
     text = source[start:end]
-    if text.startswith("@{") and enclosed(text[1:], "{", "}"):
-        result = []
-        for first, last in parts(start + 2, end - 1, ";\n"):
-            equal = bare.find("=", first, last)
-            if equal < 0:
-                raise Refusal("스플랫 매개 변수 이름을 실행 전에 확정할 수 없다.")
-            names = arguments(source[first:equal])
-            value = literal(equal + 1, last)
-            if len(names) != 1 or not re.fullmatch(r"[a-z][\w-]*", names[0], re.I) or value is None:
-                raise Refusal("스플랫 매개 변수의 값을 실행 전에 확정할 수 없다.")
-            result.append((names[0].lower(), *trim(equal + 1, last), *value))
+    result = map_entries(start, end)
+    if result is not None:
+        if any(not re.fullmatch(r"[a-z][\w-]*", entry[0], re.I) for entry in result):
+            raise Refusal("스플랫 매개 변수 이름을 실행 전에 확정할 수 없다.")
         if len({entry[0] for entry in result}) != len(result):
             raise Refusal("중복된 스플랫 매개 변수를 실행 전에 확정할 수 없다.")
         return result
