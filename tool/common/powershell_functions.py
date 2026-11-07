@@ -19,7 +19,7 @@ class Functions:
     # shortcut: only local syntax and literal provider paths are proved; use native binding evidence for dynamic session state.
     def __init__(self, source):
         self.source = source
-        self.bare = syntax(source)[0]
+        self.bare, strings = syntax(source)
         self.blocks, stack = {}, []
         for index, char in enumerate(self.bare):
             if char == "{":
@@ -39,6 +39,32 @@ class Functions:
             end = self.blocks[body] if body is not None else match.end()
             self.definitions.append(Definition((match[1] or match[2]).lower(), match.start(), end, body,
                                                "function" if body is not None else "unresolved"))
+        if re.search(r"(?im)^\s*using\s+module\b", self.bare):
+            self.note_import(-1, -1)
+        # Requirements are comments to the syntax view, but can load modules before execution.
+        quoted, cursor, depth = dict(strings), 0, 0
+        requirements = "#requires" in source.lower()
+        while requirements and cursor < len(source):
+            if not depth and cursor in quoted:
+                cursor = quoted[cursor]
+            elif source.startswith("<#", cursor):
+                depth += 1
+                cursor += 2
+            elif depth:
+                if source.startswith("#>", cursor):
+                    depth -= 1
+                    cursor += 2
+                else:
+                    cursor += 1
+            elif source[cursor] == "#":
+                end = source.find("\n", cursor)
+                end = len(source) if end < 0 else end
+                if not source[source.rfind("\n", 0, cursor) + 1:cursor].strip() \
+                        and re.match(r"#requires\s+-modules\b", source[cursor:end], re.I):
+                    self.note_import(-1, -1)
+                cursor = end
+            else:
+                cursor += 1
 
     def containers(self, position):
         return sorted(start for start, end in self.blocks.items() if start < position < end
@@ -47,12 +73,16 @@ class Functions:
     def binding(self, name, position):
         if "/" in name or "\\" in name:
             return "external"
-        result = "external"
+        result, imported = "external", False
         call_blocks = self.containers(position)
         bodies = {item.body: item for item in self.definitions if item.body is not None}
         for item in sorted(self.definitions, key=lambda row: row.start if row.body is not None and row.body < position < row.end else row.end):
             scope, _, short = item.name.rpartition(":")
             if short not in (name.lower(), "*"):
+                continue
+            # Deferred or repeated blocks can run after an import elsewhere in the command.
+            if item.kind == "imported" and call_blocks:
+                imported = True
                 continue
             inside = item.body is not None and item.body < position < item.end
             if item.end > position and not inside:
@@ -83,6 +113,9 @@ class Functions:
                     visible = False
             if not visible:
                 continue
+            if item.kind == "imported":
+                imported = True
+                continue
             if scope == "private" and any(block not in self.containers(item.start) for block in call_blocks):
                 uncertain = True
             if item.kind == "unresolved":
@@ -91,7 +124,11 @@ class Functions:
                 result = "ambiguous"
             else:
                 result = "external" if item.kind == "removed" else "function"
-        return result
+        return "imported" if imported else result
+
+    def note_import(self, position, end):
+        """Record possible session changes without reading or executing loaded code."""
+        self.definitions.append(Definition("global:*", position, end, None, "imported"))
 
     def define(self, program, tail, position):
         """Update function state; return true only for proved Function-only targets."""

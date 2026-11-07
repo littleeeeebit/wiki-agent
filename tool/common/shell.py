@@ -117,7 +117,7 @@ def invocations(text: str):
     bare, _ = command_syntax(text)
     masked, spans = syntax(text)
     quoted = dict(spans)
-    found = {}
+    found, dotted = {}, set()
 
     def record(start):
         cursor, depth = start, 0
@@ -167,17 +167,23 @@ def invocations(text: str):
             while start < len(bare) and bare[start].isspace():
                 start += 1
             found[start] = record(start)
+            if call[0] == ".":
+                dotted.add(start)
     target = r"(?:(?:[A-Za-z]:|\.{1,2})?[/\\]+)?[A-Za-z_][\w./:\\-]*(?=\s|[;|&)\]}<>]|$)"
     for match in re.finditer(target, bare, re.I):
         if command_position(bare[:match.start()]):
             found.setdefault(match.start(), record(match.start()))
     aliases = Aliases(text)
     functions = Functions(text)
+    resolved = []
     for start in sorted(found):
         if any(definition.start == start for definition in functions.definitions):
             continue
         item = found[start]
-        if item.name is not None:
+        qualified = item.name is not None and ("/" in item.name or "\\" in item.name)
+        if item.name is not None and not qualified and functions.binding("*", start) == "imported":
+            item = replace(item, kind="imported", modernize=False)
+        elif item.name is not None:
             target, aliased = aliases.resolve(item.name, start)
             program = target.replace("\\", "/").rsplit("/", 1)[-1].removesuffix(".exe") if target is not None else None
             if aliased:
@@ -193,6 +199,15 @@ def invocations(text: str):
                 function_only = functions.define(program, text[item.target_end:], start)
                 if not function_only:
                     aliases.define(program, text[item.target_end:], start)
+        resolved.append(item)
+        literal_block = item.kind == "scriptblock" and text[start:item.target_end].lstrip().startswith("{")
+        if start in dotted and not literal_block or item.name is not None and item.name.lower().endswith(".ps1") \
+                or item.program == "import-module" and item.kind != "function":
+            functions.note_import(start, item.target_end)
+    for item in resolved:
+        if item.name is not None and "/" not in item.name and "\\" not in item.name \
+                and functions.binding("*", item.target_start) == "imported":
+            item = replace(item, kind="imported", modernize=False)
         yield item
 
 
@@ -204,7 +219,7 @@ def nested_commands(text: str):
             raise Refusal("PowerShell 실행 대상을 확정할 수 없다. 리터럴 실행 대상을 사용하세요.")
         if nested.kind == "function":
             continue
-        if nested.program not in ("powershell", "pwsh"):
+        if nested.kind != "imported" and nested.program not in ("powershell", "pwsh"):
             continue
         argv = arguments(text[nested.target_end:])
         for index, value in enumerate(argv):
@@ -218,7 +233,7 @@ def nested_commands(text: str):
                     body = base64.b64decode(re.sub(r"\s+", "", rest[0] if rest else ""), validate=True).decode("utf-16-le")
                 except (binascii.Error, UnicodeError) as exc:
                     raise Refusal("인코딩된 PowerShell 명령을 읽을 수 없다.") from exc
-            yield nested.program, body
+            yield "powershell" if nested.kind == "imported" else nested.program, body
             break
 
 

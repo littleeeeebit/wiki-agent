@@ -4,9 +4,9 @@ import re
 
 from .powershell_syntax import Refusal, arguments, bound_target, syntax
 
-# Windows aliases used by the supported declaration and provider operations.
+# Windows aliases used by the supported binding-changing operations.
 DEFAULTS = {**dict.fromkeys(("ri", "rm", "rmdir", "rd", "del", "erase"), "remove-item"),
-            "sal": "set-alias", "nal": "new-alias", "si": "set-item", "ni": "new-item", "cli": "clear-item"}
+            "sal": "set-alias", "nal": "new-alias", "si": "set-item", "ni": "new-item", "cli": "clear-item", "ipmo": "import-module"}
 
 
 class Aliases:
