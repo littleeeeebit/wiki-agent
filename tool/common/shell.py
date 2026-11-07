@@ -13,7 +13,7 @@ import threading
 import uuid
 
 from . import process
-from .powershell_syntax import arguments, command_position, syntax
+from .powershell_syntax import Refusal, arguments, bound_target, command_position, enclosed, syntax
 from .shell_catalogue import COMMANDS
 
 INSTALL_CONTROL = "PowerShell 7 설치"
@@ -72,7 +72,7 @@ def detect(*, refresh: bool = False) -> tuple[PowerShell, ...]:
 def chosen() -> PowerShell:
     found = detect()
     if not found:
-        raise ValueError(f"PowerShell을 찾지 못했다. 연결 화면의 '{INSTALL_CONTROL}'을 사용하세요.")
+        raise Refusal(f"PowerShell을 찾지 못했다. 연결 화면의 '{INSTALL_CONTROL}'을 사용하세요.")
     return max(found, key=lambda item: item.major)
 
 
@@ -115,20 +115,6 @@ def invocations(text: str):
     quoted = dict(spans)
     found = {}
 
-    def enclosed(value, opening, closing):
-        code, _ = syntax(value)
-        if not code.startswith(opening):
-            return False
-        depth = 0
-        for index, char in enumerate(code):
-            if char == opening:
-                depth += 1
-            elif char == closing:
-                depth -= 1
-                if not depth:
-                    return index == len(code) - 1
-        return False
-
     def record(start):
         cursor, depth = start, 0
         while cursor < len(text):
@@ -151,18 +137,25 @@ def invocations(text: str):
         while enclosed(value, "(", ")"):
             grouped = True
             value = value[1:-1].strip()
+        variable = re.fullmatch(r'\$(\w+)|"\$(\w+)"', value)
+        bound = variable is not None
+        if bound:
+            value = bound_target(text[:start], variable[1] or variable[2])
+            if value is None:
+                return Invocation(None, start, cursor, "unresolved")
+            grouped = False
         if enclosed(value, "{", "}"):
             return Invocation(None, start, cursor, "scriptblock")
         if grouped and syntax(value)[1] != [(0, len(value))]:
             return Invocation(None, start, cursor, "unresolved")
         try:
             words = arguments(value)
-        except ValueError:
+        except Refusal:
             words = []
         if len(words) != 1:
             return Invocation(None, start, cursor, "unresolved")
         program = words[0].replace("\\", "/").rsplit("/", 1)[-1].lower().removesuffix(".exe")
-        return Invocation(program, start, cursor, "literal")
+        return Invocation(program, start, cursor, "bound" if bound else "literal")
 
     for call in re.finditer(r"(?<!&)&(?!&)|\.(?=\s)", bare):
         if command_position(bare[:call.start()]):
@@ -182,7 +175,7 @@ def nested_commands(text: str):
     options = {name[:length].lower() for name in ("Command", "EncodedCommand") for length in range(1, len(name) + 1)} | {"ec"}
     for nested in invocations(text):
         if nested.kind == "unresolved":
-            raise ValueError("PowerShell 실행 대상을 확정할 수 없다. 리터럴 실행 대상을 사용하세요.")
+            raise Refusal("PowerShell 실행 대상을 확정할 수 없다. 리터럴 실행 대상을 사용하세요.")
         if nested.program not in ("powershell", "pwsh"):
             continue
         argv = arguments(text[nested.target_end:])
@@ -196,7 +189,7 @@ def nested_commands(text: str):
                 try:
                     body = base64.b64decode(re.sub(r"\s+", "", rest[0] if rest else ""), validate=True).decode("utf-16-le")
                 except (binascii.Error, UnicodeError) as exc:
-                    raise ValueError("인코딩된 PowerShell 명령을 읽을 수 없다.") from exc
+                    raise Refusal("인코딩된 PowerShell 명령을 읽을 수 없다.") from exc
             yield nested.program, body
             break
 
@@ -319,7 +312,7 @@ def resolve(name: str, *, form: str | None = None, **values: str) -> str:
     entry = COMMANDS[name]
     command = getattr(entry, form)
     if command is None and entry.example:
-        raise ValueError("PowerShell 실행 대상을 확정할 수 없다. 리터럴 실행 대상을 사용하세요.")
+        raise Refusal("PowerShell 실행 대상을 확정할 수 없다. 리터럴 실행 대상을 사용하세요.")
     if command is not None:
         if form != "bash" and name in ("gate", "registered-check"):
             values["command"] = invoked(values["command"])
@@ -327,9 +320,9 @@ def resolve(name: str, *, form: str | None = None, **values: str) -> str:
             values["ps5_command"] = ps5_chains(values["command"])
         command = re.sub(r"\{(\w+)\}", lambda match: values.get(match[1], match[0]), command)
     if command is None or form == "ps5" and seven_only(command):
-        raise ValueError(f"이 명령은 PowerShell 7이 필요하다. 연결 화면의 '{INSTALL_CONTROL}'을 사용하세요.")
+        raise Refusal(f"이 명령은 PowerShell 7이 필요하다. 연결 화면의 '{INSTALL_CONTROL}'을 사용하세요.")
     if form != "bash" and classic_seven_only(command):
-        raise ValueError(f"Windows PowerShell에는 7 전용 명령을 넘길 수 없다. '{INSTALL_CONTROL}'에서 확인하세요.")
+        raise Refusal(f"Windows PowerShell에는 7 전용 명령을 넘길 수 없다. '{INSTALL_CONTROL}'에서 확인하세요.")
     return command
 
 

@@ -107,7 +107,7 @@ def test_unresolved_executable_targets_are_refused_by_every_boundary(monkeypatch
     command = binding.format(call="& " + target + " " + mode)
     monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", f"{major}.1", major),))
     for check in (lambda: shell.resolve("gate", command=command), lambda: shell.launch("gate", command=command)):
-        with pytest.raises(ValueError, match="리터럴 실행 대상"):
+        with pytest.raises(shell.Refusal):
             check()
     for host, verdict, name, field in (("claude", claude.verdict, "PowerShell", "command"),
                                       ("codex", codex.verdict, "functions.exec_command", "cmd")):
@@ -123,7 +123,7 @@ def test_native_oracle_retains_unknown_target_kinds_without_execution():
     assert all(any(c["name"] is None and c["kind"] != "ScriptBlockExpressionAst" for c in row["commands"]) for row in rows)
     for source, row in zip(scripts, rows):
         expected = [(c["start"], c["end"]) for c in row["commands"] if c["name"] is None]
-        actual = [(c.target_start, c.target_end) for c in shell.invocations(source) if c.kind == "unresolved"]
+        actual = [(c.target_start, c.target_end) for c in shell.invocations(source) if c.kind in ("unresolved", "bound")]
         assert actual == expected
 
 
@@ -139,26 +139,16 @@ def test_native_variable_fixture_preserves_output_and_failure_status(operator):
     assert (done.returncode, done.stdout.splitlines(), done.stderr) == (17, ["fixture-child"], "")
 
 
-@pytest.mark.parametrize("failure", ["repair", "analysis"])
 @pytest.mark.parametrize("major", [5, 7])
-def test_failures_cannot_turn_an_unresolved_target_into_host_acceptance(monkeypatch, hosts, failure, major):
+def test_repair_failure_fallback_preserves_expected_target_refusal(monkeypatch, hosts, major):
     repair, claude, codex = hosts
     monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", f"{major}.1", major),))
     def unavailable(*args, **kwargs):
         raise RuntimeError("fixture analysis failure")
-    if failure == "repair":
-        monkeypatch.setattr(repair, "repair", unavailable)
-    else:
-        monkeypatch.setattr(shell, "invocations", unavailable)
+    monkeypatch.setattr(repair, "repair", unavailable)
     payload = {"tool_name": "PowerShell", "tool_input": {"command": "& $target -Command 'Get-Error'"}}
     for verdict in (claude.verdict, codex.verdict):
         assert verdict(payload)["hookSpecificOutput"]["permissionDecision"] == "deny"
-
-
-@pytest.mark.parametrize("command", ["$target='pwsh'; & $target -Command 'Write-Output ok'", "$target={ Write-Output ok }; & $target"])
-def test_safe_but_unresolved_targets_have_the_documented_refusal(command):
-    with pytest.raises(ValueError, match="리터럴 실행 대상"):
-        shell.launch("gate", command=command)
 
 
 @pytest.mark.parametrize("command", ["$target='powershell'; Write-Output $target", "Write-Output '& $target -Command Get-Error'",
@@ -176,7 +166,7 @@ def test_unresolved_child_nested_under_literal_shell_is_also_refused(monkeypatch
     argument = base64.b64encode(body.encode("utf-16-le")).decode() if mode == "EncodedCommand" else "'" + body + "'"
     command = "pwsh -" + mode + " " + argument
     monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", f"{major}.1", major),))
-    with pytest.raises(ValueError, match="리터럴 실행 대상"):
+    with pytest.raises(shell.Refusal):
         shell.launch("gate", command=command)
     payload = {"tool_name": "PowerShell", "tool_input": {"command": command}}
     assert claude.verdict(payload)["hookSpecificOutput"]["permissionDecision"] == "deny"

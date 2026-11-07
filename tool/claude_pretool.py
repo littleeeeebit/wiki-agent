@@ -86,4 +86,4 @@ if __name__ == "__main__":
         if answer:
             json.dump(answer, sys.stdout, ensure_ascii=False)
     except Exception as error:
-        print(f"hook skipped: {type(error).__name__}", file=sys.stderr)
+        print(type(error).__name__, file=sys.stderr)

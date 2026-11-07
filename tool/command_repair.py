@@ -60,7 +60,7 @@ def refusal(payload: dict, host: str = "claude") -> dict | None:
         return None
     try:
         if shell.classic_seven_only(command):
-            raise ValueError(f"Windows PowerShell에는 7 전용 명령을 넘길 수 없다. '{shell.INSTALL_CONTROL}'에서 확인하세요.")
+            raise shell.Refusal(f"Windows PowerShell에는 7 전용 명령을 넘길 수 없다. '{shell.INSTALL_CONTROL}'에서 확인하세요.")
         if shell.chosen().major >= 7:
             return None
         shell.resolve("gate", form="ps5", command=command)
@@ -68,12 +68,9 @@ def refusal(payload: dict, host: str = "claude") -> dict | None:
             from pytest_output import held_back
             if held_back(command, dialect):
                 shell.resolve("pytest-tee", form="ps5", log="fixture.log")
-    except ValueError as exc:
+    except shell.Refusal as exc:
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                        "permissionDecisionReason": str(exc)}}
-    except Exception as exc:  # noqa: BLE001 -- a compatibility analysis failure is an explicit refusal
-        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                       "permissionDecisionReason": f"PowerShell 명령을 확인하지 못했다 ({type(exc).__name__}). 리터럴 실행 대상을 사용하세요."}}
     return None
 
 

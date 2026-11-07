@@ -5,6 +5,75 @@ import re
 ESCAPES = dict(zip("0abefnrtv", "\0\a\b\x1b\f\n\r\t\v"))
 
 
+class Refusal(ValueError):
+    """An expected compatibility refusal, distinct from an internal analysis fault."""
+
+
+def enclosed(value: str, opening: str, closing: str) -> bool:
+    code, _ = syntax(value)
+    if not code.startswith(opening):
+        return False
+    depth = 0
+    for index, char in enumerate(code):
+        if char == opening:
+            depth += 1
+        elif char == closing:
+            depth -= 1
+            if not depth:
+                return index == len(code) - 1
+    return False
+
+
+def bound_target(prefix: str, name: str) -> str | None:
+    """Prove a literal binding through completed straight-line assignments only."""
+    bare, _ = syntax(prefix)
+    bindings = {}
+
+    def literal(source):
+        source = source.strip()
+        code, spans = syntax(source)
+        if len(spans) == 1 and spans[0][0] == 0 and code.strip() == "0":
+            source = source[:spans[0][1]]
+            try:
+                return source if len(arguments(source)) == 1 else None
+            except Refusal:
+                return None
+        source = source[:len(code.rstrip())].strip()
+        if enclosed(source, "(", ")"):
+            return literal(source[1:-1])
+        if enclosed(source, "{", "}"):
+            return source
+        if match := re.fullmatch(r"\$(\w+)", source):
+            return bindings.get(match[1].lower())
+        return None
+
+    def statement(start, end):
+        code = bare[start:end]
+        if not code.strip():
+            return
+        match = re.match(r"\s*(?P<cast>\[(?:System\.)?string\]\s*)?\$(?P<name>\w+)\s*=\s*", code, re.I)
+        value = literal(prefix[start + match.end():end]) if match else None
+        if value is None or match["cast"] and value.startswith("{"):
+            bindings.clear()
+        else:
+            bindings[match["name"].lower()] = value
+
+    depth, start = 0, 0
+    for index, char in enumerate(bare):
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif not depth and char in ";\n":
+            statement(start, index)
+            start = index + 1
+    # Only an unevaluated assignment/return prefix may precede this call in the current statement.
+    pending = r"\s*(?:(?:\[(?:System\.)?string\]\s*)?\$\w+\s*=\s*)*(?:(?:return|throw|exit)\s+)?[&.]\s*"
+    if depth or not re.fullmatch(pending, bare[start:], re.I):
+        return None
+    return bindings.get(name.lower())
+
+
 def command_position(prefix: str) -> bool:
     """Statement starts and complete assignment LHSs admit a command; arguments do not."""
     stack = []
@@ -41,12 +110,12 @@ def expanded(value: str) -> str:
     def replace(match):
         token = match[0]
         if token.startswith("$"):
-            raise ValueError("실행 전에 PowerShell 명령 인수를 확정할 수 없다.")
+            raise Refusal("실행 전에 PowerShell 명령 인수를 확정할 수 없다.")
         if token.startswith("`u{"):
             try:
                 return chr(int(token[3:-1], 16))
             except ValueError as exc:
-                raise ValueError("실행 전에 PowerShell 명령 인수를 확정할 수 없다.") from exc
+                raise Refusal("실행 전에 PowerShell 명령 인수를 확정할 수 없다.") from exc
         return ESCAPES.get(token[1], token[1])
     return re.sub(r"`(?:u\{[\da-fA-F]{1,6}\}|[\s\S])|\$[\w({]", replace, value)
 
@@ -71,7 +140,7 @@ def arguments(text: str) -> list[str]:
             value = value.partition("\n")[2].rsplit("\n", 1)[0] if value.startswith("@") else value[1:-1]
             if quote == '"':
                 if bare[cursor:end].strip() != "0":
-                    raise ValueError("실행 전에 PowerShell 명령 인수를 확정할 수 없다.")
+                    raise Refusal("실행 전에 PowerShell 명령 인수를 확정할 수 없다.")
                 value = expanded(value)
             else:
                 value = value.replace("''", "'")
@@ -81,8 +150,8 @@ def arguments(text: str) -> list[str]:
         char = bare[cursor]
         if char in ";|&\n)]}<>":
             break
-        if char in "$({[":
-            raise ValueError("실행 전에 PowerShell 명령 인수를 확정할 수 없다.")
+        if char in "$({[" or char == "@" and re.match(r"@\w", text[cursor:]):
+            raise Refusal("실행 전에 PowerShell 명령 인수를 확정할 수 없다.")
         if char.isspace():
             if active:
                 words.append(word)
