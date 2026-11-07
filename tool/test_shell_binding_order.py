@@ -21,16 +21,49 @@ RESOLVED_CALLS = [
 ]
 ORDERED = ["& {{ {call} }}; {load}", "{call}; {load}", ". {{ {call} }}; {load}",
            "& {{ . {{ {call} }} }}; {load}", "& {{ {call}; {load} }}", ". {{ {call}; {load} }}"]
+COMPLETED = [
+    ("foreach ($value in 1,2) {{ {call} }}; {load}", 2),
+    ("for ($index=0; $index -lt 2; $index++) {{ {call} }}; {load}", 2),
+    ("$index=0; while ($index++ -lt 2) {{ {call} }}; {load}", 2),
+    ("$index=0; do {{ {call}; $index++ }} while ($index -lt 2); {load}", 2),
+    ("$index=0; do {{ {call}; $index++ }} until ($index -ge 2); {load}", 2),
+    ("if ($true) {{ {call} }}; {load}", 1),
+    ("if ($false) {{}} elseif ($true) {{ {call} }}; {load}", 1),
+    ("if ($false) {{}} else {{ {call} }}; {load}", 1),
+    ("try {{ {call} }} finally {{}}; {load}", 1),
+    ("try {{}} finally {{ {call} }}; {load}", 1),
+    ("try {{ throw 'fixture' }} catch {{ {call} }}; {load}", 1),
+    ("try {{ throw 'fixture' }} catch [System.Exception] {{ {call} }}; {load}", 1),
+    ("switch (1,2) {{ default {{ {call} }} }}; {load}", 2),
+    ("switch -Regex -CaseSensitive ('x') {{ 'x' {{ {call} }} }}; {load}", 1),
+    ("switch -File './startup.rc' {{ default {{ {call} }} }}; {load}", 2),
+    ("& {{ foreach ($value in 1,2) {{ {call} }} }}; {load}", 2),
+    ("foreach ($value in 1,2) {{ & {{ {call} }} }}; {load}", 2),
+    ("if ($true) {{ foreach ($value in 1,2) {{ {call} }} }}; {load}", 2),
+]
+ORDERED += [context for context, _ in COMPLETED]
 DEFERRED = ["function probe {{ {call} }}; {load}; probe",
             "function probe {{ & {{ {call} }} }}; {load}; probe",
             "foreach ($value in 1,2) {{ {call}; {load} }}",
-            "& {{ foreach ($value in 1,2) {{ {call}; {load} }} }}"]
+            "& {{ foreach ($value in 1,2) {{ {call}; {load} }} }}",
+            "$index=0; do {{ {call}; $index++ }} while ($index -lt 2 -and $({load}; $true))",
+            "$index=0; do {{ {call}; $index++ }} until ($index -ge 2 -or $({load}; $false))",
+            "Register-ObjectEvent ($source) {{ {call} }}; {load}",
+            "Write-Output switch ($source) {{ {call} }}; {load}",
+            "& if {{ {call} }}; {load}", "& foreach ($source) {{ {call} }}; {load}",
+            "Set-Alias foreach Register-ObjectEvent; $source | foreach {{ {call} }}; {load}",
+            "Set-Alias foreach Register-ObjectEvent; $source | foreach ($filter) {{ {call} }}; {load}",
+            "$callback={{ {call} }}; {load}; & $callback"]
 BINDINGS = ["$path='Function:powershell'", '$path="Function:powershell"',
             "$base='Function:powershell'; $path=$base", "$path=('Function:powershell')",
             "[string]$path='Function:powershell'"]
 MUTATIONS = ["Set-Item $path { " + BODY + " }", "Set-Item -Path $path -Value { " + BODY + " }",
              'Set-Item -LiteralPath "$path" -Value { ' + BODY + " }", "New-Item -Path $path -Value { " + BODY + " }",
              "si $path { " + BODY + " }", "ni $path -Value { " + BODY + " }"]
+GENERATORS = ["Invoke-Expression CODE", "iex CODE", "& 'Invoke-Expression' CODE", "Invoke-Expression -Command CODE",
+              "Set-Alias evaluate Invoke-Expression; evaluate CODE", "$evaluate='Invoke-Expression'; & $evaluate CODE",
+              "$code=CODE; Invoke-Expression $code", "CODE | Invoke-Expression",
+              r"Microsoft.PowerShell.Utility\Invoke-Expression CODE"]
 
 
 def host_outputs(agents, source, expected, denied=False):
@@ -66,7 +99,7 @@ def test_resolved_callable_identity_controls_script_load_detection(monkeypatch, 
 
 
 @pytest.mark.parametrize("context", ORDERED)
-@pytest.mark.parametrize("load", [". ./startup.ps1", "Import-Module ./startup.psm1"])
+@pytest.mark.parametrize("load", [". ./startup.ps1", "Import-Module ./startup.psm1", "Invoke-Expression 'Write-Output ok'"])
 @pytest.mark.parametrize("body", ["Get-Error", "Write-Output ok"])
 def test_completed_immediate_blocks_keep_the_binding_before_a_later_load(monkeypatch, request, context, load, body):
     agents = request.getfixturevalue("hosts")
@@ -167,14 +200,16 @@ def test_native_ordered_fixture_runs_the_expected_selected_child(tmp_path, monke
     monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", "7.1", 7),))
     path = tmp_path / "startup.ps1"
     path.write_text("", encoding="utf-8")
+    data = tmp_path / "startup.rc"
+    data.write_text("first\nsecond\n", encoding="utf-8")
     call = "powershell -NoProfile -Command 'Write-Output order-fixture; exit 17'"
     source = context.format(call=call, load=". " + shell.quote(str(path), "ps5")) + "; exit $LASTEXITCODE"
     expected = context.format(call=call.replace("powershell", "pwsh", 1), load=". " + shell.quote(str(path), "ps5")) + "; exit $LASTEXITCODE"
+    source, expected = (value.replace("'./startup.rc'", shell.quote(str(data), "ps5")) for value in (source, expected))
     repaired = command_repair._pwsh(source, "ps")
     assert repaired == expected
-    result, reference = native(repaired, major), native(expected, major)
-    assert result.returncode == 17 and result.stdout.splitlines() == ["order-fixture"] and result.stderr == ""
-    assert (result.returncode, result.stdout, result.stderr) == (reference.returncode, reference.stdout, reference.stderr)
+    result = native(repaired, major)
+    assert result.returncode == 17 and result.stdout.splitlines() == ["order-fixture"] * dict(COMPLETED).get(context, 1) and result.stderr == ""
 
 
 @pytest.mark.parametrize("major", [5, 7])
@@ -199,6 +234,46 @@ def test_native_resolved_suffix_fixture_still_runs_the_selected_child(monkeypatc
     expected = prefix + "; " + call.replace("powershell", "pwsh", 1) + "; exit $LASTEXITCODE"
     repaired = command_repair._pwsh(source, "ps")
     assert repaired == expected
-    result, reference = native(repaired, major), native(expected, major)
+    result = native(repaired, major)
     assert result.returncode == 17 and "suffix-fixture" in result.stdout.splitlines() and result.stderr == ""
-    assert (result.returncode, result.stdout, result.stderr) == (reference.returncode, reference.stdout, reference.stderr)
+
+
+@pytest.mark.parametrize("generator", GENERATORS)
+@pytest.mark.parametrize("major", [5, 7])
+@pytest.mark.parametrize("body", ["Write-Output child", "Get-Error"])
+def test_generated_bindings_are_preserved_and_possible_classic_children_checked(monkeypatch, request, generator, major, body):
+    agents = request.getfixturevalue("hosts")
+    monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", f"{major}.1", major),))
+    prefix = generator.replace("CODE", shell.quote("function powershell { " + BODY + " }", "ps5"))
+    source = prefix + "; powershell -Command '" + body + "'"
+    assert agents[0]._pwsh(source, "ps") == source
+    assert list(shell.invocations(source))[-1].kind == "imported"
+    if body == "Get-Error":
+        for name in ("gate", "registered-check"):
+            with pytest.raises(shell.Refusal):
+                shell.launch(name, command=source)
+    else:
+        assert shell.resolve("gate", command=source) == source
+    host_outputs(agents, source, source, denied=body == "Get-Error")
+
+
+@pytest.mark.parametrize("prefix", ["Write-Output 'Invoke-Expression'", "function unused { Invoke-Expression 'Write-Output ok' }",
+                                    "function Invoke-Expression { param($Command) Write-Output ok }; Invoke-Expression 'Write-Output ok'",
+                                    "Set-Alias iex Write-Output; iex 'Write-Output ok'"])
+def test_generator_names_in_data_or_unexecuted_code_do_not_change_root_bindings(monkeypatch, prefix):
+    import command_repair
+    monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", "7.1", 7),))
+    source = prefix + "; powershell -Command 'Write-Output ok'"
+    assert command_repair._pwsh(source, "ps").endswith("; pwsh -NoProfile -Command 'Write-Output ok'")
+
+
+@pytest.mark.parametrize("major", [5, 7])
+@pytest.mark.parametrize("generator", GENERATORS)
+def test_native_generated_binding_fixture_preserves_output_and_status(monkeypatch, major, generator):
+    import command_repair
+    monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", "7.1", 7),))
+    definition = "function powershell { param($Command) Write-Output generated-fixture }"
+    source = generator.replace("CODE", shell.quote(definition, "ps5")) + "; powershell -Command 'Write-Output external-fixture; exit 17'"
+    original, repaired = native(source, major), native(command_repair._pwsh(source, "ps"), major)
+    assert original.returncode == 0 and original.stdout.splitlines() == ["generated-fixture"] and original.stderr == ""
+    assert (repaired.returncode, repaired.stdout, repaired.stderr) == (original.returncode, original.stdout, original.stderr)

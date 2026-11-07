@@ -70,19 +70,61 @@ class Functions:
         return sorted(start for start, end in self.blocks.items() if start < position < end
                       and self.bare[start - 1:start] not in ("@", "$"))
 
+    def control(self, block):
+        """Recognize synchronous control bodies without mistaking callback arguments for them."""
+        head = self.bare[:block].rstrip()
+        header = head.endswith(")")
+        if header:
+            depth = 0
+            for index in range(len(head) - 1, -1, -1):
+                depth += (head[index] == ")") - (head[index] == "(")
+                if not depth:
+                    head = head[:index].rstrip()
+                    break
+        match = re.search(r"\b(if|elseif|else|for|foreach|while|do|switch|try|catch|finally)"
+                          r"(?:\s+-[\w]+)*(?:\s*\[[^\]]+\](?:\s*,\s*\[[^\]]+\])*)?$", head, re.I)
+        match = match or re.search(r"\b(switch)\b[^;{}\n]*\s-File\s+[^;{}\n]+$", head, re.I)
+        if match and (header or match[1].lower() in ("else", "do", "try", "catch", "finally") or re.search(r"\s-File\s", head, re.I)):
+            kind = match[1].lower()
+            before = head[:match.start()].rstrip()
+            if kind in ("elseif", "else", "catch", "finally"):
+                previous = next((start for start, end in self.blocks.items() if end == len(before)), None)
+                allowed = ("if", "elseif") if kind in ("elseif", "else") else ("try", "catch")
+                if previous is not None and self.control(previous) in allowed:
+                    return kind
+            elif not before.endswith(("&", ".", "|")) and command_position(before):
+                return kind
+        parents = self.containers(block)
+        return "clause" if parents and self.control(parents[-1]) == "switch" else None
+
+    def iteration_end(self, block, kind):
+        end = self.blocks[block]
+        condition = re.match(r"\s*(?:while|until)\s*\(", self.bare[end:], re.I) if kind == "do" else None
+        if condition:
+            depth = 0
+            for index in range(end + condition.end() - 1, len(self.bare)):
+                depth += (self.bare[index] == "(") - (self.bare[index] == ")")
+                if not depth:
+                    return index + 1
+        return end
+
     def binding(self, name, position):
         if "/" in name or "\\" in name:
             return "external"
         result, imported = "external", False
         call_blocks = self.containers(position)
         bodies = {item.body: item for item in self.definitions if item.body is not None}
-        deferred = any(block in bodies or not re.search(r"(?:[&.]\s*)$", self.bare[:block]) for block in call_blocks)
+        controls = {block: self.control(block) for block in call_blocks}
+        deferred = any(block in bodies or controls[block] is None and not re.search(r"[&.]\s*$", self.bare[:block])
+                       for block in call_blocks)
         for item in sorted(self.definitions, key=lambda row: row.start if row.body is not None and row.body < position < row.end else row.end):
             scope, _, short = item.name.rpartition(":")
             if short not in (name.lower(), "*"):
                 continue
             # Deferred or repeated blocks can run after an import elsewhere in the command.
-            if item.kind == "imported" and deferred:
+            if item.kind == "imported" and (deferred or any(kind in ("for", "foreach", "while", "do", "switch")
+                                                           and block < item.start < self.iteration_end(block, kind)
+                                                           for block, kind in controls.items())):
                 imported = True
                 continue
             inside = item.body is not None and item.body < position < item.end
@@ -132,7 +174,10 @@ class Functions:
         self.definitions.append(Definition("global:*", position, end, None, "imported"))
 
     def define(self, program, tail, position):
-        """Update function state; return true only for proved Function-only targets."""
+        """Update callable state; return true when separate alias inspection is unnecessary."""
+        if program == "invoke-expression":
+            self.note_import(position, len(self.source) - len(tail))
+            return True
         writes = ("set-item", "new-item", "si", "ni")
         removes = ("remove-item", "ri", "rm", "rmdir", "rd", "del", "erase")
         clears = ("clear-item", "cli")

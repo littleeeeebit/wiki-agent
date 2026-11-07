@@ -6,7 +6,8 @@ from .powershell_syntax import Refusal, bound_arguments, syntax
 
 # Windows aliases used by the supported binding-changing operations.
 DEFAULTS = {**dict.fromkeys(("ri", "rm", "rmdir", "rd", "del", "erase"), "remove-item"),
-            "sal": "set-alias", "nal": "new-alias", "si": "set-item", "ni": "new-item", "cli": "clear-item", "ipmo": "import-module"}
+            "sal": "set-alias", "nal": "new-alias", "si": "set-item", "ni": "new-item", "cli": "clear-item", "ipmo": "import-module",
+            "iex": "invoke-expression"}
 
 
 class Aliases:
