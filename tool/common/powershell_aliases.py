@@ -64,15 +64,16 @@ class Aliases:
             self.uncertain = True
             return
         alias_path = any("alias:" in word.lower() for word in argv)
-        if program in removers and (alias_path and any("," in word for word in argv)
-                                    or not alias_path and re.search(r"\|\s*(?:[&.]\s*)?$", self.bare[:position])):
+        if program in removers and not alias_path and re.search(r"\|\s*(?:[&.]\s*)?$", self.bare[:position]):
             self.uncertain = True
             return
         if program in providers:
             path_flags = [i for i, word in enumerate(argv[:-1]) if word.lower() in ("-path", "-literalpath")]
-            if path_flags and not argv[path_flags[0] + 1].lower().startswith("alias:"):
-                return
-            if not any(word.lower().startswith("alias:") for word in argv):
+            path = argv[path_flags[0] + 1] if path_flags else argv[0] if argv and not argv[0].startswith("-") else None
+            if path is not None:
+                if not any(part.lower().startswith("alias:") for part in path.split(",")) and not path.endswith(","):
+                    return
+            if not alias_path:
                 return
         fields, positional, index = {}, [], 0
         while index < len(argv):
@@ -94,6 +95,14 @@ class Aliases:
             path = fields.get("literalpath", fields.get("path"))
             if path is None:
                 path = positional.pop(0) if positional else ""
+            for word in positional:
+                if path.endswith(",") or word.startswith(","):
+                    path += word
+                else:
+                    break
+            if "," in path and any(part.lower().startswith("alias:") for part in path.split(",")):
+                self.uncertain = True
+                return
             if not path.lower().startswith("alias:"):
                 return
             name = path[6:].lstrip("\\/") or fields.get("name", "")

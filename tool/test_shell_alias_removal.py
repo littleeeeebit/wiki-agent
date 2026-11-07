@@ -77,6 +77,10 @@ def test_unproved_removals_cannot_reuse_stale_targets(monkeypatch, removal, majo
     "Set-Alias helper python; Remove-Item outside/target.txt; & helper outside/check.py",
     "Set-Alias helper python; Write-Output 'Remove-Item Alias:helper'; & helper outside/check.py",
     "Set-Alias helper python; # Remove-Item Alias:helper\n& helper outside/check.py",
+    "Set-Alias helper python; Set-Item outside/target.txt -Value 'Alias:powershell,Function:powershell'; & helper outside/check.py",
+    "Set-Alias helper python; New-Item -Path outside/target.txt -Value 'Alias:powershell,Function:powershell'; & helper outside/check.py",
+    "Set-Alias helper python; New-Item outside/target.txt -ItemType File -Value 'label:Alias:powershell,Function:powershell'; & helper outside/check.py",
+    "Set-Alias helper python; Set-Item -Value 'Alias:powershell,Function:powershell' outside/target.txt; & helper outside/check.py",
 ])
 def test_unrelated_removals_and_quoted_examples_preserve_alias_data(command):
     assert shell.resolve("gate", command=command) == command
@@ -128,3 +132,53 @@ def test_native_alias_removal_restores_lookup_and_preserves_failure(monkeypatch,
     argv, use_shell = shell.launch("gate", command=command)
     result = subprocess.run(argv, shell=use_shell, capture_output=True, text=True, encoding="utf-8", timeout=20)
     assert (result.returncode, result.stdout.splitlines(), result.stderr) == (17, ["removal-fixture"], "")
+
+
+MIXED_TARGETS = ["Function:powershell,Alias:powershell", "Alias:powershell,Function:powershell",
+                 "'Function:powershell','Alias:powershell'", "'Alias:powershell','Function:powershell'",
+                 "outside/target.txt,Function:powershell,Alias:powershell",
+                 "Function:powershell, Alias:powershell", "Alias:powershell, Function:powershell",
+                 "outside/target.txt, Function:powershell, Alias:powershell"]
+MUTATIONS = [program + " {paths}" for program in ("Remove-Item", "ri", "rm", "rmdir", "rd", "del", "erase")]
+MUTATIONS += ["Remove-Item -Path {paths}", "Remove-Item -LiteralPath {paths}",
+              "Set-Item -Path {paths} -Value 'powershell.exe'", "New-Item -Path {paths} -Value 'powershell.exe'",
+              "Set-Item -Value 'powershell.exe' {paths}", "New-Item -Value 'powershell.exe' {paths}",
+              "si {paths} -Value 'powershell.exe'", "ni {paths} -Value 'powershell.exe'"]
+
+
+@pytest.mark.parametrize("targets", MIXED_TARGETS)
+@pytest.mark.parametrize("mutation", MUTATIONS)
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("major", [5, 7])
+def test_mixed_provider_mutations_cannot_supply_stale_compatibility_evidence(monkeypatch, request, targets, mutation, mode, major):
+    repair, claude, codex = request.getfixturevalue("hosts")
+    monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", f"{major}.1", major),))
+    source = "Set-Alias powershell python; function powershell { Write-Output helper }; " \
+             + mutation.format(paths=targets) + "; powershell " + mode
+    for name in ("gate", "registered-check"):
+        with pytest.raises(shell.Refusal):
+            shell.launch(name, command=source)
+    for host, verdict, tool, field in (("claude", claude.verdict, "PowerShell", "command"),
+                                      ("codex", codex.verdict, "functions.exec_command", "cmd")):
+        payload = {"tool_name": tool, "tool_input": {field: source}}
+        assert repair.refusal(payload, host)["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert verdict(payload)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_native_parser_accepts_mixed_provider_mutations_without_executing_them():
+    sources = [mutation.format(paths=targets) for mutation in MUTATIONS for targets in MIXED_TARGETS]
+    rows = native_commands(sources)
+    assert all(row["errors"] == 0 for row in rows)
+
+
+@pytest.mark.parametrize("targets", MIXED_TARGETS)
+@pytest.mark.parametrize("mutation", MUTATIONS)
+def test_each_affected_function_binding_loses_its_previous_proof(targets, mutation):
+    from common.powershell_functions import Functions
+    prefix = "function powershell { Write-Output helper }; "
+    operation = mutation.format(paths=targets)
+    source = prefix + operation + "; powershell"
+    functions = Functions(source)
+    assert functions.binding("powershell", len(prefix)) == "function"
+    functions.define(operation.split()[0].lower(), source[len(prefix) + len(operation.split()[0]):], len(prefix))
+    assert functions.binding("powershell", len(source) - 1) in ("ambiguous", "unresolved")

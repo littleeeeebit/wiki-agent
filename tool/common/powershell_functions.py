@@ -94,6 +94,7 @@ class Functions:
         return result
 
     def define(self, program, tail, position):
+        """Update function state; return true only for proved Function-only targets."""
         writes = ("set-item", "new-item", "si", "ni")
         removes = ("remove-item", "ri", "rm", "rmdir", "rd", "del", "erase")
         clears = ("clear-item", "cli")
@@ -124,7 +125,16 @@ class Functions:
                 positional.append(word)
                 index += 1
         path = fields.get("-literalpath", fields.get("-path", positional[0] if positional else ""))
+        remaining = positional if "-path" in fields or "-literalpath" in fields else positional[1:]
+        for word in remaining:
+            if path.endswith(",") or word.startswith(","):
+                path += word
+            else:
+                break
+        function_only = path.lower().startswith("function:") and "," not in path and not uncertain
         if path and not path.lower().startswith("function:"):
+            if any(part.lower().startswith("function:") for part in path.split(",")):
+                self.definitions.append(Definition("*", position, position, None, "ambiguous"))
             return False
         if not path:
             # A later command's provider path must not change this command's binding state.
@@ -142,4 +152,4 @@ class Functions:
                 kind = "ambiguous"
         end = self.blocks[body] if body is not None else position
         self.definitions.append(Definition(name, position, end, body if program in writes else None, kind))
-        return True
+        return function_only

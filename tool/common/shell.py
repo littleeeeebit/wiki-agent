@@ -189,8 +189,10 @@ def invocations(text: str):
             item = replace(item, modernize=not destination_alias and functions.binding(destination or "pwsh", start) == "external")
             if binding == "function":
                 functions.called.append((target, start))
-            elif binding == "external" and not functions.define(program, text[item.target_end:], start):
-                aliases.define(program, text[item.target_end:], start)
+            elif binding == "external":
+                function_only = functions.define(program, text[item.target_end:], start)
+                if not function_only:
+                    aliases.define(program, text[item.target_end:], start)
         yield item
 
 
