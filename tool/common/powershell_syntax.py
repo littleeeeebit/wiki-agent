@@ -48,6 +48,8 @@ def bound_span(prefix: str, name: str) -> tuple[int, int] | None:
             enclosed(container[1:], "{", "}") or enclosed(container[1:], "(", ")")
         ):
             return start, start + len(source)
+        if re.fullmatch(r"[+-]?\d+(?:\.\d+)?|\$(?:true|false|null)", source, re.I):
+            return start, start + len(source)
         if match := re.fullmatch(r"\$(\w+)", source):
             return bindings.get(match[1].lower())
         return None
@@ -58,7 +60,10 @@ def bound_span(prefix: str, name: str) -> tuple[int, int] | None:
             return
         match = re.match(r"\s*(?P<cast>\[(?:System\.)?string\]\s*)?\$(?P<name>\w+)\s*=\s*", code, re.I)
         value = literal(start + match.end(), end) if match else None
-        if value is None or match["cast"] and prefix[value[0]] in "{@[":
+        if value is None and match and not match["cast"] and re.fullmatch(r"\s*\$\w+\s*", code[match.end():]):
+            # A plain variable copy cannot change values already captured by other bindings.
+            bindings.pop(match["name"].lower(), None)
+        elif value is None or match["cast"] and prefix[value[0]] in "{@[":
             bindings.clear()
         else:
             bindings[match["name"].lower()] = value

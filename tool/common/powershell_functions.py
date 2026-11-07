@@ -232,28 +232,27 @@ class Functions:
             cursor = last
             splat = re.fullmatch(r"@(\w+)", self.bare[first:last])
             if splat:
-                for name, a, b in parameters(self.source, position, splat[1]):
-                    values = [block for _, _, blocks in self.argument_spans(a, b) for block in blocks]
-                    items.append((name, a, b, values, True))
+                for name, a, b, code, values in parameters(self.source, position, splat[1]):
+                    items.append((name, a, b, values, code))
             elif re.match(r"@[\w:]", self.bare[first:last]):
                 raise Refusal("스플랫 매개 변수의 범위를 실행 전에 확정할 수 없다.")
             else:
-                items.append((None, first, last, values, False))
+                items.append((None, first, last, values, None))
         def canonical(name):
             return next((option for option in (*callbacks, "inputobject", "parallel") if option.startswith(name)), name)
 
-        explicit = {canonical(match[1].lower()) for name, a, b, _, splat in items if not splat
+        explicit = {canonical(match[1].lower()) for name, a, b, _, code in items if code is None
                     and (match := re.match(r"-([a-z]+)(:|$)", self.bare[a:b], re.I))}
         seen = set()
-        for name, _, _, _, splat in items:
-            if splat and name is not None:
+        for name, _, _, _, code in items:
+            if code is not None and name is not None:
                 key = canonical(name)
                 if key in seen or key in explicit:
                     raise Refusal("중복된 스플랫 매개 변수를 실행 전에 확정할 수 없다.")
                 seen.add(key)
-        for name, start, end, values, splat in items:
+        for name, start, end, values, code in items:
             argument = self.bare[start:end]
-            parameter = None if splat else re.match(r"-([a-z]+)(:|$)", argument, re.I)
+            parameter = re.match(r"-([a-z]+)(:|$)", argument, re.I) if code is None else None
             if name is not None or parameter:
                 name = name if name is not None else parameter[1].lower()
                 parallel |= program == "foreach-object" and len(name) >= 2 and "parallel".startswith(name)
@@ -265,9 +264,11 @@ class Functions:
                 if parameter is not None:
                     start += parameter.end()
             # Only literal block values belong to this argument, never blocks inside a nested command.
-            value = self.bare[start:end]
-            for block in reversed(values):
-                value = value[:block - start] + "0" + value[self.blocks[block] - start:]
+            value = code
+            if value is None:
+                value = self.bare[start:end]
+                for block in reversed(values):
+                    value = value[:block - start] + "0" + value[self.blocks[block] - start:]
             literal = values and re.fullmatch(r"[\s(@),0]*", value)
             # Pipeline binding can execute a ScriptBlock input value, but not an array of blocks.
             callback = positional if pending is None else pending
@@ -275,7 +276,7 @@ class Functions:
                 callback = piped and not re.search(r"[@,]", value)
             if callback and literal:
                 blocks.extend(values)
-                if splat:
+                if code is not None:
                     self.splatted.update(values)
             if pending is None and argument.strip(",") and (program == "where-object" or not literal):
                 positional = False

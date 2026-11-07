@@ -6,20 +6,25 @@ from .powershell_syntax import Refusal, arguments, bound_span, enclosed, syntax
 
 
 def parameters(source, position, name):
-    """Return parameter names and original value spans from a proved splat."""
+    """Return parameter names, source spans, literal shapes and captured block spans."""
     bare, _ = syntax(source)
-    prefix = source[:position]
-    invocation = prefix if re.search(r"[&.]\s*$", bare[:position]) else prefix + " & "
-    span = bound_span(invocation, name)
-    if span is None:
+
+    def statement_start(end):
         depth, start = 0, 0
-        for index, char in enumerate(bare[:position]):
+        for index, char in enumerate(bare[:end]):
             if char in "([{":
                 depth += 1
             elif char in ")]}":
                 depth -= 1
             elif not depth and char in ";\n":
                 start = index + 1
+        return depth, start
+
+    prefix = source[:position]
+    invocation = prefix if re.search(r"[&.]\s*$", bare[:position]) else prefix + " & "
+    span = bound_span(invocation, name)
+    if span is None:
+        depth, start = statement_start(position)
         # Only a literal pipeline input is proved not to mutate the collection before binding.
         pending = r"\s*(?:\$\w+\s*=\s*)*[\d\s,().@+-]+\|\s*(?:&\s*)?"
         if not depth and re.fullmatch(pending, bare[start:position]):
@@ -50,14 +55,21 @@ def parameters(source, position, name):
         start, end = trim(start, end)
         text, code = source[start:end], bare[start:end]
         if enclosed(text, "{", "}"):
-            return True
+            return "0", [start]
         if re.fullmatch(r"0\s*|[+-]?\d+(?:\.\d+)?|\$(?:true|false|null)", code, re.I):
-            return True
+            return "0", []
+        if variable := re.fullmatch(r"\$(\w+)", code):
+            # A collection captures the value when its containing assignment executes.
+            _, epoch = statement_start(start)
+            captured = bound_span(source[:epoch] + " & ", variable[1])
+            return literal(*captured) if captured is not None else None
         if enclosed(text, "(", ")"):
             return literal(start + 1, end - 1)
         if text.startswith("@(") and enclosed(text[1:], "(", ")"):
-            return all(literal(a, b) for a, b in parts(start + 2, end - 1, ","))
-        return False
+            values = [literal(a, b) for a, b in parts(start + 2, end - 1, ",")]
+            if all(value is not None for value in values):
+                return "@(" + ",".join(code for code, _ in values) + ")", [block for _, blocks in values for block in blocks]
+        return None
 
     start, end = span
     while enclosed(source[start:end], "(", ")"):
@@ -72,16 +84,22 @@ def parameters(source, position, name):
             if equal < 0:
                 raise Refusal("스플랫 매개 변수 이름을 실행 전에 확정할 수 없다.")
             names = arguments(source[first:equal])
-            if len(names) != 1 or not re.fullmatch(r"[a-z][\w-]*", names[0], re.I) or not literal(equal + 1, last):
+            value = literal(equal + 1, last)
+            if len(names) != 1 or not re.fullmatch(r"[a-z][\w-]*", names[0], re.I) or value is None:
                 raise Refusal("스플랫 매개 변수의 값을 실행 전에 확정할 수 없다.")
-            result.append((names[0].lower(), *trim(equal + 1, last)))
-        if len({key for key, _, _ in result}) != len(result):
+            result.append((names[0].lower(), *trim(equal + 1, last), *value))
+        if len({entry[0] for entry in result}) != len(result):
             raise Refusal("중복된 스플랫 매개 변수를 실행 전에 확정할 수 없다.")
         return result
     if text.startswith("@(") and enclosed(text[1:], "(", ")"):
-        result = [(None, *trim(first, last)) for first, last in parts(start + 2, end - 1, ",")]
-        if all(literal(first, last) for _, first, last in result):
-            return result
-    if literal(start, end):
-        return [(None, start, end)]
+        result = []
+        for first, last in parts(start + 2, end - 1, ","):
+            value = literal(first, last)
+            if value is None:
+                raise Refusal("스플랫 매개 변수의 값을 실행 전에 확정할 수 없다.")
+            result.append((None, *trim(first, last), *value))
+        return result
+    value = literal(start, end)
+    if value is not None:
+        return [(None, start, end, *value)]
     raise Refusal("스플랫 매개 변수의 값을 실행 전에 확정할 수 없다.")
