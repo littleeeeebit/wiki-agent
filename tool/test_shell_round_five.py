@@ -73,8 +73,13 @@ def native_commands(scripts, major=5):
         $arrayLiterals = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.ArrayLiteralAst] }, $true) |
             ForEach-Object { [PSCustomObject]@{ start = $_.Extent.StartOffset; end = $_.Extent.EndOffset;
                 elements = @($_.Elements).Count } })
+        $grouping = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.ParenExpressionAst] -or
+            $node -is [System.Management.Automation.Language.ArrayLiteralAst] -or
+            $node -is [System.Management.Automation.Language.ArrayExpressionAst] }, $true) |
+            ForEach-Object { [PSCustomObject]@{ start = $_.Extent.StartOffset; end = $_.Extent.EndOffset;
+                kind = $_.GetType().Name; parent = $_.Parent.GetType().Name } })
         [PSCustomObject]@{ errors = @($errors).Count; targets = $targets; commands = $records; pairs = $pairs;
-            arrays = $arrays; arrayLiterals = $arrayLiterals; version = $PSVersionTable.PSVersion.ToString() }
+            arrays = $arrays; arrayLiterals = $arrayLiterals; grouping = $grouping; version = $PSVersionTable.PSVersion.ToString() }
     })
     ConvertTo-Json -InputObject $rows -Compress -Depth 5
     """

@@ -32,7 +32,7 @@ def parameters(source, position, name):
     if span is None:
         raise Refusal("스플랫 매개 변수의 값을 실행 전에 확정할 수 없다.")
 
-    def parts(start, end, separators):
+    def parts(start, end, separators, keep_empty=False):
         depth, first = 0, start
         for index in range(start, end):
             char = bare[index]
@@ -43,10 +43,10 @@ def parameters(source, position, name):
             elif not depth and char in separators and not bare[first:index].rstrip().endswith("="):
                 if char == "\n" and bare[first:index].rstrip().endswith(","):
                     continue
-                if bare[first:index].strip():
+                if keep_empty or bare[first:index].strip():
                     yield first, index
                 first = index + 1
-        if bare[first:end].strip():
+        if keep_empty or bare[first:end].strip():
             yield first, end
 
     def trim(start, end):
@@ -72,6 +72,32 @@ def parameters(source, position, name):
             result.append((names[0].lower(), *trim(equal + 1, last), *value))
         return result
 
+    def comma_values(start, end):
+        pieces = list(parts(start, end, ",", keep_empty=True))
+        if len(pieces) < 2:
+            return None
+        operands, pending = [], None
+        for first, last in pieces:
+            if not bare[first:last].strip():
+                if pending is None:
+                    pending = first
+            else:
+                operands.append((first if pending is None else pending, last))
+                pending = None
+        if pending is not None:
+            return None
+        if len(operands) == 1:
+            # A lone operand with a leading comma constructs a singleton array.
+            first, last = operands[0]
+            operands = [(trim(first, last)[0] + 1, last)]
+        result = []
+        for first, last in operands:
+            value = literal(first, last)
+            if value is None:
+                return None
+            result.append((*trim(first, last), *value))
+        return result
+
     def array_values(start, end):
         span = value_span(start, end)
         if span is None:
@@ -79,21 +105,18 @@ def parameters(source, position, name):
         start, end = span
         text = source[start:end]
         if not text.startswith("@(") or not enclosed(text[1:], "(", ")"):
-            return None
+            return comma_values(start, end)
         result = []
         for first, last in parts(start + 2, end - 1, ";\n"):
-            elements = list(parts(first, last, ","))
-            if len(elements) == 1:
-                # Statement output enumerates arrays; comma expressions retain their elements.
-                nested = array_values(*elements[0])
-                if nested is not None:
-                    result.extend(nested)
-                    continue
-            for first, last in elements:
-                value = literal(first, last)
-                if value is None:
-                    return None
-                result.append((*trim(first, last), *value))
+            # Enumerate the statement's array value, preserving arrays within its elements.
+            nested = array_values(first, last)
+            if nested is not None:
+                result.extend(nested)
+                continue
+            value = literal(first, last)
+            if value is None:
+                return None
+            result.append((*trim(first, last), *value))
         return result
 
     def value_span(start, end):
