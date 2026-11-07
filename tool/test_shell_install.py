@@ -95,9 +95,18 @@ def test_a_phone_cannot_start_a_machine_install(client):
     assert powershell._install_thread is None
 
 
-def test_status_and_terminal_share_the_chosen_machine_version(client, tmp_path):
+@pytest.mark.parametrize("major,executable", [(5, "powershell"), (7, "pwsh")])
+def test_status_and_terminal_share_the_chosen_machine_version_without_spawning(client, tmp_path, monkeypatch, major, executable):
+    version = f"{major}.1.0"
+    monkeypatch.setattr(shell, "_detected", (shell.PowerShell(executable, version, major),))
+
+    def unexpected_process(*args, **kwargs):
+        pytest.fail("The server terminal route returns argv; Tauri owns the terminal process")
+
+    monkeypatch.setattr(shell.subprocess, "Popen", unexpected_process)
+    monkeypatch.setattr(runtime, "gate", unexpected_process)
     state = connect.status(tmp_path, {})
-    assert state["powershell"]["version"] == "5.1.19041.1"
-    assert state["powershell"]["needs_install"]
+    assert state["powershell"]["version"] == version
+    assert state["powershell"]["needs_install"] is (major == 5)
     assert client.get("/api/shell/terminal").json() == {
-        "argv": ["powershell", "-NoLogo", "-NoProfile"]}
+        "argv": [executable, "-NoLogo", "-NoProfile"]}

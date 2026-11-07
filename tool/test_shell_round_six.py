@@ -116,6 +116,26 @@ def test_unresolved_executable_targets_are_refused_by_every_boundary(monkeypatch
         assert verdict(payload)["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
+@pytest.mark.parametrize("target", ["$target", "($target)", "$env:TARGET"])
+@pytest.mark.parametrize("body", ["Write-Output fixture", "Get-Error"])
+@pytest.mark.parametrize("major", [5, 7])
+def test_unresolved_target_refusals_preserve_literal_remediation_under_either_parent(monkeypatch, request, target, body, major):
+    repair, claude, codex = request.getfixturevalue("hosts")
+    monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", f"{major}.1", major),))
+    command = "& " + target + " -Command '" + body + "'"
+    with pytest.raises(shell.Refusal, match="리터럴 실행 대상") as refused:
+        shell.resolve("gate", command=command)
+    reason = str(refused.value)
+    assert shell.INSTALL_CONTROL not in reason
+    for host, verdict, name, field in (("claude", claude.verdict, "PowerShell", "command"),
+                                      ("codex", codex.verdict, "functions.exec_command", "cmd")):
+        payload = {"tool_name": name, "tool_input": {field: command}}
+        for answer in (repair.refusal(payload, host), verdict(payload)):
+            output = answer["hookSpecificOutput"]
+            assert output["permissionDecision"] == "deny"
+            assert output["permissionDecisionReason"] == reason
+
+
 def test_native_oracle_retains_unknown_target_kinds_without_execution():
     scripts = ["$target='powershell'; " + operator + " " + target + " -Command 'Get-Error'" for operator in ("&", ".") for target in TARGETS]
     rows = native_commands(scripts)
