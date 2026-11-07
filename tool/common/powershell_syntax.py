@@ -165,6 +165,20 @@ def arguments(text: str) -> list[str]:
     return words
 
 
+def bound_arguments(text: str, prefix: str) -> list[str]:
+    """Read arguments after substituting only proved straight-line literal bindings."""
+    bare, spans = syntax(text)
+    variables = [(match.start(), match.end(), match[1]) for match in re.finditer(r"(?<!\S)\$(\w+)(?=[\s;|&)}]|$)", bare)]
+    variables += [(start, end, match[1]) for start, end in spans
+                  if (match := re.fullmatch(r'"\$(\w+)"', text[start:end]))]
+    invocation = prefix if re.search(r"(?<!&)[&.]\s*$", syntax(prefix)[0]) else prefix + " & "
+    for start, end, name in sorted(variables, reverse=True):
+        value = bound_target(invocation, name)
+        if value is not None:
+            text = text[:start] + value + text[end:]
+    return arguments(text)
+
+
 def syntax(text: str) -> tuple[str, list[tuple[int, int]]]:
     """A same-length code view and quoted spans, retaining only string subexpressions."""
     view = list(text)

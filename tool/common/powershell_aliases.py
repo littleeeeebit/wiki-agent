@@ -2,7 +2,7 @@
 
 import re
 
-from .powershell_syntax import Refusal, arguments, bound_target, syntax
+from .powershell_syntax import Refusal, bound_arguments, syntax
 
 # Windows aliases used by the supported binding-changing operations.
 DEFAULTS = {**dict.fromkeys(("ri", "rm", "rmdir", "rd", "del", "erase"), "remove-item"),
@@ -50,16 +50,8 @@ class Aliases:
         providers = ("set-item", "new-item", "si", "ni", *removers[:-1])
         if program not in (*setters, *providers, "remove-alias"):
             return
-        bare, spans = syntax(source)
-        variables = [(match.start(), match.end(), match[1]) for match in re.finditer(r"(?<!\S)\$(\w+)(?=[\s;|&)}]|$)", bare)]
-        variables += [(start, end, match[1]) for start, end in spans
-                      if (match := re.fullmatch(r'"\$(\w+)"', source[start:end]))]
-        for start, end, name in sorted(variables, reverse=True):
-            value = bound_target(self.source[:position] + " & ", name)
-            if value is not None:
-                source = source[:start] + value + source[end:]
         try:
-            argv = arguments(source)
+            argv = bound_arguments(source, self.source[:position])
         except Refusal:
             self.uncertain = True
             return

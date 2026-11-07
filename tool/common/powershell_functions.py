@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 import re
 
-from .powershell_syntax import Refusal, arguments, command_position, syntax
+from .powershell_syntax import Refusal, bound_arguments, command_position, syntax
 
 
 @dataclass(frozen=True)
@@ -76,12 +76,13 @@ class Functions:
         result, imported = "external", False
         call_blocks = self.containers(position)
         bodies = {item.body: item for item in self.definitions if item.body is not None}
+        deferred = any(block in bodies or not re.search(r"(?:[&.]\s*)$", self.bare[:block]) for block in call_blocks)
         for item in sorted(self.definitions, key=lambda row: row.start if row.body is not None and row.body < position < row.end else row.end):
             scope, _, short = item.name.rpartition(":")
             if short not in (name.lower(), "*"):
                 continue
             # Deferred or repeated blocks can run after an import elsewhere in the command.
-            if item.kind == "imported" and call_blocks:
+            if item.kind == "imported" and deferred:
                 imported = True
                 continue
             inside = item.body is not None and item.body < position < item.end
@@ -135,14 +136,14 @@ class Functions:
         writes = ("set-item", "new-item", "si", "ni")
         removes = ("remove-item", "ri", "rm", "rmdir", "rd", "del", "erase")
         clears = ("clear-item", "cli")
-        if program not in (*writes, *removes, *clears) or not re.search(r"function:", tail, re.I):
+        if program not in (*writes, *removes, *clears):
             return False
         offset = len(self.source) - len(tail)
         body = next((start for start in sorted(self.blocks) if start >= offset
                      and not re.search(r"[;\n|&]", self.bare[offset:start])), None)
         header = tail[:body - offset] if body is not None else tail
         try:
-            argv = arguments(header)
+            argv = bound_arguments(header, self.source[:position])
         except Refusal:
             argv = []
         fields, positional, uncertain, index = {}, [], False, 0

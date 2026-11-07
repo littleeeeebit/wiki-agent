@@ -201,8 +201,9 @@ def invocations(text: str):
                     aliases.define(program, text[item.target_end:], start)
         resolved.append(item)
         literal_block = item.kind == "scriptblock" and text[start:item.target_end].lstrip().startswith("{")
-        if start in dotted and not literal_block or item.name is not None and item.name.lower().endswith(".ps1") \
-                or item.program == "import-module" and item.kind != "function":
+        if item.kind != "function" and (start in dotted and not literal_block
+                                       or item.program is not None and item.program.endswith(".ps1")
+                                       or item.program == "import-module"):
             functions.note_import(start, item.target_end)
     for item in resolved:
         if item.name is not None and "/" not in item.name and "\\" not in item.name \

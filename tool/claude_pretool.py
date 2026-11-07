@@ -38,9 +38,6 @@ def check(name: str, payload: dict) -> dict | None:
 def verdict(payload: dict, without: frozenset = frozenset()) -> dict | None:
     from command_repair import refusal, repair
 
-    if denied := refusal(payload):
-        return denied
-
     # The checks judge the command that will run. A repair goes back as `updatedInput` with no
     # decision: Claude still asks, or not, by its own rules for the new command.
     given = payload
@@ -48,6 +45,8 @@ def verdict(payload: dict, without: frozenset = frozenset()) -> dict | None:
         payload, notes = repair(payload)
     except Exception:  # noqa: BLE001 -- `craft/hooks-fail-open`
         notes = []
+    if denied := refusal(payload):
+        return denied
     answers = []
     for name in MEMBERS:
         if name in without:

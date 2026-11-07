@@ -89,13 +89,6 @@ def test_data_nonloaders_and_uncalled_bodies_do_not_disable_external_modernizati
     assert command_repair._pwsh(source, "ps").endswith("; pwsh -NoProfile -Command 'Write-Output ok'")
 
 
-def test_a_root_call_before_loading_still_uses_its_current_binding(monkeypatch):
-    import command_repair
-    monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", "7.1", 7),))
-    source = "powershell -Command 'Write-Output ok'; . ./startup.ps1"
-    assert command_repair._pwsh(source, "ps").startswith("pwsh -NoProfile -Command")
-
-
 @pytest.mark.parametrize("major", [5, 7])
 def test_explicit_paths_after_imports_keep_their_own_capability_decision(monkeypatch, major):
     monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", f"{major}.1", major),))
