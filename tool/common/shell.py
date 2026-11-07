@@ -165,7 +165,7 @@ def invocations(text: str):
             while start < len(bare) and bare[start].isspace():
                 start += 1
             found[start] = record(start)
-    target = r"(?:(?:[A-Za-z]:|\.{1,2})?[/\\]+)?[A-Za-z_][\w./:\\-]*(?=\s|$)"
+    target = r"(?:(?:[A-Za-z]:|\.{1,2})?[/\\]+)?[A-Za-z_][\w./:\\-]*(?=\s|[;|&)\]}<>]|$)"
     for match in re.finditer(target, bare, re.I):
         if command_position(bare[:match.start()]):
             found.setdefault(match.start(), record(match.start()))
@@ -216,7 +216,7 @@ def seven_only(text: str) -> tuple[str, ...]:
     patterns = {
         "?.": r"\?\.", "??": r"\?\?", "ternary": r"(?<!\$)\?(?![?.])[^;{}]*?:",
         "ForEach-Object -Parallel": r"\bForEach-Object\b[^;|]*-Parallel\b",
-        "Test-Json": r"\bTest-Json\b", "Get-Error": r"\bGet-Error\b",
+        "Test-Json": r"\bTest-Json\b", "Get-Error": r"\bGet-Error\b", "Remove-Alias": r"\bRemove-Alias\b",
         "-SkipCertificateCheck": r"-SkipCertificateCheck\b", "pipeline chain": r"&&|\|\|",
     }
     found = [name for name, pattern in patterns.items() if re.search(pattern, bare, re.I)]

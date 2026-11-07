@@ -38,8 +38,9 @@ class Aliases:
 
     def define(self, program, source, position):
         setters = ("set-alias", "new-alias", "sal", "nal")
-        providers = ("set-item", "new-item", "si", "ni")
-        if program not in (*setters, *providers):
+        removers = ("remove-item", "ri", "rm", "rmdir", "rd", "del", "erase", "remove-alias")
+        providers = ("set-item", "new-item", "si", "ni", *removers[:-1])
+        if program not in (*setters, *providers, "remove-alias"):
             return
         bare, spans = syntax(source)
         variables = [(match.start(), match.end(), match[1]) for match in re.finditer(r"(?<!\S)\$(\w+)(?=[\s;|&)}]|$)", bare)]
@@ -52,6 +53,11 @@ class Aliases:
         try:
             argv = arguments(source)
         except Refusal:
+            self.uncertain = True
+            return
+        alias_path = any("alias:" in word.lower() for word in argv)
+        if program in removers and (alias_path and any("," in word for word in argv)
+                                    or not alias_path and re.search(r"\|\s*(?:[&.]\s*)?$", self.bare[:position])):
             self.uncertain = True
             return
         if program in providers:
@@ -86,12 +92,19 @@ class Aliases:
         else:
             name = fields["name"] if "name" in fields else positional.pop(0) if positional else ""
         value = fields["value"] if "value" in fields else positional.pop(0) if positional else None
-        if not name or any(char in name for char in "*?["):
+        if not name or any(char in name for char in "*?[") or program in removers and ("," in name or value is not None or positional):
             self.uncertain = True
             return
         name = name.lower()
         scope = self.scope(position)
         previous = self.values.get(name)
+        if program in removers:
+            # A nested removal can reveal an outer alias whose overwritten binding is unknown.
+            if not scope and fields.get("scope", "local").lower() in ("local", "0") and (previous is None or previous[0] is not None and previous[1] == scope):
+                self.values.pop(name, None)
+            else:
+                self.values[name] = None, scope
+            return
         if value is None or not value.strip() or fields.get("scope", "local").lower() not in ("local", "0") \
                 or fields.get("option", fields.get("options", "none")).lower() != "none" \
                 or previous and (previous[0] is None or program in ("new-alias", "nal", "new-item", "ni")):
