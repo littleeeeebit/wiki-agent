@@ -212,6 +212,9 @@ def invocations(text: str):
         if item.name is not None and "/" not in item.name and "\\" not in item.name \
                 and functions.binding("*", item.target_start) == "imported":
             item = replace(item, kind="imported", modernize=False)
+        if item.program == "foreach-object" and item.kind in ("ambiguous", "imported") \
+                and functions.callback_arguments(item.program, text[item.target_end:], item.target_start)[2]:
+            item = replace(item, required=("ForEach-Object -Parallel",))
         yield item
 
 
@@ -252,7 +255,6 @@ def seven_only(text: str) -> tuple[str, ...]:
     bare, _ = command_syntax(text)
     patterns = {
         "?.": r"\?\.", "??": r"\?\?", "ternary": r"(?<!\$)\?(?![?.])[^;{}]*?:",
-        "ForEach-Object -Parallel": r"\bForEach-Object\b[^;|]*-Parallel\b",
         "Test-Json": r"\bTest-Json\b", "Get-Error": r"\bGet-Error\b", "Remove-Alias": r"\bRemove-Alias\b",
         "-SkipCertificateCheck": r"-SkipCertificateCheck\b", "pipeline chain": r"&&|\|\|",
     }

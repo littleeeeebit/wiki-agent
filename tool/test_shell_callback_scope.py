@@ -17,7 +17,16 @@ CALLBACKS = ["1 | ForEach-Object {{ {definition} }}", "1 | % {{ {definition} }}"
              "Set-Alias visit ForEach-Object; 1 | visit {{ {definition} }}",
              "1 | & 'ForEach-Object' {{ {definition} }}",
              r"1 | Microsoft.PowerShell.Core\ForEach-Object {{ {definition} }}",
-             "& foreach -InputObject 1 {{ {definition} }}"]
+             "& foreach -InputObject 1 {{ {definition} }}",
+             "ForEach-Object -InputObject 1 -Process ({{ {definition} }})",
+             "ForEach-Object -InputObject 1 -Process @({{ {definition} }})",
+             "ForEach-Object -InputObject 1 -Process {{ {definition} }},{{}}",
+             "ForEach-Object -InputObject 1 -Process {{}} -RemainingScripts {{ {definition} }}",
+             "1 | ForEach-Object {{}} , {{ {definition} }}",
+             "1 | ForEach-Object -vb {{ {definition} }}",
+             "1 | ForEach-Object -Verbo {{ {definition} }}",
+             "1 | ForEach-Object -InputObject {{ {definition}; 1 }} -Process {{}}",
+             "1 | Where-Object -InputObject {{ {definition}; 1 }} -FilterScript {{$false}} | Out-Null"]
 DEFINITIONS = ["function global:powershell { " + BODY + " }", "filter global:powershell { " + BODY + " }",
                "function script:powershell { " + BODY + " }", "function powershell { " + BODY + " }",
                "Set-Item Function:global:powershell { " + BODY + " }"]
@@ -31,6 +40,77 @@ LABELED = [":outer foreach ($value in 1,2) {{ {call} }}; {load}",
            ":OUTER\nforeach ($value in 1,2) {{ {call} }}; {load}",
            "$index=0;:outer while ($index++ -lt 2) {{ {call} }}; {load}",
            "& {{:inner foreach ($value in 1,2) {{ {call} }} }}; {load}"]
+DATA_INPUTS = ["ForEach-Object -InputObject {data} -Process {{}}",
+               "ForEach-Object -Process {{}} -InputObject {data}",
+               "ForEach-Object -InputObject ({data}) -Process {{}}",
+               "ForEach-Object -InputObject @({data}) -Process {{}}",
+               "ForEach-Object -InputObject:({data}) -Process {{}}",
+               "ForEach-Object -Inp {data} -Proc {{}}", "ForEach-Object -InputObject {data} {{}}",
+               "Where-Object -InputObject {data} -FilterScript {{$false}} | Out-Null",
+               "1 | ForEach-Object -InputObject @({data}) -Process {{}}",
+               "1 | Where-Object -InputObject @({data}) -FilterScript {{$false}} | Out-Null"]
+NESTED_INPUTS = ["(helper -Parallel)", "$(helper -Parallel)", "@(helper -Parallel)",
+                 "([object](helper -Parallel))", "(helper -Parallel:$true)", "((helper -Parallel))",
+                 '"fixture $(helper -Parallel)"']
+
+
+@pytest.mark.parametrize("context", DATA_INPUTS)
+@pytest.mark.parametrize("major", [5, 7])
+def test_input_values_do_not_define_callback_bindings(monkeypatch, request, context, major):
+    agents = request.getfixturevalue("hosts")
+    monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", f"{major}.1", major),))
+    prefix = context.format(data="{ " + DEFINITIONS[0] + " }")
+    call = "powershell -Command 'Write-Output child'"
+    source = prefix + "; " + call
+    expected = prefix + "; " + (call.replace("powershell", "pwsh -NoProfile", 1) if major == 7 else call)
+    assert list(shell.invocations(source))[-1].kind == "literal"
+    assert agents[0]._pwsh(source, "ps") == expected
+    assert shell.resolve("gate", command=expected) == expected
+    host_outputs(agents, source, expected)
+    incompatible = prefix + "; powershell -Command 'Get-Error'"
+    with pytest.raises(shell.Refusal):
+        shell.launch("gate", command=incompatible)
+
+
+@pytest.mark.parametrize("value", NESTED_INPUTS)
+@pytest.mark.parametrize("program", ["ForEach-Object", "%", "foreach"])
+@pytest.mark.parametrize("major", [5, 7])
+def test_nested_parameters_do_not_change_the_outer_callback_role(monkeypatch, request, value, program, major):
+    agents = request.getfixturevalue("hosts")
+    monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", f"{major}.1", major),))
+    source = "function helper { param([switch]$Parallel) 1 }; " + program + " -InputObject " + value + \
+             " -Process { " + DEFINITIONS[0] + " }; powershell -Command 'Write-Output child'"
+    assert "ForEach-Object -Parallel" not in shell.seven_only(source)
+    assert agents[0]._pwsh(source, "ps") == source
+    assert shell.resolve("gate", command=source) == source
+    host_outputs(agents, source, source)
+
+
+@pytest.mark.parametrize("major", [5, 7])
+@pytest.mark.parametrize("context", DATA_INPUTS)
+def test_native_input_data_fixture_runs_the_selected_external_child(monkeypatch, major, context):
+    import command_repair
+    monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", "7.1", 7),))
+    data = "{ function global:powershell { param($Command) Write-Output data-fixture } }"
+    source = "$ErrorActionPreference='Stop'; try { " + context.format(data=data) + " } catch { " \
+             "if ($_.FullyQualifiedErrorId -notmatch '^(ScriptBlockArgumentNoInput|InputObjectNotBound),') { throw } }; " \
+             "powershell -Command 'Write-Output $PSVersionTable.PSVersion.Major; exit 17'; exit $LASTEXITCODE"
+    result = native(command_repair._pwsh(source, "ps"), major)
+    assert result.returncode == 17 and result.stdout.splitlines() == ["7"] and result.stderr == ""
+
+
+@pytest.mark.parametrize("major", [5, 7])
+@pytest.mark.parametrize("value", NESTED_INPUTS)
+def test_native_nested_parameter_fixture_keeps_the_callback_function(monkeypatch, major, value):
+    import command_repair
+    monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", "7.1", 7),))
+    source = "function helper { param([switch]$Parallel) 1 }; ForEach-Object -InputObject " + value + \
+             " -Process { function global:powershell { param($Command) Write-Output ownership-fixture } }; " \
+             "powershell -Command 'Write-Output external-fixture; exit 17'"
+    repaired = command_repair._pwsh(source, "ps")
+    assert repaired == source
+    result = native(repaired, major)
+    assert result.returncode == 0 and result.stdout.splitlines() == ["ownership-fixture"] and result.stderr == ""
 
 
 @pytest.mark.parametrize("callback", CALLBACKS)
@@ -149,6 +229,24 @@ def test_resolved_parallel_callbacks_are_refused_on_ps5(monkeypatch, request, pr
     host_outputs(agents, source, source, denied=True)
 
 
+@pytest.mark.parametrize("prefix", [". ./startup.ps1; ",
+                                   "if ($condition) { function ForEach-Object { param($Parallel) } }; "])
+def test_possible_parallel_cmdlets_remain_refused_on_ps5(request, prefix):
+    agents = request.getfixturevalue("hosts")
+    source = prefix + "1 | ForEach-Object -Parallel { Write-Output worker-fixture }"
+    with pytest.raises(shell.Refusal):
+        shell.launch("gate", command=source)
+    host_outputs(agents, source, source, denied=True)
+
+
+def test_a_known_function_owns_its_parallel_parameter(request):
+    agents = request.getfixturevalue("hosts")
+    source = "function ForEach-Object { param($Parallel) Write-Output fixture }; ForEach-Object -Parallel { Write-Output worker-fixture }"
+    assert "ForEach-Object -Parallel" not in shell.seven_only(source)
+    assert shell.resolve("gate", command=source) == source
+    host_outputs(agents, source, source)
+
+
 @pytest.mark.parametrize("source", ["Write-Output :outer powershell '-Command' 'Write-Output ok'", "Write-Output :outer foreach"])
 def test_label_like_arguments_do_not_create_command_positions(monkeypatch, source):
     import command_repair
@@ -185,11 +283,13 @@ def test_native_parser_accepts_callback_and_label_tables_without_execution():
     sources += [context.format(call="powershell", load=". ./startup.ps1") for context in LABELED]
     sources += [label + "foreach ($value in & 'outside/powershell.exe' -Command 'Get-Error') {}"
                 for label in (":outer ", ":stage_one\n", "Write-Output marker;:outer ")]
+    sources += [context.format(data="{ " + DEFINITIONS[0] + " }") for context in DATA_INPUTS]
+    sources += ["ForEach-Object -InputObject " + value + " -Process {}" for value in NESTED_INPUTS]
     assert all(row["errors"] == 0 for row in native_commands(sources))
 
 
 @pytest.mark.parametrize("major", [5, 7])
-@pytest.mark.parametrize("callback", [CALLBACKS[index] for index in (0, 1, 4, 5, 6, 9)])
+@pytest.mark.parametrize("callback", CALLBACKS)
 def test_native_callback_fixture_keeps_the_function_selected(monkeypatch, major, callback):
     import command_repair
     monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", "7.1", 7),))

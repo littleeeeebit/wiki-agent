@@ -20,6 +20,7 @@ class Functions:
     def __init__(self, source):
         self.source = source
         self.bare, strings = syntax(source)
+        self.strings = dict(strings)
         self.blocks, stack = {}, []
         for index, char in enumerate(self.bare):
             if char == "{":
@@ -189,31 +190,73 @@ class Functions:
         """Record possible session changes without reading or executing loaded code."""
         self.definitions.append(Definition("global:*", position, end, None, "imported"))
 
-    def define(self, program, tail, position):
-        """Update callable state; return true when separate alias inspection is unnecessary."""
-        if program in ("foreach-object", "where-object"):
-            cursor, groups, blocks, header = len(self.source) - len(tail), [], [], []
+    def callback_arguments(self, program, tail, position):
+        """Read callback roles and version requirements from outer arguments only."""
+        cursor, blocks, parallel, pending, positional = len(self.source) - len(tail), [], False, None, True
+        piped = re.search(r"(?<!\|)\|\s*(?:&\s*)?$", self.bare[:position]) is not None
+        callbacks = ("process", "begin", "end", "remainingscripts") if program == "foreach-object" else ("filterscript",)
+        switches = {"verbose", "debug", "whatif", "confirm", "asjob", "usenewrunspace"}
+        while cursor < len(self.bare):
+            if self.bare[cursor] in ";|\n)]}":
+                break
+            if self.bare[cursor].isspace():
+                cursor += 1
+                continue
+            start, groups, values = cursor, [], []
             while cursor < len(self.bare):
+                if cursor in self.strings:
+                    cursor = self.strings[cursor]
+                    continue
                 char = self.bare[cursor]
-                if not groups and char in ";|\n)]}":
+                if not groups and (char.isspace() or char in ";|\n)]}"):
                     break
                 if char == "{" and cursor in self.blocks:
                     if all(group == "(" for group in groups) and self.bare[cursor - 1:cursor] not in ("@", "$"):
-                        blocks.append(cursor)
+                        values.append(cursor)
                     cursor = self.blocks[cursor]
-                    header.append(" ")
                     continue
                 if char in "([":
                     groups.append(char)
                 elif char in ")]" and groups:
                     groups.pop()
-                header.append(char)
                 cursor += 1
-            flags = re.findall(r"(?<!\S)-([a-z]+)\b", "".join(header), re.I)
-            if program == "foreach-object" and any(len(flag) >= 2 and "parallel".startswith(flag.lower()) for flag in flags):
+            argument = self.bare[start:cursor]
+            parameter = re.match(r"-([a-z]+)(:|$)", argument, re.I)
+            if parameter:
+                name = parameter[1].lower()
+                parallel |= program == "foreach-object" and len(name) >= 2 and "parallel".startswith(name)
+                pending = "input" if "inputobject".startswith(name) else any(option.startswith(name) for option in callbacks)
+                if parameter[2] != ":":
+                    if name in {"vb", "db", "wi", "cf"} or any(option.startswith(name) for option in switches):
+                        pending = None
+                    continue
+                start += parameter.end()
+            # Only literal block values belong to this argument, never blocks inside a nested command.
+            value = self.bare[start:cursor]
+            for block in reversed(values):
+                value = value[:block - start] + "0" + value[self.blocks[block] - start:]
+            literal = values and re.fullmatch(r"[\s(@),0]*", value)
+            # Pipeline binding can execute a ScriptBlock input value, but not an array of blocks.
+            callback = positional if pending is None else pending
+            if pending == "input":
+                callback = piped and not re.search(r"[@,]", value)
+            if callback and literal:
+                blocks.extend(values)
+            if pending is None and argument.strip(",") and (program == "where-object" or not literal):
+                positional = False
+            next_arg = self.bare[cursor:].lstrip(" \t\r")
+            if not argument.endswith(",") and not next_arg.startswith(","):
+                pending = None
+        return cursor, blocks, parallel
+
+    def define(self, program, tail, position):
+        """Update callable state; return true when separate alias inspection is unnecessary."""
+        if program in ("foreach-object", "where-object"):
+            end, blocks, parallel = self.callback_arguments(program, tail, position)
+            if parallel:
                 self.parallel.add(position)
             else:
-                self.callbacks.update((block, cursor) for block in blocks)
+                self.callbacks.update((block, end) for block in blocks)
             return True
         if program == "invoke-expression":
             self.note_import(position, len(self.source) - len(tail))
