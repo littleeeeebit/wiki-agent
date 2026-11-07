@@ -1,6 +1,6 @@
 """One version-aware boundary for PowerShell text and launches."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import base64
 import binascii
 import os
@@ -13,6 +13,7 @@ import threading
 import uuid
 
 from . import process
+from .powershell_aliases import Aliases
 from .powershell_syntax import Refusal, arguments, bound_target, command_position, enclosed, syntax
 from .shell_catalogue import COMMANDS
 
@@ -106,6 +107,7 @@ class Invocation:
     target_start: int
     target_end: int
     kind: str
+    name: str | None = None
 
 
 def invocations(text: str):
@@ -155,7 +157,7 @@ def invocations(text: str):
         if len(words) != 1:
             return Invocation(None, start, cursor, "unresolved")
         program = words[0].replace("\\", "/").rsplit("/", 1)[-1].lower().removesuffix(".exe")
-        return Invocation(program, start, cursor, "bound" if bound else "literal")
+        return Invocation(program, start, cursor, "bound" if bound else "literal", words[0])
 
     for call in re.finditer(r"(?<!&)&(?!&)|\.(?=\s)", bare):
         if command_position(bare[:call.start()]):
@@ -163,11 +165,19 @@ def invocations(text: str):
             while start < len(bare) and bare[start].isspace():
                 start += 1
             found[start] = record(start)
-    target = r"(?P<target>(?:[^\s;&|(){}]+[/\\])?(?P<program>powershell|pwsh)(?:\.exe)?)(?=\s|$)\s*"
+    target = r"(?:(?:[A-Za-z]:|\.{1,2})?[/\\]+)?[A-Za-z_][\w./:\\-]*(?=\s|$)"
     for match in re.finditer(target, bare, re.I):
         if command_position(bare[:match.start()]):
             found.setdefault(match.start(), record(match.start()))
-    yield from (found[start] for start in sorted(found))
+    aliases = Aliases(text)
+    for start in sorted(found):
+        item = found[start]
+        if item.name is not None:
+            program, aliased = aliases.resolve(item.name, start)
+            if aliased:
+                item = replace(item, program=program, kind="alias" if program is not None else "unresolved")
+            aliases.define(program, text[item.target_end:], start)
+        yield item
 
 
 def nested_commands(text: str):
