@@ -50,9 +50,9 @@ DEFERRED = ["function probe {{ {call} }}; {load}; probe",
             "$index=0; do {{ {call}; $index++ }} until ($index -ge 2 -or $({load}; $false))",
             "Register-ObjectEvent ($source) {{ {call} }}; {load}",
             "Write-Output switch ($source) {{ {call} }}; {load}",
-            "& if {{ {call} }}; {load}", "& foreach ($source) {{ {call} }}; {load}",
-            "Set-Alias foreach Register-ObjectEvent; $source | foreach {{ {call} }}; {load}",
-            "Set-Alias foreach Register-ObjectEvent; $source | foreach ($filter) {{ {call} }}; {load}",
+            "& if {{ {call} }}; {load}", "Set-Item -LiteralPath Alias:foreach -Value Register-ObjectEvent -Force; & foreach ($source) {{ {call} }}; {load}",
+            "Set-Item -LiteralPath Alias:foreach -Value Register-ObjectEvent -Force; $source | foreach {{ {call} }}; {load}",
+            "Set-Item -LiteralPath Alias:foreach -Value Register-ObjectEvent -Force; $source | foreach ($filter) {{ {call} }}; {load}",
             "$callback={{ {call} }}; {load}; & $callback"]
 BINDINGS = ["$path='Function:powershell'", '$path="Function:powershell"',
             "$base='Function:powershell'; $path=$base", "$path=('Function:powershell')",
@@ -259,7 +259,7 @@ def test_generated_bindings_are_preserved_and_possible_classic_children_checked(
 
 @pytest.mark.parametrize("prefix", ["Write-Output 'Invoke-Expression'", "function unused { Invoke-Expression 'Write-Output ok' }",
                                     "function Invoke-Expression { param($Command) Write-Output ok }; Invoke-Expression 'Write-Output ok'",
-                                    "Set-Alias iex Write-Output; iex 'Write-Output ok'"])
+                                    "Set-Item -LiteralPath Alias:iex -Value Write-Output -Force; iex 'Write-Output ok'"])
 def test_generator_names_in_data_or_unexecuted_code_do_not_change_root_bindings(monkeypatch, prefix):
     import command_repair
     monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", "7.1", 7),))

@@ -110,6 +110,7 @@ class Invocation:
     kind: str
     name: str | None = None
     modernize: bool = True
+    required: tuple[str, ...] = ()
 
 
 def invocations(text: str):
@@ -169,7 +170,7 @@ def invocations(text: str):
             found[start] = record(start)
             if call[0] == ".":
                 dotted.add(start)
-    target = r"(?:(?:[A-Za-z]:|\.{1,2})?[/\\]+)?[A-Za-z_][\w./:\\-]*(?=\s|[;|&)\]}<>]|$)"
+    target = r"(?:(?:(?:[A-Za-z]:|\.{1,2})?[/\\]+)?[A-Za-z_][\w./:\\-]*|[?%])(?=\s|[;|&)\]}<>]|$)"
     for match in re.finditer(target, bare, re.I):
         if command_position(bare[:match.start()]):
             found.setdefault(match.start(), record(match.start()))
@@ -177,7 +178,7 @@ def invocations(text: str):
     functions = Functions(text)
     resolved = []
     for start in sorted(found):
-        if any(definition.start == start for definition in functions.definitions):
+        if start in functions.statements or any(definition.start == start for definition in functions.definitions):
             continue
         item = found[start]
         qualified = item.name is not None and ("/" in item.name or "\\" in item.name)
@@ -197,6 +198,8 @@ def invocations(text: str):
                 functions.called.append((target, start))
             elif binding == "external":
                 function_only = functions.define(program, text[item.target_end:], start)
+                if start in functions.parallel:
+                    item = replace(item, required=("ForEach-Object -Parallel",))
                 if not function_only:
                     aliases.define(program, text[item.target_end:], start)
         resolved.append(item)
@@ -254,6 +257,8 @@ def seven_only(text: str) -> tuple[str, ...]:
         "-SkipCertificateCheck": r"-SkipCertificateCheck\b", "pipeline chain": r"&&|\|\|",
     }
     found = [name for name, pattern in patterns.items() if re.search(pattern, bare, re.I)]
+    for invocation in invocations(text):
+        found.extend(feature for feature in invocation.required if feature not in found)
     for _, body in nested_commands(text):
         found.extend(feature for feature in seven_only(body) if feature not in found)
     if re.search(r"(?<![>=])>>(?![=&])|(?<![>=])>(?![=&])", bare) or any(

@@ -3,6 +3,7 @@
 import re
 
 ESCAPES = dict(zip("0abefnrtv", "\0\a\b\x1b\f\n\r\t\v"))
+LABEL = r":[\w-]+"
 
 
 class Refusal(ValueError):
@@ -101,7 +102,8 @@ def command_position(prefix: str) -> bool:
     assignment = rf"{variable}(?:\s*,\s*{variable})*\s*(?:\?\?=|[-+*/%]?=)\s*"
     if re.search(boundary + rf"(?:{assignment})+" + end, prefix, re.I):
         return True
-    if re.search(boundary + rf"foreach\s*\(\s*{variable}\s+in\s*" + end, prefix, re.I):
+    iterator = re.search(rf"(?:{LABEL}\s+)?\bforeach\s*\(\s*{variable}\s+in\s*" + end, prefix, re.I)
+    if iterator and command_position(prefix[:iterator.start()]):
         return True
     return False
 

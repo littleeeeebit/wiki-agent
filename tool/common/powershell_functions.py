@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 import re
 
-from .powershell_syntax import Refusal, bound_arguments, command_position, syntax
+from .powershell_syntax import LABEL, Refusal, bound_arguments, command_position, syntax
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,9 @@ class Functions:
             elif char == "}" and stack:
                 self.blocks[stack.pop()] = index + 1
         self.definitions, self.called = [], []
+        self.callbacks = {}
+        self.parallel = set()
+        self.statements = set()
         pattern = r"\b(?:function|filter)\s+([\w:.-]+)\s*(?:\([^{}]*\)\s*)?(\{)"
         for match in re.finditer(pattern, self.bare, re.I):
             if command_position(self.bare[:match.start()]) and match.start(2) in self.blocks:
@@ -65,6 +68,8 @@ class Functions:
                 cursor = end
             else:
                 cursor += 1
+        for block in self.blocks:
+            self.control(block)
 
     def containers(self, position):
         return sorted(start for start, end in self.blocks.items() if start < position < end
@@ -72,6 +77,8 @@ class Functions:
 
     def control(self, block):
         """Recognize synchronous control bodies without mistaking callback arguments for them."""
+        if block in self.callbacks:
+            return "callback"
         head = self.bare[:block].rstrip()
         header = head.endswith(")")
         if header:
@@ -87,17 +94,23 @@ class Functions:
         if match and (header or match[1].lower() in ("else", "do", "try", "catch", "finally") or re.search(r"\s-File\s", head, re.I)):
             kind = match[1].lower()
             before = head[:match.start()].rstrip()
+            if kind in ("for", "foreach", "while", "do", "switch"):
+                before = re.sub(rf"{LABEL}$", "", before).rstrip()
             if kind in ("elseif", "else", "catch", "finally"):
                 previous = next((start for start, end in self.blocks.items() if end == len(before)), None)
                 allowed = ("if", "elseif") if kind in ("elseif", "else") else ("try", "catch")
                 if previous is not None and self.control(previous) in allowed:
+                    self.statements.add(match.start())
                     return kind
             elif not before.endswith(("&", ".", "|")) and command_position(before):
+                self.statements.add(match.start())
                 return kind
         parents = self.containers(block)
         return "clause" if parents and self.control(parents[-1]) == "switch" else None
 
     def iteration_end(self, block, kind):
+        if kind == "callback":
+            return self.callbacks[block]
         end = self.blocks[block]
         condition = re.match(r"\s*(?:while|until)\s*\(", self.bare[end:], re.I) if kind == "do" else None
         if condition:
@@ -122,7 +135,7 @@ class Functions:
             if short not in (name.lower(), "*"):
                 continue
             # Deferred or repeated blocks can run after an import elsewhere in the command.
-            if item.kind == "imported" and (deferred or any(kind in ("for", "foreach", "while", "do", "switch")
+            if item.kind == "imported" and (deferred or any(kind in ("for", "foreach", "while", "do", "switch", "callback")
                                                            and block < item.start < self.iteration_end(block, kind)
                                                            for block, kind in controls.items())):
                 imported = True
@@ -130,7 +143,7 @@ class Functions:
             inside = item.body is not None and item.body < position < item.end
             if item.end > position and not inside:
                 # Calls inside a function may run after later declarations have executed.
-                if any(block in bodies for block in call_blocks) and item.start > position:
+                if any(block in bodies or block in self.callbacks for block in call_blocks) and item.start > position:
                     result = "ambiguous"
                 continue
             uncertain, visible = scope not in ("", "local", "script", "global", "private"), True
@@ -143,6 +156,9 @@ class Functions:
                         uncertain = True
                     else:
                         visible = False
+                    continue
+                if block in self.callbacks:
+                    uncertain = True
                     continue
                 prefix = self.bare[:block].rstrip()
                 if prefix.endswith("."):
@@ -175,6 +191,30 @@ class Functions:
 
     def define(self, program, tail, position):
         """Update callable state; return true when separate alias inspection is unnecessary."""
+        if program in ("foreach-object", "where-object"):
+            cursor, groups, blocks, header = len(self.source) - len(tail), [], [], []
+            while cursor < len(self.bare):
+                char = self.bare[cursor]
+                if not groups and char in ";|\n)]}":
+                    break
+                if char == "{" and cursor in self.blocks:
+                    if all(group == "(" for group in groups) and self.bare[cursor - 1:cursor] not in ("@", "$"):
+                        blocks.append(cursor)
+                    cursor = self.blocks[cursor]
+                    header.append(" ")
+                    continue
+                if char in "([":
+                    groups.append(char)
+                elif char in ")]" and groups:
+                    groups.pop()
+                header.append(char)
+                cursor += 1
+            flags = re.findall(r"(?<!\S)-([a-z]+)\b", "".join(header), re.I)
+            if program == "foreach-object" and any(len(flag) >= 2 and "parallel".startswith(flag.lower()) for flag in flags):
+                self.parallel.add(position)
+            else:
+                self.callbacks.update((block, cursor) for block in blocks)
+            return True
         if program == "invoke-expression":
             self.note_import(position, len(self.source) - len(tail))
             return True

@@ -248,21 +248,29 @@ def test_builtin_alias_precedence_keeps_function_removal_visible(monkeypatch, re
         assert "pwsh -NoProfile -Command" in command_repair._pwsh(source, "ps")
 
 
-def test_removing_a_builtin_alias_reveals_a_same_named_function():
-    source = "function ri { " + BODY + " }; Remove-Item Alias:ri; ri -Command 'Get-Error'"
-    assert list(shell.invocations(source))[-1].kind == "function"
-    assert shell.resolve("gate", command=source) == source
+def test_builtin_alias_removal_does_not_guess_the_inherited_fallback():
+    source = "function ri { " + BODY + " }; Remove-Item Alias:ri -Force; ri -Command 'Get-Error'"
+    with pytest.raises(shell.Refusal):
+        shell.resolve("gate", command=source)
+
+
+def test_unforced_builtin_alias_removal_does_not_reveal_a_function():
+    source = "function ri { " + BODY + " }; Remove-Item Alias:ri; ri outside/target.txt"
+    invocation = list(shell.invocations(source))[-1]
+    assert invocation.kind != "function"
+    with pytest.raises(shell.Refusal):
+        shell.resolve("gate", command=source)
 
 
 @pytest.mark.parametrize("major", [5, 7])
 def test_native_builtin_alias_metadata_precedes_same_named_functions(major):
-    from common.powershell_aliases import DEFAULTS
+    from common.powershell_aliases import DEFAULTS, READ_ONLY
     declarations = "; ".join("function " + name + " { Write-Output helper }" for name in DEFAULTS)
     names = ",".join(shell.quote(name, "ps5") for name in DEFAULTS)
-    result = native(declarations + "; @(" + names + ") | ForEach-Object { $c=Get-Command $_; "
-                    "[Console]::WriteLine($c.Name.ToLower() + ':' + $c.CommandType + ':' + $c.Definition.ToLower()) }", major)
+    result = native(declarations + "; @(" + names + ") | ForEach-Object { $c=Get-Command ([System.Management.Automation.WildcardPattern]::Escape($_)); "
+                    "[Console]::WriteLine($c.Name.ToLower() + ':' + $c.CommandType + ':' + $c.Definition.ToLower() + ':' + [bool]($c.Options -band 1)) }", major)
     assert result.returncode == 0 and result.stderr == ""
-    assert sorted(result.stdout.splitlines()) == sorted(name + ":Alias:" + target for name, target in DEFAULTS.items())
+    assert sorted(result.stdout.splitlines()) == sorted(name + ":Alias:" + target + ":" + str(name in READ_ONLY) for name, target in DEFAULTS.items())
 
 
 def test_a_failed_new_alias_cannot_override_a_builtin_binding():

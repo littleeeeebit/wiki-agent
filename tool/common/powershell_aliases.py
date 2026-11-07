@@ -7,7 +7,10 @@ from .powershell_syntax import Refusal, bound_arguments, syntax
 # Windows aliases used by the supported binding-changing operations.
 DEFAULTS = {**dict.fromkeys(("ri", "rm", "rmdir", "rd", "del", "erase"), "remove-item"),
             "sal": "set-alias", "nal": "new-alias", "si": "set-item", "ni": "new-item", "cli": "clear-item", "ipmo": "import-module",
-            "iex": "invoke-expression"}
+            "iex": "invoke-expression", "foreach": "foreach-object", "%": "foreach-object",
+            "where": "where-object", "?": "where-object"}
+READ_ONLY = DEFAULTS.keys() - {"rm", "rmdir", "rd", "del", "erase"}
+ALL_SCOPE = {"del", "foreach", "%", "where", "?"}
 
 
 class Aliases:
@@ -16,6 +19,7 @@ class Aliases:
         self.bare = syntax(source)[0]
         self.values = {}
         self.removed = set()
+        self.mutable_defaults = set()
         self.uncertain = False
 
     def scope(self, position):
@@ -68,12 +72,13 @@ class Aliases:
                     return
             if not alias_path:
                 return
-        fields, positional, index = {}, [], 0
+        fields, positional, index, forced = {}, [], 0, False
         while index < len(argv):
             word = argv[index]
             if word.startswith("-"):
                 key = word[1:].lower()
                 if key in ("force", "passthru"):
+                    forced = forced or key == "force"
                     index += 1
                     continue
                 if key not in ("name", "value", "scope", "option", "options", "path", "literalpath", "description") or index + 1 == len(argv):
@@ -102,12 +107,28 @@ class Aliases:
         else:
             name = fields["name"] if "name" in fields else positional.pop(0) if positional else ""
         value = fields["value"] if "value" in fields else positional.pop(0) if positional else None
-        if not name or any(char in name for char in "*?[") or program in removers and ("," in name or value is not None or positional):
+        literal = "literalpath" in fields or program in setters and name.lower() in DEFAULTS
+        initial = name.lower() in DEFAULTS and name.lower() not in self.removed and name.lower() not in self.mutable_defaults
+        if initial and name.lower() in READ_ONLY & ALL_SCOPE and not forced \
+                and (literal or not any(char in name for char in "*?[")):
+            return
+        # Replacing an AllScope alias without preserving that option fails even with Force.
+        if initial and name.lower() in ALL_SCOPE and program in ("set-alias", "sal") and not {"option", "options"} & fields.keys():
+            return
+        if not name or not literal and any(char in name for char in "*?[") or program in removers and ("," in name or value is not None or positional):
             self.uncertain = True
             return
         name = name.lower()
         scope = self.scope(position)
         previous = self.values.get(name)
+        if name in DEFAULTS and program in removers:
+            # Removing a local binding can reveal an inherited alias in the caller's scope.
+            self.values[name] = None, scope
+            return
+        reset = initial and program in ("set-item", "si") and forced and not scope and not {"option", "options"} & fields.keys()
+        if initial and not reset:
+            self.values[name] = None, scope
+            return
         if program in removers:
             # A nested removal can reveal an outer alias whose overwritten binding is unknown.
             if not scope and fields.get("scope", "local").lower() in ("local", "0") and (previous is None or previous[0] is not None and previous[1] == scope):
@@ -117,8 +138,11 @@ class Aliases:
                 self.values[name] = None, scope
             return
         if value is None or not value.strip() or fields.get("scope", "local").lower() not in ("local", "0") \
+                or name in READ_ONLY and name not in self.removed and ("option" in fields or "options" in fields) \
                 or fields.get("option", fields.get("options", "none")).lower() != "none" \
                 or previous and (previous[0] is None or program in ("new-alias", "nal", "new-item", "ni")) \
                 or name in DEFAULTS and name not in self.removed and program in ("new-alias", "new-item"):
             value = None
         self.values[name] = value, scope
+        if reset and value is not None:
+            self.mutable_defaults.add(name)
