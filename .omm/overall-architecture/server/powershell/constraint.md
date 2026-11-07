@@ -1,0 +1,1 @@
+Only the local PC screen may start a machine-wide install. The resolver owns the version choice (`operator/run-inside-this-session`). Callers must not hard-code `powershell` or `pwsh` launches.
