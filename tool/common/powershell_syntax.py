@@ -25,25 +25,29 @@ def enclosed(value: str, opening: str, closing: str) -> bool:
     return False
 
 
-def bound_target(prefix: str, name: str) -> str | None:
-    """Prove a literal binding through completed straight-line assignments only."""
+def bound_span(prefix: str, name: str) -> tuple[int, int] | None:
+    """Prove a literal binding while retaining the original source coordinates."""
     bare, _ = syntax(prefix)
     bindings = {}
 
-    def literal(source):
-        source = source.strip()
+    def literal(start, end):
+        start += len(prefix[start:end]) - len(prefix[start:end].lstrip())
+        source = prefix[start:end].rstrip()
         code, spans = syntax(source)
         if len(spans) == 1 and spans[0][0] == 0 and code.strip() == "0":
             source = source[:spans[0][1]]
             try:
-                return source if len(arguments(source)) == 1 else None
+                return (start, start + len(source)) if len(arguments(source)) == 1 else None
             except Refusal:
                 return None
         source = source[:len(code.rstrip())].strip()
         if enclosed(source, "(", ")"):
-            return literal(source[1:-1])
-        if enclosed(source, "{", "}"):
-            return source
+            return literal(start + 1, start + len(source) - 1)
+        container = re.sub(r"(?i)^\[ordered\]", "", source)
+        if enclosed(source, "{", "}") or container.startswith("@") and (
+            enclosed(container[1:], "{", "}") or enclosed(container[1:], "(", ")")
+        ):
+            return start, start + len(source)
         if match := re.fullmatch(r"\$(\w+)", source):
             return bindings.get(match[1].lower())
         return None
@@ -53,8 +57,8 @@ def bound_target(prefix: str, name: str) -> str | None:
         if not code.strip():
             return
         match = re.match(r"\s*(?P<cast>\[(?:System\.)?string\]\s*)?\$(?P<name>\w+)\s*=\s*", code, re.I)
-        value = literal(prefix[start + match.end():end]) if match else None
-        if value is None or match["cast"] and value.startswith("{"):
+        value = literal(start + match.end(), end) if match else None
+        if value is None or match["cast"] and prefix[value[0]] in "{@[":
             bindings.clear()
         else:
             bindings[match["name"].lower()] = value
@@ -73,6 +77,12 @@ def bound_target(prefix: str, name: str) -> str | None:
     if depth or not re.fullmatch(pending, bare[start:], re.I):
         return None
     return bindings.get(name.lower())
+
+
+def bound_target(prefix: str, name: str) -> str | None:
+    """Read a proved target without losing the shared binding validation."""
+    span = bound_span(prefix, name)
+    return prefix[slice(*span)] if span is not None else None
 
 
 def command_position(prefix: str) -> bool:

@@ -209,6 +209,14 @@ def invocations(text: str):
                                        or item.program == "import-module"):
             functions.note_import(start, item.target_end)
     for item in resolved:
+        if item.kind == "literal" and item.name is not None and any(
+            block in functions.splatted for block in functions.containers(item.target_start)
+        ):
+            binding = functions.binding(item.name, item.target_start)
+            if binding != "external":
+                item = replace(item, kind=binding)
+            if functions.binding("pwsh", item.target_start) != "external":
+                item = replace(item, modernize=False)
         if item.name is not None and "/" not in item.name and "\\" not in item.name \
                 and functions.binding("*", item.target_start) == "imported":
             item = replace(item, kind="imported", modernize=False)

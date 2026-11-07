@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import re
 
 from .powershell_syntax import LABEL, Refusal, bound_arguments, command_position, syntax
+from .powershell_splats import parameters
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class Functions:
                 self.blocks[stack.pop()] = index + 1
         self.definitions, self.called = [], []
         self.callbacks = {}
+        self.splatted = set()
         self.parallel = set()
         self.statements = set()
         pattern = r"\b(?:function|filter)\s+([\w:.-]+)\s*(?:\([^{}]*\)\s*)?(\{)"
@@ -190,20 +192,17 @@ class Functions:
         """Record possible session changes without reading or executing loaded code."""
         self.definitions.append(Definition("global:*", position, end, None, "imported"))
 
-    def callback_arguments(self, program, tail, position):
-        """Read callback roles and version requirements from outer arguments only."""
-        cursor, blocks, parallel, pending, positional = len(self.source) - len(tail), [], False, None, True
-        piped = re.search(r"(?<!\|)\|\s*(?:&\s*)?$", self.bare[:position]) is not None
-        callbacks = ("process", "begin", "end", "remainingscripts") if program == "foreach-object" else ("filterscript",)
-        switches = {"verbose", "debug", "whatif", "confirm", "asjob", "usenewrunspace"}
-        while cursor < len(self.bare):
+    def argument_spans(self, cursor, end=None):
+        """Keep argument spans and literal block spans in the submitted source."""
+        end = len(self.bare) if end is None else end
+        while cursor < end:
             if self.bare[cursor] in ";|\n)]}":
                 break
             if self.bare[cursor].isspace():
                 cursor += 1
                 continue
             start, groups, values = cursor, [], []
-            while cursor < len(self.bare):
+            while cursor < end:
                 if cursor in self.strings:
                     cursor = self.strings[cursor]
                     continue
@@ -220,19 +219,53 @@ class Functions:
                 elif char in ")]" and groups:
                     groups.pop()
                 cursor += 1
-            argument = self.bare[start:cursor]
-            parameter = re.match(r"-([a-z]+)(:|$)", argument, re.I)
-            if parameter:
-                name = parameter[1].lower()
+            yield start, cursor, values
+
+    def callback_arguments(self, program, tail, position):
+        """Read callback roles and version requirements from outer arguments only."""
+        cursor, blocks, parallel, pending, positional = len(self.source) - len(tail), [], False, None, True
+        piped = re.search(r"(?<!\|)\|\s*(?:&\s*)?$", self.bare[:position]) is not None
+        callbacks = ("process", "begin", "end", "remainingscripts") if program == "foreach-object" else ("filterscript",)
+        switches = {"verbose", "debug", "whatif", "confirm", "asjob", "usenewrunspace"}
+        items = []
+        for first, last, values in self.argument_spans(cursor):
+            cursor = last
+            splat = re.fullmatch(r"@(\w+)", self.bare[first:last])
+            if splat:
+                for name, a, b in parameters(self.source, position, splat[1]):
+                    values = [block for _, _, blocks in self.argument_spans(a, b) for block in blocks]
+                    items.append((name, a, b, values, True))
+            elif re.match(r"@[\w:]", self.bare[first:last]):
+                raise Refusal("스플랫 매개 변수의 범위를 실행 전에 확정할 수 없다.")
+            else:
+                items.append((None, first, last, values, False))
+        def canonical(name):
+            return next((option for option in (*callbacks, "inputobject", "parallel") if option.startswith(name)), name)
+
+        explicit = {canonical(match[1].lower()) for name, a, b, _, splat in items if not splat
+                    and (match := re.match(r"-([a-z]+)(:|$)", self.bare[a:b], re.I))}
+        seen = set()
+        for name, _, _, _, splat in items:
+            if splat and name is not None:
+                key = canonical(name)
+                if key in seen or key in explicit:
+                    raise Refusal("중복된 스플랫 매개 변수를 실행 전에 확정할 수 없다.")
+                seen.add(key)
+        for name, start, end, values, splat in items:
+            argument = self.bare[start:end]
+            parameter = None if splat else re.match(r"-([a-z]+)(:|$)", argument, re.I)
+            if name is not None or parameter:
+                name = name if name is not None else parameter[1].lower()
                 parallel |= program == "foreach-object" and len(name) >= 2 and "parallel".startswith(name)
                 pending = "input" if "inputobject".startswith(name) else any(option.startswith(name) for option in callbacks)
-                if parameter[2] != ":":
+                if parameter is not None and parameter[2] != ":":
                     if name in {"vb", "db", "wi", "cf"} or any(option.startswith(name) for option in switches):
                         pending = None
                     continue
-                start += parameter.end()
+                if parameter is not None:
+                    start += parameter.end()
             # Only literal block values belong to this argument, never blocks inside a nested command.
-            value = self.bare[start:cursor]
+            value = self.bare[start:end]
             for block in reversed(values):
                 value = value[:block - start] + "0" + value[self.blocks[block] - start:]
             literal = values and re.fullmatch(r"[\s(@),0]*", value)
@@ -242,9 +275,11 @@ class Functions:
                 callback = piped and not re.search(r"[@,]", value)
             if callback and literal:
                 blocks.extend(values)
+                if splat:
+                    self.splatted.update(values)
             if pending is None and argument.strip(",") and (program == "where-object" or not literal):
                 positional = False
-            next_arg = self.bare[cursor:].lstrip(" \t\r")
+            next_arg = self.bare[end:].lstrip(" \t\r")
             if not argument.endswith(",") and not next_arg.startswith(","):
                 pending = None
         return cursor, blocks, parallel
