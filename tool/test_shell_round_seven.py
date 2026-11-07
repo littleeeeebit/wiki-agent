@@ -42,6 +42,25 @@ def test_straight_line_literal_bindings_resolve_without_rewriting(binding):
     assert any(target.program == "python" and target.kind == "bound" for target in shell.invocations(command))
 
 
+@pytest.mark.parametrize("command", ["Write-Output fixture", "pwsh -Command 'Write-Output fixture'",
+                                     "1 | ForEach-Object { $_ }", "$runner='python'; & $runner outside/check.py",
+                                     "$map=@{powershell='value'}; Write-Output $map",
+                                     "function powershell { Write-Output fixture }; powershell"])
+def test_version_independent_hook_calls_never_probe_powershell(monkeypatch, request, command):
+    repair, claude, codex = request.getfixturevalue("hosts")
+
+    def unexpected_probe():
+        pytest.fail("A version-independent command must not start PowerShell version probes")
+
+    monkeypatch.setattr(shell, "chosen", unexpected_probe)
+    assert repair.repaired(command, "ps") == (command, [])
+    for host, verdict, tool, field in (("claude", claude.verdict, "PowerShell", "command"),
+                                      ("codex", codex.verdict, "functions.exec_command", "cmd")):
+        payload = {"tool_name": tool, "tool_input": {field: command}}
+        assert repair.refusal(payload, host) is None
+        assert verdict(payload) is None
+
+
 @pytest.mark.parametrize("body", ["Write-Output ok", "Get-Error"])
 @pytest.mark.parametrize("major", [5, 7])
 def test_resolved_classic_variable_child_uses_its_own_capabilities(monkeypatch, body, major):

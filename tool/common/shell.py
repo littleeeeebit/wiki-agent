@@ -1,6 +1,7 @@
 """One version-aware boundary for PowerShell text and launches."""
 
 from dataclasses import dataclass, replace
+from concurrent.futures import ThreadPoolExecutor
 import base64
 import binascii
 import os
@@ -46,8 +47,7 @@ def detect(*, refresh: bool = False) -> tuple[PowerShell, ...]:
     global _detected
     with _lock:
         if _detected is None or refresh:
-            found = []
-            for name in ("pwsh", "powershell"):
+            def probe(name):
                 executable = shutil.which(name)
                 # An installer cannot change its parent's PATH. Its standard
                 # machine install remains discoverable from this running server.
@@ -55,7 +55,7 @@ def detect(*, refresh: bool = False) -> tuple[PowerShell, ...]:
                     installed = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "PowerShell/7/pwsh.exe"
                     executable = str(installed) if installed.is_file() else None
                 if not executable:
-                    continue
+                    return None
                 try:
                     done = subprocess.run([executable, "-NoProfile", "-NonInteractive", "-Command", VERSION],
                                           capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -64,10 +64,13 @@ def detect(*, refresh: bool = False) -> tuple[PowerShell, ...]:
                     major = int(version.split(".")[0])
                     if done.returncode == 0 and (name == "pwsh" and major >= 7
                                                  or name == "powershell" and version.split(".")[:2] == ["5", "1"]):
-                        found.append(PowerShell(executable, version, major))
+                        return PowerShell(executable, version, major)
                 except (OSError, ValueError, subprocess.TimeoutExpired):
-                    continue
-            _detected = tuple(found)
+                    pass
+                return None
+
+            with ThreadPoolExecutor(max_workers=2) as probes:
+                _detected = tuple(item for item in probes.map(probe, ("pwsh", "powershell")) if item is not None)
         return _detected
 
 

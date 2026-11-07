@@ -25,13 +25,13 @@ def _pwsh(command: str, dialect: str) -> str:
     from edit_as_diff import blank_data_heredocs
 
     if dialect == "ps":
-        if os.name == "nt" and shell.chosen().major < 7:
-            return command
         replacements = []
         for match in shell.invocations(command):
             start, end = match.target_start, match.target_end
             if match.kind == "literal" and match.modernize and match.program == "powershell" and re.fullmatch(r"powershell(?:\.exe)?", command[start:end], re.I):
                 replacements.append((start, end, "pwsh" if NO_PROFILE.match(command, end) else "pwsh -NoProfile"))
+        if not replacements or os.name == "nt" and shell.chosen().major < 7:
+            return command
         for start, end, replacement in reversed(replacements):
             command = command[:start] + replacement + command[end:]
         return command
@@ -61,13 +61,15 @@ def refusal(payload: dict, host: str = "claude") -> dict | None:
     try:
         if shell.classic_seven_only(command):
             raise shell.Refusal(f"Windows PowerShell에는 7 전용 명령을 넘길 수 없다. '{shell.INSTALL_CONTROL}'에서 확인하세요.")
+        from pytest_output import held_back
+        needs_sink = dialect == "ps" and held_back(command, dialect)
+        if not shell.seven_only(command) and not needs_sink:
+            return None
         if shell.chosen().major >= 7:
             return None
         shell.resolve("gate", form="ps5", command=command)
-        if dialect == "ps":
-            from pytest_output import held_back
-            if held_back(command, dialect):
-                shell.resolve("pytest-tee", form="ps5", log="fixture.log")
+        if needs_sink:
+            shell.resolve("pytest-tee", form="ps5", log="fixture.log")
     except shell.Refusal as exc:
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                        "permissionDecisionReason": str(exc)}}
@@ -135,7 +137,7 @@ def repaired(command: str, dialect: str = "posix") -> tuple[str, list[str]]:
     if fixed != command:
         notes.append("`powershell` (Windows PowerShell 5.1) ran as `pwsh -NoProfile` (PowerShell 7). "
                      "Call `pwsh` directly.")
-    if dialect == "ps" and os.name == "nt" and shell.chosen().major < 7:
+    if dialect == "ps" and os.name == "nt" and shell.seven_only(fixed) and shell.chosen().major < 7:
         compatible = shell.resolve("gate", form="ps5", command=fixed)
         if compatible != fixed:
             notes.append("The command used the compatible PowerShell 5.1 form.")

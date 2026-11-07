@@ -40,11 +40,31 @@ def test_version_is_probed_once_and_the_preferred_executable_is_exposed(monkeypa
     assert shell.chosen().version == versions[expected]
     assert shell.chosen().major == int(versions[expected][0])
     assert len(shell.detect()) == len(versions)
-    assert calls == [name for name in ("pwsh", "powershell") if name in versions]
+    assert sorted(calls) == sorted(versions)
     if os.name == "nt":
         argv, use_shell = shell.launch("git-status")
         assert argv[0] == expected and not use_shell
         assert shell.chosen().form == ("pwsh7" if expected == "pwsh" else "ps5")
+
+
+def test_version_probes_overlap_and_finish_before_cached_detection_returns(monkeypatch):
+    calls, workers, together = [], [], threading.Barrier(2)
+    monkeypatch.setattr(shell, "_detected", None)
+    monkeypatch.setattr(shutil, "which", lambda name: name)
+
+    def probe(argv, **kwargs):
+        calls.append(argv[0])
+        workers.append(threading.current_thread())
+        together.wait(timeout=3)
+        version = "7.6.1" if argv[0] == "pwsh" else "5.1.1"
+        return subprocess.CompletedProcess(argv, 0, version, "")
+
+    monkeypatch.setattr(subprocess, "run", probe)
+    assert [item.major for item in shell.detect()] == [7, 5]
+    assert shell.chosen().major == 7
+    assert sorted(calls) == ["powershell", "pwsh"]
+    assert len({worker.ident for worker in workers}) == 2
+    assert not any(worker.is_alive() for worker in workers)
 
 
 @pytest.mark.parametrize("failure", ["wrong-version", "exit-failure", "timeout", "missing"])
