@@ -4,7 +4,7 @@ import pytest
 
 from common import shell
 from common.powershell_splats import parameters
-from common.powershell_syntax import bound_span
+from common.powershell_syntax import bound_span, bound_target
 from test_shell_array_statements import CALLBACKS, callback_source
 from test_shell_binding_order import host_outputs
 from test_shell_functions import native
@@ -19,6 +19,9 @@ ARRAYS = [("@(1,2)", "@(0,0)"), ("@((1,2))", "@(0,0)"), ("@(((1,2)))", "@(0,0)")
           ("@((1,(2,3)))", "@(0,@(0,0))"), ("@((,1))", "@(0)"),
           ("@(,(1,2))", "@(@(0,0))"), ("@(1,,2)", "@(0,@(0))"),
           ("@(,,1)", "@(@(0))"), ("@((,@()))", "@(@())")]
+ARRAYS += [(array[2:-1], shape) for index, (array, shape) in enumerate(ARRAYS) if index != 4]
+ARRAYS += [("1,\n2", "@(0,0)"), ("1,\r\n# fixture\n2", "@(0,0)")]
+ARRAYS += [("('first','second')", "@(0,0)"), ("('first,field','startup.rc')", "@(0,0)")]
 CONTEXTS = [("$options=@{{InputObject={array}; Process={body}}}; ForEach-Object @options", "$_"),
             ("$items={array}; $options=@{{InputObject=$items; Process={body}}}; ForEach-Object @options", "$_"),
             ("$saved=@{{InputObject={array}; Process={body}}}; $options=$saved; ForEach-Object @options", "$_"),
@@ -35,9 +38,70 @@ function Format-FixtureShape($value) {
 GROUPS = ["({values})", "(({values}))", "({values});@()"]
 
 
-def grouped_callback(context, group):
+def grouped_callback(context, group, collected=True):
     values = callback_source(",", "{array}")[2:-1]
-    return context.format(array="@(" + group.format(values=values) + ")")
+    array = group.format(values=values)
+    return context.format(array="@(" + array + ")" if collected else array)
+
+
+ROOT_GROUPS = ["{values}", "({values})", "(({values}))", "(\n{values}\n)"]
+ROOT_CONTEXTS = ["$options={array}; 1 | ForEach-Object @options",
+                 "$saved={array}; $options=$saved; 1 | ForEach-Object @options",
+                 "$options={array}; $unrelated=1; 1 | ForEach-Object @options",
+                 "$options={array}; $unrelated=$external; 1 | ForEach-Object @options"]
+
+
+@pytest.mark.parametrize("group", ROOT_GROUPS)
+@pytest.mark.parametrize("context", ROOT_CONTEXTS)
+@pytest.mark.parametrize("major", [5, 7])
+def test_bare_comma_bindings_preserve_both_callbacks_at_every_boundary(monkeypatch, request, context, group, major):
+    agents = request.getfixturevalue("hosts")
+    monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", f"{major}.1", major),))
+    source = grouped_callback(context, group, collected=False)
+    position = source.index("ForEach-Object")
+    assert bound_span(source[:position].removesuffix("1 | ") + " & ", "options") is not None
+    values = parameters(source, position, "options")
+    assert [code for _, _, _, code, _ in values] == ["0", "0"]
+    assert [blocks for _, _, _, _, blocks in values] == [[source.index("{ function global:")], [source.index("{ powershell -Command")]]
+    for form in ("ps5", "pwsh7"):
+        assert shell.resolve("gate", form=form, command=source) == source
+        assert shell.resolve("registered-check", form=form, command=source) == source
+    assert agents[0]._pwsh(source, "ps") == source
+    host_outputs(agents, source, source)
+
+
+@pytest.mark.parametrize("prefix", ["$first={}; $second={}; $options=($first,$second)",
+                                    "$first={}; $second={}; $options=($first,$second); $first=$external"])
+def test_bare_comma_operands_keep_construction_time_callback_spans(prefix):
+    source = prefix + "; 1 | ForEach-Object @options"
+    values = parameters(source, source.index("ForEach-Object"), "options")
+    assert [blocks for _, _, _, _, blocks in values] == [[source.index("{}")], [source.index("{}", source.index("{}") + 2)]]
+
+
+@pytest.mark.parametrize("value", ["'first','second'", "'first,field','startup.rc'"])
+def test_bare_comma_binding_keeps_complete_quoted_operand_spans(value):
+    prefix = "$options=(" + value + "); & "
+    span = bound_span(prefix, "options")
+    assert span is not None and prefix[slice(*span)] == value
+
+
+@pytest.mark.parametrize("prefix", ["$options=({},$external)", "$options=({},(Get-Fixture))",
+                                    "$options=({},)", "$options=(,)", "[string]$options=({}, {})",
+                                    "[string]$options=('first','second')",
+                                    "$options=({}, {}); Update-Fixture", "$options=({}, {}); $options[0]=$external"])
+def test_unproved_or_invalidated_bare_arrays_remain_refused(request, prefix):
+    agents = request.getfixturevalue("hosts")
+    assert bound_span(prefix + "; & ", "options") is None
+    assert_refused(agents, prefix + "; 1 | ForEach-Object @options")
+
+
+@pytest.mark.parametrize("value", ["('python','powershell')", "(,'powershell')", "({}, {})"])
+def test_proved_comma_arrays_do_not_become_scalar_executable_targets(request, value):
+    agents = request.getfixturevalue("hosts")
+    prefix = "$runner=" + value + "; & "
+    assert bound_span(prefix, "runner") is not None
+    assert bound_target(prefix, "runner") is None
+    assert_refused(agents, prefix + "$runner -Command 'Get-Error'")
 
 
 @pytest.mark.parametrize("major", [5, 7])
@@ -118,6 +182,7 @@ def test_native_grouped_callback_fixture_preserves_order_and_selected_function(m
     import command_repair
     monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", "7.1", 7),))
     sources = [grouped_callback(context, group) for context in CALLBACKS for group in GROUPS]
+    sources += [grouped_callback(context, group, collected=False) for context in ROOT_CONTEXTS for group in ROOT_GROUPS]
     for original in sources:
         repaired = command_repair._pwsh(original, "ps")
         assert repaired == original

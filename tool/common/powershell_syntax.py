@@ -25,13 +25,37 @@ def enclosed(value: str, opening: str, closing: str) -> bool:
     return False
 
 
+def comma_spans(code, start, end):
+    """Locate comma operands, retaining unary commas and rejecting missing operands."""
+    depth, first, found, operands = 0, start, False, []
+    for index in range(start, end):
+        char = code[index]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif not depth and char == ",":
+            found = True
+            if code[first:index].strip(" \t\r\n,"):
+                operands.append((first, index))
+                first = index + 1
+    if not found or not code[first:end].strip(" \t\r\n,"):
+        return None
+    operands.append((first, end))
+    if len(operands) == 1:
+        # A lone operand with a leading comma constructs a singleton array.
+        first += len(code[first:end]) - len(code[first:end].lstrip())
+        operands = [(first + 1, end)]
+    return operands
+
+
 def bound_span(prefix: str, name: str) -> tuple[int, int] | None:
     """Prove a literal binding while retaining the original source coordinates."""
     bare, _ = syntax(prefix)
     bindings = {}
 
     def literal(start, end):
-        start += len(prefix[start:end]) - len(prefix[start:end].lstrip())
+        start += len(bare[start:end]) - len(bare[start:end].lstrip())
         source = prefix[start:end].rstrip()
         code, spans = syntax(source)
         if len(spans) == 1 and spans[0][0] == 0 and code.strip() == "0":
@@ -40,7 +64,8 @@ def bound_span(prefix: str, name: str) -> tuple[int, int] | None:
                 return (start, start + len(source)) if len(arguments(source)) == 1 else None
             except Refusal:
                 return None
-        source = source[:len(code.rstrip())].strip()
+        code_end = max([len(code.rstrip()), *(string_end for _, string_end in spans)])
+        source = source[:code_end].strip()
         if enclosed(source, "(", ")"):
             return literal(start + 1, start + len(source) - 1)
         container = re.sub(r"(?i)^\[ordered\]", "", source)
@@ -52,6 +77,9 @@ def bound_span(prefix: str, name: str) -> tuple[int, int] | None:
             return start, start + len(source)
         if match := re.fullmatch(r"\$(\w+)", source):
             return bindings.get(match[1].lower())
+        operands = comma_spans(bare, start, start + len(source))
+        if operands is not None and all(literal(first, last) is not None for first, last in operands):
+            return start, start + len(source)
         return None
 
     def statement(start, end):
@@ -63,7 +91,7 @@ def bound_span(prefix: str, name: str) -> tuple[int, int] | None:
         if value is None and match and not match["cast"] and re.fullmatch(r"\s*\$\w+\s*", code[match.end():]):
             # A plain variable copy cannot change values already captured by other bindings.
             bindings.pop(match["name"].lower(), None)
-        elif value is None or match["cast"] and prefix[value[0]] in "{@[":
+        elif value is None or match["cast"] and (prefix[value[0]] in "{@[" or comma_spans(bare, *value) is not None):
             bindings.clear()
         else:
             bindings[match["name"].lower()] = value
@@ -75,6 +103,8 @@ def bound_span(prefix: str, name: str) -> tuple[int, int] | None:
         elif char in ")]}":
             depth -= 1
         elif not depth and char in ";\n":
+            if char == "\n" and bare[start:index].rstrip().endswith(("=", ",")):
+                continue
             statement(start, index)
             start = index + 1
     # Only an unevaluated assignment/return prefix may precede this call in the current statement.
@@ -87,7 +117,12 @@ def bound_span(prefix: str, name: str) -> tuple[int, int] | None:
 def bound_target(prefix: str, name: str) -> str | None:
     """Read a proved target without losing the shared binding validation."""
     span = bound_span(prefix, name)
-    return prefix[slice(*span)] if span is not None else None
+    if span is None:
+        return None
+    value = prefix[slice(*span)]
+    if comma_spans(syntax(value)[0], 0, len(value)) is not None:
+        return None
+    return value
 
 
 def command_position(prefix: str) -> bool:

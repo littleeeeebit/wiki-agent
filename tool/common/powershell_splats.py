@@ -2,7 +2,7 @@
 
 import re
 
-from .powershell_syntax import Refusal, arguments, bound_span, enclosed, syntax
+from .powershell_syntax import Refusal, arguments, bound_span, comma_spans, enclosed, syntax
 
 
 def parameters(source, position, name):
@@ -32,7 +32,7 @@ def parameters(source, position, name):
     if span is None:
         raise Refusal("스플랫 매개 변수의 값을 실행 전에 확정할 수 없다.")
 
-    def parts(start, end, separators, keep_empty=False):
+    def parts(start, end, separators):
         depth, first = 0, start
         for index in range(start, end):
             char = bare[index]
@@ -43,10 +43,10 @@ def parameters(source, position, name):
             elif not depth and char in separators and not bare[first:index].rstrip().endswith("="):
                 if char == "\n" and bare[first:index].rstrip().endswith(","):
                     continue
-                if keep_empty or bare[first:index].strip():
+                if bare[first:index].strip():
                     yield first, index
                 first = index + 1
-        if keep_empty or bare[first:end].strip():
+        if bare[first:end].strip():
             yield first, end
 
     def trim(start, end):
@@ -73,23 +73,9 @@ def parameters(source, position, name):
         return result
 
     def comma_values(start, end):
-        pieces = list(parts(start, end, ",", keep_empty=True))
-        if len(pieces) < 2:
+        operands = comma_spans(bare, start, end)
+        if operands is None:
             return None
-        operands, pending = [], None
-        for first, last in pieces:
-            if not bare[first:last].strip():
-                if pending is None:
-                    pending = first
-            else:
-                operands.append((first if pending is None else pending, last))
-                pending = None
-        if pending is not None:
-            return None
-        if len(operands) == 1:
-            # A lone operand with a leading comma constructs a singleton array.
-            first, last = operands[0]
-            operands = [(trim(first, last)[0] + 1, last)]
         result = []
         for first, last in operands:
             value = literal(first, last)
