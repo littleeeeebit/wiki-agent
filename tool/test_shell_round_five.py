@@ -38,8 +38,8 @@ DATA = [
 ]
 
 
-def native_commands(scripts):
-    executable = shutil.which("powershell")
+def native_commands(scripts, major=5):
+    executable = shutil.which("pwsh" if major == 7 else "powershell")
     if os.name != "nt" or not executable:
         pytest.skip("Windows PowerShell AST differential oracle")
     script = r"""
@@ -67,8 +67,14 @@ def native_commands(scripts):
                 [PSCustomObject]@{ keyStart = $pair.Item1.Extent.StartOffset; keyEnd = $pair.Item1.Extent.EndOffset;
                     valueStart = $pair.Item2.Extent.StartOffset; valueEnd = $pair.Item2.Extent.EndOffset }
             } })
+        $arrays = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.ArrayExpressionAst] }, $true) |
+            ForEach-Object { [PSCustomObject]@{ start = $_.Extent.StartOffset; end = $_.Extent.EndOffset;
+                statements = @($_.SubExpression.Statements).Count } })
+        $arrayLiterals = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.ArrayLiteralAst] }, $true) |
+            ForEach-Object { [PSCustomObject]@{ start = $_.Extent.StartOffset; end = $_.Extent.EndOffset;
+                elements = @($_.Elements).Count } })
         [PSCustomObject]@{ errors = @($errors).Count; targets = $targets; commands = $records; pairs = $pairs;
-            version = $PSVersionTable.PSVersion.ToString() }
+            arrays = $arrays; arrayLiterals = $arrayLiterals; version = $PSVersionTable.PSVersion.ToString() }
     })
     ConvertTo-Json -InputObject $rows -Compress -Depth 5
     """

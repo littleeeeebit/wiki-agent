@@ -70,6 +70,18 @@ def parameters(source, position, name):
             result.append((names[0].lower(), *trim(equal + 1, last), *value))
         return result
 
+    def array_values(start, end):
+        text = source[start:end]
+        if not text.startswith("@(") or not enclosed(text[1:], "(", ")"):
+            return None
+        result = []
+        for first, last in parts(start + 2, end - 1, ",;\n"):
+            value = literal(first, last)
+            if value is None:
+                return None
+            result.append((*trim(first, last), *value))
+        return result
+
     def literal(start, end):
         start, end = trim(start, end)
         text, code = source[start:end], bare[start:end]
@@ -87,16 +99,14 @@ def parameters(source, position, name):
         if map_entries(start, end) is not None:
             # Entries are validated recursively, but their blocks and keys remain data.
             return "0", []
-        if text.startswith("@(") and enclosed(text[1:], "(", ")"):
-            values = [literal(a, b) for a, b in parts(start + 2, end - 1, ",")]
-            if all(value is not None for value in values):
-                return "@(" + ",".join(code for code, _ in values) + ")", [block for _, blocks in values for block in blocks]
+        values = array_values(start, end)
+        if values is not None:
+            return "@(" + ",".join(code for _, _, code, _ in values) + ")", [block for _, _, _, blocks in values for block in blocks]
         return None
 
     start, end = span
     while enclosed(source[start:end], "(", ")"):
         start, end = trim(start + 1, end - 1)
-    text = source[start:end]
     result = map_entries(start, end)
     if result is not None:
         if any(not re.fullmatch(r"[a-z][\w-]*", entry[0], re.I) for entry in result):
@@ -104,14 +114,9 @@ def parameters(source, position, name):
         if len({entry[0] for entry in result}) != len(result):
             raise Refusal("중복된 스플랫 매개 변수를 실행 전에 확정할 수 없다.")
         return result
-    if text.startswith("@(") and enclosed(text[1:], "(", ")"):
-        result = []
-        for first, last in parts(start + 2, end - 1, ","):
-            value = literal(first, last)
-            if value is None:
-                raise Refusal("스플랫 매개 변수의 값을 실행 전에 확정할 수 없다.")
-            result.append((None, *trim(first, last), *value))
-        return result
+    values = array_values(start, end)
+    if values is not None:
+        return [(None, *value) for value in values]
     value = literal(start, end)
     if value is not None:
         return [(None, start, end, *value)]
