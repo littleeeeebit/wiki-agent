@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Btn, Modal } from '@/components/Modal'
 import * as api from '@/lib/api'
-import type { ConnectPlan, Project } from '@/lib/api'
+import type { ConnectPlan, PowerShellStatus, Project } from '@/lib/api'
+import { PowerShell } from '@/components/PowerShell'
 import { remote } from '@/lib/mobile'
 import { cn } from '@/lib/utils'
 
@@ -21,10 +22,11 @@ export function Projects({ current }: { current: string }) {
   // Where no OS dialog opens here — a phone, a Python without Tk — the path is typed.
   const [typing, setTyping] = useState(remote)
   const [typed, setTyped] = useState('')
+  const [powershell, setPowerShell] = useState<PowerShellStatus>()
 
   const read = useCallback(() => {
     api.getConnect()
-      .then(({ rows }) => setRows(rows))
+      .then(({ rows, powershell }) => { setRows(rows); setPowerShell(powershell) })
       .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
   }, [])
 
@@ -100,6 +102,7 @@ export function Projects({ current }: { current: string }) {
           </Btn>
         )}
       </div>
+      <PowerShell status={powershell} read={read} disabled={!!working} />
       {fault && (
         <div role="alert" className="whitespace-pre-wrap border-b border-destructive/30 bg-destructive/10 px-5 py-2 text-[12.5px] text-destructive">
           {fault}

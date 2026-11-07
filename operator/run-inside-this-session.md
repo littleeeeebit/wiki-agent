@@ -4,8 +4,6 @@ severity: landmine
 repeat: rule
 triggers: ["pwsh", "powershell", "파워\\s*셸", "파워쉘", "Start-Process", "서버를? (띄|올|켜|실행|재시작)", "server 를? (띄|올|켜)", "uvicorn", "npm run dev", "런처", "\\.cmd 를?", "이 셀(에서|에|안)", "백그라운드로 (띄|돌)"]
 slots: [server_stop]
-enforce:
-  deny: ["Bash(powershell -*)", "Bash(powershell.exe*)"]
 sources: []
 sources_withheld: true
 links: [after-merge-cleanup, pick-up-async-results, hooks-fail-open, name-the-build-on-screen, command-guide]
@@ -13,8 +11,10 @@ links: [after-merge-cleanup, pick-up-async-results, hooks-fail-open, name-the-bu
 
 # The shell is `pwsh`, and servers start inside this cell
 
-Rule. When PowerShell is needed, call `pwsh` — `powershell` is a different
-product. Start servers inside this cell — not with `Start-Process`, not in a
+Rule. When PowerShell is needed, use the `pwsh` instruction. The app's resolver
+owns the executable and version choice: on a 5.1-only machine it supplies the
+catalogue's `ps5` form and refuses a 7-only command with the `PowerShell 7 설치`
+control named. Start servers inside this cell — not with `Start-Process`, not in a
 detached window, not through a `.cmd` called from Git Bash; in the
 background, as this cell's own background task. What the user has to run,
 they type in this cell with the `!` prefix. Tell servers apart by port and
@@ -85,10 +85,11 @@ but that the response came from this project.
 
 ## What layer 1 blocks and what it cannot
 
-Only `powershell` is shaped like a command. Since 2026-11-03 the PreToolUse
-hook (`tool/command_repair.py`) does not refuse it: it renames the command word
-to `pwsh -NoProfile`, runs that, and tells the agent. `permissions.deny` keeps
-the prefix rules as the backstop for a shape the rename misses.
+The resolver (`tool/common/shell.py`) probes both PowerShell executables once
+per process. The PreToolUse hook (`tool/command_repair.py`) uses that choice:
+with 7 installed it repairs `powershell` to `pwsh -NoProfile`; with only 5.1
+it keeps the compatible form and refuses known 7-only constructs. The old
+`powershell` prefix denies are retired so they cannot block the `ps5` form.
 
 The other two cannot ride on layer 1. `Start-Process` goes inside
 `pwsh -Command "..."`, where a prefix rule cannot reach. Calling a `.cmd`

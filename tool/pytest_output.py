@@ -3,6 +3,8 @@
 import re
 import shlex
 
+from common import shell
+
 # A quoted string, by the shell's own escapes: backslash-quote in Git Bash, backtick-quote in PowerShell.
 # PowerShell's single quotes double (`''`) rather than escape,
 # and its here-strings (`@'` ... `'@` on lines of their own) hold quotes freely.
@@ -129,7 +131,9 @@ def teed(command: str, log: str, dialect: str = "posix") -> str:
         inside = "$(" in before or (dialect == "posix" and "`" in before)
         if runs_pytest(before.strip()) and not _tee(after.strip()) and not inside:
             joint = " |" if before.rstrip().endswith("2>&1") else " 2>&1 |"
-            out.append(f"{command[cursor:mark.start()].rstrip()}{joint} tee {log} |")
+            form = shell.chosen().form if dialect == "ps" else "bash"
+            sink = shell.resolve("pytest-tee", form=form, log=log)
+            out.append(f"{command[cursor:mark.start()].rstrip()}{joint} {sink} |")
             cursor = mark.end()
     return "".join(out) + command[cursor:]
 

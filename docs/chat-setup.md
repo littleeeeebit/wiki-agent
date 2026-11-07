@@ -10,6 +10,20 @@ here changes that page in the same pull request.
 ## 1. Preparation first
 
 - Install Git, Python 3.11 or higher, Node.js 22.12 or higher, and Rust (<https://rustup.rs>) to build the window.
+- Prepare PowerShell 7 on Windows:
+
+```powershell
+winget install --id Microsoft.PowerShell --source winget
+```
+
+The connection screen reports this PC's PowerShell version. A PC with only
+Windows PowerShell 5.1 can use the compatible command forms and offers
+`PowerShell 7 설치`. The server owns that install task, shows its output, and
+probes the version again when it ends. Without winget, the control opens the
+[official download page](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows)
+and explains why. Restart the app if an installation in a custom folder has
+not reached its PATH.
+
 - Download this repository and the project to be queried using `git clone`. If the GitHub repository is private, access permissions are required.
 - Install only the CLI you intend to use. There is no need to install both.
 

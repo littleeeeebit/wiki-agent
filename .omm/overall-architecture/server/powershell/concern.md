@@ -1,0 +1,1 @@
+The documents describe literal-text classification of command position, aliases and functions as bounded. Static evidence covers the tested grammar and the installed Windows PowerShell parser. It does not establish runtime binding for inherited aliases, provider-created functions or every PowerShell 7 feature.

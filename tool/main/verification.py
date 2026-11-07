@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -24,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 import native_verification
 
 from common.settings import unquote
-from common import indexes, process
+from common import indexes, process, shell
 from common.budget import Budget, Cancelled, Exhausted
 from . import query, runtime, specs
 from .runtime import prepare
@@ -654,7 +653,7 @@ def _execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt:
                 request_file.write_text(json.dumps(request), encoding="utf-8")
                 env["WIKI_VERIFICATION_NATIVE_REQUEST"] = str(request_file)
                 argv = [sys.executable, str(Path(native_verification.__file__).resolve())]
-                command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
+                command = shell.command_line(argv)
             verdict = specs.judge(path, [command], halt, env=env, timeout=min(runtime.FLOW_SECONDS, budget.left()))
             if verdict.get("code") is None and not halt.is_set():
                 row.update(reason="선택 흐름 실행 시간 제한을 넘었다", log=redact(verdict["tail"], settings),

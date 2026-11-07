@@ -1,0 +1,9 @@
+created: 2026-11-07T11:40:16.742Z
+updated: 2026-11-07T23:06:15.338Z
+update_count: 5
+last_field: description
+kind: nested-class
+title: powershell
+children: []
+parentPath:
+  - server

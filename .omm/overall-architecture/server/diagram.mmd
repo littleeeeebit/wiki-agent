@@ -5,8 +5,12 @@ lifecycle["Exclusive server lifecycle\ntool/main/runtime.py"]
 feed["Shared change subscriptions\ntool/main/loop.py"]
 architecture["Architecture document workflow\ntool/main/architecture.py"]
 suite["Execution status projection\ntool/main/suite.py"]
+powershell["PowerShell version and install\ntool/main/powershell.py"]
 ingress -->|"Accepted requests install the claimed X-Project context"| selection
 selection -->|"Scoped architecture routes resolve the current checkout"| architecture
 selection -->|"Suite listing selects repository-owned tasks and runs"| suite
 lifecycle -->|"Startup recovers workflows whose saves publish invalidations"| feed
 ingress -->|"GET loops/events serves changes after the supplied cursor"| feed
+ingress -->|"Local POST shell/install starts install"| powershell
+powershell -->|"Install output publishes connect events"| feed
+lifecycle -->|"close_turns joins the install thread"| powershell

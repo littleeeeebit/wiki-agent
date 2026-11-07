@@ -1,0 +1,201 @@
+# Review research — F8, cycle 2
+
+Draft research before the fix of review round 22 of PR #307, written 2026-11-07. It is not a verified fact or a shared rule: the review reads it with the fix.
+
+## Problem
+
+F8 breaks the compatibility promise that proved PowerShell 5.1 forms remain executable. Before repair, the source predicted refusal for the grouped comma-array fixture now retained in `test_reported_grouped_comma_form_is_compatible_at_every_boundary`: binding discovery retained the options map, but array decoding could not interpret the grouped comma expression. The exception propagated through both capability traversals, affecting explicit ps5 and pwsh7 resolver forms before launch. This was a static trace; the subsequent observations are recorded in Result. [C1, C2]
+
+Trigger: recurrence, rounds 7, 18, 19, 20, 22.
+
+- [P1] [P1] tool/common/powershell_splats.py:88 — grouped comma expressions are rejected inside collected array statements / when a compatible splat contains `@((1,2))` / a valid PowerShell 5.1 command is denied
+
+## Failed fixes
+
+- Round 7 corrected blanket refusal of variable-selected executables by proving straight-line literal bindings. That restored the reported executable forms, but binding provenance and recursive collection-value interpretation remained separate concerns. The earlier refusal policy had addressed uncertain child-shell admission without preserving the compatible constant-bound cases. [C3]
+- Round 18 added construction-time resolution of captured literal values, including script blocks. It repaired capture provenance; nested literal maps still lacked a decoding branch. Round 19 added recursive map validation, preserving nested blocks and keys as data, but array decoding still assumed comma-delimited contents. These histories are reconstructed from the supplied findings and the prior research record, rather than independently inspected historical commits. [C3]
+- Round 20 consolidated nested and positional array decoding and added statement separators, native checks, capture contexts and callback controls. The prior research records successful focused checks. The current recurrence does not show that consolidation failed: its shared helper still recognizes array-valued expressions only through explicit @(...). A grouped comma expression reaches that helper after grouping is stripped and falls outside its grammar. [C2, C4]
+- Round 22 has no reported correction. Its failing composition was absent from the inspected matrices: they cover comma expressions, statement arrays, nested @() and grouping around empty @(), but not grouping around a comma expression. More contexts using the same fixed VALUES list could not expose that missing expression form. [C4, C5]
+
+## Sources
+
+### S1 — Repository PowerShell compatibility promise
+
+- URL: docs/chat-setup.md
+- Retrieved: 2026-11-07
+- Locator: Lines 19–25
+- Fragment: A PC with only Windows PowerShell 5.1 can use the compatible command forms and offers `PowerShell 7 설치`.
+- Applicability: Defines the compatibility invariant F8 breaks.
+- Counterevidence: Does not promise static resolution of arbitrary dynamic commands.
+- Validation: Proved compatible fixtures resolve unchanged through both gate forms.
+
+### S2 — Current splat value and array decoder
+
+- URL: tool/common/powershell_splats.py
+- Retrieved: 2026-11-07
+- Locator: map_entries(), array_values(), value_span(), literal(); lines 56–145
+- Fragment: if not text.startswith("@(") or not enclosed(text[1:], "(", ")"): return None ... elements = list(parts(first, last, ",")) ... nested = array_values(*elements[0]) ... if enclosed(source[start:end], "(", ")"): return value_span(start + 1, end - 1) ... if len(names) != 1 or value is None: raise Refusal
+- Applicability: Shows the exact failure sequence and the shared nested/positional array consumer.
+- Counterevidence: The splitter respects nesting and the decoder already handles explicit nested @() arrays; the missing form is narrower.
+- Validation: Grouped comma values decode with correct shapes and source spans, while unsupported expressions remain unresolved.
+
+### S3 — Literal binding provenance
+
+- URL: tool/common/powershell_syntax.py
+- Retrieved: 2026-11-07
+- Locator: bound_span(), lines 28–84
+- Fragment: if enclosed(source, "(", ")"): return literal(start + 1, start + len(source) - 1) ... if enclosed(source, "{", "}") or container.startswith("@") and (enclosed(container[1:], "{", "}") or enclosed(container[1:], "(", ")")): return start, start + len(source) ... # Only an unevaluated assignment/return prefix may precede this call in the current statement.
+- Applicability: Explains why the outer map is retained without its internal expression being decoded; also bounds root assignment support.
+- Counterevidence: A retained container span is provenance evidence, not proof that every contained expression is supported.
+- Validation: Observe successful outer-map binding before decoding failure; retain existing invalidation behavior.
+
+### S4 — Capability inspection and resolver propagation
+
+- URL: tool/common/shell.py
+- Retrieved: 2026-11-07
+- Locator: invocations(), lines 177–225; nested_commands() through seven_only(), lines 229–279; resolve(), lines 367–385
+- Fragment: function_only = functions.define(program, text[item.target_end:], start) ... for nested in invocations(text): ... if command is None or form == "ps5" and seven_only(command): ... if form != "bash" and classic_seven_only(command):
+- Applicability: Both PowerShell resolver forms reach invocation analysis, which reaches splat decoding.
+- Counterevidence: An analysis exception does not establish native engine incompatibility.
+- Validation: Exercise explicit resolver forms and actual boundary outcomes, rather than relying on platform-selected defaults.
+
+### S5 — Consumer of decoded parameter shapes and callback spans
+
+- URL: tool/common/powershell_functions.py
+- Retrieved: 2026-11-07
+- Locator: callback_arguments(), lines 224–286
+- Fragment: for name, a, b, code, values in parameters(self.source, position, splat[1]): ... literal = values and re.fullmatch(r"[\s(@),0]*", value) ... # Pipeline binding can execute a ScriptBlock input value, but not an array of blocks. ... self.splatted.update(values)
+- Applicability: Decoded shape and original callback coordinates affect command-binding analysis downstream.
+- Counterevidence: Acceptance of a literal container alone does not establish its parameter conversion or execution role.
+- Validation: Keep callback spans and order correct; retain array distinctions and nested-map data roles.
+
+### S6 — Current statement-array regression matrix
+
+- URL: tool/test_shell_array_statements.py
+- Retrieved: 2026-11-07
+- Locator: VALUES and CONTEXTS, lines 14–24; COLLECTED, lines 25–37; parser, native, boundary and negative tests
+- Fragment: VALUES = ["1,2", "1;2", "1\n2", "1\r\n2", ... "@(1;2);3"] ... ("", "@((@()); BLOCK)", ["0"]) ... # Statement-array checks also exercise explicit ps5/pwsh7 forms through resolve().
+- Applicability: The inspected matrices cover multiple separators and grouped empty arrays, but omit grouped comma expressions. The final sentence describes the test body rather than quoting a source comment.
+- Counterevidence: Existing checks meaningfully test output cardinality, callbacks, boundaries and native behavior; the missing dimension is expression composition.
+- Validation: Add recursive grouping/comma cases and assert nested shape, not only acceptance or joined output.
+
+### S7 — F8 cycle-1 research and attributed repair observations
+
+- URL: docs/research/review-powershell-version-resolver-and-install-f8-1.md
+- Retrieved: 2026-11-07
+- Locator: Failed fixes, lines 15–18; Result and limits, lines 196–212
+- Fragment: The repair shares one nesting-aware literal-array decoder between nested values and positional splats ... the focused suite in `tool/test_shell_array_statements.py` reported `174 passed` ... These observations ... do not establish that arbitrary statement outputs or side effects are statically resolvable. ... Historical commit snapshots for rounds 18 and 19 were not independently available through the original source-reading tools.
+- Applicability: Records earlier fix scope, reported execution evidence and its explicit limits.
+- Counterevidence: A draft repair report is not independently rerun evidence and does not establish coverage of the current grouped-comma case.
+- Validation: Preserve recorded forms and reproduce the newly missing composition independently.
+
+### S8 — Microsoft about_Operators for Windows PowerShell 5.1
+
+- URL: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_operators?view=powershell-5.1
+- Retrieved: 2026-11-07
+- Locator: Array subexpression operator @( ), lines 170–190
+- Fragment: Returns the result of one or more statements as an array. The result is always an array of 0 or more objects.
+- Applicability: Defines @() as statement-result collection, including empty output.
+- Counterevidence: Statements can execute commands; the documentation does not make arbitrary statement values statically known.
+- Validation: Compare native collected values and cardinality with the bounded decoder.
+
+### S9 — Microsoft historical PowerShell language specification: expressions
+
+- URL: https://learn.microsoft.com/en-us/powershell/scripting/lang-spec/chapter-07?view=powershell-7.6
+- Retrieved: 2026-11-07
+- Locator: Editorial note; §7.1.1 Grouping parentheses; §7.3 Binary comma operator
+- Fragment: This specification does not reflect the current state of PowerShell. ... (2,4),6 # Length 2; values [Object[]],int
+- Applicability: Explains why grouped comma operands require preservation of array nesting rather than global flattening.
+- Counterevidence: This is the historical PowerShell 3.0 specification; native 5.1 and 7 observations must corroborate its application.
+- Validation: Measure recursive native shape for grouped comma expressions and compare it with decoded slots.
+
+### S10 — Microsoft SDK ArrayExpressionAst
+
+- URL: https://learn.microsoft.com/en-us/dotnet/api/system.management.automation.language.arrayexpressionast?view=powershellsdk-7.6.0
+- Retrieved: 2026-11-07
+- Locator: Definition, lines 40–54; constructor and SubExpression, lines 81–89; found by web search and opened
+- Fragment: The ast that represents an array expression, e.g. `@(1)`. The array literal (e.g. `1,2,3`) is represented by ArrayLiteralAst.
+- Applicability: Provides independent structural evidence that array subexpressions and comma literals are distinct constructs.
+- Counterevidence: The page carries a prerelease-information caveat. AST structure alone does not establish runtime bindings, side effects or callback roles.
+- Validation: Use native AST nesting as a structural oracle and separate runtime fixtures as a behavioral oracle.
+
+### S11 — Native execution fixture availability and behavior
+
+- URL: tool/test_shell_functions.py
+- Retrieved: 2026-11-07
+- Locator: native(), lines 26–31
+- Fragment: executable = shutil.which("pwsh" if major == 7 else "powershell") ... if os.name != "nt" or not executable: pytest.skip("The selected native PowerShell is not installed")
+- Applicability: Native fixture definitions do not imply that either engine ran in a given test selection.
+- Counterevidence: The earlier research separately reports successful native runs; helper skip behavior does not negate those attributed observations.
+- Validation: Record engine versions, actual outcomes and skips separately in the implementation session.
+
+## Claims
+
+- C1 (interpretation; S1, S4): The compatibility promise applies to proved compatible forms, and the current failure propagates before launch through PowerShell capability inspection.
+- C2 (interpretation; S2, S3, S4): For the exact round-22 trigger, current source predicts successful outer-map binding followed by failure to decode the comma expression exposed by removing grouping.
+- C3 (interpretation; S2, S3, S7): Earlier fixes restored literal-bound executables, captured values and nested-map support, but did not establish a recursively complete value grammar for the supported compositions.
+- C4 (interpretation; S2, S6, S7): The latest repair already shared array decoding and recorded passing checks. The present omission survives that consolidation because grouped comma expressions remain outside the shared helper's grammar.
+- C5 (interpretation; S6): The inspected current matrices cover grouping around empty array subexpressions, but omit grouping around comma expressions; consumer permutations cannot compensate for that missing expression form.
+- C6 (interpretation; S2, S8, S9, S10): A correct bounded repair must distinguish array-valued comma expressions from collection of statement output and preserve nesting when a grouped array is an outer comma operand.
+- C7 (source; S8, S9, S10): Microsoft documents statement-result collection for @(), distinguishes comma literals structurally, and illustrates grouping-dependent array nesting in a specification explicitly marked historical.
+- C8 (interpretation; S2, S3, S5, S6, S9): The repair should extend the bounded recursive decoder while preserving captured provenance, array shape, callback source spans, data roles and unresolved-value refusals.
+- C9 (interpretation; S3, S4, S7, S11): The current refusal remains a static prediction. Prior recorded passes and available native helpers do not establish execution of this new case; historical attribution and native availability remain explicit limits.
+
+## Core theory
+
+PowerShell distinguishes array construction by comma from collection of statement results by @(). Parentheses can enclose an array expression while also protecting that array as an operand of a larger comma expression. Consequently, evaluating an expression's array shape and collecting its statement output are separate operations. Microsoft's historical specification explicitly illustrates the nested shape of `(2,4),6`, but warns that it does not describe the current language; native 5.1 and 7 checks must corroborate its application here. The SDK independently represents array subexpressions and comma literals with different AST node types. These sources do not establish that arbitrary executable expressions are statically resolvable. [C6, C7]
+
+## Applicability
+
+Repair the bounded value grammar in powershell_splats.py. Decode supported comma expressions recursively, including those exposed by grouping, into an array shape with original element and callback spans. Let @() collect the resulting statement output at the appropriate enumeration boundary. A small shared internal representation or equivalent helpers can implement this; a wholesale parser replacement is not required. Preserve a nested array when it is an operand of an outer comma expression: accepting @((1,2)) must not flatten @((1,2),3) into three scalar slots. Keep construction-time capture lookup, nested-map data roles, explicit unresolved values and the existing callback consumer contract. Reuse this analysis for named values and positional splats. Do not implement acceptance by rewriting the submitted source. [C2, C6, C8]
+
+## Hypothesis
+
+The remaining cause is a boundary between expression-value decoding and statement-output collection. parts() classifies outer commas before value_span() removes grouping; after removal, neither literal() nor array_values() recognizes the exposed comma expression. The latest fix shares array handling, so duplicate nested/positional implementations are no longer the primary explanation. A shared helper cannot provide compositional coverage while it equates array-valued expressions with the @() spelling. [C2, C4, C6]
+
+## Counterevidence
+
+- Earlier repairs made substantive improvements. The current code shares array decoding, resolves captured values at their construction epoch and validates nested maps without promoting their blocks to callbacks. This evidence argues against repeating the cycle-1 diagnosis as though none of those changes happened. [C3, C4, C8]
+- The prior research reports native and boundary checks passing for its tested forms. The tests also include grouped empty arrays and output-cardinality controls. The narrower gap is grouped comma expressions and their resulting shape, not a complete absence of integration or native validation. [C4, C5]
+- PowerShell permits commands, side effects and unknown values inside expressions. Syntax validity alone cannot justify accepting them. The proposed grammar expansion must retain unresolved outcomes outside its proved subset. [C7, C8]
+- No reproduction or native process ran in this research session. An observation that binding proof fails earlier, or that a different decoder handles the active command, would refute the predicted path. [C2, C9]
+
+## Alternatives
+
+- Resplit all commas after removing parentheses. This could accept the exact trigger but erase array nesting when a grouped expression is one operand of an outer comma. Decode each operand recursively and distinguish its value from its emitted statement output. [C6, C8]
+- Special-case @((1,2)) or retry literal() without parentheses. Grouping is already removed; the missing branch is comma-expression decoding. An exact-pattern patch would leave deeper grouping and callback compositions uncovered. [C2, C5]
+- Catch Refusal for InputObject or classify undecoded values as compatible. That would discard information used to distinguish data, executable callbacks and unknown expressions. Preserve refusal for unproved values. [C8]
+- Add more separator and boundary permutations alone. Those exercise useful consumers but reuse expression forms that already pass. Add grammar-composition and shape assertions first, then carry them through the boundaries. [C4, C5]
+- Replace production analysis with native AST evaluation immediately. Native ASTs are useful structural oracles, but do not independently prove capture timing, mutation or callback roles. First repair and validate the bounded decoder; weigh production parser adoption separately. [C7, C8]
+
+## Experiment
+
+In the implementation session, first record bound_span(), parameters(), seven_only(), classic_seven_only(), and resolve() for the exact round-22 source. Explicitly select gate and registered-check with both ps5 and pwsh7 forms. Prediction: options binding succeeds, parameters() raises Refusal at the grouped comma value, and both resolver forms consequently refuse. Compare @(1,2), @((1,2)), @(((1,2))), @(@(1,2)), @((1,2);3), @((1,2),3), and @(@(1,2),3). On actual Windows PowerShell 5.1 and PowerShell 7, record engine versions, parse errors, parenthesized/comma/array AST nesting, stdout, stderr and status. Run the exact harmless trigger and require exit zero and output ok. Separately measure recursive value shape: @((1,2)) should contain two scalar elements; @((1,2),3) should contain two elements, with a two-element array first. Joined output alone is insufficient to verify this distinction. Cross these expressions through direct map values, captured @() values, maps containing arrays, and positional splats. Add grouped comma expressions containing callbacks; verify original callback spans, order and function-binding behavior, while nested InputObject maps remain data. Retain unknown-variable, dynamic-statement, intervening-mutation, Parallel-on-5.1 and incompatible-classic-child controls. Establish explicit behavior for unary comma and malformed empty operands rather than silently dropping them. Confirm the hypothesis if native engines accept the forms with the expected shape while only static decoding refuses them, then the repair aligns decoding and boundary outcomes without weakening negative controls. Refute or narrow it if binding fails first or native shape differs. Run affected shell tests and the required round lint during implementation; record native skips separately. No checks were executed here. [C2, C5, C6, C7, C8, C9]
+
+## Result
+
+Repair observations for the commit titled `Decode grouped comma values in PowerShell splats` (Git revision `:/Decode grouped comma values in PowerShell splats`). This page remains a draft. The source snapshots and unexecuted predictions above describe the original read-only research stage, not the subsequent repair experiments.
+
+Before changing production code, `test_reported_grouped_comma_form_is_compatible_at_every_boundary` failed twice, under selected parent versions 5 and 7. Its binding assertion passed. The diagnostic version of the test then recorded refusal from parameter decoding, both capability traversals, and both explicit forms for both runners. The final version retains direct assertions for the decoded array shape, unchanged resolver output, executable repair and both actual host verdict functions instead of duplicating the diagnostic collection loop. The quoted review command was analyzed and parsed as input; native execution used separate harmless shape and callback fixtures.
+
+The pre-fix parser experiment passed on Windows PowerShell `5.1.26100.9711` and PowerShell `7.6.8`. The 13 literal forms had no parse errors. Native records distinguish parentheses, comma literals and array subexpressions by source coordinates and parent node kind. The first three forms had zero, one and two grouping nodes. Independently, 52 original recursive-shape fixtures per engine exited zero with empty stderr. Their observations confirmed two scalar elements for a collected grouped pair and two elements, the first itself a two-element array, when that pair is an operand of a larger comma expression. The fixtures also established the tested unary-comma shapes before acceptance was added.
+
+The repair decodes comma-valued expressions after resolving grouping and capture provenance. Statement collection enumerates the resulting value; an outer comma expression retains an array operand as one element. Unary commas construct singleton arrays, and trailing empty operands remain unresolved. The shared correction reaches two decoder consumers: named or nested literal values and positional splats, including one additional consumer beyond the reported named-value path.
+
+After repair and cleanup, the focused suite in `tool/test_shell_grouped_arrays.py` reported `90 passed`. The boundary regression passed twice. `test_grouped_literal_arrays_compose_through_both_runner_and_hook_boundaries` passed 52 cases across direct values, captured arrays, captured maps and maps containing arrays. `test_positional_grouped_arrays_keep_recursive_element_shapes` passed 13 cases. The two native AST cases also required parse errors for three malformed operand forms. Native recursive-value checks compared original and repaired stdout, stderr and exit status for all 52 data fixtures per engine. The callback property passed nine cases with original source spans; the two native callback cases each compared nine original/repaired fixtures and preserved phase order and function selection. Three nested-map data-role cases and five unresolved or malformed operand refusals passed. These native checks had no skips.
+
+The affected non-native regression selection reported `2278 passed, 514 deselected`. The separate native regression selection for statement arrays, splats, captured values, nested maps and the extended parser helper reported `260 passed, 844 deselected`, with no skips. Existing mutation, unknown-value, splatted-parallel and incompatible-classic-child guards remain in the focused checks. The observations support the proposed expression-value versus statement-output diagnosis within the tested literal grammar; they do not establish arbitrary PowerShell evaluation or parameter conversion.
+
+## Unresolved limits
+
+This is draft research based on tracked source, supplied review history, the earlier research record and Microsoft documentation. Historical commit snapshots were not independently inspected during the original read-only stage. Earlier recorded passes remain attributed reports; the subsequent repair observations are listed separately in Result. The repair covers a bounded literal grammar; it does not prove arbitrary PowerShell expressions, reference-alias mutation or every parameter conversion. The root bare-comma limitation recorded after round 22 is addressed by the follow-up below; it was not part of the original round-22 evidence. [C3, C4, C8, C9]
+
+## Round-23 follow-up
+
+The commit titled `Prove literal comma-array bindings before splat decoding` (Git revision `:/Prove literal comma-array bindings before splat decoding`) addresses the separately reported binding-proof gap. This remains a draft record. Binding proof and value decoding now share comma-operand spans; binding proof requires every operand to be a known literal or captured literal binding. The source coordinates survive grouping and variable copies. Multiline comma continuations use the existing masked syntax view. Array bindings remain distinct from scalar executable targets and native arguments, and unknown operands, mutations and unproved string conversions remain unresolved.
+
+The first diagnostic lookup included the literal pipeline prefix, which the direct binding API intentionally excludes. After correcting that test boundary, a separate comparison used the previous commit's binding function with the current parameter decoder: all 12 source shapes were refused with the previous proof and decoded to two callbacks with the repaired proof. The regression tests inspect the reported bare-array form using neutral fixture bodies. Native checks use harmless phase and selected-function markers.
+
+`test_bare_comma_bindings_preserve_both_callbacks_at_every_boundary` passes 32 cases across four grouping forms, four assignment/copy contexts and selected parent versions 5 and 7. The assertions pin both original callback spans, both runner forms, unchanged executable repair and both host verdicts. `test_bare_comma_operands_keep_construction_time_callback_spans` passes two capture cases. Two additional span regressions keep complete quoted operands after masking; eight invalidation or unknown-value cases and three scalar-target refusal controls pass. The complete non-native selection in `tool/test_shell_grouped_arrays.py` reports `211 passed`. Its shared shape table now includes 29 forms: the 13 original array forms, 12 corresponding bare expression forms, two comma continuations and two quoted-value pairs. The separate native callback test added during repair was folded into `test_native_grouped_callback_fixture_preserves_order_and_selected_function`, retaining all bare and collected callback cases in one fixture.
+
+The final focused suite reports `217 passed`, including six native cases without skips on the recorded 5.1 and 7 engines. The native value fixture checks all 116 data compositions per engine against recursive shapes. The combined callback fixture checks 25 bare or collected compositions per engine and compares original and repaired stdout, stderr and status. The separate earlier native regression selection reported `266 passed, 1043 deselected`. The broader affected non-native selection reported `4730 passed, 1 skipped, 629 deselected`; the skip is the Windows-excluded Bash fixture. After the final binding changes, the direct callers were checked again with `2610 passed, 190 deselected`. These observations extend the recorded bounded literal grammar rather than establish arbitrary PowerShell evaluation.
