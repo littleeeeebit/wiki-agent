@@ -22,6 +22,63 @@ CONTEXTS = [("$options=@{{InputObject=@({values}); Process={body}}}; ForEach-Obj
 CALLBACKS = ["$options=@{{Process={array}}}; 1 | ForEach-Object @options",
              "$items={array}; $options=@{{Process=$items}}; 1 | ForEach-Object @options",
              "$options={array}; 1 | ForEach-Object @options"]
+COLLECTED = [("", "@(@(); BLOCK)", ["0"]),
+             ("", "@(@()\nBLOCK)", ["0"]),
+             ("", "@(@()\r\nBLOCK)", ["0"]),
+             ("", "@(@(@()); BLOCK)", ["0"]),
+             ("", "@((@()); BLOCK)", ["0"]),
+             ("$empty=@(); ", "@($empty; BLOCK)", ["0"]),
+             ("$empty=@(); $copy=$empty; ", "@($copy; BLOCK)", ["0"]),
+             ("$callback=BLOCK; ", "@(@(); $callback)", ["0"]),
+             ("", "@(@(BLOCK))", ["0"]),
+             ("", "@(@(), BLOCK)", ["@()", "0"]),
+             ("", "@(@(),\nBLOCK)", ["@()", "0"]),
+             ("", "@(@(1;2); BLOCK)", ["0", "0", "0"]),
+             ("", "@(@(); @())", [])]
+
+
+def collected_source(prefix, array, program="ForEach-Object"):
+    block = "{ function global:powershell { param($Command) Write-Output selected-fixture } }"
+    return (prefix + "$options=" + array).replace("BLOCK", block) + "; 1 | " + program + " @options; powershell -Command 'Write-Output external-fixture'"
+
+
+@pytest.mark.parametrize("prefix,array,codes", COLLECTED)
+@pytest.mark.parametrize("program", ["ForEach-Object", "Where-Object"])
+def test_statement_output_sets_positional_slots_without_losing_callback_spans(monkeypatch, request, prefix, array, codes, program):
+    agents = request.getfixturevalue("hosts")
+    monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", "7.1", 7),))
+    source = collected_source(prefix, array, program)
+    values = parameters(source, source.index(program), "options")
+    assert [code for _, _, _, code, _ in values] == codes
+    expected_blocks = [source.index("{ function")] if "BLOCK" in prefix + array else []
+    assert [block for _, _, _, _, blocks in values for block in blocks] == expected_blocks
+    if codes == ["0"]:
+        assert agents[0]._pwsh(source, "ps") == source
+        for name in ("gate", "registered-check"):
+            for form in ("ps5", "pwsh7"):
+                assert shell.resolve(name, form=form, command=source) == source
+        host_outputs(agents, source, source)
+
+
+@pytest.mark.parametrize("major", [5, 7])
+@pytest.mark.parametrize("prefix,array,codes", COLLECTED[:9])
+@pytest.mark.parametrize("program", ["ForEach-Object", "Where-Object"])
+def test_native_zero_output_array_fixture_preserves_the_selected_function(monkeypatch, prefix, array, codes, major, program):
+    monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", "7.1", 7),))
+    source = collected_source(prefix, array, program)
+    result = native_pair(source, major)
+    assert result.returncode == 0 and result.stdout == "selected-fixture\n" and result.stderr == ""
+
+
+@pytest.mark.parametrize("major", [5, 7])
+def test_native_collected_array_shape_agrees_with_positional_slots(major):
+    statements, expected = [], []
+    for prefix, array, codes in COLLECTED:
+        source = (prefix + "$options=" + array).replace("BLOCK", "{Write-Output callback-fixture}")
+        statements.append("& { " + source + "; Write-Output ('slots:' + $options.Count) }")
+        expected.append("slots:" + str(len(codes)))
+    result = native("; ".join(statements), major)
+    assert result.returncode == 0 and result.stdout.splitlines() == expected and result.stderr == ""
 
 
 def callback_source(separator, context):

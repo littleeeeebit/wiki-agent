@@ -41,6 +41,8 @@ def parameters(source, position, name):
             elif char in ")]}":
                 depth -= 1
             elif not depth and char in separators and not bare[first:index].rstrip().endswith("="):
+                if char == "\n" and bare[first:index].rstrip().endswith(","):
+                    continue
                 if bare[first:index].strip():
                     yield first, index
                 first = index + 1
@@ -71,31 +73,51 @@ def parameters(source, position, name):
         return result
 
     def array_values(start, end):
+        span = value_span(start, end)
+        if span is None:
+            return None
+        start, end = span
         text = source[start:end]
         if not text.startswith("@(") or not enclosed(text[1:], "(", ")"):
             return None
         result = []
-        for first, last in parts(start + 2, end - 1, ",;\n"):
-            value = literal(first, last)
-            if value is None:
-                return None
-            result.append((*trim(first, last), *value))
+        for first, last in parts(start + 2, end - 1, ";\n"):
+            elements = list(parts(first, last, ","))
+            if len(elements) == 1:
+                # Statement output enumerates arrays; comma expressions retain their elements.
+                nested = array_values(*elements[0])
+                if nested is not None:
+                    result.extend(nested)
+                    continue
+            for first, last in elements:
+                value = literal(first, last)
+                if value is None:
+                    return None
+                result.append((*trim(first, last), *value))
         return result
 
-    def literal(start, end):
+    def value_span(start, end):
         start, end = trim(start, end)
+        code = bare[start:end]
+        if code.lower() not in ("$true", "$false", "$null") and (variable := re.fullmatch(r"\$(\w+)", code)):
+            # A collection captures the value when its containing assignment executes.
+            _, epoch = statement_start(start)
+            captured = bound_span(source[:epoch] + " & ", variable[1])
+            return value_span(*captured) if captured is not None else None
+        if enclosed(source[start:end], "(", ")"):
+            return value_span(start + 1, end - 1)
+        return start, end
+
+    def literal(start, end):
+        span = value_span(start, end)
+        if span is None:
+            return None
+        start, end = span
         text, code = source[start:end], bare[start:end]
         if enclosed(text, "{", "}"):
             return "0", [start]
         if re.fullmatch(r"0\s*|[+-]?\d+(?:\.\d+)?|\$(?:true|false|null)", code, re.I):
             return "0", []
-        if variable := re.fullmatch(r"\$(\w+)", code):
-            # A collection captures the value when its containing assignment executes.
-            _, epoch = statement_start(start)
-            captured = bound_span(source[:epoch] + " & ", variable[1])
-            return literal(*captured) if captured is not None else None
-        if enclosed(text, "(", ")"):
-            return literal(start + 1, end - 1)
         if map_entries(start, end) is not None:
             # Entries are validated recursively, but their blocks and keys remain data.
             return "0", []
