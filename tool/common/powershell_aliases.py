@@ -1,8 +1,12 @@
-"""Track declared executable aliases without evaluating their definitions."""
+"""Track default and declared executable aliases without evaluating definitions."""
 
 import re
 
 from .powershell_syntax import Refusal, arguments, bound_target, syntax
+
+# Windows aliases used by the supported declaration and provider operations.
+DEFAULTS = {**dict.fromkeys(("ri", "rm", "rmdir", "rd", "del", "erase"), "remove-item"),
+            "sal": "set-alias", "nal": "new-alias", "si": "set-item", "ni": "new-item", "cli": "clear-item"}
 
 
 class Aliases:
@@ -10,6 +14,7 @@ class Aliases:
         self.source = source
         self.bare = syntax(source)[0]
         self.values = {}
+        self.removed = set()
         self.uncertain = False
 
     def scope(self, position):
@@ -28,13 +33,16 @@ class Aliases:
             if self.uncertain or current in seen:
                 return None, True
             if current not in self.values:
+                if current in DEFAULTS and current not in self.removed:
+                    current, aliased = DEFAULTS[current], True
+                    continue
                 break
             value, declared = self.values[current]
             if value is None or scope[:len(declared)] != declared:
                 return None, True
             seen.add(current)
             current, aliased = value.lower(), True
-        return current.replace("\\", "/").rsplit("/", 1)[-1].removesuffix(".exe"), aliased
+        return current, aliased
 
     def define(self, program, source, position):
         setters = ("set-alias", "new-alias", "sal", "nal")
@@ -102,11 +110,13 @@ class Aliases:
             # A nested removal can reveal an outer alias whose overwritten binding is unknown.
             if not scope and fields.get("scope", "local").lower() in ("local", "0") and (previous is None or previous[0] is not None and previous[1] == scope):
                 self.values.pop(name, None)
+                self.removed.add(name)
             else:
                 self.values[name] = None, scope
             return
         if value is None or not value.strip() or fields.get("scope", "local").lower() not in ("local", "0") \
                 or fields.get("option", fields.get("options", "none")).lower() != "none" \
-                or previous and (previous[0] is None or program in ("new-alias", "nal", "new-item", "ni")):
+                or previous and (previous[0] is None or program in ("new-alias", "nal", "new-item", "ni")) \
+                or name in DEFAULTS and name not in self.removed and program in ("new-alias", "new-item"):
             value = None
         self.values[name] = value, scope

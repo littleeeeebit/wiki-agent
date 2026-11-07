@@ -30,7 +30,7 @@ def _pwsh(command: str, dialect: str) -> str:
         replacements = []
         for match in shell.invocations(command):
             start, end = match.target_start, match.target_end
-            if match.kind == "literal" and match.program == "powershell" and re.fullmatch(r"powershell(?:\.exe)?", command[start:end], re.I):
+            if match.kind == "literal" and match.modernize and match.program == "powershell" and re.fullmatch(r"powershell(?:\.exe)?", command[start:end], re.I):
                 replacements.append((start, end, "pwsh" if NO_PROFILE.match(command, end) else "pwsh -NoProfile"))
         for start, end, replacement in reversed(replacements):
             command = command[:start] + replacement + command[end:]

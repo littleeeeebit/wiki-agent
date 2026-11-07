@@ -14,6 +14,7 @@ import uuid
 
 from . import process
 from .powershell_aliases import Aliases
+from .powershell_functions import Functions
 from .powershell_syntax import Refusal, arguments, bound_target, command_position, enclosed, syntax
 from .shell_catalogue import COMMANDS
 
@@ -108,6 +109,7 @@ class Invocation:
     target_end: int
     kind: str
     name: str | None = None
+    modernize: bool = True
 
 
 def invocations(text: str):
@@ -170,13 +172,25 @@ def invocations(text: str):
         if command_position(bare[:match.start()]):
             found.setdefault(match.start(), record(match.start()))
     aliases = Aliases(text)
+    functions = Functions(text)
     for start in sorted(found):
+        if any(definition.start == start for definition in functions.definitions):
+            continue
         item = found[start]
         if item.name is not None:
-            program, aliased = aliases.resolve(item.name, start)
+            target, aliased = aliases.resolve(item.name, start)
+            program = target.replace("\\", "/").rsplit("/", 1)[-1].removesuffix(".exe") if target is not None else None
             if aliased:
                 item = replace(item, program=program, kind="alias" if program is not None else "unresolved")
-            aliases.define(program, text[item.target_end:], start)
+            binding = functions.binding(target, start) if target is not None else "external"
+            if binding != "external":
+                item = replace(item, kind=binding)
+            destination, destination_alias = aliases.resolve("pwsh", start)
+            item = replace(item, modernize=not destination_alias and functions.binding(destination or "pwsh", start) == "external")
+            if binding == "function":
+                functions.called.append((target, start))
+            elif binding == "external" and not functions.define(program, text[item.target_end:], start):
+                aliases.define(program, text[item.target_end:], start)
         yield item
 
 
@@ -186,6 +200,8 @@ def nested_commands(text: str):
     for nested in invocations(text):
         if nested.kind == "unresolved":
             raise Refusal("PowerShell 실행 대상을 확정할 수 없다. 리터럴 실행 대상을 사용하세요.")
+        if nested.kind == "function":
+            continue
         if nested.program not in ("powershell", "pwsh"):
             continue
         argv = arguments(text[nested.target_end:])
