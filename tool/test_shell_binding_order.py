@@ -238,6 +238,31 @@ def test_native_resolved_suffix_fixture_still_runs_the_selected_child(monkeypatc
     assert result.returncode == 17 and "suffix-fixture" in result.stdout.splitlines() and result.stderr == ""
 
 
+@pytest.mark.parametrize("prefix,target,kind", [
+    (". ./startup.ps1; ", "powershell", "imported"),
+    ("Invoke-Expression 'function powershell { Write-Output fixture }'; ", "powershell", "imported"),
+    ("if ($condition) { function powershell { Write-Output fixture } }; ", "powershell", "ambiguous"),
+    ("", "& $target", "unresolved"),
+])
+@pytest.mark.parametrize("body", ["Write-Output fixture", "Get-Error"])
+@pytest.mark.parametrize("major", [5, 7])
+def test_callable_identity_states_preserve_compatible_calls_and_reject_unsafe_children(monkeypatch, request, prefix, target, kind, body, major):
+    agents = request.getfixturevalue("hosts")
+    monkeypatch.setattr(shell, "_detected", (shell.PowerShell("fixture-shell", f"{major}.1", major),))
+    source = prefix + target + " -Command '" + body + "'"
+    assert list(shell.invocations(source))[-1].kind == kind
+    assert agents[0]._pwsh(source, "ps") == source
+    denied = kind == "unresolved" or body == "Get-Error"
+    for form in ("ps5", "pwsh7"):
+        for name in ("gate", "registered-check"):
+            if denied:
+                with pytest.raises(shell.Refusal):
+                    shell.resolve(name, form=form, command=source)
+            else:
+                assert shell.resolve(name, form=form, command=source) == source
+    host_outputs(agents, source, source, denied=denied)
+
+
 @pytest.mark.parametrize("generator", GENERATORS)
 @pytest.mark.parametrize("major", [5, 7])
 @pytest.mark.parametrize("body", ["Write-Output child", "Get-Error"])
