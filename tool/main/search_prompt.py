@@ -3,6 +3,8 @@
 from pathlib import Path
 import sys
 
+from common import shell
+
 from . import channels
 
 
@@ -15,7 +17,7 @@ from . import channels
 # median input fell 20% and correct citations rose from 29.5 to 39.5.
 SEARCH_NOTE = """## Search command
 In Bash: {bash} '<query>' [--k 8]
-In PowerShell: & {pwsh} '<query>' [--k 8]
+In PowerShell: {pwsh} '<query>' [--k 8]
 Keep the query in single quotes, so `$`, backticks and `$(...)` stay text; a
 quote inside it is written '\\'' in Bash and '' in PowerShell.
 It returns matching sections with `path:line` and the pages linked to each.
@@ -47,9 +49,9 @@ def search_note(repo: Path) -> str:
 
     paths = [Path(sys.executable), channels.WIKI / "tool/search", repo.resolve()]
 
-    def command(escape) -> str:
-        python, script, project = (f"'{escape(p.as_posix())}'" for p in paths)
-        return f"{python} {script} --project {project}"
+    def command(form) -> str:
+        python, script, project = (shell.quote(p.as_posix(), form) for p in paths)
+        return shell.resolve("search", form=form, python=python, script=script, repo=project)
 
-    return SEARCH_NOTE.format(bash=command(lambda s: s.replace("'", "'\\''")),
-                              pwsh=command(lambda s: s.replace("'", "''")))
+    form = shell.chosen().form if sys.platform == "win32" else "ps5"
+    return SEARCH_NOTE.format(bash=command("bash"), pwsh=command(form))

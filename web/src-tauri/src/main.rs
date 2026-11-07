@@ -24,6 +24,7 @@ use tauri::{AppHandle, Emitter, Manager, RunEvent, State, Url, WebviewUrl, Webvi
 const BOOT: Duration = Duration::from_secs(40);
 
 struct Sidecar(Mutex<Option<Child>>);
+struct ServerPort(u16);
 
 struct Pty {
     writer: Box<dyn Write + Send>,
@@ -215,19 +216,30 @@ fn restart(app: AppHandle) -> Result<(), String> {
 // every terminal, carrying the id, so the screen can listen before it knows
 // which id it will get and keep the first prompt.
 
-fn shell() -> CommandBuilder {
+fn shell(app: &AppHandle) -> Result<CommandBuilder, String> {
     if cfg!(windows) {
-        for name in ["pwsh.exe", "powershell.exe"] {
-            if which(name) {
-                return CommandBuilder::new(name);
-            }
+        // Ask the running server's resolver, including its post-install probe.
+        let port = app.state::<ServerPort>().0;
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(3)).map_err(|e| e.to_string())?;
+        stream.set_read_timeout(Some(Duration::from_secs(25))).map_err(|e| e.to_string())?;
+        write!(stream, "GET /api/shell/terminal HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n")
+            .map_err(|e| e.to_string())?;
+        let mut response = String::new();
+        stream.read_to_string(&mut response).map_err(|e| e.to_string())?;
+        let (headers, body) = response.split_once("\r\n\r\n").ok_or("셸 응답을 읽지 못했다")?;
+        if !headers.starts_with("HTTP/1.1 200 ") && !headers.starts_with("HTTP/1.0 200 ") {
+            return Err(body.to_string());
         }
+        let data: serde_json::Value = serde_json::from_str(body).map_err(|e| e.to_string())?;
+        let argv = data["argv"].as_array().ok_or("셸 실행 경로가 없다")?;
+        let mut words = argv.iter().map(|v| v.as_str().ok_or("잘못된 셸 인수"));
+        let executable = words.next().ok_or("셸 실행 경로가 없다")??;
+        let mut cmd = CommandBuilder::new(executable);
+        for word in words { cmd.arg(word?); }
+        return Ok(cmd);
     }
-    CommandBuilder::new_default_prog()
-}
-
-fn which(name: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
+    Ok(CommandBuilder::new_default_prog())
 }
 
 #[tauri::command]
@@ -251,7 +263,7 @@ fn pty_open(app: AppHandle, from: tauri::WebviewWindow, ptys: State<Ptys>, cwd: 
     let pair = native_pty_system()
         .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| e.to_string())?;
-    let mut cmd = shell();
+    let mut cmd = shell(&app)?;
     cmd.cwd(&cwd);
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     drop(pair.slave);
@@ -320,6 +332,7 @@ fn main() {
         })
         .setup(move |app| {
             let (child, port) = spawn_sidecar(&root, &log)?;
+            app.manage(ServerPort(port));
             app.state::<Sidecar>().0.lock().unwrap().replace(child);
             let handle = app.handle().clone();
             thread::spawn(move || open_window(handle, port, log));

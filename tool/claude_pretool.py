@@ -36,7 +36,7 @@ def check(name: str, payload: dict) -> dict | None:
 
 
 def verdict(payload: dict, without: frozenset = frozenset()) -> dict | None:
-    from command_repair import repair
+    from command_repair import refusal, repair
 
     # The checks judge the command that will run. A repair goes back as `updatedInput` with no
     # decision: Claude still asks, or not, by its own rules for the new command.
@@ -45,6 +45,8 @@ def verdict(payload: dict, without: frozenset = frozenset()) -> dict | None:
         payload, notes = repair(payload)
     except Exception:  # noqa: BLE001 -- `craft/hooks-fail-open`
         notes = []
+    if denied := refusal(payload):
+        return denied
     answers = []
     for name in MEMBERS:
         if name in without:
@@ -83,4 +85,4 @@ if __name__ == "__main__":
         if answer:
             json.dump(answer, sys.stdout, ensure_ascii=False)
     except Exception as error:
-        print(f"hook skipped: {type(error).__name__}", file=sys.stderr)
+        print(type(error).__name__, file=sys.stderr)

@@ -6,17 +6,17 @@ checks judge what will really run, and the agent is told what changed.
 """
 
 import re
+import os
 import tempfile
 import time
 from pathlib import Path
 
 from pytest_output import _QUOTED, teed
+from common import shell
 
-# `powershell` is Windows PowerShell 5.1, another product than `pwsh` 7; nothing here needs it
-# (`operator/run-inside-this-session`). Only a command word is renamed: the start, or after an
-# operator or `(`, found in a copy where quoted text and data heredoc bodies are all blanks, so a
-# message or a document mentioning it keeps its text. One inside `bash -c "..."` is left to the
-# pages' deny rules, which read nested commands.
+# The resolver owns the version choice (`operator/run-inside-this-session`).
+# PowerShell discovery is shared with capability inspection. This legacy pattern
+# remains for POSIX, whose quoting and heredoc rules are separate.
 POWERSHELL = re.compile(r"(?i)(^|[;&|(\n]\s*)powershell(?:\.exe)?(?=\s|$)")
 NO_PROFILE = re.compile(r"(?i)\s+-(?:NoProfile|nop)\b")
 
@@ -24,14 +24,56 @@ NO_PROFILE = re.compile(r"(?i)\s+-(?:NoProfile|nop)\b")
 def _pwsh(command: str, dialect: str) -> str:
     from edit_as_diff import blank_data_heredocs
 
+    if dialect == "ps":
+        replacements = []
+        for match in shell.invocations(command):
+            start, end = match.target_start, match.target_end
+            if match.kind == "literal" and match.modernize and match.program == "powershell" and re.fullmatch(r"powershell(?:\.exe)?", command[start:end], re.I):
+                replacements.append((start, end, "pwsh" if NO_PROFILE.match(command, end) else "pwsh -NoProfile"))
+        if not replacements or os.name == "nt" and shell.chosen().major < 7:
+            return command
+        for start, end, replacement in reversed(replacements):
+            command = command[:start] + replacement + command[end:]
+        return command
     text = blank_data_heredocs(command) if dialect == "posix" else command  # `<<` is Bash's
     bare = _QUOTED[dialect].sub(lambda m: " " * len(m[0]), text)
+    if not POWERSHELL.search(bare):
+        return command
+    if os.name == "nt" and shell.chosen().major < 7:
+        return command
     out, cursor = [], 0
     for match in POWERSHELL.finditer(bare):
         out.append(command[cursor:match.end(1)])
         cursor = match.end()
         out.append("pwsh" if NO_PROFILE.match(command, cursor) else "pwsh -NoProfile")
     return "".join(out) + command[cursor:]
+
+
+def refusal(payload: dict, host: str = "claude") -> dict | None:
+    """A 5.1 session cannot execute a known 7-only construct."""
+    import guard
+
+    tool, command, dialect = guard.shell_command(payload, host)
+    if os.name != "nt" or tool not in guard.SHELL_TOOLS or not isinstance(command, str):
+        return None
+    if dialect != "ps" and not POWERSHELL.search(command):
+        return None
+    try:
+        if shell.classic_seven_only(command):
+            raise shell.Refusal(f"Windows PowerShell에는 7 전용 명령을 넘길 수 없다. '{shell.INSTALL_CONTROL}'에서 확인하세요.")
+        from pytest_output import held_back
+        needs_sink = dialect == "ps" and held_back(command, dialect)
+        if not shell.seven_only(command) and not needs_sink:
+            return None
+        if shell.chosen().major >= 7:
+            return None
+        shell.resolve("gate", form="ps5", command=command)
+        if needs_sink:
+            shell.resolve("pytest-tee", form="ps5", log="fixture.log")
+    except shell.Refusal as exc:
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": str(exc)}}
+    return None
 
 
 # `fd` or `jq` that looks like a command word (`cli_tools`): when this session's PATH misses it,
@@ -95,6 +137,11 @@ def repaired(command: str, dialect: str = "posix") -> tuple[str, list[str]]:
     if fixed != command:
         notes.append("`powershell` (Windows PowerShell 5.1) ran as `pwsh -NoProfile` (PowerShell 7). "
                      "Call `pwsh` directly.")
+    if dialect == "ps" and os.name == "nt" and shell.seven_only(fixed) and shell.chosen().major < 7:
+        compatible = shell.resolve("gate", form="ps5", command=fixed)
+        if compatible != fixed:
+            notes.append("The command used the compatible PowerShell 5.1 form.")
+        fixed = compatible
     log = (Path(tempfile.gettempdir()) / f"pytest-{time.time_ns() // 1_000_000}.log").as_posix()
     log = f'"{log}"' if " " in log else log
     teed_ = teed(fixed, log, dialect)

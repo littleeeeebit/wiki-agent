@@ -50,6 +50,7 @@
   "overall-architecture/server/feed",
   "overall-architecture/server/ingress",
   "overall-architecture/server/lifecycle",
+  "overall-architecture/server/powershell",
   "overall-architecture/server/selection",
   "overall-architecture/server/suite",
   "overall-architecture/workflows",

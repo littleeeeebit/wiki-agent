@@ -41,11 +41,11 @@ from pydantic import BaseModel
 import apply
 import setup_agents
 from agent import cli_command
-from common import indexes, process, swap
+from common import indexes, process, shell, swap
 from common.host import environment, skill_config
 from workspace import base_branch
 
-from . import channels, specs, work
+from . import channels, powershell, specs, work
 from .query import ROOT
 
 RECORDS = ROOT / "raw" / "connect"
@@ -218,8 +218,10 @@ def status(path: Path, wired: dict[str, bool] | None = None) -> dict:
     note is something to see that does not make it partial."""
 
     data, broken = adapter_of(path)
+    powershell = shell.status()
     if data is None:
-        return {"state": "미연결", "missing": [], "notes": [], "probing": path.name in _probing}
+        return {"state": "미연결", "missing": [], "notes": [], "probing": path.name in _probing,
+                "powershell": powershell}
     wired = users() if wired is None else wired
     rec = record(path.name)
     slots = {k: str(v).strip() for k, v in (data.get("slots") or {}).items()}
@@ -257,7 +259,7 @@ def status(path: Path, wired: dict[str, bool] | None = None) -> dict:
             and git(path, "check-ignore", "-q", "--", ADAPTER).returncode:   # an ignored one is local by choice
         notes.append("adapter 커밋 안 됨")
     return {"state": "일부" if missing else "연결 완료", "missing": missing, "notes": notes,
-            "probing": path.name in _probing, "survey": rec.get("survey")}
+            "probing": path.name in _probing, "survey": rec.get("survey"), "powershell": powershell}
 
 
 # -- The session test ---------------------------------------------------------
@@ -667,7 +669,7 @@ def listing() -> dict:
 
     now = hub()
     # The settings modal's hub line: whether this machine's wiring points here yet.
-    return {"rows": rows(), "settings": survey.settings(),
+    return {"rows": rows(), "settings": survey.settings(), "powershell": powershell.status(),
             "hub": {"name": channels.WIKI.name, "needed": now["needed"], "refused": now["refused"]}}
 
 

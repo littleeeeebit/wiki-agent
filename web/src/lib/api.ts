@@ -75,6 +75,12 @@ export type Project = {
   notes: string[]
   probing: boolean
   survey?: SurveyProgress | null
+  powershell?: Pick<PowerShellStatus, 'windows' | 'executable' | 'version' | 'major' | 'needs_install'>
+}
+export type PowerShellStatus = {
+  windows: boolean; executable: string | null; version: string | null; major: number | null
+  needs_install: boolean; winget: boolean; download: string
+  install: { running: boolean; output: string; code: number | null }
 }
 export type SurveyProgress = {
   sid?: string
@@ -805,7 +811,9 @@ export type ConnectPlan = { hub: HubPlan; agents: string[]; adapter: Record<stri
 export type Hub = { name: string; needed: boolean; refused: string }
 
 export const getConnect = () =>
-  get('/api/connect').then((r) => json<{ rows: Project[]; settings: SurveySettings; hub: Hub }>(r, '프로젝트 목록'))
+  get('/api/connect').then((r) => json<{ rows: Project[]; settings: SurveySettings; hub: Hub; powershell?: PowerShellStatus }>(r, '프로젝트 목록'))
+export const installPowerShell = () =>
+  post('/api/shell/install', {}).then((r) => json<{ ok?: boolean; download?: string; reason?: string }>(r, 'PowerShell 설치'))
 export const connectPlan = (name: string) =>
   get(`/api/connect/${encodeURIComponent(name)}/plan`).then((r) => json<ConnectPlan>(r, '연결 계획'))
 export const connect = (name: string, body: { hub: string; survey: boolean }) =>

@@ -74,7 +74,8 @@ def test_each_missing_item_makes_the_row_partial_and_is_named(tmp_path):
     assert connect.status(repo, ALL)["state"] == "미연결"
     connected(repo)
     assert connect.status(repo, ALL) | {"survey": None} == {
-        "state": "연결 완료", "missing": [], "notes": [], "probing": False, "survey": None}
+        "state": "연결 완료", "missing": [], "notes": [], "probing": False, "survey": None,
+        "powershell": connect.shell.status()}
 
     def missing(**wired) -> list[str]:
         found = connect.status(repo, {**ALL, **wired})

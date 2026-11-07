@@ -22,7 +22,7 @@
       "reason": "baseline at adoption"
     },
     "tool/codex_pretool.py": {
-      "dup": 10,
+      "dup": 9,
       "lines": 63,
       "reason": "Passes the shell's dialect to edit_as_diff so PowerShell strings are read as PowerShell. Before that: Runs command_repair first and returns a repair as allow + updatedInput, Codex's only rewrite shape. Before that: Chains both the tool-call guard (#272) and the memory-word check (#276) for Codex, one import each. Before that: Chains the memory-word check for Codex, which takes one PreToolUse hook. Before that: baseline at adoption"
     },
@@ -78,7 +78,7 @@
     },
     "tool/guard.py": {
       "dup": 0,
-      "lines": 1015,
+      "lines": 1009,
       "reason": "Once spawns pass (PR #279), `export` is read as assignments, so `run` drops the literal of every name an `export` statement's parsed words bind that `literal` could not read (`\"S\"=..`, `S\\=..`, `ex\"port\"`), or a later path is judged against a stale value. Before that: Review rounds added the run-time parts the core table rests on: here documents, ANSI-C and member lexing, bound constants, the first-statement directory rule and the shell-tool payload shapes; spec rev 5 then cut the per-program models out to guard_models.py rows (PR #272). Before that: The effect guard parses Bash, PowerShell and cmd into one effect lattice in a single hook process, which every tool call pays to start; splitting it would add imports to that path (PR #272)."
     },
     "tool/host_boundary.py": {
@@ -103,13 +103,8 @@
     },
     "tool/lint.py": {
       "dup": 7,
-      "lines": 985,
-      "reason": "Reports a tracked file under `eval/` that a run wrote — in a `results/` folder or a JSON named by a date or stamp — since `.gitignore` cannot catch a script that writes elsewhere, as `tool/eval/file_filter.py` did in #270 (`craft/results-stay-off-git`, PR #273). Before that: baseline at adoption"
-    },
-    "tool/main/review_contract.py": {
-      "dup": 0,
-      "lines": 831,
-      "reason": "The review shadow asks each candidate against its own required/unneeded conditions (rubric text moved out to tool/prompts/review-shadow.json), fits its state beside the questions in Jev's 100 kB body in UTF-8 bytes (`fit_body`), and adds a candidate unless Jev is three quarters sure it is unneeded (the policy's `add_at`, also read for shadow-3 records from the PR's first head that applied it unrecorded): on 2026-11-04 Claude-labelled real tasks the held-out required recall went from 0.03 to 0.97 (review-shadow-golden). Before that, `fitted` was added because 892 Oct–Nov 2026 observations sent nothing as `context_too_large`."
+      "lines": 987,
+      "reason": "Registers the PowerShell catalogue check; its extraction and validation stay in shell_lint.py (powershell-version-resolver-and-install, two lines). Before that: Reports a tracked file under `eval/` that a run wrote — in a `results/` folder or a JSON named by a date or stamp — since `.gitignore` cannot catch a script that writes elsewhere, as `tool/eval/file_filter.py` did in #270 (`craft/results-stay-off-git`, PR #273). Before that: baseline at adoption"
     },
     "tool/main/decisions.py": {
       "dup": 0,
@@ -141,6 +136,11 @@
       "lines": 1118,
       "reason": "`restoring` plus `published` send a test-contract refusal back to the worker `REPAIRS` times before the card stops, naming the changed definitions and, by start line, the imports, constants and docstring to put back, with `# noqa: F401` for a linter (a deleted or non-Python file stays the person's to declare): removing two declared tests left their imports unused, ruff's F401 and the contract then disagreed, and refactor cards stopped on nearly every such edit. Freeing such statements by reading the module was tried and dropped after three PR #305 review rounds found ways around every rule (ai-coding-wiki schema-seed-contracts-02719744; 100 lines, `_strays` naming only what is neither at head nor freed by a declared or enclosing definition, and `restoring` empty, so the card stops at once as before, for a refusal the worker cannot clear or on any failure building the turn). Before that: `_defines` looks into a test function's body as well as a class's: a contract naming a double a test defines (`test::NoCalls`) was refused as missing from the start commit on every round (ai-coding-wiki reference-staging-contracts-02719744, three lines). Before that: `on_old_code` takes `refreezing` under the spec lock only while the card is still stopped, where `kick` moves it, so a review resumed in between wins and the checkout never detaches under its loop. The move aside is one rename into that new folder and only the way back links then unlinks, so a build rebuilt in the worktree meanwhile is never the file unlinked (#265 round 5). `on_old_code` holds each `built` path aside in a folder `mkdtemp` makes empty beside the worktree, renamed on the same volume and named in `refreezing` before it moves, and `restore` puts it back with `_moved`, a rename that fails onto an existing path (a reused held folder and a check-then-replace each overwrote a file, #265 round 4): refused instead, ai-coding-wiki preserve-repository-boundaries-3578a758 left the person deleting a 607MB `client/.next/` by hand, while Next's loader reads `.next/server`, so the build may not stay (#265; thirty-one lines). Before that: `amendments` and `approve_amendment` also offer an existing test file that is not Python, read as Git's patch and approved at its head blob (`_declared`'s `pinned`; `_runs_as` frees it only while the worktree bytes equal that blob's, line endings aside, read with `--no-replace-objects` and never through `git hash-object`, whose clean filter hid an unread `it.skip` in #258 round 1; `_replaced` makes both `contract` and `_touched` refuse a repository with replacement refs, in `refs/replace/` or the `GIT_REPLACE_REF_BASE` the server inherited, since a replaced start hid the whole change list from `contract`, and a file whose worktree bytes are not its commit's, or are gone, is refused before approval instead of hidden as approved, #258 rounds 2–4): `contract` refused a `.test.ts` the survey named by test, `amendments` listed only `.py`, and the button answered that nothing was there to approve, so the card stopped for good (ai-companion-voice-agent authentication-callback-cleanup-97d92512; fifty-seven lines). Before that: `verified` hands `verify.final` the statuses a person's turn may run again (`again`), as `loop.finalized` does for a task: a refactor card's failed local final was returned unrun on every later report of the same head, so a final a slowed machine failed blocked the pull request for good (ai-companion-voice-agent latency-record-preparation-97d92512; four lines after folding one call). Before that: `amendments` and `approve_amendment` let a person read Git's own patch as text (no external diff, textconv or `-diff` summary; one that cannot be shown, or a file that is not UTF-8, approves nothing, #255 rounds 1–3) of an existing test file changed outside the contract and declare the changed definitions by name (`_changed`, `_amendable`), bound to the head and a digest like `removals`, which now shares `_touched`, `_shown`, `_seen`, `_approved` and `_declare` with it: a survey spec whose `change` edited a module-level test double left `tests.contract` empty, and no channel could amend it (ai-companion-voice-agent semantic-index-cleanup-97d92512, ninety-six lines). Before that: `removals` and `approve_removal` let a person read a deleted test file at the start commit and declare it removed whole, bound to the head and a digest of what was read, since a survey that named only its tests left the card refused whichever way the worker went (#252, merged past the 800-line new-file cap without an entry, so main failed debt.py check); the final gate also tells `specs.gating` its command and result (one line)."
     },
+    "tool/main/review_contract.py": {
+      "dup": 0,
+      "lines": 831,
+      "reason": "The review shadow asks each candidate against its own required/unneeded conditions (rubric text moved out to tool/prompts/review-shadow.json), fits its state beside the questions in Jev's 100 kB body in UTF-8 bytes (`fit_body`), and adds a candidate unless Jev is three quarters sure it is unneeded (the policy's `add_at`, also read for shadow-3 records from the PR's first head that applied it unrecorded): on 2026-11-04 Claude-labelled real tasks the held-out required recall went from 0.03 to 0.97 (review-shadow-golden). Before that, `fitted` was added because 892 Oct–Nov 2026 observations sent nothing as `context_too_large`."
+    },
     "tool/main/specs.py": {
       "dup": 0,
       "lines": 1772,
@@ -148,7 +148,7 @@
     },
     "tool/main/verification.py": {
       "dup": 12,
-      "lines": 996,
+      "lines": 995,
       "reason": "`sanitize` reads the hidden values once per call (`_forms`), not once per string: every listing sanitized each task's contract re-reading the env file per string, 7 s for one repository; within a value the longer form goes first, since a literal ending in a backslash split its escaped form (#299 round 1; six lines). Before that: `checkout_proven` leaves out the start hook's receipt-matching rebuilt indexes, as `specs.status` does (one line). Before that: Stage 4 extends the existing verifier with selected-flow/spec binding, owner outcomes, approved native contracts, native receipt validation and setup cancellation outcomes."
     },
     "tool/main/work.py": {
@@ -238,7 +238,7 @@
     },
     "tool/test_main.py": {
       "dup": 61,
-      "lines": 1850,
+      "lines": 1825,
       "reason": "The closed-stdin shutdown test failed once on a loaded CI runner with a bare TimeoutExpired; it now fails with server.log so a slow shutdown can be told from a stuck one. Before that: baseline at adoption."
     },
     "tool/test_markdown_emphasis.py": {
@@ -298,8 +298,8 @@
     },
     "web/src/components/Projects.tsx": {
       "dup": 9,
-      "lines": 216,
-      "reason": "The list holds only connected repositories, so connecting a new one starts here: [폴더 찾기] opens the OS folder dialog, and where none opens (a phone, a Python without Tk) a path field takes its place. Before that: baseline at adoption"
+      "lines": 219,
+      "reason": "Passes the machine's PowerShell status to the separate install panel; polling, actions and markup stay in PowerShell.tsx (powershell-version-resolver-and-install, three lines). Before that: The list holds only connected repositories, so connecting a new one starts here: [폴더 찾기] opens the OS folder dialog, and where none opens (a phone, a Python without Tk) a path field takes its place. Before that: baseline at adoption"
     },
     "web/src/components/Settings.tsx": {
       "dup": 18,
@@ -308,8 +308,8 @@
     },
     "web/src/lib/api.ts": {
       "dup": 0,
-      "lines": 1043,
-      "reason": "The review research limits' settings calls and the `recurrence` trigger kind. Before that: A survey card's `refactor` carries `jev_mode`, Jev's mode where a fitted `refactor.mode` disagreed (jev-form-choice-registry-pr-form-refactor-mode, two lines). Before that: A worktree row says when a re-freeze has it on the old code (ai-coding-wiki #162). [폴더 찾기]'s two calls: the OS folder dialog (null where none opens) and adding the picked folder; the never-listed unconnected state and the always-true `wired` left the Project type. Before that: A running gate's `eta` is typed here: the whole run's median and 80% range, or `over` past every earlier run (four lines). Before that: Translation requests are split by both of the server's limits, the verified answer's included: a 45-paragraph answer sent whole was refused and stayed English. Before that: The structure refresh's model setting is typed here. Before that: The survey's three fixed roles (survey, implementation, review) are one shared type for the survey record and its cards. The refactoring survey record, its pipelines and specs, and a survey card's verification are typed here (refactor stage 7). Before that: refactoring mode, generation and run metadata and unlimited refactoring plan limits."
+      "lines": 1051,
+      "reason": "Types the machine PowerShell version/install output and adds the install request beside the connection API (powershell-version-resolver-and-install, eight lines). Before that: The review research limits' settings calls and the `recurrence` trigger kind. Before that: A survey card's `refactor` carries `jev_mode`, Jev's mode where a fitted `refactor.mode` disagreed (jev-form-choice-registry-pr-form-refactor-mode, two lines). Before that: A worktree row says when a re-freeze has it on the old code (ai-coding-wiki #162). [폴더 찾기]'s two calls: the OS folder dialog (null where none opens) and adding the picked folder; the never-listed unconnected state and the always-true `wired` left the Project type. Before that: A running gate's `eta` is typed here: the whole run's median and 80% range, or `over` past every earlier run (four lines). Before that: Translation requests are split by both of the server's limits, the verified answer's included: a 45-paragraph answer sent whole was refused and stayed English. Before that: The structure refresh's model setting is typed here. Before that: The survey's three fixed roles (survey, implementation, review) are one shared type for the survey record and its cards. The refactoring survey record, its pipelines and specs, and a survey card's verification are typed here (refactor stage 7). Before that: refactoring mode, generation and run metadata and unlimited refactoring plan limits."
     },
     "web/tests/mobile_browser.py": {
       "dup": 7,

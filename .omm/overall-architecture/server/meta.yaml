@@ -1,6 +1,6 @@
 created: 2026-10-04T12:15:29.452Z
-updated: 2026-10-04T12:15:29.452Z
-update_count: 1
+updated: 2026-11-07T11:40:16.395Z
+update_count: 3
 last_field: diagram
 kind: nested-class
 title: server
@@ -9,6 +9,34 @@ children:
   - feed
   - ingress
   - lifecycle
+  - powershell
   - selection
   - suite
 parentPath: []
+prev_diagram: >
+  graph TD
+
+  ingress["Origin and pairing guard\ntool/main/app.py"]
+
+  selection["Selected repository guard\ntool/main/query.py"]
+
+  lifecycle["Exclusive server lifecycle\ntool/main/runtime.py"]
+
+  feed["Shared change subscriptions\ntool/main/loop.py"]
+
+  architecture["Architecture document workflow\ntool/main/architecture.py"]
+
+  suite["Execution status projection\ntool/main/suite.py"]
+
+  ingress -->|"Accepted requests install the claimed X-Project context"|
+  selection
+
+  selection -->|"Scoped architecture routes resolve the current checkout"|
+  architecture
+
+  selection -->|"Suite listing selects repository-owned tasks and runs"| suite
+
+  lifecycle -->|"Startup recovers workflows whose saves publish invalidations"|
+  feed
+
+  ingress -->|"GET loops/events serves changes after the supplied cursor"| feed

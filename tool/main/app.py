@@ -37,7 +37,7 @@ import agent
 from common import errorlog
 from common import settings as settings_file
 
-from . import architecture, channels, connect, improvements, loop, mobile, planning, query, recovery, refactor, refactor_api, runtime, specs, suite, survey, update, verification, work
+from . import architecture, channels, connect, improvements, loop, mobile, planning, powershell, query, recovery, refactor, refactor_api, runtime, specs, suite, survey, update, verification, work
 from .runtime import server_owner
 
 # On Windows `mimetypes` reads the registry, where `.js` is commonly
@@ -101,6 +101,7 @@ def close_turns() -> None:
     no registry holds, such as a query's explanation, included. Safe to call again."""
 
     runtime.stopping.set()
+    powershell.close_install()
     # Every workflow is marked stopped, and kills its own providers, before any
     # other provider dies, so a turn `end_all` kills reads as a restart, not a
     # failure. Queries keep no workflow and close only after their providers
@@ -144,6 +145,7 @@ app.include_router(planning.router)
 app.include_router(refactor_api.router)
 app.include_router(improvements.router)
 app.include_router(connect.router)
+app.include_router(powershell.router)
 app.include_router(verification.router)
 app.include_router(mobile.router)
 app.include_router(update.router)

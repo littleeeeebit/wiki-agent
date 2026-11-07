@@ -15,6 +15,7 @@ import subprocess
 import sys
 
 from common import is_junction  # tests and callers read it from here too
+from common import shell
 
 WIKI = Path(__file__).resolve().parents[1]
 SETTINGS = {"claude": ".claude/settings.json", "codex": ".codex/hooks.json"}
@@ -34,10 +35,7 @@ def hook_shell(agent):
     if os.name != "nt":
         return ["/bin/sh", "-c"]
     if agent == "codex":
-        shell = shutil.which("pwsh") or shutil.which("powershell")
-        if shell:
-            return [shell, "-NoProfile", "-NonInteractive", "-Command"]
-        raise ValueError("Codex hook 실행에 필요한 PowerShell을 찾지 못했습니다.")
+        return shell.chosen().prefix()
     # This wiki version's Claude commands are in Git Bash form, which is not
     # WSL's `bash.exe` — the two are told apart rather than assumed.
     git = shutil.which("git")

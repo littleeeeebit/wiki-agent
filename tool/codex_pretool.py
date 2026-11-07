@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 def verdict(payload: dict) -> dict | None:
-    from command_repair import repair
+    from command_repair import refusal, repair
 
     # Codex takes `updatedInput` only with `allow`, which there lets the call through without
     # blocking; the approval policy still decides. The checks judge the repaired command.
@@ -15,7 +15,7 @@ def verdict(payload: dict) -> dict | None:
         fixed, notes = repair(payload, "codex")
     except Exception:  # noqa: BLE001 -- `craft/hooks-fail-open`
         fixed, notes = payload, []
-    answer = checked(fixed)
+    answer = refusal(fixed, "codex") or checked(fixed)
     if fixed is payload or ((answer or {}).get("hookSpecificOutput") or {}).get("permissionDecision") == "deny":
         return answer
     answer = answer or {}
@@ -60,4 +60,4 @@ if __name__ == "__main__":
         if answer:
             json.dump(answer, sys.stdout, ensure_ascii=False)
     except Exception as error:
-        print(f"hook skipped: {type(error).__name__}", file=sys.stderr)
+        print(type(error).__name__, file=sys.stderr)
