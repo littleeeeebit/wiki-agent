@@ -68,7 +68,11 @@ def report(cfg: dict) -> dict:
             "equivalence": {r["task"]: r["ok"] for r in past if r.get("kind") == "equivalence"},
             "ceiling_stops": stops, "spent_usd": round(sum(_charged(r) for r in past), 4),
             "resume": f"python tool/eval/spec_views.py run --config {cfg['path']}",
-            "adjustments": cfg.get("adjustments") or [], "runner_difference": cfg["runner_difference"],
+            "adjustments": (cfg.get("adjustments") or []) + [r for r in past if r.get("kind") == "adjustment"],
+            "code_commits": _count(r.get("code_commit") for r in counted.values()),
+            "charged_at_cap": {"cells": sorted(f"{t}/{c}{n}" for (t, c, n), r in counted.items() if r.get("usd") is None),
+                               "usd": round(sum(_charged(r) for r in counted.values() if r.get("usd") is None), 4)},
+            "runner_difference": cfg["runner_difference"],
             "per_task": {t: {c: rate[(t, c)] for c in CONDITIONS} for t in tasks}}
 
 
@@ -148,9 +152,16 @@ def markdown(rep: dict, cfg: dict) -> str:
     if rep["ceiling_stops"]:
         s = rep["ceiling_stops"][-1]
         lines += [f"The {s['ceiling']} ceiling stopped the run at USD {s['spent']} and {s['hours']} h.", ""]
+    cap = rep["charged_at_cap"]
+    if cap["cells"]:
+        lines += [f"{len(cap['cells'])} cells ended without a reported cost (a timeout or a crash cut the session before "
+                  f"its result) and were charged at their cap, USD {cap['usd']} in total: {', '.join(cap['cells'])}. "
+                  "The ceiling counts these bounds, so the spend actually billed is lower than the spend shown.", ""]
     lines += [f"Resume: `{rep['resume']}` runs the cells not yet run while the ceilings have room; beyond them a new "
               "experiment id with its own committed config is required.", "",
               f"Rows from a scripted stub implementer are never counted here ({rep['mock_rows_excluded']} excluded).", "",
+              "Code commits the counted cells ran on: "
+              + (", ".join(f"`{k[:12]}` ({v})" for k, v in rep["code_commits"].items()) or "none") + ".", "",
               "## Equivalence", "", "| Task | B–C equivalent |", "| --- | --- |"]
     lines += [f"| {t} | {ok} |" for t, ok in rep["equivalence"].items()]
     lines += ["", "## Adjustments during the pilot", ""]

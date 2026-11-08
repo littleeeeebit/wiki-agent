@@ -637,7 +637,10 @@ def test_a_ceiling_stop_is_journalled_as_a_failure_and_the_rest_is_left_to_resum
     assert len(rep["cells_not_run"]) == 3
     assert rep["production_baseline"]["t1"] == {"not_run": "the wall ceiling stopped the run first"}
     assert rep["mock_rows_excluded"] == 1 and rep["per_condition"][cells[0]["condition"]]["cells_run"] == 0
-    assert "pilot, not the main experiment" in spec_report.markdown(rep, cfg)
+    harness.journal(cfg, {"kind": "adjustment", "what": "narrowed an affected test", "tasks": ["t1"]})
+    text = spec_report.markdown(spec_report.report(cfg), cfg)
+    assert "pilot, not the main experiment" in text
+    assert "narrowed an affected test — tuned on t1; the main experiment must exclude" in text
 
 
 def test_the_usd_ceiling_stops_launching_before_a_cell_could_cross_it(replay):
