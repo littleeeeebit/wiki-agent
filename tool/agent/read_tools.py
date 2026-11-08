@@ -108,7 +108,11 @@ def call(repo: Path, tool: str, args: dict, evidence: dict[str, str] | None = No
         return numbered(content, args)
     inventory = subprocess.run(["git", "-C", str(root), "ls-files", "-z"],
                                capture_output=True, timeout=10, check=True).stdout.decode("utf-8").split("\0")
-    paths = {name: root / name for name in inventory if name and not private(Path(name))}
+    evidence = evidence or {}
+    # Declared evidence is never read as ordinary source, even if it became tracked mid-round.
+    declared = {(root / name).absolute() for name in evidence}
+    paths = {name: root / name for name in inventory
+             if name and not private(Path(name)) and (root / name).absolute() not in declared}
 
     def lines(path: Path, pinned: str | None = None) -> list[str]:
         resolved = path.resolve()
@@ -129,7 +133,7 @@ def call(repo: Path, tool: str, args: dict, evidence: dict[str, str] | None = No
         path = next((p for p in paths.values() if p.absolute() == target), None)
         if path is not None:
             return numbered(lines(path), args)
-        pinned = next((sha for name, sha in (evidence or {}).items() if (root / name).absolute() == target), None)
+        pinned = next((sha for name, sha in evidence.items() if (root / name).absolute() == target), None)
         if pinned is None:
             raise ValueError("추적된 소스 파일만 읽을 수 있다")
         return numbered(lines(target, pinned), args)

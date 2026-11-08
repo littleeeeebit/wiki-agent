@@ -261,15 +261,7 @@ def test_evidence_declaration_rejects_unsafe_or_ambiguous_files(evidence):
 
 @pytest.mark.parametrize("case", ["read", "changed-after-dispatch", "not-ignored"])
 def test_declared_ignored_evidence_is_readable_and_bound_to_its_bytes(world, case):
-    spec, path = prepared(world)
-    if case != "not-ignored":
-        with (path / ".gitignore").open("a", encoding="utf-8") as stream:
-            stream.write("\nlocal/\n")
-        git(path, "add", ".gitignore")
-        git(path, "commit", "-qm", "keep local evidence out of Git")
-        git(path, "push", "-q", "origin", spec["id"])
-    (path / "local").mkdir()
-    (path / "local" / "dialogue.txt").write_bytes(DIALOGUE)
+    spec, path = with_evidence(world, ignored=case != "not-ignored")
     request = {**REQUEST, "evidence": EVIDENCE}
     if case == "not-ignored":   # an untracked file Git would show could enter the PR
         with pytest.raises(ValueError, match="무시"):
@@ -302,3 +294,50 @@ def test_declared_ignored_evidence_is_readable_and_bound_to_its_bytes(world, cas
         manifest = prerequisite_review.snapshot(path, fresh)
         assert manifest["request"]["evidence"] == EVIDENCE
         assert receipt["input_signature"] == verification.sha(manifest)
+
+
+def with_evidence(world, ignored=True):
+    spec, path = prepared(world)
+    if ignored:
+        with (path / ".gitignore").open("a", encoding="utf-8") as stream:
+            stream.write("\nlocal/\n")
+        git(path, "add", ".gitignore")
+        git(path, "commit", "-qm", "keep local evidence out of Git")
+        git(path, "push", "-q", "origin", spec["id"])
+    (path / "local").mkdir()
+    (path / "local" / "dialogue.txt").write_bytes(DIALOGUE)
+    return spec, path
+
+
+@pytest.mark.parametrize("leak", [False, True], ids=["kept-local", "force-committed"])
+def test_evidence_committed_after_a_passing_prerequisite_never_reaches_merge(world, leak):
+    spec, path = with_evidence(world)
+    specs.update("proj", spec["id"], prerequisite_review={**REQUEST, "evidence": EVIDENCE})
+
+    def review(first, text):
+        if "prerequisite-result" not in text:
+            return allow(first, text)
+        identity = re.search(r"Reviewer identity: `([^`]+)`", text)[1]
+        return first + "\n```prerequisite-result\n" + json.dumps(
+            {"reviewer_session": identity, "verdict": "pass"}) + "\n```"
+
+    def finish(work_path, halt):
+        receipt = specs.load("proj", spec["id"])["prerequisite_review_result"]
+        (work_path / "review.json").write_text(json.dumps(receipt["result"]) + "\n", encoding="utf-8")
+        git(work_path, "add", "review.json", *(["-f", "local/dialogue.txt"] if leak else []))
+        git(work_path, "commit", "-qm", "preserve the independent verdict")
+        return ("```test-cleanup\n" + json.dumps({"audited": [], "removed": [], "reason": "Data evidence only"})
+                + "\n```\n```done-report\n" + json.dumps([
+                    {"item": item, "pass": True, "evidence": "committed"} for item in spec["done"]]) + "\n```")
+
+    Reviewer.replies = [review, review]
+    Worker.replies = [finish]
+    client().post("/api/loops", json={"prs": [11]}).raise_for_status()
+    waited(lambda: not loop._loops)
+    fresh = specs.load("proj", spec["id"])
+    if leak:
+        assert fresh["state"] == "멈춤" and not fresh["prerequisite_review_result"]["completed"]
+        assert not (fresh.get("validation") or {}).get("final")
+    else:
+        assert fresh["state"] == "머지 가능" and fresh["prerequisite_review_result"]["completed"]
+        assert "local/" not in git(world.origin, "ls-tree", "-r", "--name-only", spec["id"])

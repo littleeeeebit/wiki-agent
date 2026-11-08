@@ -77,6 +77,12 @@ def test_declared_local_evidence_reads_only_while_its_pinned_hash_matches(tree, 
     with pytest.raises(ValueError):
         read_tools.call(tree, "repo_read", {"path": "local/kept.txt"}, evidence)
     assert "local" not in read_tools.call(tree, "repo_glob", {"pattern": "*"}, evidence)
+    # Staged mid-round, declared evidence is still read only under its pin, and never as source.
+    subprocess.run(["git", "-C", str(tree), "add", "-f", "local/kept.txt"], check=True)
+    with pytest.raises(ValueError):
+        read_tools.call(tree, "repo_read", {"path": "local/kept.txt"}, evidence)
+    assert "local" not in read_tools.call(tree, "repo_glob", {"pattern": "*"}, evidence)
+    assert read_tools.call(tree, "repo_grep", {"text": "changed"}, evidence) == "(결과 없음)"
 
 
 def test_the_saved_pr_diff_reads_back_whole_lines_deleted_files_and_carriage_returns(tree):

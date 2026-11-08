@@ -107,6 +107,20 @@ def _preserved(path: Path, request: dict, receipt: dict) -> None:
         raise ValueError("독립 선행 리뷰 결과 파일이 없거나 보존된 판정과 다르다")
 
 
+def _unpublished(path: Path, request: dict, base: str) -> None:
+    """No declared evidence path is tracked now or touched by any commit the PR publishes over `base`.
+    Git metadata only, so it still holds once the evidence bytes have expired."""
+    from . import specs
+
+    names = [f":(literal){e['path']}" for e in request.get("evidence", [])]
+    if not names:
+        return
+    tracked = specs.sh(["git", "ls-files", "--", *names], path)
+    touched = specs.sh(["git", "rev-list", "-n", "1", f"origin/{base}..HEAD", "--", *names], path)
+    if tracked.returncode or touched.returncode or tracked.stdout.strip() or touched.stdout.strip():
+        raise ValueError("로컬 증거가 Git 에 추적되거나 PR 커밋 이력에 들어갔다 — 이력에서 빼기 전에는 진행하지 않는다")
+
+
 def advance(spot, spec: dict, repo: Path, path: Path, head: str, base: str) -> bool | None:
     """None enters normal review; True continues the same loop; False stops it."""
     from . import loop, specs, verification
@@ -119,6 +133,7 @@ def advance(spot, spec: dict, repo: Path, path: Path, head: str, base: str) -> b
                          "선행 리뷰 인계는 로컬 구현 작업에서만 지원한다")
     manifest = snapshot(path, spec)
     signature = verification.sha(manifest)
+    _unpublished(path, request, base)
     receipt = spec.get("prerequisite_review_result") or {}
     if receipt.get("input_signature") != signature:
         spec = loop.change(spot, "리뷰 R0", report=None)
@@ -194,6 +209,8 @@ def advance(spot, spec: dict, repo: Path, path: Path, head: str, base: str) -> b
         "Run affected checks, commit and push. Only after every completion item is satisfied, return the "
         "full `done-report` and the required `test-cleanup` block. A blocked operation must not be reported "
         "as passed. Final review and server-owned final verification still follow.\n\n"
+        + ("Never add, force-add or commit these local evidence files; they must stay out of Git: "
+           + ", ".join(f"`{e['path']}`" for e in request["evidence"]) + "\n\n" if request.get("evidence") else "")
         + json.dumps({"reviewer": receipt["reviewer"], "reviewed_head": receipt["head"],
                       "input_signature": signature}, ensure_ascii=False)
         + "\n\n```json\n" + json.dumps(receipt["result"], ensure_ascii=False, indent=2) + "\n```\n\n"
@@ -210,6 +227,7 @@ def advance(spot, spec: dict, repo: Path, path: Path, head: str, base: str) -> b
                    for item, required in zip(report, fresh["done"]))):
         return loop.stop(spot, spot.repo, spot.sid, loop.Why.PREPARATION,
                          "선행 리뷰 뒤 전체 명세의 완료가 아직이다 — 통과 보고로 대체하지 않는다")
+    _unpublished(path, request, base)
     _preserved(path, request, receipt)
     specs.update(spot.repo, spot.sid, report=report,
                  prerequisite_review_result={**receipt, "completed": True})
