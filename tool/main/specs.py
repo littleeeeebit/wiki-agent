@@ -630,6 +630,7 @@ def card(repo: Path, block, gate: str, source: dict, accepted: dict | None = Non
         old = load(repo.name, base)
         if old and old["state"] == "정리됨" and not (old.get("refactor") or {}).get("run") and source.get("session") \
                 and old["source"].get("session") == source["session"]:
+            made["done"] = made["done"][:1] + [d for d in made["done"][1:] if d not in old["done"][:1]]   # its old gate (#310)
             old.update(made, rev=old["rev"] + 1, source=source)
             if "requirements" not in made:   # the card as emitted again, not a leftover of the last one
                 for key in ("requirements", "spec_version", "spec_digest"):
@@ -927,7 +928,8 @@ def edit(sid: str, body: Edit) -> dict:
                 raise HTTPException(400, str(exc)) from exc
             return view(repo, spec)
         try:
-            made = fields(repo, {**spec, "goal": body.goal, "out": body.out, "done": body.done}, gate)
+            made = fields(repo, {**spec, "goal": body.goal, "out": body.out, "done": body.done}, gate,
+                          retired=frozenset(spec["done"][:1]))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         new = sid
@@ -1425,10 +1427,12 @@ def valid(items) -> bool:
 
 
 def shortfall(items: list[dict], spec: dict) -> str:
-    """Why a report is not judged, item by number, or empty: a bare "failed or missing" left everyone guessing (#310)."""
-    done, n = spec["done"], len(items)
-    parts = [f"완료 보고 {n}개 / 명세 판 {spec['rev']} 의 완료 조건 {len(done)}개 — 빠진 항목: "
-             + ", ".join(f'{k}번 "{d}"' for k, d in enumerate(done, 1) if k > n)] if n < len(done) else []
+    """Why a report is not judged, item by number, or empty: a bare "failed or missing" left everyone guessing (#310).
+    An item is named missing only when the reported texts account for every other one; else just the counts."""
+    done, n, said = spec["done"], len(items), {i["item"].strip() for i in items}
+    missing = [f'{k}번 "{d}"' for k, d in enumerate(done, 1) if d not in said]
+    parts = [f"완료 보고 {n}개 / 명세 판 {spec['rev']} 의 완료 조건 {len(done)}개"
+             + (" — 빠진 항목: " + ", ".join(missing) if len(missing) == len(done) - n else "")] if n < len(done) else []
     if failing := [f'{k}번 "{i["item"]}"' for k, i in enumerate(items, 1) if not i["pass"]]:
         parts.append("통과하지 못한 항목: " + ", ".join(failing))
     return "; ".join(parts) + ". 판정하지 않는다" if parts else ""

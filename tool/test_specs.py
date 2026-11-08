@@ -535,6 +535,21 @@ def test_a_revision_drops_a_gate_gate_cmd_replaced_and_a_short_report_names_what
     assert specs.shortfall(items[:3], spec) == '완료 보고 3개 / 명세 판 3 의 완료 조건 4개 — 빠진 항목: 4번 "c". 판정하지 않는다'
     items[1]["pass"] = False
     assert specs.shortfall(items, spec) == '통과하지 못한 항목: 2번 "a". 판정하지 않는다'
+    middle = [i for i in items if i["item"] != "a"]
+    assert '빠진 항목: 2번 "a"' in specs.shortfall(middle, spec), "중간 누락은 그 항목을 짚는다"
+    worded = [{"item": f"항목 {k}", "pass": True} for k in range(3)]
+    assert specs.shortfall(worded, spec) == "완료 보고 3개 / 명세 판 3 의 완료 조건 4개. 판정하지 않는다", "대조 못 하면 개수만"
+
+
+def test_a_draft_emitted_again_or_edited_drops_the_gate_gate_cmd_replaced(repo):
+    _adapter(repo, PASS)
+    sid = made(repo, spec_block(slug="redo", done=["a"]))[0]["id"]
+    _adapter(repo, "git status")
+    assert made(repo, spec_block(slug="redo", done=[PASS, "a"]))[0]["id"] == sid
+    assert specs.load("proj", sid)["done"] == ["git status", "a"], "같은 카드를 다시 내도 옛 게이트는 남지 않는다"
+    _adapter(repo, PASS)
+    saved = client().put(f"/api/specs/{sid}", json={"rev": 2, "goal": "g", "out": [], "done": ["git status", "a"]}).json()
+    assert saved["done"] == [PASS, "a"], "초안 편집도 옛 게이트를 지운다"
 
 
 def test_a_code_task_is_asked_once_for_its_test_cleanup_then_stopped(repo):
