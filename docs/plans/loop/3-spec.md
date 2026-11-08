@@ -322,7 +322,9 @@ Both are pure functions over the record. No model call takes part.
   behind a fixed label (`- Requirement:`, `- Verify:` with an indented
   `- Expected:` under it, and so on). Any accepted one-line value therefore
   reads back unambiguously, including values that look like the document's
-  own structure.
+  own structure. Free text outside it (the goal, `out` lines, undecided
+  items) is put on one line, and the original request is quoted line by
+  line. No free text can therefore start a heading the parser reads.
 - `specs.agent(spec, task=None)` is a dict holding the version, digest,
   selected requirements, `contracts` and `omitted`. The contracts are
   id, status, text, postconditions and invariants for each `depends_on` target
@@ -331,9 +333,12 @@ Both are pure functions over the record. No model call takes part.
 - `specs.equivalent(human_md, agent_json)` reads the human document's
   behaviour section back. It compares facts per requirement: id, status, text,
   each condition, each dependency, each verify item, negation words and
-  number-with-unit tokens. Contracts count as facts too: a requirement the
-  agent rendering carries as a contract is compared through the contract's
-  fields, and one listed as omitted by its id alone. It returns what each
+  number-with-unit tokens. Contracts count as facts too. What a selection
+  owes comes from the human document, never from the agent rendering's own
+  `contracts` and `omitted` lists. Owed in full: the selected requirements
+  and every global one. Owed as contract fields: every dependency the full
+  ones reach. Only the rest may appear by id alone. A contract or global
+  declared as omitted therefore shows as missing facts. It returns what each
   rendering lacks.
 
 ### Setting
@@ -367,11 +372,12 @@ With the setting on, `spec_views.first_turn` runs on the first work turn
 `raw/specs/<repo>/<id>.verify.json` sits beside the record. Only the round gate
 in `specs._check` writes it (`spec_views.verified`). A verify item is recorded
 only when its text is one of the commands the gate ran. The entry is keyed by
-requirement id, `spec_version` and `spec_digest`, and holds `ok`, `head` and
-the time. A passing gate passes the matched items. A failing gate fails them
-all, since it does not say which command stopped it. `spec_views.results`
+requirement id, `spec_version`, `spec_digest` and the gate's commit (`head`),
+and holds `ok`, `head` and the time per item. A gate at another commit starts
+the entry over. A passing gate passes the matched items. A failing gate fails
+them all, since it does not say which command stopped it. `spec_views.results`
 reads a requirement as `pass` only when every verify item ran and passed under
-the current version. It reads `fail` when one failed, `stale` when the entry
+the current version at one commit. Passes from different commits never add up. It reads `fail` when one failed, `stale` when the entry
 belongs to another version or digest, and `missing` otherwise; a stale entry
 never counts as a pass. `spec-update` cannot reach the file.
 

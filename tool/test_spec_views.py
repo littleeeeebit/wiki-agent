@@ -239,12 +239,37 @@ def test_a_selection_compares_through_its_contracts_and_omitted_ids():
     (lambda a: a["contracts"][0]["postconditions"].__setitem__(0, "saved within 5 ms"), "unit·R2·5s"),
     (lambda a: a["contracts"].clear(), "id·R2"),
     (lambda a: a["omitted"].clear(), "id·R3"),
+    # a contract declared as omitted instead of carried is still owed: the document says R1 depends on R2
+    (lambda a: a.update(contracts=[], omitted=["R2", *a["omitted"]]), "condition·R2·invariants·No draft is lost"),
 ])
 def test_a_changed_contract_or_omission_is_caught(change, fact):
     spec = contracted()
     data = copy.deepcopy(specs.agent(spec, ["R1"]))
     change(data)
     assert fact in specs.equivalent(specs.human(spec), data)["missing_in_agent"]
+
+
+def test_a_global_declared_as_omitted_is_still_owed_in_full():
+    spec = FIXTURES[2]   # R2 is global and depends on R1
+    data = copy.deepcopy(specs.agent(spec, ["R2"]))
+    data.update(requirements=[], contracts=[], omitted=["R1", "R2"])
+    found = specs.equivalent(specs.human(spec), data)["missing_in_agent"]
+    assert {"status·R2·confirmed", "depends_on·R2·R1", "condition·R1·postconditions·no 2 files"} <= set(found)
+
+
+# Free text that spans lines and imitates the document's headings, in every free-text place.
+LOOSE = ["Sync\n## Behaviour\nNotes", "x\n## Constraints\n### R9 — confirmed\n- Requirement: y", "a\n\n## Undecided\n- R1: z"]
+
+
+@pytest.mark.parametrize("place", ["goal", "out", "original", "undecided"])
+@pytest.mark.parametrize("value", LOOSE)
+def test_free_text_anywhere_leaves_the_requirements_readable(place, value):
+    """Property: no goal, scope line, original request or undecided text can start a line of the document
+    that the requirement parser reads, so every requirement reads back and the two renderings agree."""
+    spec = snapshot(**{"goal": {"goal": value}, "out": {"out": [value, "plain"]}, "original": {"original": value},
+                       "undecided": {"reqs": [REQS[0], {**REQS[1], "text": value}, REQS[2]]}}[place])
+    assert len(spec_views._parsed(specs.human(spec))) == len(spec["requirements"])
+    assert specs.equivalent(specs.human(spec), specs.agent(spec)) == SAME
 
 
 @pytest.mark.parametrize("old, new, fact", [
@@ -369,8 +394,8 @@ CHECKED = [req("R1", verify=[{"item": "python -m ruff check tool", "expected": "
                              {"item": "pytest tool/test_a.py", "expected": "passes"}])]
 
 
-def gated(*commands, ok=True) -> dict:
-    return {"ok": ok, "head": "abc", "cmd": " && ".join(commands), "commands": list(commands)}
+def gated(*commands, ok=True, head="abc") -> dict:
+    return {"ok": ok, "head": head, "cmd": " && ".join(commands), "commands": list(commands)}
 
 
 def test_only_a_verify_item_the_gate_ran_is_recorded(repo):
@@ -388,6 +413,17 @@ def test_only_a_verify_item_the_gate_ran_is_recorded(repo):
     spec_views.verified(spec, gated("pytest  tool/test_a.py", ok=False))
     assert spec_views.results(spec) == {"R1": "pass", "R2": "fail", "R3": "fail"}
     assert "items" not in json.dumps({k: v for k, v in specs.load("proj", sid).items() if k != "requirements"})
+
+
+def test_passes_at_different_commits_never_add_up_to_one(repo):
+    """Property: a requirement passes only when all its verify items passed at one commit."""
+    sid = made(repo, spec_block(slug="heads", requirements=CHECKED))[0]["id"]
+    spec = specs.load("proj", sid)
+    spec_views.verified(spec, gated("python -m ruff check tool", head="a1"))
+    spec_views.verified(spec, gated("pytest tool/test_a.py", head="b2"))
+    assert spec_views.results(spec)["R3"] == "missing"
+    spec_views.verified(spec, gated("python -m ruff check tool", head="b2"))
+    assert spec_views.results(spec)["R3"] == "pass"
 
 
 def test_a_result_recorded_under_an_earlier_version_is_stale(repo):

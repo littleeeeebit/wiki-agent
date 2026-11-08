@@ -167,12 +167,16 @@ def blocked(spec: dict) -> list[tuple[str, str]]:
 # -- The two views ----------------------------------------------------------
 
 def human(spec: dict) -> str:
-    """The review document: purpose, behaviour, constraints, undecided items, conflicts and the original."""
+    """The review document: purpose, behaviour, constraints, undecided items, conflicts and the original.
+
+    No free text can start a line of its own: a goal or an out-of-scope line is flattened behind a label and
+    the original is quoted line by line. Only this renderer's headings start a line, so `_parsed` finds the
+    one behaviour section whatever the snapshot holds."""
 
     reqs = spec.get("requirements") or []
     status = {r["id"]: r["status"] for r in reqs}
     out = [f"# {spec['id']} — revision {spec.get('rev')}, spec version {spec.get('spec_version')}", "",
-           "## Purpose", "", spec["goal"], "", "## Behaviour", ""]
+           "## Purpose", "", f"Goal: {_one(spec['goal'])}", "", "## Behaviour", ""]
     for r in reqs:
         # Every value sits after a fixed label on its own line, so any accepted (one-line) text reads back.
         out += [f"### {r['id']} — {r['status']}", "", f"- Requirement: {r['text']}",
@@ -184,10 +188,10 @@ def human(spec: dict) -> str:
         out += ["- Global: applies to every task"] if r.get("global") else []
         out.append("")
     out += ["## Constraints", ""]
-    out += [f"- Out of scope: {o}" for o in spec.get("out") or []]
+    out += [f"- Out of scope: {_one(o)}" for o in spec.get("out") or []]
     out += [f"- Every task carries {r['id']}" for r in reqs if r.get("global")]
     out += ["", "## Undecided", ""]
-    out += [f"- {r['id']}: {r['text']}" for r in reqs if r["status"] == "undecided"] or ["- None"]
+    out += [f"- {r['id']}: {_one(r['text'])}" for r in reqs if r["status"] == "undecided"] or ["- None"]
     out += ["", "## Conflicts", ""]
     out += [f"- {r['id']} depends on {t}, which is {status[t]}" for r in reqs for t in r.get("depends_on", [])
             if status.get(t) in ("undecided", "not_applicable")] or ["- None"]
@@ -195,6 +199,11 @@ def human(spec: dict) -> str:
     original = spec.get("original")
     out += [f"> {line}" if line else ">" for line in original.split("\n")] if original else ["Not recorded."]
     return "\n".join(out) + "\n"
+
+
+def _one(text: str) -> str:
+    """Free text on one line, so it never starts a line of the document."""
+    return " ".join(str(text).split())
 
 
 def _closure(by_id: dict, start: list[str]) -> list[str]:
@@ -287,8 +296,8 @@ def _facts(r: dict) -> Counter:
 def _parsed(human_md: str) -> list[dict]:
     """The requirements of a `human` rendering, read back from its Behaviour section."""
 
-    # The last header: the purpose line above it is free text. Every value below is behind a label.
-    body = human_md.rpartition("\n## Behaviour\n")[2].partition("\n## Constraints\n")[0]
+    # Only the renderer's own headings start a line (`human`), so the first pair delimits the section.
+    body = human_md.partition("\n## Behaviour\n")[2].partition("\n## Constraints\n")[0]
     reqs = []
     for line in body.split("\n"):
         if head := re.fullmatch(r"### (R\d+) — (\S+)", line):
@@ -308,6 +317,8 @@ def _parsed(human_md: str) -> list[dict]:
                 r.setdefault("depends_on", []).append(value)
             elif label == "Verify":
                 r.setdefault("verify", []).append({"item": value})
+            elif label == "Global":
+                r["global"] = True
     for r in reqs:   # an item that lost its expected line no longer matches the agent's item
         r["verify"] = [{"item": v["item"], "expected": v.get("expected", "")} for v in r.get("verify", [])]
     return reqs
@@ -317,17 +328,20 @@ def equivalent(human_md: str, agent_json) -> dict:
     """What one rendering carries and the other lacks: `{"missing_in_human": [...], "missing_in_agent": [...]}`,
     each a sorted list of facts. Both empty is equivalence.
 
-    The agent rendering of a selection carries a dependency outside it as its contract and the rest by id
-    only, so the human document's requirement is compared through the same projection."""
+    The agent rendering of a selection carries the rest by id only, so the human document's requirements are
+    projected the same way — but what the selection must carry is read from the human document, never from
+    what the agent rendering declares: every global requirement in full, and the contract of every
+    dependency the full ones reach. One declared as omitted or dropped instead shows as missing facts."""
 
     data = json.loads(agent_json) if isinstance(agent_json, str) else agent_json
-    contracts = {c["id"] for c in data.get("contracts") or []}
-    omitted = set(data.get("omitted") or [])
-    seen = {"human": sum((Counter({("id", r["id"]): 1}) if r["id"] in omitted else
-                          _facts(_contract(r)) if r["id"] in contracts else _facts(r)
-                          for r in _parsed(human_md)), Counter()),
+    parsed = _parsed(human_md)
+    by_id = {r["id"]: r for r in parsed}
+    full = {r["id"] for r in data.get("requirements") or []} | {r["id"] for r in parsed if r.get("global")}
+    needed = set(_closure(by_id, sorted(full))) - full
+    seen = {"human": sum((_facts(r) if r["id"] in full else _facts(_contract(r)) if r["id"] in needed
+                          else Counter({("id", r["id"]): 1}) for r in parsed), Counter()),
             "agent": sum((_facts(r) for r in [*(data.get("requirements") or []), *(data.get("contracts") or [])]),
-                         Counter({("id", rid): 1 for rid in omitted}))}
+                         Counter(("id", rid) for rid in data.get("omitted") or []))}
     return {"missing_in_human": sorted("·".join(f) for f in seen["agent"] - seen["human"]),
             "missing_in_agent": sorted("·".join(f) for f in seen["human"] - seen["agent"])}
 
@@ -343,7 +357,8 @@ def verified(spec: dict, verdict: dict) -> None:
     """The server's gate path, and only it, records what it ran: a verify item counts only when it is one
     of the commands the gate executed, never because some other check passed. A passing gate passes
     them all; a failing one fails them all, since it does not say which command stopped it. Entries are
-    keyed by requirement id, spec version and digest; the spec record never holds results."""
+    keyed by requirement id, spec version, digest and commit: a gate at another head starts the entry
+    over, so passes from different commits never add up to one. The spec record never holds results."""
 
     ran = {" ".join(c.split()) for c in verdict.get("commands") or []}
     matched = [(r, v["item"]) for r in spec.get("requirements") or [] for v in r.get("verify", []) if v["item"] in ran]
@@ -356,8 +371,9 @@ def verified(spec: dict, verdict: dict) -> None:
         kept = {}
     for r, item in matched:
         entry = kept.get(r["id"]) or {}
-        if (entry.get("spec_version"), entry.get("spec_digest")) != (spec.get("spec_version"), spec.get("spec_digest")):
-            entry = {"spec_version": spec.get("spec_version"), "spec_digest": spec.get("spec_digest"), "items": {}}
+        key = {"spec_version": spec.get("spec_version"), "spec_digest": spec.get("spec_digest"), "head": verdict.get("head")}
+        if {k: entry.get(k) for k in key} != key:
+            entry = {**key, "items": {}}
         entry["items"][item] = {"ok": bool(verdict.get("ok")), "head": verdict.get("head"), "ts": time.time()}
         kept[r["id"]] = entry
     file.parent.mkdir(parents=True, exist_ok=True)
@@ -367,8 +383,8 @@ def verified(spec: dict, verdict: dict) -> None:
 
 
 def results(spec: dict) -> dict[str, str]:
-    """Per requirement with verify items: `pass` only when every item ran and passed under this version,
-    `fail` when one failed, `stale` when recorded for another version or digest, else `missing`."""
+    """Per requirement with verify items: `pass` only when every item ran and passed under this version at
+    one commit, `fail` when one failed, `stale` when recorded for another version or digest, else `missing`."""
 
     try:
         kept = json.loads(results_file(spec).read_text(encoding="utf-8"))
@@ -386,7 +402,7 @@ def results(spec: dict) -> dict[str, str]:
         else:
             seen = [(got.get("items") or {}).get(v["item"]) for v in r["verify"]]
             out[r["id"]] = "fail" if any(s and not s.get("ok") for s in seen) else \
-                "pass" if all(s and s.get("ok") for s in seen) else "missing"
+                "pass" if all(s and s.get("ok") for s in seen) and len({s.get("head") for s in seen}) == 1 else "missing"
     return out
 
 
