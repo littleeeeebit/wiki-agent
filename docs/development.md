@@ -418,7 +418,7 @@ skips a window with another still open and counts every window's work.
 `python web/tests/screen_state_browser.py` checks that a theme change repaints
 the terminal without reopening its shell (stubbed `pty_open`/`pty_close`) and
 that run details recover from a failed read with 다시 읽기.
-`python web/tests/spec_views_browser.py` checks that a spec card whose record
+The browser check `web/tests/spec_views_browser.py` verifies that a spec card whose record
 has requirements opens the server's human requirements document with its ids,
 and that a revision drops the earlier document and a reply still in flight.
 `python web/tests/focus_switch_browser.py` checks that an answer still streaming
