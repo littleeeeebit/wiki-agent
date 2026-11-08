@@ -512,7 +512,7 @@ sys.stdin.read()
 @pytest.mark.parametrize("tools, web", [("Read,Glob,Grep", "disabled"),
                                         ("Read,Glob,Grep,WebSearch,WebFetch", "live")])   # PR 7/8 research
 def test_codex_source_profile_has_no_shell_connectors_or_permission_dialog(tree, tools, web):
-    def bounded_call(repo, tool, args):
+    def bounded_call(repo, tool, args, evidence=None):
         if tool == "repo_read" and args == {"path": "source.py"}:
             return "1: safe"
         raise ValueError("not a read tool")

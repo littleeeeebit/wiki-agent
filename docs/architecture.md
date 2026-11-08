@@ -75,6 +75,9 @@ head and runs the repository gate.
 A local task may declare `prerequisite_review` when an independent reading must
 precede the remaining implementation. Its committed instruction, explicit inputs
 and JSON result path define that reading; they do not replace any completion item.
+Evidence kept out of Git on purpose is declared by path and SHA-256: the reviewer's
+`repo_read` opens exactly those Git-ignored files while their bytes match, and the
+pinned hashes join the input signature.
 The person's one Review Loop request runs the prerequisite before final acceptance
 evidence collection. The read-only cell returns its verdict in the conversation;
 the server records its actual identity and committed-input hashes. A pass returns

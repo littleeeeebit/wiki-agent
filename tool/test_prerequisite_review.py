@@ -2,6 +2,7 @@
 
 # ruff: noqa: F811 -- pytest injects imported shared fixtures by name
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -10,6 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
+from agent import read_tools
 from main import loop, prerequisite_review, specs, verification
 from test_loop import (  # noqa: F401 -- isolated real-Git world
     Reviewer, Worker, allow, client, git, no_machine_settings, pr_spec, template, waited, world,
@@ -241,3 +243,62 @@ def test_prerequisite_reviews_the_head_the_server_just_published(world):
     fresh = specs.load("proj", spec["id"])
     assert fresh["state"] == "멈춤" and not Worker.made
     assert fresh["prerequisite_review_result"]["head"] == expected
+
+
+DIALOGUE = b"original dialogue\n"
+EVIDENCE = [{"path": "local/dialogue.txt", "sha256": hashlib.sha256(DIALOGUE).hexdigest()}]
+
+
+@pytest.mark.parametrize("evidence", [
+    "local/dialogue.txt", [], [{"path": "local/dialogue.txt"}], EVIDENCE * 2,
+    [{"path": "../dialogue.txt", "sha256": "0" * 64}], [{"path": "local/key.pem", "sha256": "0" * 64}],
+    [{"path": "local/dialogue.txt", "sha256": "A" * 64}], [{"path": "data.json", "sha256": "0" * 64}],
+])
+def test_evidence_declaration_rejects_unsafe_or_ambiguous_files(evidence):
+    with pytest.raises(ValueError):
+        prerequisite_review.declared({**REQUEST, "evidence": evidence})
+
+
+@pytest.mark.parametrize("case", ["read", "changed-after-dispatch", "not-ignored"])
+def test_declared_ignored_evidence_is_readable_and_bound_to_its_bytes(world, case):
+    spec, path = prepared(world)
+    if case != "not-ignored":
+        with (path / ".gitignore").open("a", encoding="utf-8") as stream:
+            stream.write("\nlocal/\n")
+        git(path, "add", ".gitignore")
+        git(path, "commit", "-qm", "keep local evidence out of Git")
+        git(path, "push", "-q", "origin", spec["id"])
+    (path / "local").mkdir()
+    (path / "local" / "dialogue.txt").write_bytes(DIALOGUE)
+    request = {**REQUEST, "evidence": EVIDENCE}
+    if case == "not-ignored":   # an untracked file Git would show could enter the PR
+        with pytest.raises(ValueError, match="무시"):
+            prerequisite_review._present(path, request)
+        return
+    specs.update("proj", spec["id"], prerequisite_review=request)
+    seen = []
+
+    def review(first, text):
+        assert "local/dialogue.txt" in text and EVIDENCE[0]["sha256"] in text
+        seen.append(read_tools.call(path, "repo_read", {"path": "local/dialogue.txt"}, Reviewer.made[-1].evidence))
+        if case == "changed-after-dispatch":
+            (path / "local" / "dialogue.txt").write_bytes(b"rewritten while reading\n")
+        identity = re.search(r"Reviewer identity: `([^`]+)`", text)[1]
+        return first + "\n```prerequisite-result\n" + json.dumps({
+            "reviewer_session": identity, "verdict": "fail", "findings": ["stop after reading"],
+        }) + "\n```"
+
+    Reviewer.replies = [review]
+    client().post("/api/loops", json={"prs": [11]}).raise_for_status()
+    waited(lambda: not loop._loops)
+    fresh = specs.load("proj", spec["id"])
+    assert fresh["state"] == "멈춤" and not Worker.made
+    assert "local/" not in git(world.origin, "ls-tree", "-r", "--name-only", spec["id"])
+    assert "1: original dialogue" in seen[0] and Reviewer.made[-1].evidence == {}
+    if case == "changed-after-dispatch":
+        assert not fresh.get("prerequisite_review_result")
+    else:
+        receipt = fresh["prerequisite_review_result"]
+        manifest = prerequisite_review.snapshot(path, fresh)
+        assert manifest["request"]["evidence"] == EVIDENCE
+        assert receipt["input_signature"] == verification.sha(manifest)

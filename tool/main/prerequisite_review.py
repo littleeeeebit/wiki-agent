@@ -8,12 +8,15 @@ import re
 import time
 from pathlib import Path, PurePosixPath
 
+from agent import read_tools
+
 
 def declared(value) -> dict | None:
     if value is None:
         return None
-    if not isinstance(value, dict) or set(value) != {"instructions", "inputs", "result"}:
-        raise ValueError("prerequisite_review 는 instructions, inputs, result 를 받는다")
+    if not isinstance(value, dict) or not {"instructions", "inputs", "result"} <= set(value) <= {
+            "instructions", "inputs", "result", "evidence"}:
+        raise ValueError("prerequisite_review 는 instructions, inputs, result 와 선택 evidence 를 받는다")
 
     def safe(name):
         return (isinstance(name, str) and name and "\\" not in name and ":" not in name
@@ -27,7 +30,21 @@ def declared(value) -> dict | None:
             or len(inputs) != len(set(inputs))
             or value["result"] in [value["instructions"], *inputs]):
         raise ValueError("선행 리뷰에는 안전한 상대 경로와 중복 없는 입력 파일이 필요하다")
-    return {"instructions": value["instructions"], "inputs": list(inputs), "result": value["result"]}
+    result = {"instructions": value["instructions"], "inputs": list(inputs), "result": value["result"]}
+    if "evidence" not in value:
+        return result
+    # Local evidence kept out of Git on purpose: each file pinned by its SHA-256.
+    evidence = value["evidence"]
+    if (not isinstance(evidence, list) or not evidence
+            or not all(isinstance(e, dict) and set(e) == {"path", "sha256"} and safe(e["path"])
+                       and not read_tools.private(Path(e["path"]))
+                       and isinstance(e["sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", e["sha256"])
+                       for e in evidence)):
+        raise ValueError("로컬 증거는 안전한 상대 경로와 소문자 SHA-256 쌍의 목록이어야 한다")
+    names = [e["path"] for e in evidence]
+    if len(names) != len(set(names)) or set(names) & {result["instructions"], result["result"], *inputs}:
+        raise ValueError("로컬 증거 경로는 중복되지 않고 지시·입력·결과 파일과 겹치지 않아야 한다")
+    return {**result, "evidence": [{"path": e["path"], "sha256": e["sha256"]} for e in evidence]}
 
 
 def _committed(path: Path, name: str) -> bytes:
@@ -50,7 +67,29 @@ def snapshot(path: Path, spec: dict) -> dict:
     request = declared(spec["prerequisite_review"])
     names = sorted({request["instructions"], *request["inputs"]})
     files = [{"path": name, "sha256": hashlib.sha256(_committed(path, name)).hexdigest()} for name in names]
+    # The request carries the local evidence's pinned hashes, so they are part of the signature.
+    # Their bytes are checked only around a review (`_present`): evidence may expire afterwards.
     return {"rev": spec["rev"], "request": request, "files": files}
+
+
+def _present(path: Path, request: dict) -> None:
+    """Every declared local evidence file is on disk, Git-ignored and untracked, and its bytes match."""
+    from . import specs
+
+    for item in request.get("evidence", []):
+        name = item["path"]
+        source = path / name
+        if source.resolve() != source.absolute() or not source.resolve().is_relative_to(path.resolve()):
+            raise ValueError("로컬 증거 파일에 심볼릭 링크나 저장소 밖 경로가 있다")
+        # Ignored and untracked, so it never enters the PR; `check-ignore` never reports a tracked file.
+        if specs.sh(["git", "check-ignore", "-q", "--", name], path).returncode:
+            raise ValueError(f"로컬 증거 `{name}` 은 추적되지 않고 Git 이 무시하는 파일이어야 한다")
+        try:
+            data = source.read_bytes()
+        except OSError:
+            data = None
+        if data is None or hashlib.sha256(data).hexdigest() != item["sha256"]:
+            raise ValueError(f"로컬 증거 `{name}` 이 없거나 고정한 SHA-256 과 다르다")
 
 
 def _unique(pairs):
@@ -96,6 +135,10 @@ def advance(spot, spec: dict, repo: Path, path: Path, head: str, base: str) -> b
             + "\n".join(f"- `{name}`" for name in request["inputs"])
             + "\n\nServer-computed committed input hashes:\n```json\n"
             + json.dumps(manifest["files"], ensure_ascii=False, indent=2) + "\n```\n"
+            + ("\nLocal evidence kept out of Git on purpose. `repo_read` opens exactly these paths, and only "
+               "while their bytes match the pinned SHA-256; report a file it refuses as unavailable:\n"
+               + "\n".join(f"- `{e['path']}` sha256 `{e['sha256']}`" for e in request["evidence"]) + "\n"
+               if request.get("evidence") else "")
             + f"\n\nReviewer identity: `{chat.id}`\nInput signature: `{signature}`\n"
             f"The implementer will preserve your JSON as `{request['result']}`. Return its complete contents "
             "in exactly one fenced `prerequisite-result` JSON object, with `reviewer_session` equal to the "
@@ -110,13 +153,19 @@ def advance(spot, spec: dict, repo: Path, path: Path, head: str, base: str) -> b
         folder.mkdir(parents=True, exist_ok=True)
         order = folder / "round-0.md"
         order.write_text(instruction, encoding="utf-8", newline="\n")
-        answer = loop.ask(spot, chat, f"Review the instruction (recorded at `{order}`):\n\n{instruction}", instruction)
+        _present(path, request)
+        chat.evidence = {e["path"]: e["sha256"] for e in request.get("evidence", [])}
+        try:
+            answer = loop.ask(spot, chat, f"Review the instruction (recorded at `{order}`):\n\n{instruction}", instruction)
+        finally:
+            chat.evidence = {}
         (folder / "prerequisite-result.md").write_text(answer, encoding="utf-8", newline="\n")
         blocks = re.findall(loop.FENCE.format("prerequisite-result"), answer, re.M | re.S)
         result = json.loads(blocks[0], object_pairs_hook=_unique) if len(blocks) == 1 else None
         if (answer.splitlines()[0] != first or len(blocks) != 1 or not isinstance(result, dict)
                 or result.get("reviewer_session") != chat.id or result.get("verdict") not in ("pass", "fail")):
             raise ValueError("선행 리뷰 결과의 라운드·신원·JSON·판정을 확인하세요")
+        _present(path, request)   # evidence bytes changed after dispatch invalidate the round
         fresh = specs.load(spot.repo, spot.sid)
         if (spot.halt.is_set() or fresh is None or verification.sha(snapshot(path, fresh)) != signature
                 or loop.pr_head(repo, spec["pr"]["number"]) != (head, base)

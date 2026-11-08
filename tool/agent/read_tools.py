@@ -1,6 +1,7 @@
 """Codex's shell-free counterpart of Claude's Read, Glob and Grep."""
 
 import fnmatch
+import hashlib
 import re
 import subprocess
 from pathlib import Path
@@ -81,8 +82,10 @@ def numbered(content: list[str], args: dict) -> str:
     return result if len(result) <= 60_000 else result[:60_000] + "\n(출력 제한: limit을 줄여 다시 읽어라)"
 
 
-def call(repo: Path, tool: str, args: dict) -> str:
-    """Only fixed git inventory and bounded file reads; no model command is executed."""
+def call(repo: Path, tool: str, args: dict, evidence: dict[str, str] | None = None) -> str:
+    """Only fixed git inventory and bounded file reads; no model command is executed.
+    `evidence` maps the untracked local files a prerequisite review declared to their
+    pinned SHA-256: `repo_read` opens exactly those too, while their bytes match."""
     spec = next((s for s in SPECS if s["name"] == tool), None)
     if spec is None or not isinstance(args, dict):
         raise ValueError("지원하지 않는 읽기 도구다")
@@ -107,7 +110,7 @@ def call(repo: Path, tool: str, args: dict) -> str:
                                capture_output=True, timeout=10, check=True).stdout.decode("utf-8").split("\0")
     paths = {name: root / name for name in inventory if name and not private(Path(name))}
 
-    def lines(path: Path) -> list[str]:
+    def lines(path: Path, pinned: str | None = None) -> list[str]:
         resolved = path.resolve()
         if root not in resolved.parents or private(resolved.relative_to(root)) or not resolved.is_file():
             raise ValueError("리뷰 범위 밖 파일이다")
@@ -115,6 +118,8 @@ def call(repo: Path, tool: str, args: dict) -> str:
             data = stream.read(2_000_001)
         if len(data) > 2_000_000 or b"\0" in data:
             raise ValueError("2 MB 이하 텍스트 파일만 읽을 수 있다")
+        if pinned is not None and hashlib.sha256(data).hexdigest() != pinned:
+            raise ValueError("로컬 증거가 고정한 SHA-256 과 다르다")
         return data.decode("utf-8").splitlines()
 
     if tool == "repo_read":
@@ -122,9 +127,12 @@ def call(repo: Path, tool: str, args: dict) -> str:
         target = (target if target.is_absolute() else root / target).absolute()
         # Match the lexical tracked path before resolving symlinks.
         path = next((p for p in paths.values() if p.absolute() == target), None)
-        if path is None:
+        if path is not None:
+            return numbered(lines(path), args)
+        pinned = next((sha for name, sha in (evidence or {}).items() if (root / name).absolute() == target), None)
+        if pinned is None:
             raise ValueError("추적된 소스 파일만 읽을 수 있다")
-        return numbered(lines(path), args)
+        return numbered(lines(target, pinned), args)
     out = []
     for name, path in sorted(paths.items()):
         if not fnmatch.fnmatchcase(name, args.get("pattern", "*")):
