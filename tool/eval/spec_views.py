@@ -528,10 +528,15 @@ def _charged(row: dict) -> float:
     return float(row.get("usd_bound") or 0)
 
 
+def conditions(cfg: dict) -> list[str]:
+    """The conditions an experiment runs: its config's `conditions`, A to D unless it names others."""
+    return list(cfg.get("conditions") or CONDITIONS)
+
+
 def cells(cfg: dict) -> list[tuple[str, str, int]]:
     """Every (task, condition, repetition), shuffled by the config's seed."""
 
-    order = [(t["id"], c, r) for t in cfg["tasks"] for c in CONDITIONS for r in range(1, cfg["repetitions"] + 1)]
+    order = [(t["id"], c, r) for t in cfg["tasks"] for c in conditions(cfg) for r in range(1, cfg["repetitions"] + 1)]
     random.Random(cfg["seed"]).shuffle(order)
     return order
 
@@ -547,7 +552,7 @@ def pending(cfg: dict, past: list[dict]) -> list[tuple[str, str, int]]:
 
 
 def run_cell(cfg: dict, task: dict, record: dict, condition: str, rep: int, impl, ledger: Ledger, cap: float,
-             stop: threading.Event, kind: str = "cell", scratch: Path | None = None) -> dict:
+             stop: threading.Event, kind: str = "cell", scratch: Path | None = None, extra: dict | None = None) -> dict:
     began = time.time()
     ws = Path(scratch or tempfile.gettempdir()) / "spec-views" / cfg["experiment"] / \
         f"{task['id']}-{condition}{rep}-{uuid.uuid4().hex[:6]}"
@@ -555,7 +560,8 @@ def run_cell(cfg: dict, task: dict, record: dict, condition: str, rep: int, impl
            "implementer": getattr(impl, "name", "unknown"), "model": cfg["implementer"].get("model"),
            "effort": cfg["implementer"].get("effort"), "code_commit": git(ROOT, "rev-parse", "HEAD").strip(),
            "merge_base": task["merge_base"], "spec_version": record["enriched"].get("spec_version"),
-           "spec_digest": record["enriched"].get("spec_digest"), "usd_cap": round(cap, 4), "retries": 0}
+           "spec_digest": record["enriched"].get("spec_digest"), "usd_cap": round(cap, 4), "retries": 0,
+           **(extra or {})}
     if condition == "D":
         row["input_construction"] = record.get("selection_cost") or {}
     try:
@@ -673,14 +679,7 @@ def run(cfg: dict, impl=None, production=None, folder: Path = SPECS, scratch: Pa
         th.start()
         threads.append(th)
 
-    def timer():
-        while not stop.is_set():
-            if time.monotonic() >= ledger.deadline:
-                stop.set()
-                return
-            time.sleep(1)
-
-    threading.Thread(target=timer, daemon=True).start()
+    watch(ledger, stop)
     floor = cfg["limits"]["min_cell_usd"]
     queue = [("cell", c) for c in pending(cfg, past)]
     done_baselines = {r["task"] for r in past if r.get("kind") == "production_baseline"}
@@ -694,6 +693,24 @@ def run(cfg: dict, impl=None, production=None, folder: Path = SPECS, scratch: Pa
             break
         launch(run_cell, cfg, tasks[tid], records[tid], cond, rep, production if kind != "cell" else impl,
                ledger, cap, stop, kind, scratch)
+    return finish(cfg, ledger, stop, threads, began, stopped)
+
+
+def watch(ledger: Ledger, stop: threading.Event) -> None:
+    """Set `stop` when the wall ceiling's deadline passes, so running sessions are cut there."""
+
+    def timer():
+        while not stop.is_set():
+            if time.monotonic() >= ledger.deadline:
+                stop.set()
+                return
+            time.sleep(1)
+
+    threading.Thread(target=timer, daemon=True).start()
+
+
+def finish(cfg: dict, ledger: Ledger, stop: threading.Event, threads: list, began: float, stopped: str | None) -> dict:
+    """Wait for the running cells, then journal the invocation and any ceiling stop."""
     for th in threads:
         th.join()
     stopped = stopped or ("wall" if stop.is_set() else None)
@@ -727,7 +744,7 @@ def finals(past: list[dict], kind: str = "cell") -> dict[tuple, dict]:
 def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(prog="python tool/eval/spec_views.py", description=__doc__.split("\n\n")[0])
-    parser.add_argument("command", choices=("prepare", "run", "report"))
+    parser.add_argument("command", choices=("prepare", "run", "pipeline", "report"))
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--tasks", type=Path, default=ROOT / "eval" / "spec-views" / "tasks.json")
     args = parser.parse_args(argv)
@@ -743,8 +760,20 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         cfg = config(args.config)
         cfg["path"] = args.config.as_posix()
-        if args.command == "run":
-            print(json.dumps(run(cfg)))
+        if cfg["kind"] == "main":   # held-out tasks only, and the first task's tests at the code the cells run on
+            from eval import spec_views_main as main_report
+            main_report.held_out(cfg)
+            if args.command in ("run", "pipeline") and not main_report.implementation(cfg)["ok"]:
+                raise Refused("the first task's tests fail at this commit: no main-experiment cell runs on it")
+            if args.command == "report":
+                print(main_report.write(cfg))
+                return 0
+        if args.command in ("run", "pipeline"):
+            if args.command == "pipeline":
+                from eval.spec_views_pipeline import run as pipeline
+                print(json.dumps(pipeline(cfg)))
+            else:
+                print(json.dumps(run(cfg)))
             return 0
         from eval.spec_views_report import markdown, report   # it imports this module
         rep = report(cfg)

@@ -46,16 +46,20 @@ def spec_block(text: str) -> dict:
     return block
 
 
-def prepare(cfg: dict, tasks_file: Path, call=None, folder: Path = SPECS) -> list[dict]:
-    """The config's task entries with their digests; a frozen task is kept as it is.
+class StepFailed(Refused):
+    """A spec step's model call failed; `infra` when nothing reached the model and the harness did not stop it."""
 
-    `call(workspace, system, message, tools, limits)` is one model session; `limits` holds the USD cap and the
-    seconds the ceilings leave."""
+    def __init__(self, message: str, infra: bool = False):
+        super().__init__(message)
+        self.infra = infra
+
+
+def spender(cfg: dict, call, ledger: Ledger, extra: dict | None = None, stop: threading.Event | None = None):
+    """`spend(workspace, system, message, tools, task, step)`: one planner call reserved from `ledger`, journalled
+    as a `step` row (with `extra`), raising `Ceiling` when no room is left and `StepFailed` when the call failed."""
 
     call = call or (lambda ws, system, message, tools, limits: claude(
-        ws, system, message, {**cfg["planner"], **limits}, threading.Event(), tools=tools))
-    ledger = Ledger(cfg, rows(cfg))
-    began = time.monotonic()
+        ws, system, message, {**cfg["planner"], **limits}, stop or threading.Event(), tools=tools))
 
     def spend(ws: Path, system: str, message: str, tools: str, task: dict, step: str) -> dict:
         usd = cfg["limits"]["prepare_usd"]
@@ -63,14 +67,26 @@ def prepare(cfg: dict, tasks_file: Path, call=None, folder: Path = SPECS) -> lis
         if cap is None:
             raise Ceiling("wall" if time.monotonic() >= ledger.deadline else "usd")
         got = call(ws, system, message, tools, {"usd": cap, "seconds": ledger.left(cfg["limits"]["session_seconds"])})
-        row = journal(cfg, {"kind": step, "task": task["id"], "usd": got["usd"], "tokens": got["tokens"],
-                            "turns": got["turns"], "cause": got["cause"], "error": got["error"],
+        row = journal(cfg, {"kind": step, "task": task["id"], **(extra or {}), "usd": got["usd"],
+                            "tokens": got["tokens"], "turns": got["turns"], "cause": got["cause"], "error": got["error"],
                             **({"usd_bound": cap} if got["usd"] is None else {})})
         ledger.settle(cap, _charged(row))
         if got["cause"] or got["error"]:
-            raise Refused(f"{task['id']}: {step} failed — {got['error'] or got['cause']}")
+            raise StepFailed(f"{task['id']}: {step} failed — {got['error'] or got['cause']}", bool(got.get("infra")))
         return {**got, "cost": {k: row[k] for k in ("usd", "tokens", "turns")}}
 
+    return spend
+
+
+def prepare(cfg: dict, tasks_file: Path, call=None, folder: Path = SPECS) -> list[dict]:
+    """The config's task entries with their digests; a frozen task is kept as it is.
+
+    `call(workspace, system, message, tools, limits)` is one model session; `limits` holds the USD cap and the
+    seconds the ceilings leave."""
+
+    ledger = Ledger(cfg, rows(cfg))
+    began = time.monotonic()
+    spend = spender(cfg, call, ledger)
     listed = json.loads(Path(tasks_file).read_text(encoding="utf-8"))
     entries = []
     try:
@@ -131,34 +147,42 @@ def reference(cfg: dict, task: dict, deadline: float | None = None) -> dict:
 def freeze(cfg: dict, task: dict, spend) -> dict:
     """The baseline spec (feature off), its enrichment (on) and D's selection, each one journalled model call."""
 
-    original = task["source"]["text"]
     ws = Path(tempfile.gettempdir()) / "spec-views" / "prepare" / f"{task['id']}-{uuid.uuid4().hex[:6]}"
-    costs = {}
     try:
         workspace(source(cfg), task["merge_base"], ws)
-        plain = channels.get("next").preamble
-        got = spend(ws, plain, GENERATE + original, READ_TOOLS, task, "generation")
-        costs["generation"] = got["cost"]
-        block = spec_block(got["result"])
-        gate_cmd = task.get("round") or ""
-        baseline = {"id": task["id"], "rev": 1, "goal": block["goal"], "out": block.get("out") or [],
-                    "done": ([gate_cmd] if gate_cmd else []) + [d for d in block.get("done") or [] if d != gate_cmd],
-                    "grounds": block.get("grounds") or {}, "decisions": block.get("decisions") or []}
-        on = plain + "\n\n" + channels.REQUIREMENTS
-        shown = {k: baseline[k] for k in ("goal", "out", "done", "decisions")} | {"slug": task["id"]}
-        got = spend(ws, on, ENRICH.format(original=original, spec=json.dumps(shown, ensure_ascii=False, indent=2)),
-                    READ_TOOLS, task, "enrichment")
-        costs["enrichment"] = got["cost"]
-        reqs = spec_views.requirements(spec_block(got["result"]).get("requirements") or [])
-        enriched = {**baseline, "original": original, "requirements": reqs}
-        spec_views.stamped(None, enriched)
-        got = spend(ws, "", SELECT.format(spec=json.dumps(specs.agent(enriched), ensure_ascii=False)), "", task,
-                    "selection")
-        costs["selection"] = got["cost"]
-        picked = json.loads(re.search(r"\[.*?\]", got["result"], re.S).group(0))
-        ids = [r["id"] for r in reqs]
-        select = [i for i in ids if i in picked or any(r["id"] == i and r.get("global") for r in reqs)]
+        baseline, costs = generated(task, ws, spend)
+        return {"baseline": baseline, **enriched(task, ws, spend, baseline, costs)}
     finally:
         remove(ws)
-    return {"baseline": baseline, "enriched": enriched, "select": select or ids, "costs": costs,
-            "selection_cost": costs["selection"]}
+
+
+def generated(task: dict, ws: Path, spend) -> tuple[dict, dict]:
+    """The spec the `next` generator makes from the original text with the setting off, and its call's cost."""
+
+    got = spend(ws, channels.get("next").preamble, GENERATE + task["source"]["text"], READ_TOOLS, task, "generation")
+    block = spec_block(got["result"])
+    gate_cmd = task.get("round") or ""
+    baseline = {"id": task["id"], "rev": 1, "goal": block["goal"], "out": block.get("out") or [],
+                "done": ([gate_cmd] if gate_cmd else []) + [d for d in block.get("done") or [] if d != gate_cmd],
+                "grounds": block.get("grounds") or {}, "decisions": block.get("decisions") or []}
+    return baseline, {"generation": got["cost"]}
+
+
+def enriched(task: dict, ws: Path, spend, baseline: dict, costs: dict) -> dict:
+    """`baseline` enriched once with the setting on, and D's selection: `{enriched, select, costs, selection_cost}`."""
+
+    original = task["source"]["text"]
+    on = channels.get("next").preamble + "\n\n" + channels.REQUIREMENTS
+    shown = {k: baseline[k] for k in ("goal", "out", "done", "decisions")} | {"slug": task["id"]}
+    got = spend(ws, on, ENRICH.format(original=original, spec=json.dumps(shown, ensure_ascii=False, indent=2)),
+                READ_TOOLS, task, "enrichment")
+    costs = {**costs, "enrichment": got["cost"]}
+    reqs = spec_views.requirements(spec_block(got["result"]).get("requirements") or [])
+    spec = {**baseline, "original": original, "requirements": reqs}
+    spec_views.stamped(None, spec)
+    got = spend(ws, "", SELECT.format(spec=json.dumps(specs.agent(spec), ensure_ascii=False)), "", task, "selection")
+    costs["selection"] = got["cost"]
+    picked = json.loads(re.search(r"\[.*?\]", got["result"], re.S).group(0))
+    ids = [r["id"] for r in reqs]
+    select = [i for i in ids if i in picked or any(r["id"] == i and r.get("global") for r in reqs)]
+    return {"enriched": spec, "select": select or ids, "costs": costs, "selection_cost": costs["selection"]}

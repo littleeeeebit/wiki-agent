@@ -1,0 +1,183 @@
+{
+  "schema": "spec-views-experiment/1",
+  "experiment": "main-1",
+  "kind": "main",
+  "code_commit": null,
+  "seed": 20261109,
+  "tasks_file": "eval/spec-views/main-tasks.json",
+  "tasks": [],
+  "conditions": {
+    "A": "the spec brief the generator makes with SPEC_VIEWS off (specs.brief), after the work-spec rules",
+    "B": "the enriched spec as the human document (specs.human), after the work-spec rules",
+    "C": "the same frozen snapshot as JSON: id, rev, goal, out, original and specs.agent(spec) with every requirement",
+    "D": "id, rev, goal, out and specs.agent(spec, select); omitted requirements and the original by id from .spec-views/spec.json in the workspace"
+  },
+  "implementer": {
+    "name": "claude-cli",
+    "host": "Claude Code 2.1.319",
+    "model": "claude-opus-5-5",
+    "effort": "high"
+  },
+  "planner": {
+    "model": "claude-opus-5-5",
+    "effort": "high"
+  },
+  "repetitions": 2,
+  "concurrency": 3,
+  "retries": {
+    "per_cell": 0,
+    "infrastructure_reruns": 1
+  },
+  "limits": {
+    "session_seconds": 1800,
+    "cell_usd": 3.0,
+    "min_cell_usd": 0.5,
+    "prepare_usd": 2.0,
+    "tokens_per_cell": null,
+    "tokens_note": "The Claude Code CLI cannot cap tokens; every session is capped in USD (--max-budget-usd) and in wall time instead, the same for all four conditions.",
+    "test_seconds": 900,
+    "gate_seconds": 2400
+  },
+  "ceilings": {
+    "usd": 80,
+    "hours": 11
+  },
+  "pipeline": {
+    "experiment": "main-1-pipeline",
+    "conditions": {
+      "A": "the spec brief the generator makes with SPEC_VIEWS off (specs.brief), after the work-spec rules; made afresh for each repetition from the original text",
+      "D": "id, rev, goal, out and specs.agent(spec, select); omitted requirements and the original by id from .spec-views/spec.json in the workspace; generated, enriched and selected afresh for each repetition"
+    },
+    "pairs": [
+      [
+        "D",
+        "A"
+      ]
+    ],
+    "repetitions": 2,
+    "ceilings": {
+      "usd": 40,
+      "hours": 5
+    },
+    "text": "Each repetition generates a fresh spec from the pull request's original text with the `next` prompt (setting off), then enriches it and selects D's requirements, as the pilot's preparation did once. A runs on that repetition's spec brief and D on its narrowed agent view; one generation is shared by the pair, so the comparison carries generation variance on both sides. Every repetition's spec calls count toward its condition's cost; nothing is cached. Journal: `raw/eval/spec-views/main-1-pipeline.journal.jsonl`."
+  },
+  "budget": {
+    "usd": 120,
+    "hours": 16,
+    "approved_by": "Repository owner, 2026-11-08, through AskUserQuestion in the spec-views-main-experiment session, after the pilot report and the sample-size estimate below: USD 120 and 16 hours.",
+    "split": "Fixed-spec USD 80 and 11 h (preparation, cells and the production baselines); full pipeline USD 40 and 5 h. The two arms run one after the other at concurrency 3, never together.",
+    "per_task_estimate_usd": {
+      "fixed_cells": 6.58,
+      "preparation": 0.44,
+      "pipeline": 3.76,
+      "production_baseline": 0.78,
+      "total": 11.56,
+      "from": "pilot-1 journal means: cells A 0.781, B 1.017, C 0.830, D 0.660 USD (caps counted for uncosted cells); generation 0.201, enrichment 0.207, selection 0.033"
+    }
+  },
+  "sample_size": {
+    "tasks": 10,
+    "pilot_sd_of_paired_difference": 0.548,
+    "derivation": "The pilot's per-task D-A success differences have SD 0.548 (n=6). A 95% interval of half-width 0.05 needs (1.96*0.548/0.05)^2 = 462 tasks; 80% power to detect +10 points needs ((1.96+0.84)*0.548/0.10)^2 = 236. The approved USD 120 at USD 11.56 per task affords 10, so n = 10, expected half-width about 0.34. The sample cannot confirm either adoption path unless the effect is very large; a result without a supported judgment is written as further verification needed.",
+    "draw": "Tasks are taken in the seeded order (`seed`) from the eligible held-out pool (`main-tasks.json`, `pool`), the first n the owner vetted; nothing is chosen by hand after the draw."
+  },
+  "candidate": {
+    "condition": "D",
+    "why": "fixed from the pilot report: D, the narrowed agent JSON, was the only condition not below A on verified success (0.500 against A's 0.500; B and C 0.417) at nearly the same cost per verified success (USD 1.651 against 1.633). Chosen by the owner on 2026-11-08 before any main-run cell.",
+    "setting_gap": "`SPEC_VIEWS=on` today appends the full agent view (`specs.agent(spec)`) after A's brief, which is none of A to D. Adopting D therefore needs a follow-up change that makes the setting render D's selection before the setting is turned on."
+  },
+  "pairs": [
+    [
+      "A",
+      "B"
+    ],
+    [
+      "B",
+      "C"
+    ],
+    [
+      "C",
+      "D"
+    ],
+    [
+      "D",
+      "A"
+    ]
+  ],
+  "metrics": {
+    "primary": "verified task success: every hidden test passes, the affected existing test files (as the merge base wrote them) pass, and the diff changes no forbidden path; a timeout, budget or ceiling stop, or an exit without verification is a failure; the session's done-report is never evidence",
+    "unit": "one task, its repetitions averaged with equal weight per task; paired differences per task",
+    "secondary": [
+      "hidden-test pass fraction",
+      "regressions of affected tests",
+      "critical regressions",
+      "forbidden changes",
+      "failure causes",
+      "retries and infrastructure reruns",
+      "tokens",
+      "wall time",
+      "USD per cell",
+      "cost per verified success including failed runs and first-run spec generation"
+    ],
+    "definitions": {
+      "requirement satisfaction": "the fraction of a cell's hidden tests (the pull request's own tests of what it asked for) that passed, averaged over cells.",
+      "regressions": "cells whose affected existing tests, as the merge base wrote them, failed.",
+      "critical regressions": "cells meeting `critical_regression`.",
+      "missing critical conditions": "failed cells that changed non-test code, kept every affected test passing and still failed a hidden test: an implementation that missed a condition the request's tests check.",
+      "unsupported policy additions": "requirements in the specs a condition ran whose `source.kind` is `policy` and whose status is `assumed` or `undecided`: rules the enrichment added without a confirmed ground. A has none (no requirements).",
+      "unnecessary holds": "specs on which `spec_views.blocked` names a dependency on an undecided requirement, so production's first turn would have held for a person, although the merged pull request shows the task was answerable without one.",
+      "retries": "per-cell retries (fixed at 0) and infrastructure reruns.",
+      "cost per success": "every attempt's USD (a cost the CLI never reported at its cap) plus every spec call the condition needs, divided by verified successes; the ratio's interval resamples tasks."
+    }
+  },
+  "adoption": {
+    "requires": [
+      "fixed",
+      "pipeline"
+    ],
+    "quality": {
+      "min_difference": 0.05,
+      "min_low": 0.0,
+      "max_ratio_high": 1.1
+    },
+    "cost": {
+      "min_low": -0.02,
+      "max_ratio": 0.85,
+      "max_ratio_high": 1.0
+    },
+    "text": "Each comparison is the candidate D against A, success as a difference in rate and cost as the ratio of cost per verified success. Quality path: difference at least +0.05 with the 95% interval's lower end above 0, and the ratio's upper end at most 1.10. Cost path: the difference's lower end at least -0.02, the ratio at most 0.85 (15% cheaper per success) and its upper end below 1. A comparison is rejected when a critical regression blocks it or its intervals exclude both paths (difference upper end below +0.05 or ratio lower end above 1.10, and difference upper end below -0.02 or ratio lower end above 0.85); otherwise, when neither path passes, it needs further verification. These are the operating defaults the request gave, since no product criterion for spec quality is recorded in this repository; none was derived from the pilot's results. Adoption also needs implementation pass and experiment validity."
+  },
+  "critical_regression": "A cell whose diff changes a forbidden path (the evaluation config or frozen specs, a spec record, D's spec copy, a hidden test's placed name), whose affected existing tests fail, or which deletes a tracked file. Relative to A (the owner's choice, 2026-11-08): over the (task, repetition) pairs both ran, a candidate cell that changes a forbidden path or deletes a tracked file blocks adoption outright; failing affected tests block only when the candidate has more critical regressions than A.",
+  "infrastructure_rerun": "A cell whose session produced no model output and was not stopped by the harness (the CLI failed to start, or the API failed before any turn), or whose harness step raised, is journalled with infra true and run once more; the original row stays. A second infrastructure failure is final and counts as a failure. A timeout, budget or ceiling stop is never an infrastructure failure.",
+  "runner_difference": "The controlled runner differs from production: a fresh one-commit repository from git archive instead of a worktree (no history, no remote, no PR or review loop); one isolated Claude Code session per cell (--system-prompt-file replacing the host prompt, no user or project settings, hooks, CLAUDE.md, MCP servers or AskUserQuestion, nothing persisted) instead of the app's write session with hooks, Jev's first-turn file filter and a person to ask; the first turn is only `Start.`; verification runs the hidden and affected tests rather than the adapter gate. The production-runner baseline runs condition A once per task with the app's session flags (host prompt kept, the person's settings and hooks loaded) and adds the merge base's Python gate command; the npm and browser steps are left out because the archived workspace has no node_modules.",
+  "held_out": {
+    "configs": [
+      "eval/spec-views/pilot-1.json"
+    ],
+    "excluded": [
+      "pr304",
+      "pr198",
+      "pr260",
+      "pr164",
+      "pr106",
+      "pr161",
+      "pr201",
+      "pr284",
+      "pr309",
+      "pr311"
+    ],
+    "why": "pilot-1's six tasks (pr198 was also tuned on: its affected test was narrowed during the pilot), the two undecided tasks kept apart in tasks.json, and the two pull requests that built the feature and its harness."
+  },
+  "implementation": {
+    "tests": [
+      "tool/test_spec_views.py"
+    ],
+    "why": "the first task's tests: the requirements record, both renderers, the setting-off byte identity with main at fc886a3, and the harness. Run at the start of every main-run invocation; a failure refuses the run."
+  },
+  "setting": "`SPEC_VIEWS` in the hub `.env` (read through `common.settings.pick`) stays `off`, its default, whatever this report says. It is turned on only when the adoption judgment above reads adopt and the owner turns it on; for candidate D that also needs the follow-up change named under the candidate, because the setting today renders the full agent view, not D. Rollback: set `SPEC_VIEWS=off` (or delete the line) in the hub `.env` and restart wiki-agent; sessions made after that get exactly main's input again (`tool/test_spec_views.py` holds the byte identity), and a session already running keeps its prompt until it is rebuilt.",
+  "report": {
+    "resamples": 2000,
+    "markdown": "docs/research/spec-views-main.md"
+  },
+  "adjustments": []
+}

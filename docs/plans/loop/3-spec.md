@@ -460,6 +460,51 @@ python tool/eval/spec_views.py run --config eval/spec-views/pilot-1.json       #
 python tool/eval/spec_views.py report --config eval/spec-views/pilot-1.json
 ```
 
+### The main experiment
+
+Added 2026-11-08 (`spec-views-main-experiment`). A config whose `kind` is
+`main` (`eval/spec-views/main-1.json`) fixes before any run what the pilot
+report decided:
+
+- the candidate: D;
+- the primary metric: verified task success;
+- the pair comparisons;
+- the adoption paths;
+- the critical-regression rule, relative to A;
+- the sample size derived from the pilot's variance;
+- the owner's USD and hour ceiling, split between the two arms.
+
+Its tasks come from `eval/spec-views/main-tasks.json`. Every command refuses
+the config when one of its tasks is a pilot task or one tuned on
+(`held_out`). `run` and `pipeline` also refuse when the first task's tests
+(`tool/test_spec_views.py`) fail at the commit the cells would run on, and
+they journal that check.
+
+`pipeline` (`tool/eval/spec_views_pipeline.py`) is the full-pipeline arm,
+journalled under its own experiment id. Each (task, repetition) starts from the
+original text. It generates a fresh spec with the `next` prompt, enriches it
+and selects D's requirements. A and D then each run as one cell on that
+repetition's spec. A failed step fails only the conditions that needed it.
+Every repetition's spec calls count toward its conditions' cost per success.
+
+`report` (`tool/eval/spec_views_main.py`) reads both journals apart. It covers:
+
+- paired success differences;
+- cost-per-success ratios, both with task-resampled 95% intervals;
+- the secondary measures the config defines.
+
+It judges implementation pass, experiment validity and adoption separately,
+by the config's rules. Adoption reads adopt, do not adopt, or further
+verification needed. A notes block in the Markdown file survives
+regeneration.
+
+```bash
+python tool/eval/spec_views.py prepare --config eval/spec-views/main-1.json --tasks eval/spec-views/main-tasks.json
+python tool/eval/spec_views.py run --config eval/spec-views/main-1.json        # fixed specs, also resumes
+python tool/eval/spec_views.py pipeline --config eval/spec-views/main-1.json   # full pipeline, also resumes
+python tool/eval/spec_views.py report --config eval/spec-views/main-1.json     # docs/research/spec-views-main.md
+```
+
 ## Steps
 
 | # | Step | What | Status |

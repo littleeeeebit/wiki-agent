@@ -7,24 +7,25 @@ performance; a scripted stub's rows are counted apart and never reported as resu
 from __future__ import annotations
 
 from eval.report import boot
-from eval.spec_views import CONDITIONS, PAIRS, _charged, finals, pending, rows
+from eval.spec_views import PAIRS, _charged, conditions, finals, pending, rows
 
 
 def report(cfg: dict) -> dict:
+    conds = conditions(cfg)
     past = [r for r in rows(cfg) if r.get("config_digest") == cfg["config_digest"] or r.get("kind") != "cell"]
     real = cfg["implementer"]["name"]
     counted = {k: r for k, r in finals(past).items() if r.get("implementer") == real}
     mocked = sum(1 for r in finals(past).values() if r.get("implementer") != real)
     tasks = [t["id"] for t in cfg["tasks"]]
     rate = {(t, c): [float(bool(r.get("success"))) for (tt, cc, _), r in counted.items() if tt == t and cc == c]
-            for t in tasks for c in CONDITIONS}
+            for t in tasks for c in conds}
     resamples, seed = cfg["report"]["resamples"], cfg["seed"]
 
     def mean(xs):
         return sum(xs) / len(xs) if xs else None
 
     per_condition = {}
-    for c in CONDITIONS:
+    for c in conds:
         runs = [r for (_, cc, _), r in counted.items() if cc == c]
         # Outcomes come from the final row per cell; cost, tokens and time from every attempt, infra reruns too.
         attempts = [r for r in past if r.get("kind") == "cell" and r.get("implementer") == real and r["condition"] == c]
@@ -44,15 +45,15 @@ def report(cfg: dict) -> dict:
             "critical_regressions": sum(1 for r in runs if r.get("critical_regression")),
             "failures": _count(r.get("failure") for r in runs if not r.get("success")),
         }
-    generation = _generation(past, tasks)
-    for c in CONDITIONS:
+    generation = _generation(past, tasks, conds)
+    for c in conds:
         first_run = sum(generation["as_if_alone"][c].values())
         s = per_condition[c]["successes"]
         total = per_condition[c]["usd"] + first_run
         per_condition[c]["spec_generation_first_run_usd"] = round(first_run, 4)
         per_condition[c]["cost_per_verified_success"] = round(total / s, 4) if s else None
     diffs = {}
-    for x, y in PAIRS:
+    for x, y in [tuple(p) for p in cfg.get("pairs") or PAIRS]:
         both = [t for t in tasks if rate[(t, x)] and rate[(t, y)]]
         diffs[f"{x}-{y}"] = boot(both, lambda g, x=x, y=y: mean([mean(rate[(t, x)]) - mean(rate[(t, y)]) for t in g]),
                                  resamples, seed, 0.95)
@@ -77,7 +78,7 @@ def report(cfg: dict) -> dict:
             "charged_at_cap": {"cells": sorted(f"{t}/{c}{n}" for (t, c, n), r in counted.items() if r.get("usd") is None),
                                "usd": round(sum(_charged(r) for r in counted.values() if r.get("usd") is None), 4)},
             "runner_difference": cfg["runner_difference"],
-            "per_task": {t: {c: rate[(t, c)] for c in CONDITIONS} for t in tasks}}
+            "per_task": {t: {c: rate[(t, c)] for c in conds} for t in tasks}}
 
 
 def _why_not(stops: list[dict]) -> str:
@@ -91,9 +92,10 @@ def _count(values) -> dict:
     return out
 
 
-def _generation(past: list[dict], tasks: list[str]) -> dict:
-    """Spec-generation cost per task and step, and per condition as if that condition ran alone (first run);
-    a repetition reuses the frozen spec at no further cost (cached)."""
+def _generation(past: list[dict], tasks: list[str], conds: list[str]) -> dict:
+    """Spec-generation cost per task and step, and per condition as if that condition ran alone: every attempt
+    at each step it needs. With frozen specs that is the first run, a repetition reusing it at no further cost
+    (cached); in the full pipeline every repetition generates its own, so every repetition's calls add up."""
 
     step: dict[tuple, float] = {}   # every attempt at a step, failed ones too
     for r in past:
@@ -101,7 +103,7 @@ def _generation(past: list[dict], tasks: list[str]) -> dict:
             step[(r["task"], r["kind"])] = step.get((r["task"], r["kind"]), 0) + _charged(r)
     need = {"A": ("generation",), "B": ("generation", "enrichment"), "C": ("generation", "enrichment"),
             "D": ("generation", "enrichment", "selection")}
-    alone = {c: {t: round(sum(step.get((t, s), 0) for s in need[c]), 4) for t in tasks} for c in CONDITIONS}
+    alone = {c: {t: round(sum(step.get((t, s), 0) for s in need[c]), 4) for t in tasks} for c in conds}
     return {"per_task": {t: {s: step.get((t, s)) for s in ("generation", "enrichment", "selection")} for t in tasks},
             "as_if_alone": alone, "cached_repetition_usd": 0.0,
             "actually_spent_usd": round(sum(step.values()), 4)}
