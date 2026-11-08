@@ -209,3 +209,15 @@ def get(cid: str) -> Channel:
     if cid not in BY_ID:
         raise KeyError(cid)
     return BY_ID[cid]
+
+
+REQUIREMENTS = (WIKI / "tool/prompts/spec-requirements.md").read_text(encoding="utf-8").strip()
+
+
+def preamble(cid: str) -> str:
+    """A focus's introduction. The planning foci learn the spec's `requirements` field only while
+    `SPEC_VIEWS=on`: off, their prompts stay what they were (`spec_views`)."""
+    from . import spec_views
+
+    text = get(cid).preamble
+    return text + "\n\n" + REQUIREMENTS if cid in ("next", "refactor") and spec_views.on() else text

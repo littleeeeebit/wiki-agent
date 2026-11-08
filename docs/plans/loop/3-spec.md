@@ -277,6 +277,130 @@ Two empty spots on the screen. Both are spots where the server causes work itsel
 | Turn launched by server | Turns sent by the server like the plan line turn do not attach to the screen of the already opened task tree. Attach when refreshed |
 | Result line generated while reading list | The result line of `머지됨` noticed while reading the specification list is visible when reading the conversation again |
 
+## Requirements and two views
+
+Added 2026-11-08 (`baseline-spec-two-views`). A spec record may carry a
+versioned requirements section. Code renders a human review document and the
+write session's input from the same frozen snapshot. A setting keeps that
+input out of sessions until an experiment turns it on.
+`tool/main/spec_views.py` owns the section; `specs.py` still owns the file.
+
+### Data model
+
+| Field | Meaning |
+| --- | --- |
+| `original` | The person's own words in the `next` conversation that produced the card, verbatim (`said`, else `text`, of each user row since the last clear, read whole rather than through the screen's 200-row replay). Set once when the card is made |
+| `requirements[]` | `id` (`R1`, `R2`, …, unique), `text`, `source` `{kind, locator}` with `kind` in `original`, `policy`, `repository`, `decision`, `status` in `confirmed`, `assumed`, `undecided`, `not_applicable`. Optional: `preconditions`, `postconditions`, `invariants`, `failures`, `depends_on` (ids in the same list), `context` (paths), `verify` (`{item, expected}`), `global: true` |
+| `spec_version` | An integer that moves on whenever the requirements change |
+| `spec_digest` | sha256 of the canonical requirements JSON (sorted keys, no whitespace) |
+
+`specs.fields` validates the list (`spec_views.requirements`). An unknown key,
+a repeated id or a `depends_on` that names no requirement is refused, and the
+error names the item and the key. `tool/prompts/spec-requirements.md`
+documents the field for the planner. `channels.preamble` appends it to the
+`next` and `refactor` focus introductions only while the setting is on;
+`tool/prompts/next-task.md` itself is unchanged.
+
+The record's guarantees sit in `save`, the one exit every path passes
+(`spec_views.stamped`). A stored `original` and each stored requirement's
+`source` are restored before writing, whatever the caller changed. The version
+and digest are recomputed there too. A goal edit leaves both as they were.
+`REVISABLE` accepts `requirements` but never `original` or a verification
+result. A requirement first added by a `spec-update` is recorded as
+`decision`, with the revision and reason as its locator, whatever source it
+claims. A revision's history entry keeps the earlier requirements.
+
+### Two renderers
+
+Both are pure functions over the record. No model call takes part.
+
+- `specs.human(spec)` is Markdown with these parts: purpose (the goal);
+  behaviour (each requirement with its id, status, source, conditions,
+  dependencies, context and verify items); constraints (`out` and the global
+  requirements); undecided items; conflicts; the original request quoted
+  unchanged. Inside the behaviour section, every value sits on its own line
+  behind a fixed label (`- Requirement:`, `- Verify:` with an indented
+  `- Expected:` under it, and so on). Any accepted one-line value therefore
+  reads back unambiguously, including values that look like the document's
+  own structure. Free text outside it (the goal, `out` lines, undecided
+  items) is put on one line, and the original request is quoted line by
+  line. No free text can therefore start a heading the parser reads.
+- `specs.agent(spec, task=None)` is a dict holding the version, digest,
+  selected requirements, `contracts` and `omitted`. The contracts are
+  id, status, text, postconditions and invariants for each `depends_on` target
+  reached outside the selection, followed transitively. `omitted` lists the
+  remaining ids, available on request. `task=None` selects all.
+- `specs.equivalent(human_md, agent_json)` reads the human document's
+  behaviour section back. It compares facts per requirement: id, status, text,
+  each condition, each dependency, each verify item, negation words and
+  number-with-unit tokens. Contracts count as facts too. What a selection
+  owes comes from the human document, never from the agent rendering's own
+  `contracts` and `omitted` lists. Owed in full: the selected requirements
+  and every global one. Owed as contract fields: every dependency the full
+  ones reach. Only the rest may appear by id alone. A contract or global
+  declared as omitted therefore shows as missing facts. It returns what each
+  rendering lacks.
+
+### Setting
+
+`SPEC_VIEWS=on` in the hub `.env`, read through `common.settings.pick`, the
+same reader as `decision.env_file()`. It defaults to off. Off, every agent
+input is what main produced: the write session's system prompt and the `next`
+and `refactor` introductions. A test compares them with sha256 digests taken
+from main at `fc886a3`. The write-session comparison covers the ten records
+saved when this spec was made, whose prompt fields are committed in
+`tool/fixtures/spec_views_baseline.json`. On, a record with `requirements`
+gets one more section after the spec. That section
+is the agent view as JSON with `spec_version` and `spec_digest`, and a note
+that a `spec-update` may carry `requirements`.
+
+### Version and undecided at the first turn
+
+With the setting on, `spec_views.first_turn` runs on the first work turn
+(`work.run_turn`, `decide`), before Jev's start decision.
+
+- If a requirement's `depends_on` target is `undecided`, the turn holds. The
+  agent is sent nothing; the reply asks the person to settle the named ids, and
+  `fault` says the same. Undecided items nothing depends on do not hold.
+- If the session prompt's `spec_version` differs from the saved record's, the
+  session is rebuilt through `work.session`. That function already replaces a
+  session whose spec-derived prompt changed. An equal version reuses the
+  session.
+
+### Verification results
+
+`raw/specs/<repo>/<id>.verify.json` sits beside the record. Only the round gate
+in `specs._check` writes it (`spec_views.verified`). A verify item is recorded
+only when its text is one of the commands the gate ran. The entry is keyed by
+requirement id, `spec_version`, `spec_digest` and the gate's commit (`head`),
+and holds `ok`, `head` and the time per item. A gate at another commit starts
+the entry over. A passing gate passes the matched items. A failing gate fails
+them all, since it does not say which command stopped it. `spec_views.results`
+reads a requirement as `pass` only when every verify item ran and passed under
+the current version at one commit. Passes from different commits never add up. It reads `fail` when one failed, `stale` when the entry
+belongs to another version or digest, and `missing` otherwise; a stale entry
+never counts as a pass. `spec-update` cannot reach the file.
+
+`GET /api/specs/{id}/views` returns `{human, agent, spec_version,
+spec_digest}`. A card whose record has requirements shows a collapsible
+`요구사항 문서` section, read on first open (`web/src/components/SpecViews.tsx`).
+The section is keyed by the record's revision and requirements version. Any
+revision, a goal-only one included, retires the shown document and any reply
+still in flight. `web/tests/spec_views_browser.py` checks this.
+
+### Assumptions and undecided design points
+
+| Point | Status |
+| --- | --- |
+| `original` is every person row of the conversation since its last clear, so it can include requests that went into other cards | Assumed |
+| The planner writes `requirements`; nothing derives them from `goal` and `done` for older records, which keep no section | Assumed |
+| Conflicts are dependencies on an `undecided` or `not_applicable` requirement; contradictions between texts are not detected | Assumed |
+| Negations and units are matched by fixed word and unit lists in English; other languages compare only by text equality | Assumed |
+| Only the round gate records results, and only for verify items that are literally one of its commands. The final gate, browser or desktop checks and the done report's evidence are not mapped to requirements, so such items stay `missing` | Undecided |
+| A held first turn waits for the person's instruction; there is no screen control to change a requirement's status | Undecided |
+| The reviewer and the post-compaction restatement still read `brief` only | Undecided |
+| Which selection a task passes to `agent` is left to the experiment harness, which is the next task | Undecided |
+
 ## Steps
 
 | # | Step | What | Status |
