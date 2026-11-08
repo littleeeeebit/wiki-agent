@@ -399,7 +399,66 @@ still in flight. `web/tests/spec_views_browser.py` checks this.
 | Only the round gate records results, and only for verify items that are literally one of its commands. The final gate, browser or desktop checks and the done report's evidence are not mapped to requirements, so such items stay `missing` | Undecided |
 | A held first turn waits for the person's instruction; there is no screen control to change a requirement's status | Undecided |
 | The reviewer and the post-compaction restatement still read `brief` only | Undecided |
-| Which selection a task passes to `agent` is left to the experiment harness, which is the next task | Undecided |
+| Which selection a task passes to `agent` is left to the experiment harness, which is the next task | Decided in the pilot: one model call per task picks the ids, code adds every global one (below) |
+
+### The comparison harness
+
+Added 2026-11-08 (`spec-views-pilot`). `tool/eval/spec_views.py` compares four
+inputs to one write session. Each is rendered from the same frozen record.
+
+| Condition | System prompt after the work-spec rules |
+| --- | --- |
+| A | `specs.brief` of the spec the `next` generator makes with the setting off |
+| B | `specs.human` of that spec, enriched once with the setting on |
+| C | id, rev, goal, out, original and `specs.agent(spec)` as JSON |
+| D | id, rev, goal, out and `specs.agent(spec, select)`; the rest by id from `.spec-views/spec.json` |
+
+Tasks replay merged pull requests (`eval/spec-views/tasks.json`). Their own
+tests are the hidden check. A person vets each one as asserting observable
+behaviour and records it in `vetted_by`. Tasks whose requirements conflict sit
+in a separate `undecided` list and never enter the success rate.
+
+`prepare` runs once per task. It extracts the hidden tests to
+`raw/eval/spec-views/hidden/` and checks them against the reference: they pass
+on the merge commit and fail on its parent. It then makes three model calls:
+the generator with the setting off, the enrichment with it on, and D's
+selection. Their results are frozen in `eval/spec-views/specs/<task>.json`.
+B and C are then checked with `specs.equivalent`, and the goal, scope and
+original must appear in B too. Each call's cost and the check go to the journal.
+Preparation spends from the same ceilings as the run, and its elapsed time
+counts toward the same hours.
+
+`run` refuses a config that differs from the committed file. It also refuses
+before the first cell when a frozen record is not the one committed with the
+config, its requirements no longer hash to the configured digest, its selection
+is not the configured one, its reference check did not separate the answer, or
+B and C were not equivalent. It runs every
+(task, condition, repetition) in a seeded shuffled order. Each cell starts in a
+fresh one-commit repository made from an archive of the merge base. A worktree
+would let the session's history reach the merge commit, which is the answer. One
+isolated Claude Code session runs with the condition as its whole system prompt
+and `Start.` as its only turn. Then the hidden tests are copied in under names
+the session never saw, and their digests are checked. A hidden test passes only
+when every one of its cases passed and pytest exited cleanly. Next come the
+affected test files as the merge base wrote them, and a check for forbidden
+paths that also sees files hidden behind ignore rules. Verification stops at the
+shared wall deadline; a cell cut there is a ceiling failure, not a verdict.
+Finally the workspace is removed.
+
+The session's USD cap is the room left under the ceiling, so the ceiling holds
+while cells run in parallel. A cost the CLI never reported is charged at the
+cap. A cell stopped by the wall-time ceiling is journalled as a failure. The
+production-runner baseline runs last, as condition A with the app's session
+flags plus the merge base's Python gate. `report` reads the journal and writes
+`raw/eval/spec-views/<experiment>.report.json` and the Markdown report.
+`tool/test_spec_views.py` drives `run` with a scripted stub and sends no
+model requests.
+
+```bash
+python tool/eval/spec_views.py prepare --config eval/spec-views/pilot-1.json   # before the config is committed
+python tool/eval/spec_views.py run --config eval/spec-views/pilot-1.json       # also resumes
+python tool/eval/spec_views.py report --config eval/spec-views/pilot-1.json
+```
 
 ## Steps
 

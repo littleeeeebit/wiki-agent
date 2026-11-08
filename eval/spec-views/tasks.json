@@ -1,0 +1,217 @@
+{
+  "schema": "spec-views-tasks/1",
+  "note": "Pilot tasks replayed from merged pull requests of this repository. `source.text` is the pull request's title and body, verbatim, as the original requirement source. Hidden tests are the tests the pull request added, read from its merge commit at evaluation time; affected test files run as the merge base wrote them.",
+  "tasks": [
+    {
+      "id": "pr304",
+      "pr": 304,
+      "merge_commit": "436cc6006d6ebe3725ac0d70238862568a25afb2",
+      "merge_base": "ede5156a059a025d67507641fc4a4c5a4a867ff5",
+      "labels": [
+        "exception-handling",
+        "multi-file-cooperation"
+      ],
+      "source": {
+        "kind": "pr_body",
+        "locator": "https://github.com/littleeeeebit/wiki-agent/pull/304",
+        "text": "가드가 명령 한 부분을 읽다 실패해도 나머지 부분은 계속 검사한다\n\n## 무엇이 문제였나\r\n\r\nPR #303 리뷰에서 main 에 원래 있던 결함 다섯 개가 나왔다(P2). 다섯 개 모두 뿌리가 같다. 한 줄로 이어진 명령의 한 부분에서 효과를 모으거나 판정하다 예외가 나면, 그 예외가 `verdict` 밖으로 나가 훅이 호출 전체를 건너뛴다. 같은 줄에 붙은 보호 파일 쓰기(`; printf x > .wiki/adapter.toml`)도 막히지 않는다.\r\n\r\n1. `m_git` 의 원본 저장소 탐색이 깨진 메타데이터(`commondir` 의 잘못된 UTF-8 등)에서 예외를 낸다.\r\n2. Python 3.11 에는 `os.path.isjunction`, `DirEntry.is_junction` 이 없어 `AttributeError` 가 난다.\r\n3. 지울 경로에 NUL 이 있으면 `scandir` 가 `ValueError` 를 낸다.\r\n4. 현재 폴더가 사라진 뒤에는 상대 경로 루트의 `abspath` 가 `OSError` 를 낸다.\r\n5. 루트 접합점이 검사 사이에 다른 드라이브로 바뀌면 `relpath` 가 `ValueError` 를 낸다.\r\n\r\n## 바꾼 것\r\n\r\n하나씩 막지 않고, 모든 경우가 지나는 두 자리에서 고쳤다.\r\n\r\n- 모으기: `guard_models.modelled` 가 명령 모델을 감싼다. 모델이 실패하면 그 명령만 `unread` 효과가 되어 \"가드가 이 명령을 읽다 실패했다 — 다시 실행해 보고, 계속되면 사람이 직접 실행한다\" 로 거절되고, 나머지 명령은 계속 검사한다. 실패한 모델의 목적지(옵션 값, `-C` 기준 상대 경로)는 알 수 없으니 통과시키지 않는다(리뷰 1·2라운드). 구문 한계(`Unclosed`, `Unbounded`, 재귀 한도)는 지금처럼 호출 전체에 적용된다.\r\n- 판정: `guard.judged` 가 효과마다 `outside` 를 감싼다. 판정이 실패하면 그 효과를 \"가드가 이 경로를 확인하지 못했다(…)\" 로 거절한다. 읽을 수 없는 폴더를 지우려 할 때 이미 거절하던 것과 같은 방향이다.\r\n- 3.11: `setup_agents.is_junction`(reparse tag 로 판별)을 `common` 으로 옮겨, 지우기 검사가 3.12 API 가 없을 때 이것을 쓴다.\r\n\r\n## 확인\r\n\r\n- `tool/test_guard.py::test_one_part_that_fails_to_read_leaves_the_rest_of_the_call_judged`\r\n  - 원본 탐색이 깨지면 그 git 명령은 \"읽다 실패했다\" 로 거절되고, 같은 줄의 `echo ok` 같은 정상 명령은 통과하며, 보호 파일 쓰기는 따로 거절된다.\r\n  - 판정이 `ValueError` 로 실패하면 그 효과는 \"확인하지 못했다\" 로 거절되고, 보호 파일 쓰기도 거절된다.\r\n  - main 에서는 `UnicodeDecodeError` 가 그대로 밖으로 나가 실패한다.\r\n- `tool/test_guard.py::test_a_junction_is_found_without_the_312_entry_api`: 3.12 API 를 끈 상태에서도 접합점을 찾는다(Windows).\r\n- `python -m ruff check tool laya`, `tool/lint.py --check`, `tool/debt.py check` 통과.\r\n- `tool/test_guard.py tool/test_hook.py tool/test_connect.py` 539 passed, 2 skipped.\r\n\r\n## 리뷰\r\n\r\n3라운드에서 머지 허용. 1라운드: 실패한 명령이 직접 가리킨 보호 목적지가 빠짐(P1). 2라운드: 붙여 쓴 옵션 값과 `-C` 기준 상대 경로를 놓침(P1). 둘 다 목적지를 추측하지 않고 실패한 명령을 거절하는 것으로 해결. 메타데이터가 계속 깨진 경우 그 명령이 매번 거절되는 것은 리뷰어도 받아들일 만하다고 판단했다.\r\n\r\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\r\n\r\n"
+      },
+      "hidden": [
+        {
+          "path": "tool/test_guard.py",
+          "tests": [
+            "test_one_part_that_fails_to_read_leaves_the_rest_of_the_call_judged"
+          ]
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_guard.py"
+        }
+      ],
+      "round": "python -m ruff check tool laya",
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "excluded": "test_a_junction_is_found_without_the_312_entry_api monkeypatches guard_grant.TYPED_JUNCTIONS, a module flag the pull request body never names: it would grade an internal name.",
+      "vetted_by": "Repository owner, 2026-11-08, through AskUserQuestion in the spec-views-pilot session: approved all six hidden-test sets as asserting observable behaviour derivable from the pull request's title and body, after the reference check showed each passing on its merge commit and failing on its merge base."
+    },
+    {
+      "id": "pr198",
+      "pr": 198,
+      "merge_commit": "5c8744152ea9cb569dd10c0b19423338eba67623",
+      "merge_base": "43775fdcd271de88c211d3d3f03d9924cb9a5ec1",
+      "labels": [
+        "state-change",
+        "interface-compatibility"
+      ],
+      "source": {
+        "kind": "pr_body",
+        "locator": "https://github.com/littleeeeebit/wiki-agent/pull/198",
+        "text": "드래프트 PR 도 머지 버튼으로 머지되게 고치기\n\n## 무엇이 문제였나\n\nai-coding-wiki #153 은 리뷰에서 머지 허용이 났는데, 머지 버튼을 누르자 이렇게 멈췄다 (P0).\n\n`요청한 머지 중단 — 409: 머지하지 못했다 — GraphQL: Pull Request is still a draft (mergePullRequest)`\n\n## 원인\n\n- 작업 에이전트(Codex)가 구현 중에 PR 을 `gh pr create --draft` 로 직접 열었다. 작업 지시문(`work-spec.md`)은 작업 에이전트가 PR 을 여는 것을 허용한다.\n- 서버의 발행 단계(`pull_request`)는 이미 열린 PR 을 재사용해 제목과 본문만 갱신하고, 드래프트 상태는 그대로 두었다.\n- 머지(`_merge_spec`)는 `gh pr merge --squash` 만 호출하고 드래프트 여부를 보지 않았다. GitHub 은 드래프트 PR 의 머지를 거절한다.\n\n확인한 사실:\n- #153 은 생성 시점부터 `isDraft: true` 였다(전환 기록 없음).\n- 작업 기록에 `gh pr create --draft` 실행이 남아 있다.\n- 명세의 머지 진행 기록은 `GitHub에 squash 머지 요청 중` 다음에 위 오류로 끝난다.\n\n## 고친 것\n\n머지 직전에 PR 이 드래프트인지 확인하고, 드래프트면 `gh pr ready` 로 준비 상태로 바꾼 뒤 머지한다. 사람이 누른 머지 버튼이 곧 드래프트를 풀라는 요청이다. 발행된 PR 과 Review Loop 로 붙인 PR 이 모두 이 한 곳을 지나므로, 머지 경로에서만 고쳤다.\n\n준비 상태로 바꾸지 못하면 그 이유를 담아 409 로 멈춘다.\n\n## 검증\n\n- `tool/test_loop.py` 의 가짜 GitHub 이 실제 GitHub 처럼 드래프트 머지를 거절하게 했다. 새 테스트 `test_a_draft_pr_is_made_ready_by_the_merge_click` 을 더했다.\n  - 수정 전: 사용자가 본 것과 같은 `머지하지 못했다 — GraphQL: Pull Request is still a draft` 로 실패\n  - 수정 후: `pr ready` → `pr merge` 순서로 머지됨\n- `python -m pytest -q tool/test_loop.py -n 0 -k merge` 34개 통과. `ruff` 와 `python tool/debt.py check` 통과. 래칫은 loop.py 를 2834줄, test_loop.py 를 2720줄로 올리고 이유를 적었다.\n\n## 머지 뒤\n\nai-coding-wiki #153 명세는 아직 `머지 가능` 이다. 실행 중인 wiki-agent 를 새 코드로 재시작한 뒤 머지 버튼을 다시 누르면 된다.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n"
+      },
+      "hidden": [
+        {
+          "path": "tool/test_loop.py",
+          "tests": [
+            "test_a_draft_pr_is_made_ready_by_the_merge_click"
+          ]
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_loop.py",
+          "k": "test_merge_is_bound_to_the_allowed_head_and_cleans_up_after"
+        }
+      ],
+      "round": "python -m ruff check tool laya",
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "vetted_by": "Repository owner, 2026-11-08, through AskUserQuestion in the spec-views-pilot session: approved all six hidden-test sets as asserting observable behaviour derivable from the pull request's title and body, after the reference check showed each passing on its merge commit and failing on its merge base.",
+      "affected_note": "`-k merge` (34 tests) took 16 minutes per run serially; the one existing merge test the change runs through is kept."
+    },
+    {
+      "id": "pr260",
+      "pr": 260,
+      "merge_commit": "fe59413e3d838dac13e39c25cadaf9a633561b9a",
+      "merge_base": "f6adb13f307fbdd8eb09ff66176e4e3ae22168c5",
+      "labels": [
+        "state-change",
+        "exception-handling",
+        "multi-file-cooperation"
+      ],
+      "source": {
+        "kind": "pr_body",
+        "locator": "https://github.com/littleeeeebit/wiki-agent/pull/260",
+        "text": "로컬 최종 검사가 오래 걸리는 테스트를 멈춘 것으로 끊지 않고, 출력이 10분째 늘지 않을 때만 멈춤으로 판정합니다\n\n## 무엇이 문제였나\r\n\r\nai-generation 작업이 `멈춤 — 로컬 검증 준비 · 로컬 최종 검사 실패 — 검증 실행 시간 제한을 넘었다` 로 반복해서 멈췄습니다.\r\n\r\n- ai-generation 의 최종 검사 기록(`.git/wiki-verification-*.json`)을 보면, 전체 테스트(925개)는 평소 15.3~18.8분 걸려 통과했습니다. 마지막 실행은 19.0분에서 끊겼습니다.\r\n- 로컬 최종 검사는 고정된 19분(`verify.final(seconds=19 * 60)`)이 지나면 무조건 끊었습니다. 전체 시간만 보는 상한으로는 오래 걸리는 실행과 멈춘 실행을 가릴 수 없어서, 정상인 느린 실행이 멈춘 것으로 처리됐습니다.\r\n- 출력이 61% 에서 멈춘 것처럼 보인 것도 오해를 키웠습니다. 출력이 파일로 가면 Python 이 블록 단위로 버퍼링하기 때문에, 잡힌 꼬리가 실제 진행보다 한참 뒤처져 있었습니다.\r\n\r\n## 바뀐 것\r\n\r\n- `tool/main/runtime.py`\r\n  - 모든 게이트 실행이 지나는 `_captured` 가 출력 크기를 1초마다 봅니다. 10분(`IDLE_SECONDS`) 동안 출력이 늘지 않으면 `검증 실행이 10분째 출력 없이 멈췄다` 로 끊습니다. 실행한 시간이 아니라 진행이 멈췄는지로 판단합니다.\r\n  - 게이트를 `PYTHONUNBUFFERED=1` 로 돌립니다. 테스트가 끝날 때마다 찍는 점이 바로 기록돼, 진행 감시와 화면의 진행률이 실제와 맞습니다.\r\n- `tool/verify.py` — 로컬 최종 검사의 상한을 2시간(`FINAL_SECONDS`)으로 올렸습니다. 끝없이 출력하며 돌기만 하는 실행을 막는 마지막 안전장치로만 남깁니다.\r\n- `docs/development.md` — 로컬 최종 검사의 멈춤 판단 기준을 적었습니다.\r\n\r\n## 한계\r\n\r\n- 10분은 출력 없이 도는 테스트 하나보다 길어야 합니다. ai-generation 에서 가장 오래 걸린 테스트는 `test_comic_runner.py::test_run_to_end_goes_from_the_situation_through_every_export[16]` 의 92초로, 10분의 6분의 1도 안 됩니다.\r\n- 출력을 전혀 안 찍는 검사 명령은 10분이 지나면 멈춤으로 끊깁니다.\r\n- 라운드 게이트의 20분(`GATE_SECONDS`)과 클라우드 로컬 검증 예산 19분(`LOCAL_SECONDS`)은 그대로입니다. 진행 감시는 이 경로들에도 적용됩니다.\r\n\r\n## 검증\r\n\r\n- 새 테스트 `test_a_gate_is_cut_when_its_output_stops_not_when_it_has_run_long` — flush 없이 6초 동안 출력하는 실행은 통과하고, 출력이 끊긴 실행은 상한(60초) 전에 `runtime.STUCK` 으로 끊깁니다(대기 3초로 축소).\r\n- `tool/test_verify.py` 의 상한 단언을 `FINAL_SECONDS` 로 바꿨습니다.\r\n- `python -m pytest tool/test_gate_eta.py tool/test_verification_runtime.py tool/test_verify.py tool/test_loop_progress.py tool/test_local_verification.py` — 5 + 163 passed\r\n- ai-generation 전체 테스트를 `PYTHONUNBUFFERED=1` 과 `--durations` 로 돌렸습니다. 진행률이 끊김 없이 올라갔고, 925개가 모두 통과했습니다(25분 41초). 다른 검사와 함께 돌아 평소보다 느렸고, 예전 19분 상한이었다면 이 실행도 끊겼습니다.\r\n- `ruff check`, `python tool/debt.py check` 통과.\r\n\r\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\r\n"
+      },
+      "hidden": [
+        {
+          "path": "tool/test_gate_eta.py",
+          "tests": [
+            "test_a_gate_is_cut_when_its_output_stops_not_when_it_has_run_long"
+          ]
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_gate_eta.py"
+        }
+      ],
+      "round": "python -m ruff check tool laya",
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "excluded": "tool/test_verify.py at the merge base asserts the old 19-minute cap the request raises, so it is not an affected test; its rewritten assertion names ci.FINAL_SECONDS, an internal name.",
+      "vetted_by": "Repository owner, 2026-11-08, through AskUserQuestion in the spec-views-pilot session: approved all six hidden-test sets as asserting observable behaviour derivable from the pull request's title and body, after the reference check showed each passing on its merge commit and failing on its merge base."
+    },
+    {
+      "id": "pr164",
+      "pr": 164,
+      "merge_commit": "a41c7f3b447497f19ceb94c4b5b5f5d7c552738a",
+      "merge_base": "131a3803a0e62fd674ce37f5961d3e88e1c434bb",
+      "labels": [
+        "validation",
+        "normal-behaviour"
+      ],
+      "source": {
+        "kind": "pr_body",
+        "locator": "https://github.com/littleeeeebit/wiki-agent/pull/164",
+        "text": "deny: 진행이 안 보이게 파이프한 테스트 실행을 거절\n\n## 무엇을 바꿨나\n\n- `pytest`(`-m pytest` 포함)의 출력을 `| tail`, `| grep`, `| head` 처럼 다른 명령으로 넘기면 PreToolUse 훅(`tool/deny.py`)이 거절한다. 그렇게 넘기면 실행이 끝날 때까지 진행 상황이 하나도 안 보이기 때문이다.\n- 거절 메시지는 파이프 없이 다시 돌리라고 안내한다. 오래 걸리면 `run_in_background`를 쓰거나 `| tee <로그 파일>` 로 남기면 된다.\n- `| tee` 는 허용한다. `pip install pytest | tail` 처럼 실행하지 않는 명령과 따옴표 안의 글자도 허용한다.\n- Claude 훅과 Codex 훅(`codex_pretool.py`)이 같은 `deny.verdict`를 쓰므로 둘 다 적용된다.\n\n## 확인\n\n- `tool/test_hook.py` 새 테스트 10개 통과. 훅을 쓰는 테스트(test_hook, test_codex_hooks, test_apply) 54개 통과.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n"
+      },
+      "hidden": [
+        {
+          "path": "tool/test_hook.py",
+          "tests": [
+            "test_a_test_run_piped_where_its_progress_cannot_be_read_is_refused",
+            "test_a_test_run_whose_output_stays_readable_passes"
+          ]
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_hook.py"
+        }
+      ],
+      "round": "",
+      "gate": "python -m pytest tool",
+      "vetted_by": "Repository owner, 2026-11-08, through AskUserQuestion in the spec-views-pilot session: approved all six hidden-test sets as asserting observable behaviour derivable from the pull request's title and body, after the reference check showed each passing on its merge commit and failing on its merge base."
+    },
+    {
+      "id": "pr106",
+      "pr": 106,
+      "merge_commit": "32bb3a43ba00eef2cbceae3ab2800cbfcda5e1a9",
+      "merge_base": "f1f58e1aa305ea72f38894d86a3567502b2e6381",
+      "labels": [
+        "interface-compatibility",
+        "multi-file-cooperation"
+      ],
+      "source": {
+        "kind": "pr_body",
+        "locator": "https://github.com/littleeeeebit/wiki-agent/pull/106",
+        "text": "#103 후속: agent 공개 목록에 종료 함수 추가 (린트)\n\n## 변경 요약\n\n#103 머지 후 위키 린트(`lint.py`)가 잡은 항목 하나를 고칩니다. `tool/main/app.py`가 `agent` 패키지의 공개 목록(`__all__`) 밖인 `agent.chat_session`을 직접 가져왔습니다.\n\n- `agent/__init__.py`가 `end_all`, `reopen`을 공개합니다.\n- `app.py`는 `agent.end_all()`, `agent.reopen()`으로 부릅니다. 동작은 같습니다.\n\n## 확인\n\n- `python tool/lint.py --repo .`: 새 발견 없음 (수정 전에는 위 항목 1건)\n- `ruff check tool`, `python tool/debt.py check` 통과\n- `tool/test_runtime.py tool/test_agent.py` 50 통과\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n"
+      },
+      "hidden": [
+        {
+          "path": "tool/test_runtime.py",
+          "tests": [
+            "test_shutdown_marks_every_workflow_stopped_before_it_ends_the_remaining_providers"
+          ]
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_agent.py"
+        }
+      ],
+      "round": "",
+      "gate": "python -m pytest tool",
+      "excluded": "tool/test_runtime.py at the merge base patches app.chat_session, which the request removes, so it is not an affected test.",
+      "vetted_by": "Repository owner, 2026-11-08, through AskUserQuestion in the spec-views-pilot session: approved all six hidden-test sets as asserting observable behaviour derivable from the pull request's title and body, after the reference check showed each passing on its merge commit and failing on its merge base."
+    },
+    {
+      "id": "pr161",
+      "pr": 161,
+      "merge_commit": "362c35b56aa7ab5d8630e0417edf0cf52adc0b93",
+      "merge_base": "0fbef12cdadc828e01e766159ccbc6ee42a6de81",
+      "labels": [
+        "state-change",
+        "interface-compatibility"
+      ],
+      "source": {
+        "kind": "pr_body",
+        "locator": "https://github.com/littleeeeebit/wiki-agent/pull/161",
+        "text": "작업 명세를 붙은 PR 의 base 로 다시 발행하기\n\n## 무엇을\n\n수동으로 발행한 PR 이 붙은 작업 명세를 다시 발행할 때, 기본 브랜치(main)가 아니라 그 PR 의 base 로 보낸다.\n\n## 원인\n\nrfg_rag PR #64 는 `dev` 로 손으로 발행됐고, 리뷰 루프가 그 PR 을 명세에 붙였다(`pr.base = dev`, 명세의 `base` 는 비어 있음).\n명세의 리뷰 설정을 고치려고 `spec-update` 를 보내자 앱이 다시 발행하면서 `base_of` 가 기본 브랜치 `main` 을 골랐다.\n`existing_pr` 는 같은 브랜치의 PR 이 이미 `dev` 에 있으니 두 번째 PR 을 거부했다.\n그래서 작업이 `작업 중` 에 멈췄고, 리뷰 루프 버튼(`머지 가능` 이나 `PR #…` 상태에서만 보임)이 나오지 않았다.\n\n## 고친 것\n\n- `specs.own_base`: 명세 자신의 `base`, 없으면 붙은 PR 의 `base`.\n- `base_of`(발행), `local_base`(게이트 선택)가 기본 브랜치보다 이것을 먼저 읽는다. `[다시 PR]` 이 정한 `base` 는 여전히 가장 앞선다.\n\n## 검증\n\n- 새 테스트 `test_a_spec_attached_to_a_pr_into_a_non_default_base_is_republished_there`: 수정 전 코드에서 실패(`AssertionError: asked for the default branch`), 수정 후 통과.\n- 전체 게이트(`python -m pytest tool`): 진행 중. 결과를 이 PR 에 덧붙인다.\n  - `test_korean.py::test_a_translator_fault_ends_explicit_with_no_english_in_evidence_and_question` 는 부하가 클 때 `'deadline' == 'request_failed'` 로 실패한다. 수정 없는 `origin/main`(0fbef12)에서도 같은 방식으로 실패했고, 단독 실행은 양쪽 모두 통과한다. 그래서 이 테스트만 빼고 돌렸다.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n"
+      },
+      "hidden": [
+        {
+          "path": "tool/test_specs.py",
+          "tests": [
+            "test_a_spec_attached_to_a_pr_into_a_non_default_base_is_republished_there"
+          ]
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_specs.py"
+        }
+      ],
+      "round": "",
+      "gate": "python -m pytest tool",
+      "vetted_by": "Repository owner, 2026-11-08, through AskUserQuestion in the spec-views-pilot session: approved all six hidden-test sets as asserting observable behaviour derivable from the pull request's title and body, after the reference check showed each passing on its merge commit and failing on its merge base."
+    }
+  ],
+  "undecided": [
+    {
+      "id": "pr201",
+      "pr": 201,
+      "merge_commit": "c3d2ffd110d5ff380b67cbcda72b9bdcecf6c3e7",
+      "title": "Revert Laya's quoted-requirement wording (#197); record the result",
+      "locator": "https://github.com/littleeeeebit/wiki-agent/pull/201",
+      "why": "Reverts the quoted-requirement wording #197 had just required: two merged requirements for the same Laya questions contradict each other."
+    },
+    {
+      "id": "pr284",
+      "pr": 284,
+      "merge_commit": "968d398cdf1b075c8c936d6a8a2793c6277c880a",
+      "title": "고칠 수 있는 명령은 고쳐서 실행하고, 되쓰기 차단은 git 추적 파일에만 (3주치 거절 3,200건 중 1,360건 해소)",
+      "locator": "https://github.com/littleeeeebit/wiki-agent/pull/284",
+      "why": "Repairs and runs piped pytest commands that #164 required the hook to refuse: the rule for the same command changed, so the request conflicts with an existing policy."
+    }
+  ]
+}

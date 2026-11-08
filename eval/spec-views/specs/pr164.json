@@ -1,0 +1,430 @@
+{
+  "task": "pr164",
+  "reference": {
+    "merge_commit": {
+      "hidden": {
+        "tool/test_hook.py::test_a_test_run_piped_where_its_progress_cannot_be_read_is_refused": "passed",
+        "tool/test_hook.py::test_a_test_run_whose_output_stays_readable_passes": "passed"
+      },
+      "affected": {
+        "tool/test_hook.py": true
+      }
+    },
+    "merge_base": {
+      "hidden": {
+        "tool/test_hook.py::test_a_test_run_piped_where_its_progress_cannot_be_read_is_refused": "failed",
+        "tool/test_hook.py::test_a_test_run_whose_output_stays_readable_passes": "passed"
+      },
+      "affected": {
+        "tool/test_hook.py": true
+      }
+    },
+    "discriminates": true
+  },
+  "baseline": {
+    "id": "pr164",
+    "rev": 1,
+    "goal": "The PreToolUse hook `tool/deny.py` refuses a Bash command that sends pytest's output (including `python -m pytest`) through a pipe into another command such as `tail`, `grep` or `head`. The message says to run it again without the pipe, and to use `run_in_background` or `| tee <log file>` for long runs. `| tee`, commands that don't run pytest, and `|` inside quotes still pass. Claude and Codex both get this because both go through `deny.verdict`.",
+    "out": [
+      "Changing the per-project Claude install (`apply.py` writes `permissions.deny` there and does not run `deny.py`); wiring `deny.py` into per-project installs is not part of this change",
+      "Changing the existing `enforce.deny` rule matching (the `fnmatchcase` loop) or how rules are declared on the pages",
+      "Following nested shells or commands built at runtime (`bash -c \"...\"`, `eval`, scripts); the existing ponytail note in `deny.py` already says the hook is not a security boundary",
+      "Piped runs of test tools other than pytest"
+    ],
+    "done": [
+      "`deny.verdict({\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"pytest -q | tail -5\"}})` returns `permissionDecision: deny`. So do `python -m pytest tool | grep FAIL`, `py -m pytest -x 2>&1 | head` and `cd tool && pytest | tail`",
+      "The deny message says to run again without the pipe and names both `run_in_background` and `| tee <log file>` as the ways to handle a long run",
+      "These return None: `pytest -q | tee out.log`, `python -m pytest 2>&1 | tee -a log.txt`, `pip install pytest | tail`, `echo \"pytest | tail\"`, `git commit -m 'pytest | tail'`, `pytest -q`, `pytest -q || echo failed`",
+      "The new check runs even when `declared()` returns no deny rules, and the existing declared-rule test (`tool/test_hook.py` around line 139: `sed -i` blocked, `git status` passes) still passes",
+      "`codex_pretool.verdict` with a Bash payload `pytest | tail` returns the same deny, shown by a test in `tool/test_codex_hooks.py` or `tool/test_hook.py`",
+      "New tests in `tool/test_hook.py` cover every deny and pass case above; `tool/test_hook.py`, `tool/test_codex_hooks.py` and `tool/test_apply.py` all pass"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/deny.py:17",
+        "tool/deny.py:26",
+        "tool/codex_pretool.py:16",
+        "tool/apply.py:474",
+        "tool/apply.py:633",
+        "tool/test_hook.py:139"
+      ],
+      "rules": [
+        "Deny reasons are written in Korean, like the existing `공유 위키의 차단 규칙: ...` message",
+        "When the hook hits an error it lets the command through (`hook skipped`); the new check must not raise on commands it can't split, such as unbalanced quotes"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Write the pipe check in Python inside `deny.verdict`, not as an `enforce.deny` glob pattern on the pages",
+        "why": "An fnmatch pattern like `Bash(*pytest*|*)` can't tell `pip install pytest | tail` or a quoted `|` from a real piped test run, and it can't make an exception for `tee`. The hook has to split the command itself",
+        "rejected": "Declaring a `Bash(...)` deny pattern on a page"
+      },
+      {
+        "what": "Split the command into shell words with quotes respected (shlex-style). Cut it into pipeline segments at a lone `|` (and `|&`) and into commands at `&&`, `;` and `||`. Deny when a segment that runs pytest (first word `pytest`, or a python launcher such as `python`/`python3`/`py` followed by `-m pytest`, after any `VAR=value` prefixes) is piped into a next segment whose command is not `tee`",
+        "why": "This covers all the allowed cases at once: text in quotes is not a pipe, `||` is not a pipe, `pip install pytest` does not run pytest, and `tee` keeps the output visible while also saving it. Nobody was available to ask, so I settled this rule myself",
+        "rejected": "A regex over the raw command string (it breaks on quotes and on `||`)"
+      },
+      {
+        "what": "If the command can't be split (for example, unbalanced quotes), pass it instead of denying",
+        "why": "Every other check in this hook lets a command through when it can't judge it. Wrongly blocking a command the hook doesn't understand would cost more than missing one piped test run",
+        "rejected": "Denying when the command can't be split"
+      },
+      {
+        "what": "Run the pipe check before the declared-rule loop, so it applies whether or not any page declares deny rules. Leave the per-project Claude wiring as it is",
+        "why": "The behaviour is built into the hook, not declared on a page. Making per-project installs run `deny.py` would change how `apply.py` wires hooks and how `keep_denies` works, which is beyond this change. Nobody was available to ask, so I recorded the limit here rather than widening the change",
+        "rejected": "Wiring `deny.py` into per-project Claude installs in the same change"
+      }
+    ]
+  },
+  "enriched": {
+    "id": "pr164",
+    "rev": 1,
+    "goal": "The PreToolUse hook `tool/deny.py` refuses a Bash command that sends pytest's output (including `python -m pytest`) through a pipe into another command such as `tail`, `grep` or `head`. The message says to run it again without the pipe, and to use `run_in_background` or `| tee <log file>` for long runs. `| tee`, commands that don't run pytest, and `|` inside quotes still pass. Claude and Codex both get this because both go through `deny.verdict`.",
+    "out": [
+      "Changing the per-project Claude install (`apply.py` writes `permissions.deny` there and does not run `deny.py`); wiring `deny.py` into per-project installs is not part of this change",
+      "Changing the existing `enforce.deny` rule matching (the `fnmatchcase` loop) or how rules are declared on the pages",
+      "Following nested shells or commands built at runtime (`bash -c \"...\"`, `eval`, scripts); the existing ponytail note in `deny.py` already says the hook is not a security boundary",
+      "Piped runs of test tools other than pytest"
+    ],
+    "done": [
+      "`deny.verdict({\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"pytest -q | tail -5\"}})` returns `permissionDecision: deny`. So do `python -m pytest tool | grep FAIL`, `py -m pytest -x 2>&1 | head` and `cd tool && pytest | tail`",
+      "The deny message says to run again without the pipe and names both `run_in_background` and `| tee <log file>` as the ways to handle a long run",
+      "These return None: `pytest -q | tee out.log`, `python -m pytest 2>&1 | tee -a log.txt`, `pip install pytest | tail`, `echo \"pytest | tail\"`, `git commit -m 'pytest | tail'`, `pytest -q`, `pytest -q || echo failed`",
+      "The new check runs even when `declared()` returns no deny rules, and the existing declared-rule test (`tool/test_hook.py` around line 139: `sed -i` blocked, `git status` passes) still passes",
+      "`codex_pretool.verdict` with a Bash payload `pytest | tail` returns the same deny, shown by a test in `tool/test_codex_hooks.py` or `tool/test_hook.py`",
+      "New tests in `tool/test_hook.py` cover every deny and pass case above; `tool/test_hook.py`, `tool/test_codex_hooks.py` and `tool/test_apply.py` all pass"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/deny.py:17",
+        "tool/deny.py:26",
+        "tool/codex_pretool.py:16",
+        "tool/apply.py:474",
+        "tool/apply.py:633",
+        "tool/test_hook.py:139"
+      ],
+      "rules": [
+        "Deny reasons are written in Korean, like the existing `공유 위키의 차단 규칙: ...` message",
+        "When the hook hits an error it lets the command through (`hook skipped`); the new check must not raise on commands it can't split, such as unbalanced quotes"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Write the pipe check in Python inside `deny.verdict`, not as an `enforce.deny` glob pattern on the pages",
+        "why": "An fnmatch pattern like `Bash(*pytest*|*)` can't tell `pip install pytest | tail` or a quoted `|` from a real piped test run, and it can't make an exception for `tee`. The hook has to split the command itself",
+        "rejected": "Declaring a `Bash(...)` deny pattern on a page"
+      },
+      {
+        "what": "Split the command into shell words with quotes respected (shlex-style). Cut it into pipeline segments at a lone `|` (and `|&`) and into commands at `&&`, `;` and `||`. Deny when a segment that runs pytest (first word `pytest`, or a python launcher such as `python`/`python3`/`py` followed by `-m pytest`, after any `VAR=value` prefixes) is piped into a next segment whose command is not `tee`",
+        "why": "This covers all the allowed cases at once: text in quotes is not a pipe, `||` is not a pipe, `pip install pytest` does not run pytest, and `tee` keeps the output visible while also saving it. Nobody was available to ask, so I settled this rule myself",
+        "rejected": "A regex over the raw command string (it breaks on quotes and on `||`)"
+      },
+      {
+        "what": "If the command can't be split (for example, unbalanced quotes), pass it instead of denying",
+        "why": "Every other check in this hook lets a command through when it can't judge it. Wrongly blocking a command the hook doesn't understand would cost more than missing one piped test run",
+        "rejected": "Denying when the command can't be split"
+      },
+      {
+        "what": "Run the pipe check before the declared-rule loop, so it applies whether or not any page declares deny rules. Leave the per-project Claude wiring as it is",
+        "why": "The behaviour is built into the hook, not declared on a page. Making per-project installs run `deny.py` would change how `apply.py` wires hooks and how `keep_denies` works, which is beyond this change. Nobody was available to ask, so I recorded the limit here rather than widening the change",
+        "rejected": "Wiring `deny.py` into per-project Claude installs in the same change"
+      }
+    ],
+    "original": "deny: 진행이 안 보이게 파이프한 테스트 실행을 거절\n\n## 무엇을 바꿨나\n\n- `pytest`(`-m pytest` 포함)의 출력을 `| tail`, `| grep`, `| head` 처럼 다른 명령으로 넘기면 PreToolUse 훅(`tool/deny.py`)이 거절한다. 그렇게 넘기면 실행이 끝날 때까지 진행 상황이 하나도 안 보이기 때문이다.\n- 거절 메시지는 파이프 없이 다시 돌리라고 안내한다. 오래 걸리면 `run_in_background`를 쓰거나 `| tee <로그 파일>` 로 남기면 된다.\n- `| tee` 는 허용한다. `pip install pytest | tail` 처럼 실행하지 않는 명령과 따옴표 안의 글자도 허용한다.\n- Claude 훅과 Codex 훅(`codex_pretool.py`)이 같은 `deny.verdict`를 쓰므로 둘 다 적용된다.\n\n## 확인\n\n- `tool/test_hook.py` 새 테스트 10개 통과. 훅을 쓰는 테스트(test_hook, test_codex_hooks, test_apply) 54개 통과.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "A Bash command that runs pytest (directly or as `<python launcher> -m pytest`) and pipes its output into a command other than `tee` is refused by `deny.verdict` with `permissionDecision: deny`.",
+        "source": {
+          "kind": "original",
+          "locator": "PR body, 무엇을 바꿨나, first bullet"
+        },
+        "status": "confirmed",
+        "preconditions": [
+          "payload `tool_name` is `Bash`"
+        ],
+        "postconditions": [
+          "the returned object has `hookSpecificOutput.hookEventName` `PreToolUse` and `permissionDecision` `deny`, the same shape as the existing declared-rule deny"
+        ],
+        "context": [
+          "tool/deny.py"
+        ],
+        "verify": [
+          {
+            "item": "`deny.verdict({\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"pytest -q | tail -5\"}})` returns `permissionDecision: deny`. So do `python -m pytest tool | grep FAIL`, `py -m pytest -x 2>&1 | head` and `cd tool && pytest | tail`",
+            "expected": "each of the four commands is denied"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "The deny reason tells the agent to run the command again without the pipe, and for a long run to use `run_in_background` or `| tee <log file>`.",
+        "source": {
+          "kind": "original",
+          "locator": "PR body, 무엇을 바꿨나, second bullet"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "the message is written in Korean like the existing `공유 위키의 차단 규칙` reason, with `run_in_background` and `| tee` kept literal (assumed from the existing message language)"
+        ],
+        "context": [
+          "tool/deny.py:37"
+        ],
+        "verify": [
+          {
+            "item": "The deny message says to run again without the pipe and names both `run_in_background` and `| tee <log file>` as the ways to handle a long run",
+            "expected": "`permissionDecisionReason` contains `run_in_background` and `tee`, and says to drop the pipe"
+          }
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "Piping into `tee`, commands that do not run pytest, a `|` inside quotes, a pytest run with no pipe and `||` are all allowed.",
+        "source": {
+          "kind": "original",
+          "locator": "PR body, 무엇을 바꿨나, third bullet"
+        },
+        "status": "confirmed",
+        "context": [
+          "tool/deny.py"
+        ],
+        "verify": [
+          {
+            "item": "These return None: `pytest -q | tee out.log`, `python -m pytest 2>&1 | tee -a log.txt`, `pip install pytest | tail`, `echo \"pytest | tail\"`, `git commit -m 'pytest | tail'`, `pytest -q`, `pytest -q || echo failed`",
+            "expected": "`deny.verdict` returns None for each (with no declared rule matching them)"
+          }
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "The pipe check runs before the declared-rule loop and does not depend on `declared()` returning any deny rules; the existing declared-rule behaviour is unchanged.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 4: run the pipe check before the declared-rule loop"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "the `fnmatchcase` loop over `denies` keeps its current matching and message"
+        ],
+        "context": [
+          "tool/deny.py:23",
+          "tool/deny.py:29",
+          "tool/test_hook.py:134"
+        ],
+        "verify": [
+          {
+            "item": "The new check runs even when `declared()` returns no deny rules, and the existing declared-rule test (`tool/test_hook.py` around line 139: `sed -i` blocked, `git status` passes) still passes",
+            "expected": "a test with `declared` returning no denies still sees `pytest | tail` denied; `test_user_level_claude_carries_no_machine_wide_deny` passes"
+          }
+        ]
+      },
+      {
+        "id": "R5",
+        "text": "The Codex PreToolUse hook gives the same deny for a piped pytest run because it chains `deny.verdict`.",
+        "source": {
+          "kind": "original",
+          "locator": "PR body, 무엇을 바꿨나, fourth bullet"
+        },
+        "status": "confirmed",
+        "preconditions": [
+          "`codex_pretool.verdict` calls `host_boundary.verdict(payload) or deny.verdict(payload)` (tool/codex_pretool.py:16)"
+        ],
+        "invariants": [
+          "`host_boundary.verdict` does not answer `pytest | tail` first in a way that hides the pipe deny (assumed, not checked)"
+        ],
+        "context": [
+          "tool/codex_pretool.py",
+          "tool/test_codex_hooks.py"
+        ],
+        "verify": [
+          {
+            "item": "`codex_pretool.verdict` with a Bash payload `pytest | tail` returns the same deny, shown by a test in `tool/test_codex_hooks.py` or `tool/test_hook.py`",
+            "expected": "the test asserts `permissionDecision` `deny` with the pipe message"
+          }
+        ]
+      },
+      {
+        "id": "R6",
+        "text": "Every deny and pass case is covered by new tests in `tool/test_hook.py`, and the hook test suites all pass.",
+        "source": {
+          "kind": "original",
+          "locator": "PR body, 확인"
+        },
+        "status": "confirmed",
+        "context": [
+          "tool/test_hook.py",
+          "tool/test_codex_hooks.py",
+          "tool/test_apply.py"
+        ],
+        "verify": [
+          {
+            "item": "New tests in `tool/test_hook.py` cover every deny and pass case above; `tool/test_hook.py`, `tool/test_codex_hooks.py` and `tool/test_apply.py` all pass",
+            "expected": "all three files pass under pytest"
+          }
+        ]
+      },
+      {
+        "id": "R7",
+        "text": "The pipe check is Python code inside `deny.verdict`; no `Bash(...)` glob pattern is added to any page's `enforce.deny`.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 1: write the pipe check in Python inside deny.verdict"
+        },
+        "status": "confirmed",
+        "context": [
+          "tool/deny.py"
+        ]
+      },
+      {
+        "id": "R8",
+        "text": "The command is split into shell words with quotes respected, cut into commands at `&&`, `;` and `||` and into pipeline segments at `|` and `|&`. A segment runs pytest when, after any `VAR=value` prefixes, its first word is `pytest`, or a python launcher (`python`, `python3`, `py`) followed by `-m pytest`. It is denied when such a segment is piped into a next segment whose command is not `tee`.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 2: shlex-style split and segment rule"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "redirections such as `2>&1` on the pytest segment do not change the verdict",
+          "`||` is never treated as a pipe"
+        ],
+        "depends_on": [
+          "R7"
+        ],
+        "context": [
+          "tool/deny.py"
+        ]
+      },
+      {
+        "id": "R9",
+        "text": "A command that cannot be split (for example, unbalanced quotes) passes the pipe check instead of being denied.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 3: pass when the command can't be split"
+        },
+        "status": "confirmed",
+        "failures": [
+          "a split error (e.g. `ValueError` from shlex) is caught inside the check and the check returns no deny; it does not fall through to the outer `hook skipped` handler"
+        ],
+        "depends_on": [
+          "R8"
+        ],
+        "context": [
+          "tool/deny.py:50"
+        ],
+        "verify": [
+          {
+            "item": "`deny.verdict` on `pytest \"unbalanced | tail`",
+            "expected": "None"
+          }
+        ]
+      },
+      {
+        "id": "R10",
+        "text": "Per-project Claude installs keep their current wiring (`permissions.deny` from `apply.py`, no `deny.py`), so the pipe check reaches them only through installs that already run `deny.py`.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 4: leave the per-project Claude wiring as it is"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "`apply.py` and `keep_denies` are not modified"
+        ],
+        "context": [
+          "tool/apply.py"
+        ]
+      },
+      {
+        "id": "R11",
+        "text": "A pipe written without spaces, such as `pytest -q|tail -5`, is denied the same way as `pytest -q | tail -5`.",
+        "source": {
+          "kind": "decision",
+          "locator": "follows from decision 2: a lone `|` cuts a segment"
+        },
+        "status": "assumed",
+        "postconditions": [
+          "the splitter treats `|`, `|&`, `||`, `&&` and `;` as operators even without surrounding spaces (e.g. shlex with punctuation_chars), not only as whitespace-separated words"
+        ],
+        "depends_on": [
+          "R8"
+        ],
+        "verify": [
+          {
+            "item": "`deny.verdict` on `pytest -q|tail -5`",
+            "expected": "`permissionDecision: deny`"
+          }
+        ]
+      },
+      {
+        "id": "R12",
+        "text": "Whether these count as running pytest is not settled: `uv run pytest`, `py -3 -m pytest`, `python3.12 -m pytest`, a path such as `.venv/bin/pytest`, and a path such as `/usr/bin/tee` as the receiving command. Keep the narrow rule in R8 unless widening is clearly cheap, and list whatever is not caught as known gaps in the pull request.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 2 names the launcher set only by example ('such as')"
+        },
+        "status": "undecided",
+        "depends_on": [
+          "R8"
+        ]
+      }
+    ],
+    "spec_version": 1,
+    "spec_digest": "218bc266a5d8ef0025dfec1d8b833b182c7241ec397dc8cc91e0295c5bbd25e4"
+  },
+  "select": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
+    "R8",
+    "R9",
+    "R11",
+    "R12"
+  ],
+  "costs": {
+    "generation": {
+      "usd": 0.155091,
+      "tokens": {
+        "input": 12,
+        "output": 3860,
+        "cache_read": 53575,
+        "cache_write": 8391
+      },
+      "turns": 9
+    },
+    "enrichment": {
+      "usd": 0.20442880000000002,
+      "tokens": {
+        "input": 10,
+        "output": 7301,
+        "cache_read": 43084,
+        "cache_write": 6219
+      },
+      "turns": 6
+    },
+    "selection": {
+      "usd": 0.03938,
+      "tokens": {
+        "input": 2,
+        "output": 385,
+        "cache_read": 0,
+        "cache_write": 3959
+      },
+      "turns": 1
+    }
+  },
+  "selection_cost": {
+    "usd": 0.03938,
+    "tokens": {
+      "input": 2,
+      "output": 385,
+      "cache_read": 0,
+      "cache_write": 3959
+    },
+    "turns": 1
+  }
+}

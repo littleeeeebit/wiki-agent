@@ -1,0 +1,342 @@
+{
+  "task": "pr106",
+  "reference": {
+    "merge_commit": {
+      "hidden": {
+        "tool/test_runtime.py::test_shutdown_marks_every_workflow_stopped_before_it_ends_the_remaining_providers": "passed"
+      },
+      "affected": {
+        "tool/test_agent.py": true
+      }
+    },
+    "merge_base": {
+      "hidden": {
+        "tool/test_runtime.py::test_shutdown_marks_every_workflow_stopped_before_it_ends_the_remaining_providers": "failed"
+      },
+      "affected": {
+        "tool/test_agent.py": true
+      }
+    },
+    "discriminates": true
+  },
+  "baseline": {
+    "id": "pr106",
+    "rev": 1,
+    "goal": "tool/main/app.py stops reaching into agent.chat_session: agent/__init__.py exports end_all and reopen, app.py calls agent.end_all()/agent.reopen() with unchanged shutdown behaviour, and lint.py reports no pipeline-surface finding for it",
+    "out": [
+      "Test files that import agent.chat_session directly (test_agent.py, test_loop.py, test_main.py, etc.); pipeline_surface exempts tests",
+      "Any change to end_all/reopen behaviour or to the close_turns ordering",
+      "lint.py itself"
+    ],
+    "done": [
+      "tool/agent/__init__.py imports end_all and reopen from .chat_session and lists both in __all__",
+      "tool/main/app.py no longer imports chat_session; lifespan calls agent.reopen() and close_turns calls agent.end_all() at the same positions as before",
+      "tool/test_runtime.py test_shutdown_marks_every_workflow_stopped_before_it_ends_the_remaining_providers patches end_all through app.agent instead of app.chat_session and still asserts the order ['end_all', 'query', 'join', 'join', 'join']",
+      "python tool/lint.py --repo . reports no new findings, and the pipeline-surface finding for tool/main/app.py using agent.chat_session is gone",
+      "ruff check tool and python tool/debt.py check pass",
+      "pytest tool/test_runtime.py tool/test_agent.py passes (50 tests)"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/agent/__init__.py:10",
+        "tool/agent/chat_session.py:117",
+        "tool/agent/chat_session.py:129",
+        "tool/main/app.py:36",
+        "tool/main/app.py:89",
+        "tool/main/app.py:104",
+        "tool/test_runtime.py:117",
+        "tool/lint.py:554"
+      ],
+      "rules": [
+        "agent/__init__.py: `__all__` is the whole contract; lint.pipeline_surface goes red when a main module uses anything else"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Export end_all and reopen from the agent package and call them as agent.end_all()/agent.reopen() via `import agent` in app.py",
+        "why": "The request names this shape. Keeping the module-qualified call (rather than `from agent import end_all`) keeps a single patch point that tests can monkeypatch on app.agent",
+        "rejected": "`from agent import end_all, reopen` in app.py, which would bind local names and force the runtime test to patch app.end_all instead"
+      },
+      {
+        "what": "Update tool/test_runtime.py:117 to patch app.agent.end_all",
+        "why": "The test currently reaches end_all through app.chat_session, which no longer exists after the import is removed; the request did not mention this but the test would otherwise fail (settled without the person, since no one could be asked)",
+        "rejected": "Keeping a chat_session import in app.py only for the test, which would leave the lint finding in place"
+      },
+      {
+        "what": "Leave test files' direct agent.chat_session imports alone",
+        "why": "pipeline_surface exempts test_ files by design: tests prove a pipeline's insides",
+        "rejected": "Rewriting all tests to the public surface, which is outside this lint fix"
+      }
+    ]
+  },
+  "enriched": {
+    "id": "pr106",
+    "rev": 1,
+    "goal": "tool/main/app.py stops reaching into agent.chat_session: agent/__init__.py exports end_all and reopen, app.py calls agent.end_all()/agent.reopen() with unchanged shutdown behaviour, and lint.py reports no pipeline-surface finding for it",
+    "out": [
+      "Test files that import agent.chat_session directly (test_agent.py, test_loop.py, test_main.py, etc.); pipeline_surface exempts tests",
+      "Any change to end_all/reopen behaviour or to the close_turns ordering",
+      "lint.py itself"
+    ],
+    "done": [
+      "tool/agent/__init__.py imports end_all and reopen from .chat_session and lists both in __all__",
+      "tool/main/app.py no longer imports chat_session; lifespan calls agent.reopen() and close_turns calls agent.end_all() at the same positions as before",
+      "tool/test_runtime.py test_shutdown_marks_every_workflow_stopped_before_it_ends_the_remaining_providers patches end_all through app.agent instead of app.chat_session and still asserts the order ['end_all', 'query', 'join', 'join', 'join']",
+      "python tool/lint.py --repo . reports no new findings, and the pipeline-surface finding for tool/main/app.py using agent.chat_session is gone",
+      "ruff check tool and python tool/debt.py check pass",
+      "pytest tool/test_runtime.py tool/test_agent.py passes (50 tests)"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/agent/__init__.py:10",
+        "tool/agent/chat_session.py:117",
+        "tool/agent/chat_session.py:129",
+        "tool/main/app.py:36",
+        "tool/main/app.py:89",
+        "tool/main/app.py:104",
+        "tool/test_runtime.py:117",
+        "tool/lint.py:554"
+      ],
+      "rules": [
+        "agent/__init__.py: `__all__` is the whole contract; lint.pipeline_surface goes red when a main module uses anything else"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Export end_all and reopen from the agent package and call them as agent.end_all()/agent.reopen() via `import agent` in app.py",
+        "why": "The request names this shape. Keeping the module-qualified call (rather than `from agent import end_all`) keeps a single patch point that tests can monkeypatch on app.agent",
+        "rejected": "`from agent import end_all, reopen` in app.py, which would bind local names and force the runtime test to patch app.end_all instead"
+      },
+      {
+        "what": "Update tool/test_runtime.py:117 to patch app.agent.end_all",
+        "why": "The test currently reaches end_all through app.chat_session, which no longer exists after the import is removed; the request did not mention this but the test would otherwise fail (settled without the person, since no one could be asked)",
+        "rejected": "Keeping a chat_session import in app.py only for the test, which would leave the lint finding in place"
+      },
+      {
+        "what": "Leave test files' direct agent.chat_session imports alone",
+        "why": "pipeline_surface exempts test_ files by design: tests prove a pipeline's insides",
+        "rejected": "Rewriting all tests to the public surface, which is outside this lint fix"
+      }
+    ],
+    "original": "#103 후속: agent 공개 목록에 종료 함수 추가 (린트)\n\n## 변경 요약\n\n#103 머지 후 위키 린트(`lint.py`)가 잡은 항목 하나를 고칩니다. `tool/main/app.py`가 `agent` 패키지의 공개 목록(`__all__`) 밖인 `agent.chat_session`을 직접 가져왔습니다.\n\n- `agent/__init__.py`가 `end_all`, `reopen`을 공개합니다.\n- `app.py`는 `agent.end_all()`, `agent.reopen()`으로 부릅니다. 동작은 같습니다.\n\n## 확인\n\n- `python tool/lint.py --repo .`: 새 발견 없음 (수정 전에는 위 항목 1건)\n- `ruff check tool`, `python tool/debt.py check` 통과\n- `tool/test_runtime.py tool/test_agent.py` 50 통과\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "The agent package publicly exports end_all and reopen: tool/agent/__init__.py imports both from .chat_session alongside ChatSession, Event, explain, oneshot, and lists both names in __all__.",
+        "source": {
+          "kind": "original",
+          "locator": "change summary, first bullet"
+        },
+        "status": "confirmed",
+        "preconditions": [
+          "tool/agent/__init__.py line 10 imports only ChatSession, Event, explain, oneshot from .chat_session; __all__ lacks end_all and reopen"
+        ],
+        "postconditions": [
+          "`import agent; agent.end_all; agent.reopen` resolve to agent.chat_session.end_all / reopen",
+          "'end_all' and 'reopen' are in agent.__all__"
+        ],
+        "context": [
+          "tool/agent/__init__.py",
+          "tool/agent/chat_session.py"
+        ],
+        "verify": [
+          {
+            "item": "tool/agent/__init__.py imports end_all and reopen from .chat_session and lists both in __all__",
+            "expected": "Both names appear in the from .chat_session import line and in the __all__ tuple"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "tool/main/app.py no longer imports agent.chat_session; it imports the agent package and calls agent.reopen() in lifespan's finally block (after close_turns()) and agent.end_all() in close_turns (after work.close_all, before query.close_all), the same positions as before.",
+        "source": {
+          "kind": "original",
+          "locator": "change summary, second bullet"
+        },
+        "status": "confirmed",
+        "preconditions": [
+          "app.py:36 has `from agent import chat_session`; app.py:89 calls chat_session.reopen(); app.py:104 calls chat_session.end_all()"
+        ],
+        "postconditions": [
+          "app.py contains no reference to chat_session",
+          "app.py has `import agent` and uses only names in agent.__all__"
+        ],
+        "invariants": [
+          "Shutdown order in close_turns is unchanged: loop/planning close_all(wait=False), refactor.close_all, work.close_all(wait=False), end_all, query.close_all, then join threads"
+        ],
+        "context": [
+          "tool/main/app.py"
+        ],
+        "verify": [
+          {
+            "item": "tool/main/app.py no longer imports chat_session; lifespan calls agent.reopen() and close_turns calls agent.end_all() at the same positions as before",
+            "expected": "grep for chat_session in tool/main/app.py finds nothing; the two calls sit where the old ones were"
+          }
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "The lint finding is resolved: lint.py's pipeline-surface check no longer reports tool/main/app.py using agent.chat_session, and no new findings appear.",
+        "source": {
+          "kind": "original",
+          "locator": "confirmation section, first bullet"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R1",
+          "R2"
+        ],
+        "verify": [
+          {
+            "item": "python tool/lint.py --repo . reports no new findings, and the pipeline-surface finding for tool/main/app.py using agent.chat_session is gone",
+            "expected": "Zero new findings; the one prior app.py/agent.chat_session finding is absent"
+          }
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "Repository static checks stay green after the change.",
+        "source": {
+          "kind": "original",
+          "locator": "confirmation section, second bullet"
+        },
+        "status": "confirmed",
+        "verify": [
+          {
+            "item": "ruff check tool and python tool/debt.py check pass",
+            "expected": "Both exit 0"
+          }
+        ]
+      },
+      {
+        "id": "R5",
+        "text": "Export end_all and reopen from the agent package and call them module-qualified (agent.end_all()/agent.reopen()) via `import agent` in app.py, not via `from agent import end_all, reopen`, so tests have one patch point on app.agent.",
+        "source": {
+          "kind": "decision",
+          "locator": "spec decision 1"
+        },
+        "status": "confirmed",
+        "failures": [
+          "Binding local names with `from agent import end_all, reopen` would make monkeypatching app.agent.end_all ineffective"
+        ],
+        "depends_on": [
+          "R1",
+          "R2"
+        ]
+      },
+      {
+        "id": "R6",
+        "text": "Update tool/test_runtime.py:117 so the shutdown-order test patches end_all through app.agent instead of app.chat_session, keeping its assertion of the order ['end_all', 'query', 'join', 'join', 'join'].",
+        "source": {
+          "kind": "decision",
+          "locator": "spec decision 2"
+        },
+        "status": "assumed",
+        "preconditions": [
+          "test_runtime.py:117 does monkeypatch.setattr(app.chat_session, \"end_all\", ...); line 120 asserts order[4:] == ['end_all', 'query', 'join', 'join', 'join']"
+        ],
+        "invariants": [
+          "end_all and reopen behaviour itself is not changed (out of scope); assumed unchanged since only call sites move"
+        ],
+        "depends_on": [
+          "R5"
+        ],
+        "context": [
+          "tool/test_runtime.py"
+        ],
+        "verify": [
+          {
+            "item": "tool/test_runtime.py test_shutdown_marks_every_workflow_stopped_before_it_ends_the_remaining_providers patches end_all through app.agent instead of app.chat_session and still asserts the order ['end_all', 'query', 'join', 'join', 'join']",
+            "expected": "The setattr target is app.agent; the asserted order is unchanged and the test passes"
+          }
+        ]
+      },
+      {
+        "id": "R7",
+        "text": "Leave direct agent.chat_session imports in test files (test_agent.py, test_loop.py, test_main.py, etc.) as they are; pipeline_surface exempts test_ files.",
+        "source": {
+          "kind": "decision",
+          "locator": "spec decision 3"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "No test file other than tool/test_runtime.py changes for this task"
+        ]
+      },
+      {
+        "id": "R8",
+        "text": "The runtime and agent test suites pass with the change.",
+        "source": {
+          "kind": "original",
+          "locator": "confirmation section, third bullet"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R6"
+        ],
+        "verify": [
+          {
+            "item": "pytest tool/test_runtime.py tool/test_agent.py passes (50 tests)",
+            "expected": "50 passed, 0 failed (count taken from the request, not re-run here)"
+          }
+        ]
+      }
+    ],
+    "spec_version": 1,
+    "spec_digest": "00d081544c30434bfda5db161667b64b408b8b3e5acfd8808e2e65191507d5e7"
+  },
+  "select": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
+    "R8"
+  ],
+  "costs": {
+    "generation": {
+      "usd": 0.147122,
+      "tokens": {
+        "input": 10,
+        "output": 2684,
+        "cache_read": 35210,
+        "cache_write": 10795
+      },
+      "turns": 8
+    },
+    "enrichment": {
+      "usd": 0.134326,
+      "tokens": {
+        "input": 6,
+        "output": 4537,
+        "cache_read": 20570,
+        "cache_write": 4931
+      },
+      "turns": 6
+    },
+    "selection": {
+      "usd": 0.025812,
+      "tokens": {
+        "input": 2,
+        "output": 145,
+        "cache_read": 0,
+        "cache_write": 2863
+      },
+      "turns": 1
+    }
+  },
+  "selection_cost": {
+    "usd": 0.025812,
+    "tokens": {
+      "input": 2,
+      "output": 145,
+      "cache_read": 0,
+      "cache_write": 2863
+    },
+    "turns": 1
+  }
+}

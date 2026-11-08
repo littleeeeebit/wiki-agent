@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -444,3 +445,389 @@ def test_the_views_route_renders_the_saved_record(repo):
     assert set(got) == {"human", "agent", "spec_version", "spec_digest"}
     assert got["human"] == specs.human(spec) and got["agent"] == specs.agent(spec)
     assert (got["spec_version"], got["spec_digest"]) == (1, spec["spec_digest"])
+
+
+# -- the experiment harness (`tool/eval/spec_views.py`), driven by a scripted stub ---------------
+
+from eval import spec_views as harness  # noqa: E402
+from eval import spec_views_report as spec_report  # noqa: E402
+
+
+def _git(cwd, *args):
+    return harness.git(Path(cwd), *args)
+
+
+def commit_all(repo) -> str:
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "frozen")
+    return _git(repo, "rev-parse", "HEAD").strip()
+
+
+@pytest.fixture
+def replay(tmp_path):
+    """A source repository whose one 'pull request' fixes `add`, its frozen spec and an experiment config."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _git(src, "init", "-q", "-b", "main")
+    (src / "pkg.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    (src / "test_other.py").write_text("def test_other():\n    assert True\n", encoding="utf-8")
+    _git(src, "add", "-A")
+    _git(src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base")
+    base = _git(src, "rev-parse", "HEAD").strip()
+    (src / "pkg.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (src / "test_pkg.py").write_text("from pkg import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n",
+                                     encoding="utf-8")
+    _git(src, "add", "-A")
+    _git(src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "the answer (#1)")
+    merge = _git(src, "rev-parse", "HEAD").strip()
+    hidden = (src / "test_pkg.py").read_bytes()
+    enriched = snapshot(goal="add adds", out=["Nothing else"])
+    def side(outcome):
+        return {"hidden": {"test_pkg.py::test_add": outcome}, "affected": {"test_other.py": True}}
+
+    record = {"task": "t1", "baseline": {"id": "fixture", "rev": 1, "goal": "add adds", "out": ["Nothing else"],
+                                        "done": ["python -m pytest"], "decisions": []},
+              "enriched": enriched, "select": ["R1"], "selection_cost": {"usd": 0.01},
+              "reference": {"discriminates": True, "merge_commit": side("passed"), "merge_base": side("failed")}}
+    hub = tmp_path / "frozen"   # the frozen records, committed with the config
+    folder = hub / "specs"
+    folder.mkdir(parents=True)
+    (folder / "t1.json").write_text(json.dumps(record), encoding="utf-8")
+    _git(hub, "init", "-q")
+    task = {"id": "t1", "merge_base": base, "merge_commit": merge, "spec_digest": enriched["spec_digest"],
+            "hidden": [{"path": "test_pkg.py", "tests": ["test_add"], "digest": harness.sha(hidden)}],
+            "affected": [{"path": "test_other.py"}], "select": ["R1"], "equivalent": True}
+    cfg = {"schema": harness.SCHEMA, "experiment": "t", "kind": "pilot", "config_digest": "d", "seed": 7,
+           "config_root": str(hub), "config_commit": commit_all(hub),
+           "journal_dir": str(tmp_path / "raw"), "hidden_dir": str(tmp_path / "hidden"), "source_repo": str(src),
+           "tasks": [task], "repetitions": 1, "concurrency": 1, "implementer": {"name": "claude-cli", "model": "m"},
+           "ceilings": {"usd": 10, "hours": 1},
+           "limits": {"cell_usd": 1, "min_cell_usd": 0.05, "session_seconds": 60, "test_seconds": 120,
+                      "gate_seconds": 60},
+           "report": {"resamples": 200, "markdown": "x.md"}, "runner_difference": "stub", "path": "c.json"}
+    store = harness.stored(cfg, "t1", "test_pkg.py")
+    store.parent.mkdir(parents=True)
+    store.write_bytes(hidden)
+    return SimpleNamespace(cfg=cfg, folder=folder, src=src, merge=merge, base=base, scratch=tmp_path / "scratch")
+
+
+def stub(script):
+    """A scripted implementer: `script(workspace, system, stop)` edits the workspace and may name a stop cause."""
+    def impl(ws, system, limits, stop):
+        cause = script(Path(ws), system, stop) or ""
+        return {"result": "```done-report\n[{\"item\": \"x\", \"pass\": true}]\n```", "usd": None if cause else 0.1,
+                "tokens": {"input": 1}, "turns": 1, "error": "", "cause": cause, "infra": False}
+    impl.name = "stub"
+    return impl
+
+
+def fix(ws, system, stop):
+    (ws / "pkg.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+
+
+def ran(cfg, kinds=("cell",)):
+    return [r for r in harness.rows(cfg) if r["kind"] in kinds]
+
+
+def test_every_cell_starts_alone_at_the_merge_base_and_leaves_nothing_behind(replay):
+    seen = []
+
+    def script(ws, system, stop):
+        seen.append({"ws": ws, "log": _git(ws, "log", "--all", "--format=%H").split(),
+                     "answer": harness.git(ws, "cat-file", "-t", replay.merge, check=False).strip(),
+                     "left": (ws / "left.txt").exists(), "hidden": (ws / "test_pkg.py").exists(),
+                     "d_file": (ws / harness.D_FILE).exists(), "system": system})
+        (ws / "left.txt").write_text("from an earlier cell", encoding="utf-8")
+        fix(ws, system, stop)
+
+    got = harness.run(replay.cfg, stub(script), stub(script), replay.folder, replay.scratch)
+    assert got == {"stopped": None, "pending": 0, "spent": pytest.approx(0.5)}
+    rows = ran(replay.cfg, ("cell", "production_baseline"))
+    assert len(seen) == len(rows) == 5   # four conditions, then the production baseline
+    # Concurrency 1: the cells ran in exactly the seeded shuffled order.
+    assert [(r["task"], r["condition"], r["repetition"]) for r in rows[:4]] == harness.cells(replay.cfg)
+    for s in seen:
+        assert len(s["log"]) == 1 and not s["answer"]   # one commit; the merge commit is not reachable
+        assert not s["left"] and not s["hidden"]        # nothing from an earlier cell, no hidden test yet
+        assert not s["ws"].exists()                     # removed after evaluation
+    systems = {r["condition"] + r["kind"][0]: s["system"] for r, s in zip(rows, seen)}
+    assert "### R1" in systems["Bc"] and '"requirements"' in systems["Cc"] and harness.D_NOTE in systems["Dc"]
+    assert [s["d_file"] for s in seen] == [r["condition"] == "D" for r in rows]
+    cells = ran(replay.cfg)
+    assert all(r["success"] and r["hidden"] == {"test_pkg.py::test_add": "passed"} for r in cells)
+    assert all(r["spec_digest"] == replay.cfg["tasks"][0]["spec_digest"] and r["usd"] == 0.1 for r in cells)
+    assert next(r for r in cells if r["condition"] == "D")["input_construction"] == {"usd": 0.01}
+
+
+def one_cell(replay, script, condition="A"):
+    record = harness.frozen("t1", replay.folder)
+    ledger = harness.Ledger(replay.cfg, [])
+    return harness.run_cell(replay.cfg, replay.cfg["tasks"][0], record, condition, 1, stub(script), ledger,
+                            ledger.reserve(1, 0), threading.Event(), scratch=replay.scratch)
+
+
+def test_a_session_that_does_not_implement_fails_whatever_its_done_report_says(replay):
+    row = one_cell(replay, lambda ws, system, stop: None)
+    assert not row["success"] and row["failure"] == "verification"
+    assert row["hidden"] == {"test_pkg.py::test_add": "failed"}
+    assert row["done_report"] == [{"item": "x", "pass": True}]   # kept, never the evidence
+
+
+def test_cells_are_shuffled_by_the_seed_and_a_finished_cell_is_not_run_again(replay):
+    cfg = {**replay.cfg, "tasks": [replay.cfg["tasks"][0], {**replay.cfg["tasks"][0], "id": "t2"}],
+           "repetitions": 2}
+    order = harness.cells(cfg)
+    assert order == harness.cells(cfg)   # the seed fixes it
+    assert sorted(order) == sorted((t, c, r) for t in ("t1", "t2") for c in "ABCD" for r in (1, 2))
+    assert order != sorted(order) and order != harness.cells({**cfg, "seed": 8})
+    infra = {"kind": "cell", "task": "t1", "condition": "A", "repetition": 1, "infra": True}
+    final = {"kind": "cell", "task": "t1", "condition": "B", "repetition": 1, "success": False}
+    left = harness.pending(cfg, [infra, final])
+    assert ("t1", "A", 1) in left and ("t1", "B", 1) not in left and len(left) == 15   # an infra error runs once more
+    assert ("t1", "A", 1) not in harness.pending(cfg, [infra, {**infra, "infra": True}])   # twice is final
+
+
+def test_a_config_that_is_not_the_committed_one_is_refused(replay, tmp_path):
+    repo = tmp_path / "hub"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    file = repo / "pilot.json"
+    file.write_text(json.dumps({"schema": harness.SCHEMA, "experiment": "p"}), encoding="utf-8")
+    with pytest.raises(harness.Refused, match="not committed"):
+        harness.config(file, repo)
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "config")
+    assert harness.config(file, repo)["config_digest"] == harness.sha(file.read_bytes())
+    file.write_text(json.dumps({"schema": harness.SCHEMA, "experiment": "p", "repetitions": 3}), encoding="utf-8")
+    with pytest.raises(harness.Refused, match="new experiment id"):
+        harness.config(file, repo)
+    with pytest.raises(harness.Refused, match="frozen spec digest"):
+        harness.run({**replay.cfg, "tasks": [{**replay.cfg["tasks"][0], "spec_digest": "0" * 64}]},
+                    stub(fix), stub(fix), replay.folder, replay.scratch)
+    harness.stored(replay.cfg, "t1", "test_pkg.py").write_text("def test_add():\n    pass\n", encoding="utf-8")
+    with pytest.raises(harness.Refused, match="hidden test test_pkg.py digest"):
+        harness.run(replay.cfg, stub(fix), stub(fix), replay.folder, replay.scratch)
+    assert not ran(replay.cfg)   # a refused check records no result
+
+
+@pytest.mark.parametrize("ignored", [False, True], ids=["tracked-or-new", "behind-an-ignore-rule"])
+@pytest.mark.parametrize("path", [harness.D_FILE, "eval/spec-views/pilot-1.json", "raw/specs/x/t1.json",
+                                  "test_hidden_pkg.py"])
+def test_a_forbidden_change_fails_the_cell_even_when_every_test_passes(replay, path, ignored):
+    def script(ws, system, stop):
+        fix(ws, system, stop)
+        if ignored:   # hidden from `git add -A`: the check must not depend on ignore rules
+            with (ws / ".gitignore").open("a", encoding="utf-8") as rules:
+                rules.write(f"\n{path.split('/')[0]}\n")
+        (ws / path).parent.mkdir(parents=True, exist_ok=True)
+        (ws / path).write_text("changed by the session", encoding="utf-8")
+
+    row = one_cell(replay, script, "D")
+    assert row["hidden"]["test_pkg.py::test_add"] == "passed"
+    assert not row["success"] and row["forbidden"] == [path] and row["failure"] == "verification"
+
+
+def test_an_edited_affected_test_is_judged_as_the_merge_base_wrote_it(replay):
+    def script(ws, system, stop):
+        fix(ws, system, stop)
+        (ws / "test_other.py").write_text("def test_other():\n    assert False\n", encoding="utf-8")
+
+    row = one_cell(replay, script)
+    assert row["success"] and row["affected_edited"] == ["test_other.py"]
+    assert row["affected"]["test_other.py"]["ok"]
+
+
+def test_a_ceiling_stop_is_journalled_as_a_failure_and_the_rest_is_left_to_resume(replay):
+    def script(ws, system, stop):
+        fix(ws, system, stop)
+        assert stop.wait(30)   # a long session the wall-time ceiling ends
+        return "ceiling"
+
+    cfg = {**replay.cfg, "ceilings": {"usd": 10, "hours": 2 / 3600}}
+    got = harness.run(cfg, stub(script), stub(fix), replay.folder, replay.scratch)
+    cells = ran(cfg)
+    assert len(cells) == 1 and not cells[0]["success"] and cells[0]["failure"] == "ceiling"
+    assert cells[0]["usd"] is None and cells[0]["usd_bound"] == 1   # an unknown cost is charged at its cap
+    stop = ran(cfg, ("ceiling_stop",))[0]
+    assert stop["ceiling"] == "wall" and stop["spent"] == 1 and stop["pending"] == 3 == got["pending"]
+    rep = spec_report.report(cfg)
+    assert len(rep["cells_not_run"]) == 3
+    assert rep["production_baseline"]["t1"] == {"not_run": "the wall ceiling stopped the run first"}
+    assert rep["mock_rows_excluded"] == 1 and rep["per_condition"][cells[0]["condition"]]["cells_run"] == 0
+    harness.journal(cfg, {"kind": "adjustment", "what": "narrowed an affected test", "tasks": ["t1"]})
+    text = spec_report.markdown(spec_report.report(cfg), cfg)
+    assert "pilot, not the main experiment" in text
+    assert "narrowed an affected test — tuned on t1; the main experiment must exclude" in text
+
+
+def test_the_usd_ceiling_stops_launching_before_a_cell_could_cross_it(replay):
+    cfg = {**replay.cfg, "ceilings": {"usd": 0.15, "hours": 1}}
+    harness.run(cfg, stub(fix), stub(fix), replay.folder, replay.scratch)
+    assert [r["usd_cap"] for r in ran(cfg)] == [0.15]   # the cap is the room left
+    assert ran(cfg, ("ceiling_stop",))[0]["ceiling"] == "usd"
+
+
+def refrozen(replay, change, *, with_config: bool) -> dict:
+    """The fixture's frozen record changed by `change`; committed as the config's commit when `with_config`."""
+    file = replay.folder / "t1.json"
+    record = json.loads(file.read_text(encoding="utf-8"))
+    change(record)
+    file.write_text(json.dumps(record), encoding="utf-8")
+    commit = commit_all(Path(replay.cfg["config_root"]))
+    return {**replay.cfg, **({"config_commit": commit} if with_config else {})}
+
+
+def _req_text(r):
+    r["enriched"]["requirements"][0]["text"] = "a different requirement"   # its digest left as it was
+
+
+def _goal(r):
+    r["baseline"]["goal"] = "a different goal"
+
+
+def _select(r):
+    r["select"] = ["R2"]
+
+
+def _base_only_skipped(r):   # the stored flag still says it discriminates
+    r["reference"]["merge_base"]["hidden"]["test_pkg.py::test_add"] = "skipped"
+
+
+def _affected_failed_at_base(r):
+    r["reference"]["merge_base"]["affected"]["test_other.py"] = False
+
+
+@pytest.mark.parametrize("change, with_config, refused", [
+    (_req_text, False, "not the one committed with the config"),
+    (_goal, False, "not the one committed with the config"),
+    (_select, False, "not the one committed with the config"),
+    (_req_text, True, "frozen spec digest differs from its requirements"),
+    (_select, True, "frozen selection differs"),
+    (_base_only_skipped, True, "reference check failed"),
+    (_affected_failed_at_base, True, "reference check failed"),
+], ids=["requirement-after-config", "baseline-after-config", "selection-after-config", "requirement-digest-kept",
+        "selection-not-configured", "reference-base-only-skipped", "reference-affected-failed"])
+def test_a_frozen_input_unlike_the_one_checked_with_the_config_refuses_the_run_before_any_cell(
+        replay, change, with_config, refused):
+    cfg = refrozen(replay, change, with_config=with_config)
+    with pytest.raises(harness.Refused, match=refused):
+        harness.run(cfg, stub(fix), stub(fix), replay.folder, replay.scratch)
+    assert not ran(cfg, ("start", "cell", "production_baseline"))
+
+
+@pytest.mark.parametrize("merge, base, separates", [
+    ({"t": "passed"}, {"t": "failed"}, True),
+    ({"t": "passed", "u": "passed"}, {"t": "failed", "u": "passed"}, True),   # one real failure is enough
+    ({"t": "passed"}, {"t": "skipped"}, False),
+    ({"t": "passed"}, {"t": "missing"}, False),
+    ({"t": "passed"}, {"t": "error"}, False),
+    ({"t": "passed"}, {"t": "passed"}, False),
+    ({"t": "skipped"}, {"t": "failed"}, False),
+    ({}, {}, False),
+])
+def test_a_reference_separates_the_answer_only_when_a_hidden_test_actually_fails_on_the_base(merge, base, separates):
+    ref = {"merge_commit": {"hidden": merge, "affected": {"a": True}}, "merge_base": {"hidden": base, "affected": {}}}
+    assert harness.discriminates(ref) is separates
+
+
+def test_a_task_whose_b_and_c_were_not_equivalent_refuses_the_run(replay):
+    cfg = {**replay.cfg, "tasks": [{**replay.cfg["tasks"][0], "equivalent": False}]}
+    with pytest.raises(harness.Refused, match="B and C are not equivalent"):
+        harness.run(cfg, stub(fix), stub(fix), replay.folder, replay.scratch)
+    assert not ran(cfg, ("start", "cell"))
+
+
+@pytest.mark.parametrize("cases, code, verdict", [
+    ({"t": "passed"}, 0, "passed"),
+    ({"t[a]": "passed", "t[b]": "passed"}, 0, "passed"),
+    ({"t[a]": "passed", "t[b]": "skipped"}, 0, "skipped"),
+    ({"t": "skipped"}, 0, "skipped"),
+    ({"t[a]": "passed", "t[b]": "failed"}, 1, "failed"),
+    ({"t": "passed"}, 1, "error"),       # every case passed, the run did not
+    ({"t": "passed"}, None, "error"),    # cut by its timeout
+    ({"t2": "passed"}, 0, "missing"),    # another test whose name starts the same
+    ({}, 0, "missing"),
+])
+def test_a_hidden_test_passes_only_when_every_case_passed_and_the_run_exited_cleanly(cases, code, verdict):
+    assert harness.verdicts(cases, ["t"], code) == {"t": verdict}
+
+
+def test_a_failing_neighbour_does_not_turn_a_passing_hidden_test_into_an_error():
+    got = harness.verdicts({"t": "passed", "u": "failed"}, ["t", "u"], 1)
+    assert got == {"t": "passed", "u": "failed"}
+
+
+def test_verification_cut_by_the_wall_ceiling_is_a_ceiling_failure_not_a_verdict(replay):
+    def script(ws, system, stop):
+        fix(ws, system, stop)
+        assert stop.wait(30)   # a session that ends on its own just as the wall ceiling passes
+        return ""
+
+    cfg = {**replay.cfg, "ceilings": {"usd": 10, "hours": 2 / 3600}}
+    harness.run(cfg, stub(script), stub(fix), replay.folder, replay.scratch)
+    cells = ran(cfg)
+    assert len(cells) == 1 and cells[0]["failure"] == "ceiling" and not cells[0]["success"]
+    assert "hidden" not in cells[0]   # no verification ran past the deadline
+    with pytest.raises(harness.Ceiling, match="wall"):
+        harness.gate(replay.scratch, "exit 0", 60, harness.time.monotonic() - 1)
+
+
+LATE = "import time, pathlib; time.sleep(3); pathlib.Path('late.txt').write_text('outlived the deadline')"
+
+
+def _gate_with_a_child(ws, deadline):
+    harness.gate(ws, f'"{harness.sys.executable}" -c "{LATE}"', 60, deadline)
+
+
+def _pytest_with_a_child(ws, deadline):
+    (ws / "test_slow.py").write_text(
+        "import subprocess, sys\n\n\ndef test_slow():\n"
+        f"    subprocess.run([sys.executable, '-c', {LATE!r}])\n", encoding="utf-8")
+    harness.pytest(ws, ["test_slow.py"], 60, deadline)
+
+
+@pytest.mark.parametrize("command", [_gate_with_a_child, _pytest_with_a_child], ids=["gate", "pytest"])
+def test_a_command_cut_at_the_wall_deadline_ends_with_its_whole_process_tree(tmp_path, command):
+    began = harness.time.monotonic()
+    with pytest.raises(harness.Ceiling, match="wall"):
+        command(tmp_path, began + 0.5)
+    assert harness.time.monotonic() - began < 2.5   # the child's three seconds were not waited out
+    harness.time.sleep(3.5)
+    assert not (tmp_path / "late.txt").exists()     # and the child itself is gone
+
+
+@pytest.mark.parametrize("ceiling, earlier", [
+    ("usd", {"kind": "generation", "task": "t0", "usd": 9.8}),
+    ("wall", {"kind": "preparation", "elapsed": 3600}),
+])
+def test_preparation_spends_and_counts_time_inside_the_experiment_ceilings(replay, tmp_path, ceiling, earlier):
+    from eval import spec_views_prepare
+
+    cfg = {**replay.cfg, "planner": {"model": "m"}, "limits": {**replay.cfg["limits"], "prepare_usd": 0.5}}
+    harness.journal(cfg, earlier)
+    task = {**replay.cfg["tasks"][0], "vetted_by": "a person", "source": {"text": "make add add"}}
+    tasks_file = tmp_path / "tasks.json"
+    tasks_file.write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+    calls = []
+    with pytest.raises(harness.Refused, match=f"the {ceiling} ceiling stopped preparation"):
+        spec_views_prepare.prepare(cfg, tasks_file, lambda *a: calls.append(a), tmp_path / "unfrozen")
+    assert not calls   # no model call once the ceiling has no room
+    stop = ran(cfg, ("ceiling_stop",))
+    assert [(s["ceiling"], s["during"]) for s in stop] == [(ceiling, "prepare")]
+    prep = ran(cfg, ("preparation",))[-1]
+    assert prep["elapsed"] >= 0
+    past = harness.rows(cfg)
+    assert harness.Ledger(cfg, past).elapsed == sum(r.get("elapsed", 0) for r in past if r["kind"] == "preparation")
+
+
+def test_cost_per_verified_success_keeps_every_attempt_a_rerun_replaced(replay):
+    cfg = replay.cfg
+    cell = {"kind": "cell", "task": "t1", "condition": "A", "repetition": 1, "implementer": "claude-cli"}
+    harness.journal(cfg, {**cell, "usd": 1.0, "infra": True, "success": False})
+    harness.journal(cfg, {**cell, "usd": 0.5, "infra": False, "success": True})
+    for usd in (0.2, 0.3):   # a failed generation, then the one that was frozen
+        harness.journal(cfg, {"kind": "generation", "task": "t1", "usd": usd})
+    a = spec_report.report(cfg)["per_condition"]["A"]
+    assert (a["cells_run"], a["successes"], a["attempts"], a["usd"]) == (1, 1, 2, 1.5)
+    assert a["spec_generation_first_run_usd"] == 0.5
+    assert a["cost_per_verified_success"] == 2.0

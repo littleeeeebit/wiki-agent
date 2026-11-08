@@ -1,0 +1,396 @@
+{
+  "task": "pr161",
+  "reference": {
+    "merge_commit": {
+      "hidden": {
+        "tool/test_specs.py::test_a_spec_attached_to_a_pr_into_a_non_default_base_is_republished_there": "passed"
+      },
+      "affected": {
+        "tool/test_specs.py": true
+      }
+    },
+    "merge_base": {
+      "hidden": {
+        "tool/test_specs.py::test_a_spec_attached_to_a_pr_into_a_non_default_base_is_republished_there": "failed"
+      },
+      "affected": {
+        "tool/test_specs.py": true
+      }
+    },
+    "discriminates": true
+  },
+  "baseline": {
+    "id": "pr161",
+    "rev": 1,
+    "goal": "A spec with no base of its own that has a pull request attached (opened by hand, picked up by the review loop) is published again to that pull request's base, not the repository's default branch, and its gate selection uses the same base",
+    "out": [
+      "The debt ratchet's base in `required()` (tool/main/specs.py:1070) keeps reading only `spec.get(\"base\")`",
+      "`existing_pr`'s refusal of a second PR from one branch into another base stays as it is",
+      "The load-dependent failure of `test_korean.py::test_a_translator_fault_ends_explicit_with_no_english_in_evidence_and_question` is not fixed or skipped in code"
+    ],
+    "done": [
+      "`tool/main/specs.py` has `own_base(spec)`. It returns `spec[\"base\"]` when that is set, else `spec[\"pr\"][\"base\"]` when a PR is attached, else an empty string",
+      "`base_of` returns `own_base(spec)` without calling `gh repo view` when that is not empty, and asks GitHub for the default branch only when it is empty",
+      "`local_base` returns `own_base(spec)` when that is not empty, and reads `origin/HEAD` only when it is empty",
+      "A spec whose `base` was set by `[다시 PR]` still goes to that base even when the attached PR's base differs. A test covers this",
+      "New test `test_a_spec_attached_to_a_pr_into_a_non_default_base_is_republished_there`: a spec with an empty `base` and `pr.base = dev` is published to `dev`, and the fake `gh repo view` is never called. The test fails before the fix with `AssertionError: asked for the default branch` and passes after it",
+      "The PR body reports the full gate result. If the known load-dependent `test_korean.py` translator-fault test fails, the session reruns it on its own and gives both outcomes, plus the fact that it fails the same way on unmodified `origin/main`"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/specs.py:1093",
+        "tool/main/specs.py:1259",
+        "tool/main/specs.py:1267",
+        "tool/main/specs.py:1336",
+        "tool/main/specs.py:1460",
+        "tool/main/specs.py:1070",
+        "tool/main/planning.py:975",
+        "tool/main/decisions.py:697",
+        "tool/main/knowledge.py:2740",
+        "tool/test_specs.py:132"
+      ],
+      "rules": [
+        "craft/do-the-whole-instruction"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Order the bases as: the spec's own `base` (set by `[다시 PR]`), then the attached PR's `base`, then the repository default",
+        "why": "rfg_rag PR #64 was opened into `dev` by hand. A `spec-update` republished it toward `main`, `existing_pr` refused the second PR, and the task stayed on `작업 중` with no review-loop button. The attached PR already says where the work goes. `[다시 PR]` is an explicit later choice by the person, so it still wins",
+        "rejected": "Letting the attached PR's base override the spec's own `base`: that would undo a base the person chose with `[다시 PR]`"
+      },
+      {
+        "what": "Put the rule in one helper, `specs.own_base`, and have both `base_of` and `local_base` call it",
+        "why": "Publishing and gate selection must agree on the base. Otherwise the targeted checks diff against `main` while the PR goes to `dev`. Every caller (planning, decisions, knowledge, the publish path) goes through these two functions",
+        "rejected": "Patching only `base_of`: gate selection would still compute its merge base against `origin/HEAD`"
+      },
+      {
+        "what": "Leave the debt ratchet's base in `required()` alone",
+        "why": "The request names only `base_of` and `local_base`. This was settled without the person, so the scope stays as written",
+        "rejected": "Also switching `debt.command(spec.get(\"base\"))` to `own_base`, which would widen the change past what was asked"
+      },
+      {
+        "what": "Do not skip or fix the flaky `test_korean.py` translator-fault test in code; rerun it on its own and report it",
+        "why": "The person saw it fail the same way on unmodified `origin/main` (0fbef12) under load and pass when run alone on both, so it is unrelated to this change",
+        "rejected": "Marking it skipped in the test file, which would hide it from every later run"
+      }
+    ]
+  },
+  "enriched": {
+    "id": "pr161",
+    "rev": 1,
+    "goal": "A spec with no base of its own that has a pull request attached (opened by hand, picked up by the review loop) is published again to that pull request's base, not the repository's default branch, and its gate selection uses the same base",
+    "out": [
+      "The debt ratchet's base in `required()` (tool/main/specs.py:1070) keeps reading only `spec.get(\"base\")`",
+      "`existing_pr`'s refusal of a second PR from one branch into another base stays as it is",
+      "The load-dependent failure of `test_korean.py::test_a_translator_fault_ends_explicit_with_no_english_in_evidence_and_question` is not fixed or skipped in code"
+    ],
+    "done": [
+      "`tool/main/specs.py` has `own_base(spec)`. It returns `spec[\"base\"]` when that is set, else `spec[\"pr\"][\"base\"]` when a PR is attached, else an empty string",
+      "`base_of` returns `own_base(spec)` without calling `gh repo view` when that is not empty, and asks GitHub for the default branch only when it is empty",
+      "`local_base` returns `own_base(spec)` when that is not empty, and reads `origin/HEAD` only when it is empty",
+      "A spec whose `base` was set by `[다시 PR]` still goes to that base even when the attached PR's base differs. A test covers this",
+      "New test `test_a_spec_attached_to_a_pr_into_a_non_default_base_is_republished_there`: a spec with an empty `base` and `pr.base = dev` is published to `dev`, and the fake `gh repo view` is never called. The test fails before the fix with `AssertionError: asked for the default branch` and passes after it",
+      "The PR body reports the full gate result. If the known load-dependent `test_korean.py` translator-fault test fails, the session reruns it on its own and gives both outcomes, plus the fact that it fails the same way on unmodified `origin/main`"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/specs.py:1093",
+        "tool/main/specs.py:1259",
+        "tool/main/specs.py:1267",
+        "tool/main/specs.py:1336",
+        "tool/main/specs.py:1460",
+        "tool/main/specs.py:1070",
+        "tool/main/planning.py:975",
+        "tool/main/decisions.py:697",
+        "tool/main/knowledge.py:2740",
+        "tool/test_specs.py:132"
+      ],
+      "rules": [
+        "craft/do-the-whole-instruction"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Order the bases as: the spec's own `base` (set by `[다시 PR]`), then the attached PR's `base`, then the repository default",
+        "why": "rfg_rag PR #64 was opened into `dev` by hand. A `spec-update` republished it toward `main`, `existing_pr` refused the second PR, and the task stayed on `작업 중` with no review-loop button. The attached PR already says where the work goes. `[다시 PR]` is an explicit later choice by the person, so it still wins",
+        "rejected": "Letting the attached PR's base override the spec's own `base`: that would undo a base the person chose with `[다시 PR]`"
+      },
+      {
+        "what": "Put the rule in one helper, `specs.own_base`, and have both `base_of` and `local_base` call it",
+        "why": "Publishing and gate selection must agree on the base. Otherwise the targeted checks diff against `main` while the PR goes to `dev`. Every caller (planning, decisions, knowledge, the publish path) goes through these two functions",
+        "rejected": "Patching only `base_of`: gate selection would still compute its merge base against `origin/HEAD`"
+      },
+      {
+        "what": "Leave the debt ratchet's base in `required()` alone",
+        "why": "The request names only `base_of` and `local_base`. This was settled without the person, so the scope stays as written",
+        "rejected": "Also switching `debt.command(spec.get(\"base\"))` to `own_base`, which would widen the change past what was asked"
+      },
+      {
+        "what": "Do not skip or fix the flaky `test_korean.py` translator-fault test in code; rerun it on its own and report it",
+        "why": "The person saw it fail the same way on unmodified `origin/main` (0fbef12) under load and pass when run alone on both, so it is unrelated to this change",
+        "rejected": "Marking it skipped in the test file, which would hide it from every later run"
+      }
+    ],
+    "original": "작업 명세를 붙은 PR 의 base 로 다시 발행하기\n\n## 무엇을\n\n수동으로 발행한 PR 이 붙은 작업 명세를 다시 발행할 때, 기본 브랜치(main)가 아니라 그 PR 의 base 로 보낸다.\n\n## 원인\n\nrfg_rag PR #64 는 `dev` 로 손으로 발행됐고, 리뷰 루프가 그 PR 을 명세에 붙였다(`pr.base = dev`, 명세의 `base` 는 비어 있음).\n명세의 리뷰 설정을 고치려고 `spec-update` 를 보내자 앱이 다시 발행하면서 `base_of` 가 기본 브랜치 `main` 을 골랐다.\n`existing_pr` 는 같은 브랜치의 PR 이 이미 `dev` 에 있으니 두 번째 PR 을 거부했다.\n그래서 작업이 `작업 중` 에 멈췄고, 리뷰 루프 버튼(`머지 가능` 이나 `PR #…` 상태에서만 보임)이 나오지 않았다.\n\n## 고친 것\n\n- `specs.own_base`: 명세 자신의 `base`, 없으면 붙은 PR 의 `base`.\n- `base_of`(발행), `local_base`(게이트 선택)가 기본 브랜치보다 이것을 먼저 읽는다. `[다시 PR]` 이 정한 `base` 는 여전히 가장 앞선다.\n\n## 검증\n\n- 새 테스트 `test_a_spec_attached_to_a_pr_into_a_non_default_base_is_republished_there`: 수정 전 코드에서 실패(`AssertionError: asked for the default branch`), 수정 후 통과.\n- 전체 게이트(`python -m pytest tool`): 진행 중. 결과를 이 PR 에 덧붙인다.\n  - `test_korean.py::test_a_translator_fault_ends_explicit_with_no_english_in_evidence_and_question` 는 부하가 클 때 `'deadline' == 'request_failed'` 로 실패한다. 수정 없는 `origin/main`(0fbef12)에서도 같은 방식으로 실패했고, 단독 실행은 양쪽 모두 통과한다. 그래서 이 테스트만 빼고 돌렸다.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "`specs.own_base(spec)` resolves a spec's base in order: the spec's own non-empty `base`, else the attached PR's `base` when `spec[\"pr\"]` exists and carries one, else an empty string.",
+        "source": {
+          "kind": "original",
+          "locator": "the request's 고친 것 section, first bullet"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "A missing `pr` key, a `pr` without `base`, or an empty `pr.base` yields the empty string, never an exception"
+        ],
+        "context": [
+          "tool/main/specs.py"
+        ],
+        "verify": [
+          {
+            "item": "`tool/main/specs.py` has `own_base(spec)`. It returns `spec[\"base\"]` when that is set, else `spec[\"pr\"][\"base\"]` when a PR is attached, else an empty string",
+            "expected": "Holds for each of the three cases"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "`base_of` uses `own_base(spec)` when it is not empty and does not run `gh repo view`; only an empty `own_base` asks GitHub for the default branch.",
+        "source": {
+          "kind": "original",
+          "locator": "the request's 고친 것 section, second bullet"
+        },
+        "status": "assumed",
+        "preconditions": [
+          "`base_of` keeps returning a `subprocess.CompletedProcess` (tool/main/specs.py:1259) whose stdout is the branch, so callers in planning, decisions and knowledge stay unchanged; assumed, since the done text says it 'returns `own_base(spec)`'"
+        ],
+        "depends_on": [
+          "R1"
+        ],
+        "context": [
+          "tool/main/specs.py",
+          "tool/main/planning.py",
+          "tool/main/decisions.py",
+          "tool/main/knowledge.py"
+        ],
+        "verify": [
+          {
+            "item": "`base_of` returns `own_base(spec)` without calling `gh repo view` when that is not empty, and asks GitHub for the default branch only when it is empty",
+            "expected": "No `gh` call for a spec with `base` or `pr.base`; one `gh repo view` call otherwise"
+          }
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "`local_base` uses `own_base(spec)` when it is not empty and reads `origin/HEAD` only when it is empty.",
+        "source": {
+          "kind": "original",
+          "locator": "the request's 고친 것 section, second bullet"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R1"
+        ],
+        "context": [
+          "tool/main/specs.py"
+        ],
+        "verify": [
+          {
+            "item": "`local_base` returns `own_base(spec)` when that is not empty, and reads `origin/HEAD` only when it is empty",
+            "expected": "A spec with `pr.base = dev` and no `base` gives `dev` for gate selection"
+          }
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "A `base` set by `[다시 PR]` on the spec takes precedence over the attached PR's base, and a test covers this.",
+        "source": {
+          "kind": "original",
+          "locator": "the request's 고친 것 section, last sentence"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R1",
+          "R2"
+        ],
+        "context": [
+          "tool/test_task_workflow.py"
+        ],
+        "verify": [
+          {
+            "item": "A spec whose `base` was set by `[다시 PR]` still goes to that base even when the attached PR's base differs. A test covers this",
+            "expected": "A spec with `base = main` and `pr.base = dev` publishes to `main`"
+          }
+        ]
+      },
+      {
+        "id": "R5",
+        "text": "A regression test named `test_a_spec_attached_to_a_pr_into_a_non_default_base_is_republished_there` reproduces the rfg_rag PR #64 case and proves the fix.",
+        "source": {
+          "kind": "original",
+          "locator": "the request's 검증 section, first bullet"
+        },
+        "status": "assumed",
+        "preconditions": [
+          "The test lives beside the existing `base_of`/`local_base` tests in tool/test_task_workflow.py; assumed from where those names already appear"
+        ],
+        "depends_on": [
+          "R2"
+        ],
+        "context": [
+          "tool/test_task_workflow.py"
+        ],
+        "verify": [
+          {
+            "item": "New test `test_a_spec_attached_to_a_pr_into_a_non_default_base_is_republished_there`: a spec with an empty `base` and `pr.base = dev` is published to `dev`, and the fake `gh repo view` is never called. The test fails before the fix with `AssertionError: asked for the default branch` and passes after it",
+            "expected": "Fails on the unfixed code with that message; passes after the fix"
+          }
+        ]
+      },
+      {
+        "id": "R6",
+        "text": "The PR body reports the full gate result, with the known load-dependent `test_korean.py` translator-fault test rerun on its own and its relation to `origin/main` stated if it fails.",
+        "source": {
+          "kind": "original",
+          "locator": "the request's 검증 section, second bullet"
+        },
+        "status": "confirmed",
+        "verify": [
+          {
+            "item": "The PR body reports the full gate result. If the known load-dependent `test_korean.py` translator-fault test fails, the session reruns it on its own and gives both outcomes, plus the fact that it fails the same way on unmodified `origin/main`",
+            "expected": "The PR body carries the gate outcome and, when applicable, both outcomes of that test"
+          }
+        ]
+      },
+      {
+        "id": "R7",
+        "text": "Base precedence is: the spec's own `base` (from `[다시 PR]`), then the attached PR's `base`, then the repository default.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[0]"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R1"
+        ],
+        "verify": [
+          {
+            "item": "Specs with (base, pr.base) of (main, dev), (empty, dev) and (empty, none) resolve to main, dev and the default branch",
+            "expected": "Each resolves as listed"
+          }
+        ]
+      },
+      {
+        "id": "R8",
+        "text": "The precedence rule exists once, in `specs.own_base`, and both `base_of` and `local_base` call it, so publishing and gate selection agree.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[1]"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R1",
+          "R2",
+          "R3"
+        ],
+        "verify": [
+          {
+            "item": "Neither `base_of` nor `local_base` reads `spec[\"base\"]` or `spec[\"pr\"]` directly",
+            "expected": "Both go through `own_base`"
+          }
+        ]
+      },
+      {
+        "id": "R9",
+        "text": "The debt ratchet's base in `required()` keeps reading only `spec.get(\"base\")`.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[2]"
+        },
+        "status": "confirmed",
+        "context": [
+          "tool/main/specs.py"
+        ],
+        "verify": [
+          {
+            "item": "`required()` at tool/main/specs.py still calls `debt.command(spec.get(\"base\") or \"\")`",
+            "expected": "That line is unchanged in the diff"
+          }
+        ]
+      },
+      {
+        "id": "R10",
+        "text": "The flaky `test_korean.py` translator-fault test is neither skipped nor changed; it is rerun on its own and reported.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[3]"
+        },
+        "status": "confirmed",
+        "verify": [
+          {
+            "item": "The diff does not touch `tool/test_korean.py`",
+            "expected": "No change to that file"
+          }
+        ]
+      }
+    ],
+    "spec_version": 1,
+    "spec_digest": "811ee8eee98523eaa81b9427875675f60e345787deb77b9d67dded3a538f78ab"
+  },
+  "select": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R7",
+    "R8",
+    "R9"
+  ],
+  "costs": {
+    "generation": {
+      "usd": 0.1924018,
+      "tokens": {
+        "input": 12,
+        "output": 3715,
+        "cache_read": 66269,
+        "cache_write": 13100
+      },
+      "turns": 9
+    },
+    "enrichment": {
+      "usd": 0.1549798,
+      "tokens": {
+        "input": 8,
+        "output": 5023,
+        "cache_read": 32919,
+        "cache_write": 5988
+      },
+      "turns": 5
+    },
+    "selection": {
+      "usd": 0.031152,
+      "tokens": {
+        "input": 2,
+        "output": 276,
+        "cache_read": 0,
+        "cache_write": 3203
+      },
+      "turns": 1
+    }
+  },
+  "selection_cost": {
+    "usd": 0.031152,
+    "tokens": {
+      "input": 2,
+      "output": 276,
+      "cache_read": 0,
+      "cache_write": 3203
+    },
+    "turns": 1
+  }
+}
