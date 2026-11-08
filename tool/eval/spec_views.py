@@ -358,6 +358,28 @@ def stored(cfg: dict, task_id: str, path: str) -> Path:
     return hidden_store(cfg) / task_id / path.replace("/", "__")
 
 
+def tree(cmd, cwd: Path, seconds: float, env: dict, shell: bool = False) -> tuple[int | None, str]:
+    """`(exit code, output)` of `cmd` run in a job (a process group elsewhere) holding everything it starts.
+    At `seconds` the whole tree is killed, so no grandchild keeps the output pipes or the workspace open;
+    the code is then None."""
+
+    proc = subprocess.Popen(cmd, shell=shell, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", env=env,
+                            creationflags=SUSPENDED | background_options().get("creationflags", 0),
+                            start_new_session=os.name != "nt")
+    job = contained(proc)
+    resumed(proc)
+    try:
+        out, _ = proc.communicate(timeout=seconds)
+        return proc.returncode, out or ""
+    except subprocess.TimeoutExpired:
+        killed(job) if job else proc.kill()
+        out, _ = proc.communicate()   # the pipes close once the tree is dead
+        return None, out or ""
+    finally:
+        terminated(job)
+
+
 def pytest(ws: Path, args: list[str], seconds: float, deadline: float | None = None) -> dict:
     """`{case name: outcome}` from one pytest run, plus its exit code; cut at the shared wall deadline."""
 
@@ -365,15 +387,11 @@ def pytest(ws: Path, args: list[str], seconds: float, deadline: float | None = N
     cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-n", "0", "--maxfail=0",
            f"--junitxml={junit}", *args]
     seconds = bounded(seconds, deadline)
-    try:
-        done = subprocess.run(cmd, cwd=ws, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                              timeout=seconds, env={**python_environment(), "PYTHONDONTWRITEBYTECODE": "1"},
-                              **background_options())
-        code, tail = done.returncode, (done.stdout + done.stderr)[-1500:]
-    except subprocess.TimeoutExpired as exc:
+    code, output = tree(cmd, ws, seconds, {**python_environment(), "PYTHONDONTWRITEBYTECODE": "1"})
+    tail = output[-1500:] if code is not None else f"timed out after {seconds:.0f} s: {output[-1000:]}"
+    if code is None:
         junit.unlink(missing_ok=True)
         bounded(seconds, deadline)   # past the shared deadline: a ceiling stop, not a verdict
-        code, tail = None, f"timed out after {seconds} s: {str(exc.output or '')[-1000:]}"
     cases = {}
     try:
         for case in ET.parse(junit).getroot().iter("testcase"):
@@ -576,14 +594,22 @@ def run_cell(cfg: dict, task: dict, record: dict, condition: str, rep: int, impl
 def gate(ws: Path, command: str, seconds: float, deadline: float | None = None) -> dict:
     began = time.time()
     seconds = bounded(seconds, deadline)
-    try:
-        done = subprocess.run(command, shell=True, cwd=ws, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=seconds, env=python_environment(), **background_options())
-        return {"command": command, "ok": done.returncode == 0, "code": done.returncode,
-                "seconds": round(time.time() - began, 1), "tail": (done.stdout + done.stderr)[-1500:]}
-    except subprocess.TimeoutExpired:
-        bounded(seconds, deadline)
-        return {"command": command, "ok": False, "code": None, "seconds": seconds, "tail": "timed out"}
+    code, output = tree(command, ws, seconds, python_environment(), shell=True)
+    if code is None:
+        bounded(seconds, deadline)   # past the shared deadline: a ceiling stop
+    return {"command": command, "ok": code == 0, "code": code, "seconds": round(time.time() - began, 1),
+            "tail": output[-1500:] if code is not None else "timed out"}
+
+
+def discriminates(ref: dict) -> bool:
+    """The reference separates the answer: every hidden test passed on the merge commit, at least one actually
+    failed on the merge base (skipped, missing or an error is no failure), and the affected files passed on both."""
+
+    m, b = ref.get("merge_commit") or {}, ref.get("merge_base") or {}
+    hidden_m, hidden_b = m.get("hidden") or {}, b.get("hidden") or {}
+    return bool(hidden_m) and all(v == "passed" for v in hidden_m.values()) \
+        and any(v == "failed" for v in hidden_b.values()) \
+        and all(all(side.get("affected", {}).values()) for side in (m, b))
 
 
 def admitted(cfg: dict, task: dict, folder: Path) -> dict:
@@ -603,9 +629,7 @@ def admitted(cfg: dict, task: dict, folder: Path) -> dict:
         raise Refused(f"{tid}: frozen spec digest differs from its requirements or the config")
     if record.get("select") != task.get("select"):
         raise Refused(f"{tid}: frozen selection differs from the config")
-    ref = record.get("reference") or {}
-    sides = [ref.get("merge_commit"), ref.get("merge_base")]
-    if not ref.get("discriminates") or not all(side and all(side.get("affected", {}).values()) for side in sides):
+    if not discriminates(record.get("reference") or {}):   # recomputed from the outcomes, not the stored flag
         raise Refused(f"{tid}: the reference check failed; the hidden tests do not separate the answer")
     if not task.get("equivalent") or not equivalence(record)["ok"]:
         raise Refused(f"{tid}: B and C are not equivalent")

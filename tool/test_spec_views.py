@@ -482,11 +482,13 @@ def replay(tmp_path):
     merge = _git(src, "rev-parse", "HEAD").strip()
     hidden = (src / "test_pkg.py").read_bytes()
     enriched = snapshot(goal="add adds", out=["Nothing else"])
-    sides = {"affected": {"test_other.py": True}}
+    def side(outcome):
+        return {"hidden": {"test_pkg.py::test_add": outcome}, "affected": {"test_other.py": True}}
+
     record = {"task": "t1", "baseline": {"id": "fixture", "rev": 1, "goal": "add adds", "out": ["Nothing else"],
                                         "done": ["python -m pytest"], "decisions": []},
               "enriched": enriched, "select": ["R1"], "selection_cost": {"usd": 0.01},
-              "reference": {"discriminates": True, "merge_commit": sides, "merge_base": sides}}
+              "reference": {"discriminates": True, "merge_commit": side("passed"), "merge_base": side("failed")}}
     hub = tmp_path / "frozen"   # the frozen records, committed with the config
     folder = hub / "specs"
     folder.mkdir(parents=True)
@@ -687,8 +689,8 @@ def _select(r):
     r["select"] = ["R2"]
 
 
-def _no_discrimination(r):
-    r["reference"]["discriminates"] = False
+def _base_only_skipped(r):   # the stored flag still says it discriminates
+    r["reference"]["merge_base"]["hidden"]["test_pkg.py::test_add"] = "skipped"
 
 
 def _affected_failed_at_base(r):
@@ -701,16 +703,31 @@ def _affected_failed_at_base(r):
     (_select, False, "not the one committed with the config"),
     (_req_text, True, "frozen spec digest differs from its requirements"),
     (_select, True, "frozen selection differs"),
-    (_no_discrimination, True, "reference check failed"),
+    (_base_only_skipped, True, "reference check failed"),
     (_affected_failed_at_base, True, "reference check failed"),
 ], ids=["requirement-after-config", "baseline-after-config", "selection-after-config", "requirement-digest-kept",
-        "selection-not-configured", "reference-did-not-discriminate", "reference-affected-failed"])
+        "selection-not-configured", "reference-base-only-skipped", "reference-affected-failed"])
 def test_a_frozen_input_unlike_the_one_checked_with_the_config_refuses_the_run_before_any_cell(
         replay, change, with_config, refused):
     cfg = refrozen(replay, change, with_config=with_config)
     with pytest.raises(harness.Refused, match=refused):
         harness.run(cfg, stub(fix), stub(fix), replay.folder, replay.scratch)
     assert not ran(cfg, ("start", "cell", "production_baseline"))
+
+
+@pytest.mark.parametrize("merge, base, separates", [
+    ({"t": "passed"}, {"t": "failed"}, True),
+    ({"t": "passed", "u": "passed"}, {"t": "failed", "u": "passed"}, True),   # one real failure is enough
+    ({"t": "passed"}, {"t": "skipped"}, False),
+    ({"t": "passed"}, {"t": "missing"}, False),
+    ({"t": "passed"}, {"t": "error"}, False),
+    ({"t": "passed"}, {"t": "passed"}, False),
+    ({"t": "skipped"}, {"t": "failed"}, False),
+    ({}, {}, False),
+])
+def test_a_reference_separates_the_answer_only_when_a_hidden_test_actually_fails_on_the_base(merge, base, separates):
+    ref = {"merge_commit": {"hidden": merge, "affected": {"a": True}}, "merge_base": {"hidden": base, "affected": {}}}
+    assert harness.discriminates(ref) is separates
 
 
 def test_a_task_whose_b_and_c_were_not_equivalent_refuses_the_run(replay):
@@ -753,6 +770,30 @@ def test_verification_cut_by_the_wall_ceiling_is_a_ceiling_failure_not_a_verdict
     assert "hidden" not in cells[0]   # no verification ran past the deadline
     with pytest.raises(harness.Ceiling, match="wall"):
         harness.gate(replay.scratch, "exit 0", 60, harness.time.monotonic() - 1)
+
+
+LATE = "import time, pathlib; time.sleep(3); pathlib.Path('late.txt').write_text('outlived the deadline')"
+
+
+def _gate_with_a_child(ws, deadline):
+    harness.gate(ws, f'"{harness.sys.executable}" -c "{LATE}"', 60, deadline)
+
+
+def _pytest_with_a_child(ws, deadline):
+    (ws / "test_slow.py").write_text(
+        "import subprocess, sys\n\n\ndef test_slow():\n"
+        f"    subprocess.run([sys.executable, '-c', {LATE!r}])\n", encoding="utf-8")
+    harness.pytest(ws, ["test_slow.py"], 60, deadline)
+
+
+@pytest.mark.parametrize("command", [_gate_with_a_child, _pytest_with_a_child], ids=["gate", "pytest"])
+def test_a_command_cut_at_the_wall_deadline_ends_with_its_whole_process_tree(tmp_path, command):
+    began = harness.time.monotonic()
+    with pytest.raises(harness.Ceiling, match="wall"):
+        command(tmp_path, began + 0.5)
+    assert harness.time.monotonic() - began < 2.5   # the child's three seconds were not waited out
+    harness.time.sleep(3.5)
+    assert not (tmp_path / "late.txt").exists()     # and the child itself is gone
 
 
 @pytest.mark.parametrize("ceiling, earlier", [

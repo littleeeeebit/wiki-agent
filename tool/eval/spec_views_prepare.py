@@ -17,7 +17,8 @@ import uuid
 from pathlib import Path
 
 from eval.spec_views import (READ_TOOLS, SPECS, Ceiling, Ledger, Refused, _charged, check_affected, check_hidden,
-                             claude, equivalence, git, journal, remove, rows, sha, source, stored, workspace)
+                             claude, discriminates, equivalence, git, journal, remove, rows, sha, source, stored,
+                             workspace)
 from main import channels, spec_views, specs
 
 GENERATE = ("A person asked for the change below; their words follow verbatim. Nobody can answer questions in "
@@ -123,9 +124,7 @@ def reference(cfg: dict, task: dict, deadline: float | None = None) -> dict:
                          "affected": {k: v["ok"] for k, v in check_affected(ws, task, start, seconds, deadline).items()}}
         finally:
             remove(ws)
-    m, b = out["merge_commit"], out["merge_base"]
-    out["discriminates"] = all(v == "passed" for v in m["hidden"].values()) and \
-        any(v != "passed" for v in b["hidden"].values())
+    out["discriminates"] = discriminates(out)
     return out
 
 
