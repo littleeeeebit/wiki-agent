@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -444,3 +445,203 @@ def test_the_views_route_renders_the_saved_record(repo):
     assert set(got) == {"human", "agent", "spec_version", "spec_digest"}
     assert got["human"] == specs.human(spec) and got["agent"] == specs.agent(spec)
     assert (got["spec_version"], got["spec_digest"]) == (1, spec["spec_digest"])
+
+
+# -- the experiment harness (`tool/eval/spec_views.py`), driven by a scripted stub ---------------
+
+from eval import spec_views as harness  # noqa: E402
+from eval import spec_views_report as spec_report  # noqa: E402
+
+
+def _git(cwd, *args):
+    return harness.git(Path(cwd), *args)
+
+
+@pytest.fixture
+def replay(tmp_path):
+    """A source repository whose one 'pull request' fixes `add`, its frozen spec and an experiment config."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _git(src, "init", "-q", "-b", "main")
+    (src / "pkg.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    (src / "test_other.py").write_text("def test_other():\n    assert True\n", encoding="utf-8")
+    _git(src, "add", "-A")
+    _git(src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base")
+    base = _git(src, "rev-parse", "HEAD").strip()
+    (src / "pkg.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (src / "test_pkg.py").write_text("from pkg import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n",
+                                     encoding="utf-8")
+    _git(src, "add", "-A")
+    _git(src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "the answer (#1)")
+    merge = _git(src, "rev-parse", "HEAD").strip()
+    hidden = (src / "test_pkg.py").read_bytes()
+    enriched = snapshot(goal="add adds", out=["Nothing else"])
+    record = {"task": "t1", "baseline": {"id": "fixture", "rev": 1, "goal": "add adds", "out": ["Nothing else"],
+                                        "done": ["python -m pytest"], "decisions": []},
+              "enriched": enriched, "select": ["R1"], "selection_cost": {"usd": 0.01}}
+    folder = tmp_path / "specs"
+    folder.mkdir()
+    (folder / "t1.json").write_text(json.dumps(record), encoding="utf-8")
+    task = {"id": "t1", "merge_base": base, "merge_commit": merge, "spec_digest": enriched["spec_digest"],
+            "hidden": [{"path": "test_pkg.py", "tests": ["test_add"], "digest": harness.sha(hidden)}],
+            "affected": [{"path": "test_other.py"}]}
+    cfg = {"schema": harness.SCHEMA, "experiment": "t", "kind": "pilot", "config_digest": "d", "seed": 7,
+           "journal_dir": str(tmp_path / "raw"), "hidden_dir": str(tmp_path / "hidden"), "source_repo": str(src),
+           "tasks": [task], "repetitions": 1, "concurrency": 1, "implementer": {"name": "claude-cli", "model": "m"},
+           "ceilings": {"usd": 10, "hours": 1},
+           "limits": {"cell_usd": 1, "min_cell_usd": 0.05, "session_seconds": 60, "test_seconds": 120,
+                      "gate_seconds": 60},
+           "report": {"resamples": 200, "markdown": "x.md"}, "runner_difference": "stub", "path": "c.json"}
+    store = harness.stored(cfg, "t1", "test_pkg.py")
+    store.parent.mkdir(parents=True)
+    store.write_bytes(hidden)
+    return SimpleNamespace(cfg=cfg, folder=folder, src=src, merge=merge, base=base, scratch=tmp_path / "scratch")
+
+
+def stub(script):
+    """A scripted implementer: `script(workspace, system, stop)` edits the workspace and may name a stop cause."""
+    def impl(ws, system, limits, stop):
+        cause = script(Path(ws), system, stop) or ""
+        return {"result": "```done-report\n[{\"item\": \"x\", \"pass\": true}]\n```", "usd": None if cause else 0.1,
+                "tokens": {"input": 1}, "turns": 1, "error": "", "cause": cause, "infra": False}
+    impl.name = "stub"
+    return impl
+
+
+def fix(ws, system, stop):
+    (ws / "pkg.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+
+
+def ran(cfg, kinds=("cell",)):
+    return [r for r in harness.rows(cfg) if r["kind"] in kinds]
+
+
+def test_every_cell_starts_alone_at_the_merge_base_and_leaves_nothing_behind(replay):
+    seen = []
+
+    def script(ws, system, stop):
+        seen.append({"ws": ws, "log": _git(ws, "log", "--all", "--format=%H").split(),
+                     "answer": harness.git(ws, "cat-file", "-t", replay.merge, check=False).strip(),
+                     "left": (ws / "left.txt").exists(), "hidden": (ws / "test_pkg.py").exists(),
+                     "d_file": (ws / harness.D_FILE).exists(), "system": system})
+        (ws / "left.txt").write_text("from an earlier cell", encoding="utf-8")
+        fix(ws, system, stop)
+
+    got = harness.run(replay.cfg, stub(script), stub(script), replay.folder, replay.scratch)
+    assert got == {"stopped": None, "pending": 0, "spent": pytest.approx(0.5)}
+    rows = ran(replay.cfg, ("cell", "production_baseline"))
+    assert len(seen) == len(rows) == 5   # four conditions, then the production baseline
+    # Concurrency 1: the cells ran in exactly the seeded shuffled order.
+    assert [(r["task"], r["condition"], r["repetition"]) for r in rows[:4]] == harness.cells(replay.cfg)
+    for s in seen:
+        assert len(s["log"]) == 1 and not s["answer"]   # one commit; the merge commit is not reachable
+        assert not s["left"] and not s["hidden"]        # nothing from an earlier cell, no hidden test yet
+        assert not s["ws"].exists()                     # removed after evaluation
+    systems = {r["condition"] + r["kind"][0]: s["system"] for r, s in zip(rows, seen)}
+    assert "### R1" in systems["Bc"] and '"requirements"' in systems["Cc"] and harness.D_NOTE in systems["Dc"]
+    assert [s["d_file"] for s in seen] == [r["condition"] == "D" for r in rows]
+    cells = ran(replay.cfg)
+    assert all(r["success"] and r["hidden"] == {"test_pkg.py::test_add": "passed"} for r in cells)
+    assert all(r["spec_digest"] == replay.cfg["tasks"][0]["spec_digest"] and r["usd"] == 0.1 for r in cells)
+    assert next(r for r in cells if r["condition"] == "D")["input_construction"] == {"usd": 0.01}
+
+
+def one_cell(replay, script, condition="A"):
+    record = harness.frozen("t1", replay.folder)
+    ledger = harness.Ledger(replay.cfg, [])
+    return harness.run_cell(replay.cfg, replay.cfg["tasks"][0], record, condition, 1, stub(script), ledger,
+                            ledger.reserve(1, 0), threading.Event(), scratch=replay.scratch)
+
+
+def test_a_session_that_does_not_implement_fails_whatever_its_done_report_says(replay):
+    row = one_cell(replay, lambda ws, system, stop: None)
+    assert not row["success"] and row["failure"] == "verification"
+    assert row["hidden"] == {"test_pkg.py::test_add": "failed"}
+    assert row["done_report"] == [{"item": "x", "pass": True}]   # kept, never the evidence
+
+
+def test_cells_are_shuffled_by_the_seed_and_a_finished_cell_is_not_run_again(replay):
+    cfg = {**replay.cfg, "tasks": [replay.cfg["tasks"][0], {**replay.cfg["tasks"][0], "id": "t2"}],
+           "repetitions": 2}
+    order = harness.cells(cfg)
+    assert order == harness.cells(cfg)   # the seed fixes it
+    assert sorted(order) == sorted((t, c, r) for t in ("t1", "t2") for c in "ABCD" for r in (1, 2))
+    assert order != sorted(order) and order != harness.cells({**cfg, "seed": 8})
+    infra = {"kind": "cell", "task": "t1", "condition": "A", "repetition": 1, "infra": True}
+    final = {"kind": "cell", "task": "t1", "condition": "B", "repetition": 1, "success": False}
+    left = harness.pending(cfg, [infra, final])
+    assert ("t1", "A", 1) in left and ("t1", "B", 1) not in left and len(left) == 15   # an infra error runs once more
+    assert ("t1", "A", 1) not in harness.pending(cfg, [infra, {**infra, "infra": True}])   # twice is final
+
+
+def test_a_config_that_is_not_the_committed_one_is_refused(replay, tmp_path):
+    repo = tmp_path / "hub"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    file = repo / "pilot.json"
+    file.write_text(json.dumps({"schema": harness.SCHEMA, "experiment": "p"}), encoding="utf-8")
+    with pytest.raises(harness.Refused, match="not committed"):
+        harness.config(file, repo)
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "config")
+    assert harness.config(file, repo)["config_digest"] == harness.sha(file.read_bytes())
+    file.write_text(json.dumps({"schema": harness.SCHEMA, "experiment": "p", "repetitions": 3}), encoding="utf-8")
+    with pytest.raises(harness.Refused, match="new experiment id"):
+        harness.config(file, repo)
+    with pytest.raises(harness.Refused, match="frozen spec digest"):
+        harness.run({**replay.cfg, "tasks": [{**replay.cfg["tasks"][0], "spec_digest": "0" * 64}]},
+                    stub(fix), stub(fix), replay.folder, replay.scratch)
+    harness.stored(replay.cfg, "t1", "test_pkg.py").write_text("def test_add():\n    pass\n", encoding="utf-8")
+    with pytest.raises(harness.Refused, match="hidden test test_pkg.py digest"):
+        harness.run(replay.cfg, stub(fix), stub(fix), replay.folder, replay.scratch)
+    assert not ran(replay.cfg)   # a refused check records no result
+
+
+@pytest.mark.parametrize("path", [harness.D_FILE, "eval/spec-views/pilot-1.json", "raw/specs/x/t1.json",
+                                  "test_hidden_pkg.py"])
+def test_a_forbidden_change_fails_the_cell_even_when_every_test_passes(replay, path):
+    def script(ws, system, stop):
+        fix(ws, system, stop)
+        (ws / path).parent.mkdir(parents=True, exist_ok=True)
+        (ws / path).write_text("changed by the session", encoding="utf-8")
+
+    row = one_cell(replay, script, "D")
+    assert row["hidden"]["test_pkg.py::test_add"] == "passed"
+    assert not row["success"] and row["forbidden"] == [path] and row["failure"] == "verification"
+
+
+def test_an_edited_affected_test_is_judged_as_the_merge_base_wrote_it(replay):
+    def script(ws, system, stop):
+        fix(ws, system, stop)
+        (ws / "test_other.py").write_text("def test_other():\n    assert False\n", encoding="utf-8")
+
+    row = one_cell(replay, script)
+    assert row["success"] and row["affected_edited"] == ["test_other.py"]
+    assert row["affected"]["test_other.py"]["ok"]
+
+
+def test_a_ceiling_stop_is_journalled_as_a_failure_and_the_rest_is_left_to_resume(replay):
+    def script(ws, system, stop):
+        fix(ws, system, stop)
+        assert stop.wait(30)   # a long session the wall-time ceiling ends
+        return "ceiling"
+
+    cfg = {**replay.cfg, "ceilings": {"usd": 10, "hours": 2 / 3600}}
+    got = harness.run(cfg, stub(script), stub(fix), replay.folder, replay.scratch)
+    cells = ran(cfg)
+    assert len(cells) == 1 and not cells[0]["success"] and cells[0]["failure"] == "ceiling"
+    assert cells[0]["usd"] is None and cells[0]["usd_bound"] == 1   # an unknown cost is charged at its cap
+    stop = ran(cfg, ("ceiling_stop",))[0]
+    assert stop["ceiling"] == "wall" and stop["spent"] == 1 and stop["pending"] == 3 == got["pending"]
+    rep = spec_report.report(cfg)
+    assert len(rep["cells_not_run"]) == 3
+    assert rep["production_baseline"]["t1"] == {"not_run": "the wall ceiling stopped the run first"}
+    assert rep["mock_rows_excluded"] == 1 and rep["per_condition"][cells[0]["condition"]]["cells_run"] == 0
+    assert "pilot, not the main experiment" in spec_report.markdown(rep, cfg)
+
+
+def test_the_usd_ceiling_stops_launching_before_a_cell_could_cross_it(replay):
+    cfg = {**replay.cfg, "ceilings": {"usd": 0.15, "hours": 1}}
+    harness.run(cfg, stub(fix), stub(fix), replay.folder, replay.scratch)
+    assert [r["usd_cap"] for r in ran(cfg)] == [0.15]   # the cap is the room left
+    assert ran(cfg, ("ceiling_stop",))[0]["ceiling"] == "usd"
