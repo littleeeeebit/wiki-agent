@@ -376,6 +376,7 @@ DOCUMENTED = (
     'python web/tests/mobile_connection.py',
     'python web/tests/mobile_sync.py',
     'python web/tests/screen_state_browser.py',
+    'python web/tests/spec_views_browser.py',
     'python web/tests/task_browser.py',
     'python web/tests/terminal_privacy.py --app <isolated test exe> --project <fixture project> --task <fixture task>',
     'python web/tests/window_project_browser.py',

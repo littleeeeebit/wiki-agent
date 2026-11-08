@@ -1,0 +1,571 @@
+{
+ "records": [
+  {
+   "record": {
+    "id": "loop-4-review-cell",
+    "rev": 1,
+    "goal": "A read-only review cell can be opened or resumed per PR, its answers are saved under the hub's raw/review/<repo>/<pr>/, and the round-result parser accepts or rejects them per the stage-4 plan",
+    "out": [
+     "The content of the instruction file round-<n>.md (shortstat, previous dispositions, gate result, Deferred P2, the bundling section): stage-4 row 2",
+     "Sending a round turn, the one retry on a format failure, round-limit/gate/disagree stops, the loop state machine, concurrency: row 2",
+     "PR list, adopt, minimal spec from a PR: row 3",
+     "[머지], P2 picking and comment, cleanup, closing the review cell: row 4",
+     "UI, settings inputs in raw/chat/main.json, notifications: row 5 — the model and effort are parameters here, not settings",
+     "Any change to ChatSession's write path or to READ_TOOLS itself"
+    ],
+    "done": [
+     "python -m pytest tool",
+     "tool/prompts/review-round.md exists; it tells the reviewer to return the result as its final answer (not a file), to start with `Round <n> · PR #<pr> · <head7>`, to write findings as `[P0|P1|P2] path:line` lines with the body below, and to end with a line starting `머지 허용` or `머지 불가`; it carries over the items of operator/codex-review-loop.md 'What the instruction must contain'",
+     "tool/test_loop.py: the parser accepts a well-formed answer and returns round, head, findings (level, path, line, body) and verdict",
+     "tool/test_loop.py: the parser rejects a first-line round-number mismatch, a head-commit mismatch, and a missing or invalid last line — each test goes red when its check is deleted",
+     "tool/test_loop.py: a Claude review cell's CLI arguments carry tools Read,Glob,Grep and no Bash — red if the tools are switched back to READ_TOOLS",
+     "tool/test_loop.py: a Codex review cell is a non-write ChatSession with effort high and the model passed in (default model when none)",
+     "tool/test_loop.py: opening a review cell writes the CLI session id to raw/review/<repo>/<pr>/session.json, and opening it again for the same PR passes that id as resume",
+     "tool/test_loop.py: round-<n>.md, round-<n>-result.md and session.json paths resolve under the hub's raw/review/<repo>/<pr>/, never inside the worktree; saving an answer writes round-<n>-result.md verbatim"
+    ],
+    "grounds": {
+     "pages": [
+      "operator/codex-review-loop"
+     ],
+     "files": [
+      "docs/plans/loop/4-review.md:32",
+      "docs/plans/loop/4-review.md:47",
+      "docs/plans/loop/4-review.md:52",
+      "docs/plans/loop/4-review.md:62",
+      "docs/plans/loop/4-review.md:286",
+      "docs/plans/loop/4-review.md:300",
+      "tool/agent/chat_session.py:40",
+      "tool/agent/chat_session.py:117",
+      "tool/main/specs.py:39",
+      "operator/codex-review-loop.md:27"
+     ],
+     "rules": [
+      "operator/english-progress",
+      "operator/agent-delegation"
+     ]
+    },
+    "decisions": [
+     {
+      "what": "Row 1 builds only the round-file paths and result storage; the instruction file's content is written by the loop in row 2",
+      "why": "Most of that content (previous dispositions, gate result, Deferred P2, the bundling trigger) comes from loop state that does not exist until row 2, and its test (4-review.md:290) is a loop test. Writing it here would leave placeholders",
+      "rejected": "Filling round number, PR, head, base, allow/deny lists and shortstat in row 1"
+     },
+     {
+      "what": "A Claude review cell gets Read,Glob,Grep only, not READ_TOOLS",
+      "why": "READ_TOOLS includes Bash, which --allowedTools lets run without approval, and one python -c can write inside or outside the worktree; the prompt cannot stop writes (4-review.md:39-43)",
+      "rejected": "Reusing READ_TOOLS and relying on the prompt to forbid writes"
+     },
+     {
+      "what": "Round files live in the hub's raw/review/<repo>/<pr>/, not the worktree's review_dir",
+      "why": "The work cell's git add -A could commit them, and removing the worktree would delete the record (4-review.md:28-29)",
+      "rejected": "review_dir inside the worktree"
+     }
+    ]
+   },
+   "system_sha256": "eb578d60fa77cd5887b77a1f8c035d2833e6f936b889e946fda890cc45e9bfff"
+  },
+  {
+   "record": {
+    "id": "readme-next-task-checks",
+    "rev": 2,
+    "goal": "README's query-screen Checks paragraph lists tool/test_specs.py with what it confirms, and gives the in-window procedure for the next-task focus from candidates through the harvest check",
+    "out": [
+     "The existing progress-answer quality guidance in the same paragraph (문맥 비우기, the two comparisons) — left as written",
+     "Any code, test, prompt or web change",
+     "docs/plans/loop/3-spec.md beyond the plan-row commit the server makes",
+     "The loop-4-review-cell spec and anything stage 4",
+     "The hook wiring drift lint warnings (a local re-install, not a repository change)"
+    ],
+    "done": [
+     "python -m pytest tool",
+     "README.md's Checks paragraph (currently README.md:310) runs `python -m pytest -q tool/test_main.py tool/test_specs.py`, and `python -m pytest -q tool/test_main.py tool/test_specs.py` passes in the worktree",
+     "One or two sentences say what tool/test_specs.py confirms, drawn from its test names: spec checks (empty goal, gate kept first, adapter required), slug tidying and collisions, a stale card refused, block extraction, [시작] making the worktree first, the spec as the work session's system prompt, the server's gate over the agent's report, the PR and plan row, the PR body sections harvest reads, the result line shown once",
+     "An in-window procedure for the next-task focus follows docs/plans/loop/3-spec.md:290-293 in order: 후보 내기 → pick one → answer the follow-up choices → spec card → edit one done item and save → [시작] → the work session reports done → the server's gate → PR with its 변경 이유 section → result line in the conversation → the plan-row commit in the PR → merge on GitHub → 머지됨 and its result line",
+     "The procedure ends with the harvest step: `python tool/harvest.py --project <checkout>` to preview and with `--write` to write, then check that the .wiki/decisions/ record for that PR has the spec's decisions as its why; it states that the server does not run harvest after a merge and that otherwise the record appears at the next sync (docs/plans/loop/0-overview.md:95-98)",
+     "Every button or label named in the procedure matches its text in web/src (e.g. 후보 내기 at web/src/components/Query.tsx:327)",
+     "Before the PR is up, this task's commits change README.md only (the server's later plan-row commit changes docs/plans/loop/3-spec.md row 6 only)"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "README.md:294",
+      "README.md:310",
+      "docs/plans/loop/3-spec.md:290",
+      "docs/plans/loop/3-spec.md:304",
+      "docs/plans/loop/0-overview.md:95",
+      "tool/test_specs.py:140",
+      "tool/test_specs.py:352",
+      "tool/harvest.py:236",
+      "web/src/components/Query.tsx:327"
+     ],
+     "rules": [
+      "operator/english-progress"
+     ]
+    },
+    "decisions": [
+     {
+      "what": "Add both the automated check (tool/test_specs.py) and the in-window procedure to README's Checks paragraph",
+      "why": "The paragraph lists only tool/test_main.py although the next-task focus it describes two paragraphs earlier is tested in tool/test_specs.py, and the stage-3 window check should be followable from the README rather than only from the plan",
+      "rejected": "Only the pytest command, or only the window procedure"
+     },
+     {
+      "what": "The window procedure runs through a manual harvest check",
+      "why": "The server deliberately does not run harvest after a merge because it would write into the original checkout, so the record otherwise waits for the next sync (6-hour interval); the stage-3 check needs the why confirmed now",
+      "rejected": "Stopping the procedure at 머지됨 and leaving the harvest check to the plan"
+     },
+     {
+      "what": "Take docs/plans/loop/3-spec.md row 6 as this spec's plan row",
+      "why": "This task is the vehicle for the stage-3 window check, and that check includes the plan-row commit landing in the PR, which only happens for a spec with a plan row. The cost, accepted: row 6 reads done when the PR goes up, before the harvest check, and must be set back by hand if that check fails",
+      "rejected": "No plan source, which leaves row 6 in progress but skips the plan-row step of the check"
+     }
+    ]
+   },
+   "system_sha256": "17bd1a35457793682f21f9e7a4d1206f264063ee390eb713b2f1330c74318740"
+  },
+  {
+   "record": {
+    "id": "fix-native-hooks-review-recovery",
+    "rev": 1,
+    "goal": "ORCA 의존성 제거 및 기존 명세 PR 리뷰 루프 복구",
+    "out": [],
+    "done": [
+     "python -m pytest tool"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": [],
+    "review_profile": "code",
+    "review_profile_version": 1,
+    "artifact_root": null
+   },
+   "system_sha256": "2998e0d10b88ebebd52122d48587f2d5cddaa01851cd8baed45b3cad94d4acd7"
+  },
+  {
+   "record": {
+    "id": "feat-separated-self-improvement",
+    "rev": 1,
+    "goal": "hub·연결 저장소 자기개선 파이프라인 분리",
+    "out": [],
+    "done": [
+     "python -m pytest tool"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": [],
+    "review_profile": "code",
+    "review_profile_version": 1,
+    "artifact_root": null
+   },
+   "system_sha256": "0a0f764342624800f0a4c9188ae4ddb3e3b0c98c69b30cfbb7004ec5ac1ded6f"
+  },
+  {
+   "record": {
+    "id": "refactor-1-scanner",
+    "rev": 1,
+    "goal": "리펙터링 1/6: 부채 스캐너와 래칫을 최종 게이트에 추가",
+    "out": [],
+    "done": [
+     "python -m pytest tool"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": [],
+    "review_profile": "code",
+    "review_profile_version": 1,
+    "artifact_root": null
+   },
+   "system_sha256": "c4b471aebb240d03aadfd6d0ae36ec79ad71c535af4d8c3050488b7841a69c10"
+  },
+  {
+   "record": {
+    "id": "jev-file-filter-at-work-start",
+    "rev": 2,
+    "goal": "A write session's first turn loads only the files Jev judged needed for the spec, lists the rest by path as available, and the PR shows first-turn input tokens before and after on ten real merged specs",
+    "out": [
+     "Filtering on later turns of a session",
+     "A jevgrep-style command the agent calls itself",
+     "The wiki query path and its passage judging",
+     "Laya serving or training",
+     "Model selection"
+    ],
+    "done": [
+     "python -m ruff check tool laya",
+     "Code builds the candidate file list for `work.start` from the spec's grounds files, search-index hits for the goal, and files changed by merged specs with overlapping grounds, capped at the existing `MAX_FILES`",
+     "One TypeSafe request per work start carries the spec state and one relevance Noul per candidate file; the action record row stores offered, kept and dropped paths with each probability and the threshold used",
+     "The first-turn prompt loads kept files (cut to 200 lines and 8,000 characters each, 60,000 in all) and lists dropped ones under an 'Available, not loaded' heading with their paths; a Jev key missing, mode off, a network error, a failed English normalization or a Jev result with no answers (status other than decided or uncertain) loads the full list and records status `fallback`, never a silent drop",
+     "`/api/jev` lists the point `work.files` with its operations, baseline (full list) and provisional status",
+     "`python tool/eval/file_filter.py --replay 10` replays the ten most recently merged specs through work start with the filter off and on and writes `eval/jev/file-filter/<date>.json` with, per spec: files offered, kept, dropped, first-turn input tokens before and after, and Jev usage; the PR body carries that table",
+     "Tests pin the candidate builder, the fallback path, the prompt rendering of kept and available lists, and that the replay never sends a turn to a live coding session"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "docs/plans/jev/8-agent-decisions.md:33"
+     ],
+     "rules": []
+    },
+    "decisions": [
+     {
+      "what": "Jev answers one yes/no per file over a code-built candidate list",
+      "why": "The Jev 1.13 page supports bounded relevance questions and warns that it does not count or generate; listing files is generation, judging each is not",
+      "rejected": "Asking Jev to name the needed files in one Choice"
+     },
+     {
+      "what": "Active from the first PR, with a conservative threshold and dropped files still listed as available",
+      "why": "A shadow filter saves no tokens, and listing dropped paths keeps the session able to open any file, so a wrong drop costs one read, not a failed task",
+      "rejected": "Shadow first, as with the branch points"
+     },
+     {
+      "what": "Saving measured by replaying ten merged specs with the filter off and on",
+      "why": "The person asked for the number itself; production logs after merge would mix spec sizes and give no paired comparison",
+      "rejected": "Kept/dropped lists only, tokens read from production later"
+     },
+     {
+      "what": "One request carrying all candidate Noul questions",
+      "why": "Recorded Jev traffic shows a judge request at about 2,200 tokens and TypeSafe takes many questions per state, so forty questions in one state stays near that and avoids forty round trips",
+      "rejected": "One request per file"
+     }
+    ],
+    "review_profile": "code",
+    "review_profile_version": 1,
+    "artifact_root": null,
+    "review": {
+     "criteria": [
+      "data",
+      "performance"
+     ],
+     "evidence": [
+      "offline"
+     ],
+     "flows": []
+    }
+   },
+   "system_sha256": "1c147d2d4e7c7fe809a60309575c8f60a6bbcf2974c5dade8dc4ce71e875ca75"
+  },
+  {
+   "record": {
+    "id": "jev-form-choice-registry-pr-form-refactor-mode",
+    "rev": 1,
+    "goal": "A form-choice kind in the decision registry lets code offer a closed set of forms and Jev pick one in shadow until a fixture gate fits it, with the PR text form and the refactoring purpose mode as its first two points",
+    "out": [
+     "Review profile widening, which stays a code rule",
+     "Model selection",
+     "Any third branch point beyond PR form and refactor mode",
+     "Changing which review criteria apply to a PR"
+    ],
+    "done": [
+     "python -m ruff check tool laya",
+     "`tool/main/decisions.py` gains a form-choice kind: a registered point declares its offered forms with one-line descriptions, a code baseline, and its fixture set; `/api/jev` lists `pr.form` and `refactor.mode` with operations, baseline and provisional status",
+     "`pr.form` offers at least feature-with-behaviour-change, fix, refactor-no-behaviour, plan-document and files-only; the shared rules of `tool/prompts/pr-write.md` stay in one place and each form adds its own section, with the three existing examples assigned to their forms",
+     "Code's baseline for `pr.form` derives from the diff (numstat, prose-only paths, artifact root, refactor criteria) and is what the worker receives while the point is provisional; Jev's pick, probability and the option order used are recorded in the action record beside it",
+     "`refactor.mode` asks, for each spec a survey proposes, which of preserve, simplify and rework it belongs to; while provisional the survey's mode stands and Jev's answer is recorded beside it; when fitted, a disagreement re-validates the spec under Jev's mode through the existing spec shape check and marks the spec with both modes for the person",
+     "`eval/jev/branches/` holds frozen labelled fixtures, at least thirty per point, drawn from merged PRs and past surveys with their hashes recorded; `python tool/eval/branches.py` reports accuracy with a Wilson interval and the agreement rate between the natural option order and a reversed order, and writes a result file",
+     "A point becomes fitted only by a result file whose lower interval bound reaches 0.90 and whose order-agreement reaches 0.90; the active path, which hands Jev's form to the worker with the code baseline as fallback on doubt, is implemented and tested behind that flag and stays off in this PR",
+     "Tests pin the registry shape, that an unregistered form is refused, the shadow recording, the reversed-order evaluation, and that the worker's prompt is unchanged while provisional"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "docs/plans/jev/8-agent-decisions.md:33",
+      "docs/plans/refactor/0-overview.md:83"
+     ],
+     "rules": [],
+     "evidence": [
+      {
+       "id": "d4ec57f58592bc7a1a8714266241cc6e477d5e34e9007ae5ae4cb1d0933c8610",
+       "cite": "docs/plans/refactor/0-overview.md:83-97",
+       "revision": "6d95ee0c87b41abbb29e682ac7428427e322ca3a9f573af22872563c0b14c7ed"
+      },
+      {
+       "id": "ecb99f1433b74b99ae0897795793db47ee7cd6fbe5859129e9e0f48bbcd5d841",
+       "cite": "docs/plans/jev/8-agent-decisions.md:116",
+       "revision": "31db436b1fce109ee425599c7bc6eeb8040585dfa3d21a554c9016e20671c058"
+      },
+      {
+       "id": "b4ca9ca298fa036f5fbac56f179e3f6776e27963db04c496fa1131cf18d1e081",
+       "cite": "docs/plans/jev/8-agent-decisions.md:33-45",
+       "revision": "31db436b1fce109ee425599c7bc6eeb8040585dfa3d21a554c9016e20671c058"
+      }
+     ]
+    },
+    "decisions": [
+     {
+      "what": "One registry kind for form choices, with PR form and refactor mode as entries",
+      "why": "The person asked for an elegant expansion; the registry of action points already exists, so a new branch point should be an entry plus fixtures rather than code at each site",
+      "rejected": "Two separate features, one in pr_text and one in refactor_survey"
+     },
+     {
+      "what": "Shadow first, active only after a fixture gate at 0.90 with an order-swap check",
+      "why": "The person chose it; the Jev 1.13 page says Choice leans toward the first option, so agreement under a reversed order is part of fitness, and the earlier routing gate stalled for lack of cases, hence thirty fixtures rather than six",
+      "rejected": "Active at once with the code rule as fallback"
+     },
+     {
+      "what": "Review profile widening left to code",
+      "why": "The person did not pick it, and the current path rule only widens, which is the safe direction",
+      "rejected": "Jev judging whether extra files are prose support"
+     },
+     {
+      "what": "Model routing is not a Jev decision",
+      "why": "The person corrected this: Jev chooses at branch points in the work's form, never which model runs",
+      "rejected": "Jev classifying specs as simple or complex to pick a model"
+     }
+    ],
+    "review_profile": "code",
+    "review_profile_version": 1,
+    "artifact_root": null,
+    "review": {
+     "criteria": [
+      "data"
+     ],
+     "evidence": [
+      "offline"
+     ],
+     "flows": []
+    }
+   },
+   "system_sha256": "346b95717518099fe9a8cb2f92c525f448dd7d900fbfd180e613037bf928fd51"
+  },
+  {
+   "record": {
+    "id": "tool-call-guard-effect-algebra",
+    "rev": 5,
+    "goal": "The PreToolUse guard core: every tool call reduces to a set of effects and is denied when its effects leave the task's granted set. Only a small closed table of rows yields effects other than top; every form outside the table is top and denied. Later specs add rows, never this one",
+    "out": [
+     "Jev or any model in the guard path",
+     "Judging whether text a tool returns contains instructions",
+     "Sandboxing or host execution policy",
+     "Restricting reads",
+     "Removing the existing `enforce.deny` declarations from wiki pages",
+     "Resolving environment variables such as `$TEMP` from the hook's environment",
+     "Rows beyond the core table. Three follow-up specs add them after this one merges: git and gh writes and network (continuations, per-call configuration, worktree operations, host aliases); PowerShell and cmd (providers, parameter prefixes, members, copy and link cmdlets); shell semantics (directory changes inside groups and loops, traps, awk, archives, links, curl). Until then those commands are denied in app-managed sessions"
+    ],
+    "done": [
+     "python -m ruff check tool laya",
+     "`tool/guard.py` (with `guard_models.py`, `guard_windows.py`, `guard_grant.py`) parses a Bash or PowerShell command into a tree covering `;`, `&&`, `||`, `|`, `$(...)`, backticks, redirections and nested shell strings (`bash -c`, `sh -c`, `pwsh -Command`, `powershell -Command`, `cmd /c`) recursed to a fixed depth, and reduces the tree to effects: read, write(path), delete(path), spawn(executable), network(host), and top for anything undecidable such as `eval`, `-EncodedCommand`, a variable or glob in a write path, an unclosed quote or substitution, or depth exhausted",
+     "The closed table in `guard_models.py` holds only these rows, each with the flags it understands: read-only listing, reading and searching programs on both hosts (for example `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find` without actions, `diff`, `echo`, `pwd`, `Get-Content`, `Get-ChildItem`, `Select-String`, `Test-Path`); the adapter's gate, verification and registered check commands matched as exact commands; git `status`, `diff`, `log`, `show`, `rev-parse`, `add <paths>`, `commit -m`/`-F` and `push` with at most a remote and a branch, none of them with `-c`, `-C`, `--git-dir`, `--work-tree`, `--exec-path` or a config, alias, worktree or submodule verb; and plain `>`/`>>` redirection to a literal path. Every other program, flag or construct reduces to top, including every PowerShell cmdlet and member not in the read-only rows, gh, curl, archives, links, `cd` anywhere but the first statement, `trap`, `awk`, loops and functions",
+     "Review scope: a form outside the table that reduces to top and is denied is the intended outcome, not a finding. A finding is a table row whose effects miss a real effect, a form that reaches a row it should not, a grant or containment error, or a crash or performance failure",
+     "Path-state tracking is bounded: when the number of distinct directory states exceeds a fixed limit the call reduces to top, so the guard's work grows at most linearly with the command",
+     "The grant for a task is computed once per call from the worktree root (only the spec's artifact root when the profile is plan), the temporary directories and the session's memory folder, the adapter's gate, verification commands and registered checks, the search command, git and gh verbs with their write targets and the git remotes' hosts, and an optional adapter `[guard]` table that declares extra write roots, network hosts and executables but never a command pattern; `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` are never granted",
+     "A Bash call is denied exactly when its effect set is not contained in the grant, and an Edit, Write, MultiEdit or apply_patch call is denied when its resolved target lies outside the write roots; every denial names the offending effect and path and the grant that would allow it; the guard judges only app-managed sessions (`WIKI_AGENT_MANAGED=1`) in a checkout with an adapter, and tools that neither run a shell nor edit a file count as reads",
+     "The guard runs on both hosts: wired through `apply.py`'s pretooluse path for Claude and chained in `codex_pretool.py` for Codex, after the existing `host_boundary` and declared deny checks, which keep their current behaviour",
+     "Property tests pin: monotonicity over complete commands (appending tokens never removes an effect, top absorbing), nested-shell recursion, top on the undecidable forms, containment on Windows and POSIX paths including `..`, junctions and drive-letter forms, and fail-open on any exception with UTF-8 pinned",
+     "A corpus of at least two hundred real commands taken from session records (raw/actions holds no shell commands) has expected effects recorded in `eval/guard/corpus.json`; the test asserts the derived effects match and that the guard answers each call under 200 ms on this machine",
+     "`docs/hooks-setup.md` documents the grant table and the denial message, and `deny.py`'s ponytail note about nested shells that the check did not follow is removed, because nested shells are now checked"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": [
+     {
+      "what": "An effect algebra over a parsed command tree instead of patterns",
+      "why": "The person asked for a mathematical design rather than rules added one by one; fnmatch on the direct command is bypassed by any nested shell, as the current deny hook documents",
+      "rejected": "Extending the fnmatch deny list and parsing nested shells only"
+     },
+     {
+      "what": "Undecidable constructs reduce to top and are denied with a reason",
+      "why": "Soundness over completeness: an encoded or variable-built command cannot be shown safe, and the cost of denial is one visible message, while a silent pass is the failure the guard exists to stop",
+      "rejected": "Allowing unknown constructs and logging them"
+     },
+     {
+      "what": "Reads are unrestricted",
+      "why": "Token cost from reads is handled by the file filter spec, and denying reads would block ordinary work for no safety gain",
+      "rejected": "Granting read roots too"
+     },
+     {
+      "what": "No Jev in the guard",
+      "why": "The person chose code-only; the Jev 1.13 page says Jev does not treat state as hostile, so it is the wrong judge for injected commands",
+      "rejected": "Jev scoring each tool call against the spec"
+     }
+    ],
+    "review_profile": "code",
+    "review_profile_version": 1,
+    "artifact_root": null,
+    "review": {
+     "criteria": [
+      "performance",
+      "security"
+     ],
+     "evidence": [
+      "offline"
+     ],
+     "flows": []
+    }
+   },
+   "system_sha256": "b18b0ab6a58836a08cea56e3ffe2ba72f034048019ad9adf31c5df840b54be3b"
+  },
+  {
+   "record": {
+    "id": "powershell-version-resolver-and-install",
+    "rev": 1,
+    "goal": "One resolver chooses the PowerShell form of every command the app and its focuses hand to a shell, 7-only forms never run under Windows PowerShell 5.1, and a 5.1-only machine sees an Install PowerShell 7 control that runs winget",
+    "out": [
+     "macOS and Linux shell behaviour",
+     "Installing Codex CLI or Claude Code",
+     "Rewriting shell commands into Python to avoid a shell",
+     "The Bash forms of the focus commands"
+    ],
+    "done": [
+     "python -m ruff check tool laya",
+     "`tool/common/shell.py` detects `pwsh` and `powershell` once per process with their `$PSVersionTable.PSVersion`, exposes the chosen executable and its major version, and serves every catalogued command in a `bash`, `pwsh7` or `ps5` form; a command with no `ps5` form is refused on 5.1 with a message naming the install control, and is never launched under `powershell`",
+     "`tool/common/shell_catalogue.py` lists every shell command handed out by the six focuses (next task, refactoring, wiki, retrospective, agent, review), the hook shell line in `setup_agents.py`, the login and check commands in `docs/chat-setup.md`, the gate and registered-check runner, and the Tauri terminal launch; each entry carries its forms and the 7-only constructs it depends on",
+     "A repository lint check fails when any prompt, instruction text or document under `tool/prompts`, `tool/main` or `docs` contains a PowerShell command not drawn from the catalogue, or a `ps5` form using a 7-only construct (`?.`, `??`, ternary, `ForEach-Object -Parallel`, `Test-Json`, `Get-Error`, `-SkipCertificateCheck`, reliance on UTF-8 default encoding)",
+     "`search_prompt.py` and the Codex hook shell take their PowerShell line from the resolver; `setup_agents.py` installs the `ps5` hook form on a 5.1-only machine instead of silently falling back to `powershell` with the 7 form",
+     "`connect.status` reports the PowerShell version per machine; on 5.1-only the connection screen shows a `PowerShell 7 설치` control that runs `winget install --id Microsoft.PowerShell --source winget` as the server's own background task with its output on screen, then re-probes; when winget is absent the control opens the official download page and says why",
+     "`operator/run-inside-this-session.md` loses its `enforce.deny` lines for `powershell`; its prose keeps `pwsh` as the instruction and says the resolver now owns the choice; `docs/chat-setup.md` lists PowerShell 7 among the preparation items with the winget line",
+     "Tests pin the resolver on fake 5.1-only, 7-only and both-present machines, the refusal of a 7-only form on 5.1, the lint over the catalogue, and that `powershell` is never launched with a `pwsh7` form; the install control is checked in the running window on a machine where `pwsh` is absent from PATH"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": [],
+     "evidence": []
+    },
+    "decisions": [
+     {
+      "what": "One resolver at the point where a command leaves for a shell, with a catalogue and a lint",
+      "why": "Gating the exit means no caller can hand out an unchecked form, and the lint turns the person's rule into a check instead of a hook deny that blocks the very 5.1 form a 5.1 machine must run",
+      "rejected": "Keeping the `powershell` deny and adding version checks at each call site"
+     },
+     {
+      "what": "5.1 runs the `ps5` set and is offered the install, rather than refused outright",
+      "why": "The person chose it; a machine without winget or admin rights still has to work",
+      "rejected": "Refusing to run tasks until PowerShell 7 is installed"
+     },
+     {
+      "what": "winget runs as the server's own background task with output on screen",
+      "why": "The operator rule forbids detached processes the cell cannot track, and a visible log is how the person knows the install finished",
+      "rejected": "Opening a browser to the download page as the only path"
+     }
+    ],
+    "review_profile": "code",
+    "review_profile_version": 1,
+    "artifact_root": null,
+    "review": {
+     "criteria": [
+      "documentation"
+     ],
+     "evidence": [
+      "browser",
+      "desktop",
+      "offline"
+     ],
+     "flows": []
+    }
+   },
+   "system_sha256": "1e27f8fe45aafeb16e03dadd6961729233eee1365572ef7971b04a3d63cb9012"
+  },
+  {
+   "record": {
+    "id": "baseline-spec-two-views",
+    "rev": 1,
+    "goal": "A spec record can carry a versioned requirements section with ids, grounds, decision status and verification items, from which the human review document and the task-specific agent input are rendered by code from one frozen snapshot, behind a setting that defaults off and leaves today's agent input byte-identical",
+    "out": [
+     "The experiment harness, evaluation task set and any live model runs (the next two tasks)",
+     "A generic spec framework or platform beyond this repository's spec record and write session",
+     "An LLM rewrite step inside view generation; both views are deterministic code over the snapshot",
+     "Changing the PR text path, which is written from the diff and never from the spec",
+     "Any change to agent input, prompts or card when the setting is off"
+    ],
+    "done": [
+     "python -m ruff check tool laya",
+     "The spec block accepted by `specs.fields` takes an optional `requirements` list; each item has `id` (R1, R2, …), `text`, `source` in {original, policy, repository, decision} with a locator, and `status` in {confirmed, assumed, undecided, not_applicable}; optional `preconditions`, `postconditions`, `invariants`, `failures`, `depends_on`, `context` (paths), `verify` (items with expected result) and `global: true`; unknown keys and ids not unique or referenced but undefined are refused with a named error, and `tool/prompts/next-task.md` documents the field",
+     "The original request text is stored verbatim in `original` and never altered by any save, edit, revise or spec-update path; `REVISABLE` excludes `original`, `requirements[].source` and verification results, and a test proves each path leaves them untouched",
+     "The record carries `spec_version` (an integer that increments whenever `requirements` change) and `spec_digest` (sha256 of the canonical requirements JSON); a test shows an edit of a requirement bumps both and an edit of `goal` alone does not",
+     "`specs.human(spec)` renders Markdown with purpose, behaviour, constraints, each requirement with its id, source, status and verification items, the undecided items and conflicts listed, and original text shown as original; `specs.agent(spec, task=None)` renders the structured input holding the selected requirements, every `global: true` requirement, the contracts of each `depends_on` target, context paths and verify items, with omitted requirements listed by id as available on request",
+     "`specs.equivalent(human_md, agent_json)` reports every requirement id, status, condition, negation, unit and verify item present in one rendering and missing in the other; a test mutates each rendering and shows the difference is caught, and a test over the fixture specs shows two renderings of the same snapshot are equivalent",
+     "A test shows `specs.agent` with a task selection that would drop a `global` requirement or a `depends_on` contract fails with the missing ids named, never silently",
+     "With the setting `SPEC_VIEWS=on` in the hub `.env` (default off, read through `common.settings.pick`), `specs.system` carries the agent view plus `spec_version` and `spec_digest`; with it off, `specs.brief` output is byte-identical to the current output on the ten saved records under `raw/specs/wiki-agent/`",
+     "At the first work turn with the setting on, the server compares the prompt's `spec_version` with the saved record and rebuilds the session when they differ; a test shows a stale prompt is refreshed before the turn and an equal one is reused",
+     "A requirement whose `depends_on` target is `undecided` makes the first turn hold with the blocking id named and ask the person; a spec whose undecided items are not depended on starts normally, and a test covers both",
+     "Verification results are stored outside the spec record under `raw/specs/<repo>/<id>.verify.json`, keyed by requirement id, `spec_version` and `spec_digest`, written only by the server's gate path; a result recorded under a previous version is reported as stale, not as a pass, and a test proves it",
+     "`GET /api/specs/{id}/views` returns `{human, agent, spec_version, spec_digest}` and the spec card shows the human document in a collapsible section when the record has requirements; the browser check opens a card with requirements and sees the ids rendered",
+     "Documented in `docs/plans/loop/3-spec.md` under a new section naming the data model, the two renderers, the setting, the version and undecided behaviour, with assumptions and undecided design points listed as such",
+     "`python -m pytest -q tool/test_specs.py tool/test_loop.py tool/test_task_workflow.py` passes with no new failures against main"
+    ],
+    "grounds": {
+     "pages": [
+      "craft/verify-narrow-then-wide"
+     ],
+     "files": [],
+     "rules": [
+      "craft/verify-narrow-then-wide"
+     ],
+     "evidence": [
+      {
+       "id": "0761e8e07320bff994904d241118540501d4e59d30f9973dd8ba62daa972bea7",
+       "cite": "docs/plans/refactor/2-runner.md:38-57",
+       "revision": "1434d9b008460aa22a9c8ec6486d87445d3a319001334c18cd3b1fd1f13c7056"
+      },
+      {
+       "id": "bef805cfeb189ed4782c72dcb09788711977880885f51c552ed01be98c69a6c0",
+       "cite": "docs/self-improvement.md:95-114",
+       "revision": "7be9eceab8ba3261caf1ddf84e40f6e772318f7b2be5c8a98903d5f1d8878c7d"
+      },
+      {
+       "id": "ff026586f7e5a611c5a1746ff0da34c06e57b04100d86d2960b77bad5b831153",
+       "cite": ".wiki/memory/2026-11-08-104602-next.md:43-48",
+       "revision": "7a8ba397e69ee2f1bd0a51e8df9c00bd00bc8fe7cdd41c4bee69189e8dfd99e8"
+      }
+     ]
+    },
+    "decisions": [
+     {
+      "what": "Extend the existing spec record with an optional requirements section instead of a new document type",
+      "why": "`specs.py` is the sole owner of the record, the review side already derives R0/R1 ids from it, and one record keeps requirements and decisions in one place as the request demands",
+      "rejected": "A separate baseline-spec file beside the record, which would create a second owner and a second place for policies to diverge"
+     },
+     {
+      "what": "Both views are pure functions over one snapshot; no model call in rendering",
+      "why": "Field selection, ordering and serialization are deterministic, and a rewrite step would add cost and a place for conditions and negations to drift",
+      "rejected": "An LLM narration step with a post-check; kept out until a measured need appears"
+     },
+     {
+      "what": "The setting is a dotenv key read through the existing settings reader, off by default",
+      "why": "The experiment needs the current behaviour as condition A unchanged, and the repository already stores operator switches this way",
+      "rejected": "A per-spec flag in the card, which would let A and the new path mix inside one experiment"
+     },
+     {
+      "what": "Verification results live in a sibling file written only by the server gate path, keyed by version and digest",
+      "why": "The implementer must not be able to turn a failure into a pass by editing the record, and an old version's pass must not count for a new one",
+      "rejected": "Storing results inside the spec record, which spec-update can reach"
+     },
+     {
+      "what": "Reuse the session rebuild on prompt change for the version check and add a start-turn comparison",
+      "why": "`work.session` already closes and recreates a session whose spec-derived prompt changed; a second mechanism would duplicate it",
+      "rejected": "A separate pre-flight command the agent runs itself, which the server could not trust"
+     }
+    ],
+    "review_profile": "code",
+    "review_profile_version": 1,
+    "artifact_root": null,
+    "review": {
+     "criteria": [
+      "data",
+      "documentation"
+     ],
+     "evidence": [
+      "browser",
+      "offline"
+     ],
+     "flows": []
+    }
+   },
+   "system_sha256": "02ebf6b164abf811cc5c104a7db0c828b370c49b091d1df872e4b7f691977e8b"
+  }
+ ],
+ "preambles": {
+  "next": "e1e6b1dd0faab38dd1b9038f9f0d5b722b4ee8128447e78276fd113fd7eaaa37",
+  "refactor": "fb7e00a1cfc6e3c140c693ee4e8c1dc7c2e6b549f3114fc588fb8fd7848a1841"
+ }
+}

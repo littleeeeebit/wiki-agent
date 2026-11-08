@@ -38,6 +38,9 @@ VERSION = re.compile(r'"spec_version": (\d+)')
 LABELS = {"preconditions": "Precondition", "postconditions": "Postcondition", "invariants": "Invariant",
           "failures": "Failure"}
 CONDITION = {label: kind for kind, label in LABELS.items()}
+CONTRACT = ("id", "status", "text", "postconditions", "invariants")
+LINE = re.compile(r"- (Requirement|Source|Precondition|Postcondition|Invariant|Failure|Depends on|Context|Verify|Global)"
+                  r": (.*)")
 
 
 # -- The record -------------------------------------------------------------
@@ -171,12 +174,13 @@ def human(spec: dict) -> str:
     out = [f"# {spec['id']} — revision {spec.get('rev')}, spec version {spec.get('spec_version')}", "",
            "## Purpose", "", spec["goal"], "", "## Behaviour", ""]
     for r in reqs:
-        out += [f"### {r['id']} — {r['status']}", "", r["text"], "",
+        # Every value sits after a fixed label on its own line, so any accepted (one-line) text reads back.
+        out += [f"### {r['id']} — {r['status']}", "", f"- Requirement: {r['text']}",
                 f"- Source: {r['source']['kind']} — {r['source']['locator']}"]
         out += [f"- {LABELS[k]}: {c}" for k in CONDITIONS for c in r.get(k, [])]
         out += [f"- Depends on: {t}" for t in r.get("depends_on", [])]
         out += [f"- Context: `{p}`" for p in r.get("context", [])]
-        out += [f"- Verify: {v['item']} ⇒ {v['expected']}" for v in r.get("verify", [])]
+        out += [line for v in r.get("verify", []) for line in (f"- Verify: {v['item']}", f"  - Expected: {v['expected']}")]
         out += ["- Global: applies to every task"] if r.get("global") else []
         out.append("")
     out += ["## Constraints", ""]
@@ -203,6 +207,11 @@ def _closure(by_id: dict, start: list[str]) -> list[str]:
     return seen
 
 
+def _contract(r: dict) -> dict:
+    """What a dependency promises the requirements that rely on it."""
+    return {k: r[k] for k in CONTRACT if k in r}
+
+
 def agent(spec: dict, task: list[str] | None = None) -> dict:
     """The structured input for a write session. `task` selects requirement ids; `None` is all of them.
 
@@ -221,8 +230,7 @@ def agent(spec: dict, task: list[str] | None = None) -> dict:
         raise ValueError(f"작업 선택이 요구사항을 떨어뜨린다 — {', '.join(dict.fromkeys(missing))}")
     return {"spec_version": spec.get("spec_version"), "spec_digest": spec.get("spec_digest"),
             "requirements": [by_id[rid] for rid in chosen],
-            "contracts": [{k: by_id[t][k] for k in ("id", "status", "text", "postconditions", "invariants")
-                           if k in by_id[t]} for t in reached],
+            "contracts": [_contract(by_id[t]) for t in reached],
             "omitted": [r["id"] for r in reqs if r["id"] not in chosen and r["id"] not in reached],
             "omitted_note": "Requirements listed in `omitted` exist in the spec; ask for any of them by id."}
 
@@ -279,34 +287,47 @@ def _facts(r: dict) -> Counter:
 def _parsed(human_md: str) -> list[dict]:
     """The requirements of a `human` rendering, read back from its Behaviour section."""
 
-    body = human_md.split("\n## Behaviour\n", 1)[-1].split("\n## Constraints\n", 1)[0]
+    # The last header: the purpose line above it is free text. Every value below is behind a label.
+    body = human_md.rpartition("\n## Behaviour\n")[2].partition("\n## Constraints\n")[0]
     reqs = []
     for line in body.split("\n"):
         if head := re.fullmatch(r"### (R\d+) — (\S+)", line):
             reqs.append({"id": head.group(1), "status": head.group(2), "text": ""})
-        elif not reqs or not line.strip():
+        elif not reqs:
             continue
-        elif bullet := re.fullmatch(r"- (\w[\w ]*?): (.*)", line):
+        elif expected := re.fullmatch(r"  - Expected: (.*)", line):
+            if reqs[-1].get("verify") and "expected" not in reqs[-1]["verify"][-1]:
+                reqs[-1]["verify"][-1]["expected"] = expected.group(1)
+        elif bullet := LINE.fullmatch(line):
             label, value, r = bullet.group(1), bullet.group(2), reqs[-1]
-            if label in CONDITION:
+            if label == "Requirement":
+                r["text"] = value
+            elif label in CONDITION:
                 r.setdefault(CONDITION[label], []).append(value)
             elif label == "Depends on":
                 r.setdefault("depends_on", []).append(value)
-            elif label == "Verify" and " ⇒ " in value:
-                item, expected = value.split(" ⇒ ", 1)
-                r.setdefault("verify", []).append({"item": item, "expected": expected})
-        elif not line.startswith("- "):
-            reqs[-1]["text"] = (reqs[-1]["text"] + " " + line).strip()
+            elif label == "Verify":
+                r.setdefault("verify", []).append({"item": value})
+    for r in reqs:   # an item that lost its expected line no longer matches the agent's item
+        r["verify"] = [{"item": v["item"], "expected": v.get("expected", "")} for v in r.get("verify", [])]
     return reqs
 
 
 def equivalent(human_md: str, agent_json) -> dict:
     """What one rendering carries and the other lacks: `{"missing_in_human": [...], "missing_in_agent": [...]}`,
-    each a sorted list of facts. Both empty is equivalence."""
+    each a sorted list of facts. Both empty is equivalence.
+
+    The agent rendering of a selection carries a dependency outside it as its contract and the rest by id
+    only, so the human document's requirement is compared through the same projection."""
 
     data = json.loads(agent_json) if isinstance(agent_json, str) else agent_json
-    seen = {"human": sum((_facts(r) for r in _parsed(human_md)), Counter()),
-            "agent": sum((_facts(r) for r in data.get("requirements") or []), Counter())}
+    contracts = {c["id"] for c in data.get("contracts") or []}
+    omitted = set(data.get("omitted") or [])
+    seen = {"human": sum((Counter({("id", r["id"]): 1}) if r["id"] in omitted else
+                          _facts(_contract(r)) if r["id"] in contracts else _facts(r)
+                          for r in _parsed(human_md)), Counter()),
+            "agent": sum((_facts(r) for r in [*(data.get("requirements") or []), *(data.get("contracts") or [])]),
+                         Counter({("id", rid): 1 for rid in omitted}))}
     return {"missing_in_human": sorted("·".join(f) for f in seen["agent"] - seen["human"]),
             "missing_in_agent": sorted("·".join(f) for f in seen["human"] - seen["agent"])}
 
@@ -319,21 +340,26 @@ def results_file(spec: dict) -> Path:
 
 
 def verified(spec: dict, verdict: dict) -> None:
-    """The server's gate path, and only it, records a verdict against each requirement with verify items,
-    keyed by the spec version and digest it ran for. The spec record never holds results."""
+    """The server's gate path, and only it, records what it ran: a verify item counts only when it is one
+    of the commands the gate executed, never because some other check passed. A passing gate passes
+    them all; a failing one fails them all, since it does not say which command stopped it. Entries are
+    keyed by requirement id, spec version and digest; the spec record never holds results."""
 
-    if not spec.get("requirements"):
+    ran = {" ".join(c.split()) for c in verdict.get("commands") or []}
+    matched = [(r, v["item"]) for r in spec.get("requirements") or [] for v in r.get("verify", []) if v["item"] in ran]
+    if not matched:
         return
     file = results_file(spec)
     try:
         kept = json.loads(file.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         kept = {}
-    for r in spec["requirements"]:
-        if r.get("verify"):
-            kept[r["id"]] = {"spec_version": spec.get("spec_version"), "spec_digest": spec.get("spec_digest"),
-                             "ok": bool(verdict.get("ok")), "head": verdict.get("head"), "cmd": verdict.get("cmd"),
-                             "items": [v["item"] for v in r["verify"]], "ts": time.time()}
+    for r, item in matched:
+        entry = kept.get(r["id"]) or {}
+        if (entry.get("spec_version"), entry.get("spec_digest")) != (spec.get("spec_version"), spec.get("spec_digest")):
+            entry = {"spec_version": spec.get("spec_version"), "spec_digest": spec.get("spec_digest"), "items": {}}
+        entry["items"][item] = {"ok": bool(verdict.get("ok")), "head": verdict.get("head"), "ts": time.time()}
+        kept[r["id"]] = entry
     file.parent.mkdir(parents=True, exist_ok=True)
     temporary = file.with_suffix(".tmp")
     temporary.write_text(json.dumps(kept, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -341,7 +367,8 @@ def verified(spec: dict, verdict: dict) -> None:
 
 
 def results(spec: dict) -> dict[str, str]:
-    """Per requirement with verify items: `pass`, `fail`, `stale` (recorded for another version) or `missing`."""
+    """Per requirement with verify items: `pass` only when every item ran and passed under this version,
+    `fail` when one failed, `stale` when recorded for another version or digest, else `missing`."""
 
     try:
         kept = json.loads(results_file(spec).read_text(encoding="utf-8"))
@@ -352,8 +379,14 @@ def results(spec: dict) -> dict[str, str]:
         if not r.get("verify"):
             continue
         got = kept.get(r["id"])
-        out[r["id"]] = "missing" if not got else "stale" if (got.get("spec_version"), got.get("spec_digest")) != (
-            spec.get("spec_version"), spec.get("spec_digest")) else "pass" if got.get("ok") else "fail"
+        if not got:
+            out[r["id"]] = "missing"
+        elif (got.get("spec_version"), got.get("spec_digest")) != (spec.get("spec_version"), spec.get("spec_digest")):
+            out[r["id"]] = "stale"
+        else:
+            seen = [(got.get("items") or {}).get(v["item"]) for v in r["verify"]]
+            out[r["id"]] = "fail" if any(s and not s.get("ok") for s in seen) else \
+                "pass" if all(s and s.get("ok") for s in seen) else "missing"
     return out
 
 

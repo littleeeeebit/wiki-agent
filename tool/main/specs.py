@@ -651,7 +651,7 @@ def answered(repo: Path, found: list[dict], source: dict, accepted: dict | None 
 
     gate = gate_of(repo)
     # The person's words, verbatim, kept on the card and never revised (`spec_views.stamped`).
-    original = spec_views.requested(query.recall(source.get("focus") or "next")) \
+    original = spec_views.requested(query.recall(source.get("focus") or "next", whole=True)) \
         if any(b["name"] == "spec" for b in found) else ""
     out = []
     for block in found:

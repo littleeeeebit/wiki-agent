@@ -182,7 +182,7 @@ def session(cid: str) -> ChatSession:
         if chat is None:
             cfg = config(cid)
             repo = current_repo()
-            system = "\n\n".join((channels.ANSWER_PROMPT, channels.get(cid).preamble, search_note(repo)))
+            system = "\n\n".join((channels.ANSWER_PROMPT, channels.preamble(cid), search_note(repo)))
             # The web too: "search deeply" about a model, a library or a paper had nothing to search with.
             chat = ChatSession(repo, tools="Bash,Read,Glob,Grep,WebSearch,WebFetch", system=system, model=cfg["model"],
                                effort=cfg["effort"], choices=cid in ("next", "refactor"))
@@ -269,7 +269,7 @@ def remember(cid: str, role: str, text: str, error: str = "", repo: Path | None 
     work.feed.put({"kind": "conversation", "cid": cid})
 
 
-def recall(cid: str, legacy: bool = False, include_context: bool = False) -> list[dict]:
+def recall(cid: str, legacy: bool = False, include_context: bool = False, whole: bool = False) -> list[dict]:
     """This project's rows since the last clear. A cleared conversation came
     back on the next switch of focus when this read the whole file."""
 
@@ -287,7 +287,7 @@ def recall(cid: str, legacy: bool = False, include_context: bool = False) -> lis
     rows = memory.since_clear(rows)
     if not include_context:
         rows = [r for r in rows if r.get("role") in memory.SAID]
-    return rows[-MAX_REPLAY:]
+    return rows if whole else rows[-MAX_REPLAY:]   # `whole`: a record that must keep the start (`spec_views.requested`)
 
 
 def unseen(cid: str) -> list[dict]:

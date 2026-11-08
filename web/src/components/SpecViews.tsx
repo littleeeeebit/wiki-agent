@@ -5,7 +5,9 @@ import * as api from '@/lib/api'
 import type { Spec } from '@/lib/api'
 
 /** The human requirements document the server renders from the saved record, read when opened.
- *  Only a record with requirements has one; links and images stay text. */
+ *  Only a record with requirements has one; links and images stay text. The caller keys it by the
+ *  record's revision and requirements version: any revision mounts a new one, so a document or a
+ *  reply still in flight from the old revision lands on the retired instance and is never shown. */
 export function SpecViews({ spec }: { spec: Spec }) {
   const [text, setText] = useState('')
   const [fault, setFault] = useState('')

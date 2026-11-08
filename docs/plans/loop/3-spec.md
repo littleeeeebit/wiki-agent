@@ -289,15 +289,17 @@ input out of sessions until an experiment turns it on.
 
 | Field | Meaning |
 | --- | --- |
-| `original` | The person's own words in the `next` conversation that produced the card, verbatim (`said`, else `text`, of each user row since the last clear). Set once when the card is made |
+| `original` | The person's own words in the `next` conversation that produced the card, verbatim (`said`, else `text`, of each user row since the last clear, read whole rather than through the screen's 200-row replay). Set once when the card is made |
 | `requirements[]` | `id` (`R1`, `R2`, …, unique), `text`, `source` `{kind, locator}` with `kind` in `original`, `policy`, `repository`, `decision`, `status` in `confirmed`, `assumed`, `undecided`, `not_applicable`. Optional: `preconditions`, `postconditions`, `invariants`, `failures`, `depends_on` (ids in the same list), `context` (paths), `verify` (`{item, expected}`), `global: true` |
 | `spec_version` | An integer that moves on whenever the requirements change |
 | `spec_digest` | sha256 of the canonical requirements JSON (sorted keys, no whitespace) |
 
 `specs.fields` validates the list (`spec_views.requirements`). An unknown key,
 a repeated id or a `depends_on` that names no requirement is refused, and the
-error names the item and the key. `tool/prompts/next-task.md` documents the
-field for the planner.
+error names the item and the key. `tool/prompts/spec-requirements.md`
+documents the field for the planner. `channels.preamble` appends it to the
+`next` and `refactor` focus introductions only while the setting is on;
+`tool/prompts/next-task.md` itself is unchanged.
 
 The record's guarantees sit in `save`, the one exit every path passes
 (`spec_views.stamped`). A stored `original` and each stored requirement's
@@ -316,7 +318,11 @@ Both are pure functions over the record. No model call takes part.
   behaviour (each requirement with its id, status, source, conditions,
   dependencies, context and verify items); constraints (`out` and the global
   requirements); undecided items; conflicts; the original request quoted
-  unchanged.
+  unchanged. Inside the behaviour section, every value sits on its own line
+  behind a fixed label (`- Requirement:`, `- Verify:` with an indented
+  `- Expected:` under it, and so on). Any accepted one-line value therefore
+  reads back unambiguously, including values that look like the document's
+  own structure.
 - `specs.agent(spec, task=None)` is a dict holding the version, digest,
   selected requirements, `contracts` and `omitted`. The contracts are
   id, status, text, postconditions and invariants for each `depends_on` target
@@ -325,15 +331,21 @@ Both are pure functions over the record. No model call takes part.
 - `specs.equivalent(human_md, agent_json)` reads the human document's
   behaviour section back. It compares facts per requirement: id, status, text,
   each condition, each dependency, each verify item, negation words and
-  number-with-unit tokens. It returns what each rendering lacks.
+  number-with-unit tokens. Contracts count as facts too: a requirement the
+  agent rendering carries as a contract is compared through the contract's
+  fields, and one listed as omitted by its id alone. It returns what each
+  rendering lacks.
 
 ### Setting
 
 `SPEC_VIEWS=on` in the hub `.env`, read through `common.settings.pick`, the
-same reader as `decision.env_file()`. It defaults to off. Off,
-`specs.system` and `specs.brief` are unchanged. A test checks `brief` against
-digests of this hub's saved records (`tool/fixtures/spec_briefs.json`). On, a
-record with `requirements` gets one more section after the spec. That section
+same reader as `decision.env_file()`. It defaults to off. Off, every agent
+input is what main produced: the write session's system prompt and the `next`
+and `refactor` introductions. A test compares them with sha256 digests taken
+from main at `fc886a3`. The write-session comparison covers the ten records
+saved when this spec was made, whose prompt fields are committed in
+`tool/fixtures/spec_views_baseline.json`. On, a record with `requirements`
+gets one more section after the spec. That section
 is the agent view as JSON with `spec_version` and `spec_digest`, and a note
 that a `spec-update` may carry `requirements`.
 
@@ -353,16 +365,22 @@ With the setting on, `spec_views.first_turn` runs on the first work turn
 ### Verification results
 
 `raw/specs/<repo>/<id>.verify.json` sits beside the record. Only the round gate
-in `specs._check` writes it (`spec_views.verified`). Each requirement with
-verify items gets an entry with `spec_version`, `spec_digest`, `ok`, `head` and
-`cmd`. `spec_views.results` reads each one as `pass`, `fail`, `missing` or
-`stale`. A stale entry was recorded under another version or digest and never
-counts as a pass. `spec-update` cannot reach the file.
+in `specs._check` writes it (`spec_views.verified`). A verify item is recorded
+only when its text is one of the commands the gate ran. The entry is keyed by
+requirement id, `spec_version` and `spec_digest`, and holds `ok`, `head` and
+the time. A passing gate passes the matched items. A failing gate fails them
+all, since it does not say which command stopped it. `spec_views.results`
+reads a requirement as `pass` only when every verify item ran and passed under
+the current version. It reads `fail` when one failed, `stale` when the entry
+belongs to another version or digest, and `missing` otherwise; a stale entry
+never counts as a pass. `spec-update` cannot reach the file.
 
 `GET /api/specs/{id}/views` returns `{human, agent, spec_version,
 spec_digest}`. A card whose record has requirements shows a collapsible
-`요구사항 문서` section, read on first open (`web/src/components/SpecViews.tsx`,
-checked by `web/tests/spec_views_browser.py`).
+`요구사항 문서` section, read on first open (`web/src/components/SpecViews.tsx`).
+The section is keyed by the record's revision and requirements version. Any
+revision, a goal-only one included, retires the shown document and any reply
+still in flight. `web/tests/spec_views_browser.py` checks this.
 
 ### Assumptions and undecided design points
 
@@ -372,7 +390,7 @@ checked by `web/tests/spec_views_browser.py`).
 | The planner writes `requirements`; nothing derives them from `goal` and `done` for older records, which keep no section | Assumed |
 | Conflicts are dependencies on an `undecided` or `not_applicable` requirement; contradictions between texts are not detected | Assumed |
 | Negations and units are matched by fixed word and unit lists in English; other languages compare only by text equality | Assumed |
-| A round gate verdict is recorded against every requirement with verify items; per-item evidence from the done report is not mapped to requirements | Undecided |
+| Only the round gate records results, and only for verify items that are literally one of its commands. The final gate, browser or desktop checks and the done report's evidence are not mapped to requirements, so such items stay `missing` | Undecided |
 | A held first turn waits for the person's instruction; there is no screen control to change a requirement's status | Undecided |
 | The reviewer and the post-compaction restatement still read `brief` only | Undecided |
 | Which selection a task passes to `agent` is left to the experiment harness, which is the next task | Undecided |
