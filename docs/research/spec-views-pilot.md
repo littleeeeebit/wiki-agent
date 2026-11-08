@@ -60,7 +60,11 @@ The usd ceiling stopped the run at USD 37.9952 and 4.063 h.
 
 4 cells ended without a reported cost (a timeout or a crash cut the session before its result) and were charged at their cap, USD 12.0 in total: pr161/B1, pr161/C1, pr198/B2, pr304/A1. The ceiling counts these bounds, so the spend actually billed is lower than the spend shown.
 
-Resume: `python tool/eval/spec_views.py run --config eval/spec-views/pilot-1.json` runs the cells not yet run while the ceilings have room; beyond them a new experiment id with its own committed config is required.
+Resume: the command below runs the cells not yet run while the ceilings have room; beyond them a new experiment id with its own committed config is required.
+
+```bash
+python tool/eval/spec_views.py run --config eval/spec-views/pilot-1.json
+```
 
 Rows from a scripted stub implementer are never counted here (0 excluded).
 
