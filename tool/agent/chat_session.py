@@ -163,6 +163,7 @@ class ChatSession:
                  verification: Path | None = None, env: dict | None = None,
                  fast: bool = False, results: list[str] | None = None, choices: bool = False) -> None:
         self.repo = Path(repo)
+        self.evidence: dict[str, str] = {}   # untracked files `repo_read` may also open, by pinned SHA-256
         # Every tool result as the host received it, whole: a caller grading what the host read passes a list.
         self.results = results
         if verification is not None and not our_worktree(self.repo):
@@ -754,11 +755,10 @@ class ChatSession:
         if method == "item/tool/call" and self.source_only:
             tool = params.get("tool", "")
             try:
-                output = read_tools.call(self.repo, tool, params.get("arguments"))
-                success = True
+                output, success = read_tools.call(self.repo, tool, params.get("arguments"), self.evidence), True
             except (OSError, ValueError, subprocess.SubprocessError):
                 # Exception text can contain private paths or file bytes.
-                output, success = "읽기 실패: 추적된 소스 경로와 검색 인수를 확인해라.", False
+                output, success = "읽기 실패: 추적된 소스나 고정 해시가 맞는 선언된 로컬 증거인지, 검색 인수를 확인해라.", False
             self._send({"id": rid, "result": {"contentItems": [{"type": "inputText", "text": output}],
                                               "success": success}})
             return Event("tool", f"소스 읽기 · {tool}"[:120], {"tool": tool, "success": success})
