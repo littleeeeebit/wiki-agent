@@ -309,6 +309,40 @@ def with_evidence(world, ignored=True):
     return spec, path
 
 
+@pytest.mark.parametrize("history", ["clean", "merged-side-branch", "case-variant"])
+def test_any_reachable_commit_of_the_evidence_path_counts_as_leaked(world, history):
+    spec, path = with_evidence(world)
+    spec["prerequisite_review"] = {**REQUEST, "evidence": EVIDENCE}
+    branch = git(path, "rev-parse", "--abbrev-ref", "HEAD")
+    if history == "merged-side-branch":   # added then dropped on a side branch, merged with no evidence
+        git(path, "checkout", "-qb", "side")
+        git(path, "add", "-f", "local/dialogue.txt")
+        git(path, "commit", "-qm", "add evidence")
+        git(path, "rm", "-q", "--cached", "local/dialogue.txt")
+        git(path, "commit", "-qm", "drop evidence")
+        git(path, "checkout", "-q", branch)
+        git(path, "merge", "-q", "--no-ff", "side", "-m", "merge side")
+    elif history == "case-variant":       # the same file on Windows, committed under another case
+        blob = git(path, "hash-object", "-w", "local/dialogue.txt")
+        git(path, "update-index", "--add", "--cacheinfo", f"100644,{blob},LOCAL/DIALOGUE.TXT")
+        git(path, "commit", "-qm", "uppercase evidence")
+        git(path, "rm", "-q", "--cached", "LOCAL/DIALOGUE.TXT")
+        git(path, "commit", "-qm", "drop uppercase evidence")
+    assert bool(prerequisite_review.leaked(path, spec)) is (history != "clean")
+
+
+def test_the_server_never_pushes_a_commit_carrying_declared_evidence(world):
+    spec, path = with_evidence(world)
+    specs.update("proj", spec["id"], prerequisite_review={**REQUEST, "evidence": EVIDENCE})
+    git(path, "add", "-f", "local/dialogue.txt")
+    git(path, "commit", "-qm", "local evidence before review request")
+    client().post("/api/loops", json={"prs": [11]}).raise_for_status()
+    waited(lambda: not loop._loops)
+    fresh = specs.load("proj", spec["id"])
+    assert fresh["state"] == "멈춤" and not Worker.made and not fresh.get("prerequisite_review_result")
+    assert "local/" not in git(world.origin, "ls-tree", "-r", "--name-only", spec["id"])
+
+
 @pytest.mark.parametrize("leak", [False, True], ids=["kept-local", "force-committed"])
 def test_evidence_committed_after_a_passing_prerequisite_never_reaches_merge(world, leak):
     spec, path = with_evidence(world)
@@ -340,4 +374,4 @@ def test_evidence_committed_after_a_passing_prerequisite_never_reaches_merge(wor
         assert not (fresh.get("validation") or {}).get("final")
     else:
         assert fresh["state"] == "머지 가능" and fresh["prerequisite_review_result"]["completed"]
-        assert "local/" not in git(world.origin, "ls-tree", "-r", "--name-only", spec["id"])
+    assert "local/" not in git(world.origin, "ls-tree", "-r", "--name-only", spec["id"])

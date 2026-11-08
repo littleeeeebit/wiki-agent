@@ -37,7 +37,7 @@ from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
 
-from . import channels, gate_eta, pr_text, query, review_contract, runtime, spec_views, sweep, work
+from . import channels, gate_eta, pr_text, prerequisite_review, query, review_contract, runtime, spec_views, sweep, work
 from .spec_views import agent, equivalent, human  # noqa: F401 — `specs.human` and the others: this record's views
 from .pr_text import body_of
 from .decisions import extra_check, recommend, registered
@@ -1500,7 +1500,7 @@ def opened(repo: Path, path: Path, run, spec: dict):
     if run.halt.is_set():
         return failed(run, spec, "사람이 멈춤 — push 하지 않았다")
     note(run, f"push · origin {branch}")
-    pushed = sh(["git", "push", "-u", "origin", branch], path, 120)
+    pushed = prerequisite_review.push(path, spec, ["git", "push", "-u", "origin", branch])
     if pushed.returncode:
         return failed(run, spec, f"push 실패 — {said(pushed)}")
     base = base_of(spec, path)
@@ -1671,7 +1671,7 @@ def _check(path: Path, run, final: str):
                                      f"`{marker(path, plan)} — PR #{spec['pr']['number']}` 가 아니다")
         if run.halt.is_set():
             return failed(run, spec, "사람이 멈춤 — 계획 행 커밋을 push 하지 않았다")
-        pushed = sh(["git", "push", "origin", branch_of(spec)], path, 120)
+        pushed = prerequisite_review.push(path, spec, ["git", "push", "origin", branch_of(spec)])
         if pushed.returncode:
             return failed(run, spec, f"계획 행 커밋의 push 실패 — {said(pushed)}")
         note(run, f"push · 계획 행 `{plan['path']}` {plan['row']}")

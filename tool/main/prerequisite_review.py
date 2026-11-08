@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
 import time
 from pathlib import Path, PurePosixPath
 
@@ -107,18 +108,37 @@ def _preserved(path: Path, request: dict, receipt: dict) -> None:
         raise ValueError("독립 선행 리뷰 결과 파일이 없거나 보존된 판정과 다르다")
 
 
-def _unpublished(path: Path, request: dict, base: str) -> None:
-    """No declared evidence path is tracked now or touched by any commit the PR publishes over `base`.
-    Git metadata only, so it still holds once the evidence bytes have expired."""
+def leaked(path: Path, spec: dict) -> str:
+    """Why pushing this checkout would expose declared local evidence, or "". Every server push checks it.
+
+    The whole history HEAD reaches, not a range over a base ref that may be missing or stale:
+    `--full-history` keeps side branches a merge would simplify away, and `icase` catches a
+    path that differs only in case, the same file on Windows. Git metadata only, so it still
+    holds once the evidence bytes have expired."""
     from . import specs
 
-    names = [f":(literal){e['path']}" for e in request.get("evidence", [])]
+    request = declared(spec.get("prerequisite_review")) or {}
+    names = [f":(literal,icase){e['path']}" for e in request.get("evidence", [])]
     if not names:
-        return
+        return ""
     tracked = specs.sh(["git", "ls-files", "--", *names], path)
-    touched = specs.sh(["git", "rev-list", "-n", "1", f"origin/{base}..HEAD", "--", *names], path)
+    touched = specs.sh(["git", "rev-list", "-n", "1", "--full-history", "HEAD", "--", *names], path)
     if tracked.returncode or touched.returncode or tracked.stdout.strip() or touched.stdout.strip():
-        raise ValueError("로컬 증거가 Git 에 추적되거나 PR 커밋 이력에 들어갔다 — 이력에서 빼기 전에는 진행하지 않는다")
+        return "로컬 증거가 Git 에 추적되거나 커밋 이력에 들어갔다 — 이력에서 빼기 전에는 push 하거나 진행하지 않는다"
+    return ""
+
+
+def push(path: Path, spec: dict, command: list[str]) -> subprocess.CompletedProcess:
+    """Every server push of a task branch: refused, as a failed push, while declared evidence leaked."""
+    from . import specs
+
+    why = leaked(path, spec)
+    return subprocess.CompletedProcess(command, 1, "", why) if why else specs.sh(command, path, 120)
+
+
+def _unpublished(path: Path, spec: dict) -> None:
+    if why := leaked(path, spec):
+        raise ValueError(why)
 
 
 def advance(spot, spec: dict, repo: Path, path: Path, head: str, base: str) -> bool | None:
@@ -133,7 +153,7 @@ def advance(spot, spec: dict, repo: Path, path: Path, head: str, base: str) -> b
                          "선행 리뷰 인계는 로컬 구현 작업에서만 지원한다")
     manifest = snapshot(path, spec)
     signature = verification.sha(manifest)
-    _unpublished(path, request, base)
+    _unpublished(path, spec)
     receipt = spec.get("prerequisite_review_result") or {}
     if receipt.get("input_signature") != signature:
         spec = loop.change(spot, "리뷰 R0", report=None)
@@ -227,7 +247,7 @@ def advance(spot, spec: dict, repo: Path, path: Path, head: str, base: str) -> b
                    for item, required in zip(report, fresh["done"]))):
         return loop.stop(spot, spot.repo, spot.sid, loop.Why.PREPARATION,
                          "선행 리뷰 뒤 전체 명세의 완료가 아직이다 — 통과 보고로 대체하지 않는다")
-    _unpublished(path, request, base)
+    _unpublished(path, fresh)
     _preserved(path, request, receipt)
     specs.update(spot.repo, spot.sid, report=report,
                  prerequisite_review_result={**receipt, "completed": True})

@@ -25,8 +25,8 @@ from common import settings as settings_file
 from common.budget import Budget, Cancelled, Exhausted
 from workspace import adopt, base_branch, checkout, folder_for, holder, merged, remove, worktrees
 
-from . import (channels, connect, decisions, knowledge, maintenance, pr_text, query, refactor_run, review_contract, runtime,
-               specs, sweep, verification, work)
+from . import (channels, connect, decisions, knowledge, maintenance, pr_text, prerequisite_review, query, refactor_run,
+               review_contract, runtime, specs, sweep, verification, work)
 from .query import ROOT, _lock, current_repo, hold, project, streaming
 from .review_result import (  # noqa: F401 -- preserve the loop protocol API
     FIRST, FINDING, FENCE, META, bare, parse, described, block, disposed,
@@ -1117,7 +1117,7 @@ def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str
             verdict, record = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
             pushed = None
             if verdict["ok"] and verdict["head"] != head and not loop.halt.is_set():
-                pushed = specs.sh(["git", "push", "origin", branch], path, 120)
+                pushed = prerequisite_review.push(path, spec, ["git", "push", "origin", branch])
         finally:
             release()
         if change(loop, gate=verdict) is None:
