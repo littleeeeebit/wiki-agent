@@ -1,0 +1,456 @@
+{
+  "task": "pr260",
+  "reference": {
+    "merge_commit": {
+      "hidden": {
+        "tool/test_gate_eta.py::test_a_gate_is_cut_when_its_output_stops_not_when_it_has_run_long": "passed"
+      },
+      "affected": {
+        "tool/test_gate_eta.py": true
+      }
+    },
+    "merge_base": {
+      "hidden": {
+        "tool/test_gate_eta.py::test_a_gate_is_cut_when_its_output_stops_not_when_it_has_run_long": "failed"
+      },
+      "affected": {
+        "tool/test_gate_eta.py": true
+      }
+    },
+    "discriminates": true
+  },
+  "baseline": {
+    "id": "pr260",
+    "rev": 1,
+    "goal": "Gate runs, including the local final check, are cut as stuck only when their output has not grown for 10 minutes (IDLE_SECONDS). The local final check's overall limit rises to 2 hours (FINAL_SECONDS), so a slow full test run that is still making progress (ai-generation's 925 tests, 15-26 min) passes and is not cut at 19 minutes.",
+    "out": [
+      "Round gate limit GATE_SECONDS (20 min, tool/main/specs.py:48): value unchanged",
+      "Cloud local-verification budget LOCAL_SECONDS (19 min, tool/main/runtime.py:19): value unchanged",
+      "Speeding up ai-generation's own test suite or its slowest tests",
+      "CI-backend final checks (ci_result in tool/verify.py)"
+    ],
+    "done": [
+      "python -m ruff check tool laya",
+      "tool/main/runtime.py defines IDLE_SECONDS = 10 * 60 and STUCK = '검증 실행이 10분째 출력 없이 멈췄다'. _captured checks the capture file's size about once a second, on both the watched path (reader) and the unwatched TemporaryFile path. When the size has not grown for IDLE_SECONDS it kills the process tree the same way it does at the deadline, and returns (None, output, runtime.STUCK).",
+      "runtime.gate runs the command with PYTHONUNBUFFERED=1 set, without overwriting a value the caller's env already sets, so pytest's per-test dots reach the capture file right away",
+      "tool/verify.py defines FINAL_SECONDS = 2 * 60 * 60, and final(...) uses it as its default seconds instead of 19 * 60",
+      "Confirmed on the actual call paths (loop.py:1128 → verify.verdict → final → local_result → specs.judge → runtime.gate) that no active runtime.verification_budget clamps the local final check back to LOCAL_SECONDS. If one does on the local, non-cloud path, it is fixed so FINAL_SECONDS applies there. The cloud path keeps its 19-minute budget.",
+      "New test test_a_gate_is_cut_when_its_output_stops_not_when_it_has_run_long in tool/test_verification_runtime.py, with IDLE_SECONDS patched to about 3 s. A child that writes without flushing for about 6 s passes with code 0. A child that prints once and then sleeps is cut with runtime.STUCK well before a 60 s timeout.",
+      "tool/test_verify.py:225 asserts the timeout against ci.FINAL_SECONDS instead of 19 * 60",
+      "python -m pytest tool/test_gate_eta.py tool/test_verification_runtime.py tool/test_verify.py tool/test_loop_progress.py tool/test_local_verification.py passes",
+      "docs/development.md states how the local final check decides a run is stuck: 10 minutes with no output growth, a 2-hour overall safety limit, a command that prints nothing gets cut after 10 minutes, and GATE_SECONDS and LOCAL_SECONDS are unchanged but also get the idle watch",
+      "ruff check and python tool/debt.py check pass"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/runtime.py:19",
+        "tool/main/runtime.py:40",
+        "tool/main/runtime.py:80",
+        "tool/main/runtime.py:104",
+        "tool/verify.py:276",
+        "tool/verify.py:289",
+        "tool/verify.py:315",
+        "tool/main/specs.py:48",
+        "tool/main/specs.py:1126",
+        "tool/main/specs.py:1142",
+        "tool/main/loop.py:1128",
+        "tool/main/loop.py:1273",
+        "tool/test_verify.py:225",
+        "tool/test_verification_runtime.py:188",
+        "docs/development.md"
+      ],
+      "rules": [
+        "craft/do-the-whole-instruction"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Decide a run is stuck by whether its output has grown in 10 minutes, not by how long it has run",
+        "why": "ai-generation's full suite normally takes 15.3-18.8 min and its last run was cut at 19.0 min. An overall time limit cannot tell a slow run from a stuck one, but output growth can. The slowest single test (92 s) is far below 10 minutes.",
+        "rejected": "Only raising the fixed 19-minute limit, which still cuts a slow run on a busy machine (a 25m41s passing run was observed) and still waits the whole limit on a stuck run"
+      },
+      {
+        "what": "Measure progress by the capture file's size (os.fstat) inside _captured, for every gate",
+        "why": "_captured is the single loop every gate run goes through, and the file size is available without reading output or moving the child's write position",
+        "rejected": "Watching only on the screen-watched path, which would leave unwatched gates with no stall detection"
+      },
+      {
+        "what": "Set PYTHONUNBUFFERED=1 for gate runs without overwriting an existing value",
+        "why": "When output goes to a file, Python buffers it in blocks, so the captured tail lagged far behind real progress (it seemed to stop at 61%). The idle watch would then see false stalls.",
+        "rejected": "Asking each project to add -u or flush to its gate command"
+      },
+      {
+        "what": "Keep a 2-hour FINAL_SECONDS overall limit on the local final check",
+        "why": "It stays as a last safety net against a run that keeps printing forever and never finishes",
+        "rejected": "Removing the overall limit entirely"
+      },
+      {
+        "what": "Leave GATE_SECONDS (20 min) and LOCAL_SECONDS (19 min) unchanged, but they also get the idle watch",
+        "why": "The request only covers the local final check's limit. The idle watch lives in shared code, so those paths get it without any change to their limits.",
+        "rejected": "Raising the round-gate and cloud budgets as well"
+      },
+      {
+        "what": "Settled without the person, since no one could be asked: IDLE_SECONDS is a module constant in runtime.py that tests patch, not a per-call parameter; the stuck reason is a separate runtime.STUCK constant",
+        "why": "This matches how GATE_SECONDS is already patched in tests (test_verification_runtime.py:188), and a separate reason lets the record and tests tell a stalled run from one that hit the overall limit",
+        "rejected": "Adding an idle argument to gate/judge/final signatures"
+      }
+    ]
+  },
+  "enriched": {
+    "id": "pr260",
+    "rev": 1,
+    "goal": "Gate runs, including the local final check, are cut as stuck only when their output has not grown for 10 minutes (IDLE_SECONDS). The local final check's overall limit rises to 2 hours (FINAL_SECONDS), so a slow full test run that is still making progress (ai-generation's 925 tests, 15-26 min) passes and is not cut at 19 minutes.",
+    "out": [
+      "Round gate limit GATE_SECONDS (20 min, tool/main/specs.py:48): value unchanged",
+      "Cloud local-verification budget LOCAL_SECONDS (19 min, tool/main/runtime.py:19): value unchanged",
+      "Speeding up ai-generation's own test suite or its slowest tests",
+      "CI-backend final checks (ci_result in tool/verify.py)"
+    ],
+    "done": [
+      "python -m ruff check tool laya",
+      "tool/main/runtime.py defines IDLE_SECONDS = 10 * 60 and STUCK = '검증 실행이 10분째 출력 없이 멈췄다'. _captured checks the capture file's size about once a second, on both the watched path (reader) and the unwatched TemporaryFile path. When the size has not grown for IDLE_SECONDS it kills the process tree the same way it does at the deadline, and returns (None, output, runtime.STUCK).",
+      "runtime.gate runs the command with PYTHONUNBUFFERED=1 set, without overwriting a value the caller's env already sets, so pytest's per-test dots reach the capture file right away",
+      "tool/verify.py defines FINAL_SECONDS = 2 * 60 * 60, and final(...) uses it as its default seconds instead of 19 * 60",
+      "Confirmed on the actual call paths (loop.py:1128 → verify.verdict → final → local_result → specs.judge → runtime.gate) that no active runtime.verification_budget clamps the local final check back to LOCAL_SECONDS. If one does on the local, non-cloud path, it is fixed so FINAL_SECONDS applies there. The cloud path keeps its 19-minute budget.",
+      "New test test_a_gate_is_cut_when_its_output_stops_not_when_it_has_run_long in tool/test_verification_runtime.py, with IDLE_SECONDS patched to about 3 s. A child that writes without flushing for about 6 s passes with code 0. A child that prints once and then sleeps is cut with runtime.STUCK well before a 60 s timeout.",
+      "tool/test_verify.py:225 asserts the timeout against ci.FINAL_SECONDS instead of 19 * 60",
+      "python -m pytest tool/test_gate_eta.py tool/test_verification_runtime.py tool/test_verify.py tool/test_loop_progress.py tool/test_local_verification.py passes",
+      "docs/development.md states how the local final check decides a run is stuck: 10 minutes with no output growth, a 2-hour overall safety limit, a command that prints nothing gets cut after 10 minutes, and GATE_SECONDS and LOCAL_SECONDS are unchanged but also get the idle watch",
+      "ruff check and python tool/debt.py check pass"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/runtime.py:19",
+        "tool/main/runtime.py:40",
+        "tool/main/runtime.py:80",
+        "tool/main/runtime.py:104",
+        "tool/verify.py:276",
+        "tool/verify.py:289",
+        "tool/verify.py:315",
+        "tool/main/specs.py:48",
+        "tool/main/specs.py:1126",
+        "tool/main/specs.py:1142",
+        "tool/main/loop.py:1128",
+        "tool/main/loop.py:1273",
+        "tool/test_verify.py:225",
+        "tool/test_verification_runtime.py:188",
+        "docs/development.md"
+      ],
+      "rules": [
+        "craft/do-the-whole-instruction"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Decide a run is stuck by whether its output has grown in 10 minutes, not by how long it has run",
+        "why": "ai-generation's full suite normally takes 15.3-18.8 min and its last run was cut at 19.0 min. An overall time limit cannot tell a slow run from a stuck one, but output growth can. The slowest single test (92 s) is far below 10 minutes.",
+        "rejected": "Only raising the fixed 19-minute limit, which still cuts a slow run on a busy machine (a 25m41s passing run was observed) and still waits the whole limit on a stuck run"
+      },
+      {
+        "what": "Measure progress by the capture file's size (os.fstat) inside _captured, for every gate",
+        "why": "_captured is the single loop every gate run goes through, and the file size is available without reading output or moving the child's write position",
+        "rejected": "Watching only on the screen-watched path, which would leave unwatched gates with no stall detection"
+      },
+      {
+        "what": "Set PYTHONUNBUFFERED=1 for gate runs without overwriting an existing value",
+        "why": "When output goes to a file, Python buffers it in blocks, so the captured tail lagged far behind real progress (it seemed to stop at 61%). The idle watch would then see false stalls.",
+        "rejected": "Asking each project to add -u or flush to its gate command"
+      },
+      {
+        "what": "Keep a 2-hour FINAL_SECONDS overall limit on the local final check",
+        "why": "It stays as a last safety net against a run that keeps printing forever and never finishes",
+        "rejected": "Removing the overall limit entirely"
+      },
+      {
+        "what": "Leave GATE_SECONDS (20 min) and LOCAL_SECONDS (19 min) unchanged, but they also get the idle watch",
+        "why": "The request only covers the local final check's limit. The idle watch lives in shared code, so those paths get it without any change to their limits.",
+        "rejected": "Raising the round-gate and cloud budgets as well"
+      },
+      {
+        "what": "Settled without the person, since no one could be asked: IDLE_SECONDS is a module constant in runtime.py that tests patch, not a per-call parameter; the stuck reason is a separate runtime.STUCK constant",
+        "why": "This matches how GATE_SECONDS is already patched in tests (test_verification_runtime.py:188), and a separate reason lets the record and tests tell a stalled run from one that hit the overall limit",
+        "rejected": "Adding an idle argument to gate/judge/final signatures"
+      }
+    ],
+    "original": "로컬 최종 검사가 오래 걸리는 테스트를 멈춘 것으로 끊지 않고, 출력이 10분째 늘지 않을 때만 멈춤으로 판정합니다\n\n## 무엇이 문제였나\r\n\r\nai-generation 작업이 `멈춤 — 로컬 검증 준비 · 로컬 최종 검사 실패 — 검증 실행 시간 제한을 넘었다` 로 반복해서 멈췄습니다.\r\n\r\n- ai-generation 의 최종 검사 기록(`.git/wiki-verification-*.json`)을 보면, 전체 테스트(925개)는 평소 15.3~18.8분 걸려 통과했습니다. 마지막 실행은 19.0분에서 끊겼습니다.\r\n- 로컬 최종 검사는 고정된 19분(`verify.final(seconds=19 * 60)`)이 지나면 무조건 끊었습니다. 전체 시간만 보는 상한으로는 오래 걸리는 실행과 멈춘 실행을 가릴 수 없어서, 정상인 느린 실행이 멈춘 것으로 처리됐습니다.\r\n- 출력이 61% 에서 멈춘 것처럼 보인 것도 오해를 키웠습니다. 출력이 파일로 가면 Python 이 블록 단위로 버퍼링하기 때문에, 잡힌 꼬리가 실제 진행보다 한참 뒤처져 있었습니다.\r\n\r\n## 바뀐 것\r\n\r\n- `tool/main/runtime.py`\r\n  - 모든 게이트 실행이 지나는 `_captured` 가 출력 크기를 1초마다 봅니다. 10분(`IDLE_SECONDS`) 동안 출력이 늘지 않으면 `검증 실행이 10분째 출력 없이 멈췄다` 로 끊습니다. 실행한 시간이 아니라 진행이 멈췄는지로 판단합니다.\r\n  - 게이트를 `PYTHONUNBUFFERED=1` 로 돌립니다. 테스트가 끝날 때마다 찍는 점이 바로 기록돼, 진행 감시와 화면의 진행률이 실제와 맞습니다.\r\n- `tool/verify.py` — 로컬 최종 검사의 상한을 2시간(`FINAL_SECONDS`)으로 올렸습니다. 끝없이 출력하며 돌기만 하는 실행을 막는 마지막 안전장치로만 남깁니다.\r\n- `docs/development.md` — 로컬 최종 검사의 멈춤 판단 기준을 적었습니다.\r\n\r\n## 한계\r\n\r\n- 10분은 출력 없이 도는 테스트 하나보다 길어야 합니다. ai-generation 에서 가장 오래 걸린 테스트는 `test_comic_runner.py::test_run_to_end_goes_from_the_situation_through_every_export[16]` 의 92초로, 10분의 6분의 1도 안 됩니다.\r\n- 출력을 전혀 안 찍는 검사 명령은 10분이 지나면 멈춤으로 끊깁니다.\r\n- 라운드 게이트의 20분(`GATE_SECONDS`)과 클라우드 로컬 검증 예산 19분(`LOCAL_SECONDS`)은 그대로입니다. 진행 감시는 이 경로들에도 적용됩니다.\r\n\r\n## 검증\r\n\r\n- 새 테스트 `test_a_gate_is_cut_when_its_output_stops_not_when_it_has_run_long` — flush 없이 6초 동안 출력하는 실행은 통과하고, 출력이 끊긴 실행은 상한(60초) 전에 `runtime.STUCK` 으로 끊깁니다(대기 3초로 축소).\r\n- `tool/test_verify.py` 의 상한 단언을 `FINAL_SECONDS` 로 바꿨습니다.\r\n- `python -m pytest tool/test_gate_eta.py tool/test_verification_runtime.py tool/test_verify.py tool/test_loop_progress.py tool/test_local_verification.py` — 5 + 163 passed\r\n- ai-generation 전체 테스트를 `PYTHONUNBUFFERED=1` 과 `--durations` 로 돌렸습니다. 진행률이 끊김 없이 올라갔고, 925개가 모두 통과했습니다(25분 41초). 다른 검사와 함께 돌아 평소보다 느렸고, 예전 19분 상한이었다면 이 실행도 끊겼습니다.\r\n- `ruff check`, `python tool/debt.py check` 통과.\r\n\r\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\r\n",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "A gate run is judged stuck and cut only when its captured output has not grown for 10 minutes; a run that keeps producing output is not cut for having run long.",
+        "source": {
+          "kind": "original",
+          "locator": "request title and '바뀐 것' tool/main/runtime.py bullet"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "A run whose output size grows at least once every IDLE_SECONDS is never cut with runtime.STUCK"
+        ],
+        "failures": [
+          "A command that prints nothing at all is cut with runtime.STUCK after IDLE_SECONDS (accepted limitation)"
+        ],
+        "context": [
+          "tool/main/runtime.py",
+          "tool/test_verification_runtime.py"
+        ],
+        "verify": [
+          {
+            "item": "New test test_a_gate_is_cut_when_its_output_stops_not_when_it_has_run_long in tool/test_verification_runtime.py, with IDLE_SECONDS patched to about 3 s. A child that writes without flushing for about 6 s passes with code 0. A child that prints once and then sleeps is cut with runtime.STUCK well before a 60 s timeout.",
+            "expected": "Both cases behave as described and the test passes"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "The local final check's overall limit is 2 hours, so ai-generation's 925-test suite (15-26 min, still making progress) passes instead of being cut at 19 minutes.",
+        "source": {
+          "kind": "original",
+          "locator": "request '무엇이 문제였나' and '바뀐 것' tool/verify.py bullet"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R3"
+        ],
+        "context": [
+          "tool/verify.py",
+          "tool/test_verify.py"
+        ],
+        "verify": [
+          {
+            "item": "tool/test_verify.py:225 asserts the timeout against ci.FINAL_SECONDS instead of 19 * 60",
+            "expected": "The assertion references FINAL_SECONDS and passes"
+          }
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "No active verification_budget clamps the local (non-cloud) final check back to LOCAL_SECONDS. From reading the code: loop.py:1128 calls verify.verdict without setting a budget, and only cloud_shipped (loop.py:1273) sets a LOCAL_SECONDS budget. runtime.verification_scope (runtime.py:40-43) does clamp any seconds to LOCAL_SECONDS, so every caller on the final path still has to be checked.",
+        "source": {
+          "kind": "repository",
+          "locator": "tool/main/loop.py:1128, tool/main/loop.py:1273, tool/main/runtime.py:40-43, tool/main/runtime.py:81-82"
+        },
+        "status": "assumed",
+        "postconditions": [
+          "The cloud path keeps its 19-minute LOCAL_SECONDS budget"
+        ],
+        "context": [
+          "tool/main/loop.py",
+          "tool/main/runtime.py",
+          "tool/verify.py",
+          "tool/main/specs.py"
+        ],
+        "verify": [
+          {
+            "item": "Confirmed on the actual call paths (loop.py:1128 → verify.verdict → final → local_result → specs.judge → runtime.gate) that no active runtime.verification_budget clamps the local final check back to LOCAL_SECONDS. If one does on the local, non-cloud path, it is fixed so FINAL_SECONDS applies there. The cloud path keeps its 19-minute budget.",
+            "expected": "runtime.gate on the local final path receives a timeout of FINAL_SECONDS, not min(LOCAL_SECONDS, ...)"
+          }
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "Stuck is decided by output growth over 10 minutes, not by elapsed run time.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[0]"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R1"
+        ]
+      },
+      {
+        "id": "R5",
+        "text": "Progress is measured by the capture file's size (os.fstat) inside _captured, on both the watched (reader) and the unwatched TemporaryFile paths, so every gate gets stall detection.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[1]"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "Measuring progress never moves the child's write position on the shared capture handle"
+        ],
+        "context": [
+          "tool/main/runtime.py"
+        ],
+        "verify": [
+          {
+            "item": "tool/main/runtime.py defines IDLE_SECONDS = 10 * 60 and STUCK = '검증 실행이 10분째 출력 없이 멈췄다'. _captured checks the capture file's size about once a second, on both the watched path (reader) and the unwatched TemporaryFile path. When the size has not grown for IDLE_SECONDS it kills the process tree the same way it does at the deadline, and returns (None, output, runtime.STUCK).",
+            "expected": "Constants exist and both capture paths cut an idle run with runtime.STUCK"
+          }
+        ]
+      },
+      {
+        "id": "R6",
+        "text": "Gate commands run with PYTHONUNBUFFERED=1 unless the caller's env already sets it, so the capture file and the on-screen progress keep up with real progress.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[2]"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "A PYTHONUNBUFFERED value already present in the passed env is kept"
+        ],
+        "context": [
+          "tool/main/runtime.py"
+        ],
+        "verify": [
+          {
+            "item": "runtime.gate runs the command with PYTHONUNBUFFERED=1 set, without overwriting a value the caller's env already sets, so pytest's per-test dots reach the capture file right away",
+            "expected": "The child sees PYTHONUNBUFFERED=1, or the caller's own value when one is given"
+          }
+        ]
+      },
+      {
+        "id": "R7",
+        "text": "A 2-hour FINAL_SECONDS overall limit stays on the local final check as a last safety net against a run that prints forever.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[3]"
+        },
+        "status": "confirmed",
+        "context": [
+          "tool/verify.py"
+        ],
+        "verify": [
+          {
+            "item": "tool/verify.py defines FINAL_SECONDS = 2 * 60 * 60, and final(...) uses it as its default seconds instead of 19 * 60",
+            "expected": "final's default seconds is FINAL_SECONDS (7200)"
+          }
+        ]
+      },
+      {
+        "id": "R8",
+        "text": "GATE_SECONDS (20 min) and LOCAL_SECONDS (19 min) keep their values, and those paths also get the idle watch through the shared _captured.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[4]"
+        },
+        "status": "confirmed",
+        "context": [
+          "tool/main/specs.py",
+          "tool/main/runtime.py"
+        ],
+        "verify": [
+          {
+            "item": "GATE_SECONDS in tool/main/specs.py and LOCAL_SECONDS in tool/main/runtime.py",
+            "expected": "Still 20 * 60 and 19 * 60"
+          }
+        ]
+      },
+      {
+        "id": "R9",
+        "text": "IDLE_SECONDS is a module constant in runtime.py that tests patch, not a per-call parameter; the stuck reason is a separate runtime.STUCK constant, distinct from the overall-limit reason '검증 실행 시간 제한을 넘었다'.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[5]"
+        },
+        "status": "assumed",
+        "invariants": [
+          "gate/judge/final signatures gain no idle argument"
+        ],
+        "context": [
+          "tool/main/runtime.py",
+          "tool/test_verification_runtime.py"
+        ]
+      },
+      {
+        "id": "R10",
+        "text": "docs/development.md documents how the local final check decides a run is stuck, including its limits.",
+        "source": {
+          "kind": "original",
+          "locator": "request '바뀐 것' docs/development.md bullet and '한계'"
+        },
+        "status": "confirmed",
+        "context": [
+          "docs/development.md"
+        ],
+        "verify": [
+          {
+            "item": "docs/development.md states how the local final check decides a run is stuck: 10 minutes with no output growth, a 2-hour overall safety limit, a command that prints nothing gets cut after 10 minutes, and GATE_SECONDS and LOCAL_SECONDS are unchanged but also get the idle watch",
+            "expected": "All four points are present"
+          }
+        ]
+      },
+      {
+        "id": "R11",
+        "text": "The change leaves the existing verification test suites, lint and debt checks passing.",
+        "source": {
+          "kind": "original",
+          "locator": "request '검증' section"
+        },
+        "status": "confirmed",
+        "verify": [
+          {
+            "item": "python -m ruff check tool laya",
+            "expected": "No findings"
+          },
+          {
+            "item": "python -m pytest tool/test_gate_eta.py tool/test_verification_runtime.py tool/test_verify.py tool/test_loop_progress.py tool/test_local_verification.py passes",
+            "expected": "All tests pass"
+          },
+          {
+            "item": "ruff check and python tool/debt.py check pass",
+            "expected": "Both exit 0"
+          }
+        ]
+      }
+    ],
+    "spec_version": 1,
+    "spec_digest": "cdb6f87a052121d4cbb754a68a2d28940b71c43a48fff014be2469182a2badcd"
+  },
+  "select": [
+    "R1",
+    "R2",
+    "R3",
+    "R5",
+    "R6",
+    "R7",
+    "R8",
+    "R9",
+    "R10",
+    "R11"
+  ],
+  "costs": {
+    "generation": {
+      "usd": 0.24973460000000003,
+      "tokens": {
+        "input": 14,
+        "output": 4843,
+        "cache_read": 89653,
+        "cache_write": 16861
+      },
+      "turns": 11
+    },
+    "enrichment": {
+      "usd": 0.259757,
+      "tokens": {
+        "input": 8,
+        "output": 8280,
+        "cache_read": 41385,
+        "cache_write": 10731
+      },
+      "turns": 8
+    },
+    "selection": {
+      "usd": 0.03404,
+      "tokens": {
+        "input": 2,
+        "output": 186,
+        "cache_read": 0,
+        "cache_write": 3789
+      },
+      "turns": 1
+    }
+  },
+  "selection_cost": {
+    "usd": 0.03404,
+    "tokens": {
+      "input": 2,
+      "output": 186,
+      "cache_read": 0,
+      "cache_write": 3789
+    },
+    "turns": 1
+  }
+}

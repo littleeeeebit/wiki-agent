@@ -1,0 +1,445 @@
+{
+  "task": "pr304",
+  "reference": {
+    "merge_commit": {
+      "hidden": {
+        "tool/test_guard.py::test_one_part_that_fails_to_read_leaves_the_rest_of_the_call_judged": "passed"
+      },
+      "affected": {
+        "tool/test_guard.py": true
+      }
+    },
+    "merge_base": {
+      "hidden": {
+        "tool/test_guard.py::test_one_part_that_fails_to_read_leaves_the_rest_of_the_call_judged": "failed"
+      },
+      "affected": {
+        "tool/test_guard.py": true
+      }
+    },
+    "discriminates": true
+  },
+  "baseline": {
+    "id": "pr304",
+    "rev": 1,
+    "goal": "When reading one command, or judging one effect, of a chained call fails, the guard refuses only that part with a clear reason, keeps checking every other part (so a protected-file write on the same line is still refused), and no longer lets the whole call skip the hook.",
+    "out": [
+      "Separate fixes at each of the five failure sites (the m_git origin lookup, NUL paths in scandir, abspath after the cwd is gone, relpath across drives): the two catch points are the fix",
+      "Changing how syntax limits (Unclosed, Unbounded, recursion limit) apply: they stay applied to the whole call as now",
+      "Guessing the destinations of a command whose model failed (option values, paths relative to -C)",
+      "Other hooks' verdict functions and the hook entry's own catch-all in tool/guard.py __main__"
+    ],
+    "done": [
+      "python -m ruff check tool laya",
+      "tool/guard_models.py has `modelled`, which wraps the model dispatch in `run_argv`. Any exception other than `Unclosed`, `Unbounded` or `RecursionError` turns only that command into an `unread` effect, and the other commands in the call keep their effects",
+      "`outside` in tool/guard_grant.py refuses an `unread` effect with the reason \"가드가 이 명령을 읽다 실패했다 — 다시 실행해 보고, 계속되면 사람이 직접 실행한다\". A failed command's destinations are never let through",
+      "tool/guard.py has `judged`, which wraps `outside` for each effect in `verdict`. An exception refuses that effect with \"가드가 이 경로를 확인하지 못했다(<error type>)\", and the other effects are still judged",
+      "`is_junction` lives in tool/common (reparse-tag check). tool/setup_agents.py imports it from there, and `holds_protected` in tool/guard_grant.py uses it when `os.path.isjunction` or `DirEntry.is_junction` is missing (Python 3.11)",
+      "New test tool/test_guard.py::test_one_part_that_fails_to_read_leaves_the_rest_of_the_call_judged. When the origin lookup is broken (e.g. a commondir with invalid UTF-8), the git command is refused as 'failed to read', `echo ok` on the same line adds no denial line, and `; printf x > .wiki/adapter.toml` is refused separately. When `outside` raises ValueError, that effect is refused as 'could not check' and the protected write is still refused. On main the test fails because UnicodeDecodeError escapes",
+      "New test tool/test_guard.py::test_a_junction_is_found_without_the_312_entry_api: with the 3.12 junction APIs removed (monkeypatched), a junction inside a delete target is still found (Windows; skipped elsewhere)",
+      "`python -m ruff check tool laya`, `python tool/lint.py --check` and `python tool/debt.py check` pass",
+      "`pytest tool/test_guard.py tool/test_hook.py tool/test_connect.py` passes with no new failures"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/guard.py:92",
+        "tool/guard.py:96",
+        "tool/guard.py:962",
+        "tool/guard.py:987",
+        "tool/guard_models.py:737",
+        "tool/guard_grant.py:242",
+        "tool/guard_grant.py:288",
+        "tool/guard_git.py:156",
+        "tool/guard_git.py:301",
+        "tool/setup_agents.py:329",
+        "tool/common/__init__.py:30"
+      ],
+      "rules": [
+        "PR #303 review P2: five failures that already existed on main share one cause, an exception escaping `verdict` so the hook skips the whole call"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Fix at the two points every case passes through: model dispatch (`modelled` in run_argv) and per-effect judgement (`judged` around `outside`)",
+        "why": "All five defects are exceptions escaping the same two places. Catching there also covers failures nobody has found yet, where per-site guards would leave the next one open",
+        "rejected": "A separate try/except or input check at each of the five failure sites"
+      },
+      {
+        "what": "A command whose model failed becomes a new `unread` effect that `outside` always refuses, instead of `top`",
+        "why": "`top` and `spawn` pass by design (tool/guard_grant.py:292), so reusing `top` would let a failed command through. Its destinations (glued option values, paths relative to -C) cannot be known, and review rounds 1 and 2 found protected targets missed when they were guessed",
+        "rejected": "Reusing `top`, or trying to recover the failed command's destinations"
+      },
+      {
+        "what": "`modelled` re-raises Unclosed, Unbounded and RecursionError before catching anything else",
+        "why": "Unclosed and Unbounded subclass ValueError (tool/guard.py:92,96), and they are syntax limits that apply to the whole call. Catching them per command would quietly change that behaviour",
+        "rejected": "Catching every Exception, including the syntax limits"
+      },
+      {
+        "what": "A judgement failure refuses that effect with the error's type name in the reason",
+        "why": "Same direction as refusing an unreadable folder in holds_protected already. The type name tells the person what went wrong without dumping a path that may contain odd bytes",
+        "rejected": "Letting the effect pass when it cannot be checked"
+      },
+      {
+        "what": "Move setup_agents.is_junction into tool/common and use it as the fallback when the 3.12 junction APIs are missing",
+        "why": "Python 3.11 has neither os.path.isjunction nor DirEntry.is_junction, and the reparse-tag check already exists and works from 3.8. One copy in common avoids two versions drifting apart",
+        "rejected": "Copying the function into guard_grant, or requiring Python 3.12"
+      },
+      {
+        "what": "A command whose metadata stays broken is refused every time",
+        "why": "The PR #303 reviewer judged this acceptable, and the refusal tells the person to run the command themselves, so they are not stuck",
+        "rejected": "Caching or retrying the failed lookup so the command can eventually pass"
+      }
+    ]
+  },
+  "enriched": {
+    "id": "pr304",
+    "rev": 1,
+    "goal": "When reading one command, or judging one effect, of a chained call fails, the guard refuses only that part with a clear reason, keeps checking every other part (so a protected-file write on the same line is still refused), and no longer lets the whole call skip the hook.",
+    "out": [
+      "Separate fixes at each of the five failure sites (the m_git origin lookup, NUL paths in scandir, abspath after the cwd is gone, relpath across drives): the two catch points are the fix",
+      "Changing how syntax limits (Unclosed, Unbounded, recursion limit) apply: they stay applied to the whole call as now",
+      "Guessing the destinations of a command whose model failed (option values, paths relative to -C)",
+      "Other hooks' verdict functions and the hook entry's own catch-all in tool/guard.py __main__"
+    ],
+    "done": [
+      "python -m ruff check tool laya",
+      "tool/guard_models.py has `modelled`, which wraps the model dispatch in `run_argv`. Any exception other than `Unclosed`, `Unbounded` or `RecursionError` turns only that command into an `unread` effect, and the other commands in the call keep their effects",
+      "`outside` in tool/guard_grant.py refuses an `unread` effect with the reason \"가드가 이 명령을 읽다 실패했다 — 다시 실행해 보고, 계속되면 사람이 직접 실행한다\". A failed command's destinations are never let through",
+      "tool/guard.py has `judged`, which wraps `outside` for each effect in `verdict`. An exception refuses that effect with \"가드가 이 경로를 확인하지 못했다(<error type>)\", and the other effects are still judged",
+      "`is_junction` lives in tool/common (reparse-tag check). tool/setup_agents.py imports it from there, and `holds_protected` in tool/guard_grant.py uses it when `os.path.isjunction` or `DirEntry.is_junction` is missing (Python 3.11)",
+      "New test tool/test_guard.py::test_one_part_that_fails_to_read_leaves_the_rest_of_the_call_judged. When the origin lookup is broken (e.g. a commondir with invalid UTF-8), the git command is refused as 'failed to read', `echo ok` on the same line adds no denial line, and `; printf x > .wiki/adapter.toml` is refused separately. When `outside` raises ValueError, that effect is refused as 'could not check' and the protected write is still refused. On main the test fails because UnicodeDecodeError escapes",
+      "New test tool/test_guard.py::test_a_junction_is_found_without_the_312_entry_api: with the 3.12 junction APIs removed (monkeypatched), a junction inside a delete target is still found (Windows; skipped elsewhere)",
+      "`python -m ruff check tool laya`, `python tool/lint.py --check` and `python tool/debt.py check` pass",
+      "`pytest tool/test_guard.py tool/test_hook.py tool/test_connect.py` passes with no new failures"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/guard.py:92",
+        "tool/guard.py:96",
+        "tool/guard.py:962",
+        "tool/guard.py:987",
+        "tool/guard_models.py:737",
+        "tool/guard_grant.py:242",
+        "tool/guard_grant.py:288",
+        "tool/guard_git.py:156",
+        "tool/guard_git.py:301",
+        "tool/setup_agents.py:329",
+        "tool/common/__init__.py:30"
+      ],
+      "rules": [
+        "PR #303 review P2: five failures that already existed on main share one cause, an exception escaping `verdict` so the hook skips the whole call"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Fix at the two points every case passes through: model dispatch (`modelled` in run_argv) and per-effect judgement (`judged` around `outside`)",
+        "why": "All five defects are exceptions escaping the same two places. Catching there also covers failures nobody has found yet, where per-site guards would leave the next one open",
+        "rejected": "A separate try/except or input check at each of the five failure sites"
+      },
+      {
+        "what": "A command whose model failed becomes a new `unread` effect that `outside` always refuses, instead of `top`",
+        "why": "`top` and `spawn` pass by design (tool/guard_grant.py:292), so reusing `top` would let a failed command through. Its destinations (glued option values, paths relative to -C) cannot be known, and review rounds 1 and 2 found protected targets missed when they were guessed",
+        "rejected": "Reusing `top`, or trying to recover the failed command's destinations"
+      },
+      {
+        "what": "`modelled` re-raises Unclosed, Unbounded and RecursionError before catching anything else",
+        "why": "Unclosed and Unbounded subclass ValueError (tool/guard.py:92,96), and they are syntax limits that apply to the whole call. Catching them per command would quietly change that behaviour",
+        "rejected": "Catching every Exception, including the syntax limits"
+      },
+      {
+        "what": "A judgement failure refuses that effect with the error's type name in the reason",
+        "why": "Same direction as refusing an unreadable folder in holds_protected already. The type name tells the person what went wrong without dumping a path that may contain odd bytes",
+        "rejected": "Letting the effect pass when it cannot be checked"
+      },
+      {
+        "what": "Move setup_agents.is_junction into tool/common and use it as the fallback when the 3.12 junction APIs are missing",
+        "why": "Python 3.11 has neither os.path.isjunction nor DirEntry.is_junction, and the reparse-tag check already exists and works from 3.8. One copy in common avoids two versions drifting apart",
+        "rejected": "Copying the function into guard_grant, or requiring Python 3.12"
+      },
+      {
+        "what": "A command whose metadata stays broken is refused every time",
+        "why": "The PR #303 reviewer judged this acceptable, and the refusal tells the person to run the command themselves, so they are not stuck",
+        "rejected": "Caching or retrying the failed lookup so the command can eventually pass"
+      }
+    ],
+    "original": "가드가 명령 한 부분을 읽다 실패해도 나머지 부분은 계속 검사한다\n\n## 무엇이 문제였나\r\n\r\nPR #303 리뷰에서 main 에 원래 있던 결함 다섯 개가 나왔다(P2). 다섯 개 모두 뿌리가 같다. 한 줄로 이어진 명령의 한 부분에서 효과를 모으거나 판정하다 예외가 나면, 그 예외가 `verdict` 밖으로 나가 훅이 호출 전체를 건너뛴다. 같은 줄에 붙은 보호 파일 쓰기(`; printf x > .wiki/adapter.toml`)도 막히지 않는다.\r\n\r\n1. `m_git` 의 원본 저장소 탐색이 깨진 메타데이터(`commondir` 의 잘못된 UTF-8 등)에서 예외를 낸다.\r\n2. Python 3.11 에는 `os.path.isjunction`, `DirEntry.is_junction` 이 없어 `AttributeError` 가 난다.\r\n3. 지울 경로에 NUL 이 있으면 `scandir` 가 `ValueError` 를 낸다.\r\n4. 현재 폴더가 사라진 뒤에는 상대 경로 루트의 `abspath` 가 `OSError` 를 낸다.\r\n5. 루트 접합점이 검사 사이에 다른 드라이브로 바뀌면 `relpath` 가 `ValueError` 를 낸다.\r\n\r\n## 바꾼 것\r\n\r\n하나씩 막지 않고, 모든 경우가 지나는 두 자리에서 고쳤다.\r\n\r\n- 모으기: `guard_models.modelled` 가 명령 모델을 감싼다. 모델이 실패하면 그 명령만 `unread` 효과가 되어 \"가드가 이 명령을 읽다 실패했다 — 다시 실행해 보고, 계속되면 사람이 직접 실행한다\" 로 거절되고, 나머지 명령은 계속 검사한다. 실패한 모델의 목적지(옵션 값, `-C` 기준 상대 경로)는 알 수 없으니 통과시키지 않는다(리뷰 1·2라운드). 구문 한계(`Unclosed`, `Unbounded`, 재귀 한도)는 지금처럼 호출 전체에 적용된다.\r\n- 판정: `guard.judged` 가 효과마다 `outside` 를 감싼다. 판정이 실패하면 그 효과를 \"가드가 이 경로를 확인하지 못했다(…)\" 로 거절한다. 읽을 수 없는 폴더를 지우려 할 때 이미 거절하던 것과 같은 방향이다.\r\n- 3.11: `setup_agents.is_junction`(reparse tag 로 판별)을 `common` 으로 옮겨, 지우기 검사가 3.12 API 가 없을 때 이것을 쓴다.\r\n\r\n## 확인\r\n\r\n- `tool/test_guard.py::test_one_part_that_fails_to_read_leaves_the_rest_of_the_call_judged`\r\n  - 원본 탐색이 깨지면 그 git 명령은 \"읽다 실패했다\" 로 거절되고, 같은 줄의 `echo ok` 같은 정상 명령은 통과하며, 보호 파일 쓰기는 따로 거절된다.\r\n  - 판정이 `ValueError` 로 실패하면 그 효과는 \"확인하지 못했다\" 로 거절되고, 보호 파일 쓰기도 거절된다.\r\n  - main 에서는 `UnicodeDecodeError` 가 그대로 밖으로 나가 실패한다.\r\n- `tool/test_guard.py::test_a_junction_is_found_without_the_312_entry_api`: 3.12 API 를 끈 상태에서도 접합점을 찾는다(Windows).\r\n- `python -m ruff check tool laya`, `tool/lint.py --check`, `tool/debt.py check` 통과.\r\n- `tool/test_guard.py tool/test_hook.py tool/test_connect.py` 539 passed, 2 skipped.\r\n\r\n## 리뷰\r\n\r\n3라운드에서 머지 허용. 1라운드: 실패한 명령이 직접 가리킨 보호 목적지가 빠짐(P1). 2라운드: 붙여 쓴 옵션 값과 `-C` 기준 상대 경로를 놓침(P1). 둘 다 목적지를 추측하지 않고 실패한 명령을 거절하는 것으로 해결. 메타데이터가 계속 깨진 경우 그 명령이 매번 거절되는 것은 리뷰어도 받아들일 만하다고 판단했다.\r\n\r\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\r\n\r\n",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "When modelling one command or judging one effect in a chained shell call raises, only that part is refused. Every other part of the same call is still collected and judged, so a protected-file write on the same line is refused, and the exception never escapes `verdict` (so the hook does not skip the whole call).",
+        "source": {
+          "kind": "original",
+          "locator": "request title and '무엇이 문제였나' section"
+        },
+        "status": "confirmed",
+        "preconditions": [
+          "WIKI_AGENT_MANAGED=1 and a grant exists for the cwd, so `verdict` in tool/guard.py runs its checks"
+        ],
+        "postconditions": [
+          "The deny reason lists one line for the failed part and separate lines for any other out-of-grant effects",
+          "A harmless command in the same call (e.g. `echo ok`) adds no denial line"
+        ],
+        "invariants": [
+          "Before this change, an exception escaping `verdict` was caught by the `__main__` catch-all at tool/guard.py:997 and the call went through unchecked; after it, no exception from per-command modelling or per-effect judgement reaches that catch-all"
+        ],
+        "failures": [
+          "The m_git origin lookup raising UnicodeDecodeError on a commondir with invalid UTF-8 must not let `; printf x > .wiki/adapter.toml` through"
+        ],
+        "context": [
+          "tool/guard.py",
+          "tool/guard_models.py",
+          "tool/guard_grant.py",
+          "tool/test_guard.py"
+        ],
+        "verify": [
+          {
+            "item": "New test tool/test_guard.py::test_one_part_that_fails_to_read_leaves_the_rest_of_the_call_judged. When the origin lookup is broken (e.g. a commondir with invalid UTF-8), the git command is refused as 'failed to read', `echo ok` on the same line adds no denial line, and `; printf x > .wiki/adapter.toml` is refused separately. When `outside` raises ValueError, that effect is refused as 'could not check' and the protected write is still refused. On main the test fails because UnicodeDecodeError escapes",
+            "expected": "passes on the branch; fails on main with UnicodeDecodeError escaping"
+          },
+          {
+            "item": "`pytest tool/test_guard.py tool/test_hook.py tool/test_connect.py` passes with no new failures",
+            "expected": "no failures beyond those already on main"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "The fix sits at the two points every failure passes through: `modelled` in tool/guard_models.py wraps the model dispatch in `run_argv`, and `judged` in tool/guard.py wraps `outside` for each effect in `verdict`. The five failure sites are not patched one by one.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 1: fix at the two points every case passes through"
+        },
+        "status": "assumed",
+        "postconditions": [
+          "`run_argv` (tool/guard_models.py:737) calls the command models through `modelled`",
+          "`verdict` (tool/guard.py:977) calls `judged(e, g)` in place of `outside(e, g)`"
+        ],
+        "invariants": [
+          "No new try/except is added at the m_git origin lookup, scandir, abspath or relpath sites for these cases"
+        ],
+        "context": [
+          "tool/guard_models.py:737",
+          "tool/guard.py:962",
+          "tool/guard.py:977"
+        ],
+        "verify": [
+          {
+            "item": "tool/guard_models.py has `modelled`, which wraps the model dispatch in `run_argv`. Any exception other than `Unclosed`, `Unbounded` or `RecursionError` turns only that command into an `unread` effect, and the other commands in the call keep their effects",
+            "expected": "`modelled` exists and covers the model calls in `run_argv`; assumed to cover `r.model` and the `ps_cmdlet`, `cmd_builtin` and `posix_builtin` dispatches alike"
+          },
+          {
+            "item": "tool/guard.py has `judged`, which wraps `outside` for each effect in `verdict`. An exception refuses that effect with \"가드가 이 경로를 확인하지 못했다(<error type>)\", and the other effects are still judged",
+            "expected": "`judged` exists and `verdict` uses it for every effect"
+          }
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "A command whose model failed yields a new `unread` effect, and `outside` always refuses it with \"가드가 이 명령을 읽다 실패했다 — 다시 실행해 보고, 계속되면 사람이 직접 실행한다\". It is never mapped to `top`, and none of its destinations are guessed or let through.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 2: a failed model becomes an `unread` effect, not `top`"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "`read`, `top` and `spawn` still pass in `outside` (tool/guard_grant.py:292); `unread` is not added to that pass list"
+        ],
+        "failures": [
+          "A failed git command with `-C <dir>` or a glued option value naming a protected path is refused as a whole, not partially judged"
+        ],
+        "depends_on": [
+          "R2"
+        ],
+        "context": [
+          "tool/guard_grant.py:288",
+          "tool/guard_grant.py:292"
+        ],
+        "verify": [
+          {
+            "item": "`outside` in tool/guard_grant.py refuses an `unread` effect with the reason \"가드가 이 명령을 읽다 실패했다 — 다시 실행해 보고, 계속되면 사람이 직접 실행한다\". A failed command's destinations are never let through",
+            "expected": "`outside((\"unread\", ...), g)` returns that exact reason for any grant"
+          }
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "`modelled` re-raises `Unclosed`, `Unbounded` and `RecursionError` before catching anything else, so syntax limits keep applying to the whole call as they do now.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 3: syntax limits re-raised before the catch"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "`Unclosed` and `Unbounded` subclass ValueError (tool/guard.py:92, tool/guard.py:96); a plain `except Exception` placed first would swallow them, so the re-raise must come first"
+        ],
+        "depends_on": [
+          "R2"
+        ],
+        "context": [
+          "tool/guard.py:92",
+          "tool/guard.py:96",
+          "tool/guard_models.py"
+        ],
+        "verify": [
+          {
+            "item": "Existing guard tests for unclosed quotes, unbounded expansion and deep nesting",
+            "expected": "still pass unchanged within the pytest run of tool/test_guard.py"
+          }
+        ]
+      },
+      {
+        "id": "R5",
+        "text": "When judging one effect raises, `judged` refuses that effect with \"가드가 이 경로를 확인하지 못했다(<error type>)\", where <error type> is the exception's type name (not its message or the path), and the remaining effects are still judged.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 4: a judgement failure refuses that effect with the error's type name"
+        },
+        "status": "confirmed",
+        "failures": [
+          "ValueError from `relpath` across drives, ValueError from a NUL in a scandir path, or OSError from `abspath` after the cwd is gone each refuse only their own effect"
+        ],
+        "depends_on": [
+          "R2"
+        ],
+        "context": [
+          "tool/guard.py:977",
+          "tool/guard_grant.py:242"
+        ],
+        "verify": [
+          {
+            "item": "A test where `outside` is patched to raise ValueError for one effect",
+            "expected": "that effect's line reads \"가드가 이 경로를 확인하지 못했다(ValueError)\" and the protected write in the same call is still refused (covered by the new test in R1)"
+          }
+        ]
+      },
+      {
+        "id": "R6",
+        "text": "`is_junction` (reparse-tag check) moves from tool/setup_agents.py into tool/common. tool/setup_agents.py imports it from there, and `holds_protected` in tool/guard_grant.py falls back to it when `os.path.isjunction` or `DirEntry.is_junction` is missing (Python 3.11).",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 5: move setup_agents.is_junction into tool/common"
+        },
+        "status": "assumed",
+        "postconditions": [
+          "Only one definition of `is_junction` remains in the repository",
+          "`holds_protected` no longer raises AttributeError on Python 3.11"
+        ],
+        "invariants": [
+          "On Python 3.12+, where the native APIs exist, the delete check finds the same junctions as before"
+        ],
+        "context": [
+          "tool/setup_agents.py:329",
+          "tool/guard_grant.py:247",
+          "tool/guard_grant.py:262",
+          "tool/common/__init__.py"
+        ],
+        "verify": [
+          {
+            "item": "`is_junction` lives in tool/common (reparse-tag check). tool/setup_agents.py imports it from there, and `holds_protected` in tool/guard_grant.py uses it when `os.path.isjunction` or `DirEntry.is_junction` is missing (Python 3.11)",
+            "expected": "assumed: the exact module inside tool/common (its __init__ or a new file) is not settled; both the target check at guard_grant.py:247 and the entry check at :262 use the fallback"
+          },
+          {
+            "item": "New test tool/test_guard.py::test_a_junction_is_found_without_the_312_entry_api: with the 3.12 junction APIs removed (monkeypatched), a junction inside a delete target is still found (Windows; skipped elsewhere)",
+            "expected": "passes on Windows, skipped elsewhere"
+          }
+        ]
+      },
+      {
+        "id": "R7",
+        "text": "A command whose metadata stays broken is refused on every run. No caching or retrying lets it eventually pass, and the refusal reason tells the person to run it themselves.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 6: persistently broken metadata is refused every time"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "No state is stored between hook calls for failed lookups"
+        ],
+        "depends_on": [
+          "R3"
+        ],
+        "verify": [
+          {
+            "item": "Running the same call with the broken commondir twice through `verdict`",
+            "expected": "both runs return the same 'failed to read' denial"
+          }
+        ]
+      },
+      {
+        "id": "R8",
+        "text": "The repository's lint, debt and test checks pass on the change.",
+        "source": {
+          "kind": "repository",
+          "locator": "request '확인' section"
+        },
+        "status": "confirmed",
+        "verify": [
+          {
+            "item": "python -m ruff check tool laya",
+            "expected": "no findings"
+          },
+          {
+            "item": "`python -m ruff check tool laya`, `python tool/lint.py --check` and `python tool/debt.py check` pass",
+            "expected": "all three exit 0"
+          }
+        ]
+      }
+    ],
+    "spec_version": 1,
+    "spec_digest": "bb7149043557c60eab88804ee37f425329758242a51d473660735f919fdd2103"
+  },
+  "select": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
+    "R8"
+  ],
+  "costs": {
+    "generation": {
+      "usd": 0.26872039999999997,
+      "tokens": {
+        "input": 16,
+        "output": 4950,
+        "cache_read": 93842,
+        "cache_write": 18861
+      },
+      "turns": 13
+    },
+    "enrichment": {
+      "usd": 0.264158,
+      "tokens": {
+        "input": 8,
+        "output": 8064,
+        "cache_read": 35630,
+        "cache_write": 11965
+      },
+      "turns": 7
+    },
+    "selection": {
+      "usd": 0.038836,
+      "tokens": {
+        "input": 2,
+        "output": 219,
+        "cache_read": 0,
+        "cache_write": 4306
+      },
+      "turns": 1
+    }
+  },
+  "selection_cost": {
+    "usd": 0.038836,
+    "tokens": {
+      "input": 2,
+      "output": 219,
+      "cache_read": 0,
+      "cache_write": 4306
+    },
+    "turns": 1
+  }
+}

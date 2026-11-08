@@ -1,0 +1,309 @@
+{
+  "schema": "spec-views-experiment/1",
+  "experiment": "pilot-1",
+  "kind": "pilot",
+  "code_commit": "6e63fe67b3840d38c79e8fea87fe2c623130a11f",
+  "seed": 20261108,
+  "tasks_file": "eval/spec-views/tasks.json",
+  "tasks": [
+    {
+      "id": "pr304",
+      "merge_base": "ede5156a059a025d67507641fc4a4c5a4a867ff5",
+      "merge_commit": "436cc6006d6ebe3725ac0d70238862568a25afb2",
+      "hidden": [
+        {
+          "path": "tool/test_guard.py",
+          "tests": [
+            "test_one_part_that_fails_to_read_leaves_the_rest_of_the_call_judged"
+          ],
+          "digest": "91065c90a4da4309ad4228920e975e67d2650a514fcf3b78350e6942831bdb04"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_guard.py"
+        }
+      ],
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "labels": [
+        "exception-handling",
+        "multi-file-cooperation"
+      ],
+      "spec_version": 1,
+      "spec_digest": "bb7149043557c60eab88804ee37f425329758242a51d473660735f919fdd2103",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr198",
+      "merge_base": "43775fdcd271de88c211d3d3f03d9924cb9a5ec1",
+      "merge_commit": "5c8744152ea9cb569dd10c0b19423338eba67623",
+      "hidden": [
+        {
+          "path": "tool/test_loop.py",
+          "tests": [
+            "test_a_draft_pr_is_made_ready_by_the_merge_click"
+          ],
+          "digest": "4f16b7dec085114d067daf133a4d4fbc43d5d8eda32145b63b8fe2e7ca81ac41"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_loop.py",
+          "k": "test_merge_is_bound_to_the_allowed_head_and_cleans_up_after"
+        }
+      ],
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "labels": [
+        "state-change",
+        "interface-compatibility"
+      ],
+      "spec_version": 1,
+      "spec_digest": "3535b496fbba2893d30957d1a36042dd2c3cf919aac5d8f66e65857e8d7cd56c",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr260",
+      "merge_base": "f6adb13f307fbdd8eb09ff66176e4e3ae22168c5",
+      "merge_commit": "fe59413e3d838dac13e39c25cadaf9a633561b9a",
+      "hidden": [
+        {
+          "path": "tool/test_gate_eta.py",
+          "tests": [
+            "test_a_gate_is_cut_when_its_output_stops_not_when_it_has_run_long"
+          ],
+          "digest": "abfd576a951297f0ea04d093de43b3f229933bc9590eb7edd6f64a88dc1066aa"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_gate_eta.py"
+        }
+      ],
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "labels": [
+        "state-change",
+        "exception-handling",
+        "multi-file-cooperation"
+      ],
+      "spec_version": 1,
+      "spec_digest": "cdb6f87a052121d4cbb754a68a2d28940b71c43a48fff014be2469182a2badcd",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+        "R10",
+        "R11"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr164",
+      "merge_base": "131a3803a0e62fd674ce37f5961d3e88e1c434bb",
+      "merge_commit": "a41c7f3b447497f19ceb94c4b5b5f5d7c552738a",
+      "hidden": [
+        {
+          "path": "tool/test_hook.py",
+          "tests": [
+            "test_a_test_run_piped_where_its_progress_cannot_be_read_is_refused",
+            "test_a_test_run_whose_output_stays_readable_passes"
+          ],
+          "digest": "83a5dd5cd8cc9500c86924569bb879a0886ea0e38427c7bd60d24d994ee0f39b"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_hook.py"
+        }
+      ],
+      "gate": "python -m pytest tool",
+      "labels": [
+        "validation",
+        "normal-behaviour"
+      ],
+      "spec_version": 1,
+      "spec_digest": "218bc266a5d8ef0025dfec1d8b833b182c7241ec397dc8cc91e0295c5bbd25e4",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+        "R11",
+        "R12"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr106",
+      "merge_base": "f1f58e1aa305ea72f38894d86a3567502b2e6381",
+      "merge_commit": "32bb3a43ba00eef2cbceae3ab2800cbfcda5e1a9",
+      "hidden": [
+        {
+          "path": "tool/test_runtime.py",
+          "tests": [
+            "test_shutdown_marks_every_workflow_stopped_before_it_ends_the_remaining_providers"
+          ],
+          "digest": "aa2e9800d3ca447cb989e8122054d2b44b121ab7c399c178d67f24cbc8e1fc4c"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_agent.py"
+        }
+      ],
+      "gate": "python -m pytest tool",
+      "labels": [
+        "interface-compatibility",
+        "multi-file-cooperation"
+      ],
+      "spec_version": 1,
+      "spec_digest": "00d081544c30434bfda5db161667b64b408b8b3e5acfd8808e2e65191507d5e7",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr161",
+      "merge_base": "0fbef12cdadc828e01e766159ccbc6ee42a6de81",
+      "merge_commit": "362c35b56aa7ab5d8630e0417edf0cf52adc0b93",
+      "hidden": [
+        {
+          "path": "tool/test_specs.py",
+          "tests": [
+            "test_a_spec_attached_to_a_pr_into_a_non_default_base_is_republished_there"
+          ],
+          "digest": "1077cd7e092917c3cfd14cc5d5497a55635707a9c73e9c8d4d9bf8db3b3df452"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_specs.py"
+        }
+      ],
+      "gate": "python -m pytest tool",
+      "labels": [
+        "state-change",
+        "interface-compatibility"
+      ],
+      "spec_version": 1,
+      "spec_digest": "811ee8eee98523eaa81b9427875675f60e345787deb77b9d67dded3a538f78ab",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R7",
+        "R8",
+        "R9"
+      ],
+      "equivalent": true
+    }
+  ],
+  "conditions": {
+    "A": "the spec brief the generator makes with SPEC_VIEWS off (specs.brief), after the work-spec rules",
+    "B": "the enriched spec as the human document (specs.human), after the work-spec rules",
+    "C": "the same frozen snapshot as JSON: id, rev, goal, out, original and specs.agent(spec) with every requirement",
+    "D": "id, rev, goal, out and specs.agent(spec, select); omitted requirements and the original by id from .spec-views/spec.json in the workspace"
+  },
+  "implementer": {
+    "name": "claude-cli",
+    "host": "Claude Code 2.1.319",
+    "model": "claude-opus-5-5",
+    "effort": "high"
+  },
+  "planner": {
+    "model": "claude-opus-5-5",
+    "effort": "high"
+  },
+  "repetitions": 2,
+  "concurrency": 3,
+  "retries": {
+    "per_cell": 0,
+    "infrastructure_reruns": 1
+  },
+  "limits": {
+    "session_seconds": 1800,
+    "cell_usd": 3.0,
+    "min_cell_usd": 0.5,
+    "prepare_usd": 2.0,
+    "tokens_per_cell": null,
+    "tokens_note": "The Claude Code CLI cannot cap tokens; every session is capped in USD (--max-budget-usd) and in wall time instead, the same for all four conditions.",
+    "test_seconds": 900,
+    "gate_seconds": 2400
+  },
+  "ceilings": {
+    "usd": 40,
+    "hours": 8
+  },
+  "metrics": {
+    "primary": "verified task success: every hidden test passes, the affected existing test files (as the merge base wrote them) pass, and the diff changes no forbidden path; a timeout, budget or ceiling stop, or an exit without verification is a failure; the session's done-report is never evidence",
+    "unit": "one task, its repetitions averaged with equal weight per task; paired differences per task",
+    "secondary": [
+      "hidden-test pass fraction",
+      "regressions of affected tests",
+      "critical regressions",
+      "forbidden changes",
+      "failure causes",
+      "retries and infrastructure reruns",
+      "tokens",
+      "wall time",
+      "USD per cell",
+      "cost per verified success including failed runs and first-run spec generation"
+    ]
+  },
+  "pass_criteria": {
+    "pilot": [
+      "every task's B and C renderings pass specs.equivalent before the first run, and D's selection owes nothing it lacks",
+      "every hidden test passes on its merge commit and at least one fails on its merge base (reference check)",
+      "every cell that ran has a journal row with condition, task, repetition, code commit, spec version and digest, per-test results, USD and tokens or an explicit cap bound, wall time and failure cause",
+      "no stub row is counted as model performance"
+    ],
+    "adoption_reference": "Not judged in a pilot. Recorded for the main experiment as the person stated it: quality path — success rate at least 5 points above A with the 95% interval's lower end above 0, and the cost-per-success ratio's upper end at most 1.10 × A; cost path — the success difference's lower end at least -2 points, observed cost per success at least 15% lower and the ratio's upper end below 1; no critical regression on either path."
+  },
+  "infrastructure_rerun": "A cell whose session produced no model output and was not stopped by the harness (the CLI failed to start, or the API failed before any turn), or whose harness step raised, is journalled with infra true and run once more; the original row stays. A second infrastructure failure is final and counts as a failure. A timeout, budget or ceiling stop is never an infrastructure failure.",
+  "critical_regression": "A cell whose diff changes a forbidden path (the evaluation config or frozen specs, a spec record, D's spec copy, a hidden test's placed name), whose affected existing tests fail, or which deletes a tracked file.",
+  "runner_difference": "The controlled runner differs from production: a fresh one-commit repository from git archive instead of a worktree (no history, no remote, no PR or review loop); one isolated Claude Code session per cell (--system-prompt-file replacing the host prompt, no user or project settings, hooks, CLAUDE.md, MCP servers or AskUserQuestion, nothing persisted) instead of the app's write session with hooks, Jev's first-turn file filter and a person to ask; the first turn is only `Start.`; verification runs the hidden and affected tests rather than the adapter gate. The production-runner baseline runs condition A once per task with the app's session flags (host prompt kept, the person's settings and hooks loaded) and adds the merge base's Python gate command; the npm and browser steps are left out because the archived workspace has no node_modules.",
+  "report": {
+    "resamples": 2000,
+    "markdown": "docs/research/spec-views-pilot.md"
+  },
+  "adjustments": []
+}

@@ -1,0 +1,391 @@
+{
+  "task": "pr198",
+  "reference": {
+    "merge_commit": {
+      "hidden": {
+        "tool/test_loop.py::test_a_draft_pr_is_made_ready_by_the_merge_click": "passed"
+      },
+      "affected": {
+        "tool/test_loop.py": true
+      }
+    },
+    "merge_base": {
+      "hidden": {
+        "tool/test_loop.py::test_a_draft_pr_is_made_ready_by_the_merge_click": "failed"
+      },
+      "affected": {
+        "tool/test_loop.py": true
+      }
+    },
+    "discriminates": true
+  },
+  "baseline": {
+    "id": "pr198",
+    "rev": 1,
+    "goal": "Clicking merge on an approved spec merges its PR even when the PR was opened as a draft: the server marks it ready first, or stops with a 409 that gives the reason.",
+    "out": [
+      "The publish step (`pull_request`) that reuses an already-open PR: its draft handling stays as it is",
+      "`work-spec.md`'s permission for the work agent to open PRs itself (`gh pr create --draft`)",
+      "Restarting wiki-agent and clicking merge again on ai-coding-wiki #153: an operational step after this PR merges"
+    ],
+    "done": [
+      "python -m ruff check tool laya",
+      "The fake GitHub `Hub` in `tool/test_loop.py` tracks draft state per PR (e.g. `open(n, branch, draft=True)`), returns `isDraft` from `pr view --json`, rejects `gh pr merge` on a draft with `GraphQL: Pull Request is still a draft (mergePullRequest)`, and supports `gh pr ready <n>`, which clears the draft flag",
+      "New test `test_a_draft_pr_is_made_ready_by_the_merge_click`: with the `loop.py` change reverted, it fails with `머지하지 못했다 — GraphQL: Pull Request is still a draft`; with the change, it passes, the calls show `gh pr ready <n>` before `gh pr merge <n> --squash --match-head-commit <head>`, and the spec reaches the same merged state as an ordinary merge",
+      "A test where `gh pr ready` fails: the merge endpoint returns 409 with a message that includes GitHub's reason, `gh pr merge` is never called, and the spec stays `머지 가능` with no merge recorded",
+      "A non-draft PR merges with no `gh pr ready` call (existing merge tests still pass unchanged apart from the Hub additions)",
+      "`python -m pytest -q tool/test_loop.py -n 0 -k merge` passes; `ruff` and `python tool/debt.py check` pass, with any line-cap raise for `tool/main/loop.py` / `tool/test_loop.py` in `.wiki/ratchet.json` carrying a written reason"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/loop.py:2148",
+        "tool/main/loop.py:2234",
+        "tool/main/loop.py:2247",
+        "tool/main/loop.py:2254",
+        "tool/main/loop.py:786",
+        "tool/test_loop.py:64",
+        "tool/test_loop.py:139",
+        "tool/test_loop.py:2065",
+        "tool/debt.py:31"
+      ],
+      "rules": [
+        "craft/do-the-whole-instruction"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Fix only in `_merge_spec`, just before `gh pr merge`: read `isDraft` with `gh pr view`, and if it is true, run `gh pr ready <n>`, then merge with `--match-head-commit` as before",
+        "why": "Published PRs and PRs attached through Review Loop both pass through this one call. The person's merge click is itself the request to take the PR out of draft, so this is the single place that covers both, and it acts only with the person's consent",
+        "rejected": "Clearing the draft in the publish step (`pull_request`): it would miss PRs attached through Review Loop and would mark a PR ready before anyone approved it"
+      },
+      {
+        "what": "Check the draft state up front, inside the existing `hold` and after the work-folder HEAD/dirty check, rather than merging, catching the draft error and retrying",
+        "why": "One clear order (ready → merge), easy to assert in tests, and no parsing of GitHub error strings",
+        "rejected": "Retrying after the error: it relies on matching GitHub's error text and calls merge twice"
+      },
+      {
+        "what": "If `isDraft` can't be read or `gh pr ready` fails, raise HTTPException(409) with GitHub's reason (via `specs.said`) and do not call merge",
+        "why": "The person asked that a failed conversion stop with its reason; stopping keeps the spec at `머지 가능` so the click can be retried",
+        "rejected": "Trying the merge anyway, which only brings back the vaguer draft error the person already hit"
+      },
+      {
+        "what": "Make the fake `Hub` reject draft merges the way real GitHub does",
+        "why": "The fake merged drafts silently, which is why the suite never caught #153; the regression test has to fail without the fix",
+        "rejected": "A test that only asserts `pr ready` was called, which would pass even if a draft could not actually be merged"
+      },
+      {
+        "what": "Raise the `.wiki/ratchet.json` line caps for `tool/main/loop.py` and `tool/test_loop.py` with a written reason, rather than cutting code elsewhere",
+        "why": "This is a small P0 fix; refactoring to fit the cap is unrelated scope",
+        "rejected": "Pulling the merge helpers out into another module in this PR"
+      }
+    ]
+  },
+  "enriched": {
+    "id": "pr198",
+    "rev": 1,
+    "goal": "Clicking merge on an approved spec merges its PR even when the PR was opened as a draft: the server marks it ready first, or stops with a 409 that gives the reason.",
+    "out": [
+      "The publish step (`pull_request`) that reuses an already-open PR: its draft handling stays as it is",
+      "`work-spec.md`'s permission for the work agent to open PRs itself (`gh pr create --draft`)",
+      "Restarting wiki-agent and clicking merge again on ai-coding-wiki #153: an operational step after this PR merges"
+    ],
+    "done": [
+      "python -m ruff check tool laya",
+      "The fake GitHub `Hub` in `tool/test_loop.py` tracks draft state per PR (e.g. `open(n, branch, draft=True)`), returns `isDraft` from `pr view --json`, rejects `gh pr merge` on a draft with `GraphQL: Pull Request is still a draft (mergePullRequest)`, and supports `gh pr ready <n>`, which clears the draft flag",
+      "New test `test_a_draft_pr_is_made_ready_by_the_merge_click`: with the `loop.py` change reverted, it fails with `머지하지 못했다 — GraphQL: Pull Request is still a draft`; with the change, it passes, the calls show `gh pr ready <n>` before `gh pr merge <n> --squash --match-head-commit <head>`, and the spec reaches the same merged state as an ordinary merge",
+      "A test where `gh pr ready` fails: the merge endpoint returns 409 with a message that includes GitHub's reason, `gh pr merge` is never called, and the spec stays `머지 가능` with no merge recorded",
+      "A non-draft PR merges with no `gh pr ready` call (existing merge tests still pass unchanged apart from the Hub additions)",
+      "`python -m pytest -q tool/test_loop.py -n 0 -k merge` passes; `ruff` and `python tool/debt.py check` pass, with any line-cap raise for `tool/main/loop.py` / `tool/test_loop.py` in `.wiki/ratchet.json` carrying a written reason"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/loop.py:2148",
+        "tool/main/loop.py:2234",
+        "tool/main/loop.py:2247",
+        "tool/main/loop.py:2254",
+        "tool/main/loop.py:786",
+        "tool/test_loop.py:64",
+        "tool/test_loop.py:139",
+        "tool/test_loop.py:2065",
+        "tool/debt.py:31"
+      ],
+      "rules": [
+        "craft/do-the-whole-instruction"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Fix only in `_merge_spec`, just before `gh pr merge`: read `isDraft` with `gh pr view`, and if it is true, run `gh pr ready <n>`, then merge with `--match-head-commit` as before",
+        "why": "Published PRs and PRs attached through Review Loop both pass through this one call. The person's merge click is itself the request to take the PR out of draft, so this is the single place that covers both, and it acts only with the person's consent",
+        "rejected": "Clearing the draft in the publish step (`pull_request`): it would miss PRs attached through Review Loop and would mark a PR ready before anyone approved it"
+      },
+      {
+        "what": "Check the draft state up front, inside the existing `hold` and after the work-folder HEAD/dirty check, rather than merging, catching the draft error and retrying",
+        "why": "One clear order (ready → merge), easy to assert in tests, and no parsing of GitHub error strings",
+        "rejected": "Retrying after the error: it relies on matching GitHub's error text and calls merge twice"
+      },
+      {
+        "what": "If `isDraft` can't be read or `gh pr ready` fails, raise HTTPException(409) with GitHub's reason (via `specs.said`) and do not call merge",
+        "why": "The person asked that a failed conversion stop with its reason; stopping keeps the spec at `머지 가능` so the click can be retried",
+        "rejected": "Trying the merge anyway, which only brings back the vaguer draft error the person already hit"
+      },
+      {
+        "what": "Make the fake `Hub` reject draft merges the way real GitHub does",
+        "why": "The fake merged drafts silently, which is why the suite never caught #153; the regression test has to fail without the fix",
+        "rejected": "A test that only asserts `pr ready` was called, which would pass even if a draft could not actually be merged"
+      },
+      {
+        "what": "Raise the `.wiki/ratchet.json` line caps for `tool/main/loop.py` and `tool/test_loop.py` with a written reason, rather than cutting code elsewhere",
+        "why": "This is a small P0 fix; refactoring to fit the cap is unrelated scope",
+        "rejected": "Pulling the merge helpers out into another module in this PR"
+      }
+    ],
+    "original": "드래프트 PR 도 머지 버튼으로 머지되게 고치기\n\n## 무엇이 문제였나\n\nai-coding-wiki #153 은 리뷰에서 머지 허용이 났는데, 머지 버튼을 누르자 이렇게 멈췄다 (P0).\n\n`요청한 머지 중단 — 409: 머지하지 못했다 — GraphQL: Pull Request is still a draft (mergePullRequest)`\n\n## 원인\n\n- 작업 에이전트(Codex)가 구현 중에 PR 을 `gh pr create --draft` 로 직접 열었다. 작업 지시문(`work-spec.md`)은 작업 에이전트가 PR 을 여는 것을 허용한다.\n- 서버의 발행 단계(`pull_request`)는 이미 열린 PR 을 재사용해 제목과 본문만 갱신하고, 드래프트 상태는 그대로 두었다.\n- 머지(`_merge_spec`)는 `gh pr merge --squash` 만 호출하고 드래프트 여부를 보지 않았다. GitHub 은 드래프트 PR 의 머지를 거절한다.\n\n확인한 사실:\n- #153 은 생성 시점부터 `isDraft: true` 였다(전환 기록 없음).\n- 작업 기록에 `gh pr create --draft` 실행이 남아 있다.\n- 명세의 머지 진행 기록은 `GitHub에 squash 머지 요청 중` 다음에 위 오류로 끝난다.\n\n## 고친 것\n\n머지 직전에 PR 이 드래프트인지 확인하고, 드래프트면 `gh pr ready` 로 준비 상태로 바꾼 뒤 머지한다. 사람이 누른 머지 버튼이 곧 드래프트를 풀라는 요청이다. 발행된 PR 과 Review Loop 로 붙인 PR 이 모두 이 한 곳을 지나므로, 머지 경로에서만 고쳤다.\n\n준비 상태로 바꾸지 못하면 그 이유를 담아 409 로 멈춘다.\n\n## 검증\n\n- `tool/test_loop.py` 의 가짜 GitHub 이 실제 GitHub 처럼 드래프트 머지를 거절하게 했다. 새 테스트 `test_a_draft_pr_is_made_ready_by_the_merge_click` 을 더했다.\n  - 수정 전: 사용자가 본 것과 같은 `머지하지 못했다 — GraphQL: Pull Request is still a draft` 로 실패\n  - 수정 후: `pr ready` → `pr merge` 순서로 머지됨\n- `python -m pytest -q tool/test_loop.py -n 0 -k merge` 34개 통과. `ruff` 와 `python tool/debt.py check` 통과. 래칫은 loop.py 를 2834줄, test_loop.py 를 2720줄로 올리고 이유를 적었다.\n\n## 머지 뒤\n\nai-coding-wiki #153 명세는 아직 `머지 가능` 이다. 실행 중인 wiki-agent 를 새 코드로 재시작한 뒤 머지 버튼을 다시 누르면 된다.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "When the person clicks merge on a `머지 가능` spec whose PR is a draft, the server takes the PR out of draft and the squash merge goes through, ending in the same merged state as an ordinary merge.",
+        "source": {
+          "kind": "original",
+          "locator": "the request title and its '고친 것' section"
+        },
+        "status": "confirmed",
+        "preconditions": [
+          "The spec is `머지 가능` with an approved round",
+          "The PR on GitHub has `isDraft: true` (e.g. opened by the work agent with `gh pr create --draft`)"
+        ],
+        "postconditions": [
+          "`gh pr ready <n>` ran before `gh pr merge <n> --squash --match-head-commit <head>`",
+          "The spec moves to `머지 대기` and then through `landed` like any merge"
+        ],
+        "depends_on": [
+          "R3",
+          "R6"
+        ],
+        "context": [
+          "tool/main/loop.py",
+          "tool/test_loop.py"
+        ],
+        "verify": [
+          {
+            "item": "New test `test_a_draft_pr_is_made_ready_by_the_merge_click`: with the `loop.py` change reverted, it fails with `머지하지 못했다 — GraphQL: Pull Request is still a draft`; with the change, it passes, the calls show `gh pr ready <n>` before `gh pr merge <n> --squash --match-head-commit <head>`, and the spec reaches the same merged state as an ordinary merge",
+            "expected": "fails without the fix, passes with it, and `ready` comes before `merge` in `Hub.calls`"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "If the PR cannot be taken out of draft, the merge stops with HTTP 409 and a message that includes GitHub's reason, and no merge is attempted.",
+        "source": {
+          "kind": "original",
+          "locator": "the request's '고친 것' section, last paragraph"
+        },
+        "status": "confirmed",
+        "postconditions": [
+          "The spec stays `머지 가능` with no merge recorded, so the click can be retried"
+        ],
+        "failures": [
+          "`gh pr ready <n>` returns non-zero → 409 with `specs.said(...)` text; `gh pr merge` is not called"
+        ],
+        "depends_on": [
+          "R5"
+        ],
+        "context": [
+          "tool/main/loop.py",
+          "tool/main/specs.py"
+        ],
+        "verify": [
+          {
+            "item": "A test where `gh pr ready` fails: the merge endpoint returns 409 with a message that includes GitHub's reason, `gh pr merge` is never called, and the spec stays `머지 가능` with no merge recorded",
+            "expected": "409 with the reason in the message, no `pr merge` in `Hub.calls`, state `머지 가능`"
+          }
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "The fix lives only in `_merge_spec`, just before `gh pr merge`: read `isDraft` with `gh pr view`, run `gh pr ready <n>` only when it is true, then merge with `--match-head-commit` as before. The publish step is not changed.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 1 (fix only in `_merge_spec`)"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "A PR that is not a draft gets no `gh pr ready` call",
+          "The merge command and its `--match-head-commit` guard are unchanged"
+        ],
+        "context": [
+          "tool/main/loop.py"
+        ],
+        "verify": [
+          {
+            "item": "A non-draft PR merges with no `gh pr ready` call (existing merge tests still pass unchanged apart from the Hub additions)",
+            "expected": "existing merge tests pass; no `pr ready` in their calls"
+          }
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "The draft check runs up front, inside the second `hold` of `_merge_spec`, after the work-folder HEAD/dirty check and before `gh pr merge`. The code does not merge, catch the draft error and retry.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 2 (check up front, no retry)"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "`gh pr merge` is called at most once per click",
+          "No GitHub error text is matched to detect a draft"
+        ],
+        "depends_on": [
+          "R3"
+        ],
+        "context": [
+          "tool/main/loop.py"
+        ]
+      },
+      {
+        "id": "R5",
+        "text": "If `isDraft` cannot be read, or `gh pr ready` fails, `_merge_spec` raises HTTPException(409) carrying GitHub's reason via `specs.said` and does not call merge.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 3 (failure stops with 409)"
+        },
+        "status": "assumed",
+        "failures": [
+          "`gh pr view` for `isDraft` fails or returns unparsable JSON → 409 with the reason; this case has no done item of its own, so it is assumed to be handled the same way as a failed `gh pr ready`"
+        ],
+        "context": [
+          "tool/main/loop.py",
+          "tool/main/specs.py"
+        ]
+      },
+      {
+        "id": "R6",
+        "text": "The fake GitHub `Hub` in `tool/test_loop.py` behaves like real GitHub for drafts: it tracks draft state per PR, reports `isDraft` from `pr view --json`, rejects `gh pr merge` on a draft with GitHub's error text, and supports `gh pr ready <n>`.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 4 (Hub rejects draft merges)"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "PRs opened without `draft=True` behave exactly as before"
+        ],
+        "context": [
+          "tool/test_loop.py"
+        ],
+        "verify": [
+          {
+            "item": "The fake GitHub `Hub` in `tool/test_loop.py` tracks draft state per PR (e.g. `open(n, branch, draft=True)`), returns `isDraft` from `pr view --json`, rejects `gh pr merge` on a draft with `GraphQL: Pull Request is still a draft (mergePullRequest)`, and supports `gh pr ready <n>`, which clears the draft flag",
+            "expected": "Hub draft behaviour matches GitHub's"
+          }
+        ]
+      },
+      {
+        "id": "R7",
+        "text": "Any growth past the line caps for `tool/main/loop.py` and `tool/test_loop.py` is handled by raising their caps in `.wiki/ratchet.json` with a written reason, not by refactoring code elsewhere in this PR.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 5 (ratchet raise)"
+        },
+        "status": "confirmed",
+        "context": [
+          ".wiki/ratchet.json",
+          "tool/main/loop.py",
+          "tool/test_loop.py"
+        ],
+        "verify": [
+          {
+            "item": "`python -m pytest -q tool/test_loop.py -n 0 -k merge` passes; `ruff` and `python tool/debt.py check` pass, with any line-cap raise for `tool/main/loop.py` / `tool/test_loop.py` in `.wiki/ratchet.json` carrying a written reason",
+            "expected": "all pass; each raised cap has a reason"
+          },
+          {
+            "item": "python -m ruff check tool laya",
+            "expected": "no findings"
+          }
+        ]
+      },
+      {
+        "id": "R8",
+        "text": "Once `gh pr ready` has succeeded, the PR stays ready even if the merge that follows fails. Nothing turns it back into a draft, and the existing merge-failure handling (moved head, conflict, `머지하지 못했다`) applies unchanged.",
+        "source": {
+          "kind": "repository",
+          "locator": "tool/main/loop.py:2254-2267 (existing merge-failure handling)"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R3"
+        ],
+        "context": [
+          "tool/main/loop.py"
+        ]
+      },
+      {
+        "id": "R9",
+        "text": "Whether to log a separate merge progress entry (via `specs.merge_progress`) while the PR is taken out of draft, before the existing `GitHub에 squash 머지 요청 중` entry.",
+        "source": {
+          "kind": "repository",
+          "locator": "tool/main/loop.py:2246"
+        },
+        "status": "undecided",
+        "context": [
+          "tool/main/loop.py"
+        ]
+      }
+    ],
+    "spec_version": 1,
+    "spec_digest": "3535b496fbba2893d30957d1a36042dd2c3cf919aac5d8f66e65857e8d7cd56c"
+  },
+  "select": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
+    "R8"
+  ],
+  "costs": {
+    "generation": {
+      "usd": 0.19471679999999997,
+      "tokens": {
+        "input": 14,
+        "output": 3980,
+        "cache_read": 79104,
+        "cache_write": 12405
+      },
+      "turns": 10
+    },
+    "enrichment": {
+      "usd": 0.225086,
+      "tokens": {
+        "input": 10,
+        "output": 6842,
+        "cache_read": 48190,
+        "cache_write": 9821
+      },
+      "turns": 6
+    },
+    "selection": {
+      "usd": 0.031316000000000004,
+      "tokens": {
+        "input": 2,
+        "output": 181,
+        "cache_read": 0,
+        "cache_write": 3461
+      },
+      "turns": 1
+    }
+  },
+  "selection_cost": {
+    "usd": 0.031316000000000004,
+    "tokens": {
+      "input": 2,
+      "output": 181,
+      "cache_read": 0,
+      "cache_write": 3461
+    },
+    "turns": 1
+  }
+}
