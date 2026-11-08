@@ -37,7 +37,7 @@ import improvement
 from agent import ChatSession
 from common.budget import Budget, Cancelled, Exhausted
 
-from . import channels, loop, runtime, specs, work
+from . import channels, loop, prerequisite_review, runtime, specs, work
 from .query import ROOT, _lock, current_repo, hold
 
 PROMPT = (ROOT / "tool/prompts/plan-planner.md").read_text(encoding="utf-8")
@@ -978,7 +978,7 @@ def publish(worker: Worker, spec: dict, path: Path) -> None:
     if worker.halt.is_set():
         return worker.stop(worker.reason, "커밋은 했고 push 하지 않았다")
     branch = specs.branch_of(spec)
-    pushed = specs.sh(["git", "push", "-u", "origin", branch], path, 120)
+    pushed = prerequisite_review.push(path, spec, ["git", "push", "-u", "origin", branch])
     if pushed.returncode:
         return worker.stop("publish_failed", f"push 실패 — {specs.said(pushed)}")
     base = specs.base_of(spec, path)

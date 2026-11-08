@@ -15,7 +15,7 @@ import lint
 import repo_graph
 import repo_lint
 
-from . import architecture, query, runtime, specs, work
+from . import architecture, prerequisite_review, query, runtime, specs, work
 
 
 def git(path: Path, *args: str) -> str:
@@ -23,6 +23,13 @@ def git(path: Path, *args: str) -> str:
     if done.returncode:
         raise ValueError(specs.said(done))
     return done.stdout if "-z" in args else done.stdout.strip()
+
+
+def publish(path: Path, spec: dict) -> None:
+    """Push the preparation commit to the PR branch, never while declared local evidence leaked."""
+    done = prerequisite_review.push(path, spec, ["git", "push", "origin", f"HEAD:refs/heads/{specs.branch_of(spec)}"])
+    if done.returncode:
+        raise ValueError(specs.said(done))
 
 
 def changes(path: Path) -> set[str]:
@@ -229,7 +236,7 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
     if resumable and receipt.get("state") in ("committed", "complete") and receipt.get("head") == local:
         if receipt["state"] == "committed":
             specs.merge_progress(spec["repo"], spec["id"], "같은 PR에 준비 커밋 다시 올리는 중")
-            git(path, "push", "origin", f"HEAD:refs/heads/{specs.branch_of(spec)}")
+            publish(path, spec)
             specs.update(spec["repo"], spec["id"], maintenance={**receipt, "state": "complete"})
         return local
     receipt = {**identity, "source_head": head, "head": head, "state": "preparing"}
@@ -293,6 +300,6 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
         raise
     if prepared != head:
         specs.merge_progress(spec["repo"], spec["id"], "같은 PR에 준비 커밋 올리는 중")
-        git(path, "push", "origin", f"HEAD:refs/heads/{specs.branch_of(spec)}")
+        publish(path, spec)
     specs.update(spec["repo"], spec["id"], maintenance={**receipt, "state": "complete"})
     return prepared

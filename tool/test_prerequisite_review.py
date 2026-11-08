@@ -343,6 +343,29 @@ def test_the_server_never_pushes_a_commit_carrying_declared_evidence(world):
     assert "local/" not in git(world.origin, "ls-tree", "-r", "--name-only", spec["id"])
 
 
+def test_every_server_push_of_commits_goes_through_the_evidence_check():
+    """A new push that skips `prerequisite_review.push` fails here; deleting a remote branch uploads nothing."""
+    main = Path(prerequisite_review.__file__).parent
+    raw = [f"{source.name}:{n}" for source in sorted(main.glob("*.py"))
+           for n, line in enumerate(source.read_text(encoding="utf-8").splitlines(), 1)
+           if re.search(r"""["']push["']""", line) and "stash" not in line
+           and "prerequisite_review.push(" not in line and "--force-with-lease=refs/heads/{branch}:{approved}" not in line]
+    assert raw == []
+
+
+def test_merge_preparation_never_pushes_leaked_evidence(world):
+    from main import maintenance
+
+    spec, path = with_evidence(world)
+    spec["prerequisite_review"] = {**REQUEST, "evidence": EVIDENCE}
+    published = git(world.origin, "rev-parse", spec["id"])
+    git(path, "add", "-f", "local/dialogue.txt")
+    git(path, "commit", "-qm", "preparation commit carrying evidence")
+    with pytest.raises(ValueError, match="로컬 증거"):
+        maintenance.publish(path, spec)
+    assert git(world.origin, "rev-parse", spec["id"]) == published
+
+
 @pytest.mark.parametrize("leak", [False, True], ids=["kept-local", "force-committed"])
 def test_evidence_committed_after_a_passing_prerequisite_never_reaches_merge(world, leak):
     spec, path = with_evidence(world)
