@@ -539,6 +539,12 @@ def test_a_revision_drops_a_gate_gate_cmd_replaced_and_a_short_report_names_what
     assert '빠진 항목: 2번 "a"' in specs.shortfall(middle, spec), "중간 누락은 그 항목을 짚는다"
     worded = [{"item": f"항목 {k}", "pass": True} for k in range(3)]
     assert specs.shortfall(worded, spec) == "완료 보고 3개 / 명세 판 3 의 완료 조건 4개. 판정하지 않는다", "대조 못 하면 개수만"
+    twice = {"rev": 1, "done": ["gate", "a", "a", "b"]}
+    said = [{"item": t, "pass": True} for t in ("gate", "a", "other")]
+    assert "빠진 항목" not in specs.shortfall(said, twice), "중복 하나와 모르는 항목이 상쇄돼도 이름을 확정하지 않는다"
+    said[2]["item"] = "b"
+    assert "빠진 항목" not in specs.shortfall(said, twice), "중복 중 하나만 빠지면 어느 자리인지 모른다"
+    assert '빠진 항목: 2번 "a", 3번 "a"' in specs.shortfall(said[:1] + said[2:], twice)
 
 
 def test_a_draft_emitted_again_or_edited_drops_the_gate_gate_cmd_replaced(repo):

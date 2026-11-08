@@ -15,6 +15,7 @@ stays Korean.
 
 from __future__ import annotations
 
+import collections
 import json
 import os
 import re
@@ -1428,11 +1429,14 @@ def valid(items) -> bool:
 
 def shortfall(items: list[dict], spec: dict) -> str:
     """Why a report is not judged, item by number, or empty: a bare "failed or missing" left everyone guessing (#310).
-    An item is named missing only when the reported texts account for every other one; else just the counts."""
-    done, n, said = spec["done"], len(items), {i["item"].strip() for i in items}
-    missing = [f'{k}번 "{d}"' for k, d in enumerate(done, 1) if d not in said]
-    parts = [f"완료 보고 {n}개 / 명세 판 {spec['rev']} 의 완료 조건 {len(done)}개"
-             + (" — 빠진 항목: " + ", ".join(missing) if len(missing) == len(done) - n else "")] if n < len(done) else []
+    Items are named missing only when every reported text matches one item and each missing text is wholly
+    absent, so the positions are certain; else just the counts."""
+    done, n = spec["done"], len(items)
+    said, want = collections.Counter(i["item"].strip() for i in items), collections.Counter(done)
+    gone = want - said
+    named = not said - want and all(gone[d] == want[d] for d in gone)
+    parts = [f"완료 보고 {n}개 / 명세 판 {spec['rev']} 의 완료 조건 {len(done)}개" + (" — 빠진 항목: " + ", ".join(
+        f'{k}번 "{d}"' for k, d in enumerate(done, 1) if d in gone) if named else "")] if n < len(done) else []
     if failing := [f'{k}번 "{i["item"]}"' for k, i in enumerate(items, 1) if not i["pass"]]:
         parts.append("통과하지 못한 항목: " + ", ".join(failing))
     return "; ".join(parts) + ". 판정하지 않는다" if parts else ""
