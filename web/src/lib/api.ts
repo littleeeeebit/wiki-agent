@@ -616,6 +616,9 @@ export type Spec = {
     baseline?: { cmd: string; code: number | null; failures: string[] }; new?: string[]; pre_existing?: string[]
     measured?: { metric: string; task: string; argv: string[]; repeat: number; before: { median_ms: number }; after: { median_ms: number } } }
   refactor_frozen?: { tests: string[]; head: string }
+  /** The versioned requirements section (`spec_views`); its human document comes from `specViews`. */
+  requirements?: { id: string }[]
+  spec_version?: number
 }
 
 export const getSpecs = () =>
@@ -625,6 +628,7 @@ export const saveSpec = (id: string, body: { rev: number; goal: string; out: str
 export const startSpec = (id: string, choice: { model: string; effort: string; fast?: boolean }) =>
   post(`/api/specs/${id}/start`, choice).then((r) => json<{ path: string; turn: string }>(r, '시작'))
 export const dropSpec = (id: string) => post(`/api/specs/${id}/drop`).then((r) => json(r, '버리기'))
+export const specViews = (id: string) => get(`/api/specs/${id}/views`).then((r) => json<{ human: string }>(r, '요구사항 문서'))
 export const checkoutSpec = (id: string) => post(`/api/specs/${id}/checkout`).then((r) => json<{ path: string }>(r, '브랜치 열기'))
 
 // -- The Plan action -----------------------------------------------------------

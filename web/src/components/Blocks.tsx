@@ -6,6 +6,7 @@ import type { RefactorMode } from '@/components/Refactor'
 import { Btn } from '@/components/Modal'
 import { Amendments } from '@/components/Amendments'
 import { Removals } from '@/components/Removals'
+import { SpecViews } from '@/components/SpecViews'
 import type { Choice } from '@/components/Toolbar'
 import * as api from '@/lib/api'
 import type { Block, ChoiceQuestion, Spec } from '@/lib/api'
@@ -208,6 +209,7 @@ function SpecDetails({ spec, korean }: { spec: Spec; korean: boolean }) {
       {list('작업 셀의 보고', (spec.report ?? []).map((r) => `${r.pass ? '통과' : '실패'} · ${shown(r.item)}`))}
       {!!spec.revisions?.length && <div className="mt-2">변경 이력 · 현재 판 {spec.rev}</div>}
     </details>
+    <SpecViews key={spec.spec_version} spec={spec} />
   </div>
 }
 

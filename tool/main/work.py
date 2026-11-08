@@ -790,9 +790,12 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
             final, events = text, ()
             run.put({"kind": "done", "text": text, "meta": {}, "session_id": chat.id, "parent_id": chat.parent_id})
         elif decide:
-            from . import decisions  # `decisions` reads this module's sessions
+            from . import decisions, spec_views  # both read this module's sessions
 
-            sent, shown, kind = decisions.start_turn(path, run, text)
+            # `SPEC_VIEWS=on`: a dependency on an undecided requirement holds the turn; a stale prompt is rebuilt.
+            held = spec_views.first_turn(path, run)
+            chat = run.chat
+            sent, shown, kind = (None, held, "done") if held else decisions.start_turn(path, run, text)
             if run.halt.is_set():
                 sent, shown, kind = None, "사람이 멈춤", "error"
             if sent is None:

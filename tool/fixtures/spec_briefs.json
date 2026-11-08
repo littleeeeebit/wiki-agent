@@ -1,0 +1,50 @@
+{
+  "baseline-spec-two-views": {
+    "rev": 1,
+    "sha256": "1abbd01ad074a09c595299e08a72e9d62d23ffa31313c195e6c7807bf36539fb"
+  },
+  "feat-separated-self-improvement": {
+    "rev": 1,
+    "sha256": "2662f6f4b1bcc85709756def1011f685d92f70e2fedd85fe3f8eadfb51cda6bf"
+  },
+  "fix-native-hooks-review-recovery": {
+    "rev": 1,
+    "sha256": "1cc2fbc52e1028b16ba54e31cba57f44fa67473e432fa839b87d2467eb0bb1ee"
+  },
+  "jev-file-filter-at-work-start": {
+    "rev": 2,
+    "sha256": "27f533ba695b675fb46f0d71df2520bc6267362a19899798b447d3acd93e7953"
+  },
+  "jev-form-choice-registry-pr-form-refactor-mode": {
+    "rev": 1,
+    "sha256": "1a1e1f4a4e22add2bd80b372035054a79b7e607d6ca027c7f01a19c471b138df"
+  },
+  "loop-4-review-cell": {
+    "rev": 1,
+    "sha256": "3362768a3777ed563d5d0eef3973dc404bca5005067e1cdaee005f3f823f9a20"
+  },
+  "powershell-version-resolver-and-install": {
+    "rev": 1,
+    "sha256": "97a5f394ab7f0b6f342c81f1e64dac79ed9c35dd980b21570216a11845e86c15"
+  },
+  "readme-next-task-checks": {
+    "rev": 2,
+    "sha256": "d16e558e45580c7b668149e6b3695b1d602c1e95a188ca061038bf3e51874ee6"
+  },
+  "refactor-1-scanner": {
+    "rev": 1,
+    "sha256": "6dc1bb94970eb2da94ef281f1ff0ec5a1562fe9ed28fe86fdecf5601ce6a6448"
+  },
+  "spec-views-main-experiment": {
+    "rev": 1,
+    "sha256": "a9ba00e771459da8a8a5c22a36a52b3cfdf6afa66290a583fd4bce303caa4dfa"
+  },
+  "spec-views-pilot": {
+    "rev": 1,
+    "sha256": "55eec9228dcd8ef79eadd03d07f52f520f46779b773908ea8c542f1db32714f2"
+  },
+  "tool-call-guard-effect-algebra": {
+    "rev": 5,
+    "sha256": "27f9f4af7b3ac0526c1a0299a2a8f91105910e0bb11940ef33115d790074d9c0"
+  }
+}
