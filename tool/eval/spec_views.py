@@ -17,10 +17,11 @@ request's own tests then come in from outside, digest-checked, under names the
 session never saw; they and the affected test files run, the diff is checked for
 forbidden paths, and the workspace is removed. The done-report is never evidence.
 
-`prepare` checks the hidden tests against the reference, then generates, enriches,
-selects and freezes each spec (`eval/spec-views/specs/`). `run` refuses an
-uncommitted config and runs every pending cell under the ceilings. `report` is
-`spec_views_report`. The journal, `raw/eval/spec-views/<experiment>.journal.jsonl`,
+`prepare` (`spec_views_prepare`) checks the hidden tests against the reference, then
+generates, enriches, selects and freezes each spec (`eval/spec-views/specs/`). `run`
+refuses an uncommitted config or a frozen input that is not the one committed with it,
+failed its reference or equivalence check, and runs every pending cell under the
+ceilings. `report` is `spec_views_report`. The journal, `raw/eval/spec-views/<experiment>.journal.jsonl`,
 is appended only. The plan's "The comparison harness" section has the details.
 """
 
@@ -49,7 +50,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from common import python_environment  # noqa: E402
 from common.process import SUSPENDED, background_options, contained, killed, resumed, terminated  # noqa: E402
-from main import channels, spec_views, specs  # noqa: E402
+from main import spec_views, specs  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 RAW = ROOT / "raw" / "eval" / "spec-views"
@@ -65,22 +66,24 @@ FORBIDDEN = ("eval/spec-views/", "raw/specs/", ".spec-views/")
 D_FILE = ".spec-views/spec.json"
 D_NOTE = ("Requirements listed in `omitted` and the person's original request are in `.spec-views/spec.json` "
           "(the frozen spec record) in this workspace: read them by id when you need them. Never edit that file.")
-GENERATE = ("A person asked for the change below; their words follow verbatim. Nobody can answer questions in "
-            "this run: do not ask, settle open points yourself and say so in `decisions`. Read the repository as "
-            "you need, then end your answer with exactly one `spec` block for this change.\n\n---\n\n")
-ENRICH = ("Below are a person's request, verbatim, and the spec already settled for it. Emit the same spec again "
-          "as one `spec` block with a `requirements` section added. Keep `slug`, `goal`, `out`, `done` and "
-          "`decisions` exactly as they are. Carry every `done` item as a `verify` item whose `item` is the done "
-          "text verbatim, and every decision as a requirement with `source.kind` `decision`. Nobody can answer "
-          "questions: read the repository as you need and mark what you could not settle `assumed` or "
-          "`undecided`.\n\n## Request\n\n{original}\n\n## Spec\n\n```json\n{spec}\n```\n")
-SELECT = ("A write session will implement the spec below. List the requirement ids it must see in full to "
-          "implement and verify this change; the others stay available to it by id. Answer with one line: a "
-          "JSON list of ids, nothing else.\n\n```json\n{spec}\n```\n")
 
 
 class Refused(ValueError):
     """The experiment cannot run as configured."""
+
+
+class Ceiling(Exception):
+    """A ceiling ran out; the message names it (`wall` or `usd`)."""
+
+
+def bounded(limit: float, deadline: float | None) -> float:
+    """`limit` seconds, cut to what the shared wall deadline leaves; none left is a ceiling stop."""
+    if deadline is None:
+        return limit
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise Ceiling("wall")
+    return min(limit, left)
 
 
 def sha(data: bytes | str) -> str:
@@ -99,22 +102,28 @@ def git(root: Path, *args: str, binary: bool = False, check: bool = True):
 # -- configuration --------------------------------------------------------------
 
 def config(path: Path, root: Path = ROOT) -> dict:
-    """The experiment's config, refused unless the file is byte for byte the committed one."""
+    """The experiment's config, refused unless the file is the committed one. Its digest is the committed
+    content's; `config_commit` is the commit that last changed it, which the frozen records are bound to."""
 
     path = Path(path).resolve()
     rel = path.relative_to(root).as_posix()
-    data = path.read_bytes()
     committed = git(root, "show", f"HEAD:{rel}", binary=True, check=False)
     if not committed:
         raise Refused(f"{rel} is not committed: commit the config before any run")
-    if sha(committed) != sha(data):
-        raise Refused(f"{rel} differs from the committed config ({sha(data)[:12]} != {sha(committed)[:12]}): "
-                      "a changed setting is a new experiment id")
-    cfg = json.loads(data)
+    if not unchanged(root, rel, "HEAD"):
+        raise Refused(f"{rel} differs from the committed config: a changed setting is a new experiment id")
+    cfg = json.loads(committed)
     if cfg.get("schema") != SCHEMA:
         raise Refused(f"{rel}: schema must be {SCHEMA}")
-    cfg["config_digest"] = sha(data)
+    cfg.update(config_digest=sha(committed), config_root=str(root),
+               config_commit=git(root, "log", "-1", "--format=%H", "--", rel).strip())
     return cfg
+
+
+def unchanged(root: Path, rel: str, commit: str) -> bool:
+    """The working file is `commit`'s version, compared as Git stores it (line-end normalisation applied)."""
+    stored_id = git(root, "rev-parse", "-q", "--verify", f"{commit}:{rel}", check=False).strip()
+    return bool(stored_id) and git(root, "hash-object", "--", rel, check=False).strip() == stored_id
 
 
 def source(cfg: dict) -> Path:
@@ -349,18 +358,21 @@ def stored(cfg: dict, task_id: str, path: str) -> Path:
     return hidden_store(cfg) / task_id / path.replace("/", "__")
 
 
-def pytest(ws: Path, args: list[str], seconds: float) -> dict:
-    """`{case name: outcome}` from one pytest run, plus its exit code."""
+def pytest(ws: Path, args: list[str], seconds: float, deadline: float | None = None) -> dict:
+    """`{case name: outcome}` from one pytest run, plus its exit code; cut at the shared wall deadline."""
 
     junit = ws.parent / f"{ws.name}-{uuid.uuid4().hex[:8]}.xml"
     cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-n", "0", "--maxfail=0",
            f"--junitxml={junit}", *args]
+    seconds = bounded(seconds, deadline)
     try:
         done = subprocess.run(cmd, cwd=ws, capture_output=True, text=True, encoding="utf-8", errors="replace",
                               timeout=seconds, env={**python_environment(), "PYTHONDONTWRITEBYTECODE": "1"},
                               **background_options())
         code, tail = done.returncode, (done.stdout + done.stderr)[-1500:]
     except subprocess.TimeoutExpired as exc:
+        junit.unlink(missing_ok=True)
+        bounded(seconds, deadline)   # past the shared deadline: a ceiling stop, not a verdict
         code, tail = None, f"timed out after {seconds} s: {str(exc.output or '')[-1000:]}"
     cases = {}
     try:
@@ -386,8 +398,23 @@ def hidden_bytes(cfg: dict, task: dict, h: dict) -> bytes:
     return data
 
 
-def check_hidden(ws: Path, cfg: dict, task: dict, seconds: float) -> dict:
-    """Every hidden test copied in (digest checked) and run: `{test: passed|failed|skipped|missing}`."""
+def verdicts(cases: dict[str, str], tests: list[str], code: int | None) -> dict[str, str]:
+    """Per selected test: `passed` only when it ran and every one of its cases (parametrized ones too) passed;
+    `failed` when any case failed, `skipped` when any was skipped, `missing` when none ran. A run that exits
+    non-zero while every selected case passed (an error outside the cases, a timeout) passes none: `error`."""
+
+    out = {}
+    for t in tests:
+        seen = [o for name, o in cases.items() if name == t or name.startswith(t + "[")]
+        out[t] = ("missing" if not seen else "failed" if "failed" in seen
+                  else "skipped" if any(o != "passed" for o in seen) else "passed")
+    if code != 0 and all(v == "passed" for v in out.values()):
+        out = dict.fromkeys(out, "error")
+    return out
+
+
+def check_hidden(ws: Path, cfg: dict, task: dict, seconds: float, deadline: float | None = None) -> dict:
+    """Every hidden test copied in (digest checked) and run: `{test: passed|failed|skipped|missing|error}`."""
 
     out = {}
     for h in task["hidden"]:
@@ -395,21 +422,18 @@ def check_hidden(ws: Path, cfg: dict, task: dict, seconds: float) -> dict:
         target = placed(h["path"])
         (ws / target).parent.mkdir(parents=True, exist_ok=True)
         (ws / target).write_bytes(data)
-        got = pytest(ws, [f"{target}::{t}" for t in h["tests"]], seconds)
-        for t in h["tests"]:
-            seen = [o for name, o in got["cases"].items() if name == t or name.startswith(t + "[")]
-            out[f"{h['path']}::{t}"] = ("failed" if "failed" in seen else "skipped" if seen and set(seen) == {"skipped"}
-                                        else "passed" if seen else "missing")
+        got = pytest(ws, [f"{target}::{t}" for t in h["tests"]], seconds, deadline)
+        out |= {f"{h['path']}::{t}": v for t, v in verdicts(got["cases"], h["tests"], got["code"]).items()}
     return out
 
 
-def check_affected(ws: Path, task: dict, start: str, seconds: float) -> dict:
+def check_affected(ws: Path, task: dict, start: str, seconds: float, deadline: float | None = None) -> dict:
     """Each affected test file, restored to the merge base, run whole (or by its `-k`): passed or failed."""
 
     out = {}
     for a in task.get("affected") or []:
         git(ws, "checkout", start, "--", a["path"])
-        got = pytest(ws, [a["path"], *(["-k", a["k"]] if a.get("k") else [])], seconds)
+        got = pytest(ws, [a["path"], *(["-k", a["k"]] if a.get("k") else [])], seconds, deadline)
         failed = [n for n, o in got["cases"].items() if o == "failed"]
         out[a["path"]] = {"ok": got["code"] == 0 and not failed, "failed": failed[:20], "code": got["code"],
                           **({"tail": got["tail"]} if got["code"] != 0 else {})}
@@ -423,19 +447,21 @@ def changes(ws: Path, start: str) -> dict[str, str]:
     return dict(zip(parts[1::2], parts[0::2]))
 
 
-def evaluate(ws: Path, cfg: dict, task: dict, start: str) -> dict:
+def evaluate(ws: Path, cfg: dict, task: dict, start: str, deadline: float | None = None) -> dict:
     """Success: every hidden test passes, the affected files pass, no forbidden path changed. A critical
     regression (fixed before any run, `critical_regression` in the config): a forbidden change, an affected
-    test that fails, or a tracked file deleted."""
+    test that fails, or a tracked file deleted. Raises `Ceiling` when the shared deadline passes first."""
 
     changed = changes(ws, start)
     deleted = [p for p, status in changed.items() if status == "D"]
-    hidden_paths = {placed(h["path"]) for h in task["hidden"]}
-    forbidden = [p for p in changed if p.startswith(FORBIDDEN) or p in hidden_paths]
+    hidden_paths = sorted(placed(h["path"]) for h in task["hidden"])
+    # Untracked files under a forbidden path, ignore rules or not: `ls-files --others` without `--exclude*`.
+    unseen = [p for p in git(ws, "ls-files", "--others", "-z", "--", *FORBIDDEN, *hidden_paths).split("\0") if p]
+    forbidden = sorted({p for p in changed if p.startswith(FORBIDDEN) or p in hidden_paths} | set(unseen))
     edited = [a["path"] for a in task.get("affected") or [] if a["path"] in changed]
     seconds = cfg["limits"]["test_seconds"]
-    hidden = check_hidden(ws, cfg, task, seconds)
-    affected = check_affected(ws, task, start, seconds)
+    hidden = check_hidden(ws, cfg, task, seconds, deadline)
+    affected = check_affected(ws, task, start, seconds, deadline)
     # A skipped hidden test is no pass: every one passed on the reference (`reference`).
     ok = all(v == "passed" for v in hidden.values()) and all(a["ok"] for a in affected.values()) \
         and not forbidden
@@ -455,8 +481,12 @@ class Ledger:
         self.lock = threading.Lock()
         self.spent = sum(_charged(r) for r in past)
         self.reserved = 0.0
-        self.elapsed = sum(r.get("elapsed", 0) for r in past if r.get("kind") == "invocation")
+        # Preparation, reference checks and every run invocation count toward the same hours.
+        self.elapsed = sum(r.get("elapsed", 0) for r in past if r.get("kind") in ("invocation", "preparation"))
         self.deadline = time.monotonic() + cfg["ceilings"]["hours"] * 3600 - self.elapsed
+
+    def left(self, limit: float) -> float:
+        return bounded(limit, self.deadline)
 
     def reserve(self, cap: float, floor: float) -> float | None:
         with self.lock:
@@ -522,7 +552,7 @@ def run_cell(cfg: dict, task: dict, record: dict, condition: str, rep: int, impl
         if got["infra"]:
             row["success"] = False
         else:
-            ev = evaluate(ws, cfg, task, start)
+            ev = evaluate(ws, cfg, task, start, ledger.deadline)
             row.update(ev)
             row["success"] = bool(ev["success"] and not got["cause"])
             if got["cause"] and not row.get("failure"):
@@ -530,7 +560,9 @@ def run_cell(cfg: dict, task: dict, record: dict, condition: str, rep: int, impl
             elif not ev["success"]:
                 row["failure"] = "verification"
             if kind == "production_baseline" and task.get("gate"):
-                row["production_gate"] = gate(ws, task["gate"], cfg["limits"]["gate_seconds"])
+                row["production_gate"] = gate(ws, task["gate"], cfg["limits"]["gate_seconds"], ledger.deadline)
+    except Ceiling:   # the wall ran out before verification finished: no verdict, a ceiling failure
+        row.update(success=False, failure="ceiling", cause="ceiling")
     except Exception as exc:   # the harness or the machine failed: recorded, never a pass
         row.update(success=False, infra=True, cause="error", error=f"{type(exc).__name__}: {exc}"[:500],
                    usd_bound=row.get("usd_bound", 0))
@@ -541,15 +573,45 @@ def run_cell(cfg: dict, task: dict, record: dict, condition: str, rep: int, impl
     return journal(cfg, row)
 
 
-def gate(ws: Path, command: str, seconds: float) -> dict:
+def gate(ws: Path, command: str, seconds: float, deadline: float | None = None) -> dict:
     began = time.time()
+    seconds = bounded(seconds, deadline)
     try:
         done = subprocess.run(command, shell=True, cwd=ws, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=seconds, env=python_environment(), **background_options())
         return {"command": command, "ok": done.returncode == 0, "code": done.returncode,
                 "seconds": round(time.time() - began, 1), "tail": (done.stdout + done.stderr)[-1500:]}
     except subprocess.TimeoutExpired:
+        bounded(seconds, deadline)
         return {"command": command, "ok": False, "code": None, "seconds": seconds, "tail": "timed out"}
+
+
+def admitted(cfg: dict, task: dict, folder: Path) -> dict:
+    """The frozen record a task's cells may use, refused unless it is the one committed with the config, its
+    requirements still hash to the configured digest, its selection is the configured one, the reference check
+    discriminated with the affected files passing on both sides, and B and C are equivalent; every hidden
+    test's digest is checked too."""
+
+    tid, root = task["id"], Path(cfg.get("config_root") or ROOT)
+    file = folder / f"{tid}.json"
+    rel = file.resolve().relative_to(root.resolve()).as_posix()
+    if not cfg.get("config_commit") or not unchanged(root, rel, cfg["config_commit"]):
+        raise Refused(f"{tid}: frozen record {rel} is not the one committed with the config")
+    record = json.loads(file.read_text(encoding="utf-8"))
+    spec = record["enriched"]
+    if not spec_views.digest(spec.get("requirements") or []) == spec.get("spec_digest") == task["spec_digest"]:
+        raise Refused(f"{tid}: frozen spec digest differs from its requirements or the config")
+    if record.get("select") != task.get("select"):
+        raise Refused(f"{tid}: frozen selection differs from the config")
+    ref = record.get("reference") or {}
+    sides = [ref.get("merge_commit"), ref.get("merge_base")]
+    if not ref.get("discriminates") or not all(side and all(side.get("affected", {}).values()) for side in sides):
+        raise Refused(f"{tid}: the reference check failed; the hidden tests do not separate the answer")
+    if not task.get("equivalent") or not equivalence(record)["ok"]:
+        raise Refused(f"{tid}: B and C are not equivalent")
+    for h in task["hidden"]:
+        hidden_bytes(cfg, task, h)   # each cell checks again
+    return record
 
 
 def _done_report(text: str) -> object:
@@ -568,13 +630,7 @@ def run(cfg: dict, impl=None, production=None, folder: Path = SPECS, scratch: Pa
     impl = impl or implementer(cfg)
     production = production if production is not None else implementer(cfg, production=True)
     tasks = {t["id"]: t for t in cfg["tasks"]}
-    records = {}
-    for tid in tasks:
-        records[tid] = frozen(tid, folder)
-        if records[tid]["enriched"].get("spec_digest") != tasks[tid]["spec_digest"]:
-            raise Refused(f"{tid}: frozen spec digest differs from the config")
-        for h in tasks[tid]["hidden"]:
-            hidden_bytes(cfg, tasks[tid], h)   # every digest before the first cell; each cell checks again
+    records = {tid: admitted(cfg, t, folder) for tid, t in tasks.items()}   # all of them before the first cell
     past = rows(cfg)
     ledger = Ledger(cfg, past)
     stop = threading.Event()
@@ -628,121 +684,6 @@ def run(cfg: dict, impl=None, production=None, folder: Path = SPECS, scratch: Pa
     return {"stopped": stopped, "pending": len(left), "spent": ledger.spent}
 
 
-# -- preparation ------------------------------------------------------------------------------
-
-def spec_block(text: str) -> dict:
-    found = re.findall(r"```spec[ \t]*\r?\n(.*?)```", text or "", re.S)
-    if not found:
-        raise Refused("the generator returned no spec block")
-    block = json.loads(found[-1])
-    block = block[0] if isinstance(block, list) else block
-    if not isinstance(block.get("goal"), str) or not isinstance(block.get("done", []), list):
-        raise Refused("the spec block has no goal or done list")
-    return block
-
-
-def prepare(cfg: dict, tasks_file: Path, call=None, folder: Path = SPECS) -> list[dict]:
-    """Per task, once: hidden tests extracted and checked against the reference, the baseline spec generated
-    (feature off), enriched (on), D's selection made, all frozen and checked equivalent. Returns the config's
-    task entries with their digests; a frozen task is kept as it is."""
-
-    call = call or (lambda ws, system, message, tools: claude(
-        ws, system, message, {**cfg["planner"], "usd": cfg["limits"]["prepare_usd"],
-                              "seconds": cfg["limits"]["session_seconds"]}, threading.Event(), tools=tools))
-    listed = json.loads(Path(tasks_file).read_text(encoding="utf-8"))
-    entries = []
-    for task in listed["tasks"]:
-        if not task.get("vetted_by"):
-            raise Refused(f"{task['id']}: hidden tests not vetted by a person (`vetted_by`)")
-        hidden = []
-        for h in task["hidden"]:
-            data = git(ROOT, "show", f"{task['merge_commit']}:{h['path']}", binary=True)
-            target = stored(cfg, task["id"], h["path"])
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
-            hidden.append({**h, "digest": sha(data)})
-        task = {**task, "hidden": hidden}
-        file = folder / f"{task['id']}.json"
-        if not file.exists():
-            record = {"task": task["id"], "reference": reference(cfg, task)}
-            journal(cfg, {"kind": "reference", "task": task["id"], **record["reference"]})
-            record.update(freeze(cfg, task, call))
-            file.parent.mkdir(parents=True, exist_ok=True)
-            file.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        record = json.loads(file.read_text(encoding="utf-8"))
-        check = equivalence(record)
-        journal(cfg, {"kind": "equivalence", "task": task["id"], "spec_digest": record["enriched"]["spec_digest"],
-                      "spec_version": record["enriched"]["spec_version"], **check})
-        entries.append({k: task[k] for k in ("id", "merge_base", "merge_commit", "hidden", "affected", "gate", "labels")
-                        if k in task} | {"spec_version": record["enriched"]["spec_version"],
-                                         "spec_digest": record["enriched"]["spec_digest"], "select": record["select"],
-                                         "equivalent": check["ok"]})
-    return entries
-
-
-def reference(cfg: dict, task: dict) -> dict:
-    """The hidden tests pass on the pull request's own result and fail before it; the affected files pass on both."""
-
-    out = {}
-    for name, commit in (("merge_commit", task["merge_commit"]), ("merge_base", task["merge_base"])):
-        ws = Path(tempfile.gettempdir()) / "spec-views" / "reference" / f"{task['id']}-{name}-{uuid.uuid4().hex[:6]}"
-        try:
-            start = workspace(ROOT, commit, ws)
-            out[name] = {"hidden": check_hidden(ws, cfg, task, cfg["limits"]["test_seconds"]),
-                         "affected": {k: v["ok"] for k, v in check_affected(ws, task, start,
-                                                                             cfg["limits"]["test_seconds"]).items()}}
-        finally:
-            remove(ws)
-    m, b = out["merge_commit"], out["merge_base"]
-    out["discriminates"] = all(v == "passed" for v in m["hidden"].values()) and \
-        any(v != "passed" for v in b["hidden"].values())
-    return out
-
-
-def freeze(cfg: dict, task: dict, call) -> dict:
-    """The baseline spec (feature off), its enrichment (on) and D's selection, each one journalled model call."""
-
-    original = task["source"]["text"]
-    ws = Path(tempfile.gettempdir()) / "spec-views" / "prepare" / f"{task['id']}-{uuid.uuid4().hex[:6]}"
-    costs = {}
-    try:
-        workspace(ROOT, task["merge_base"], ws)
-        plain = channels.get("next").preamble
-        got = call(ws, plain, GENERATE + original, READ_TOOLS)
-        costs["generation"] = _cost(cfg, task, "generation", got)
-        block = spec_block(got["result"])
-        gate_cmd = task.get("round") or ""
-        baseline = {"id": task["id"], "rev": 1, "goal": block["goal"], "out": block.get("out") or [],
-                    "done": ([gate_cmd] if gate_cmd else []) + [d for d in block.get("done") or [] if d != gate_cmd],
-                    "grounds": block.get("grounds") or {}, "decisions": block.get("decisions") or []}
-        on = plain + "\n\n" + channels.REQUIREMENTS
-        shown = {k: baseline[k] for k in ("goal", "out", "done", "decisions")} | {"slug": task["id"]}
-        got = call(ws, on, ENRICH.format(original=original, spec=json.dumps(shown, ensure_ascii=False, indent=2)),
-                   READ_TOOLS)
-        costs["enrichment"] = _cost(cfg, task, "enrichment", got)
-        reqs = spec_views.requirements(spec_block(got["result"]).get("requirements") or [])
-        enriched = {**baseline, "original": original, "requirements": reqs}
-        spec_views.stamped(None, enriched)
-        got = call(ws, "", SELECT.format(spec=json.dumps(specs.agent(enriched), ensure_ascii=False)), "")
-        costs["selection"] = _cost(cfg, task, "selection", got)
-        picked = json.loads(re.search(r"\[.*?\]", got["result"], re.S).group(0))
-        ids = [r["id"] for r in reqs]
-        select = [i for i in ids if i in picked or any(r["id"] == i and r.get("global") for r in reqs)]
-    finally:
-        remove(ws)
-    return {"baseline": baseline, "enriched": enriched, "select": select or ids, "costs": costs,
-            "selection_cost": costs["selection"]}
-
-
-def _cost(cfg: dict, task: dict, step: str, got: dict) -> dict:
-    row = journal(cfg, {"kind": step, "task": task["id"], "usd": got["usd"], "tokens": got["tokens"],
-                        "turns": got["turns"], "cause": got["cause"], "error": got["error"],
-                        **({"usd_bound": cfg["limits"]["prepare_usd"]} if got["usd"] is None else {})})
-    if got["cause"] or got["error"]:
-        raise Refused(f"{task['id']}: {step} failed — {got['error'] or got['cause']}")
-    return {k: row[k] for k in ("usd", "tokens", "turns")}
-
-
 # -- final rows (`spec_views_report` reads the journal through these) -------------------------------
 
 def finals(past: list[dict], kind: str = "cell") -> dict[tuple, dict]:
@@ -769,6 +710,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "prepare":
             # Before the config is committed: it reads the draft and fills in the digests.
+            from eval.spec_views_prepare import prepare   # it imports this module
             cfg = json.loads(args.config.read_text(encoding="utf-8"))
             cfg["tasks"] = prepare(cfg, args.tasks)
             args.config.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

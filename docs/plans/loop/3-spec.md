@@ -425,16 +425,25 @@ the generator with the setting off, the enrichment with it on, and D's
 selection. Their results are frozen in `eval/spec-views/specs/<task>.json`.
 B and C are then checked with `specs.equivalent`, and the goal, scope and
 original must appear in B too. Each call's cost and the check go to the journal.
+Preparation spends from the same ceilings as the run, and its elapsed time
+counts toward the same hours.
 
-`run` refuses a config whose bytes differ from the committed file. It runs every
+`run` refuses a config that differs from the committed file. It also refuses
+before the first cell when a frozen record is not the one committed with the
+config, its requirements no longer hash to the configured digest, its selection
+is not the configured one, its reference check did not separate the answer, or
+B and C were not equivalent. It runs every
 (task, condition, repetition) in a seeded shuffled order. Each cell starts in a
 fresh one-commit repository made from an archive of the merge base. A worktree
 would let the session's history reach the merge commit, which is the answer. One
 isolated Claude Code session runs with the condition as its whole system prompt
 and `Start.` as its only turn. Then the hidden tests are copied in under names
-the session never saw, and their digests are checked. Next come the affected
-test files as the merge base wrote them, and a check of the diff for forbidden
-paths. Finally the workspace is removed.
+the session never saw, and their digests are checked. A hidden test passes only
+when every one of its cases passed and pytest exited cleanly. Next come the
+affected test files as the merge base wrote them, and a check for forbidden
+paths that also sees files hidden behind ignore rules. Verification stops at the
+shared wall deadline; a cell cut there is a ceiling failure, not a verdict.
+Finally the workspace is removed.
 
 The session's USD cap is the room left under the ceiling, so the ceiling holds
 while cells run in parallel. A cost the CLI never reported is charged at the

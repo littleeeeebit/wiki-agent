@@ -26,13 +26,15 @@ def report(cfg: dict) -> dict:
     per_condition = {}
     for c in CONDITIONS:
         runs = [r for (_, cc, _), r in counted.items() if cc == c]
+        # Outcomes come from the final row per cell; cost, tokens and time from every attempt, infra reruns too.
+        attempts = [r for r in past if r.get("kind") == "cell" and r.get("implementer") == real and r["condition"] == c]
         per_condition[c] = {
             "cells_run": len(runs), "successes": sum(bool(r.get("success")) for r in runs),
             "success_rate": boot([t for t in tasks if rate[(t, c)]], lambda g, c=c: mean([mean(rate[(t, c)]) for t in g]),
                                  resamples, seed, 0.95),
-            "usd": round(sum(_charged(r) for r in runs), 4),
-            "tokens": sum(sum((r.get("tokens") or {}).values()) for r in runs),
-            "wall_seconds": round(sum(r.get("wall_seconds") or 0 for r in runs), 1),
+            "attempts": len(attempts), "usd": round(sum(_charged(r) for r in attempts), 4),
+            "tokens": sum(sum((r.get("tokens") or {}).values()) for r in attempts),
+            "wall_seconds": round(sum(r.get("wall_seconds") or 0 for r in attempts), 1),
             "retries": sum(r.get("retries") or 0 for r in runs),
             "infra_reruns": sum(1 for r in past if r.get("kind") == "cell" and r.get("infra") and r["condition"] == c),
             "hidden_pass_fraction": mean([mean([v == "passed" for v in (r.get("hidden") or {}).values()] or [0])
@@ -67,6 +69,8 @@ def report(cfg: dict) -> dict:
                 for t in tasks},
             "equivalence": {r["task"]: r["ok"] for r in past if r.get("kind") == "equivalence"},
             "ceiling_stops": stops, "spent_usd": round(sum(_charged(r) for r in past), 4),
+            "elapsed_hours": round(sum(r.get("elapsed", 0) for r in past
+                                       if r.get("kind") in ("invocation", "preparation")) / 3600, 3),
             "resume": f"python tool/eval/spec_views.py run --config {cfg['path']}",
             "adjustments": (cfg.get("adjustments") or []) + [r for r in past if r.get("kind") == "adjustment"],
             "code_commits": _count(r.get("code_commit") for r in counted.values()),
@@ -91,7 +95,10 @@ def _generation(past: list[dict], tasks: list[str]) -> dict:
     """Spec-generation cost per task and step, and per condition as if that condition ran alone (first run);
     a repetition reuses the frozen spec at no further cost (cached)."""
 
-    step = {(r["task"], r["kind"]): _charged(r) for r in past if r.get("kind") in ("generation", "enrichment", "selection")}
+    step: dict[tuple, float] = {}   # every attempt at a step, failed ones too
+    for r in past:
+        if r.get("kind") in ("generation", "enrichment", "selection"):
+            step[(r["task"], r["kind"])] = step.get((r["task"], r["kind"]), 0) + _charged(r)
     need = {"A": ("generation",), "B": ("generation", "enrichment"), "C": ("generation", "enrichment"),
             "D": ("generation", "enrichment", "selection")}
     alone = {c: {t: round(sum(step.get((t, s), 0) for s in need[c]), 4) for t in tasks} for c in CONDITIONS}
@@ -113,7 +120,7 @@ def markdown(rep: dict, cfg: dict) -> str:
              f"Implementer: `{cfg['implementer'].get('model')}` at effort `{cfg['implementer'].get('effort')}`, "
              f"{cfg['repetitions']} repetitions, concurrency {cfg['concurrency']}, ceilings USD "
              f"{cfg['ceilings']['usd']} and {cfg['ceilings']['hours']} h. Config digest `{rep['config_digest'][:12]}`. "
-             f"Spent USD {rep['spent_usd']}.", "",
+             f"Spent USD {rep['spent_usd']} and {rep['elapsed_hours']} h, preparation included.", "",
              "## Verified task success per condition", "",
              "| Condition | Cells run | Successes | Success rate (95% CI over tasks) | Cell USD | First-run spec USD "
              "| USD per verified success | Regressions | Critical | Forbidden | Failures |",
@@ -165,6 +172,7 @@ def markdown(rep: dict, cfg: dict) -> str:
               "## Equivalence", "", "| Task | B–C equivalent |", "| --- | --- |"]
     lines += [f"| {t} | {ok} |" for t, ok in rep["equivalence"].items()]
     lines += ["", "## Adjustments during the pilot", ""]
-    lines += [f"- {a['what']} — tuned on {', '.join(a['tasks'])}; the main experiment must exclude these tasks."
+    lines += [f"- {a['what']} — " + (f"tuned on {', '.join(a['tasks'])}; the main experiment must exclude these tasks."
+                                     if a.get("tasks") else "not tuned on any task.")
               for a in rep["adjustments"]] or ["- None."]
     return "\n".join(lines) + "\n"

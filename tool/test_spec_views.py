@@ -457,6 +457,12 @@ def _git(cwd, *args):
     return harness.git(Path(cwd), *args)
 
 
+def commit_all(repo) -> str:
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "frozen")
+    return _git(repo, "rev-parse", "HEAD").strip()
+
+
 @pytest.fixture
 def replay(tmp_path):
     """A source repository whose one 'pull request' fixes `add`, its frozen spec and an experiment config."""
@@ -476,16 +482,21 @@ def replay(tmp_path):
     merge = _git(src, "rev-parse", "HEAD").strip()
     hidden = (src / "test_pkg.py").read_bytes()
     enriched = snapshot(goal="add adds", out=["Nothing else"])
+    sides = {"affected": {"test_other.py": True}}
     record = {"task": "t1", "baseline": {"id": "fixture", "rev": 1, "goal": "add adds", "out": ["Nothing else"],
                                         "done": ["python -m pytest"], "decisions": []},
-              "enriched": enriched, "select": ["R1"], "selection_cost": {"usd": 0.01}}
-    folder = tmp_path / "specs"
-    folder.mkdir()
+              "enriched": enriched, "select": ["R1"], "selection_cost": {"usd": 0.01},
+              "reference": {"discriminates": True, "merge_commit": sides, "merge_base": sides}}
+    hub = tmp_path / "frozen"   # the frozen records, committed with the config
+    folder = hub / "specs"
+    folder.mkdir(parents=True)
     (folder / "t1.json").write_text(json.dumps(record), encoding="utf-8")
+    _git(hub, "init", "-q")
     task = {"id": "t1", "merge_base": base, "merge_commit": merge, "spec_digest": enriched["spec_digest"],
             "hidden": [{"path": "test_pkg.py", "tests": ["test_add"], "digest": harness.sha(hidden)}],
-            "affected": [{"path": "test_other.py"}]}
+            "affected": [{"path": "test_other.py"}], "select": ["R1"], "equivalent": True}
     cfg = {"schema": harness.SCHEMA, "experiment": "t", "kind": "pilot", "config_digest": "d", "seed": 7,
+           "config_root": str(hub), "config_commit": commit_all(hub),
            "journal_dir": str(tmp_path / "raw"), "hidden_dir": str(tmp_path / "hidden"), "source_repo": str(src),
            "tasks": [task], "repetitions": 1, "concurrency": 1, "implementer": {"name": "claude-cli", "model": "m"},
            "ceilings": {"usd": 10, "hours": 1},
@@ -597,11 +608,15 @@ def test_a_config_that_is_not_the_committed_one_is_refused(replay, tmp_path):
     assert not ran(replay.cfg)   # a refused check records no result
 
 
+@pytest.mark.parametrize("ignored", [False, True], ids=["tracked-or-new", "behind-an-ignore-rule"])
 @pytest.mark.parametrize("path", [harness.D_FILE, "eval/spec-views/pilot-1.json", "raw/specs/x/t1.json",
                                   "test_hidden_pkg.py"])
-def test_a_forbidden_change_fails_the_cell_even_when_every_test_passes(replay, path):
+def test_a_forbidden_change_fails_the_cell_even_when_every_test_passes(replay, path, ignored):
     def script(ws, system, stop):
         fix(ws, system, stop)
+        if ignored:   # hidden from `git add -A`: the check must not depend on ignore rules
+            with (ws / ".gitignore").open("a", encoding="utf-8") as rules:
+                rules.write(f"\n{path.split('/')[0]}\n")
         (ws / path).parent.mkdir(parents=True, exist_ok=True)
         (ws / path).write_text("changed by the session", encoding="utf-8")
 
@@ -648,3 +663,130 @@ def test_the_usd_ceiling_stops_launching_before_a_cell_could_cross_it(replay):
     harness.run(cfg, stub(fix), stub(fix), replay.folder, replay.scratch)
     assert [r["usd_cap"] for r in ran(cfg)] == [0.15]   # the cap is the room left
     assert ran(cfg, ("ceiling_stop",))[0]["ceiling"] == "usd"
+
+
+def refrozen(replay, change, *, with_config: bool) -> dict:
+    """The fixture's frozen record changed by `change`; committed as the config's commit when `with_config`."""
+    file = replay.folder / "t1.json"
+    record = json.loads(file.read_text(encoding="utf-8"))
+    change(record)
+    file.write_text(json.dumps(record), encoding="utf-8")
+    commit = commit_all(Path(replay.cfg["config_root"]))
+    return {**replay.cfg, **({"config_commit": commit} if with_config else {})}
+
+
+def _req_text(r):
+    r["enriched"]["requirements"][0]["text"] = "a different requirement"   # its digest left as it was
+
+
+def _goal(r):
+    r["baseline"]["goal"] = "a different goal"
+
+
+def _select(r):
+    r["select"] = ["R2"]
+
+
+def _no_discrimination(r):
+    r["reference"]["discriminates"] = False
+
+
+def _affected_failed_at_base(r):
+    r["reference"]["merge_base"]["affected"]["test_other.py"] = False
+
+
+@pytest.mark.parametrize("change, with_config, refused", [
+    (_req_text, False, "not the one committed with the config"),
+    (_goal, False, "not the one committed with the config"),
+    (_select, False, "not the one committed with the config"),
+    (_req_text, True, "frozen spec digest differs from its requirements"),
+    (_select, True, "frozen selection differs"),
+    (_no_discrimination, True, "reference check failed"),
+    (_affected_failed_at_base, True, "reference check failed"),
+], ids=["requirement-after-config", "baseline-after-config", "selection-after-config", "requirement-digest-kept",
+        "selection-not-configured", "reference-did-not-discriminate", "reference-affected-failed"])
+def test_a_frozen_input_unlike_the_one_checked_with_the_config_refuses_the_run_before_any_cell(
+        replay, change, with_config, refused):
+    cfg = refrozen(replay, change, with_config=with_config)
+    with pytest.raises(harness.Refused, match=refused):
+        harness.run(cfg, stub(fix), stub(fix), replay.folder, replay.scratch)
+    assert not ran(cfg, ("start", "cell", "production_baseline"))
+
+
+def test_a_task_whose_b_and_c_were_not_equivalent_refuses_the_run(replay):
+    cfg = {**replay.cfg, "tasks": [{**replay.cfg["tasks"][0], "equivalent": False}]}
+    with pytest.raises(harness.Refused, match="B and C are not equivalent"):
+        harness.run(cfg, stub(fix), stub(fix), replay.folder, replay.scratch)
+    assert not ran(cfg, ("start", "cell"))
+
+
+@pytest.mark.parametrize("cases, code, verdict", [
+    ({"t": "passed"}, 0, "passed"),
+    ({"t[a]": "passed", "t[b]": "passed"}, 0, "passed"),
+    ({"t[a]": "passed", "t[b]": "skipped"}, 0, "skipped"),
+    ({"t": "skipped"}, 0, "skipped"),
+    ({"t[a]": "passed", "t[b]": "failed"}, 1, "failed"),
+    ({"t": "passed"}, 1, "error"),       # every case passed, the run did not
+    ({"t": "passed"}, None, "error"),    # cut by its timeout
+    ({"t2": "passed"}, 0, "missing"),    # another test whose name starts the same
+    ({}, 0, "missing"),
+])
+def test_a_hidden_test_passes_only_when_every_case_passed_and_the_run_exited_cleanly(cases, code, verdict):
+    assert harness.verdicts(cases, ["t"], code) == {"t": verdict}
+
+
+def test_a_failing_neighbour_does_not_turn_a_passing_hidden_test_into_an_error():
+    got = harness.verdicts({"t": "passed", "u": "failed"}, ["t", "u"], 1)
+    assert got == {"t": "passed", "u": "failed"}
+
+
+def test_verification_cut_by_the_wall_ceiling_is_a_ceiling_failure_not_a_verdict(replay):
+    def script(ws, system, stop):
+        fix(ws, system, stop)
+        assert stop.wait(30)   # a session that ends on its own just as the wall ceiling passes
+        return ""
+
+    cfg = {**replay.cfg, "ceilings": {"usd": 10, "hours": 2 / 3600}}
+    harness.run(cfg, stub(script), stub(fix), replay.folder, replay.scratch)
+    cells = ran(cfg)
+    assert len(cells) == 1 and cells[0]["failure"] == "ceiling" and not cells[0]["success"]
+    assert "hidden" not in cells[0]   # no verification ran past the deadline
+    with pytest.raises(harness.Ceiling, match="wall"):
+        harness.gate(replay.scratch, "exit 0", 60, harness.time.monotonic() - 1)
+
+
+@pytest.mark.parametrize("ceiling, earlier", [
+    ("usd", {"kind": "generation", "task": "t0", "usd": 9.8}),
+    ("wall", {"kind": "preparation", "elapsed": 3600}),
+])
+def test_preparation_spends_and_counts_time_inside_the_experiment_ceilings(replay, tmp_path, ceiling, earlier):
+    from eval import spec_views_prepare
+
+    cfg = {**replay.cfg, "planner": {"model": "m"}, "limits": {**replay.cfg["limits"], "prepare_usd": 0.5}}
+    harness.journal(cfg, earlier)
+    task = {**replay.cfg["tasks"][0], "vetted_by": "a person", "source": {"text": "make add add"}}
+    tasks_file = tmp_path / "tasks.json"
+    tasks_file.write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+    calls = []
+    with pytest.raises(harness.Refused, match=f"the {ceiling} ceiling stopped preparation"):
+        spec_views_prepare.prepare(cfg, tasks_file, lambda *a: calls.append(a), tmp_path / "unfrozen")
+    assert not calls   # no model call once the ceiling has no room
+    stop = ran(cfg, ("ceiling_stop",))
+    assert [(s["ceiling"], s["during"]) for s in stop] == [(ceiling, "prepare")]
+    prep = ran(cfg, ("preparation",))[-1]
+    assert prep["elapsed"] >= 0
+    past = harness.rows(cfg)
+    assert harness.Ledger(cfg, past).elapsed == sum(r.get("elapsed", 0) for r in past if r["kind"] == "preparation")
+
+
+def test_cost_per_verified_success_keeps_every_attempt_a_rerun_replaced(replay):
+    cfg = replay.cfg
+    cell = {"kind": "cell", "task": "t1", "condition": "A", "repetition": 1, "implementer": "claude-cli"}
+    harness.journal(cfg, {**cell, "usd": 1.0, "infra": True, "success": False})
+    harness.journal(cfg, {**cell, "usd": 0.5, "infra": False, "success": True})
+    for usd in (0.2, 0.3):   # a failed generation, then the one that was frozen
+        harness.journal(cfg, {"kind": "generation", "task": "t1", "usd": usd})
+    a = spec_report.report(cfg)["per_condition"]["A"]
+    assert (a["cells_run"], a["successes"], a["attempts"], a["usd"]) == (1, 1, 2, 1.5)
+    assert a["spec_generation_first_run_usd"] == 0.5
+    assert a["cost_per_verified_success"] == 2.0

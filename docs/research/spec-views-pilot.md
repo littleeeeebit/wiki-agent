@@ -2,7 +2,7 @@
 
 This is a pilot. It checks the harness, the B–C equivalence, the journal and the cost accounting. Its sample is far too small to support any adoption claim, and nothing here judges adoption.
 
-Implementer: `claude-opus-5-5` at effort `high`, 2 repetitions, concurrency 3, ceilings USD 40 and 8 h. Config digest `3536e32ee2da`. Spent USD 37.9952.
+Implementer: `claude-opus-5-5` at effort `high`, 2 repetitions, concurrency 3, ceilings USD 40 and 8 h. Config digest `3536e32ee2da`. Spent USD 37.9952 and 4.535 h, preparation included.
 
 ## Verified task success per condition
 
@@ -80,3 +80,4 @@ Code commits the counted cells ran on: `36123b312fa7` (4), `187bd136d63c` (39).
 ## Adjustments during the pilot
 
 - narrowed pr198's affected tool/test_loop.py from `-k merge` (34 tests, 16 minutes per evaluation) to the one existing merge test the change runs through, so evaluation fits the session and wall budgets — tuned on pr198; the main experiment must exclude these tasks.
+- harness repairs after the run: frozen records must be the ones committed with the config, hash to their digest, carry the configured selection, a discriminating reference and B–C equivalence; a hidden test passes only when every case passed and its pytest exited 0; forbidden paths are found behind ignore rules; verification and the production gate stop at the shared wall deadline; preparation spends and counts time inside the ceilings; cost per success keeps every attempt. The 43 cells journalled before were judged by the earlier rules: none ran past the wall deadline (the USD ceiling stopped the run at 4.06 h), every pr164 cell failed, no infrastructure rerun occurred and no preparation step was repeated, so none of those changes moves a reported number; a hidden pytest exit code was not journalled then, so a passing hidden test with a non-zero exit cannot be ruled out for those rows — not tuned on any task.
