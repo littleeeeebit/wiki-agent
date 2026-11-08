@@ -1,0 +1,499 @@
+{
+  "task": "pr46",
+  "reference": {
+    "merge_commit": {
+      "hidden": {
+        "tool/test_sources.py::test_the_listing_git_opens_no_window_and_is_otherwise_unchanged": "passed"
+      },
+      "affected": {
+        "tool/test_sources.py": true
+      }
+    },
+    "merge_base": {
+      "hidden": {
+        "tool/test_sources.py::test_the_listing_git_opens_no_window_and_is_otherwise_unchanged": "failed"
+      },
+      "affected": {
+        "tool/test_sources.py": true
+      }
+    },
+    "discriminates": true
+  },
+  "baseline": {
+    "id": "pr46",
+    "rev": 1,
+    "goal": "Children the detached search daemon launches on Windows (git ls-files in sources.listing, orca in daemon.orca) start with CREATE_NO_WINDOW through a new tool/common/process.py::background_options() helper, so asking a question in the desktop app no longer flashes a console window",
+    "out": [
+      "search.spawn in tool/search/__init__.py: its DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | breakaway flags and fallback stay as they are",
+      "web/src-tauri/src/main.rs: sidecar flag, PTY launching and window-close handling unchanged",
+      "Children the sidecar launches directly (git, gh, codex, claude): blueprint rows session_state.run, chat_local.CodexServer, chat_session, specs.sh/gate, knowledge.promote are not changed",
+      "Jev policy, translation, and any process-manager or window-hiding service",
+      "Fixing the observed case where a taskkill close request did not close the app"
+    ],
+    "done": [
+      "tool/common/process.py defines background_options(): returns {\"creationflags\": subprocess.CREATE_NO_WINDOW} when sys.platform == 'win32' and {} otherwise; it spawns nothing, mutates no environment, owns no lifecycle",
+      "tool/search/sources.py::listing passes **background_options() to its git ls-files subprocess.run, keeping argv, capture_output, timeout=30, check=True and UTF-8 decoding; the rglob fallback on OSError/SubprocessError is unchanged",
+      "tool/search/daemon.py::orca passes **background_options() to its subprocess.run, keeping argv, capture_output, timeout=5 and the None-on-failure path",
+      "One regression test in tool/test_sources.py intercepts subprocess.run in listing and asserts the argv is unchanged and CREATE_NO_WINDOW is passed exactly once on win32, and that background_options() returns {} on a non-Windows platform",
+      "Existing search/daemon spawn tests still pass (detach/breakaway fallback remains valid)",
+      "python tool/lint.py --check reports no new findings",
+      "Desktop capture with the release app, before and after, recorded under raw/diagnostics/processes/{before,after}/records.jsonl as {scenario, time, parent_pid, child_pid, executable, launch_site, window_seen} with no argv, environment or prompt text: before shows a window owned by the daemon's git; after shows that git launched with CREATE_NO_WINDOW and no window across startup, cold question, warm (second) question, answer rewrite and terminal opening",
+      "Stopping an active question (POST /api/knowledge/runs/{id}/cancel) ends claude.exe and its children, and the stream ends as stopped",
+      "Owner step (session stops and asks before the done report): the person opens the embedded terminal, types `echo terminal-ok`, and confirms the output and a fresh prompt",
+      "Owner step (session stops and asks before the done report): the person closes the app window with the X button; afterwards no sidecar, agent claude.exe or terminal pwsh process remains",
+      "docs/plans/reliability/1-processes.md step table: row 1 (Capture) marked done; the PR body names sources.listing's git as the confirmed responsible call site and daemon.orca as fixed by the same reasoning but not observed in the capture"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "docs/plans/reliability/1-processes.md",
+        "tool/search/sources.py:54",
+        "tool/search/daemon.py:1027",
+        "tool/search/__init__.py:77",
+        "tool/common/__init__.py",
+        "tool/test_sources.py"
+      ],
+      "rules": [
+        "Do not combine DETACHED_PROCESS with CREATE_NO_WINDOW in search.spawn without checking semantics (plan blueprint)",
+        "A launch error follows the original error path; never retry without hiding",
+        "Unobserved candidates are not presented as root causes"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Apply CREATE_NO_WINDOW only to the two runs inside the search daemon (sources.listing, daemon.orca)",
+        "why": "The process capture tied the visible window's PseudoConsoleWindow owner PID to git whose parent was the daemon; the daemon has no console because search.spawn uses DETACHED_PROCESS, so its children get a new console. Sidecar-launched children inherited the sidecar's hidden console and showed no window through startup, cold/warm questions, translation and terminal opening",
+        "rejected": "Applying the helper to every blueprint row (session_state, chat_local, chat_session, specs, knowledge.promote): no observed window, extra lifecycle risk"
+      },
+      {
+        "what": "Include daemon.orca although it did not run during the capture",
+        "why": "It has the same console-less parent and would flash the same way when it runs",
+        "rejected": "Fixing only the observed git call and leaving a known identical path open"
+      },
+      {
+        "what": "Leave search.spawn and main.rs untouched",
+        "why": "Fixing at the children's launch is the narrowest boundary; changing the daemon's detach flags would alter its detachment and job-breakaway semantics, which the plan forbids without separate treatment",
+        "rejected": "Replacing DETACHED_PROCESS with CREATE_NO_WINDOW on the daemon itself"
+      },
+      {
+        "what": "A small stdlib helper returning creationflags, not a wrapper that spawns",
+        "why": "Callers keep ownership of pipes, timeouts, cancellation and reaping; plan says reuse stdlib subprocess options and no process manager",
+        "rejected": "A run/Popen wrapper or window-hiding service"
+      },
+      {
+        "what": "Plan field points at row 2 (Fix); row 1 (Capture) is marked done in the plan doc by this same change, so the review profile is mixed",
+        "why": "This change delivers both the capture evidence and the fix, but the plan field takes a single row; settled without the person since no questions could be asked",
+        "rejected": "Leaving row 1 as Not started though its capture is the basis of this PR"
+      }
+    ]
+  },
+  "enriched": {
+    "id": "pr46",
+    "rev": 1,
+    "goal": "Children the detached search daemon launches on Windows (git ls-files in sources.listing, orca in daemon.orca) start with CREATE_NO_WINDOW through a new tool/common/process.py::background_options() helper, so asking a question in the desktop app no longer flashes a console window",
+    "out": [
+      "search.spawn in tool/search/__init__.py: its DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | breakaway flags and fallback stay as they are",
+      "web/src-tauri/src/main.rs: sidecar flag, PTY launching and window-close handling unchanged",
+      "Children the sidecar launches directly (git, gh, codex, claude): blueprint rows session_state.run, chat_local.CodexServer, chat_session, specs.sh/gate, knowledge.promote are not changed",
+      "Jev policy, translation, and any process-manager or window-hiding service",
+      "Fixing the observed case where a taskkill close request did not close the app"
+    ],
+    "done": [
+      "tool/common/process.py defines background_options(): returns {\"creationflags\": subprocess.CREATE_NO_WINDOW} when sys.platform == 'win32' and {} otherwise; it spawns nothing, mutates no environment, owns no lifecycle",
+      "tool/search/sources.py::listing passes **background_options() to its git ls-files subprocess.run, keeping argv, capture_output, timeout=30, check=True and UTF-8 decoding; the rglob fallback on OSError/SubprocessError is unchanged",
+      "tool/search/daemon.py::orca passes **background_options() to its subprocess.run, keeping argv, capture_output, timeout=5 and the None-on-failure path",
+      "One regression test in tool/test_sources.py intercepts subprocess.run in listing and asserts the argv is unchanged and CREATE_NO_WINDOW is passed exactly once on win32, and that background_options() returns {} on a non-Windows platform",
+      "Existing search/daemon spawn tests still pass (detach/breakaway fallback remains valid)",
+      "python tool/lint.py --check reports no new findings",
+      "Desktop capture with the release app, before and after, recorded under raw/diagnostics/processes/{before,after}/records.jsonl as {scenario, time, parent_pid, child_pid, executable, launch_site, window_seen} with no argv, environment or prompt text: before shows a window owned by the daemon's git; after shows that git launched with CREATE_NO_WINDOW and no window across startup, cold question, warm (second) question, answer rewrite and terminal opening",
+      "Stopping an active question (POST /api/knowledge/runs/{id}/cancel) ends claude.exe and its children, and the stream ends as stopped",
+      "Owner step (session stops and asks before the done report): the person opens the embedded terminal, types `echo terminal-ok`, and confirms the output and a fresh prompt",
+      "Owner step (session stops and asks before the done report): the person closes the app window with the X button; afterwards no sidecar, agent claude.exe or terminal pwsh process remains",
+      "docs/plans/reliability/1-processes.md step table: row 1 (Capture) marked done; the PR body names sources.listing's git as the confirmed responsible call site and daemon.orca as fixed by the same reasoning but not observed in the capture"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "docs/plans/reliability/1-processes.md",
+        "tool/search/sources.py:54",
+        "tool/search/daemon.py:1027",
+        "tool/search/__init__.py:77",
+        "tool/common/__init__.py",
+        "tool/test_sources.py"
+      ],
+      "rules": [
+        "Do not combine DETACHED_PROCESS with CREATE_NO_WINDOW in search.spawn without checking semantics (plan blueprint)",
+        "A launch error follows the original error path; never retry without hiding",
+        "Unobserved candidates are not presented as root causes"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Apply CREATE_NO_WINDOW only to the two runs inside the search daemon (sources.listing, daemon.orca)",
+        "why": "The process capture tied the visible window's PseudoConsoleWindow owner PID to git whose parent was the daemon; the daemon has no console because search.spawn uses DETACHED_PROCESS, so its children get a new console. Sidecar-launched children inherited the sidecar's hidden console and showed no window through startup, cold/warm questions, translation and terminal opening",
+        "rejected": "Applying the helper to every blueprint row (session_state, chat_local, chat_session, specs, knowledge.promote): no observed window, extra lifecycle risk"
+      },
+      {
+        "what": "Include daemon.orca although it did not run during the capture",
+        "why": "It has the same console-less parent and would flash the same way when it runs",
+        "rejected": "Fixing only the observed git call and leaving a known identical path open"
+      },
+      {
+        "what": "Leave search.spawn and main.rs untouched",
+        "why": "Fixing at the children's launch is the narrowest boundary; changing the daemon's detach flags would alter its detachment and job-breakaway semantics, which the plan forbids without separate treatment",
+        "rejected": "Replacing DETACHED_PROCESS with CREATE_NO_WINDOW on the daemon itself"
+      },
+      {
+        "what": "A small stdlib helper returning creationflags, not a wrapper that spawns",
+        "why": "Callers keep ownership of pipes, timeouts, cancellation and reaping; plan says reuse stdlib subprocess options and no process manager",
+        "rejected": "A run/Popen wrapper or window-hiding service"
+      },
+      {
+        "what": "Plan field points at row 2 (Fix); row 1 (Capture) is marked done in the plan doc by this same change, so the review profile is mixed",
+        "why": "This change delivers both the capture evidence and the fix, but the plan field takes a single row; settled without the person since no questions could be asked",
+        "rejected": "Leaving row 1 as Not started though its capture is the basis of this PR"
+      }
+    ],
+    "original": "fix: 분리된 검색 데몬의 자식이 창을 띄우지 않게 한다\n\n## 변경 요약\r\n\r\n신뢰성 계획 1단계(`docs/plans/reliability/1-processes.md`). 데스크톱 앱에서 질문할 때 콘솔 창이 번쩍이던 문제를 고친다.\r\n\r\n원인 (프로세스 캡처로 확인): `search.spawn` 은 검색 데몬을 `DETACHED_PROCESS` 로 띄워 데몬에 콘솔이 없다. 데몬이 색인하며 부르는 `git ls-files` (`tool/search/sources.py::listing`) 는 그래서 새 콘솔을 받고, 기본 터미널이 \"Windows 가 결정\" 이라 Windows Terminal 창으로 보였다. 창의 `PseudoConsoleWindow` 소유 PID 가 그 `git` 이었고, 부모는 데몬이었다. 두 번째(웜) 질문에서 재현됐다.\r\n\r\n- `tool/common/process.py::background_options()` — Windows 에서 `CREATE_NO_WINDOW`, 그 밖에서는 빈 옵션\r\n- 데몬 안에서 도는 두 실행에 적용: `sources.listing`, `daemon.orca` (`orca` 는 캡처 중 실행되지 않았다. 같은 콘솔 없는 부모라서 함께 고친다)\r\n- 회귀 테스트 1개 (`tool/test_sources.py`): 인자 그대로, 플래그 한 번, 비 Windows 에서는 빈 옵션\r\n\r\n바꾸지 않은 것: 사이드카가 직접 띄우는 자식(`git`, `gh`, `codex`, `claude`)은 사이드카의 숨은 콘솔을 물려받아 시작·콜드/웜 질문·번역·터미널 열기 내내 창이 없었다. 그래서 설계도의 `session_state`, `chat_local`, `chat_session`, `specs`, `knowledge.promote` 행은 바꾸지 않았다. `search.spawn` 과 `main.rs` 도 그대로다.\r\n\r\n## 확인\r\n\r\n- 캡처 전/후 (릴리스 앱, `raw/diagnostics/processes/{before,after}/records.jsonl`): 전 — 데몬의 `git` 에 창 1개. 후 — 같은 자리의 `git` 2회 모두 `CREATE_NO_WINDOW`, 창 없음\r\n- 앱을 닫으면 사이드카와 에이전트 자식이 남지 않는다\r\n- `python -m pytest -q tool`: 1021 통과, 2 건너뜀\r\n- `python tool/lint.py --check`: 새 발견 없음\r\n\r\n- 리뷰 1차 지적(P1)으로 바뀐 빌드에서 수용 확인을 더 돌렸다 (`raw/diagnostics/processes/accept/`)\r\n  - 진행 중 질문 멈춤: `/api/knowledge/runs/{id}/cancel` 뒤 `claude.exe` 와 그 자식(`git`, `conhost`)이 15.4초 안에 끝났고, 스트림은 멈춤으로 끝났다\r\n  - 내장 터미널: 소유자가 직접 `echo terminal-ok` 를 입력해 출력과 새 프롬프트를 확인했다. `pwsh` 콘솔은 숨은 채로 만들어졌고, 전체 실행 중 보이는 콘솔 창은 없었다\r\n  - 창 닫기: X 버튼으로 닫자 사이드카, 위키 대화의 `claude.exe`, 터미널의 `pwsh` 가 함께 정리됐다. 같은 실행에서 `taskkill` 닫기 요청 두 번은 전달됐지만 앱이 닫히지 않았다 (이전 실행에서는 닫혔다, `main.rs` 는 이 PR 에서 바뀌지 않았다)\r\n- 리뷰 루프: 1차 머지 불가(위 P1) → 2차 새 발견 없음, 머지 허용\r\n\r\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\r\n\r\n",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "A helper background_options() in tool/common/process.py returns CREATE_NO_WINDOW creationflags on Windows and an empty mapping elsewhere, and does nothing else (no spawning, no environment change, no lifecycle ownership).",
+        "source": {
+          "kind": "repository",
+          "locator": "docs/plans/reliability/1-processes.md:37"
+        },
+        "status": "confirmed",
+        "postconditions": [
+          "Calling it has no side effects",
+          "On non-Windows no Windows-only keyword value is introduced"
+        ],
+        "context": [
+          "tool/common/process.py"
+        ],
+        "verify": [
+          {
+            "item": "tool/common/process.py defines background_options(): returns {\"creationflags\": subprocess.CREATE_NO_WINDOW} when sys.platform == 'win32' and {} otherwise; it spawns nothing, mutates no environment, owns no lifecycle",
+            "expected": "Helper exists with exactly this behaviour"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "The git ls-files run in sources.listing, executed inside the console-less search daemon during indexing, starts without a console window while keeping its existing arguments, capture, timeout, check and decoding, and its rglob fallback.",
+        "source": {
+          "kind": "repository",
+          "locator": "tool/search/sources.py:54; docs/plans/reliability/1-processes.md:39"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "argv, capture_output, timeout=30, check=True and UTF-8 decoding unchanged",
+          "rglob fallback on OSError/SubprocessError unchanged"
+        ],
+        "depends_on": [
+          "R1"
+        ],
+        "context": [
+          "tool/search/sources.py"
+        ],
+        "verify": [
+          {
+            "item": "tool/search/sources.py::listing passes **background_options() to its git ls-files subprocess.run, keeping argv, capture_output, timeout=30, check=True and UTF-8 decoding; the rglob fallback on OSError/SubprocessError is unchanged",
+            "expected": "Only the creation options are added"
+          }
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "The orca run in daemon.orca starts without a console window while keeping its arguments, capture, timeout and None-on-failure behaviour.",
+        "source": {
+          "kind": "repository",
+          "locator": "tool/search/daemon.py:1027"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "argv, capture_output, timeout=5 unchanged",
+          "Returns None on failure as before"
+        ],
+        "depends_on": [
+          "R1"
+        ],
+        "context": [
+          "tool/search/daemon.py"
+        ],
+        "verify": [
+          {
+            "item": "tool/search/daemon.py::orca passes **background_options() to its subprocess.run, keeping argv, capture_output, timeout=5 and the None-on-failure path",
+            "expected": "Only the creation options are added"
+          }
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "A regression test proves the identified call keeps its argv and receives CREATE_NO_WINDOW exactly once on Windows, and that the helper yields no options on other platforms.",
+        "source": {
+          "kind": "repository",
+          "locator": "docs/plans/reliability/1-processes.md:78-79"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R1",
+          "R2"
+        ],
+        "context": [
+          "tool/test_sources.py"
+        ],
+        "verify": [
+          {
+            "item": "One regression test in tool/test_sources.py intercepts subprocess.run in listing and asserts the argv is unchanged and CREATE_NO_WINDOW is passed exactly once on win32, and that background_options() returns {} on a non-Windows platform",
+            "expected": "Test passes"
+          }
+        ]
+      },
+      {
+        "id": "R5",
+        "text": "The search daemon's own detach and job-breakaway launch, including its fallback, still behaves as before and its existing tests pass.",
+        "source": {
+          "kind": "repository",
+          "locator": "docs/plans/reliability/1-processes.md:83; tool/search/__init__.py:77"
+        },
+        "status": "assumed",
+        "context": [
+          "tool/search/__init__.py"
+        ],
+        "verify": [
+          {
+            "item": "Existing search/daemon spawn tests still pass (detach/breakaway fallback remains valid)",
+            "expected": "Tests pass unchanged"
+          }
+        ]
+      },
+      {
+        "id": "R6",
+        "text": "The change introduces no new lint findings.",
+        "source": {
+          "kind": "original",
+          "locator": "확인 section, lint line"
+        },
+        "status": "confirmed",
+        "verify": [
+          {
+            "item": "python tool/lint.py --check reports no new findings",
+            "expected": "No new findings"
+          }
+        ]
+      },
+      {
+        "id": "R7",
+        "text": "Before/after process captures from the release desktop app show the daemon's git owned a visible window before the fix and launches with CREATE_NO_WINDOW and no window after, across startup, cold and warm questions, answer rewrite and terminal opening; records hold no argv, environment or prompt text.",
+        "source": {
+          "kind": "original",
+          "locator": "변경 요약 원인 paragraph and 확인 capture line"
+        },
+        "status": "assumed",
+        "invariants": [
+          "Capture records contain no argv, environment or prompt text"
+        ],
+        "depends_on": [
+          "R2"
+        ],
+        "context": [
+          "raw/diagnostics/processes/before/records.jsonl",
+          "raw/diagnostics/processes/after/records.jsonl"
+        ],
+        "verify": [
+          {
+            "item": "Desktop capture with the release app, before and after, recorded under raw/diagnostics/processes/{before,after}/records.jsonl as {scenario, time, parent_pid, child_pid, executable, launch_site, window_seen} with no argv, environment or prompt text: before shows a window owned by the daemon's git; after shows that git launched with CREATE_NO_WINDOW and no window across startup, cold question, warm (second) question, answer rewrite and terminal opening",
+            "expected": "Before: one window from daemon git; after: none"
+          }
+        ]
+      },
+      {
+        "id": "R8",
+        "text": "Cancelling an active question terminates the agent process and its children, and the stream ends in the stopped state.",
+        "source": {
+          "kind": "repository",
+          "locator": "docs/plans/reliability/1-processes.md:80"
+        },
+        "status": "confirmed",
+        "verify": [
+          {
+            "item": "Stopping an active question (POST /api/knowledge/runs/{id}/cancel) ends claude.exe and its children, and the stream ends as stopped",
+            "expected": "No leftover claude.exe/git/conhost; stream reports stopped"
+          }
+        ]
+      },
+      {
+        "id": "R9",
+        "text": "The embedded terminal stays interactive; the person confirms it by typing a command, and the write session stops and asks for this before its done report.",
+        "source": {
+          "kind": "repository",
+          "locator": "docs/plans/reliability/1-processes.md:82"
+        },
+        "status": "confirmed",
+        "preconditions": [
+          "Release desktop app built from this branch is running"
+        ],
+        "verify": [
+          {
+            "item": "Owner step (session stops and asks before the done report): the person opens the embedded terminal, types `echo terminal-ok`, and confirms the output and a fresh prompt",
+            "expected": "Output 'terminal-ok' followed by a new prompt, confirmed by the person"
+          }
+        ]
+      },
+      {
+        "id": "R10",
+        "text": "Closing the app window with the X button leaves no sidecar, agent or terminal process behind; the person performs this and the write session waits for it.",
+        "source": {
+          "kind": "original",
+          "locator": "확인 section, 창 닫기 line"
+        },
+        "status": "confirmed",
+        "verify": [
+          {
+            "item": "Owner step (session stops and asks before the done report): the person closes the app window with the X button; afterwards no sidecar, agent claude.exe or terminal pwsh process remains",
+            "expected": "No sidecar, claude.exe or pwsh remains"
+          }
+        ]
+      },
+      {
+        "id": "R11",
+        "text": "The plan records the capture step as done, and the PR body distinguishes the confirmed call site (sources.listing's git) from the one fixed by the same reasoning without observation (daemon.orca).",
+        "source": {
+          "kind": "repository",
+          "locator": "docs/plans/reliability/1-processes.md:100"
+        },
+        "status": "assumed",
+        "context": [
+          "docs/plans/reliability/1-processes.md"
+        ],
+        "verify": [
+          {
+            "item": "docs/plans/reliability/1-processes.md step table: row 1 (Capture) marked done; the PR body names sources.listing's git as the confirmed responsible call site and daemon.orca as fixed by the same reasoning but not observed in the capture",
+            "expected": "Row 1 status is done; PR body states both call sites with their evidence status"
+          }
+        ]
+      },
+      {
+        "id": "R12",
+        "text": "Only the two runs inside the search daemon get the no-window option; sidecar-launched children (session_state, chat_local, chat_session, specs, knowledge.promote) are not changed.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[0]"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "No diff in tool/session_state.py, tool/agent/chat_local.py, tool/agent/chat_session.py, tool/main/specs.py, tool/main/knowledge.py for this purpose"
+        ]
+      },
+      {
+        "id": "R13",
+        "text": "daemon.orca is fixed alongside sources.listing although it was not observed running during the capture.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[1]"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R3"
+        ]
+      },
+      {
+        "id": "R14",
+        "text": "search.spawn and web/src-tauri/src/main.rs are left untouched; the fix sits at the children's launch, not the daemon's detach flags.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[2]"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "No diff in tool/search/__init__.py spawn flags or in web/src-tauri/src/main.rs"
+        ]
+      },
+      {
+        "id": "R15",
+        "text": "The helper only returns creation options; callers keep ownership of pipes, timeouts, cancellation and reaping, and no spawning wrapper is introduced.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[3]"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R1"
+        ]
+      },
+      {
+        "id": "R16",
+        "text": "The task's plan link is row 2 (Fix) while row 1 (Capture) is marked done in the plan document by the same change, so it is reviewed as mixed code and plan.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[4]"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R11"
+        ]
+      }
+    ],
+    "spec_version": 1,
+    "spec_digest": "1616274c9fd09982f7bffbca844b905cd6200b0b738c14acff4fc9d2cd2fc639"
+  },
+  "select": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
+    "R8",
+    "R9",
+    "R10",
+    "R11",
+    "R12",
+    "R14",
+    "R15"
+  ],
+  "costs": {
+    "generation": {
+      "usd": 0.15919,
+      "tokens": {
+        "input": 8,
+        "output": 4274,
+        "cache_read": 31550,
+        "cache_write": 8421
+      },
+      "turns": 8
+    },
+    "enrichment": {
+      "usd": 0.19212200000000001,
+      "tokens": {
+        "input": 4,
+        "output": 7061,
+        "cache_read": 14590,
+        "cache_write": 5996
+      },
+      "turns": 3
+    },
+    "selection": {
+      "usd": 0.038856,
+      "tokens": {
+        "input": 2,
+        "output": 246,
+        "cache_read": 0,
+        "cache_write": 4241
+      },
+      "turns": 1
+    }
+  },
+  "selection_cost": {
+    "usd": 0.038856,
+    "tokens": {
+      "input": 2,
+      "output": 246,
+      "cache_read": 0,
+      "cache_write": 4241
+    },
+    "turns": 1
+  }
+}

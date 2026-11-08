@@ -1,0 +1,423 @@
+{
+  "task": "pr166",
+  "reference": {
+    "merge_commit": {
+      "hidden": {
+        "tool/test_specs.py::test_legacy_final_debt_check_uses_the_attached_pr_base": "passed"
+      },
+      "affected": {
+        "tool/test_specs.py": true
+      }
+    },
+    "merge_base": {
+      "hidden": {
+        "tool/test_specs.py::test_legacy_final_debt_check_uses_the_attached_pr_base": "failed"
+      },
+      "affected": {
+        "tool/test_specs.py": true
+      }
+    },
+    "discriminates": true
+  },
+  "baseline": {
+    "id": "pr166",
+    "rev": 1,
+    "goal": "The final debt check compares against the spec's own base, else its linked PR's base. The pytest output hook blocks only a real pytest run piped into tail/head/grep. A cancelled question frees its work hold before its stream reports completion. Full CI passes on the final commit.",
+    "out": [
+      "Product timeouts and verification criteria: CI failures are fixed in test expectations and fixtures, not by loosening limits",
+      "Turning the hook into a security boundary that parses nested shells (bash -c \"...\", eval, subshells) in full",
+      "Changing the already-approved code of #160 (Laya), #162 (PR recovery) and #163 (work rail)",
+      "Real Laya labelling or retraining, restarting the live app, and a local full pytest run",
+      "Rewriting or replacing the #165 final CI evidence"
+    ],
+    "done": [
+      "python -m ruff check tool laya",
+      "In a repository with no verify policy, a spec without `base` whose `pr.base` is `dev` gets a `local_required` command whose debt check targets `dev`. An explicit `spec.base` still wins over `pr.base`, and a spec with neither keeps today's default. Each case has a regression test in tool/test_specs.py or tool/test_debt.py that fails before the fix",
+      "pytest_output.held_back returns '' for `echo pytest | tail`, `printf 'pytest\\n' | head`, `python script.py pytest | tail`, `command -v pytest | head` and `command -V pytest | tail`",
+      "pytest_output.held_back still names the stage for `pytest -q | tail`, `python -m pytest | head`, `py -3 -m pytest | grep x`, `time pytest | tail`, `env A=1 pytest | tail`, `env -i pytest | head`, `timeout 60 pytest | tail`, `timeout -k 5 60 python -m pytest | tail` and `.venv/Scripts/pytest.exe | tail`. `| tee log` and `pip install pytest | tail` are still allowed",
+      "The Claude and Codex hook paths (tool/deny.py and how the installer wires them) deny and allow the same cases, checked by tests in tool/test_hook.py",
+      "Fixed test expectations for the shared final command, plus the translation and TLS fixtures that failed in CI, pass on Windows CI with product timeouts unchanged. Giving TLS its full timeout back is caught by a failing test, and an injected 0.45 s delay in the translation charge still yields the right response-error classification",
+      "A test with a cancelled question checks at the entry of `run.finish` that the hold key is already free. It fails before the fix every time and passes after. Normal and failed completions still save the transcript, write the summary and send the notice, using the captured run id and repository",
+      "Lifecycle and transition tests for query holds pass, as do the normal and failed completion tests",
+      "Changed files pass ruff and the debt check, `git diff --check` is clean, and changed files are UTF-8 without BOM",
+      "Full CI (static checks, Laya, web lint/build/browser, Windows pytest) passes on the final commit. Any earlier failed run is kept and linked in the PR, never re-run on the same commit. The PR says which failed paths from earlier runs now pass in that run's JUnit"
+    ],
+    "grounds": {
+      "pages": [
+        "craft/do-the-whole-instruction"
+      ],
+      "files": [
+        "tool/main/specs.py:1074",
+        "tool/main/specs.py:1106",
+        "tool/main/specs.py:1065",
+        "tool/pytest_output.py:6",
+        "tool/deny.py:32",
+        "tool/main/query.py:932",
+        "tool/main/query.py:281",
+        "tool/main/work.py:775",
+        "tool/test_hook.py",
+        "tool/test_specs.py",
+        "tool/test_debt.py",
+        "tool/test_translate.py",
+        "tool/test_mobile_transport.py"
+      ],
+      "rules": [
+        "Keep product timeouts and verification criteria; fix fixtures, not limits",
+        "Never re-run a failed CI commit unchanged; keep failed runs as evidence",
+        "UTF-8 without BOM for changed files"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "In `local_required`, get the debt-check base from `own_base(spec)` (spec base, then linked PR base, then empty for the default)",
+        "why": "`required()` already uses `own_base` when a policy exists, so only the no-policy path forgot the PR base. Reusing the one helper keeps both paths on the same precedence",
+        "rejected": "Asking GitHub for the PR's base at check time: it needs the network, and the spec already carries `pr.base`"
+      },
+      {
+        "what": "The hook splits each pipe stage into tokens and finds the program that actually runs. It skips `time`, `env` (options and VAR=value) and `timeout` (options and the duration), then treats `pytest`/`pytest.exe` or a Python launcher with `-m pytest` as a run. `command -v/-V` counts as a lookup",
+        "why": "The old regex matched `pytest` anywhere in a stage, so echo/printf text and script arguments were blocked by mistake while wrapped runs were only caught by luck",
+        "rejected": "A full shell parser that follows `bash -c` and eval: too large for an output-visibility hook, and the PR states plainly that this is not a security boundary"
+      },
+      {
+        "what": "In the question stream's `finally`: try to save the transcript, then release the hold, then call `run.finish` and send the notice using run/repo/cid values captured beforehand",
+        "why": "A stream that reports completion before releasing lets the screen's next question hit a 409. The agent-work path already releases before telling the end",
+        "rejected": "Retrying the next question on 409 in the screen: it hides the race and adds a delay"
+      },
+      {
+        "what": "Fix CI failures by correcting the expected shared final command and making the translation and TLS fixtures robust to timing, with product timeouts unchanged",
+        "why": "The failures were wrong test assumptions, and loosening limits would weaken the product checks the PR keeps",
+        "rejected": "Giving TLS its full timeout back or raising the translation deadline"
+      },
+      {
+        "what": "Keep #165's final CI as evidence for the earlier merged code and report this PR's CI separately, never re-running a failed commit",
+        "why": "So the record does not suggest that #160-#164 each passed full verification when they were merged",
+        "rejected": "Re-running CI on the old commit until it passes"
+      }
+    ]
+  },
+  "enriched": {
+    "id": "pr166",
+    "rev": 1,
+    "goal": "The final debt check compares against the spec's own base, else its linked PR's base. The pytest output hook blocks only a real pytest run piped into tail/head/grep. A cancelled question frees its work hold before its stream reports completion. Full CI passes on the final commit.",
+    "out": [
+      "Product timeouts and verification criteria: CI failures are fixed in test expectations and fixtures, not by loosening limits",
+      "Turning the hook into a security boundary that parses nested shells (bash -c \"...\", eval, subshells) in full",
+      "Changing the already-approved code of #160 (Laya), #162 (PR recovery) and #163 (work rail)",
+      "Real Laya labelling or retraining, restarting the live app, and a local full pytest run",
+      "Rewriting or replacing the #165 final CI evidence"
+    ],
+    "done": [
+      "python -m ruff check tool laya",
+      "In a repository with no verify policy, a spec without `base` whose `pr.base` is `dev` gets a `local_required` command whose debt check targets `dev`. An explicit `spec.base` still wins over `pr.base`, and a spec with neither keeps today's default. Each case has a regression test in tool/test_specs.py or tool/test_debt.py that fails before the fix",
+      "pytest_output.held_back returns '' for `echo pytest | tail`, `printf 'pytest\\n' | head`, `python script.py pytest | tail`, `command -v pytest | head` and `command -V pytest | tail`",
+      "pytest_output.held_back still names the stage for `pytest -q | tail`, `python -m pytest | head`, `py -3 -m pytest | grep x`, `time pytest | tail`, `env A=1 pytest | tail`, `env -i pytest | head`, `timeout 60 pytest | tail`, `timeout -k 5 60 python -m pytest | tail` and `.venv/Scripts/pytest.exe | tail`. `| tee log` and `pip install pytest | tail` are still allowed",
+      "The Claude and Codex hook paths (tool/deny.py and how the installer wires them) deny and allow the same cases, checked by tests in tool/test_hook.py",
+      "Fixed test expectations for the shared final command, plus the translation and TLS fixtures that failed in CI, pass on Windows CI with product timeouts unchanged. Giving TLS its full timeout back is caught by a failing test, and an injected 0.45 s delay in the translation charge still yields the right response-error classification",
+      "A test with a cancelled question checks at the entry of `run.finish` that the hold key is already free. It fails before the fix every time and passes after. Normal and failed completions still save the transcript, write the summary and send the notice, using the captured run id and repository",
+      "Lifecycle and transition tests for query holds pass, as do the normal and failed completion tests",
+      "Changed files pass ruff and the debt check, `git diff --check` is clean, and changed files are UTF-8 without BOM",
+      "Full CI (static checks, Laya, web lint/build/browser, Windows pytest) passes on the final commit. Any earlier failed run is kept and linked in the PR, never re-run on the same commit. The PR says which failed paths from earlier runs now pass in that run's JUnit"
+    ],
+    "grounds": {
+      "pages": [
+        "craft/do-the-whole-instruction"
+      ],
+      "files": [
+        "tool/main/specs.py:1074",
+        "tool/main/specs.py:1106",
+        "tool/main/specs.py:1065",
+        "tool/pytest_output.py:6",
+        "tool/deny.py:32",
+        "tool/main/query.py:932",
+        "tool/main/query.py:281",
+        "tool/main/work.py:775",
+        "tool/test_hook.py",
+        "tool/test_specs.py",
+        "tool/test_debt.py",
+        "tool/test_translate.py",
+        "tool/test_mobile_transport.py"
+      ],
+      "rules": [
+        "Keep product timeouts and verification criteria; fix fixtures, not limits",
+        "Never re-run a failed CI commit unchanged; keep failed runs as evidence",
+        "UTF-8 without BOM for changed files"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "In `local_required`, get the debt-check base from `own_base(spec)` (spec base, then linked PR base, then empty for the default)",
+        "why": "`required()` already uses `own_base` when a policy exists, so only the no-policy path forgot the PR base. Reusing the one helper keeps both paths on the same precedence",
+        "rejected": "Asking GitHub for the PR's base at check time: it needs the network, and the spec already carries `pr.base`"
+      },
+      {
+        "what": "The hook splits each pipe stage into tokens and finds the program that actually runs. It skips `time`, `env` (options and VAR=value) and `timeout` (options and the duration), then treats `pytest`/`pytest.exe` or a Python launcher with `-m pytest` as a run. `command -v/-V` counts as a lookup",
+        "why": "The old regex matched `pytest` anywhere in a stage, so echo/printf text and script arguments were blocked by mistake while wrapped runs were only caught by luck",
+        "rejected": "A full shell parser that follows `bash -c` and eval: too large for an output-visibility hook, and the PR states plainly that this is not a security boundary"
+      },
+      {
+        "what": "In the question stream's `finally`: try to save the transcript, then release the hold, then call `run.finish` and send the notice using run/repo/cid values captured beforehand",
+        "why": "A stream that reports completion before releasing lets the screen's next question hit a 409. The agent-work path already releases before telling the end",
+        "rejected": "Retrying the next question on 409 in the screen: it hides the race and adds a delay"
+      },
+      {
+        "what": "Fix CI failures by correcting the expected shared final command and making the translation and TLS fixtures robust to timing, with product timeouts unchanged",
+        "why": "The failures were wrong test assumptions, and loosening limits would weaken the product checks the PR keeps",
+        "rejected": "Giving TLS its full timeout back or raising the translation deadline"
+      },
+      {
+        "what": "Keep #165's final CI as evidence for the earlier merged code and report this PR's CI separately, never re-running a failed commit",
+        "why": "So the record does not suggest that #160-#164 each passed full verification when they were merged",
+        "rejected": "Re-running CI on the old commit until it passes"
+      }
+    ],
+    "original": "사후 검증 보완: PR base·pytest 훅·취소 완료 경쟁 수정\n\n## 변경 요약\n\nCI 정책이 없는 저장소에서 명세에 base가 없고 연결된 PR만 dev를 가리키면, 최종 debt 검사가 기본 브랜치로 비교하던 누락을 고쳤습니다. 이제 명시적 명세 base, 연결된 PR base 순서를 최종 debt 검사에도 적용합니다.\n\npytest 출력 훅은 실행 파일과 Python의 -m 인자를 확인합니다. echo/printf나 Python 스크립트에 pytest가 인자로 나타나는 경우는 허용하고, 실제 pytest 실행을 tail/head로 보내는 경우는 계속 차단합니다.\n\ntime/env/timeout 옵션 뒤의 실행도 감지하며 command -v/-V 조회는 허용합니다. CI에서 드러난 공용 final 명령 기대값과 번역·TLS fixture도 보완했습니다. 제품 timeout과 검증 기준은 유지했습니다.\n\n취소된 질문의 완료 스트림이 작업 점유 해제보다 먼저 끝나 다음 질문이 잠시 거부될 수 있는 경쟁도 수정했습니다. 대화 기록 저장 시도 후 점유를 먼저 해제하고, 캡처된 실행·저장소 정보로 summary와 완료를 통지합니다.\n\n## 변경 이유\n\n- 이미 머지된 #160~164의 사후 독립 리뷰에서 발견한 base 전달 누락과 훅 오탐을 해결합니다.\n- 기존 #165 최종 CI는 이전 통합 코드의 증거로 보존하고, 이번 변경의 성공 증거와 구분합니다.\n- #160 Laya, #162 PR 복구, #163 작업 레일은 소스와 기존 통합 CI 증거로 승인됐습니다. #161과 #164의 발견 사항은 이 PR에서 해결했습니다. 과거 각 PR이 머지 당시 전체 검증을 통과했다는 의미는 아닙니다.\n\n## 검증\n\n- 수정 전 회귀 검사: base 전달 누락 1건과 문자열 명령 오탐 3건 재현.\n- 수정 후 집중 검사 19개 통과.\n- Claude/Codex 훅·설치 연결, base 선택, 정책 유무 검증을 포함한 관련 검사 66개 통과(20.44초).\n- 변경 파일 ruff, debt 검사, git diff --check 통과. UTF-8 without BOM 확인.\n- 최종 훅 집중 검사 27개 통과. GPT-5.6-Sol 독립 리뷰 6차: 224d136에서 머지 허용, 열린 P0/P1/P2 지적 없음.\n- 최초 최종 CI 39074977983: 정적 검사·Laya·웹 통과, Windows 2005개 통과·8개 실패·14개 건너뜀. 실패 기록을 보존했고 같은 커밋을 재시도하지 않았습니다.\n- 실패 경로 수정 후 집중 검사 12개 통과(48.24초). TLS에 전체 timeout을 다시 주는 변이는 검사에서 거부됐고, 번역 charge에 0.45초 지연을 주입해도 응답 오류 분류 검사가 통과했습니다.\n- 두 번째 최종 CI 39076749110: 정적 검사·Laya·웹 통과, Windows 2012개 통과·1개 실패·14개 건너뜀. 앞선 실패 8건은 모두 통과했고, 취소 완료와 점유 해제 순서의 경쟁 1건이 발견됐습니다.\n- 취소 경쟁은 finish 입구의 점유 여부를 직접 확인해 수정 전 매번 재현했고, 수정 후 수명·전환 검사 38개와 정상/실패 완료 검사 3개가 통과했습니다. 실패한 커밋을 그대로 재시도한 적은 없습니다.\n- 최종 CI: https://github.com/littleeeeebit/wiki-agent/actions/runs/39078172056 — 승인 커밋 224d136, attempt 1에서 전체 통과. Windows 2013개 통과·14개 건너뜀(923.606초), Laya 67개 통과·1개 건너뜀, 정적 검사·웹 lint·빌드·브라우저 통과.\n- 앞선 CI 두 번에서 실패한 9개 경로가 이번 JUnit에서 모두 실제 통과했음을 대조했습니다. 읽기 전용 status도 동일한 최종 증거를 재사용했고 새 검사나 CI를 시작하지 않았습니다.\n\n## 한계\n\n훅은 직접 실행과 일반 래퍼를 대상으로 하며 중첩 셸 전체를 해석하는 보안 경계는 아닙니다. 실제 Laya 라벨링·재학습, 운영 앱 재시작, 로컬 전체 pytest는 수행하지 않았습니다.\n",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "With no verify policy, the debt check in `local_required` uses `own_base(spec)`: the spec's own `base`, else `pr.base`, else empty for today's default. This is the same order `required()` already uses when a policy exists.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[0]: local_required gets the debt-check base from own_base(spec)"
+        },
+        "status": "confirmed",
+        "preconditions": [
+          "The repository has no verify policy (verify.policy returns nothing)"
+        ],
+        "postconditions": [
+          "A spec without `base` whose `pr.base` is `dev` gets a debt command that targets `dev`",
+          "An explicit `spec.base` wins over `pr.base`",
+          "A spec with neither `base` nor `pr.base` keeps the current default debt command"
+        ],
+        "invariants": [
+          "Getting the base needs no network or GitHub call"
+        ],
+        "context": [
+          "tool/main/specs.py",
+          "tool/test_specs.py",
+          "tool/test_debt.py"
+        ],
+        "verify": [
+          {
+            "item": "In a repository with no verify policy, a spec without `base` whose `pr.base` is `dev` gets a `local_required` command whose debt check targets `dev`. An explicit `spec.base` still wins over `pr.base`, and a spec with neither keeps today's default. Each case has a regression test in tool/test_specs.py or tool/test_debt.py that fails before the fix",
+            "expected": "All three cases pass after the fix, and the `pr.base`-only case fails on the code before the fix"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "`pytest_output.held_back` finds the program each pipe stage actually runs. It skips `time`, `env` (options and VAR=value) and `timeout` (options and duration). It blocks only a real pytest run (`pytest`, `pytest.exe`, or a Python launcher with `-m pytest`) piped into tail/head/grep. Text arguments and `command -v/-V` lookups are not blocked.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[1]: tokenise each pipe stage and find the program that runs"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "The hook is not a security boundary: `bash -c`, eval and subshells are not followed",
+          "`| tee log` and `pip install pytest | tail` stay allowed"
+        ],
+        "context": [
+          "tool/pytest_output.py",
+          "tool/test_hook.py"
+        ],
+        "verify": [
+          {
+            "item": "pytest_output.held_back returns '' for `echo pytest | tail`, `printf 'pytest\\n' | head`, `python script.py pytest | tail`, `command -v pytest | head` and `command -V pytest | tail`",
+            "expected": "Each command returns an empty string"
+          },
+          {
+            "item": "pytest_output.held_back still names the stage for `pytest -q | tail`, `python -m pytest | head`, `py -3 -m pytest | grep x`, `time pytest | tail`, `env A=1 pytest | tail`, `env -i pytest | head`, `timeout 60 pytest | tail`, `timeout -k 5 60 python -m pytest | tail` and `.venv/Scripts/pytest.exe | tail`. `| tee log` and `pip install pytest | tail` are still allowed",
+            "expected": "Each listed run returns a non-empty stage name; the tee and pip cases return empty"
+          }
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "The Claude and Codex hook paths give the same deny/allow result for the same commands.",
+        "source": {
+          "kind": "original",
+          "locator": "Verification section: Claude/Codex hook and installer wiring checks"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R2"
+        ],
+        "context": [
+          "tool/deny.py",
+          "tool/test_hook.py"
+        ],
+        "verify": [
+          {
+            "item": "The Claude and Codex hook paths (tool/deny.py and how the installer wires them) deny and allow the same cases, checked by tests in tool/test_hook.py",
+            "expected": "Both paths give identical results for the R2 command set"
+          }
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "When a question stream ends, it tries to save the transcript, then releases the work hold. Only after that does it call `run.finish` and send the notice, using the run id, repository and cid captured beforehand. A cancelled question's completion can then no longer reach the screen while the hold is still taken.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[2]: save transcript, release hold, then finish and notify with captured values"
+        },
+        "status": "confirmed",
+        "preconditions": [
+          "A question run holds a work hold key while it streams"
+        ],
+        "postconditions": [
+          "At the entry of `run.finish` the hold key is already free",
+          "Normal and failed completions still save the transcript, write the summary and send the notice"
+        ],
+        "invariants": [
+          "The hold is released even if saving the transcript raises",
+          "Cancelled runs still send no completion notice"
+        ],
+        "failures": [
+          "The screen's next question gets a 409 because the previous run's hold was still taken"
+        ],
+        "context": [
+          "tool/main/query.py"
+        ],
+        "verify": [
+          {
+            "item": "A test with a cancelled question checks at the entry of `run.finish` that the hold key is already free. It fails before the fix every time and passes after. Normal and failed completions still save the transcript, write the summary and send the notice, using the captured run id and repository",
+            "expected": "Fails on every run before the fix and passes after; normal and failed paths keep transcript, summary and notice"
+          },
+          {
+            "item": "Lifecycle and transition tests for query holds pass, as do the normal and failed completion tests",
+            "expected": "All pass"
+          }
+        ]
+      },
+      {
+        "id": "R5",
+        "text": "The CI failures are fixed by correcting the expected shared final command and making the translation and TLS fixtures robust to timing. No product timeout or verification limit changes.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[3]: fix CI failures in expectations and fixtures, product timeouts unchanged"
+        },
+        "status": "assumed",
+        "invariants": [
+          "Product timeouts and verification criteria are unchanged"
+        ],
+        "failures": [
+          "Giving TLS its full timeout back must make a test fail"
+        ],
+        "verify": [
+          {
+            "item": "Fixed test expectations for the shared final command, plus the translation and TLS fixtures that failed in CI, pass on Windows CI with product timeouts unchanged. Giving TLS its full timeout back is caught by a failing test, and an injected 0.45 s delay in the translation charge still yields the right response-error classification",
+            "expected": "Those tests pass on Windows CI; the TLS full-timeout change is caught; the 0.45 s delay still gives the right classification"
+          }
+        ]
+      },
+      {
+        "id": "R6",
+        "text": "Changed files are lint-clean, pass the debt check, have no whitespace errors, and are UTF-8 without BOM.",
+        "source": {
+          "kind": "original",
+          "locator": "Verification section: ruff, debt check, git diff --check, UTF-8 without BOM"
+        },
+        "status": "confirmed",
+        "verify": [
+          {
+            "item": "python -m ruff check tool laya",
+            "expected": "No findings"
+          },
+          {
+            "item": "Changed files pass ruff and the debt check, `git diff --check` is clean, and changed files are UTF-8 without BOM",
+            "expected": "All clean"
+          }
+        ]
+      },
+      {
+        "id": "R7",
+        "text": "#165's final CI stays as evidence for the earlier merged code, and this PR's CI is reported separately. A failed commit is never re-run. Earlier failed runs are kept and linked, and the PR names which earlier failed paths now pass in the final run's JUnit.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[4]: keep #165 CI evidence separate, never re-run a failed commit"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "#165's CI evidence is not rewritten or replaced",
+          "The PR does not claim #160-#164 each passed full verification when merged"
+        ],
+        "depends_on": [
+          "R1",
+          "R2",
+          "R4",
+          "R5"
+        ],
+        "verify": [
+          {
+            "item": "Full CI (static checks, Laya, web lint/build/browser, Windows pytest) passes on the final commit. Any earlier failed run is kept and linked in the PR, never re-run on the same commit. The PR says which failed paths from earlier runs now pass in that run's JUnit",
+            "expected": "Final-commit CI is green on every job; the PR links earlier failed runs and lists the paths that now pass"
+          }
+        ]
+      },
+      {
+        "id": "R8",
+        "text": "The already-approved code of #160 (Laya), #162 (PR recovery) and #163 (work rail) stays as it is. This task changes only what fixes the #161 and #164 findings and the CI failures.",
+        "source": {
+          "kind": "original",
+          "locator": "Reasons section: #160, #162 and #163 approved; #161 and #164 findings fixed here"
+        },
+        "status": "assumed",
+        "invariants": [
+          "No behaviour change in the Laya, PR recovery or work rail code paths"
+        ]
+      }
+    ],
+    "spec_version": 1,
+    "spec_digest": "aef5887422ef39f225c927a6b20edc0d928d80aab6d2af321f36199ef8241c8b"
+  },
+  "select": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R8"
+  ],
+  "costs": {
+    "generation": {
+      "usd": 0.31753580000000003,
+      "tokens": {
+        "input": 24,
+        "output": 6259,
+        "cache_read": 152539,
+        "cache_write": 20219
+      },
+      "turns": 18
+    },
+    "enrichment": {
+      "usd": 0.2456614,
+      "tokens": {
+        "input": 10,
+        "output": 7249,
+        "cache_read": 47287,
+        "cache_write": 11398
+      },
+      "turns": 7
+    },
+    "selection": {
+      "usd": 0.036072,
+      "tokens": {
+        "input": 2,
+        "output": 304,
+        "cache_read": 0,
+        "cache_write": 3748
+      },
+      "turns": 1
+    }
+  },
+  "selection_cost": {
+    "usd": 0.036072,
+    "tokens": {
+      "input": 2,
+      "output": 304,
+      "cache_read": 0,
+      "cache_write": 3748
+    },
+    "turns": 1
+  }
+}

@@ -2,10 +2,377 @@
   "schema": "spec-views-experiment/1",
   "experiment": "main-1",
   "kind": "main",
-  "code_commit": null,
+  "code_commit": "d5cd946aa1d387581ad6d9883cac75c3a2318c8b",
   "seed": 20261109,
   "tasks_file": "eval/spec-views/main-tasks.json",
-  "tasks": [],
+  "tasks": [
+    {
+      "id": "pr166",
+      "merge_base": "d816dcdcb6f23480dd59cabe154079e0d0a01233",
+      "merge_commit": "34a47e4f5e29bbfc000a8f4845a678623b040a42",
+      "hidden": [
+        {
+          "path": "tool/test_specs.py",
+          "tests": [
+            "test_legacy_final_debt_check_uses_the_attached_pr_base"
+          ],
+          "digest": "b1248694a2252db15b8a53c2459816226533d2f428d6a3a54cca00da968329d5"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_specs.py"
+        }
+      ],
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "spec_version": 1,
+      "spec_digest": "aef5887422ef39f225c927a6b20edc0d928d80aab6d2af321f36199ef8241c8b",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R8"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr46",
+      "merge_base": "0a24f12becc816f52c57fc6bdc4adc732679072d",
+      "merge_commit": "b1de267a3020867620d1986446b06de3069b22b4",
+      "hidden": [
+        {
+          "path": "tool/test_sources.py",
+          "tests": [
+            "test_the_listing_git_opens_no_window_and_is_otherwise_unchanged"
+          ],
+          "digest": "73eea4e480bf797e9c27f892da5911427434a1bdde2a6cca8b855a9b628ab0b2"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_sources.py"
+        }
+      ],
+      "gate": "python -m pytest tool",
+      "spec_version": 1,
+      "spec_digest": "1616274c9fd09982f7bffbca844b905cd6200b0b738c14acff4fc9d2cd2fc639",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+        "R10",
+        "R11",
+        "R12",
+        "R14",
+        "R15"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr219",
+      "merge_base": "9fc39ca1bdc0d6f68b85c92ef5c1a6d474e3fadb",
+      "merge_commit": "9c88a3a5a605f23241acb504f08599f508e446c7",
+      "hidden": [
+        {
+          "path": "tool/test_planning.py",
+          "tests": [
+            "test_a_decision_record_written_during_the_run_neither_stops_nor_joins_the_publication"
+          ],
+          "digest": "809acde19e4df75a665ab155bc2e14c17e85e1b44d5f2e40a90b59a2b90d1b55"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_planning.py"
+        }
+      ],
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "spec_version": 1,
+      "spec_digest": "4fdda7784d662df39164dea8d04dca6356f19def02e8894a8f2cc2e07c320c68",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr87",
+      "merge_base": "4665d258ef1cad5b1372480240066cda9a759ac7",
+      "merge_commit": "5e66685b0a28d350ad3eaad326e7ce5dbf926a19",
+      "hidden": [
+        {
+          "path": "tool/test_connect.py",
+          "tests": [
+            "test_connection_on_a_pc_with_only_one_cli",
+            "test_connection_probe_does_not_start_an_uninstalled_cli",
+            "test_connection_hub_respects_the_adapter_when_both_clis_are_installed"
+          ],
+          "digest": "4bfd20d956641dd4cbea9541ff739268768455f9b1d826eacd1ee8aac27f1aba"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_connect.py"
+        }
+      ],
+      "gate": "python -m pytest tool",
+      "spec_version": 1,
+      "spec_digest": "69e46f72d36ae58d0dcc6207921c1f1efed4fa33314e9fde208132987f9680a4",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+        "R10",
+        "R11",
+        "R12",
+        "R17"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr28",
+      "merge_base": "2a8de0102d8ad0534b6db412082c70c60970eb5c",
+      "merge_commit": "22fc03bc28cead29f1b0b726e07a4326faad7438",
+      "hidden": [
+        {
+          "path": "tool/test_agent.py",
+          "tests": [
+            "test_a_tool_line_shows_the_command_beside_what_it_is_for"
+          ],
+          "digest": "2982e259af382722ac04a582e9527e34171ea08ea62a705db33f77feb20cdece"
+        },
+        {
+          "path": "tool/test_main.py",
+          "tests": [
+            "test_a_cite_finds_its_file_the_ways_answers_write_it"
+          ],
+          "digest": "26998f3b776995f0a3211f6e2c81972fb573f6ced89c10fc38102fc5a131c7ca"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_agent.py"
+        },
+        {
+          "path": "tool/test_main.py"
+        }
+      ],
+      "gate": "python -m pytest tool",
+      "spec_version": 1,
+      "spec_digest": "5006f9831758de9ebadc54e73ff738ddbed4182465c305e45db7c39db182c1db",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+        "R10",
+        "R11",
+        "R12",
+        "R13",
+        "R14"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr299",
+      "merge_base": "8279639664e198cd31e15e5a9bc64460f2118be3",
+      "merge_commit": "2a5dd42478511ea77e762c2764dae7851eee3e1c",
+      "hidden": [
+        {
+          "path": "tool/test_specs.py",
+          "tests": [
+            "test_the_listing_leaves_out_what_no_screen_reads"
+          ],
+          "digest": "d416d639798dcc439f8925fd785281ed470ffcddcf12e120978dfa0d227ac3b4"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_specs.py"
+        }
+      ],
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "spec_version": 1,
+      "spec_digest": "fa7392f63eb1fbf920bccaf6e609644f827b41807f86cee0546248ae319be8bd",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr191",
+      "merge_base": "528dd93b9c269edbff20a81bc199f4ee122ba2fb",
+      "merge_commit": "f2c6b809f261a942503bd6203fbb4eb9246357c9",
+      "hidden": [
+        {
+          "path": "tool/test_loop_progress.py",
+          "tests": [
+            "test_a_pr_adopted_from_github_repairs_on_the_work_model_the_screen_chose"
+          ],
+          "digest": "2eba005111afc7c643af6a80ab493d90b6ab748803a0de2e4434d8dce3831037"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_loop_progress.py"
+        }
+      ],
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "spec_version": 1,
+      "spec_digest": "e1b7f4021b61f7bbf0331297d30a2bbb5c376eef633ed70d2255d6d3a37447f6",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+        "R10",
+        "R11"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr203",
+      "merge_base": "1d499a6e50187872353705f9f5f586a2bcf31c4f",
+      "merge_commit": "d22e050ddbcee957e065730e4e295399fb50b3a4",
+      "hidden": [
+        {
+          "path": "tool/test_connect.py",
+          "tests": [
+            "test_a_record_read_while_it_is_kept_does_not_fail_the_write"
+          ],
+          "digest": "99ab1bb12963f27a2d5b3b087bdc0c9c4f8c71cbc0d3d2c69349242287456807"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_connect.py"
+        }
+      ],
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "spec_version": 1,
+      "spec_digest": "a91ecb68ae63d5937a69e65ea0a13e711577f76b899625162a954c4afe097c7e",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr98",
+      "merge_base": "c8d586e1a239aefbdc1252e45eba5978e3fffbaa",
+      "merge_commit": "046afc86de5d67d4926517e8cc253abdea3c7c7e",
+      "hidden": [
+        {
+          "path": "tool/test_mobile.py",
+          "tests": [
+            "test_served_apk_survives_the_after_merge_scratch_cleanup"
+          ],
+          "digest": "965533676c914623f67cf06a237ebe6364dedd2003729003156476bf34a5d710"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_mobile.py"
+        }
+      ],
+      "gate": "python -m pytest tool",
+      "spec_version": 1,
+      "spec_digest": "50ff9bded4ea6f890aeb998ddf9b6867c19bce4ef62e77ad8c470f52b4e45b37",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+        "R10"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr125",
+      "merge_base": "f479ec4ed976626b23718da8e0be053ee5c84212",
+      "merge_commit": "6d2996c645c6b0f862617511fdb55892cd83bf1a",
+      "hidden": [
+        {
+          "path": "tool/test_decision_flow.py",
+          "tests": [
+            "test_a_host_answer_after_its_reasoning_is_still_its_answer",
+            "test_text_with_no_single_answer_that_ends_it_settles_nothing"
+          ],
+          "digest": "9a6f6dcee143193db7ed80944b5de53e0558a2b2a6602ea4087eb6080970bd43"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_decision_flow.py"
+        }
+      ],
+      "gate": "python -m pytest tool",
+      "spec_version": 1,
+      "spec_digest": "2fc2fbd1665b9be167be73b21dd20f00f6e9caad5bd25f8e70bd7cacee40dfcc",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+        "R10",
+        "R11",
+        "R13",
+        "R14"
+      ],
+      "equivalent": true
+    }
+  ],
   "conditions": {
     "A": "the spec brief the generator makes with SPEC_VIEWS off (specs.brief), after the work-spec rules",
     "B": "the enriched spec as the human document (specs.human), after the work-spec rules",
