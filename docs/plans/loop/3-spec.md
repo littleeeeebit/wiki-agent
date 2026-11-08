@@ -445,6 +445,12 @@ flags plus the merge base's Python gate. `report` reads the journal and writes
 `tool/test_spec_views.py` drives `run` with a scripted stub and sends no
 model requests.
 
+```bash
+python tool/eval/spec_views.py prepare --config eval/spec-views/pilot-1.json   # before the config is committed
+python tool/eval/spec_views.py run --config eval/spec-views/pilot-1.json       # also resumes
+python tool/eval/spec_views.py report --config eval/spec-views/pilot-1.json
+```
+
 ## Steps
 
 | # | Step | What | Status |
