@@ -412,8 +412,8 @@ def profiled(repo: Path, block: dict) -> dict:
     return review_contract.profile_fields(repo, block)
 
 
-def fields(repo: Path, block, gate: str, accepted: dict | None = None) -> dict:
-    """Validate settled fields, raising `ValueError`; always put the gate first.
+def fields(repo: Path, block, gate: str, accepted: dict | None = None, retired: frozenset = frozenset()) -> dict:
+    """Validate settled fields, raising `ValueError`; always put the gate first, once, dropping `retired` gates.
     `accepted` maps cited draft IDs to stage-7 verified evidence and revisions.
     Grounds contain only accepted claims; goals and decisions remain proposals
     requiring human approval."""
@@ -447,7 +447,7 @@ def fields(repo: Path, block, gate: str, accepted: dict | None = None) -> dict:
     return {
         "goal": " ".join(goal.split()),
         "out": strings(block.get("out"), "out"),
-        "done": [gate] + [d for d in strings(block.get("done"), "done") if d != gate],
+        "done": [gate] + [d for d in strings(block.get("done"), "done") if d != gate and d not in retired],
         "grounds": listed,
         "decisions": decided,
         **profiled(repo, block),
@@ -965,8 +965,10 @@ def revise(repo: Path, spec: dict, change: dict) -> None:
     gate = gated(repo, spec)
     if not gate:
         raise ValueError("저장소의 gate_cmd 를 먼저 연결해라")
+    # Every revision's first item was its gate; one a changed `gate_cmd` replaced is still no item of its own (#310).
+    retired = frozenset(r["done"][0] for r in [spec, *(spec.get("revisions") or [])] if r.get("done"))
     made = fields(repo, {**spec, **{k: change[k] for k in (
-        "goal", "out", "done", "review", "prerequisite_review", "requirements") if k in change}}, gate)
+        "goal", "out", "done", "review", "prerequisite_review", "requirements") if k in change}}, gate, retired=retired)
     if "requirements" in change:
         spec_views.introduced(spec.get("requirements") or [], made["requirements"],
                               f"spec-update to revision {spec['rev'] + 1}: {reason.strip()}")
@@ -1422,6 +1424,16 @@ def valid(items) -> bool:
         isinstance(i, dict) and isinstance(i.get("item"), str) and isinstance(i.get("pass"), bool) for i in items)
 
 
+def shortfall(items: list[dict], spec: dict) -> str:
+    """Why a report is not judged, item by number, or empty: a bare "failed or missing" left everyone guessing (#310)."""
+    done, n = spec["done"], len(items)
+    parts = [f"완료 보고 {n}개 / 명세 판 {spec['rev']} 의 완료 조건 {len(done)}개 — 빠진 항목: "
+             + ", ".join(f'{k}번 "{d}"' for k, d in enumerate(done, 1) if k > n)] if n < len(done) else []
+    if failing := [f'{k}번 "{i["item"]}"' for k, i in enumerate(items, 1) if not i["pass"]]:
+        parts.append("통과하지 못한 항목: " + ", ".join(failing))
+    return "; ".join(parts) + ". 판정하지 않는다" if parts else ""
+
+
 
 def base_of(spec: dict, path: Path) -> subprocess.CompletedProcess:
     """The branch the pull request goes to. A spec sent back by `[다시 PR]`
@@ -1733,8 +1745,8 @@ def _check(path: Path, run, final: str):
     spec = update(spec["repo"], spec["id"], report=items, report_asked=False, summary=None,   # text is per head
                   report_at={"head": sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), "rev": spec["rev"],
                              "turn": getattr(run, "turn", None)})
-    if len(items) < len(spec["done"]) or not all(i["pass"] for i in items):
-        return failed(run, spec, "완료 보고에 통과하지 못했거나 빠진 항목이 있다. 판정하지 않는다")
+    if short := shortfall(items, spec):
+        return failed(run, spec, short)
     cleanup = next((b.get("value") for b in blocks(final)[1] if b["name"] == "test-cleanup"), None)
     if sweep.valid(cleanup):
         spec = update(spec["repo"], spec["id"], test_cleanup=cleanup, sweep_asked=False)

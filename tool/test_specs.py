@@ -514,7 +514,27 @@ def test_a_passing_report_is_not_believed_over_a_failing_gate_or_an_uncommitted_
         Worker.replies = [report(True, False)]
         path = started(web, sid)
         assert specs.load("proj", sid)["gate"] is None and not remote.created()
-        assert any("통과하지 못했거나" in s["text"] for s in work.recall(Path(path))[-1]["steps"])
+        assert any('통과하지 못한 항목: 2번 "항목 1"' in s["text"] for s in work.recall(Path(path))[-1]["steps"])
+
+
+def test_a_revision_drops_a_gate_gate_cmd_replaced_and_a_short_report_names_what_is_missing(repo):
+    """#310: the old gate an agent copied back stayed as an item, and `7 < 8` stopped with no reason."""
+
+    _adapter(repo, PASS)
+    spec = specs.load("proj", made(repo, spec_block(slug="moved", done=["a", "b"]))[0]["id"])
+    _adapter(repo, "git status")
+    specs.revise(repo, spec, {"rev": 1, "reason": "split b", "goal": spec["goal"], "out": [], "done": [PASS, "a", "b", "c"]})
+    spec = specs.load("proj", spec["id"])
+    assert spec["done"] == ["git status", "a", "b", "c"], "옛 게이트는 항목으로 남지 않는다"
+    specs.revise(repo, spec, {"rev": 2, "reason": "again", "goal": spec["goal"], "out": [], "done": ["a", PASS, "b", "c"]})
+    spec = specs.load("proj", spec["id"])
+    assert spec["done"] == ["git status", "a", "b", "c"], "지난 판들의 게이트도 지운다"
+
+    items = [{"item": d, "pass": True} for d in spec["done"]]
+    assert specs.shortfall(items, spec) == "", "같은 개수의 통과 보고는 받아들여진다"
+    assert specs.shortfall(items[:3], spec) == '완료 보고 3개 / 명세 판 3 의 완료 조건 4개 — 빠진 항목: 4번 "c". 판정하지 않는다'
+    items[1]["pass"] = False
+    assert specs.shortfall(items, spec) == '통과하지 못한 항목: 2번 "a". 판정하지 않는다'
 
 
 def test_a_code_task_is_asked_once_for_its_test_cleanup_then_stopped(repo):
