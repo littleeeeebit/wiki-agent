@@ -265,7 +265,7 @@ def approved(repo: str) -> None:
             store(repo).stop("folder", f"설계 문서를 커밋하지 못했다 — {(done.stderr or done.stdout).strip()[-300:]}")
             return
     head = specs.sh(["git", "rev-parse", "HEAD"], tree, 30).stdout.strip()
-    saved(repo, oneshot={"stage": "tests", "design_head": head, "working": None})
+    saved(repo, oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
 
 
 def start(repo: str, work: str, *args, **fields) -> None:
@@ -356,12 +356,15 @@ def decide(repo: str, body: Decisions) -> dict:
             if not isinstance(d.get("edit"), str) or not d["edit"].strip():
                 raise HTTPException(400, f"{item}: 승인하거나 고칠 내용을 적어라")
             comments[item] = d["edit"].strip()
-        if not comments:
-            saved(repo, oneshot={"r1": {**o["r1"], "decisions": decisions}})
-            approved(repo)
+        if comments:
+            reach = sorted(sheet.dependents(o["design"], spec.get("requirements") or [], set(comments)))
+            start(repo, "redesign", comments, reach, r1={**o["r1"], "decisions": decisions})
             return view(spec_of(repo))
-        reach = sorted(sheet.dependents(o["design"], spec.get("requirements") or [], set(comments)))
-        start(repo, "redesign", comments, reach, r1={**o["r1"], "decisions": decisions})
+        saved(repo, oneshot={"r1": {**o["r1"], "decisions": decisions}})
+        approved(repo)
+    from . import oneshot_build   # it imports this module
+    if spec_of(repo)["oneshot"]["stage"] == "tests":   # outside the lock: the turn takes the worktree's hold
+        oneshot_build.begin(repo)
     return view(spec_of(repo))
 
 
@@ -371,9 +374,16 @@ def resume(repo: str) -> dict:
         o = spec_of(repo)["oneshot"]
         if not o.get("stopped") or o.get("working"):
             raise HTTPException(409, "멈춘 단계가 아니다")
-        if o["stage"] not in RUNNING:
+        if o.get("inflight"):   # its `Turn.finish` has not run: the next turn would lose that turn's charge
+            raise HTTPException(409, "앞 턴의 비용을 아직 매기는 중이다 — 잠시 뒤 다시 하라")
+        if o["stage"] not in (*RUNNING, "tests", "build"):
             raise HTTPException(409, f"`{o['stage']}` 단계는 다음 단계에서 이어진다")
         if o["stage"] == "r1":   # an edit turn that stopped: the sheet stands, the owner decides again
             return view(saved(repo, oneshot={"stopped": None}))
-        start(repo, RUNNING[o["stage"]])
+        if o["stage"] in RUNNING:
+            start(repo, RUNNING[o["stage"]])
+            return view(spec_of(repo))
+        saved(repo, oneshot={"working": o["stage"], "stopped": None})   # a second resume meanwhile is refused
+    from . import oneshot_build   # it imports this module
+    oneshot_build.resume(repo)   # outside the lock, as after the approval
     return view(spec_of(repo))
