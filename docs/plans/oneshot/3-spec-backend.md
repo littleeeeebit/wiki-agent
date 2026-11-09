@@ -38,17 +38,18 @@ agent view, which is still under evaluation.
 
 ## Stage states
 
-`spec → design → r1 → tests → build → backend review → split`, held in the
-spec's `oneshot.stage`. `split` is where step 4 begins. Stops follow step 2's
-table, plus `gate` (the build could not get the gate green within its
-attempts) and `review` (the read-only review refused twice).
+`spec → design → r1 → tests → build → review → split`, held in the spec's
+`oneshot.stage`. `split` is where step 4 begins. Stops follow step 2's
+table, plus `tests` (the tests-first turn was refused three times), `gate`
+(the build could not pass its checks within its attempts) and `review` (the
+read-only review refused twice).
 
 The step ships as three pull requests, in order:
 
 | Part | Holds |
 | --- | --- |
 | 3a | S2, S3 and R1: `tool/main/oneshot_spec.py` (stages and HTTP), `tool/main/oneshot_sheet.py` (checks, sheet, translationese) |
-| 3b | S4 tests first and the build, with the contract-test protection |
+| 3b | S4 tests first and the build, with the contract-test protection: `tool/main/oneshot_build.py` |
 | 3c | The backend review |
 
 The bootstrap's last act starts the first S2 turn. Each stage's worker hands
@@ -233,40 +234,56 @@ edit turn that stops leaves the sheet as it was, and `[재개]` returns to it.
 No human input. Three parts, each checked by the server rather than by the
 agent's word.
 
-A oneshot spec's turn never reaches `pr_turn` before S8. `specs`' completion
-path gets two branches, placed where the refactor's are:
+A oneshot spec's turn never reaches `pr_turn` before S8. `specs._check` hands
+every turn in a oneshot spec's worktree to `oneshot_build.checked` before any
+general branch (a `spec-update`, the `done-report` check, the round gate, the
+pull request). Success in `tests` means the planned tests fail, which the
+general gate would count as a failure. In `build` the general round gate is
+scoped (`git diff --check` for an unmapped change), so the stage reads its
+own report and runs the full gate itself. A person's turn in the worktree,
+or a turn in a stage S4 does not own, changes nothing. The branch stays
+local until S8.
 
-| Stage | Branch point | Why there |
-| --- | --- | --- |
-| `tests` | Before the general `done-report` check and the gate, where `refactor_run.characterized` branches | Success here means the planned tests fail, which the gate would count as a failure, and the spec's other `done` items are not met yet |
-| `build` (S4 and S7) | Right after the gate passes, where `refactor_run.published` branches | The gate must be green; what follows is the stage's own completion, not publication |
-
-Both return to `oneshot`, which records the stage's result and moves the run
-on. The branch stays local until S8.
+The turns are the ordinary work session's (`work.session` on the role model
+`next`), sent as an `oneshot_build.Turn`. Each is checked against the run's
+ledger before it is sent and charged when it ends, its cost unknown when the
+CLI reported none. A turn that ends without reaching its check (stopped,
+failed, cut by a shutdown) stops the stage with `block` or `restart` and the
+reason. A refusal goes back to the session as the next turn with the reason;
+the third refusal of a stage stops it (`tests` or `gate`). `[재개]` sends the
+stage's turn again with fresh attempts, and start-up stops a stage whose turn
+was running with `restart`.
 
 ### Tests first
 
-A write session receives the approved design and the test plan and writes
-only tests. The server then checks:
+After R1's approval, a write session receives the planned tests
+(`oneshot-tests.md`), reads the committed design, and writes only tests.
+The server then checks:
 
-- The diff touches only test paths and the test configuration.
-- Collection succeeds: the tests are importable and name the planned tests.
-- The planned tests fail, because nothing is implemented yet. A planned test
-  that already passes is reported back as not testing anything.
+- Since the design commit, only test paths (`tests/`, `test_*.py`,
+  `*_test.py`, `conftest.py`) and the test configuration (`pyproject.toml`,
+  `uv.lock`, `pytest.ini`) changed, committed or not.
+- Collection succeeds (`<gate> --collect-only`) and names every planned
+  test. The prompt asks for the application to be imported inside the tests,
+  so they collect before it exists.
+- Every planned test runs by node id and fails. A planned test that already
+  passes is reported back as not testing anything, and a skipped one too.
 
-When all three hold, the server commits the tests and records the commit as
-`oneshot.tests_head` with the list of contract test files. That commit, not
-the base commit, is what later changes are compared against.
+When all three hold, the server commits those paths and records the commit
+as `oneshot.tests_head` with the test files as `oneshot.contract`. That
+commit, not the base commit, is what later changes are compared against.
+The spec's `done` becomes the gate and one line per scenario
+(`R1: <text>`), and the build turn follows.
 
 ### Implementation
 
-The same work session machinery as any spec: the spec's `done` lists the
-gate and the scenarios; the session writes `done-report`; the server reruns
-`gate_cmd` in the worktree. The contract tests are protected against
-`tests_head` in two ways, because a file that is unchanged is not yet a test
-that ran:
+The build turn (`oneshot-build.md`) names the pinned files and the checks.
+Its `done-report` must cover every `done` item (`specs.shortfall`); the
+server then runs `gate_cmd` itself on the clean, committed HEAD
+(`specs.judge`). The contract tests are protected against `tests_head` in
+two ways, because a file that is unchanged is not yet a test that ran:
 
-1. Unchanged. Before each gate, `oneshot` reads each pinned file at
+1. Unchanged. Before each gate, `oneshot_build` reads each pinned file at
    `tests_head` and in the worktree and compares them with
    `refactor_run.equivalent`, the whole-file AST comparison: nothing may be
    added to a pinned file either, so a module-level `pytest.skip(...,
@@ -274,13 +291,16 @@ that ran:
    is a refusal. (`_kept` is not enough here: it allows statements added
    after the old ones.) A deleted, unreadable or unparsable pinned file is a
    refusal. New tests go in new files.
-2. Ran and passed. After the gate passes, `oneshot` runs the planned tests
-   by node id with a JUnit XML report into the run's raw folder, and counts a
-   planned test as passing only when the report shows it passed. Skipped,
-   xfailed, deselected or missing from the report is a failure, whatever the
-   gate's exit code said.
+2. Ran and passed. After the gate passes, `oneshot_build` runs the planned
+   tests by node id with a JUnit XML report into the run's raw folder, and
+   counts a planned test as passing only when every case the report holds for
+   it passed. Skipped, xfailed, deselected or missing from the report is a
+   failure, whatever the gate's exit code said. A new `conftest.py` that skips
+   them is caught here.
 
-Up to three gate attempts, then `stopped` with `gate`.
+Up to three attempts, then `stopped` with `gate`. When all checks hold, the
+stage becomes `review` with the HEAD as `oneshot.built_head`; that is where
+the backend review (3c) begins.
 
 ### Backend review
 
@@ -312,8 +332,10 @@ verdict folded under R2.
 ## Prompts
 
 `tool/prompts/oneshot-spec.md` (S2), `oneshot-design.md` (S3),
-`oneshot-tests.md` (S4 tests first) and `oneshot-review.md` (the backend
-review). English instructions, with a section of Korean style rules and the
+`oneshot-tests.md` (S4 tests first), `oneshot-build.md` (S4 build) and
+`oneshot-review.md` (the backend review). The two S4 prompts are the turn's
+text, after the work session's own system prompt; they forbid pushing,
+opening a pull request and asking the person, which that prompt allows. English instructions, with a section of Korean style rules and the
 requirement that person-facing strings are written in Korean directly.
 
 ## Completion

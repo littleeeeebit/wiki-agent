@@ -1654,7 +1654,9 @@ def _check(path: Path, run, final: str):
     if spec.get("planning") and spec["planning"].get("phase") != "handoff" and spec["state"] == "작업 중":
         # A plan goes up through `planning` only; a done report here publishes nothing.
         return None
-    from . import refactor_run   # it imports this module
+    from . import oneshot_build, refactor_run   # they import this module
+    if oneshot_build.owns(spec):   # its own checks, and nothing general: no revision, no gate, no pull request
+        return oneshot_build.checked(path, run, spec, final)
     changes = [b for b in blocks(final)[1] if b["name"] == "spec-update"]
     if changes:
         if len(changes) != 1 or "error" in changes[0]:
