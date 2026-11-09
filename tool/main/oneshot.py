@@ -54,6 +54,7 @@ RUNNING = {"intake": "intake", "environment": "profile", "bootstrap": "bootstrap
 router = APIRouter()
 _lock = threading.RLock()   # run files, name reservations and workers, read and written as one step
 _workers: dict[str, threading.Thread] = {}
+ROLES: dict = {}   # a role whose model is not `next`'s, as its module registers it: `{role: () -> {model, effort}}`
 
 
 # -- Run records ------------------------------------------------------------------
@@ -146,14 +147,14 @@ def prefilled(kind: str) -> dict:
 
 # -- Model turns -----------------------------------------------------------------------
 
-def role_config() -> dict:
+def role_config(role: str = "") -> dict:
     from .query import config
 
-    return config("next")
+    return ROLES[role]() if role in ROLES else config("next")
 
 
-def codex_role() -> bool:
-    return str(role_config().get("model") or "").startswith("codex:")
+def codex_role(role: str = "") -> bool:
+    return str(role_config(role).get("model") or "").startswith("codex:")
 
 
 class Failed(RuntimeError):
@@ -177,7 +178,7 @@ def ask(store: Store, role: str, system: str, text: str, where: Path | None = No
     """One turn, read-only, in `where` (the store's own folder by default): `(final, meta, codex)`.
     Patched in tests."""
 
-    cfg = role_config()
+    cfg = role_config(role)
     where = where or store.folder
     where.mkdir(parents=True, exist_ok=True)
     chat = ChatSession(where, tools=TOOLS, system=system, model=cfg["model"], effort=cfg["effort"])
@@ -221,7 +222,7 @@ def turned(rid: str | Store, role: str, system: str, text: str, name: str, check
         if runtime.stopping.is_set():
             store.stop("restart", "서버가 꺼지는 중이라 멈췄다")
             return None
-        codex = codex_role()
+        codex = codex_role(role)
         with _lock:
             if why := allowed(store.get().get("spend"), store.profile(), role, codex):
                 store.stop("budget", why)
