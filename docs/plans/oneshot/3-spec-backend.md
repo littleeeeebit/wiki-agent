@@ -72,11 +72,19 @@ validates them and writes the files.
 
 | Block | Shape | Becomes |
 | --- | --- | --- |
-| `oneshot-entities` | `[{name, fields: [{name, type, rule}], relations}]` | An entity diagram (Mermaid) and the storage schema |
-| `oneshot-api` | `[{method, path, does, request, response, errors, requirement_ids}]` | The API table and the OpenAPI document |
-| `oneshot-flows` | `[{name, steps}]` for the main scenarios | Sequence diagrams |
-| `oneshot-assumptions` | `[{id, what, why, rejected}]` | `assumed` requirements |
-| `oneshot-tests` | `[{requirement_id, test_name, given, when, then}]` | The contract test plan |
+| `oneshot-entities` | `[{id, name, fields: [{name, type, rule}], relations, depends_on}]` | An entity diagram (Mermaid) and the storage schema |
+| `oneshot-api` | `[{id, method, path, does, request, response, errors, depends_on}]` | The API table and the OpenAPI document |
+| `oneshot-flows` | `[{id, name, steps, depends_on}]` for the main scenarios | Sequence diagrams |
+| `oneshot-assumptions` | `[{id, what, why, rejected, depends_on}]` | `assumed` requirements |
+| `oneshot-tests` | `[{id, test_name, given, when, then, depends_on}]` | The contract test plan |
+
+Every item has a stable `id`, and `depends_on` lists the ids of the items it
+was derived from: requirements, assumptions, entities and endpoints. The
+server checks the references: every id exists, there is no cycle, an
+endpoint depends on at least one requirement, a test on its requirement and
+on every endpoint it calls, a flow on the endpoints in its steps, and
+anything shaped by an assumption names it. A missing or dangling reference
+refuses the block like any other S3 check.
 
 Server checks before R1 is shown, each a refusal sent back to the model once:
 
@@ -148,12 +156,12 @@ comment, and the server moves the run on only when every item on the sheet,
 folded or not, has a recorded decision (step 5 gives folded sections an
 explicit approve-all).
 
-Items depend on each other through ids: an endpoint, a flow and a planned
-test name the requirements they serve (`requirement_ids`, `requirement_id`).
-An edit therefore reaches further than the edited item:
+Items depend on each other through `depends_on` (S3 above), so an edit to a
+requirement, an assumption, an entity or an endpoint reaches the tests and
+flows built on it. An edit therefore reaches further than the edited item:
 
-1. The server collects the edited items and every item that references one of
-   them, transitively.
+1. The server collects the edited items and every item whose `depends_on`
+   reaches one of them, transitively.
 2. One turn receives the owner's comments and that whole set, and returns
    replacements for all of it; the S3 checks run again on the full design.
 3. Every item in the set loses its approval, whether or not its text changed.
@@ -167,11 +175,16 @@ The number of rounds is recorded on the spec.
 No human input. Three parts, each checked by the server rather than by the
 agent's word.
 
-A oneshot spec's `done-report` never reaches `pr_turn` before S8. In
-`specs`' completion path, right after the gate, a spec with an `oneshot`
-field whose stage is not `pull request` returns to `oneshot` (as a refactor
-spec returns to `refactor_run.published`), which records the stage's result
-and moves the run on. The branch stays local until S8.
+A oneshot spec's turn never reaches `pr_turn` before S8. `specs`' completion
+path gets two branches, placed where the refactor's are:
+
+| Stage | Branch point | Why there |
+| --- | --- | --- |
+| `tests` | Before the general `done-report` check and the gate, where `refactor_run.characterized` branches | Success here means the planned tests fail, which the gate would count as a failure, and the spec's other `done` items are not met yet |
+| `build` (S4 and S7) | Right after the gate passes, where `refactor_run.published` branches | The gate must be green; what follows is the stage's own completion, not publication |
+
+Both return to `oneshot`, which records the stage's result and moves the run
+on. The branch stays local until S8.
 
 ### Tests first
 
@@ -192,28 +205,36 @@ the base commit, is what later changes are compared against.
 The same work session machinery as any spec: the spec's `done` lists the
 gate and the scenarios; the session writes `done-report`; the server reruns
 `gate_cmd` in the worktree. The contract tests are protected against
-`tests_head`: before each gate, every contract test file is compared with its
-content at `tests_head` by the same AST-equivalence check the refactor
-contract uses (`_kept`), called with that commit and that file list instead
-of `spec["refactor"]` and `start_head`. New test files may be added; a
-contract test may not be removed, renamed, skipped or changed. Up to three
-gate attempts, then `stopped` with `gate`.
+`tests_head`: before each gate, `oneshot` reads each pinned file at
+`tests_head` and in the worktree, parses both, and calls
+`refactor_run._kept(old_tree.body, new_tree.body, set())`, the pure syntax
+comparison behind the refactor contract. A deleted, unreadable or unparsable
+pinned file is a refusal. New test files may be added; a contract test may
+not be removed, renamed, skipped or changed. Up to three gate attempts, then
+`stopped` with `gate`.
 
 ### Backend review
 
 A oneshot reading of its own, between agents and before any pull request:
 
-1. The server writes the review input under the run's raw folder, outside
-   the repository: the approved design, the requirements, and the diff from
-   the base commit to the worktree's HEAD, with that HEAD named.
-2. A read-only session (`agent.read_tools`, on the reviewer model the
-   settings name) reads that input and the worktree, and returns an
-   `oneshot-review` block: findings with location, severity, reason and
-   evidence, and a verdict.
-3. On a refusal, the findings go to the work session as one turn; the
+1. The server freezes the review input: the approved design, the
+   requirements, and the diff from the base commit to the worktree's HEAD,
+   with that HEAD named. A copy is kept under the run's raw folder as the
+   record, but the reviewer never reads it there: the read-only tools reach
+   only tracked files of the worktree (`agent/read_tools.py`, `git ls-files`).
+2. Delivery: the design and the requirements go into the review turn's
+   prompt itself; the diff is written with `read_tools.save_diff` to the
+   fixed path inside the worktree's Git directory that the existing
+   `pr_diff` tool reads, as Review Loop does. The source files are tracked,
+   so `repo_read` reaches them. No read outside the repository is added.
+3. A read-only session (`agent.read_tools`, on the reviewer model the
+   settings name) returns an `oneshot-review` block: findings with location,
+   severity, reason and evidence, and a verdict naming the HEAD it read.
+4. On a refusal, the findings go to the work session as one turn; the
    contract-test check and the gate run again; the review runs once more on
-   the new HEAD. A second refusal stops the run with `review`.
-4. An approval of the HEAD the input named moves the run to `split`; an
+   the new HEAD with a new frozen input. A second refusal stops the run with
+   `review`.
+5. An approval of the HEAD the input named moves the run to `split`; an
    approval of an older HEAD counts as no verdict.
 
 Nothing in this reading pushes or opens a pull request. The owner sees its
@@ -232,13 +253,20 @@ requirement that person-facing strings are written in Korean directly.
   item or an uncovered original item; each S3 check refusing; the sheet's
   order and length budget; each translationese pattern counted and named on
   fixtures, and clean Korean passing; a submission with any item undecided,
-  folded or not, refused by the server; an edited scenario regenerating the
-  endpoints and planned tests that reference it and resetting their
-  approvals; the tests-first checks (non-test path refused, passing planned
-  test reported); a contract test created after the base commit then weakened
+  folded or not, refused by the server; dangling, missing and cyclic
+  `depends_on` refused; an edited scenario, an edited endpoint response (a
+  field renamed) and an edited assumption each regenerating the tests and
+  flows that depend on them and resetting their approvals; a `tests` turn
+  whose planned tests fail reaching `build` without being counted as a gate
+  failure or an incomplete spec; the tests-first checks (non-test path
+  refused, passing planned test reported); a contract test created after the
+  base commit then weakened
   (an expected value changed, a skip mark, a deleted test) refused against
-  `tests_head`; review refusal looping once then stopping; a verdict on an
-  older HEAD ignored; a full S4 run that ends in `split` with no push, no
+  `tests_head`, and a deleted or unparsable pinned file refused; review
+  refusal looping once then stopping; a verdict on an older HEAD ignored; the
+  review turn, run with the real Codex read profile, receiving the design
+  and requirements in its prompt and the diff through `pr_diff`, and
+  returning a verdict on the current HEAD; a full S4 run that ends in `split` with no push, no
   pull request and no Review Loop.
 - The repository's gate, `tool/lint.py --check` and `tool/debt.py check`.
 - One real run from step 2's throwaway repository through `split`, with the

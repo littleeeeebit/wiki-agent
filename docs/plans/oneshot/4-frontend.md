@@ -110,10 +110,19 @@ the frequency map. Two rules it must follow, both checked by the server:
 
 The adapter is guarded (`tool/guard_grant.py`): a session may write the task
 checkout's `.wiki/adapter.toml` only while its server spec carries
-`adapter: true`, and never the original's. The run sets that flag when S7's
-build turn starts and clears it when the build's `done-report` is accepted,
-so the grant covers exactly the turns that must change the slots, and only in
-the linked worktree. The server then reads the committed adapter back and
+`adapter: true`, and never the original's. The guard trusts the stored flag
+alone, so its lifetime is the run's job:
+
+- Set when an S7 build turn actually starts, including a resumed one.
+- Cleared when that turn ends by any path: accepted `done-report`, a refused
+  one, a gate failure, a model error, the owner's stop, the budget. The clear
+  sits in the turn's end handler, which runs for every ending, not in the
+  completion path, which an errored turn never reaches.
+- Cleared by the run's `recover()` at server start for every oneshot spec,
+  since a restart can cut a turn before its end handler runs.
+
+So the grant exists only while a build turn is running, and only in the
+linked worktree. The server then reads the committed adapter back and
 refuses the build if `gate_cmd` lost the backend's tests or `live_cmd` is
 empty.
 
@@ -148,8 +157,12 @@ high severity by definition and never left to the critic's judgement.
 ### Critique: a separate read-only session
 
 The owner chose a critic separate from the builder. It is a read-only
-session that receives the screenshots as images, the mechanical findings, the
-R2 sheet and the frequency map, and judges in the `design-pass` order:
+session on a model that accepts images. The shots live under the run's raw
+folder, which the read-only tools cannot reach, so the server attaches the
+round's screenshots to the critic's turn as image input and puts the
+mechanical findings, the R2 sheet and the frequency map in its prompt; the
+critic reads nothing from disk outside the worktree's tracked files. It judges
+in the `design-pass` order:
 purpose and layout, measured spacing and alignment, typography, colour,
 leftover whitespace. It returns an `oneshot-critique` block:
 `[{severity: "high"|"medium"|"low", route, viewport, state, what, fix}]`. It
@@ -193,10 +206,13 @@ changed. Approval moves the run to `pull request`.
   on fixture pages (an `every` feature hidden, a `rarely` feature on the
   primary route, a `sometimes` feature two clicks away); the stop rule (two
   clean rounds, the cap, a mechanical high finding overriding a clean
-  critique); the critic's block refused outside its schema; the adapter
-  grant set only during the build turns and refused on the original
-  checkout, through the real guard, with the slots committed in the
-  worktree; a build whose adapter dropped the backend tests refused; a
+  critique); the critic's block refused outside its schema; the critic's
+  turn carrying the round's screenshots as image input; the adapter grant
+  set only during the build turns and refused on the original checkout,
+  through the real guard, with the slots committed in the worktree; the real
+  guard refusing an adapter write after a build turn ended by a model error,
+  by the owner's stop, by a gate failure, and after a restart right after the
+  flag was stored; a build whose adapter dropped the backend tests refused; a
   reopened S5 discarding the old screens and approvals so R2 cannot reuse
   them.
 - The repository's gate including the web build, `tool/lint.py --check` and
