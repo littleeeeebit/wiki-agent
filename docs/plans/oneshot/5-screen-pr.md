@@ -37,9 +37,13 @@ define the content and order). It owns only the interaction:
 | Interaction | Behaviour |
 | --- | --- |
 | Per item | Approve or edit, with a comment box on edit |
-| Fold | Sections the step marks folded start collapsed; opening one is recorded |
-| Re-show | Changed items marked, unchanged ones collapsed |
-| Submit | Enabled when every unfolded item is approved or edited; sends approvals and edits in one request |
+| Fold | Folding changes what is shown, never what is decided. Sections the step marks folded start collapsed; opening one is recorded |
+| Approve a section | A folded section's header carries "approve all N"; pressing it records an approval for each item in it, named in the request |
+| Re-show | Items needing a decision again (edited, changed as a consequence, or reset by a dependency) marked and unfolded; untouched approved items collapsed |
+| Submit | Enabled when every item on the sheet, folded or not, has a decision; the count of undecided items sits beside the button |
+
+The server applies the same rule: a submission that leaves any item of the
+sheet's current version undecided is refused, whatever the screen showed.
 | Length | The sheet scrolls inside its panel; the first screen holds what the step put first |
 
 Screenshots open in a lightbox at full size; videos play inline. The palette
@@ -94,8 +98,10 @@ in step 2.
 
 ## Completion
 
-- Web tests for the gate sheet view (per-item approve and edit, submit
-  enabled only when every unfolded item is answered, re-show marking), the
+- Web tests for the gate sheet view (per-item approve and edit; submit
+  disabled while an item in an automatically folded section, or in a section
+  the owner folded, is undecided; "approve all" deciding exactly its section;
+  re-show unfolding every item that needs a decision again), the
   board (drag and keyboard moves produce the same map), and the stage strip
   for each state including `stopped`.
 - New tests in `tool/test_oneshot.py`: S8 refusing to open with the gate

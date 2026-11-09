@@ -54,7 +54,7 @@ inside an autonomous stretch.
  S0 intake → S1 environment → S2 spec → S3 backend design ──▶ R1
                                                               │ approve
  ┌─ alone ──────────────────────────┐   ┌─ talk ─────────┐     ▼
- S4 backend build + internal review ──▶ S5 feature split → S6 frontend design ──▶ R2
+ S4 backend build + agent review ──▶ S5 feature split → S6 frontend design ──▶ R2
                                                                                   │ approve
  ┌─ alone ─────────────────────────────────────────┐                              ▼
  S7 frontend build ⇄ screenshot ⇄ critique ⇄ fix  ──▶ R3 ──▶ S8 first pull request ──▶ review loop
@@ -69,7 +69,7 @@ inside an autonomous stretch.
 | S2 Spec | A few turns of options | Asks scope, users, core scenarios, exclusions; fixes the domain vocabulary | Scenarios in Given/When/Then, glossary, exclusions | No scenario is marked undecided |
 | S3 Backend design | None | Domain model, storage schema, API contract, main flows, test plan from scenarios | The R1 sheet | Its own design lint passes |
 | R1 | Review | — | Approval or per-item edits | Approved |
-| S4 Backend build | None | Scaffolds, writes contract tests from the scenarios first, implements, runs the gate, runs an internal review loop | Passing backend with tests | Gate green and internal review allows merge |
+| S4 Backend build | None | Scaffolds, writes contract tests from the scenarios first, implements, runs the gate, has an independent read-only session review the diff; nothing is pushed | Passing backend with tests | Gate green and the review approves the current HEAD |
 | S5 Feature split | One or two turns | Lists every user-facing action from the built API with a proposed frequency class | Frequency map | The owner submits the split |
 | S6 Frontend design | None | Information architecture, low-fidelity screens rendered as screenshots, tokens, states | The R2 sheet | Every frequent feature sits on its primary screen |
 | R2 | Review | — | Approval or per-item edits | Approved |
@@ -112,6 +112,11 @@ The owner named four; the full set is below. The key proposal is a saved
 profile: the first project asks everything, every later project shows one card
 "same as last time?" with only the differences highlighted.
 
+The table is the full schema. This version runs one stack end to end —
+`webapp`, FastAPI, Vite and React — and shows the other kinds and stacks
+disabled until a later plan gives them their own stages, gate and review
+deliverables ([step 2](2-bootstrap.md), "Supported combinations").
+
 | Choice | Options | Proposed default | What it changes downstream |
 | --- | --- | --- | --- |
 | OS now | Windows / macOS / both | The machine running the app | Script language, path handling, README commands |
@@ -132,7 +137,7 @@ profile: the first project asks everything, every later project shows one card
 | Docs and commit language | Korean / English | Asked once, saved | See the readability section: this interacts with the hub's English rule |
 | Responsive | Desktop only / desktop and mobile | Desktop and mobile | S7 viewport count |
 | Uses an LLM | No / yes with which provider | No | `.env.example`, key handling |
-| Budget | USD and hours ceiling for the whole run | Asked every time | Stops the run, keeps what was built |
+| Budget | USD and hours ceiling for the whole run | Asked every time | Checked before every model turn against the run's ledger; stops the run, keeps what was built |
 
 The private-repository rule follows the owner's words: private means no
 GitHub Actions by default. The local gate then has to be strong enough alone,
@@ -254,14 +259,20 @@ The owner wants the agent to look, fix, and look again. The loop below makes
 ### What the empty folder needs before a spec can exist
 
 Today a spec requires the repository's adapter `gate_cmd`. An empty folder has
-none, so S1 ends by creating the repository itself:
+none, so S1 ends by creating the repository itself, after reserving its name
+against existing folders, connection records, other runs and GitHub:
 
-1. A new Git repository with `.gitignore`, `.gitattributes` and a README stub.
-2. The GitHub repository, created through `gh` with the chosen visibility.
-3. `.wiki/adapter.toml` with a `gate_cmd` built from the profile.
-4. One base commit on `main`, so the first pull request has a base.
-5. Everything after that happens on one branch, `oneshot/initial`, which
-   becomes the first pull request.
+1. A new Git repository with `.gitignore`, `.gitattributes`, a README stub
+   and `.wiki/adapter.toml` whose `gate_cmd` is built from the profile.
+2. One base commit on `main`, so the first pull request has a base.
+3. The GitHub repository, created through `gh` with the chosen visibility,
+   and `main` pushed.
+4. Everything after that happens in a linked worktree on one branch,
+   `oneshot-initial`, which becomes the first pull request; the original
+   checkout stays on `main`.
+
+Each of these checks whether its effect already exists before acting, so a
+restart repeats nothing ([step 2](2-bootstrap.md)).
 
 ### Run states
 
@@ -289,6 +300,6 @@ split → frontend design → R2 → frontend build → R3 → pull request`, wi
 | --- | --- | --- | --- |
 | 1 | Decisions | The owner's answers above | Done — 2026-11-09 |
 | 2 | [Run record and bootstrap](2-bootstrap.md) | `oneshot` run states, S0–S1 with profiles per project kind, empty-folder repository creation with adapter and base commit | Not started |
-| 3 | [Spec and backend](3-spec-backend.md) | S2–S4: scenarios and glossary, the R1 sheet in Korean with length and translationese checks, contract-test-first build with internal review | Not started |
+| 3 | [Spec and backend](3-spec-backend.md) | S2–S4: scenarios and glossary, the R1 sheet in Korean with length and translationese checks, contract-test-first build with an independent read-only review | Not started |
 | 4 | [Frontend](4-frontend.md) | S5–S7: frequency map, the R2 sheet, the screenshot, critique and fix loop with a separate critic and the stop rule | Not started |
 | 5 | [Screen and pull request](5-screen-pr.md) | Oneshot entry, gate sheets with per-item approval, the drag board, S8 handing the pull request to Review Loop | Not started |

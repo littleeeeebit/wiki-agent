@@ -84,8 +84,16 @@ translationese check on every person-facing string. Order:
    picks one.
 5. Folded: states per screen, the backend review verdict from S4.
 
+Edits follow R1's dependency rule: a screen's states, its mock and its
+screenshot depend on the screen, and every item in the set loses its approval
+and is shown again. Every item, folded or not, needs a decision before the
+run moves on.
+
 An edit to a placement may reopen S5's board instead of S6, when the owner
-says the class was wrong rather than the screen.
+says the class was wrong rather than the screen. Reopening S5 invalidates
+everything S6 produced from the old map: the screen map, states, mocks,
+screenshots, the palette choice and every R2 approval are discarded, S6 runs
+again from the new map, and R2 is shown whole, not as a difference.
 
 ## S7 — Build, look, critique, fix
 
@@ -99,6 +107,15 @@ the frequency map. Two rules it must follow, both checked by the server:
   the session fills it, since step 2 left it empty, and the gate gains the
   frontend's tests, in the existing `gate` shell form with its PowerShell 5
   variant.
+
+The adapter is guarded (`tool/guard_grant.py`): a session may write the task
+checkout's `.wiki/adapter.toml` only while its server spec carries
+`adapter: true`, and never the original's. The run sets that flag when S7's
+build turn starts and clears it when the build's `done-report` is accepted,
+so the grant covers exactly the turns that must change the slots, and only in
+the linked worktree. The server then reads the committed adapter back and
+refuses the build if `gate_cmd` lost the backend's tests or `live_cmd` is
+empty.
 
 ### Look: the shooting harness
 
@@ -176,7 +193,12 @@ changed. Approval moves the run to `pull request`.
   on fixture pages (an `every` feature hidden, a `rarely` feature on the
   primary route, a `sometimes` feature two clicks away); the stop rule (two
   clean rounds, the cap, a mechanical high finding overriding a clean
-  critique); the critic's block refused outside its schema.
+  critique); the critic's block refused outside its schema; the adapter
+  grant set only during the build turns and refused on the original
+  checkout, through the real guard, with the slots committed in the
+  worktree; a build whose adapter dropped the backend tests refused; a
+  reopened S5 discarding the old screens and approvals so R2 cannot reuse
+  them.
 - The repository's gate including the web build, `tool/lint.py --check` and
   `tool/debt.py check`.
 - One real run from step 3's throwaway repository through R3, with the R2 and

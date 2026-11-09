@@ -8,7 +8,8 @@ Goal. A few turns of options turn the owner's sentence into scenarios and a
 glossary; the agent designs the backend alone and shows it as one Korean sheet
 (R1); after approval it writes the contract tests first, implements against
 them, passes the gate and an independent read-only review, and hands a working
-backend to step 4 without asking anything.
+backend to step 4 without asking anything and without publishing anything:
+nothing in this step pushes the branch or opens a pull request.
 
 ## What already exists and is reused
 
@@ -18,8 +19,18 @@ backend to step 4 without asking anything.
 | A requirement the run cannot pass | `spec_views.blocked` names a dependency on an undecided item | `tool/main/spec_views.py` |
 | Asking with options inside an answer | The `choices` block and its buttons | `tool/main/specs.py` (`blocks`, `answered`) |
 | A write session on a spec | The work session with the spec as system prompt, `done-report`, and the server rerunning `gate_cmd` | `tool/main/work.py`, `tool/prompts/work-spec.md` |
-| An independent reading before the rest | `prerequisite_review`: committed instruction, declared inputs, JSON verdict path; read-only | `tool/main/prerequisite_review.py` |
+| Leaving the done-report before the pull request | The refactor branch: a spec with its own completion returns before `pr_turn` (`refactor_run.published`) | `tool/main/specs.py:1773` |
+| Read-only sessions | `agent.read_tools`, as the review and prerequisite readings use | `tool/agent` |
+| Syntax comparison of test files | `refactor_run._kept`, the AST-equivalence check behind the refactor test contract | `tool/main/refactor_run.py:559` |
 | Blocks returned and written by the server | Planner pattern: the model returns named JSON blocks, the server validates and writes only inside a named folder | `tool/main/planning.py` |
+
+Two existing pieces are deliberately not reused as they are.
+`prerequisite_review` runs only inside a published pull request's Review Loop
+and, once it passes, tells the session to implement everything and push; S4
+has no pull request yet and must not push. The refactor test contract
+(`refactor_run.contract`) reads `spec["refactor"]` and compares against
+`start_head`, where the oneshot's contract tests do not exist yet, so it would
+skip them as new files. S4 below reuses only their parts.
 
 `SPEC_VIEWS` in the hub's `.env` stays off. The oneshot run uses the
 requirements shape and its own renderer; it does not switch on the experiment's
@@ -133,15 +144,34 @@ runs, not guessed further now.
 ### Approval
 
 Per item: each assumption, endpoint row and scenario has approve or edit with a
-comment. Edited items go back in one turn with only their ids; the returned
-items replace them and the sheet is shown again with the changed items marked
-and the rest folded. Approving everything moves the run to `tests`. The
-number of rounds is recorded on the spec.
+comment, and the server moves the run on only when every item on the sheet,
+folded or not, has a recorded decision (step 5 gives folded sections an
+explicit approve-all).
+
+Items depend on each other through ids: an endpoint, a flow and a planned
+test name the requirements they serve (`requirement_ids`, `requirement_id`).
+An edit therefore reaches further than the edited item:
+
+1. The server collects the edited items and every item that references one of
+   them, transitively.
+2. One turn receives the owner's comments and that whole set, and returns
+   replacements for all of it; the S3 checks run again on the full design.
+3. Every item in the set loses its approval, whether or not its text changed.
+4. The sheet is shown again with the set marked: edited by the owner, changed
+   as a consequence, or unchanged but needing approval again.
+
+The number of rounds is recorded on the spec.
 
 ## S4 — Backend build
 
 No human input. Three parts, each checked by the server rather than by the
 agent's word.
+
+A oneshot spec's `done-report` never reaches `pr_turn` before S8. In
+`specs`' completion path, right after the gate, a spec with an `oneshot`
+field whose stage is not `pull request` returns to `oneshot` (as a refactor
+spec returns to `refactor_run.published`), which records the stage's result
+and moves the run on. The branch stays local until S8.
 
 ### Tests first
 
@@ -153,33 +183,47 @@ only tests. The server then checks:
 - The planned tests fail, because nothing is implemented yet. A planned test
   that already passes is reported back as not testing anything.
 
+When all three hold, the server commits the tests and records the commit as
+`oneshot.tests_head` with the list of contract test files. That commit, not
+the base commit, is what later changes are compared against.
+
 ### Implementation
 
 The same work session machinery as any spec: the spec's `done` lists the
 gate and the scenarios; the session writes `done-report`; the server reruns
-`gate_cmd` in the worktree. The session may not edit the contract tests from
-the first part; the server holds those files to the existing test-contract
-check (`docs/plans/refactor/7-purpose-modes.md`, "Test contract"), so a test
-can be added but a planned one cannot be weakened. Up to three gate attempts,
-then `stopped` with `gate`.
+`gate_cmd` in the worktree. The contract tests are protected against
+`tests_head`: before each gate, every contract test file is compared with its
+content at `tests_head` by the same AST-equivalence check the refactor
+contract uses (`_kept`), called with that commit and that file list instead
+of `spec["refactor"]` and `start_head`. New test files may be added; a
+contract test may not be removed, renamed, skipped or changed. Up to three
+gate attempts, then `stopped` with `gate`.
 
 ### Backend review
 
-A `prerequisite_review` with a committed instruction under
-`docs/design/review-backend.md`, the design files and the diff since the base
-commit as inputs, and its verdict at `artifacts/review/backend.json`. A
-refusal goes back to the work session as one turn of findings, the gate runs
-again, and the review runs once more. A second refusal stops the run with
-`review`. An approval moves the run to `split`.
+A oneshot reading of its own, between agents and before any pull request:
 
-This is a reading between agents, not a human review; the owner sees its
+1. The server writes the review input under the run's raw folder, outside
+   the repository: the approved design, the requirements, and the diff from
+   the base commit to the worktree's HEAD, with that HEAD named.
+2. A read-only session (`agent.read_tools`, on the reviewer model the
+   settings name) reads that input and the worktree, and returns an
+   `oneshot-review` block: findings with location, severity, reason and
+   evidence, and a verdict.
+3. On a refusal, the findings go to the work session as one turn; the
+   contract-test check and the gate run again; the review runs once more on
+   the new HEAD. A second refusal stops the run with `review`.
+4. An approval of the HEAD the input named moves the run to `split`; an
+   approval of an older HEAD counts as no verdict.
+
+Nothing in this reading pushes or opens a pull request. The owner sees its
 verdict folded under R2.
 
 ## Prompts
 
 `tool/prompts/oneshot-spec.md` (S2), `oneshot-design.md` (S3),
-`oneshot-tests.md` (S4 tests first), and the instruction for the backend
-review. English instructions, with a section of Korean style rules and the
+`oneshot-tests.md` (S4 tests first) and `oneshot-review.md` (the backend
+review). English instructions, with a section of Korean style rules and the
 requirement that person-facing strings are written in Korean directly.
 
 ## Completion
@@ -187,10 +231,15 @@ requirement that person-facing strings are written in Korean directly.
 - New tests in `tool/test_oneshot.py`: S2 refusing to end with an undecided
   item or an uncovered original item; each S3 check refusing; the sheet's
   order and length budget; each translationese pattern counted and named on
-  fixtures, and clean Korean passing; per-item edits replacing only those
-  items; the tests-first checks (non-test path refused, passing planned test
-  reported); a weakened contract test refused; review refusal looping once
-  then stopping.
+  fixtures, and clean Korean passing; a submission with any item undecided,
+  folded or not, refused by the server; an edited scenario regenerating the
+  endpoints and planned tests that reference it and resetting their
+  approvals; the tests-first checks (non-test path refused, passing planned
+  test reported); a contract test created after the base commit then weakened
+  (an expected value changed, a skip mark, a deleted test) refused against
+  `tests_head`; review refusal looping once then stopping; a verdict on an
+  older HEAD ignored; a full S4 run that ends in `split` with no push, no
+  pull request and no Review Loop.
 - The repository's gate, `tool/lint.py --check` and `tool/debt.py check`.
 - One real run from step 2's throwaway repository through `split`, with the
   R1 sheet's screenshot and the review verdict in the pull request.
