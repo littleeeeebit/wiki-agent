@@ -234,6 +234,8 @@ def test_a_clean_design_is_shot_and_shown_as_the_r2_sheet(boarded):
     ("<script>missing()</script>", "페이지 오류"),
     ("<img src='https://example.com/x.png'>", "외부 요청"),
     (f"<iframe src='{Path(__file__).resolve().as_uri()}'></iframe>", "로컬 파일 요청"),   # a file beside the mock
+    ("<script>window.socket = new WebSocket('wss://example.com/mock-probe')</script>", "WebSocket 요청"),
+    ("<script>window.open('https://example.com/mock-popup')</script>", "외부 요청 https://example.com/mock-popup"),
 ])
 def test_a_mock_that_does_not_open_cleanly_is_sent_back_once(boarded, extra, said):
     playwright_or_skip()
@@ -318,6 +320,40 @@ def test_a_junction_on_the_way_to_the_design_stops_the_approval_before_anything_
         pytest.skip("no directory junctions here")
     front.decide("budget", approve_all(palette="C1"))
     assert o()["stopped"]["reason"] == "folder" and not any(outside.iterdir())
+
+
+def test_an_approval_on_a_moved_backend_goes_back_to_the_builds_checks_before_writing(boarded):
+    designed(boarded)
+    (boarded / "late.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "late.py"], cwd=boarded, check=True)
+    subprocess.run(["git", "commit", "-qm", "late"], cwd=boarded, check=True)
+    front.decide("budget", approve_all(palette="C1"))
+    assert o()["stage"] == "build" and o()["stopped"]["reason"] == "gate"
+    assert not (boarded / "docs/design/frontend.md").exists()
+
+
+def test_an_approval_while_another_turn_holds_the_tree_is_refused_and_keeps_the_decisions(boarded):
+    designed(boarded)
+    release = query.hold(work._busy, query._lock, str(boarded), "busy", kind="turn")
+    try:
+        with pytest.raises(HTTPException, match="다른 턴"):
+            front.decide("budget", approve_all(palette="C1"))
+    finally:
+        release()
+    assert o()["stage"] == "r2" and o()["r2"]["palette"] == "C1" and not (boarded / "docs/design").exists()
+    front.decide("budget", approve_all())
+    assert o()["stage"] == "build-front" and (boarded / "docs/design/frontend.md").is_file()
+
+
+def test_a_split_after_a_rebuild_drops_the_old_design_and_shows_the_new_board(boarded):
+    designed(boarded)
+    oneshot_spec.saved("budget", oneshot={"stage": "split", "r2": {**o()["r2"], "palette": "C1"}})
+    _, asking = replies(fenced("oneshot-features", FEATURES))
+    with asking, patch.object(front, "served", lambda spec: OPS):
+        front.split("budget")
+    shown = oneshot_spec.view(specs.load("budget", oneshot.BRANCH))
+    assert o()["front"] is None and o()["r2"] is None and "front_sheet" not in shown
+    assert shown["board"]["frequency"] == FREQUENCY
 
 
 def test_reopening_the_board_discards_the_design_and_its_approvals(boarded):

@@ -51,7 +51,9 @@ and the split, S6 and an R2 edit turn each hold it as the review does
 on the HEAD the build passed and a clean tree, checked before and after the
 turn. A moved tree sends the run back to the build's checks (`build`, stopped
 with `gate`), and the instruction the person queued for the worktree
-meanwhile goes once the stage lets go.
+meanwhile goes once the stage lets go. A split saved after such a rebuild
+discards the screen design and R2 decisions left from the earlier split, so
+the board is shown alone.
 
 | Class | Placement rule |
 | --- | --- |
@@ -97,6 +99,9 @@ Server checks, each a refusal sent back once:
 - Each mock opens with no console error, no page error and no request
   leaving the page; the shooting browser lets through the mock's own file and
   `data:` URLs and aborts every other request, another local file included.
+  The filter covers the whole browser context, so a popup's requests are
+  aborted too; a WebSocket is never connected, and opening either is a
+  refusal of its own.
 - Translationese in a purpose, a state line or a palette name is sent back
   once and kept as a warning after that, as in R1.
 
@@ -127,9 +132,13 @@ that changes a palette, the type scale or the spacing is sent back, and the
 owner's palette choice stands as chosen. Every item, folded or not, needs a
 decision before the run moves on. Approval writes `docs/design/frontend.md`,
 the mocks under `docs/design/mock/` and the shots under `docs/design/shots/`
-into the worktree as one commit, and the run moves to `build-front`. A
-symbolic link or a junction on the way to any of them, or a place that
-resolves outside the worktree, stops the approval before anything is written.
+into the worktree as one commit, and the run moves to `build-front`. The
+commit holds the worktree as a turn does: while another turn holds it, the
+approval is refused and the decisions are kept for a second try; a HEAD that
+is not the one the build passed, or a dirty tree, sends the run back to the
+build's checks. A symbolic link or a junction on the way to any of those files, or a
+place that resolves outside the worktree, stops the approval before anything
+is written.
 
 An edit to a placement may reopen S5's board instead of S6, when the owner
 says the class was wrong rather than the screen. Reopening S5 invalidates

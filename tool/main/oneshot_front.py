@@ -13,6 +13,7 @@ import json
 import re
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
@@ -21,9 +22,9 @@ from pydantic import BaseModel
 
 from common import is_junction
 
-from . import oneshot, oneshot_screens as screens, oneshot_spec, runtime, specs
+from . import oneshot, oneshot_screens as screens, oneshot_spec, runtime, specs, work
 from .oneshot_profile import python_cmd
-from .query import ROOT
+from .query import ROOT, _lock as work_lock, hold
 
 SPLIT_PROMPT = (ROOT / "tool/prompts/oneshot-split.md").read_text(encoding="utf-8")
 FRONTEND_PROMPT = (ROOT / "tool/prompts/oneshot-frontend.md").read_text(encoding="utf-8")
@@ -78,7 +79,9 @@ def split_turn(repo: str, store, spec: dict):
     if found is None:
         return None
     return lambda: oneshot_spec.saved(repo, oneshot={
+        # a design and R2 decisions left from an earlier split were placed on features that are gone
         "stage": "board", "working": None, "inventory": ops, "features": found, "frequency": None,
+        "front": None, "r2": None,
         "first_screen": o.get("first_screen") or o["intent"]["first_screen"]})
 
 
@@ -122,8 +125,8 @@ def shoot(mocks: dict[str, str], folder: Path, viewports: list[str]) -> dict[str
 
 def shot_one(browser, page_file: Path, view: str, found: list[str]) -> None:
     width, height = screens.VIEWPORTS[view]
-    page = browser.new_page(viewport={"width": width, "height": height})
-
+    # The routes sit on the context, so a popup's first request is filtered too; a WebSocket is never opened.
+    context = browser.new_context(viewport={"width": width, "height": height})
     own = unquote(page_file.as_uri())
 
     def routed(route) -> None:   # the mock itself and inline data; any other file is as outside as the network
@@ -134,14 +137,20 @@ def shot_one(browser, page_file: Path, view: str, found: list[str]) -> None:
             found.append(f"{'로컬 파일' if url.startswith('file:') else '외부'} 요청 {url[:120]}")
             route.abort()
 
+    def socket(ws) -> None:   # a routed socket never reaches its server; closing it here blocks the shot
+        found.append(f"WebSocket 요청 {ws.url[:120]}")
+
     try:
+        context.route("**/*", routed)
+        context.route_web_socket(re.compile(".*"), socket)
+        page = context.new_page()
+        context.on("page", lambda popup: found.append(f"새 창 {popup.url[:120]}"))
         page.on("console", lambda m: m.type == "error" and found.append(f"콘솔 오류 {m.text[:200]}"))
         page.on("pageerror", lambda e: found.append(f"페이지 오류 {str(e)[:200]}"))
-        page.route("**/*", routed)
         page.goto(page_file.as_uri(), wait_until="load", timeout=SHOT_SECONDS)
         page.screenshot(path=str(page_file.with_name(f"{page_file.stem}-{view}.png")), full_page=True)
     finally:
-        page.close()
+        context.close()
 
 
 def front_turn(final: str, attempt: int, spec: dict, reach: set[str] | None = None) -> tuple[dict, list[str]]:
@@ -224,13 +233,30 @@ def refront_turn(repo: str, store, spec: dict, tree: Path, comments: dict[str, s
 # -- R2 approved ------------------------------------------------------------------------------
 
 def approved(repo: str) -> None:
-    """Every item approved and a palette chosen: the frontend design, its mocks and shots committed."""
+    """Every item approved and a palette chosen: the frontend design, its mocks and shots committed.
+    The commit writes the worktree, so it holds it as a turn does, on the HEAD the build passed: a tree
+    another turn holds refuses the approval (409, the decisions kept), and a moved one goes back to the
+    build's checks before anything is written."""
 
     spec, store = oneshot_spec.spec_of(repo), oneshot_spec.store(repo)
-    tree, o = oneshot_spec.own_tree(spec), spec["oneshot"]
+    tree = oneshot_spec.own_tree(spec)
     if not tree:
         store.stop("folder", f"작업트리가 `{oneshot.BRANCH}` 브랜치의 그 작업트리가 아니다: {spec['worktree']}")
         return
+    release = hold(work._busy, work_lock, str(tree), "작업트리를 다른 턴이 쓰고 있다 — 끝난 뒤 다시 승인하라",
+                   kind="turn")
+    try:
+        if why := review().moved(spec, tree):
+            review().rebuild(repo, store, f"R2 승인 전에 작업트리가 바뀌었다 — {why}")
+        else:
+            record(repo, store, spec, tree)
+    finally:
+        release()
+        work.dispatch(tree, SimpleNamespace(halt=runtime.stopping, turn=""))
+
+
+def record(repo: str, store, spec: dict, tree: Path) -> None:
+    o = spec["oneshot"]
     front, source = o["front"], shots(repo, o["front"]["shots"])
     copies = {"docs/design/frontend.md": None,
               **{f"docs/design/mock/{s['id']}.html": source / f"{s['id']}.html" for s in front["screens"]},
