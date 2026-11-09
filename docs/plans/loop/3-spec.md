@@ -305,12 +305,15 @@ by the pull request's own tests, which the session never saw.
 | Report | What it found |
 | --- | --- |
 | `docs/research/spec-views-pilot.md` | Six tasks: D alone was not below A, at about A's cost per success |
-| `docs/research/spec-views-main.md` | Ten held-out tasks, D against A with frozen specs and through the full pipeline: no detectable difference, and D about 1.2 times A's cost per success |
+| `docs/research/spec-views-main.md` | Ten held-out tasks, D against A with frozen specs and through the full pipeline: inconclusive, and D about 1.2 times A's cost per success |
 
-The brief's done items already name what the tests check. The requirements
-restated the same facts in another shape, so the shape changed neither which
-tasks succeeded nor how they failed. The agent's input is therefore the
-brief, and work on the spec goes to what a person reads.
+In the main experiment, paired by task, A and D split on one fixed-spec task
+(pr219: A succeeded, D was cut at the time limit) and on two pipeline tasks
+in opposite directions (pr203 to D, pr219 to A); they agreed on the rest. The
+intervals (fixed −0.10 [−0.30, 0.00], pipeline 0.00 [−0.30, +0.30]) are too
+wide to show the shape helps, hurts or makes no difference, and they do not
+say why. D cleared neither adoption path, so the agent's input stays the
+brief and work on the spec goes to what a person reads.
 
 The main experiment also found three limits of the task set and the runner:
 
@@ -319,7 +322,8 @@ The main experiment also found three limits of the task set and the runner:
 - The 1800 s session limit cut finished work: five of twenty fixed-spec cells
   timed out with every hidden test already passing.
 - The journal keeps no tool transcript, so what a session read outside its
-  workspace cannot be shown.
+  workspace cannot be shown, and the run's validity is not established:
+  leakage from the hub checkout's history stays unverified.
 
 The configs, task lists and frozen specs are under `eval/spec-views/`; the
 journals and hidden tests are under `raw/eval/spec-views/`. The harness that

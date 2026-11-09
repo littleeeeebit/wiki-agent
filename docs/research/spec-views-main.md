@@ -13,7 +13,7 @@ main-2 narrows main-1 to the candidate D against A. The owner stopped main-1 on 
 | Stage | Result | Grounds |
 | --- | --- | --- |
 | Implementation pass | pass | `-m pytest -q -p no:cacheprovider -n 0 tool/test_spec_views.py` at `58a359a77bd8`: passed; `-m pytest -q -p no:cacheprovider -n 0 tool/test_spec_views.py` at `58a359a77bd8`: passed |
-| Experiment validity | valid | config yes, one_code_commit yes, held_out yes, frozen_inputs yes, costs_recorded yes, all_cells_ran yes |
+| Experiment validity | not established: no leakage unverified | config yes, one_code_commit yes, held_out yes, frozen_inputs yes, costs_recorded yes, all_cells_ran yes; no leakage or contamination unverified: sessions could reach the hub checkout's history and the journal keeps no tool transcript (Leakage limit, below) |
 | Adoption, fixed | further verification needed | neither path passes and the intervals still allow one; difference -0.100 [-0.300, +0.000], ratio 1.211 [0.827, 3.853]; critical regressions 1 against A's 2, none forbidden or deleting |
 | Adoption, pipeline | further verification needed | neither path passes and the intervals still allow one; difference +0.000 [-0.300, +0.300], ratio 1.234 [0.397, 3.157]; critical regressions 1 against A's 1, none forbidden or deleting |
 
@@ -93,12 +93,14 @@ From the journal, up to two final rows per failure cause.
   all three tasks carry the full gate (ruff, lint, debt and the whole pytest tool -n 2 suite) as their first done
   item, which a session that runs it spends much of its 1800 s on. The primary metric, fixed before the run, counts a
   timeout as a failure, so they stay failures; read as "correct but unfinished", A would be 6/10 and D 6/10. This is
-  a property of the 1800 s limit both conditions share, not a difference between them.
+  a property of the 1800 s limit both conditions share; whether a condition makes a cut more likely is not
+  something five cuts can show.
 - Failures are task-bound. pr125 (A and D fail the same hidden test,
   `test_text_with_no_single_answer_that_ends_it_settles_nothing`), pr191 (both fail
   `test_a_pr_adopted_from_github_repairs_on_the_work_model_the_screen_chose`, both claimed done) and pr87 (A misses
-  one hidden test, D two) fail the same way under both inputs: the spec format does not change which condition of
-  the request is missed.
+  one hidden test, D two) fail under both inputs on the same hidden tests, apart from pr87's one extra miss under D.
+  On these three tasks the two inputs missed the same conditions of the request; ten tasks do not show that this
+  holds beyond them.
 - Critical regressions. pr28 broke existing `tool/test_main.py` tests under both conditions (A three, D two) and
   pr87 under A broke `test_the_move_writes_the_plan_it_checked_not_one_read_again`. None changed a forbidden path or
   deleted a tracked file, so the rule relative to A (D 1 against A 2) does not block D.
@@ -110,7 +112,8 @@ From the journal, up to two final rows per failure cause.
   specs name those files and the gate's `debt.py` step rewrites the ratchet, which accounts for it. The workspace is a
   history-free git archive of the merge base, but the session has Bash on the same disk as the hub checkout, and
   the journal keeps no tool transcript, so reading the hub's history cannot be excluded from the journal alone. This
-  is the pilot's isolation, held identical as the spec requires; it affects A and D alike.
+  is the pilot's isolation, held identical as the spec requires. Both conditions had the same access, but nothing
+  recorded shows whether either used it, or used it equally, so no leakage stays unverified.
 
 ### What the full-pipeline journal shows
 
@@ -142,11 +145,13 @@ From the journal, up to two final rows per failure cause.
   on, at the start of both arms. (The report first read "not shown": pr125's two pipeline cells never started a
   session and carry no commit, which the check counted as one more commit. The report, not any measured row, was
   corrected after the run; the validity check already ignored commit-less rows.)
-- Experiment validity: valid. The config committed at 58a359a was unchanged for every cell, the tasks meet
+- Experiment validity: not established, because no leakage is unverified. What holds: the config committed at 58a359a was unchanged for every cell, the tasks meet
   neither the pilot's nor any tuned-on task, the frozen specs and hidden tests matched their digests, every cell ran
   with its cost recorded (a timeout the CLI reported no cost for counts its USD 3 cap: two cells and two
   baselines in the fixed arm, two cells in the pipeline), and main-1's cells are not pooled.
-  The one limit is the leakage note above: the journal cannot show what a session read outside its workspace.
+  What does not: the journal cannot show what a session read outside its workspace (the leakage note above), so
+  neither leakage nor contamination is excluded. Adoption, which needs validity, could not pass on this run in any
+  case; the comparisons below are read as measurements under that limit.
 - Adoption: further verification needed, so D is not adopted. In neither arm does D clear a path: it is not
   better than A (quality path needs the difference's lower end above 0) and not cheaper per success (cost path needs
   a ratio at most 0.85; D is 1.21 and 1.23). Ten tasks leave intervals too wide to reject either path outright. No
