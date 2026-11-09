@@ -325,7 +325,7 @@ def markdown(rep: dict, cfg: dict, kept: str = "") -> str:
               "sample cannot tell the conditions apart.", "", "## Fixed specs", ""] + _conditions_table(rep, "fixed")
     lines += ["", f"## Full pipeline (`{rep['pipeline_experiment']}`)", "", cfg["pipeline"]["text"], ""]
     lines += _conditions_table(rep, "pipeline")
-    lines += ["", "Measures: " + " ".join(f"**{k}** — {d}" for k, d in cfg["metrics"]["definitions"].items()), "",
+    lines += ["", "Measures:", "", *(f"- {k}: {d}" for k, d in cfg["metrics"]["definitions"].items()), "",
               "## Representative failures", "", "From the journal, up to two final rows per failure cause.", ""]
     for part_name in ("fixed", "pipeline"):
         for m in rep["cells"][part_name].values():

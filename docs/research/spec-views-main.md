@@ -44,7 +44,16 @@ Each repetition generates a fresh spec from the pull request's original text wit
 | A | 10 | 4 | 0.400 [0.100, 0.700] (n=10) | 0.500 | 1 | 1 | 1 | n/a | n/a | 0 | 14234002 | 3.55 | 15.8338 | 3.9585 |
 | D | 10 | 4 | 0.400 [0.100, 0.700] (n=10) | 0.500 | 1 | 1 | 1 | 0 | 0 | 0 | 16228078 | 3.68 | 19.5408 | 4.8852 |
 
-Measures: **requirement satisfaction** — the fraction of a cell's hidden tests (the pull request's own tests of what it asked for) that passed, averaged over cells. **regressions** — cells whose affected existing tests, as the merge base wrote them, failed. **critical regressions** — cells meeting `critical_regression`. **missing critical conditions** — failed cells that changed non-test code, kept every affected test passing and still failed a hidden test: an implementation that missed a condition the request's tests check. **unsupported policy additions** — requirements in the specs a condition ran whose `source.kind` is `policy` and whose status is `assumed` or `undecided`: rules the enrichment added without a confirmed ground. A has none (no requirements). **unnecessary holds** — specs on which `spec_views.blocked` names a dependency on an undecided requirement, so production's first turn would have held for a person, although the merged pull request shows the task was answerable without one. **retries** — per-cell retries (fixed at 0) and infrastructure reruns. **cost per success** — every attempt's USD (a cost the CLI never reported at its cap) plus every spec call the condition needs, divided by verified successes; the ratio's interval resamples tasks.
+Measures:
+
+- requirement satisfaction: the fraction of a cell's hidden tests (the pull request's own tests of what it asked for) that passed, averaged over cells.
+- regressions: cells whose affected existing tests, as the merge base wrote them, failed.
+- critical regressions: cells meeting `critical_regression`.
+- missing critical conditions: failed cells that changed non-test code, kept every affected test passing and still failed a hidden test: an implementation that missed a condition the request's tests check.
+- unsupported policy additions: requirements in the specs a condition ran whose `source.kind` is `policy` and whose status is `assumed` or `undecided`: rules the enrichment added without a confirmed ground. A has none (no requirements).
+- unnecessary holds: specs on which `spec_views.blocked` names a dependency on an undecided requirement, so production's first turn would have held for a person, although the merged pull request shows the task was answerable without one.
+- retries: per-cell retries (fixed at 0) and infrastructure reruns.
+- cost per success: every attempt's USD (a cost the CLI never reported at its cap) plus every spec call the condition needs, divided by verified successes; the ratio's interval resamples tasks.
 
 ## Representative failures
 
@@ -72,71 +81,71 @@ From the journal, up to two final rows per failure cause.
 <!-- notes: kept across regenerations -->
 ### What the fixed-spec journal shows
 
-- **One task carries the whole D−A difference.** Paired by task, A and D agree on nine of ten: both succeed on
+- One task carries the whole D−A difference. Paired by task, A and D agree on nine of ten: both succeed on
   pr46, pr98 and pr166; both fail pr28, pr87, pr125, pr191, pr203 and pr299. The only split is pr219, where A
   succeeded in 1575 s and D's session was cut at the 1800 s limit (1883 s with verification) with the hidden test
   already passing. The −0.100 difference is that one cell; its interval [−0.300, 0.000] reflects how few tasks split.
-- **Timeouts after the work was done.** Five of the twenty fixed cells timed out (A: pr203, pr299; D: pr203,
+- Timeouts after the work was done. Five of the twenty fixed cells timed out (A: pr203, pr299; D: pr203,
   pr219, pr299), and in all five every hidden test and every affected test passed on what the session had left in
   the workspace. The sessions were still working, none had written a done-report, when the harness stopped them;
-  all three tasks carry the full gate (ruff, lint, debt and the whole `pytest tool -n 2` suite) as their first done
+  all three tasks carry the full gate (ruff, lint, debt and the whole pytest tool -n 2 suite) as their first done
   item, which a session that runs it spends much of its 1800 s on. The primary metric, fixed before the run, counts a
   timeout as a failure, so they stay failures; read as "correct but unfinished", A would be 6/10 and D 6/10. This is
   a property of the 1800 s limit both conditions share, not a difference between them.
-- **Failures are task-bound.** pr125 (A and D fail the same hidden test,
+- Failures are task-bound. pr125 (A and D fail the same hidden test,
   `test_text_with_no_single_answer_that_ends_it_settles_nothing`), pr191 (both fail
   `test_a_pr_adopted_from_github_repairs_on_the_work_model_the_screen_chose`, both claimed done) and pr87 (A misses
   one hidden test, D two) fail the same way under both inputs: the spec format does not change which condition of
   the request is missed.
-- **Critical regressions.** pr28 broke existing `tool/test_main.py` tests under both conditions (A three, D two) and
+- Critical regressions. pr28 broke existing `tool/test_main.py` tests under both conditions (A three, D two) and
   pr87 under A broke `test_the_move_writes_the_plan_it_checked_not_one_read_again`. None changed a forbidden path or
   deleted a tracked file, so the rule relative to A (D 1 against A 2) does not block D.
-- **Production-runner baselines.** Condition A with the app's session flags succeeded on 3/10 (pr46, pr98, pr166)
+- Production-runner baselines. Condition A with the app's session flags succeeded on 3/10 (pr46, pr98, pr166)
   against the isolated A's 4/10; the difference is pr219, which timed out on the production runner too
   (2038 s). Three of the seven failures were timeouts.
-- **Leakage limit.** Several cells changed exactly the files the merged pull request changed (pr203 and pr299 under
+- Leakage limit. Several cells changed exactly the files the merged pull request changed (pr203 and pr299 under
   both conditions, including `web/tests/task_browser.py` and `.wiki/ratchet.json`). The original text and the frozen
   specs name those files and the gate's `debt.py` step rewrites the ratchet, which accounts for it. The workspace is a
-  history-free `git archive` of the merge base, but the session has Bash on the same disk as the hub checkout, and
+  history-free git archive of the merge base, but the session has Bash on the same disk as the hub checkout, and
   the journal keeps no tool transcript, so reading the hub's history cannot be excluded from the journal alone. This
   is the pilot's isolation, held identical as the spec requires; it affects A and D alike.
 
 ### What the full-pipeline journal shows
 
-- **Two splits that cancel.** Paired by task, A and D agree on eight of ten: both succeed on pr46, pr98 and pr166;
+- Two splits that cancel. Paired by task, A and D agree on eight of ten: both succeed on pr46, pr98 and pr166;
   both fail pr28, pr87, pr125, pr191 and pr299. pr203 went to D (A timed out at 2402 s with its hidden test already
   passing) and pr219 to A (D timed out at 1934 s, hidden test passing) — the same timeout-after-the-work pattern as
   the fixed arm, landing once on each side. The 0.000 difference is those two cells; its interval [−0.300, +0.300]
   is as wide as ten tasks allow.
-- **A generation that did not parse.** For pr125 the `next` generator ran 12 turns (USD 0.27) and returned a spec
+- A generation that did not parse. For pr125 the `next` generator ran 12 turns (USD 0.27) and returned a spec
   block whose JSON is cut off (`Unterminated string`), so neither condition had an input. That is a real failure of
   the full pipeline — production's first turn would refuse the same block — and is counted for both A and D; it is
   not an infrastructure failure (the model answered), so it was not rerun.
-- **D pays for its extra spec calls.** The pipeline charges every repetition's spec calls to the conditions that
+- D pays for its extra spec calls. The pipeline charges every repetition's spec calls to the conditions that
   need them: generation alone for A (USD 2.56 over the ten tasks), generation, enrichment and selection for D
   (USD 4.88). With the same four successes, that USD 2.33 of enrichment and selection is most of why D's cost per
   success is 1.23 times A's; the cells themselves cost A USD 13.28 and D USD 14.66.
-- **Fresh specs satisfy fewer requirements.** Hidden-test pass fraction fell from 0.767 (A) and 0.733 (D) on the
+- Fresh specs satisfy fewer requirements. Hidden-test pass fraction fell from 0.767 (A) and 0.733 (D) on the
   frozen specs to 0.500 for both on fresh ones: pr28 and pr299 timed out with hidden tests still failing under both
   conditions, and pr125 never ran. The drop is shared, so it does not separate A from D, but it is the variance the
   generation step adds and why the pipeline arm was run apart.
-- **Critical regressions.** pr87 under both conditions broke `tool/test_connect.py` and failed all three hidden
+- Critical regressions. pr87 under both conditions broke `tool/test_connect.py` and failed all three hidden
   tests; no cell changed a forbidden path or deleted a tracked file, so D (1) against A (1) does not block.
-- **No policy additions, no holds.** Neither D's ten frozen specs nor its nine fresh ones carry an assumed or
+- No policy additions, no holds. Neither D's ten frozen specs nor its nine fresh ones carry an assumed or
   undecided policy requirement, and none would have held production's first turn for a person.
 
 ### Reading the three judgments
 
-- **Implementation pass: pass.** `tool/test_spec_views.py` passed at 58a359a, the only commit any counted cell ran
+- Implementation pass: pass. `tool/test_spec_views.py` passed at 58a359a, the only commit any counted cell ran
   on, at the start of both arms. (The report first read "not shown": pr125's two pipeline cells never started a
   session and carry no commit, which the check counted as one more commit. The report, not any measured row, was
   corrected after the run; the validity check already ignored commit-less rows.)
-- **Experiment validity: valid.** The config committed at 58a359a was unchanged for every cell, the tasks meet
+- Experiment validity: valid. The config committed at 58a359a was unchanged for every cell, the tasks meet
   neither the pilot's nor any tuned-on task, the frozen specs and hidden tests matched their digests, every cell ran
   with its cost recorded (a timeout the CLI reported no cost for counts its USD 3 cap: two cells and two
   baselines in the fixed arm, two cells in the pipeline), and main-1's cells are not pooled.
   The one limit is the leakage note above: the journal cannot show what a session read outside its workspace.
-- **Adoption: further verification needed, so D is not adopted.** In neither arm does D clear a path: it is not
+- Adoption: further verification needed, so D is not adopted. In neither arm does D clear a path: it is not
   better than A (quality path needs the difference's lower end above 0) and not cheaper per success (cost path needs
   a ratio at most 0.85; D is 1.21 and 1.23). Ten tasks leave intervals too wide to reject either path outright. No
   significant difference is not evidence that D and A are equivalent. A further test would need a far larger sample
