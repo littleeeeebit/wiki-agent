@@ -929,6 +929,9 @@ def test_the_shell_s_pipe_neither_blocks_the_server_nor_outlives_it(tmp_path):
         "sys.path.insert(0, str(entry.parent))\nfrom main import app, specs, query, work\n"
         "specs.SPECS = scratch / 'specs'\nquery.LOGS = scratch / 'chat'\n"
         "work.LOGS = scratch / 'work'\napp.SWITCH = scratch / 'main.json'\n"
+        # Once a `dump` file appears, every thread's stack goes to the log: what a server that will not exit waits on.
+        "import faulthandler, threading, time\nthreading.Thread(daemon=True, target=lambda: (any(time.sleep(0.2) or "
+        "(scratch / 'dump').exists() for _ in iter(int, 1)), faulthandler.dump_traceback(file=sys.stderr))).start()\n"
         "sys.argv = [str(entry), *sys.argv[2:]]\nrunpy.run_path(str(entry), run_name='__main__')\n",
         encoding="utf-8")
     log = tmp_path / "server.log"
@@ -947,9 +950,11 @@ def test_the_shell_s_pipe_neither_blocks_the_server_nor_outlives_it(tmp_path):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/channels", timeout=20) as reply:
             assert json.loads(reply.read())
         server.stdin.close()
-        try:    # a bare timeout once on a loaded CI runner (run 41557814228): keep what the server said
-            assert server.wait(timeout=20) == 0, log.read_text(encoding="utf-8")
+        try:    # loaded CI runners passed 20 s with an empty log (runs 41557814228, 42701080213): 60 s, then stacks
+            assert server.wait(timeout=60) == 0, log.read_text(encoding="utf-8")
         except subprocess.TimeoutExpired:
+            (tmp_path / "dump").touch()
+            time.sleep(3)
             pytest.fail("the server outlived its closed stdin:\n" + log.read_text(encoding="utf-8"))
     finally:
         server.kill()
