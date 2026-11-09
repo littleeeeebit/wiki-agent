@@ -21,7 +21,7 @@ nothing in this step pushes the branch or opens a pull request.
 | A write session on a spec | The work session with the spec as system prompt, `done-report`, and the server rerunning `gate_cmd` | `tool/main/work.py`, `tool/prompts/work-spec.md` |
 | Leaving the done-report before the pull request | The refactor branch: a spec with its own completion returns before `pr_turn` (`refactor_run.published`) | `tool/main/specs.py:1773` |
 | Read-only sessions | `agent.read_tools`, as the review and prerequisite readings use | `tool/agent` |
-| Syntax comparison of test files | `refactor_run._kept`, the AST-equivalence check behind the refactor test contract | `tool/main/refactor_run.py:559` |
+| Syntax comparison of test files | `refactor_run.equivalent`, the whole-file AST comparison the refactor contract uses | `tool/main/refactor_run.py:473` |
 | Blocks returned and written by the server | Planner pattern: the model returns named JSON blocks, the server validates and writes only inside a named folder | `tool/main/planning.py` |
 
 Two existing pieces are deliberately not reused as they are.
@@ -205,13 +205,24 @@ the base commit, is what later changes are compared against.
 The same work session machinery as any spec: the spec's `done` lists the
 gate and the scenarios; the session writes `done-report`; the server reruns
 `gate_cmd` in the worktree. The contract tests are protected against
-`tests_head`: before each gate, `oneshot` reads each pinned file at
-`tests_head` and in the worktree, parses both, and calls
-`refactor_run._kept(old_tree.body, new_tree.body, set())`, the pure syntax
-comparison behind the refactor contract. A deleted, unreadable or unparsable
-pinned file is a refusal. New test files may be added; a contract test may
-not be removed, renamed, skipped or changed. Up to three gate attempts, then
-`stopped` with `gate`.
+`tests_head` in two ways, because a file that is unchanged is not yet a test
+that ran:
+
+1. Unchanged. Before each gate, `oneshot` reads each pinned file at
+   `tests_head` and in the worktree and compares them with
+   `refactor_run.equivalent`, the whole-file AST comparison: nothing may be
+   added to a pinned file either, so a module-level `pytest.skip(...,
+   allow_module_level=True)` or a new `pytestmark` appended after the tests
+   is a refusal. (`_kept` is not enough here: it allows statements added
+   after the old ones.) A deleted, unreadable or unparsable pinned file is a
+   refusal. New tests go in new files.
+2. Ran and passed. After the gate passes, `oneshot` runs the planned tests
+   by node id with a JUnit XML report into the run's raw folder, and counts a
+   planned test as passing only when the report shows it passed. Skipped,
+   xfailed, deselected or missing from the report is a failure, whatever the
+   gate's exit code said.
+
+Up to three gate attempts, then `stopped` with `gate`.
 
 ### Backend review
 
@@ -262,7 +273,10 @@ requirement that person-facing strings are written in Korean directly.
   refused, passing planned test reported); a contract test created after the
   base commit then weakened
   (an expected value changed, a skip mark, a deleted test) refused against
-  `tests_head`, and a deleted or unparsable pinned file refused; review
+  `tests_head`, and a deleted or unparsable pinned file refused; a
+  module-level skip appended to an otherwise unchanged pinned file refused;
+  a planned test skipped, xfailed or not collected counted as failing while
+  the gate itself is green; review
   refusal looping once then stopping; a verdict on an older HEAD ignored; the
   review turn, run with the real Codex read profile, receiving the design
   and requirements in its prompt and the diff through `pr_diff`, and

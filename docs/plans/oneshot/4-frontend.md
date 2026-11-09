@@ -157,12 +157,28 @@ high severity by definition and never left to the critic's judgement.
 ### Critique: a separate read-only session
 
 The owner chose a critic separate from the builder. It is a read-only
-session on a model that accepts images. The shots live under the run's raw
-folder, which the read-only tools cannot reach, so the server attaches the
-round's screenshots to the critic's turn as image input and puts the
-mechanical findings, the R2 sheet and the frequency map in its prompt; the
-critic reads nothing from disk outside the worktree's tracked files. It judges
-in the `design-pass` order:
+session that must see the screenshots, and the shots live under the run's
+raw folder, which the read-only tools cannot reach (Codex's source-only read
+profile also turns off `view_image`). So the screenshots travel in the turn
+itself, which the app's sessions cannot do yet: `ChatSession.say` takes text
+only, and every provider path serializes one text block
+(`tool/agent/chat_session.py:872`, `:913`, `:935`;
+`tool/agent/chat_events.py:103`). This step therefore extends the session
+first:
+
+- `say` gains an optional list of image files. The Claude path serializes
+  them as base64 image content blocks in the same stream-json user message as
+  the text; that is the one provider supported for the critic. A session on a
+  provider without image input refuses a turn with images instead of dropping
+  them.
+- The images belong to the turn, so a retry of that turn (the session's
+  overflow or transport retries) resends the same round's images.
+- The critic runs on Claude. A refused or failed image turn stops the run
+  with `critique`; it is never treated as a critique that saw nothing wrong.
+
+The mechanical findings, the R2 sheet and the frequency map go in the
+critic's prompt; the critic reads nothing from disk outside the worktree's
+tracked files. It judges in the `design-pass` order:
 purpose and layout, measured spacing and alignment, typography, colour,
 leftover whitespace. It returns an `oneshot-critique` block:
 `[{severity: "high"|"medium"|"low", route, viewport, state, what, fix}]`. It
@@ -206,8 +222,12 @@ changed. Approval moves the run to `pull request`.
   on fixture pages (an `every` feature hidden, a `rarely` feature on the
   primary route, a `sometimes` feature two clicks away); the stop rule (two
   clean rounds, the cap, a mechanical high finding overriding a clean
-  critique); the critic's block refused outside its schema; the critic's
-  turn carrying the round's screenshots as image input; the adapter grant
+  critique); the critic's block refused outside its schema; with the
+  provider transport mocked (no external call), the request the real
+  `ChatSession` sends for a critic turn containing each screenshot as an
+  image block beside the text, a retried turn resending the same round's
+  images, and a session on a provider without image input refusing the turn
+  so the run stops with `critique`; the adapter grant
   set only during the build turns and refused on the original checkout,
   through the real guard, with the slots committed in the worktree; the real
   guard refusing an adapter write after a build turn ended by a model error,
