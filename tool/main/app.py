@@ -37,7 +37,7 @@ import agent
 from common import errorlog
 from common import settings as settings_file
 
-from . import architecture, channels, connect, improvements, loop, mobile, planning, powershell, query, recovery, refactor, refactor_api, runtime, specs, suite, survey, update, verification, wiring, work
+from . import architecture, channels, connect, improvements, loop, mobile, oneshot, oneshot_spec, planning, powershell, query, recovery, refactor, refactor_api, runtime, specs, suite, survey, update, verification, wiring, work
 from .runtime import server_owner
 
 # On Windows `mimetypes` reads the registry, where `.js` is commonly
@@ -74,6 +74,8 @@ async def lifespan(application: FastAPI):
         # second server must never mark the first server's live loops stopped.
         resume = loop.recover()
         planning.recover()
+        oneshot.recover()
+        oneshot_spec.recover()
         refactor.recover()
         survey.recover()
         for repo, sid in resume:
@@ -107,7 +109,7 @@ def close_turns() -> None:
     # other provider dies, so a turn `end_all` kills reads as a restart, not a
     # failure. Queries keep no workflow and close only after their providers
     # are dead: closing stdin waits on a prompt write a stalled provider blocks.
-    threads = [*loop.close_all(wait=False), *planning.close_all(wait=False)]
+    threads = [*loop.close_all(wait=False), *planning.close_all(wait=False), *oneshot.close_all(wait=False)]
     refactor.close_all()
     threads += work.close_all(wait=False)
     agent.end_all()
@@ -143,6 +145,8 @@ app.include_router(specs.router)
 app.include_router(loop.router)
 app.include_router(recovery.router)
 app.include_router(planning.router)
+app.include_router(oneshot.router)
+app.include_router(oneshot_spec.router)
 app.include_router(refactor_api.router)
 app.include_router(improvements.router)
 app.include_router(connect.router)
