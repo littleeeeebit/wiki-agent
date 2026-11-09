@@ -232,6 +232,22 @@ def test_a_build_with_a_full_report_a_green_gate_and_every_planned_test_passing_
     assert begun == ["budget"]   # the backend review follows
 
 
+def test_a_server_that_dies_between_the_passed_build_and_its_review_resumes_the_review(built_world):
+    tree, sent = built_world
+    to_build(tree, sent)
+    write(tree, "app.py", APP)
+    git(tree, "add", "app.py")
+    git(tree, "commit", "-m", "build")
+    check(tree, "만들었다.\n" + report())   # its review never started: the server went down
+    assert o()["working"] == "review"
+    oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "restart"
+    begun = []
+    with patch("main.oneshot_review.begin", begun.append):
+        oneshot_spec.resume("budget")
+    assert begun == ["budget"]
+
+
 @pytest.mark.parametrize("weaken, said", [
     (lambda tree: write(tree, "test_budget.py", TESTS.replace("== 3000", "== 0")), "바뀌었다"),
     (lambda tree: write(tree, "test_budget.py", TESTS + "\nimport pytest\npytest.skip('x', allow_module_level=True)\n"),

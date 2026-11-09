@@ -134,7 +134,9 @@ def begin(repo: str) -> None:
 def resume(repo: str) -> None:
     spec = oneshot_spec.saved(repo, oneshot={"attempts": 0})   # the owner's resume starts the attempts afresh
     stage = spec["oneshot"]["stage"]
-    send(repo, stage, tests_text(spec) if stage == "tests" else build_text(spec))
+    from . import oneshot_review   # it imports this module
+
+    send(repo, stage, tests_text(spec) if stage == "tests" else oneshot_review.build_turn(spec))
 
 
 # -- What the server checks ------------------------------------------------------------
@@ -418,7 +420,8 @@ def built(path: Path, run, spec: dict, final: str) -> str:
         return why
     if head(path) != verdict["head"] or specs.dirty(path):
         return "계획 테스트를 돌리는 동안 작업트리가 바뀌었다"
+    # `working` names the review before its worker starts: a server that dies in between leaves it for `recover`.
     oneshot_spec.saved(spec["repo"], oneshot={"stage": "review", "built_head": verdict["head"], "attempts": 0,
-                                              "working": None})
+                                              "working": "review"})
     specs.note(run, f"백엔드 빌드 통과 · {verdict['head'][:12]}")
     return ""

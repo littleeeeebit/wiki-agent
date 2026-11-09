@@ -16,8 +16,8 @@ from fastapi import HTTPException
 
 from agent import read_tools
 
-from . import oneshot, oneshot_build, oneshot_spec, specs
-from .query import ROOT
+from . import oneshot, oneshot_build, oneshot_spec, specs, work
+from .query import ROOT, _lock as work_lock, hold
 
 REVIEW_PROMPT = (ROOT / "tool/prompts/oneshot-review.md").read_text(encoding="utf-8")
 SEVERITIES = ("P0", "P1", "P2")
@@ -93,34 +93,72 @@ def verdict_of(value, head: str) -> dict:
 
 
 def review(repo: str) -> None:
+    """The review holds the worktree from freezing its input until its verdict is saved, so no other turn
+    writes the tree it reads; a refusal releases it before the build turn takes it."""
+
     store = oneshot_spec.store(repo)
     spec = oneshot_spec.spec_of(repo)
     o, tree = spec["oneshot"], Path(spec["worktree"])
     try:
+        release = hold(work._busy, work_lock, str(tree), "작업트리를 다른 턴이 쓰고 있다", kind="turn")
+    except HTTPException as exc:
+        store.stop("block", f"{exc.detail} — 끝난 뒤 [재개] 로 백엔드 리뷰를 다시 한다")
+        return
+    try:
+        found = verdict(repo, store, spec, tree)
+        if found is None:
+            return
+        reviews = [*(o.get("reviews") or []), {**found, "ts": time.time()}]
+        if found["verdict"] == "approve":
+            oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "working": None})
+            return
+        refused = int(o.get("refused") or 0) + 1
+        if refused >= MAX_REFUSALS:
+            store.put(reviews=reviews, refused=refused)
+            store.stop("review", f"백엔드 리뷰가 {refused}번 거부했다 — " +
+                       " / ".join(f"[{f['severity']}] {f['location']} {f['reason']}" for f in found["findings"][:5]))
+            return
+        # `working` names the build before it is sent: a server that dies in between leaves it for `recover`.
+        spec = oneshot_spec.saved(repo, oneshot={"stage": "build", "reviews": reviews, "refused": refused,
+                                                 "attempts": 0, "working": "build"})
+    finally:
+        release()
+    oneshot_build.send(repo, "build", fixing(spec, found))
+
+
+def verdict(repo: str, store, spec: dict, tree: Path) -> dict | None:
+    """The checked verdict on the HEAD the build passed, or `None` after stopping. A tree that is not that
+    HEAD, clean, before or after the turn sends the run back to the build's checks."""
+
+    o = spec["oneshot"]
+
+    def moved() -> str:
+        head = specs.sh(["git", "rev-parse", "HEAD"], tree).stdout.strip()
+        if head != o.get("built_head"):
+            return f"HEAD `{head[:12]}` 가 빌드를 통과한 `{str(o.get('built_head'))[:12]}` 가 아니다"
+        return "작업트리에 커밋하지 않은 변경이 있다" if specs.dirty(tree) else ""
+
+    if why := moved():
+        rebuild(repo, store, why)
+        return None
+    try:
         head, how = frozen(spec)
     except (ValueError, OSError, RuntimeError) as exc:
         store.stop("review", str(exc))
-        return
-    if head != o.get("built_head"):
-        store.stop("review", f"HEAD `{head[:12]}` 가 빌드를 통과한 `{str(o.get('built_head'))[:12]}` 가 아니다")
-        return
+        return None
     found = oneshot.turned(store, "review", REVIEW_PROMPT, review_text(spec, head, how), "oneshot-review",
                            lambda value: verdict_of(value, head), tree)
-    if found is None:
-        return
-    reviews = [*(o.get("reviews") or []), {**found, "ts": time.time()}]
-    if found["verdict"] == "approve":
-        oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "working": None})
-        return
-    refused = int(o.get("refused") or 0) + 1
-    if refused >= MAX_REFUSALS:
-        store.put(reviews=reviews, refused=refused)
-        store.stop("review", f"백엔드 리뷰가 {refused}번 거부했다 — " +
-                   " / ".join(f"[{f['severity']}] {f['location']} {f['reason']}" for f in found["findings"][:5]))
-        return
-    spec = oneshot_spec.saved(repo, oneshot={"stage": "build", "reviews": reviews, "refused": refused, "attempts": 0,
-                                             "working": None})
-    oneshot_build.send(repo, "build", fixing(spec, found))
+    if found is not None and (why := moved()):
+        rebuild(repo, store, f"리뷰하는 동안 작업트리가 바뀌었다 — {why}")
+        return None
+    return found
+
+
+def rebuild(repo: str, store, why: str) -> None:
+    """The tree is not what the build passed: `[재개]` sends the build turn, whose checks run again."""
+
+    oneshot_spec.saved(repo, oneshot={"stage": "build", "attempts": 0})
+    store.stop("gate", f"{why} — [재개] 로 빌드 검사부터 다시 한다")
 
 
 def fixing(spec: dict, found: dict) -> str:
@@ -129,6 +167,16 @@ def fixing(spec: dict, found: dict) -> str:
             "where it points, without changing the pinned contract tests; a finding you disagree with gets "
             "evidence in your answer instead of a change.\n\n```json\n"
             f"{json.dumps(serious, ensure_ascii=False, indent=2)}\n```\n\n" + oneshot_build.build_text(spec))
+
+
+def build_turn(spec: dict) -> str:
+    """A resumed build's turn: the review's findings again while its refusal of the built HEAD stands."""
+
+    o = spec["oneshot"]
+    last = (o.get("reviews") or [None])[-1]
+    if last and last["verdict"] == "refuse" and last["head"] == o.get("built_head"):
+        return fixing(spec, last)
+    return oneshot_build.build_text(spec)
 
 
 def resume(repo: str) -> None:

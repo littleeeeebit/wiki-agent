@@ -8,9 +8,10 @@ import subprocess
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 
 from agent import read_tools
-from main import loop, oneshot, oneshot_build, oneshot_review, oneshot_sheet as sheet, oneshot_spec, specs
+from main import loop, oneshot, oneshot_build, oneshot_review, oneshot_sheet as sheet, oneshot_spec, query, specs, work
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_spec import DESIGN, GLOSSARY, PROFILE, REQS, fenced, world  # noqa: F401 — `world` is a fixture
 
@@ -111,7 +112,63 @@ def test_a_head_other_than_the_one_the_build_passed_is_not_reviewed(reviewed):
     heard, asking = answers()
     with asking:
         oneshot_review.review("budget")
-    assert o()["stopped"]["reason"] == "review" and not heard
+    assert o()["stage"] == "build" and o()["stopped"]["reason"] == "gate" and not heard
+
+
+@pytest.mark.parametrize("change", ["commit", "edit"])
+def test_a_tree_changed_while_the_review_read_it_goes_back_to_the_builds_checks(reviewed, change):
+    tree, head, sent = reviewed
+
+    def ask(store, role, system, text, where=None):
+        (tree / "late.py").write_text("x = 1\n", encoding="utf-8")
+        if change == "commit":
+            git(tree, "add", "late.py")
+            git(tree, "commit", "-m", "late")
+        return verdict(head), {"cost_usd": 0.1}, False
+
+    with patch.object(oneshot, "ask", ask):
+        oneshot_review.review("budget")
+    assert o()["stage"] == "build" and o()["stopped"]["reason"] == "gate" and "바뀌었다" in o()["stopped"]["detail"]
+    assert not sent
+
+
+def test_the_review_holds_its_worktree_until_the_verdict_is_saved(reviewed):
+    tree, head, sent = reviewed
+    held = []
+
+    def ask(store, role, system, text, where=None):
+        with pytest.raises(HTTPException):
+            query.hold(work._busy, query._lock, str(tree), "busy")
+        return verdict(head, "refuse", P1), {"cost_usd": 0.1}, False
+
+    with patch.object(oneshot, "ask", ask),          patch.object(oneshot_build, "send", lambda *a: held.append(str(tree) in work._busy)):
+        oneshot_review.review("budget")
+    assert held == [False]   # released before the build turn takes the tree
+
+
+def test_a_busy_worktree_stops_the_review_before_it_reads(reviewed):
+    tree, _, _ = reviewed
+    release = query.hold(work._busy, query._lock, str(tree), "busy")
+    heard, asking = answers()
+    try:
+        with asking:
+            oneshot_review.review("budget")
+    finally:
+        release()
+    assert o()["stopped"]["reason"] == "block" and not heard
+
+
+def test_a_server_that_dies_before_the_refusals_build_turn_resumes_it_with_the_findings(reviewed):
+    tree, head, sent = reviewed
+    seen = []
+    _, asking = answers(verdict(head, "refuse", P1))
+    with asking, patch.object(oneshot_build, "send", lambda *a: seen.append(o()["working"])):
+        oneshot_review.review("budget")   # the build turn never left: the server went down
+    assert seen == ["build"]
+    oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "restart"
+    oneshot_spec.resume("budget")
+    assert sent[-1][:2] == ("budget", "build") and "음수 금액을 받는다" in sent[-1][2]
 
 
 def test_resuming_a_stopped_review_counts_refusals_afresh(reviewed):

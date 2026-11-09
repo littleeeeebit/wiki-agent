@@ -358,12 +358,20 @@ the backend review (3c) begins.
 
 A oneshot reading of its own (`tool/main/oneshot_review.py`), between
 agents and before any pull request. The build's success hands over to it as
-a worker of the spec's store, like S2 and S3:
+a worker of the spec's store, like S2 and S3. The passed build is saved with
+`working: "review"` before the worker starts, so a server that stops in
+between leaves the run for `recover` and `[재개]`. The worker holds the
+worktree, as a work turn does, from freezing its input until its verdict is
+saved, so no other turn writes the tree it reads:
 
 1. The server freezes the review input: the approved design, the
    requirements, and the diff from the base commit (`start_head`) to the
    worktree's HEAD, with that HEAD named. The HEAD must be the
-   `built_head` the build checks passed; any other stops with `review`. A
+   `built_head` the build checks passed, on a clean tree, both before the
+   review turn and again before its verdict is applied. Otherwise the run
+   goes back to `build`, stopped with `gate`, and `[재개]` sends the build
+   turn so its checks run again. A worktree another turn holds stops the
+   review with `block`. A
    copy of the diff is kept in the run's folder as the record, but the
    reviewer never reads it there: the read-only tools reach only tracked
    files of the worktree (`agent/read_tools.py`, `git ls-files`).
@@ -382,8 +390,11 @@ a worker of the spec's store, like S2 and S3:
    P0 or P1 finding, or when a refusal carries none. The turn is metered as
    the role `review`.
 4. On a refusal, the P0 and P1 findings go to the work session as one build
-   turn with fresh attempts; the contract-test check and the gate run
-   again; the review runs once more on the new HEAD with a new frozen input.
+   turn with fresh attempts, saved with `working: "build"` and the worktree
+   released before that turn is sent; a resumed build sends the same
+   findings again while the refusal of the built HEAD stands. The
+   contract-test check and the gate run again; the review runs once more on
+   the new HEAD with a new frozen input.
    A second refusal stops the run with `review`; `[재개]` counts refusals
    afresh and reads the current HEAD again.
 5. An approval of the HEAD the input named moves the run to `split`. Every
