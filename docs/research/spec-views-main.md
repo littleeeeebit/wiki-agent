@@ -1,5 +1,7 @@
 # Spec views — main-2: the main experiment
 
+The harness, its tests and the `SPEC_VIEWS` setting this report names are at commit `6c79a1b`; run its commands from a scratch worktree of that commit with `raw/eval/spec-views/` copied in. The product gives the write session the brief (`docs/plans/loop/3-spec.md`).
+
 Outcome: **further verification needed**. Candidate: condition D — fixed from the pilot report: D, the narrowed agent JSON, was the only condition not below A on verified success (0.500 against A's 0.500; B and C 0.417) at nearly the same cost per verified success (USD 1.651 against 1.633). Chosen by the owner on 2026-11-08 before any main-run cell.
 
 Implementer `claude-opus-5-5` at effort `high`, the pilot's harness, tools, retries, limits and isolation; 10 held-out tasks, 1 repetitions fixed-spec and 1 in the pipeline. Config digest `dd257e2d2e9a`. Fixed-spec spent USD 50.2197 in 4.395 h (ceiling USD 55, 7 h); pipeline (`main-2-pipeline`) USD 32.8169 in 3.195 h (ceiling USD 37, 5.5 h).
@@ -162,5 +164,5 @@ From the journal, up to two final rows per failure cause.
 
 ## The setting and its rollback
 
-`SPEC_VIEWS` in the hub `.env` (read through `common.settings.pick`) stays `off`, its default, whatever this report says. It is turned on only when the adoption judgment above reads adopt and the owner turns it on; for candidate D that also needs the follow-up change named under the candidate, because the setting today renders the full agent view, not D. Rollback: set `SPEC_VIEWS=off` (or delete the line) in the hub `.env` and restart wiki-agent; sessions made after that get exactly main's input again (`tool/test_spec_views.py` holds the byte identity), and a session already running keeps its prompt until it is rebuilt.
+`SPEC_VIEWS` in the hub `.env` stayed `off`, its default, through both runs, since the adoption judgment did not read adopt. With no adoption the owner retired the setting together with the requirements views and the harness, so the product has no switch to turn on. Every write session gets the brief that condition A measured. A `SPEC_VIEWS` line left in a hub `.env` is ignored. Rollback: none is needed for the product. To test the views again, start a new experiment id from commit `6c79a1b`, where the setting is read through `common.settings.pick` and `tool/test_spec_views.py` holds the byte identity of its off state.
 

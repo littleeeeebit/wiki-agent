@@ -182,7 +182,7 @@ def session(cid: str) -> ChatSession:
         if chat is None:
             cfg = config(cid)
             repo = current_repo()
-            system = "\n\n".join((channels.ANSWER_PROMPT, channels.preamble(cid), search_note(repo)))
+            system = "\n\n".join((channels.ANSWER_PROMPT, channels.get(cid).preamble, search_note(repo)))
             # The web too: "search deeply" about a model, a library or a paper had nothing to search with.
             chat = ChatSession(repo, tools="Bash,Read,Glob,Grep,WebSearch,WebFetch", system=system, model=cfg["model"],
                                effort=cfg["effort"], choices=cid in ("next", "refactor"))
@@ -287,7 +287,7 @@ def recall(cid: str, legacy: bool = False, include_context: bool = False, whole:
     rows = memory.since_clear(rows)
     if not include_context:
         rows = [r for r in rows if r.get("role") in memory.SAID]
-    return rows if whole else rows[-MAX_REPLAY:]   # `whole`: a record that must keep the start (`spec_views.requested`)
+    return rows if whole else rows[-MAX_REPLAY:]   # `whole`: a record that must keep the start (a card's `original`)
 
 
 def unseen(cid: str) -> list[dict]:

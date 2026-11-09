@@ -277,233 +277,55 @@ Two empty spots on the screen. Both are spots where the server causes work itsel
 | Turn launched by server | Turns sent by the server like the plan line turn do not attach to the screen of the already opened task tree. Attach when refreshed |
 | Result line generated while reading list | The result line of `머지됨` noticed while reading the specification list is visible when reading the conversation again |
 
-## Requirements and two views
+## The person's words and the spec's shape
 
-Added 2026-11-08 (`baseline-spec-two-views`). A spec record may carry a
-versioned requirements section. Code renders a human review document and the
-write session's input from the same frozen snapshot. A setting keeps that
-input out of sessions until an experiment turns it on.
-`tool/main/spec_views.py` owns the section; `specs.py` still owns the file.
+A card keeps `original`: the person's own words in the `next` conversation
+that produced it, verbatim (`said`, else `text`, of each user row since the
+last clear, read whole rather than through the screen's 200-row replay), so it
+can include requests that went into other cards. It is set once when the card
+is made. `save`, the one exit every path passes,
+restores the stored value whatever a caller changed, and `REVISABLE` never
+accepts it, so neither the screen's edit nor a `spec-update` rewrites it.
+Nothing sends it to an agent; it is the source a person-facing account of the
+card is written from.
 
-### Data model
+The write session receives the work-spec rules and `brief(spec)`, and nothing
+else from the record. The agent reads the spec in the shape the generator
+writes it: goal, scope, done items, grounds and decisions.
 
-| Field | Meaning |
+### Spec-shape experiments
+
+Two experiments asked whether a write session does better when the spec
+reaches it in another shape. The other shapes were numbered requirements, each
+with its ground, status and conditions, given as a document (B), as JSON (C),
+or as JSON narrowed to the requirements one task needs (D). The baseline was
+the brief (A). Tasks replayed merged pull requests of this repository, graded
+by the pull request's own tests, which the session never saw.
+
+| Report | What it found |
 | --- | --- |
-| `original` | The person's own words in the `next` conversation that produced the card, verbatim (`said`, else `text`, of each user row since the last clear, read whole rather than through the screen's 200-row replay). Set once when the card is made |
-| `requirements[]` | `id` (`R1`, `R2`, …, unique), `text`, `source` `{kind, locator}` with `kind` in `original`, `policy`, `repository`, `decision`, `status` in `confirmed`, `assumed`, `undecided`, `not_applicable`. Optional: `preconditions`, `postconditions`, `invariants`, `failures`, `depends_on` (ids in the same list), `context` (paths), `verify` (`{item, expected}`), `global: true` |
-| `spec_version` | An integer that moves on whenever the requirements change |
-| `spec_digest` | sha256 of the canonical requirements JSON (sorted keys, no whitespace) |
+| `docs/research/spec-views-pilot.md` | Six tasks: D alone was not below A, at about A's cost per success |
+| `docs/research/spec-views-main.md` | Ten held-out tasks, D against A with frozen specs and through the full pipeline: no detectable difference, and D about 1.2 times A's cost per success |
 
-`specs.fields` validates the list (`spec_views.requirements`). An unknown key,
-a repeated id or a `depends_on` that names no requirement is refused, and the
-error names the item and the key. `tool/prompts/spec-requirements.md`
-documents the field for the planner. `channels.preamble` appends it to the
-`next` and `refactor` focus introductions only while the setting is on;
-`tool/prompts/next-task.md` itself is unchanged.
+The brief's done items already name what the tests check. The requirements
+restated the same facts in another shape, so the shape changed neither which
+tasks succeeded nor how they failed. The agent's input is therefore the
+brief, and work on the spec goes to what a person reads.
 
-The record's guarantees sit in `save`, the one exit every path passes
-(`spec_views.stamped`). A stored `original` and each stored requirement's
-`source` are restored before writing, whatever the caller changed. The version
-and digest are recomputed there too. A goal edit leaves both as they were.
-`REVISABLE` accepts `requirements` but never `original` or a verification
-result. A requirement first added by a `spec-update` is recorded as
-`decision`, with the revision and reason as its locator, whatever source it
-claims. A revision's history entry keeps the earlier requirements.
+The main experiment also found three limits of the task set and the runner:
 
-### Two renderers
+- Two tasks' hidden tests graded fixes made in the original pull request's
+  review rounds, which its text never states (pr125, pr191).
+- The 1800 s session limit cut finished work: five of twenty fixed-spec cells
+  timed out with every hidden test already passing.
+- The journal keeps no tool transcript, so what a session read outside its
+  workspace cannot be shown.
 
-Both are pure functions over the record. No model call takes part.
-
-- `specs.human(spec)` is Markdown with these parts: purpose (the goal);
-  behaviour (each requirement with its id, status, source, conditions,
-  dependencies, context and verify items); constraints (`out` and the global
-  requirements); undecided items; conflicts; the original request quoted
-  unchanged. Inside the behaviour section, every value sits on its own line
-  behind a fixed label (`- Requirement:`, `- Verify:` with an indented
-  `- Expected:` under it, and so on). Any accepted one-line value therefore
-  reads back unambiguously, including values that look like the document's
-  own structure. Free text outside it (the goal, `out` lines, undecided
-  items) is put on one line, and the original request is quoted line by
-  line. No free text can therefore start a heading the parser reads.
-- `specs.agent(spec, task=None)` is a dict holding the version, digest,
-  selected requirements, `contracts` and `omitted`. The contracts are
-  id, status, text, postconditions and invariants for each `depends_on` target
-  reached outside the selection, followed transitively. `omitted` lists the
-  remaining ids, available on request. `task=None` selects all.
-- `specs.equivalent(human_md, agent_json)` reads the human document's
-  behaviour section back. It compares facts per requirement: id, status, text,
-  each condition, each dependency, each verify item, negation words and
-  number-with-unit tokens. Contracts count as facts too. What a selection
-  owes comes from the human document, never from the agent rendering's own
-  `contracts` and `omitted` lists. Owed in full: the selected requirements
-  and every global one. Owed as contract fields: every dependency the full
-  ones reach. Only the rest may appear by id alone. A contract or global
-  declared as omitted therefore shows as missing facts. It returns what each
-  rendering lacks.
-
-### Setting
-
-`SPEC_VIEWS=on` in the hub `.env`, read through `common.settings.pick`, the
-same reader as `decision.env_file()`. It defaults to off. Off, every agent
-input is what main produced: the write session's system prompt and the `next`
-and `refactor` introductions. A test compares them with sha256 digests taken
-from main at `fc886a3`. The write-session comparison covers the ten records
-saved when this spec was made, whose prompt fields are committed in
-`tool/fixtures/spec_views_baseline.json`. On, a record with `requirements`
-gets one more section after the spec. That section
-is the agent view as JSON with `spec_version` and `spec_digest`, and a note
-that a `spec-update` may carry `requirements`.
-
-### Version and undecided at the first turn
-
-With the setting on, `spec_views.first_turn` runs on the first work turn
-(`work.run_turn`, `decide`), before Jev's start decision.
-
-- If a requirement's `depends_on` target is `undecided`, the turn holds. The
-  agent is sent nothing; the reply asks the person to settle the named ids, and
-  `fault` says the same. Undecided items nothing depends on do not hold.
-- If the session prompt's `spec_version` differs from the saved record's, the
-  session is rebuilt through `work.session`. That function already replaces a
-  session whose spec-derived prompt changed. An equal version reuses the
-  session.
-
-### Verification results
-
-`raw/specs/<repo>/<id>.verify.json` sits beside the record. Only the round gate
-in `specs._check` writes it (`spec_views.verified`). A verify item is recorded
-only when its text is one of the commands the gate ran. The entry is keyed by
-requirement id, `spec_version`, `spec_digest` and the gate's commit (`head`),
-and holds `ok`, `head` and the time per item. A gate at another commit starts
-the entry over. A passing gate passes the matched items. A failing gate fails
-them all, since it does not say which command stopped it. `spec_views.results`
-reads a requirement as `pass` only when every verify item ran and passed under
-the current version at one commit. Passes from different commits never add up. It reads `fail` when one failed, `stale` when the entry
-belongs to another version or digest, and `missing` otherwise; a stale entry
-never counts as a pass. `spec-update` cannot reach the file.
-
-`GET /api/specs/{id}/views` returns `{human, agent, spec_version,
-spec_digest}`. A card whose record has requirements shows a collapsible
-`요구사항 문서` section, read on first open (`web/src/components/SpecViews.tsx`).
-The section is keyed by the record's revision and requirements version. Any
-revision, a goal-only one included, retires the shown document and any reply
-still in flight. `web/tests/spec_views_browser.py` checks this.
-
-### Assumptions and undecided design points
-
-| Point | Status |
-| --- | --- |
-| `original` is every person row of the conversation since its last clear, so it can include requests that went into other cards | Assumed |
-| The planner writes `requirements`; nothing derives them from `goal` and `done` for older records, which keep no section | Assumed |
-| Conflicts are dependencies on an `undecided` or `not_applicable` requirement; contradictions between texts are not detected | Assumed |
-| Negations and units are matched by fixed word and unit lists in English; other languages compare only by text equality | Assumed |
-| Only the round gate records results, and only for verify items that are literally one of its commands. The final gate, browser or desktop checks and the done report's evidence are not mapped to requirements, so such items stay `missing` | Undecided |
-| A held first turn waits for the person's instruction; there is no screen control to change a requirement's status | Undecided |
-| The reviewer and the post-compaction restatement still read `brief` only | Undecided |
-| Which selection a task passes to `agent` is left to the experiment harness, which is the next task | Decided in the pilot: one model call per task picks the ids, code adds every global one (below) |
-
-### The comparison harness
-
-Added 2026-11-08 (`spec-views-pilot`). `tool/eval/spec_views.py` compares four
-inputs to one write session. Each is rendered from the same frozen record.
-
-| Condition | System prompt after the work-spec rules |
-| --- | --- |
-| A | `specs.brief` of the spec the `next` generator makes with the setting off |
-| B | `specs.human` of that spec, enriched once with the setting on |
-| C | id, rev, goal, out, original and `specs.agent(spec)` as JSON |
-| D | id, rev, goal, out and `specs.agent(spec, select)`; the rest by id from `.spec-views/spec.json` |
-
-Tasks replay merged pull requests (`eval/spec-views/tasks.json`). Their own
-tests are the hidden check. A person vets each one as asserting observable
-behaviour and records it in `vetted_by`. Tasks whose requirements conflict sit
-in a separate `undecided` list and never enter the success rate.
-
-`prepare` runs once per task. It extracts the hidden tests to
-`raw/eval/spec-views/hidden/` and checks them against the reference: they pass
-on the merge commit and fail on its parent. It then makes three model calls:
-the generator with the setting off, the enrichment with it on, and D's
-selection. Their results are frozen in `eval/spec-views/specs/<task>.json`.
-B and C are then checked with `specs.equivalent`, and the goal, scope and
-original must appear in B too. Each call's cost and the check go to the journal.
-Preparation spends from the same ceilings as the run, and its elapsed time
-counts toward the same hours.
-
-`run` refuses a config that differs from the committed file. It also refuses
-before the first cell when a frozen record is not the one committed with the
-config, its requirements no longer hash to the configured digest, its selection
-is not the configured one, its reference check did not separate the answer, or
-B and C were not equivalent. It runs every
-(task, condition, repetition) in a seeded shuffled order. Each cell starts in a
-fresh one-commit repository made from an archive of the merge base. A worktree
-would let the session's history reach the merge commit, which is the answer. One
-isolated Claude Code session runs with the condition as its whole system prompt
-and `Start.` as its only turn. Then the hidden tests are copied in under names
-the session never saw, and their digests are checked. A hidden test passes only
-when every one of its cases passed and pytest exited cleanly. Next come the
-affected test files as the merge base wrote them, and a check for forbidden
-paths that also sees files hidden behind ignore rules. Verification stops at the
-shared wall deadline; a cell cut there is a ceiling failure, not a verdict.
-Finally the workspace is removed.
-
-The session's USD cap is the room left under the ceiling, so the ceiling holds
-while cells run in parallel. A cost the CLI never reported is charged at the
-cap. A cell stopped by the wall-time ceiling is journalled as a failure. The
-production-runner baseline runs last, as condition A with the app's session
-flags plus the merge base's Python gate. `report` reads the journal and writes
-`raw/eval/spec-views/<experiment>.report.json` and the Markdown report.
-`tool/test_spec_views.py` drives `run` with a scripted stub and sends no
-model requests.
-
-```bash
-python tool/eval/spec_views.py prepare --config eval/spec-views/pilot-1.json   # before the config is committed
-python tool/eval/spec_views.py run --config eval/spec-views/pilot-1.json       # also resumes
-python tool/eval/spec_views.py report --config eval/spec-views/pilot-1.json
-```
-
-### The main experiment
-
-Added 2026-11-08 (`spec-views-main-experiment`). A config whose `kind` is
-`main` (`eval/spec-views/main-1.json`) fixes before any run what the pilot
-report decided:
-
-- the candidate: D;
-- the primary metric: verified task success;
-- the pair comparisons;
-- the adoption paths;
-- the critical-regression rule, relative to A;
-- the sample size derived from the pilot's variance;
-- the owner's USD and hour ceiling, split between the two arms.
-
-Its tasks come from `eval/spec-views/main-tasks.json`. Every command refuses
-the config when one of its tasks is a pilot task or one tuned on
-(`held_out`). `run` and `pipeline` also refuse when the first task's tests
-(`tool/test_spec_views.py`) fail at the commit the cells would run on, and
-they journal that check.
-
-`pipeline` (`tool/eval/spec_views_pipeline.py`) is the full-pipeline arm,
-journalled under its own experiment id. Each (task, repetition) starts from the
-original text. It generates a fresh spec with the `next` prompt, enriches it
-and selects D's requirements. A and D then each run as one cell on that
-repetition's spec. A failed step fails only the conditions that needed it.
-Every repetition's spec calls count toward its conditions' cost per success.
-
-`report` (`tool/eval/spec_views_main.py`) reads both journals apart. It covers:
-
-- paired success differences;
-- cost-per-success ratios, both with task-resampled 95% intervals;
-- the secondary measures the config defines.
-
-It judges implementation pass, experiment validity and adoption separately,
-by the config's rules. Adoption reads adopt, do not adopt, or further
-verification needed. A notes block in the Markdown file survives
-regeneration.
-
-```bash
-python tool/eval/spec_views.py prepare --config eval/spec-views/main-1.json --tasks eval/spec-views/main-tasks.json
-python tool/eval/spec_views.py run --config eval/spec-views/main-1.json        # fixed specs, also resumes
-python tool/eval/spec_views.py pipeline --config eval/spec-views/main-1.json   # full pipeline, also resumes
-python tool/eval/spec_views.py report --config eval/spec-views/main-1.json     # docs/research/spec-views-main.md
-```
+The configs, task lists and frozen specs are under `eval/spec-views/`; the
+journals and hidden tests are under `raw/eval/spec-views/`. The harness that
+ran them, `tool/eval/spec_views.py` and its siblings, is at commit `6c79a1b`.
+Rerun from a scratch worktree of that commit with `raw/eval/spec-views/`
+copied in.
 
 ## Steps
 

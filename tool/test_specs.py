@@ -300,6 +300,32 @@ def test_the_same_slug_in_the_same_conversation_replaces_the_card(repo):
     assert again == sid and spec["rev"] == 2 and spec["goal"] == "새 목표"
 
 
+def test_the_persons_words_stay_as_first_stored_through_every_path(repo):
+    chat.remember("next", "user", "Keep my drafts, verbatim  please.", repo=repo)
+    sid = made(repo, spec_block(slug="drafts"))[0]["id"]
+    assert specs.load("proj", sid)["original"] == "Keep my drafts, verbatim  please."
+    # The same card emitted again after the person said more, the screen's edit, and a plain save rewriting it.
+    chat.remember("next", "user", "And something else.", repo=repo)
+    assert made(repo, spec_block(slug="drafts"))[0]["id"] == sid
+    assert client().put(f"/api/specs/{sid}", json={"rev": 2, "goal": "New goal", "out": [], "done": []}).status_code == 200
+    specs.save({**specs.load("proj", sid), "original": "rewritten"})
+    spec = specs.load("proj", sid)
+    assert spec["original"] == "Keep my drafts, verbatim  please."
+    # A spec-update cannot carry it.
+    change = {"rev": spec["rev"], "reason": "r", "goal": spec["goal"], "out": [], "done": [], "original": "changed"}
+    with pytest.raises(ValueError, match="original"):
+        specs.revise(repo, spec, change)
+
+
+def test_the_persons_words_hold_every_turn_of_a_conversation_past_the_replay_limit(repo):
+    chat.remember("next", "user", "The first request.", repo=repo)
+    for n in range(chat.MAX_REPLAY + 10):
+        chat.remember("next", "assistant" if n % 2 else "user", f"turn {n}", repo=repo)
+    original = specs.load("proj", made(repo, spec_block(slug="long"))[0]["id"])["original"]
+    assert original.startswith("The first request.\n\nturn 0\n\n")
+    assert original.count("turn ") == (chat.MAX_REPLAY + 10 + 1) // 2
+
+
 def test_a_save_from_a_stale_card_is_refused(repo):
     web = client()
     sid = made(repo, spec_block())[0]["id"]
