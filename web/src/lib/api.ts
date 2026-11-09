@@ -812,7 +812,11 @@ export type Estimate = {
 export type ConnectPlan = { hub: HubPlan; agents: string[]; adapter: Record<string, string> | null; unwire: string[]; survey: Estimate | null }
 
 /** Whether this machine's hooks and skill links point at this hub yet. */
-export type Hub = { name: string; needed: boolean; refused: string }
+export type Hub = { name: string; needed: boolean; refused: string; branch: string }
+/** What [모두 다시 연결] writes: the hub move, then each connected repository's old hooks out (`wiring.py`). */
+export type RewirePlan = { refused: string; hub: HubPlan; repos: { name: string; unwire: string[] }[] }
+export const rewirePlan = () => get('/api/rewire/plan').then((r) => json<RewirePlan>(r, '다시 연결 계획'))
+export const rewire = (hub: string) => post('/api/rewire', { hub }).then((r) => json<{ ok: boolean }>(r, '모두 다시 연결'))
 
 export const getConnect = () =>
   get('/api/connect').then((r) => json<{ rows: Project[]; settings: SurveySettings; hub: Hub; powershell?: PowerShellStatus }>(r, '프로젝트 목록'))

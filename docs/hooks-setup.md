@@ -259,6 +259,15 @@ would otherwise keep the job — the dispatcher steps aside for them.
 `hook.py`, through Codex's own config writer; leave it out to review them in
 Codex's `/hooks` instead.
 
+The app does the same without the command line. `[모두 다시 연결]` on the
+`프로젝트 · 연결` screen runs the user-level install and the old-hook cleanup
+for every connected repository (`tool/main/wiring.py`). It shows every line it
+will write before it writes. It is refused while the hub checkout is on a
+branch other than `main`, because it would put that branch's wiring on the
+whole machine. The screen reads the wiring again on its own whenever the hub's
+branch or a host's user settings file changes. When the hub is off `main`, a
+banner says so, because every repository then reads as unwired.
+
 After updating Claude Code, Codex or this wiki, run the check. It re-reads
 every user-level file, reports Codex hooks waiting for trust, and runs the
 SessionStart hook once from each `--project` (or the current folder):

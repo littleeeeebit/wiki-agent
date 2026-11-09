@@ -665,12 +665,13 @@ class SurveySettings(BaseModel):
 
 @router.get("/api/connect")
 def listing() -> dict:
-    from . import survey
+    from . import survey, wiring
 
     now = hub()
     # The settings modal's hub line: whether this machine's wiring points here yet.
     return {"rows": rows(), "settings": survey.settings(), "powershell": powershell.status(),
-            "hub": {"name": channels.WIKI.name, "needed": now["needed"], "refused": now["refused"]}}
+            "hub": {"name": channels.WIKI.name, "needed": now["needed"], "refused": now["refused"],
+                    "branch": wiring.hub_branch()}}
 
 
 class Folder(BaseModel):

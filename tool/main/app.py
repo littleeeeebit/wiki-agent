@@ -37,7 +37,7 @@ import agent
 from common import errorlog
 from common import settings as settings_file
 
-from . import architecture, channels, connect, improvements, loop, mobile, planning, powershell, query, recovery, refactor, refactor_api, runtime, specs, suite, survey, update, verification, work
+from . import architecture, channels, connect, improvements, loop, mobile, planning, powershell, query, recovery, refactor, refactor_api, runtime, specs, suite, survey, update, verification, wiring, work
 from .runtime import server_owner
 
 # On Windows `mimetypes` reads the registry, where `.js` is commonly
@@ -84,6 +84,7 @@ async def lifespan(application: FastAPI):
         poll_stop = threading.Event()
         poll_thread = threading.Thread(target=loop.poll, args=(poll_stop,), daemon=True)
         poll_thread.start()
+        threading.Thread(target=wiring.watch, args=(poll_stop,), daemon=True).start()
         try:
             yield
         finally:
@@ -145,6 +146,7 @@ app.include_router(planning.router)
 app.include_router(refactor_api.router)
 app.include_router(improvements.router)
 app.include_router(connect.router)
+app.include_router(wiring.router)
 app.include_router(powershell.router)
 app.include_router(verification.router)
 app.include_router(mobile.router)
@@ -428,6 +430,7 @@ def wiki_graph(repo: str = "") -> dict:
         # not apply here, and this one's are the other layer.
         hub = graph.build(graph.load_pages(), [path])
     mine = repo_graph.picture(path)
+    findings = repo_lint.check(path)
     return {
         "repo": path.name,
         "hub": path == ROOT,
@@ -437,8 +440,9 @@ def wiki_graph(repo: str = "") -> dict:
             "hub": {"nodes": hub["nodes"], "edges": hub["links"],
                     "ladder": hub["ladder"]},
         },
-        "metrics": {"pages": len(mine["nodes"]), "orphans": len(mine["orphans"]),
-                    "lint": len(repo_lint.check(path))},
+        "metrics": {"pages": len(mine["nodes"]), "orphans": len(mine["orphans"]), "lint": len(findings)},
+        # The lists behind the two counts, so the map can show and hand on each one.
+        "orphans": mine["orphans"], "findings": [{"kind": kind, "text": text} for kind, text in findings],
     }
 
 
