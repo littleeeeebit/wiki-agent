@@ -15,6 +15,7 @@ stays Korean.
 
 from __future__ import annotations
 
+import collections
 import json
 import os
 import re
@@ -37,7 +38,7 @@ from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
 
-from . import channels, gate_eta, pr_text, query, review_contract, runtime, spec_views, sweep, work
+from . import channels, gate_eta, pr_text, prerequisite_review, query, review_contract, runtime, spec_views, sweep, work
 from .spec_views import agent, equivalent, human  # noqa: F401 — `specs.human` and the others: this record's views
 from .pr_text import body_of
 from .decisions import extra_check, recommend, registered
@@ -344,8 +345,10 @@ def stand_in(repo: Path) -> str:
 
 
 def gated(repo: Path, spec: dict) -> str:
-    """The gate a revision of `spec` carries first; empty while nothing stands in for a missing one."""
-    return gate_of(repo) or (stand_in(repo) if spec.get("adapter") else "")
+    """The gate a revision of `spec` carries first — its checkout's own, as the server runs it (`_check`) —
+    empty while nothing stands in for a missing one."""
+    return gate_of(repo, Path(spec["worktree"]) if spec.get("worktree") else None) or (
+        stand_in(repo) if spec.get("adapter") else "")
 
 
 def slugged(raw) -> str:
@@ -412,8 +415,8 @@ def profiled(repo: Path, block: dict) -> dict:
     return review_contract.profile_fields(repo, block)
 
 
-def fields(repo: Path, block, gate: str, accepted: dict | None = None) -> dict:
-    """Validate settled fields, raising `ValueError`; always put the gate first.
+def fields(repo: Path, block, gate: str, accepted: dict | None = None, retired: frozenset = frozenset()) -> dict:
+    """Validate settled fields, raising `ValueError`; always put the gate first, once, dropping `retired` gates.
     `accepted` maps cited draft IDs to stage-7 verified evidence and revisions.
     Grounds contain only accepted claims; goals and decisions remain proposals
     requiring human approval."""
@@ -447,7 +450,7 @@ def fields(repo: Path, block, gate: str, accepted: dict | None = None) -> dict:
     return {
         "goal": " ".join(goal.split()),
         "out": strings(block.get("out"), "out"),
-        "done": [gate] + [d for d in strings(block.get("done"), "done") if d != gate],
+        "done": [gate] + [d for d in strings(block.get("done"), "done") if d != gate and d not in retired],
         "grounds": listed,
         "decisions": decided,
         **profiled(repo, block),
@@ -630,6 +633,7 @@ def card(repo: Path, block, gate: str, source: dict, accepted: dict | None = Non
         old = load(repo.name, base)
         if old and old["state"] == "정리됨" and not (old.get("refactor") or {}).get("run") and source.get("session") \
                 and old["source"].get("session") == source["session"]:
+            made["done"] = made["done"][:1] + [d for d in made["done"][1:] if d not in old["done"][:1]]   # its old gate (#310)
             old.update(made, rev=old["rev"] + 1, source=source)
             if "requirements" not in made:   # the card as emitted again, not a leftover of the last one
                 for key in ("requirements", "spec_version", "spec_digest"):
@@ -927,7 +931,8 @@ def edit(sid: str, body: Edit) -> dict:
                 raise HTTPException(400, str(exc)) from exc
             return view(repo, spec)
         try:
-            made = fields(repo, {**spec, "goal": body.goal, "out": body.out, "done": body.done}, gate)
+            made = fields(repo, {**spec, "goal": body.goal, "out": body.out, "done": body.done}, gate,
+                          retired=frozenset(spec["done"][:1]))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         new = sid
@@ -965,8 +970,10 @@ def revise(repo: Path, spec: dict, change: dict) -> None:
     gate = gated(repo, spec)
     if not gate:
         raise ValueError("저장소의 gate_cmd 를 먼저 연결해라")
+    # Every revision's first item was its gate; one a changed `gate_cmd` replaced is still no item of its own (#310).
+    retired = frozenset(r["done"][0] for r in [spec, *(spec.get("revisions") or [])] if r.get("done"))
     made = fields(repo, {**spec, **{k: change[k] for k in (
-        "goal", "out", "done", "review", "prerequisite_review", "requirements") if k in change}}, gate)
+        "goal", "out", "done", "review", "prerequisite_review", "requirements") if k in change}}, gate, retired=retired)
     if "requirements" in change:
         spec_views.introduced(spec.get("requirements") or [], made["requirements"],
                               f"spec-update to revision {spec['rev'] + 1}: {reason.strip()}")
@@ -1422,6 +1429,21 @@ def valid(items) -> bool:
         isinstance(i, dict) and isinstance(i.get("item"), str) and isinstance(i.get("pass"), bool) for i in items)
 
 
+def shortfall(items: list[dict], spec: dict) -> str:
+    """Why a report is not judged, item by number, or empty: a bare "failed or missing" left everyone guessing (#310).
+    Items are named missing only when every reported text matches one item and each missing text is wholly
+    absent, so the positions are certain; else just the counts."""
+    done, n = spec["done"], len(items)
+    said, want = collections.Counter(i["item"].strip() for i in items), collections.Counter(done)
+    gone = want - said
+    named = not said - want and all(gone[d] == want[d] for d in gone)
+    parts = [f"완료 보고 {n}개 / 명세 판 {spec['rev']} 의 완료 조건 {len(done)}개" + (" — 빠진 항목: " + ", ".join(
+        f'{k}번 "{d}"' for k, d in enumerate(done, 1) if d in gone) if named else "")] if n < len(done) else []
+    if failing := [f'{k}번 "{i["item"]}"' for k, i in enumerate(items, 1) if not i["pass"]]:
+        parts.append("통과하지 못한 항목: " + ", ".join(failing))
+    return "; ".join(parts) + ". 판정하지 않는다" if parts else ""
+
+
 
 def base_of(spec: dict, path: Path) -> subprocess.CompletedProcess:
     """The branch the pull request goes to. A spec sent back by `[다시 PR]`
@@ -1500,7 +1522,7 @@ def opened(repo: Path, path: Path, run, spec: dict):
     if run.halt.is_set():
         return failed(run, spec, "사람이 멈춤 — push 하지 않았다")
     note(run, f"push · origin {branch}")
-    pushed = sh(["git", "push", "-u", "origin", branch], path, 120)
+    pushed = prerequisite_review.push(path, spec, ["git", "push", "-u", "origin", branch])
     if pushed.returncode:
         return failed(run, spec, f"push 실패 — {said(pushed)}")
     base = base_of(spec, path)
@@ -1671,7 +1693,7 @@ def _check(path: Path, run, final: str):
                                      f"`{marker(path, plan)} — PR #{spec['pr']['number']}` 가 아니다")
         if run.halt.is_set():
             return failed(run, spec, "사람이 멈춤 — 계획 행 커밋을 push 하지 않았다")
-        pushed = sh(["git", "push", "origin", branch_of(spec)], path, 120)
+        pushed = prerequisite_review.push(path, spec, ["git", "push", "origin", branch_of(spec)])
         if pushed.returncode:
             return failed(run, spec, f"계획 행 커밋의 push 실패 — {said(pushed)}")
         note(run, f"push · 계획 행 `{plan['path']}` {plan['row']}")
@@ -1733,8 +1755,8 @@ def _check(path: Path, run, final: str):
     spec = update(spec["repo"], spec["id"], report=items, report_asked=False, summary=None,   # text is per head
                   report_at={"head": sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), "rev": spec["rev"],
                              "turn": getattr(run, "turn", None)})
-    if len(items) < len(spec["done"]) or not all(i["pass"] for i in items):
-        return failed(run, spec, "완료 보고에 통과하지 못했거나 빠진 항목이 있다. 판정하지 않는다")
+    if short := shortfall(items, spec):
+        return failed(run, spec, short)
     cleanup = next((b.get("value") for b in blocks(final)[1] if b["name"] == "test-cleanup"), None)
     if sweep.valid(cleanup):
         spec = update(spec["repo"], spec["id"], test_cleanup=cleanup, sweep_asked=False)

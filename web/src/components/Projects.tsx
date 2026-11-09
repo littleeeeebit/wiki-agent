@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Btn, Modal } from '@/components/Modal'
 import * as api from '@/lib/api'
-import type { ConnectPlan, PowerShellStatus, Project } from '@/lib/api'
+import type { ConnectPlan, Hub, PowerShellStatus, Project } from '@/lib/api'
 import { PowerShell } from '@/components/PowerShell'
+import { HubMove, Rewire } from '@/components/Rewire'
 import { remote } from '@/lib/mobile'
 import { cn } from '@/lib/utils'
 
@@ -23,15 +24,17 @@ export function Projects({ current }: { current: string }) {
   const [typing, setTyping] = useState(remote)
   const [typed, setTyped] = useState('')
   const [powershell, setPowerShell] = useState<PowerShellStatus>()
+  const [hub, setHub] = useState<Hub>()
 
   const read = useCallback(() => {
     api.getConnect()
-      .then(({ rows, powershell }) => { setRows(rows); setPowerShell(powershell) })
+      .then(({ rows, powershell, hub }) => { setRows(rows); setPowerShell(powershell); setHub(hub) })
       .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
   }, [])
 
   // Read on focus — a handover left waiting is tried again by this read — and
-  // whenever the server says a connection changed.
+  // whenever the server says a connection changed, which includes the wiring
+  // it watches outside the app: the hub's branch and the hosts' user settings.
   useEffect(() => {
     read()
     window.addEventListener('focus', read)
@@ -88,21 +91,28 @@ export function Projects({ current }: { current: string }) {
       <div className="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-card px-5 font-mono text-[10.5px] text-faint">
         <span>연결 완료 {count('연결 완료')}</span>
         <span>일부 {count('일부')}</span>
+        <Rewire working={working} disabled={!!working || rows.length === 0} act={act} />
         {typing ? (
-          <form className="ml-auto flex items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); void addTyped() }}>
+          <form className="flex items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); void addTyped() }}>
             <input aria-label="연결할 저장소 폴더 경로" placeholder="저장소 폴더 경로" value={typed}
               onChange={(e) => setTyped(e.target.value)}
               className="h-7 w-64 rounded-md border border-input bg-background px-2 font-mono text-[12px] text-foreground" />
             <Btn type="submit" disabled={!!working || !typed.trim()}>{working === 'folder' ? '연결하는 중…' : '연결'}</Btn>
           </form>
         ) : (
-          <Btn className="ml-auto font-sans" disabled={!!working} onClick={() => void find()}
+          <Btn className="font-sans" disabled={!!working} onClick={() => void find()}
             title="이 컴퓨터의 폴더 창에서 연결할 Git 저장소를 고른다">
             {working === 'folder' ? '폴더 고르는 중…' : '폴더 찾기'}
           </Btn>
         )}
       </div>
       <PowerShell status={powershell} read={read} disabled={!!working} />
+      {hub && hub.branch !== 'main' && (
+        <div role="status" className="border-b border-wait/30 bg-wait/10 px-5 py-2 text-[12.5px]">
+          허브 체크아웃이 <span className="font-mono">{hub.branch || '분리된 HEAD'}</span> 에 있다. 아래의 연결 진단은
+          그 브랜치의 코드로 읽은 것이라 틀릴 수 있다 — 허브를 main 으로 돌리면 바로 다시 읽는다.
+        </div>
+      )}
       {fault && (
         <div role="alert" className="whitespace-pre-wrap border-b border-destructive/30 bg-destructive/10 px-5 py-2 text-[12.5px] text-destructive">
           {fault}
@@ -165,24 +175,7 @@ export function Projects({ current }: { current: string }) {
             <p className="mb-3 text-muted-foreground">
               연결할 도구: {asking.plan.agents.map((agent) => agent === 'claude' ? 'Claude Code' : 'Codex').join(', ') || '설치된 도구 없음'}
             </p>
-            {asking.plan.hub.refused && (
-              <p className="mb-2 whitespace-pre-wrap text-destructive">허브를 옮길 수 없다 — {asking.plan.hub.refused}</p>
-            )}
-            {asking.plan.hub.needed && !asking.plan.hub.refused && (
-              <section className="mb-3">
-                <div className="mb-1 font-heading text-[11px] font-semibold text-faint">허브 이전 — 이 기계에 한 번. 사용자 단위 설정이 이렇게 바뀐다</div>
-                <ul className="space-y-0.5 font-mono text-[12px]">
-                  {asking.plan.hub.lines.map((l, i) => <li key={i}><span className="text-faint">{l.file}</span> {l.change}</li>)}
-                  {asking.plan.hub.links.map((l) => (
-                    <li key={l.link}>
-                      <span className="text-faint">{l.link}</span>{' '}
-                      {l.to ? `→ ${l.to}` : `그대로 둔다 — 이 허브에 같은 이름의 스킬이 없다 (${l.from})`}
-                    </li>
-                  ))}
-                  {asking.plan.hub.trust && <li>Codex: 이 허브의 hook.py 를 부르는 위키 훅을 신뢰로 기록한다 (--trust-codex)</li>}
-                </ul>
-              </section>
-            )}
+            <HubMove hub={asking.plan.hub} />
             {asking.plan.adapter && (
               <section className="mb-3">
                 <div className="mb-1 font-heading text-[11px] font-semibold text-faint">원본 체크아웃에 쓰는 .wiki/adapter.toml</div>
@@ -214,6 +207,7 @@ export function Projects({ current }: { current: string }) {
           </div>
         </Modal>
       )}
+
     </section>
   )
 }

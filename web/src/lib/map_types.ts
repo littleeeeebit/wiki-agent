@@ -37,4 +37,8 @@ export type MapData = {
       ladder: { n: number; title: string }[] }
   }
   metrics: { pages: number; orphans: number; lint: number }
+  /** The documents behind `metrics.orphans`: no document, page or record points at them. */
+  orphans: string[]
+  /** `repo_lint`'s findings behind `metrics.lint`. */
+  findings: { kind: string; text: string }[]
 }

@@ -70,6 +70,10 @@ The person's later instructions update the assignment as work progresses.
   `{"instructions":"docs/packet/README.md","inputs":["docs/packet/rewrite.json","docs/packet/originals.json"],"result":"docs/packet/review.json"}`.
   The instructions and every input must be committed tracked files; use safe
   repository-relative paths, and keep the JSON result separate from all inputs.
+  Evidence that must never enter Git goes in an optional `"evidence"` list of
+  `{"path":"local/export.json","sha256":"<64 lowercase hex>"}`: each file must be
+  Git-ignored and untracked, and the reviewer may read it only while its bytes
+  match the pinned hash.
   Preserve the complete production goal and all completion conditions. Do not
   manufacture a passing `done-report` to unlock this review. Publish the prepared
   PR and wait for the person's explicit Review Loop request. That one loop runs

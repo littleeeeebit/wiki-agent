@@ -415,23 +415,27 @@ def hub(data: dict | None = None) -> dict:
     return _snapshot(data)[0]
 
 
-def move(confirmed: str, data: dict | None = None) -> dict:
+def move(confirmed: str, data: dict | None = None, done: list[str] | None = None) -> dict:
     """Write what `hub()` showed, only if it is still exactly that. Every
-    repository's test was of the old wiring, so the records drop them."""
+    repository's test was of the old wiring, so the records drop them.
+    `done` collects each step as it lands, so a failure partway says how far."""
 
+    done = [] if done is None else done
     with _moving:
         now, plan, found, python = _snapshot(data)
         if now["refused"]:
             raise HTTPException(409, f"허브를 옮길 수 없다 — {now['refused']}")
         if now["digest"] != confirmed:
             raise HTTPException(409, "확인한 뒤에 바뀔 줄이 달라졌다. 다시 확인한다")
-        setup_agents.write_plan(plan)
-        for link, _old, new in found:
-            if new:
-                setup_agents.relink(link, new)
-        if now["trust"]:
-            for file in apply.user_files("codex"):
-                setup_agents.codex_hooks(file.parent, True, python)
+        for step in plan:
+            setup_agents.write_plan([step])
+            done += [str(step[0])] if step[2] else []
+        for link, _old, new in (found_link for found_link in found if found_link[2]):
+            setup_agents.relink(link, new)
+            done.append(f"{link} → {new}")
+        for file in apply.user_files("codex") if now["trust"] else []:
+            setup_agents.codex_hooks(file.parent, True, python)
+            done.append(f"{file.parent}: Codex 신뢰 기록")
         for file in RECORDS.glob("*.json"):
             keep(file.stem, probe={}, trust=None)
         return now
@@ -503,19 +507,24 @@ def unwire(path: Path, write: bool = True) -> list[str]:
     """The old per-project hooks out, the deny rules kept where the host
     enforces them — what `setup_agents --global --project` does."""
 
-    changed = []
-    data, _ = adapter_of(path)
-    for host in hosts(data):
-        file = path / setup_agents.SETTINGS[host]
-        if not file.exists() and host != "claude":
-            continue
-        settings = apply.read_json(file)
-        changes = rewired(settings, host)
-        changed += [f"{file}: {change}" for change in changes]
+    plan = pending(path)
+    for file, settings, changes in plan:
         if changes and write:
             file.parent.mkdir(parents=True, exist_ok=True)
             file.write_text(settled(settings), encoding="utf-8", newline="\n")
-    return changed
+    return [f"{file}: {change}" for file, _settings, changes in plan for change in changes]
+
+
+def pending(path: Path) -> list[tuple[Path, dict, list[str]]]:
+    """Each host's project settings with what `unwire` changes in them, all read before any is written."""
+
+    plan = []
+    for host in hosts(adapter_of(path)[0]):
+        file = path / setup_agents.SETTINGS[host]
+        if file.exists() or host == "claude":
+            settings = apply.read_json(file)
+            plan.append((file, settings, rewired(settings, host)))
+    return plan
 
 
 def rewired(settings: dict, host: str) -> list[str]:
@@ -665,12 +674,13 @@ class SurveySettings(BaseModel):
 
 @router.get("/api/connect")
 def listing() -> dict:
-    from . import survey
+    from . import survey, wiring
 
     now = hub()
     # The settings modal's hub line: whether this machine's wiring points here yet.
     return {"rows": rows(), "settings": survey.settings(), "powershell": powershell.status(),
-            "hub": {"name": channels.WIKI.name, "needed": now["needed"], "refused": now["refused"]}}
+            "hub": {"name": channels.WIKI.name, "needed": now["needed"], "refused": now["refused"],
+                    "branch": wiring.hub_branch()}}
 
 
 class Folder(BaseModel):

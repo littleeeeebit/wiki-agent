@@ -1,5 +1,6 @@
 """Focused checks split from tool/test_agent.py."""
 
+import hashlib
 import json
 import subprocess
 from unittest.mock import patch
@@ -57,6 +58,31 @@ def test_source_tools_read_tracked_text_but_not_private_ignored_or_outside_files
         # A tracked symlink/junction cannot escape the worktree.
         with pytest.raises(ValueError):
             read_tools.call(tree, "repo_read", {"path": "source.py"})
+
+
+def test_declared_local_evidence_reads_only_while_its_pinned_hash_matches(tree, tmp_path):
+    (tree / "local").mkdir()
+    for name in ("kept.txt", "other.txt", "id_rsa"):
+        (tree / "local" / name).write_bytes(b"dialogue\n")
+    (tmp_path / "outside.txt").write_bytes(b"dialogue\n")
+    pinned = hashlib.sha256(b"dialogue\n").hexdigest()
+    evidence = {"local/kept.txt": pinned, "local/id_rsa": pinned, "../outside.txt": pinned}
+    assert "1: dialogue" in read_tools.call(tree, "repo_read", {"path": "local/kept.txt"}, evidence)
+    for path in ("local/other.txt", "local/id_rsa", "../outside.txt"):   # undeclared, private, outside
+        with pytest.raises(ValueError):
+            read_tools.call(tree, "repo_read", {"path": path}, evidence)
+    with pytest.raises(ValueError):                                     # never without the declaration
+        read_tools.call(tree, "repo_read", {"path": "local/kept.txt"})
+    (tree / "local" / "kept.txt").write_bytes(b"changed\n")
+    with pytest.raises(ValueError):
+        read_tools.call(tree, "repo_read", {"path": "local/kept.txt"}, evidence)
+    assert "local" not in read_tools.call(tree, "repo_glob", {"pattern": "*"}, evidence)
+    # Staged mid-round, declared evidence is still read only under its pin, and never as source.
+    subprocess.run(["git", "-C", str(tree), "add", "-f", "local/kept.txt"], check=True)
+    with pytest.raises(ValueError):
+        read_tools.call(tree, "repo_read", {"path": "local/kept.txt"}, evidence)
+    assert "local" not in read_tools.call(tree, "repo_glob", {"pattern": "*"}, evidence)
+    assert read_tools.call(tree, "repo_grep", {"text": "changed"}, evidence) == "(결과 없음)"
 
 
 def test_the_saved_pr_diff_reads_back_whole_lines_deleted_files_and_carriage_returns(tree):
