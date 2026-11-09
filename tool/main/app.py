@@ -108,7 +108,7 @@ def close_turns() -> None:
     # other provider dies, so a turn `end_all` kills reads as a restart, not a
     # failure. Queries keep no workflow and close only after their providers
     # are dead: closing stdin waits on a prompt write a stalled provider blocks.
-    threads = [*loop.close_all(wait=False), *planning.close_all(wait=False)]
+    threads = [*loop.close_all(wait=False), *planning.close_all(wait=False), *oneshot.close_all(wait=False)]
     refactor.close_all()
     threads += work.close_all(wait=False)
     agent.end_all()

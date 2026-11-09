@@ -17,6 +17,7 @@ are English.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import secrets
@@ -31,7 +32,7 @@ from agent import ChatSession
 from common import swap, worktree_home
 from workspace import TASK, create
 
-from . import channels, connect, specs
+from . import channels, connect, runtime, specs
 from .oneshot_profile import (KINDS, SCHEMA, SUPPORTED_KINDS, allowed, charged, gate_cmd, ledger, problems,
                               proposal)
 from .query import ROOT
@@ -50,7 +51,8 @@ STEPS = ("recheck", "folder", "files", "commit", "register", "remote", "origin",
 RUNNING = {"intake": "intake", "environment": "profile", "bootstrap": "bootstrap"}
 
 router = APIRouter()
-_lock = threading.RLock()   # run files and name reservations, read and written as one step
+_lock = threading.RLock()   # run files, name reservations and workers, read and written as one step
+_workers: dict[str, threading.Thread] = {}
 
 
 # -- Run records ------------------------------------------------------------------
@@ -130,6 +132,14 @@ def codex_role() -> bool:
     return str(role_config().get("model") or "").startswith("codex:")
 
 
+class Failed(RuntimeError):
+    """A turn that ended without an answer; `meta` keeps what it reported, its cost included."""
+
+    def __init__(self, text: str, meta: dict) -> None:
+        super().__init__(text)
+        self.meta = meta
+
+
 def ask(rid: str, role: str, system: str, text: str) -> tuple[str, dict, bool]:
     """One turn in the run's own folder: `(final, meta, codex)`. Patched in tests."""
 
@@ -139,7 +149,7 @@ def ask(rid: str, role: str, system: str, text: str) -> tuple[str, dict, bool]:
     chat = ChatSession(where, tools=TOOLS, system=system, model=cfg["model"], effort=cfg["effort"])
     final, meta, failed = "", {}, ""
     try:
-        for ev in chat.say(text, threading.Event()):
+        for ev in chat.say(text, runtime.stopping):
             if ev.kind == "done":
                 final, meta = ev.text, dict(ev.meta or {})
                 if meta.pop("error", False):
@@ -149,7 +159,7 @@ def ask(rid: str, role: str, system: str, text: str) -> tuple[str, dict, bool]:
     finally:
         chat.close()
     if failed:
-        raise RuntimeError(failed)
+        raise Failed(failed, meta)
     return final, meta, chat.is_codex
 
 
@@ -168,24 +178,35 @@ def turned(rid: str, role: str, system: str, text: str, name: str, check) -> obj
 
     reason = ""
     for _ in range(2):
-        run = load(rid)
-        codex = codex_role()
-        if why := allowed(run.get("spend"), run.get("profile") if run.get("confirmed") else None, role, codex):
-            stop(rid, "budget", why)
+        if runtime.stopping.is_set():
+            stop(rid, "restart", "서버가 꺼지는 중이라 멈췄다")
             return None
+        codex = codex_role()
+        with _lock:
+            run = load(rid)
+            if why := allowed(run.get("spend"), run.get("profile") if run.get("confirmed") else None, role, codex):
+                stop(rid, "budget", why)
+                return None
+            # Recorded before the turn is sent: a server that dies inside it leaves this for `recover` to charge.
+            changed(rid, inflight={"role": role, "codex": codex})
         started = time.monotonic()
         try:
             final, meta, codex = ask(rid, role, system, text if not reason else
                                      f"{text}\n\nYour last `{name}` block was refused: {reason}. Return it again.")
-        except Exception as exc:   # a broken turn still owes the screen a reason; its cost is unknown, never zero
+        except Exception as exc:   # a broken turn still owes the screen a reason; an unreported cost is unknown, never zero
             with _lock:
                 run = load(rid)
-                changed(rid, spend=charged(run.get("spend"), role, codex, None, time.monotonic() - started))
-            stop(rid, "block", f"모델 턴이 실패했다 — {exc}")
+                cost = (getattr(exc, "meta", None) or {}).get("cost_usd")
+                changed(rid, inflight=None, spend=charged(run.get("spend"), role, codex, cost, time.monotonic() - started))
+            if runtime.stopping.is_set():
+                stop(rid, "restart", "서버가 꺼지는 중이라 멈췄다")
+            else:
+                stop(rid, "block", f"모델 턴이 실패했다 — {exc}")
             return None
         with _lock:
             run = load(rid)
-            changed(rid, spend=charged(run.get("spend"), role, codex, meta.get("cost_usd"), time.monotonic() - started))
+            changed(rid, inflight=None,
+                    spend=charged(run.get("spend"), role, codex, meta.get("cost_usd"), time.monotonic() - started))
         try:
             return check(block(final, name))
         except ValueError as exc:
@@ -321,6 +342,19 @@ def tracked(path: Path) -> set[str]:
     return set(done.stdout.splitlines()) if not done.returncode else set()
 
 
+def blob(text: str) -> str:
+    data = text.encode("utf-8")
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def as_planned(path: Path, files: dict[str, str]) -> bool:
+    """`main` is one commit holding exactly `files`, each byte for byte as planned."""
+
+    if tracked(path) != set(files) or git(path, "rev-list", "--count", "main").stdout.strip() != "1":
+        return False
+    return all(git(path, "rev-parse", f"main:{rel}").stdout.strip() == blob(text) for rel, text in files.items())
+
+
 class Stop(Exception):
     def __init__(self, reason: str, detail: str) -> None:
         super().__init__(detail)
@@ -332,6 +366,8 @@ def step(rid: str, name: str, fn) -> dict:
 
     run = load(rid)
     if name not in run["steps"]:
+        if runtime.stopping.is_set():   # no new outward step once the server is going down
+            raise Stop("restart", "서버가 꺼지는 중이라 멈췄다")
         fn(run)
         with _lock:
             run = load(rid)
@@ -370,7 +406,7 @@ def s_files(run: dict) -> None:
     for rel, text in planned(run).items():
         file = path / rel
         if file.exists():
-            if file.read_text(encoding="utf-8") != text:
+            if file.read_bytes() != text.encode("utf-8"):
                 raise Stop("folder", f"`{rel}` 이 이 실행이 쓸 내용과 다르다 — 덮어쓰지 않는다")
             continue
         file.parent.mkdir(parents=True, exist_ok=True)
@@ -383,15 +419,19 @@ def s_commit(run: dict) -> None:
         if git(path, "init", "-b", "main").returncode:
             raise Stop("folder", "git init 이 실패했다")
     head = git(path, "rev-parse", "--verify", "main")
-    if not head.returncode:
-        count = git(path, "rev-list", "--count", "main").stdout.strip()
-        if tracked(path) != set(files) or count != "1":
-            raise Stop("folder", "`main` 이 이 실행의 기본 커밋이 아니다")
-    else:
+    if head.returncode:
+        # The files step may have finished long ago: what is on disk now is what gets committed, so check it now.
+        changed_files = [rel for rel, text in files.items()
+                         if not (path / rel).is_file() or (path / rel).read_bytes() != text.encode("utf-8")]
+        if changed_files:
+            raise Stop("folder", f"`{changed_files[0]}` 이 이 실행이 쓴 내용과 다르다 — 커밋하지 않는다")
         if git(path, "add", "--", *files).returncode or git(
                 path, "commit", "-m", f"Start {run['identity']['name']} from oneshot").returncode:
             raise Stop("folder", "기본 커밋을 만들지 못했다")
-    changed(run["id"], base=git(path, "rev-parse", "main").stdout.strip())
+    now = git(path, "rev-parse", "main").stdout.strip()
+    if not as_planned(path, files) or (run.get("base") and now != run["base"]):
+        raise Stop("folder", "`main` 이 이 실행의 기본 커밋이 아니다")
+    changed(run["id"], base=now)
 
 
 def s_register(run: dict) -> None:
@@ -422,7 +462,11 @@ def s_remote(run: dict) -> None:
             raise Stop("github", f"GitHub 에 기록하지 않은 같은 이름의 저장소가 있다: {ident['owner']}/{ident['name']} — "
                                  "커밋이 없으면 [이어 쓰기], 아니면 이름을 바꿔라")
         commits = gh(["api", f"repos/{ident['owner']}/{ident['name']}/commits"], timeout=30)
-        if not commits.returncode and commits.stdout.strip() not in ("", "[]"):
+        # Only an answer that shows no commits adopts: GitHub's 409 for an empty repository, or an empty list.
+        empty_repo = commits.returncode and "Git Repository is empty" in f"{commits.stdout}\n{commits.stderr}"
+        if not empty_repo and commits.returncode:
+            raise Stop("github", "커밋이 없는 저장소인지 확인하지 못했다 — 이어 쓰지 않는다")
+        if not empty_repo and commits.stdout.strip() != "[]":
             raise Stop("github", "커밋이 있는 저장소는 이어 쓰지 않는다")
         changed(run["id"], github={"node_id": now})
         return
@@ -439,18 +483,30 @@ def url_of(run: dict) -> str:
     return f"https://github.com/{run['identity']['owner']}/{run['identity']['name']}.git"
 
 
-def s_origin(run: dict) -> None:
+def origin_is_ours(run: dict) -> None:
     path, url = Path(run["identity"]["path"]), url_of(run)
     have = git(path, "remote", "get-url", "origin")
-    if have.returncode:
-        if git(path, "remote", "add", "origin", url).returncode:
+    if have.returncode or have.stdout.strip().removesuffix(".git") != url.removesuffix(".git"):
+        raise Stop("github", f"origin 이 이 실행의 저장소를 가리키지 않는다: {have.stdout.strip() or '없음'}")
+
+
+def s_origin(run: dict) -> None:
+    path = Path(run["identity"]["path"])
+    if git(path, "remote", "get-url", "origin").returncode:
+        if git(path, "remote", "add", "origin", url_of(run)).returncode:
             raise Stop("github", "origin 을 추가하지 못했다")
-    elif have.stdout.strip().removesuffix(".git") != url.removesuffix(".git"):
-        raise Stop("github", f"origin 이 다른 곳을 가리킨다: {have.stdout.strip()}")
+    origin_is_ours(run)
 
 
 def s_push(run: dict) -> None:
-    path = Path(run["identity"]["path"])
+    """Every earlier step is checked again here: a record of it is no proof the folder or origin stayed so."""
+
+    path, ident = Path(run["identity"]["path"]), run["identity"]
+    if git(path, "rev-parse", "main").stdout.strip() != run["base"] or not as_planned(path, planned(run)):
+        raise Stop("folder", "`main` 이 확인한 기본 커밋이 아니다 — 푸시하지 않는다")
+    origin_is_ours(run)
+    if remote_id(ident["owner"], ident["name"]) != (run.get("github") or {}).get("node_id"):
+        raise Stop("github", "GitHub 저장소가 기록한 것과 다르거나 확인하지 못했다 — 푸시하지 않는다")
     remote = git(path, "ls-remote", "origin", "refs/heads/main", timeout=120)
     if not remote.returncode and remote.stdout.split()[:1] == [run["base"]]:
         return
@@ -522,16 +578,39 @@ def bootstrap(rid: str) -> None:
 # -- Workers ------------------------------------------------------------------------------------
 
 def launch(rid: str, work: str, *args) -> None:
+    """One worker per run. Callers hold `_lock` from their state check through this call."""
+
     fn = {"intake": intake, "profile": environment, "bootstrap": bootstrap}[work]
-    changed(rid, working=work, stopped=None)
-    threading.Thread(target=fn, args=(rid, *args), daemon=True, name=f"oneshot-{rid}").start()
+    with _lock:
+        if runtime.stopping.is_set():
+            raise HTTPException(503, "서버가 종료 중이다. 다시 시작한 뒤 이어가라")
+        if (running := _workers.get(rid)) is not None and running.is_alive():
+            raise HTTPException(409, "이 실행은 이미 돌고 있다")
+        changed(rid, working=work, stopped=None)
+        thread = threading.Thread(target=fn, args=(rid, *args), daemon=True, name=f"oneshot-{rid}")
+        _workers[rid] = thread
+        thread.start()
+
+
+def close_all(wait: bool = True) -> list[threading.Thread]:
+    """At shutdown, after `runtime.stopping` is set: each worker stops at its next step or turn with
+    `restart`; a step already running finishes first. Its threads, joined unless `wait` is false."""
+
+    with _lock:
+        threads = [t for t in _workers.values() if t.is_alive()]
+    for thread in threads if wait else []:
+        thread.join()
+    return threads
 
 
 def recover() -> None:
-    """At server start: a stage that was running when the server stopped is stopped with `restart`."""
+    """At server start: a stage that was running when the server stopped is stopped with `restart`,
+    and a turn it had sent and never charged is charged as unknown, never zero."""
 
     for run in runs():
         if run.get("working") and not run.get("committed"):
+            if cut := run.get("inflight"):
+                changed(run["id"], inflight=None, spend=charged(run.get("spend"), cut["role"], cut["codex"], None, 0))
             stop(run["id"], "restart", "서버가 다시 켜졌다")
 
 
@@ -580,7 +659,7 @@ def start(body: Start) -> dict:
               "stopped": None, "sentence": sentence, "picked": picked, "intent": None, "confirmed": False,
               "profile": None, "proposed": {}, "identity": None, "steps": {}, "github": {}, "base": None,
               "adopt": False, "spend": ledger(None), "spec": None})
-    launch(rid, "intake")
+        launch(rid, "intake")
     return view(load(rid))
 
 
@@ -638,7 +717,7 @@ def intent(rid: str, body: Intent) -> dict:
         # Identity is fixed here, under the lock, before anything is written.
         changed(rid, state="environment", stopped=None,
                 identity={"path": str(path), "name": name, "owner": owner, "spec_id": BRANCH, "branch": BRANCH})
-    launch(rid, "profile")
+        launch(rid, "profile")
     return view(load(rid))
 
 
@@ -664,9 +743,9 @@ def profile(rid: str, body: Profile) -> dict:
                     raise HTTPException(409, "; ".join(found))
                 ident = {**ident, "owner": values["github_owner"]}
             changed(rid, profile=values, identity=ident, confirmed=True, state="bootstrap")
+            launch(rid, "bootstrap")
         else:
             return view(changed(rid, profile=values))
-    launch(rid, "bootstrap")
     return view(load(rid))
 
 
@@ -680,5 +759,5 @@ def resume(rid: str, body: Resume) -> dict:
             raise HTTPException(409, "멈춘 실행이 아니다")
         if body.adopt:
             changed(rid, adopt=True)
-    launch(rid, RUNNING[run["state"]])
+        launch(rid, RUNNING[run["state"]])
     return view(load(rid))

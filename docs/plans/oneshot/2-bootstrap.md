@@ -82,6 +82,9 @@ rewrites — is metered by what its provider reports:
   each turn; calls are recorded for the card, with no ceiling of their own.
 - The ledger is written after each turn, so a restart resumes with the spent
   totals; a turn cut by the restart counts as unknown at the rule above.
+  The run records the turn as in flight before sending it, and recovery
+  charges an in-flight turn once. A failed turn that reported its cost is
+  charged that cost.
   A ledger whose USD entries are all estimates still enforces: the estimates
   are what was charged.
 
@@ -92,7 +95,11 @@ inside one: a single turn may overshoot by its own cost.
 ## Run states in this step
 
 `intake → environment → bootstrap → spec`. `spec` is where step 3 begins.
-`stopped` is reachable from each with a reason.
+`stopped` is reachable from each with a reason. A run has at most one worker:
+the state check and the worker's start happen under one lock, and a second
+start is refused. At shutdown no new sub-step or turn starts; a sub-step
+already running finishes, the run stops with `restart`, and the server joins
+its worker before letting go of the hub.
 
 | Reason | When | `[재개]` does |
 | --- | --- | --- |
@@ -198,11 +205,11 @@ after an effect and before its record.
 | 1 | Re-check the name | — | The reservation checks run again; a conflict that appeared meanwhile stops with `folder` |
 | 2 | Folder | The fixed path exists and holds only files this run wrote | Create it, or re-check the picked one is still empty |
 | 3 | Files | Each file exists with the content the run would write | `.gitignore` from the profile's languages; `.gitattributes` with `* text=auto eol=lf` when another OS is planned; a README stub with the restatement, the owner's sentence and the setup command; `LICENSE` when public; `.wiki/adapter.toml` from the profile through `connect.adapter_text` |
-| 4 | Base commit | `main` exists and its one commit holds exactly those files | Initialise with `main` and commit |
+| 4 | Base commit | `main` exists and its one commit holds exactly those files, each blob byte for byte as planned, and is the recorded base when one is | Re-check every planned file on disk, initialise with `main` and commit, then check the commit the same way |
 | 5 | Register | The folder is listed by `channels.projects` under the fixed name | Register a picked folder as `[폴더 찾기]` does, with its same-name refusal; then write the adapter's hash through `connect.keep` |
 | 6 | Remote repository | The run recorded the repository's node id | Create it through `gh` with the chosen visibility and owner, and record its node id at once |
 | 7 | Origin | `origin` points at that repository | Add it |
-| 8 | Push | The remote `main` is the base commit | Push `main` with upstream |
+| 8 | Push | The remote `main` is the base commit | First check again that local `main` is the base and as planned, that `origin` is the run's URL and that the repository's node id is the recorded one; any difference stops before anything is pushed. Then push `main` with upstream |
 | 9 | Spec and worktree | A spec with the fixed id whose `oneshot.run` is this run; a linked worktree on `oneshot-initial` whose HEAD is the base commit | Create whichever is missing (`workspace.create(..., linked=True)`), then write the commit point |
 
 Two cases are not adopted silently:
@@ -210,8 +217,9 @@ Two cases are not adopted silently:
 - At sub-step 6, a repository with the fixed name exists but its node id is
   not recorded (the server stopped between creation and record, or someone
   else made it). The run stops with `github` and shows the repository; the
-  owner either adopts it, allowed only when it has no commits, or picks
-  another name.
+  owner either adopts it, allowed only when GitHub answers that it has no
+  commits (an empty list, or its empty-repository refusal; any other failure
+  to ask stops with `github`), or picks another name.
 - At sub-step 9, a spec or branch with the fixed id that does not belong to
   this run stops with `folder`; it is never overwritten.
 

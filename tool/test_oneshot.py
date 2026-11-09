@@ -7,14 +7,17 @@ and `origin` is a local bare repository.
 
 import json
 import subprocess
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
 
-from main import channels, connect, oneshot, oneshot_profile, specs
+from main import channels, connect, oneshot, oneshot_profile, runtime, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
+
+LAUNCH = oneshot.launch   # the real one; `world` replaces it with a synchronous state change
 
 INTENT = {"restated": "가계부를 만든다.", "kind": "webapp", "name": "Budget Tracker", "users": "나 혼자 쓴다.",
           "first_screen": "이번 달 지출을 본다."}
@@ -33,6 +36,7 @@ class GitHub:
         self.repos: dict[str, str] = {}
         self.calls: list[list[str]] = []
         self.bare = bare
+        self.commits = (0, "[]", "")   # returncode, stdout, stderr of listing an adopted repository's commits
 
     def gh(self, args, cwd=None, timeout=120):
         self.calls.append(args)
@@ -41,7 +45,7 @@ class GitHub:
             subprocess.run(["git", "init", "--bare", "-b", "main", str(self.bare)], check=True, capture_output=True)
             return subprocess.CompletedProcess(args, 0, "", "")
         if args[:2] == ["api", "repos/someone/budget-tracker/commits"]:
-            return subprocess.CompletedProcess(args, 0, "[]", "")
+            return subprocess.CompletedProcess(args, *self.commits)
         return subprocess.CompletedProcess(args, 1, "", "unexpected")
 
     def remote_id(self, owner, name):
@@ -325,3 +329,117 @@ def test_recover_stops_running_stages_with_restart(world):
     rid = made(world)
     oneshot.recover()
     assert oneshot.load(rid)["stopped"]["reason"] == "restart" and oneshot.load(rid)["working"] is None
+
+
+def through(rid: str, last: str) -> None:
+    for name in oneshot.STEPS[:oneshot.STEPS.index(last) + 1]:
+        oneshot.step(rid, name, oneshot.SUBSTEPS[name])
+
+
+def git_ok(where: Path, *args: str) -> bool:
+    return subprocess.run(["git", *args], cwd=where, capture_output=True).returncode == 0
+
+
+def test_a_file_changed_after_the_files_step_is_never_committed(world):
+    rid = made(world)
+    through(rid, "files")
+    repo = world["workspace"] / "budget-tracker"
+    (repo / "README.md").write_text("UNAPPROVED LOCAL EDIT", encoding="utf-8")
+    oneshot.bootstrap(rid)
+    assert oneshot.load(rid)["stopped"]["reason"] == "folder"
+    assert not git_ok(repo, "rev-parse", "--verify", "main") and not world["github"].bare.exists()
+
+
+def test_an_existing_main_with_the_same_names_but_other_content_is_not_adopted(world):
+    rid = made(world)
+    through(rid, "files")
+    repo = world["workspace"] / "budget-tracker"
+    (repo / "README.md").write_text("other", encoding="utf-8")
+    for args in (["init", "-b", "main"], ["add", "-A"], ["-c", "user.name=x", "-c", "user.email=x@x", "commit", "-m", "x"]):
+        assert git_ok(repo, *args)
+    oneshot.bootstrap(rid)
+    assert oneshot.load(rid)["stopped"]["reason"] == "folder" and not world["github"].bare.exists()
+
+
+def test_an_origin_changed_after_its_step_is_never_pushed_to(world):
+    rid = made(world)
+    through(rid, "origin")
+    repo, other = world["workspace"] / "budget-tracker", world["tmp"] / "other.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(other)], check=True, capture_output=True)
+    assert git_ok(repo, "remote", "set-url", "origin", str(other))
+    oneshot.bootstrap(rid)
+    assert oneshot.load(rid)["stopped"]["reason"] == "github"
+    assert not git_ok(other, "rev-parse", "--verify", "main")
+    assert not git_ok(world["github"].bare, "rev-parse", "--verify", "main")
+
+
+@pytest.mark.parametrize("answer, adopted", [((1, "", "HTTP 403: cannot list commits"), False),
+                                             ((0, '[{"sha": "abc"}]', ""), False),
+                                             ((1, "", "gh: Git Repository is empty. (HTTP 409)"), True)])
+def test_a_remote_is_adopted_only_when_github_shows_it_has_no_commits(world, answer, adopted):
+    rid = made(world, adopt=True)
+    through(rid, "register")
+    world["github"].repos["someone/budget-tracker"] = "R_7"
+    world["github"].commits = answer
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(world["github"].bare)], check=True, capture_output=True)
+    oneshot.bootstrap(rid)
+    run = json.loads(oneshot.file_of(rid).read_text(encoding="utf-8"))
+    assert bool(run.get("committed")) == adopted
+    assert git_ok(world["github"].bare, "rev-parse", "--verify", "main") == adopted
+
+
+def test_one_worker_per_run_and_a_second_resume_is_refused(world):
+    rid = made(world, working=None, stopped={"reason": "restart", "detail": "", "state": "bootstrap"})
+    release = threading.Event()
+    with patch.object(oneshot, "launch", LAUNCH), patch.object(oneshot, "bootstrap", lambda rid: release.wait(10)):
+        try:
+            oneshot.resume(rid, oneshot.Resume())
+            for again in (lambda: oneshot.resume(rid, oneshot.Resume()), lambda: oneshot.launch(rid, "bootstrap")):
+                with pytest.raises(HTTPException) as refused:
+                    again()
+                assert refused.value.status_code == 409
+            assert len(oneshot.close_all(wait=False)) == 1
+        finally:
+            release.set()
+            oneshot.close_all()
+
+
+def test_a_turn_cut_by_the_server_dying_is_charged_once_as_unknown(world):
+    def dies(*a):
+        raise SystemExit("the server went down inside the turn")
+
+    with patch.object(oneshot, "ask", dies):
+        rid = oneshot.start(oneshot.Start(sentence="가계부"))["id"]
+        with pytest.raises(SystemExit):
+            oneshot.intake(rid)
+    with patch.object(oneshot_profile, "estimate", lambda role: 2.0):
+        oneshot.recover()
+        oneshot.recover()
+    run = oneshot.load(rid)
+    assert run["stopped"]["reason"] == "restart" and run["inflight"] is None
+    assert (run["spend"]["calls"], run["spend"]["unknown"], run["spend"]["usd"]) == (1, 1, 2.0)
+
+
+def test_a_failed_turn_keeps_the_cost_it_reported(world):
+    def fails(*a):
+        raise oneshot.Failed("provider error", {"cost_usd": 30.0})
+
+    with patch.object(oneshot, "ask", fails), patch.object(oneshot_profile, "estimate", lambda role: 2.0):
+        rid = oneshot.start(oneshot.Start(sentence="가계부"))["id"]
+        oneshot.intake(rid)
+    run = oneshot.load(rid)
+    assert run["stopped"]["reason"] == "block" and run["spend"]["usd"] == 30.0 and run["spend"]["unknown"] == 0
+
+
+def test_shutdown_starts_no_new_step_and_refuses_new_workers(world):
+    rid = made(world)
+    runtime.stopping.set()
+    try:
+        oneshot.bootstrap(rid)
+        with patch.object(oneshot, "launch", LAUNCH), pytest.raises(HTTPException) as refused:
+            oneshot.launch(rid, "bootstrap")
+    finally:
+        runtime.stopping.clear()
+    run = oneshot.load(rid)
+    assert run["stopped"]["reason"] == "restart" and run["steps"] == {} and refused.value.status_code == 503
+    assert not (world["workspace"] / "budget-tracker").exists()
