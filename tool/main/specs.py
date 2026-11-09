@@ -345,8 +345,10 @@ def stand_in(repo: Path) -> str:
 
 
 def gated(repo: Path, spec: dict) -> str:
-    """The gate a revision of `spec` carries first; empty while nothing stands in for a missing one."""
-    return gate_of(repo) or (stand_in(repo) if spec.get("adapter") else "")
+    """The gate a revision of `spec` carries first — its checkout's own, as the server runs it (`_check`) —
+    empty while nothing stands in for a missing one."""
+    return gate_of(repo, Path(spec["worktree"]) if spec.get("worktree") else None) or (
+        stand_in(repo) if spec.get("adapter") else "")
 
 
 def slugged(raw) -> str:

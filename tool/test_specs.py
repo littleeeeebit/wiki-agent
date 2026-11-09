@@ -260,6 +260,9 @@ def test_the_gate_a_slot_spec_fills_in_its_linked_worktree_is_the_one_the_server
     _adapter(linked, FAIL)
     assert specs.gate_of(repo, linked) == FAIL and specs.gate_of(repo) == ""
     assert FAIL in specs.local_required(repo, spec)
+    specs.revise(repo, spec, {"rev": spec["rev"], "reason": "filled", "goal": spec["goal"], "out": [],
+                              "done": [FAIL, specs.FILL_GATE]})
+    assert specs.load(repo.name, sid)["done"] == [FAIL, specs.FILL_GATE], "명세 수정도 작업 폴더의 게이트를 앞에 둔다 (#314)"
 
 
 def test_a_spec_names_its_review_profile_and_an_old_one_is_code(repo):
