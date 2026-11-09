@@ -133,8 +133,17 @@ function entries(data: MapData, layer: Layer): { list: Entry[]; lines: Line[] } 
   return { list, lines }
 }
 
+/** What the wiki focus is handed for a list of orphans or findings: the items and what to do with them.
+ *  The server writes no document of an original checkout; a fix goes through the conversation and a task. */
+const ORPHAN_ASK = (ids: string[]) => `이 저장소의 어떤 문서·페이지·기록에서도 링크하지 않는 문서다:\n${ids.map((id) => `- \`${id}\``).join('\n')}\n` +
+  '각 문서를 읽고, 어느 문서가 가리켜야 하는지, 다른 문서와 합칠지, 지울지 제안해라. 고칠 것은 작업 명세로 만든다.'
+const FINDING_ASK = (found: MapData['findings']) => `repo_lint 의 발견이다:\n${found.map((f) => `- [${f.kind}] ${f.text}`).join('\n')}\n` +
+  '각 발견의 원인을 확인하고 고칠 방법을 제안해라. 고칠 것은 작업 명세로 만든다.'
+// A finding names its page first, in backticks: `.wiki/x` is the node `.wiki/x.md`.
+const named = (text: string) => /`([^`]+)`/.exec(text)?.[1] ?? ''
+
 /** `on` is the app's translation switch: the panel's preview is overlaid
- *  only while it is on. `onAsk` puts the path in the wiki focus's box. */
+ *  only while it is on. `onAsk` puts its text in the wiki focus's box. */
 export function RepoMap({ repo, on, run, onRunClose, onAsk }: {
   repo: string; on: boolean; run: RunSummary | null; onRunClose: () => void; onAsk: (path: string) => void
 }) {
@@ -143,6 +152,7 @@ export function RepoMap({ repo, on, run, onRunClose, onAsk }: {
   const [layer, setLayer] = useState<Layer>('repo')
   const [picked, setPicked] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const [listed, setListed] = useState<'orphans' | 'findings' | null>(null)
   const board = useRef<SVGSVGElement>(null)
   const handle = useRef<Handle | null>(null)
 
@@ -152,6 +162,7 @@ export function RepoMap({ repo, on, run, onRunClose, onAsk }: {
     setData(null)
     setFault('')
     setPicked(null)
+    setListed(null)
     api.getGraph(repo)
       .then((d) => {
         if (stale) return
@@ -208,8 +219,13 @@ export function RepoMap({ repo, on, run, onRunClose, onAsk }: {
         {data && layer !== 'run' && (
           <p className="ml-auto flex shrink-0 gap-3 font-mono text-[10.5px] text-faint">
             <span title="이 저장소의 문서·지식 페이지·모듈·결정 기록">페이지 {data.metrics.pages}</span>
-            <span title="아무 문서도 가리키지 않는 문서">고아 {data.metrics.orphans}</span>
-            <span title="repo_lint 의 발견">경고 {data.metrics.lint}</span>
+            {(['orphans', 'findings'] as const).map((k) => (
+              <button key={k} type="button" aria-pressed={listed === k} onClick={() => { setListed(listed === k ? null : k); setPicked(null) }}
+                title={k === 'orphans' ? '들어오는 링크가 하나도 없는 문서 — 누르면 목록' : 'repo_lint 의 발견 — 누르면 목록'}
+                className={cn('underline-offset-2 hover:text-foreground hover:underline', listed === k && 'text-foreground underline')}>
+                {k === 'orphans' ? `고아 ${data.metrics.orphans}` : `경고 ${data.metrics.lint}`}
+              </button>
+            ))}
           </p>
         )}
       </div>
@@ -219,6 +235,10 @@ export function RepoMap({ repo, on, run, onRunClose, onAsk }: {
         {!drawn && !fault && <p className="p-5 text-[13.5px] text-faint">지도를 그리는 중…</p>}
         <svg ref={board} className={cn('map-board size-full', !drawn && 'hidden')} role="img"
           aria-label={layer === 'run' ? `${repo} — 이번 질문이 지나간 경로` : `${repo} 지도`} />
+        {listed && data && layer !== 'run' && !entry && (
+          <ListPanel data={data} listed={listed} onAsk={onAsk} onClose={() => setListed(null)}
+            onPick={(id) => { if (layer === 'hub') setLayer('both'); setPicked(id) }} />
+        )}
         {layer === 'run' && path && run && !entry && (
           <RunPanel run={run} label={path.label} onPick={setPicked} onClose={onRunClose} />
         )}
@@ -330,8 +350,60 @@ function Panel({ entry, on, onAsk, onPick, title, into, out, both, walked }: {
         </div>
       </div>
       <div className="shrink-0 border-t border-border px-4 py-3">
-        <Btn tone="primary" className="w-full justify-center" disabled={!entry.path} onClick={() => onAsk(entry.path)}>이 문서에 대해 묻기</Btn>
+        <Btn tone="primary" className="w-full justify-center" disabled={!entry.path} onClick={() => onAsk(`\`${entry.path}\` `)}>이 문서에 대해 묻기</Btn>
       </div>
+    </aside>
+  )
+}
+
+/** The orphans or findings behind a count: each one found on the map, and
+ *  handed to the wiki focus to fix, one at a time or all together. */
+function ListPanel({ data, listed, onPick, onAsk, onClose }: {
+  data: MapData; listed: 'orphans' | 'findings'; onPick: (id: string) => void; onAsk: (text: string) => void; onClose: () => void
+}) {
+  const ids = new Set(data.layers.repo.nodes.map((n) => n.id))
+  const node = (text: string) => [named(text), `${named(text)}.md`].find((id) => ids.has(id)) ?? ''
+  // Hook wiring drift is this machine's, not a document's: [모두 다시 연결] fixes it, a conversation does not.
+  const wired = (f: MapData['findings'][number]) => f.kind.includes('배선')
+  const rows = listed === 'orphans'
+    ? data.orphans.map((id) => ({ key: id, label: stem(id), sub: id, at: id, ask: ORPHAN_ASK([id]) }))
+    : data.findings.map((f, i) => ({ key: `${i}`, label: f.kind, sub: f.text, at: node(f.text), ask: wired(f) ? '' : FINDING_ASK([f]) }))
+  const asked = listed === 'orphans' ? data.orphans.length : data.findings.filter((f) => !wired(f)).length
+  const all = listed === 'orphans' ? ORPHAN_ASK(data.orphans) : FINDING_ASK(data.findings.filter((f) => !wired(f)))
+  return (
+    <aside aria-label={listed === 'orphans' ? '고아 문서' : 'lint 발견'}
+      className="absolute inset-y-0 right-0 flex w-80 max-w-full flex-col border-l border-border bg-card">
+      <div className="flex shrink-0 items-start gap-2 border-b border-border px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <h3 className="font-heading text-[14px] font-semibold leading-snug">
+            {listed === 'orphans' ? `고아 문서 ${rows.length}` : `lint 발견 ${rows.length}`}
+          </h3>
+          <p className="mt-0.5 text-[11px] text-faint">
+            {listed === 'orphans' ? `문서 ${data.layers.repo.nodes.filter((n) => n.kind === 'doc').length}개 가운데 들어오는 링크가 하나도 없는 것` : 'repo_lint 가 이 저장소에서 찾은 것'}
+          </p>
+        </div>
+        <Btn tone="ghost" onClick={onClose}>닫기</Btn>
+      </div>
+      <ul className="min-h-0 flex-1 divide-y divide-border overflow-y-auto text-[12.5px]">
+        {rows.length === 0 && <li className="px-4 py-3 text-faint">없다.</li>}
+        {rows.map((r) => (
+          <li key={r.key} className="px-4 py-2">
+            {r.at ? (
+              <button type="button" onClick={() => onPick(r.at)} className="max-w-full truncate font-mono text-[12px] text-primary hover:underline">
+                {r.label}
+              </button>
+            ) : <span className="font-mono text-[12px]">{r.label}</span>}
+            <p className="mt-0.5 break-words text-[11px] text-muted-foreground">{r.sub}</p>
+            {r.ask ? <Btn tone="ghost" className="mt-1" onClick={() => onAsk(r.ask)}>고치게 하기</Btn>
+              : <p className="mt-1 text-[11px] text-faint">프로젝트 · 연결의 [모두 다시 연결] 로 고친다</p>}
+          </li>
+        ))}
+      </ul>
+      {asked > 1 && (
+        <div className="shrink-0 border-t border-border px-4 py-3">
+          <Btn tone="primary" className="w-full justify-center" onClick={() => onAsk(all)}>전부 고치게 하기</Btn>
+        </div>
+      )}
     </aside>
   )
 }

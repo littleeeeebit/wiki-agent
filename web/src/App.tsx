@@ -711,8 +711,8 @@ export default function App() {
         {mapped && (
           <div className={cn('min-h-0 flex-1', view !== 'map' && 'hidden')}>
             <RepoMap repo={repo} on={full} run={mapRun?.repo === repo ? mapRun.run : null}
-              onRunClose={() => setMapRun(null)} onAsk={(file) => {
-              setSeed({ focus: 'wiki', text: `\`${file}\` ` })
+              onRunClose={() => setMapRun(null)} onAsk={(text) => {
+              setSeed({ focus: 'wiki', text })
               setView('chat')
             }} />
           </div>
