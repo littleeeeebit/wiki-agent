@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { Choices } from '@/components/Blocks'
 import { Btn } from '@/components/Modal'
 import { api, COLUMNS, STAGES, STOP, stageLabel, type Decision, type Feature, type Freq, type Gate, type Palette,
-  type SpecView, type Talk } from '@/lib/oneshot'
+  type RunSummary, type SpecView, type Talk } from '@/lib/oneshot'
 import { cn } from '@/lib/utils'
 
 /** A oneshot run past S1 (`docs/plans/oneshot/5-screen-pr.md`): the stage strip, the S2
@@ -74,6 +74,7 @@ export function OneshotSpec({ repo }: { repo: string }) {
         <Sheet key={`r3-${o.r3.round}`} gate="r3" text={view.r3_sheet} items={view.r3_items ?? []} state={o.r3}
           busy={busy} submit={(body) => act(() => api.decide(repo, 'r3', body))} />
       )}
+      {view.stage === 'done' && view.summary && <Finished summary={view.summary} />}
     </div>
   )
 }
@@ -369,5 +370,40 @@ function Column({ label, drop, children }: { label: string; drop: () => void; ch
       <h3 className="text-[12px] font-semibold">{label}</h3>
       {children}
     </div>
+  )
+}
+
+// -- The finished run -------------------------------------------------------------------
+
+const GATE_NAMES: Record<string, string> = { r1: 'R1 백엔드 설계', r2: 'R2 화면 설계', r3: 'R3 완성 화면' }
+
+/** The one summary a finished run keeps: what was asked, each review and how it was read, what it cost. */
+function Finished({ summary }: { summary: RunSummary }) {
+  const s = summary.spend
+  const hours = ((s.seconds ?? 0) / 3600).toFixed(1)
+  return (
+    <section aria-label="실행 요약" className="flex flex-col gap-3">
+      <p className="text-muted-foreground">{summary.sentence}</p>
+      {summary.pr && (
+        <p>풀 리퀘스트 <a href={summary.pr.url} target="_blank" rel="noreferrer" className="font-mono underline">#{summary.pr.number}</a>
+          {' '}— 리뷰 루프는 작업 목록의 이 명세에서 시작한다.</p>
+      )}
+      <table className="w-full text-left">
+        <thead><tr className="text-muted-foreground"><th>검토</th><th>회차</th><th>고친 항목</th><th>읽은 시간</th><th>펼친 부분</th></tr></thead>
+        <tbody>
+          {summary.gates.map((g) => (
+            <tr key={g.gate}>
+              <td>{GATE_NAMES[g.gate] ?? g.gate}</td><td>{g.rounds}</td><td>{g.edited.length}</td>
+              <td>{Math.round(g.reading.reduce((n, r) => n + (r.seconds ?? 0), 0) / 60)}분</td>
+              <td>{[...new Set(g.reading.flatMap((r) => r.opened))].join(', ') || '없음'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p>
+        비용 ${(s.usd ?? 0).toFixed(2)}{s.unknown ? ` (추정 ${s.unknown}턴 포함)` : ''} · 시간 {hours}시간 · 턴 {s.calls ?? 0}개 ·
+        화면 찍기 {summary.looks}회 · 화면 비평 {summary.critiques}회
+      </p>
+    </section>
   )
 }

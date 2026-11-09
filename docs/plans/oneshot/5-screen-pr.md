@@ -16,7 +16,7 @@ is, with Review Loop ready.
 | Part | Scope | Module |
 | --- | --- | --- |
 | 5a | The run's row, the stage strip, the S2 conversation, the gate sheet view, the feature board and the reading record | `web/src/components/OneshotSpec.tsx`, `web/src/lib/oneshot.ts`, `GET /api/oneshot-specs` in `tool/main/oneshot_spec.py` |
-| 5b | S8: the README turn, the final gate, the pull request handed to Review Loop, and the finished run's summary | — |
+| 5b | S8: the README turn, the final gate, the pull request handed to Review Loop, and the finished run's summary | `tool/main/oneshot_pr.py`, `tool/prompts/oneshot-readme.md`, the `Finished` view in `web/src/components/OneshotSpec.tsx` |
 
 ## The run on the screen
 
@@ -100,15 +100,30 @@ After R3 approval, a server routine and one model turn:
 4. The pull request is attached to the run's spec, so the Review Loop button
    finds it by its branch, as it does every task's.
 
+R3's approval sets the stage to `pr` and sends the README turn
+(`oneshot-readme.md`). When it ends, `oneshot_pr` checks, in order: the
+`done-report` covers every `done` item; `README.md` exists; a workflow file
+exists exactly when the repository is public with GitHub Actions; the
+contract and the pytest configuration are pinned as in S4; and the adapter's
+`gate_cmd` passes on a clean, committed HEAD (`specs.judge`). A refusal sends
+the turn back, the third stops the stage. When all hold, the gate is recorded
+on the spec with `selection: "full"`, and the next turn is the existing
+`pr_text.writing` request with the run's decisions appended: each item the
+owner edited at R1, R2 or R3, and the chosen palette. That turn's answer goes
+through `specs.written`, which pushes the branch and opens the pull request
+as for every spec; a push or `gh` refusal stops the run with its reason.
+Resuming a stopped S8 starts again from the README turn.
+
 The run's state becomes the spec's `PR #n`, and from here the spec follows
 the ordinary cycle in `docs/plans/loop/3-spec.md`: the owner starts Review
 Loop, the rounds fix findings between agents, and the owner merges.
 
 ## The finished run's summary
 
-Once the pull request is open, the run view keeps one summary: the owner's
-sentence, the three gates with their rounds and reading numbers, the
-autonomous stages with their cost and time, the critique rounds, and the
+Once the pull request is open, the run's stage is `done` and the run view
+keeps one summary: the owner's sentence, the three gates with their rounds,
+the items edited and each submission's reading record, the run's spend as
+totals (calls, cost and time), the critique and screenshot rounds, and the
 link to the pull request. The kind's saved profile has already been updated
 in step 2.
 
@@ -120,9 +135,11 @@ in step 2.
   re-show unfolding every item that needs a decision again), the
   board (drag and keyboard moves produce the same map), and the stage strip
   for each state including `stopped`.
-- New tests in `tool/test_oneshot.py`: S8 refusing to open with the gate
-  red, no workflow file for a private repository, the pull request attached
-  to the spec by branch.
+- New tests in `tool/test_oneshot_pr.py`: S8 refusing to open without its
+  README, with a workflow file in a private repository, with a changed
+  contract or with the gate red; a public repository needing its workflow;
+  the pull request attached to the spec by branch and the summary; a refused
+  push stopping the run; a resumed S8 starting from its README turn.
 - The repository's gate including the web build and browser checks,
   `tool/lint.py --check` and `tool/debt.py check`.
 - One real run end to end on a throwaway private repository: from the sentence
