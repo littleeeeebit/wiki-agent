@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import threading
 from pathlib import Path
 from unittest.mock import patch
 from types import SimpleNamespace
@@ -9,6 +10,29 @@ from types import SimpleNamespace
 import pytest
 
 from main import loop, query, work
+
+
+class OwnFeed(work.Feed):
+    """A feed that keeps only what the test's own thread puts. A daemon thread another
+    test left running (a probe's or a watcher's `connect`) reaches whatever `work.feed`
+    is when it fires, and its events broke exact-content assertions on CI."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.owner = threading.get_ident()
+
+    def put(self, payload: dict) -> None:
+        if threading.get_ident() == self.owner:
+            super().put(payload)
+
+
+def test_a_test_feed_drops_what_another_thread_puts():
+    feed = OwnFeed()
+    feed.put({"kind": "sync"})
+    stray = threading.Thread(target=feed.put, args=({"kind": "connect", "repo": ""},))
+    stray.start()
+    stray.join()
+    assert feed.events == [{"kind": "sync", "seq": 0}]
 
 
 def refused_once(refused: list):
@@ -28,7 +52,7 @@ def refused_once(refused: list):
 def test_conversation_append_and_clear_announce_after_persistence(tmp_path):
     repo = tmp_path / "fixture"
     repo.mkdir()
-    feed = work.Feed()
+    feed = OwnFeed()
     with patch.object(work, "feed", feed), patch.object(query, "LOGS", tmp_path / "logs"), \
          patch.object(query, "current_repo", return_value=repo), \
          patch.object(query, "config", return_value={}), \
@@ -60,7 +84,7 @@ def test_a_conversation_read_while_it_is_cleared_does_not_fail_the_clear(tmp_pat
 @pytest.mark.parametrize("after, cursor, expected", [(None, 1, []), (-1, -1, [0, 1]),
                                                      (0, 0, [1]), (999, -1, [0, 1])])
 def test_feed_replay_and_cursor_after_server_restart(after, cursor, expected):
-    feed = work.Feed()
+    feed = OwnFeed()
     feed.put({"kind": "conversation", "cid": "wiki"})
     feed.put({"kind": "sync"})
     feed.done = True
@@ -78,7 +102,7 @@ def test_feed_replay_and_cursor_after_server_restart(after, cursor, expected):
 @pytest.mark.parametrize("after", [0, 1, 99])
 def test_notice_replay_belongs_to_its_feed_generation(after):
     old = work.Feed()
-    restarted = work.Feed()
+    restarted = OwnFeed()
     restarted.done = True
     with patch.object(work, "feed", restarted):
         work.notice("Question pending", "fixture")
@@ -100,7 +124,7 @@ def test_queue_cancel_and_session_permissions_invalidate_state(tmp_path):
     chat = SimpleNamespace(id="fixture", parent_id=None, answer=lambda *args: True, clear_rules=lambda: None)
     run = work.Run(chat)
     path = str(tmp_path)
-    feed = work.Feed()
+    feed = OwnFeed()
     with patch.object(work, "feed", feed), patch.object(work, "_queued", {}), \
          patch.object(work, "_sessions", {path: chat}), patch.object(work, "_runs", {path: run}), \
          patch.object(work, "ours", return_value=tmp_path), patch.object(work, "current_repo", return_value=tmp_path):

@@ -9,6 +9,7 @@ import pytest
 
 from main import channels as chat_channels
 from main import connect, wiring, work
+from test_sync import OwnFeed
 from test_main import _documented, _repo, _two_projects, client, no_machine_settings  # noqa: F401 — the fixture is autouse
 
 
@@ -57,7 +58,8 @@ def test_a_change_of_branch_or_user_settings_tells_the_screens_once_each(tmp_pat
     settings = tmp_path / "settings.json"
     settings.write_text("{}", encoding="utf-8")
     branch = ["main"]
-    with patch.object(wiring, "hub_branch", side_effect=lambda: branch[0]), \
+    # `watch` runs on this thread, so a feed that drops other threads' events holds the exact count.
+    with patch.object(work, "feed", OwnFeed()), patch.object(wiring, "hub_branch", side_effect=lambda: branch[0]), \
          patch.object(wiring.apply, "user_files", side_effect=lambda host: [settings] if host == "claude" else []):
         drained()
         wiring.watch(Ticks(1), every=0)
