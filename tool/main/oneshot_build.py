@@ -330,7 +330,8 @@ def checked(path: Path, run, spec: dict, final: str):
     if not why:
         if stage == "tests":
             return unless_stopped(run, repo, lambda: send(repo, "build", build_text(oneshot_spec.spec_of(repo))))
-        return None
+        from . import oneshot_review   # it imports this module
+        return unless_stopped(run, repo, lambda: oneshot_review.begin(repo))
     specs.note(run, why)
     attempts = int(spec["oneshot"].get("attempts") or 0) + 1
     store = oneshot_spec.store(repo)

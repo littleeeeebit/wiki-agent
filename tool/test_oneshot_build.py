@@ -205,7 +205,7 @@ def test_each_case_is_pinned_by_its_own_node_id_through_inheritance_and_any_para
     write(tree, "app.py", APP)
     git(tree, "add", "app.py")
     git(tree, "commit", "-m", "build")
-    assert check(tree, "만들었다.\n" + report()) is None and o()["stage"] == "review"
+    assert check(tree, "만들었다.\n" + report()) is not None and o()["stage"] == "review"
 
 
 def test_the_third_refusal_stops_the_stage(built_world):
@@ -224,8 +224,12 @@ def test_a_build_with_a_full_report_a_green_gate_and_every_planned_test_passing_
     write(tree, "app.py", APP)
     git(tree, "add", "app.py")
     git(tree, "commit", "-m", "build")
-    assert check(tree, "만들었다.\n" + report()) is None
+    then = check(tree, "만들었다.\n" + report())
     assert o()["stage"] == "review" and o()["built_head"] == git(tree, "rev-parse", "HEAD")
+    begun = []
+    with patch("main.oneshot_review.begin", begun.append):
+        then()
+    assert begun == ["budget"]   # the backend review follows
 
 
 @pytest.mark.parametrize("weaken, said", [
@@ -318,7 +322,7 @@ def test_async_unittest_and_data_reading_contracts_go_from_red_to_green(built_wo
     write(tree, "app.py", APP)
     git(tree, "add", "app.py")
     git(tree, "commit", "-m", "build")
-    assert check(tree, "만들었다.\n" + report()) is None and o()["stage"] == "review"
+    assert check(tree, "만들었다.\n" + report()) is not None and o()["stage"] == "review"
 
 
 CLEANUP = '''import pytest

@@ -376,12 +376,16 @@ def resume(repo: str) -> dict:
             raise HTTPException(409, "멈춘 단계가 아니다")
         if o.get("inflight"):   # its `Turn.finish` has not run: the next turn would lose that turn's charge
             raise HTTPException(409, "앞 턴의 비용을 아직 매기는 중이다 — 잠시 뒤 다시 하라")
-        if o["stage"] not in (*RUNNING, "tests", "build"):
+        if o["stage"] not in (*RUNNING, "tests", "build", "review"):
             raise HTTPException(409, f"`{o['stage']}` 단계는 다음 단계에서 이어진다")
         if o["stage"] == "r1":   # an edit turn that stopped: the sheet stands, the owner decides again
             return view(saved(repo, oneshot={"stopped": None}))
         if o["stage"] in RUNNING:
             start(repo, RUNNING[o["stage"]])
+            return view(spec_of(repo))
+        if o["stage"] == "review":   # a worker, started under the lock like the stages above
+            from . import oneshot_review   # it imports this module
+            oneshot_review.resume(repo)
             return view(spec_of(repo))
         saved(repo, oneshot={"working": o["stage"], "stopped": None})   # a second resume meanwhile is refused
     from . import oneshot_build   # it imports this module

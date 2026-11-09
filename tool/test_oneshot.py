@@ -70,7 +70,7 @@ def world(tmp_path):
          patch.object(oneshot, "gh", github.gh), patch.object(oneshot, "remote_id", github.remote_id), \
          patch.object(oneshot, "gh_user", lambda: "someone"), \
          patch.object(oneshot, "url_of", lambda run: str(github.bare)), \
-         patch.object(oneshot, "codex_role", lambda: False), \
+         patch.object(oneshot, "codex_role", lambda role="": False), \
          patch.object(oneshot_spec, "begin", lambda repo: None), \
          patch.object(oneshot, "launch",
                       lambda rid, work, *a, **f: oneshot.changed(rid, **f, working=work, stopped=None)):
