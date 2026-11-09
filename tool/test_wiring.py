@@ -149,11 +149,36 @@ def test_rewire_writes_exactly_the_confirmed_plan_or_nothing(tmp_path):
 
             settings(a, "{}"), settings(b, "{}")
             with patch.object(connect, "hub", return_value={**calm, "needed": True, "digest": "d"}), \
-                 patch.object(connect, "move") as move:
+                 patch.object(connect, "move", side_effect=lambda _d, done: done.append("user")) as move:
                 assert web.post("/api/rewire", json={"plan": plan["digest"]}).status_code == 409, "허브 이전도 계획에 묶인다"
                 plan, answer = confirm()
-                assert answer.json()["ok"] and answer.json()["written"][0] == "허브 이전"
-                move.assert_called_once_with("d")
+                assert answer.json()["ok"] and answer.json()["written"][0] == "user"
+                move.assert_called_once()
+
+    # The hub move itself failing partway: the real `move`, its user files in tmp_path.
+    home = [tmp_path / "home/.claude/settings.json", tmp_path / "home/.codex/hooks.json"]
+    for file in home:
+        file.parent.mkdir(parents=True)
+        file.write_text("{}", encoding="utf-8")
+    moving = {**calm, "needed": True, "lines": [{"file": str(f), "change": "c"} for f in home], "digest": "d"}
+    rows.clear()
+    real = Path.write_text
+
+    def second(self: Path, *args, **kwargs):
+        if self == home[1]:
+            raise OSError("디스크가 가득 찼다")
+        return real(self, *args, **kwargs)
+
+    with patch.object(wiring, "hub_branch", return_value="main"), \
+         patch.object(chat_channels, "projects", side_effect=lambda: list(rows)), \
+         patch.object(connect, "_snapshot", return_value=(moving, [(f, {"moved": True}, ["c"]) for f in home], [], "py")), \
+         patch.object(connect, "RECORDS", tmp_path / "records"):
+        plan = web.get("/api/rewire/plan").json()
+        with patch.object(Path, "write_text", second):
+            done = web.post("/api/rewire", json={"plan": plan["digest"]}).json()
+    assert done == {"ok": False, "written": [str(home[0])], "failed": ["허브 이전: OSError: 디스크가 가득 찼다"]}
+    assert json.loads(home[0].read_text(encoding="utf-8")) == {"moved": True}
+    assert json.loads(home[1].read_text(encoding="utf-8")) == {}
 
 
 def test_the_listing_names_the_hub_branch(tmp_path):

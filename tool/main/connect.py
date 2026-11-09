@@ -415,23 +415,30 @@ def hub(data: dict | None = None) -> dict:
     return _snapshot(data)[0]
 
 
-def move(confirmed: str, data: dict | None = None) -> dict:
+def move(confirmed: str, data: dict | None = None, done: list[str] | None = None) -> dict:
     """Write what `hub()` showed, only if it is still exactly that. Every
-    repository's test was of the old wiring, so the records drop them."""
+    repository's test was of the old wiring, so the records drop them.
+    `done` collects each step as it lands, so a failure partway says how far."""
 
+    done = [] if done is None else done
     with _moving:
         now, plan, found, python = _snapshot(data)
         if now["refused"]:
             raise HTTPException(409, f"허브를 옮길 수 없다 — {now['refused']}")
         if now["digest"] != confirmed:
             raise HTTPException(409, "확인한 뒤에 바뀔 줄이 달라졌다. 다시 확인한다")
-        setup_agents.write_plan(plan)
+        for step in plan:
+            setup_agents.write_plan([step])
+            if step[2]:
+                done.append(str(step[0]))
         for link, _old, new in found:
             if new:
                 setup_agents.relink(link, new)
+                done.append(f"{link} → {new}")
         if now["trust"]:
             for file in apply.user_files("codex"):
                 setup_agents.codex_hooks(file.parent, True, python)
+                done.append(f"{file.parent}: Codex 신뢰 기록")
         for file in RECORDS.glob("*.json"):
             keep(file.stem, probe={}, trust=None)
         return now

@@ -122,8 +122,10 @@ class Rewire(BaseModel):
 @router.post("/api/rewire")
 def rewire(body: Rewire) -> dict:
     """Write exactly the plan confirmed — the repositories and every line, not
-    only the hub move — or nothing. `failed` names a file whose write failed
-    after others were written, and `written` what had landed by then."""
+    only the hub move — or nothing. `failed` names what failed after others
+    were written, and `written` what had landed by then. A hub move that fails
+    partway stops there: the repositories' hooks come out only once the
+    machine's wiring calls this hub."""
 
     shown, files = _survey()
     if why := "\n".join(filter(None, [shown["refused"], shown["hub"]["refused"],
@@ -134,8 +136,12 @@ def rewire(body: Rewire) -> dict:
     written, failed = [], []
     try:
         if shown["hub"]["needed"]:
-            connect.move(shown["hub"]["digest"])
-            written.append("허브 이전")
+            try:
+                connect.move(shown["hub"]["digest"], done=written)
+            except HTTPException:
+                raise
+            except Exception as exc:   # whatever a user file, link or Codex's writer raised, said with how far it got
+                return {"ok": False, "written": written, "failed": [f"허브 이전: {type(exc).__name__}: {exc}"]}
         for file, settings in files:
             try:
                 file.parent.mkdir(parents=True, exist_ok=True)
