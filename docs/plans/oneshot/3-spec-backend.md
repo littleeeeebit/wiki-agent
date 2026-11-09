@@ -362,7 +362,9 @@ a worker of the spec's store, like S2 and S3. The passed build is saved with
 `working: "review"` before the worker starts, so a server that stops in
 between leaves the run for `recover` and `[재개]`. The worker holds the
 worktree, as a work turn does, from freezing its input until its verdict is
-saved, so no other turn writes the tree it reads:
+saved, so no other turn writes the tree it reads. When it lets go, the
+instruction the person queued for the worktree meanwhile is sent, as after
+any turn (`work.dispatch`); after a refusal it waits behind the build turn:
 
 1. The server freezes the review input: the approved design, the
    requirements, and the diff from the base commit (`start_head`) to the

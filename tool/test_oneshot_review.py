@@ -5,6 +5,7 @@ See `docs/plans/oneshot/3-spec-backend.md` ("Backend review"). The review turn
 """
 
 import subprocess
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -144,6 +145,33 @@ def test_the_review_holds_its_worktree_until_the_verdict_is_saved(reviewed):
     with patch.object(oneshot, "ask", ask),          patch.object(oneshot_build, "send", lambda *a: held.append(str(tree) in work._busy)):
         oneshot_review.review("budget")
     assert held == [False]   # released before the build turn takes the tree
+
+
+@pytest.mark.parametrize("kind", ["approve", "refuse"])
+def test_an_instruction_queued_while_the_review_held_the_tree_goes_once_after_it(reviewed, kind):
+    tree, head, sent = reviewed
+    begun = []
+
+    def ask(store, role, system, text, where=None):
+        work._queued[str(tree)] = work.Order(path=str(tree), text="다음 지시")   # queued while the review held it
+        return verdict(head, kind, *([P1] if kind == "refuse" else [])), {"cost_usd": 0.1}, False
+
+    def build(*a):   # the build turn takes the tree, as `send` does
+        sent.append(a)
+        query.hold(work._busy, query._lock, str(tree), "", kind="turn")
+
+    try:
+        with patch.object(oneshot, "ask", ask), patch.object(oneshot_build, "send", build), \
+             patch.object(work, "session", lambda *a: SimpleNamespace(id="c", parent_id=None)), \
+             patch.object(work, "begin", lambda path, chat, text, release, run: (begun.append(text), release())):
+            oneshot_review.review("budget")
+        if kind == "approve":
+            assert begun == ["다음 지시"] and str(tree) not in work._queued
+        else:   # the refusal's build turn goes first; the instruction waits for that turn's end
+            assert sent and not begun and work._queued[str(tree)].text == "다음 지시"
+    finally:
+        work._queued.pop(str(tree), None)
+        work._busy.pop(str(tree), None)
 
 
 def test_a_busy_worktree_stops_the_review_before_it_reads(reviewed):
