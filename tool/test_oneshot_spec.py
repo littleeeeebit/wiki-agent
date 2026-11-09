@@ -145,6 +145,7 @@ def design_with(changes: dict):
     ({("oneshot-api", 0, "errors"): 3}, "문자열 목록"),
     ({("oneshot-api", 1, "method"): "POST"}, "같은 `POST /spendings`"),
     ({("oneshot-api", 0, "path"): "/a|b"}, "/ 로 시작"),
+    ({("oneshot-entities", 0, "fields"): [{"name": "id", "type": "int", "key": "false"}]}, "true 나 false"),
 ])
 def test_each_design_check_refuses(change, said):
     with pytest.raises(ValueError, match=said):
@@ -374,3 +375,40 @@ def test_the_approval_commits_only_the_design_files_and_the_sheet_escapes_what_i
     oneshot_spec.saved("budget", oneshot={"design": sheet.parsed(odd)})
     text = sheet.sheet(specs.load("budget", oneshot.BRANCH))
     assert "    사용자_앱->>서버: 금액, '''보낸다" in text
+
+
+# -- Review round 2 of #320 ----------------------------------------------------------------
+
+def test_a_requirement_a_redesign_adds_is_shown_and_must_be_decided_even_without_a_scenario(world):
+    at_r1(world)
+    rule = {"id": "R3", "text": "기록은 90일 동안 둔다", "source": {"kind": "policy", "locator": "x"},
+            "status": "assumed", "invariants": ["90일 동안 둔다"], "depends_on": ["R1"]}
+    reach = sorted(sheet.dependents(sheet.parsed(DESIGN), REQS, {"R1"}))
+    with replies(answer(DESIGN, fenced("oneshot-spec", {"requirements": [*REQS, rule], "glossary": GLOSSARY}))):
+        oneshot_spec.redesign("budget", {"R1": "기록을 얼마나 둘지 정해라"}, reach)
+    spec = specs.load("budget", oneshot.BRANCH)
+    assert spec["requirements"][2]["source"]["kind"] == "decision" and o()["r1"]["marks"]["R3"] == "consequence"
+    assert "기록은 90일 동안 둔다 (지켜야 할 조건" in sheet.sheet(spec)
+    with pytest.raises(HTTPException, match="R3"):
+        oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions={k: {"approve": True} for k in reach}))
+
+
+def test_a_cycle_among_the_requirements_is_refused_in_the_conversation_where_it_can_be_fixed(world):
+    cyclic = fenced("oneshot-spec", {"requirements": [{**REQS[0], "depends_on": ["R2"]}, REQS[1]],
+                                     "glossary": GLOSSARY})
+    with replies(cyclic, fenced("oneshot-spec", {"requirements": REQS, "glossary": GLOSSARY})):
+        oneshot_spec.talk("budget")
+    assert o()["stage"] == "design"
+
+
+def test_a_design_file_that_is_a_link_stops_the_approval_before_anything_is_written(world, tmp_path):
+    at_r1(world)
+    outside = tmp_path / "outside.md"
+    outside.write_text("keep", encoding="utf-8")
+    (world / "docs/design").mkdir(parents=True)
+    try:
+        (world / "docs/design/backend.md").symlink_to(outside)
+    except OSError:
+        pytest.skip("this account cannot make symbolic links")
+    oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions=everything()))
+    assert o()["stopped"]["reason"] == "folder" and outside.read_text(encoding="utf-8") == "keep"

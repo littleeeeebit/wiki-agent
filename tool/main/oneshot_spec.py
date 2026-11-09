@@ -89,6 +89,8 @@ def kept(spec: dict, value, where: str) -> tuple[list[dict], list[dict]]:
         raise ValueError(f"주인의 말에서 온 요구를 지웠다: {', '.join(gone)}")
     reqs = [{**r, "source": sources.get(r["id"]) or (r["source"] if where == "S2" else
                                                       {"kind": "decision", "locator": where})} for r in reqs]
+    if found := sheet.cycle({r["id"]: r for r in reqs}):   # refused here, where the requirements can still change
+        raise ValueError(f"요구의 `depends_on` 이 돌고 돈다 — {' → '.join(found)}")
     words = owner_words(o)
     if renamed := [g["term"] for g in o.get("glossary") or []
                    if g["term"] in words and g["term"] not in {x["term"] for x in glossary}]:
@@ -249,6 +251,9 @@ def approved(repo: str) -> None:
         store(repo).stop("folder", f"작업트리가 `{oneshot.BRANCH}` 브랜치의 그 작업트리가 아니다: {tree}")
         return
     files = ["docs/design/backend.md", "docs/design/api.yaml"]
+    if linked := [f for f in files if (tree / f).is_symlink() or not (tree / f).resolve().is_relative_to(tree)]:
+        store(repo).stop("folder", f"설계 문서 자리가 작업트리 밖을 가리킨다: {', '.join(linked)}")
+        return
     docs.mkdir(parents=True, exist_ok=True)
     (docs / "backend.md").write_text(sheet.sheet(spec), encoding="utf-8", newline="\n")
     (docs / "api.yaml").write_text(sheet.openapi(spec), encoding="utf-8", newline="\n")

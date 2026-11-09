@@ -104,8 +104,8 @@ def _kind(name: str, item: dict, where: str) -> dict:
         fields = item["fields"]
         if not isinstance(fields, list) or not fields or not all(
                 isinstance(f, dict) and all(isinstance(f.get(k), str) and f[k].strip() for k in ("name", "type"))
-                for f in fields):
-            raise ValueError(f"{where}: `fields` 마다 `name` 과 `type` 이 있어야 한다")
+                and isinstance(f.get("key", False), bool) for f in fields):
+            raise ValueError(f"{where}: `fields` 마다 `name` 과 `type` 이 있고, `key` 는 true 나 false 다")
         item["fields"] = [{"name": f["name"], "type": f["type"], "rule": str(f.get("rule") or ""),
                            "key": bool(f.get("key"))} for f in fields]
         item["relations"] = _strings(item, "relations", where)
@@ -169,8 +169,8 @@ def checked(design: dict, reqs: list[dict], glossary: list[dict], profile: dict)
     for item in [i for kind in KINDS for i in design[kind]]:
         if bad := [d for d in item["depends_on"] if d not in known or d == item["id"]]:
             raise ValueError(f"{item['id']}: `depends_on` 이 없는 id 를 가리킨다 — {', '.join(bad)}")
-    if cycle := _cycle(known):
-        raise ValueError(f"`depends_on` 이 돌고 돈다 — {' → '.join(cycle)}")
+    if found := cycle(known):
+        raise ValueError(f"`depends_on` 이 돌고 돈다 — {' → '.join(found)}")
     routes: dict[tuple[str, str], str] = {}
     for p in design["api"]:
         if (twin := routes.setdefault((p["method"], p["path"]), p["id"])) != p["id"]:
@@ -205,7 +205,7 @@ def checked(design: dict, reqs: list[dict], glossary: list[dict], profile: dict)
         raise ValueError(f"환경 카드는 로그인 `{profile['auth']}` 인데 인증 엔드포인트가 없다")
 
 
-def _cycle(known: dict[str, dict]) -> list[str]:
+def cycle(known: dict[str, dict]) -> list[str]:
     """A cycle through the requirements and the design items together, or empty."""
 
     edges = {i: item.get("depends_on", []) for i, item in known.items()}
@@ -270,9 +270,10 @@ def dependents(design: dict, reqs: list[dict], start: set[str]) -> set[str]:
 
 
 def decidable(design: dict, reqs: list[dict]) -> list[str]:
-    """Every item on the sheet that needs the owner's decision, folded or not."""
+    """Every item on the sheet that needs the owner's decision, folded or not: every requirement,
+    a scenario or not, and every design item."""
 
-    return [r["id"] for r in scenarios(reqs)] + [i["id"] for kind in KINDS for i in design[kind]]
+    return [r["id"] for r in reqs] + [i["id"] for kind in KINDS for i in design[kind]]
 
 
 # -- The sheet ----------------------------------------------------------------
@@ -327,6 +328,8 @@ def sheet(spec: dict) -> str:
     for r in scenarios(reqs):
         tests = [t["test_name"] for t in design["tests"] if r["id"] in t["depends_on"]]
         lines.append(f"- **{r['id']}**{mark(r['id'])} {r['text']} → {', '.join(f'`{t}`' for t in tests)}")
+    lines += [f"- **{r['id']}**{mark(r['id'])} {r['text']} (지켜야 할 조건, 시나리오 아님)"
+              for r in reqs if not r.get("postconditions")]
     lines += ["", "<details><summary>흐름, 요청·응답, 용어집</summary>", ""]
     for f in design["flows"]:
         lines += [f"### {f['id']}{mark(f['id'])} {f['name']}", "", "```mermaid", "sequenceDiagram",

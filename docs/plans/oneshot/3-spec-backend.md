@@ -79,8 +79,9 @@ Runs in the run's own chat, with the `next`-style blocks.
    `original` item has at least one scenario (a requirement with
    `postconditions` that is the item or names it in `depends_on`). The server
    judges the requirements as it will store them: a kept requirement keeps
-   its stored `source` whatever the turn claims, and an `original` item may
-   not be dropped. The agent cannot end it by saying so; a `choices` block in
+   its stored `source` whatever the turn claims, an `original` item may not
+   be dropped, and a cycle among the requirements' `depends_on` is refused
+   here, where the conversation can still fix it. The agent cannot end it by saying so; a `choices` block in
    the turn that ends it is dropped. Until then the server records what is
    still open. The conversation keeps the agent's prose without its blocks.
 
@@ -122,7 +123,7 @@ Server checks before R1 is shown, each a refusal sent back to the model once:
   refused as out of scope. No two endpoints share a method and path, so the
   OpenAPI document holds every approved row.
 - A path uses letters, digits and `-_.{}/` only; nested lists (`relations`,
-  `errors`, `avoid`) are lists of strings. A wrong shape is a refusal, never
+  `errors`, `avoid`) are lists of strings, and a field's `key` is a boolean. A wrong shape is a refusal, never
   a failed worker.
 - No entity name, field, path or `does` uses a word the glossary's `avoid`
   lists.
@@ -139,7 +140,7 @@ When R1 is approved, the server writes into the worktree and commits:
 `docs/design/backend.md` (the sheet) and `docs/design/api.yaml` (an OpenAPI
 3.1 document written as JSON, which is valid YAML). It first checks that the
 worktree is still the Git root on the oneshot branch and that the output
-folder resolves inside it, and the commit names the two files, so nothing
+folder and both files resolve inside it, neither file a link, and the commit names the two files, so nothing
 else staged meanwhile goes in. It records the commit as
 `oneshot.design_head`. They are the new project's own documents.
 
@@ -221,7 +222,8 @@ flows built on it. An edit therefore reaches further than the edited item:
 The number of rounds is recorded on the spec. The decisions arrive in one
 `POST /api/oneshot/spec/{repo}/r1`, each item `{approve: true}` or `{edit:
 comment}`; the server refuses a submission that leaves any item without a
-decision. The items needing a decision are every scenario requirement and
+decision. The items needing a decision are every requirement, a scenario or
+not (a condition without `postconditions` is listed under the scenarios), and
 every entity, endpoint, flow, assumption and test. An approval survives a
 regeneration only when its item is outside the reached set and unchanged. An
 edit turn that stops leaves the sheet as it was, and `[재개]` returns to it.
