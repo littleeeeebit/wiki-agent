@@ -7,15 +7,17 @@ switched to another branch — whose older `apply.py` then judges every
 repository unwired. `watch` notices those and asks the screens to list again.
 
 `[모두 다시 연결]` is `setup_agents.py --global --project <each>` from the
-screen: the hub move `connect.hub` shows, confirmed by its digest, then the old
-per-project hooks out of every connected repository. It is refused while the
-hub is off main, since it would write that branch's wiring onto the machine.
+screen: the hub move `connect.hub` shows, then the old per-project hooks out
+of every connected repository, all confirmed by one digest of the whole plan.
+It is refused while the hub is off main, since it would write that branch's
+wiring onto the machine, and where a repository has its hooks switched off.
 
 What reaches the screen is read by a person and stays Korean.
 """
 
 from __future__ import annotations
 
+import json
 import threading
 from pathlib import Path
 
@@ -80,26 +82,67 @@ def connected() -> list[Path]:
     return [Path(row["path"]) for row in channels.projects() if row["state"] != "미연결"]
 
 
+def _survey() -> tuple[dict, list[tuple[Path, dict]]]:
+    """What `[모두 다시 연결]` will write, with a digest of all of it, and the
+    settings it was read from — every file read before any is written, so a
+    broken one refuses the whole rewire instead of stopping it halfway."""
+
+    repos, files = [], []
+    for path in connected():
+        entry = {"name": path.name, "path": str(path), "unwire": [], "refused": ""}
+        try:
+            plan = connect.pending(path)
+            claude = [file for file, _s, _c in plan if file.parent.name == ".claude"]
+            # As `setup_agents.plan_global` refuses: Claude honours it from any layer,
+            # and it is the person's own switch, never one to clear for them.
+            off = [file for file in [*claude, *(f.with_name("settings.local.json") for f in claude)]
+                   if apply.read_json(file).get("disableAllHooks")]
+        except (OSError, ValueError) as exc:
+            entry["refused"] = f"{path}: 설정을 읽을 수 없다 — {exc}"
+        else:
+            entry["unwire"] = [f"{file}: {change}" for file, _s, changes in plan for change in changes]
+            entry["refused"] = "\n".join(f"{file}: disableAllHooks 가 켜져 있다 — 직접 검토한다" for file in off)
+            files += [(file, settings) for file, settings, changes in plan if changes]
+        repos.append(entry)
+    shown = {"refused": refused(), "hub": connect.hub(), "repos": repos}
+    return {**shown, "digest": connect.digest(json.dumps(shown, sort_keys=True, ensure_ascii=False).encode())}, files
+
+
 @router.get("/api/rewire/plan")
 def plan() -> dict:
     """What `[모두 다시 연결]` will write, for its confirmation."""
 
-    return {"refused": refused(), "hub": connect.hub(),
-            "repos": [{"name": path.name, "unwire": connect.unwire(path, write=False)} for path in connected()]}
+    return _survey()[0]
 
 
 class Rewire(BaseModel):
-    hub: str = ""   # the digest of the hub move the person confirmed
+    plan: str = ""   # the digest of the whole plan the person confirmed
 
 
 @router.post("/api/rewire")
 def rewire(body: Rewire) -> dict:
-    if why := refused():
+    """Write exactly the plan confirmed — the repositories and every line, not
+    only the hub move — or nothing. `failed` names a file whose write failed
+    after others were written, and `written` what had landed by then."""
+
+    shown, files = _survey()
+    if why := "\n".join(filter(None, [shown["refused"], shown["hub"]["refused"],
+                                       *(repo["refused"] for repo in shown["repos"])])):
         raise HTTPException(409, why)
-    if connect.hub()["needed"]:
-        if not body.hub:
-            raise HTTPException(409, "허브 이전을 먼저 확인받아야 한다")
-        connect.move(body.hub)
-    changed = {path.name: connect.unwire(path) for path in connected()}
-    work.feed.put({"kind": "connect", "repo": ""})
-    return {"ok": True, "changed": changed}
+    if body.plan != shown["digest"]:
+        raise HTTPException(409, "확인한 뒤에 바뀐 것이 있다 — 계획을 다시 읽고 확인한다")
+    written, failed = [], []
+    try:
+        if shown["hub"]["needed"]:
+            connect.move(shown["hub"]["digest"])
+            written.append("허브 이전")
+        for file, settings in files:
+            try:
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_text(connect.settled(settings), encoding="utf-8", newline="\n")
+                written.append(str(file))
+            except OSError as exc:
+                failed.append(f"{file}: {exc}")
+    finally:
+        work.feed.put({"kind": "connect", "repo": ""})
+    return {"ok": not failed, "written": written, "failed": failed}

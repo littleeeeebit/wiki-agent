@@ -262,9 +262,15 @@ Codex's `/hooks` instead.
 The app does the same without the command line. `[모두 다시 연결]` on the
 `프로젝트 · 연결` screen runs the user-level install and the old-hook cleanup
 for every connected repository (`tool/main/wiring.py`). It shows every line it
-will write before it writes. It is refused while the hub checkout is on a
-branch other than `main`, because it would put that branch's wiring on the
-whole machine. The screen reads the wiring again on its own whenever the hub's
+will write before it writes, and writes only that: the repositories and lines
+shown are under one digest, so a repository connected or a file changed since
+asks for a fresh confirmation. Every file is read before the first write, so
+one it cannot read refuses the whole run; a write that fails after others
+landed names both. It is refused while the hub checkout is on a branch other
+than `main`, because it would put that branch's wiring on the whole machine,
+and where a repository's `.claude/settings.json` or `settings.local.json`
+turns `disableAllHooks` on — as the command refuses it, and that switch is
+left to the person. The screen reads the wiring again on its own whenever the hub's
 branch or a host's user settings file changes. When the hub is off `main`, a
 banner says so, because every repository then reads as unwired.
 

@@ -503,19 +503,25 @@ def unwire(path: Path, write: bool = True) -> list[str]:
     """The old per-project hooks out, the deny rules kept where the host
     enforces them — what `setup_agents --global --project` does."""
 
-    changed = []
-    data, _ = adapter_of(path)
-    for host in hosts(data):
-        file = path / setup_agents.SETTINGS[host]
-        if not file.exists() and host != "claude":
-            continue
-        settings = apply.read_json(file)
-        changes = rewired(settings, host)
-        changed += [f"{file}: {change}" for change in changes]
+    plan = pending(path)
+    for file, settings, changes in plan:
         if changes and write:
             file.parent.mkdir(parents=True, exist_ok=True)
             file.write_text(settled(settings), encoding="utf-8", newline="\n")
-    return changed
+    return [f"{file}: {change}" for file, _settings, changes in plan for change in changes]
+
+
+def pending(path: Path) -> list[tuple[Path, dict, list[str]]]:
+    """Each host's project settings with what `unwire` changes in them, all read before any is written."""
+
+    plan = []
+    data, _ = adapter_of(path)
+    for host in hosts(data):
+        file = path / setup_agents.SETTINGS[host]
+        if file.exists() or host == "claude":
+            settings = apply.read_json(file)
+            plan.append((file, settings, rewired(settings, host)))
+    return plan
 
 
 def rewired(settings: dict, host: str) -> list[str]:

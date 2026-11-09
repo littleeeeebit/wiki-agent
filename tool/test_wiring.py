@@ -1,5 +1,6 @@
 """The machine's wiring watched live, redone for every repository at once, and the map's lists behind its counts."""
 
+import json
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -74,32 +75,85 @@ def test_a_change_of_branch_or_user_settings_tells_the_screens_once_each(tmp_pat
         assert drained() == [{"kind": "connect", "repo": ""}] * 2, "설정 파일과 브랜치가 바뀔 때마다 한 번씩"
 
 
-def test_rewire_is_refused_off_main_and_otherwise_unwires_every_connected_repository(tmp_path):
-    repos = [tmp_path / "a", tmp_path / "b"]
+def test_rewire_writes_exactly_the_confirmed_plan_or_nothing(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+
+    def settings(repo: Path, text: str | None = None) -> dict | None:
+        """Write `text` as `repo`'s Claude settings, or read them back."""
+        file = repo / ".claude" / "settings.json"
+        if text is None:
+            return json.loads(file.read_text(encoding="utf-8"))
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(text, encoding="utf-8")
+        return None
+
+    settings(a, "{}"), settings(b, "{}")
+    rows = [{"path": str(a), "state": "일부"}]
     web = client()
     calm = {"needed": False, "refused": "", "lines": [], "links": [], "trust": False, "digest": ""}
-    undone: list[tuple[str, bool]] = []
-    with patch.object(wiring, "connected", return_value=repos), patch.object(connect, "hub", return_value=calm), \
-         patch.object(connect, "move", side_effect=AssertionError("옮길 것이 없으면 옮기지 않는다")), \
-         patch.object(connect, "unwire", side_effect=lambda path, write=True: undone.append((path.name, write)) or []):
+
+    def confirm() -> tuple[dict, object]:
+        plan = web.get("/api/rewire/plan").json()
+        return plan, web.post("/api/rewire", json={"plan": plan["digest"]})
+
+    with patch.object(connect, "hub", return_value=calm), patch.object(connect, "hosts", return_value=["claude"]), \
+         patch.object(chat_channels, "projects", side_effect=lambda: list(rows)), \
+         patch.object(connect.apply, "declared", return_value=({"Bash(git reset --hard*)": []}, {})), \
+         patch.object(connect, "move", side_effect=AssertionError("옮길 것이 없으면 옮기지 않는다")):
         with patch.object(wiring, "hub_branch", return_value="feature"):
-            assert "feature" in web.get("/api/rewire/plan").json()["refused"]
-            answer = web.post("/api/rewire", json={"hub": ""})
-            assert answer.status_code == 409 and "main" in answer.json()["detail"]
-            assert not [w for _n, w in undone if w], "거절되면 아무것도 쓰지 않는다"
-        undone.clear()
+            plan, answer = confirm()
+            assert "feature" in plan["refused"]
+            assert answer.status_code == 409 and "main" in answer.json()["detail"] and settings(a) == {}
         with patch.object(wiring, "hub_branch", return_value="main"):
             plan = web.get("/api/rewire/plan").json()
-            assert plan["refused"] == "" and [r["name"] for r in plan["repos"]] == ["a", "b"]
-            assert undone == [("a", False), ("b", False)], "계획은 쓰지 않고 읽기만 한다"
-            undone.clear()
+            assert [r["name"] for r in plan["repos"]] == ["a"] and plan["repos"][0]["unwire"]
+            assert settings(a) == {}, "계획은 쓰지 않고 읽기만 한다"
+            rows.append({"path": str(b), "state": "일부"})   # another window connected b meanwhile
+            assert web.post("/api/rewire", json={"plan": plan["digest"]}).status_code == 409
+            assert settings(a) == settings(b) == {}, "확인한 계획과 다르면 아무것도 쓰지 않는다"
             drained()
-            assert web.post("/api/rewire", json={"hub": ""}).json()["ok"]
-            assert undone == [("a", True), ("b", True)]
+            plan, answer = confirm()
+            assert answer.json() == {"ok": True, "written": [str(a / ".claude/settings.json"), str(b / ".claude/settings.json")],
+                                     "failed": []}
+            assert "permissions" in settings(a) and "permissions" in settings(b)
             assert {"kind": "connect", "repo": ""} in drained()
 
-            with patch.object(connect, "hub", return_value={**calm, "needed": True, "digest": "d"}):
-                assert web.post("/api/rewire", json={"hub": ""}).status_code == 409, "허브 이전은 확인받은 digest 가 있어야 한다"
+            settings(a, "{}"), settings(b, "{broken")
+            plan, answer = confirm()
+            assert "읽을 수 없다" in plan["repos"][1]["refused"] and answer.status_code == 409
+            assert settings(a) == {}, "읽지 못하는 파일이 하나라도 있으면 첫 쓰기 전에 거절한다"
+
+            settings(b, "{}")
+            local = a / ".claude" / "settings.local.json"
+            local.write_text('{"disableAllHooks": true}', encoding="utf-8")
+            plan, answer = confirm()
+            assert "disableAllHooks" in plan["repos"][0]["refused"] and answer.status_code == 409
+            assert settings(a) == {} and json.loads(local.read_text(encoding="utf-8")) == {"disableAllHooks": True}, \
+                "사람이 꺼 둔 훅은 지우지 않고 거절한다"
+            local.unlink()
+
+            real = Path.write_text
+
+            def full(self: Path, *args, **kwargs):
+                if b in self.parents:
+                    raise OSError("디스크가 가득 찼다")
+                return real(self, *args, **kwargs)
+
+            drained()
+            with patch.object(Path, "write_text", full):
+                plan, answer = confirm()
+            done = answer.json()
+            assert done["ok"] is False and done["written"] == [str(a / ".claude/settings.json")]
+            assert done["failed"] == [f"{b / '.claude/settings.json'}: 디스크가 가득 찼다"]
+            assert {"kind": "connect", "repo": ""} in drained(), "반쯤 쓴 것도 화면들이 다시 읽는다"
+
+            settings(a, "{}"), settings(b, "{}")
+            with patch.object(connect, "hub", return_value={**calm, "needed": True, "digest": "d"}), \
+                 patch.object(connect, "move") as move:
+                assert web.post("/api/rewire", json={"plan": plan["digest"]}).status_code == 409, "허브 이전도 계획에 묶인다"
+                plan, answer = confirm()
+                assert answer.json()["ok"] and answer.json()["written"][0] == "허브 이전"
+                move.assert_called_once_with("d")
 
 
 def test_the_listing_names_the_hub_branch(tmp_path):

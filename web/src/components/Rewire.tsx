@@ -10,11 +10,17 @@ export function Rewire({ working, disabled, act }: {
   working: string; disabled: boolean; act: (key: string, fn: () => Promise<void>) => Promise<void>
 }) {
   const [plan, setPlan] = useState<RewirePlan | null>(null)
+  // The hub's own refusal is shown by `HubMove`; this is everything else that stops the write.
+  const blocked = plan && [plan.refused, ...plan.repos.map((r) => r.refused)].filter(Boolean).join('\n')
   const confirm = () => {
     if (!plan) return
-    const { hub } = plan
+    const { digest } = plan
     setPlan(null)
-    void act('rewire', () => api.rewire(hub.needed ? hub.digest : '').then(() => {}))
+    void act('rewire', async () => {
+      // A write that failed after others landed: name both, so the person sees what is half done.
+      const done = await api.rewire(digest)
+      if (!done.ok) throw new Error(`일부만 다시 연결했다.\n쓴 것:\n${done.written.join('\n') || '(없음)'}\n실패:\n${done.failed.join('\n')}`)
+    })
   }
   return (
     <>
@@ -26,11 +32,11 @@ export function Rewire({ working, disabled, act }: {
         <Modal wide title="모두 다시 연결" onClose={() => setPlan(null)} foot={(
           <>
             <Btn onClick={() => setPlan(null)}>닫기</Btn>
-            <Btn tone="primary" disabled={!!plan.refused || !!plan.hub.refused} onClick={confirm}>확인</Btn>
+            <Btn tone="primary" disabled={!!blocked || !!plan.hub.refused} onClick={confirm}>확인</Btn>
           </>
         )}>
           <div className="font-sans">
-            {plan.refused && <p className="mb-2 whitespace-pre-wrap text-destructive">{plan.refused}</p>}
+            {blocked && <p className="mb-2 whitespace-pre-wrap text-destructive">{blocked}</p>}
             <HubMove hub={plan.hub} />
             <section className="mb-3">
               <div className="mb-1 font-heading text-[11px] font-semibold text-faint">저장소마다 옛 훅 정리·보호 규칙 적용</div>
@@ -39,6 +45,7 @@ export function Rewire({ working, disabled, act }: {
                   <li key={r.name}>
                     {r.name} <span className="text-faint">{r.unwire.length ? '' : '— 바꿀 것 없음'}</span>
                     {r.unwire.map((u) => <div key={u} className="pl-3 text-muted-foreground">{u}</div>)}
+                {r.refused && <div className="whitespace-pre-wrap pl-3 text-destructive">{r.refused}</div>}
                   </li>
                 ))}
               </ul>
