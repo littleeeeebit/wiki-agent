@@ -171,7 +171,11 @@ def probe(path: Path, run, spec: dict, files, nodes=None) -> tuple[int | None, s
     if nodes is not None:
         wanted.write_text(json.dumps(nodes), encoding="utf-8")
         env["ONESHOT_PROBE_NODES"] = str(wanted)
-    quoted = " ".join(f'"{f}"' for f in sorted(files))
+    # What pytest collects: the test modules only, never a data file the tests read; a run of chosen nodes,
+    # the modules those nodes came from.
+    modules = {n.split("::", 1)[0] for n in nodes} if nodes is not None else {
+        f for f in files if fnmatchcase(f.rsplit("/", 1)[-1], "test_*.py") or fnmatchcase(f.rsplit("/", 1)[-1], "*_test.py")}
+    quoted = " ".join(f'"{f}"' for f in sorted(modules))
     code, text, cut = specs.gate(f"{gate_cmd(spec['oneshot']['profile'])} -p no:cacheprovider -p oneshot_probe -q "
                                  f"{'' if nodes is not None else '--collect-only '}{quoted}", path, run.halt, env=env,
                                  timeout=RUN_SECONDS)
@@ -210,7 +214,7 @@ def ran(path: Path, run, spec: dict, files, nodes: list[str]) -> dict[str, dict]
     for node, by in phases.items():
         broken = next((by[w] for w in ("setup", "teardown") if by.get(w, {}).get("outcome") == "failed"), None)
         call = by.get("call") or {}
-        skipped = "skipped" in (by.get("setup", {}).get("outcome"), call.get("outcome"))
+        skipped = any(r.get("outcome") == "skipped" for r in by.values())   # teardown's too: nothing skipped counts
         if not (broken or skipped or call):
             continue
         found[node] = {"kind": "error" if broken else "skipped" if skipped else call["outcome"],

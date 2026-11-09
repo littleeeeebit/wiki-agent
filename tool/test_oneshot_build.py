@@ -274,6 +274,86 @@ def test_a_same_named_test_in_another_file_does_not_stand_in_for_the_contract(bu
     assert "test_budget.py::test_spending_adds_to_the_total(failed)" in sent[-1][2]
 
 
+ANYIO = '''import pytest
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_spending_adds_to_the_total(anyio_backend):
+    from app import add
+    assert add(3000) == 3000
+'''
+UNITTEST = '''import unittest
+
+
+class TestBudget(unittest.TestCase):
+    def test_spending_adds_to_the_total(self):
+        from app import add
+        self.assertEqual(add(3000), 3000)
+'''
+READS = '''import json
+from pathlib import Path
+
+
+def test_spending_adds_to_the_total():
+    from app import add
+    amount = json.loads((Path(__file__).parent / "data" / "payload.json").read_text())["amount"]
+    assert add(amount) == amount
+'''
+
+
+@pytest.mark.parametrize("files", [
+    {"tests/test_add.py": ANYIO, "pytest.ini": "[pytest]\naddopts = -p anyio\n"},   # loaded with autoload off and on
+    {"tests/test_add.py": UNITTEST},
+    {"tests/test_add.py": READS, "tests/data/payload.json": '{"amount": 3000}\n'},
+], ids=["anyio", "unittest", "data-file"])
+def test_async_unittest_and_data_reading_contracts_go_from_red_to_green(built_world, files):
+    tree, sent = built_world
+    write(tree, "tests/test_month.py", TESTS.split("\n\n\n")[1])
+    for name, text in files.items():
+        write(tree, name, text)
+    check(tree)()
+    assert o()["stage"] == "build", sent[-1][2]
+    assert sorted(o()["contract"]) == sorted(["tests/test_month.py", *(n for n in files if n.startswith("tests/"))])
+    write(tree, "app.py", APP)
+    git(tree, "add", "app.py")
+    git(tree, "commit", "-m", "build")
+    assert check(tree, "만들었다.\n" + report()) is None and o()["stage"] == "review"
+
+
+CLEANUP = '''import pytest
+
+
+@pytest.fixture
+def lifecycle():
+    yield
+    {cleanup}
+
+
+def test_spending_adds_to_the_total(lifecycle):
+    from app import add
+    assert add(3000) == 3000
+'''
+
+
+def test_a_skipped_teardown_is_no_red_test_and_no_green_one(built_world):
+    tree, sent = built_world
+    write(tree, "test_month.py", TESTS.split("\n\n\n")[1])
+    write(tree, "test_budget.py", CLEANUP.format(cleanup='pytest.skip("cleanup unavailable")'))
+    check(tree)()
+    assert o()["stage"] == "tests" and "건너뛴" in sent[-1][2]
+    write(tree, "test_budget.py", CLEANUP.format(cleanup='import importlib.util\n'
+                                                 '    if importlib.util.find_spec("app"):\n'
+                                                 '        pytest.skip("cleanup unavailable")'))
+    check(tree)()
+    assert o()["stage"] == "build"
+    write(tree, "app.py", APP)
+    git(tree, "add", "app.py")
+    git(tree, "commit", "-m", "build")
+    check(tree, "만들었다.\n" + report())()
+    assert o()["stage"] == "build" and "test_budget.py::test_spending_adds_to_the_total(skipped)" in sent[-1][2]
+
+
 def test_a_build_without_its_report_or_with_a_red_gate_is_refused(built_world):
     tree, sent = built_world
     to_build(tree, sent)

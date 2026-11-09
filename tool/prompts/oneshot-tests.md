@@ -37,7 +37,10 @@ The gate command is `{gate}`.
    module included, is refused.
 
 The server runs pytest with plugin autoloading off and `PYTEST_ADDOPTS`
-empty, so a plugin the tests need must be named in the configuration. When
+empty, so a plugin the tests need must be named in the configuration by its
+plugin name, as `addopts = -p anyio` (not `-p anyio.pytest_plugin`, which the
+gate then loads twice). Only `test_*.py` and `*_test.py` files are collected;
+a data file the tests read may sit beside them and is pinned too. When
 all three hold, the server commits the test files itself and pins them with
 the pytest configuration: from then on these files, any `conftest.py`, the
 `pytest.ini` and the `[tool.pytest]` table cannot change. Make them right now.

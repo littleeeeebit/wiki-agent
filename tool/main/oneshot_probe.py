@@ -14,6 +14,7 @@ With `$ONESHOT_PROBE_NODES` naming a file of node ids, every other collected tes
 """
 
 import functools
+import inspect
 import json
 import os
 
@@ -48,8 +49,12 @@ def pytest_collection_modifyitems(config, items):
     items[:] = [i for i in items if i.nodeid in keep]
 
 
+RUNNERS: dict = {}   # each collected item type's own `runtest` as collection left it: unittest's is its own
+
+
 def pytest_collection_finish(session):
     for item in session.items:
+        RUNNERS.setdefault(type(item), type(item).runtest)
         _write({"kind": "item", "node": item.nodeid, "name": getattr(item, "originalname", None) or item.name})
 
 
@@ -57,10 +62,16 @@ def pytest_collection_finish(session):
 def pytest_runtest_call(item):
     func, entered = item.obj, []
 
-    @functools.wraps(func)
-    def body(*args, **kwargs):
-        entered.append(True)
-        return func(*args, **kwargs)
+    if inspect.iscoroutinefunction(func):   # an async test stays one, for the plugin that runs it
+        @functools.wraps(func)
+        async def body(*args, **kwargs):
+            entered.append(True)
+            return await func(*args, **kwargs)
+    else:
+        @functools.wraps(func)
+        def body(*args, **kwargs):
+            entered.append(True)
+            return func(*args, **kwargs)
 
     item.obj = body
     try:
@@ -74,7 +85,8 @@ def pytest_runtest_call(item):
 def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
-    intact = type(item).runtest is RUNTEST and "runtest" not in vars(item)
+    intact = pytest.Function.runtest is RUNTEST and type(item).runtest is RUNNERS.get(type(item)) \
+        and "runtest" not in vars(item)
     _write({"kind": "report", "node": item.nodeid, "when": call.when, "outcome": report.outcome,
             "entered": bool(getattr(item, "oneshot_entered", False)), "intact": intact,
             "missing_app": call.excinfo is not None and _missing_app(call.excinfo.value),

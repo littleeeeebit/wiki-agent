@@ -295,10 +295,20 @@ folder, which is the only path it adds. The probe is what the server reads,
 never a report rebuilt afterwards: pytest's own node id of every collected
 test, and for each phase its outcome, whether the test's own function was
 entered, whether anything replaced how pytest runs a test, and whether the
-failure was the missing application. A run of chosen nodes has the probe
-deselect every other test, so no node id passes through the command line.
-Plugin autoloading is off (`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`),
-`PYTEST_ADDOPTS` is empty and no bytecode is written. The changed files, HEAD and the set of changed paths are read before
+failure was the missing application. The probe keeps an `async def` test
+a coroutine function, so the plugin that runs it still does, and counts it
+entered only when its body starts. Each item type is compared with its own
+`runtest` as collection left it, so a `unittest.TestCase` keeps pytest's
+runner for it. pytest is given the test modules alone (`test_*.py`,
+`*_test.py`); a data file the tests read is pinned with them but never
+collected. A run of chosen nodes is given the modules of those nodes and has
+the probe deselect every other test, so no node id passes through the
+command line. A phase that is skipped, the teardown included, makes the
+whole node skipped. Plugin autoloading is off
+(`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`), so a plugin the tests need is named in
+the configuration by its plugin name (`-p anyio`), which the gate, run with
+autoloading on, accepts too; `PYTEST_ADDOPTS` is empty and no bytecode is
+written. The changed files, HEAD and the set of changed paths are read before
 the runs and again after them; any difference is a refusal, so a file the
 run itself rewrote is never committed.
 
