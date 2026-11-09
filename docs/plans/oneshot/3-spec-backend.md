@@ -254,6 +254,14 @@ the third refusal of a stage stops it (`tests` or `gate`). `[재개]` sends the
 stage's turn again with fresh attempts, and start-up stops a stage whose turn
 was running with `restart`.
 
+Each turn names itself in `oneshot.inflight` with a token. A turn whose end
+arrives after a newer turn was sent is still charged, but it clears and stops
+nothing: the in-flight entry is the newer turn's. A turn `work.begin` refuses
+before taking it ran no model, so it is not charged and leaves nothing in
+flight. `[재개]` is refused (409) while a stopped turn is still in flight,
+because the next turn would lose that turn's charge. A stop that arrives
+while a passing check runs stops the stage before the next turn is sent.
+
 ### Tests first
 
 After R1's approval, a write session receives the planned tests
@@ -264,14 +272,28 @@ The server then checks:
   `*_test.py`, `conftest.py`) and the test configuration (`pyproject.toml`,
   `uv.lock`, `pytest.ini`) changed, committed or not.
 - Collection succeeds (`<gate> --collect-only`) and names every planned
-  test. The prompt asks for the application to be imported inside the tests,
-  so they collect before it exists.
-- Every planned test runs by node id and fails. A planned test that already
-  passes is reported back as not testing anything, and a skipped one too.
+  test in the changed test files. Matching is by function name, but what is
+  kept is each node id the collection printed, parameter cases included; a
+  same-named test outside those files is not a planned test. The prompt asks
+  for the application to be imported in the test body, so the tests collect
+  before it exists.
+- Every collected node runs in one JUnit run and fails because the
+  application is not there: the failure names a `ModuleNotFoundError` or
+  `ImportError` of `app`. A node that passes checks nothing, a skipped one
+  neither, an error in setup or teardown is not a red test, and a failure for
+  any other reason means the test does not wait for the application.
 
-When all three hold, the server commits those paths and records the commit
-as `oneshot.tests_head` with the test files as `oneshot.contract`. That
-commit, not the base commit, is what later changes are compared against.
+Every pytest run of the contract has plugin autoloading off
+(`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`), `PYTEST_ADDOPTS` empty and no bytecode
+written. The changed files, HEAD and the set of changed paths are read before
+the runs and again after them; any difference is a refusal, so a file the
+run itself rewrote is never committed.
+
+When all three hold, the server commits those paths alone, naming them to
+the commit so nothing else staged rides along, checks that none of them is
+left changed, and records the commit as `oneshot.tests_head`, the test files
+as `oneshot.contract` and the node ids as `oneshot.nodes`. That commit, not
+the base commit, is what later changes are compared against.
 The spec's `done` becomes the gate and one line per scenario
 (`R1: <text>`), and the build turn follows.
 
@@ -290,13 +312,19 @@ two ways, because a file that is unchanged is not yet a test that ran:
    allow_module_level=True)` or a new `pytestmark` appended after the tests
    is a refusal. (`_kept` is not enough here: it allows statements added
    after the old ones.) A deleted, unreadable or unparsable pinned file is a
-   refusal. New tests go in new files.
-2. Ran and passed. After the gate passes, `oneshot_build` runs the planned
-   tests by node id with a JUnit XML report into the run's raw folder, and
-   counts a planned test as passing only when every case the report holds for
-   it passed. Skipped, xfailed, deselected or missing from the report is a
-   failure, whatever the gate's exit code said. A new `conftest.py` that skips
-   them is caught here.
+   refusal. New tests go in new files. The pytest configuration is pinned
+   with them: a `conftest.py`, `pytest.ini`, `tox.ini` or `setup.cfg` added
+   or changed since `tests_head` (other than a pinned file that is still
+   equivalent) is a refusal, and so is a `[tool.pytest]` table in
+   `pyproject.toml` that differs from the one at `tests_head`. A hook that
+   skips the tests, replaces their bodies or deselects them has nowhere to
+   go.
+2. Ran and passed. After the gate passes, `oneshot_build` runs exactly the
+   node ids in `oneshot.nodes` with a JUnit XML report into the run's raw
+   folder, and rebuilds each report entry's node id from its file, class and
+   name. Each pinned node must be there and passed. Skipped, xfailed,
+   deselected or missing from the report is a failure, whatever the gate's
+   exit code said; a same-named test in another file stands in for nothing.
 
 Up to three attempts, then `stopped` with `gate`. When all checks hold, the
 stage becomes `review` with the HEAD as `oneshot.built_head`; that is where
@@ -350,7 +378,15 @@ requirement that person-facing strings are written in Korean directly.
   flows that depend on them and resetting their approvals; a `tests` turn
   whose planned tests fail reaching `build` without being counted as a gate
   failure or an incomplete spec; the tests-first checks (non-test path
-  refused, passing planned test reported); a contract test created after the
+  refused, passing planned test reported, a setup error and a failure that is
+  not the missing application refused, each parameter case pinned, nothing
+  staged outside the test files committed, a file changed during the run
+  refused, a stop during the check sending no build turn); a late end of an
+  earlier turn leaving the newer turn's in-flight entry alone, a turn
+  `work.begin` refused leaving nothing in flight, and a resume refused while
+  a turn is in flight; a new `conftest.py`, a replaced test body and a
+  `[tool.pytest]` change refused in the build; a same-named passing test in
+  another file not standing in for a failing contract test; a contract test created after the
   base commit then weakened
   (an expected value changed, a skip mark, a deleted test) refused against
   `tests_head`, and a deleted or unparsable pinned file refused; a

@@ -374,6 +374,8 @@ def resume(repo: str) -> dict:
         o = spec_of(repo)["oneshot"]
         if not o.get("stopped") or o.get("working"):
             raise HTTPException(409, "멈춘 단계가 아니다")
+        if o.get("inflight"):   # its `Turn.finish` has not run: the next turn would lose that turn's charge
+            raise HTTPException(409, "앞 턴의 비용을 아직 매기는 중이다 — 잠시 뒤 다시 하라")
         if o["stage"] not in (*RUNNING, "tests", "build"):
             raise HTTPException(409, f"`{o['stage']}` 단계는 다음 단계에서 이어진다")
         if o["stage"] == "r1":   # an edit turn that stopped: the sheet stands, the owner decides again

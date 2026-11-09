@@ -26,14 +26,19 @@ The gate command is `{gate}`.
 1. Only test files (`tests/`, `test_*.py`, `*_test.py`, `conftest.py`) and the
    test configuration (`pyproject.toml`, `uv.lock`, `pytest.ini`) changed since
    the design commit.
-2. The tests collect: import the application inside a fixture or the test
-   body, never at module level, so collection succeeds while the application
-   does not exist yet.
-3. Every planned test runs and fails, because nothing is implemented. A planned
-   test that passes now checks nothing, and a skipped one checks nothing either.
+2. The tests collect: write `from app.main import app` inside each test
+   body, never at module level and never in a fixture, so collection succeeds
+   while the application does not exist yet.
+3. Every planned test runs and fails for one reason only: `app` cannot be
+   imported yet. A planned test that passes now checks nothing, a skipped one
+   checks nothing either, an error in a fixture is not a failing test, and a
+   test that fails for any other reason is refused.
 
-When all three hold, the server commits the tests itself and pins them: from
-then on these files cannot change. Make them right now.
+The server runs pytest with plugin autoloading off and `PYTEST_ADDOPTS`
+empty, so a plugin the tests need must be named in the configuration. When
+all three hold, the server commits the test files itself and pins them with
+the pytest configuration: from then on these files, any `conftest.py`, the
+`pytest.ini` and the `[tool.pytest]` table cannot change. Make them right now.
 
 ## In this turn
 
