@@ -52,7 +52,7 @@ const LABEL: Record<string, string> = {
 }
 const STEP: Record<string, string> = {
   recheck: '이름 다시 확인', folder: '폴더', files: '기본 파일', commit: '첫 커밋', register: '앱에 연결',
-  remote: 'GitHub 저장소', origin: 'origin 연결', push: 'main push', spec: '명세 작업 공간',
+  remote: 'GitHub 저장소', origin: 'origin 연결', publish: 'main push', spec: '명세 작업 공간',
 }
 const STOP: Record<string, string> = {
   budget: '한도에 닿았다', block: '모델 답을 쓸 수 없었다', folder: '폴더나 이름 문제', github: 'GitHub 문제',

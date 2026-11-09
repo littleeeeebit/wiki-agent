@@ -32,7 +32,7 @@ from agent import ChatSession
 from common import swap, worktree_home
 from workspace import TASK, create
 
-from . import channels, connect, runtime, specs
+from . import channels, connect, prerequisite_review, runtime, specs
 from .oneshot_profile import (KINDS, SCHEMA, SUPPORTED_KINDS, allowed, charged, cut, gate_cmd, ledger, problems,
                               proposal)
 from .query import ROOT
@@ -48,7 +48,7 @@ BLOCK = re.compile(r"^```(oneshot-intent|oneshot-profile)[ \t]*\r?\n(.*?)^```[ \
 MAX_SENTENCE = 2_000
 HEARTBEAT = 30.0   # seconds between a running turn's `inflight.seen` writes
 
-STEPS = ("recheck", "folder", "files", "commit", "register", "remote", "origin", "push", "spec")
+STEPS = ("recheck", "folder", "files", "commit", "register", "remote", "origin", "publish", "spec")
 RUNNING = {"intake": "intake", "environment": "profile", "bootstrap": "bootstrap"}
 
 router = APIRouter()
@@ -438,9 +438,10 @@ def s_commit(run: dict) -> None:
                          if not (path / rel).is_file() or (path / rel).read_bytes() != text.encode("utf-8")]
         if changed_files:
             raise Stop("folder", f"`{changed_files[0]}` 이 이 실행이 쓴 내용과 다르다 — 커밋하지 않는다")
-        if git(path, "add", "--", *files).returncode or git(
-                path, "commit", "-m", f"Start {run['identity']['name']} from oneshot").returncode:
-            raise Stop("folder", "기본 커밋을 만들지 못했다")
+        for args in (["add", "--", *files], ["commit", "-m", f"Start {run['identity']['name']} from oneshot"]):
+            done = git(path, *args)
+            if done.returncode:   # git's own words: a missing user.name is the owner's to set
+                raise Stop("folder", f"기본 커밋을 만들지 못했다 — {(done.stderr or done.stdout).strip()[-300:]}")
     now = git(path, "rev-parse", "main").stdout.strip()
     if not as_planned(path, files) or (run.get("base") and now != run["base"]):
         raise Stop("folder", "`main` 이 이 실행의 기본 커밋이 아니다")
@@ -515,7 +516,7 @@ def s_origin(run: dict) -> None:
     origin_is_ours(run)
 
 
-def s_push(run: dict) -> None:
+def s_publish(run: dict) -> None:
     """Every earlier step is checked again here: a record of it is no proof the folder or origin stayed so."""
 
     path, ident = Path(run["identity"]["path"]), run["identity"]
@@ -527,7 +528,8 @@ def s_push(run: dict) -> None:
     remote = git(path, "ls-remote", "origin", "refs/heads/main", timeout=120)
     if not remote.returncode and remote.stdout.split()[:1] == [run["base"]]:
         return
-    if git(path, "push", "-u", "origin", "main", timeout=300).returncode:
+    # Before any spec exists no evidence is declared; the shared check still owns every server push.
+    if prerequisite_review.push(path, {}, ["git", "push", "-u", "origin", "main"]).returncode:
         raise Stop("github", "`main` 을 푸시하지 못했다")
 
 
@@ -565,7 +567,7 @@ def s_spec(run: dict) -> None:
 
 
 SUBSTEPS = {"recheck": s_recheck, "folder": s_folder, "files": s_files, "commit": s_commit, "register": s_register,
-            "remote": s_remote, "origin": s_origin, "push": s_push, "spec": s_spec}
+            "remote": s_remote, "origin": s_origin, "publish": s_publish, "spec": s_spec}
 
 
 def bootstrap(rid: str) -> None:

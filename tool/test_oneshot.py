@@ -6,6 +6,7 @@ and `origin` is a local bare repository.
 """
 
 import json
+import os
 import subprocess
 import threading
 import time
@@ -60,7 +61,9 @@ def world(tmp_path):
     workspace.mkdir()
     hub = Path(oneshot.ROOT)
     github = GitHub(tmp_path / "remote.git")
-    with patch.object(oneshot, "RUNS", tmp_path / "oneshot"), \
+    identity = {f"GIT_{who}_{what}": value for who in ("AUTHOR", "COMMITTER")
+                for what, value in (("NAME", "Oneshot test"), ("EMAIL", "oneshot@example.test"))}
+    with patch.dict(os.environ, identity), patch.object(oneshot, "RUNS", tmp_path / "oneshot"), \
          patch.object(oneshot, "PROFILES", tmp_path / "oneshot" / "profiles"), \
          patch.object(connect, "RECORDS", tmp_path / "connect"), \
          patch.object(channels, "WORKSPACE", workspace), \
