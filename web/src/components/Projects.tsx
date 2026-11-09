@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Btn, Modal } from '@/components/Modal'
 import * as api from '@/lib/api'
 import type { ConnectPlan, Hub, PowerShellStatus, Project } from '@/lib/api'
+import { Oneshot } from '@/components/Oneshot'
 import { PowerShell } from '@/components/PowerShell'
 import { HubMove, Rewire } from '@/components/Rewire'
 import { remote } from '@/lib/mobile'
@@ -25,6 +26,7 @@ export function Projects({ current }: { current: string }) {
   const [typed, setTyped] = useState('')
   const [powershell, setPowerShell] = useState<PowerShellStatus>()
   const [hub, setHub] = useState<Hub>()
+  const [oneshot, setOneshot] = useState(false)
 
   const read = useCallback(() => {
     api.getConnect()
@@ -105,7 +107,10 @@ export function Projects({ current }: { current: string }) {
             {working === 'folder' ? '폴더 고르는 중…' : '폴더 찾기'}
           </Btn>
         )}
+        <Btn className="font-sans" disabled={!!working} onClick={() => setOneshot(true)}
+          title="빈 폴더와 만들고 싶은 것 한두 문장으로 새 저장소를 시작한다">새 프로젝트</Btn>
       </div>
+      {oneshot && <Oneshot onClose={() => { setOneshot(false); read() }} />}
       <PowerShell status={powershell} read={read} disabled={!!working} />
       {hub && hub.branch !== 'main' && (
         <div role="status" className="border-b border-wait/30 bg-wait/10 px-5 py-2 text-[12.5px]">

@@ -20,7 +20,6 @@ is ready for S2.
 | A picked folder outside the workspace | `connect.pick_folder`, `connect.added`, and the same-name refusal of folder registration | `tool/main/connect.py:149`, `:117`, `:710` |
 | Which folders are projects | `channels.projects` lists every workspace or picked folder that is not `미연결` | `tool/main/channels.py:102` |
 | Blocks inside an answer | `specs.blocks` extracts fenced JSON blocks and removes them from the text | `tool/main/specs.py:556` |
-| Time and call ceiling | `common.budget.Budget` (seconds, calls, tokens; no money) | `tool/common/budget.py` |
 | Cost of a model turn | The turn's `cost_usd` from the CLI's `total_cost_usd` | `tool/agent/chat_session.py:1321` |
 
 `specs.fork` is not used: it switches the original checkout to the task
@@ -63,8 +62,7 @@ the owner picks another.
 
 ## Spending
 
-`Budget` carries time and calls, not money, and not every provider reports
-money: Claude's result carries `total_cost_usd` (`tool/agent/chat_session.py:1321`),
+Not every provider reports money: Claude's result carries `total_cost_usd` (`tool/agent/chat_session.py:1321`),
 while Codex runs on the subscription and reports tokens only (`:1095`,
 `:1124`). So the run keeps its own ledger in the record that currently owns
 it (`spend` in the run record, then in the spec's `oneshot` field), and each
@@ -74,27 +72,38 @@ rewrites — is metered by what its provider reports:
 | Role's provider | Metered by | First turn, no sample yet | Turn ended without a cost |
 | --- | --- | --- | --- |
 | Reports USD (Claude) | The USD ceiling | Counted at the role's estimate, a setting per role with one default | Counted at the larger of the estimate and the role's largest seen cost, marked unknown |
-| Subscription (Codex) | Hours and calls only; never converted to USD | — | — |
+| Subscription (Codex) | The hours ceiling only; never converted to USD | — | — |
 
 - Before a USD-metered turn starts, the run refuses it when the spent total
   plus the role's largest seen cost, or its estimate before any sample, would
   pass the ceiling, and stops with `budget`.
-- Every turn, of either kind, counts against the hours and calls ceilings
-  through a `Budget` whose elapsed seconds and calls are restored from the
-  ledger on resume, as the planner restores its counters.
+- Every turn, of either kind, adds its elapsed seconds and one call to the
+  ledger. The hours ceiling is checked against the ledger's seconds before
+  each turn; calls are recorded for the card, with no ceiling of their own.
 - The ledger is written after each turn, so a restart resumes with the spent
   totals; a turn cut by the restart counts as unknown at the rule above.
+  The run records the turn as in flight before sending it, with the time it
+  was sent and a heartbeat every 30 seconds while it runs, and recovery
+  charges an in-flight turn once. Its time is at least the span its
+  heartbeats prove, and otherwise the larger of the role's longest turn and
+  ten minutes, never more than the time since it was sent; it is marked
+  unknown. A failed turn that reported its cost is charged that cost.
   A ledger whose USD entries are all estimates still enforces: the estimates
   are what was charged.
 
 The card shows which roles fall under the USD ceiling and which only under
-hours and calls, and that the ceilings are enforced between turns, never
+the hours ceiling, and that the ceilings are enforced between turns, never
 inside one: a single turn may overshoot by its own cost.
 
 ## Run states in this step
 
 `intake → environment → bootstrap → spec`. `spec` is where step 3 begins.
-`stopped` is reachable from each with a reason.
+`stopped` is reachable from each with a reason. A run has at most one worker:
+the state check, the stage's new state and the worker's start happen under
+one lock, the new state is written only once the worker may start, and a
+second start is refused. At shutdown no new sub-step or turn starts; a sub-step
+already running finishes, the run stops with `restart`, and the server joins
+its worker before letting go of the hub.
 
 | Reason | When | `[재개]` does |
 | --- | --- | --- |
@@ -200,11 +209,11 @@ after an effect and before its record.
 | 1 | Re-check the name | — | The reservation checks run again; a conflict that appeared meanwhile stops with `folder` |
 | 2 | Folder | The fixed path exists and holds only files this run wrote | Create it, or re-check the picked one is still empty |
 | 3 | Files | Each file exists with the content the run would write | `.gitignore` from the profile's languages; `.gitattributes` with `* text=auto eol=lf` when another OS is planned; a README stub with the restatement, the owner's sentence and the setup command; `LICENSE` when public; `.wiki/adapter.toml` from the profile through `connect.adapter_text` |
-| 4 | Base commit | `main` exists and its one commit holds exactly those files | Initialise with `main` and commit |
+| 4 | Base commit | `main` exists and its one commit holds exactly those files, each blob byte for byte as planned, and is the recorded base when one is | Re-check every planned file on disk, initialise with `main` and commit, then check the commit the same way |
 | 5 | Register | The folder is listed by `channels.projects` under the fixed name | Register a picked folder as `[폴더 찾기]` does, with its same-name refusal; then write the adapter's hash through `connect.keep` |
 | 6 | Remote repository | The run recorded the repository's node id | Create it through `gh` with the chosen visibility and owner, and record its node id at once |
 | 7 | Origin | `origin` points at that repository | Add it |
-| 8 | Push | The remote `main` is the base commit | Push `main` with upstream |
+| 8 | Push | The remote `main` is the base commit | First check again that local `main` is the base and as planned, that every fetch and push URL of `origin` is the run's URL and that the repository's node id is the recorded one; any difference stops before anything is pushed. Then push `main` with upstream |
 | 9 | Spec and worktree | A spec with the fixed id whose `oneshot.run` is this run; a linked worktree on `oneshot-initial` whose HEAD is the base commit | Create whichever is missing (`workspace.create(..., linked=True)`), then write the commit point |
 
 Two cases are not adopted silently:
@@ -212,8 +221,9 @@ Two cases are not adopted silently:
 - At sub-step 6, a repository with the fixed name exists but its node id is
   not recorded (the server stopped between creation and record, or someone
   else made it). The run stops with `github` and shows the repository; the
-  owner either adopts it, allowed only when it has no commits, or picks
-  another name.
+  owner either adopts it, allowed only when GitHub answers that it has no
+  commits (an empty list, or its empty-repository refusal; any other failure
+  to ask stops with `github`), or picks another name.
 - At sub-step 9, a spec or branch with the fixed id that does not belong to
   this run stops with `folder`; it is never overwritten.
 
@@ -284,7 +294,7 @@ card. Gate sheets and the drag board are step 5.
   `main` and unchanged after sub-step 9; the `gate_cmd` for each environment;
   the ledger refusing a turn that would pass the ceiling, charging a USD
   role's first turn at its estimate, counting an unreported cost as unknown,
-  metering Codex-only roles by hours and calls without inventing USD across
+  metering Codex-only roles by hours without inventing USD across
   several turns, and restoring every total after a restart, including a
   ledger of estimates only; a
   restart turning each running state into `stopped` with `restart`.
