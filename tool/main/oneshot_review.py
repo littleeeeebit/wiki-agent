@@ -17,7 +17,7 @@ from fastapi import HTTPException
 
 from agent import read_tools
 
-from . import oneshot, oneshot_build, oneshot_spec, runtime, specs, work
+from . import oneshot, oneshot_build, oneshot_front, oneshot_spec, runtime, specs, work  # noqa: F401 — `oneshot_front` registers `split`
 from .query import ROOT, _lock as work_lock, hold
 
 REVIEW_PROMPT = (ROOT / "tool/prompts/oneshot-review.md").read_text(encoding="utf-8")
@@ -94,9 +94,21 @@ def verdict_of(value, head: str) -> dict:
 
 
 def review(repo: str) -> None:
-    """The review holds the worktree from freezing its input until its verdict is saved, so no other turn
-    writes the tree it reads. A refusal releases it before the build turn takes it; then the instruction the
-    person queued for this worktree meanwhile goes, as after any turn, behind that build turn."""
+    def body(store, spec, tree):
+        found = verdict(store, spec, tree)
+        return None if found is None else lambda: decided(repo, store, spec, found)
+
+    holding(repo, "백엔드 리뷰", body)
+
+
+def holding(repo: str, what: str, body) -> None:
+    """A stage that reads the worktree holds it, as a work turn does, so no other turn writes the tree it
+    reads. `body(store, spec, tree)` runs on the HEAD the build passed, on a clean tree, and returns the
+    callable that saves its result, or `None` after stopping; the tree is checked again before that is
+    called. A moved tree goes back to the build's checks. A callable the save returns runs once the tree
+    is let go: the refusal's build turn, or the next stage's worker, which then holds the tree itself
+    (it returns true). Otherwise
+    the instruction the person queued for this worktree meanwhile goes, as after any turn."""
 
     store = oneshot_spec.store(repo)
     spec = oneshot_spec.spec_of(repo)
@@ -104,31 +116,50 @@ def review(repo: str) -> None:
     try:
         release = hold(work._busy, work_lock, str(tree), "작업트리를 다른 턴이 쓰고 있다", kind="turn")
     except HTTPException as exc:   # whoever holds it sends the queued instruction when it lets go
-        store.stop("block", f"{exc.detail} — 끝난 뒤 [재개] 로 백엔드 리뷰를 다시 한다")
+        store.stop("block", f"{exc.detail} — 끝난 뒤 [재개] 로 {what}을 다시 한다")
         return
+    passed_on = False
     try:
+        following = None
         try:
-            following = decided(repo, store, spec, tree)
+            if why := moved(spec, tree):
+                rebuild(repo, store, why)
+                return
+            save = body(store, spec, tree)
+            if save is None:
+                return
+            if why := moved(spec, tree):
+                rebuild(repo, store, f"{what} 동안 작업트리가 바뀌었다 — {why}")
+                return
+            following = save()
         finally:
             release()
-        if following:
-            following()
+        if callable(following):   # a save that only saves returns the spec
+            passed_on = bool(following())
     finally:   # an exception included: the worker records the stop, and the instruction still goes
-        # A server going down drops it, as `dispatch` drops one after a stopped turn.
-        work.dispatch(tree, SimpleNamespace(halt=runtime.stopping, turn=""))
+        if not passed_on:   # a server going down drops it, as `dispatch` drops one after a stopped turn
+            work.dispatch(tree, SimpleNamespace(halt=runtime.stopping, turn=""))
 
 
-def decided(repo: str, store, spec: dict, tree: Path):
-    """The verdict applied; the refusal's build turn, if any, returned to be sent once the tree is free."""
+def moved(spec: dict, tree: Path) -> str:
+    """Empty when the worktree is the HEAD the build passed, with nothing uncommitted, or how it is not."""
+
+    built = spec["oneshot"].get("built_head")
+    head = specs.sh(["git", "rev-parse", "HEAD"], tree).stdout.strip()
+    if head != built:
+        return f"HEAD `{head[:12]}` 가 빌드를 통과한 `{str(built)[:12]}` 가 아니다"
+    return "작업트리에 커밋하지 않은 변경이 있다" if specs.dirty(tree) else ""
+
+
+def decided(repo: str, store, spec: dict, found: dict):
+    """The verdict applied; what follows once the tree is free: the split's worker, or the refusal's build turn."""
 
     o = spec["oneshot"]
-    found = verdict(repo, store, spec, tree)
-    if found is None:
-        return None
     reviews = [*(o.get("reviews") or []), {**found, "ts": time.time()}]
     if found["verdict"] == "approve":
-        oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "working": None})
-        return None
+        # `working` names the split before its worker starts: a server that dies in between leaves it for `recover`.
+        oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "working": "split"})
+        return lambda: oneshot_spec.handoff(repo, "split") or True   # the split holds the tree itself
     refused = int(o.get("refused") or 0) + 1
     if refused >= MAX_REFUSALS:
         store.put(reviews=reviews, refused=refused)
@@ -141,32 +172,16 @@ def decided(repo: str, store, spec: dict, tree: Path):
     return lambda: oneshot_build.send(repo, "build", fixing(spec, found))
 
 
-def verdict(repo: str, store, spec: dict, tree: Path) -> dict | None:
-    """The checked verdict on the HEAD the build passed, or `None` after stopping. A tree that is not that
-    HEAD, clean, before or after the turn sends the run back to the build's checks."""
+def verdict(store, spec: dict, tree: Path) -> dict | None:
+    """The checked verdict on the frozen HEAD, or `None` after stopping."""
 
-    o = spec["oneshot"]
-
-    def moved() -> str:
-        head = specs.sh(["git", "rev-parse", "HEAD"], tree).stdout.strip()
-        if head != o.get("built_head"):
-            return f"HEAD `{head[:12]}` 가 빌드를 통과한 `{str(o.get('built_head'))[:12]}` 가 아니다"
-        return "작업트리에 커밋하지 않은 변경이 있다" if specs.dirty(tree) else ""
-
-    if why := moved():
-        rebuild(repo, store, why)
-        return None
     try:
         head, how = frozen(spec)
     except (ValueError, OSError, RuntimeError) as exc:
         store.stop("review", str(exc))
         return None
-    found = oneshot.turned(store, "review", REVIEW_PROMPT, review_text(spec, head, how), "oneshot-review",
-                           lambda value: verdict_of(value, head), tree)
-    if found is not None and (why := moved()):
-        rebuild(repo, store, f"리뷰하는 동안 작업트리가 바뀌었다 — {why}")
-        return None
-    return found
+    return oneshot.turned(store, "review", REVIEW_PROMPT, review_text(spec, head, how), "oneshot-review",
+                          lambda value: verdict_of(value, head), tree)
 
 
 def rebuild(repo: str, store, why: str) -> None:
