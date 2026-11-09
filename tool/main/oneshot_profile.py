@@ -13,6 +13,7 @@ from common import settings
 from common.host import conda_exe
 
 ESTIMATE_USD = 2.0   # a USD-metered role's first turn, before any sample; `.env` may override per role
+TURN_SECONDS = 600.0  # a cut turn's time before the role has a longest turn on record
 
 KINDS = ("webapp", "api", "cli", "desktop", "data")
 SUPPORTED_KINDS = ("webapp",)
@@ -127,7 +128,7 @@ def estimate(role: str) -> float:
 
 
 def ledger(spend: dict | None) -> dict:
-    return {"usd": 0.0, "seconds": 0.0, "calls": 0, "unknown": 0, "max": {}, **(spend or {})}
+    return {"usd": 0.0, "seconds": 0.0, "calls": 0, "unknown": 0, "max": {}, "longest": {}, **(spend or {})}
 
 
 def allowed(spend: dict, profile: dict | None, role: str, codex: bool) -> str:
@@ -150,6 +151,7 @@ def allowed(spend: dict, profile: dict | None, role: str, codex: bool) -> str:
 def charged(spend: dict, role: str, codex: bool, cost, seconds: float) -> dict:
     spend = ledger(spend)
     spend["seconds"] = round(spend["seconds"] + seconds, 1)
+    spend["longest"] = {**spend["longest"], role: max(seconds, spend["longest"].get(role, 0.0))}
     spend["calls"] += 1
     if codex:
         return spend
@@ -160,3 +162,17 @@ def charged(spend: dict, role: str, codex: bool, cost, seconds: float) -> dict:
         spend["usd"] = round(spend["usd"] + max(estimate(role), spend["max"].get(role, 0.0)), 6)
         spend["unknown"] += 1
     return spend
+
+
+def cut(spend: dict, role: str, codex: bool, elapsed: float, lived: float) -> dict:
+    """A turn the server died inside, charged once: its cost as unreported. Its time is at least
+    `lived`, the span its heartbeats prove, and otherwise the larger of the role's longest turn and
+    `TURN_SECONDS`, never more than the wall-clock time since it was sent."""
+
+    spend = ledger(spend)
+    seconds = max(lived, min(elapsed, max(TURN_SECONDS, spend["longest"].get(role, 0.0))))
+    out = charged(spend, role, codex, None, seconds)
+    if codex:
+        out["unknown"] += 1   # `charged` marks only USD roles; a Codex turn's time is the unknown here
+    out["longest"] = spend["longest"]   # an estimate is not a measured turn
+    return out

@@ -82,9 +82,12 @@ rewrites — is metered by what its provider reports:
   each turn; calls are recorded for the card, with no ceiling of their own.
 - The ledger is written after each turn, so a restart resumes with the spent
   totals; a turn cut by the restart counts as unknown at the rule above.
-  The run records the turn as in flight before sending it, and recovery
-  charges an in-flight turn once. A failed turn that reported its cost is
-  charged that cost.
+  The run records the turn as in flight before sending it, with the time it
+  was sent and a heartbeat every 30 seconds while it runs, and recovery
+  charges an in-flight turn once. Its time is at least the span its
+  heartbeats prove, and otherwise the larger of the role's longest turn and
+  ten minutes, never more than the time since it was sent; it is marked
+  unknown. A failed turn that reported its cost is charged that cost.
   A ledger whose USD entries are all estimates still enforces: the estimates
   are what was charged.
 
@@ -96,8 +99,9 @@ inside one: a single turn may overshoot by its own cost.
 
 `intake → environment → bootstrap → spec`. `spec` is where step 3 begins.
 `stopped` is reachable from each with a reason. A run has at most one worker:
-the state check and the worker's start happen under one lock, and a second
-start is refused. At shutdown no new sub-step or turn starts; a sub-step
+the state check, the stage's new state and the worker's start happen under
+one lock, the new state is written only once the worker may start, and a
+second start is refused. At shutdown no new sub-step or turn starts; a sub-step
 already running finishes, the run stops with `restart`, and the server joins
 its worker before letting go of the hub.
 
@@ -209,7 +213,7 @@ after an effect and before its record.
 | 5 | Register | The folder is listed by `channels.projects` under the fixed name | Register a picked folder as `[폴더 찾기]` does, with its same-name refusal; then write the adapter's hash through `connect.keep` |
 | 6 | Remote repository | The run recorded the repository's node id | Create it through `gh` with the chosen visibility and owner, and record its node id at once |
 | 7 | Origin | `origin` points at that repository | Add it |
-| 8 | Push | The remote `main` is the base commit | First check again that local `main` is the base and as planned, that `origin` is the run's URL and that the repository's node id is the recorded one; any difference stops before anything is pushed. Then push `main` with upstream |
+| 8 | Push | The remote `main` is the base commit | First check again that local `main` is the base and as planned, that every fetch and push URL of `origin` is the run's URL and that the repository's node id is the recorded one; any difference stops before anything is pushed. Then push `main` with upstream |
 | 9 | Spec and worktree | A spec with the fixed id whose `oneshot.run` is this run; a linked worktree on `oneshot-initial` whose HEAD is the base commit | Create whichever is missing (`workspace.create(..., linked=True)`), then write the commit point |
 
 Two cases are not adopted silently:

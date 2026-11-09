@@ -8,6 +8,7 @@ and `origin` is a local bare repository.
 import json
 import subprocess
 import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -67,7 +68,8 @@ def world(tmp_path):
          patch.object(oneshot, "gh_user", lambda: "someone"), \
          patch.object(oneshot, "url_of", lambda run: str(github.bare)), \
          patch.object(oneshot, "codex_role", lambda: False), \
-         patch.object(oneshot, "launch", lambda rid, work, *a: oneshot.changed(rid, working=work, stopped=None)):
+         patch.object(oneshot, "launch",
+                      lambda rid, work, *a, **f: oneshot.changed(rid, **f, working=work, stopped=None)):
         yield {"workspace": workspace, "github": github, "hub": hub, "tmp": tmp_path}
 
 
@@ -373,6 +375,18 @@ def test_an_origin_changed_after_its_step_is_never_pushed_to(world):
     assert not git_ok(world["github"].bare, "rev-parse", "--verify", "main")
 
 
+def test_a_separate_push_url_is_never_pushed_to(world):
+    rid = made(world)
+    through(rid, "origin")
+    repo, other = world["workspace"] / "budget-tracker", world["tmp"] / "other.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(other)], check=True, capture_output=True)
+    assert git_ok(repo, "remote", "set-url", "--push", "origin", str(other))
+    oneshot.bootstrap(rid)
+    assert oneshot.load(rid)["stopped"]["reason"] == "github"
+    assert not git_ok(other, "rev-parse", "--verify", "main")
+    assert not git_ok(world["github"].bare, "rev-parse", "--verify", "main")
+
+
 @pytest.mark.parametrize("answer, adopted", [((1, "", "HTTP 403: cannot list commits"), False),
                                              ((0, '[{"sha": "abc"}]', ""), False),
                                              ((1, "", "gh: Git Repository is empty. (HTTP 409)"), True)])
@@ -418,6 +432,51 @@ def test_a_turn_cut_by_the_server_dying_is_charged_once_as_unknown(world):
     run = oneshot.load(rid)
     assert run["stopped"]["reason"] == "restart" and run["inflight"] is None
     assert (run["spend"]["calls"], run["spend"]["unknown"], run["spend"]["usd"]) == (1, 1, 2.0)
+
+
+def test_a_long_codex_turn_cut_by_a_restart_keeps_the_time_its_heartbeats_prove(world):
+    now = time.time()
+    rid = made(world, state="intake", inflight={"role": "intake", "codex": True, "sent": now - 4000, "seen": now - 400})
+    oneshot.recover()
+    spend = oneshot.load(rid)["spend"]
+    assert spend["seconds"] >= 3600 and spend["calls"] == 1 and spend["unknown"] == 1 and spend["usd"] == 0
+    assert "시간 한도" in oneshot.allowed(spend, {**PROFILE, "budget_hours": 0.5}, "intake", True)
+
+
+def test_a_running_turn_writes_heartbeats(world):
+    rid = made(world, inflight={"role": "intake", "codex": False, "sent": 1.0})
+    ended = threading.Event()
+    with patch.object(oneshot, "HEARTBEAT", 0.05):
+        beat = threading.Thread(target=oneshot.heartbeat, args=(rid, ended))
+        beat.start()
+        time.sleep(0.3)
+        ended.set()
+        beat.join()
+    assert oneshot.load(rid)["inflight"]["seen"] > 1.0
+
+
+def test_a_launch_refused_at_shutdown_leaves_the_run_where_it_was(world):
+    with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-intent", INTENT), {}, False)):
+        rid = oneshot.start(oneshot.Start(sentence="가계부"))["id"]
+        oneshot.intake(rid)
+    with patch.object(oneshot, "launch", LAUNCH), patch.object(oneshot, "environment", lambda rid: None), \
+         patch.object(oneshot, "intake", lambda rid, *a: None):
+        runtime.stopping.set()
+        try:
+            for refused_call in (lambda: oneshot.intent(rid, oneshot.Intent(confirm=True)),
+                                 lambda: oneshot.start(oneshot.Start(sentence="가계부 둘"))):
+                with pytest.raises(HTTPException) as refused:
+                    refused_call()
+                assert refused.value.status_code == 503
+        finally:
+            runtime.stopping.clear()
+        run = oneshot.load(rid)
+        assert run["state"] == "intake" and run["identity"] is None and run["intent"] and not run["working"]
+        second = next(r for r in oneshot.runs() if r["id"] != rid)
+        assert second["stopped"]["reason"] == "restart"
+        oneshot.resume(second["id"], oneshot.Resume())
+        assert oneshot.intent(rid, oneshot.Intent(confirm=True))["state"] == "environment"
+        oneshot.close_all()
 
 
 def test_a_failed_turn_keeps_the_cost_it_reported(world):

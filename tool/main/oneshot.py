@@ -33,7 +33,7 @@ from common import swap, worktree_home
 from workspace import TASK, create
 
 from . import channels, connect, runtime, specs
-from .oneshot_profile import (KINDS, SCHEMA, SUPPORTED_KINDS, allowed, charged, gate_cmd, ledger, problems,
+from .oneshot_profile import (KINDS, SCHEMA, SUPPORTED_KINDS, allowed, charged, cut, gate_cmd, ledger, problems,
                               proposal)
 from .query import ROOT
 
@@ -46,6 +46,7 @@ PROFILE_PROMPT = (ROOT / "tool/prompts/oneshot-profile.md").read_text(encoding="
 TOOLS = "Read,Glob,Grep"     # the run folder holds nothing to read; no tool writes
 BLOCK = re.compile(r"^```(oneshot-intent|oneshot-profile)[ \t]*\r?\n(.*?)^```[ \t]*$", re.M | re.S)
 MAX_SENTENCE = 2_000
+HEARTBEAT = 30.0   # seconds between a running turn's `inflight.seen` writes
 
 STEPS = ("recheck", "folder", "files", "commit", "register", "remote", "origin", "push", "spec")
 RUNNING = {"intake": "intake", "environment": "profile", "bootstrap": "bootstrap"}
@@ -140,6 +141,15 @@ class Failed(RuntimeError):
         self.meta = meta
 
 
+def heartbeat(rid: str, ended: threading.Event) -> None:
+    """While a turn runs, `inflight.seen` moves on: how long it lived, should the server die inside it."""
+
+    while not ended.wait(HEARTBEAT):
+        with _lock:
+            if inflight := load(rid).get("inflight"):
+                changed(rid, inflight={**inflight, "seen": time.time()})
+
+
 def ask(rid: str, role: str, system: str, text: str) -> tuple[str, dict, bool]:
     """One turn in the run's own folder: `(final, meta, codex)`. Patched in tests."""
 
@@ -148,6 +158,8 @@ def ask(rid: str, role: str, system: str, text: str) -> tuple[str, dict, bool]:
     where.mkdir(parents=True, exist_ok=True)
     chat = ChatSession(where, tools=TOOLS, system=system, model=cfg["model"], effort=cfg["effort"])
     final, meta, failed = "", {}, ""
+    ended = threading.Event()
+    threading.Thread(target=heartbeat, args=(rid, ended), daemon=True, name=f"oneshot-beat-{rid}").start()
     try:
         for ev in chat.say(text, runtime.stopping):
             if ev.kind == "done":
@@ -157,6 +169,7 @@ def ask(rid: str, role: str, system: str, text: str) -> tuple[str, dict, bool]:
             elif ev.kind == "error":
                 failed = ev.text
     finally:
+        ended.set()
         chat.close()
     if failed:
         raise Failed(failed, meta)
@@ -188,7 +201,7 @@ def turned(rid: str, role: str, system: str, text: str, name: str, check) -> obj
                 stop(rid, "budget", why)
                 return None
             # Recorded before the turn is sent: a server that dies inside it leaves this for `recover` to charge.
-            changed(rid, inflight={"role": role, "codex": codex})
+            changed(rid, inflight={"role": role, "codex": codex, "sent": time.time()})
         started = time.monotonic()
         try:
             final, meta, codex = ask(rid, role, system, text if not reason else
@@ -484,10 +497,14 @@ def url_of(run: dict) -> str:
 
 
 def origin_is_ours(run: dict) -> None:
+    """Every URL `origin` fetches from and pushes to, after `insteadOf` rewrites, is the run's repository."""
+
     path, url = Path(run["identity"]["path"]), url_of(run)
-    have = git(path, "remote", "get-url", "origin")
-    if have.returncode or have.stdout.strip().removesuffix(".git") != url.removesuffix(".git"):
-        raise Stop("github", f"origin 이 이 실행의 저장소를 가리키지 않는다: {have.stdout.strip() or '없음'}")
+    for kind in ([], ["--push"]):
+        have = git(path, "remote", "get-url", *kind, "--all", "origin")
+        urls = have.stdout.split()
+        if have.returncode or not urls or any(u.removesuffix(".git") != url.removesuffix(".git") for u in urls):
+            raise Stop("github", f"origin 이 이 실행의 저장소만 가리키지 않는다: {' '.join(urls) or '없음'}")
 
 
 def s_origin(run: dict) -> None:
@@ -577,8 +594,10 @@ def bootstrap(rid: str) -> None:
 
 # -- Workers ------------------------------------------------------------------------------------
 
-def launch(rid: str, work: str, *args) -> None:
-    """One worker per run. Callers hold `_lock` from their state check through this call."""
+def launch(rid: str, work: str, *args, **fields) -> None:
+    """One worker per run. Callers hold `_lock` from their state check through this call, and hand
+    the stage's new state in `fields`: it is written with `working` only once the worker may start,
+    so a refusal leaves the run as it was."""
 
     fn = {"intake": intake, "profile": environment, "bootstrap": bootstrap}[work]
     with _lock:
@@ -586,7 +605,7 @@ def launch(rid: str, work: str, *args) -> None:
             raise HTTPException(503, "서버가 종료 중이다. 다시 시작한 뒤 이어가라")
         if (running := _workers.get(rid)) is not None and running.is_alive():
             raise HTTPException(409, "이 실행은 이미 돌고 있다")
-        changed(rid, working=work, stopped=None)
+        changed(rid, **fields, working=work, stopped=None)
         thread = threading.Thread(target=fn, args=(rid, *args), daemon=True, name=f"oneshot-{rid}")
         _workers[rid] = thread
         thread.start()
@@ -609,8 +628,11 @@ def recover() -> None:
 
     for run in runs():
         if run.get("working") and not run.get("committed"):
-            if cut := run.get("inflight"):
-                changed(run["id"], inflight=None, spend=charged(run.get("spend"), cut["role"], cut["codex"], None, 0))
+            if inflight := run.get("inflight"):
+                sent = float(inflight.get("sent") or time.time())
+                elapsed, lived = max(0.0, time.time() - sent), max(0.0, float(inflight.get("seen") or sent) - sent)
+                changed(run["id"], inflight=None,
+                        spend=cut(run.get("spend"), inflight["role"], inflight["codex"], elapsed, lived))
             stop(run["id"], "restart", "서버가 다시 켜졌다")
 
 
@@ -659,7 +681,11 @@ def start(body: Start) -> dict:
               "stopped": None, "sentence": sentence, "picked": picked, "intent": None, "confirmed": False,
               "profile": None, "proposed": {}, "identity": None, "steps": {}, "github": {}, "base": None,
               "adopt": False, "spend": ledger(None), "spec": None})
-        launch(rid, "intake")
+        try:
+            launch(rid, "intake")
+        except HTTPException:   # the record exists already: left stopped, so `[재개]` takes it on
+            stop(rid, "restart", "서버가 꺼지는 중이라 시작하지 못했다")
+            raise
     return view(load(rid))
 
 
@@ -715,9 +741,8 @@ def intent(rid: str, body: Intent) -> dict:
         if found:
             raise HTTPException(409, "; ".join(found))
         # Identity is fixed here, under the lock, before anything is written.
-        changed(rid, state="environment", stopped=None,
-                identity={"path": str(path), "name": name, "owner": owner, "spec_id": BRANCH, "branch": BRANCH})
-        launch(rid, "profile")
+        launch(rid, "profile", state="environment",
+               identity={"path": str(path), "name": name, "owner": owner, "spec_id": BRANCH, "branch": BRANCH})
     return view(load(rid))
 
 
@@ -742,8 +767,7 @@ def profile(rid: str, body: Profile) -> dict:
                 if found:
                     raise HTTPException(409, "; ".join(found))
                 ident = {**ident, "owner": values["github_owner"]}
-            changed(rid, profile=values, identity=ident, confirmed=True, state="bootstrap")
-            launch(rid, "bootstrap")
+            launch(rid, "bootstrap", profile=values, identity=ident, confirmed=True, state="bootstrap")
         else:
             return view(changed(rid, profile=values))
     return view(load(rid))
@@ -757,7 +781,5 @@ def resume(rid: str, body: Resume) -> dict:
         run = load(rid)
         if run.get("committed") or not run.get("stopped") or run.get("working"):
             raise HTTPException(409, "멈춘 실행이 아니다")
-        if body.adopt:
-            changed(rid, adopt=True)
-        launch(rid, RUNNING[run["state"]])
+        launch(rid, RUNNING[run["state"]], **({"adopt": True} if body.adopt else {}))
     return view(load(rid))
