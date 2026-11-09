@@ -62,9 +62,11 @@ def answers(*texts):
 def test_an_approval_of_the_head_read_moves_to_split_with_the_input_frozen(reviewed):
     tree, head, _ = reviewed
     heard, asking = answers(verdict(head, "approve", P2))
-    with asking:
+    started = []
+    with asking, patch.object(oneshot_spec, "start", lambda *a, **fields: started.append((a, fields))):
         oneshot_review.review("budget")
-    assert o()["stage"] == "split" and o()["reviews"][-1]["findings"] == [P2] and o()["working"] is None
+    (args, fields), = started
+    assert args == ("budget", "split") and fields["stage"] == "split" and fields["reviews"][-1]["findings"] == [P2]
     role, text, where = heard[0]
     assert role == "review" and where == tree and head in text and "test_spending_adds_to_the_total" in text
     assert "지출을 적으면" in text   # the requirements travel in the prompt; the reviewer reads no record

@@ -12,10 +12,22 @@ walkthrough of each core scenario.
 
 ## Stage states
 
-`split → frontend design → R2 → frontend build ⇄ critique → R3`. After R3
+`split → board → frontend → r2 → build-front ⇄ critique → r3`. After R3
 approval the run moves to `pull request` ([step 5](5-screen-pr.md)). Stops
 follow step 2's table, plus `critique` (the round cap was reached with
-high-severity findings left).
+high-severity findings left). The backend review's approval starts `split`
+on the same worker key; `board` and `r2` wait for the owner.
+
+## Parts
+
+| Part | Scope | Module |
+| --- | --- | --- |
+| 4a | S5, S6 and R2: the inventory, the board, the design turn, the mock shots, the R2 decisions and their commit | `tool/main/oneshot_front.py`, `tool/main/oneshot_screens.py` |
+| 4b | S7's build turn: the adapter grant, `live_cmd`, the shooting harness and its mechanical findings | — |
+| 4c | Image input in `ChatSession`, the critic, the stop rule and R3 | — |
+
+The screens that show the board and the sheets belong to
+[step 5](5-screen-pr.md); 4a serves their data over HTTP.
 
 ## S5 — Feature split
 
@@ -24,9 +36,14 @@ high-severity findings left).
 The list of actions is read from the built backend, not written by the model,
 so nothing is forgotten and nothing invented: the OpenAPI document the
 framework serves (FastAPI's `openapi.json`), or the CLI's command list for a
-`cli` run. One model turn only names each action in the owner's words (from
-the glossary), groups trivially related endpoints into one feature (list and
-filter are one), and proposes a class with a one-line reason.
+`cli` run. The server reads it by importing `app.main:app` with the project's
+own interpreter (`python_cmd`, the gate's interpreter) in the worktree. One
+read-only model turn only names each action in the owner's words (from the
+glossary), groups trivially related endpoints into one feature (list and
+filter are one), and proposes a class with a one-line reason, as an
+`oneshot-features` block:
+`[{id, name, endpoints: ["METHOD /path"], class, why}]`. Every served
+operation belongs to exactly one feature and a feature names no other.
 
 | Class | Placement rule |
 | --- | --- |
@@ -49,27 +66,36 @@ design, in the code as `data-feature`, and in the checks.
 
 ## S6 — Frontend design
 
-One model turn in the worktree that returns blocks and writes low-fidelity
-mock pages; the server validates the blocks and shoots the mocks.
+One read-only model turn in the worktree that returns four blocks; the
+server validates them, writes each mock page into the run's folder and shoots
+it.
 
-| Block or file | Shape | Becomes |
+| Block | Shape | Becomes |
 | --- | --- | --- |
-| `oneshot-screens` | `[{route, purpose, features: [feature_id], primary: bool}]` | The screen map |
-| `oneshot-states` | Per screen: what empty, loading, error and full look like, one line each | The state list R2 shows and S7 shoots |
-| `oneshot-tokens` | Two or three palette proposals, a type scale, spacing | The palette choice on R2 |
-| `design/mock/<route>.html` | Static grey-box pages, no real data | Screenshots on R2 |
+| `oneshot-screens` | `[{id: "S1", route, purpose, features: [feature_id], primary: bool, reached: "start"\|"one-click"\|"deeper"}]` | The screen map |
+| `oneshot-states` | `[{screen, empty, loading, error, full}]`, one line each, one entry per screen | The state list R2 shows and S7 shoots |
+| `oneshot-tokens` | `{palettes: [{id: "C1", name, colors: {primary, surface, text, accent}}], type: [...], spacing: [...]}`, two or three palettes | The palette choice on R2 |
+| `oneshot-mocks` | `{screen_id: html}`: a self-contained grey-box page per screen, no real data, no external file | Screenshots on R2 |
 
 Server checks, each a refusal sent back once:
 
-- Exactly one screen is `primary`, and it carries every `every` feature.
+- Exactly one screen is `primary`, reached at `start`, and it carries every
+  `every` feature.
 - No `rarely` or `never` feature appears on the primary screen.
-- Every `sometimes` feature is on a screen or element reachable in one step
-  from the primary screen.
-- Every feature except `never` appears on some screen.
-- Each mock page exists and renders without console errors.
+- Every `sometimes` feature is on a screen reached at `start` or `one-click`.
+- Every feature except `never` appears on some screen, and no `never`
+  feature appears on any.
+- Each mock carries `data-feature="<id>"` for every feature its screen lists.
+- Each mock opens with no console error, no page error and no request
+  leaving the page; the shooting browser aborts every request that is not a
+  `file:` or `data:` URL.
+- Translationese in a purpose, a state line or a palette name is sent back
+  once and kept as a warning after that, as in R1.
 
 The server shoots each mock with Playwright at the profile's viewports
-(desktop, and phone when responsive was chosen).
+(desktop, and phone when responsive was chosen), into the run's folder under
+`front/r<n>/`, a new `n` for every accepted design so an earlier round's
+shots stay.
 
 ## R2 — the frontend sheet
 
@@ -78,16 +104,20 @@ translationese check on every person-facing string. Order:
 
 1. The first-screen line and the primary screen's screenshot.
 2. The frequency map as the owner submitted it, beside where each feature
-   landed. Any placement the design could not honour is listed here.
+   landed. A design that cannot honour a placement is refused before R2, so
+   every row matches the owner's class.
 3. The other screens' screenshots, one row per screen with its purpose.
-4. The palette proposals as swatches on the primary screenshot; the owner
-   picks one.
+4. The palette proposals, each with its four colours; the owner picks one.
 5. Folded: states per screen, the backend review verdict from S4.
 
-Edits follow R1's dependency rule: a screen's states, its mock and its
-screenshot depend on the screen, and every item in the set loses its approval
-and is shown again. Every item, folded or not, needs a decision before the
-run moves on.
+The items are each screen (`S1`, with its mock and screenshot) and each
+screen's states (`S1.states`); the palette is a choice beside them, needed
+before approval. Edits follow R1's dependency rule: a screen's states, its
+mock and its screenshot depend on the screen, and every item in the set loses
+its approval and is shown again. Every item, folded or not, needs a decision
+before the run moves on. Approval writes `docs/design/frontend.md`, the mocks
+under `docs/design/mock/` and the shots under `docs/design/shots/` into the
+worktree as one commit, and the run moves to `build-front`.
 
 An edit to a placement may reopen S5's board instead of S6, when the owner
 says the class was wrong rather than the screen. Reopening S5 invalidates
@@ -217,8 +247,13 @@ changed. Approval moves the run to `pull request`.
 
 ## Completion
 
-- New tests in `tool/test_oneshot.py`: the inventory read from a fixture
-  OpenAPI document; each S6 placement check refusing; the DOM placement check
+- 4a's tests in `tool/test_oneshot_front.py`: the inventory read from a
+  served fixture app; a feature list that invents, drops or shares an
+  operation refused; each S6 placement check refusing; a mock with a console
+  error, a page error or an outside request sent back; R2 needing every item
+  and a palette, committing the design, an edit reaching the screen's states
+  and keeping the rest approved, and a reopened board discarding the design.
+- New tests for 4b and 4c: the DOM placement check
   on fixture pages (an `every` feature hidden, a `rarely` feature on the
   primary route, a `sometimes` feature two clicks away); the stop rule (two
   clean rounds, the cap, a mechanical high finding overriding a clean
@@ -232,9 +267,7 @@ changed. Approval moves the run to `pull request`.
   through the real guard, with the slots committed in the worktree; the real
   guard refusing an adapter write after a build turn ended by a model error,
   by the owner's stop, by a gate failure, and after a restart right after the
-  flag was stored; a build whose adapter dropped the backend tests refused; a
-  reopened S5 discarding the old screens and approvals so R2 cannot reuse
-  them.
+  flag was stored; a build whose adapter dropped the backend tests refused.
 - The repository's gate including the web build, `tool/lint.py --check` and
   `tool/debt.py check`.
 - One real run from step 3's throwaway repository through R3, with the R2 and

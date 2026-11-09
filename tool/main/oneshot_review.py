@@ -17,7 +17,7 @@ from fastapi import HTTPException
 
 from agent import read_tools
 
-from . import oneshot, oneshot_build, oneshot_spec, runtime, specs, work
+from . import oneshot, oneshot_build, oneshot_front, oneshot_spec, runtime, specs, work  # noqa: F401 — `oneshot_front` registers `split`
 from .query import ROOT, _lock as work_lock, hold
 
 REVIEW_PROMPT = (ROOT / "tool/prompts/oneshot-review.md").read_text(encoding="utf-8")
@@ -127,7 +127,7 @@ def decided(repo: str, store, spec: dict, tree: Path):
         return None
     reviews = [*(o.get("reviews") or []), {**found, "ts": time.time()}]
     if found["verdict"] == "approve":
-        oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "working": None})
+        oneshot_spec.handoff(repo, "split", stage="split", reviews=reviews)   # the feature split, on this key
         return None
     refused = int(o.get("refused") or 0) + 1
     if refused >= MAX_REFUSALS:
