@@ -38,10 +38,22 @@ agent view, which is still under evaluation.
 
 ## Stage states
 
-`spec → design → R1 → tests → build → backend review → split`. `split` is
-where step 4 begins. Stops follow step 2's table, plus `gate` (the build could
-not get the gate green within its attempts) and `review` (the read-only review
-refused twice).
+`spec → design → r1 → tests → build → backend review → split`, held in the
+spec's `oneshot.stage`. `split` is where step 4 begins. Stops follow step 2's
+table, plus `gate` (the build could not get the gate green within its
+attempts) and `review` (the read-only review refused twice).
+
+The step ships as three pull requests, in order:
+
+| Part | Holds |
+| --- | --- |
+| 3a | S2, S3 and R1: `tool/main/oneshot_spec.py` (stages and HTTP), `tool/main/oneshot_sheet.py` (checks, sheet, translationese) |
+| 3b | S4 tests first and the build, with the contract-test protection |
+| 3c | The backend review |
+
+The bootstrap's last act starts the first S2 turn. Each stage's worker hands
+over to the next one itself; a hand-over refused because the server is going
+down leaves the new stage stopped with `restart`.
 
 ## S2 — Spec conversation
 
@@ -55,11 +67,20 @@ Runs in the run's own chat, with the `next`-style blocks.
    the observable result; `source.kind` is `original` when it comes from the
    owner's words, `decision` when from an answer, `policy` when the agent
    added it.
-3. The glossary is a list of `{term, meaning}` taken from the owner's words.
-   The agent may add terms but may not rename one the owner used.
+3. The glossary is a list of `{term, meaning, avoid}` taken from the owner's
+   words; `avoid` lists the words not to use for the same thing. The agent
+   may add terms but may not rename or drop one the owner used: a term of the
+   previous glossary that appears in the owner's sentence or answers must
+   still be there.
 4. The stage ends when the server finds no `undecided` item and every
-   `original` item has at least one scenario. The agent cannot end it by
-   saying so.
+   `original` item has at least one scenario (a requirement with
+   `postconditions` that is the item or names it in `depends_on`). The agent
+   cannot end it by saying so; a `choices` block in the turn that ends it is
+   dropped. Until then the server records what is still open.
+
+Each turn replaces the requirements and the glossary whole in an
+`oneshot-spec` block and may ask at most three questions in one `choices`
+block. The owner answers through `POST /api/oneshot/spec/{repo}/say`.
 
 The owner's turns are the only human input until R1, so S2 asks everything
 the design depends on. What the agent still has to guess later becomes an
@@ -72,18 +93,19 @@ validates them and writes the files.
 
 | Block | Shape | Becomes |
 | --- | --- | --- |
-| `oneshot-entities` | `[{id, name, fields: [{name, type, rule}], relations, depends_on}]` | An entity diagram (Mermaid) and the storage schema |
-| `oneshot-api` | `[{id, method, path, does, request, response, errors, depends_on}]` | The API table and the OpenAPI document |
-| `oneshot-flows` | `[{id, name, steps, depends_on}]` for the main scenarios | Sequence diagrams |
-| `oneshot-assumptions` | `[{id, what, why, rejected, depends_on}]` | `assumed` requirements |
-| `oneshot-tests` | `[{id, test_name, given, when, then, depends_on}]` | The contract test plan |
+| `oneshot-entities` | `[{id: E1…, name, fields: [{name, type, rule, key}], relations, depends_on}]` | An entity diagram (Mermaid) and the storage keys |
+| `oneshot-api` | `[{id: P1…, method, path, does, request, response, errors, depends_on}]` | The API table and the OpenAPI document |
+| `oneshot-flows` | `[{id: F1…, name, steps: [{from, to, say, api}], depends_on}]` for the main scenarios | Sequence diagrams |
+| `oneshot-assumptions` | `[{id: A1…, what, why, rejected, depends_on}]` | The sheet's first section, and part of the approved design the build receives |
+| `oneshot-tests` | `[{id: T1…, test_name, given, when, then, depends_on}]` | The contract test plan |
 
 Every item has a stable `id`, and `depends_on` lists the ids of the items it
 was derived from: requirements, assumptions, entities and endpoints. The
 server checks the references: every id exists, there is no cycle, an
 endpoint depends on at least one requirement, a test on its requirement and
 on every endpoint it calls, a flow on the endpoints in its steps, and
-anything shaped by an assumption names it. A missing or dangling reference
+anything shaped by an assumption names it (the prompt asks for this; no code
+can tell what an assumption shaped). A missing or dangling reference
 refuses the block like any other S3 check.
 
 Server checks before R1 is shown, each a refusal sent back to the model once:
@@ -91,13 +113,21 @@ Server checks before R1 is shown, each a refusal sent back to the model once:
 - Every scenario requirement is covered by an endpoint and a test.
 - Every endpoint names the requirements it serves; one serving nothing is
   refused as out of scope.
-- No entity field or endpoint uses a word that contradicts the glossary.
-- The profile is respected: the chosen data store, authentication and
-  framework.
+- No entity name, field, path or `does` uses a word the glossary's `avoid`
+  lists.
+- The profile is respected. Authentication is checked: with `none`, no
+  login, session or password endpoint, and with `password` or `oauth`, at
+  least one. The data store and the framework are stated on the sheet and
+  in the documents from the profile, not read from the blocks.
 
-Files written into the worktree and committed: `docs/design/backend.md` (the
-sheet's long form), `docs/design/api.yaml`. These are the new project's own
-documents and follow its docs-language choice from S1.
+These refusals go back to the model once and stop the run with `block` on the
+second. The length budget and the translationese check below also go back
+once, but a second answer still over them is shown with the warnings listed.
+
+When R1 is approved, the server writes into the worktree and commits:
+`docs/design/backend.md` (the sheet) and `docs/design/api.yaml` (an OpenAPI
+3.1 document written as JSON, which is valid YAML). It records the commit as
+`oneshot.design_head`. They are the new project's own documents.
 
 ## R1 — the backend sheet
 
@@ -132,8 +162,8 @@ the extra rows are folded and the sheet says how many.
 
 ### The translationese check
 
-Deterministic, in `tool/main/oneshot.py`, run on every person-facing string
-before the sheet is shown.
+Deterministic, in `tool/main/oneshot_sheet.py`, run on every person-facing
+string before the sheet is shown.
 
 | Pattern | Example |
 | --- | --- |
@@ -145,9 +175,11 @@ before the sheet is shown.
 | English parentheses | an English word in parentheses after a Korean word that already says it |
 
 A string over the threshold goes back to the model once with the matched spans
-named; the check counts and names, it never rewrites. The threshold and the
-pattern list are the knobs; both are tuned on real sheets from the first
-runs, not guessed further now.
+named; the check counts and names, it never rewrites. The threshold starts at
+one match per string. Plural `~들` skips a list of words for people, and `~의`
+chains skip nouns that end in `의` (`회의`, `동의`, …). The threshold, the
+pattern list and the skip lists are the knobs; all are tuned on real sheets
+from the first runs, not guessed further now.
 
 ### Approval
 
@@ -168,7 +200,13 @@ flows built on it. An edit therefore reaches further than the edited item:
 4. The sheet is shown again with the set marked: edited by the owner, changed
    as a consequence, or unchanged but needing approval again.
 
-The number of rounds is recorded on the spec.
+The number of rounds is recorded on the spec. The decisions arrive in one
+`POST /api/oneshot/spec/{repo}/r1`, each item `{approve: true}` or `{edit:
+comment}`; the server refuses a submission that leaves any item without a
+decision. The items needing a decision are every scenario requirement and
+every entity, endpoint, flow, assumption and test. An approval survives a
+regeneration only when its item is outside the reached set and unchanged. An
+edit turn that stops leaves the sheet as it was, and `[재개]` returns to it.
 
 ## S4 — Backend build
 
