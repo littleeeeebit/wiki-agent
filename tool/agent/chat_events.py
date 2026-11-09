@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import difflib
 import json
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass
@@ -100,8 +102,16 @@ def _hook(name: str, said: str, context: str) -> Event | None:
                  {"event": name, **({"context": context} if context.strip() else {})})
 
 
-def _user(text: str) -> dict:
-    return {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
+IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+
+
+def _user(text: str, images=()) -> dict:
+    """A stream-json user message: each image file as a base64 block, then the text."""
+
+    pictures = [{"type": "image", "source": {"type": "base64", "media_type": IMAGE_TYPES[Path(p).suffix.lower()],
+                                             "data": base64.b64encode(Path(p).read_bytes()).decode("ascii")}}
+                for p in images]
+    return {"type": "user", "message": {"role": "user", "content": [*pictures, {"type": "text", "text": text}]}}
 
 
 def _tool_brief(block: dict) -> str:
