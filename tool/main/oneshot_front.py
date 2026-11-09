@@ -13,10 +13,13 @@ import json
 import re
 import shutil
 from pathlib import Path
+from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+
+from common import is_junction
 
 from . import oneshot, oneshot_screens as screens, oneshot_spec, runtime, specs
 from .oneshot_profile import python_cmd
@@ -52,15 +55,19 @@ def served(spec: dict) -> list[str]:
 
 
 def split(repo: str) -> None:
-    """One read-only turn: each served operation named in the owner's words, grouped, and given a class."""
+    """One read-only turn: each served operation named in the owner's words, grouped, and given a class.
+    It holds the worktree from reading the app until the features are saved (`oneshot_review.holding`)."""
 
-    store, spec = oneshot_spec.store(repo), oneshot_spec.spec_of(repo)
+    review().holding(repo, "기능 나누기", lambda store, spec, tree: split_turn(repo, store, spec))
+
+
+def split_turn(repo: str, store, spec: dict):
     o = spec["oneshot"]
     try:
         ops = served(spec)
     except (RuntimeError, ValueError, OSError) as exc:
         store.stop("block", str(exc))
-        return
+        return None
     text = (f"The owner's sentence:\n\n{o['sentence']}\n\nThe confirmed restatement:\n\n"
             f"{json.dumps(o['intent'], ensure_ascii=False)}\n\nThe requirements:\n\n"
             f"{json.dumps(spec.get('requirements') or [], ensure_ascii=False)}\n\nThe glossary:\n\n"
@@ -69,10 +76,16 @@ def split(repo: str) -> None:
     found = oneshot.turned(store, "split", SPLIT_PROMPT, text, "oneshot-features",
                            lambda value: screens.features(value, ops), Path(spec["worktree"]))
     if found is None:
-        return
-    oneshot_spec.saved(repo, oneshot={
+        return None
+    return lambda: oneshot_spec.saved(repo, oneshot={
         "stage": "board", "working": None, "inventory": ops, "features": found, "frequency": None,
         "first_screen": o.get("first_screen") or o["intent"]["first_screen"]})
+
+
+def review():
+    from . import oneshot_review   # it imports this module
+
+    return oneshot_review
 
 
 # -- S6 the frontend design -------------------------------------------------------------------
@@ -111,11 +124,14 @@ def shot_one(browser, page_file: Path, view: str, found: list[str]) -> None:
     width, height = screens.VIEWPORTS[view]
     page = browser.new_page(viewport={"width": width, "height": height})
 
-    def routed(route) -> None:
-        if route.request.url.startswith(("file:", "data:")):
+    own = unquote(page_file.as_uri())
+
+    def routed(route) -> None:   # the mock itself and inline data; any other file is as outside as the network
+        url = route.request.url
+        if url.startswith("data:") or unquote(url) == own:
             route.continue_()
         else:
-            found.append(f"외부 요청 {route.request.url[:120]}")
+            found.append(f"{'로컬 파일' if url.startswith('file:') else '외부'} 요청 {url[:120]}")
             route.abort()
 
     try:
@@ -137,6 +153,8 @@ def front_turn(final: str, attempt: int, spec: dict, reach: set[str] | None = No
         old, new = screens.every(o["front"]), screens.every(front)
         if moved := sorted(i for i in old if i not in reach and old[i] != new.get(i)):
             raise ValueError(f"고치라고 한 범위 밖 항목을 바꾸거나 지웠다: {', '.join(moved)} — 그대로 두어라")
+        if front["tokens"] != o["front"]["tokens"]:   # no item holds them: the owner's palette stands as chosen
+            raise ValueError("화면을 고치는 턴이 색 배합·글자 크기·간격(`tokens`)을 바꿨다 — 그대로 두어라")
     warnings = screens.soft(front)
     if warnings and attempt == 0:
         raise ValueError("다음을 고쳐 다시 내라 — " + " / ".join(warnings[:12]))
@@ -162,37 +180,42 @@ def front_text(spec: dict) -> str:
 def frontend(repo: str) -> None:
     """One S6 turn in the worktree, read-only; the server checks the blocks, shoots the mocks and shows R2."""
 
-    spec = oneshot_spec.spec_of(repo)
-    found = oneshot.turned(oneshot_spec.store(repo), "frontend", FRONTEND_PROMPT, front_text(spec), screens.BLOCKS,
-                           lambda final, attempt: front_turn(final, attempt, spec), Path(spec["worktree"]))
-    if found is None:
-        return
-    front, warnings = found
-    oneshot_spec.saved(repo, oneshot={"front": front, "shots": front["shots"], "stage": "r2", "working": None,
-                                      "r2": {"round": 1, "decisions": {}, "marks": {}, "warnings": warnings,
-                                             "palette": ""}})
+    def body(store, spec, tree):
+        found = oneshot.turned(store, "frontend", FRONTEND_PROMPT, front_text(spec), screens.BLOCKS,
+                               lambda final, attempt: front_turn(final, attempt, spec), tree)
+        if found is None:
+            return None
+        front, warnings = found
+        return lambda: oneshot_spec.saved(repo, oneshot={
+            "front": front, "shots": front["shots"], "stage": "r2", "working": None,
+            "r2": {"round": 1, "decisions": {}, "marks": {}, "warnings": warnings, "palette": ""}})
+
+    review().holding(repo, "화면 설계", body)
 
 
 def refront(repo: str, comments: dict[str, str], reach: list[str]) -> None:
     """The owner's edits and what depends on them, regenerated in one turn and checked whole."""
 
-    spec = oneshot_spec.spec_of(repo)
+    review().holding(repo, "화면 수정", lambda store, spec, tree: refront_turn(repo, store, spec, tree, comments, reach))
+
+
+def refront_turn(repo: str, store, spec: dict, tree: Path, comments: dict[str, str], reach: list[str]):
     o = spec["oneshot"]
     text = (front_text(spec) + f"\nThe current frontend design:\n\n"
             f"{json.dumps({k: v for k, v in o['front'].items() if k != 'shots'}, ensure_ascii=False)}"
             f"\n\nThe owner edited these items, with these comments:\n\n{json.dumps(comments, ensure_ascii=False)}"
             f"\n\nReplace every item in this set and keep the rest as it is: {', '.join(reach)}. "
             "Return all four blocks in full.\n")
-    found = oneshot.turned(oneshot_spec.store(repo), "frontend", FRONTEND_PROMPT, text, screens.BLOCKS,
-                           lambda final, attempt: front_turn(final, attempt, spec, set(reach)), Path(spec["worktree"]))
+    found = oneshot.turned(store, "frontend", FRONTEND_PROMPT, text, screens.BLOCKS,
+                           lambda final, attempt: front_turn(final, attempt, spec, set(reach)), tree)
     if found is None:
-        return
+        return None
     front, warnings = found
     r2 = o["r2"]
     marks, decisions = oneshot_spec.marked(screens.decidable(front), comments, reach, screens.every(o["front"]),
                                            screens.every(front), r2["decisions"])
     palette = r2["palette"] if r2["palette"] in {p["id"] for p in front["tokens"]["palettes"]} else ""
-    oneshot_spec.saved(repo, oneshot={
+    return lambda: oneshot_spec.saved(repo, oneshot={
         "front": front, "shots": front["shots"], "working": None,
         "r2": {"round": r2["round"] + 1, "decisions": decisions, "marks": marks, "warnings": warnings,
                "palette": palette}})
@@ -213,9 +236,11 @@ def approved(repo: str) -> None:
               **{f"docs/design/mock/{s['id']}.html": source / f"{s['id']}.html" for s in front["screens"]},
               **{f"docs/design/shots/{s['id']}-{v}.png": source / f"{s['id']}-{v}.png"
                  for s in front["screens"] for v in views(o["profile"])}}
-    for name in copies:
+    root = tree.resolve()
+    for name in copies:   # a link or a junction on the way, or a place that resolves outside the tree
         parts = Path(name).parts
-        if any((tree.joinpath(*parts[:i])).is_symlink() for i in range(1, len(parts) + 1)):
+        steps = [tree.joinpath(*parts[:i]) for i in range(1, len(parts) + 1)]
+        if any(p.is_symlink() or is_junction(p) for p in steps) or not (tree / name).resolve().is_relative_to(root):
             store.stop("folder", f"설계 문서 자리가 작업트리 밖을 가리킨다: {name}")
             return
     for name, src in copies.items():

@@ -66,7 +66,8 @@ def test_an_approval_of_the_head_read_moves_to_split_with_the_input_frozen(revie
     with asking, patch.object(oneshot_spec, "start", lambda *a, **fields: started.append((a, fields))):
         oneshot_review.review("budget")
     (args, fields), = started
-    assert args == ("budget", "split") and fields["stage"] == "split" and fields["reviews"][-1]["findings"] == [P2]
+    assert args == ("budget", "split") and not fields
+    assert o()["stage"] == "split" and o()["working"] == "split" and o()["reviews"][-1]["findings"] == [P2]
     role, text, where = heard[0]
     assert role == "review" and where == tree and head in text and "test_spending_adds_to_the_total" in text
     assert "지출을 적으면" in text   # the requirements travel in the prompt; the reviewer reads no record
@@ -162,13 +163,15 @@ def test_an_instruction_queued_while_the_review_held_the_tree_goes_once_after_it
         sent.append(a)
         query.hold(work._busy, query._lock, str(tree), "", kind="turn")
 
+    handed = []
     try:
         with patch.object(oneshot, "ask", ask), patch.object(oneshot_build, "send", build), \
+             patch.object(oneshot_spec, "handoff", lambda *a: handed.append(a)), \
              patch.object(work, "session", lambda *a: SimpleNamespace(id="c", parent_id=None)), \
              patch.object(work, "begin", lambda path, chat, text, release, run: (begun.append(text), release())):
             oneshot_review.review("budget")
-        if kind == "approve":
-            assert begun == ["다음 지시"] and str(tree) not in work._queued
+        if kind == "approve":   # the split holds the tree next and sends the instruction when it lets go
+            assert handed == [("budget", "split")] and not begun and work._queued[str(tree)].text == "다음 지시"
         else:   # the refusal's build turn goes first; the instruction waits for that turn's end
             assert sent and not begun and work._queued[str(tree)].text == "다음 지시"
     finally:

@@ -5,13 +5,16 @@ are stand-ins; Git, the project's interpreter and Playwright run for real.
 """
 
 import json
+import subprocess
 import sys
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
 
-from main import oneshot, oneshot_front as front, oneshot_screens as screens, oneshot_spec, specs
+from main import oneshot, oneshot_front as front, oneshot_screens as screens, oneshot_spec, query, specs, work
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_spec import fenced, world  # noqa: F401 — `world` is a fixture
 
@@ -22,6 +25,12 @@ FEATURES = [
     {"id": "export", "name": "내보내기", "endpoints": ["GET /export"], "class": "rarely", "why": "한 해에 한 번"},
 ]
 FREQUENCY = {"add-spending": "every", "month-list": "sometimes", "export": "rarely"}
+
+
+def head(tree) -> str:
+    """The HEAD the stages after the build read: the one its checks passed."""
+
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=tree, check=True, capture_output=True, text=True).stdout.strip()
 
 
 def mock(*features, extra=""):
@@ -83,7 +92,7 @@ def playwright_or_skip():
 def boarded(world):  # noqa: F811 — the imported fixture, requested by name
     oneshot_spec.saved("budget", oneshot={
         "stage": "frontend", "features": FEATURES, "frequency": FREQUENCY, "first_screen": "오늘 쓴 돈을 적는다",
-        "design": {}, "glossary": [], "profile": {**o()["profile"], "responsive": "desktop"}})
+        "design": {}, "glossary": [], "profile": {**o()["profile"], "responsive": "desktop"}, "built_head": head(world)})
     return world
 
 
@@ -120,7 +129,8 @@ def test_a_feature_list_that_invents_drops_or_shares_an_operation_is_refused(cha
 
 
 def test_the_split_turn_names_each_operation_and_opens_the_board(world):  # noqa: F811
-    oneshot_spec.saved("budget", oneshot={"stage": "split", "intent": {**o()["intent"], "first_screen": "오늘 지출"}})
+    oneshot_spec.saved("budget", oneshot={"stage": "split", "intent": {**o()["intent"], "first_screen": "오늘 지출"},
+                                          "built_head": head(world)})
     heard, asking = replies(fenced("oneshot-features", FEATURES))
     with asking, patch.object(front, "served", lambda spec: OPS):
         front.split("budget")
@@ -128,6 +138,42 @@ def test_the_split_turn_names_each_operation_and_opens_the_board(world):  # noqa
     assert all(f"`{op}`" in heard[0][1] for op in OPS)
     board = oneshot_spec.view(specs.load("budget", oneshot.BRANCH))["board"]
     assert board["frequency"] == FREQUENCY   # the model's proposal, until the owner submits
+
+
+def test_the_split_holds_the_tree_and_sends_the_queued_instruction_when_it_lets_go(world):  # noqa: F811
+    oneshot_spec.saved("budget", oneshot={"stage": "split", "built_head": head(world), "first_screen": "오늘 지출"})
+    begun = []
+
+    def served(spec):
+        with pytest.raises(HTTPException):   # no turn of the person's writes the app it reads
+            query.hold(work._busy, query._lock, str(world), "busy")
+        work._queued[str(world)] = work.Order(path=str(world), text="다음 지시")
+        return OPS
+
+    _, asking = replies(fenced("oneshot-features", FEATURES))
+    try:
+        with asking, patch.object(front, "served", served), \
+             patch.object(work, "session", lambda *a: SimpleNamespace(id="c", parent_id=None)), \
+             patch.object(work, "begin", lambda path, chat, text, release, run: (begun.append(text), release())):
+            front.split("budget")
+        assert o()["stage"] == "board" and begun == ["다음 지시"] and str(world) not in work._busy
+    finally:
+        work._queued.pop(str(world), None)
+
+
+def test_a_backend_changed_while_the_split_read_it_goes_back_to_the_builds_checks(world):  # noqa: F811
+    oneshot_spec.saved("budget", oneshot={"stage": "split", "built_head": head(world), "first_screen": "오늘 지출"})
+
+    def served(spec):
+        (world / "late.py").write_text("x = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "late.py"], cwd=world, check=True)
+        subprocess.run(["git", "commit", "-qm", "late"], cwd=world, check=True)
+        return OPS
+
+    _, asking = replies(fenced("oneshot-features", FEATURES))
+    with asking, patch.object(front, "served", served):
+        front.split("budget")
+    assert o()["stage"] == "build" and o()["stopped"]["reason"] == "gate" and not o().get("features")
 
 
 def test_the_board_needs_every_feature_placed_and_starts_the_design_from_scratch(world):  # noqa: F811
@@ -187,6 +233,7 @@ def test_a_clean_design_is_shot_and_shown_as_the_r2_sheet(boarded):
     ("<script>console.error('boom')</script>", "콘솔 오류"),
     ("<script>missing()</script>", "페이지 오류"),
     ("<img src='https://example.com/x.png'>", "외부 요청"),
+    (f"<iframe src='{Path(__file__).resolve().as_uri()}'></iframe>", "로컬 파일 요청"),   # a file beside the mock
 ])
 def test_a_mock_that_does_not_open_cleanly_is_sent_back_once(boarded, extra, said):
     playwright_or_skip()
@@ -243,6 +290,34 @@ def test_an_edit_reaches_the_screens_states_and_keeps_the_rest_approved(boarded)
     r2 = o()["r2"]
     assert r2["round"] == 2 and r2["marks"] == {"S2": "edited", "S2.states": "again"} and r2["palette"] == "C1"
     assert set(r2["decisions"]) == {"S1", "S1.states", "S3", "S3.states"} and o()["front"]["shots"] == 2
+
+
+def test_an_edit_that_changes_the_tokens_is_sent_back_and_the_chosen_palette_stands(boarded):
+    designed(boarded)
+    front.decide("budget", front.R2(decisions={**approve_all().decisions, "S2": {"edit": "목록을 표로"}}, palette="C1"))
+    oneshot_spec.saved("budget", oneshot={"working": None})
+    recolored = screens_with({(1, "purpose"): "지난 달 지출을 표로 본다"})
+    recolored["oneshot-tokens"]["palettes"][0]["colors"]["primary"] = "#ff0000"
+    recolored["oneshot-tokens"]["type"] = ["99px"]
+    fixed = screens_with({(1, "purpose"): "지난 달 지출을 표로 본다"})
+    heard, asking = replies(answer(recolored), answer(fixed))
+    with asking:
+        front.refront("budget", {"S2": "목록을 표로"}, ["S2", "S2.states"])
+    assert "tokens" in heard[1][1] and o()["front"]["tokens"] == blocks()["oneshot-tokens"] and o()["r2"]["palette"] == "C1"
+
+
+def test_a_junction_on_the_way_to_the_design_stops_the_approval_before_anything_is_written(boarded, tmp_path):
+    designed(boarded)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (boarded / "docs" / "design").mkdir(parents=True, exist_ok=True)
+    try:
+        import _winapi
+        _winapi.CreateJunction(str(outside), str(boarded / "docs" / "design" / "mock"))
+    except (ImportError, OSError):
+        pytest.skip("no directory junctions here")
+    front.decide("budget", approve_all(palette="C1"))
+    assert o()["stopped"]["reason"] == "folder" and not any(outside.iterdir())
 
 
 def test_reopening_the_board_discards_the_design_and_its_approvals(boarded):

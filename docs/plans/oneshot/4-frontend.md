@@ -45,6 +45,14 @@ filter are one), and proposes a class with a one-line reason, as an
 `[{id, name, endpoints: ["METHOD /path"], class, why}]`. Every served
 operation belongs to exactly one feature and a feature names no other.
 
+The backend review hands the worktree to the split only after letting it go,
+and the split, S6 and an R2 edit turn each hold it as the review does
+(`oneshot_review.holding`): from reading the app until the result is saved,
+on the HEAD the build passed and a clean tree, checked before and after the
+turn. A moved tree sends the run back to the build's checks (`build`, stopped
+with `gate`), and the instruction the person queued for the worktree
+meanwhile goes once the stage lets go.
+
 | Class | Placement rule |
 | --- | --- |
 | `every` | On the primary screen, visible without a click |
@@ -87,8 +95,8 @@ Server checks, each a refusal sent back once:
   feature appears on any.
 - Each mock carries `data-feature="<id>"` for every feature its screen lists.
 - Each mock opens with no console error, no page error and no request
-  leaving the page; the shooting browser aborts every request that is not a
-  `file:` or `data:` URL.
+  leaving the page; the shooting browser lets through the mock's own file and
+  `data:` URLs and aborts every other request, another local file included.
 - Translationese in a purpose, a state line or a palette name is sent back
   once and kept as a warning after that, as in R1.
 
@@ -114,10 +122,14 @@ The items are each screen (`S1`, with its mock and screenshot) and each
 screen's states (`S1.states`); the palette is a choice beside them, needed
 before approval. Edits follow R1's dependency rule: a screen's states, its
 mock and its screenshot depend on the screen, and every item in the set loses
-its approval and is shown again. Every item, folded or not, needs a decision
-before the run moves on. Approval writes `docs/design/frontend.md`, the mocks
-under `docs/design/mock/` and the shots under `docs/design/shots/` into the
-worktree as one commit, and the run moves to `build-front`.
+its approval and is shown again. No item holds the tokens, so an edit turn
+that changes a palette, the type scale or the spacing is sent back, and the
+owner's palette choice stands as chosen. Every item, folded or not, needs a
+decision before the run moves on. Approval writes `docs/design/frontend.md`,
+the mocks under `docs/design/mock/` and the shots under `docs/design/shots/`
+into the worktree as one commit, and the run moves to `build-front`. A
+symbolic link or a junction on the way to any of them, or a place that
+resolves outside the worktree, stops the approval before anything is written.
 
 An edit to a placement may reopen S5's board instead of S6, when the owner
 says the class was wrong rather than the screen. Reopening S5 invalidates
