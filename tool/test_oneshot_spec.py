@@ -141,6 +141,10 @@ def design_with(changes: dict):
     ({("oneshot-entities", 0, "name"): "Expense"}, "쓰지 않기로"),
     ({("oneshot-api", 0, "path"): "/login"}, "로그인 없음"),
     ({("oneshot-tests", 0, "test_name"): "spending adds"}, "test_"),
+    ({("oneshot-entities", 0, "relations"): 3}, "문자열 목록"),
+    ({("oneshot-api", 0, "errors"): 3}, "문자열 목록"),
+    ({("oneshot-api", 1, "method"): "POST"}, "같은 `POST /spendings`"),
+    ({("oneshot-api", 0, "path"): "/a|b"}, "/ 로 시작"),
 ])
 def test_each_design_check_refuses(change, said):
     with pytest.raises(ValueError, match=said):
@@ -152,6 +156,18 @@ def test_a_valid_design_passes_and_a_password_profile_needs_an_auth_endpoint():
     sheet.checked(design, REQS, GLOSSARY, PROFILE)
     with pytest.raises(ValueError, match="인증 엔드포인트가 없다"):
         sheet.checked(design, REQS, GLOSSARY, {**PROFILE, "auth": "password"})
+    authors = sheet.parsed(design_with({("oneshot-api", 0, "path"): "/authors"}))
+    sheet.checked(authors, REQS, GLOSSARY, PROFILE)   # a word containing `auth` is not a sign-in path
+    with pytest.raises(ValueError, match="인증 엔드포인트가 없다"):
+        sheet.checked(authors, REQS, GLOSSARY, {**PROFILE, "auth": "password"})
+
+
+def test_a_cycle_through_the_requirements_and_a_malformed_avoid_list_are_refused():
+    cyclic = [{**REQS[0], "depends_on": ["R2"]}, REQS[1]]
+    with pytest.raises(ValueError, match="돌고 돈다"):
+        sheet.checked(sheet.parsed(DESIGN), cyclic, GLOSSARY, PROFILE)
+    with pytest.raises(ValueError, match="문자열 목록"):
+        sheet.requirement_block({"requirements": REQS, "glossary": [{**GLOSSARY[0], "avoid": 3}]})
 
 
 @pytest.mark.parametrize("text, pattern", [
@@ -169,7 +185,7 @@ def test_each_translationese_pattern_is_counted_and_named(text, pattern):
 
 def test_clean_korean_passes_the_translationese_check():
     for text in ("지출을 적으면 이번 달 합계에 더해진다", "사용자들이 같은 가계부를 함께 쓴다", "목록을 만들 수 있다",
-                 "고른 달의 지출 목록을 돌려준다"):
+                 "고른 달의 지출 목록을 돌려준다", "핸들을 잡는다", "아들이 온다"):
         assert sheet.translationese(text) == [], text
 
 
@@ -279,3 +295,82 @@ def test_a_stopped_edit_turn_resumes_to_the_sheet_and_a_cut_turn_is_recovered(wo
                                                                               "sent": 1.0}})
     oneshot_spec.recover()
     assert o()["stopped"]["reason"] == "restart" and o()["inflight"] is None and o()["spend"]["unknown"] == 1
+
+
+# -- Review round 1 of #320 ----------------------------------------------------------------
+
+def test_the_end_rule_reads_the_sources_as_stored_and_an_original_cannot_be_dropped(world):
+    oneshot_spec.saved("budget", requirements=REQS, oneshot={"glossary": GLOSSARY})
+    swapped = [{**REQS[0], "source": {"kind": "policy", "locator": "x"}, "postconditions": []},
+               {**REQS[1], "source": {"kind": "original", "locator": "x"}, "depends_on": []}]
+    with replies(fenced("oneshot-spec", {"requirements": swapped, "glossary": GLOSSARY})):
+        oneshot_spec.talk("budget")
+    assert o()["stage"] == "spec" and "R1" in o()["open"]
+    dropped = fenced("oneshot-spec", {"requirements": [{**REQS[1], "depends_on": []}], "glossary": GLOSSARY})
+    with replies(dropped, dropped):
+        oneshot_spec.talk("budget")
+    assert "지웠다: R1" in o()["stopped"]["detail"]
+
+
+def test_the_ending_turn_drops_its_question_and_keeps_no_blocks_in_the_conversation(world):
+    ask = {"questions": [{"question": "더 볼까요?", "options": [{"label": "예"}]}]}
+    with replies("다 정했다.\n" + fenced("oneshot-spec", {"requirements": REQS, "glossary": GLOSSARY}) +
+                 fenced("choices", ask)):
+        oneshot_spec.talk("budget")
+    last = o()["talk"][-1]
+    assert o()["stage"] == "design" and last["choices"] is None and last["text"] == "다 정했다."
+
+
+def test_a_redesign_may_not_move_items_outside_its_reach_or_rename_the_owners_term(world):
+    at_r1(world)
+    oneshot_spec.saved("budget", oneshot={"sentence": "지출을 적는 가계부"})
+    outside = answer(design_with({("oneshot-api", 0, "response"): {"sum": "int"},
+                                  ("oneshot-assumptions", 0, "what"): "달은 월급날로 나눈다"}))
+    with replies(outside, outside):
+        oneshot_spec.redesign("budget", {"P1": "sum 으로"}, ["F1", "P1", "T1"])
+    assert "범위 밖" in o()["stopped"]["detail"] and "A1" in o()["stopped"]["detail"]
+    renamed = answer(DESIGN, fenced("oneshot-spec", {"requirements": REQS,
+                                                     "glossary": [{"term": "cost", "meaning": "쓴 돈"}]}))
+    with replies(renamed, renamed):
+        oneshot_spec.redesign("budget", {"R1": "고쳐라"}, sorted(sheet.dependents(sheet.parsed(DESIGN), REQS, {"R1"})))
+    assert "지출" in o()["stopped"]["detail"]
+
+
+def test_a_model_answer_of_the_wrong_type_is_refused_and_an_unforeseen_failure_stops(world):
+    oneshot_spec.saved("budget", requirements=REQS, oneshot={"glossary": GLOSSARY, "stage": "design"})
+    broken = answer(design_with({("oneshot-entities", 0, "relations"): 3}))
+    with replies(broken, broken):
+        oneshot_spec.design("budget")
+    assert o()["stopped"]["reason"] == "block" and "문자열 목록" in o()["stopped"]["detail"]
+    store = oneshot_spec.store("budget")
+    oneshot.start_worker(store, "design", lambda repo: (_ for _ in ()).throw(RuntimeError("boom")), ("budget",), {})
+    oneshot._workers[store.key].join()
+    assert o()["working"] is None and "RuntimeError: boom" in o()["stopped"]["detail"]
+
+
+def test_a_first_turn_the_hand_over_never_started_is_left_resumable(world, tmp_path):
+    oneshot.RUNS.mkdir(parents=True, exist_ok=True)
+    oneshot_spec.recover()
+    assert not o().get("stopped")   # the run's commit point is not written: the bootstrap still owns it
+    (oneshot.RUNS / "0123456789abcdef.json").write_text(json.dumps({"committed": True}), encoding="utf-8")
+    oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "restart"
+    oneshot_spec.resume("budget")
+    assert o()["working"] == "talk"
+
+
+def test_the_approval_commits_only_the_design_files_and_the_sheet_escapes_what_it_shows(world):
+    at_r1(world)
+    (world / "other.txt").write_text("staged meanwhile", encoding="utf-8")
+    subprocess.run(["git", "add", "other.txt"], cwd=world, check=True)
+    oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions=everything()))
+    shown = subprocess.run(["git", "show", "--name-only", "--format=", "HEAD"], cwd=world, capture_output=True,
+                           text=True).stdout.split()
+    assert shown == ["docs/design/api.yaml", "docs/design/backend.md"]
+    staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=world, capture_output=True, text=True)
+    assert staged.stdout.split() == ["other.txt"]
+    odd = design_with({("oneshot-flows", 0, "steps"): [{"from": "사용자 앱", "to": "서버", "say": "금액;\n```보낸다",
+                                                         "api": "P1"}]})
+    oneshot_spec.saved("budget", oneshot={"design": sheet.parsed(odd)})
+    text = sheet.sheet(specs.load("budget", oneshot.BRANCH))
+    assert "    사용자_앱->>서버: 금액, '''보낸다" in text

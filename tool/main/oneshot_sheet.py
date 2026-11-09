@@ -24,7 +24,9 @@ BLOCKS = ",".join(block for block, _, _ in KINDS.values())
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 TEST_NAME = re.compile(r"test_[a-z0-9_]+")
 MAX_ASSUMPTIONS, MAX_ROWS = 7, 12
-AUTH_WORDS = re.compile(r"login|logout|signin|signup|auth|password|token|session", re.I)
+PATH = re.compile(r"/[A-Za-z0-9_.{}/-]*")
+# A path segment that is a sign-in role, whole: `/authors` is not one.
+AUTH_SEGMENT = re.compile(r"log-?(in|out)|sign-?(in|up|out)|auth|oauth2?|sessions?|tokens?|passwords?|register", re.I)
 
 # The translationese check: counts and names, never rewrites. The patterns and the threshold are the knobs.
 HUMANS = ("사람", "사용자", "회원", "관리자", "학생", "고객", "친구", "우리", "여러분", "직원", "참가자", "선생님",
@@ -51,7 +53,8 @@ def translationese(text: str) -> list[tuple[str, str]]:
             found.append(("의 연쇄", " ".join(chain)))
     for name, pattern in PATTERNS.items():
         for m in pattern.finditer(text):
-            if name == "사물에 붙은 들" and (m.group(1).endswith(HUMANS) or m.group(1) in ("만", "")):
+            # A one-syllable stem is a word that ends in `들` (`핸들`, `아들`), not a plural.
+            if name == "사물에 붙은 들" and (m.group(1).endswith(HUMANS) or len(m.group(1)) < 2):
                 continue
             found.append((name, m.group(0).strip()))
     return found
@@ -64,6 +67,13 @@ def _text(item: dict, key: str, where: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{where}: `{key}` 가 비었다")
     return " ".join(value.split())
+
+
+def _strings(item: dict, key: str, where: str) -> list[str]:
+    value = item.get(key) or []
+    if not isinstance(value, list) or not all(isinstance(v, (str, int)) and not isinstance(v, bool) for v in value):
+        raise ValueError(f"{where}: `{key}` 는 문자열 목록이어야 한다")
+    return [str(v) for v in value]
 
 
 def _items(name: str, value) -> list[dict]:
@@ -98,17 +108,17 @@ def _kind(name: str, item: dict, where: str) -> dict:
             raise ValueError(f"{where}: `fields` 마다 `name` 과 `type` 이 있어야 한다")
         item["fields"] = [{"name": f["name"], "type": f["type"], "rule": str(f.get("rule") or ""),
                            "key": bool(f.get("key"))} for f in fields]
-        item["relations"] = [str(r) for r in item.get("relations") or []]
+        item["relations"] = _strings(item, "relations", where)
     elif name == "api":
         if item["method"] not in METHODS:
             raise ValueError(f"{where}: `method` 는 {', '.join(METHODS)} 중 하나다")
-        if not isinstance(item["path"], str) or not item["path"].startswith("/"):
-            raise ValueError(f"{where}: `path` 는 / 로 시작한다")
+        if not isinstance(item["path"], str) or not PATH.fullmatch(item["path"]):
+            raise ValueError(f"{where}: `path` 는 / 로 시작하고 글자, 숫자, `-_.{{}}/` 만 쓴다")
         item["does"] = _text(item, "does", where)
         for key in ("request", "response"):
             if not isinstance(item[key], dict):
                 raise ValueError(f"{where}: `{key}` 는 필드 이름에서 형식으로 가는 객체다")
-        item["errors"] = [str(e) for e in item.get("errors") or []]
+        item["errors"] = _strings(item, "errors", where)
     elif name == "flows":
         _text(item, "name", where)
         steps = item["steps"]
@@ -116,8 +126,8 @@ def _kind(name: str, item: dict, where: str) -> dict:
                 isinstance(s, dict) and all(isinstance(s.get(k), str) and s[k].strip() for k in ("from", "to", "say"))
                 for s in steps):
             raise ValueError(f"{where}: `steps` 마다 `from`, `to`, `say` 가 있어야 한다")
-        item["steps"] = [{"from": s["from"], "to": s["to"], "say": s["say"], "api": str(s.get("api") or "")}
-                         for s in steps]
+        item["steps"] = [{"from": " ".join(s["from"].split()), "to": " ".join(s["to"].split()),
+                          "say": " ".join(s["say"].split()), "api": str(s.get("api") or "")} for s in steps]
     elif name == "assumptions":
         for key in ("what", "why", "rejected"):
             item[key] = _text(item, key, where)
@@ -159,8 +169,12 @@ def checked(design: dict, reqs: list[dict], glossary: list[dict], profile: dict)
     for item in [i for kind in KINDS for i in design[kind]]:
         if bad := [d for d in item["depends_on"] if d not in known or d == item["id"]]:
             raise ValueError(f"{item['id']}: `depends_on` 이 없는 id 를 가리킨다 — {', '.join(bad)}")
-    if cycle := _cycle(design):
+    if cycle := _cycle(known):
         raise ValueError(f"`depends_on` 이 돌고 돈다 — {' → '.join(cycle)}")
+    routes: dict[tuple[str, str], str] = {}
+    for p in design["api"]:
+        if (twin := routes.setdefault((p["method"], p["path"]), p["id"])) != p["id"]:
+            raise ValueError(f"{twin}, {p['id']}: 같은 `{p['method']} {p['path']}` 다 — 하나로 합쳐라")
     for p in design["api"]:
         if not req_ids & set(p["depends_on"]):
             raise ValueError(f"{p['id']} {p['method']} {p['path']}: 어떤 요구에도 쓰이지 않는다 — 범위 밖이다")
@@ -184,15 +198,17 @@ def checked(design: dict, reqs: list[dict], glossary: list[dict], profile: dict)
         for avoid in g.get("avoid") or []:
             if hits := [i for i, text in words if avoid.lower() in text.lower()]:
                 raise ValueError(f"{', '.join(hits)}: 용어집의 `{g['term']}` 대신 쓰지 않기로 한 `{avoid}` 를 썼다")
-    auth = [p for p in design["api"] if AUTH_WORDS.search(p["path"])]
+    auth = [p for p in design["api"] if any(AUTH_SEGMENT.fullmatch(s) for s in p["path"].split("/"))]
     if profile.get("auth") == "none" and auth:
         raise ValueError(f"{auth[0]['id']}: 환경 카드는 로그인 없음인데 인증 엔드포인트가 있다")
     if profile.get("auth") in ("password", "oauth") and not auth:
         raise ValueError(f"환경 카드는 로그인 `{profile['auth']}` 인데 인증 엔드포인트가 없다")
 
 
-def _cycle(design: dict) -> list[str]:
-    edges = {i["id"]: i["depends_on"] for kind in KINDS for i in design[kind]}
+def _cycle(known: dict[str, dict]) -> list[str]:
+    """A cycle through the requirements and the design items together, or empty."""
+
+    edges = {i: item.get("depends_on", []) for i, item in known.items()}
     state: dict[str, int] = {}
 
     def visit(node: str, path: list[str]) -> list[str]:
@@ -265,6 +281,18 @@ def _cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
 
+def _actor(text: str) -> str:
+    """A Mermaid participant: letters, digits and Hangul only."""
+
+    return re.sub(r"[^\w가-힣]", "_", text) or "_"
+
+
+def _said(text: str) -> str:
+    """A Mermaid message: one line, no statement separator, no fence."""
+
+    return " ".join(text.split()).replace(";", ",").replace("#", "＃").replace("`", "'")
+
+
 def _shape(value: dict) -> str:
     return ", ".join(f"`{k}`: {v}" for k, v in value.items()) or "없음"
 
@@ -291,7 +319,7 @@ def sheet(spec: dict) -> str:
         lines.append("- 공개 저장소다: 코드와 설계 문서가 모두에게 보인다")
     lines += ["", "## 데이터와 API", "", "```mermaid", *mermaid_er(design), "```", "",
               "| id | 메서드 | 경로 | 하는 일 |", "| --- | --- | --- | --- |"]
-    lines += [f"| {p['id']}{mark(p['id'])} | {p['method']} | `{p['path']}` | {_cell(p['does'])} |"
+    lines += [f"| {p['id']}{mark(p['id'])} | {p['method']} | `{_cell(p['path'])}` | {_cell(p['does'])} |"
               for p in design["api"][:MAX_ROWS]]
     if len(design["api"]) > MAX_ROWS:
         lines.append(f"\n그 밖의 엔드포인트 {len(design['api']) - MAX_ROWS}개는 아래 접힌 부분에 있다")
@@ -302,7 +330,7 @@ def sheet(spec: dict) -> str:
     lines += ["", "<details><summary>흐름, 요청·응답, 용어집</summary>", ""]
     for f in design["flows"]:
         lines += [f"### {f['id']}{mark(f['id'])} {f['name']}", "", "```mermaid", "sequenceDiagram",
-                  *[f"    {s['from']}->>{s['to']}: {s['say']}" for s in f["steps"]], "```", ""]
+                  *[f"    {_actor(s['from'])}->>{_actor(s['to'])}: {_said(s['say'])}" for s in f["steps"]], "```", ""]
     for p in design["api"]:
         lines.append(f"- **{p['id']}**{mark(p['id'])} `{p['method']} {p['path']}` 요청 {_shape(p['request'])} / "
                      f"응답 {_shape(p['response'])} / 오류 {', '.join(p['errors']) or '없음'}")
@@ -360,5 +388,5 @@ def requirement_block(value) -> tuple[list[dict], list[dict]]:
             for g in glossary):
         raise ValueError("`glossary` 항목마다 `term` 과 `meaning` 이 있어야 한다")
     glossary = [{"term": g["term"].strip(), "meaning": " ".join(g["meaning"].split()),
-                 "avoid": [str(a) for a in g.get("avoid") or [] if str(a).strip()]} for g in glossary]
+                 "avoid": [a for a in _strings(g, "avoid", f"용어 {g['term']}") if a.strip()]} for g in glossary]
     return reqs, glossary

@@ -247,7 +247,7 @@ def turned(rid: str | Store, role: str, system: str, text: str, name: str, check
                                                    time.monotonic() - started))
         try:
             return check(final, attempt) if "," in name else check(block(final, name))
-        except ValueError as exc:
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:   # the answer's shape, refused
             reason = str(exc)
     store.stop("block", f"`{name}` 블록이 두 번 거부됐다 — {reason}")
     return None
@@ -602,7 +602,16 @@ def start_worker(store: Store, work: str, fn, args: tuple, fields: dict) -> None
         if running is not None and running.is_alive() and running is not threading.current_thread():
             raise HTTPException(409, "이 실행은 이미 돌고 있다")
         store.put(**fields, working=work, stopped=None)
-        thread = threading.Thread(target=fn, args=args, daemon=True, name=f"oneshot-{store.key}")
+
+        def guarded() -> None:   # an unforeseen failure still stops with a reason, never leaves `working` set
+            try:
+                fn(*args)
+            except Exception as exc:
+                with _lock:
+                    if _workers.get(store.key) is threading.current_thread():
+                        store.stop("block", f"예상하지 못한 실패 — {type(exc).__name__}: {exc}")
+
+        thread = threading.Thread(target=guarded, daemon=True, name=f"oneshot-{store.key}")
         _workers[store.key] = thread
         thread.start()
 

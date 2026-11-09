@@ -77,20 +77,37 @@ def owner_words(o: dict) -> str:
     return "\n".join([o["sentence"], *[t["text"] for t in o.get("talk") or [] if t["role"] == "owner"]])
 
 
-def spec_turn(final: str, previous: list[dict], words: str):
+def kept(spec: dict, value, where: str) -> tuple[list[dict], list[dict]]:
+    """An `oneshot-spec` block as the spec will store it: each kept requirement's stored `source`
+    (`spec_views.stamped`), a new one counted as a decision outside S2, no original requirement
+    dropped, and no term the owner used renamed or removed."""
+
+    reqs, glossary = sheet.requirement_block(value)
+    previous, o = spec.get("requirements") or [], spec["oneshot"]
+    sources = {r["id"]: r["source"] for r in previous}
+    if gone := [r["id"] for r in previous if r["source"]["kind"] == "original" and r["id"] not in {x["id"] for x in reqs}]:
+        raise ValueError(f"주인의 말에서 온 요구를 지웠다: {', '.join(gone)}")
+    reqs = [{**r, "source": sources.get(r["id"]) or (r["source"] if where == "S2" else
+                                                      {"kind": "decision", "locator": where})} for r in reqs]
+    words = owner_words(o)
+    if renamed := [g["term"] for g in o.get("glossary") or []
+                   if g["term"] in words and g["term"] not in {x["term"] for x in glossary}]:
+        raise ValueError(f"주인이 쓴 용어를 바꾸거나 지웠다: {', '.join(renamed)}")
+    return reqs, glossary
+
+
+def spec_turn(final: str, spec: dict):
     found = {m.group(1): m.group(2) for m in oneshot.BLOCK.finditer(final)}
     if "oneshot-spec" not in found:
         raise ValueError("`oneshot-spec` 블록이 하나 있어야 한다")
-    reqs, glossary = sheet.requirement_block(json.loads(found["oneshot-spec"]))
-    if renamed := [g["term"] for g in previous if g["term"] in words and g["term"] not in {x["term"] for x in glossary}]:
-        raise ValueError(f"주인이 쓴 용어를 바꾸거나 지웠다: {', '.join(renamed)}")
+    reqs, glossary = kept(spec, json.loads(found["oneshot-spec"]), "S2")
     choices = None
     if "choices" in found:
         choices = json.loads(found["choices"])
         specs._shape("choices", choices)
         if len(choices.get("questions", [choices])) > 3:
             raise ValueError("한 번에 묻는 `choices` 는 세 개까지다")
-    said = specs.blocks(final)[0]
+    said = oneshot.BLOCK.sub("", final).strip()
     return reqs, glossary, choices, said
 
 
@@ -106,12 +123,15 @@ def talk(repo: str) -> None:
             f"{json.dumps(o.get('glossary') or [], ensure_ascii=False)}\n\nThe conversation so far:\n\n"
             + ("\n\n".join(f"[{t['role']}] {t['text']}" for t in o.get("talk") or []) or "(none yet: this is the first turn)"))
     found = oneshot.turned(store(repo), "spec", SPEC_PROMPT, text, "oneshot-spec,choices",
-                           lambda final, _: spec_turn(final, o.get("glossary") or [], owner_words(o)))
+                           lambda final, _: spec_turn(final, spec))
     if found is None:
         return
     reqs, glossary, choices, said = found
-    turns = [*(o.get("talk") or []), {"role": "agent", "text": said, "choices": choices, "ts": time.time()}]
-    if not (why := ended(reqs)):
+    why = ended(reqs)
+    # A question in the turn that ends the conversation could never be answered: it is dropped.
+    turns = [*(o.get("talk") or []), {"role": "agent", "text": said, "choices": choices if why else None,
+                                      "ts": time.time()}]
+    if not why:
         saved(repo, requirements=reqs, oneshot={"glossary": glossary, "talk": turns, "open": ""})
         handoff(repo, "design", stage="design")
     else:
@@ -148,10 +168,14 @@ def design_turn(final: str, attempt: int, spec: dict, partial: set[str] | None =
             raise ValueError(f"`{m.group(1)}` 블록이 JSON 이 아니다 — {exc}") from exc
     reqs, glossary = spec.get("requirements") or [], spec["oneshot"].get("glossary") or []
     if partial is not None and "oneshot-spec" in found:
-        reqs, glossary = sheet.requirement_block(found["oneshot-spec"])
+        reqs, glossary = kept(spec, found["oneshot-spec"], f"R1 {spec['oneshot']['r1']['round']}회차 고침")
         if why := ended(reqs):
             raise ValueError(why)
     design = sheet.parsed(found)
+    if partial is not None:   # an approval outside the reach survives, so nothing outside it may move
+        old, new = sheet.every(spec["oneshot"]["design"], spec.get("requirements") or []), sheet.every(design, reqs)
+        if moved := sorted(i for i in old if i not in partial and old[i] != new.get(i)):
+            raise ValueError(f"고치라고 한 범위 밖 항목을 바꾸거나 지웠다: {', '.join(moved)} — 그대로 두어라")
     sheet.checked(design, reqs, glossary, spec["oneshot"]["profile"])
     warnings = sheet.soft(design, reqs, glossary)
     if warnings and attempt == 0:
@@ -217,15 +241,22 @@ def approved(repo: str) -> None:
     """Every item approved: the design files written into the worktree and committed, and the build may begin."""
 
     spec = spec_of(repo)
-    tree, o = Path(spec["worktree"]), spec["oneshot"]
-    docs = tree / "docs" / "design"
+    tree, o = Path(spec["worktree"]).resolve(), spec["oneshot"]
+    top = specs.sh(["git", "rev-parse", "--show-toplevel"], tree, 30).stdout.strip()
+    branch = specs.sh(["git", "branch", "--show-current"], tree, 30).stdout.strip()
+    docs = (tree / "docs" / "design").resolve()
+    if not top or Path(top).resolve() != tree or branch != oneshot.BRANCH or not docs.is_relative_to(tree):
+        store(repo).stop("folder", f"작업트리가 `{oneshot.BRANCH}` 브랜치의 그 작업트리가 아니다: {tree}")
+        return
+    files = ["docs/design/backend.md", "docs/design/api.yaml"]
     docs.mkdir(parents=True, exist_ok=True)
     (docs / "backend.md").write_text(sheet.sheet(spec), encoding="utf-8", newline="\n")
     (docs / "api.yaml").write_text(sheet.openapi(spec), encoding="utf-8", newline="\n")
-    for args in (["add", "--", "docs/design/backend.md", "docs/design/api.yaml"],
-                 ["commit", "-m", f"Record the approved backend design (R1 round {o['r1']['round']})"]):
+    # With paths, the commit holds only these two files, whatever else is staged.
+    for args in (["add", "--", *files],
+                 ["commit", "-m", f"Record the approved backend design (R1 round {o['r1']['round']})", "--", *files]):
         done = specs.sh(["git", *args], tree, 60)
-        if done.returncode and "nothing to commit" not in done.stdout + done.stderr:
+        if done.returncode and not re.search("nothing to commit|no changes added", done.stdout + done.stderr):
             store(repo).stop("folder", f"설계 문서를 커밋하지 못했다 — {(done.stderr or done.stdout).strip()[-300:]}")
             return
     head = specs.sh(["git", "rev-parse", "HEAD"], tree, 30).stdout.strip()
@@ -238,10 +269,24 @@ def start(repo: str, work: str, *args, **fields) -> None:
 
 
 def recover() -> None:
+    """A stage running when the server stopped, and a first S2 turn the bootstrap's hand-over never
+    started, are both left stopped with `restart`, so `[재개]` takes them on."""
+
     for folder in specs.SPECS.glob("*"):
         spec = specs.load(folder.name, oneshot.BRANCH) if folder.is_dir() else None
-        if spec and (spec.get("oneshot") or {}).get("working"):
+        o = (spec or {}).get("oneshot") or {}
+        if o.get("working") or (o and o.get("stage") == "spec" and not o.get("talk") and not o.get("stopped")
+                                and handed(o)):
             oneshot.restarted(store(folder.name))
+
+
+def handed(o: dict) -> bool:
+    """The run's commit point is written: the spec, not the bootstrap, owns what comes next."""
+
+    try:
+        return bool(oneshot.load(o.get("run") or "").get("committed"))
+    except HTTPException:
+        return False
 
 
 # -- HTTP ---------------------------------------------------------------------------------

@@ -53,7 +53,10 @@ The step ships as three pull requests, in order:
 
 The bootstrap's last act starts the first S2 turn. Each stage's worker hands
 over to the next one itself; a hand-over refused because the server is going
-down leaves the new stage stopped with `restart`.
+down leaves the new stage stopped with `restart`. At start-up, a spec whose
+run has written its commit point but whose first S2 turn never ran is stopped
+with `restart` too, so `[재개]` starts it. A worker that fails in a way no
+check foresaw stops with `block` and the exception named.
 
 ## S2 — Spec conversation
 
@@ -74,9 +77,12 @@ Runs in the run's own chat, with the `next`-style blocks.
    still be there.
 4. The stage ends when the server finds no `undecided` item and every
    `original` item has at least one scenario (a requirement with
-   `postconditions` that is the item or names it in `depends_on`). The agent
-   cannot end it by saying so; a `choices` block in the turn that ends it is
-   dropped. Until then the server records what is still open.
+   `postconditions` that is the item or names it in `depends_on`). The server
+   judges the requirements as it will store them: a kept requirement keeps
+   its stored `source` whatever the turn claims, and an `original` item may
+   not be dropped. The agent cannot end it by saying so; a `choices` block in
+   the turn that ends it is dropped. Until then the server records what is
+   still open. The conversation keeps the agent's prose without its blocks.
 
 Each turn replaces the requirements and the glossary whole in an
 `oneshot-spec` block and may ask at most three questions in one `choices`
@@ -101,8 +107,9 @@ validates them and writes the files.
 
 Every item has a stable `id`, and `depends_on` lists the ids of the items it
 was derived from: requirements, assumptions, entities and endpoints. The
-server checks the references: every id exists, there is no cycle, an
-endpoint depends on at least one requirement, a test on its requirement and
+server checks the references: every id exists, there is no cycle through the
+requirements and the items together, an endpoint depends on at least one
+requirement, a test on its requirement and
 on every endpoint it calls, a flow on the endpoints in its steps, and
 anything shaped by an assumption names it (the prompt asks for this; no code
 can tell what an assumption shaped). A missing or dangling reference
@@ -112,12 +119,16 @@ Server checks before R1 is shown, each a refusal sent back to the model once:
 
 - Every scenario requirement is covered by an endpoint and a test.
 - Every endpoint names the requirements it serves; one serving nothing is
-  refused as out of scope.
+  refused as out of scope. No two endpoints share a method and path, so the
+  OpenAPI document holds every approved row.
+- A path uses letters, digits and `-_.{}/` only; nested lists (`relations`,
+  `errors`, `avoid`) are lists of strings. A wrong shape is a refusal, never
+  a failed worker.
 - No entity name, field, path or `does` uses a word the glossary's `avoid`
   lists.
-- The profile is respected. Authentication is checked: with `none`, no
-  login, session or password endpoint, and with `password` or `oauth`, at
-  least one. The data store and the framework are stated on the sheet and
+- The profile is respected. Authentication is checked on whole path
+  segments (`/login`, `/sessions`, `/auth`; not `/authors`): with `none`, no
+  such endpoint, and with `password` or `oauth`, at least one. The data store and the framework are stated on the sheet and
   in the documents from the profile, not read from the blocks.
 
 These refusals go back to the model once and stop the run with `block` on the
@@ -126,7 +137,10 @@ once, but a second answer still over them is shown with the warnings listed.
 
 When R1 is approved, the server writes into the worktree and commits:
 `docs/design/backend.md` (the sheet) and `docs/design/api.yaml` (an OpenAPI
-3.1 document written as JSON, which is valid YAML). It records the commit as
+3.1 document written as JSON, which is valid YAML). It first checks that the
+worktree is still the Git root on the oneshot branch and that the output
+folder resolves inside it, and the commit names the two files, so nothing
+else staged meanwhile goes in. It records the commit as
 `oneshot.design_head`. They are the new project's own documents.
 
 ## R1 — the backend sheet
@@ -196,6 +210,10 @@ flows built on it. An edit therefore reaches further than the edited item:
    reaches one of them, transitively.
 2. One turn receives the owner's comments and that whole set, and returns
    replacements for all of it; the S3 checks run again on the full design.
+   An item outside the set that changed or disappeared refuses the answer,
+   because its approval survives. Changed requirements follow S2's rules:
+   stored sources, no original dropped, no owner's term renamed; a new one
+   counts as a decision.
 3. Every item in the set loses its approval, whether or not its text changed.
 4. The sheet is shown again with the set marked: edited by the owner, changed
    as a consequence, or unchanged but needing approval again.
