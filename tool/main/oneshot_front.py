@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from common import is_junction
 
-from . import oneshot, oneshot_screens as screens, oneshot_spec, runtime, specs, work
+from . import oneshot, oneshot_front_build, oneshot_screens as screens, oneshot_spec, runtime, specs, work
 from .oneshot_profile import python_cmd
 from .query import ROOT, _lock as work_lock, hold
 
@@ -245,17 +245,19 @@ def approved(repo: str) -> None:
         return
     release = hold(work._busy, work_lock, str(tree), "작업트리를 다른 턴이 쓰고 있다 — 끝난 뒤 다시 승인하라",
                    kind="turn")
+    passed_on = False
     try:
         if why := review().moved(spec, tree):
             review().rebuild(repo, store, f"R2 승인 전에 작업트리가 바뀌었다 — {why}")
         else:
-            record(repo, store, spec, tree)
+            passed_on = record(repo, store, spec, tree)
     finally:
         release()
-        work.dispatch(tree, SimpleNamespace(halt=runtime.stopping, turn=""))
+        if not passed_on:   # the build turn that follows sends the queued instruction when it ends
+            work.dispatch(tree, SimpleNamespace(halt=runtime.stopping, turn=""))
 
 
-def record(repo: str, store, spec: dict, tree: Path) -> None:
+def record(repo: str, store, spec: dict, tree: Path) -> bool:
     o = spec["oneshot"]
     front, source = o["front"], shots(repo, o["front"]["shots"])
     copies = {"docs/design/frontend.md": None,
@@ -268,7 +270,7 @@ def record(repo: str, store, spec: dict, tree: Path) -> None:
         steps = [tree.joinpath(*parts[:i]) for i in range(1, len(parts) + 1)]
         if any(p.is_symlink() or is_junction(p) for p in steps) or not (tree / name).resolve().is_relative_to(root):
             store.stop("folder", f"설계 문서 자리가 작업트리 밖을 가리킨다: {name}")
-            return
+            return False
     for name, src in copies.items():
         (tree / name).parent.mkdir(parents=True, exist_ok=True)
         if src is None:
@@ -277,8 +279,11 @@ def record(repo: str, store, spec: dict, tree: Path) -> None:
         else:
             shutil.copyfile(src, tree / name)
     head = oneshot_spec.commit(repo, tree, list(copies), f"Record the approved frontend design (R2 round {o['r2']['round']})")
-    if head:
-        oneshot_spec.saved(repo, oneshot={"stage": "build-front", "front_head": head, "working": None})
+    if not head:
+        return False
+    # `working` names the build before its turn is sent: a server that dies in between leaves it for `recover`.
+    oneshot_spec.saved(repo, oneshot={"stage": "build-front", "front_head": head, "working": "build-front"})
+    return True
 
 
 oneshot_spec.WORKERS.update(split=split, frontend=frontend, refront=refront)
@@ -344,7 +349,7 @@ def decide(repo: str, body: R2) -> dict:
         palette = body.palette or o["r2"]["palette"]
         if palette and palette not in {p["id"] for p in o["front"]["tokens"]["palettes"]}:
             raise HTTPException(400, f"없는 색 배합이다: {palette}")
-        r2 ={**o["r2"], "decisions": decisions, "palette": palette}
+        r2 = {**o["r2"], "decisions": decisions, "palette": palette}
         if comments:
             reach = sorted(screens.dependents(set(comments)))
             oneshot_spec.start(repo, "refront", comments, reach, r2=r2)
@@ -353,6 +358,8 @@ def decide(repo: str, body: R2) -> dict:
             raise HTTPException(400, "색 배합을 하나 골라라")
         oneshot_spec.saved(repo, oneshot={"r2": r2})
         approved(repo)
+    if oneshot_spec.spec_of(repo)["oneshot"]["stage"] == "build-front":   # outside the lock: the turn takes the worktree's hold
+        oneshot_front_build.begin(repo)
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
 

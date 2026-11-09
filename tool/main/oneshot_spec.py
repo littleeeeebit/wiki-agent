@@ -24,6 +24,7 @@ SPEC_PROMPT = (ROOT / "tool/prompts/oneshot-spec.md").read_text(encoding="utf-8"
 DESIGN_PROMPT = (ROOT / "tool/prompts/oneshot-design.md").read_text(encoding="utf-8")
 RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}   # a later stage's module adds its own
 SHEETS = {"r1"}   # a stage whose sheet stands when its edit turn stopped
+TURNS = {"tests", "build"}   # a stage run as a work turn (`oneshot_build.STAGES`), resumed by sending it again
 VIEWS: list = []   # a later stage's fields for the screen, `fn(spec) -> dict`
 MAX_TALK = 4_000
 
@@ -327,6 +328,8 @@ def recover() -> None:
     for folder in specs.SPECS.glob("*"):
         spec = specs.load(folder.name, oneshot.BRANCH) if folder.is_dir() else None
         o = (spec or {}).get("oneshot") or {}
+        if o and spec.get("adapter"):   # a restart can cut a turn before its end clears the adapter grant
+            saved(folder.name, adapter=False)
         if o.get("working") or (o and o.get("stage") == "spec" and not o.get("talk") and not o.get("stopped")
                                 and handed(o)):
             oneshot.restarted(store(folder.name))
@@ -414,7 +417,7 @@ def resume(repo: str) -> dict:
             raise HTTPException(409, "멈춘 단계가 아니다")
         if o.get("inflight"):   # its `Turn.finish` has not run: the next turn would lose that turn's charge
             raise HTTPException(409, "앞 턴의 비용을 아직 매기는 중이다 — 잠시 뒤 다시 하라")
-        if o["stage"] not in (*RUNNING, "tests", "build", "review"):
+        if o["stage"] not in (*RUNNING, *TURNS, "review"):
             raise HTTPException(409, f"`{o['stage']}` 단계는 다음 단계에서 이어진다")
         if o["stage"] in SHEETS:   # an edit turn that stopped: the sheet stands, the owner decides again
             return view(saved(repo, oneshot={"stopped": None}))

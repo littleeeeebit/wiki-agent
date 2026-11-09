@@ -23,7 +23,7 @@ on the same worker key; `board` and `r2` wait for the owner.
 | Part | Scope | Module |
 | --- | --- | --- |
 | 4a | S5, S6 and R2: the inventory, the board, the design turn, the mock shots, the R2 decisions and their commit | `tool/main/oneshot_front.py`, `tool/main/oneshot_screens.py` |
-| 4b | S7's build turn: the adapter grant, `live_cmd`, the shooting harness and its mechanical findings | — |
+| 4b | S7's build turn: the adapter grant, `live_cmd`, the shooting harness and its mechanical findings | `tool/main/oneshot_front_build.py`, `tool/main/oneshot_look.py` |
 | 4c | Image input in `ChatSession`, the critic, the stop rule and R3 | — |
 
 The screens that show the board and the sheets belong to
@@ -150,14 +150,21 @@ again from the new map, and R2 is shown whole, not as a difference.
 
 ### Build
 
-A write session receives the approved screen map, states, chosen palette and
-the frequency map. Two rules it must follow, both checked by the server:
+R2's approval sends one write turn (stage `build-front`, run like the
+backend's through `oneshot_build.send`) the approved screen map, states,
+chosen palette and the frequency map; the spec's `done` becomes one item per
+screen. The rules it must follow, all checked by the server:
 
 - Every control for a feature carries `data-feature="<feature_id>"`.
 - The adapter's `live_cmd` starts the backend and the frontend together;
   the session fills it, since step 2 left it empty, and the gate gains the
   frontend's tests, in the existing `gate` shell form with its PowerShell 5
-  variant.
+  variant, keeping the backend's gate command in it.
+- The app serves its screens and its API on one port, read from `PORT`, and
+  keeps its data under `APP_DATA_DIR`. Screens use hash routes (`/#/months`),
+  so no screen route meets an API path.
+- `e2e/seed.json` lists the API calls, `[{method, path, body}]`, that fill
+  an empty app the way a person would.
 
 The adapter is guarded (`tool/guard_grant.py`): a session may write the task
 checkout's `.wiki/adapter.toml` only while its server spec carries
@@ -175,7 +182,11 @@ alone, so its lifetime is the run's job:
 So the grant exists only while a build turn is running, and only in the
 linked worktree. The server then reads the committed adapter back and
 refuses the build if `gate_cmd` lost the backend's tests or `live_cmd` is
-empty.
+empty. It runs the adapter's gate on a clean HEAD, keeps the contract tests
+pinned and every planned backend test passing by node id, as in S4, and then
+runs the harness below. A high finding goes back to the turn with the rest of
+S4's refusal rule (three in all, then `gate`); a pass moves the run to
+`critique`.
 
 ### Look: the shooting harness
 
@@ -184,26 +195,37 @@ over every route, at each viewport, in each state:
 
 | State | How it is produced without changing the app |
 | --- | --- |
-| empty | A fresh database |
-| full | The fixture the contract tests use, loaded through the API |
-| loading | Routes intercepted and delayed |
-| error | Routes intercepted to return 500 |
+| empty | The app started on a fresh `APP_DATA_DIR` |
+| full | The app started again on another fresh folder, then `e2e/seed.json` replayed through the API |
+| loading | The API's requests intercepted and never answered while the shot is taken |
+| error | The API's requests intercepted to return 500 |
+
+A request counts as the API's when it is a fetch whose path matches a served
+operation from the S5 inventory (`{id}` matches one segment). In `error`, the
+failed request's own console line is expected, so only uncaught page errors
+count there.
 
 and records, per shot:
 
-- Console errors and unhandled rejections.
-- Horizontal overflow (`scrollWidth` above the viewport width) and elements
-  outside the viewport.
-- An axe-core accessibility pass, contrast included.
-- The placement check from the DOM: on the primary route every `every`
-  feature's `data-feature` element is visible without interaction, no
-  `rarely` or `never` one is present, and every `sometimes` one becomes
-  visible after one click.
-- The core scenarios run as end-to-end tests clicking through, recorded as
-  video.
+- Console errors and unhandled rejections (high).
+- Horizontal overflow, `scrollWidth` above the viewport width (medium).
+- The placement check from the DOM in the `full` state: on the primary route
+  every `every` feature's `data-feature` element is visible without
+  interaction, no `rarely` or `never` one is present, and every `sometimes`
+  one is visible there or becomes visible after one click on one of the
+  first fifteen controls (high).
+- Across every screen, no `never` feature is present and every other feature
+  is present somewhere (high).
 
-The mechanical findings are deterministic; a placement or console finding is
-high severity by definition and never left to the critic's judgement.
+Each shot is `<screen>-<viewport>-<state>.png` under the run's folder,
+`build/r<n>/`, one `n` per checked build. The mechanical findings are
+deterministic; a placement or console finding is high severity by definition
+and never left to the critic's judgement.
+
+Two records the harness does not take yet: an axe-core accessibility pass
+(axe-core is not installed in this repository's environment) and the core
+scenarios run as recorded end-to-end walkthroughs, which R3 shows and 4c
+adds.
 
 ### Critique: a separate read-only session
 
@@ -274,21 +296,26 @@ changed. Approval moves the run to `pull request`.
   error, a page error or an outside request sent back; R2 needing every item
   and a palette, committing the design, an edit reaching the screen's states
   and keeping the rest approved, and a reopened board discarding the design.
-- New tests for 4b and 4c: the DOM placement check
-  on fixture pages (an `every` feature hidden, a `rarely` feature on the
-  primary route, a `sometimes` feature two clicks away); the stop rule (two
-  clean rounds, the cap, a mechanical high finding overriding a clean
-  critique); the critic's block refused outside its schema; with the
-  provider transport mocked (no external call), the request the real
-  `ChatSession` sends for a critic turn containing each screenshot as an
-  image block beside the text, a retried turn resending the same round's
-  images, and a session on a provider without image input refusing the turn
-  so the run stops with `critique`; the adapter grant
-  set only during the build turns and refused on the original checkout,
-  through the real guard, with the slots committed in the worktree; the real
-  guard refusing an adapter write after a build turn ended by a model error,
-  by the owner's stop, by a gate failure, and after a restart right after the
-  flag was stored; a build whose adapter dropped the backend tests refused.
+- 4b's tests in `tool/test_oneshot_look.py` and
+  `tool/test_oneshot_front_build.py`: on a real fixture app started by its
+  `live_cmd`, every screen shot in every state, and the DOM placement check
+  (an `every` feature hidden, a `rarely` feature on the primary route, a
+  `sometimes` feature no single click reaches, a `never` feature on a
+  screen) and a console error each high; an app the command cannot start
+  refused with its output; the adapter grant set only during the build turn
+  and refused on the original checkout, through the real guard, and the real
+  guard refusing an adapter write after the turn ended by a model error, by
+  the owner's stop, by a refused check, and after a restart right after the
+  flag was stored; a build whose adapter dropped the backend tests or left
+  `live_cmd` empty refused; a high finding from the shots sent back; a clean
+  build moving to `critique`.
+- 4c's tests: the stop rule (two clean rounds, the cap, a mechanical high
+  finding overriding a clean critique); the critic's block refused outside
+  its schema; with the provider transport mocked (no external call), the
+  request the real `ChatSession` sends for a critic turn containing each
+  screenshot as an image block beside the text, a retried turn resending the
+  same round's images, and a session on a provider without image input
+  refusing the turn so the run stops with `critique`.
 - The repository's gate including the web build, `tool/lint.py --check` and
   `tool/debt.py check`.
 - One real run from step 3's throwaway repository through R3, with the R2 and
