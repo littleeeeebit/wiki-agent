@@ -16,7 +16,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from main import channels, connect, oneshot, oneshot_profile, runtime, specs
+from main import channels, connect, oneshot, oneshot_profile, oneshot_spec, runtime, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 
 LAUNCH = oneshot.launch   # the real one; `world` replaces it with a synchronous state change
@@ -71,6 +71,7 @@ def world(tmp_path):
          patch.object(oneshot, "gh_user", lambda: "someone"), \
          patch.object(oneshot, "url_of", lambda run: str(github.bare)), \
          patch.object(oneshot, "codex_role", lambda: False), \
+         patch.object(oneshot_spec, "begin", lambda repo: None), \
          patch.object(oneshot, "launch",
                       lambda rid, work, *a, **f: oneshot.changed(rid, **f, working=work, stopped=None)):
         yield {"workspace": workspace, "github": github, "hub": hub, "tmp": tmp_path}
@@ -166,7 +167,7 @@ def test_intake_restates_and_a_refused_block_is_asked_again_once(world):
     replies = [fenced("oneshot-intent", {**INTENT, "kind": "game"}), fenced("oneshot-intent", INTENT)]
     heard = []
 
-    def ask(rid, role, system, text):
+    def ask(store, role, system, text, where=None):
         heard.append(text)
         return replies.pop(0), {"cost_usd": 0.1}, False
 
@@ -450,7 +451,7 @@ def test_a_running_turn_writes_heartbeats(world):
     rid = made(world, inflight={"role": "intake", "codex": False, "sent": 1.0})
     ended = threading.Event()
     with patch.object(oneshot, "HEARTBEAT", 0.05):
-        beat = threading.Thread(target=oneshot.heartbeat, args=(rid, ended))
+        beat = threading.Thread(target=oneshot.heartbeat, args=(oneshot.run_store(rid), ended))
         beat.start()
         time.sleep(0.3)
         ended.set()

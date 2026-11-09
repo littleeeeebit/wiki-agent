@@ -17,7 +17,6 @@ are English.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import secrets
@@ -33,6 +32,7 @@ from common import swap, worktree_home
 from workspace import TASK, create
 
 from . import channels, connect, prerequisite_review, runtime, specs
+from .oneshot_files import as_planned, git, planned, tracked  # noqa: F401 — `tracked` is read by tests
 from .oneshot_profile import (KINDS, SCHEMA, SUPPORTED_KINDS, allowed, charged, cut, gate_cmd, ledger, problems,
                               proposal)
 from .query import ROOT
@@ -44,7 +44,7 @@ BRANCH = "oneshot-initial"   # also the spec id: a valid task name, so the branc
 INTENT_PROMPT = (ROOT / "tool/prompts/oneshot-intent.md").read_text(encoding="utf-8")
 PROFILE_PROMPT = (ROOT / "tool/prompts/oneshot-profile.md").read_text(encoding="utf-8")
 TOOLS = "Read,Glob,Grep"     # the run folder holds nothing to read; no tool writes
-BLOCK = re.compile(r"^```(oneshot-intent|oneshot-profile)[ \t]*\r?\n(.*?)^```[ \t]*$", re.M | re.S)
+BLOCK = re.compile(r"^```(oneshot-[a-z]+|choices)[ \t]*\r?\n(.*?)^```[ \t]*$", re.M | re.S)
 MAX_SENTENCE = 2_000
 HEARTBEAT = 30.0   # seconds between a running turn's `inflight.seen` writes
 
@@ -105,6 +105,29 @@ def stop(rid: str, reason: str, detail: str) -> dict:
         return changed(rid, working=None, stopped={"reason": reason, "detail": detail, "state": run["state"]})
 
 
+class Store:
+    """Where a stage's state lives: the run record until the commit point, the spec's `oneshot` field after.
+    `get` reads it, `put` merges fields into it; both under `_lock`."""
+
+    def __init__(self, key: str, get, put, state: str, folder: Path, active) -> None:
+        self.key, self.get, self.put, self.state, self.folder, self.active = key, get, put, state, folder, active
+
+    def stop(self, reason: str, detail: str) -> dict:
+        with _lock:
+            return self.put(working=None, stopped={"reason": reason, "detail": detail, "state": self.get()[self.state]})
+
+    def profile(self) -> dict | None:
+        """The profile whose ceilings bind this store's turns, or `None` before the card is confirmed."""
+
+        current = self.get()
+        return current.get("profile") if self.active(current) else None
+
+
+def run_store(rid: str) -> Store:
+    return Store(rid, lambda: load(rid), lambda **f: changed(rid, **f), "state", RUNS / rid,
+                 lambda run: bool(run.get("confirmed")))
+
+
 # -- The profile -------------------------------------------------------------------
 
 def saved_profile(kind: str) -> dict:
@@ -141,25 +164,26 @@ class Failed(RuntimeError):
         self.meta = meta
 
 
-def heartbeat(rid: str, ended: threading.Event) -> None:
+def heartbeat(store: Store, ended: threading.Event) -> None:
     """While a turn runs, `inflight.seen` moves on: how long it lived, should the server die inside it."""
 
     while not ended.wait(HEARTBEAT):
         with _lock:
-            if inflight := load(rid).get("inflight"):
-                changed(rid, inflight={**inflight, "seen": time.time()})
+            if inflight := store.get().get("inflight"):
+                store.put(inflight={**inflight, "seen": time.time()})
 
 
-def ask(rid: str, role: str, system: str, text: str) -> tuple[str, dict, bool]:
-    """One turn in the run's own folder: `(final, meta, codex)`. Patched in tests."""
+def ask(store: Store, role: str, system: str, text: str, where: Path | None = None) -> tuple[str, dict, bool]:
+    """One turn, read-only, in `where` (the store's own folder by default): `(final, meta, codex)`.
+    Patched in tests."""
 
     cfg = role_config()
-    where = RUNS / rid
+    where = where or store.folder
     where.mkdir(parents=True, exist_ok=True)
     chat = ChatSession(where, tools=TOOLS, system=system, model=cfg["model"], effort=cfg["effort"])
     final, meta, failed = "", {}, ""
     ended = threading.Event()
-    threading.Thread(target=heartbeat, args=(rid, ended), daemon=True, name=f"oneshot-beat-{rid}").start()
+    threading.Thread(target=heartbeat, args=(store, ended), daemon=True, name=f"oneshot-beat-{store.key}").start()
     try:
         for ev in chat.say(text, runtime.stopping):
             if ev.kind == "done":
@@ -186,45 +210,46 @@ def block(final: str, name: str):
         raise ValueError(f"`{name}` 블록이 JSON 이 아니다 — {exc}") from exc
 
 
-def turned(rid: str, role: str, system: str, text: str, name: str, check) -> object | None:
-    """A turn whose block passes `check`, asked again once with the reason; `None` after stopping."""
+def turned(rid: str | Store, role: str, system: str, text: str, name: str, check,
+           where: Path | None = None) -> object | None:
+    """A turn whose answer passes `check`, asked again once with the reason; `None` after stopping.
+    With one block `name`, `check` gets that block's value; with several (`"a,b"`), the whole answer."""
 
+    store = rid if isinstance(rid, Store) else run_store(rid)
     reason = ""
-    for _ in range(2):
+    for attempt in range(2):
         if runtime.stopping.is_set():
-            stop(rid, "restart", "서버가 꺼지는 중이라 멈췄다")
+            store.stop("restart", "서버가 꺼지는 중이라 멈췄다")
             return None
         codex = codex_role()
         with _lock:
-            run = load(rid)
-            if why := allowed(run.get("spend"), run.get("profile") if run.get("confirmed") else None, role, codex):
-                stop(rid, "budget", why)
+            if why := allowed(store.get().get("spend"), store.profile(), role, codex):
+                store.stop("budget", why)
                 return None
             # Recorded before the turn is sent: a server that dies inside it leaves this for `recover` to charge.
-            changed(rid, inflight={"role": role, "codex": codex, "sent": time.time()})
+            store.put(inflight={"role": role, "codex": codex, "sent": time.time()})
         started = time.monotonic()
         try:
-            final, meta, codex = ask(rid, role, system, text if not reason else
-                                     f"{text}\n\nYour last `{name}` block was refused: {reason}. Return it again.")
+            final, meta, codex = ask(store, role, system, text if not reason else
+                                     f"{text}\n\nYour last answer was refused: {reason}. Return it again.", where)
         except Exception as exc:   # a broken turn still owes the screen a reason; an unreported cost is unknown, never zero
             with _lock:
-                run = load(rid)
                 cost = (getattr(exc, "meta", None) or {}).get("cost_usd")
-                changed(rid, inflight=None, spend=charged(run.get("spend"), role, codex, cost, time.monotonic() - started))
+                store.put(inflight=None, spend=charged(store.get().get("spend"), role, codex, cost,
+                                                       time.monotonic() - started))
             if runtime.stopping.is_set():
-                stop(rid, "restart", "서버가 꺼지는 중이라 멈췄다")
+                store.stop("restart", "서버가 꺼지는 중이라 멈췄다")
             else:
-                stop(rid, "block", f"모델 턴이 실패했다 — {exc}")
+                store.stop("block", f"모델 턴이 실패했다 — {exc}")
             return None
         with _lock:
-            run = load(rid)
-            changed(rid, inflight=None,
-                    spend=charged(run.get("spend"), role, codex, meta.get("cost_usd"), time.monotonic() - started))
+            store.put(inflight=None, spend=charged(store.get().get("spend"), role, codex, meta.get("cost_usd"),
+                                                   time.monotonic() - started))
         try:
-            return check(block(final, name))
-        except ValueError as exc:
+            return check(final, attempt) if "," in name else check(block(final, name))
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:   # the answer's shape, refused
             reason = str(exc)
-    stop(rid, "block", f"`{name}` 블록이 두 번 거부됐다 — {reason}")
+    store.stop("block", f"`{name}` 블록이 두 번 거부됐다 — {reason}")
     return None
 
 
@@ -325,48 +350,6 @@ def environment(rid: str) -> None:
 
 
 # -- Bootstrap ---------------------------------------------------------------------------------
-
-def planned(run: dict) -> dict[str, str]:
-    """Every file the base commit holds, by path, as the run writes it."""
-
-    p, intent, name = run["profile"], run["intent"], run["identity"]["name"]
-    ignore = [".venv/", "__pycache__/", "*.pyc", ".pytest_cache/", ".env", "node_modules/", "dist/", "artifacts/"]
-    setup = {"uv": "uv sync",
-             "venv": f"python -m venv .venv\n.venv/{'Scripts' if p['os_now'] == 'windows' else 'bin'}/python -m pip install -e .",
-             "conda": f"conda create -n {p.get('conda_env')} python=3.12\nconda activate {p.get('conda_env')}"}[p["python_env"]]
-    readme = (f"# {name}\n\n{intent['restated']}\n\n> {run['sentence']}\n\n"
-              f"## Setup\n\n```\n{setup}\n```\n")
-    files = {".gitignore": "\n".join(ignore) + "\n", "README.md": readme,
-             ".wiki/adapter.toml": connect.adapter_text({"gate_cmd": gate_cmd(p), "review_dir": "artifacts/review",
-                                                         "scratch_dirs": "artifacts/", "live_cmd": "", "server_stop": ""})}
-    if p["os_later"] == "other":
-        files[".gitattributes"] = "* text=auto eol=lf\n"
-    if p["visibility"] == "public" and run.get("license_text"):
-        files["LICENSE"] = run["license_text"]
-    return files
-
-
-def git(path: Path, *args: str, timeout: float = 60):
-    return specs.sh(["git", *args], path, timeout)
-
-
-def tracked(path: Path) -> set[str]:
-    done = git(path, "ls-tree", "-r", "--name-only", "main")
-    return set(done.stdout.splitlines()) if not done.returncode else set()
-
-
-def blob(text: str) -> str:
-    data = text.encode("utf-8")
-    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
-
-
-def as_planned(path: Path, files: dict[str, str]) -> bool:
-    """`main` is one commit holding exactly `files`, each byte for byte as planned."""
-
-    if tracked(path) != set(files) or git(path, "rev-list", "--count", "main").stdout.strip() != "1":
-        return False
-    return all(git(path, "rev-parse", f"main:{rel}").stdout.strip() == blob(text) for rel, text in files.items())
-
 
 class Stop(Exception):
     def __init__(self, reason: str, detail: str) -> None:
@@ -592,6 +575,9 @@ def bootstrap(rid: str) -> None:
         temporary = file.with_suffix(".tmp")
         temporary.write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
         swap(temporary, file)
+    from . import oneshot_spec   # the spec conversation's first turn: S2 starts by itself
+
+    oneshot_spec.begin(run["identity"]["name"])
 
 
 # -- Workers ------------------------------------------------------------------------------------
@@ -602,14 +588,31 @@ def launch(rid: str, work: str, *args, **fields) -> None:
     so a refusal leaves the run as it was."""
 
     fn = {"intake": intake, "profile": environment, "bootstrap": bootstrap}[work]
+    start_worker(run_store(rid), work, fn, (rid, *args), fields)
+
+
+def start_worker(store: Store, work: str, fn, args: tuple, fields: dict) -> None:
+    """One worker per store key, its state written with `working` only once it may start.
+    A worker may hand its key on to the next stage's worker as its last act."""
+
     with _lock:
         if runtime.stopping.is_set():
             raise HTTPException(503, "서버가 종료 중이다. 다시 시작한 뒤 이어가라")
-        if (running := _workers.get(rid)) is not None and running.is_alive():
+        running = _workers.get(store.key)
+        if running is not None and running.is_alive() and running is not threading.current_thread():
             raise HTTPException(409, "이 실행은 이미 돌고 있다")
-        changed(rid, **fields, working=work, stopped=None)
-        thread = threading.Thread(target=fn, args=(rid, *args), daemon=True, name=f"oneshot-{rid}")
-        _workers[rid] = thread
+        store.put(**fields, working=work, stopped=None)
+
+        def guarded() -> None:   # an unforeseen failure still stops with a reason, never leaves `working` set
+            try:
+                fn(*args)
+            except Exception as exc:
+                with _lock:
+                    if _workers.get(store.key) is threading.current_thread():
+                        store.stop("block", f"예상하지 못한 실패 — {type(exc).__name__}: {exc}")
+
+        thread = threading.Thread(target=guarded, daemon=True, name=f"oneshot-{store.key}")
+        _workers[store.key] = thread
         thread.start()
 
 
@@ -630,12 +633,19 @@ def recover() -> None:
 
     for run in runs():
         if run.get("working") and not run.get("committed"):
-            if inflight := run.get("inflight"):
-                sent = float(inflight.get("sent") or time.time())
-                elapsed, lived = max(0.0, time.time() - sent), max(0.0, float(inflight.get("seen") or sent) - sent)
-                changed(run["id"], inflight=None,
-                        spend=cut(run.get("spend"), inflight["role"], inflight["codex"], elapsed, lived))
-            stop(run["id"], "restart", "서버가 다시 켜졌다")
+            restarted(run_store(run["id"]))
+
+
+def restarted(store: Store) -> None:
+    """A stage the server went down with: its cut turn charged once, then stopped with `restart`."""
+
+    with _lock:
+        current = store.get()
+        if inflight := current.get("inflight"):
+            sent = float(inflight.get("sent") or time.time())
+            elapsed, lived = max(0.0, time.time() - sent), max(0.0, float(inflight.get("seen") or sent) - sent)
+            store.put(inflight=None, spend=cut(current.get("spend"), inflight["role"], inflight["codex"], elapsed, lived))
+        store.stop("restart", "서버가 다시 켜졌다")
 
 
 def view(run: dict) -> dict:
