@@ -58,3 +58,11 @@ def skill_config(repo: Path, env: dict) -> str | None:
     rows = ["{path=" + json.dumps(path, ensure_ascii=False) + ",enabled=" + str(enabled).lower() + "}"
             for path, enabled in sorted(overrides.items())]
     return "skills.config=[" + ",".join(rows) + "]"
+
+
+def conda_exe() -> str:
+    """This machine's conda executable, or empty."""
+
+    found = [os.environ.get("CONDA_EXE") or "", *(str(Path.home() / root / where) for root in ("anaconda3", "miniconda3")
+                                                   for where in ("Scripts/conda.exe", "bin/conda"))]
+    return next((exe for exe in found if exe and Path(exe).is_file()), "")

@@ -20,7 +20,6 @@ is ready for S2.
 | A picked folder outside the workspace | `connect.pick_folder`, `connect.added`, and the same-name refusal of folder registration | `tool/main/connect.py:149`, `:117`, `:710` |
 | Which folders are projects | `channels.projects` lists every workspace or picked folder that is not `미연결` | `tool/main/channels.py:102` |
 | Blocks inside an answer | `specs.blocks` extracts fenced JSON blocks and removes them from the text | `tool/main/specs.py:556` |
-| Time and call ceiling | `common.budget.Budget` (seconds, calls, tokens; no money) | `tool/common/budget.py` |
 | Cost of a model turn | The turn's `cost_usd` from the CLI's `total_cost_usd` | `tool/agent/chat_session.py:1321` |
 
 `specs.fork` is not used: it switches the original checkout to the task
@@ -63,8 +62,7 @@ the owner picks another.
 
 ## Spending
 
-`Budget` carries time and calls, not money, and not every provider reports
-money: Claude's result carries `total_cost_usd` (`tool/agent/chat_session.py:1321`),
+Not every provider reports money: Claude's result carries `total_cost_usd` (`tool/agent/chat_session.py:1321`),
 while Codex runs on the subscription and reports tokens only (`:1095`,
 `:1124`). So the run keeps its own ledger in the record that currently owns
 it (`spend` in the run record, then in the spec's `oneshot` field), and each
@@ -74,21 +72,21 @@ rewrites — is metered by what its provider reports:
 | Role's provider | Metered by | First turn, no sample yet | Turn ended without a cost |
 | --- | --- | --- | --- |
 | Reports USD (Claude) | The USD ceiling | Counted at the role's estimate, a setting per role with one default | Counted at the larger of the estimate and the role's largest seen cost, marked unknown |
-| Subscription (Codex) | Hours and calls only; never converted to USD | — | — |
+| Subscription (Codex) | The hours ceiling only; never converted to USD | — | — |
 
 - Before a USD-metered turn starts, the run refuses it when the spent total
   plus the role's largest seen cost, or its estimate before any sample, would
   pass the ceiling, and stops with `budget`.
-- Every turn, of either kind, counts against the hours and calls ceilings
-  through a `Budget` whose elapsed seconds and calls are restored from the
-  ledger on resume, as the planner restores its counters.
+- Every turn, of either kind, adds its elapsed seconds and one call to the
+  ledger. The hours ceiling is checked against the ledger's seconds before
+  each turn; calls are recorded for the card, with no ceiling of their own.
 - The ledger is written after each turn, so a restart resumes with the spent
   totals; a turn cut by the restart counts as unknown at the rule above.
   A ledger whose USD entries are all estimates still enforces: the estimates
   are what was charged.
 
 The card shows which roles fall under the USD ceiling and which only under
-hours and calls, and that the ceilings are enforced between turns, never
+the hours ceiling, and that the ceilings are enforced between turns, never
 inside one: a single turn may overshoot by its own cost.
 
 ## Run states in this step
@@ -284,7 +282,7 @@ card. Gate sheets and the drag board are step 5.
   `main` and unchanged after sub-step 9; the `gate_cmd` for each environment;
   the ledger refusing a turn that would pass the ceiling, charging a USD
   role's first turn at its estimate, counting an unreported cost as unknown,
-  metering Codex-only roles by hours and calls without inventing USD across
+  metering Codex-only roles by hours without inventing USD across
   several turns, and restoring every total after a restart, including a
   ledger of estimates only; a
   restart turning each running state into `stopped` with `restart`.

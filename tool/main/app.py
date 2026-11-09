@@ -37,7 +37,7 @@ import agent
 from common import errorlog
 from common import settings as settings_file
 
-from . import architecture, channels, connect, improvements, loop, mobile, planning, powershell, query, recovery, refactor, refactor_api, runtime, specs, suite, survey, update, verification, wiring, work
+from . import architecture, channels, connect, improvements, loop, mobile, oneshot, planning, powershell, query, recovery, refactor, refactor_api, runtime, specs, suite, survey, update, verification, wiring, work
 from .runtime import server_owner
 
 # On Windows `mimetypes` reads the registry, where `.js` is commonly
@@ -74,6 +74,7 @@ async def lifespan(application: FastAPI):
         # second server must never mark the first server's live loops stopped.
         resume = loop.recover()
         planning.recover()
+        oneshot.recover()
         refactor.recover()
         survey.recover()
         for repo, sid in resume:
@@ -143,6 +144,7 @@ app.include_router(specs.router)
 app.include_router(loop.router)
 app.include_router(recovery.router)
 app.include_router(planning.router)
+app.include_router(oneshot.router)
 app.include_router(refactor_api.router)
 app.include_router(improvements.router)
 app.include_router(connect.router)
