@@ -40,6 +40,7 @@ class PowerShell:
 
 _lock = threading.RLock()
 _detected: tuple[PowerShell, ...] | None = None
+SLOW = object()   # a version probe that timed out, so detection is asked again next time
 
 
 def detect(*, refresh: bool = False) -> tuple[PowerShell, ...]:
@@ -65,12 +66,19 @@ def detect(*, refresh: bool = False) -> tuple[PowerShell, ...]:
                     if done.returncode == 0 and (name == "pwsh" and major >= 7
                                                  or name == "powershell" and version.split(".")[:2] == ["5", "1"]):
                         return PowerShell(executable, version, major)
-                except (OSError, ValueError, subprocess.TimeoutExpired):
+                except subprocess.TimeoutExpired:
+                    return SLOW
+                except (OSError, ValueError):
                     pass
                 return None
 
             with ThreadPoolExecutor(max_workers=2) as probes:
-                _detected = tuple(item for item in probes.map(probe, ("pwsh", "powershell")) if item is not None)
+                results = list(probes.map(probe, ("pwsh", "powershell")))
+            found = tuple(item for item in results if isinstance(item, PowerShell))
+            # A probe that timed out on a loaded machine is not an answer: kept, it said
+            # "no PowerShell" for the process's life (CI run 42622513677, one worker).
+            _detected = None if SLOW in results else found
+            return found
         return _detected
 
 

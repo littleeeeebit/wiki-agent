@@ -82,6 +82,23 @@ def test_a_name_or_failed_probe_is_not_a_version(monkeypatch, failure):
         shell.chosen()
 
 
+def test_a_probe_that_timed_out_is_asked_again_rather_than_kept(monkeypatch):
+    calls = []
+    monkeypatch.setattr(shell, "_detected", None)
+    monkeypatch.setattr(shutil, "which", lambda name: name if name == "pwsh" else None)
+
+    def run(argv, **kwargs):
+        calls.append(argv[0])
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired(argv, 10)
+        return subprocess.CompletedProcess(argv, 0, "7.6.1", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert shell.detect() == ()
+    assert shell.chosen().major == 7
+    assert shell.chosen().major == 7 and calls == ["pwsh", "pwsh"], "an answered probe is kept"
+
+
 @pytest.mark.parametrize("line,feature", [
     ("${x}?.Name", "?."), ("$x ?? 'fallback'", "??"), ("$x ? 1 : 0", "ternary"),
     ("1 | ForEach-Object -Parallel { $_ }", "ForEach-Object -Parallel"),
