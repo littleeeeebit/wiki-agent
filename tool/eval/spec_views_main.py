@@ -299,7 +299,7 @@ def markdown(rep: dict, cfg: dict, kept: str = "") -> str:
              f"`{rep['config_digest'][:12]}`. Fixed-spec spent USD {f['spent_usd']} in {f['elapsed_hours']} h (ceiling "
              f"USD {cfg['ceilings']['usd']}, {cfg['ceilings']['hours']} h); pipeline (`{rep['pipeline_experiment']}`) "
              f"USD {p['spent_usd']} in {p['elapsed_hours']} h (ceiling USD {cfg['pipeline']['ceilings']['usd']}, "
-             f"{cfg['pipeline']['ceilings']['hours']} h).", "",
+             f"{cfg['pipeline']['ceilings']['hours']} h).", "", *([cfg["context"], ""] if cfg.get("context") else []),
              "## Three judgments", "", "| Stage | Result | Grounds |", "| --- | --- | --- |"]
     impl = rep["implementation"]
     lines.append(f"| Implementation pass | {'pass' if impl['ok'] else 'not shown'} | "
@@ -342,6 +342,7 @@ def markdown(rep: dict, cfg: dict, kept: str = "") -> str:
                                            f"`{rep['resume'][part_name]}`; it needs the committed config unchanged, "
                                            "the same code commit, and room under that arm's ceilings, else a new "
                                            "experiment id." if left else "every cell ran."))
+    lines += [f"- {x}" for x in cfg.get("not_run") or []]   # parts of the design this experiment leaves out
     stops = f["ceiling_stops"] + p["ceiling_stops"]
     lines += ["- Ceiling stops: " + (", ".join(f"{s['ceiling']} at USD {s['spent']}" for s in stops) or "none") + ".",
               "", "## The setting and its rollback", "", cfg["setting"], ""]
