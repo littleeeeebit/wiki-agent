@@ -288,6 +288,7 @@ class R2(BaseModel):
     decisions: dict[str, dict] = {}
     palette: str = ""
     reopen: bool = False
+    reading: dict = {}
 
 
 def extra(spec: dict) -> dict:
@@ -336,13 +337,14 @@ def decide(repo: str, body: R2) -> dict:
         if palette and palette not in {p["id"] for p in o["front"]["tokens"]["palettes"]}:
             raise HTTPException(400, f"없는 색 배합이다: {palette}")
         r2 = {**o["r2"], "decisions": decisions, "palette": palette}
+        reading = oneshot_spec.read(o, "r2", body.reading, comments)
         if comments:
             reach = sorted(screens.dependents(set(comments)))
-            oneshot_spec.start(repo, "refront", comments, reach, r2=r2)
+            oneshot_spec.start(repo, "refront", comments, reach, r2=r2, reading=reading)
             return oneshot_spec.view(oneshot_spec.spec_of(repo))
         if not palette:
             raise HTTPException(400, "색 배합을 하나 골라라")
-        oneshot_spec.saved(repo, oneshot={"r2": r2})
+        oneshot_spec.saved(repo, oneshot={"r2": r2, "reading": reading})
         approved(repo)
     if oneshot_spec.spec_of(repo)["oneshot"]["stage"] == "build-front":   # outside the lock: the turn takes the worktree's hold
         oneshot_front_build.begin(repo)

@@ -146,3 +146,4 @@ jobs:
       - run: npm --prefix web run build
       - run: python web/tests/task_browser.py
       - run: python web/tests/window_project_browser.py
+      - run: python web/tests/oneshot_browser.py

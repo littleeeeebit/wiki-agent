@@ -298,8 +298,8 @@
     },
     "web/src/components/Projects.tsx": {
       "dup": 9,
-      "lines": 219,
-      "reason": "Passes the machine's PowerShell status to the separate install panel; polling, actions and markup stay in PowerShell.tsx (powershell-version-resolver-and-install, three lines). Before that: The list holds only connected repositories, so connecting a new one starts here: [폴더 찾기] opens the OS folder dialog, and where none opens (a phone, a Python without Tk) a path field takes its place. Before that: baseline at adoption"
+      "lines": 220,
+      "reason": "Shows the oneshot runs past S1 above the list; the row and its reads live in `OneshotRail` in `Oneshot.tsx` (oneshot-screens, one line). Before that: Passes the machine's PowerShell status to the separate install panel; polling, actions and markup stay in PowerShell.tsx (powershell-version-resolver-and-install, three lines). Before that: The list holds only connected repositories, so connecting a new one starts here: [폴더 찾기] opens the OS folder dialog, and where none opens (a phone, a Python without Tk) a path field takes its place. Before that: baseline at adoption"
     },
     "web/src/components/Settings.tsx": {
       "dup": 18,

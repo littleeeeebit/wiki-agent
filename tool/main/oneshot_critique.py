@@ -207,6 +207,7 @@ def r3_sheet(spec: dict, shot) -> str:
 
 class Decisions(BaseModel):
     decisions: dict[str, dict]
+    reading: dict = {}
 
 
 def extra(spec: dict) -> dict:
@@ -231,15 +232,16 @@ def decide(repo: str, body: Decisions) -> dict:
         oneshot_spec.idle(o, "r3")
         decisions, comments = oneshot_spec.decided([s["id"] for s in o["front"]["screens"]], o["r3"]["decisions"],
                                                    body.decisions)
+        reading = oneshot_spec.read(o, "r3", body.reading, comments)
         if not comments:
-            oneshot_spec.saved(repo, oneshot={"r3": {**o["r3"], "decisions": decisions}})
+            oneshot_spec.saved(repo, oneshot={"r3": {**o["r3"], "decisions": decisions}, "reading": reading})
             approved(repo)
             return oneshot_spec.view(oneshot_spec.spec_of(repo))
         # `working` and `fix` are saved with the decisions: a server that dies before the turn is sent, or a
         # budget that refuses it, leaves a `[재개]` that sends the owner's edits again.
         spec = oneshot_spec.saved(repo, oneshot={
             "stage": front_build.STAGE, "attempts": 0, "critique_base": len(o.get("critiques") or []),
-            "working": front_build.STAGE,
+            "working": front_build.STAGE, "reading": reading,
             "fix": {"who": "The owner reviewed the finished screens (R3)",
                     "findings": [{"severity": "high", "screen": k, "what": v} for k, v in comments.items()]},
             "r3": {**o["r3"], "decisions": decisions, "next_marks": {k: "edited" for k in comments}}})

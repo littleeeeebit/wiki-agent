@@ -11,15 +11,26 @@ and whether it waits for them, review each gate on one screen with per-item
 approval, and find the finished pull request where every other pull request
 is, with Review Loop ready.
 
+## Parts
+
+| Part | Scope | Module |
+| --- | --- | --- |
+| 5a | The run's row, the stage strip, the S2 conversation, the gate sheet view, the feature board and the reading record | `web/src/components/OneshotSpec.tsx`, `web/src/lib/oneshot.ts`, `GET /api/oneshot-specs` in `tool/main/oneshot_spec.py` |
+| 5b | S8: the README turn, the final gate, the pull request handed to Review Loop, and the finished run's summary | — |
+
 ## The run on the screen
 
 ### Entry and rail
 
-- `새 프로젝트` on the project rail opens the intake form (step 2).
-- A run appears on the rail under its folder name from S0 on, before the
-  repository exists, with its stage as a short Korean label and a mark when it
-  waits for the owner. A run that waits is the only thing that asks for
-  attention; autonomous stages show progress without a mark.
+- `새 프로젝트` on the project pane opens the intake form (step 2).
+- Before S1 ends, an unfinished run is listed in the intake form under
+  `끝나지 않은 실행`, with its state or its stop. From S2 on it is also a row
+  above the project list, read from `GET /api/oneshot-specs`: the
+  repository's name, its stage as a short Korean label, and a mark when it
+  waits for the owner (`r1`, `board`, `r2`, `r3`, or `spec` when the agent's
+  question is the last word). A run that waits is the only thing that asks
+  for attention; autonomous stages show progress without a mark. Either
+  opens the run in the oneshot window.
 
 ### Stage strip
 
@@ -38,7 +49,7 @@ define the content and order). It owns only the interaction:
 | --- | --- |
 | Per item | Approve or edit, with a comment box on edit |
 | Fold | Folding changes what is shown, never what is decided. Sections the step marks folded start collapsed; opening one is recorded |
-| Approve a section | A folded section's header carries "approve all N"; pressing it records an approval for each item in it, named in the request |
+| Approve a section | The items the sheet's shown text does not name belong to its folded sections and are listed together under a header with "모두 승인 (N)"; pressing it records an approval for each of them, named in the request |
 | Re-show | Items needing a decision again (edited, changed as a consequence, or reset by a dependency) marked and unfolded; untouched approved items collapsed |
 | Submit | Enabled when every item on the sheet, folded or not, has a decision; the count of undecided items sits beside the button |
 
@@ -46,16 +57,20 @@ The server applies the same rule: a submission that leaves any item of the
 sheet's current version undecided is refused, whatever the screen showed.
 | Length | The sheet scrolls inside its panel; the first screen holds what the step put first |
 
-Screenshots open in a lightbox at full size; videos play inline. The palette
-choice on R2 is a single choice among swatches.
+Screenshots open in a lightbox at full size. A Mermaid fence in a sheet is
+drawn as its diagram. The palette choice on R2 is a single choice among
+swatches, and R2 carries `기능 보드 다시 열기`. Videos play inline once step 4
+records walkthroughs.
 
 ### Recording whether a sheet was read
 
-From the overview's "Measuring it": per gate the view records time open, which
-folds were opened, and which items were edited, on the spec. When a later
-stage finds an assumption wrong that was approved without being edited, the
-run notes it against that gate. The numbers are shown to the owner in the
-finished run's summary; nothing acts on them automatically.
+From the overview's "Measuring it": each submission of a gate sheet sends
+the seconds the sheet was open and the folds opened, and the server adds the
+items edited, from the submission itself, as one entry of
+`oneshot.reading.<gate>` with the sheet's round. The numbers are shown to the
+owner in the finished run's summary; nothing acts on them automatically. A
+later stage that finds wrong an assumption approved without an edit is not
+noted against its gate yet.
 
 ## The feature board
 
@@ -64,8 +79,9 @@ reason under each card, the first-screen line above. Keyboard operable: a
 focused card moves between columns with the arrow keys, since dragging is not
 the only way a board must work. Submit sends the whole map once.
 
-Built with the app's existing React and Tailwind; no drag-and-drop library is
-added unless native HTML drag events prove unworkable in the Tauri window.
+Built with the app's existing React and Tailwind and native HTML drag
+events; no drag-and-drop library is added. A card's focus follows it into its
+new column.
 
 ## S8 — the first pull request
 
