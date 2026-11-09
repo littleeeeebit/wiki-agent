@@ -429,16 +429,13 @@ def move(confirmed: str, data: dict | None = None, done: list[str] | None = None
             raise HTTPException(409, "확인한 뒤에 바뀔 줄이 달라졌다. 다시 확인한다")
         for step in plan:
             setup_agents.write_plan([step])
-            if step[2]:
-                done.append(str(step[0]))
-        for link, _old, new in found:
-            if new:
-                setup_agents.relink(link, new)
-                done.append(f"{link} → {new}")
-        if now["trust"]:
-            for file in apply.user_files("codex"):
-                setup_agents.codex_hooks(file.parent, True, python)
-                done.append(f"{file.parent}: Codex 신뢰 기록")
+            done += [str(step[0])] if step[2] else []
+        for link, _old, new in (found_link for found_link in found if found_link[2]):
+            setup_agents.relink(link, new)
+            done.append(f"{link} → {new}")
+        for file in apply.user_files("codex") if now["trust"] else []:
+            setup_agents.codex_hooks(file.parent, True, python)
+            done.append(f"{file.parent}: Codex 신뢰 기록")
         for file in RECORDS.glob("*.json"):
             keep(file.stem, probe={}, trust=None)
         return now
@@ -522,8 +519,7 @@ def pending(path: Path) -> list[tuple[Path, dict, list[str]]]:
     """Each host's project settings with what `unwire` changes in them, all read before any is written."""
 
     plan = []
-    data, _ = adapter_of(path)
-    for host in hosts(data):
+    for host in hosts(adapter_of(path)[0]):
         file = path / setup_agents.SETTINGS[host]
         if file.exists() or host == "claude":
             settings = apply.read_json(file)
