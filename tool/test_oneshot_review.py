@@ -174,6 +174,25 @@ def test_an_instruction_queued_while_the_review_held_the_tree_goes_once_after_it
         work._busy.pop(str(tree), None)
 
 
+def test_a_review_that_fails_still_lets_the_tree_go_and_sends_the_queued_instruction(reviewed):
+    tree, _, _ = reviewed
+    begun = []
+
+    def fails(*a):
+        work._queued[str(tree)] = work.Order(path=str(tree), text="다음 지시")
+        raise subprocess.TimeoutExpired(["git", "rev-parse", "HEAD"], 60)
+
+    try:
+        with patch.object(oneshot_review, "verdict", fails), \
+             patch.object(work, "session", lambda *a: SimpleNamespace(id="c", parent_id=None)), \
+             patch.object(work, "begin", lambda path, chat, text, release, run: (begun.append(text), release())), \
+             pytest.raises(subprocess.TimeoutExpired):
+            oneshot_review.review("budget")
+        assert begun == ["다음 지시"] and str(tree) not in work._busy
+    finally:
+        work._queued.pop(str(tree), None)
+
+
 def test_a_busy_worktree_stops_the_review_before_it_reads(reviewed):
     tree, _, _ = reviewed
     release = query.hold(work._busy, query._lock, str(tree), "busy")

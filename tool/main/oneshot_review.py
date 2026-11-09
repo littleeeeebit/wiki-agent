@@ -107,13 +107,13 @@ def review(repo: str) -> None:
         store.stop("block", f"{exc.detail} — 끝난 뒤 [재개] 로 백엔드 리뷰를 다시 한다")
         return
     try:
-        following = decided(repo, store, spec, tree)
-    finally:
-        release()
-    try:
+        try:
+            following = decided(repo, store, spec, tree)
+        finally:
+            release()
         if following:
             following()
-    finally:
+    finally:   # an exception included: the worker records the stop, and the instruction still goes
         # A server going down drops it, as `dispatch` drops one after a stopped turn.
         work.dispatch(tree, SimpleNamespace(halt=runtime.stopping, turn=""))
 
