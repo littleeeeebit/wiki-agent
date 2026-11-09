@@ -224,7 +224,8 @@ def report(cfg: dict) -> dict:
     # Implementation pass: the first task's tests (its feature, the setting-off byte identity, the harness) passed
     # at every code commit a counted cell ran on.
     impl = [r for r in fixed_past + pipe_past if r.get("kind") == "implementation"]
-    commits = {r.get("code_commit") for r in fixed_past + pipe_past if r.get("kind") == "cell"}
+    # A pipeline cell whose spec step failed never started a session and carries no commit.
+    commits = {r["code_commit"] for r in fixed_past + pipe_past if r.get("kind") == "cell" and r.get("code_commit")}
     implementation_pass = {"ok": bool(impl) and all(r["ok"] for r in impl) and {r["code_commit"] for r in impl} >= commits,
                            "runs": [{k: r.get(k) for k in ("code_commit", "command", "ok", "seconds")} for r in impl]}
     valid = validity(cfg, fixed_past, pipe_past, fixed["cells_not_run"] + piped["cells_not_run"])

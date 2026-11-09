@@ -84,11 +84,16 @@ def test_every_pipeline_repetition_makes_its_own_spec_from_the_original_and_pays
 
 def test_a_failed_enrichment_fails_only_the_candidate_and_a_still_runs(main):
     rp, cfg = main
-    pipeline.run({**cfg, "pipeline": {**cfg["pipeline"], "repetitions": 1}}, counted(fix), planner({"enrichment"}),
-                 rp.scratch)
-    cells = {r["condition"]: r for r in ran(pipeline.arm({**cfg, "pipeline": {**cfg["pipeline"], "repetitions": 1}}))}
+    cfg = {**cfg, "pipeline": {**cfg["pipeline"], "repetitions": 1}}
+    pipeline.run(cfg, counted(fix), planner({"enrichment"}), rp.scratch)
+    cells = {r["condition"]: r for r in ran(pipeline.arm(cfg))}
     assert cells["A"]["success"] and (cells["D"]["success"], cells["D"]["failure"], cells["D"]["infra"]) == \
         (False, "spec", False)
+    # D's cell never started a session, so it has no code commit; it does not undo the implementation pass.
+    assert not cells["D"].get("code_commit")
+    harness.journal(cfg, {"kind": "implementation", "code_commit": cells["A"]["code_commit"], "ok": True,
+                          "command": "pytest", "seconds": 0})
+    assert main_report.report(cfg)["implementation"]["ok"]
 
 
 def test_the_report_judges_three_stages_and_keeps_the_written_notes(main):
@@ -103,6 +108,10 @@ def test_the_report_judges_three_stages_and_keeps_the_written_notes(main):
     text = main_report.markdown(rep, cfg, "pr1 failed because …")
     assert "further verification needed" in text and "pr1 failed because …" in text and "SPEC_VIEWS" in text
     assert text.index(main_report.NOTES[0]) < text.index("pr1 failed") < text.index(main_report.NOTES[1])
+    # A narrowed experiment says what it carries over, and lists what it leaves out under "Not run".
+    narrowed = main_report.markdown(rep, {**cfg, "context": "narrows main-1", "not_run": ["B-C: resume main-1"]})
+    assert narrowed.index("narrows main-1") < narrowed.index("## Three judgments")
+    assert narrowed.index("## Not run") < narrowed.index("- B-C: resume main-1") < narrowed.index("## The setting")
 
 
 def _cmp(d, r):
