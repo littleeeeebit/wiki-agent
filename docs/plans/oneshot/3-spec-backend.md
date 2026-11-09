@@ -257,10 +257,14 @@ was running with `restart`.
 Each turn names itself in `oneshot.inflight` with a token. A turn whose end
 arrives after a newer turn was sent is still charged, but it clears and stops
 nothing: the in-flight entry is the newer turn's. A turn `work.begin` refuses
-before taking it ran no model, so it is not charged and leaves nothing in
-flight. `[재개]` is refused (409) while a stopped turn is still in flight,
-because the next turn would lose that turn's charge. A stop that arrives
-while a passing check runs stops the stage before the next turn is sent.
+before its thread starts ran no model, so it is not charged and leaves
+nothing in flight, including when `work.begin` ends the turn itself before
+refusing it: that end arrives on the thread that sent the turn, never on the
+turn's own. `[재개]` is refused (409) while a stopped turn is still in
+flight, because the next turn would lose that turn's charge. The next turn
+a check hands back is sent only if no stop arrived by the time
+`work.run_turn` sends it; a stop during the check or while the turn is
+recorded leaves the stage stopped and resumable.
 
 ### Tests first
 
@@ -271,21 +275,30 @@ The server then checks:
 - Since the design commit, only test paths (`tests/`, `test_*.py`,
   `*_test.py`, `conftest.py`) and the test configuration (`pyproject.toml`,
   `uv.lock`, `pytest.ini`) changed, committed or not.
-- Collection succeeds (`<gate> --collect-only`) and names every planned
-  test in the changed test files. Matching is by function name, but what is
-  kept is each node id the collection printed, parameter cases included; a
-  same-named test outside those files is not a planned test. The prompt asks
-  for the application to be imported in the test body, so the tests collect
-  before it exists.
-- Every collected node runs in one JUnit run and fails because the
-  application is not there: the failure names a `ModuleNotFoundError` or
-  `ImportError` of `app`. A node that passes checks nothing, a skipped one
-  neither, an error in setup or teardown is not a red test, and a failure for
-  any other reason means the test does not wait for the application.
+- Collection succeeds and names every planned test in the changed test
+  files. Matching is by the function's own name, but what is kept is each
+  node id pytest itself gave, parameter cases and inherited classes
+  included; a same-named test outside those files is not a planned test. The
+  prompt asks for the application to be imported in the test body, so the
+  tests collect before it exists.
+- Every collected node runs and fails, in its own body, because the
+  application is not there: the exception, or one it was raised from, is a
+  `ModuleNotFoundError` for `app` or a module under it. A node that passes
+  checks nothing, a skipped one neither, an error in setup or teardown is
+  not a red test, and a failure for any other reason, an `ImportError` from
+  another module included, means the test does not wait for the
+  application.
 
-Every pytest run of the contract has plugin autoloading off
-(`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`), `PYTEST_ADDOPTS` empty and no bytecode
-written. The changed files, HEAD and the set of changed paths are read before
+Every pytest run of the contract loads `tool/main/oneshot_probe.py` by name
+(`-p oneshot_probe`), copied to a folder of its own under the run's raw
+folder, which is the only path it adds. The probe is what the server reads,
+never a report rebuilt afterwards: pytest's own node id of every collected
+test, and for each phase its outcome, whether the test's own function was
+entered, whether anything replaced how pytest runs a test, and whether the
+failure was the missing application. A run of chosen nodes has the probe
+deselect every other test, so no node id passes through the command line.
+Plugin autoloading is off (`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`),
+`PYTEST_ADDOPTS` is empty and no bytecode is written. The changed files, HEAD and the set of changed paths are read before
 the runs and again after them; any difference is a refusal, so a file the
 run itself rewrote is never committed.
 
@@ -313,18 +326,19 @@ two ways, because a file that is unchanged is not yet a test that ran:
    is a refusal. (`_kept` is not enough here: it allows statements added
    after the old ones.) A deleted, unreadable or unparsable pinned file is a
    refusal. New tests go in new files. The pytest configuration is pinned
-   with them: a `conftest.py`, `pytest.ini`, `tox.ini` or `setup.cfg` added
-   or changed since `tests_head` (other than a pinned file that is still
-   equivalent) is a refusal, and so is a `[tool.pytest]` table in
-   `pyproject.toml` that differs from the one at `tests_head`. A hook that
-   skips the tests, replaces their bodies or deselects them has nowhere to
-   go.
+   with them: a `pytest.ini`, `.pytest.ini`, `tox.ini`, `setup.cfg` or
+   `conftest.py` added or changed since `tests_head` (other than a pinned
+   file that is still equivalent) is a refusal, and so is a package's
+   `__init__.py` in or above a contract file's folder, which runs before its
+   tests do, and a `[tool.pytest]` table in `pyproject.toml` that differs
+   from the one at `tests_head`.
 2. Ran and passed. After the gate passes, `oneshot_build` runs exactly the
-   node ids in `oneshot.nodes` with a JUnit XML report into the run's raw
-   folder, and rebuilds each report entry's node id from its file, class and
-   name. Each pinned node must be there and passed. Skipped, xfailed,
-   deselected or missing from the report is a failure, whatever the gate's
-   exit code said; a same-named test in another file stands in for nothing.
+   node ids in `oneshot.nodes` through the probe. Each pinned node must be
+   there, passed, with its own body entered and pytest's way of running a
+   test untouched. Skipped, xfailed, deselected or missing is a failure,
+   whatever the gate's exit code said; a same-named test in another file
+   stands in for nothing, and an application that replaces how pytest runs
+   tests while it is imported is caught here.
 
 Up to three attempts, then `stopped` with `gate`. When all checks hold, the
 stage becomes `review` with the HEAD as `oneshot.built_head`; that is where
@@ -384,8 +398,12 @@ requirement that person-facing strings are written in Korean directly.
   refused, a stop during the check sending no build turn); a late end of an
   earlier turn leaving the newer turn's in-flight entry alone, a turn
   `work.begin` refused leaving nothing in flight, and a resume refused while
-  a turn is in flight; a new `conftest.py`, a replaced test body and a
-  `[tool.pytest]` change refused in the build; a same-named passing test in
+  a turn is in flight, and a stop after the check sending no next turn; a
+  case pinned by its own node id through an inherited class and a parameter
+  id holding `::`; an `ImportError` from another module refused as red; a
+  new `conftest.py`, `.pytest.ini` or package `__init__.py`, a replaced test
+  body and a `[tool.pytest]` change refused in the build, and an application
+  that replaces pytest's test runner caught by the probe; a same-named passing test in
   another file not standing in for a failing contract test; a contract test created after the
   base commit then weakened
   (an expected value changed, a skip mark, a deleted test) refused against

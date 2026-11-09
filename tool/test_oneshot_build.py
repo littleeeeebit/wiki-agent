@@ -15,7 +15,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from main import oneshot, oneshot_build, oneshot_sheet as sheet, oneshot_spec, specs, work
+from main import oneshot, oneshot_build, oneshot_sheet as sheet, oneshot_spec, runtime as runtime_mod, specs, work
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_spec import DESIGN, GLOSSARY, REQS, fenced, world  # noqa: F401 — `world` is a fixture
 
@@ -48,6 +48,14 @@ class Turn:
 
     def put(self, payload):
         self.events.append(payload)
+
+
+def elsewhere(fn):
+    """As `work.run_turn` ends a turn: on the turn's own thread, never the one that sent it."""
+
+    thread = threading.Thread(target=fn)
+    thread.start()
+    thread.join()
 
 
 def git(tree, *args):
@@ -119,6 +127,7 @@ def test_failing_planned_tests_are_committed_pinned_and_followed_by_the_build_tu
     ({"test_budget.py": "import pytest\n\n\n@pytest.fixture(autouse=True)\ndef db():\n    raise RuntimeError('no db')\n"
       + TESTS}, "준비(setup·teardown)에서 오류가 난"),
     ({"test_budget.py": TESTS.replace("    from app import add\n", "    assert 1 == 2\n")}, "앱이 없어서가 아닌"),
+    ({"test_budget.py": TESTS.replace("from app import add", "from pathlib import app")}, "앱이 없어서가 아닌"),
 ])
 def test_a_tests_turn_is_refused_with_the_reason_and_sent_back(built_world, files, said):
     tree, sent = built_world
@@ -159,21 +168,44 @@ def test_a_test_file_changed_while_its_run_is_checked_is_refused(built_world):
     assert "바뀌었다" in sent[-1][2] and o()["stage"] == "tests" and git(tree, "log", "-1", "--format=%s") == "design"
 
 
-def test_a_halt_during_the_tests_check_stops_before_the_build_turn(built_world):
+@pytest.mark.parametrize("when", ["during the commit", "after the check, while the turn is recorded"])
+def test_a_halt_before_the_next_turn_stops_instead_of_sending_it(built_world, when):
     tree, sent = built_world
     write(tree, "test_budget.py", TESTS)
-    real = oneshot_build.tested
+    real, run = oneshot_build.tested, Turn()
 
     def tested(path, run, spec):
         why = real(path, run, spec)
-        run.halt.set()   # the owner's stop arrived while the commit was made
+        if when == "during the commit":
+            run.halt.set()
         return why
 
     with patch.object(oneshot_build, "tested", tested):
-        assert check(tree) is None
+        then = oneshot_build.checked(tree, run, spec(), "썼다.")
+    run.halt.set()   # either way, set by the time `work.run_turn` calls `then`
+    then()
     assert not sent and o()["stage"] == "build" and o()["stopped"]["reason"] == "block"
     oneshot_spec.resume("budget")
     assert sent[-1][:2] == ("budget", "build")
+
+
+def test_each_case_is_pinned_by_its_own_node_id_through_inheritance_and_any_parameter_id(built_world):
+    tree, sent = built_world
+    write(tree, "tests/helpers.py", "import pytest\n\n\nclass Base:\n"
+                                    "    @pytest.mark.parametrize('case', [pytest.param(3000, id='lookup::empty')])\n"
+                                    "    def test_spending_adds_to_the_total(self, case):\n"
+                                    "        from app import add\n        assert add(case) == case\n")
+    write(tree, "tests/test_budget.py", "from helpers import Base\n\n\nclass TestApi(Base):\n    pass\n\n\n"
+                                        "def test_a_month_lists_its_spendings():\n"
+                                        "    from app import month\n    assert month('2026-10') == []\n")
+    check(tree)()
+    assert o()["nodes"] == {
+        "test_spending_adds_to_the_total": ["tests/test_budget.py::TestApi::test_spending_adds_to_the_total[lookup::empty]"],
+        "test_a_month_lists_its_spendings": ["tests/test_budget.py::test_a_month_lists_its_spendings"]}
+    write(tree, "app.py", APP)
+    git(tree, "add", "app.py")
+    git(tree, "commit", "-m", "build")
+    assert check(tree, "만들었다.\n" + report()) is None and o()["stage"] == "review"
 
 
 def test_the_third_refusal_stops_the_stage(built_world):
@@ -210,6 +242,11 @@ def test_a_build_with_a_full_report_a_green_gate_and_every_planned_test_passing_
     (lambda tree: (write(tree, "pyproject.toml", '[tool.pytest.ini_options]\naddopts = "-k spending"\n'),
                    write(tree, "test_extra.py", "def test_a_month_lists_its_spendings():\n    pass\n")),
      "[tool.pytest]"),
+    (lambda tree: write(tree, ".pytest.ini", "[pytest]\naddopts = -k spending\n"), "pytest 설정"),
+    (lambda tree: write(tree, "__init__.py", "import pytest\npytest.Function.runtest = lambda self: None\n"),
+     "pytest 설정"),
+    (lambda tree: write(tree, "app.py", APP + "\nimport pytest\npytest.Function.runtest = lambda self: None\n"),
+     "본문이 돌지 않음"),
 ])
 def test_a_weakened_contract_is_refused_even_when_the_gate_is_green(built_world, weaken, said):
     tree, sent = built_world
@@ -234,7 +271,7 @@ def test_a_same_named_test_in_another_file_does_not_stand_in_for_the_contract(bu
     green = {"ok": True, "head": git(tree, "rev-parse", "HEAD"), "reason": "", "tail": ""}
     with patch.object(specs, "judge", lambda *a, **k: green):   # a gate that runs only some of the tests
         check(tree, "만들었다.\n" + report())()
-    assert "test_budget.py::test_spending_adds_to_the_total(failure)" in sent[-1][2]
+    assert "test_budget.py::test_spending_adds_to_the_total(failed)" in sent[-1][2]
 
 
 def test_a_build_without_its_report_or_with_a_red_gate_is_refused(built_world):
@@ -254,7 +291,7 @@ def test_a_turn_that_ends_without_its_check_stops_the_stage_and_is_charged(built
         turn = oneshot_build.Turn(chat, "budget", "tests", False)
         oneshot_spec.saved("budget", oneshot={"inflight": {"role": "tests", "turn": turn.token}})   # as `send` writes it
         turn.put({"kind": "error", "text": "사람이 멈춤", "meta": {}})
-        turn.finish()
+        elsewhere(turn.finish)
     assert o()["stopped"] == {**o()["stopped"], "reason": "block"} and "사람이 멈춤" in o()["stopped"]["detail"]
     assert o()["spend"]["calls"] == 1 and o()["spend"]["unknown"] == 1
 
@@ -265,23 +302,31 @@ def test_a_late_end_of_an_earlier_turn_leaves_the_resumed_turn_alone(built_world
     with patch.object(work, "notice", lambda *a: None):
         old, new = (oneshot_build.Turn(chat, "budget", "tests", False) for _ in range(2))
         oneshot_spec.saved("budget", oneshot={"inflight": {"role": "tests", "turn": new.token}})
-        old.finish()
+        elsewhere(old.finish)
         assert o()["inflight"]["turn"] == new.token and not o().get("stopped") and o()["spend"]["calls"] == 1
         new.ended.set()
 
 
-def test_a_turn_that_cannot_be_begun_leaves_nothing_in_flight(built_world):
+@pytest.mark.parametrize("where", ["before", "inside"])
+def test_a_turn_that_cannot_be_begun_leaves_nothing_in_flight_and_charges_nothing(built_world, where):
     tree, _ = built_world
+    real = work.begin
 
     def refuse(*a):
-        raise RuntimeError("세션이 없다")
+        if where == "before":
+            raise RuntimeError("세션이 없다")
+        # The real `work.begin` refuses a thread while the server stops, ending the turn itself first.
+        with patch.object(runtime_mod.stopping, "is_set", lambda: True):
+            return real(*a)
 
     with patch.object(work, "notice", lambda *a: None), patch.object(work, "begin", refuse), \
+         patch.object(work, "remember", lambda *a, **k: None), \
          patch.object(work, "session", lambda *a: SimpleNamespace(id="c", parent_id=None, repo=str(tree))), \
          patch.object(oneshot, "role_config", lambda *a: {"model": "m", "effort": "e"}), \
          patch.object(oneshot, "codex_role", lambda *a: False), patch.object(oneshot_build, "allowed", lambda *a: ""):
         SEND("budget", "tests", "x")
     assert o()["inflight"] is None and "보내지 못했다" in o()["stopped"]["detail"]
+    assert not (o().get("spend") or {}).get("calls")   # no model ran
     assert str(tree) not in work._busy   # the worktree is free for the resumed turn
 
 

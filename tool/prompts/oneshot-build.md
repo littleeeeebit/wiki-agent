@@ -17,12 +17,14 @@ The server checks, in order:
 
 1. The `done-report` covers every item of the spec's `done`, each passing.
 2. Every pinned file is unchanged since `{tests_head}`, and so is the pytest
-   configuration: no `conftest.py`, `pytest.ini`, `tox.ini` or `setup.cfg` is
+   configuration: no `conftest.py`, `pytest.ini`, `.pytest.ini`, `tox.ini`,
+   `setup.cfg` or test package `__init__.py` is
    added or changed, and the `[tool.pytest]` table of `pyproject.toml` stays
    as it was.
 3. The gate `{gate}` passes on a clean, committed HEAD.
 4. Every node id pinned at `{tests_head}` runs and passes. Skipped, xfailed,
-   deselected or not collected counts as failing, whatever the gate said.
+   deselected or not collected counts as failing, whatever the gate said, and
+   so does a test whose own body did not run.
 
 A refusal comes back with the reason, at most three times in all.
 

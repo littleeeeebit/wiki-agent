@@ -10,12 +10,10 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import threading
 import time
 import tomllib
 import uuid
-import xml.etree.ElementTree as ET
 from fnmatch import fnmatchcase
 from pathlib import Path
 
@@ -34,9 +32,9 @@ CONFIG = ("pyproject.toml", "uv.lock", "pytest.ini")
 RUN_SECONDS = 900
 # The contract runs on its own files: no plugin loads itself from the environment, and no option comes in.
 PYTEST_ENV = {"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTEST_ADDOPTS": "", "PYTHONDONTWRITEBYTECODE": "1"}
-PYTEST_FILES = ("conftest.py", "pytest.ini", "tox.ini", "setup.cfg")   # each can change how a test runs
-# Before the build, a planned test may fail for one reason only: the application is not there yet.
-MISSING_APP = re.compile(r"\b(?:ModuleNotFoundError|ImportError)\b.*\bapp\b")
+# Each can change how a test runs: pytest's configuration files in its own search order, and a conftest.
+PYTEST_FILES = ("pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg", "conftest.py")
+PROBE = Path(__file__).with_name("oneshot_probe.py")   # node ids, a body that ran, the reason it failed
 
 
 class Turn(work.Run):
@@ -47,12 +45,16 @@ class Turn(work.Run):
         super().__init__(chat, task=True)
         self.repo, self.stage, self.codex, self.checked = repo, stage, codex, False
         self.token = uuid.uuid4().hex   # names this turn's `inflight`, so a late end clears only its own
+        self.sender = threading.get_ident()   # `work.begin` ends a turn it could not start on this thread
         self.ended = threading.Event()
         threading.Thread(target=oneshot.heartbeat, args=(oneshot_spec.store(repo), self.ended), daemon=True,
                          name=f"oneshot-beat-{repo}").start()
 
     def finish(self) -> None:
         super().finish()
+        if threading.get_ident() == self.sender:   # never started: no model ran, so nothing is charged
+            self.unsent()
+            return
         self.ended.set()
         done = next((e for e in self.events if e["kind"] == "done"), None) or {}
         error = next((e["text"] for e in reversed(self.events) if e["kind"] == "error"), "") or "완료된 답이 없다"
@@ -155,68 +157,99 @@ def changed(path: Path, since: str) -> list[str]:
     return sorted(names)
 
 
-def pytest(spec: dict, run, path: Path, args: str) -> tuple[int | None, str, str]:
-    return specs.gate(f"{gate_cmd(spec['oneshot']['profile'])} -p no:cacheprovider {args}", path, run.halt,
-                      env={**os.environ, **PYTEST_ENV}, timeout=RUN_SECONDS)
+def probe(path: Path, run, spec: dict, files, nodes=None) -> tuple[int | None, str, list[dict]]:
+    """One pytest run of the contract `files` with `oneshot_probe` loaded: its exit code, output and rows.
+    With `nodes`, only those node ids run; without, the run only collects."""
+
+    folder = oneshot_spec.store(spec["repo"]).folder / "probe"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / PROBE.name).write_bytes(PROBE.read_bytes())   # the only module on the path this adds
+    stamp = time.time_ns()
+    out, wanted = folder / f"run-{stamp}.jsonl", folder / f"nodes-{stamp}.json"
+    env = {**os.environ, **PYTEST_ENV, "ONESHOT_PROBE": str(out),
+           "PYTHONPATH": os.pathsep.join(p for p in (str(folder), os.environ.get("PYTHONPATH", "")) if p)}
+    if nodes is not None:
+        wanted.write_text(json.dumps(nodes), encoding="utf-8")
+        env["ONESHOT_PROBE_NODES"] = str(wanted)
+    quoted = " ".join(f'"{f}"' for f in sorted(files))
+    code, text, cut = specs.gate(f"{gate_cmd(spec['oneshot']['profile'])} -p no:cacheprovider -p oneshot_probe -q "
+                                 f"{'' if nodes is not None else '--collect-only '}{quoted}", path, run.halt, env=env,
+                                 timeout=RUN_SECONDS)
+    if cut:
+        raise ValueError(f"계약 테스트 실행이 끊겼다 ({cut}) — {text.strip()[-800:]}")
+    try:
+        rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except (OSError, ValueError):
+        rows = []
+    return code, text, rows
 
 
 def collected(path: Path, run, spec: dict, files: set[str]) -> dict[str, list[str]]:
-    """Each planned test's node ids, parameter cases included, collected from `files` alone."""
+    """Each planned test's node ids, parameter cases included, as pytest itself names them, from `files` alone."""
 
-    code, out, cut = pytest(spec, run, path, "--collect-only -q")
-    if code != 0:
-        raise ValueError(f"테스트 수집이 실패했다 ({cut or code}) — {out.strip()[-800:]}")
+    code, out, rows = probe(path, run, spec, files)
+    if code != 0 or not rows:
+        raise ValueError(f"테스트 수집이 실패했다 ({code}) — {out.strip()[-800:]}")
     names, found = {t["test_name"] for t in planned(spec)}, {}
-    for line in out.splitlines():
-        node = line.strip()
-        if "::" in node and node.split("::", 1)[0] in files and (name := node.rsplit("::", 1)[-1].split("[")[0]) in names:
-            found.setdefault(name, []).append(node)
+    for row in rows:
+        if row["kind"] == "item" and row["node"].split("::", 1)[0] in files and row["name"] in names:
+            found.setdefault(row["name"], []).append(row["node"])
     return found
 
 
-def ran(path: Path, run, spec: dict, raw: Path, nodes: list[str]) -> dict[str, tuple[str, str]]:
-    """Exactly these node ids in one JUnit run: `{node: (passed|failure|error|skipped, message)}`.
-    A node that did not run is absent."""
+def ran(path: Path, run, spec: dict, files, nodes: list[str]) -> dict[str, dict]:
+    """Exactly these node ids in one run: `{node: {kind, entered, intact, missing_app, text}}`, where `kind` is
+    `passed`, `failed`, `skipped` or `error` (setup or teardown). A node that did not run is absent."""
 
-    raw.mkdir(parents=True, exist_ok=True)
-    xml = raw / f"junit-{int(time.time() * 1000)}.xml"
-    quoted = " ".join(f'"{n}"' for n in nodes)
-    code, out, cut = pytest(spec, run, path, f'-q -o junit_family=xunit1 --junitxml="{xml.as_posix()}" {quoted}')
-    if cut or not xml.exists():
-        raise ValueError(f"계획된 테스트를 돌리지 못했다 ({cut or code}) — {out.strip()[-800:]}")
+    _, out, rows = probe(path, run, spec, files, nodes)
+    phases: dict[str, dict[str, dict]] = {}
+    for row in rows:
+        if row["kind"] == "report":
+            phases.setdefault(row["node"], {})[row["when"]] = row
     found = {}
-    for case in ET.parse(xml).getroot().iter("testcase"):
-        file = (case.get("file") or "").replace("\\", "/")
-        module, cls = file.removesuffix(".py").replace("/", "."), case.get("classname") or ""
-        inner = [p for p in cls[len(module) + 1:].split(".") if p] if cls.startswith(module + ".") else []
-        mark = next((c for c in case if c.tag in ("failure", "error", "skipped")), None)
-        found["::".join([file, *inner, case.get("name") or ""])] = (
-            ("passed", "") if mark is None else (mark.tag, f"{mark.get('message') or ''} {(mark.text or '')[:2000]}"))
+    for node, by in phases.items():
+        broken = next((by[w] for w in ("setup", "teardown") if by.get(w, {}).get("outcome") == "failed"), None)
+        call = by.get("call") or {}
+        skipped = "skipped" in (by.get("setup", {}).get("outcome"), call.get("outcome"))
+        if not (broken or skipped or call):
+            continue
+        found[node] = {"kind": "error" if broken else "skipped" if skipped else call["outcome"],
+                       "entered": bool(call.get("entered")), "intact": all(r.get("intact") for r in by.values()),
+                       "missing_app": bool(call.get("missing_app")), "text": (broken or call).get("text", "")}
+    if not found and nodes:
+        raise ValueError(f"계획된 테스트를 돌리지 못했다 — {out.strip()[-800:]}")
     return found
 
 
-def red(nodes: dict[str, list[str]], spec: dict, found: dict[str, tuple[str, str]]) -> str:
-    """Why the planned tests do not all fail for want of the application, or empty."""
+def red(nodes: dict[str, list[str]], spec: dict, found: dict[str, dict]) -> str:
+    """Why the planned tests do not all fail, in their own bodies, for want of the application, or empty."""
 
     if missing := sorted(t["test_name"] for t in planned(spec) if not nodes.get(t["test_name"])):
         return "수집되지 않은 계획 테스트: " + ", ".join(missing)
     flat = [n for ids in nodes.values() for n in ids]
+    kind = lambda n: found.get(n, {}).get("kind", "absent")   # noqa: E731
     for want, label in (("absent", "돌지 않은"), ("passed", "아직 구현이 없는데 통과하는 테스트는 아무것도 확인하지 않는다:"),
                         ("skipped", "건너뛴"), ("error", "준비(setup·teardown)에서 오류가 난")):
-        if bad := [n for n in flat if found.get(n, ("absent", ""))[0] == want]:
+        if bad := [n for n in flat if kind(n) == want]:
             return f"{label} 계획 테스트: " + ", ".join(bad) + (
-                f" — {found[bad[0]][1].strip()[:300]}" if want == "error" else "")
-    if other := [n for n in flat if not MISSING_APP.search(found[n][1])]:
+                f" — {found[bad[0]]['text'].strip()[-300:]}" if want == "error" else "")
+    if bad := [n for n in flat if not (found[n]["entered"] and found[n]["intact"])]:
+        return "본문이 돌지 않았거나 pytest 의 실행 방식이 바뀐 계획 테스트: " + ", ".join(bad)
+    if other := [n for n in flat if not found[n]["missing_app"]]:
         return ("앱이 없어서가 아닌 이유로 실패한 계획 테스트: " + ", ".join(other)
-                + f" — {found[other[0]][1].strip()[:300]}. 앱은 테스트 본문에서 `from app.main import app` 으로 가져온다")
+                + f" — {found[other[0]]['text'].strip()[-300:]}. 앱은 테스트 본문에서 `from app.main import app` 으로 가져온다")
     return ""
 
 
-def green(nodes: dict[str, list[str]], found: dict[str, tuple[str, str]]) -> str:
-    """Why a node id pinned at the tests commit did not run and pass, or empty."""
+def green(nodes: dict[str, list[str]], found: dict[str, dict]) -> str:
+    """Why a node id pinned at the tests commit did not run its own body and pass, or empty."""
 
-    bad = [f"{n}({found.get(n, ('돌지 않음',))[0]})" for ids in nodes.values() for n in ids
-           if found.get(n, ("",))[0] != "passed"]
+    def why(n):
+        f = found.get(n)
+        return ("돌지 않음" if f is None else f["kind"] if f["kind"] != "passed" else
+                "본문이 돌지 않음" if not f["entered"] else "pytest 실행 방식이 바뀜" if not f["intact"] else "")
+
+    bad = [f"{n}({w})" for ids in nodes.values() for n in ids if (w := why(n))]
     return "통과하지 못한 계획 테스트: " + ", ".join(bad) if bad else ""
 
 
@@ -235,7 +268,12 @@ def pinned(path: Path, o: dict) -> str:
         if old.returncode or not refactor_run.equivalent(name, old.stdout.encode("utf-8"), new):
             return f"계약 테스트 `{name}` 가 바뀌었다 — 계약 테스트는 고치지 않는다. 새 테스트는 새 파일에 쓴다"
     names = changed(path, o["tests_head"])
-    if touched := [n for n in names if n.rsplit("/", 1)[-1] in PYTEST_FILES and n not in o["contract"]]:
+    # A package's `__init__.py` above a contract file runs before its tests do, as a conftest would.
+    folder = lambda n: n.rsplit("/", 1)[0] if "/" in n else ""   # noqa: E731
+    above = {folder(c) for c in o["contract"]}
+    package = lambda n: n.rsplit("/", 1)[-1] == "__init__.py" and any(   # noqa: E731
+        folder(n) in ("", d) or d.startswith(folder(n) + "/") for d in above)
+    if touched := [n for n in names if (n.rsplit("/", 1)[-1] in PYTEST_FILES or package(n)) and n not in o["contract"]]:
         return "계약 테스트 커밋 뒤에 pytest 설정을 더하거나 바꿨다 — " + ", ".join(touched[:10])
     if "pyproject.toml" in names and pytest_table(specs.sh(["git", "show", f"{o['tests_head']}:pyproject.toml"], path)
                                                   .stdout) != pytest_table(read(path / "pyproject.toml")):
@@ -280,18 +318,14 @@ def checked(path: Path, run, spec: dict, final: str):
     run.checked = True
     try:
         why = tested(path, run, spec) if stage == "tests" else built(path, run, spec, final)
-    except (ValueError, OSError, ET.ParseError) as exc:
+    except (ValueError, OSError) as exc:
         why = str(exc)
     except Exception as exc:   # an unforeseen failure still stops with a reason, never leaves the stage running
         oneshot_spec.store(repo).stop("block", f"{type(exc).__name__}: {exc}")
         raise
     if not why:
-        if stage == "tests" and (run.halt.is_set() or runtime.stopping.is_set()):
-            oneshot_spec.store(repo).stop("restart" if runtime.stopping.is_set() else "block",
-                                          "검사가 끝나기 전에 멈췄다 — [재개] 로 다음 단계를 보낸다")
-            return None
         if stage == "tests":
-            return lambda: send(repo, "build", build_text(oneshot_spec.spec_of(repo)))
+            return unless_stopped(run, repo, lambda: send(repo, "build", build_text(oneshot_spec.spec_of(repo))))
         return None
     specs.note(run, why)
     attempts = int(spec["oneshot"].get("attempts") or 0) + 1
@@ -301,8 +335,23 @@ def checked(path: Path, run, spec: dict, final: str):
         store.stop(STOPS[stage], why)
         return None
     store.put(attempts=attempts, working=None)
-    return lambda: send(repo, stage, f"The server refused this {stage} turn: {why}\n\nFix it and finish the "
-                                     f"turn again (attempt {attempts + 1} of {MAX_ATTEMPTS}).")
+    return unless_stopped(run, repo, lambda: send(
+        repo, stage, f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again "
+                     f"(attempt {attempts + 1} of {MAX_ATTEMPTS})."))
+
+
+def unless_stopped(run, repo: str, then):
+    """The next turn, sent only if no stop arrived by the time `work.run_turn` sends it: a stop pressed
+    after the check, while the turn was being recorded, leaves the stage resumable instead."""
+
+    def next_turn():
+        if run.halt.is_set() or runtime.stopping.is_set():
+            oneshot_spec.store(repo).stop("restart" if runtime.stopping.is_set() else "block",
+                                          "다음 턴을 보내기 전에 멈췄다 — [재개] 로 이어 간다")
+            return
+        then()
+
+    return next_turn
 
 
 def tested(path: Path, run, spec: dict) -> str:
@@ -320,7 +369,7 @@ def tested(path: Path, run, spec: dict) -> str:
     before = (snapshot(path, names), head(path), names)
     nodes = collected(path, run, spec, set(contract))
     flat = [n for ids in nodes.values() for n in ids]
-    if why := red(nodes, spec, ran(path, run, spec, oneshot_spec.store(spec["repo"]).folder, flat) if flat else {}):
+    if why := red(nodes, spec, ran(path, run, spec, contract, flat) if flat else {}):
         return why
     if (snapshot(path, names), head(path), changed(path, o["design_head"])) != before:
         return "계획 테스트를 돌리는 동안 작업트리가 바뀌었다"
@@ -359,7 +408,7 @@ def built(path: Path, run, spec: dict, final: str) -> str:
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     nodes = o["nodes"]
-    found = ran(path, run, spec, oneshot_spec.store(spec["repo"]).folder, [n for ids in nodes.values() for n in ids])
+    found = ran(path, run, spec, o["contract"], [n for ids in nodes.values() for n in ids])
     if why := green(nodes, found):
         return why
     if head(path) != verdict["head"] or specs.dirty(path):

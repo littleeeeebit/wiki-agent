@@ -29,10 +29,12 @@ The gate command is `{gate}`.
 2. The tests collect: write `from app.main import app` inside each test
    body, never at module level and never in a fixture, so collection succeeds
    while the application does not exist yet.
-3. Every planned test runs and fails for one reason only: `app` cannot be
-   imported yet. A planned test that passes now checks nothing, a skipped one
-   checks nothing either, an error in a fixture is not a failing test, and a
-   test that fails for any other reason is refused.
+3. Every planned test runs and fails, in its own body, for one reason only:
+   `from app.main import app` raises `ModuleNotFoundError` because `app`
+   does not exist yet. A planned test that passes now checks nothing, a
+   skipped one checks nothing either, an error in a fixture is not a failing
+   test, and a test that fails for any other reason, an import from another
+   module included, is refused.
 
 The server runs pytest with plugin autoloading off and `PYTEST_ADDOPTS`
 empty, so a plugin the tests need must be named in the configuration. When
