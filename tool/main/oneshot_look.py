@@ -159,9 +159,10 @@ class Tree:
 
     def __init__(self, proc, job) -> None:
         self.proc, self.job, self.held = proc, job, {}   # pid → handle
-        self.lock, self.done = threading.Lock(), threading.Event()
+        self.lock, self.done, self.watcher = threading.Lock(), threading.Event(), None
         if os.name == "nt":
-            threading.Thread(target=self.watching, daemon=True, name="oneshot-look-tree").start()
+            self.watcher = threading.Thread(target=self.watching, daemon=True, name="oneshot-look-tree")
+            self.watcher.start()
 
     def watching(self) -> None:
         while not self.done.wait(self.WATCH_SECONDS):
@@ -192,9 +193,10 @@ class Tree:
     def reap(self) -> None:
         """Every process of the app killed: the job's, and on Windows each one the watcher holds."""
 
-        if os.name == "nt":
-            self.watch()
         self.done.set()
+        if self.watcher:   # a scan still running would register a handle after the kill: let it land first
+            self.watcher.join()
+            self.watch()
         process.terminated(self.job)
         if self.proc.poll() is None:
             self.proc.kill()

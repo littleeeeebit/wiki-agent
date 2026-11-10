@@ -7,6 +7,7 @@ follows the conventions the build prompt fixes: one port from `PORT`, its data u
 
 import http.server
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -207,6 +208,36 @@ def test_the_apps_own_listener_is_accepted_and_nothing_of_it_outlives_the_look(t
     while look.listeners(port) and time.monotonic() < deadline:
         time.sleep(0.2)
     assert not look.listeners(port)   # the server under the launcher's shell is gone too
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the watcher runs on Windows only")
+def test_a_child_the_watcher_finds_while_the_look_ends_is_still_killed():
+    entered, release, killed, closed, watcher = threading.Event(), threading.Event(), [], [], []
+
+    def parents():   # the watcher's scan sees a new child, then is held before it registers it
+        if threading.current_thread().name == "oneshot-look-tree":
+            watcher.append(threading.current_thread())
+            entered.set()
+            release.wait(5)
+            return {100: 50, 200: 100}
+        return {100: 50}
+
+    k32 = type("K32", (), {"OpenProcess": staticmethod(lambda access, inherit, pid: 10000 + pid),
+                           "TerminateProcess": staticmethod(lambda h, code: killed.append(h)),
+                           "CloseHandle": staticmethod(closed.append)})
+    proc = type("Proc", (), {"pid": 100, "poll": lambda self: 0})()
+    with patch.object(look, "parents", parents), patch.object(look, "_k32", k32), \
+         patch.object(look.process, "terminated", lambda job: None):
+        tree = look.Tree(proc, None)
+        assert entered.wait(5)
+        reaping = threading.Thread(target=tree.reap)
+        reaping.start()
+        time.sleep(0.3)   # the end of the look gets as far as it can while the scan is held
+        release.set()
+        reaping.join(5)
+        watcher[0].join(5)
+    assert not reaping.is_alive() and not watcher[0].is_alive()
+    assert tree.held == {} and killed == [10200] and closed == [10200]
 
 
 def test_a_stop_ends_the_wait_for_the_app(tmp_path):
