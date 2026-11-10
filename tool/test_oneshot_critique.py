@@ -197,7 +197,7 @@ def test_a_tree_changed_after_the_shots_is_neither_judged_nor_approved(judged, c
     assert o()["stage"] == "build-front" and o()["stopped"]["reason"] == "gate"
 
 
-@pytest.mark.parametrize("cut", ["restart", "budget"])
+@pytest.mark.parametrize("cut", ["restart", "block"])
 def test_fixes_whose_turn_was_never_sent_go_again_on_resume(judged, cut):
     _, sent = judged
     at_r3()
@@ -206,8 +206,8 @@ def test_fixes_whose_turn_was_never_sent_go_again_on_resume(judged, cut):
     assert o()["working"] == "build-front" and o()["fix"]["findings"][0]["what"] == "R3_ONLY_EDIT 표로"
     if cut == "restart":   # the server died before the turn went out
         oneshot_spec.recover()
-    else:                  # the budget refused it before any session
-        oneshot_spec.store("budget").stop("budget", "한도")
+    else:                  # the session could not be opened
+        oneshot_spec.store("budget").stop("block", "작업 턴을 보내지 못했다")
     assert o()["stopped"]["reason"] == cut and not o()["working"]
     oneshot_spec.resume("budget")
     assert sent[-1][1] == "build-front" and "R3_ONLY_EDIT 표로" in sent[-1][2]

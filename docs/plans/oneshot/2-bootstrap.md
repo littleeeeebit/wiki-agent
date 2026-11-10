@@ -67,19 +67,16 @@ while Codex runs on the subscription and reports tokens only (`:1095`,
 `:1124`). So the run keeps its own ledger in the record that currently owns
 it (`spend` in the run record, then in the spec's `oneshot` field), and each
 role of the run — intake, spec, design, builder, critic, reviewer, sheet
-rewrites — is metered by what its provider reports:
+rewrites — is metered by what its provider reports. The ledger is a record,
+not a limit: no turn is refused for what the run has spent.
 
-| Role's provider | Metered by | First turn, no sample yet | Turn ended without a cost |
-| --- | --- | --- | --- |
-| Reports USD (Claude) | The USD ceiling | Counted at the role's estimate, a setting per role with one default | Counted at the larger of the estimate and the role's largest seen cost, marked unknown |
-| Subscription (Codex) | The hours ceiling only; never converted to USD | — | — |
+| Role's provider | Metered by | Turn ended without a cost |
+| --- | --- | --- |
+| Reports USD (Claude) | USD and time | Counted at the larger of the role's estimate (a setting per role with one default) and its largest seen cost, marked unknown |
+| Subscription (Codex) | Time only; never converted to USD | — |
 
-- Before a USD-metered turn starts, the run refuses it when the spent total
-  plus the role's largest seen cost, or its estimate before any sample, would
-  pass the ceiling, and stops with `budget`.
 - Every turn, of either kind, adds its elapsed seconds and one call to the
-  ledger. The hours ceiling is checked against the ledger's seconds before
-  each turn; calls are recorded for the card, with no ceiling of their own.
+  ledger.
 - The ledger is written after each turn, so a restart resumes with the spent
   totals; a turn cut by the restart counts as unknown at the rule above.
   The run records the turn as in flight before sending it, with the time it
@@ -88,12 +85,6 @@ rewrites — is metered by what its provider reports:
   heartbeats prove, and otherwise the larger of the role's longest turn and
   ten minutes, never more than the time since it was sent; it is marked
   unknown. A failed turn that reported its cost is charged that cost.
-  A ledger whose USD entries are all estimates still enforces: the estimates
-  are what was charged.
-
-The card shows which roles fall under the USD ceiling and which only under
-the hours ceiling, and that the ceilings are enforced between turns, never
-inside one: a single turn may overshoot by its own cost.
 
 ## Run states in this step
 
@@ -108,7 +99,6 @@ its worker before letting go of the hub.
 | Reason | When | `[재개]` does |
 | --- | --- | --- |
 | `restart` | The server stopped mid-stage | Reruns the stage from its last recorded sub-step |
-| `budget` | The run's ceiling was reached | Asks for a new ceiling, then continues |
 | `folder` | The target folder is not empty, or vanished | Re-checks the folder |
 | `github` | `gh` is not logged in, the name is taken, or the push was refused | Re-runs the failed sub-step only |
 | `block` | The model's block failed validation twice | Sends the stage turn again |
@@ -174,8 +164,8 @@ saved profile.
   "…", "why": "…"}}`, only for fields it changes. A field or option outside the
   schema refuses the block.
 - Fields the intent decides (for example "uses an LLM", or conda because the
-  intent names GPU work) are proposed; fields only the owner can know (budget,
-  visibility) are always shown empty on a first run.
+  intent names GPU work) are proposed; fields only the owner can know (visibility,
+  docs language) are always shown empty on a first run.
 
 ### Supported combinations
 
@@ -207,7 +197,6 @@ on the card, not as a refusal.
 | Conda needs an environment name | The README carries `conda activate <name>`, which is also what `connect.conda_python` reads |
 | Public needs a license | The overview's choice |
 | Private forbids a CI workflow file | The owner's rule: private means no hosted CI |
-| Budget must be filled | The run's ledger and `Budget` are built from it |
 
 ### The card
 
@@ -313,8 +302,7 @@ card. Gate sheets and the drag board are step 5.
   with the existing `raw/connect/<name>.json` byte-identical and no `gh`
   call; a non-empty picked folder refused; the original checkout still on
   `main` and unchanged after sub-step 9; the `gate_cmd` for each environment;
-  the ledger refusing a turn that would pass the ceiling, charging a USD
-  role's first turn at its estimate, counting an unreported cost as unknown,
+  the ledger charging a USD role's unreported turn at its estimate, counting an unreported cost as unknown,
   metering Codex-only roles by hours without inventing USD across
   several turns, and restoring every total after a restart, including a
   ledger of estimates only; a

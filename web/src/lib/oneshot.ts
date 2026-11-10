@@ -62,7 +62,7 @@ export const STAGES: { id: string; label: string; kind: 'talk' | 'gate' | 'auto'
 ]
 export const stageLabel = (id: string) => STAGES.find((s) => s.id === id)?.label ?? id
 export const STOP: Record<string, string> = {
-  budget: '한도에 닿았다', block: '모델 답을 쓸 수 없었다', restart: '서버가 다시 켜져 멈췄다', tests: '계약 테스트를 쓰지 못했다',
+  block: '모델 답을 쓸 수 없었다', restart: '서버가 다시 켜져 멈췄다', tests: '계약 테스트를 쓰지 못했다',
   gate: '빌드가 검사를 통과하지 못했다', review: '백엔드 리뷰가 두 번 거절했다', critique: '화면 비평이 멈췄다',
 }
 export const COLUMNS: { id: Freq; label: string }[] = [

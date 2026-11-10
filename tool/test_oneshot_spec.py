@@ -17,7 +17,7 @@ from main import oneshot, oneshot_sheet as sheet, oneshot_spec, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 
 PROFILE = {"auth": "none", "data_store": "sqlite", "backend": "fastapi", "visibility": "private",
-           "docs_language": "ko", "budget_usd": 50, "budget_hours": 10}
+           "docs_language": "ko"}
 REQS = [{"id": "R1", "text": "지출을 적으면 이번 달 합계에 더해진다", "source": {"kind": "original", "locator": "주인의 문장"},
          "status": "confirmed", "postconditions": ["합계가 늘어난다"]},
         {"id": "R2", "text": "지난 달 지출을 고르면 그 달 목록이 보인다", "source": {"kind": "decision", "locator": "답 1"},
