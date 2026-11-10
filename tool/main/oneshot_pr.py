@@ -73,11 +73,16 @@ def ci_file(path: Path, mode: str | None, gate: str) -> bool:
         flow = yaml.safe_load(shown.stdout) if not shown.returncode else None
     except yaml.YAMLError:
         return False
-    # YAML 1.1 reads the bare key `on` as true.
-    if not isinstance(flow, dict) or not (flow.get("on") or flow.get(True)) or not isinstance(flow.get("jobs"), dict):
+    if not isinstance(flow, dict) or not isinstance(flow.get("jobs"), dict):
+        return False
+    on = flow.get("on", flow.get(True))   # YAML 1.1 reads the bare key `on` as true
+    events = {on} if isinstance(on, str) else set(on) if isinstance(on, (list, dict)) else set()
+    if not {"push", "pull_request"} <= events:   # on every push and pull request, not by hand only
         return False
     steps = [s for job in flow["jobs"].values() if isinstance(job, dict) for s in job.get("steps") or []]
-    return any(isinstance(s, dict) and gate in str(s.get("run") or "") for s in steps)
+    # The gate is a command a line of `run` starts with: named in a comment or an `echo`, it never runs.
+    return any(line.strip() == gate or line.strip().startswith(gate + " ")
+               for s in steps if isinstance(s, dict) for line in str(s.get("run") or "").splitlines())
 
 
 def readied(path: Path, run, spec: dict, final: str) -> str:

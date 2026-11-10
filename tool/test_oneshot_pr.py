@@ -118,6 +118,21 @@ def test_a_public_repository_needs_its_committed_ci_workflow(finished, more):
     assert "CI 워크플로(`.github/workflows/ci.yml`)가 없다" in sent[-1][2]
 
 
+@pytest.mark.parametrize("text, runs", [
+    (workflow("      - run: |\n          # uv run pytest\n          echo done\n"), False),
+    (workflow("      - run: echo uv run pytest\n"), False),
+    ("on: workflow_dispatch\njobs:\n  gate:\n    steps:\n      - run: uv run pytest\n", False),
+    ("on: push\njobs:\n  gate:\n    steps:\n      - run: uv run pytest\n", False),
+    (workflow("      - run: |\n          uv sync\n          uv run pytest -q\n"), True),
+    ("on:\n  push:\n    branches: [main]\n  pull_request:\njobs:\n  a:\n    steps:\n      - run: ls\n"
+     "  b:\n    steps:\n      - run: uv run pytest\n", True),
+])
+def test_the_public_ci_runs_the_gate_on_every_push_and_pull_request(finished, text, runs):
+    tree, _ = finished
+    readme(tree, (oneshot_pr.CI, text))
+    assert oneshot_pr.ci_file(tree, oneshot_pr.workflows(tree).get(oneshot_pr.CI), "uv run pytest") is runs
+
+
 def test_a_workflow_deleted_in_the_run_is_no_ci_and_a_committed_one_passes(finished):
     tree, sent = finished
     oneshot_spec.saved("budget", oneshot={"profile": {**o()["profile"], "visibility": "public", "ci": "github-actions"}})
