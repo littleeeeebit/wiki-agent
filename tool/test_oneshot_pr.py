@@ -100,8 +100,16 @@ def test_s8_refuses_to_open_without_its_readme_with_a_private_workflow_or_with_t
     assert sent[-1][1] == "pr" and said in sent[-1][2] and o()["attempts"] == 1 and not spec().get("writing")
 
 
+def workflow(steps: str) -> str:
+    return f"name: ci\non: [push, pull_request]\njobs:\n  gate:\n    runs-on: ubuntu-latest\n    steps:\n{steps}"
+
+
 @pytest.mark.parametrize("more", [(), ((".github/workflows/notes.txt", "later\n"),),
-                                  ((".github/workflows/ci.yml", "name: ci\n"),)])
+                                  ((".github/workflows/ci.yml", "name: ci\n"),),
+                                  ((".github/workflows/ci.yml", "# jobs: TODO\n"),),
+                                  ((".github/workflows/ci.yml", "jobs:\n  gate:\n    runs-on: ubuntu-latest\n"),),
+                                  ((".github/workflows/ci.yml", workflow("      - run: echo hi\n")),),
+                                  ((".github/workflows/ci.yml", "on: [push\n"),)])
 def test_a_public_repository_needs_its_committed_ci_workflow(finished, more):
     tree, sent = finished
     oneshot_spec.saved("budget", oneshot={"profile": {**o()["profile"], "visibility": "public", "ci": "github-actions"}})
@@ -113,8 +121,8 @@ def test_a_public_repository_needs_its_committed_ci_workflow(finished, more):
 def test_a_workflow_deleted_in_the_run_is_no_ci_and_a_committed_one_passes(finished):
     tree, sent = finished
     oneshot_spec.saved("budget", oneshot={"profile": {**o()["profile"], "visibility": "public", "ci": "github-actions"}})
-    readme(tree, (".github/workflows/ci.yml", "jobs:\n  gate:\n    runs-on: ubuntu-latest\n"))
-    assert oneshot_pr.ci_file(tree, oneshot_pr.workflows(tree).get(oneshot_pr.CI))
+    readme(tree, (".github/workflows/ci.yml", workflow(f"      - uses: actions/checkout@v4\n      - run: |\n          {GATE}\n")))
+    assert oneshot_pr.ci_file(tree, oneshot_pr.workflows(tree).get(oneshot_pr.CI), GATE)
     git(tree, "rm", "-q", ".github/workflows/ci.yml")
     git(tree, "commit", "-m", "drop ci")
     check(tree, answer(report()))()
@@ -180,10 +188,22 @@ def test_a_pull_request_text_asked_again_is_the_runs_own_turn(finished):
         check(tree, answer(report()))()
     asked = len(sent)
     then = check(tree, answer())   # no `pr-summary`: sent back once
-    assert spec()["writing"]["asked"] == 2 and len(sent) == asked and o()["working"] is None
+    assert spec()["writing"]["asked"] == 2 and len(sent) == asked and o()["working"] == "pr"
     then()
     assert len(sent) == asked + 1 and sent[-1][1] == "pr" and "pr-summary" in sent[-1][2]
     assert spec()["writing"]["asked"] == 2   # still asked: the next answer is handed over again
+
+
+def test_a_restart_before_the_text_is_asked_again_leaves_the_run_resumable(finished):
+    tree, sent = finished
+    readme(tree)
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    check(tree, answer())   # the re-ask is returned, and the server stops before it is sent
+    oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "restart"
+    oneshot_spec.resume("budget")
+    assert sent[-1][1] == "pr" and "README.md" in sent[-1][2] and not spec().get("writing")
 
 
 def test_a_resumed_s8_starts_again_from_its_readme_turn(finished):

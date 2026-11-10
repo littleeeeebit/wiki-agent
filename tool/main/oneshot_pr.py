@@ -13,6 +13,8 @@ import os
 import threading
 from pathlib import Path
 
+import yaml
+
 from wiki import slots_for
 
 from . import oneshot_build, oneshot_spec, pr_text, specs
@@ -33,8 +35,8 @@ def readme_text(spec: dict) -> str:
     public = profile.get("visibility") == "public" and profile.get("ci") == "github-actions"
     return (README_PROMPT.replace("{os}", " and ".join(both))
             .replace("{gate}", slots_for(None, Path(spec["worktree"])).get("gate_cmd", "").strip())
-            .replace("{workflow}", "Also write `.github/workflows/ci.yml` running the same gate on every push and "
-                                   "pull request." if public else
+            .replace("{workflow}", "Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and a job "
+                                   "whose step `run`s the gate command above, as written." if public else
                      "Write no CI workflow: this repository gets none, and the server refuses one."))
 
 
@@ -60,13 +62,22 @@ def workflows(path: Path) -> dict[str, str]:
     return {name: meta.split()[0] for meta, _, name in (e.partition("\t") for e in done.stdout.split("\0") if e)}
 
 
-def ci_file(path: Path, mode: str | None) -> bool:
-    """`ci.yml` committed as a plain file (a link points anywhere) that names its jobs."""
+def ci_file(path: Path, mode: str | None, gate: str) -> bool:
+    """`ci.yml` committed as a plain file (a link points anywhere) whose workflow has a trigger and a
+    job step that runs the gate: a comment or an empty job is no CI."""
 
     if mode not in ("100644", "100755"):
         return False
     shown = specs.sh(["git", "show", f"HEAD:{CI}"], path)
-    return not shown.returncode and "jobs:" in shown.stdout
+    try:
+        flow = yaml.safe_load(shown.stdout) if not shown.returncode else None
+    except yaml.YAMLError:
+        return False
+    # YAML 1.1 reads the bare key `on` as true.
+    if not isinstance(flow, dict) or not (flow.get("on") or flow.get(True)) or not isinstance(flow.get("jobs"), dict):
+        return False
+    steps = [s for job in flow["jobs"].values() if isinstance(job, dict) for s in job.get("steps") or []]
+    return any(isinstance(s, dict) and gate in str(s.get("run") or "") for s in steps)
 
 
 def readied(path: Path, run, spec: dict, final: str) -> str:
@@ -79,19 +90,20 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     names = oneshot_build.changed(path, o.get("front_built_head") or o["tests_head"])
     if "README.md" not in names or not (path / "README.md").is_file():
         return "`README.md` 를 쓰지 않았다 — 설치, 실행, 테스트 명령을 적는다"
+    gate = slots_for(None, path).get("gate_cmd", "").strip()
+    if not gate:
+        return "어댑터의 `gate_cmd` 가 비었다"
     # What the published HEAD holds, not what changed: a deleted workflow or a stray note is no CI.
     held = workflows(path)
     flows = sorted({*held, *(n for n in names if n.startswith(WORKFLOWS) and os.path.lexists(path / n))})
     public = o["profile"].get("visibility") == "public" and o["profile"].get("ci") == "github-actions"
     if flows and not public:
         return "이 저장소는 CI 워크플로를 두지 않는다 — " + ", ".join(flows[:5]) + " 를 지운다"
-    if public and not ci_file(path, held.get(CI)):
-        return f"공개 저장소의 CI 워크플로(`{CI}`)가 없다 — 커밋된 보통 파일로, `jobs:` 에 게이트를 둔다"
+    if public and not ci_file(path, held.get(CI), gate):
+        return (f"공개 저장소의 CI 워크플로(`{CI}`)가 없다 — 커밋된 보통 파일로, `on:` 트리거와 "
+                f"게이트(`{gate}`)를 `run` 하는 job step 을 둔다")
     if why := oneshot_build.pinned(path, o):
         return why
-    gate = slots_for(None, path).get("gate_cmd", "").strip()
-    if not gate:
-        return "어댑터의 `gate_cmd` 가 비었다"
     verdict = specs.judge(path, [gate], run.halt, lambda text: specs.note(run, text))
     if not verdict["ok"]:
         return f"최종 게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
@@ -149,8 +161,7 @@ def handed(path: Path, run, spec: dict, final: str):
         oneshot_spec.saved(repo, oneshot={"stage": "done", "working": None, "pr": fresh["pr"]})
     elif not fresh.get("writing"):   # neither open nor asked again: the reason is the spec's fault
         oneshot_spec.store(repo).stop(STAGE, fresh.get("fault") or "PR 을 만들지 못했다")
-    elif then:
-        oneshot_spec.store(repo).put(working=None)
+    elif then:   # `working` stays until the turn goes: a restart in between is recovered as any running stage
         return oneshot_build.unless_stopped(run, repo, then)
     return then
 
