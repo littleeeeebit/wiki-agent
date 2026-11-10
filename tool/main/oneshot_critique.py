@@ -166,6 +166,7 @@ def fixing(spec: dict, found: list[dict], who: str) -> str:
 
 oneshot_spec.WORKERS["critique"] = critique
 oneshot_spec.RUNNING["critique"] = "critique"
+oneshot_spec.SHEETS.add("r3")   # an approval the worktree refused: `[재개]` puts the sheet back, decisions kept
 oneshot_build.STAGES[front_build.STAGE] = (*oneshot_build.STAGES[front_build.STAGE][:2], front_turn, begin)
 
 

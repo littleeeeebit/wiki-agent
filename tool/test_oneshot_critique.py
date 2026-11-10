@@ -250,3 +250,17 @@ def test_a_round_folder_that_links_outside_the_run_is_never_served_nor_shown(jud
         critique.look_shot("budget", 2, "S1-desktop-full.png")
     spec = specs.load("budget", oneshot.BRANCH)
     assert critique.pictures(spec, 2)[0] == [] and critique.pictures(spec, 1)[1] == []
+
+
+def test_an_r3_approval_the_worktree_refused_is_resumed_and_approved_again(judged):
+    tree, _ = judged
+    at_r3()
+    everything = critique.Decisions(decisions={s["id"]: {"approve": True} for s in FRONT["screens"]})
+    git(tree, "checkout", "-q", "-b", "elsewhere")
+    critique.decide("budget", everything)
+    assert o()["stage"] == "r3" and o()["stopped"]["reason"] == "folder"
+    git(tree, "checkout", "-q", oneshot.BRANCH)
+    oneshot_spec.resume("budget")
+    assert o()["stage"] == "r3" and not o()["stopped"] and o()["r3"]["decisions"]
+    critique.decide("budget", critique.Decisions(decisions={}))
+    assert o()["stage"] == "pr"

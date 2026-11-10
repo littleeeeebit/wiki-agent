@@ -330,8 +330,10 @@ counted afresh; the re-shown sheet marks the edited screens. Approval of
 every screen moves the run to `pull request`. The approval holds the worktree
 and checks it is still `front_built_head`, clean; a tree another turn holds
 refuses it (409, the decisions kept), and a moved one goes back to
-`build-front`'s checks. A screenshot path through a link or a junction is
-never served.
+`build-front`'s checks. A worktree that is not the run's checkout stops R3
+with `folder`; `[재개]` puts the sheet back with its decisions, and the next
+approval checks the tree again. A screenshot path through a link or a
+junction is never served.
 
 ## Completion
 
