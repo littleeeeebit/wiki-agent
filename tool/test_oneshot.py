@@ -247,6 +247,17 @@ def test_the_card_is_prefilled_from_the_kind_and_confirmed_only_without_errors(w
     assert shown["state"] == "bootstrap" and shown["confirmed"]
 
 
+def test_a_card_saved_before_a_field_was_dropped_shows_and_saves_without_it(world):
+    rid = made(world, state="environment", working=None, confirmed=False,
+               profile={**PROFILE, "budget_usd": 50, "budget_hours": 10})
+    shown = oneshot.view(oneshot.load(rid))
+    assert "budget_usd" not in shown["profile"] and shown["profile"]["github_owner"] == "someone"
+    # What the screen sends back is the card it was shown, and it saves.
+    with patch.object(oneshot, "launch", lambda rid, *a, **k: oneshot.save({**oneshot.load(rid), **k})):
+        saved = oneshot.profile(rid, oneshot.Profile(values=shown["profile"], confirm=True))
+    assert "budget_usd" not in saved["profile"] and saved["confirmed"]
+
+
 # -- Bootstrap ---------------------------------------------------------------------------------
 
 def finished(world, rid: str) -> dict:

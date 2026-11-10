@@ -34,7 +34,7 @@ from workspace import TASK, create
 from . import channels, connect, prerequisite_review, runtime, specs
 from .oneshot_files import as_planned, git, planned, tracked  # noqa: F401 — `tracked` is read by tests
 from .oneshot_profile import (KINDS, SCHEMA, SUPPORTED_KINDS, charged, cut, gate_cmd, ledger, problems,
-                              proposal)
+                              proposal, current)
 from .query import ROOT
 
 RUNS = ROOT / "raw" / "oneshot"
@@ -663,8 +663,8 @@ def restarted(store: Store) -> None:
 
 def view(run: dict) -> dict:
     errors, warnings = problems(run["profile"]) if run.get("profile") else ([], [])
-    return {**{k: v for k, v in run.items() if k != "license_text"}, "errors": errors, "warnings": warnings,
-            "schema": SCHEMA, "steps_order": list(STEPS)}
+    return {**{k: v for k, v in run.items() if k != "license_text"}, "profile": current(run.get("profile")),
+            "errors": errors, "warnings": warnings, "schema": SCHEMA, "steps_order": list(STEPS)}
 
 
 # -- HTTP ------------------------------------------------------------------------------------------
@@ -808,7 +808,7 @@ def profile(rid: str, body: Profile) -> dict:
         unknown = set(body.values) - set(SCHEMA)
         if unknown:
             raise HTTPException(400, f"스키마에 없는 필드: {', '.join(sorted(unknown))}")
-        values = {**run["profile"], **body.values}
+        values = {**current(run["profile"]), **body.values}
         if body.confirm:
             errors, _ = problems(values)
             if errors:

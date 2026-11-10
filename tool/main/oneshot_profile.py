@@ -45,6 +45,13 @@ SCHEMA: dict[str, dict] = {
 OWNER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
 CONDA_ENV = re.compile(r"[\w.-]{1,64}")
 
+
+def current(profile: dict | None) -> dict | None:
+    """A card's values in today's schema: a field a later version dropped is no longer the card's."""
+
+    return None if profile is None else {k: v for k, v in profile.items() if k in SCHEMA}
+
+
 def proposal(value) -> dict:
     """The model's `oneshot-profile` block, checked against the schema: `{field: {value, why}}`."""
 

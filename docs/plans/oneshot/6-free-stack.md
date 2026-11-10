@@ -100,10 +100,19 @@ with one block:
 
 | Check | When | Refused if |
 | --- | --- | --- |
+| Named | The tests turn ends | A listed file is missing or outside the worktree, or a file the turn changed names a planned test but is not in `contract` |
 | Red | The tests turn ends | A planned name is missing from the report, or passed, or was skipped |
-| Pin | The server commits the tests | — it stores `command`, `contract` and `config` with `tests_head` |
+| Pin | The server commits the tests | — it stores `command`, `contract`, `config` and each planned case as `[classname, name]` from the report, with `tests_head` |
 | Pinned | Every later turn ends | A `contract` or `config` file differs from `tests_head` |
-| Green | The build turn ends | A planned name did not pass, or was skipped, in a run of the stored command |
+| Green | The build turn ends | A pinned case is absent, skipped or failing in a run of the stored command |
+
+A planned name matches a testcase whose name equals it in any case, or
+continues with a parameter (`name[…]`, `name (…)`), so Go's `Test_name` and
+pytest's parameter cases match. A case is pinned by its classname and name
+together, as pytest's node id pinned the file, the class and the parameter
+case: a test of the same name in another file or class never stands in for
+it, and a configuration that deselects or skips a pinned case leaves it
+absent or skipped at green.
 
 The server substitutes `{report}` with a path in the run's folder, outside the
 worktree, and reads only that file. The adapter's `gate_cmd` becomes the
@@ -114,14 +123,21 @@ stored command with `{report}` set to `artifacts/junit.xml`.
 pytest's probe (`oneshot_probe`) proved three more things: that each test's
 body ran (`entered`), that pytest's runner was not patched (`intact`), and
 that a red test failed only for want of the application (`missing_app`). No
-generic report carries them, so they go:
+generic report carries them, so they go, and nothing at green brings them
+back:
 
-- A red test failing for another reason, a broken import in the test itself
-  say, is not refused at red. It cannot turn green without editing a pinned
-  file, so the build is refused at green instead, later than today.
-- A configuration file the turn did not list, or application code that
-  tampers with the tool's reporting, is not caught by the server. The
-  backend's independent review (3c) reads the diff for it.
+- Red no longer says why a test failed. A test that fails for want of a
+  helper module unrelated to the application, and checks nothing about it,
+  passes once the build adds that module. A later pass proves the case ran
+  and passed, not that it exercised the application.
+- A body that never ran is not caught: a runner patched to report a pass, by
+  a configuration file the turn did not list or by application code, reads as
+  a pass in the report.
+
+The planned tests' `given`, `when` and `then` were approved at R1, and the
+backend's independent review (3c) reads the contract tests and the diff
+against them. That review, not the server, is what stands between these
+cases and a green build.
 
 ## S5 — operations from the approved API document
 
@@ -143,22 +159,43 @@ board are unchanged.
 | Dropped | Instead |
 | --- | --- |
 | The frontend lives in `web/` | Wherever the chosen stack puts it |
-| Hash routes | The build writes `e2e/screens.json`, `{"S1": "/months"}`, and the shots open those paths |
+| Hash routes | Each screen opens at its own route as a path (`/months`), which server-rendered pages and history-routed apps both serve; S6 refuses a route that an API path also matches |
 | `gate_cmd` keeps the backend's pytest command | It keeps the stored contract command |
 
 ## Runs started before this step
 
-A run whose spec carries `oneshot.version` 1 stops with the reason `version`
-on its next step: its profile and its pins have the old shape. It is kept for
-reading; a new run starts over.
+Each part that changes the shape of what a run stores raises the spec's
+`oneshot.version` in that part, and `[재개]` refuses a run of an older version
+that is already past the stage whose record changed. A server restart stops
+every running run with `restart` first, so the resume is the only way back
+in, and the refusal tells the owner to start a new run. The run stays
+readable.
+
+| Part | Version | Refused on resume |
+| --- | --- | --- |
+| 6b | 2 | A version 1 run past the tests turn: it pinned pytest node ids and no command |
+| 6c | 3 | A version 2 run past S2: its stack is in the card's old fields, not in `stack` |
+
+A run still before the changed stage carries on: the new code writes the new
+record when it reaches that stage.
 
 ## Parts
 
 | Part | Scope | Status |
 | --- | --- | --- |
 | 6a | This document; budgets removed from the card, the ceilings and the screen | In progress |
-| 6b | S4 on the runner block and JUnit, S5 from `api.yaml`, S7's conventions | Not started |
-| 6c | The stack in S2 and on R1, the card's stack fields removed, the bootstrap without them, the prompts reading the stack, version 2 | Not started |
+| 6b | S4 on the runner block and JUnit, S5 from `api.yaml`, S7's conventions, version 2 | Not started |
+| 6c | The stack in S2 and on R1, the card's stack fields removed, the bootstrap without them, the prompts reading the stack, version 3 | Not started |
 
-6b goes before 6c so every merged state still runs: with the old card the
-tests turn can declare a pytest command, and 6c then moves the choice into S2.
+6b goes before 6c so every merged state still runs. After 6b a new run's
+tests turn declares a pytest command from the old card, and a run already
+past its tests turn is refused on resume (version 1). 6c then moves the
+choice into S2.
+
+What each merged state is checked against:
+
+| After | A new run | A run from before the part |
+| --- | --- | --- |
+| 6a | Runs to the end on the card's stack, with no ceiling | Carries on; a card saved with the budget fields shows and saves without them |
+| 6b | Declares its runner and runs to the end | Before the tests turn: carries on. Past it: refused on resume |
+| 6c | Picks its stack in S2 and runs to the end | Before S2: carries on. Past it: refused on resume |
