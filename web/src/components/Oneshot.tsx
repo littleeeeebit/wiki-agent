@@ -120,8 +120,13 @@ export function OneshotRail({ open }: { open: (repo: string) => void }) {
   useEffect(() => {
     const read = () => { oneshotSpecs().then((d) => setRuns(d.specs.filter((s) => s.stage !== 'done'))).catch(() => setRuns([])) }
     read()
+    // A worker moving a run on (an automatic stage reaching a gate) saves its spec, which the feed announces.
     window.addEventListener('focus', read)
-    return () => window.removeEventListener('focus', read)
+    window.addEventListener('spec-changed', read)
+    return () => {
+      window.removeEventListener('focus', read)
+      window.removeEventListener('spec-changed', read)
+    }
   }, [])
   if (!runs.length) return null
   return (

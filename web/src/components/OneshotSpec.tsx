@@ -1,6 +1,7 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
-import Markdown from 'react-markdown'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { Choices } from '@/components/Blocks'
 import { Btn } from '@/components/Modal'
 import { api, COLUMNS, STAGES, STOP, stageLabel, type Decision, type Feature, type Freq, type Gate, type Palette,
   type SpecView, type Talk } from '@/lib/oneshot'
@@ -25,13 +26,16 @@ export function OneshotSpec({ repo }: { repo: string }) {
     return () => window.clearInterval(timer)
   }, [repo, working])
 
+  /** Whether the server took it: a refused answer stays in its box to be sent again. */
   async function act(fn: () => Promise<SpecView>) {
     setFault('')
     setBusy(true)
     try {
       setView(await fn())
+      return true
     } catch (err) {
       setFault(error(err))
+      return false
     } finally {
       setBusy(false)
     }
@@ -100,18 +104,22 @@ function Strip({ view }: { view: SpecView }) {
 }
 
 function Conversation({ talk, sentence, busy, send }: {
-  talk: Talk[]; sentence: string; busy: boolean; send: (text: string) => Promise<void>
+  talk: Talk[]; sentence: string; busy: boolean; send: (text: string) => Promise<boolean>
 }) {
   const [text, setText] = useState('')
+  // Cleared only once the server took it, and only if nothing new was typed meanwhile.
+  const submit = async (sent: string) => { if (await send(sent)) setText((now) => (now === sent ? '' : now)) }
   return (
     <section aria-label="요구 대화" className="flex flex-col gap-2">
       <p className="text-muted-foreground">{sentence}</p>
       {talk.map((t, i) => (
         <div key={i} className={cn('whitespace-pre-wrap rounded-md px-3 py-2', t.role === 'agent' ? 'bg-secondary' : 'border border-border')}>
           <span className="mr-2 text-[11.5px] text-muted-foreground">{t.role === 'agent' ? '에이전트' : '나'}</span>{t.text}
+          {/* The question itself rides in `choices`, cut from the text: only the last turn's can be answered. */}
+          {t.choices && <Choices value={t.choices} korean={false} busy={busy || i !== talk.length - 1} onSay={(a) => void send(a)} />}
         </div>
       ))}
-      <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); void send(text).then(() => setText('')) }}>
+      <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); void submit(text) }}>
         <textarea aria-label="답" value={text} onChange={(e) => setText(e.target.value)} rows={2}
           className="flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-foreground" />
         <Btn type="submit" tone="primary" disabled={busy || !text.trim()}>보내기</Btn>
@@ -152,9 +160,8 @@ function Mermaid({ code }: { code: string }) {
 }
 
 function Md({ text, zoom }: { text: string; zoom: (src: string) => void }) {
-  return (
-    <div className="prose-answer">
-      <Markdown remarkPlugins={[remarkGfm]} components={{
+  // Made once: a new `img` each render is a new component, which replaces the thumbnail holding the focus.
+  const components = useMemo<Components>(() => ({
         img: ({ src, alt }) => (
           <button type="button" className="inline-block" onClick={() => zoom(String(src))} title="크게 본다">
             <img src={String(src)} alt={alt ?? ''} loading="lazy" className="max-h-64 rounded border border-border" />
@@ -163,14 +170,17 @@ function Md({ text, zoom }: { text: string; zoom: (src: string) => void }) {
         table: ({ children }) => <div className="overflow-x-auto"><table>{children}</table></div>,
         code: ({ className, children }) => className === 'language-mermaid'
           ? <Mermaid code={String(children ?? '').replace(/\n$/, '')} /> : <code className={className}>{children}</code>,
-      }}>{text}</Markdown>
+      }), [zoom])
+  return (
+    <div className="prose-answer">
+      <Markdown remarkPlugins={[remarkGfm]} components={components}>{text}</Markdown>
     </div>
   )
 }
 
 export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen }: {
   gate: 'r1' | 'r2' | 'r3'; text: string; items: string[]; state: Gate; busy: boolean
-  submit: (body: object) => Promise<void>; palettes?: Palette[]; reopen?: () => Promise<void>
+  submit: (body: object) => Promise<unknown>; palettes?: Palette[]; reopen?: () => Promise<unknown>
 }) {
   const [decisions, setDecisions] = useState<Record<string, Decision>>(state.decisions)
   const [palette, setPalette] = useState(state.palette ?? '')
@@ -225,13 +235,32 @@ export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen
           제출
         </Btn>
       </div>
-      {zoom && (
-        <div role="dialog" aria-label="화면 사진" className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-          onClick={() => setZoom('')} onKeyDown={(e) => e.key === 'Escape' && setZoom('')}>
-          <img src={zoom} alt="" className="max-h-full max-w-full" />
-        </div>
-      )}
+      {zoom && <Zoom src={zoom} close={() => setZoom('')} />}
     </section>
+  )
+}
+
+/** A picture enlarged in its own modal dialog above the oneshot window: Escape, the backdrop or
+ *  [닫기] close only it, and the focus goes back to the thumbnail that opened it. React passes a
+ *  dialog's `close` and `cancel` up its tree, so they stop here before the window's own close. */
+function Zoom({ src, close }: { src: string; close: () => void }) {
+  const box = useRef<HTMLDialogElement>(null)
+  const opener = useRef<Element | null>(null)
+  useEffect(() => {
+    if (!box.current || box.current.open) return
+    opener.current = document.activeElement
+    box.current.showModal()
+  }, [])
+  return (
+    <dialog ref={box} aria-label="화면 사진" onCancel={(e) => e.stopPropagation()}
+      onClose={(e) => { e.stopPropagation(); close(); (opener.current as HTMLElement | null)?.focus() }}
+      onClick={(e) => { e.stopPropagation(); if (e.target === box.current) box.current.close() }}
+      className="m-auto max-h-[95dvh] max-w-[95vw] bg-transparent p-0 backdrop:bg-black/70">
+      <div className="flex flex-col items-end gap-2">
+        <Btn autoFocus onClick={() => box.current?.close()}>닫기</Btn>
+        <img src={src} alt="" className="max-h-[85dvh] max-w-full" />
+      </div>
+    </dialog>
   )
 }
 
@@ -286,7 +315,7 @@ function Item({ id, d, mark, set }: { id: string; d?: Decision; mark?: string; s
 // -- The feature board ------------------------------------------------------------------
 
 function Board({ board, busy, submit }: {
-  board: NonNullable<SpecView['board']>; busy: boolean; submit: (f: Record<string, Freq>, line: string) => Promise<void>
+  board: NonNullable<SpecView['board']>; busy: boolean; submit: (f: Record<string, Freq>, line: string) => Promise<unknown>
 }) {
   const [map, setMap] = useState<Record<string, Freq>>(board.frequency)
   const [line, setLine] = useState(board.first_screen ?? '')

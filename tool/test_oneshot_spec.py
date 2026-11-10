@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
+from fastapi.responses import JSONResponse
 
 from main import oneshot, oneshot_sheet as sheet, oneshot_spec, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
@@ -426,3 +427,10 @@ def test_each_submission_records_how_its_sheet_was_read_and_the_rail_shows_what_
                                                          reading={"seconds": 92.04, "opened": ["흐름", 3, "흐름"]}))
     assert o()["reading"] == {"r1": [{"round": 1, "seconds": 92.0, "opened": ["흐름"], "edited": ["P1"]}]}
     assert oneshot_spec.listing()["specs"][0]["waits"] is False   # the edit turn runs
+
+
+@pytest.mark.parametrize("seconds", [1e309, 10**400, float("nan"), True, "90"])
+def test_a_reading_time_json_cannot_carry_is_kept_as_unmeasured(seconds):
+    entry = oneshot_spec.read({"r1": {"round": 1}}, "r1", {"seconds": seconds}, [])["r1"][0]
+    assert entry["seconds"] is None
+    JSONResponse(entry)   # the state view sends the reading back: a non-finite number would fail it

@@ -1,4 +1,4 @@
-import { get, json, post } from '@/lib/api'
+import { get, json, post, type ChoiceQuestion } from '@/lib/api'
 
 /** The oneshot run's data past S1 and its requests (`tool/main/oneshot_spec.py` `view`). */
 
@@ -7,7 +7,7 @@ export type Feature = { id: string; name: string; class: Freq; why: string; endp
 export type Freq = 'every' | 'sometimes' | 'rarely' | 'never'
 export type Palette = { id: string; name: string; colors: Record<string, string> }
 export type Gate = { round: number; decisions: Record<string, Decision>; marks?: Record<string, string>; palette?: string }
-export type Talk = { role: 'owner' | 'agent'; text: string; choices?: unknown }
+export type Talk = { role: 'owner' | 'agent'; text: string; choices?: ChoiceQuestion | { questions: ChoiceQuestion[] } | null }
 export type SpecSummary = {
   repo: string; stage: string; working: string | null; waits: boolean
   stopped: { reason: string; detail: string } | null

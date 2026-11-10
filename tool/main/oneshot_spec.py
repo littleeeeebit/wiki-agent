@@ -10,6 +10,7 @@ The glossary, the conversation, the design and the sheet's decisions live in `on
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 from pathlib import Path
@@ -374,9 +375,13 @@ def read(o: dict, gate: str, given: dict, edited) -> dict:
     the folds opened and the items edited. Recorded, shown in the summary, acted on by nothing."""
 
     seconds = given.get("seconds")
+    try:   # `1e309` arrives as inf and `10**400` overflows a float: neither could be sent back as JSON
+        seconds = float(seconds) if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) else None
+    except OverflowError:
+        seconds = None
     opened = given.get("opened")
     entry = {"round": (o.get(gate) or {}).get("round", 1),
-             "seconds": round(float(seconds), 1) if isinstance(seconds, (int, float)) and seconds >= 0 else None,
+             "seconds": round(seconds, 1) if seconds is not None and math.isfinite(seconds) and seconds >= 0 else None,
              "opened": sorted({x for x in opened if isinstance(x, str)})[:20] if isinstance(opened, list) else [],
              "edited": sorted(edited)}
     earlier = o.get("reading") or {}
