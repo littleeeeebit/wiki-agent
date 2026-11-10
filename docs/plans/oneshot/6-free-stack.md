@@ -177,28 +177,31 @@ board are unchanged.
 
 ## Runs started before this step
 
-Each part that changes the shape of what a run stores raises the spec's
-`oneshot.version` in that part. One check refuses, with HTTP 409, every
-owner action on a run of an older version that is already past the stage
-whose record changed. The refusal tells the owner to start a new run, and the
-run stays readable.
+Each part that changes the shape of what a run stores raises `VERSION` in
+that part. The run record and the spec it hands over to both carry it. One
+check refuses, with HTTP 409, every owner action on a run of an older
+version that is already past the stage whose record changed. The refusal
+tells the owner to start a new run, and the run stays readable.
 
-The check stands in front of every way forward, not only `[재개]`. A run
-waiting for the owner is not running, so a server restart leaves it as it
-was, and its next step is a submission, not a resume. The actions it guards
-are `[재개]` and the submissions `say`, `r1`, `board`, `r2` and `r3`.
+The check stands in front of every way forward, not only the spec's
+`[재개]`. A run waiting for the owner is not running, so a server restart
+leaves it as it was, and its next step is a submission, not a resume. The
+actions it guards are the run's resume (`/api/oneshot/{rid}/resume`), the
+spec's `[재개]`, and the submissions `say`, `r1`, `board`, `r2` and `r3`.
 
 | Part | Version | Refused |
 | --- | --- | --- |
-| 6b | 2 | A version 1 run past the tests turn: it pinned pytest node ids and no command |
-| 6c | 3 | A version 2 run past S2: its stack is in the card's old fields, not in `stack` |
+| 6b | 2 | A version 1 spec past the tests turn: it pinned pytest node ids and no command |
+| 6c | 3 | A version 2 run whose bootstrap wrote its files: its README and adapter carry the card's stack, and the bootstrap's commit compares them with what 6c writes |
+| 6c | 3 | A version 2 spec past S2: its stack is in the card's old fields, not in `stack` |
 
 A run still before the changed stage carries on: the new code writes the new
 record when it reaches that stage.
 
-Each part's tests include its own case: for 6b, a version 1 run waiting at
-R2 whose `r2` submission is refused; for 6c, a version 2 run waiting at R1
-whose `r1` submission is refused.
+Each part's tests include its own cases: for 6b, a version 1 spec waiting at
+R2 whose `r2` submission is refused; for 6c, a version 2 spec waiting at R1
+whose `r1` submission is refused, and a version 2 run stopped after the
+bootstrap's `files` step and before its `commit` whose resume is refused.
 
 ## Parts
 
@@ -218,5 +221,5 @@ What each merged state is checked against:
 | After | A new run | A run from before the part |
 | --- | --- | --- |
 | 6a | Runs to the end on the card's stack, with no ceiling | Carries on; a card saved with the budget fields shows and saves without them |
-| 6b | Declares its runner and runs to the end | Before the tests turn: carries on. Past it: refused on resume |
-| 6c | Picks its stack in S2 and runs to the end | Before S2: carries on. Past it: refused on resume |
+| 6b | Declares its runner and runs to the end | Before the tests turn: carries on. Past it: refused on resume and on every submission |
+| 6c | Picks its stack in S2 and runs to the end | Before the bootstrap's files: carries on. Files written, or past S2: refused on resume and on every submission |
