@@ -11,12 +11,13 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
 
-from main import channels, connect, oneshot, oneshot_profile, oneshot_spec, runtime, specs
+from main import channels, connect, oneshot, oneshot_profile, oneshot_spec, runtime, specs, work
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 
 LAUNCH = oneshot.launch   # the real one; `world` replaces it with a synchronous state change
@@ -70,7 +71,7 @@ def world(tmp_path):
          patch.object(oneshot, "gh", github.gh), patch.object(oneshot, "remote_id", github.remote_id), \
          patch.object(oneshot, "gh_user", lambda: "someone"), \
          patch.object(oneshot, "url_of", lambda run: str(github.bare)), \
-         patch.object(oneshot, "codex_role", lambda role="": False), \
+         patch.object(oneshot, "codex_role", lambda role="", store=None: False), \
          patch.object(oneshot_spec, "begin", lambda repo: None), \
          patch.object(oneshot, "launch",
                       lambda rid, work, *a, **f: oneshot.changed(rid, **f, working=work, stopped=None)):
@@ -506,3 +507,90 @@ def test_shutdown_starts_no_new_step_and_refuses_new_workers(world):
     run = oneshot.load(rid)
     assert run["stopped"]["reason"] == "restart" and run["steps"] == {} and refused.value.status_code == 503
     assert not (world["workspace"] / "budget-tracker").exists()
+
+
+# -- The three models ---------------------------------------------------------------------
+
+MODELS = {"spec": {"model": "opus", "effort": "high"}, "build": {"model": "sonnet", "effort": "medium"},
+          "review": {"model": "codex:gpt-6.1-sol", "effort": "xhigh"}}
+REGISTERED = {"review": lambda: {"model": "codex:loop-default", "effort": "low"},
+              "critic": lambda: {"model": "opus", "effort": "high"}}
+
+
+def window(*a):
+    raise AssertionError("a run that fixed its models never reads the window's `next` model")
+
+
+def test_the_start_fixes_three_models_and_every_role_reads_its_own(world):
+    with patch.object(oneshot, "launch", lambda *a, **f: None):
+        rid = oneshot.start(oneshot.Start(sentence="가계부", models=MODELS))["id"]
+    assert oneshot.load(rid)["models"] == MODELS
+    store = oneshot.run_store(rid)
+    with patch.dict(oneshot.ROLES, REGISTERED), patch("main.query.config", window):
+        for role in ("intake", "profile", "spec", "design", "split", "frontend"):
+            assert oneshot.role_config(role, store) == MODELS["spec"], role
+        assert oneshot.role_config("build", store) == MODELS["build"]
+        assert oneshot.role_config("review", store) == MODELS["review"]
+        assert oneshot.role_config("critic", store) == {"model": "opus", "effort": "high"}   # not the owner's to pick
+    sent = []
+
+    class Chat:   # the real `ask`, on a session that answers at once
+        is_codex = False
+
+        def __init__(self, where, model="", effort="", **k):
+            sent.append((model, effort))
+
+        def say(self, text, halt, images):
+            yield SimpleNamespace(kind="done", text=fenced("oneshot-intent", INTENT), meta={"cost_usd": 0.1})
+
+        def close(self):
+            pass
+
+    with patch.object(oneshot, "ChatSession", Chat):
+        oneshot.intake(rid)
+    assert sent == [("opus", "high")] and oneshot.load(rid)["intent"]["name"] == "budget-tracker"
+
+
+def test_an_empty_model_is_the_roles_own_default_and_an_older_run_keeps_the_window(world):
+    empty = {"spec": {"model": "", "effort": ""}, "build": {"model": "", "effort": "max"},
+             "review": {"model": "", "effort": "high"}}
+    with patch.object(oneshot, "launch", lambda *a, **f: None):
+        rid = oneshot.start(oneshot.Start(sentence="가계부", models=empty))["id"]
+    store = oneshot.run_store(rid)
+    with patch.dict(oneshot.ROLES, REGISTERED), patch("main.query.config", window):
+        assert oneshot.role_config("intake", store) == {"model": "", "effort": ""}           # the CLI's default
+        assert oneshot.role_config("build", store) == {"model": "", "effort": "max"}
+        assert oneshot.role_config("review", store) == {"model": "codex:loop-default", "effort": "high"}
+    older = made(world)                                                                  # no `models`
+    with patch("main.query.config", lambda cid: {"model": "next-model", "effort": "e"}):
+        assert oneshot.role_config("intake", oneshot.run_store(older))["model"] == "next-model"
+
+
+@pytest.mark.parametrize("role", [{"model": "opus; rm -rf", "effort": ""}, {"model": "opus", "effort": "HIGH!"}])
+def test_a_model_or_effort_the_cli_would_not_take_is_refused_before_the_run_exists(world, role):
+    with pytest.raises(HTTPException) as refused:
+        oneshot.start(oneshot.Start(sentence="가계부", models={**MODELS, "build": role}))
+    assert refused.value.status_code == 400 and not list(oneshot.RUNS.glob("*.json"))
+
+
+def test_the_spec_holds_the_runs_models_and_its_work_cell_never_moves(world):
+    rid = made(world, models=MODELS)
+    finished(world, rid)
+    spec = specs.load("budget-tracker", oneshot.BRANCH)
+    assert spec["oneshot"]["models"] == MODELS
+    assert spec["cell"] == {**MODELS["build"], "fast": False} and spec["reviewer"] == MODELS["review"]
+    made_with = []
+
+    class Chat:
+        is_codex, bypass, fast = False, True, False
+
+        def __init__(self, path, model="", effort="", **k):
+            made_with.append((model, effort))
+
+        def reconfigure(self, model, effort):
+            made_with.append((model, effort))
+
+    with patch.object(work, "ChatSession", Chat), patch.dict(work._sessions, clear=True):
+        work.session(Path(spec["worktree"]), "haiku", "low")       # the screen's toolbar, or a repair turn
+    assert made_with == [("sonnet", "medium")]
+    assert specs.load("budget-tracker", oneshot.BRANCH)["cell"] == {**MODELS["build"], "fast": False}

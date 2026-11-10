@@ -244,8 +244,8 @@ own report and runs the full gate itself. A person's turn in the worktree,
 or a turn in a stage S4 does not own, changes nothing. The branch stays
 local until S8.
 
-The turns are the ordinary work session's (`work.session` on the role model
-`next`), sent as an `oneshot_build.Turn`. Each is checked against the run's
+The turns are the ordinary work session's (`work.session` on the run's
+`build` model, `2-bootstrap.md` S0), sent as an `oneshot_build.Turn`. Each is checked against the run's
 ledger before it is sent and charged when it ends, its cost unknown when the
 CLI reported none. A turn that ends without reaching its check (stopped,
 failed, cut by a shutdown) stops the stage with `block` or `restart` and the
@@ -383,8 +383,9 @@ any turn (`work.dispatch`); after a refusal it waits behind the build turn:
    directory that the existing `pr_diff` tool reads, as Review Loop does (a
    Claude reviewer is told that file's path). The source files are tracked,
    so `repo_read` reaches them. No read outside the repository is added.
-3. A read-only session (`Read,Glob,Grep`, on the model and effort the Review
-   Loop settings name, through `oneshot.ROLES["review"]`) returns an
+3. A read-only session (`Read,Glob,Grep`, on the run's `review` model; an
+   empty one is what the Review Loop settings name, through
+   `oneshot.ROLES["review"]`) returns an
    `oneshot-review` block (`oneshot-review.md`): `{verdict, head,
    findings: [{location, severity, reason, evidence}]}`. The server refuses
    the block, and asks again once, when `head` is not the HEAD it was given

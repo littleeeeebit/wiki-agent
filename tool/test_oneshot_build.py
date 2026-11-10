@@ -439,6 +439,25 @@ def test_a_turn_that_cannot_be_begun_leaves_nothing_in_flight_and_charges_nothin
     assert str(tree) not in work._busy   # the worktree is free for the resumed turn
 
 
+def test_a_work_turn_runs_on_the_build_model_the_run_fixed(built_world):
+    tree, _ = built_world
+    fixed = {"spec": {"model": "opus", "effort": "high"}, "build": {"model": "sonnet", "effort": "medium"},
+             "review": {"model": "", "effort": ""}}
+    oneshot_spec.saved("budget", oneshot={"models": fixed})
+    opened = []
+
+    def session(path, model, effort, *a):
+        opened.append((model, effort))
+        return SimpleNamespace(id="c", parent_id=None, repo=str(tree))
+
+    with patch.object(work, "notice", lambda *a: None), patch.object(work, "remember", lambda *a, **k: None), \
+         patch.object(work, "begin", lambda *a: (_ for _ in ()).throw(RuntimeError("멈춤"))), \
+         patch.object(work, "session", session), patch.object(oneshot_build, "allowed", lambda *a: ""), \
+         patch("main.query.config", lambda *a: {"model": "window", "effort": "e"}):
+        SEND("budget", "tests", "x")
+    assert opened == [("sonnet", "medium")]
+
+
 def test_a_resume_waits_while_a_stopped_turn_is_still_being_charged(built_world):
     oneshot_spec.store("budget").stop("block", "멈춤")
     oneshot_spec.saved("budget", oneshot={"inflight": {"role": "tests", "turn": "t"}})
