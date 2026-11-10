@@ -154,8 +154,8 @@ R2's approval sends one write turn (stage `build-front`, run like the
 backend's through `oneshot_build.send`) the approved screen map, states,
 chosen palette and the frequency map; the spec's `done` becomes one item per
 screen in the same save that commits the approval, so a turn resumed after a
-restart reports against the screens too. A turn that cannot be sent (the
-budget, a failed start) lets the instruction the person queued meanwhile go,
+restart reports against the screens too. A turn that cannot be sent (a
+failed start) lets the instruction the person queued meanwhile go,
 as a finished turn does. The rules it must follow, all checked by the server:
 
 - Every control for a feature carries `data-feature="<feature_id>"`.
@@ -176,7 +176,7 @@ alone, so its lifetime is the run's job:
 
 - Set when an S7 build turn actually starts, including a resumed one.
 - Cleared when that turn ends by any path: accepted `done-report`, a refused
-  one, a gate failure, a model error, the owner's stop, the budget. The clear
+  one, a gate failure, a model error, the owner's stop. The clear
   sits in the turn's release of the worktree, which runs for every ending and
   before the worktree is let go, so the next turn there never finds it set.
 - Cleared by the run's `recover()` at server start for every oneshot spec,
@@ -299,13 +299,12 @@ stage starts: the build that passed names the critique, a round with findings
 names the build. A server that dies in between leaves the stage for
 `recover`, so `[재개]` takes it on. The findings a build turn is sent with are
 kept as the run's `fix` until a build of them passes the harness, so a resumed
-turn, after a restart or a refused budget, carries the same findings.
+turn, after a restart or a failed start, carries the same findings.
 
 | Stop rule | Value |
 | --- | --- |
 | Done | No high-severity finding, mechanical or critic, in two rounds in a row |
 | Cap | Six rounds; still high findings → `stopped` with `critique`, the findings in its detail. `[재개]` counts six rounds afresh |
-| Budget | The run's ceiling, as everywhere |
 
 Every round's shots are kept under the run's raw folder, so R3 can fold a
 before and after per screen.

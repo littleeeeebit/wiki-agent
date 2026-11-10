@@ -33,7 +33,7 @@ from workspace import TASK, create
 
 from . import channels, connect, prerequisite_review, runtime, specs
 from .oneshot_files import as_planned, git, planned, tracked  # noqa: F401 — `tracked` is read by tests
-from .oneshot_profile import (KINDS, SCHEMA, SUPPORTED_KINDS, allowed, charged, cut, gate_cmd, ledger, problems,
+from .oneshot_profile import (KINDS, SCHEMA, SUPPORTED_KINDS, charged, cut, gate_cmd, ledger, problems,
                               proposal)
 from .query import ROOT
 
@@ -235,9 +235,6 @@ def turned(rid: str | Store, role: str, system: str, text: str, name: str, check
             return None
         codex = codex_role(role, store)
         with _lock:
-            if why := allowed(store.get().get("spend"), store.profile(), role, codex):
-                store.stop("budget", why)
-                return None
             # Recorded before the turn is sent: a server that dies inside it leaves this for `recover` to charge.
             store.put(inflight={"role": role, "codex": codex, "sent": time.time()})
         started = time.monotonic()
@@ -351,7 +348,7 @@ def environment(rid: str) -> None:
     base = prefilled(kind)
     if not base.get("github_owner"):
         base["github_owner"] = gh_user()
-    shown = {k: {**{x: f[x] for x in ("options", "enabled", "text", "number") if x in f}} for k, f in SCHEMA.items()}
+    shown = {k: {**{x: f[x] for x in ("options", "enabled", "text") if x in f}} for k, f in SCHEMA.items()}
     text = (f"The owner's sentence:\n\n{run['sentence']}\n\nThe confirmed restatement:\n\n"
             f"{json.dumps(run['intent'], ensure_ascii=False)}\n\nThe schema:\n\n{json.dumps(shown)}\n\n"
             f"The prefilled profile:\n\n{json.dumps(base, ensure_ascii=False)}\n")

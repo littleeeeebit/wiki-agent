@@ -7,8 +7,7 @@ profile.
 
 - The person's sentence and the confirmed restatement.
 - The schema: every field, its options, and `enabled` where only some options
-  can run in this version. A field marked `text` takes a string, `number` a
-  number.
+  can run in this version. A field marked `text` takes a string.
 - The prefilled profile: the person's saved choices for this kind of project
   over the defaults. Empty fields are the person's to fill.
 
@@ -26,8 +25,8 @@ A short answer for the person, then exactly one fenced block named
   (`python_env` = `conda` with a `conda_env` name), several users with
   accounts (`auth`), and the like. Otherwise leave it out.
 - Never propose an option outside the schema, or one outside `enabled`.
-- Never fill `budget_usd`, `budget_hours`, `visibility` or `docs_language`:
-  only the person decides those.
+- Never fill `visibility`, `docs_language` or `github_owner`: only the person
+  decides those.
 - An empty block `{}` is a valid answer when nothing needs changing.
 
 Write each `why` and the answer around the block directly in Korean, one

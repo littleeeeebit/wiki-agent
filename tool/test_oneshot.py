@@ -25,7 +25,7 @@ LAUNCH = oneshot.launch   # the real one; `world` replaces it with a synchronous
 INTENT = {"restated": "가계부를 만든다.", "kind": "webapp", "name": "Budget Tracker", "users": "나 혼자 쓴다.",
           "first_screen": "이번 달 지출을 본다."}
 PROFILE = {**{k: f["default"] for k, f in oneshot.SCHEMA.items()}, "visibility": "private", "docs_language": "ko",
-           "github_owner": "someone", "budget_usd": 50, "budget_hours": 10, "python_env": "uv"}
+           "github_owner": "someone", "python_env": "uv"}
 
 
 CODEX = [{"id": "codex:gpt-6.1-sol", "is_default": True, "efforts": [{"id": e} for e in ("", "high", "xhigh")]},
@@ -110,7 +110,7 @@ def test_profile_block_refuses_fields_options_and_choices_outside_the_schema():
                {"llm": {"value": "mistral", "why": "-"}},
                {"backend": {"value": "node", "why": "-"}},          # in the schema, not enabled
                {"visibility": {"value": "public", "why": "-"}},     # the person's to decide
-               {"budget_usd": {"value": 10, "why": "-"}},
+               {"github_owner": {"value": "someone", "why": "-"}},
                {"llm": {"value": "anthropic"}}]
     for block in refused:
         with pytest.raises(ValueError):
@@ -125,8 +125,6 @@ def test_validity_rules_on_the_card():
     assert any("라이선스" in e for e in errors)
     errors, _ = oneshot.problems({**PROFILE, "ci": "github-actions"})
     assert any("CI" in e for e in errors)
-    errors, _ = oneshot.problems({**PROFILE, "budget_usd": 0})
-    assert any("budget_usd" in e for e in errors)
     errors, _ = oneshot.problems({**PROFILE, "frontend": "tauri"})
     assert any("아직 고를 수 없다" in e for e in errors)
     _, warnings = oneshot.problems({**PROFILE, "python_env": "venv", "os_later": "other"})
@@ -147,22 +145,16 @@ def test_gate_cmd_comes_from_the_profile_never_from_guess():
 
 # -- The ledger -------------------------------------------------------------------------
 
-def test_ledger_charges_estimates_meters_codex_by_hours_and_refuses_past_the_ceiling():
+def test_ledger_charges_estimates_and_meters_codex_by_hours():
     spend = oneshot.ledger(None)
-    assert oneshot.allowed(spend, PROFILE, "builder", False) == ""
     with patch.object(oneshot_profile, "estimate", lambda role: 2.0):
         spend = oneshot.charged(spend, "builder", False, None, 10)        # unreported: the estimate, marked unknown
         assert spend["usd"] == 2.0 and spend["unknown"] == 1
         spend = oneshot.charged(spend, "builder", False, 30.0, 10)
         assert spend["usd"] == 32.0 and spend["max"]["builder"] == 30.0
-        assert "금액 한도" in oneshot.allowed(spend, PROFILE, "builder", False)   # 32 + 30 > 50
-        assert oneshot.allowed(spend, PROFILE, "critic", False) == ""           # 32 + 2 (estimate) <= 50
         for _ in range(3):
             spend = oneshot.charged(spend, "reviewer", True, None, 100)       # Codex: no USD invented
-        assert spend["usd"] == 32.0 and spend["calls"] == 5
-        assert oneshot.allowed(spend, PROFILE, "reviewer", True) == ""
-        spend = oneshot.charged(spend, "reviewer", True, None, 10 * 3600)
-        assert "시간 한도" in oneshot.allowed(spend, PROFILE, "reviewer", True)
+        assert spend["usd"] == 32.0 and spend["calls"] == 5 and spend["seconds"] == 320
     restored = json.loads(json.dumps(spend))
     assert oneshot.ledger(restored) == spend
 
@@ -248,11 +240,10 @@ def test_the_card_is_prefilled_from_the_kind_and_confirmed_only_without_errors(w
     assert run["profile"]["styling"] == "css" and run["profile"]["llm"] == "anthropic"
     assert run["profile"]["github_owner"] == "someone"
     with pytest.raises(HTTPException):
-        oneshot.profile(rid, oneshot.Profile(values={}, confirm=True))       # budget and docs language empty
+        oneshot.profile(rid, oneshot.Profile(values={}, confirm=True))       # docs language empty
     with pytest.raises(HTTPException):
         oneshot.profile(rid, oneshot.Profile(values={"colour": "red"}))
-    shown = oneshot.profile(rid, oneshot.Profile(values={"budget_usd": 30, "budget_hours": 5, "docs_language": "ko",
-                                                         "license": "mit"}, confirm=True))
+    shown = oneshot.profile(rid, oneshot.Profile(values={"docs_language": "ko", "license": "mit"}, confirm=True))
     assert shown["state"] == "bootstrap" and shown["confirmed"]
 
 
@@ -276,7 +267,7 @@ def test_bootstrap_makes_the_repository_the_spec_and_the_linked_worktree(world):
     assert spec["oneshot"]["run"] == rid and spec["workspace_mode"] == "worktree"
     assert Path(spec["worktree"]).is_dir() and spec["done"] == ["uv run pytest"]
     assert json.loads((connect.RECORDS / "budget-tracker.json").read_text(encoding="utf-8"))["hash"]
-    assert json.loads((oneshot.PROFILES / "webapp.json").read_text(encoding="utf-8"))["budget_usd"] == 50
+    assert json.loads((oneshot.PROFILES / "webapp.json").read_text(encoding="utf-8"))["github_owner"] == "someone"
     with pytest.raises(RuntimeError):
         oneshot.save(run)                                                    # never written again
 
@@ -450,7 +441,6 @@ def test_a_long_codex_turn_cut_by_a_restart_keeps_the_time_its_heartbeats_prove(
     oneshot.recover()
     spend = oneshot.load(rid)["spend"]
     assert spend["seconds"] >= 3600 and spend["calls"] == 1 and spend["unknown"] == 1 and spend["usd"] == 0
-    assert "시간 한도" in oneshot.allowed(spend, {**PROFILE, "budget_hours": 0.5}, "intake", True)
 
 
 def test_a_running_turn_writes_heartbeats(world):
