@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import oneshot, oneshot_build, oneshot_front_build as front_build, oneshot_review as review, \
+from . import oneshot, oneshot_build, oneshot_front_build as front_build, oneshot_pr, oneshot_review as review, \
     oneshot_screens as screens, oneshot_spec
 from .query import ROOT
 
@@ -236,15 +236,19 @@ def decide(repo: str, body: Decisions) -> dict:
         if not comments:
             oneshot_spec.saved(repo, oneshot={"r3": {**o["r3"], "decisions": decisions}, "reading": reading})
             approved(repo)
-            return oneshot_spec.view(oneshot_spec.spec_of(repo))
-        # `working` and `fix` are saved with the decisions: a server that dies before the turn is sent, or a
-        # budget that refuses it, leaves a `[재개]` that sends the owner's edits again.
-        spec = oneshot_spec.saved(repo, oneshot={
-            "stage": front_build.STAGE, "attempts": 0, "critique_base": len(o.get("critiques") or []),
-            "working": front_build.STAGE, "reading": reading,
-            "fix": {"who": "The owner reviewed the finished screens (R3)",
-                    "findings": [{"severity": "high", "screen": k, "what": v} for k, v in comments.items()]},
-            "r3": {**o["r3"], "decisions": decisions, "next_marks": {k: "edited" for k in comments}}})
+        else:
+            # `working` and `fix` are saved with the decisions: a server that dies before the turn is sent, or a
+            # budget that refuses it, leaves a `[재개]` that sends the owner's edits again.
+            spec = oneshot_spec.saved(repo, oneshot={
+                "stage": front_build.STAGE, "attempts": 0, "critique_base": len(o.get("critiques") or []),
+                "working": front_build.STAGE, "reading": reading,
+                "fix": {"who": "The owner reviewed the finished screens (R3)",
+                        "findings": [{"severity": "high", "screen": k, "what": v} for k, v in comments.items()]},
+                "r3": {**o["r3"], "decisions": decisions, "next_marks": {k: "edited" for k in comments}}})
+    if not comments:
+        if oneshot_spec.spec_of(repo)["oneshot"]["stage"] == oneshot_pr.STAGE:   # outside the lock: the turn takes the worktree's hold
+            oneshot_pr.begin(repo)
+        return oneshot_spec.view(oneshot_spec.spec_of(repo))
     oneshot_build.send(repo, front_build.STAGE, front_turn(spec))
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
@@ -254,8 +258,11 @@ def approved(repo: str) -> None:
     worktree as a turn does, so a tree another turn holds refuses the approval (409, the decisions kept),
     and a tree that moved since goes back to the build's checks."""
 
-    def moving(store, spec, tree) -> None:   # nothing follows yet: the queued instruction goes
-        oneshot_spec.saved(repo, oneshot={"stage": "pr"})
+    def moving(store, spec, tree) -> bool:
+        # `working` names the README turn before it is sent: a server that dies in between leaves it for
+        # `recover`, and the turn that follows sends the queued instruction when it ends.
+        oneshot_spec.saved(repo, oneshot={"stage": oneshot_pr.STAGE, "working": oneshot_pr.STAGE})
+        return True
 
     review.approval(repo, "R3 승인", moving, "front_built_head", front_build.STAGE)
 

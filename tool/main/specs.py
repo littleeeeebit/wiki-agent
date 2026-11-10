@@ -1800,9 +1800,9 @@ def pr_turn(repo: Path, path: Path, run, spec: dict):
     return lambda: again(path, run.chat, text, spec) or update(spec["repo"], spec["id"], writing=None)
 
 
-def written(repo: Path, path: Path, run, spec: dict, final: str):
-    """The answer to `pr_turn`'s request. Sent back once with what failed; a
-    second miss goes up as files and checks only."""
+def written(repo: Path, path: Path, run, spec: dict, final: str, ask=None):
+    """The answer to `pr_turn`'s request. Sent back once with what failed (by `ask`
+    for a caller that sends its own turns); a second miss goes up as files and checks only."""
 
     asked = spec["writing"]
     if sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != asked["head"] or dirty(path):
@@ -1813,7 +1813,7 @@ def written(repo: Path, path: Path, run, spec: dict, final: str):
     if unfit and asked["asked"] < 2 and not run.halt.is_set():
         spec = update(spec["repo"], spec["id"], writing={**asked, "asked": 2})
         note(run, "PR 요약(`pr-summary`)이 검사를 통과하지 못했다 — " + " · ".join(unfit[:3]))
-        return lambda: again(path, run.chat, pr_text.asking(unfit), spec) or update(spec["repo"], spec["id"],
-                                                                                     writing=None)
+        ask = ask or (lambda text: again(path, run.chat, text, spec))
+        return lambda: ask(pr_text.asking(unfit)) or update(spec["repo"], spec["id"], writing=None)
     spec = update(spec["repo"], spec["id"], writing=None, summary=None if unfit else told)
     return opened(repo, path, run, spec)

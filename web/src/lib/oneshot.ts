@@ -12,6 +12,12 @@ export type SpecSummary = {
   repo: string; stage: string; working: string | null; waits: boolean
   stopped: { reason: string; detail: string } | null
 }
+export type Reading = { round: number; seconds: number | null; opened: string[]; edited: string[] }
+export type RunSummary = {
+  sentence: string; pr: { number: number; url: string; branch: string } | null; critiques: number; looks: number
+  gates: { gate: string; rounds: number; edited: string[]; reading: Reading[] }[]
+  spend: { usd?: number; seconds?: number; calls?: number; unknown?: number }
+}
 export type SpecView = SpecSummary & {
   oneshot: {
     sentence: string; talk?: Talk[]; attempts?: number; critiques?: unknown[]
@@ -22,6 +28,7 @@ export type SpecView = SpecSummary & {
   board?: { features: Feature[]; first_screen: string | null; frequency: Record<string, Freq> }
   front_sheet?: string; front_items?: string[]
   r3_sheet?: string; r3_items?: string[]
+  summary?: RunSummary
 }
 
 export const base = (repo: string) => `/api/oneshot/spec/${repo}`
@@ -45,6 +52,7 @@ export const STAGES: { id: string; label: string; kind: 'talk' | 'gate' | 'auto'
   { id: 'frontend', label: '화면 설계', kind: 'auto' }, { id: 'r2', label: 'R2 화면 설계', kind: 'gate' },
   { id: 'build-front', label: '프런트엔드 빌드', kind: 'auto' }, { id: 'critique', label: '화면 비평', kind: 'auto' },
   { id: 'r3', label: 'R3 완성 화면', kind: 'gate' }, { id: 'pr', label: '풀 리퀘스트', kind: 'auto' },
+  { id: 'done', label: '끝', kind: 'auto' },
 ]
 export const stageLabel = (id: string) => STAGES.find((s) => s.id === id)?.label ?? id
 export const STOP: Record<string, string> = {

@@ -372,7 +372,8 @@ WAITS = {"r1", "board", "r2", "r3"}   # stages that wait for the owner; `spec` w
 
 def read(o: dict, gate: str, given: dict, edited) -> dict:
     """`oneshot.reading` with one more submission of `gate`: the round, the seconds the sheet was open,
-    the folds opened and the items edited. Recorded, shown in the summary, acted on by nothing."""
+    the folds opened and the items edited with their comments (`edited`, item → comment). The sheet's
+    decisions drop a comment once it is applied, so this is where S8 finds what the owner changed."""
 
     seconds = given.get("seconds")
     try:   # `1e309` arrives as inf and `10**400` overflows a float: neither could be sent back as JSON
@@ -383,7 +384,7 @@ def read(o: dict, gate: str, given: dict, edited) -> dict:
     entry = {"round": (o.get(gate) or {}).get("round", 1),
              "seconds": round(seconds, 1) if seconds is not None and math.isfinite(seconds) and seconds >= 0 else None,
              "opened": sorted({x for x in opened if isinstance(x, str)})[:20] if isinstance(opened, list) else [],
-             "edited": sorted(edited)}
+             "edited": sorted(edited), "edits": {i: edited[i] for i in sorted(edited)}}
     earlier = o.get("reading") or {}
     return {**earlier, gate: [*(earlier.get(gate) or []), entry]}
 

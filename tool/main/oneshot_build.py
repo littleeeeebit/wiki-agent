@@ -28,6 +28,8 @@ TESTS_PROMPT = (ROOT / "tool/prompts/oneshot-tests.md").read_text(encoding="utf-
 BUILD_PROMPT = (ROOT / "tool/prompts/oneshot-build.md").read_text(encoding="utf-8")
 MAX_ATTEMPTS = 3
 GRANTS: set[str] = set()   # a stage whose turn may write the worktree's adapter, only while it runs
+# A stage's turn another module checks while its condition on the spec holds: `(applies, check)`.
+HANDOVERS: dict[str, tuple] = {}
 CONFIG = ("pyproject.toml", "uv.lock", "pytest.ini")
 RUN_SECONDS = 900
 # The contract runs on its own files: no plugin loads itself from the environment, and no option comes in.
@@ -341,6 +343,8 @@ def checked(path: Path, run, spec: dict, final: str):
     repo, stage = spec["repo"], spec["oneshot"]["stage"]
     if getattr(run, "person", False) or stage not in STAGES:
         return None
+    if (hand := HANDOVERS.get(stage)) and hand[0](spec):
+        return hand[1](path, run, spec, final)
     run.checked = True
     check, stop, _, after = STAGES[stage]
     try:
@@ -359,7 +363,7 @@ def checked(path: Path, run, spec: dict, final: str):
         store.put(attempts=attempts)
         store.stop(stop, why)
         return None
-    store.put(attempts=attempts, working=None)
+    store.put(attempts=attempts)   # `working` stays until the turn goes: a restart in between is recovered
     return unless_stopped(run, repo, lambda: send(
         repo, stage, f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again "
                      f"(attempt {attempts + 1} of {MAX_ATTEMPTS})."))
