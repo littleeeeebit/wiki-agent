@@ -27,7 +27,7 @@ The server checks, in order:
 1. The `done-report` covers every item of the spec's `done`, each passing.
 2. `README.md` was written, and a CI workflow exists exactly where it is
    asked for above.
-3. The contract tests and the pytest configuration are unchanged.
+3. The contract tests and the test tool's configuration are unchanged.
 4. The whole gate `{gate}` passes on a clean, committed HEAD.
 
 Then the server asks you for the pull request's text, and opens it itself.

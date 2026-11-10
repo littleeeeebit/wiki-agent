@@ -19,9 +19,10 @@ pinned; these files may not change at all:
 
 ## Conventions the server relies on
 
-- The frontend lives in `web/` and follows the profile's `frontend`,
-  `styling` and `js_pm`. Screens use hash routes: the screen `/months` is
-  opened at `/#/months`, so no screen route meets an API path.
+- The frontend follows the profile's `frontend`, `styling` and `js_pm`, laid
+  out wherever that stack puts it. Each screen opens at its own route as a
+  path: the screen `/months` is served at `/months`, on a fresh load as well
+  as by a link, and no screen route meets an API path.
 - The app serves the built screens and the API on one port. It reads the port
   from the environment variable `PORT` and keeps all its data under the folder
   in `APP_DATA_DIR`, creating what it needs there; the backend's contract

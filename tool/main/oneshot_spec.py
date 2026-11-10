@@ -418,7 +418,16 @@ def view(spec: dict) -> dict:
     return out
 
 
+def supported(o: dict) -> None:
+    """Refuses any step forward on a run of an older version already past the stage whose record changed:
+    version 1 pinned pytest node ids at the tests turn, and no command."""
+
+    if o.get("version", 1) < 2 and o.get("tests_head"):
+        raise HTTPException(409, "예전 형식으로 계약 테스트를 고정한 실행이라 이어 갈 수 없다 — 새 실행을 시작하라")
+
+
 def idle(o: dict, stage: str) -> None:
+    supported(o)
     if o.get("stage") != stage or o.get("working") or o.get("stopped"):
         raise HTTPException(409, f"지금 할 수 없다 — {o.get('stage')}{' 진행 중' if o.get('working') else ''}")
 
@@ -467,6 +476,7 @@ def decide(repo: str, body: Decisions) -> dict:
 def resume(repo: str) -> dict:
     with oneshot._lock:
         o = spec_of(repo)["oneshot"]
+        supported(o)
         if not o.get("stopped") or o.get("working"):
             raise HTTPException(409, "멈춘 단계가 아니다")
         if o.get("inflight"):   # its `Turn.finish` has not run: the next turn would lose that turn's charge

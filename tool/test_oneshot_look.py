@@ -2,7 +2,7 @@
 
 See `docs/plans/oneshot/4-frontend.md` ("Look: the shooting harness"). The fixture app
 follows the conventions the build prompt fixes: one port from `PORT`, its data under
-`APP_DATA_DIR`, hash routes, and `e2e/seed.json`.
+`APP_DATA_DIR`, each screen served at its own path, and `e2e/seed.json`.
 """
 
 import http.server
@@ -47,15 +47,17 @@ def added(body: dict):
 
 
 @app.get("/", response_class=HTMLResponse)
+@app.get("/months", response_class=HTMLResponse)
+@app.get("/settings", response_class=HTMLResponse)
 def index():
     return (Path(__file__).parent / "index.html").read_text(encoding="utf-8")
 '''
 SERVE = "import os\n\nimport uvicorn\n\nuvicorn.run('app.main:app', host='127.0.0.1', port=int(os.environ['PORT']))\n"
-FIRST = ('<button data-feature="add">적기</button><a href="#/months">달별</a>'
+FIRST = ('<button data-feature="add">적기</button><a href="/months">달별</a>'
          '<ul>${items.map(i => `<li>${i}</li>`).join("")}</ul>')
 INDEX = '''<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div><script>
 async function render() {
-  const route = location.hash.slice(1) || "/", root = document.getElementById("root");
+  const route = location.pathname, root = document.getElementById("root");
   root.textContent = "불러오는 중";
   if (route === "/") {
     let items = [];
@@ -68,7 +70,6 @@ async function render() {
     root.innerHTML = '<button data-feature="export">내보내기</button>';
   }
 }
-window.addEventListener("hashchange", render);
 render();
 </script></body></html>'''
 FRONT = {"screens": [{"id": "S1", "route": "/", "primary": True, "features": ["add"]},
@@ -116,11 +117,11 @@ def test_a_clean_app_is_shot_in_every_state_with_no_high_finding(app_tree):
 @pytest.mark.parametrize("first, said", [
     (FIRST.replace('<button data-feature="add">', '<button data-feature="add" style="display:none">'), "바로 보이지"),
     (FIRST + '<button data-feature="export">내보내기</button>', "첫 화면에 없어야"),
-    (FIRST.replace('<a href="#/months">달별</a>', ""), "한 번 눌러서"),
+    (FIRST.replace('<a href="/months">달별</a>', ""), "한 번 눌러서"),
     (FIRST + '<img src="x" onerror="console.error(\'boom\')">', "콘솔 오류"),
     # below the fold: shown, but not without scrolling, and a link down there is more than one click
     (FIRST.replace('<button data-feature="add">', f'{FOLD}<button data-feature="add">'), "바로 보이지"),
-    (FIRST.replace('<a href="#/months">', f'{FOLD}<a href="#/months">'), "한 번 눌러서"),
+    (FIRST.replace('<a href="/months">', f'{FOLD}<a href="/months">'), "한 번 눌러서"),
 ])
 def test_the_dom_breaks_of_the_owners_map_and_console_errors_are_high(app_tree, first, said):
     found, _ = app_tree(first)

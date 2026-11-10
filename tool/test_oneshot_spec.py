@@ -62,7 +62,7 @@ def world(tmp_path):
             subprocess.run(["git", *args], cwd=tree, check=True, capture_output=True)
         specs.save({"id": oneshot.BRANCH, "repo": "budget", "rev": 1, "goal": "가계부", "out": [], "done": [],
                     "state": "작업 중", "worktree": str(tree), "history": [{"ts": 1, "state": "작업 중"}],
-                    "oneshot": {"version": 1, "run": "0123456789abcdef", "stage": "spec", "spend": oneshot.ledger(None),
+                    "oneshot": {"version": oneshot.VERSION, "run": "0123456789abcdef", "stage": "spec", "spend": oneshot.ledger(None),
                                 "sentence": "가계부 만들어줘", "intent": {"restated": "가계부를 만든다.", "kind": "webapp"},
                                 "profile": PROFILE}})
         with patch.object(oneshot, "RUNS", tmp_path / "oneshot"), patch.object(oneshot, "codex_role", lambda role="", store=None: False), \

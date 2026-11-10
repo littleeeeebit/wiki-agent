@@ -30,8 +30,8 @@ def reviewed(world):  # noqa: F811 — the imported fixture, requested by name
     head = git(world, "rev-parse", "HEAD")
     oneshot_spec.saved("budget", start_head=base, requirements=REQS, oneshot={
         "glossary": GLOSSARY, "stage": "review", "design": sheet.parsed(DESIGN), "tests_head": base,
-        "contract": ["test_budget.py"], "built_head": head, "working": "review",
-        "profile": {**PROFILE, "python_env": "uv"}})
+        "contract": ["test_budget.py"], "gate": "uv run pytest", "built_head": head, "working": "review",
+        "profile": PROFILE})
     sent = []
     with patch.object(oneshot_build, "send", lambda *a: sent.append(a)):
         yield world, head, sent

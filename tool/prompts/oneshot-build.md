@@ -2,29 +2,24 @@ This turn implements the backend the person approved, against its contract tests
 
 The design is committed in this worktree: `docs/design/backend.md` and
 `docs/design/api.yaml`. The contract tests were committed at `{tests_head}`
-and are pinned; these files may not change at all, not even by adding a skip,
-a mark or a statement after the tests:
+and are pinned with the test tool's configuration; these files may not change
+at all, not even by adding a skip, a mark or a statement after the tests:
 
 {contract}
 
-New tests go in new files. The application is the FastAPI object `app` in
-`app/main.py`, where the contract tests import it; the server also reads the
-served OpenAPI document from there.
+New tests go in new files.
 
 ## When this turn ends
 
 The server checks, in order:
 
 1. The `done-report` covers every item of the spec's `done`, each passing.
-2. Every pinned file is unchanged since `{tests_head}`, and so is the pytest
-   configuration: no `conftest.py`, `pytest.ini`, `.pytest.ini`, `tox.ini`,
-   `setup.cfg` or test package `__init__.py` is
-   added or changed, and the `[tool.pytest]` table of `pyproject.toml` stays
-   as it was.
+2. Every pinned file is unchanged since `{tests_head}`.
 3. The gate `{gate}` passes on a clean, committed HEAD.
-4. Every node id pinned at `{tests_head}` runs and passes. Skipped, xfailed,
-   deselected or not collected counts as failing, whatever the gate said, and
-   so does a test whose own body did not run.
+4. In a run of the pinned test command, every case pinned at `{tests_head}`,
+   by its class and name, runs and passes. Skipped or absent counts as
+   failing, whatever the gate said, and a test of the same name elsewhere
+   does not stand in for it.
 
 A refusal comes back with the reason, at most three times in all.
 

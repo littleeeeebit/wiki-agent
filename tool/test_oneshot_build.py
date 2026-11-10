@@ -1,8 +1,8 @@
 """oneshot step 3b: the contract tests first, then the build, checked by the server.
 
-See `docs/plans/oneshot/3-spec-backend.md` ("S4"). The work turns are stand-ins:
+See `docs/plans/oneshot/3-spec-backend.md` ("S4") and `6-free-stack.md`. The work turns are stand-ins:
 each test writes what a session would have written, then hands the turn to the
-check. Git and pytest run for real in a temporary worktree.
+check. Git and the project's test tool, pytest writing a JUnit report here, run for real in a temporary worktree.
 """
 
 import json
@@ -19,7 +19,8 @@ from main import oneshot, oneshot_build, oneshot_sheet as sheet, oneshot_spec, r
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_spec import DESIGN, GLOSSARY, REQS, fenced, world  # noqa: F401 — `world` is a fixture
 
-GATE = f'"{sys.executable}" -m pytest'
+RUNNER = f'"{sys.executable}" -m pytest -p no:cacheprovider -q --junitxml={{report}}'
+GATE = RUNNER.replace("{report}", oneshot_build.REPORT)
 SEND = oneshot_build.send   # the fixture replaces it; one test sends for real
 TESTS = '''
 def test_spending_adds_to_the_total():
@@ -64,15 +65,14 @@ def git(tree, *args):
 
 @pytest.fixture
 def built_world(world):  # noqa: F811 — the imported fixture, requested by name
-    (world / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
+    (world / ".gitignore").write_text("__pycache__/\nartifacts/\n", encoding="utf-8")
     git(world, "add", ".gitignore")
     git(world, "commit", "-m", "design")
     oneshot_spec.saved("budget", requirements=REQS, oneshot={
         "glossary": GLOSSARY, "stage": "tests", "design": sheet.parsed(DESIGN), "design_head": git(world, "rev-parse", "HEAD"),
         "working": "tests"})
     sent = []
-    with patch.object(oneshot_build, "gate_cmd", lambda profile: GATE), \
-         patch.object(oneshot_build, "send", lambda *a: sent.append(a)):
+    with patch.object(oneshot_build, "send", lambda *a: sent.append(a)):
         yield world, sent
 
 
@@ -84,8 +84,14 @@ def spec() -> dict:
     return specs.load("budget", oneshot.BRANCH)
 
 
-def check(tree, final="썼다."):
-    return oneshot_build.checked(tree, Turn(), spec(), final)
+def told(contract=("test_budget.py",), config=(), command=RUNNER) -> str:
+    """A tests turn's answer: its `oneshot-runner` block."""
+
+    return "썼다.\n" + fenced("oneshot-runner", {"command": command, "contract": list(contract), "config": list(config)})
+
+
+def check(tree, final=None):
+    return oneshot_build.checked(tree, Turn(), spec(), told() if final is None else final)
 
 
 def write(tree, name, text):
@@ -111,35 +117,37 @@ def test_failing_planned_tests_are_committed_pinned_and_followed_by_the_build_tu
     tree, sent = built_world
     to_build(tree, sent)
     assert o()["tests_head"] == git(tree, "rev-parse", "HEAD") and o()["contract"] == ["test_budget.py"]
-    assert git(tree, "status", "--porcelain") == ""
+    assert git(tree, "status", "--porcelain") == "" and o()["runner"] == RUNNER and o()["gate"] == GATE
+    assert f"gate_cmd = {json.dumps(GATE)}" in (tree / ".wiki/adapter.toml").read_text(encoding="utf-8")
     assert spec()["done"] == [GATE, "R1: 지출을 적으면 이번 달 합계에 더해진다", "R2: 지난 달 지출을 고르면 그 달 목록이 보인다"]
     assert o()["tests_head"] in sent[-1][2] and "`test_budget.py`" in sent[-1][2]
 
 
-@pytest.mark.parametrize("files, said", [
-    ({"test_budget.py": TESTS, "app.py": APP}, "테스트와 테스트 설정만"),
+@pytest.mark.parametrize("files, final, said", [
+    ({"test_budget.py": TESTS}, "썼다.", "`oneshot-runner` 블록이 하나 있어야 한다"),
+    ({"test_budget.py": TESTS}, told(command=GATE), "`{report}`"),
+    ({"test_budget.py": TESTS}, told(contract=["tests/test_budget.py"]), "작업트리에 없다"),
+    ({"test_budget.py": TESTS}, told(contract=["../outside.py"]), "작업트리에 없다"),
+    ({"test_budget.py": TESTS}, told(command=f'"{sys.executable}" -c "pass" {{report}}'), "JUnit 보고서를 쓰지 않았다"),
     ({"test_budget.py": TESTS.replace('assert month("2026-10") == []', "assert True")
-      .replace("from app import month", "pass")}, "아무것도 확인하지 않는다"),
-    ({"test_budget.py": TESTS.split("\n\n\ndef test_a_month")[0]}, "test_a_month_lists_its_spendings"),
+      .replace("from app import month", "pass")}, None, "아무것도 확인하지 않는다"),
+    ({"test_budget.py": TESTS.split("\n\n\ndef test_a_month")[0]}, None, "test_a_month_lists_its_spendings"),
     ({"test_budget.py": "import pytest\n" + TESTS.replace("def test_a_month", "@pytest.mark.skip\ndef test_a_month")},
-     "건너뛴"),
-    ({"test_budget.py": "import app\n" + TESTS}, "수집이 실패했다"),
-    ({"test_budget.py": "import pytest\n\n\n@pytest.fixture(autouse=True)\ndef db():\n    raise RuntimeError('no db')\n"
-      + TESTS}, "준비(setup·teardown)에서 오류가 난"),
-    ({"test_budget.py": TESTS.replace("    from app import add\n", "    assert 1 == 2\n")}, "앱이 없어서가 아닌"),
-    ({"test_budget.py": TESTS.replace("from app import add", "from pathlib import app")}, "앱이 없어서가 아닌"),
+     None, "건너뛴"),
+    ({"test_budget.py": "import app\n" + TESTS}, None, "JUnit 보고서에 없는"),   # a module that cannot be collected
 ])
-def test_a_tests_turn_is_refused_with_the_reason_and_sent_back(built_world, files, said):
+def test_a_tests_turn_is_refused_with_the_reason_and_sent_back(built_world, files, final, said):
     tree, sent = built_world
+    (tree.parent / "outside.py").write_text(TESTS, encoding="utf-8")
     for name, text in files.items():
         write(tree, name, text)
-    then = check(tree)
+    then = check(tree, final)
     assert o()["stage"] == "tests" and o()["attempts"] == 1
     then()
     assert sent[-1][:2] == ("budget", "tests") and said in sent[-1][2]
 
 
-def test_each_parameter_case_is_pinned_and_only_the_test_files_are_committed(built_world):
+def test_each_parameter_case_is_pinned_and_only_the_turns_files_are_committed(built_world):
     tree, sent = built_world
     write(tree, "app.py", APP)
     git(tree, "add", "app.py")
@@ -147,23 +155,41 @@ def test_each_parameter_case_is_pinned_and_only_the_test_files_are_committed(bui
     write(tree, "test_budget.py", "import pytest\n" + TESTS.replace(
         "def test_a_month", '@pytest.mark.parametrize("m", ["2026-10", "2026-11"])\ndef test_a_month')
         .replace('month("2026-10")', "month(m)").replace("spendings():", "spendings(m):"))
-    assert check(tree) is not None and o()["nodes"] == {
-        "test_spending_adds_to_the_total": ["test_budget.py::test_spending_adds_to_the_total"],
-        "test_a_month_lists_its_spendings": ["test_budget.py::test_a_month_lists_its_spendings[2026-10]",
-                                             "test_budget.py::test_a_month_lists_its_spendings[2026-11]"]}
-    assert git(tree, "show", "--name-only", "--format=", "HEAD") == "test_budget.py"
+    # xunit1 names each case's file; the default xunit2 does not, and the file is then empty
+    assert check(tree, told(command=RUNNER + " -o junit_family=xunit1")) is not None and o()["cases"] == [
+        ["test_budget", "test_a_month_lists_its_spendings[2026-10]", "test_budget.py"],
+        ["test_budget", "test_a_month_lists_its_spendings[2026-11]", "test_budget.py"],
+        ["test_budget", "test_spending_adds_to_the_total", "test_budget.py"]]
+    assert git(tree, "show", "--name-only", "--format=", "HEAD").split() == [".wiki/adapter.toml", "test_budget.py"]
+
+
+def test_a_case_from_another_file_or_reported_twice_does_not_stand_in_for_a_pinned_one(built_world):
+    pin = ["tests.a.b.test_total", "test_spending_adds_to_the_total"]
+    other = (*pin, "tests/a/b/test_total.py", "passed")
+    assert "돌지 않음" in oneshot_build.green([[*pin, "tests/a.b/test_total.py"]], [other])
+    # with no file in the report the two cannot be told apart: only both running shows it
+    assert "두 번 이상" in oneshot_build.green([[*pin, ""]], [(*pin, "", "passed")] * 2)
+    assert oneshot_build.green([[*pin, ""]], [(*pin, "", "passed")]) == ""
+    month = ("tests.a.b.test_total", "test_a_month_lists_its_spendings", "", "failure")
+    assert "구별하지 못하는" in oneshot_build.red(spec(), [month, (*pin, "", "failure"), (*pin, "", "failure")])
+
+
+def test_a_planned_name_matches_in_any_case_and_with_a_parameter_but_not_as_a_prefix():
+    assert oneshot_build.named("test_add", "Test_Add") and oneshot_build.named("test_add", "test_add[1]")
+    assert oneshot_build.named("test_add", "test_add (one)")
+    assert not oneshot_build.named("test_add", "test_add_more") and not oneshot_build.named("test_add", "test_ad")
 
 
 def test_a_test_file_changed_while_its_run_is_checked_is_refused(built_world):
     tree, sent = built_world
     write(tree, "test_budget.py", TESTS)
-    real = oneshot_build.ran
+    real = oneshot_build.junit
 
-    def ran(path, *a):
+    def junit(path, *a):
         write(path, "test_budget.py", TESTS + "\n# changed\n")
         return real(path, *a)
 
-    with patch.object(oneshot_build, "ran", ran):
+    with patch.object(oneshot_build, "junit", junit):
         check(tree)()
     assert "바뀌었다" in sent[-1][2] and o()["stage"] == "tests" and git(tree, "log", "-1", "--format=%s") == "design"
 
@@ -174,14 +200,14 @@ def test_a_halt_before_the_next_turn_stops_instead_of_sending_it(built_world, wh
     write(tree, "test_budget.py", TESTS)
     real, run = oneshot_build.tested, Turn()
 
-    def tested(path, run, spec):
-        why = real(path, run, spec)
+    def tested(path, run, spec, final):
+        why = real(path, run, spec, final)
         if when == "during the commit":
             run.halt.set()
         return why
 
-    with patch.object(oneshot_build, "tested", tested):
-        then = oneshot_build.checked(tree, run, spec(), "썼다.")
+    with patch.dict(oneshot_build.STAGES, {"tests": (tested, *oneshot_build.STAGES["tests"][1:])}):
+        then = oneshot_build.checked(tree, run, spec(), told())
     run.halt.set()   # either way, set by the time `work.run_turn` calls `then`
     then()
     assert not sent and o()["stage"] == "build" and o()["stopped"]["reason"] == "block"
@@ -189,7 +215,7 @@ def test_a_halt_before_the_next_turn_stops_instead_of_sending_it(built_world, wh
     assert sent[-1][:2] == ("budget", "build")
 
 
-def test_each_case_is_pinned_by_its_own_node_id_through_inheritance_and_any_parameter_id(built_world):
+def test_each_case_is_pinned_by_its_class_through_inheritance_and_any_parameter_id(built_world):
     tree, sent = built_world
     write(tree, "tests/helpers.py", "import pytest\n\n\nclass Base:\n"
                                     "    @pytest.mark.parametrize('case', [pytest.param(3000, id='lookup::empty')])\n"
@@ -198,10 +224,10 @@ def test_each_case_is_pinned_by_its_own_node_id_through_inheritance_and_any_para
     write(tree, "tests/test_budget.py", "from helpers import Base\n\n\nclass TestApi(Base):\n    pass\n\n\n"
                                         "def test_a_month_lists_its_spendings():\n"
                                         "    from app import month\n    assert month('2026-10') == []\n")
-    check(tree)()
-    assert o()["nodes"] == {
-        "test_spending_adds_to_the_total": ["tests/test_budget.py::TestApi::test_spending_adds_to_the_total[lookup::empty]"],
-        "test_a_month_lists_its_spendings": ["tests/test_budget.py::test_a_month_lists_its_spendings"]}
+    check(tree, told(contract=["tests/test_budget.py", "tests/helpers.py"]))()
+    (month, month_case, _), (add, add_case, _) = o()["cases"]
+    assert (month_case, add_case) == ("test_a_month_lists_its_spendings", "test_spending_adds_to_the_total[lookup::empty]")
+    assert add == month + ".TestApi"
     write(tree, "app.py", APP)
     git(tree, "add", "app.py")
     git(tree, "commit", "-m", "build")
@@ -262,20 +288,14 @@ def test_a_server_that_dies_between_the_passed_build_and_its_review_resumes_the_
     (lambda tree: write(tree, "test_budget.py", TESTS + "\nimport pytest\npytest.skip('x', allow_module_level=True)\n"),
      "바뀌었다"),
     (lambda tree: (tree / "test_budget.py").unlink(), "없다"),
+    # A configuration the tests turn never named is not pinned, but what it does to the pinned cases shows.
     (lambda tree: write(tree, "conftest.py", "import pytest\n\n\ndef pytest_collection_modifyitems(items):\n"
                                              "    for item in items:\n        item.add_marker(pytest.mark.skip)\n"),
-     "pytest 설정"),
-    (lambda tree: write(tree, "tests/conftest.py", "def pytest_collection_modifyitems(items):\n"
-                                                   "    for item in items:\n        item.runtest = lambda: None\n"),
-     "pytest 설정"),
-    (lambda tree: (write(tree, "pyproject.toml", '[tool.pytest.ini_options]\naddopts = "-k spending"\n'),
+     "(skipped)"),
+    (lambda tree: (write(tree, "pyproject.toml", '[tool.pytest.ini_options]\naddopts = "-k total"\n'),
                    write(tree, "test_extra.py", "def test_a_month_lists_its_spendings():\n    pass\n")),
-     "[tool.pytest]"),
-    (lambda tree: write(tree, ".pytest.ini", "[pytest]\naddopts = -k spending\n"), "pytest 설정"),
-    (lambda tree: write(tree, "__init__.py", "import pytest\npytest.Function.runtest = lambda self: None\n"),
-     "pytest 설정"),
-    (lambda tree: write(tree, "app.py", APP + "\nimport pytest\npytest.Function.runtest = lambda self: None\n"),
-     "본문이 돌지 않음"),
+     "test_budget::test_a_month_lists_its_spendings(돌지 않음)"),
+    (lambda tree: write(tree, ".pytest.ini", "[pytest]\naddopts = -k total\n"), "(돌지 않음)"),
 ])
 def test_a_weakened_contract_is_refused_even_when_the_gate_is_green(built_world, weaken, said):
     tree, sent = built_world
@@ -300,7 +320,21 @@ def test_a_same_named_test_in_another_file_does_not_stand_in_for_the_contract(bu
     green = {"ok": True, "head": git(tree, "rev-parse", "HEAD"), "reason": "", "tail": ""}
     with patch.object(specs, "judge", lambda *a, **k: green):   # a gate that runs only some of the tests
         check(tree, "만들었다.\n" + report())()
-    assert "test_budget.py::test_spending_adds_to_the_total(failed)" in sent[-1][2]
+    assert "test_budget::test_spending_adds_to_the_total(failure)" in sent[-1][2]
+
+
+def test_a_named_configuration_file_is_pinned_with_the_contract(built_world):
+    tree, sent = built_world
+    write(tree, "test_budget.py", TESTS)
+    write(tree, "pytest.ini", "[pytest]\n")
+    check(tree, told(config=["pytest.ini"]))()
+    assert o()["contract"] == ["test_budget.py", "pytest.ini"]
+    write(tree, "app.py", APP)
+    write(tree, "pytest.ini", "[pytest]\naddopts = -q\n")
+    git(tree, "add", "-A")
+    git(tree, "commit", "-m", "build")
+    check(tree, "만들었다.\n" + report())()
+    assert "`pytest.ini` 가 바뀌었다" in sent[-1][2]
 
 
 ANYIO = '''import pytest
@@ -341,9 +375,10 @@ def test_async_unittest_and_data_reading_contracts_go_from_red_to_green(built_wo
     write(tree, "tests/test_month.py", TESTS.split("\n\n\n")[1])
     for name, text in files.items():
         write(tree, name, text)
-    check(tree)()
+    contract, config = ["tests/test_add.py", "tests/test_month.py"], [n for n in files if not n.startswith("tests/")]
+    check(tree, told(contract, config))()
     assert o()["stage"] == "build", sent[-1][2]
-    assert sorted(o()["contract"]) == sorted(["tests/test_month.py", *(n for n in files if n.startswith("tests/"))])
+    assert o()["contract"] == contract + config
     write(tree, "app.py", APP)
     git(tree, "add", "app.py")
     git(tree, "commit", "-m", "build")
@@ -369,18 +404,27 @@ def test_a_skipped_teardown_is_no_red_test_and_no_green_one(built_world):
     tree, sent = built_world
     write(tree, "test_month.py", TESTS.split("\n\n\n")[1])
     write(tree, "test_budget.py", CLEANUP.format(cleanup='pytest.skip("cleanup unavailable")'))
-    check(tree)()
+    both = told(contract=["test_budget.py", "test_month.py"])
+    check(tree, both)()
     assert o()["stage"] == "tests" and "건너뛴" in sent[-1][2]
     write(tree, "test_budget.py", CLEANUP.format(cleanup='import importlib.util\n'
                                                  '    if importlib.util.find_spec("app"):\n'
                                                  '        pytest.skip("cleanup unavailable")'))
-    check(tree)()
+    check(tree, both)()
     assert o()["stage"] == "build"
     write(tree, "app.py", APP)
     git(tree, "add", "app.py")
     git(tree, "commit", "-m", "build")
     check(tree, "만들었다.\n" + report())()
-    assert o()["stage"] == "build" and "test_budget.py::test_spending_adds_to_the_total(skipped)" in sent[-1][2]
+    assert o()["stage"] == "build" and "test_budget::test_spending_adds_to_the_total(skipped)" in sent[-1][2]
+
+
+def test_a_planned_test_in_a_file_the_runner_block_left_out_is_refused(built_world):
+    tree, sent = built_world
+    write(tree, "test_budget.py", TESTS.split("\n\n\n")[0])
+    write(tree, "test_month.py", TESTS.split("\n\n\n")[1])
+    check(tree)()
+    assert o()["stage"] == "tests" and "`contract` 에 적는다 — test_month.py" in sent[-1][2]
 
 
 def test_a_build_without_its_report_or_with_a_red_gate_is_refused(built_world):
@@ -487,9 +531,10 @@ def test_resuming_a_stopped_build_sends_its_turn_again_with_fresh_attempts(built
 
 
 def test_the_prompts_name_the_planned_tests_and_the_pins():
-    s = {"oneshot": {"design": sheet.parsed(DESIGN), "profile": {"python_env": "uv"}, "tests_head": "abc",
-                     "contract": ["tests/test_a.py"]}}
+    s = {"oneshot": {"design": sheet.parsed(DESIGN), "profile": {"backend": "fastapi"}, "tests_head": "abc",
+                     "contract": ["tests/test_a.py"], "gate": "uv run pytest"}}
     tests = oneshot_build.tests_text(s)
-    assert "test_spending_adds_to_the_total" in tests and "uv run pytest" in tests and "{tests}" not in tests
+    assert "test_spending_adds_to_the_total" in tests and '"backend": "fastapi"' in tests and "oneshot-runner" in tests
+    assert "{tests}" not in tests and "{profile}" not in tests and "uv run pytest" in oneshot_build.build_text(s)
     assert json.loads(tests.split("```json\n")[1].split("```")[0])[0]["id"] == "T1"
     assert "`tests/test_a.py`" in oneshot_build.build_text(s) and "abc" in oneshot_build.build_text(s)

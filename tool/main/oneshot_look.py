@@ -3,7 +3,7 @@ in every state, and the mechanical findings read off the pages. A server routine
 
 `docs/plans/oneshot/4-frontend.md` ("Look: the shooting harness") is the design. The build fixes the
 conventions it relies on: the app serves its screens and its API on one port, the port and the data folder
-come from `PORT` and `APP_DATA_DIR`, screens use hash routes (`/#/months`), and `e2e/seed.json` lists the
+come from `PORT` and `APP_DATA_DIR`, each screen is served at its own route (`/months`), and `e2e/seed.json` lists the
 API calls that fill it. A placement or console finding is high by definition.
 """
 
@@ -27,7 +27,7 @@ from pathlib import Path
 
 from common import process, shell
 
-from .oneshot_screens import VIEWPORTS
+from .oneshot_screens import VIEWPORTS, api_paths
 
 READY_SECONDS = 180
 PAGE_MS = 15_000
@@ -289,14 +289,6 @@ def seeded(tree: Path, url: str) -> None:
             raise ValueError(f"`{SEED}` 의 `{c['method']} {c['path']}` 가 실패했다 — {exc}") from exc
 
 
-def api_paths(ops: list[str]) -> re.Pattern:
-    """A URL path any served operation answers: `{id}` matches one segment."""
-
-    templates = sorted({op.split(" ", 1)[1] for op in ops})
-    parts = [re.sub(r"\\\{[^/]*?\\\}", "[^/]+", re.escape(t)) for t in templates]
-    return re.compile("(?:" + "|".join(parts) + r")/?") if parts else re.compile(r"(?!)")
-
-
 def opened(browser, url: str, route: str, view: str, state: str, api: re.Pattern, found: list[str]):
     """A page at `route`, its API answering as `state` asks: `loading` never answers, `error` answers 500."""
 
@@ -320,7 +312,7 @@ def opened(browser, url: str, route: str, view: str, state: str, api: re.Pattern
         page.on("console", lambda m: m.type == "error" and found.append(f"콘솔 오류 {m.text[:200]}"))
     page.on("pageerror", lambda e: found.append(f"페이지 오류 {str(e)[:200]}"))
     page.route("**/*", routed)
-    page.goto(f"{url}/#{route}", wait_until="domcontentloaded", timeout=PAGE_MS)
+    page.goto(f"{url}{route}", wait_until="domcontentloaded", timeout=PAGE_MS)
     if state != "loading":
         try:
             page.wait_for_load_state("networkidle", timeout=PAGE_MS)

@@ -31,7 +31,7 @@ def spec() -> dict:
 @pytest.fixture
 def finished(world):  # noqa: F811 — the imported fixture, requested by name
     write(world, "test_budget.py", CONTRACT)
-    write(world, ".gitignore", "__pycache__/\n")
+    write(world, ".gitignore", "__pycache__/\nartifacts/\n")   # as the bootstrap writes it: the gate's report lands there
     write(world, ".wiki/adapter.toml", adapter())
     git(world, "add", "-A")
     git(world, "commit", "-m", "built")
