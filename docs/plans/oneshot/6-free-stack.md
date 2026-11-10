@@ -95,24 +95,34 @@ with one block:
   files that change how the tool runs them.
 - Each planned test's own name is exactly its `test_name`, not nested in a
   suite name, so the report names it.
+- Where the tool can, `command` makes each testcase carry a `file`
+  attribute: pytest with `-o junit_family=xunit1`, jest-junit with
+  `addFileAttribute`. The server pins it with the case.
 
 ### What the server checks
 
 | Check | When | Refused if |
 | --- | --- | --- |
 | Named | The tests turn ends | A listed file is missing or outside the worktree, or a file the turn changed names a planned test but is not in `contract` |
-| Red | The tests turn ends | A planned name is missing from the report, or passed, or was skipped |
-| Pin | The server commits the tests | — it stores `command`, `contract`, `config` and each planned case as `[classname, name]` from the report, with `tests_head` |
+| Red | The tests turn ends | A planned name is missing from the report, or passed, or was skipped, or two of its testcases carry the same `[classname, name, file]` |
+| Pin | The server commits the tests | — it stores `command`, `contract`, `config` and each planned case as `[classname, name, file]` from the report (`file` empty when the report has none), with `tests_head` |
 | Pinned | Every later turn ends | A `contract` or `config` file differs from `tests_head` |
-| Green | The build turn ends | A pinned case is absent, skipped or failing in a run of the stored command |
+| Green | The build turn ends | A pinned case is absent, skipped, failing or reported more than once in a run of the stored command |
 
 A planned name matches a testcase whose name equals it in any case, or
 continues with a parameter (`name[…]`, `name (…)`), so Go's `Test_name` and
-pytest's parameter cases match. A case is pinned by its classname and name
-together, as pytest's node id pinned the file, the class and the parameter
-case: a test of the same name in another file or class never stands in for
-it, and a configuration that deselects or skips a pinned case leaves it
-absent or skipped at green.
+pytest's parameter cases match. A case is pinned by its classname, name and
+file together: a test of the same name in another class, or in another file
+the report names, never stands in for it, and a configuration that deselects
+or skips a pinned case leaves it absent or skipped at green.
+
+A report without `file` identifies a case by classname and name only, and
+those do not always name one file: pytest turns `tests/a.b/test_total.py` and
+`tests/a/b/test_total.py` into the same classname `tests.a.b.test_total`. If
+the pinned case stops running and a new file reporting the same classname
+and name passes, green reads one passing case and accepts it. Green refuses
+the case only when both run, because the pinned identity is then reported
+twice.
 
 The server substitutes `{report}` with a path in the run's folder, outside the
 worktree, and reads only that file. The adapter's `gate_cmd` becomes the
@@ -133,6 +143,9 @@ back:
 - A body that never ran is not caught: a runner patched to report a pass, by
   a configuration file the turn did not list or by application code, reads as
   a pass in the report.
+- Without a `file` attribute, the file a case came from is not checked: a
+  new file whose case reports the pinned classname and name stands in for a
+  pinned case that stopped running.
 
 The planned tests' `given`, `when` and `then` were approved at R1, and the
 backend's independent review (3c) reads the contract tests and the diff
@@ -165,19 +178,27 @@ board are unchanged.
 ## Runs started before this step
 
 Each part that changes the shape of what a run stores raises the spec's
-`oneshot.version` in that part, and `[재개]` refuses a run of an older version
-that is already past the stage whose record changed. A server restart stops
-every running run with `restart` first, so the resume is the only way back
-in, and the refusal tells the owner to start a new run. The run stays
-readable.
+`oneshot.version` in that part. One check refuses, with HTTP 409, every
+owner action on a run of an older version that is already past the stage
+whose record changed. The refusal tells the owner to start a new run, and the
+run stays readable.
 
-| Part | Version | Refused on resume |
+The check stands in front of every way forward, not only `[재개]`. A run
+waiting for the owner is not running, so a server restart leaves it as it
+was, and its next step is a submission, not a resume. The actions it guards
+are `[재개]` and the submissions `say`, `r1`, `board`, `r2` and `r3`.
+
+| Part | Version | Refused |
 | --- | --- | --- |
 | 6b | 2 | A version 1 run past the tests turn: it pinned pytest node ids and no command |
 | 6c | 3 | A version 2 run past S2: its stack is in the card's old fields, not in `stack` |
 
 A run still before the changed stage carries on: the new code writes the new
 record when it reaches that stage.
+
+Each part's tests include its own case: for 6b, a version 1 run waiting at
+R2 whose `r2` submission is refused; for 6c, a version 2 run waiting at R1
+whose `r1` submission is refused.
 
 ## Parts
 
@@ -189,7 +210,7 @@ record when it reaches that stage.
 
 6b goes before 6c so every merged state still runs. After 6b a new run's
 tests turn declares a pytest command from the old card, and a run already
-past its tests turn is refused on resume (version 1). 6c then moves the
+past its tests turn is refused on resume and on every submission (version 1). 6c then moves the
 choice into S2.
 
 What each merged state is checked against:
