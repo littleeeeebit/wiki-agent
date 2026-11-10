@@ -137,7 +137,9 @@ deliverables ([step 2](2-bootstrap.md), "Supported combinations").
 | Docs and commit language | Korean / English | Asked once, saved | See the readability section: this interacts with the hub's English rule |
 | Responsive | Desktop only / desktop and mobile | Desktop and mobile | S7 viewport count |
 | Uses an LLM | No / yes with which provider | No | `.env.example`, key handling |
-| Budget | USD and hours ceiling for the whole run | Asked every time | Checked before every model turn against the run's ledger; stops the run, keeps what was built |
+
+The run has no spending ceiling. Its ledger records money and time per role
+and the screen shows them ([step 2](2-bootstrap.md), "Spending").
 
 The private-repository rule follows the owner's words: private means no
 GitHub Actions by default. The local gate then has to be strong enough alone,
@@ -244,7 +246,7 @@ The owner wants the agent to look, fix, and look again. The loop below makes
 | Question | Options | Recommendation |
 | --- | --- | --- |
 | Who critiques | A separate read-only session, so the builder does not approve its own work | Decided |
-| Stop rule | No high-severity findings / a fixed number of rounds / budget | No high-severity findings in two rounds in a row, capped at N rounds and the budget |
+| Stop rule | No high-severity findings / a fixed number of rounds | No high-severity findings in two rounds in a row, capped at N rounds |
 | What R3 receives | Final screenshots / before and after per round / a recorded walkthrough of each scenario | Final screenshots and one walkthrough per core scenario; round history folded |
 | Palette | Agent picks / proposed at R2 for the owner to choose | Proposed at R2, since the owner is looking then anyway |
 
@@ -303,3 +305,4 @@ split → frontend design → R2 → frontend build → R3 → pull request`, wi
 | 3 | [Spec and backend](3-spec-backend.md) | S2–S4: scenarios and glossary, the R1 sheet in Korean with length and translationese checks, contract-test-first build with an independent read-only review | In progress — 3a #320 (S2–R1), 3b S4 build, 3c the backend review; the real run through `split` remains |
 | 4 | [Frontend](4-frontend.md) | S5–S7: frequency map, the R2 sheet, image input in the app's sessions, the screenshot, critique and fix loop with a separate critic and the stop rule | In progress — 4a S5–R2, 4b the build and its shots, 4c the critic and R3 are built; the real run, the recorded walkthroughs and an accessibility pass remain |
 | 5 | [Screen and pull request](5-screen-pr.md) | Oneshot entry, gate sheets with per-item approval, the drag board, S8 handing the pull request to Review Loop | In progress — 5a the screens and 5b S8 with the run's summary are built; the real run end to end on a throwaway repository remains |
+| 6 | [Free stack](6-free-stack.md) | The stack chosen by the owner in S2 instead of the card, contract tests in the project's own tool, no spending ceiling | In progress — 6a removes the ceilings |

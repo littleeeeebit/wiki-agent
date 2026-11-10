@@ -142,7 +142,7 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict]):
         return lambda: oneshot_spec.handoff(repo, "critique") or True   # the next look holds the tree itself
     todo = found + [f for f in look["findings"] if f["severity"] == "high"]   # a mechanical high outranks a clean critique
     # `working` names the build and `fix` keeps its findings before the turn is sent: a server that dies in
-    # between, or a budget that refuses it, leaves a `[재개]` that sends the same fixes.
+    # between, or a session that cannot open, leaves a `[재개]` that sends the same fixes.
     spec = oneshot_spec.saved(repo, oneshot={"critiques": rounds, "stage": front_build.STAGE, "attempts": 0,
                                              "working": front_build.STAGE,
                                              "fix": {"who": "An independent read-only critic judged the screenshots",
@@ -238,7 +238,7 @@ def decide(repo: str, body: Decisions) -> dict:
             approved(repo)
         else:
             # `working` and `fix` are saved with the decisions: a server that dies before the turn is sent, or a
-            # budget that refuses it, leaves a `[재개]` that sends the owner's edits again.
+            # session that cannot open, leaves a `[재개]` that sends the owner's edits again.
             spec = oneshot_spec.saved(repo, oneshot={
                 "stage": front_build.STAGE, "attempts": 0, "critique_base": len(o.get("critiques") or []),
                 "working": front_build.STAGE, "reading": reading,

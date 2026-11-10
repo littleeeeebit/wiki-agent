@@ -7,13 +7,13 @@ import { ModelsLine, OneshotSpec } from '@/components/OneshotSpec'
 import { ROLE, oneshotSpecs, stageLabel, type Models, type SpecSummary } from '@/lib/oneshot'
 
 type OneshotField = {
-  options?: string[]; enabled?: string[]; text?: boolean; number?: boolean; asked?: boolean; default: string
+  options?: string[]; enabled?: string[]; text?: boolean; asked?: boolean; default: string
 }
 type OneshotRun = {
   id: string
   state: 'intake' | 'environment' | 'bootstrap' | 'spec'
   working: string | null
-  stopped: { reason: 'budget' | 'block' | 'folder' | 'github' | 'restart'; detail: string; state: string } | null
+  stopped: { reason: 'block' | 'folder' | 'github' | 'restart'; detail: string; state: string } | null
   sentence: string
   models?: Models
   picked: string
@@ -53,14 +53,14 @@ const LABEL: Record<string, string> = {
   backend: '백엔드', frontend: '프런트엔드', styling: '스타일', data_store: '데이터 저장', auth: '로그인',
   deploy: '배포', visibility: 'GitHub 공개 범위', license: '라이선스', ci: 'CI', js_pm: 'JS 패키지 관리자',
   ui_language: '화면 언어', docs_language: '문서 언어', responsive: '화면 크기', llm: 'LLM 사용',
-  github_owner: 'GitHub 소유자', budget_usd: '금액 한도 (USD)', budget_hours: '시간 한도 (시간)',
+  github_owner: 'GitHub 소유자',
 }
 const STEP: Record<string, string> = {
   recheck: '이름 다시 확인', folder: '폴더', files: '기본 파일', commit: '첫 커밋', register: '앱에 연결',
   remote: 'GitHub 저장소', origin: 'origin 연결', publish: 'main push', spec: '명세 작업 공간',
 }
 const STOP: Record<string, string> = {
-  budget: '한도에 닿았다', block: '모델 답을 쓸 수 없었다', folder: '폴더나 이름 문제', github: 'GitHub 문제',
+  block: '모델 답을 쓸 수 없었다', folder: '폴더나 이름 문제', github: 'GitHub 문제',
   restart: '서버가 다시 켜져 멈췄다',
 }
 const WORKING: Record<string, string> = {
@@ -327,8 +327,6 @@ function Restated({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act
 
 function Card({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act }) {
   const [draft, setDraft] = useState<Record<string, string | number>>(run.profile!)
-  const values = () => Object.fromEntries(Object.entries(draft).map(([k, v]) =>
-    [k, run.schema[k]?.number && v !== '' ? Number(v) : v]))
   const owner = String(draft.github_owner || run.identity?.owner || '')
   const visibility = draft.visibility === 'public' ? '공개' : draft.visibility === 'private' ? '비공개' : '(공개 범위 미정)'
   return (
@@ -353,7 +351,7 @@ function Card({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act }) 
                   ))}
                 </select>
               ) : (
-                <input type={field.number ? 'number' : 'text'} min={field.number ? 0 : undefined} value={String(value)}
+                <input type="text" value={String(value)}
                   onChange={(e) => set(e.target.value)}
                   className="h-7 rounded-md border border-input bg-background px-2 font-mono text-[12px] text-foreground" />
               )}
@@ -368,18 +366,14 @@ function Card({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act }) 
           {run.warnings.map((w) => <li key={w} className="text-wait">{w}</li>)}
         </ul>
       )}
-      <p className="text-muted-foreground">
-        금액 한도는 비용을 알려 주는 Claude 역할에만 걸리고, Codex 역할은 시간 한도로만 잰다. 한도는 턴과 턴 사이에서
-        확인하므로 한 턴이 자기 비용만큼 넘을 수 있다.
-      </p>
       <p className="rounded-md border border-border px-3 py-2">
         확정하면 바깥에 이렇게 남는다: GitHub 에 <span className="font-mono">{owner}/{run.identity?.name}</span> 저장소를 {visibility}로
         만들고 첫 커밋을 main 에 push 한다. 로컬 폴더는 <span className="font-mono">{run.identity?.path}</span>.
       </p>
       <div className="flex justify-end gap-2">
-        <Btn disabled={busy} onClick={() => void act(() => api.saveProfile(run.id, values(), false))}
+        <Btn disabled={busy} onClick={() => void act(() => api.saveProfile(run.id, draft, false))}
           title="저장하고 문제를 다시 확인한다">저장</Btn>
-        <Btn tone="primary" disabled={busy} onClick={() => void act(() => api.saveProfile(run.id, values(), true))}>확정하고 만들기</Btn>
+        <Btn tone="primary" disabled={busy} onClick={() => void act(() => api.saveProfile(run.id, draft, true))}>확정하고 만들기</Btn>
       </div>
     </section>
   )

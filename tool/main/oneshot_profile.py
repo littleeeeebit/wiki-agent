@@ -41,11 +41,16 @@ SCHEMA: dict[str, dict] = {
     "responsive": {"options": ["desktop", "desktop-mobile"], "default": "desktop-mobile"},
     "llm": {"options": ["none", "anthropic", "openai", "other"], "default": "none"},
     "github_owner": {"text": True, "default": "", "asked": True},
-    "budget_usd": {"number": True, "default": "", "asked": True},
-    "budget_hours": {"number": True, "default": "", "asked": True},
 }
 OWNER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
 CONDA_ENV = re.compile(r"[\w.-]{1,64}")
+
+
+def current(profile: dict | None) -> dict | None:
+    """A card's values in today's schema: a field a later version dropped is no longer the card's."""
+
+    return None if profile is None else {k: v for k, v in profile.items() if k in SCHEMA}
+
 
 def proposal(value) -> dict:
     """The model's `oneshot-profile` block, checked against the schema: `{field: {value, why}}`."""
@@ -64,8 +69,6 @@ def proposal(value) -> dict:
         v = item["value"]
         if "options" in field and v not in field.get("enabled", field["options"]):
             raise ValueError(f"`{name}` 에 고를 수 없는 선택지다: {v}")
-        if field.get("number") and not (isinstance(v, (int, float)) and not isinstance(v, bool)):
-            raise ValueError(f"`{name}` 은 숫자여야 한다")
         if field.get("text") and not isinstance(v, str):
             raise ValueError(f"`{name}` 은 문자열이어야 한다")
         out[name] = {"value": v, "why": item["why"].strip()}
@@ -86,8 +89,6 @@ def problems(profile: dict) -> tuple[list[str], list[str]]:
             errors.append(f"`{name}` 에 없는 선택지다: {v}")
         elif "enabled" in field and v not in field["enabled"]:
             errors.append(f"`{name}` 의 `{v}` 는 이 버전에서 아직 고를 수 없다")
-        if field.get("number") and not (isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0):
-            errors.append(f"`{name}` 은 0보다 큰 숫자여야 한다")
     if profile.get("python_env") == "conda":
         if not CONDA_ENV.fullmatch(str(profile.get("conda_env") or "")):
             errors.append("conda 는 환경 이름이 있어야 한다 (영문·숫자·`._-`)")
@@ -136,23 +137,6 @@ def estimate(role: str) -> float:
 
 def ledger(spend: dict | None) -> dict:
     return {"usd": 0.0, "seconds": 0.0, "calls": 0, "unknown": 0, "max": {}, "longest": {}, **(spend or {})}
-
-
-def allowed(spend: dict, profile: dict | None, role: str, codex: bool) -> str:
-    """Empty when the role may start a turn now, or the reason it may not.
-    Ceilings are enforced between turns, never inside one."""
-
-    if not profile:
-        return ""   # before the card there is no ceiling: S0 and S1 only record
-    spend = ledger(spend)
-    if spend["seconds"] >= float(profile["budget_hours"]) * 3600:
-        return "시간 한도를 다 썼다"
-    if codex:
-        return ""   # the subscription reports no money; hours bound it
-    expected = spend["max"].get(role, estimate(role))
-    if spend["usd"] + expected > float(profile["budget_usd"]):
-        return f"금액 한도를 넘는다 — 쓴 돈 USD {spend['usd']:.2f}, 이번 턴 예상 USD {expected:.2f}"
-    return ""
 
 
 def charged(spend: dict, role: str, codex: bool, cost, seconds: float) -> dict:

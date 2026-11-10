@@ -432,7 +432,7 @@ def test_a_turn_that_cannot_be_begun_leaves_nothing_in_flight_and_charges_nothin
          patch.object(work, "remember", lambda *a, **k: None), \
          patch.object(work, "session", lambda *a: SimpleNamespace(id="c", parent_id=None, repo=str(tree))), \
          patch.object(oneshot, "role_config", lambda *a: {"model": "m", "effort": "e"}), \
-         patch.object(oneshot, "codex_role", lambda *a: False), patch.object(oneshot_build, "allowed", lambda *a: ""):
+         patch.object(oneshot, "codex_role", lambda *a: False):
         SEND("budget", "tests", "x")
     assert o()["inflight"] is None and "보내지 못했다" in o()["stopped"]["detail"]
     assert not (o().get("spend") or {}).get("calls")   # no model ran
@@ -452,7 +452,7 @@ def test_a_work_turn_runs_on_the_build_model_the_run_fixed(built_world):
 
     with patch.object(work, "notice", lambda *a: None), patch.object(work, "remember", lambda *a, **k: None), \
          patch.object(work, "begin", lambda *a: (_ for _ in ()).throw(RuntimeError("멈춤"))), \
-         patch.object(work, "session", session), patch.object(oneshot_build, "allowed", lambda *a: ""), \
+         patch.object(work, "session", session), \
          patch("main.query.config", lambda *a: {"model": "window", "effort": "e"}):
         SEND("budget", "tests", "x")
     assert opened == [("sonnet", "medium")]

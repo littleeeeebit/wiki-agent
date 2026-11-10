@@ -21,7 +21,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 
 from . import oneshot, oneshot_spec, refactor_run, runtime, specs, work
-from .oneshot_profile import allowed, charged, gate_cmd
+from .oneshot_profile import charged, gate_cmd
 from .query import ROOT, _lock as work_lock, hold
 
 TESTS_PROMPT = (ROOT / "tool/prompts/oneshot-tests.md").read_text(encoding="utf-8")
@@ -89,13 +89,6 @@ def send(repo: str, stage: str, text: str) -> None:
     store = oneshot_spec.store(repo)
     spec = oneshot_spec.spec_of(repo)
     path, codex = Path(spec["worktree"]), oneshot.codex_role("build", store)
-    with oneshot._lock:
-        why = allowed(spec["oneshot"].get("spend"), spec["oneshot"].get("profile"), stage, codex)
-        if why:
-            store.stop("budget", why)
-    if why:
-        idle(path)
-        return
     try:
         held = hold(work._busy, work_lock, str(path), "작업트리를 다른 턴이 쓰고 있다", kind="turn")
     except HTTPException as exc:   # whoever holds it sends the queued instruction when it lets go

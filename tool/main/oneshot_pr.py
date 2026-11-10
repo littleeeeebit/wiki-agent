@@ -162,7 +162,7 @@ def handed(path: Path, run, spec: dict, final: str):
 
     repo = spec["repo"]
     run.checked = True
-    # The text asked again is the run's own turn: budgeted, charged, and stopping the stage if it fails.
+    # The text asked again is the run's own turn: charged, and stopping the stage if it fails.
     ask = lambda text: oneshot_build.send(repo, STAGE, text) or True   # noqa: E731 — sent stops itself on a refusal
     try:
         then = specs.written(specs.channels.repo_for(repo), path, run, spec, final, ask)
