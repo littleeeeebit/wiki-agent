@@ -5,6 +5,7 @@ turn (`oneshot.ask`) is a stand-in that records the images it was handed; the re
 the real session sends with them is in `test_session_images.py`.
 """
 
+import os
 from unittest.mock import patch
 
 import pytest
@@ -13,6 +14,7 @@ from fastapi import HTTPException
 from main import oneshot, oneshot_build, oneshot_critique as critique, oneshot_spec, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_front_build import FEATURES, FREQUENCY, FRONT
+from test_oneshot_review import git
 from test_oneshot_spec import PROFILE, fenced, world  # noqa: F401 — `world` is a fixture
 from test_session_images import PNG
 
@@ -39,7 +41,8 @@ def judged(world):  # noqa: F811 — the imported fixture, requested by name
     oneshot_spec.saved("budget", oneshot={
         "stage": "critique", "front": FRONT, "features": FEATURES, "frequency": FREQUENCY, "first_screen": "오늘 쓴 돈",
         "r2": {"palette": "C1"}, "profile": {**PROFILE, "python_env": "uv", "responsive": "desktop"}, "looks": [look()],
-        "tests_head": "b" * 40, "contract": ["test_budget.py"], "working": "critique"})
+        "tests_head": "b" * 40, "contract": ["test_budget.py"], "working": "critique",
+        "front_built_head": git(world, "rev-parse", "HEAD")})
     sent = []
     with patch.object(oneshot_build, "send", lambda *a: sent.append(a)):
         yield world, sent
@@ -137,7 +140,7 @@ def test_a_critic_that_cannot_see_the_images_stops_with_critique_never_as_clean(
 # -- R3 --------------------------------------------------------------------------------------
 
 def at_r3():
-    oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None, "r3": {"round": 1, "decisions": {}, "marks": {}},
+    oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None, "stopped": None, "r3": {"round": 1, "decisions": {}, "marks": {}},
                                           "critiques": [{"look": 1, "head": "a" * 40, "findings": [LOW], "clean": True}]})
 
 
@@ -162,6 +165,88 @@ def test_r3_approval_moves_to_the_pull_request_and_an_edit_runs_the_loop_again(j
                                                              "S3": {"approve": True}}))
     assert o()["stage"] == "build-front" and o()["critique_base"] == 1 and "표로 바꿔라" in sent[-1][2]
     assert o()["r3"]["next_marks"] == {"S2": "edited"}
-    oneshot_spec.saved("budget", oneshot={"stage": "r3"})
+    oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None})
     critique.decide("budget", critique.Decisions(decisions={"S2": {"approve": True}}))
     assert o()["stage"] == "pr"
+
+
+# -- The tree the critic judged, the hand-overs, the shots it sees ---------------------------
+
+@pytest.mark.parametrize("change", ["commit", "dirty"])
+def test_a_tree_changed_after_the_shots_is_neither_judged_nor_approved(judged, change):
+    tree, _ = judged
+
+    def changed():
+        (tree / "later.txt").write_text("x", encoding="utf-8")
+        if change == "commit":
+            git(tree, "add", "later.txt")
+            git(tree, "-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-m", "later")
+
+    changed()
+    heard, asking = critic(said())
+    with asking:
+        critique.critique("budget")
+    assert heard == [] and o()["stage"] == "build-front" and o()["stopped"]["reason"] == "gate"
+    if change == "commit":
+        git(tree, "reset", "-q", "--hard", "HEAD~1")
+    else:
+        (tree / "later.txt").unlink()
+    at_r3()
+    changed()
+    critique.decide("budget", critique.Decisions(decisions={s["id"]: {"approve": True} for s in FRONT["screens"]}))
+    assert o()["stage"] == "build-front" and o()["stopped"]["reason"] == "gate"
+
+
+@pytest.mark.parametrize("cut", ["restart", "budget"])
+def test_fixes_whose_turn_was_never_sent_go_again_on_resume(judged, cut):
+    _, sent = judged
+    at_r3()
+    critique.decide("budget", critique.Decisions(decisions={"S1": {"approve": True}, "S2": {"edit": "R3_ONLY_EDIT 표로"},
+                                                             "S3": {"approve": True}}))
+    assert o()["working"] == "build-front" and o()["fix"]["findings"][0]["what"] == "R3_ONLY_EDIT 표로"
+    if cut == "restart":   # the server died before the turn went out
+        oneshot_spec.recover()
+    else:                  # the budget refused it before any session
+        oneshot_spec.store("budget").stop("budget", "한도")
+    assert o()["stopped"]["reason"] == cut and not o()["working"]
+    oneshot_spec.resume("budget")
+    assert sent[-1][1] == "build-front" and "R3_ONLY_EDIT 표로" in sent[-1][2]
+
+
+def test_a_critique_s_fixes_are_saved_before_their_turn_and_kept_until_a_build_passes(judged):
+    _, sent = judged
+    _, asking = critic(said(HIGH))
+    with asking:
+        critique.critique("budget")
+    assert o()["working"] == "build-front" and o()["fix"]["findings"] == [HIGH]
+    assert "합계가 안 보인다" in critique.front_turn(specs.load("budget", oneshot.BRANCH))
+
+
+def test_a_round_with_a_shot_missing_is_never_judged(judged):
+    (critique.folder("budget", 1) / "S2-desktop-error.png").unlink()
+    heard, asking = critic(said(), said())
+    with asking:
+        critique.critique("budget")
+    assert heard == [] and o()["stage"] == "build-front" and o()["stopped"]["reason"] == "gate"
+    assert "S2-desktop-error.png" in o()["stopped"]["detail"] and not o().get("critiques")
+
+
+def linked(link, target):
+    if os.name == "nt":
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        link.symlink_to(target, target_is_directory=True)
+
+
+def test_a_round_folder_that_links_outside_the_run_is_never_served_nor_shown(judged, tmp_path):
+    outside = tmp_path / "private"
+    outside.mkdir()
+    for s in FRONT["screens"]:
+        for state in critique.STATES:
+            (outside / f"{s['id']}-desktop-{state}.png").write_bytes(PNG)
+    linked(critique.folder("budget", 2), outside)
+    with pytest.raises(HTTPException):
+        critique.look_shot("budget", 2, "S1-desktop-full.png")
+    spec = specs.load("budget", oneshot.BRANCH)
+    assert critique.pictures(spec, 2)[0] == [] and critique.pictures(spec, 1)[1] == []

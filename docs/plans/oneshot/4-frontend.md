@@ -269,7 +269,12 @@ first:
   `critique`; it is never treated as a critique that saw nothing wrong.
 - The turn carries the latest round's shots, every screen's `full` state
   first, then `empty`, `error` and `loading`, at most 24 images, each named
-  in the text in the order attached.
+  in the text in the order attached. A round with one of those shots missing,
+  or reached through a link or a junction, is never judged: the run goes
+  back to `build-front`, and `[재개]` shoots again.
+- The critique holds the worktree as the backend review does, on the HEAD the
+  build and its shots passed (`front_built_head`), clean. A tree that moved
+  goes back to `build-front`'s checks.
 
 The mechanical findings, the R2 sheet and the frequency map go in the
 critic's prompt; the critic reads nothing from disk outside the worktree's
@@ -288,6 +293,13 @@ the harness found anything of high severity. A clean round that still has
 medium or low findings sends them to the builder once; a clean round with no
 finding at all has the critic look at the same shots again, so two clean
 rounds are two independent readings.
+
+Each hand-over saves the next stage's `working` with its result, before that
+stage starts: the build that passed names the critique, a round with findings
+names the build. A server that dies in between leaves the stage for
+`recover`, so `[재개]` takes it on. The findings a build turn is sent with are
+kept as the run's `fix` until a build of them passes the harness, so a resumed
+turn, after a restart or a refused budget, carries the same findings.
 
 | Stop rule | Value |
 | --- | --- |
@@ -315,7 +327,11 @@ local link to the running app, for the owner to click around in, is part of
 the screens in [step 5](5-screen-pr.md). Per-item edits go back to the
 builder as one turn and the loop runs again from shooting, with its stop rule
 counted afresh; the re-shown sheet marks the edited screens. Approval of
-every screen moves the run to `pull request`.
+every screen moves the run to `pull request`. The approval holds the worktree
+and checks it is still `front_built_head`, clean; a tree another turn holds
+refuses it (409, the decisions kept), and a moved one goes back to
+`build-front`'s checks. A screenshot path through a link or a junction is
+never served.
 
 ## Completion
 

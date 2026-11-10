@@ -121,6 +121,7 @@ def test_a_build_with_its_adapter_filled_a_green_gate_and_clean_shots_moves_to_c
     built(staged)
     then = check(staged)
     assert then is not None and o()["stage"] == "critique", o().get("stopped")
+    assert o()["working"] == "critique"   # named before the critic starts: a restart in between is resumable
     assert o()["front_built_head"] == git(staged, "rev-parse", "HEAD") and o()["looks"][0]["round"] == 1
     assert not [f for f in o()["looks"][0]["findings"] if f["severity"] == "high"]
     folder = oneshot_spec.store("budget").folder / "build" / "r1"

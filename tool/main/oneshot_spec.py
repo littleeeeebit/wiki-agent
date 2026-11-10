@@ -17,6 +17,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from common import is_junction
+
 from . import oneshot, oneshot_sheet as sheet, specs
 from .query import ROOT
 
@@ -274,6 +276,15 @@ def approved(repo: str) -> None:
     head = commit(repo, tree, files, f"Record the approved backend design (R1 round {o['r1']['round']})")
     if head:
         saved(repo, oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
+
+
+def within(base: Path, *parts: str) -> Path | None:
+    """`base / parts`, or `None` when a link or a junction on the way, or where it resolves, leaves `base`."""
+
+    steps = [base.joinpath(*parts[:i]) for i in range(1, len(parts) + 1)]
+    if any(p.is_symlink() or is_junction(p) for p in steps):
+        return None
+    return steps[-1] if steps[-1].resolve().is_relative_to(base.resolve()) else None
 
 
 def own_tree(spec: dict) -> Path | None:

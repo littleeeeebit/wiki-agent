@@ -101,9 +101,10 @@ def review(repo: str) -> None:
     holding(repo, "백엔드 리뷰", body)
 
 
-def holding(repo: str, what: str, body) -> None:
+def holding(repo: str, what: str, body, passed: str = "built_head", build: str = "build") -> None:
     """A stage that reads the worktree holds it, as a work turn does, so no other turn writes the tree it
-    reads. `body(store, spec, tree)` runs on the HEAD the build passed, on a clean tree, and returns the
+    reads. `body(store, spec, tree)` runs on the HEAD the build passed (`passed` names it; a moved tree
+    goes back to the `build` stage), on a clean tree, and returns the
     callable that saves its result, or `None` after stopping; the tree is checked again before that is
     called. A moved tree goes back to the build's checks. A callable the save returns runs once the tree
     is let go: the refusal's build turn, or the next stage's worker, which then holds the tree itself
@@ -122,14 +123,14 @@ def holding(repo: str, what: str, body) -> None:
     try:
         following = None
         try:
-            if why := moved(spec, tree):
-                rebuild(repo, store, why)
+            if why := moved(spec, tree, passed):
+                rebuild(repo, store, why, build)
                 return
             save = body(store, spec, tree)
             if save is None:
                 return
-            if why := moved(spec, tree):
-                rebuild(repo, store, f"{what} 동안 작업트리가 바뀌었다 — {why}")
+            if why := moved(spec, tree, passed):
+                rebuild(repo, store, f"{what} 동안 작업트리가 바뀌었다 — {why}", build)
                 return
             following = save()
         finally:
@@ -141,10 +142,36 @@ def holding(repo: str, what: str, body) -> None:
             work.dispatch(tree, SimpleNamespace(halt=runtime.stopping, turn=""))
 
 
-def moved(spec: dict, tree: Path) -> str:
-    """Empty when the worktree is the HEAD the build passed, with nothing uncommitted, or how it is not."""
+def approval(repo: str, what: str, then, passed: str = "built_head", build: str = "build") -> None:
+    """An owner's approval holds the worktree as a turn does, on the HEAD the build passed (`passed`): a
+    tree another turn holds refuses it (409, the decisions kept), and a moved one goes back to the `build`
+    stage's checks before anything is written. `then(store, spec, tree)` returns true when what follows
+    sends the instruction queued for the worktree itself."""
 
-    built = spec["oneshot"].get("built_head")
+    spec, store = oneshot_spec.spec_of(repo), oneshot_spec.store(repo)
+    tree = oneshot_spec.own_tree(spec)
+    if not tree:
+        store.stop("folder", f"작업트리가 `{oneshot.BRANCH}` 브랜치의 그 작업트리가 아니다: {spec['worktree']}")
+        return
+    release = hold(work._busy, work_lock, str(tree), "작업트리를 다른 턴이 쓰고 있다 — 끝난 뒤 다시 승인하라",
+                   kind="turn")
+    passed_on = False
+    try:
+        if why := moved(spec, tree, passed):
+            rebuild(repo, store, f"{what} 전에 작업트리가 바뀌었다 — {why}", build)
+        else:
+            passed_on = bool(then(store, spec, tree))
+    finally:
+        release()
+        if not passed_on:
+            work.dispatch(tree, SimpleNamespace(halt=runtime.stopping, turn=""))
+
+
+def moved(spec: dict, tree: Path, passed: str = "built_head") -> str:
+    """Empty when the worktree is the HEAD the build passed (`passed` names it), with nothing uncommitted,
+    or how it is not."""
+
+    built = spec["oneshot"].get(passed)
     head = specs.sh(["git", "rev-parse", "HEAD"], tree).stdout.strip()
     if head != built:
         return f"HEAD `{head[:12]}` 가 빌드를 통과한 `{str(built)[:12]}` 가 아니다"
@@ -184,10 +211,10 @@ def verdict(store, spec: dict, tree: Path) -> dict | None:
                           lambda value: verdict_of(value, head), tree)
 
 
-def rebuild(repo: str, store, why: str) -> None:
-    """The tree is not what the build passed: `[재개]` sends the build turn, whose checks run again."""
+def rebuild(repo: str, store, why: str, build: str = "build") -> None:
+    """The tree is not what the build passed: `[재개]` sends the `build` stage's turn, whose checks run again."""
 
-    oneshot_spec.saved(repo, oneshot={"stage": "build", "attempts": 0})
+    oneshot_spec.saved(repo, oneshot={"stage": build, "attempts": 0})
     store.stop("gate", f"{why} — [재개] 로 빌드 검사부터 다시 한다")
 
 

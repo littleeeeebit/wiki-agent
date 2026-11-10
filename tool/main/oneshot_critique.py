@@ -17,7 +17,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import oneshot, oneshot_build, oneshot_front_build as front_build, oneshot_screens as screens, oneshot_spec
+from . import oneshot, oneshot_build, oneshot_front_build as front_build, oneshot_review as review, \
+    oneshot_screens as screens, oneshot_spec
 from .query import ROOT
 
 CRITIC_PROMPT = (ROOT / "tool/prompts/oneshot-critic.md").read_text(encoding="utf-8")
@@ -52,13 +53,15 @@ def folder(repo: str, n: int) -> Path:
     return oneshot_spec.store(repo).folder / "build" / f"r{n}"
 
 
-def pictures(spec: dict, n: int) -> list[Path]:
-    """The shots the critic sees, every screen's `full` first, at most `MAX_IMAGES`."""
+def pictures(spec: dict, n: int) -> tuple[list[Path], list[str]]:
+    """The shots the critic sees, every screen's `full` first, at most `MAX_IMAGES`, and the names of those
+    missing or reached through a link: a round the critic cannot see whole is never judged."""
 
-    o, where = spec["oneshot"], folder(spec["repo"], n)
-    found = [where / f"{s['id']}-{v}-{state}.png" for state in STATES for s in o["front"]["screens"]
-             for v in front_build.views(o["profile"])]
-    return [p for p in found if p.is_file()][:MAX_IMAGES]
+    o, base = spec["oneshot"], oneshot_spec.store(spec["repo"]).folder
+    names = [f"{s['id']}-{v}-{state}.png" for state in STATES for s in o["front"]["screens"]
+             for v in front_build.views(o["profile"])][:MAX_IMAGES]
+    found = {name: oneshot_spec.within(base, "build", f"r{n}", name) for name in names}
+    return [p for p in found.values() if p and p.is_file()], [k for k, p in found.items() if not (p and p.is_file())]
 
 
 def critique_of(value, spec: dict) -> list[dict]:
@@ -92,40 +95,66 @@ def critique_text(spec: dict, look: dict, shown: list[Path]) -> str:
 
 
 def critique(repo: str) -> None:
-    store, spec = oneshot_spec.store(repo), oneshot_spec.spec_of(repo)
-    o = spec["oneshot"]
+    """One critique round, holding the worktree on the HEAD the build and its shots passed, as the backend
+    review does: a tree that moved goes back to the build's checks, and so does a round with shots missing."""
+
     if oneshot.codex_role("critic"):
-        store.stop("critique", "비평가는 그림을 받는 Claude 세션이어야 한다")
+        oneshot_spec.store(repo).stop("critique", "비평가는 그림을 받는 Claude 세션이어야 한다")
         return
-    look = o["looks"][-1]
-    shown = pictures(spec, look["round"])
-    found = oneshot.turned(store, "critic", CRITIC_PROMPT, critique_text(spec, look, shown), "oneshot-critique",
-                           lambda value: critique_of(value, spec), Path(spec["worktree"]), tuple(shown))
-    if found is None:   # a refused or failed image turn is never a critique that saw nothing wrong
-        stopped = store.get().get("stopped") or {}
-        if stopped.get("reason") == "block":
-            store.stop("critique", stopped.get("detail") or "")
-        return
+
+    def body(store, spec, tree):
+        look = spec["oneshot"]["looks"][-1]
+        shown, missing = pictures(spec, look["round"])
+        if missing:
+            review.rebuild(repo, store, f"비평할 화면 사진이 없다 — {', '.join(missing[:6])}", front_build.STAGE)
+            return None
+        found = oneshot.turned(store, "critic", CRITIC_PROMPT, critique_text(spec, look, shown), "oneshot-critique",
+                               lambda value: critique_of(value, spec), tree, tuple(shown))
+        if found is None:   # a refused or failed image turn is never a critique that saw nothing wrong
+            stopped = store.get().get("stopped") or {}
+            if stopped.get("reason") == "block":
+                store.stop("critique", stopped.get("detail") or "")
+            return None
+        return lambda: judged(repo, store, spec, look, found)
+
+    review.holding(repo, "화면 비평", body, "front_built_head", front_build.STAGE)
+
+
+def judged(repo: str, store, spec: dict, look: dict, found: list[dict]):
+    """The round applied; what follows once the tree is free: a second look, or the fixes' build turn."""
+
+    o = spec["oneshot"]
     rounds = [*(o.get("critiques") or []), {"look": look["round"], "head": look["head"], "findings": found,
                                             "clean": not any(f["severity"] == "high" for f in found + look["findings"]),
                                             "ts": time.time()}]
     ours = rounds[int(o.get("critique_base") or 0):]
     if len(ours) >= 2 and ours[-1]["clean"] and ours[-2]["clean"]:
-        oneshot_spec.saved(repo, oneshot={"critiques": rounds, "stage": "r3", "working": None,
-                                          "r3": {"round": (o.get("r3") or {}).get("round", 0) + 1, "decisions": {},
-                                                 "marks": (o.get("r3") or {}).get("next_marks") or {}}})
-        return
+        return oneshot_spec.saved(repo, oneshot={"critiques": rounds, "stage": "r3", "working": None,
+                                                 "r3": {"round": (o.get("r3") or {}).get("round", 0) + 1, "decisions": {},
+                                                        "marks": (o.get("r3") or {}).get("next_marks") or {}}})
     if len(ours) >= MAX_ROUNDS:
         store.put(critiques=rounds, critique_base=len(rounds))   # `[재개]` starts a fresh count
         store.stop("critique", f"{MAX_ROUNDS}회차에도 높은 발견이 남았다 — " + " / ".join(
             f"{f['route']} {f['viewport']} {f['state']}: {f['what']}" for f in found if f["severity"] == "high"))
-        return
-    if ours[-1]["clean"] and not found:   # nothing to fix: a second look at the same shots
-        oneshot_spec.handoff(repo, "critique", critiques=rounds)
-        return
-    spec = oneshot_spec.saved(repo, oneshot={"critiques": rounds, "stage": "build-front", "attempts": 0, "working": None})
+        return None
+    if ours[-1]["clean"] and not found:   # nothing to fix: a second look at the same shots, `working` still set
+        oneshot_spec.saved(repo, oneshot={"critiques": rounds})
+        return lambda: oneshot_spec.handoff(repo, "critique") or True   # the next look holds the tree itself
     todo = found + [f for f in look["findings"] if f["severity"] == "high"]   # a mechanical high outranks a clean critique
-    oneshot_build.send(repo, "build-front", fixing(spec, todo, "An independent read-only critic judged the screenshots"))
+    # `working` names the build and `fix` keeps its findings before the turn is sent: a server that dies in
+    # between, or a budget that refuses it, leaves a `[재개]` that sends the same fixes.
+    spec = oneshot_spec.saved(repo, oneshot={"critiques": rounds, "stage": front_build.STAGE, "attempts": 0,
+                                             "working": front_build.STAGE,
+                                             "fix": {"who": "An independent read-only critic judged the screenshots",
+                                                     "findings": todo}})
+    return lambda: oneshot_build.send(repo, front_build.STAGE, front_turn(spec))
+
+
+def front_turn(spec: dict) -> str:
+    """The build-front turn, with the fixes it is sent for until a build of them passes the harness."""
+
+    fix = spec["oneshot"].get("fix")
+    return fixing(spec, fix["findings"], fix["who"]) if fix else front_build.build_front_text(spec)
 
 
 def fixing(spec: dict, found: list[dict], who: str) -> str:
@@ -137,7 +166,7 @@ def fixing(spec: dict, found: list[dict], who: str) -> str:
 
 oneshot_spec.WORKERS["critique"] = critique
 oneshot_spec.RUNNING["critique"] = "critique"
-oneshot_build.STAGES[front_build.STAGE] = (*oneshot_build.STAGES[front_build.STAGE][:3], begin)
+oneshot_build.STAGES[front_build.STAGE] = (*oneshot_build.STAGES[front_build.STAGE][:2], front_turn, begin)
 
 
 # -- R3 ------------------------------------------------------------------------------------------
@@ -202,19 +231,36 @@ def decide(repo: str, body: Decisions) -> dict:
         decisions, comments = oneshot_spec.decided([s["id"] for s in o["front"]["screens"]], o["r3"]["decisions"],
                                                    body.decisions)
         if not comments:
-            return oneshot_spec.view(oneshot_spec.saved(repo, oneshot={"stage": "pr", "r3": {**o["r3"], "decisions": decisions}}))
+            oneshot_spec.saved(repo, oneshot={"r3": {**o["r3"], "decisions": decisions}})
+            approved(repo)
+            return oneshot_spec.view(oneshot_spec.spec_of(repo))
+        # `working` and `fix` are saved with the decisions: a server that dies before the turn is sent, or a
+        # budget that refuses it, leaves a `[재개]` that sends the owner's edits again.
         spec = oneshot_spec.saved(repo, oneshot={
-            "stage": "build-front", "attempts": 0, "critique_base": len(o.get("critiques") or []),
+            "stage": front_build.STAGE, "attempts": 0, "critique_base": len(o.get("critiques") or []),
+            "working": front_build.STAGE,
+            "fix": {"who": "The owner reviewed the finished screens (R3)",
+                    "findings": [{"severity": "high", "screen": k, "what": v} for k, v in comments.items()]},
             "r3": {**o["r3"], "decisions": decisions, "next_marks": {k: "edited" for k in comments}}})
-    found = [{"severity": "high", "screen": k, "what": v} for k, v in comments.items()]
-    oneshot_build.send(repo, "build-front", fixing(spec, found, "The owner reviewed the finished screens (R3)"))
+    oneshot_build.send(repo, front_build.STAGE, front_turn(spec))
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
+
+
+def approved(repo: str) -> None:
+    """Every screen approved: the run moves to its pull request on the HEAD the critic judged. It holds the
+    worktree as a turn does, so a tree another turn holds refuses the approval (409, the decisions kept),
+    and a tree that moved since goes back to the build's checks."""
+
+    def moving(store, spec, tree) -> None:   # nothing follows yet: the queued instruction goes
+        oneshot_spec.saved(repo, oneshot={"stage": "pr"})
+
+    review.approval(repo, "R3 승인", moving, "front_built_head", front_build.STAGE)
 
 
 @router.get("/api/oneshot/spec/{repo}/look/{n}/{name}")
 def look_shot(repo: str, n: int, name: str) -> FileResponse:
     oneshot_spec.spec_of(repo)   # a repository with a oneshot spec, never a path
-    path = folder(repo, n) / name
-    if not SHOT.fullmatch(name) or not path.is_file():
+    path = SHOT.fullmatch(name) and oneshot_spec.within(oneshot_spec.store(repo).folder, "build", f"r{n}", name)
+    if not path or not path.is_file():   # a link or a junction on the way never serves a file outside the run
         raise HTTPException(404, "그런 화면 사진이 없다")
     return FileResponse(path, media_type="image/png")
