@@ -198,9 +198,13 @@ goes back to the turn with the rest of S4's refusal rule (three in all, then
 
 A server routine, not a model. It starts `live_cmd` on a free port inside a
 process tree it owns (a job on Windows, a process group elsewhere), never
-starts it when that tree cannot be owned, refuses an answer on the port once
-the launcher has exited, and kills the tree on every way out. With the app
-running it drives Playwright over every route, at each viewport, in each
+starts it when that tree cannot be owned, and kills the tree on every way
+out. On Windows the tree is also followed by parent process, since a
+packaged launcher such as the Store's `pwsh` starts its children outside the
+job. Before any request goes to the port, every process listening on it
+must be one of the app's; another program there, or a launcher that exited,
+refuses the look, so the seed's writes never reach another program. With the
+app running it drives Playwright over every route, at each viewport, in each
 state:
 
 | State | How it is produced without changing the app |

@@ -152,26 +152,44 @@ def test_an_app_whose_process_tree_cannot_be_owned_is_never_started(tmp_path):
     assert started[0].poll() is not None
 
 
-def test_another_program_answering_on_the_port_of_a_launcher_that_exited_is_refused(tmp_path):
-    class Slow(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):   # answers after the launcher has exited
-            time.sleep(2)
+@pytest.mark.parametrize("launcher", ["import time; time.sleep(60)", "raise SystemExit(1)"])
+def test_another_program_on_the_apps_port_gets_no_request(tmp_path, launcher):
+    heard = []
+
+    class Other(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            heard.append(self.path)
             self.send_response(200)
             self.end_headers()
+
+        do_POST = do_GET
 
         def log_message(self, *a):
             pass
 
-    other = http.server.HTTPServer(("127.0.0.1", 0), Slow)
+    other = http.server.HTTPServer(("127.0.0.1", 0), Other)   # took the port before the app could bind it
     threading.Thread(target=other.serve_forever, daemon=True).start()
     try:
-        with patch.object(look, "free_port", lambda: other.server_address[1]), \
-             pytest.raises(ValueError, match="띄우지 못했다"):
-            with look.served(tmp_path, f'"{sys.executable}" -c "raise SystemExit(1)"', tmp_path):
-                pass
+        with patch.object(look, "free_port", lambda: other.server_address[1]), pytest.raises(ValueError):
+            with look.served(tmp_path, f'"{sys.executable}" -c "{launcher}"', tmp_path) as url:
+                look.seeded(tmp_path, url)
     finally:
         other.shutdown()
         other.server_close()
+    assert heard == []
+
+
+def test_the_apps_own_listener_is_accepted_and_nothing_of_it_outlives_the_look(tmp_path):
+    (tmp_path / "srv.py").write_text(
+        "import http.server, os\nhttp.server.HTTPServer(('127.0.0.1', int(os.environ['PORT'])),"
+        " http.server.SimpleHTTPRequestHandler).serve_forever()\n", encoding="utf-8")
+    with look.served(tmp_path, f'"{sys.executable}" srv.py', tmp_path) as url:
+        port = int(url.rsplit(":", 1)[1])
+        assert look.listeners(port) not in (None, set())
+    deadline = time.monotonic() + 10
+    while look.listeners(port) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    assert not look.listeners(port)   # the server under the launcher's shell is gone too
 
 
 def test_a_stop_ends_the_wait_for_the_app(tmp_path):
