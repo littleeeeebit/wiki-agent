@@ -17,6 +17,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -66,18 +67,23 @@ class _Row6(ctypes.Structure):   # MIB_TCP6ROW_OWNER_PID
 
 
 def listeners(port: int) -> set[int] | None:
-    """The pids listening on TCP `port`, IPv4 and IPv6, or `None` where this system's table is not read.
-    A pid of 0 stands for a socket this process may not see the owner of."""
+    """The pids listening on TCP `port`, IPv4 and IPv6, or `None` where this system has no table to read.
+    A pid of 0 stands for a listener whose owner this process cannot see. A table that cannot be read
+    raises `OSError`: not knowing is never taken for "nobody else"."""
 
     if os.name == "nt":
         found = set()
         table = ctypes.windll.iphlpapi.GetExtendedTcpTable
         for family, row in ((socket.AF_INET, _Row), (socket.AF_INET6, _Row6)):
-            size = ctypes.c_uint32(0)
-            table(None, ctypes.byref(size), False, family, 3, 0)   # TCP_TABLE_OWNER_PID_LISTENER
-            buf = ctypes.create_string_buffer(size.value)
-            if table(buf, ctypes.byref(size), False, family, 3, 0):
-                return None
+            for _ in range(3):   # the table can grow between asking its size and reading it
+                size = ctypes.c_uint32(0)
+                table(None, ctypes.byref(size), False, family, 3, 0)   # TCP_TABLE_OWNER_PID_LISTENER
+                buf = ctypes.create_string_buffer(size.value + 4096)
+                size = ctypes.c_uint32(len(buf))
+                if not table(buf, ctypes.byref(size), False, family, 3, 0):
+                    break
+            else:
+                raise OSError(f"TCP 리스너 표를 읽지 못했다 (포트 {port})")
             count = ctypes.c_uint32.from_buffer(buf).value
             rows = (row * count).from_buffer(buf, ctypes.sizeof(ctypes.c_uint32))   # after `dwNumEntries`
             found |= {r.pid for r in rows if socket.ntohs(r.port & 0xFFFF) == port}
@@ -86,25 +92,23 @@ def listeners(port: int) -> set[int] | None:
         return None
     inodes = set()
     for name in ("/proc/net/tcp", "/proc/net/tcp6"):
-        try:
-            lines = Path(name).read_text().splitlines()[1:]
-        except OSError:
+        if name.endswith("6") and not Path(name).is_file():   # a kernel without IPv6
             continue
-        for line in lines:
+        for line in Path(name).read_text().splitlines()[1:]:   # unreadable: `OSError`, as above
             cols = line.split()
             if cols[3] == "0A" and int(cols[1].rsplit(":", 1)[1], 16) == port:   # LISTEN
                 inodes.add(f"socket:[{cols[9]}]")
-    if not inodes:
-        return set()
-    found = set()
-    for proc in Path("/proc").iterdir():
+    found, seen = set(), set()
+    for proc in Path("/proc").iterdir() if inodes else ():
         if proc.name.isdigit():
             try:
-                if any(os.readlink(fd) in inodes for fd in (proc / "fd").iterdir()):
-                    found.add(int(proc.name))
+                held = {os.readlink(fd) for fd in (proc / "fd").iterdir()} & inodes
             except OSError:   # another user's process, or gone
                 continue
-    return found or {0}
+            if held:
+                found.add(int(proc.name))
+                seen |= held
+    return found | ({0} if inodes - seen else set())   # a listener with no owner found is nobody's we know
 
 
 class _Entry(ctypes.Structure):   # PROCESSENTRY32W
@@ -114,68 +118,106 @@ class _Entry(ctypes.Structure):   # PROCESSENTRY32W
                 ("exe", ctypes.c_wchar * 260)]
 
 
-def descendants(root: int) -> set[int]:
-    """`root` and every process started under it, by parent pid. On Windows a job does not hold them all:
-    a packaged launcher (the Store's `pwsh`) starts its children outside the job.
-    ponytail: a parent pid reused by an unrelated process would count it in; creation times would rule it out."""
+if os.name == "nt":
+    _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _k32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    _k32.CreateToolhelp32Snapshot.argtypes = (ctypes.c_uint32, ctypes.c_uint32)
+    _k32.Process32FirstW.argtypes = _k32.Process32NextW.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
+    _k32.OpenProcess.restype = ctypes.c_void_p
+    _k32.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
+    _k32.TerminateProcess.argtypes = (ctypes.c_void_p, ctypes.c_uint32)
+    _k32.CloseHandle.argtypes = (ctypes.c_void_p,)
 
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    k32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
-    snap = k32.CreateToolhelp32Snapshot(2, 0)   # TH32CS_SNAPPROCESS
+
+def parents() -> dict[int, int]:
+    """Every process's parent pid, from one Toolhelp snapshot; empty when no snapshot is taken."""
+
+    snap = _k32.CreateToolhelp32Snapshot(2, 0)   # TH32CS_SNAPPROCESS
     if not snap or snap == ctypes.c_void_p(-1).value:
-        return {root}
-    parent: dict[int, int] = {}
+        return {}
+    found: dict[int, int] = {}
     try:
         entry = _Entry(size=ctypes.sizeof(_Entry))
-        ok = k32.Process32FirstW(ctypes.c_void_p(snap), ctypes.byref(entry))
+        ok = _k32.Process32FirstW(snap, ctypes.byref(entry))
         while ok:
-            parent[entry.pid] = entry.parent
-            ok = k32.Process32NextW(ctypes.c_void_p(snap), ctypes.byref(entry))
+            found[entry.pid] = entry.parent
+            ok = _k32.Process32NextW(snap, ctypes.byref(entry))
     finally:
-        k32.CloseHandle(ctypes.c_void_p(snap))
-    found, more = {root}, True
-    while more:
-        more = {p for p, up in parent.items() if up in found and p not in found and p != up}
-        found |= more
+        _k32.CloseHandle(snap)
     return found
 
 
-def tree(proc, job) -> set[int]:
-    """The pids of the app's own processes, or the process group on POSIX (`process.contained`)."""
+class Tree:
+    """The app's processes. On POSIX its process group (`process.contained`). On Windows the job does
+    not hold them all: a packaged launcher such as the Store's `pwsh` starts its children outside it.
+    So a watcher follows them by parent pid while the app runs and keeps a handle on each one found;
+    a held handle keeps its pid from being reused, so a child whose parent has exited is still traced
+    through that parent, and the handles are what `reap` kills.
+    ponytail: a process that starts a child and exits within one watch interval is missed with it."""
 
-    return descendants(proc.pid) if os.name == "nt" else {job}
+    WATCH_SECONDS = 0.2
+
+    def __init__(self, proc, job) -> None:
+        self.proc, self.job, self.held = proc, job, {}   # pid → handle
+        self.lock, self.done = threading.Lock(), threading.Event()
+        if os.name == "nt":
+            threading.Thread(target=self.watching, daemon=True, name="oneshot-look-tree").start()
+
+    def watching(self) -> None:
+        while not self.done.wait(self.WATCH_SECONDS):
+            self.watch()
+
+    def watch(self) -> None:
+        parent = parents()
+        with self.lock:
+            known, more = {self.proc.pid, *self.held}, True   # `Popen` holds the launcher's own handle
+            while more:
+                more = {p for p, up in parent.items() if up in known and p not in known and p != up}
+                for pid in more:
+                    if handle := _k32.OpenProcess(0x1001, False, pid):   # QUERY_LIMITED_INFORMATION | TERMINATE
+                        self.held[pid] = handle
+                known |= set(self.held)
+                more &= set(self.held)   # an unopened pid may be reused: nothing is traced through it
+
+    def owns(self, pids: set[int]) -> bool:
+        if os.name != "nt":
+            try:
+                return all(pid and os.getpgid(pid) == self.job for pid in pids)
+            except OSError:
+                return False
+        self.watch()
+        with self.lock:
+            return pids <= {self.proc.pid, *self.held}
+
+    def reap(self) -> None:
+        """Every process of the app killed: the job's, and on Windows each one the watcher holds."""
+
+        if os.name == "nt":
+            self.watch()
+        self.done.set()
+        process.terminated(self.job)
+        if self.proc.poll() is None:
+            self.proc.kill()
+        with self.lock:
+            for handle in self.held.values():
+                _k32.TerminateProcess(handle, 1)
+                _k32.CloseHandle(handle)
+            self.held.clear()
 
 
-def owned(proc, job, port: int) -> bool | None:
+def owned(apps: Tree, port: int) -> bool | None:
     """Whether something listens on `port` and every listener is one of the app's processes; `None`
-    while nobody listens yet."""
+    while nobody listens yet, or while the table cannot be read."""
 
-    found = listeners(port)
+    try:
+        found = listeners(port)
+    except OSError:
+        return None   # not knowing sends nothing; the deadline ends a table that never reads
     if found is None:
         return True   # nothing to read on this system: the launcher's being alive is the check
     if not found:
         return None
-    if os.name == "nt":
-        return found <= tree(proc, job)
-    try:
-        return all(pid and os.getpgid(pid) == job for pid in found)
-    except OSError:
-        return False
-
-
-def reaped(proc, job) -> None:
-    """Every process of the app killed: the job's, and on Windows any descendant outside it."""
-
-    stray = tree(proc, job) - {proc.pid} if os.name == "nt" else set()
-    process.terminated(job)
-    if proc.poll() is None:
-        proc.kill()
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True) if stray else None
-    for pid in stray:
-        handle = k32.OpenProcess(0x0001, False, pid)   # PROCESS_TERMINATE
-        if handle:
-            k32.TerminateProcess(handle, 1)
-            k32.CloseHandle(handle)
+    return apps.owns(found)
 
 
 @contextmanager
@@ -193,6 +235,7 @@ def served(tree: Path, cmd: str, data: Path, stopped=never):
                             **{**process.background_options(), "creationflags":
                                process.background_options().get("creationflags", 0) | process.SUSPENDED})
     job = process.contained(proc)
+    apps = Tree(proc, job)
     try:
         if not job:   # its children would outlive the kill, holding the port and the data folder
             proc.kill()
@@ -202,7 +245,7 @@ def served(tree: Path, cmd: str, data: Path, stopped=never):
         url, deadline = f"http://127.0.0.1:{port}", time.monotonic() + READY_SECONDS
         while True:
             halted(stopped)
-            mine = owned(proc, job, port)
+            mine = owned(apps, port)
             if mine is False:   # the seed's writes would go to that program
                 raise ValueError(f"다른 프로그램이 포트 {port} 를 잡았다 — 앱이 띄운 프로세스가 아니라 요청을 보내지 않았다")
             if mine and proc.poll() is None:   # an answer from a port whose launcher exited is someone else's
@@ -218,7 +261,7 @@ def served(tree: Path, cmd: str, data: Path, stopped=never):
             time.sleep(0.5)
         yield url
     finally:
-        reaped(proc, job)
+        apps.reap()
         log.close()
 
 

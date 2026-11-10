@@ -152,8 +152,16 @@ def test_an_app_whose_process_tree_cannot_be_owned_is_never_started(tmp_path):
     assert started[0].poll() is not None
 
 
-@pytest.mark.parametrize("launcher", ["import time; time.sleep(60)", "raise SystemExit(1)"])
-def test_another_program_on_the_apps_port_gets_no_request(tmp_path, launcher):
+def unreadable(port):
+    raise OSError("table")
+
+
+@pytest.mark.parametrize("launcher, table", [
+    ("import time; time.sleep(60)", None), ("raise SystemExit(1)", None),
+    ("import time; time.sleep(60)", unreadable),            # not knowing the owner is not "nobody else"
+    ("import time; time.sleep(60)", lambda port: {0}),      # a listener whose owner cannot be seen
+])
+def test_another_program_on_the_apps_port_gets_no_request(tmp_path, launcher, table):
     heard = []
 
     class Other(http.server.BaseHTTPRequestHandler):
@@ -170,7 +178,8 @@ def test_another_program_on_the_apps_port_gets_no_request(tmp_path, launcher):
     other = http.server.HTTPServer(("127.0.0.1", 0), Other)   # took the port before the app could bind it
     threading.Thread(target=other.serve_forever, daemon=True).start()
     try:
-        with patch.object(look, "free_port", lambda: other.server_address[1]), pytest.raises(ValueError):
+        with patch.object(look, "free_port", lambda: other.server_address[1]), patch.object(look, "READY_SECONDS", 3), \
+             patch.object(look, "listeners", table or look.listeners), pytest.raises(ValueError):
             with look.served(tmp_path, f'"{sys.executable}" -c "{launcher}"', tmp_path) as url:
                 look.seeded(tmp_path, url)
     finally:
@@ -179,11 +188,19 @@ def test_another_program_on_the_apps_port_gets_no_request(tmp_path, launcher):
     assert heard == []
 
 
-def test_the_apps_own_listener_is_accepted_and_nothing_of_it_outlives_the_look(tmp_path):
+@pytest.mark.parametrize("launch", [
+    "srv.py",
+    "keeper.py",   # keeper → a launcher in between, which starts the server and exits → the server
+])
+def test_the_apps_own_listener_is_accepted_and_nothing_of_it_outlives_the_look(tmp_path, launch):
     (tmp_path / "srv.py").write_text(
         "import http.server, os\nhttp.server.HTTPServer(('127.0.0.1', int(os.environ['PORT'])),"
         " http.server.SimpleHTTPRequestHandler).serve_forever()\n", encoding="utf-8")
-    with look.served(tmp_path, f'"{sys.executable}" srv.py', tmp_path) as url:
+    for name, child, wait in (("keeper.py", "between.py", 600), ("between.py", "srv.py", 1)):
+        (tmp_path / name).write_text(f"import subprocess, sys, time\nsubprocess.Popen([sys.executable, {child!r}])\n"
+                                     f"time.sleep({wait})\n", encoding="utf-8")
+    with look.served(tmp_path, f'"{sys.executable}" {launch}', tmp_path) as url:
+        time.sleep(1.5)   # the launcher in between has exited by now
         port = int(url.rsplit(":", 1)[1])
         assert look.listeners(port) not in (None, set())
     deadline = time.monotonic() + 10

@@ -201,9 +201,12 @@ process tree it owns (a job on Windows, a process group elsewhere), never
 starts it when that tree cannot be owned, and kills the tree on every way
 out. On Windows the tree is also followed by parent process, since a
 packaged launcher such as the Store's `pwsh` starts its children outside the
-job. Before any request goes to the port, every process listening on it
-must be one of the app's; another program there, or a launcher that exited,
-refuses the look, so the seed's writes never reach another program. With the
+job. A watcher opens a handle to each new child as it appears and holds it
+until the end, so a child whose parent exits first is still the app's and
+is still killed. Before any request goes to the port, every process listening
+on it must be one of the app's; another program there, a listener whose owner
+cannot be read, a table that cannot be read, or a launcher that exited refuses
+the look, so the seed's writes never reach another program. With the
 app running it drives Playwright over every route, at each viewport, in each
 state:
 
