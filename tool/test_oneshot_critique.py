@@ -131,7 +131,7 @@ def test_the_cap_stops_with_critique_and_a_resume_counts_afresh(judged):
 @pytest.mark.parametrize("why", ["codex", "failed"])
 def test_a_critic_that_cannot_see_the_images_stops_with_critique_never_as_clean(judged, why):
     heard, asking = critic(oneshot.Failed("이 세션은 그림을 받지 못한다", {}))
-    with asking, patch.object(oneshot, "codex_role", lambda role="": why == "codex" and role == "critic"):
+    with asking, patch.object(oneshot, "codex_role", lambda role="", store=None: why == "codex" and role == "critic"):
         critique.critique("budget")
     assert o()["stopped"]["reason"] == "critique" and not o().get("critiques")
     assert (heard == []) is (why == "codex")

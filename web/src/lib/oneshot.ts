@@ -8,6 +8,12 @@ export type Freq = 'every' | 'sometimes' | 'rarely' | 'never'
 export type Palette = { id: string; name: string; colors: Record<string, string> }
 export type Gate = { round: number; decisions: Record<string, Decision>; marks?: Record<string, string>; palette?: string }
 export type Talk = { role: 'owner' | 'agent'; text: string; choices?: ChoiceQuestion | { questions: ChoiceQuestion[] } | null }
+/** The three models a run fixes at its start (`tool/main/oneshot.py` `Models`); a run from before them has none. */
+export type Models = Record<'spec' | 'build' | 'review', { model: string; effort: string }>
+export const ROLE = { spec: '명세', build: '구현', review: '리뷰' } as const
+/** An empty model is the role's default: Claude's CLI for writing, the Review Loop settings for review. */
+export const modelName = (role: keyof Models, m: { model: string; effort: string }) =>
+  `${m.model || (role === 'review' ? '리뷰 설정 따름' : 'Claude 기본')}${m.effort ? ` · ${m.effort}` : ''}`
 export type SpecSummary = {
   repo: string; stage: string; working: string | null; waits: boolean
   stopped: { reason: string; detail: string } | null
@@ -20,7 +26,7 @@ export type RunSummary = {
 }
 export type SpecView = SpecSummary & {
   oneshot: {
-    sentence: string; talk?: Talk[]; attempts?: number; critiques?: unknown[]
+    sentence: string; models?: Models; talk?: Talk[]; attempts?: number; critiques?: unknown[]
     r1?: Gate; r2?: Gate; r3?: Gate; front?: { tokens: { palettes: Palette[] } }
     reading?: Record<string, { round: number; seconds: number | null; opened: string[]; edited: string[] }[]>
   }

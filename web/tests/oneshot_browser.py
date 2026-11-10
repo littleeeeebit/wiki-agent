@@ -79,6 +79,7 @@ def main():
              "auto-demo": run("auto-demo", "build", working="build", waits=False)}
     views["talk-demo"]["oneshot"]["talk"] = TALK
     posted = []
+    started: dict = {}
     fake = FastAPI()
 
     @fake.get("/shot.png")
@@ -89,8 +90,25 @@ def main():
     async def api(path: str, request: Request):
         if path == "oneshot-specs":
             return {"specs": [{k: v[k] for k in ("repo", "stage", "working", "stopped", "waits")} for v in views.values()]}
+        if path == "oneshot" and request.method == "POST":
+            body = await request.json()
+            posted.append(("", "start", body))
+            started.update(id="0123456789abcdef", state="intake", working="intake", stopped=None, picked="",
+                           sentence=body["sentence"], models=body["models"], intent=None, profile=None, proposed={},
+                           identity=None, steps={}, spec=None, errors=[], warnings=[], schema={}, steps_order=[])
+            return started
         if path == "oneshot":
             return {"runs": []}
+        if path == f"oneshot/{started.get('id')}":
+            return started
+        if path == "options":
+            return {**fixture(path, request.method), "efforts": [{"id": "", "label": "기본", "note": ""},
+                                                                  {"id": "high", "label": "high", "note": ""}],
+                    "models": [{"id": "", "label": "Claude 기본", "note": ""}, {"id": "opus", "label": "Opus", "note": ""},
+                               {"id": "codex:gpt-6.1-sol", "label": "GPT-6.1-Sol", "note": "Codex", "is_default": True,
+                                "efforts": [{"id": "high", "label": "high", "note": ""}]}]}
+        if path == "loop/settings":
+            return {**fixture(path, request.method), "review_model": "codex:gpt-6.1-sol", "review_effort": "high"}
         if path.startswith("oneshot/spec/"):
             repo, _, act = path.removeprefix("oneshot/spec/").partition("/")
             if request.method == "POST":
@@ -221,12 +239,29 @@ def main():
         views["auto-demo"] = run("auto-demo", "build", working="build", waits=False)   # and a feed resync alone
         page.evaluate("window.dispatchEvent(new Event('server-resync'))")
         expect(row.get_by_label("결정을 기다린다")).to_have_count(0)
+
+        # The start form: three models picked apart, the review on the Review Loop's choice, all in the request.
+        page.get_by_role("button", name="새 프로젝트", exact=True).click()
+        form = page.get_by_role("dialog", name="새 프로젝트 — 원샷")
+        group = {role: form.get_by_role("group", name=f"{role} 모델") for role in ("명세", "구현", "리뷰")}
+        expect(group["리뷰"].get_by_role("combobox", name="모델")).to_contain_text("GPT-6.1-Sol")
+        expect(group["명세"].get_by_role("combobox", name="모델")).to_contain_text("Claude 기본")
+        group["명세"].get_by_role("combobox", name="모델").click()
+        page.get_by_role("option", name="Opus").click()
+        group["명세"].get_by_role("combobox", name="추론 강도").click()
+        page.get_by_role("option", name="high").click()
+        expect(group["구현"].get_by_role("combobox", name="모델")).to_contain_text("Claude 기본")   # apart from 명세
+        form.get_by_role("textbox").first.fill("가계부를 만들고 싶다")
+        form.get_by_role("button", name="시작", exact=True).click()
+        expect(form.get_by_text("명세 opus · high / 구현 Claude 기본 / 리뷰 codex:gpt-6.1-sol · high")).to_be_visible()
+        assert posted[-1][2]["models"] == {"spec": {"model": "opus", "effort": "high"}, "build": {"model": "", "effort": ""},
+                                           "review": {"model": "codex:gpt-6.1-sol", "effort": "high"}}, posted[-1]
         browser.close()
     assert not errors, errors
     print("PASS: the rail marks a run that waits; a gate sheet needs every item, folded or not, and records the folds "
           "opened; an enlarged picture closes alone; the re-shown sheet opens what needs a decision again; the board "
           "moves by drag and by keys; a stopped run resumes; S2 shows its choices and keeps a refused answer; the rail "
-          "follows a saved spec")
+          "follows a saved spec; the start form fixes three models picked apart")
 
 
 if __name__ == "__main__":

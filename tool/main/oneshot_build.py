@@ -88,7 +88,7 @@ def send(repo: str, stage: str, text: str) -> None:
 
     store = oneshot_spec.store(repo)
     spec = oneshot_spec.spec_of(repo)
-    path, codex = Path(spec["worktree"]), oneshot.codex_role()
+    path, codex = Path(spec["worktree"]), oneshot.codex_role("build", store)
     with oneshot._lock:
         why = allowed(spec["oneshot"].get("spend"), spec["oneshot"].get("profile"), stage, codex)
         if why:
@@ -110,7 +110,7 @@ def send(repo: str, stage: str, text: str) -> None:
     release.held = held.held
     turn = None
     try:
-        cfg = oneshot.role_config()
+        cfg = oneshot.role_config("build", store)
         chat = work.session(path, cfg["model"], cfg["effort"])
         turn = Turn(chat, repo, stage, codex)
         store.put(working=stage, stopped=None,

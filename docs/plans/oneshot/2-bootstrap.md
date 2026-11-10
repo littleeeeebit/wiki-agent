@@ -119,6 +119,27 @@ its worker before letting go of the hub.
    workspace, or an existing folder picked with `[폴더 찾기]`. A picked folder
    must be empty — no files at all, hidden ones included — or the run refuses
    it before any model turn.
+
+   The owner also picks three models, each a model and an effort, and the
+   run record keeps them until the run ends (`models`).
+
+   | Model | Its turns |
+   | --- | --- |
+   | `spec` | S0 intake, the environment card, S2–S3 and the screen design (`intake`, `profile`, `spec`, `design`, `split`, `frontend`) |
+   | `build` | The work session in the worktree; after the PR, the spec's work cell (`cell`), so Review Loop repairs run on it too |
+   | `review` | The review before the PR; after the PR, the spec's `reviewer` |
+
+   An empty `spec` or `build` model is the CLI's default, and stays so
+   after the PR. An empty `review` model is resolved at the start to the
+   model the Review Loop settings name then, with their effort when none
+   was picked, so a later settings change moves nothing. A picked empty
+   effort is the CLI's default before and after the PR. The start refuses
+   a model or effort the model's own list does not hold
+   (`channels.efforts_of`). The critic stays on its fixed model
+   (`4-frontend.md`). `work.session` holds the worktree's cell to `build`,
+   as it holds a refactoring card's, and the Review Loop's start never
+   fills it from the screen. A run from before this choice has no `models`
+   and reads the window's `next` model on each turn.
 2. One model turn returns an `oneshot-intent` block:
 
    ```json

@@ -212,7 +212,7 @@ def linked(tmp_path, monkeypatch):
     specs.save({"id": oneshot.BRANCH, "repo": "budget", "rev": 1, "goal": "가계부", "out": [], "done": [],
                 "worktree": str(tree), "branch": oneshot.BRANCH, "state": "작업 중", "history": [{"ts": 1, "state": "작업 중"}],
                 "oneshot": {"stage": "build-front", "spend": oneshot.ledger(None), "profile": PROFILE}})
-    with patch.object(oneshot, "RUNS", tmp_path / "oneshot"), patch.object(oneshot, "codex_role", lambda role="": False):
+    with patch.object(oneshot, "RUNS", tmp_path / "oneshot"), patch.object(oneshot, "codex_role", lambda role="", store=None: False):
         yield original, tree
 
 

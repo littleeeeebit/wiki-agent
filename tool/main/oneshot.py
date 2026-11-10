@@ -55,6 +55,9 @@ router = APIRouter()
 _lock = threading.RLock()   # run files, name reservations and workers, read and written as one step
 _workers: dict[str, threading.Thread] = {}
 ROLES: dict = {}   # a role whose model is not `next`'s, as its module registers it: `{role: () -> {model, effort}}`
+# Which of the three models the owner picks at the start a role's turns run on; the critic is not here (fixed).
+GROUPS = {"intake": "spec", "profile": "spec", "spec": "spec", "design": "spec", "split": "spec", "frontend": "spec",
+          "build": "build", "review": "review"}
 
 
 # -- Run records ------------------------------------------------------------------
@@ -147,14 +150,22 @@ def prefilled(kind: str) -> dict:
 
 # -- Model turns -----------------------------------------------------------------------
 
-def role_config(role: str = "") -> dict:
+def role_config(role: str = "", store: Store | None = None) -> dict:
+    """The model the run fixed at its start for `role`'s group; an empty model there is the role's own
+    default (the Review Loop settings for `review`, the CLI's for the rest). A run started before the
+    choice existed keeps the window's `next` model."""
     from .query import config
 
+    chosen = ((store.get().get("models") if store else None) or {}).get(GROUPS.get(role, ""))
+    if chosen and (chosen["model"] or role not in ROLES):
+        return dict(chosen)
+    if chosen:
+        return {**ROLES[role](), **{k: v for k, v in chosen.items() if v}}
     return ROLES[role]() if role in ROLES else config("next")
 
 
-def codex_role(role: str = "") -> bool:
-    return str(role_config(role).get("model") or "").startswith("codex:")
+def codex_role(role: str = "", store: Store | None = None) -> bool:
+    return str(role_config(role, store).get("model") or "").startswith("codex:")
 
 
 class Failed(RuntimeError):
@@ -178,7 +189,7 @@ def ask(store: Store, role: str, system: str, text: str, where: Path | None = No
     """One turn, read-only, in `where` (the store's own folder by default), `images` beside the text:
     `(final, meta, codex)`. Patched in tests."""
 
-    cfg = role_config(role)
+    cfg = role_config(role, store)
     where = where or store.folder
     where.mkdir(parents=True, exist_ok=True)
     chat = ChatSession(where, tools=TOOLS, system=system, model=cfg["model"], effort=cfg["effort"])
@@ -222,7 +233,7 @@ def turned(rid: str | Store, role: str, system: str, text: str, name: str, check
         if runtime.stopping.is_set():
             store.stop("restart", "서버가 꺼지는 중이라 멈췄다")
             return None
-        codex = codex_role(role)
+        codex = codex_role(role, store)
         with _lock:
             if why := allowed(store.get().get("spend"), store.profile(), role, codex):
                 store.stop("budget", why)
@@ -546,8 +557,12 @@ def s_spec(run: dict) -> None:
                     "worktree": str(tree), "workspace_mode": "worktree", "branch": BRANCH, "start_head": run["base"],
                     "return_branch": "main", "pr": None, "report": None, "gate": None, "fault": None,
                     "history": [{"ts": now, "state": "정리됨"}, {"ts": now, "state": "작업 중"}],
+                    # The run's models hold the work cell and the reviewer past the PR too (`work.session`, `loop.cell`).
+                    **({"cell": {**run["models"]["build"], "fast": False}, "reviewer": run["models"]["review"]}
+                       if run.get("models") else {}),
                     "oneshot": {"version": VERSION, "run": run["id"], "stage": "spec", "spend": ledger(run.get("spend")),
-                                "sentence": run["sentence"], "intent": run["intent"], "profile": run["profile"]}})
+                                "sentence": run["sentence"], "intent": run["intent"], "profile": run["profile"],
+                                **({"models": run["models"]} if run.get("models") else {})}})
 
 
 SUBSTEPS = {"recheck": s_recheck, "folder": s_folder, "files": s_files, "commit": s_commit, "register": s_register,
@@ -657,9 +672,21 @@ def view(run: dict) -> dict:
 
 # -- HTTP ------------------------------------------------------------------------------------------
 
+class Role(BaseModel):
+    model: str = ""    # empty: the role's default, as `role_config` reads it
+    effort: str = ""
+
+
+class Models(BaseModel):
+    spec: Role = Role()     # S0–S3 and the screen design: every turn that decides what to make
+    build: Role = Role()    # the work session's turns in the worktree, and the Review Loop's repairs after the PR
+    review: Role = Role()   # the review before the PR, and the Review Loop's reviewer after it
+
+
 class Start(BaseModel):
     sentence: str
     path: str = ""   # a picked empty folder; empty means a new folder in the workspace
+    models: Models = Models()
 
 
 class Intent(BaseModel):
@@ -688,12 +715,27 @@ def start(body: Start) -> dict:
         if not path.is_absolute() or not empty(path):
             raise HTTPException(400, f"비어 있는 폴더여야 한다 — 숨김 파일도 없어야 한다: {body.path}")
         picked = str(path.resolve())
+    models = {name: {k: v.strip() for k, v in role.items()} for name, role in body.models.model_dump().items()}
+    try:
+        if not models["review"]["model"]:   # "the Review Loop's model" is named now, so a later settings change moves nothing
+            from . import loop   # it imports `specs`, which imports this module's neighbours
+            models["review"] = {"model": loop.review_model(),
+                                "effort": models["review"]["effort"] or loop.settings()["review_effort"]}
+        for name, role in models.items():
+            if role["model"] and not role["model"].startswith("codex:") and not channels.CLAUDE_MODEL.fullmatch(role["model"]):
+                raise HTTPException(400, f"{name} 모델 이름을 받지 않는다: {role['model']}")
+            if role["effort"] not in channels.efforts_of(role["model"]):   # an unlisted Codex model takes none
+                raise HTTPException(400, f"{name} 모델 {role['model'] or '기본'} 이 받지 않는 선택이다: {role['effort'] or '기본'}")
+    except HTTPException:
+        raise
+    except Exception as exc:   # listing Codex's models starts Codex
+        raise HTTPException(503, f"모델 목록을 확인하지 못했다 — {exc}") from exc
     rid = secrets.token_hex(8)
     with _lock:
         save({"id": rid, "version": VERSION, "created": time.time(), "state": "intake", "working": None,
               "stopped": None, "sentence": sentence, "picked": picked, "intent": None, "confirmed": False,
               "profile": None, "proposed": {}, "identity": None, "steps": {}, "github": {}, "base": None,
-              "adopt": False, "spend": ledger(None), "spec": None})
+              "adopt": False, "spend": ledger(None), "spec": None, "models": models})
         try:
             launch(rid, "intake")
         except HTTPException:   # the record exists already: left stopped, so `[재개]` takes it on
