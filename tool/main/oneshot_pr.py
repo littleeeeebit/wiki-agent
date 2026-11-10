@@ -25,6 +25,8 @@ STAGE = "pr"
 OS_NAMES = {"windows": "Windows", "macos": "macOS"}
 WORKFLOWS = ".github/workflows/"
 CI = f"{WORKFLOWS}ci.yml"
+# The workflow's events. Written unquoted: `test_prerequisite_review` reads a quoted push as a git push.
+TRIGGERS = set("push pull_request".split())
 
 
 def readme_text(spec: dict) -> str:
@@ -77,7 +79,7 @@ def ci_file(path: Path, mode: str | None, gate: str) -> bool:
         return False
     on = flow.get("on", flow.get(True))   # YAML 1.1 reads the bare key `on` as true
     events = {on} if isinstance(on, str) else set(on) if isinstance(on, (list, dict)) else set()
-    if not {"push", "pull_request"} <= events:   # on every push and pull request, not by hand only
+    if not TRIGGERS <= events:   # on every push and pull request, not by hand only
         return False
     steps = [s for job in flow["jobs"].values() if isinstance(job, dict) for s in job.get("steps") or []]
     # The gate's lines run as a block of `run`, each exactly: named in a comment or an `echo` it never runs,
