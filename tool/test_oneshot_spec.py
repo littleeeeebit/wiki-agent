@@ -425,7 +425,8 @@ def test_each_submission_records_how_its_sheet_was_read_and_the_rail_shows_what_
                                                  "waits": True}]}
     oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions=everything(P1="응답 필드를 sum 으로 바꿔라"),
                                                          reading={"seconds": 92.04, "opened": ["흐름", 3, "흐름"]}))
-    assert o()["reading"] == {"r1": [{"round": 1, "seconds": 92.0, "opened": ["흐름"], "edited": ["P1"]}]}
+    assert o()["reading"] == {"r1": [{"round": 1, "seconds": 92.0, "opened": ["흐름"], "edited": ["P1"],
+                                      "edits": {"P1": "응답 필드를 sum 으로 바꿔라"}}]}
     assert oneshot_spec.listing()["specs"][0]["waits"] is False   # the edit turn runs
 
 

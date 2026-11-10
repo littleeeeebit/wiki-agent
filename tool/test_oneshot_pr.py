@@ -6,11 +6,12 @@ is pushed and no pull request is made.
 """
 
 import json
+import subprocess
 from unittest.mock import patch
 
 import pytest
 
-from main import oneshot, oneshot_build, oneshot_critique as critique, oneshot_spec, pr_text, specs
+from main import oneshot, oneshot_build, oneshot_critique as critique, oneshot_pr, oneshot_spec, pr_text, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_front_build import CONTRACT, FEATURES, FREQUENCY, FRONT, GATE, Run, adapter, git, write
 from test_oneshot_spec import PROFILE, fenced, world  # noqa: F401 — `world` is a fixture
@@ -41,10 +42,13 @@ def finished(world):  # noqa: F811 — the imported fixture, requested by name
         "stage": "pr", "tests_head": head, "front_built_head": head, "contract": ["test_budget.py"], "front": FRONT,
         "features": FEATURES, "frequency": FREQUENCY, "first_screen": "오늘 쓴 돈을 적는다",
         "profile": {**PROFILE, "visibility": "private", "ci": "none", "os_now": "windows", "os_later": "other"},
-        "r1": {"round": 2, "decisions": {"P1": {"edit": "응답 필드를 sum 으로"}, "R1": {"approve": True}}},
+        # As a real run reaches S8: P1's comment was applied, so the sheet holds only its later approval.
+        "r1": {"round": 2, "decisions": {"P1": {"approve": True}, "R1": {"approve": True}}},
         "r2": {"round": 1, "decisions": {"S1": {"approve": True}}, "palette": "C1"},
         "r3": {"round": 1, "decisions": {"S1": {"approve": True}}}, "working": "pr",
-        "reading": {"r1": [{"round": 1, "seconds": 80.0, "opened": ["흐름"], "edited": ["P1"]}]}})
+        "reading": {"r1": [{"round": 1, "seconds": 80.0, "opened": ["흐름"], "edited": ["P1"],
+                            "edits": {"P1": "응답 필드를 sum 으로"}},
+                           {"round": 2, "seconds": 20.0, "opened": [], "edited": [], "edits": {}}]}})
     sent = []
     with patch.object(oneshot_build, "send", lambda *a: sent.append(a)), \
          patch.object(specs.channels, "repo_for", lambda r: world):
@@ -96,10 +100,23 @@ def test_s8_refuses_to_open_without_its_readme_with_a_private_workflow_or_with_t
     assert sent[-1][1] == "pr" and said in sent[-1][2] and o()["attempts"] == 1 and not spec().get("writing")
 
 
-def test_a_public_repository_needs_its_workflow(finished):
+@pytest.mark.parametrize("more", [(), ((".github/workflows/notes.txt", "later\n"),),
+                                  ((".github/workflows/ci.yml", "name: ci\n"),)])
+def test_a_public_repository_needs_its_committed_ci_workflow(finished, more):
     tree, sent = finished
     oneshot_spec.saved("budget", oneshot={"profile": {**o()["profile"], "visibility": "public", "ci": "github-actions"}})
-    readme(tree)
+    readme(tree, *more)
+    check(tree, answer(report()))()
+    assert "CI 워크플로(`.github/workflows/ci.yml`)가 없다" in sent[-1][2]
+
+
+def test_a_workflow_deleted_in_the_run_is_no_ci_and_a_committed_one_passes(finished):
+    tree, sent = finished
+    oneshot_spec.saved("budget", oneshot={"profile": {**o()["profile"], "visibility": "public", "ci": "github-actions"}})
+    readme(tree, (".github/workflows/ci.yml", "jobs:\n  gate:\n    runs-on: ubuntu-latest\n"))
+    assert oneshot_pr.ci_file(tree, oneshot_pr.workflows(tree).get(oneshot_pr.CI))
+    git(tree, "rm", "-q", ".github/workflows/ci.yml")
+    git(tree, "commit", "-m", "drop ci")
     check(tree, answer(report()))()
     assert "CI 워크플로(`.github/workflows/ci.yml`)가 없다" in sent[-1][2]
 
@@ -112,7 +129,7 @@ def test_the_gate_green_asks_for_the_text_then_opens_the_pull_request_attached_b
     with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         check(tree, answer(report()))()
     stage, text = sent[-1][1:]
-    assert stage == "pr" and text.startswith("Write the pull request's text.") and "R1 P1: 응답 필드를 sum 으로" in text
+    assert stage == "pr" and text.startswith("Write the pull request's text.") and "R1 P1 (round 1): 응답 필드를 sum 으로" in text
     assert spec()["writing"]["head"] == git(tree, "rev-parse", "HEAD") and spec()["gate"]["cmd"] == GATE
     remote = Remote()
     with patch.object(specs, "sh", remote):
@@ -136,6 +153,37 @@ def test_a_push_github_refuses_stops_the_run_with_its_reason(finished):
                       else __import__("subprocess").CompletedProcess(args, 1, "", "rejected")):
         check(tree, SUMMARIZED)
     assert o()["stopped"]["reason"] == "pr" and "push 실패" in o()["stopped"]["detail"] and not remote.created()
+
+
+def test_a_push_that_times_out_stops_the_run_so_it_can_be_resumed(finished):
+    tree, sent = finished
+    readme(tree)
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    remote = Remote()
+
+    def timed_out(args, cwd, timeout=60):
+        if args[:2] == ["git", "push"]:
+            raise subprocess.TimeoutExpired(args, timeout)
+        return remote(args, cwd, timeout)
+
+    with patch.object(specs, "sh", timed_out), pytest.raises(subprocess.TimeoutExpired):
+        check(tree, SUMMARIZED)
+    assert o()["working"] is None and o()["stopped"]["reason"] == "pr" and "TimeoutExpired" in o()["stopped"]["detail"]
+    assert not remote.created()
+
+
+def test_a_pull_request_text_asked_again_is_the_runs_own_turn(finished):
+    tree, sent = finished
+    readme(tree)
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    asked = len(sent)
+    then = check(tree, answer())   # no `pr-summary`: sent back once
+    assert spec()["writing"]["asked"] == 2 and len(sent) == asked and o()["working"] is None
+    then()
+    assert len(sent) == asked + 1 and sent[-1][1] == "pr" and "pr-summary" in sent[-1][2]
+    assert spec()["writing"]["asked"] == 2   # still asked: the next answer is handed over again
 
 
 def test_a_resumed_s8_starts_again_from_its_readme_turn(finished):

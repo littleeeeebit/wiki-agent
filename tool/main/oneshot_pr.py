@@ -9,6 +9,7 @@ From `PR #n` on the spec follows the ordinary cycle, and the run keeps its summa
 
 from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
 
@@ -21,6 +22,7 @@ README_PROMPT = (ROOT / "tool/prompts/oneshot-readme.md").read_text(encoding="ut
 STAGE = "pr"
 OS_NAMES = {"windows": "Windows", "macos": "macOS"}
 WORKFLOWS = ".github/workflows/"
+CI = f"{WORKFLOWS}ci.yml"
 
 
 def readme_text(spec: dict) -> str:
@@ -49,6 +51,24 @@ def restart(spec: dict) -> str:
     return readme_text(spec)
 
 
+def workflows(path: Path) -> dict[str, str]:
+    """HEAD's files under `.github/workflows/`, each with its tree mode (`100644`, `120000` for a link)."""
+
+    done = specs.sh(["git", "-c", "core.quotepath=off", "ls-tree", "-r", "-z", "HEAD", "--", WORKFLOWS], path)
+    if done.returncode:
+        raise ValueError(f"git ls-tree 실패 — {(done.stderr or '').strip()[-200:]}")
+    return {name: meta.split()[0] for meta, _, name in (e.partition("\t") for e in done.stdout.split("\0") if e)}
+
+
+def ci_file(path: Path, mode: str | None) -> bool:
+    """`ci.yml` committed as a plain file (a link points anywhere) that names its jobs."""
+
+    if mode not in ("100644", "100755"):
+        return False
+    shown = specs.sh(["git", "show", f"HEAD:{CI}"], path)
+    return not shown.returncode and "jobs:" in shown.stdout
+
+
 def readied(path: Path, run, spec: dict, final: str) -> str:
     """The report met, a README written, a workflow file only where the profile asks for one, and the
     adapter's whole gate green on the clean, committed HEAD."""
@@ -59,13 +79,14 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     names = oneshot_build.changed(path, o.get("front_built_head") or o["tests_head"])
     if "README.md" not in names or not (path / "README.md").is_file():
         return "`README.md` 를 쓰지 않았다 — 설치, 실행, 테스트 명령을 적는다"
-    flows = [n for n in names if n.startswith(WORKFLOWS)] + [
-        f"{WORKFLOWS}{p.name}" for p in (path / WORKFLOWS).glob("*") if p.is_file()]
+    # What the published HEAD holds, not what changed: a deleted workflow or a stray note is no CI.
+    held = workflows(path)
+    flows = sorted({*held, *(n for n in names if n.startswith(WORKFLOWS) and os.path.lexists(path / n))})
     public = o["profile"].get("visibility") == "public" and o["profile"].get("ci") == "github-actions"
     if flows and not public:
-        return "이 저장소는 CI 워크플로를 두지 않는다 — " + ", ".join(sorted(set(flows))[:5]) + " 를 지운다"
-    if public and not flows:
-        return "공개 저장소의 CI 워크플로(`.github/workflows/ci.yml`)가 없다"
+        return "이 저장소는 CI 워크플로를 두지 않는다 — " + ", ".join(flows[:5]) + " 를 지운다"
+    if public and not ci_file(path, held.get(CI)):
+        return f"공개 저장소의 CI 워크플로(`{CI}`)가 없다 — 커밋된 보통 파일로, `jobs:` 에 게이트를 둔다"
     if why := oneshot_build.pinned(path, o):
         return why
     gate = slots_for(None, path).get("gate_cmd", "").strip()
@@ -87,11 +108,10 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
 def decisions(o: dict) -> list[str]:
     """What the owner decided at the three reviews, for the pull request's `변경 이유`."""
 
-    out = []
-    for gate in ("r1", "r2", "r3"):
-        for item, d in sorted(((o.get(gate) or {}).get("decisions") or {}).items()):
-            if d.get("edit"):
-                out.append(f"{gate.upper()} {item}: {d['edit']}")
+    # Read off each submission's record: an applied edit's comment is gone from the sheet's decisions.
+    out = [f"{gate.upper()} {item} (round {entry['round']}): {comment}"
+           for gate in ("r1", "r2", "r3") for entry in (o.get("reading") or {}).get(gate) or []
+           for item, comment in (entry.get("edits") or {}).items()]
     if palette := (o.get("r2") or {}).get("palette"):
         out.append(f"R2 palette: {palette}")
     return out
@@ -117,12 +137,21 @@ def handed(path: Path, run, spec: dict, final: str):
 
     repo = spec["repo"]
     run.checked = True
-    then = specs.written(specs.channels.repo_for(repo), path, run, spec, final)
+    # The text asked again is the run's own turn: budgeted, charged, and stopping the stage if it fails.
+    ask = lambda text: oneshot_build.send(repo, STAGE, text) or True   # noqa: E731 — sent stops itself on a refusal
+    try:
+        then = specs.written(specs.channels.repo_for(repo), path, run, spec, final, ask)
+    except Exception as exc:   # a push that timed out: stopped with its reason, resumed from the README turn
+        oneshot_spec.store(repo).stop(STAGE, f"PR 을 만들지 못했다 — {type(exc).__name__}: {exc}")
+        raise
     fresh = specs.load(repo, spec["id"])
     if fresh.get("pr"):
         oneshot_spec.saved(repo, oneshot={"stage": "done", "working": None, "pr": fresh["pr"]})
     elif not fresh.get("writing"):   # neither open nor asked again: the reason is the spec's fault
         oneshot_spec.store(repo).stop(STAGE, fresh.get("fault") or "PR 을 만들지 못했다")
+    elif then:
+        oneshot_spec.store(repo).put(working=None)
+        return oneshot_build.unless_stopped(run, repo, then)
     return then
 
 
@@ -139,7 +168,7 @@ def summary(spec: dict) -> dict:
     reading = o.get("reading") or {}
     return {"sentence": o.get("sentence", ""), "pr": o.get("pr"),
             "gates": [{"gate": g, "rounds": (o.get(g) or {}).get("round", 0), "reading": reading.get(g) or [],
-                       "edited": sorted(i for i, d in ((o.get(g) or {}).get("decisions") or {}).items() if d.get("edit"))}
+                       "edited": sorted({i for e in reading.get(g) or [] for i in e.get("edited") or []})}
                       for g in ("r1", "r2", "r3")],
             "spend": o.get("spend") or {}, "critiques": len(o.get("critiques") or []),
             "looks": len(o.get("looks") or [])}
