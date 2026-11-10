@@ -602,7 +602,7 @@ export type Spec = {
   /** Who holds a `머지 대기`: "대기열" or "자동 머지 — 검사 대기". */
   queued?: string | null
   implementation_environment?: 'local' | 'claude-cloud' | 'external'
-  reviewer?: { model: string; effort: string }
+  reviewer?: { model: string; effort: string }; oneshot?: { models?: object }   // a oneshot's fixed models hold `cell` and `reviewer`
   local_verification?: LocalVerification
   /** A plan the Plan action drafts: its phase, budget and hand-off (reliability PR 7). */
   planning?: Planning | null

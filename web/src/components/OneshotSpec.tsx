@@ -4,8 +4,19 @@ import remarkGfm from 'remark-gfm'
 import { Choices } from '@/components/Blocks'
 import { Btn } from '@/components/Modal'
 import { api, COLUMNS, STAGES, STOP, stageLabel, type Decision, type Feature, type Freq, type Gate, type Palette,
-  type RunSummary, type SpecView, type Talk } from '@/lib/oneshot'
+  type Models, type RunSummary, type SpecView, type Talk, ROLE, modelName } from '@/lib/oneshot'
 import { cn } from '@/lib/utils'
+
+/** Which model each part of the run uses, fixed at its start. */
+export function ModelsLine({ models }: { models?: Models }) {
+  return (
+    <p className="text-[12.5px] text-muted-foreground">
+      {models
+        ? `${(Object.keys(ROLE) as (keyof Models)[]).map((k) => `${ROLE[k]} ${modelName(k, models[k])}`).join(' / ')} / 화면 비평 opus · high (고정)`
+        : '모델을 고르기 전에 시작한 실행이다 — 「다음 작업」 창에서 고른 모델을 쓴다'}
+    </p>
+  )
+}
 
 /** A oneshot run past S1 (`docs/plans/oneshot/5-screen-pr.md`): the stage strip, the S2
  *  conversation, the three gate sheets and the feature board. The server renders every
@@ -47,7 +58,8 @@ export function OneshotSpec({ repo }: { repo: string }) {
   return (
     <div className="flex flex-col gap-4">
       <Strip view={view} />
-      {fault && <p role="alert" className="whitespace-pre-wrap rounded-md bg-destructive/10 px-3 py-2 text-destructive">{fault}</p>}
+      <ModelsLine models={o.models} />
+      {fault &&<p role="alert" className="whitespace-pre-wrap rounded-md bg-destructive/10 px-3 py-2 text-destructive">{fault}</p>}
       {view.stopped && (
         <section role="alert" className="flex flex-col gap-2 rounded-md border border-wait/40 bg-wait/10 px-3 py-2">
           <p className="font-semibold">멈췄다 — {STOP[view.stopped.reason] ?? view.stopped.reason}</p>

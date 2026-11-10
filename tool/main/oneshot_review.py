@@ -56,7 +56,7 @@ def frozen(spec: dict) -> tuple[str, str]:
     store.folder.mkdir(parents=True, exist_ok=True)
     (store.folder / f"review-{head[:12]}.diff").write_text(done.stdout, encoding="utf-8", newline="\n")
     read_tools.save_diff(tree, done.stdout)
-    how = ("read it with the `pr_diff` tool" if oneshot.codex_role("review") else
+    how = ("read it with the `pr_diff` tool" if oneshot.codex_role("review", store) else
            f"read it from `{read_tools.diff_file(tree).resolve()}`; a line starting with ~ continues the line before it")
     return head, how
 

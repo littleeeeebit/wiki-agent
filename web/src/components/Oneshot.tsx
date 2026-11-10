@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Btn, Modal } from '@/components/Modal'
-import { browseFolder, get, json, post } from '@/lib/api'
+import { Toolbar } from '@/components/Toolbar'
+import { browseFolder, get, getLoopSettings, getOptions, json, post, type Options } from '@/lib/api'
 import { remote } from '@/lib/mobile'
-import { OneshotSpec } from '@/components/OneshotSpec'
-import { oneshotSpecs, stageLabel, type SpecSummary } from '@/lib/oneshot'
+import { ModelsLine, OneshotSpec } from '@/components/OneshotSpec'
+import { ROLE, oneshotSpecs, stageLabel, type Models, type SpecSummary } from '@/lib/oneshot'
 
 type OneshotField = {
   options?: string[]; enabled?: string[]; text?: boolean; number?: boolean; asked?: boolean; default: string
@@ -14,6 +15,7 @@ type OneshotRun = {
   working: string | null
   stopped: { reason: 'budget' | 'block' | 'folder' | 'github' | 'restart'; detail: string; state: string } | null
   sentence: string
+  models?: Models
   picked: string
   intent: { restated: string; kind: string; name: string; users: string; first_screen: string; unsupported?: boolean } | null
   profile: Record<string, string | number> | null
@@ -32,7 +34,8 @@ const api = {
   browseFolder,
   oneshotRuns: () => get('/api/oneshot').then((r) => json<{ runs: OneshotRun[] }>(r, '원샷 목록')),
   oneshotRun: (id: string) => get(`/api/oneshot/${id}`).then(answer),
-  startOneshot: (sentence: string, path: string) => post('/api/oneshot', { sentence, path }).then(answer),
+  startOneshot: (sentence: string, path: string, models: Models) =>
+    post('/api/oneshot', { sentence, path, models }).then(answer),
   answerIntent: (id: string, body: { confirm: boolean; edit?: string; name?: string }) =>
     post(`/api/oneshot/${id}/intent`, body).then(answer),
   saveProfile: (id: string, values: Record<string, string | number>, confirm: boolean) =>
@@ -150,6 +153,22 @@ function Intake({ open, later, busy, act, pick, pickSpec }: {
   const [sentence, setSentence] = useState('')
   const [path, setPath] = useState('')
   const [typing, setTyping] = useState(remote)
+  const [options, setOptions] = useState<Options | null>(null)
+  const none = { model: '', effort: '' }
+  const [models, setModels] = useState<Models>({ spec: none, build: none, review: none })
+  // The review starts on the Review Loop's own choice, so the run fixes a named model, not "whatever it is then".
+  useEffect(() => {
+    getOptions().then(setOptions).catch(() => setOptions(null))
+    getLoopSettings().then((s) => setModels((m) => m.review.model || m.review.effort ? m
+      : { ...m, review: { model: s.review_model ?? '', effort: s.review_effort ?? '' } }))
+      .catch(() => {})
+  }, [])
+  const codex = options?.models.find((m) => m.id.startsWith('codex:') && m.is_default)
+  const reviewOptions = options && { ...options, models: [
+    { id: '', label: '리뷰 설정 따름', note: '시작할 때 리뷰 루프 설정의 모델로 정한다', efforts: codex?.efforts ?? [] },
+    ...options.models.filter((m) => m.id),
+  ] }
+  const HINT = { spec: '요구 대화, 백엔드·화면 설계', build: '코드를 쓰는 작업 세션, PR 뒤의 수정', review: 'PR 전 리뷰, PR 뒤 리뷰 루프' }
 
   const find = async () => {
     const found = await api.browseFolder().catch(() => null)
@@ -179,7 +198,7 @@ function Intake({ open, later, busy, act, pick, pickSpec }: {
           ))}
         </section>
       )}
-      <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void act(() => api.startOneshot(sentence, path)) }}>
+      <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void act(() => api.startOneshot(sentence, path, models)) }}>
         <label className="flex flex-col gap-1.5">
           <span className="font-semibold">무엇을 만들고 싶은가</span>
           <textarea value={sentence} onChange={(e) => setSentence(e.target.value)} rows={4} maxLength={2000}
@@ -200,6 +219,18 @@ function Intake({ open, later, busy, act, pick, pickSpec }: {
             </div>
           )}
         </div>
+        <fieldset className="flex flex-col gap-1.5">
+          <legend className="font-semibold">모델 — 이 실행이 끝날 때까지 바뀌지 않는다</legend>
+          {(Object.keys(ROLE) as (keyof Models)[]).map((k) => (
+            <div key={k} role="group" aria-label={`${ROLE[k]} 모델`} className="flex flex-wrap items-center gap-2">
+              <span className="w-12 font-medium">{ROLE[k]}</span>
+              <Toolbar options={k === 'review' ? reviewOptions : options} value={models[k]} busy={busy}
+                onChange={(c) => setModels((m) => ({ ...m, [k]: { model: c.model, effort: c.effort } }))} />
+              <span className="text-[12px] text-muted-foreground">{HINT[k]}</span>
+            </div>
+          ))}
+          <p className="text-[12px] text-muted-foreground">화면 비평은 이미지를 읽어야 해서 opus · high 로 고정이다.</p>
+        </fieldset>
         <div className="flex justify-end">
           <Btn type="submit" tone="primary" disabled={busy || !sentence.trim()}>{busy ? '시작하는 중…' : '시작'}</Btn>
         </div>
@@ -222,6 +253,7 @@ function Body({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act }) 
   }
   return (
     <>
+      <ModelsLine models={run.models} />
       {run.stopped && <Stopped run={run} busy={busy} act={act} />}
       {run.working && <p role="status" className="text-muted-foreground">{WORKING[run.working] ?? run.working}</p>}
       {run.state === 'intake' && run.intent && !run.working && !run.stopped && <Restated run={run} busy={busy} act={act} />}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { X } from 'lucide-react'
 import type { Keep, Kept } from '@/lib/api'
+import { Layer } from '@/lib/layer'
 import { cn } from '@/lib/utils'
 
 /** Every modal of the window, on the platform's `<dialog>`: it traps focus,
@@ -18,14 +19,16 @@ export function Modal({ title, onClose, children, foot, wide, locked }: {
   locked?: boolean
 }) {
   const box = useRef<HTMLDialogElement>(null)
+  const [layer, setLayer] = useState<HTMLDialogElement | null>(null)
   // Opened once; unmounting removes it. Closing it in a cleanup would fire
   // `close`, and so `onClose`, on StrictMode's rehearsal unmount.
   useEffect(() => {
     if (box.current && !box.current.open) box.current.showModal()
   }, [])
   return (
+    <Layer.Provider value={layer}>
     <dialog
-      ref={box}
+      ref={(el) => { box.current = el; setLayer(el) }}
       aria-label={title}
       onClose={onClose}
       // Escape closes a `<dialog>` by itself; the component stayed mounted
@@ -47,6 +50,7 @@ export function Modal({ title, onClose, children, foot, wide, locked }: {
         {foot && <div className="flex shrink-0 justify-end gap-2 border-t border-border px-4 py-3">{foot}</div>}
       </div>
     </dialog>
+    </Layer.Provider>
   )
 }
 

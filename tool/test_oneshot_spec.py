@@ -65,7 +65,7 @@ def world(tmp_path):
                     "oneshot": {"version": 1, "run": "0123456789abcdef", "stage": "spec", "spend": oneshot.ledger(None),
                                 "sentence": "가계부 만들어줘", "intent": {"restated": "가계부를 만든다.", "kind": "webapp"},
                                 "profile": PROFILE}})
-        with patch.object(oneshot, "RUNS", tmp_path / "oneshot"), patch.object(oneshot, "codex_role", lambda role="": False), \
+        with patch.object(oneshot, "RUNS", tmp_path / "oneshot"), patch.object(oneshot, "codex_role", lambda role="", store=None: False), \
              patch("main.oneshot_build.begin", lambda repo: None), \
              patch.object(oneshot_spec, "start", lambda repo, work, *a, **f: oneshot_spec.store(repo).put(
                  **f, working=work, stopped=None)):
