@@ -68,7 +68,7 @@ def answer(found: dict) -> str:
 def replies(*texts):
     heard, queue = [], list(texts)
 
-    def ask(store, role, system, text, where=None):
+    def ask(store, role, system, text, where=None, images=()):
         heard.append((role, text))
         return queue.pop(0), {"cost_usd": 0.1}, False
 

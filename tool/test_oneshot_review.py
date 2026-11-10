@@ -52,7 +52,7 @@ P2 = {"location": "budget_app.py:1", "severity": "P2", "reason": "이름이 짧�
 def answers(*texts):
     heard, queue = [], list(texts)
 
-    def ask(store, role, system, text, where=None):
+    def ask(store, role, system, text, where=None, images=()):
         heard.append((role, text, where))
         return queue.pop(0), {"cost_usd": 0.1}, False
 
@@ -123,7 +123,7 @@ def test_a_head_other_than_the_one_the_build_passed_is_not_reviewed(reviewed):
 def test_a_tree_changed_while_the_review_read_it_goes_back_to_the_builds_checks(reviewed, change):
     tree, head, sent = reviewed
 
-    def ask(store, role, system, text, where=None):
+    def ask(store, role, system, text, where=None, images=()):
         (tree / "late.py").write_text("x = 1\n", encoding="utf-8")
         if change == "commit":
             git(tree, "add", "late.py")
@@ -140,7 +140,7 @@ def test_the_review_holds_its_worktree_until_the_verdict_is_saved(reviewed):
     tree, head, sent = reviewed
     held = []
 
-    def ask(store, role, system, text, where=None):
+    def ask(store, role, system, text, where=None, images=()):
         with pytest.raises(HTTPException):
             query.hold(work._busy, query._lock, str(tree), "busy")
         return verdict(head, "refuse", P1), {"cost_usd": 0.1}, False
@@ -155,7 +155,7 @@ def test_an_instruction_queued_while_the_review_held_the_tree_goes_once_after_it
     tree, head, sent = reviewed
     begun = []
 
-    def ask(store, role, system, text, where=None):
+    def ask(store, role, system, text, where=None, images=()):
         work._queued[str(tree)] = work.Order(path=str(tree), text="다음 지시")   # queued while the review held it
         return verdict(head, kind, *([P1] if kind == "refuse" else [])), {"cost_usd": 0.1}, False
 

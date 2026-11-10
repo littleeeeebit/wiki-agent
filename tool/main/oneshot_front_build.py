@@ -82,8 +82,10 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
         oneshot_spec.saved(spec["repo"], oneshot={"looks": looks})
         return "화면 검사에서 고칠 것이 나왔다 — " + " / ".join(
             f"{f['screen']} {f['viewport']} {f['state']}: {f['what']}" for f in high[:12])
+    # `working` names the critique before its worker starts: a server that dies in between leaves it for `recover`.
+    # The fixes this turn was sent with are built now: a resumed build no longer carries them.
     oneshot_spec.saved(spec["repo"], oneshot={"stage": "critique", "front_built_head": verdict["head"], "looks": looks,
-                                              "attempts": 0, "working": None})
+                                              "attempts": 0, "working": "critique", "fix": None})
     specs.note(run, f"화면 빌드 통과 · {verdict['head'][:12]}")
     return ""
 

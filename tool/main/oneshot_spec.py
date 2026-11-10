@@ -17,6 +17,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from common import is_junction
+
 from . import oneshot, oneshot_sheet as sheet, specs
 from .query import ROOT
 
@@ -276,6 +278,15 @@ def approved(repo: str) -> None:
         saved(repo, oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
 
 
+def within(base: Path, *parts: str) -> Path | None:
+    """`base / parts`, or `None` when a link or a junction on the way, or where it resolves, leaves `base`."""
+
+    steps = [base.joinpath(*parts[:i]) for i in range(1, len(parts) + 1)]
+    if any(p.is_symlink() or is_junction(p) for p in steps):
+        return None
+    return steps[-1] if steps[-1].resolve().is_relative_to(base.resolve()) else None
+
+
 def own_tree(spec: dict) -> Path | None:
     """The run's worktree, resolved, when it is the top of a checkout on the run's branch."""
 
@@ -417,7 +428,7 @@ def resume(repo: str) -> dict:
             raise HTTPException(409, "멈춘 단계가 아니다")
         if o.get("inflight"):   # its `Turn.finish` has not run: the next turn would lose that turn's charge
             raise HTTPException(409, "앞 턴의 비용을 아직 매기는 중이다 — 잠시 뒤 다시 하라")
-        if o["stage"] not in (*RUNNING, *TURNS, "review"):
+        if o["stage"] not in (*RUNNING, *TURNS, *SHEETS, "review"):
             raise HTTPException(409, f"`{o['stage']}` 단계는 다음 단계에서 이어진다")
         if o["stage"] in SHEETS:   # an edit turn that stopped: the sheet stands, the owner decides again
             return view(saved(repo, oneshot={"stopped": None}))

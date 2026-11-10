@@ -13,7 +13,6 @@ import json
 import re
 import shutil
 from pathlib import Path
-from types import SimpleNamespace
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
@@ -22,9 +21,9 @@ from pydantic import BaseModel
 
 from common import is_junction
 
-from . import oneshot, oneshot_front_build, oneshot_screens as screens, oneshot_spec, runtime, specs, work
+from . import oneshot, oneshot_front_build, oneshot_screens as screens, oneshot_spec, runtime, specs
 from .oneshot_profile import python_cmd
-from .query import ROOT, _lock as work_lock, hold
+from .query import ROOT
 
 SPLIT_PROMPT = (ROOT / "tool/prompts/oneshot-split.md").read_text(encoding="utf-8")
 FRONTEND_PROMPT = (ROOT / "tool/prompts/oneshot-frontend.md").read_text(encoding="utf-8")
@@ -236,25 +235,10 @@ def approved(repo: str) -> None:
     """Every item approved and a palette chosen: the frontend design, its mocks and shots committed.
     The commit writes the worktree, so it holds it as a turn does, on the HEAD the build passed: a tree
     another turn holds refuses the approval (409, the decisions kept), and a moved one goes back to the
-    build's checks before anything is written."""
+    build's checks before anything is written. The build turn that follows sends the queued instruction
+    when it ends."""
 
-    spec, store = oneshot_spec.spec_of(repo), oneshot_spec.store(repo)
-    tree = oneshot_spec.own_tree(spec)
-    if not tree:
-        store.stop("folder", f"작업트리가 `{oneshot.BRANCH}` 브랜치의 그 작업트리가 아니다: {spec['worktree']}")
-        return
-    release = hold(work._busy, work_lock, str(tree), "작업트리를 다른 턴이 쓰고 있다 — 끝난 뒤 다시 승인하라",
-                   kind="turn")
-    passed_on = False
-    try:
-        if why := review().moved(spec, tree):
-            review().rebuild(repo, store, f"R2 승인 전에 작업트리가 바뀌었다 — {why}")
-        else:
-            passed_on = record(repo, store, spec, tree)
-    finally:
-        release()
-        if not passed_on:   # the build turn that follows sends the queued instruction when it ends
-            work.dispatch(tree, SimpleNamespace(halt=runtime.stopping, turn=""))
+    review().approval(repo, "R2 승인", lambda store, spec, tree: record(repo, store, spec, tree))
 
 
 def record(repo: str, store, spec: dict, tree: Path) -> bool:
@@ -368,7 +352,7 @@ def decide(repo: str, body: R2) -> dict:
 @router.get("/api/oneshot/spec/{repo}/shot/{n}/{name}")
 def shot(repo: str, n: int, name: str) -> FileResponse:
     oneshot_spec.spec_of(repo)   # a repository with a oneshot spec, never a path
-    path = shots(repo, n) / name
-    if not SHOT_NAME.fullmatch(name) or not path.is_file():
+    path = SHOT_NAME.fullmatch(name) and oneshot_spec.within(oneshot_spec.store(repo).folder, "front", f"r{n}", name)
+    if not path or not path.is_file():   # a link or a junction on the way never serves a file outside the run
         raise HTTPException(404, "그런 화면 사진이 없다")
     return FileResponse(path, media_type="image/png")

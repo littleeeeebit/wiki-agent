@@ -24,7 +24,7 @@ on the same worker key; `board` and `r2` wait for the owner.
 | --- | --- | --- |
 | 4a | S5, S6 and R2: the inventory, the board, the design turn, the mock shots, the R2 decisions and their commit | `tool/main/oneshot_front.py`, `tool/main/oneshot_screens.py` |
 | 4b | S7's build turn: the adapter grant, `live_cmd`, the shooting harness and its mechanical findings | `tool/main/oneshot_front_build.py`, `tool/main/oneshot_look.py` |
-| 4c | Image input in `ChatSession`, the critic, the stop rule and R3 | — |
+| 4c | Image input in `ChatSession`, the critic, the stop rule and R3 | `tool/agent/chat_session.py`, `tool/main/oneshot_critique.py` |
 
 The screens that show the board and the sheets belong to
 [step 5](5-screen-pr.md); 4a serves their data over HTTP.
@@ -242,8 +242,8 @@ and never left to the critic's judgement.
 
 Two records the harness does not take yet: an axe-core accessibility pass
 (axe-core is not installed in this repository's environment) and the core
-scenarios run as recorded end-to-end walkthroughs, which R3 shows and 4c
-adds.
+scenarios run as recorded end-to-end walkthroughs. Both wait for a later
+part; until then R3 shows screenshots only.
 
 ### Critique: a separate read-only session
 
@@ -264,8 +264,17 @@ first:
   them.
 - The images belong to the turn, so a retry of that turn (the session's
   overflow or transport retries) resends the same round's images.
-- The critic runs on Claude. A refused or failed image turn stops the run
-  with `critique`; it is never treated as a critique that saw nothing wrong.
+- The critic runs on Claude (role `critic`: `opus` at `high` effort). A
+  Codex critic, or a refused or failed image turn, stops the run with
+  `critique`; it is never treated as a critique that saw nothing wrong.
+- The turn carries the latest round's shots, every screen's `full` state
+  first, then `empty`, `error` and `loading`, at most 24 images, each named
+  in the text in the order attached. A round with one of those shots missing,
+  or reached through a link or a junction, is never judged: the run goes
+  back to `build-front`, and `[재개]` shoots again.
+- The critique holds the worktree as the backend review does, on the HEAD the
+  build and its shots passed (`front_built_head`), clean. A tree that moved
+  goes back to `build-front`'s checks.
 
 The mechanical findings, the R2 sheet and the frequency map go in the
 critic's prompt; the critic reads nothing from disk outside the worktree's
@@ -277,13 +286,25 @@ cannot write files and never sees the builder's reasoning, only the result.
 
 ### Fix and repeat
 
-The findings go to the builder as one turn, high severity first; the gate
-runs; the harness shoots again; the critic judges again.
+The findings go to the builder as one turn, high severity first, with the
+round's mechanical high findings added; the gate runs; the harness shoots
+again; the critic judges again. A round is clean when neither the critic nor
+the harness found anything of high severity. A clean round that still has
+medium or low findings sends them to the builder once; a clean round with no
+finding at all has the critic look at the same shots again, so two clean
+rounds are two independent readings.
+
+Each hand-over saves the next stage's `working` with its result, before that
+stage starts: the build that passed names the critique, a round with findings
+names the build. A server that dies in between leaves the stage for
+`recover`, so `[재개]` takes it on. The findings a build turn is sent with are
+kept as the run's `fix` until a build of them passes the harness, so a resumed
+turn, after a restart or a refused budget, carries the same findings.
 
 | Stop rule | Value |
 | --- | --- |
 | Done | No high-severity finding, mechanical or critic, in two rounds in a row |
-| Cap | Six rounds; still high findings → `stopped` with `critique`, and R3 shows them |
+| Cap | Six rounds; still high findings → `stopped` with `critique`, the findings in its detail. `[재개]` counts six rounds afresh |
 | Budget | The run's ceiling, as everywhere |
 
 Every round's shots are kept under the run's raw folder, so R3 can fold a
@@ -294,17 +315,25 @@ before and after per screen.
 Rendered like R1 and R2. Order:
 
 1. The primary screen, final, at each viewport.
-2. One recorded walkthrough per core scenario.
-3. The placement check's result: each frequency class and where its features
+2. The placement check's result: each frequency class and where its features
    ended up.
-4. Remaining medium and low findings, if any, with why they were left.
-5. Folded: every other screen and state, the per-round before and after, the
-   mechanical findings history.
+3. Remaining medium and low findings, if any, with why they were left.
+4. Folded: every screen in every state, the first and last shot of each
+   screen, the mechanical findings history.
 
-A local link to the running app sits at the top for the owner to click
-around in. Per-item edits go back to the builder as one turn and the loop
-runs again from shooting, with its stop rule; the re-shown sheet marks what
-changed. Approval moves the run to `pull request`.
+The items are the screens (`S1`, `S2`, ...), each approved or edited. The
+screenshots are served at `GET /api/oneshot/spec/<repo>/look/<n>/<name>`. A
+local link to the running app, for the owner to click around in, is part of
+the screens in [step 5](5-screen-pr.md). Per-item edits go back to the
+builder as one turn and the loop runs again from shooting, with its stop rule
+counted afresh; the re-shown sheet marks the edited screens. Approval of
+every screen moves the run to `pull request`. The approval holds the worktree
+and checks it is still `front_built_head`, clean; a tree another turn holds
+refuses it (409, the decisions kept), and a moved one goes back to
+`build-front`'s checks. A worktree that is not the run's checkout stops R3
+with `folder`; `[재개]` puts the sheet back with its decisions, and the next
+approval checks the tree again. A screenshot path through a link or a
+junction is never served.
 
 ## Completion
 

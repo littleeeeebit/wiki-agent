@@ -869,13 +869,14 @@ class ChatSession:
 
     # -- One turn -----------------------------------------------------------
 
-    def say(self, text: str, halt: threading.Event | None = None):
+    def say(self, text: str, halt: threading.Event | None = None, images: tuple = ()):
         """Send one utterance and stream the events. One turn runs at a time.
 
         `halt` is this turn's stop. `stop()` can only kill a process that
         exists; one asked for while the process is still starting is caught
         here, once it has started and before anything is sent to it. A turn the
         provider refuses as full waits, then goes again or continues, until `halt` or `end` (`chat_busy`).
+        `images` are files sent beside the text, the same ones on every retry; only Claude takes them.
         """
 
         def mark(event: Event) -> Event:
@@ -883,9 +884,12 @@ class ChatSession:
             return event
         ended = self._ended = threading.Event()   # this say's own: the next one cannot clear it
         over = lambda: ended.is_set() or _ending or bool(halt and halt.is_set())  # noqa: E731 -- `end`, `end_all` or `halt`
-        yield from chat_busy.patiently(lambda again: self._say(text, halt, again and not self.isolated), over, mark)
+        yield from chat_busy.patiently(lambda again: self._say(text, halt, again and not self.isolated, images), over, mark)
 
-    def _say(self, text: str, halt: threading.Event | None = None, again: bool = False):
+    def _say(self, text: str, halt: threading.Event | None = None, again: bool = False, images: tuple = ()):
+        if images and self.is_codex:   # a turn's images are never dropped: one Codex cannot carry is refused
+            yield Event("error", "이 세션은 그림을 받지 못한다 — 그림이 든 턴은 Claude 세션으로만 보낸다.")
+            return
         if not self._turn.acquire(blocking=False):
             yield Event("error", "앞 턴이 아직 안 끝났다.")
             return
@@ -932,7 +936,7 @@ class ChatSession:
                 except (BrokenPipeError, OSError, ValueError):
                     sent = False
             else:
-                sent = self._send(_user(text))
+                sent = self._send(_user(text, images))
             if not sent:
                 self.close()
                 yield Event("error", "프로세스가 죽었다. 다시 보내면 새로 띄운다.")
