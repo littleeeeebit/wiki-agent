@@ -331,6 +331,7 @@ export default function App() {
         window.dispatchEvent(new CustomEvent('review-turn', { detail: ev }))
         return
       }
+      window.dispatchEvent(new Event('spec-changed'))
       const key = `${ev.repo}/${ev.id}`
       const before = seen.get(key)
       seen.set(key, ev)

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Btn, Modal } from '@/components/Modal'
 import { browseFolder, get, json, post } from '@/lib/api'
 import { remote } from '@/lib/mobile'
+import { OneshotSpec } from '@/components/OneshotSpec'
+import { oneshotSpecs, stageLabel, type SpecSummary } from '@/lib/oneshot'
 
 type OneshotField = {
   options?: string[]; enabled?: string[]; text?: boolean; number?: boolean; asked?: boolean; default: string
@@ -64,13 +66,18 @@ const WORKING: Record<string, string> = {
 
 const error = (err: unknown) => String(err instanceof Error ? err.message : err)
 
-export function Oneshot({ onClose }: { onClose: () => void }) {
+export function Oneshot({ onClose, repo: picked = '' }: { onClose: () => void; repo?: string }) {
   const [run, setRun] = useState<OneshotRun | null>(null)
+  const [repo, setRepo] = useState(picked)
   const [open, setOpen] = useState<OneshotRun[]>([])
+  const [later, setLater] = useState<SpecSummary[]>([])
   const [fault, setFault] = useState('')
   const [busy, setBusy] = useState(false)
 
-  useEffect(() => { api.oneshotRuns().then((d) => setOpen(d.runs)).catch((err) => setFault(error(err))) }, [])
+  useEffect(() => {
+    api.oneshotRuns().then((d) => setOpen(d.runs)).catch((err) => setFault(error(err)))
+    oneshotSpecs().then((d) => setLater(d.specs)).catch((err) => setFault(error(err)))
+  }, [])
 
   // While a stage runs on the server, read the run until it settles.
   const id = run?.id
@@ -99,17 +106,48 @@ export function Oneshot({ onClose }: { onClose: () => void }) {
     <Modal title="새 프로젝트 — 원샷" wide locked={busy} onClose={onClose}>
       <div className="flex flex-col gap-4">
         {fault && <p role="alert" className="whitespace-pre-wrap rounded-md bg-destructive/10 px-3 py-2 text-destructive">{fault}</p>}
-        {!run && <Intake open={open} busy={busy} act={act} pick={setRun} />}
-        {run && <Body run={run} busy={busy} act={act} />}
+        {repo && <OneshotSpec repo={repo} />}
+        {!repo && !run && <Intake open={open} later={later} busy={busy} act={act} pick={setRun} pickSpec={setRepo} />}
+        {!repo && run && <Body run={run} busy={busy} act={act} />}
       </div>
     </Modal>
   )
 }
 
+/** The runs past S1, a row above the project list: each opens in the oneshot window, marked when it waits. */
+export function OneshotRail({ open }: { open: (repo: string) => void }) {
+  const [runs, setRuns] = useState<SpecSummary[]>([])
+  useEffect(() => {
+    const read = () => { oneshotSpecs().then((d) => setRuns(d.specs.filter((s) => s.stage !== 'done'))).catch(() => setRuns([])) }
+    read()
+    // A worker moving a run on (an automatic stage reaching a gate) saves its spec, which the feed announces.
+    window.addEventListener('focus', read)
+    window.addEventListener('spec-changed', read)
+    return () => {
+      window.removeEventListener('focus', read)
+      window.removeEventListener('spec-changed', read)
+    }
+  }, [])
+  if (!runs.length) return null
+  return (
+    <nav aria-label="원샷 실행" className="flex flex-wrap gap-1.5 border-b border-border px-5 py-2 text-[12.5px]">
+      {runs.map((s) => (
+        <button key={s.repo} type="button" onClick={() => open(s.repo)}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 hover:bg-secondary">
+          {s.waits && <span aria-label="결정을 기다린다" className="size-2 rounded-full bg-wait" />}
+          <span className="font-mono">{s.repo}</span>
+          <span className="text-muted-foreground">{s.stopped ? '멈춤' : stageLabel(s.stage)}</span>
+        </button>
+      ))}
+    </nav>
+  )
+}
+
 type Act = (fn: () => Promise<OneshotRun>) => Promise<void>
 
-function Intake({ open, busy, act, pick }: {
-  open: OneshotRun[]; busy: boolean; act: Act; pick: (run: OneshotRun) => void
+function Intake({ open, later, busy, act, pick, pickSpec }: {
+  open: OneshotRun[]; later: SpecSummary[]; busy: boolean; act: Act; pick: (run: OneshotRun) => void
+  pickSpec: (repo: string) => void
 }) {
   const [sentence, setSentence] = useState('')
   const [path, setPath] = useState('')
@@ -123,9 +161,17 @@ function Intake({ open, busy, act, pick }: {
 
   return (
     <>
-      {open.length > 0 && (
+      {(open.length > 0 || later.length > 0) && (
         <section className="flex flex-col gap-1.5">
           <h3 className="font-semibold">끝나지 않은 실행</h3>
+          {later.filter((s) => s.stage !== 'done').map((s) => (
+            <button key={s.repo} type="button" onClick={() => pickSpec(s.repo)}
+              className="truncate rounded-md border border-border px-3 py-2 text-left hover:bg-secondary">
+              {s.waits && <span aria-label="결정을 기다린다" className="mr-1.5 inline-block size-2 rounded-full bg-wait" />}
+              {s.repo}
+              <span className="ml-2 text-muted-foreground">{s.stopped ? `멈춤 — ${s.stopped.reason}` : stageLabel(s.stage)}</span>
+            </button>
+          ))}
           {open.map((r) => (
             <button key={r.id} type="button" onClick={() => pick(r)}
               className="truncate rounded-md border border-border px-3 py-2 text-left hover:bg-secondary">
@@ -167,10 +213,13 @@ function Intake({ open, busy, act, pick }: {
 function Body({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act }) {
   if (run.state === 'spec') {
     return (
-      <p role="status">
-        저장소 <span className="font-mono">{run.spec?.repo}</span> 를 만들고 main 에 올렸다. 명세는 <span className="font-mono">{run.spec?.id}</span> 브랜치의
-        작업 공간에서 이어진다. 프로젝트 목록에서 열 수 있다.
-      </p>
+      <>
+        <p role="status">
+          저장소 <span className="font-mono">{run.spec?.repo}</span> 를 만들고 main 에 올렸다. 명세는 <span className="font-mono">{run.spec?.id}</span> 브랜치의
+          작업 공간에서 이어진다.
+        </p>
+        {run.spec && <OneshotSpec repo={run.spec.repo} />}
+      </>
     )
   }
   return (

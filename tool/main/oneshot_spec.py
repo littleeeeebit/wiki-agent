@@ -10,6 +10,7 @@ The glossary, the conversation, the design and the sheet's decisions live in `on
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 from pathlib import Path
@@ -363,11 +364,51 @@ class Say(BaseModel):
 
 class Decisions(BaseModel):
     decisions: dict[str, dict]
+    reading: dict = {}   # how the sheet was read: `seconds` open and the folds `opened`
+
+
+WAITS = {"r1", "board", "r2", "r3"}   # stages that wait for the owner; `spec` waits on the agent's question
+
+
+def read(o: dict, gate: str, given: dict, edited) -> dict:
+    """`oneshot.reading` with one more submission of `gate`: the round, the seconds the sheet was open,
+    the folds opened and the items edited. Recorded, shown in the summary, acted on by nothing."""
+
+    seconds = given.get("seconds")
+    try:   # `1e309` arrives as inf and `10**400` overflows a float: neither could be sent back as JSON
+        seconds = float(seconds) if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) else None
+    except OverflowError:
+        seconds = None
+    opened = given.get("opened")
+    entry = {"round": (o.get(gate) or {}).get("round", 1),
+             "seconds": round(seconds, 1) if seconds is not None and math.isfinite(seconds) and seconds >= 0 else None,
+             "opened": sorted({x for x in opened if isinstance(x, str)})[:20] if isinstance(opened, list) else [],
+             "edited": sorted(edited)}
+    earlier = o.get("reading") or {}
+    return {**earlier, gate: [*(earlier.get(gate) or []), entry]}
+
+
+def summary(spec: dict) -> dict:
+    o = spec["oneshot"]
+    asked = o["stage"] == "spec" and (o.get("talk") or [{}])[-1].get("role") == "agent"
+    return {"repo": spec["repo"], "stage": o["stage"], "working": o.get("working"), "stopped": o.get("stopped"),
+            "waits": not o.get("working") and not o.get("stopped") and (o["stage"] in WAITS or asked)}
+
+
+@router.get("/api/oneshot-specs")
+def listing() -> dict:
+    """Every run past S1, the rail's rows: its stage, and whether it waits for the owner."""
+
+    found = []
+    for run in oneshot.runs():
+        if run.get("spec") and (spec := specs.load(run["spec"]["repo"], oneshot.BRANCH)) and "oneshot" in spec:
+            found.append(summary(spec))
+    return {"specs": found}
 
 
 def view(spec: dict) -> dict:
     o = spec["oneshot"]
-    out = {"repo": spec["repo"], "oneshot": o, "requirements": spec.get("requirements") or []}
+    out = {"repo": spec["repo"], "oneshot": o, "requirements": spec.get("requirements") or [], **summary(spec)}
     if o.get("design"):
         out["sheet"] = sheet.sheet(spec)
         out["items"] = sheet.decidable(o["design"], spec.get("requirements") or [])
@@ -410,9 +451,10 @@ def decide(repo: str, body: Decisions) -> dict:
         decisions, comments = decided(items, o["r1"]["decisions"], body.decisions)
         if comments:
             reach = sorted(sheet.dependents(o["design"], spec.get("requirements") or [], set(comments)))
-            start(repo, "redesign", comments, reach, r1={**o["r1"], "decisions": decisions})
+            start(repo, "redesign", comments, reach, r1={**o["r1"], "decisions": decisions},
+                  reading=read(o, "r1", body.reading, comments))
             return view(spec_of(repo))
-        saved(repo, oneshot={"r1": {**o["r1"], "decisions": decisions}})
+        saved(repo, oneshot={"r1": {**o["r1"], "decisions": decisions}, "reading": read(o, "r1", body.reading, ())})
         approved(repo)
     from . import oneshot_build   # it imports this module
     if spec_of(repo)["oneshot"]["stage"] == "tests":   # outside the lock: the turn takes the worktree's hold
