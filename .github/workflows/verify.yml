@@ -74,7 +74,8 @@ jobs:
   python:
     needs: identity
     runs-on: windows-2025
-    timeout-minutes: 35
+    # The full suite takes 27–40 minutes on a hosted runner; 35 cut three Final runs with no failure.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
