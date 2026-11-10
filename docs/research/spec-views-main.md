@@ -164,7 +164,7 @@ From the journal, up to two final rows per failure cause.
 
 - fixed: every cell ran.
 - pipeline: every cell ran.
-- A-B (the whole enrichment step), B-C (information equal) and C-D (execution equal): conditions B and C are not in main-2 by the owner's choice. main-1 ran 10 of its 80 cells (B 3, C 2) before it was stopped; those cells are in its journal and are not reported as a comparison. To run them, resume main-1 with `python tool/eval/spec_views.py run --config eval/spec-views/main-1.json` from a worktree at its code commit 88e0d13 with `raw/eval/spec-views/` copied in, after a new owner approval (its fixed ceiling has about USD 53 and 7.6 h left), then `pipeline` and `report` with the same config.
+- A-B (the whole enrichment step), B-C (information equal) and C-D (execution equal): conditions B and C are not in main-2 by the owner's choice. main-1 ran 10 of its 80 cells (B 3, C 2) before it was stopped; those cells are in its journal and are not reported as a comparison. To run them, resume main-1 from a worktree at its code commit 88e0d13 with `raw/eval/spec-views/` copied in, after a new owner approval (its fixed ceiling has about USD 53 and 7.6 h left): the harness `tool/eval/spec_views.py` there takes `run`, then `pipeline`, then `report`, each with `--config eval/spec-views/main-1.json`.
 - Ceiling stops: none.
 
 ## The setting and its rollback
