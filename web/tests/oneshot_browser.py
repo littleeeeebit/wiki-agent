@@ -246,8 +246,16 @@ def main():
         group = {role: form.get_by_role("group", name=f"{role} 모델") for role in ("명세", "구현", "리뷰")}
         expect(group["리뷰"].get_by_role("combobox", name="모델")).to_contain_text("GPT-6.1-Sol")
         expect(group["명세"].get_by_role("combobox", name="모델")).to_contain_text("Claude 기본")
-        group["명세"].get_by_role("combobox", name="모델").click()
+        # A person's press: the list opens on the press and lies over the trigger before the release,
+        # so the click lands on what holds both — never read as a click on the backdrop.
+        box = group["명세"].get_by_role("combobox", name="모델").bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.mouse.down()
+        expect(page.get_by_role("option", name="Opus")).to_be_visible()
+        page.mouse.up()
+        expect(form).to_be_visible()
         page.get_by_role("option", name="Opus").click()
+        expect(form).to_be_visible()
         group["명세"].get_by_role("combobox", name="추론 강도").click()
         page.get_by_role("option", name="high").click()
         expect(group["구현"].get_by_role("combobox", name="모델")).to_contain_text("Claude 기본")   # apart from 명세
@@ -256,6 +264,8 @@ def main():
         expect(form.get_by_text("명세 opus · high / 구현 Claude 기본 / 리뷰 codex:gpt-6.1-sol · high")).to_be_visible()
         assert posted[-1][2]["models"] == {"spec": {"model": "opus", "effort": "high"}, "build": {"model": "", "effort": ""},
                                            "review": {"model": "codex:gpt-6.1-sol", "effort": "high"}}, posted[-1]
+        page.mouse.click(4, 4)   # the backdrop itself still closes the window
+        expect(form).to_have_count(0)
         browser.close()
     assert not errors, errors
     print("PASS: the rail marks a run that waits; a gate sheet needs every item, folded or not, and records the folds "
