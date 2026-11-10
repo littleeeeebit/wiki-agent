@@ -167,7 +167,7 @@ def test_intake_restates_and_a_refused_block_is_asked_again_once(world):
     replies = [fenced("oneshot-intent", {**INTENT, "kind": "game"}), fenced("oneshot-intent", INTENT)]
     heard = []
 
-    def ask(store, role, system, text, where=None):
+    def ask(store, role, system, text, where=None, images=()):
         heard.append(text)
         return replies.pop(0), {"cost_usd": 0.1}, False
 

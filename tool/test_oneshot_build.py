@@ -208,6 +208,15 @@ def test_each_case_is_pinned_by_its_own_node_id_through_inheritance_and_any_para
     assert check(tree, "만들었다.\n" + report()) is not None and o()["stage"] == "review"
 
 
+def test_a_restart_between_a_refusal_and_its_resend_leaves_the_stage_resumable(built_world):
+    tree, sent = built_world
+    oneshot_spec.saved("budget", oneshot={"working": "tests"})
+    write(tree, "app.py", APP)
+    assert check(tree) is not None and not sent   # the resend is returned; the server stops before it goes
+    oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "restart"
+
+
 def test_the_third_refusal_stops_the_stage(built_world):
     tree, sent = built_world
     oneshot_spec.saved("budget", oneshot={"attempts": 2})

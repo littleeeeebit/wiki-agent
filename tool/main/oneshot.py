@@ -174,9 +174,9 @@ def heartbeat(store: Store, ended: threading.Event) -> None:
                 store.put(inflight={**inflight, "seen": time.time()})
 
 
-def ask(store: Store, role: str, system: str, text: str, where: Path | None = None) -> tuple[str, dict, bool]:
-    """One turn, read-only, in `where` (the store's own folder by default): `(final, meta, codex)`.
-    Patched in tests."""
+def ask(store: Store, role: str, system: str, text: str, where: Path | None = None, images: tuple = ()) -> tuple[str, dict, bool]:
+    """One turn, read-only, in `where` (the store's own folder by default), `images` beside the text:
+    `(final, meta, codex)`. Patched in tests."""
 
     cfg = role_config(role)
     where = where or store.folder
@@ -186,7 +186,7 @@ def ask(store: Store, role: str, system: str, text: str, where: Path | None = No
     ended = threading.Event()
     threading.Thread(target=heartbeat, args=(store, ended), daemon=True, name=f"oneshot-beat-{store.key}").start()
     try:
-        for ev in chat.say(text, runtime.stopping):
+        for ev in chat.say(text, runtime.stopping, images):
             if ev.kind == "done":
                 final, meta = ev.text, dict(ev.meta or {})
                 if meta.pop("error", False):
@@ -212,7 +212,7 @@ def block(final: str, name: str):
 
 
 def turned(rid: str | Store, role: str, system: str, text: str, name: str, check,
-           where: Path | None = None) -> object | None:
+           where: Path | None = None, images: tuple = ()) -> object | None:
     """A turn whose answer passes `check`, asked again once with the reason; `None` after stopping.
     With one block `name`, `check` gets that block's value; with several (`"a,b"`), the whole answer."""
 
@@ -232,7 +232,7 @@ def turned(rid: str | Store, role: str, system: str, text: str, name: str, check
         started = time.monotonic()
         try:
             final, meta, codex = ask(store, role, system, text if not reason else
-                                     f"{text}\n\nYour last answer was refused: {reason}. Return it again.", where)
+                                     f"{text}\n\nYour last answer was refused: {reason}. Return it again.", where, images)
         except Exception as exc:   # a broken turn still owes the screen a reason; an unreported cost is unknown, never zero
             with _lock:
                 cost = (getattr(exc, "meta", None) or {}).get("cost_usd")

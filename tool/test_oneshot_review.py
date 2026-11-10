@@ -52,7 +52,7 @@ P2 = {"location": "budget_app.py:1", "severity": "P2", "reason": "이름이 짧�
 def answers(*texts):
     heard, queue = [], list(texts)
 
-    def ask(store, role, system, text, where=None):
+    def ask(store, role, system, text, where=None, images=()):
         heard.append((role, text, where))
         return queue.pop(0), {"cost_usd": 0.1}, False
 
@@ -62,9 +62,12 @@ def answers(*texts):
 def test_an_approval_of_the_head_read_moves_to_split_with_the_input_frozen(reviewed):
     tree, head, _ = reviewed
     heard, asking = answers(verdict(head, "approve", P2))
-    with asking:
+    started = []
+    with asking, patch.object(oneshot_spec, "start", lambda *a, **fields: started.append((a, fields))):
         oneshot_review.review("budget")
-    assert o()["stage"] == "split" and o()["reviews"][-1]["findings"] == [P2] and o()["working"] is None
+    (args, fields), = started
+    assert args == ("budget", "split") and not fields
+    assert o()["stage"] == "split" and o()["working"] == "split" and o()["reviews"][-1]["findings"] == [P2]
     role, text, where = heard[0]
     assert role == "review" and where == tree and head in text and "test_spending_adds_to_the_total" in text
     assert "지출을 적으면" in text   # the requirements travel in the prompt; the reviewer reads no record
@@ -120,7 +123,7 @@ def test_a_head_other_than_the_one_the_build_passed_is_not_reviewed(reviewed):
 def test_a_tree_changed_while_the_review_read_it_goes_back_to_the_builds_checks(reviewed, change):
     tree, head, sent = reviewed
 
-    def ask(store, role, system, text, where=None):
+    def ask(store, role, system, text, where=None, images=()):
         (tree / "late.py").write_text("x = 1\n", encoding="utf-8")
         if change == "commit":
             git(tree, "add", "late.py")
@@ -137,7 +140,7 @@ def test_the_review_holds_its_worktree_until_the_verdict_is_saved(reviewed):
     tree, head, sent = reviewed
     held = []
 
-    def ask(store, role, system, text, where=None):
+    def ask(store, role, system, text, where=None, images=()):
         with pytest.raises(HTTPException):
             query.hold(work._busy, query._lock, str(tree), "busy")
         return verdict(head, "refuse", P1), {"cost_usd": 0.1}, False
@@ -152,7 +155,7 @@ def test_an_instruction_queued_while_the_review_held_the_tree_goes_once_after_it
     tree, head, sent = reviewed
     begun = []
 
-    def ask(store, role, system, text, where=None):
+    def ask(store, role, system, text, where=None, images=()):
         work._queued[str(tree)] = work.Order(path=str(tree), text="다음 지시")   # queued while the review held it
         return verdict(head, kind, *([P1] if kind == "refuse" else [])), {"cost_usd": 0.1}, False
 
@@ -160,13 +163,15 @@ def test_an_instruction_queued_while_the_review_held_the_tree_goes_once_after_it
         sent.append(a)
         query.hold(work._busy, query._lock, str(tree), "", kind="turn")
 
+    handed = []
     try:
         with patch.object(oneshot, "ask", ask), patch.object(oneshot_build, "send", build), \
+             patch.object(oneshot_spec, "handoff", lambda *a: handed.append(a)), \
              patch.object(work, "session", lambda *a: SimpleNamespace(id="c", parent_id=None)), \
              patch.object(work, "begin", lambda path, chat, text, release, run: (begun.append(text), release())):
             oneshot_review.review("budget")
-        if kind == "approve":
-            assert begun == ["다음 지시"] and str(tree) not in work._queued
+        if kind == "approve":   # the split holds the tree next and sends the instruction when it lets go
+            assert handed == [("budget", "split")] and not begun and work._queued[str(tree)].text == "다음 지시"
         else:   # the refusal's build turn goes first; the instruction waits for that turn's end
             assert sent and not begun and work._queued[str(tree)].text == "다음 지시"
     finally:

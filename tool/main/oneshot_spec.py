@@ -10,6 +10,7 @@ The glossary, the conversation, the design and the sheet's decisions live in `on
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 from pathlib import Path
@@ -17,12 +18,17 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from common import is_junction
+
 from . import oneshot, oneshot_sheet as sheet, specs
 from .query import ROOT
 
 SPEC_PROMPT = (ROOT / "tool/prompts/oneshot-spec.md").read_text(encoding="utf-8")
 DESIGN_PROMPT = (ROOT / "tool/prompts/oneshot-design.md").read_text(encoding="utf-8")
-RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}
+RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}   # a later stage's module adds its own
+SHEETS = {"r1"}   # a stage whose sheet stands when its edit turn stopped
+TURNS = {"tests", "build"}   # a stage run as a work turn (`oneshot_build.STAGES`), resumed by sending it again
+VIEWS: list = []   # a later stage's fields for the screen, `fn(spec) -> dict`
 MAX_TALK = 4_000
 
 router = APIRouter()
@@ -159,7 +165,9 @@ def handoff(repo: str, work: str, **fields) -> None:
 
 # -- S3 the backend design -------------------------------------------------------------
 
-def design_turn(final: str, attempt: int, spec: dict, partial: set[str] | None = None):
+def blocks(final: str) -> dict:
+    """Every fenced block of an answer, each once and each JSON."""
+
     found = {}
     for m in oneshot.BLOCK.finditer(final):
         if m.group(1) in found:
@@ -168,6 +176,25 @@ def design_turn(final: str, attempt: int, spec: dict, partial: set[str] | None =
             found[m.group(1)] = json.loads(m.group(2))
         except ValueError as exc:
             raise ValueError(f"`{m.group(1)}` 블록이 JSON 이 아니다 — {exc}") from exc
+    return found
+
+
+def marked(items: list[str], comments: dict, reach: list[str], old: dict, new: dict, decisions: dict) -> tuple[dict, dict]:
+    """After an edit turn, `(marks, decisions kept)`: an edited, a changed or a re-shown item loses its approval."""
+
+    marks = {}
+    for item in items:
+        if item in comments:
+            marks[item] = "edited"
+        elif old.get(item) != new.get(item):
+            marks[item] = "consequence"
+        elif item in reach:
+            marks[item] = "again"
+    return marks, {k: v for k, v in decisions.items() if k not in marks and v.get("approve")}
+
+
+def design_turn(final: str, attempt: int, spec: dict, partial: set[str] | None = None):
+    found = blocks(final)
     reqs, glossary = spec.get("requirements") or [], spec["oneshot"].get("glossary") or []
     if partial is not None and "oneshot-spec" in found:
         reqs, glossary = kept(spec, found["oneshot-spec"], f"R1 {spec['oneshot']['r1']['round']}회차 고침")
@@ -225,15 +252,7 @@ def redesign(repo: str, comments: dict[str, str], reach: list[str]) -> None:
     old = sheet.every(spec["oneshot"]["design"], spec.get("requirements") or [])
     new = sheet.every(made, reqs)
     r1 = spec["oneshot"]["r1"]
-    marks = {}
-    for item in sheet.decidable(made, reqs):
-        if item in comments:
-            marks[item] = "edited"
-        elif old.get(item) != new.get(item):
-            marks[item] = "consequence"
-        elif item in reach:
-            marks[item] = "again"
-    decisions = {k: v for k, v in r1["decisions"].items() if k not in marks and v.get("approve")}
+    marks, decisions = marked(sheet.decidable(made, reqs), comments, reach, old, new, r1["decisions"])
     saved(repo, requirements=reqs, oneshot={
         "design": made, "glossary": glossary, "working": None,
         "r1": {"round": r1["round"] + 1, "decisions": decisions, "marks": marks, "warnings": warnings}})
@@ -243,12 +262,10 @@ def approved(repo: str) -> None:
     """Every item approved: the design files written into the worktree and committed, and the build may begin."""
 
     spec = spec_of(repo)
-    tree, o = Path(spec["worktree"]).resolve(), spec["oneshot"]
-    top = specs.sh(["git", "rev-parse", "--show-toplevel"], tree, 30).stdout.strip()
-    branch = specs.sh(["git", "branch", "--show-current"], tree, 30).stdout.strip()
-    docs = (tree / "docs" / "design").resolve()
-    if not top or Path(top).resolve() != tree or branch != oneshot.BRANCH or not docs.is_relative_to(tree):
-        store(repo).stop("folder", f"작업트리가 `{oneshot.BRANCH}` 브랜치의 그 작업트리가 아니다: {tree}")
+    tree, o = own_tree(spec), spec["oneshot"]
+    docs = tree and (tree / "docs" / "design").resolve()
+    if not tree or not docs.is_relative_to(tree):
+        store(repo).stop("folder", f"작업트리가 `{oneshot.BRANCH}` 브랜치의 그 작업트리가 아니다: {spec['worktree']}")
         return
     files = ["docs/design/backend.md", "docs/design/api.yaml"]
     if linked := [f for f in files if (tree / f).is_symlink() or not (tree / f).resolve().is_relative_to(tree)]:
@@ -257,20 +274,63 @@ def approved(repo: str) -> None:
     docs.mkdir(parents=True, exist_ok=True)
     (docs / "backend.md").write_text(sheet.sheet(spec), encoding="utf-8", newline="\n")
     (docs / "api.yaml").write_text(sheet.openapi(spec), encoding="utf-8", newline="\n")
-    # With paths, the commit holds only these two files, whatever else is staged.
-    for args in (["add", "--", *files],
-                 ["commit", "-m", f"Record the approved backend design (R1 round {o['r1']['round']})", "--", *files]):
+    head = commit(repo, tree, files, f"Record the approved backend design (R1 round {o['r1']['round']})")
+    if head:
+        saved(repo, oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
+
+
+def within(base: Path, *parts: str) -> Path | None:
+    """`base / parts`, or `None` when a link or a junction on the way, or where it resolves, leaves `base`."""
+
+    steps = [base.joinpath(*parts[:i]) for i in range(1, len(parts) + 1)]
+    if any(p.is_symlink() or is_junction(p) for p in steps):
+        return None
+    return steps[-1] if steps[-1].resolve().is_relative_to(base.resolve()) else None
+
+
+def own_tree(spec: dict) -> Path | None:
+    """The run's worktree, resolved, when it is the top of a checkout on the run's branch."""
+
+    tree = Path(spec["worktree"]).resolve()
+    top = specs.sh(["git", "rev-parse", "--show-toplevel"], tree, 30).stdout.strip()
+    branch = specs.sh(["git", "branch", "--show-current"], tree, 30).stdout.strip()
+    return tree if top and Path(top).resolve() == tree and branch == oneshot.BRANCH else None
+
+
+def commit(repo: str, tree: Path, files: list[str], message: str) -> str | None:
+    """Exactly `files` committed, whatever else is staged: the new HEAD, or `None` after stopping with `folder`."""
+
+    for args in (["add", "--", *files], ["commit", "-m", message, "--", *files]):
         done = specs.sh(["git", *args], tree, 60)
         if done.returncode and not re.search("nothing to commit|no changes added", done.stdout + done.stderr):
             store(repo).stop("folder", f"설계 문서를 커밋하지 못했다 — {(done.stderr or done.stdout).strip()[-300:]}")
-            return
-    head = specs.sh(["git", "rev-parse", "HEAD"], tree, 30).stdout.strip()
-    saved(repo, oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
+            return None
+    return specs.sh(["git", "rev-parse", "HEAD"], tree, 30).stdout.strip()
+
+
+def decided(items: list[str], earlier: dict, given: dict) -> tuple[dict, dict[str, str]]:
+    """A sheet's decisions merged over the earlier ones, `(decisions, edit comments)`; every item needs one."""
+
+    if unknown := sorted(set(given) - set(items)):
+        raise HTTPException(400, f"시트에 없는 항목이다: {', '.join(unknown)}")
+    decisions = {**earlier, **given}
+    if missing := [i for i in items if i not in decisions]:
+        raise HTTPException(400, f"아직 정하지 않은 항목이 있다: {', '.join(missing)}")
+    comments = {}
+    for item, d in decisions.items():
+        if d.get("approve") is True and not d.get("edit"):
+            continue
+        if not isinstance(d.get("edit"), str) or not d["edit"].strip():
+            raise HTTPException(400, f"{item}: 승인하거나 고칠 내용을 적어라")
+        comments[item] = d["edit"].strip()
+    return decisions, comments
+
+
+WORKERS = {"talk": talk, "design": design, "redesign": redesign}   # a later stage's module adds its own
 
 
 def start(repo: str, work: str, *args, **fields) -> None:
-    fn = {"talk": talk, "design": design, "redesign": redesign}[work]
-    oneshot.start_worker(store(repo), work, fn, (repo, *args), fields)
+    oneshot.start_worker(store(repo), work, WORKERS[work], (repo, *args), fields)
 
 
 def recover() -> None:
@@ -280,6 +340,8 @@ def recover() -> None:
     for folder in specs.SPECS.glob("*"):
         spec = specs.load(folder.name, oneshot.BRANCH) if folder.is_dir() else None
         o = (spec or {}).get("oneshot") or {}
+        if o and spec.get("adapter"):   # a restart can cut a turn before its end clears the adapter grant
+            saved(folder.name, adapter=False)
         if o.get("working") or (o and o.get("stage") == "spec" and not o.get("talk") and not o.get("stopped")
                                 and handed(o)):
             oneshot.restarted(store(folder.name))
@@ -302,14 +364,57 @@ class Say(BaseModel):
 
 class Decisions(BaseModel):
     decisions: dict[str, dict]
+    reading: dict = {}   # how the sheet was read: `seconds` open and the folds `opened`
+
+
+WAITS = {"r1", "board", "r2", "r3"}   # stages that wait for the owner; `spec` waits on the agent's question
+
+
+def read(o: dict, gate: str, given: dict, edited) -> dict:
+    """`oneshot.reading` with one more submission of `gate`: the round, the seconds the sheet was open,
+    the folds opened and the items edited with their comments (`edited`, item → comment). The sheet's
+    decisions drop a comment once it is applied, so this is where S8 finds what the owner changed."""
+
+    seconds = given.get("seconds")
+    try:   # `1e309` arrives as inf and `10**400` overflows a float: neither could be sent back as JSON
+        seconds = float(seconds) if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) else None
+    except OverflowError:
+        seconds = None
+    opened = given.get("opened")
+    entry = {"round": (o.get(gate) or {}).get("round", 1),
+             "seconds": round(seconds, 1) if seconds is not None and math.isfinite(seconds) and seconds >= 0 else None,
+             "opened": sorted({x for x in opened if isinstance(x, str)})[:20] if isinstance(opened, list) else [],
+             "edited": sorted(edited), "edits": {i: edited[i] for i in sorted(edited)}}
+    earlier = o.get("reading") or {}
+    return {**earlier, gate: [*(earlier.get(gate) or []), entry]}
+
+
+def summary(spec: dict) -> dict:
+    o = spec["oneshot"]
+    asked = o["stage"] == "spec" and (o.get("talk") or [{}])[-1].get("role") == "agent"
+    return {"repo": spec["repo"], "stage": o["stage"], "working": o.get("working"), "stopped": o.get("stopped"),
+            "waits": not o.get("working") and not o.get("stopped") and (o["stage"] in WAITS or asked)}
+
+
+@router.get("/api/oneshot-specs")
+def listing() -> dict:
+    """Every run past S1, the rail's rows: its stage, and whether it waits for the owner."""
+
+    found = []
+    for run in oneshot.runs():
+        if run.get("spec") and (spec := specs.load(run["spec"]["repo"], oneshot.BRANCH)) and "oneshot" in spec:
+            found.append(summary(spec))
+    return {"specs": found}
 
 
 def view(spec: dict) -> dict:
     o = spec["oneshot"]
-    out = {"repo": spec["repo"], "oneshot": o, "requirements": spec.get("requirements") or []}
+    out = {"repo": spec["repo"], "oneshot": o, "requirements": spec.get("requirements") or [], **summary(spec)}
     if o.get("design"):
         out["sheet"] = sheet.sheet(spec)
         out["items"] = sheet.decidable(o["design"], spec.get("requirements") or [])
+    for more in VIEWS:
+        out.update(more(spec))
     return out
 
 
@@ -344,23 +449,13 @@ def decide(repo: str, body: Decisions) -> dict:
         o = spec["oneshot"]
         idle(o, "r1")
         items = sheet.decidable(o["design"], spec.get("requirements") or [])
-        if unknown := sorted(set(body.decisions) - set(items)):
-            raise HTTPException(400, f"시트에 없는 항목이다: {', '.join(unknown)}")
-        decisions = {**o["r1"]["decisions"], **body.decisions}
-        if missing := [i for i in items if i not in decisions]:
-            raise HTTPException(400, f"아직 정하지 않은 항목이 있다: {', '.join(missing)}")
-        comments = {}
-        for item, d in decisions.items():
-            if d.get("approve") is True and not d.get("edit"):
-                continue
-            if not isinstance(d.get("edit"), str) or not d["edit"].strip():
-                raise HTTPException(400, f"{item}: 승인하거나 고칠 내용을 적어라")
-            comments[item] = d["edit"].strip()
+        decisions, comments = decided(items, o["r1"]["decisions"], body.decisions)
         if comments:
             reach = sorted(sheet.dependents(o["design"], spec.get("requirements") or [], set(comments)))
-            start(repo, "redesign", comments, reach, r1={**o["r1"], "decisions": decisions})
+            start(repo, "redesign", comments, reach, r1={**o["r1"], "decisions": decisions},
+                  reading=read(o, "r1", body.reading, comments))
             return view(spec_of(repo))
-        saved(repo, oneshot={"r1": {**o["r1"], "decisions": decisions}})
+        saved(repo, oneshot={"r1": {**o["r1"], "decisions": decisions}, "reading": read(o, "r1", body.reading, ())})
         approved(repo)
     from . import oneshot_build   # it imports this module
     if spec_of(repo)["oneshot"]["stage"] == "tests":   # outside the lock: the turn takes the worktree's hold
@@ -376,9 +471,9 @@ def resume(repo: str) -> dict:
             raise HTTPException(409, "멈춘 단계가 아니다")
         if o.get("inflight"):   # its `Turn.finish` has not run: the next turn would lose that turn's charge
             raise HTTPException(409, "앞 턴의 비용을 아직 매기는 중이다 — 잠시 뒤 다시 하라")
-        if o["stage"] not in (*RUNNING, "tests", "build", "review"):
+        if o["stage"] not in (*RUNNING, *TURNS, *SHEETS, "review"):
             raise HTTPException(409, f"`{o['stage']}` 단계는 다음 단계에서 이어진다")
-        if o["stage"] == "r1":   # an edit turn that stopped: the sheet stands, the owner decides again
+        if o["stage"] in SHEETS:   # an edit turn that stopped: the sheet stands, the owner decides again
             return view(saved(repo, oneshot={"stopped": None}))
         if o["stage"] in RUNNING:
             start(repo, RUNNING[o["stage"]])

@@ -402,7 +402,7 @@ def _busy_session(answers, monkeypatch):
     chat = ChatSession.__new__(ChatSession)
     chat.id, chat.parent_id, chat.isolated, sent = "s", None, False, []
 
-    def turn(text, halt=None, again=False):
+    def turn(text, halt=None, again=False, images=()):
         sent.append(chat_busy.CONTINUE if again else text)   # as `_say` with its thread resumed
         yield from (Event(*answer) for answer in answers[len(sent) - 1])
 
@@ -656,7 +656,7 @@ def test_cancelling_the_run_ends_its_plain_explanation_waiting_on_capacity(monke
     from agent.chat_events import Event
     sent: list = []
 
-    def full(self, text, halt=None, again=False):
+    def full(self, text, halt=None, again=False, images=()):
         sent.append(text)
         yield Event("error", "Selected model is at capacity.")
 

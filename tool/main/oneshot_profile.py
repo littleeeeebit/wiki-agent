@@ -115,6 +115,13 @@ def gate_cmd(profile: dict) -> str:
     return f".venv/{folder}/python -m pytest"
 
 
+def python_cmd(profile: dict) -> str:
+    """The project's own interpreter, as `gate_cmd` reaches it."""
+
+    return gate_cmd(profile).removesuffix(" -m pytest").removesuffix(" pytest") + (
+        " python" if profile["python_env"] == "uv" else "")
+
+
 # -- Spending -------------------------------------------------------------------------
 
 def estimate(role: str) -> float:

@@ -415,6 +415,11 @@ deletion across reload, plus file citations and link dispatch using synthetic da
 keep their own projects, that the rail names another project's running turn by
 the server's answer and shows its waiting approval, and that the close question
 skips a window with another still open and counts every window's work.
+`python web/tests/oneshot_browser.py` checks the oneshot run's screens on
+synthetic runs: the rail marks a run that waits, a gate sheet needs every item
+decided, folded or not, and records the folds opened, the re-shown sheet opens
+what needs a decision again, the feature board moves a card by drag and by the
+arrow keys, and a stopped run resumes.
 `python web/tests/screen_state_browser.py` checks that a theme change repaints
 the terminal without reopening its shell (stubbed `pty_open`/`pty_close`) and
 that run details recover from a failed read with 다시 읽기.
