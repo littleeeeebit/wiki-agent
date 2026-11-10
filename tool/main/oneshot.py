@@ -716,11 +716,20 @@ def start(body: Start) -> dict:
             raise HTTPException(400, f"비어 있는 폴더여야 한다 — 숨김 파일도 없어야 한다: {body.path}")
         picked = str(path.resolve())
     models = {name: {k: v.strip() for k, v in role.items()} for name, role in body.models.model_dump().items()}
-    for name, role in models.items():
-        if role["model"] and not role["model"].startswith("codex:") and not channels.CLAUDE_MODEL.fullmatch(role["model"]):
-            raise HTTPException(400, f"{name} 모델 이름을 받지 않는다: {role['model']}")
-        if role["effort"] and not re.fullmatch(r"[a-z]{1,16}", role["effort"]):
-            raise HTTPException(400, f"{name} 추론 강도를 받지 않는다: {role['effort']}")
+    try:
+        if not models["review"]["model"]:   # "the Review Loop's model" is named now, so a later settings change moves nothing
+            from . import loop   # it imports `specs`, which imports this module's neighbours
+            models["review"] = {"model": loop.review_model(),
+                                "effort": models["review"]["effort"] or loop.settings()["review_effort"]}
+        for name, role in models.items():
+            if role["model"] and not role["model"].startswith("codex:") and not channels.CLAUDE_MODEL.fullmatch(role["model"]):
+                raise HTTPException(400, f"{name} 모델 이름을 받지 않는다: {role['model']}")
+            if role["effort"] not in channels.efforts_of(role["model"]):   # an unlisted Codex model takes none
+                raise HTTPException(400, f"{name} 모델 {role['model'] or '기본'} 이 받지 않는 선택이다: {role['effort'] or '기본'}")
+    except HTTPException:
+        raise
+    except Exception as exc:   # listing Codex's models starts Codex
+        raise HTTPException(503, f"모델 목록을 확인하지 못했다 — {exc}") from exc
     rid = secrets.token_hex(8)
     with _lock:
         save({"id": rid, "version": VERSION, "created": time.time(), "state": "intake", "working": None,

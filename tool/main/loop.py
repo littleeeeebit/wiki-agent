@@ -504,7 +504,7 @@ def cell(spec: dict, path: Path) -> ChatSession:
     named = spec.get("reviewer") or {}
     # Outside the lock: listing Codex's models starts Codex.
     model = review_model(named["model"]) if named.get("model") else review_model()
-    effort = named.get("effort") or settings()["review_effort"]
+    effort = named["effort"] if (spec.get("oneshot") or {}).get("models") else named.get("effort") or settings()["review_effort"]
     repo = channels.repo_for(spec["repo"]) if verify_dir is not None else None
     local = verification.local(repo) if repo is not None else {}
     env = {"WIKI_VERIFICATION_HEAD": spec["pr"]["head"],
@@ -2706,9 +2706,9 @@ def minimal(repo: Path, view: dict, path: Path, gate: str) -> dict:
 
 def named(repo: Path, spec: dict, cell: dict | None) -> dict:
     """`cell`, the work model the screen has chosen, fills a spec that names none, never one that does:
-    a PR adopted from GitHub ran its repairs on Claude's default (rfg_rag #74-#76)."""
+    a PR adopted from GitHub ran its repairs on Claude's default (rfg_rag #74-#76). A oneshot's, its default included, is fixed."""
 
-    if cell and cell.get("model") and not (spec.get("cell") or {}).get("model"):
+    if cell and cell.get("model") and not (spec.get("cell") or {}).get("model") and not (spec.get("oneshot") or {}).get("models"):
         return specs.update(repo.name, spec["id"], cell=cell)
     return spec
 

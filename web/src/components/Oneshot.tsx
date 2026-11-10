@@ -165,7 +165,7 @@ function Intake({ open, later, busy, act, pick, pickSpec }: {
   }, [])
   const codex = options?.models.find((m) => m.id.startsWith('codex:') && m.is_default)
   const reviewOptions = options && { ...options, models: [
-    { id: '', label: '리뷰 설정 따름', note: '리뷰 루프 설정의 모델', efforts: codex?.efforts ?? [] },
+    { id: '', label: '리뷰 설정 따름', note: '시작할 때 리뷰 루프 설정의 모델로 정한다', efforts: codex?.efforts ?? [] },
     ...options.models.filter((m) => m.id),
   ] }
   const HINT = { spec: '요구 대화, 백엔드·화면 설계', build: '코드를 쓰는 작업 세션, PR 뒤의 수정', review: 'PR 전 리뷰, PR 뒤 리뷰 루프' }

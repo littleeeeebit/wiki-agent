@@ -17,7 +17,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from main import channels, connect, oneshot, oneshot_profile, oneshot_spec, runtime, specs, work
+from main import channels, connect, loop, oneshot, oneshot_profile, oneshot_spec, runtime, specs, work
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 
 LAUNCH = oneshot.launch   # the real one; `world` replaces it with a synchronous state change
@@ -26,6 +26,10 @@ INTENT = {"restated": "가계부를 만든다.", "kind": "webapp", "name": "Budg
           "first_screen": "이번 달 지출을 본다."}
 PROFILE = {**{k: f["default"] for k, f in oneshot.SCHEMA.items()}, "visibility": "private", "docs_language": "ko",
            "github_owner": "someone", "budget_usd": 50, "budget_hours": 10, "python_env": "uv"}
+
+
+CODEX = [{"id": "codex:gpt-6.1-sol", "is_default": True, "efforts": [{"id": e} for e in ("", "high", "xhigh")]},
+         {"id": "codex:gpt-other", "efforts": [{"id": e} for e in ("", "low")]}]
 
 
 def fenced(name: str, value) -> str:
@@ -72,6 +76,7 @@ def world(tmp_path):
          patch.object(oneshot, "gh_user", lambda: "someone"), \
          patch.object(oneshot, "url_of", lambda run: str(github.bare)), \
          patch.object(oneshot, "codex_role", lambda role="", store=None: False), \
+         patch.object(channels, "codex_models", lambda: CODEX), \
          patch.object(oneshot_spec, "begin", lambda repo: None), \
          patch.object(oneshot, "launch",
                       lambda rid, work, *a, **f: oneshot.changed(rid, **f, working=work, stopped=None)):
@@ -553,24 +558,38 @@ def test_the_start_fixes_three_models_and_every_role_reads_its_own(world):
 
 def test_an_empty_model_is_the_roles_own_default_and_an_older_run_keeps_the_window(world):
     empty = {"spec": {"model": "", "effort": ""}, "build": {"model": "", "effort": "max"},
-             "review": {"model": "", "effort": "high"}}
+             "review": {"model": "", "effort": ""}}
     with patch.object(oneshot, "launch", lambda *a, **f: None):
         rid = oneshot.start(oneshot.Start(sentence="가계부", models=empty))["id"]
+    # "The Review Loop's model" is named at the start, from the settings then: Codex's default, `high`.
+    assert oneshot.load(rid)["models"]["review"] == {"model": "codex:gpt-6.1-sol", "effort": "high"}
     store = oneshot.run_store(rid)
-    with patch.dict(oneshot.ROLES, REGISTERED), patch("main.query.config", window):
+    later = {"review_model": "opus", "review_effort": "low"}
+    with patch.object(loop, "settings", lambda *a: {**loop.DEFAULTS, **later}), patch("main.query.config", window):
         assert oneshot.role_config("intake", store) == {"model": "", "effort": ""}           # the CLI's default
         assert oneshot.role_config("build", store) == {"model": "", "effort": "max"}
-        assert oneshot.role_config("review", store) == {"model": "codex:loop-default", "effort": "high"}
+        assert oneshot.role_config("review", store) == {"model": "codex:gpt-6.1-sol", "effort": "high"}   # unmoved
     older = made(world)                                                                  # no `models`
     with patch("main.query.config", lambda cid: {"model": "next-model", "effort": "e"}):
         assert oneshot.role_config("intake", oneshot.run_store(older))["model"] == "next-model"
 
 
-@pytest.mark.parametrize("role", [{"model": "opus; rm -rf", "effort": ""}, {"model": "opus", "effort": "HIGH!"}])
+@pytest.mark.parametrize("role", [{"model": "opus; rm -rf", "effort": ""}, {"model": "opus", "effort": "HIGH!"},
+                                  {"model": "opus", "effort": "banana"}, {"model": "codex:", "effort": ""},
+                                  {"model": "codex:not-a-listed-model", "effort": "max"},
+                                  {"model": "codex:gpt-other", "effort": "high"}])
 def test_a_model_or_effort_the_cli_would_not_take_is_refused_before_the_run_exists(world, role):
     with pytest.raises(HTTPException) as refused:
         oneshot.start(oneshot.Start(sentence="가계부", models={**MODELS, "build": role}))
     assert refused.value.status_code == 400 and not list(oneshot.RUNS.glob("*.json"))
+
+
+@pytest.mark.parametrize("role", [{"model": "opus[1m]", "effort": ""}, {"model": "codex:gpt-other", "effort": "low"},
+                                  {"model": "", "effort": "max"}])
+def test_a_listed_or_typed_model_and_its_own_effort_are_taken(world, role):
+    with patch.object(oneshot, "launch", lambda *a, **f: None):
+        rid = oneshot.start(oneshot.Start(sentence="가계부", models={**MODELS, "build": role}))["id"]
+    assert oneshot.load(rid)["models"]["build"] == role
 
 
 def test_the_spec_holds_the_runs_models_and_its_work_cell_never_moves(world):
@@ -594,3 +613,40 @@ def test_the_spec_holds_the_runs_models_and_its_work_cell_never_moves(world):
         work.session(Path(spec["worktree"]), "haiku", "low")       # the screen's toolbar, or a repair turn
     assert made_with == [("sonnet", "medium")]
     assert specs.load("budget-tracker", oneshot.BRANCH)["cell"] == {**MODELS["build"], "fast": False}
+
+
+def test_a_default_build_model_is_not_filled_in_by_the_review_loops_start(world):
+    default = {**MODELS, "build": {"model": "", "effort": ""}}
+    finished(world, made(world, models=default))
+    spec = specs.load("budget-tracker", oneshot.BRANCH)
+    screen = {"model": "codex:gpt-6.1-sol", "effort": "high", "fast": False}   # the work pane's pick, sent with `[시작]`
+    assert loop.named(world["workspace"] / "budget-tracker", spec, screen)["cell"] == {"model": "", "effort": "", "fast": False}
+    made_with = []
+
+    class Chat:
+        is_codex, bypass, fast = False, True, False
+
+        def __init__(self, path, model="", effort="", **k):
+            made_with.append((model, effort))
+
+    with patch.object(work, "ChatSession", Chat), patch.dict(work._sessions, clear=True):
+        work.session(Path(spec["worktree"]), "codex:gpt-6.1-sol", "high")   # the repair turn after it
+    assert made_with == [("", "")]
+
+
+def test_a_named_review_model_keeps_its_default_effort_after_the_pr(world, tmp_path):
+    fixed = {**MODELS, "review": {"model": "opus", "effort": ""}}
+    finished(world, made(world, models=fixed))
+    spec = {**specs.load("budget-tracker", oneshot.BRANCH), "pr": {"number": 7, "head": "abc"}}
+    made_with = []
+
+    class Chat:
+        is_codex = False
+
+        def __init__(self, path, model="", effort="", **k):
+            made_with.append((model, effort))
+
+    with patch.object(loop, "ChatSession", Chat), patch.object(loop, "REVIEW", tmp_path / "review"), \
+         patch.dict(loop._cells, clear=True), patch.object(loop, "settings", lambda *a: {**loop.DEFAULTS, "review_effort": "high"}):
+        loop.cell(spec, tmp_path)
+    assert made_with == [("opus", "")]   # the CLI's default, as before the PR — never the settings' `high`

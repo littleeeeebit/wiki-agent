@@ -449,7 +449,7 @@ export default function App() {
   const blank = `new:${repo}`
   const empty = !other && !task?.row
   const choiceKey = empty ? blank : owning ? choiceOf(owning) : selected
-  const pinned = task?.spec?.refactor?.roles ? task.spec.cell : undefined   // fixed at its survey's start, held by the server
+  const pinned = task?.spec?.refactor?.roles || task?.spec?.oneshot?.models ? task.spec.cell : undefined   // fixed at its survey's (a oneshot's run's) start, held by the server
   const choice = pinned ?? choices[choiceKey] ?? (empty ? undefined : task?.spec?.cell) ?? NO_CHOICE
   const setChoice = (c: Choice) => setChoices((all) => ({ ...all, [choiceKey]: c }))
 

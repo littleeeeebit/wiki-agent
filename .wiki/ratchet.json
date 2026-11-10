@@ -123,8 +123,8 @@
     },
     "tool/main/oneshot.py": {
       "dup": 0,
-      "lines": 831,
-      "reason": "The start fixes three models (spec, build, review), each a model and an effort the start checks; `role_config` reads a role's group from the run's store, and the commit point hands them to the spec's `cell` and `reviewer`, since every turn read the window's `next` model at the moment it ran and the owner could not tell which model was working (oneshot-models, thirty-three lines). Before that: baseline under the new-file cap."
+      "lines": 840,
+      "reason": "The start fixes three models (spec, build, review), each a model and an effort checked against the model's own listed efforts (`channels.efforts_of`), and names \"the Review Loop's model\" then, so a later settings change moves nothing; `role_config` reads a role's group from the run's store, and the commit point hands them to the spec's `cell` and `reviewer`, since every turn read the window's `next` model at the moment it ran and the owner could not tell which model was working (oneshot-models, PR #329 round 1, forty-two lines). Before that: baseline under the new-file cap."
     },
     "tool/main/planning.py": {
       "dup": 18,
