@@ -135,6 +135,18 @@ def test_the_public_ci_runs_the_gate_on_every_push_and_pull_request(finished, te
     assert oneshot_pr.ci_file(tree, oneshot_pr.workflows(tree).get(oneshot_pr.CI), "uv run pytest") is runs
 
 
+@pytest.mark.parametrize("run, runs", [
+    ("uv sync\n          uv run pytest &&\n          npm --prefix web test\n", True),
+    ("uv run pytest &&\n          npm --prefix web test -- --run one\n", False),
+    ("uv run pytest &&\n", False),
+])
+def test_a_gate_over_several_lines_runs_as_one_block(finished, run, runs):
+    tree, _ = finished
+    readme(tree, (oneshot_pr.CI, workflow(f"      - shell: pwsh\n        run: |\n          {run}")))
+    gate = "uv run pytest &&\nnpm --prefix web test"
+    assert oneshot_pr.ci_file(tree, oneshot_pr.workflows(tree).get(oneshot_pr.CI), gate) is runs
+
+
 def test_a_workflow_deleted_in_the_run_is_no_ci_and_a_committed_one_passes(finished):
     tree, sent = finished
     oneshot_spec.saved("budget", oneshot={"profile": {**o()["profile"], "visibility": "public", "ci": "github-actions"}})

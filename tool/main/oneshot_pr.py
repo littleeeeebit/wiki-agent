@@ -80,10 +80,15 @@ def ci_file(path: Path, mode: str | None, gate: str) -> bool:
     if not {"push", "pull_request"} <= events:   # on every push and pull request, not by hand only
         return False
     steps = [s for job in flow["jobs"].values() if isinstance(job, dict) for s in job.get("steps") or []]
-    # A line of `run` is the gate exactly: named in a comment or an `echo` it never runs, and an argument
-    # added after it (`--collect-only`, a narrower selection) runs something else. Its arguments live in `gate_cmd`.
-    return any(line.strip() == gate
-               for s in steps if isinstance(s, dict) for line in str(s.get("run") or "").splitlines())
+    # The gate's lines run as a block of `run`, each exactly: named in a comment or an `echo` it never runs,
+    # and an argument added (`--collect-only`, a narrower selection) runs something else. Arguments live in
+    # `gate_cmd`, which may span lines (the front build extends the backend's).
+    want = [line.strip() for line in gate.splitlines() if line.strip()]
+    for s in steps:
+        have = [line.strip() for line in str(s.get("run") or "").splitlines() if line.strip()] if isinstance(s, dict) else []
+        if want and any(have[i:i + len(want)] == want for i in range(len(have) - len(want) + 1)):
+            return True
+    return False
 
 
 def readied(path: Path, run, spec: dict, final: str) -> str:
