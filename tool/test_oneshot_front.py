@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from main import oneshot, oneshot_front as front, oneshot_screens as screens, oneshot_spec, query, specs, work
+from main import oneshot, oneshot_build, oneshot_front as front, oneshot_screens as screens, oneshot_spec, query, specs, work
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_spec import fenced, world  # noqa: F401 — `world` is a fixture
 
@@ -269,12 +269,61 @@ def test_r2_needs_every_item_and_a_palette_then_commits_the_design(boarded):
         front.decide("budget", approve_all())
     with pytest.raises(HTTPException, match="없는 색"):
         front.decide("budget", approve_all(palette="C9"))
-    front.decide("budget", approve_all(palette="C2"))
-    assert o()["stage"] == "build-front" and o()["r2"]["palette"] == "C2"
+    begun = []
+    with patch.object(front.oneshot_front_build, "begin", begun.append):
+        front.decide("budget", approve_all(palette="C2"))
+    assert o()["stage"] == "build-front" and o()["r2"]["palette"] == "C2" and begun == ["budget"]
     for name in ("docs/design/frontend.md", "docs/design/mock/S1.html", "docs/design/shots/S3-desktop.png"):
         assert (boarded / name).is_file()
     sheet_md = (boarded / "docs/design/frontend.md").read_text(encoding="utf-8")
     assert "](shots/S1-desktop.png)" in sheet_md and "| C2 (고름) |" in sheet_md
+
+
+def test_a_server_that_dies_before_the_front_build_starts_resumes_it(boarded):
+    designed(boarded)
+    seen, sent = [], []
+    with patch.object(front.oneshot_front_build, "begin", lambda repo: seen.append(o()["working"])):
+        front.decide("budget", approve_all(palette="C1"))   # the build turn never left: the server went down
+    assert seen == ["build-front"]
+    oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "restart"
+    # what the backend's stages wrote, which this fixture skips
+    oneshot_spec.saved("budget", oneshot={"tests_head": head(boarded), "contract": ["test_budget.py"],
+                                          "profile": {**o()["profile"], "python_env": "uv"}})
+    with patch.object(oneshot_build, "send", lambda *a: sent.append(a)):
+        oneshot_spec.resume("budget")
+    assert sent[-1][:2] == ("budget", "build-front")
+    assert specs.load("budget", oneshot.BRANCH)["done"] == [   # what the resumed turn reports against
+        f"{s['id']} `{s['route']}`: {s['purpose']}" for s in o()["front"]["screens"]]
+
+
+def test_a_build_the_budget_refuses_after_the_approval_lets_the_queued_instruction_go(boarded):
+    designed(boarded)
+    oneshot_spec.saved("budget", oneshot={"tests_head": head(boarded), "contract": ["test_budget.py"],
+                                          "profile": {**o()["profile"], "python_env": "uv"}})
+    work._queued[str(boarded)] = work.Order(path=str(boarded), text="다음 지시")
+    begun = []
+    try:
+        with patch.object(oneshot_build, "allowed", lambda *a: "예산을 다 썼다"), \
+             patch.object(work, "session", lambda *a: SimpleNamespace(id="c", parent_id=None)), \
+             patch.object(work, "begin", lambda path, chat, text, release, run: (begun.append(text), release())):
+            front.decide("budget", approve_all(palette="C1"))
+        assert o()["stopped"]["reason"] == "budget" and begun == ["다음 지시"]
+    finally:
+        work._queued.pop(str(boarded), None)
+
+
+def test_an_instruction_queued_before_the_approval_waits_for_the_front_build(boarded):
+    designed(boarded)
+    work._queued[str(boarded)] = work.Order(path=str(boarded), text="다음 지시")
+    seen, begun = [], []
+    try:
+        with patch.object(front.oneshot_front_build, "begin", lambda repo: seen.append(str(boarded) in work._queued)), \
+             patch.object(work, "begin", lambda *a: begun.append(a)):
+            front.decide("budget", approve_all(palette="C1"))
+        assert seen == [True] and begun == []   # the build turn sends it when it ends
+    finally:
+        work._queued.pop(str(boarded), None)
 
 
 def test_an_edit_reaches_the_screens_states_and_keeps_the_rest_approved(boarded):
@@ -341,8 +390,10 @@ def test_an_approval_while_another_turn_holds_the_tree_is_refused_and_keeps_the_
     finally:
         release()
     assert o()["stage"] == "r2" and o()["r2"]["palette"] == "C1" and not (boarded / "docs/design").exists()
-    front.decide("budget", approve_all())
-    assert o()["stage"] == "build-front" and (boarded / "docs/design/frontend.md").is_file()
+    begun = []
+    with patch.object(front.oneshot_front_build, "begin", begun.append):
+        front.decide("budget", approve_all())
+    assert o()["stage"] == "build-front" and (boarded / "docs/design/frontend.md").is_file() and begun == ["budget"]
 
 
 def test_a_split_after_a_rebuild_drops_the_old_design_and_shows_the_new_board(boarded):

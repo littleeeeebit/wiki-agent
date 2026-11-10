@@ -16,6 +16,7 @@ import tomllib
 import uuid
 from fnmatch import fnmatchcase
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 
@@ -25,9 +26,8 @@ from .query import ROOT, _lock as work_lock, hold
 
 TESTS_PROMPT = (ROOT / "tool/prompts/oneshot-tests.md").read_text(encoding="utf-8")
 BUILD_PROMPT = (ROOT / "tool/prompts/oneshot-build.md").read_text(encoding="utf-8")
-STAGES = ("tests", "build")
 MAX_ATTEMPTS = 3
-STOPS = {"tests": "tests", "build": "gate"}
+GRANTS: set[str] = set()   # a stage whose turn may write the worktree's adapter, only while it runs
 CONFIG = ("pyproject.toml", "uv.lock", "pytest.ini")
 RUN_SECONDS = 900
 # The contract runs on its own files: no plugin loads itself from the environment, and no option comes in.
@@ -74,25 +74,38 @@ class Turn(work.Run):
         self.ended.set()
         store = oneshot_spec.store(self.repo)
         with oneshot._lock:
+            if self.stage in GRANTS:
+                oneshot_spec.saved(self.repo, adapter=False)
             if (store.get().get("inflight") or {}).get("turn") == self.token:
                 store.put(inflight=None)
 
 
 def send(repo: str, stage: str, text: str) -> None:
-    """One work turn for `stage` in the spec's worktree; a turn that cannot be sent stops the stage."""
+    """One work turn for `stage` in the spec's worktree; a turn that cannot be sent stops the stage, and
+    the instruction the person queued for the worktree goes then, as after a turn."""
 
     store = oneshot_spec.store(repo)
     spec = oneshot_spec.spec_of(repo)
     path, codex = Path(spec["worktree"]), oneshot.codex_role()
     with oneshot._lock:
-        if why := allowed(spec["oneshot"].get("spend"), spec["oneshot"].get("profile"), stage, codex):
+        why = allowed(spec["oneshot"].get("spend"), spec["oneshot"].get("profile"), stage, codex)
+        if why:
             store.stop("budget", why)
-            return
+    if why:
+        idle(path)
+        return
     try:
-        release = hold(work._busy, work_lock, str(path), "작업트리를 다른 턴이 쓰고 있다", kind="turn")
-    except HTTPException as exc:
+        held = hold(work._busy, work_lock, str(path), "작업트리를 다른 턴이 쓰고 있다", kind="turn")
+    except HTTPException as exc:   # whoever holds it sends the queued instruction when it lets go
         store.stop("block", str(exc.detail))
         return
+
+    def release() -> None:   # the grant goes before the tree does: the next turn there never finds it set
+        if stage in GRANTS:
+            oneshot_spec.saved(repo, adapter=False)
+        held()
+
+    release.held = held.held
     turn = None
     try:
         cfg = oneshot.role_config()
@@ -100,6 +113,8 @@ def send(repo: str, stage: str, text: str) -> None:
         turn = Turn(chat, repo, stage, codex)
         store.put(working=stage, stopped=None,
                   inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token})
+        if stage in GRANTS:   # set as the turn starts, a resumed one included; the turn's end clears it
+            oneshot_spec.saved(repo, adapter=True)
         work.begin(path, chat, text, release, turn)
     except BaseException as exc:
         if turn is not None:
@@ -107,6 +122,13 @@ def send(repo: str, stage: str, text: str) -> None:
         release()
         store.stop("restart" if runtime.stopping.is_set() else "block",
                    f"작업 턴을 보내지 못했다 — {getattr(exc, 'detail', exc)}")
+        idle(path)
+
+
+def idle(path: Path) -> None:
+    """No turn was sent: the instruction queued for the worktree goes now, unless the server is stopping."""
+
+    work.dispatch(path, SimpleNamespace(halt=runtime.stopping, turn=""))
 
 
 def planned(spec: dict) -> list[dict]:
@@ -134,9 +156,7 @@ def begin(repo: str) -> None:
 def resume(repo: str) -> None:
     spec = oneshot_spec.saved(repo, oneshot={"attempts": 0})   # the owner's resume starts the attempts afresh
     stage = spec["oneshot"]["stage"]
-    from . import oneshot_review   # it imports this module
-
-    send(repo, stage, tests_text(spec) if stage == "tests" else oneshot_review.build_turn(spec))
+    send(repo, stage, STAGES[stage][2](spec))
 
 
 # -- What the server checks ------------------------------------------------------------
@@ -322,24 +342,22 @@ def checked(path: Path, run, spec: dict, final: str):
     if getattr(run, "person", False) or stage not in STAGES:
         return None
     run.checked = True
+    check, stop, _, after = STAGES[stage]
     try:
-        why = tested(path, run, spec) if stage == "tests" else built(path, run, spec, final)
+        why = check(path, run, spec, final)
     except (ValueError, OSError) as exc:
         why = str(exc)
     except Exception as exc:   # an unforeseen failure still stops with a reason, never leaves the stage running
         oneshot_spec.store(repo).stop("block", f"{type(exc).__name__}: {exc}")
         raise
     if not why:
-        if stage == "tests":
-            return unless_stopped(run, repo, lambda: send(repo, "build", build_text(oneshot_spec.spec_of(repo))))
-        from . import oneshot_review   # it imports this module
-        return unless_stopped(run, repo, lambda: oneshot_review.begin(repo))
+        return unless_stopped(run, repo, lambda: after(repo))
     specs.note(run, why)
     attempts = int(spec["oneshot"].get("attempts") or 0) + 1
     store = oneshot_spec.store(repo)
     if attempts >= MAX_ATTEMPTS or run.halt.is_set():
         store.put(attempts=attempts)
-        store.stop(STOPS[stage], why)
+        store.stop(stop, why)
         return None
     store.put(attempts=attempts, working=None)
     return unless_stopped(run, repo, lambda: send(
@@ -361,7 +379,7 @@ def unless_stopped(run, repo: str, then):
     return next_turn
 
 
-def tested(path: Path, run, spec: dict) -> str:
+def tested(path: Path, run, spec: dict, final: str = "") -> str:
     """Only tests and their configuration changed, they collect, and every planned test fails because the
     application is not there yet: then the server commits those files alone and pins them, with each planned
     test's node ids, at that commit."""
@@ -403,25 +421,54 @@ def built(path: Path, run, spec: dict, final: str) -> str:
     """A done-report meeting every item, the contract tests unchanged, the gate green on a clean HEAD, and
     every node id pinned at the tests commit passing: then the run moves to the backend review."""
 
-    report = next((b for b in specs.blocks(final)[1] if b["name"] == "done-report"), None)
-    if report is None or "error" in report or not specs.valid(report.get("value")):
-        return "완료 보고(`done-report`)가 없거나 형식이 틀렸다 — 항목마다 item 과 pass 를 적는다"
-    if short := specs.shortfall(report["value"], spec):
-        return short
     o = spec["oneshot"]
-    if why := pinned(path, o):
+    if why := reported(spec, final) or pinned(path, o):
         return why
     verdict = specs.judge(path, [gate_cmd(o["profile"])], run.halt, lambda text: specs.note(run, text))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
-    nodes = o["nodes"]
-    found = ran(path, run, spec, o["contract"], [n for ids in nodes.values() for n in ids])
-    if why := green(nodes, found):
+    if why := held(path, run, spec, verdict):
         return why
-    if head(path) != verdict["head"] or specs.dirty(path):
-        return "계획 테스트를 돌리는 동안 작업트리가 바뀌었다"
     # `working` names the review before its worker starts: a server that dies in between leaves it for `recover`.
     oneshot_spec.saved(spec["repo"], oneshot={"stage": "review", "built_head": verdict["head"], "attempts": 0,
                                               "working": "review"})
     specs.note(run, f"백엔드 빌드 통과 · {verdict['head'][:12]}")
     return ""
+
+
+def held(path: Path, run, spec: dict, verdict: dict) -> str:
+    """Empty when every node id pinned at the tests commit passes and the runs left HEAD and the worktree as
+    the green gate saw them, or why not."""
+
+    o = spec["oneshot"]
+    nodes = o["nodes"]
+    if why := green(nodes, ran(path, run, spec, o["contract"], [n for ids in nodes.values() for n in ids])):
+        return why
+    if head(path) != verdict["head"] or specs.dirty(path):
+        return "계획 테스트를 돌리는 동안 작업트리가 바뀌었다"
+    return ""
+
+
+def reported(spec: dict, final: str) -> str:
+    """Empty when the answer's `done-report` meets every item of the spec's `done`, or why not."""
+
+    report = next((b for b in specs.blocks(final)[1] if b["name"] == "done-report"), None)
+    if report is None or "error" in report or not specs.valid(report.get("value")):
+        return "완료 보고(`done-report`)가 없거나 형식이 틀렸다 — 항목마다 item 과 pass 를 적는다"
+    return specs.shortfall(report["value"], spec) or ""
+
+
+def review_module():
+    from . import oneshot_review   # it imports this module
+
+    return oneshot_review
+
+
+def reviewed(repo: str) -> None:
+    review_module().begin(repo)
+
+
+# A stage's turn: `(check, stop reason after the last refusal, the turn's text, what follows a pass)`.
+# A later stage's module adds its own.
+STAGES = {"tests": (tested, "tests", tests_text, lambda repo: send(repo, "build", build_text(oneshot_spec.spec_of(repo)))),
+          "build": (built, "gate", lambda spec: review_module().build_turn(spec), reviewed)}
