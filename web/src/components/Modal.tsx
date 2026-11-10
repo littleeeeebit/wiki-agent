@@ -20,6 +20,12 @@ export function Modal({ title, onClose, children, foot, wide, locked }: {
 }) {
   const box = useRef<HTMLDialogElement>(null)
   const [layer, setLayer] = useState<HTMLDialogElement | null>(null)
+  const pressed = useRef(false)
+  const outside = (e: { target: EventTarget; clientX: number; clientY: number }) => {
+    const r = box.current?.getBoundingClientRect()
+    return !!r && e.target === box.current &&
+      (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)
+  }
   // Opened once; unmounting removes it. Closing it in a cleanup would fire
   // `close`, and so `onClose`, on StrictMode's rehearsal unmount.
   useEffect(() => {
@@ -34,7 +40,10 @@ export function Modal({ title, onClose, children, foot, wide, locked }: {
       // Escape closes a `<dialog>` by itself; the component stayed mounted
       // and its request's answer landed on a screen that had moved on.
       onCancel={(e) => locked && e.preventDefault()}
-      onClick={(e) => e.target === box.current && !locked && onClose()}
+      // The backdrop is outside the box. A click's target is what holds both its press and its release:
+      // a list that opens on the press over its trigger made a press inside read as the backdrop.
+      onPointerDown={(e) => { pressed.current = outside(e) }}
+      onClick={(e) => pressed.current && outside(e) && !locked && onClose()}
       className={cn('m-auto max-h-[85dvh] max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-card p-0 text-foreground',
         'backdrop:bg-black/50', wide ? 'w-[40rem]' : 'w-[28rem]')}
     >
