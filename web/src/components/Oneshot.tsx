@@ -120,13 +120,11 @@ export function OneshotRail({ open }: { open: (repo: string) => void }) {
   useEffect(() => {
     const read = () => { oneshotSpecs().then((d) => setRuns(d.specs.filter((s) => s.stage !== 'done'))).catch(() => setRuns([])) }
     read()
-    // A worker moving a run on (an automatic stage reaching a gate) saves its spec, which the feed announces.
-    window.addEventListener('focus', read)
-    window.addEventListener('spec-changed', read)
-    return () => {
-      window.removeEventListener('focus', read)
-      window.removeEventListener('spec-changed', read)
-    }
+    // A worker moving a run on (an automatic stage reaching a gate) saves its spec, which the feed announces;
+    // a feed that reconnects or resyncs announces no single spec, so the rail reads again then too.
+    const on = ['focus', 'spec-changed', 'server-resync']
+    on.forEach((name) => window.addEventListener(name, read))
+    return () => on.forEach((name) => window.removeEventListener(name, read))
   }, [])
   if (!runs.length) return null
   return (

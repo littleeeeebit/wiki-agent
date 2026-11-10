@@ -218,6 +218,9 @@ def main():
         views["auto-demo"] = run("auto-demo", "r1")
         page.evaluate("window.dispatchEvent(new Event('spec-changed'))")
         expect(row.get_by_label("결정을 기다린다")).to_be_visible()
+        views["auto-demo"] = run("auto-demo", "build", working="build", waits=False)   # and a feed resync alone
+        page.evaluate("window.dispatchEvent(new Event('server-resync'))")
+        expect(row.get_by_label("결정을 기다린다")).to_have_count(0)
         browser.close()
     assert not errors, errors
     print("PASS: the rail marks a run that waits; a gate sheet needs every item, folded or not, and records the folds "
