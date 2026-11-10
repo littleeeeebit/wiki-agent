@@ -80,8 +80,9 @@ def ci_file(path: Path, mode: str | None, gate: str) -> bool:
     if not {"push", "pull_request"} <= events:   # on every push and pull request, not by hand only
         return False
     steps = [s for job in flow["jobs"].values() if isinstance(job, dict) for s in job.get("steps") or []]
-    # The gate is a command a line of `run` starts with: named in a comment or an `echo`, it never runs.
-    return any(line.strip() == gate or line.strip().startswith(gate + " ")
+    # A line of `run` is the gate exactly: named in a comment or an `echo` it never runs, and an argument
+    # added after it (`--collect-only`, a narrower selection) runs something else. Its arguments live in `gate_cmd`.
+    return any(line.strip() == gate
                for s in steps if isinstance(s, dict) for line in str(s.get("run") or "").splitlines())
 
 

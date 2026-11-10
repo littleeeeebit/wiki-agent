@@ -123,7 +123,9 @@ def test_a_public_repository_needs_its_committed_ci_workflow(finished, more):
     (workflow("      - run: echo uv run pytest\n"), False),
     ("on: workflow_dispatch\njobs:\n  gate:\n    steps:\n      - run: uv run pytest\n", False),
     ("on: push\njobs:\n  gate:\n    steps:\n      - run: uv run pytest\n", False),
-    (workflow("      - run: |\n          uv sync\n          uv run pytest -q\n"), True),
+    (workflow("      - shell: pwsh\n        run: |\n          uv run pytest --collect-only\n"), False),
+    (workflow("      - run: uv run pytest tests/test_one.py\n"), False),
+    (workflow("      - run: |\n          uv sync\n          cd .\n          uv run pytest\n"), True),
     ("on:\n  push:\n    branches: [main]\n  pull_request:\njobs:\n  a:\n    steps:\n      - run: ls\n"
      "  b:\n    steps:\n      - run: uv run pytest\n", True),
 ])
