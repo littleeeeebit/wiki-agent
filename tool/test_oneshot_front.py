@@ -293,6 +293,24 @@ def test_a_server_that_dies_before_the_front_build_starts_resumes_it(boarded):
     with patch.object(oneshot_build, "send", lambda *a: sent.append(a)):
         oneshot_spec.resume("budget")
     assert sent[-1][:2] == ("budget", "build-front")
+    assert specs.load("budget", oneshot.BRANCH)["done"] == [   # what the resumed turn reports against
+        f"{s['id']} `{s['route']}`: {s['purpose']}" for s in o()["front"]["screens"]]
+
+
+def test_a_build_the_budget_refuses_after_the_approval_lets_the_queued_instruction_go(boarded):
+    designed(boarded)
+    oneshot_spec.saved("budget", oneshot={"tests_head": head(boarded), "contract": ["test_budget.py"],
+                                          "profile": {**o()["profile"], "python_env": "uv"}})
+    work._queued[str(boarded)] = work.Order(path=str(boarded), text="다음 지시")
+    begun = []
+    try:
+        with patch.object(oneshot_build, "allowed", lambda *a: "예산을 다 썼다"), \
+             patch.object(work, "session", lambda *a: SimpleNamespace(id="c", parent_id=None)), \
+             patch.object(work, "begin", lambda path, chat, text, release, run: (begun.append(text), release())):
+            front.decide("budget", approve_all(palette="C1"))
+        assert o()["stopped"]["reason"] == "budget" and begun == ["다음 지시"]
+    finally:
+        work._queued.pop(str(boarded), None)
 
 
 def test_an_instruction_queued_before_the_approval_waits_for_the_front_build(boarded):

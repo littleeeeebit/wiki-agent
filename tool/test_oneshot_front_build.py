@@ -139,6 +139,45 @@ def test_an_adapter_that_lost_the_backend_tests_or_left_live_empty_is_refused(st
     assert o()["stage"] == "build-front" and o()["attempts"] == 1 and said in sent[-1][2]
 
 
+def test_a_gate_that_only_names_the_backend_tests_still_runs_them(staged):
+    built(staged, slots=adapter(gate=f"{GATE} --version"))   # names `pytest`, runs none of it
+    write(staged, "test_other.py", "def test_a_backend_rule_outside_the_contract():\n    assert False\n")
+    git(staged, "add", "-A")
+    git(staged, "commit", "-m", "other")
+    sent = []
+    with patch.object(oneshot_build, "send", lambda *a: sent.append(a)), \
+         patch.object(front_build.oneshot_look, "look", lambda *a: []):
+        check(staged)()
+    assert o()["stage"] == "build-front" and "게이트 실패" in sent[-1][2]
+
+
+def test_a_stop_during_the_look_passes_nothing_and_leaves_the_build_resumable(staged):
+    built(staged)
+    run = Run()
+    with patch.object(front_build.oneshot_look, "look", lambda *a: (run.halt.set(), [])[1]):
+        oneshot_build.checked(staged, run, spec(), report())
+    assert o()["stage"] == "build-front" and o()["stopped"]["reason"] == "gate" and "멈췄다" in o()["stopped"]["detail"]
+    sent = []
+    with patch.object(oneshot_build, "send", lambda *a: sent.append(a)):
+        oneshot_spec.resume("budget")
+    assert sent[-1][:2] == ("budget", "build-front")
+
+
+def test_a_tree_changed_while_the_app_ran_is_not_recorded_as_passed(staged):
+    built(staged)
+
+    def look(*a):
+        write(staged, "app/built.js", "x")   # what a `live_cmd` that builds into the tree leaves
+        git(staged, "add", "-A")
+        git(staged, "commit", "-m", "built")
+        return []
+
+    sent = []
+    with patch.object(oneshot_build, "send", lambda *a: sent.append(a)), patch.object(front_build.oneshot_look, "look", look):
+        check(staged)()
+    assert o()["stage"] == "build-front" and "작업트리가 바뀌었다" in sent[-1][2] and not o().get("front_built_head")
+
+
 def test_a_high_finding_from_the_shots_is_sent_back_and_kept(staged):
     playwright_or_skip()
     built(staged, FIRST.replace('<a href="#/months">달별</a>', ""))
@@ -207,8 +246,9 @@ def test_the_grant_opens_the_worktrees_adapter_only_while_a_build_turn_runs(link
         assert spec()["adapter"] is True and writes(tree) and not writes(original)
         turn, release = begun[0]
         ending(turn)
+        release()   # the server lets the tree go before it tells the end: the next turn there gets no grant
+        assert spec()["adapter"] is False and not writes(tree)
         turn.finish()
-        release()
     assert spec()["adapter"] is False and not writes(tree)
 
 

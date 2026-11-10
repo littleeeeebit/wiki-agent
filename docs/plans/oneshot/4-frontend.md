@@ -153,7 +153,10 @@ again from the new map, and R2 is shown whole, not as a difference.
 R2's approval sends one write turn (stage `build-front`, run like the
 backend's through `oneshot_build.send`) the approved screen map, states,
 chosen palette and the frequency map; the spec's `done` becomes one item per
-screen. The rules it must follow, all checked by the server:
+screen in the same save that commits the approval, so a turn resumed after a
+restart reports against the screens too. A turn that cannot be sent (the
+budget, a failed start) lets the instruction the person queued meanwhile go,
+as a finished turn does. The rules it must follow, all checked by the server:
 
 - Every control for a feature carries `data-feature="<feature_id>"`.
 - The adapter's `live_cmd` starts the backend and the frontend together;
@@ -174,24 +177,31 @@ alone, so its lifetime is the run's job:
 - Set when an S7 build turn actually starts, including a resumed one.
 - Cleared when that turn ends by any path: accepted `done-report`, a refused
   one, a gate failure, a model error, the owner's stop, the budget. The clear
-  sits in the turn's end handler, which runs for every ending, not in the
-  completion path, which an errored turn never reaches.
+  sits in the turn's release of the worktree, which runs for every ending and
+  before the worktree is let go, so the next turn there never finds it set.
 - Cleared by the run's `recover()` at server start for every oneshot spec,
   since a restart can cut a turn before its end handler runs.
 
 So the grant exists only while a build turn is running, and only in the
 linked worktree. The server then reads the committed adapter back and
 refuses the build if `gate_cmd` lost the backend's tests or `live_cmd` is
-empty. It runs the adapter's gate on a clean HEAD, keeps the contract tests
-pinned and every planned backend test passing by node id, as in S4, and then
-runs the harness below. A high finding goes back to the turn with the rest of
-S4's refusal rule (three in all, then `gate`); a pass moves the run to
-`critique`.
+empty. It runs the backend's gate command as the server knows it and then
+the adapter's gate, on a clean HEAD, keeps the contract tests pinned and
+every planned backend test passing by node id, as in S4, and then runs the
+harness below. After the harness the HEAD must still be the one the gate
+passed, with a clean tree; a look the owner's stop or a server shutdown cut
+short passes nothing and leaves the stage at `build-front`. A high finding
+goes back to the turn with the rest of S4's refusal rule (three in all, then
+`gate`); a pass moves the run to `critique`.
 
 ### Look: the shooting harness
 
-A server routine, not a model. With `live_cmd` running it drives Playwright
-over every route, at each viewport, in each state:
+A server routine, not a model. It starts `live_cmd` on a free port inside a
+process tree it owns (a job on Windows, a process group elsewhere), never
+starts it when that tree cannot be owned, refuses an answer on the port once
+the launcher has exited, and kills the tree on every way out. With the app
+running it drives Playwright over every route, at each viewport, in each
+state:
 
 | State | How it is produced without changing the app |
 | --- | --- |
@@ -210,10 +220,11 @@ and records, per shot:
 - Console errors and unhandled rejections (high).
 - Horizontal overflow, `scrollWidth` above the viewport width (medium).
 - The placement check from the DOM in the `full` state: on the primary route
-  every `every` feature's `data-feature` element is visible without
-  interaction, no `rarely` or `never` one is present, and every `sometimes`
-  one is visible there or becomes visible after one click on one of the
-  first fifteen controls (high).
+  every `every` feature's `data-feature` element is visible inside the
+  viewport without interaction or scrolling, no `rarely` or `never` one is
+  present, and every `sometimes` one is visible there or becomes visible in
+  the viewport after one click on one of the first fifteen controls that is
+  itself in view (high).
 - Across every screen, no `never` feature is present and every other feature
   is present somewhere (high).
 

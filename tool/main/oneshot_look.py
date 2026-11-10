@@ -45,10 +45,22 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+def never() -> bool:
+    return False
+
+
+def halted(stopped) -> None:
+    if stopped():
+        raise ValueError("화면 검사 중에 멈췄다 — [재개] 로 빌드부터 다시 검사한다")
+
+
 @contextmanager
-def served(tree: Path, cmd: str, data: Path):
+def served(tree: Path, cmd: str, data: Path, stopped=never):
     """The app running from `cmd` in `tree` on a free port with its data in `data`: its URL.
-    Every process it started is killed on the way out."""
+    Every process it started is killed on the way out; a tree it cannot own is never started.
+    ponytail: a free port can be taken by another program between the probe and the app's bind; a
+    launcher that exited is refused, but one that stays alive while that program answers is not.
+    Matching the listener's pid to the job would close it."""
 
     port = free_port()
     env = {**os.environ, "PORT": str(port), "APP_DATA_DIR": str(data), "PYTHONUNBUFFERED": "1"}
@@ -60,15 +72,21 @@ def served(tree: Path, cmd: str, data: Path):
                                process.background_options().get("creationflags", 0) | process.SUSPENDED})
     job = process.contained(proc)
     try:
+        if not job:   # its children would outlive the kill, holding the port and the data folder
+            proc.kill()
+            proc.wait()
+            raise ValueError("`live_cmd` 의 프로세스 트리를 묶지 못해 앱을 띄우지 않았다")
         process.resumed(proc)
         url, deadline = f"http://127.0.0.1:{port}", time.monotonic() + READY_SECONDS
         while True:
-            try:
-                with urllib.request.urlopen(url + "/", timeout=5) as answer:
-                    if answer.status == 200:
-                        break
-            except (urllib.error.URLError, OSError):
-                pass
+            halted(stopped)
+            if proc.poll() is None:   # an answer from a port whose launcher exited is someone else's
+                try:
+                    with urllib.request.urlopen(url + "/", timeout=5) as answer:
+                        if answer.status == 200 and proc.poll() is None:
+                            break
+                except (urllib.error.URLError, OSError):
+                    pass
             if proc.poll() is not None or time.monotonic() > deadline:
                 log.seek(0)
                 raise ValueError(f"`live_cmd` 가 {url}/ 에 앱을 띄우지 못했다 ({proc.poll()}) — {log.read()[-600:]}")
@@ -144,13 +162,23 @@ def opened(browser, url: str, route: str, view: str, state: str, api: re.Pattern
     return page
 
 
+# Shown and inside the viewport as it stands: `is_visible` alone counts an element far below the fold.
+IN_VIEW = """el => { const r = el.getBoundingClientRect();
+  return r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth; }"""
+
+
+def in_view(element) -> bool:
+    return element.is_visible() and element.evaluate(IN_VIEW)
+
+
 def visible(page, fid: str) -> bool:
     found = page.locator(f'[data-feature="{fid}"]')
-    return any(found.nth(i).is_visible() for i in range(min(found.count(), 5)))
+    return any(in_view(found.nth(i)) for i in range(min(found.count(), 5)))
 
 
-def one_click(browser, url: str, route: str, view: str, api: re.Pattern, fid: str) -> bool:
-    """Whether some single click on the first screen makes the feature visible, there or where it leads."""
+def one_click(browser, url: str, route: str, view: str, api: re.Pattern, fid: str, stopped=never) -> bool:
+    """Whether some single click on the first screen, on a control in view without scrolling, makes the
+    feature visible in view, there or where it leads."""
 
     page = opened(browser, url, route, view, "full", api, [])
     try:
@@ -158,10 +186,11 @@ def one_click(browser, url: str, route: str, view: str, api: re.Pattern, fid: st
     finally:
         page.close()
     for i in range(n):
+        halted(stopped)
         page = opened(browser, url, route, view, "full", api, [])
         try:
             target = page.locator(CLICKABLE).nth(i)
-            if not target.is_visible():
+            if not in_view(target):   # Playwright would scroll to it: that is more than one click
                 continue
             target.click(timeout=3_000)
             page.wait_for_timeout(SETTLE_MS)
@@ -174,7 +203,8 @@ def one_click(browser, url: str, route: str, view: str, api: re.Pattern, fid: st
     return False
 
 
-def placement(browser, url: str, front: dict, frequency: dict, view: str, api: re.Pattern) -> list[dict]:
+def placement(browser, url: str, front: dict, frequency: dict, view: str, api: re.Pattern,
+              stopped=never) -> list[dict]:
     """The owner's map read from the DOM in the `full` state; each breach is high."""
 
     first = next(s for s in front["screens"] if s["primary"])
@@ -190,13 +220,13 @@ def placement(browser, url: str, front: dict, frequency: dict, view: str, api: r
             out.append(finding("high", first["id"], view, "full", f"늘 쓰는 기능 `{f}` 가 첫 화면에 바로 보이지 않는다"))
         if cls in ("rarely", "never") and present[f]:
             out.append(finding("high", first["id"], view, "full", f"`{f}` 는 첫 화면에 없어야 한다"))
-        if cls == "sometimes" and not on_first[f] and not one_click(browser, url, first["route"], view, api, f):
+        if cls == "sometimes" and not on_first[f] and not one_click(browser, url, first["route"], view, api, f, stopped):
             out.append(finding("high", first["id"], view, "full", f"가끔 쓰는 기능 `{f}` 가 한 번 눌러서 보이지 않는다"))
     return out
 
 
 def look(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], views: list[str],
-         folder: Path) -> list[dict]:
+         folder: Path, stopped=never) -> list[dict]:
     """Every screen at every viewport in `empty`, `full`, `loading` and `error`, shot into `folder` as
     `<screen>-<viewport>-<state>.png`; the findings, the placement check's included."""
 
@@ -212,16 +242,17 @@ def look(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], vie
             for data_state, states in (("empty", ["empty"]), ("full", ["full", "loading", "error"])):
                 data = Path(scratch) / data_state
                 data.mkdir()
-                with served(tree, cmd, data) as url:
+                with served(tree, cmd, data, stopped) as url:
                     if data_state == "full":
                         seeded(tree, url)
                     for s in front["screens"]:
                         for view in views:
                             for state in states:
+                                halted(stopped)   # a stop ends the look: the app and the browser go below
                                 findings += shot(browser, url, s, view, state, api, folder, shown)
                     if data_state == "full":
                         for view in views:
-                            findings += placement(browser, url, front, frequency, view, api)
+                            findings += placement(browser, url, front, frequency, view, api, stopped)
         finally:
             browser.close()
     first = next(s for s in front["screens"] if s["primary"])

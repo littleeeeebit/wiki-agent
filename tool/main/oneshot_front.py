@@ -281,8 +281,10 @@ def record(repo: str, store, spec: dict, tree: Path) -> bool:
     head = oneshot_spec.commit(repo, tree, list(copies), f"Record the approved frontend design (R2 round {o['r2']['round']})")
     if not head:
         return False
-    # `working` names the build before its turn is sent: a server that dies in between leaves it for `recover`.
-    oneshot_spec.saved(repo, oneshot={"stage": "build-front", "front_head": head, "working": "build-front"})
+    # `working` names the build before its turn is sent: a server that dies in between leaves it for `recover`,
+    # and the screens are already the spec's `done` that the resumed turn reports against.
+    oneshot_spec.saved(repo, done=[f"{s['id']} `{s['route']}`: {s['purpose']}" for s in front["screens"]],
+                       oneshot={"stage": "build-front", "front_head": head, "working": "build-front", "attempts": 0})
     return True
 
 

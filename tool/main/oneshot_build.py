@@ -16,6 +16,7 @@ import tomllib
 import uuid
 from fnmatch import fnmatchcase
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 
@@ -59,8 +60,6 @@ class Turn(work.Run):
         error = next((e["text"] for e in reversed(self.events) if e["kind"] == "error"), "") or "완료된 답이 없다"
         store = oneshot_spec.store(self.repo)
         with oneshot._lock:
-            if self.stage in GRANTS:   # every ending clears the grant: done, refused, errored, stopped or cut short
-                oneshot_spec.saved(self.repo, adapter=False)
             current = store.get()
             mine = (current.get("inflight") or {}).get("turn") == self.token
             store.put(**({"inflight": None} if mine else {}),
@@ -82,20 +81,31 @@ class Turn(work.Run):
 
 
 def send(repo: str, stage: str, text: str) -> None:
-    """One work turn for `stage` in the spec's worktree; a turn that cannot be sent stops the stage."""
+    """One work turn for `stage` in the spec's worktree; a turn that cannot be sent stops the stage, and
+    the instruction the person queued for the worktree goes then, as after a turn."""
 
     store = oneshot_spec.store(repo)
     spec = oneshot_spec.spec_of(repo)
     path, codex = Path(spec["worktree"]), oneshot.codex_role()
     with oneshot._lock:
-        if why := allowed(spec["oneshot"].get("spend"), spec["oneshot"].get("profile"), stage, codex):
+        why = allowed(spec["oneshot"].get("spend"), spec["oneshot"].get("profile"), stage, codex)
+        if why:
             store.stop("budget", why)
-            return
+    if why:
+        idle(path)
+        return
     try:
-        release = hold(work._busy, work_lock, str(path), "작업트리를 다른 턴이 쓰고 있다", kind="turn")
-    except HTTPException as exc:
+        held = hold(work._busy, work_lock, str(path), "작업트리를 다른 턴이 쓰고 있다", kind="turn")
+    except HTTPException as exc:   # whoever holds it sends the queued instruction when it lets go
         store.stop("block", str(exc.detail))
         return
+
+    def release() -> None:   # the grant goes before the tree does: the next turn there never finds it set
+        if stage in GRANTS:
+            oneshot_spec.saved(repo, adapter=False)
+        held()
+
+    release.held = held.held
     turn = None
     try:
         cfg = oneshot.role_config()
@@ -109,11 +119,16 @@ def send(repo: str, stage: str, text: str) -> None:
     except BaseException as exc:
         if turn is not None:
             turn.unsent()
-        elif stage in GRANTS:
-            oneshot_spec.saved(repo, adapter=False)
         release()
         store.stop("restart" if runtime.stopping.is_set() else "block",
                    f"작업 턴을 보내지 못했다 — {getattr(exc, 'detail', exc)}")
+        idle(path)
+
+
+def idle(path: Path) -> None:
+    """No turn was sent: the instruction queued for the worktree goes now, unless the server is stopping."""
+
+    work.dispatch(path, SimpleNamespace(halt=runtime.stopping, turn=""))
 
 
 def planned(spec: dict) -> list[dict]:

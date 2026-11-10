@@ -5,8 +5,13 @@ follows the conventions the build prompt fixes: one port from `PORT`, its data u
 `APP_DATA_DIR`, hash routes, and `e2e/seed.json`.
 """
 
+import http.server
 import json
+import subprocess
 import sys
+import threading
+import time
+from unittest.mock import patch
 
 import pytest
 
@@ -70,6 +75,7 @@ FRONT = {"screens": [{"id": "S1", "route": "/", "primary": True, "features": ["a
                      {"id": "S3", "route": "/settings", "primary": False, "features": ["export"]}]}
 FREQUENCY = {"add": "every", "months": "sometimes", "export": "rarely"}
 OPS = ["GET /items", "POST /items"]
+FOLD = '<div style="height:3000px"></div>'
 
 
 @pytest.fixture
@@ -111,6 +117,9 @@ def test_a_clean_app_is_shot_in_every_state_with_no_high_finding(app_tree):
     (FIRST + '<button data-feature="export">내보내기</button>', "첫 화면에 없어야"),
     (FIRST.replace('<a href="#/months">달별</a>', ""), "한 번 눌러서"),
     (FIRST + '<img src="x" onerror="console.error(\'boom\')">', "콘솔 오류"),
+    # below the fold: shown, but not without scrolling, and a link down there is more than one click
+    (FIRST.replace('<button data-feature="add">', f'{FOLD}<button data-feature="add">'), "바로 보이지"),
+    (FIRST.replace('<a href="#/months">', f'{FOLD}<a href="#/months">'), "한 번 눌러서"),
 ])
 def test_the_dom_breaks_of_the_owners_map_and_console_errors_are_high(app_tree, first, said):
     found, _ = app_tree(first)
@@ -125,6 +134,49 @@ def test_a_never_feature_on_any_screen_is_high(app_tree):
 def test_an_app_the_command_cannot_start_is_refused_with_its_output(tmp_path):
     with pytest.raises(ValueError, match="띄우지 못했다"):
         with look.served(tmp_path, f'"{sys.executable}" -c "print(42)"', tmp_path):
+            pass
+
+
+def test_an_app_whose_process_tree_cannot_be_owned_is_never_started(tmp_path):
+    started = []
+    real = subprocess.Popen
+
+    def popen(*a, **k):
+        started.append(real(*a, **k))
+        return started[-1]
+
+    with patch.object(look.subprocess, "Popen", popen), patch.object(look.process, "contained", lambda proc: None), \
+         pytest.raises(ValueError, match="묶지 못해"):
+        with look.served(tmp_path, f'"{sys.executable}" -c "import time; time.sleep(60)"', tmp_path):
+            pass
+    assert started[0].poll() is not None
+
+
+def test_another_program_answering_on_the_port_of_a_launcher_that_exited_is_refused(tmp_path):
+    class Slow(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):   # answers after the launcher has exited
+            time.sleep(2)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    other = http.server.HTTPServer(("127.0.0.1", 0), Slow)
+    threading.Thread(target=other.serve_forever, daemon=True).start()
+    try:
+        with patch.object(look, "free_port", lambda: other.server_address[1]), \
+             pytest.raises(ValueError, match="띄우지 못했다"):
+            with look.served(tmp_path, f'"{sys.executable}" -c "raise SystemExit(1)"', tmp_path):
+                pass
+    finally:
+        other.shutdown()
+        other.server_close()
+
+
+def test_a_stop_ends_the_wait_for_the_app(tmp_path):
+    with pytest.raises(ValueError, match="멈췄다"):
+        with look.served(tmp_path, f'"{sys.executable}" -c "import time; time.sleep(60)"', tmp_path, lambda: True):
             pass
 
 
