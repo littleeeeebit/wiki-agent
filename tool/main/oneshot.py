@@ -453,7 +453,8 @@ def s_register(run: dict) -> None:
     connect.keep(name, hash=connect.digest(text.encode("utf-8")), adapter=text, written=time.time(), handover=None)
     if connect.hub(connect.adapter_of(path)[0])["needed"]:   # the machine's wiring moves only on `[연결]`'s confirmation
         raise Stop("connect", "이 기계의 hook 배선이나 Codex 신뢰를 바꿔야 한다 — 프로젝트 목록에서 이 저장소의 [연결]로 확인한 뒤 [재개]")
-    connect.examine(path, wait=True)   # `[연결]`'s tests, in the step: a cut before their results are kept runs them again
+    if not connect.examine(path, wait=True):   # `[연결]`'s tests, in the step: a cut before their results are kept runs them again
+        raise Stop("connect", "이 저장소의 시험이 아직 돌고 있다 — 끝난 뒤 [재개]")
 
 
 def s_remote(run: dict) -> None:
@@ -806,8 +807,7 @@ def profile(rid: str, body: Profile) -> dict:
         idle(run, "environment")
         if run.get("profile") is None:
             raise HTTPException(409, "카드가 아직 없다")
-        unknown = set(body.values) - set(SCHEMA)
-        if unknown:
+        if unknown := set(body.values) - set(SCHEMA):
             raise HTTPException(400, f"스키마에 없는 필드: {', '.join(sorted(unknown))}")
         values = {**current(run["profile"]), **body.values}
         if body.confirm:

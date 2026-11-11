@@ -320,6 +320,11 @@ def test_wiring_to_confirm_stops_the_register_and_tests_cut_before_their_results
          patch.object(connect, "probe", side_effect=RuntimeError("server stopped during the tests")):
         oneshot.bootstrap(rid)
     assert oneshot.load(rid)["stopped"] and "register" not in oneshot.load(rid)["steps"]
+    # `[연결]`'s own tests still running: this step cannot wait on them, so it stops unrecorded too.
+    oneshot.changed(rid, stopped=None)
+    with patch.object(connect, "examine", EXAMINE), patch.object(connect, "_probing", {"budget-tracker"}):
+        oneshot.bootstrap(rid)
+    assert oneshot.load(rid)["stopped"]["reason"] == "connect" and "register" not in oneshot.load(rid)["steps"]
     oneshot.changed(rid, stopped=None)
     assert finished(world, rid)["committed"]
     assert world["examined"] == [(world["workspace"] / "budget-tracker", True)]

@@ -236,7 +236,9 @@ already have changed another repository's record.
 
 The tests run within sub-step 5, not on a thread after it: a server that goes
 down before they keep their results leaves the step unrecorded, so `[재개]`
-runs them again. The machine's wiring and Codex trust are written only on the
+runs them again. Tests `[연결]` started for the same repository are not
+waited on: the step stops with `connect`, unrecorded, and `[재개]` after
+they finish runs its own. The machine's wiring and Codex trust are written only on the
 confirmation `[연결]` shows, never by a run.
 
 ### The adapter's `gate_cmd`
