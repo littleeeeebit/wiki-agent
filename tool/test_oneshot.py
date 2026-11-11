@@ -344,12 +344,23 @@ def test_a_version_2_run_whose_bootstrap_wrote_files_is_refused_on_resume(world,
         assert oneshot.load(rid)["stopped"]
     else:
         assert oneshot.resume(rid, oneshot.Resume())["working"] == "bootstrap"
-        # what it writes from here is version 3's: a stop after the files resumes again
-        assert oneshot.load(rid)["version"] == oneshot.VERSION
-        oneshot.save({**oneshot.load(rid), "working": None, "stopped": {"reason": "restart", "detail": "", "ts": 0}})
-        (world["workspace"] / "budget-tracker").mkdir(parents=True, exist_ok=True)
-        (world["workspace"] / "budget-tracker" / "README.md").write_text("# budget-tracker\n", encoding="utf-8")
-        assert oneshot.resume(rid, oneshot.Resume())["working"] == "bootstrap"
+        wrote_then_stopped_and_resumed(rid)
+
+
+def wrote_then_stopped_and_resumed(rid: str) -> None:
+    """The bootstrap writes its files through `step`, the server stops, and the run resumes after them."""
+
+    for s in ("folder", "files"):
+        oneshot.step(rid, s, oneshot.SUBSTEPS[s])
+    assert oneshot.load(rid)["version"] == oneshot.VERSION   # what it wrote is this version's
+    oneshot.save({**oneshot.load(rid), "working": None, "stopped": {"reason": "restart", "detail": "", "ts": 0}})
+    assert oneshot.resume(rid, oneshot.Resume())["working"] == "bootstrap"
+
+
+def test_a_version_2_run_waiting_at_the_card_writes_this_versions_files_and_resumes_after_them(world):
+    rid = made(world, version=2, state="environment", working=None, steps={"recheck": 1})
+    assert oneshot.profile(rid, oneshot.Profile(values=dict(PROFILE), confirm=True))["state"] == "bootstrap"
+    wrote_then_stopped_and_resumed(rid)
 
 
 def test_a_file_someone_changed_is_never_overwritten(world):

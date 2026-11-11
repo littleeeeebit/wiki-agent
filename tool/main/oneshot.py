@@ -373,6 +373,8 @@ def step(rid: str, name: str, fn) -> dict:
     if name not in run["steps"]:
         if runtime.stopping.is_set():   # no new outward step once the server is going down
             raise Stop("restart", "서버가 꺼지는 중이라 멈췄다")
+        if run.get("version", 1) < VERSION:   # every way into the bootstrap, before its files: they are VERSION's
+            save(run := {**run, "version": VERSION})
         fn(run)
         with _lock:
             run = load(rid)
@@ -395,8 +397,7 @@ def s_folder(run: dict) -> None:
         path.mkdir(parents=True)
         return
     mine = {p.split("/")[0] for p in files} | {".git"}
-    extra = [c.name for c in path.iterdir() if c.name not in mine]
-    if extra:
+    if extra := [c.name for c in path.iterdir() if c.name not in mine]:
         raise Stop("folder", f"폴더에 이 실행이 쓰지 않은 것이 있다: {', '.join(sorted(extra)[:5])}")
 
 
@@ -832,9 +833,8 @@ def resume(rid: str, body: Resume) -> dict:
         run = load(rid)
         if run.get("committed") or not run.get("stopped") or run.get("working"):
             raise HTTPException(409, "멈춘 실행이 아니다")
-        if run.get("version", 1) < 3:   # its files, even some, carry the old card's stack; none yet: what it writes is 3's
-            if run.get("identity") and any((Path(run["identity"]["path"]) / f).exists() for f in ("README.md", ".gitignore", ".wiki/adapter.toml")):
-                raise HTTPException(409, "예전 형식으로 기본 파일을 쓴 실행이라 이어 갈 수 없다 — 새 실행을 시작하라")
-            save({**run, "version": VERSION})
+        if run.get("version", 1) < 3 and run.get("identity") and any(   # its files, even some, carry the old card's stack
+                (Path(run["identity"]["path"]) / f).exists() for f in ("README.md", ".gitignore", ".wiki/adapter.toml")):
+            raise HTTPException(409, "예전 형식으로 기본 파일을 쓴 실행이라 이어 갈 수 없다 — 새 실행을 시작하라")
         launch(rid, RUNNING[run["state"]], **({"adopt": True} if body.adopt else {}))
     return view(load(rid))

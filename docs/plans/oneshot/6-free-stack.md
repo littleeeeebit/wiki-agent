@@ -71,9 +71,10 @@ The `oneshot-spec` block gains a `stack` list beside the requirements:
   `confirmed` and the turn asks nothing: a turn's question waits for its
   answer. An `assumed` part keeps the conversation open.
 - A spec that leaves S2, or saves any S2 turn, records version 3, whatever
-  version it started at, since its stack is now in `stack`. A run resumed
-  before its bootstrap wrote a file records version 3 too, since the files
-  it writes from then on are version 3's.
+  version it started at, since its stack is now in `stack`. A run records
+  version 3 before its bootstrap's first sub-step, whichever way it entered
+  the bootstrap (a resume, or the card's confirmation), since the files it
+  writes from then on are version 3's.
 - The stack is shown at the top of the R1 sheet, read-only: changing it after
   R1 means a new run.
 
