@@ -386,8 +386,7 @@ def step(rid: str, name: str, fn) -> dict:
 def s_recheck(run: dict) -> None:
     ident = run["identity"]
     known = (run.get("github") or {}).get("node_id")
-    found = conflicts(run["id"], Path(ident["path"]), ident["name"], ident["owner"], remote=not known)
-    if found:
+    if found := conflicts(run["id"], Path(ident["path"]), ident["name"], ident["owner"], remote=not known):
         raise Stop("folder", "; ".join(found))
 
 
@@ -452,6 +451,7 @@ def s_register(run: dict) -> None:
         raise Stop("folder", "이 이름으로 이 폴더를 찾지 못했다")
     text = planned(run)[".wiki/adapter.toml"]
     connect.keep(name, hash=connect.digest(text.encode("utf-8")), adapter=text, written=time.time(), handover=None)
+    connect.examine(path)   # the hosts' tests and Codex's trust, as `[연결]` runs them, on their own thread
 
 
 def s_remote(run: dict) -> None:

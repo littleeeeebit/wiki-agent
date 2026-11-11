@@ -68,9 +68,11 @@ def world(tmp_path):
     github = GitHub(tmp_path / "remote.git")
     identity = {f"GIT_{who}_{what}": value for who in ("AUTHOR", "COMMITTER")
                 for what, value in (("NAME", "Oneshot test"), ("EMAIL", "oneshot@example.test"))}
+    examined = []
     with patch.dict(os.environ, identity), patch.object(oneshot, "RUNS", tmp_path / "oneshot"), \
          patch.object(oneshot, "PROFILES", tmp_path / "oneshot" / "profiles"), \
          patch.object(connect, "RECORDS", tmp_path / "connect"), \
+         patch.object(connect, "examine", lambda path, then=None: examined.append(path) or True), \
          patch.object(channels, "WORKSPACE", workspace), \
          patch.object(oneshot, "gh", github.gh), patch.object(oneshot, "remote_id", github.remote_id), \
          patch.object(oneshot, "gh_user", lambda: "someone"), \
@@ -80,7 +82,7 @@ def world(tmp_path):
          patch.object(oneshot_spec, "begin", lambda repo: None), \
          patch.object(oneshot, "launch",
                       lambda rid, work, *a, **f: oneshot.changed(rid, **f, working=work, stopped=None)):
-        yield {"workspace": workspace, "github": github, "hub": hub, "tmp": tmp_path}
+        yield {"workspace": workspace, "github": github, "hub": hub, "tmp": tmp_path, "examined": examined}
 
 
 def made(world, **extra) -> str:
@@ -275,6 +277,7 @@ def test_bootstrap_makes_the_repository_the_spec_and_the_linked_worktree(world):
     assert spec["oneshot"]["run"] == rid and spec["workspace_mode"] == "worktree"
     assert Path(spec["worktree"]).is_dir() and spec["done"] == []
     assert json.loads((connect.RECORDS / "budget-tracker.json").read_text(encoding="utf-8"))["hash"]
+    assert world["examined"] == [repo]          # connected as `[연결]` would: the hosts' tests and Codex's trust
     assert json.loads((oneshot.PROFILES / "webapp.json").read_text(encoding="utf-8"))["github_owner"] == "someone"
     with pytest.raises(RuntimeError):
         oneshot.save(run)                                                    # never written again
