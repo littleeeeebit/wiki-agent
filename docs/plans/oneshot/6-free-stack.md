@@ -263,7 +263,7 @@ bootstrap's `files` step and before its `commit` whose resume is refused.
 | --- | --- | --- |
 | 6a | This document; budgets removed from the card, the ceilings and the screen | Done (#331) |
 | 6b | S4 on the runner block and JUnit, S5 from `api.yaml`, S7's conventions, version 2 | Done (#332) |
-| 6c | The stack in S2 and on R1, the card's stack fields removed, the bootstrap without them, the prompts reading the stack, version 3 | In progress |
+| 6c | The stack in S2 and on R1, the card's stack fields removed, the bootstrap without them, the prompts reading the stack, version 3 | Done (#334) |
 
 6b goes before 6c so every merged state still runs. After 6b a new run's
 tests turn declares a pytest command from the old card, and a run already
