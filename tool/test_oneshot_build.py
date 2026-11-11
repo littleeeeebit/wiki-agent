@@ -633,3 +633,26 @@ def test_a_oneshot_turn_reads_its_own_closing_block_as_closing_and_only_while_it
         assert not chat.settled(runner) and chat.settled("```done-report\n{}\n```")
         for turn in (tests, old, pr, build):
             turn.ended.set()
+
+
+def test_the_tree_goes_back_with_the_ordinary_closings_before_the_turn_ends(built_world):
+    """`work.run_turn` lets the worktree go before it ends the turn: a person's turn taking the same session
+    in between must not read the tests turn's runner block as closing its own work."""
+
+    tree, _ = built_world
+    runner = f"```{oneshot_build.RUNNER}\n{{}}\n```"
+    chat = SimpleNamespace(id="c", parent_id=None, repo=str(tree), settled=work.SETTLING.search)
+    seen = []
+
+    def begin(path, chat, text, release, turn):   # as `run_turn` ends: release, then (later) finish
+        seen.append(chat.settled(runner) is not None)
+        release()
+        seen.append((str(tree) in work._busy, chat.settled(runner) is not None))
+        turn.ended.set()
+
+    with patch.object(work, "notice", lambda *a: None), patch.object(work, "begin", begin), \
+         patch.object(work, "session", lambda *a: chat), \
+         patch.object(oneshot, "role_config", lambda *a: {"model": "m", "effort": "e"}), \
+         patch.object(oneshot, "codex_role", lambda *a: False):
+        SEND("budget", "tests", "x")
+    assert seen == [True, (False, False)]

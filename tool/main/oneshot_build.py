@@ -109,7 +109,9 @@ def send(repo: str, stage: str, text: str) -> None:
         store.stop("block", str(exc.detail))
         return
 
-    def release() -> None:   # the grant goes before the tree does: the next turn there never finds it set
+    def release() -> None:   # the grant and the closing block go before the tree does: the next turn there,
+        if turn is not None:   # a person's included, never finds them set (`work.run_turn` lets go first)
+            turn.settle()
         if stage in GRANTS:
             oneshot_spec.saved(repo, adapter=False)
         held()
