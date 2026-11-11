@@ -176,8 +176,9 @@ def declared(path: Path, final: str) -> dict:
         raise ValueError(f"`{RUNNER}` 블록은 command, contract, config 를 담은 객체다")
     command, contract, config = value.get("command"), value.get("contract"), value.get("config", [])
     folder = value.get("root", "")
-    if not isinstance(command, str) or command.count("{report}") != 1 or "\n" in command:
-        raise ValueError("`command` 는 JUnit 보고서 경로 자리 `{report}` 를 한 번 담은 한 줄 명령이다")
+    # The published gate appends ` && …` to this command: a `#` in it would turn what follows into a comment.
+    if not isinstance(command, str) or command.count("{report}") != 1 or any(c in command for c in "\r\n#"):
+        raise ValueError("`command` 는 JUnit 보고서 경로 자리 `{report}` 를 한 번 담은 한 줄 명령이고 `#` 을 담지 않는다")
     if not (isinstance(contract, list) and contract and isinstance(config, list)
             and all(isinstance(f, str) and f for f in contract + config)):
         raise ValueError("`contract` 는 비지 않은 파일 목록, `config` 는 파일 목록이다")

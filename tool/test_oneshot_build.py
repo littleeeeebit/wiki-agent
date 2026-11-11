@@ -126,6 +126,9 @@ def test_failing_planned_tests_are_committed_pinned_and_followed_by_the_build_tu
 @pytest.mark.parametrize("files, final, said", [
     ({"test_budget.py": TESTS}, "썼다.", "`oneshot-runner` 블록이 하나 있어야 한다"),
     ({"test_budget.py": TESTS}, told(command=GATE), "`{report}`"),
+    # the published gate appends ` && …`, which a comment here would swallow
+    ({"test_budget.py": TESTS}, told(command=RUNNER + " # contract suite"), "`#` 을 담지 않는다"),
+    ({"test_budget.py": TESTS}, told(command=RUNNER + "\r"), "한 줄 명령"),
     ({"test_budget.py": TESTS}, told(contract=["tests/test_budget.py"]), "작업트리에 없다"),
     ({"test_budget.py": TESTS}, told(contract=["../outside.py"]), "작업트리에 없다"),
     ({"test_budget.py": TESTS}, told(command=f'"{sys.executable}" -c "pass" {{report}}'), "JUnit 보고서를 쓰지 않았다"),

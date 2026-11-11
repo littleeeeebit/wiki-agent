@@ -114,7 +114,9 @@ also refuse an adapter whose `gate_cmd` does not start with it, or adds
 anything after it other than ` && ` commands on the same line: no new line,
 `||`, `;` or lone `&`, which could run past its failure, and no `#`, which
 could hide it in a comment. The published gate, which CI and later sessions
-run, then runs the contract first and fails with it. The check reads
+run, then runs the contract first and fails with it. The stored command
+itself holds no `#` either: the tests turn's check refuses one, since a
+comment there would swallow every ` && ` command after it. The check reads
 characters, not shell syntax, so a quoted `#` or `;` is refused too; such a
 command goes in a project script.
 
