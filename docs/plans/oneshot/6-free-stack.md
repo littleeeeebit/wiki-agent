@@ -124,13 +124,25 @@ hide or outlive the chain:
 - comments, escapes, substitutions, groups and blocks: `#`, a backtick,
   `$(`, brackets, braces;
 - a command that starts with a word that leaves or replaces the shell:
-  `exit`, `exec`, `return`, `eval`, `source`, `.`, `iex` and the like.
+  `exit`, `exec`, `return`, `eval`, `source`, `.`, `iex`, `command`,
+  `builtin`, an alias definition and the like. The word is read as the
+  shell finds it: quotes, a folder or module in front (`…\Invoke-Expression`)
+  and `.exe` are set aside, and an environment assignment in front
+  (`CI=1 exec …`) is refused outright.
 
 The check reads characters and first words, not shell syntax, so a quoted
-`;` or `(` is refused too; such a command goes in a project script. A
-program that ends its parent shell from outside it is not caught here, and
-the server's own runs at S7 and S8, with `held()`, remain what proves the
-contract.
+`;` or `(` is refused too; such a command goes in a project script.
+
+What it guards against is a command that ends the chain by mistake, such as
+a runner written with `; exit $LASTEXITCODE` or a comment. It does not
+guard against a command written to get past it: PowerShell and bash are
+whole languages, and a string check cannot follow every way either finds a
+command, nor a program that ends its parent shell from outside it. Running
+the stored command in a process of its own would close that, but the gate is
+one command line run by PowerShell on Windows and by bash elsewhere, so the
+wrapper would differ between the machines the same gate runs on. The proof
+that the contract passes is the server's own runs at S7 and S8, with
+`held()`; the published gate's form is checked on top of that.
 
 A planned name matches a testcase whose name equals it in any case, or that
 name followed by a parameter in brackets (`name[…]`) or in parentheses after

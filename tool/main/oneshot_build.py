@@ -231,18 +231,30 @@ def literal(text: str) -> str:
 # comments, escapes, substitutions, groups and blocks, a lone `&`, and the words that leave or replace the shell.
 CONTROL = re.compile(r"[\r\n;|#`(){}]|\$\(|&&&|(?<!&)&(?!&)")
 LEAVE = {"exit", "exec", "return", "break", "continue", "eval", "source", ".", "iex", "invoke-expression",
-         "trap", "logout", "kill", "stop-process", "set"}
+         "trap", "logout", "kill", "stop-process", "set", "command", "builtin", "time", "enable", "shopt",
+         "sal", "set-alias", "nal", "new-alias", "exsn", "exit-pssession"}
 CHAIN = ("평범한 명령을 ` && ` 로만 잇는다 — `;`, `|`, `#`, `` ` ``, `$(`, 괄호·중괄호, 홑 `&`, 줄바꿈 없이, "
          "어느 명령도 `exit`·`exec`·`eval`·`iex` 같은 셸 제어어로 시작하지 않는다")
 
 
+def leaves(word: str) -> bool:
+    """`word`, as the shell would find it, is one that leaves or replaces the shell: its quotes, folder or
+    module and `.exe` set aside. An environment assignment in front (`CI=1 exec …`) counts as one too."""
+
+    if "=" in word:
+        return True
+    name = re.split(r"[\\/]", word.strip("'\""))[-1].lower().removesuffix(".exe")
+    return name in LEAVE
+
+
 def chained(command: str) -> bool:
     """`command` is plain commands joined by `&&` and nothing else: each runs only after the one before it
-    passed, none can end the shell early, and the chain's status is its first failure.  ponytail: by character
-    and first word, so a quoted `;` or `(` is refused too; a project script takes such a command."""
+    passed, and none starts with a word that ends the shell early, so the chain's status is its first failure.
+    ponytail: by character and first word, not shell syntax: it stops a command that ends the chain by
+    mistake, not one written to get past it; a quoted `;` or `(` is refused too, and a project script takes it."""
 
     parts = command.split("&&")
-    return not CONTROL.search(command) and all(p.split() and p.split()[0].lower() not in LEAVE for p in parts)
+    return not CONTROL.search(command) and all(p.split() and not leaves(p.split()[0]) for p in parts)
 
 
 def published(gate: str, backend: str) -> str:

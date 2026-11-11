@@ -152,7 +152,12 @@ def test_an_adapter_that_lost_the_backend_tests_or_left_live_empty_is_refused(st
     ("pytest -q && exit 0", False), ("pytest -q && exec npm test", False), ("pytest -q && EXIT", False),
     ("pytest -q && npm test $(exit 0)", False), ("pytest -q && npm test (exit)", False),
     ("pytest -q && . {exit}", False), ("pytest -q && npm test `", False), ("pytest -q &&  && npm test", False),
+    # the same words spelled the way the shell still finds them
+    ("pytest -q && CI=1 exec npm test", False), ("pytest -q && command exec npm test", False),
+    ("pytest -q && 'exec' npm test", False), ("pytest -q && \"exit\"", False),
+    ("pytest -q && Microsoft.PowerShell.Utility\\Invoke-Expression 'exit 0'", False), ("pytest -q && /bin/kill.exe 1", False),
     ("pytest -q && npm --prefix web test -- --run && npm --prefix web run build", True),
+    ('pytest -q && "C:\\Program Files\\nodejs\\npx.cmd" vitest run && uv run pytest && go test ./... && cargo nextest run', True),
 ])
 def test_the_published_gate_runs_the_contracts_command_first_and_swallows_nothing(gate, ok):
     assert (oneshot_build.published(gate, "pytest -q") == "") is ok
