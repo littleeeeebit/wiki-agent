@@ -50,6 +50,7 @@
     --color-st-ready: var(--st-ready);
     --color-st-queued: var(--st-queued);
     --color-st-stop: var(--st-stop);
+    --color-progress: var(--progress);
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -106,6 +107,9 @@
     --st-ready: #1d7d3e;
     --st-queued: #006669;
     --st-stop: #ba2b2e;
+    /* The oneshot window's progress: its bars and the current stage's mark.
+       Indigo, apart from the blue that marks what can be pressed. */
+    --progress: #2b3a67;
 
     /* The map. A repository's documents are neutral; what the hub injects is
        the one coloured thing, and the ladder runs solid to diffuse. */
@@ -159,6 +163,7 @@
     --st-ready: #6fc884;
     --st-queued: #65d2d2;
     --st-stop: #ff7c75;
+    --progress: #a9b8e8;
 
     --map-doc: #6f757d;
     --map-page: #7fa9c9;

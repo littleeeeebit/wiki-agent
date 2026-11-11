@@ -3,7 +3,7 @@ import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Choices } from '@/components/Blocks'
 import { Btn } from '@/components/Modal'
-import { api, COLUMNS, STAGES, STOP, stageLabel, type Decision, type Feature, type Freq, type Gate, type Palette,
+import { api, COLUMNS, STOP, type Decision, type Feature, type Freq, type Gate, type Palette,
   type Models, type RunSummary, type SpecView, type Talk, ROLE, modelName } from '@/lib/oneshot'
 import { cn } from '@/lib/utils'
 
@@ -24,12 +24,13 @@ export function ModelsLine({ models }: { models?: Models }) {
 
 const error = (err: unknown) => String(err instanceof Error ? err.message : err)
 
-export function OneshotSpec({ repo }: { repo: string }) {
+export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: SpecView) => void }) {
   const [view, setView] = useState<SpecView | null>(null)
   const [fault, setFault] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => { api.view(repo).then(setView).catch((err) => setFault(error(err))) }, [repo])
+  useEffect(() => { if (view) onView?.(view) }, [view, onView])
   const working = !!view?.working
   useEffect(() => {
     if (!working) return
@@ -57,9 +58,7 @@ export function OneshotSpec({ repo }: { repo: string }) {
   const idle = !view.working && !view.stopped
   return (
     <div className="flex flex-col gap-4">
-      <Strip view={view} />
-      <ModelsLine models={o.models} />
-      {fault &&<p role="alert" className="whitespace-pre-wrap rounded-md bg-destructive/10 px-3 py-2 text-destructive">{fault}</p>}
+      {fault && <p role="alert" className="whitespace-pre-wrap rounded-md bg-destructive/10 px-3 py-2 text-destructive">{fault}</p>}
       {view.stopped && (
         <section role="alert" className="flex flex-col gap-2 rounded-md border border-wait/40 bg-wait/10 px-3 py-2">
           <p className="font-semibold">멈췄다 — {STOP[view.stopped.reason] ?? view.stopped.reason}</p>
@@ -88,31 +87,6 @@ export function OneshotSpec({ repo }: { repo: string }) {
       )}
       {view.stage === 'done' && view.summary && <Finished summary={view.summary} />}
     </div>
-  )
-}
-
-/** The stages across the top: gates and conversations drawn apart from what runs alone. */
-function Strip({ view }: { view: SpecView }) {
-  const at = STAGES.findIndex((s) => s.id === view.stage)
-  const o = view.oneshot
-  const line = view.working ? `${stageLabel(view.stage)} 진행 중…${o.attempts ? ` (${o.attempts + 1}번째 시도)` : ''}`
-    + (view.stage === 'critique' && o.critiques?.length ? ` · 비평 ${o.critiques.length}회차` : '') : ''
-  return (
-    <nav aria-label="원샷 단계" className="flex flex-col gap-1.5">
-      <ol className="flex flex-wrap gap-1">
-        {STAGES.map((s, i) => (
-          <li key={s.id} aria-current={i === at ? 'step' : undefined}
-            className={cn('rounded px-1.5 py-0.5 text-[11.5px]',
-              s.kind === 'auto' ? 'border border-dashed border-border' : 'border border-foreground/40 font-semibold',
-              i < at && 'text-muted-foreground', i === at && 'bg-primary text-primary-foreground',
-              i === at && view.stopped && 'bg-wait text-wait-foreground')}>
-            {s.kind === 'gate' ? '◆ ' : ''}{s.label}
-          </li>
-        ))}
-      </ol>
-      {line && <p role="status" className="text-muted-foreground">{line}</p>}
-      {view.waits && <p role="status" className="font-semibold text-wait">결정을 기다린다 — {stageLabel(view.stage)}</p>}
-    </nav>
   )
 }
 

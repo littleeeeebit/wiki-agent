@@ -20,25 +20,29 @@ is, with Review Loop ready.
 
 ## The run on the screen
 
-### Entry and rail
+### The oneshot window
 
-- `새 프로젝트` on the project pane opens the intake form (step 2).
-- Before S1 ends, an unfinished run is listed in the intake form under
-  `끝나지 않은 실행`, with its state or its stop. From S2 on it is also a row
-  above the project list, read from `GET /api/oneshot-specs`: the
-  repository's name, its stage as a short Korean label, and a mark when it
-  waits for the owner (`r1`, `board`, `r2`, `r3`, or `spec` when the agent's
-  question is the last word). A run that waits is the only thing that asks
-  for attention; autonomous stages show progress without a mark. Either
-  opens the run in the oneshot window.
+Runs have their own window beside maintenance (`DESIGN.md`, "Oneshot
+window"); the switch `[유지보수 · 원샷]` at the top of both rails moves
+between them, and maintenance's `새 프로젝트` opens the intake form there
+(step 2), as does the window's own `새 실행`.
 
-### Stage strip
+- The run list holds every run: from S2 on read from
+  `GET /api/oneshot-specs`, before it from `GET /api/oneshot`. A row is the
+  repository's name, its stage as a short Korean label with its place among
+  the eighteen stages, and a mark when it waits for the owner (`r1`,
+  `board`, `r2`, `r3`, or `spec` when the agent's question is the last word).
+  A run that waits is the only thing that asks for attention, and the switch
+  carries the same mark; autonomous stages show progress without one. A
+  stopped run says so in its row. Finished runs fold under `끝남`.
 
-Across the top of the run view, the stages in order. Conversation stages and
-gates are drawn differently from autonomous ones, so the owner sees that
-there are three reviews and where they are. The current stage shows its
-progress line (the work session's tool line, the build's gate attempt, the
-loop's round count); a stopped run shows its reason and `[재개]`.
+### Stages
+
+Beside the run, every stage in order under five phases, S1's three included.
+Stages where the owner decides are marked `정함`, so the owner sees that
+there are three reviews and where they are. The header over the run names the
+current stage and its state: waiting, running with its attempt or critique
+round, or stopped; a stopped run shows its reason and `[재개]` below.
 
 ## The gate sheet view
 
@@ -133,8 +137,8 @@ in step 2.
   disabled while an item in an automatically folded section, or in a section
   the owner folded, is undecided; "approve all" deciding exactly its section;
   re-show unfolding every item that needs a decision again), the
-  board (drag and keyboard moves produce the same map), and the stage strip
-  for each state including `stopped`.
+  board (drag and keyboard moves produce the same map), and the stages and
+  header for each state including `stopped`.
 - New tests in `tool/test_oneshot_pr.py`: S8 refusing to open without its
   README, with a workflow file in a private repository, with a changed
   contract or with the gate red; a public repository needing its workflow;

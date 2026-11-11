@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Btn, Modal } from '@/components/Modal'
 import * as api from '@/lib/api'
 import type { ConnectPlan, Hub, PowerShellStatus, Project } from '@/lib/api'
-import { Oneshot, OneshotRail } from '@/components/Oneshot'
+import { go } from '@/lib/mode'
 import { PowerShell } from '@/components/PowerShell'
 import { HubMove, Rewire } from '@/components/Rewire'
 import { remote } from '@/lib/mobile'
@@ -26,7 +26,6 @@ export function Projects({ current }: { current: string }) {
   const [typed, setTyped] = useState('')
   const [powershell, setPowerShell] = useState<PowerShellStatus>()
   const [hub, setHub] = useState<Hub>()
-  const [oneshot, setOneshot] = useState<string | null>(null)   // the run to open; '' for a new one
 
   const read = useCallback(() => {
     api.getConnect()
@@ -107,11 +106,9 @@ export function Projects({ current }: { current: string }) {
             {working === 'folder' ? '폴더 고르는 중…' : '폴더 찾기'}
           </Btn>
         )}
-        <Btn className="font-sans" disabled={!!working} onClick={() => setOneshot('')}
-          title="빈 폴더와 만들고 싶은 것 한두 문장으로 새 저장소를 시작한다">새 프로젝트</Btn>
+        <Btn className="font-sans" disabled={!!working} onClick={() => go('oneshot', 'new')}
+          title="원샷 창에서 빈 폴더와 만들고 싶은 것 한두 문장으로 새 저장소를 시작한다">새 프로젝트</Btn>
       </div>
-      <OneshotRail key={String(oneshot)} open={setOneshot} />
-      {oneshot !== null && <Oneshot repo={oneshot} onClose={() => { setOneshot(null); read() }} />}
       <PowerShell status={powershell} read={read} disabled={!!working} />
       {hub && hub.branch !== 'main' && (
         <div role="status" className="border-b border-wait/30 bg-wait/10 px-5 py-2 text-[12.5px]">

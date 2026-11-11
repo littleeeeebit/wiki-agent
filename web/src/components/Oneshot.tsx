@@ -1,15 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Btn, Modal } from '@/components/Modal'
+import { Btn } from '@/components/Modal'
 import { Toolbar } from '@/components/Toolbar'
 import { browseFolder, get, getLoopSettings, getOptions, json, post, type Options } from '@/lib/api'
 import { remote } from '@/lib/mobile'
-import { ModelsLine, OneshotSpec } from '@/components/OneshotSpec'
-import { ROLE, oneshotSpecs, stageLabel, type Models, type SpecSummary } from '@/lib/oneshot'
+import { ROLE, type Models } from '@/lib/oneshot'
 
 type OneshotField = {
   options?: string[]; enabled?: string[]; text?: boolean; asked?: boolean; default: string
 }
-type OneshotRun = {
+export type OneshotRun = {
   id: string
   state: 'intake' | 'environment' | 'bootstrap' | 'spec'
   working: string | null
@@ -30,7 +29,7 @@ type OneshotRun = {
 }
 
 const answer = (r: Response) => json<OneshotRun>(r, '원샷')
-const api = {
+export const api = {
   browseFolder,
   oneshotRuns: () => get('/api/oneshot').then((r) => json<{ runs: OneshotRun[] }>(r, '원샷 목록')),
   oneshotRun: (id: string) => get(`/api/oneshot/${id}`).then(answer),
@@ -43,10 +42,10 @@ const api = {
   resumeOneshot: (id: string, adopt = false) => post(`/api/oneshot/${id}/resume`, { adopt }).then(answer),
 }
 
-/** The oneshot run's minimum screen (`docs/plans/oneshot/2-bootstrap.md`):
+/** A oneshot run's S1 parts (`docs/plans/oneshot/2-bootstrap.md`), shown in the oneshot window:
  *  the intake form, the restatement beside the owner's sentence, the
  *  environment card and the bootstrap's progress. Every stop shows its reason
- *  and `[재개]`. The server owns every rule; this screen only shows and asks. */
+ *  and `[재개]`. The server owns every rule; these parts only show and ask. */
 
 const LABEL: Record<string, string> = {
   os_now: '지금 쓰는 OS', os_later: '다른 OS 에서도', auth: '로그인',
@@ -58,7 +57,7 @@ const STEP: Record<string, string> = {
   recheck: '이름 다시 확인', folder: '폴더', files: '기본 파일', commit: '첫 커밋', register: '앱에 연결',
   remote: 'GitHub 저장소', origin: 'origin 연결', publish: 'main push', spec: '명세 작업 공간',
 }
-const STOP: Record<string, string> = {
+export const STOP: Record<string, string> = {
   block: '모델 답을 쓸 수 없었다', folder: '폴더나 이름 문제', github: 'GitHub 문제', connect: '연결을 확인해야 한다',
   restart: '서버가 다시 켜져 멈췄다',
 }
@@ -68,87 +67,27 @@ const WORKING: Record<string, string> = {
 
 const error = (err: unknown) => String(err instanceof Error ? err.message : err)
 
-export function Oneshot({ onClose, repo: picked = '' }: { onClose: () => void; repo?: string }) {
-  const [run, setRun] = useState<OneshotRun | null>(null)
-  const [repo, setRepo] = useState(picked)
-  const [open, setOpen] = useState<OneshotRun[]>([])
-  const [later, setLater] = useState<SpecSummary[]>([])
+export type Act = (fn: () => Promise<OneshotRun>) => Promise<void>
+
+/** One request at a time: what the server answers goes to `done`, a refusal to `fault`. */
+export function useAct(done: (run: OneshotRun) => void) {
   const [fault, setFault] = useState('')
   const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    api.oneshotRuns().then((d) => setOpen(d.runs)).catch((err) => setFault(error(err)))
-    oneshotSpecs().then((d) => setLater(d.specs)).catch((err) => setFault(error(err)))
-  }, [])
-
-  // While a stage runs on the server, read the run until it settles.
-  const id = run?.id
-  const working = !!run?.working
-  useEffect(() => {
-    if (!id || !working) return
-    const timer = window.setInterval(() => {
-      api.oneshotRun(id).then(setRun).catch((err) => setFault(error(err)))
-    }, 1500)
-    return () => window.clearInterval(timer)
-  }, [id, working])
-
-  async function act(fn: () => Promise<OneshotRun>) {
+  const act: Act = async (fn) => {
     setFault('')
     setBusy(true)
     try {
-      setRun(await fn())
+      done(await fn())
     } catch (err) {
       setFault(error(err))
     } finally {
       setBusy(false)
     }
   }
-
-  return (
-    <Modal title="새 프로젝트 — 원샷" wide locked={busy} onClose={onClose}>
-      <div className="flex flex-col gap-4">
-        {fault && <p role="alert" className="whitespace-pre-wrap rounded-md bg-destructive/10 px-3 py-2 text-destructive">{fault}</p>}
-        {repo && <OneshotSpec repo={repo} />}
-        {!repo && !run && <Intake open={open} later={later} busy={busy} act={act} pick={setRun} pickSpec={setRepo} />}
-        {!repo && run && <Body run={run} busy={busy} act={act} />}
-      </div>
-    </Modal>
-  )
+  return { fault, setFault, busy, act }
 }
 
-/** The runs past S1, a row above the project list: each opens in the oneshot window, marked when it waits. */
-export function OneshotRail({ open }: { open: (repo: string) => void }) {
-  const [runs, setRuns] = useState<SpecSummary[]>([])
-  useEffect(() => {
-    const read = () => { oneshotSpecs().then((d) => setRuns(d.specs.filter((s) => s.stage !== 'done'))).catch(() => setRuns([])) }
-    read()
-    // A worker moving a run on (an automatic stage reaching a gate) saves its spec, which the feed announces;
-    // a feed that reconnects or resyncs announces no single spec, so the rail reads again then too.
-    const on = ['focus', 'spec-changed', 'server-resync']
-    on.forEach((name) => window.addEventListener(name, read))
-    return () => on.forEach((name) => window.removeEventListener(name, read))
-  }, [])
-  if (!runs.length) return null
-  return (
-    <nav aria-label="원샷 실행" className="flex flex-wrap gap-1.5 border-b border-border px-5 py-2 text-[12.5px]">
-      {runs.map((s) => (
-        <button key={s.repo} type="button" onClick={() => open(s.repo)}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 hover:bg-secondary">
-          {s.waits && <span aria-label="결정을 기다린다" className="size-2 rounded-full bg-wait" />}
-          <span className="font-mono">{s.repo}</span>
-          <span className="text-muted-foreground">{s.stopped ? '멈춤' : stageLabel(s.stage)}</span>
-        </button>
-      ))}
-    </nav>
-  )
-}
-
-type Act = (fn: () => Promise<OneshotRun>) => Promise<void>
-
-function Intake({ open, later, busy, act, pick, pickSpec }: {
-  open: OneshotRun[]; later: SpecSummary[]; busy: boolean; act: Act; pick: (run: OneshotRun) => void
-  pickSpec: (repo: string) => void
-}) {
+export function Intake({ busy, act }: { busy: boolean; act: Act }) {
   const [sentence, setSentence] = useState('')
   const [path, setPath] = useState('')
   const [typing, setTyping] = useState(remote)
@@ -177,26 +116,6 @@ function Intake({ open, later, busy, act, pick, pickSpec }: {
 
   return (
     <>
-      {(open.length > 0 || later.length > 0) && (
-        <section className="flex flex-col gap-1.5">
-          <h3 className="font-semibold">끝나지 않은 실행</h3>
-          {later.filter((s) => s.stage !== 'done').map((s) => (
-            <button key={s.repo} type="button" onClick={() => pickSpec(s.repo)}
-              className="truncate rounded-md border border-border px-3 py-2 text-left hover:bg-secondary">
-              {s.waits && <span aria-label="결정을 기다린다" className="mr-1.5 inline-block size-2 rounded-full bg-wait" />}
-              {s.repo}
-              <span className="ml-2 text-muted-foreground">{s.stopped ? `멈춤 — ${s.stopped.reason}` : stageLabel(s.stage)}</span>
-            </button>
-          ))}
-          {open.map((r) => (
-            <button key={r.id} type="button" onClick={() => pick(r)}
-              className="truncate rounded-md border border-border px-3 py-2 text-left hover:bg-secondary">
-              {r.identity?.name ?? r.intent?.name ?? r.sentence}
-              <span className="ml-2 text-muted-foreground">{r.stopped ? `멈춤 — ${STOP[r.stopped.reason] ?? r.stopped.reason}` : r.state}</span>
-            </button>
-          ))}
-        </section>
-      )}
       <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void act(() => api.startOneshot(sentence, path, models)) }}>
         <label className="flex flex-col gap-1.5">
           <span className="font-semibold">무엇을 만들고 싶은가</span>
@@ -238,21 +157,10 @@ function Intake({ open, later, busy, act, pick, pickSpec }: {
   )
 }
 
-function Body({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act }) {
-  if (run.state === 'spec') {
-    return (
-      <>
-        <p role="status">
-          저장소 <span className="font-mono">{run.spec?.repo}</span> 를 만들고 main 에 올렸다. 명세는 <span className="font-mono">{run.spec?.id}</span> 브랜치의
-          작업 공간에서 이어진다.
-        </p>
-        {run.spec && <OneshotSpec repo={run.spec.repo} />}
-      </>
-    )
-  }
+/** A run before S2: its stop, what runs, or what it asks. Past the bootstrap the window opens its spec instead. */
+export function Body({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act }) {
   return (
     <>
-      <ModelsLine models={run.models} />
       {run.stopped && <Stopped run={run} busy={busy} act={act} />}
       {run.working && <p role="status" className="text-muted-foreground">{WORKING[run.working] ?? run.working}</p>}
       {run.state === 'intake' && run.intent && !run.working && !run.stopped && <Restated run={run} busy={busy} act={act} />}

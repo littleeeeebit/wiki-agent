@@ -19,6 +19,7 @@ colors:
   st-ready: "#1d7d3e"
   st-queued: "#006669"
   st-stop: "#ba2b2e"
+  progress: "#2b3a67"
   map-doc: "#878d95"
   map-page: "#3f6b8f"
   map-module: "#b9b3a4"
@@ -44,6 +45,7 @@ colors:
     st-ready: "#6fc884"
     st-queued: "#65d2d2"
     st-stop: "#ff7c75"
+    progress: "#a9b8e8"
     map-doc: "#6f757d"
     map-page: "#7fa9c9"
     map-module: "#8a8577"
@@ -84,6 +86,8 @@ components:
   - 지도 — 층 토글 · 찾기 · 되돌리기 · 지표 한 줄 · 옆 패널 · 이번 질문 경로 층과 경로 목록
   - 모달 — 설정 (일반 · 연결 · 질문 (Jev) · 리뷰) · 리뷰 루프 PR 고르기 · 연결 확인
   - 빈 상태 (면마다 하나)
+  - 창 전환 — 두 레일 맨 위의 [유지보수 · 원샷]; 결정을 기다리는 원샷 실행이 있으면 `wait` 점
+  - 원샷 창 — 실행 목록 (진행 중 · 끝남) · 단계 (시작 · 요구 · 백엔드 · 화면 · 마무리) · 지금 단계의 일
 ---
 
 # DESIGN — Screen values for this repository
@@ -138,6 +142,42 @@ The center is slightly wider than the right to give the conversation more readin
 
 The title headers of the three sides have the same height (`44px`, `h-11`). They only state what is being viewed. The tab line is `36px` (`h-9`). Settings have been moved to a modal via the gear icon — since translation and theme are things you don't touch again once set, there is no reason to use rail space.
 
+## Oneshot window
+
+```
+누가:   한두 문장으로 새 저장소를 시작한 주인
+하려고: 실행이 지금 어느 단계인지, 내가 정할 것이 있는지 보고 그 자리에서 정한다
+성공:   실행 목록에서 기다리는 실행을 바로 찾고, 고르면 전체 단계와 지금 할 일이 한 화면에 있다
+```
+
+Maintenance (the three columns above) is for keeping and extending existing
+repositories; a oneshot run, from its sentence to its pull request, has its
+own window. The two windows sit in one app window and both stay mounted, so a
+stream or a draft in one survives a look at the other. The switch
+`[유지보수 · 원샷]` is at the same place at the top of both rails, and carries a
+`wait` dot when a oneshot run waits for the owner. The folded maintenance rail
+has a rocket icon with the same dot. The URL fragment holds the window and the
+run (`#oneshot/spec:<repo>`, `#oneshot/run:<id>`, `#oneshot/new`), so the
+browser's back works and going back to the oneshot window reopens the run last
+shown. Maintenance's `[새 프로젝트]` opens the start form there.
+
+| Area | Position | Why there |
+| --- | --- | --- |
+| Run list | Left `15rem` | Runs still going, waiting first, then the S1 runs; finished runs fold under `끝남`. Each row: name (code), stage and `n/18` (meta), a 2px `progress` bar |
+| Stages | `17rem` | The sentence and the fixed models, then all eighteen stages under five phases (시작 · 요구 · 백엔드 · 화면 · 마무리): `✓` passed, `●` now, `○` to come, `정함` where the owner decides |
+| Now | `1fr` | The stage name and its state in the 44px header, one line on what the stage does, then what it shows or asks — the intent, the card, the conversation, a gate sheet, the board, the summary. Content keeps the header's left edge, at most `60rem` wide |
+
+Under 1280px the stages fold into a `단계 n/18` disclosure at the top of Now.
+At 1100px or narrower one column remains and the run list folds behind
+`실행 목록`. Measured on 2026-11-11 at 1440, 1200, 1000 and 400px: no
+horizontal overflow; the three headers are 44px; Now's header and content
+start on the same edge.
+
+The window adds no type levels: title for the app name, pane for the stage
+name, label for phase and group names, body for the stage line and the
+sentence, control for stage rows and the switch, code for run names, meta for
+a row's stage and count, `정함` and the header's state.
+
 ## Color
 
 Neutral background with two accent colors. Selected by the user on 2026-09-25.
@@ -179,6 +219,16 @@ The dot for a task waiting for approval is `wait` instead of the status color. W
 ### A question's run
 
 No new colours (Jev stage 9, 2026-09-27). Every state is also a mark and a word, so none rests on colour: the stepper is `✓` passed, `●` now, `○` to come; evidence support is `✓` supported (`ok`), `?` unverified, `≠` conflict, `!` untrusted, `·` not cited (all `ink-soft`). `warn` stays for failure only — a cancelled run is `⏹ 멈춤` in `ink-soft`, since stopping is a person's choice, not a fault. On the run's map layer a seed is the large dot, a bridge the dashed one, cited evidence the outlined one, said in a legend above the path list.
+
+### Oneshot progress
+
+`progress` is indigo, used only in the oneshot window: each run row's 2px bar
+and the current stage's `●`. It sits apart from `ok` blue, so how far a run
+has come never reads as something to press; `wait` amber still marks a run or
+stage waiting for the owner, and a stopped run says `멈춤` in `wait`. The user
+picked indigo over the shared blue and a neutral ink on 2026-11-11. Contrast
+of the mark on its highlighted row is 9.24 in light and 7.55 in dark; the bar
+on its track is 7.61 and 6.48.
 
 ### Map
 

@@ -1,6 +1,6 @@
-"""The oneshot run's screens: the rail row that waits, the stage strip, a gate sheet's per-item
-decisions with its folded section, the re-shown sheet, the feature board by drag and by keys, and a
-stopped run's `[재개]`.
+"""The oneshot window: the switch from maintenance, the run list with its waiting and stopped rows,
+the stages, a gate sheet's per-item decisions with its folded section, the re-shown sheet, the
+feature board by drag and by keys, a stopped run's `[재개]`, and the start form.
 
 Run after building: python web/tests/oneshot_browser.py
 Serves web/dist with synthetic runs; the sheets are short Markdown like the server's, never a real run.
@@ -133,15 +133,21 @@ def main():
         browser = p.chromium.launch()
         page = page_of(browser, errors, viewport={"width": 1280, "height": 960})
         page.goto(f"http://127.0.0.1:{port}/")
-        page.get_by_role("button", name="프로젝트 · 연결", exact=True).click()
+        # Maintenance says a oneshot run waits, on the switch to the oneshot window.
+        switch = page.get_by_role("tablist", name="창")
+        expect(switch.get_by_role("tab", name="원샷").get_by_label("결정을 기다리는 실행이 있다")).to_be_visible()
+        switch.get_by_role("tab", name="원샷").click()
+        expect(page.get_by_role("tab", name="원샷")).to_have_attribute("aria-selected", "true")
         rail = page.get_by_role("navigation", name="원샷 실행")
         expect(rail.get_by_role("button").filter(has_text="demo").first.get_by_label("결정을 기다린다")).to_be_visible()
         expect(rail.get_by_role("button").filter(has_text="stopped-demo").get_by_label("결정을 기다린다")).to_have_count(0)
+        expect(rail.get_by_role("button").filter(has_text="stopped-demo")).to_contain_text("멈춤 — 화면 비평")
 
-        # R1: the strip, per-item decisions, the folded section and its "approve all".
+        # R1: the stages, per-item decisions, the folded section and its "approve all".
         rail.get_by_role("button").filter(has_text="demo").first.click()
         strip = page.get_by_role("navigation", name="원샷 단계")
-        expect(strip.locator("[aria-current=step]")).to_have_text("◆ R1 백엔드 설계")
+        expect(strip.locator("[aria-current=step]")).to_contain_text("R1 백엔드 설계")
+        expect(strip.get_by_text("✓")).to_have_count(5)   # the start's three, the conversation, the backend design
         sheet = page.get_by_role("region", name="R1 시트")
         shown, folded = sheet.get_by_role("region", name="펼쳐진 항목"), sheet.get_by_role("region", name="접힌 부분의 항목")
         expect(shown.locator("[data-item]")).to_have_count(3)
@@ -182,7 +188,6 @@ def main():
         expect(sheet.locator("[data-item=T1]").first).to_be_visible()
         expect(sheet.locator("[data-item=R1]")).to_be_hidden()
         expect(sheet.get_by_text("정하지 않은 항목 1개")).to_be_visible()
-        page.keyboard.press("Escape")
 
         # The board: one card dragged, one moved with the arrow keys, the whole map sent once.
         page.get_by_role("navigation", name="원샷 실행").get_by_role("button").filter(has_text="board-demo").click()
@@ -198,15 +203,16 @@ def main():
             board.get_by_role("button", name="보드 제출").click()
         assert posted[-1] == ("board-demo", "board", {"frequency": {"record": "sometimes", "export": "rarely", "month": "every"},
                                                        "first_screen": "오늘 쓴 돈"}), posted[-1]
-        page.keyboard.press("Escape")
 
         # A stopped run: its reason and `[재개]`.
         page.get_by_role("navigation", name="원샷 실행").get_by_role("button").filter(has_text="stopped-demo").click()
         expect(page.get_by_role("alert").filter(has_text="멈췄다 — 화면 비평이 멈췄다")).to_contain_text("6회차에도")
+        head = page.locator(".oneshot-shell main > header")
+        expect(head.get_by_role("status")).to_have_text("멈춤 — 아래에 이유")
         page.get_by_role("button", name="재개", exact=True).click()
-        expect(page.get_by_role("navigation", name="원샷 단계").get_by_role("status")).to_have_text("화면 비평 진행 중…")
+        expect(head.get_by_role("status")).to_have_text("진행 중…")
+        expect(head.get_by_role("heading")).to_have_text("화면 비평")
         assert posted[-1][:2] == ("stopped-demo", "resume"), posted[-1]
-        page.keyboard.press("Escape")
 
         # S2: the question that rides only in `choices` is shown and answered; a refused answer stays.
         page.get_by_role("navigation", name="원샷 실행").get_by_role("button").filter(has_text="talk-demo").click()
@@ -227,8 +233,6 @@ def main():
         talk.get_by_role("button", name="보내기").click()
         expect(reply).to_have_value("")
         assert posted[-1] == ("talk-demo", "say", {"text": "좋다"}), posted[-1]
-        with page.expect_response(lambda r: r.url.endswith("/api/oneshot-specs")):   # the rail reads once as the window closes
-            page.keyboard.press("Escape")
 
         # The rail follows a spec the server saves, with no focus change: an automatic stage reaching a gate.
         row = page.get_by_role("navigation", name="원샷 실행").get_by_role("button").filter(has_text="auto-demo")
@@ -240,9 +244,18 @@ def main():
         page.evaluate("window.dispatchEvent(new Event('server-resync'))")
         expect(row.get_by_label("결정을 기다린다")).to_have_count(0)
 
-        # The start form: three models picked apart, the review on the Review Loop's choice, all in the request.
+        # Back to maintenance and in again: the run last shown opens again.
+        page.get_by_role("tab", name="유지보수").click()
+        expect(page.locator(".oneshot-shell")).to_be_hidden()
+        page.get_by_role("button", name="프로젝트 · 연결", exact=True).click()
+        page.get_by_role("tab", name="원샷").click()
+        expect(page.get_by_role("region", name="요구 대화")).to_be_visible()
+        page.get_by_role("tab", name="유지보수").click()
+
+        # Maintenance's [새 프로젝트] opens the start form in the oneshot window.
         page.get_by_role("button", name="새 프로젝트", exact=True).click()
-        form = page.get_by_role("dialog", name="새 프로젝트 — 원샷")
+        form = page.locator(".oneshot-shell main")
+        expect(form.get_by_role("heading", name="새 실행")).to_be_visible()
         group = {role: form.get_by_role("group", name=f"{role} 모델") for role in ("명세", "구현", "리뷰")}
         expect(group["리뷰"].get_by_role("combobox", name="모델")).to_contain_text("GPT-6.1-Sol")
         expect(group["명세"].get_by_role("combobox", name="모델")).to_contain_text("Claude 기본")
@@ -261,17 +274,19 @@ def main():
         expect(group["구현"].get_by_role("combobox", name="모델")).to_contain_text("Claude 기본")   # apart from 명세
         form.get_by_role("textbox").first.fill("가계부를 만들고 싶다")
         form.get_by_role("button", name="시작", exact=True).click()
-        expect(form.get_by_text("명세 opus · high / 구현 Claude 기본 / 리뷰 codex:gpt-6.1-sol · high")).to_be_visible()
+        stages = page.get_by_role("region", name="실행의 단계")
+        expect(stages.get_by_text("명세 opus · high / 구현 Claude 기본 / 리뷰 codex:gpt-6.1-sol · high")).to_be_visible()
+        expect(page.get_by_role("navigation", name="원샷 단계").locator("[aria-current=step]")).to_contain_text("하고 싶은 것")
+        assert page.url.endswith("#oneshot/run%3A0123456789abcdef"), page.url
         assert posted[-1][2]["models"] == {"spec": {"model": "opus", "effort": "high"}, "build": {"model": "", "effort": ""},
                                            "review": {"model": "codex:gpt-6.1-sol", "effort": "high"}}, posted[-1]
-        page.mouse.click(4, 4)   # the backdrop itself still closes the window
-        expect(form).to_have_count(0)
         browser.close()
     assert not errors, errors
-    print("PASS: the rail marks a run that waits; a gate sheet needs every item, folded or not, and records the folds "
-          "opened; an enlarged picture closes alone; the re-shown sheet opens what needs a decision again; the board "
-          "moves by drag and by keys; a stopped run resumes; S2 shows its choices and keeps a refused answer; the rail "
-          "follows a saved spec; the start form fixes three models picked apart")
+    print("PASS: maintenance marks a waiting run on the switch; the oneshot window lists runs with the waiting and the "
+          "stopped marked; a gate sheet needs every item, folded or not, and records the folds opened; an enlarged "
+          "picture closes alone; the re-shown sheet opens what needs a decision again; the board moves by drag and by "
+          "keys; a stopped run resumes; S2 shows its choices and keeps a refused answer; the list follows a saved spec; "
+          "the switch keeps the run shown; [새 프로젝트] opens the start form, which fixes three models picked apart")
 
 
 if __name__ == "__main__":
