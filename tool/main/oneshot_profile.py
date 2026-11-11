@@ -1,4 +1,5 @@
-"""The oneshot environment card's schema, its checks, the adapter's gate, and the run's spending ledger.
+"""The oneshot environment card's schema and its checks, the stack the owner picks in S2, and the run's
+spending ledger.
 
 The schema is the server's, never the model's (`docs/plans/oneshot/2-bootstrap.md`, "S1").
 Pure functions: no run records, no sessions.
@@ -6,11 +7,11 @@ Pure functions: no run records, no sessions.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 
 from common import settings
-from common.host import conda_exe
 
 ESTIMATE_USD = 2.0   # a USD-metered role's first turn, before any sample; `.env` may override per role
 TURN_SECONDS = 600.0  # a cut turn's time before the role has a longest turn on record
@@ -23,19 +24,10 @@ SUPPORTED_KINDS = ("webapp",)
 SCHEMA: dict[str, dict] = {
     "os_now": {"options": ["windows", "macos"], "default": "windows" if sys.platform == "win32" else "macos"},
     "os_later": {"options": ["none", "other"], "default": "other"},
-    "python_env": {"options": ["uv", "venv", "conda"], "default": "uv"},
-    "conda_env": {"text": True, "default": ""},
-    "backend": {"options": ["fastapi", "node", "none"], "default": "fastapi", "enabled": ["fastapi"]},
-    "frontend": {"options": ["vite-react", "jinja-htmx", "tauri", "none"], "default": "vite-react",
-                 "enabled": ["vite-react"]},
-    "styling": {"options": ["tailwind", "css", "component-library"], "default": "tailwind"},
-    "data_store": {"options": ["sqlite", "json", "postgres"], "default": "sqlite"},
     "auth": {"options": ["none", "password", "oauth"], "default": "none"},
-    "deploy": {"options": ["local", "docker", "cloud"], "default": "local"},
     "visibility": {"options": ["private", "public"], "default": "", "asked": True},
     "license": {"options": ["none", "mit", "apache-2.0"], "default": "none"},
     "ci": {"options": ["none", "github-actions"], "default": "none"},
-    "js_pm": {"options": ["npm", "pnpm"], "default": "npm"},
     "ui_language": {"options": ["ko", "en", "both"], "default": "ko"},
     "docs_language": {"options": ["ko", "en"], "default": "", "asked": True},
     "responsive": {"options": ["desktop", "desktop-mobile"], "default": "desktop-mobile"},
@@ -43,7 +35,9 @@ SCHEMA: dict[str, dict] = {
     "github_owner": {"text": True, "default": "", "asked": True},
 }
 OWNER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
-CONDA_ENV = re.compile(r"[\w.-]{1,64}")
+# The stack is the owner's, picked in S2 (`docs/plans/oneshot/6-free-stack.md`); the card holds none of it.
+PARTS = ("backend", "frontend", "styling", "data_store", "tests", "deploy")
+STATUSES = ("confirmed", "assumed", "undecided")
 
 
 def current(profile: dict | None) -> dict | None:
@@ -82,20 +76,12 @@ def problems(profile: dict) -> tuple[list[str], list[str]]:
     for name, field in SCHEMA.items():
         v = profile.get(name, "")
         if v in ("", None):
-            if not (name == "conda_env" and profile.get("python_env") != "conda"):
-                errors.append(f"`{name}` 을 채워야 한다")
+            errors.append(f"`{name}` 을 채워야 한다")
             continue
         if "options" in field and v not in field["options"]:
             errors.append(f"`{name}` 에 없는 선택지다: {v}")
         elif "enabled" in field and v not in field["enabled"]:
             errors.append(f"`{name}` 의 `{v}` 는 이 버전에서 아직 고를 수 없다")
-    if profile.get("python_env") == "conda":
-        if not CONDA_ENV.fullmatch(str(profile.get("conda_env") or "")):
-            errors.append("conda 는 환경 이름이 있어야 한다 (영문·숫자·`._-`)")
-        if not conda_exe():
-            errors.append("이 PC 에서 conda 를 찾지 못했다")
-    if profile.get("python_env") == "venv" and profile.get("os_later") == "other":
-        warnings.append("stdlib venv 는 OS 마다 인터프리터 경로가 달라 하나의 gate 로 쓸 수 없다 — uv 를 권한다")
     if profile.get("visibility") == "public" and profile.get("license") == "none":
         errors.append("공개 저장소는 라이선스를 골라야 한다")
     if profile.get("visibility") == "private" and profile.get("ci") != "none":
@@ -106,21 +92,40 @@ def problems(profile: dict) -> tuple[list[str], list[str]]:
     return errors, warnings
 
 
-def gate_cmd(profile: dict) -> str:
-    env = profile["python_env"]
-    if env == "uv":
-        return "uv run pytest"
-    if env == "conda":
-        return f'"{conda_exe()}" run --no-capture-output -n {profile["conda_env"]} python -m pytest'
-    folder = "Scripts" if profile["os_now"] == "windows" else "bin"
-    return f".venv/{folder}/python -m pytest"
+def stacked(value) -> list[dict]:
+    """The `stack` list of an `oneshot-spec` block, checked: `[{part, choice, why, status}]`, each part at
+    most once. A part may still be missing; the conversation ends only when every part is confirmed."""
+
+    if not isinstance(value, list):
+        raise ValueError("`stack` 는 목록이어야 한다")
+    out, seen = [], set()
+    for item in value:
+        if not isinstance(item, dict) or item.get("part") not in PARTS:
+            raise ValueError(f"`stack` 의 `part` 는 {', '.join(PARTS)} 중 하나다")
+        if item["part"] in seen:
+            raise ValueError(f"`stack` 에 `{item['part']}` 가 둘 이상이다")
+        if not all(isinstance(item.get(k), str) and item[k].strip() for k in ("choice", "why")):
+            raise ValueError(f"`stack` 의 `{item['part']}` 에 `choice` 와 `why` 가 있어야 한다")
+        if item.get("status") not in STATUSES:
+            raise ValueError(f"`stack` 의 `status` 는 {', '.join(STATUSES)} 중 하나다")
+        seen.add(item["part"])
+        out.append({"part": item["part"], "choice": item["choice"].strip(), "why": " ".join(item["why"].split()),
+                    "status": item["status"]})
+    return sorted(out, key=lambda s: PARTS.index(s["part"]))
 
 
-def python_cmd(profile: dict) -> str:
-    """The project's own interpreter, as `gate_cmd` reaches it."""
+def unsettled(stack: list[dict]) -> list[str]:
+    """The parts the owner has not confirmed yet, in the plan's order."""
 
-    return gate_cmd(profile).removesuffix(" -m pytest").removesuffix(" pytest") + (
-        " python" if profile["python_env"] == "uv" else "")
+    confirmed = {s["part"] for s in stack if s["status"] == "confirmed"}
+    return [p for p in PARTS if p not in confirmed]
+
+
+def environment(o: dict) -> str:
+    """What a turn is told about the project's setting: the card and the stack the owner picked in S2."""
+
+    return json.dumps({**current(o["profile"]), "stack": {s["part"]: s["choice"] for s in o.get("stack") or []}},
+                      ensure_ascii=False)
 
 
 # -- Spending -------------------------------------------------------------------------

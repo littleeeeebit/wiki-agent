@@ -49,9 +49,8 @@ const api = {
  *  and `[재개]`. The server owns every rule; this screen only shows and asks. */
 
 const LABEL: Record<string, string> = {
-  os_now: '지금 쓰는 OS', os_later: '다른 OS 에서도', python_env: '파이썬 환경', conda_env: 'conda 환경 이름',
-  backend: '백엔드', frontend: '프런트엔드', styling: '스타일', data_store: '데이터 저장', auth: '로그인',
-  deploy: '배포', visibility: 'GitHub 공개 범위', license: '라이선스', ci: 'CI', js_pm: 'JS 패키지 관리자',
+  os_now: '지금 쓰는 OS', os_later: '다른 OS 에서도', auth: '로그인',
+  visibility: 'GitHub 공개 범위', license: '라이선스', ci: 'CI',
   ui_language: '화면 언어', docs_language: '문서 언어', responsive: '화면 크기', llm: 'LLM 사용',
   github_owner: 'GitHub 소유자',
 }
@@ -333,7 +332,6 @@ function Card({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act }) 
     <section className="flex flex-col gap-3">
       <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
         {Object.entries(run.schema).map(([key, field]) => {
-          if (key === 'conda_env' && draft.python_env !== 'conda') return null
           const why = run.proposed[key]?.why
           const value = draft[key] ?? ''
           const set = (v: string) => setDraft({ ...draft, [key]: v })

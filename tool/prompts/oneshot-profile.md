@@ -21,9 +21,10 @@ A short answer for the person, then exactly one fenced block named
 ```
 
 - Change a field only when the request gives a concrete reason: the sentence
-  names an AI feature (`llm`), GPU or native scientific packages
-  (`python_env` = `conda` with a `conda_env` name), several users with
-  accounts (`auth`), and the like. Otherwise leave it out.
+  names an AI feature (`llm`), several users with accounts (`auth`), use on
+  a phone (`responsive`), and the like. Otherwise leave it out. The stack is
+  not on the card: the person picks it later, in the requirements
+  conversation.
 - Never propose an option outside the schema, or one outside `enabled`.
 - Never fill `visibility`, `docs_language` or `github_owner`: only the person
   decides those.

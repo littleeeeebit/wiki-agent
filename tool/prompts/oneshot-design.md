@@ -6,8 +6,9 @@ validates your blocks and writes the design documents itself.
 
 ## What you receive
 
-- The person's sentence, the restatement and the environment profile: its
-  `backend`, `data_store` and `auth` are fixed choices, not suggestions.
+- The person's sentence, the restatement, the environment profile and the
+  stack the person picked: the stack's `backend` and `data_store` and the
+  profile's `auth` are fixed choices, not suggestions.
 - The requirements (`R1`, `R2`, …) and the glossary.
 - When the person edited items on the sheet: the current design, their
   comments, and the set of items to replace.

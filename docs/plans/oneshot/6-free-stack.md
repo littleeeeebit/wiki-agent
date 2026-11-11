@@ -61,9 +61,20 @@ The `oneshot-spec` block gains a `stack` list beside the requirements:
 - The first stack question offers two or three whole bundles, each naming
   every part with one reason, so one answer settles the stack. A later
   question changes one part only when the owner asks for it.
-- `status` is `confirmed` only from the owner's answer. The server ends S2
-  when every requirement is settled and every part is `confirmed`; an
-  `assumed` part keeps the conversation open.
+- `status` is `confirmed` only from the owner's answer. The server accepts a
+  part as `confirmed` when it was already confirmed with the same choice, or
+  when the owner has just answered a question and the part was offered in
+  the stack before that question. It sends back a turn that confirms any
+  other part. That the answered question was the stack's is the prompt's to
+  keep; the owner sees the stack again on R1.
+- The server ends S2 when every requirement is settled, every part is
+  `confirmed` and the turn asks nothing: a turn's question waits for its
+  answer. An `assumed` part keeps the conversation open.
+- A spec that leaves S2, or saves any S2 turn, records version 3, whatever
+  version it started at, since its stack is now in `stack`. A run records
+  version 3 before its bootstrap's first sub-step, whichever way it entered
+  the bootstrap (a resume, or the card's confirmation), since the files it
+  writes from then on are version 3's.
 - The stack is shown at the top of the R1 sheet, read-only: changing it after
   R1 means a new run.
 
@@ -251,8 +262,8 @@ bootstrap's `files` step and before its `commit` whose resume is refused.
 | Part | Scope | Status |
 | --- | --- | --- |
 | 6a | This document; budgets removed from the card, the ceilings and the screen | Done (#331) |
-| 6b | S4 on the runner block and JUnit, S5 from `api.yaml`, S7's conventions, version 2 | In progress |
-| 6c | The stack in S2 and on R1, the card's stack fields removed, the bootstrap without them, the prompts reading the stack, version 3 | Not started |
+| 6b | S4 on the runner block and JUnit, S5 from `api.yaml`, S7's conventions, version 2 | Done (#332) |
+| 6c | The stack in S2 and on R1, the card's stack fields removed, the bootstrap without them, the prompts reading the stack, version 3 | In progress |
 
 6b goes before 6c so every merged state still runs. After 6b a new run's
 tests turn declares a pytest command from the old card, and a run already
