@@ -21,6 +21,7 @@ from main import channels, connect, loop, oneshot, oneshot_profile, oneshot_spec
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 
 LAUNCH = oneshot.launch   # the real one; `world` replaces it with a synchronous state change
+EXAMINE = connect.examine   # the real one; `world` replaces it with a recorder
 
 INTENT = {"restated": "가계부를 만든다.", "kind": "webapp", "name": "Budget Tracker", "users": "나 혼자 쓴다.",
           "first_screen": "이번 달 지출을 본다."}
@@ -68,9 +69,12 @@ def world(tmp_path):
     github = GitHub(tmp_path / "remote.git")
     identity = {f"GIT_{who}_{what}": value for who in ("AUTHOR", "COMMITTER")
                 for what, value in (("NAME", "Oneshot test"), ("EMAIL", "oneshot@example.test"))}
+    examined, wiring = [], {"needed": False}   # never this machine's CLIs, hooks or Codex trust
     with patch.dict(os.environ, identity), patch.object(oneshot, "RUNS", tmp_path / "oneshot"), \
          patch.object(oneshot, "PROFILES", tmp_path / "oneshot" / "profiles"), \
          patch.object(connect, "RECORDS", tmp_path / "connect"), \
+         patch.object(connect, "examine", lambda path, then=None, wait=False: examined.append((path, wait)) or True), \
+         patch.object(connect, "hub", lambda data=None: dict(wiring)), \
          patch.object(channels, "WORKSPACE", workspace), \
          patch.object(oneshot, "gh", github.gh), patch.object(oneshot, "remote_id", github.remote_id), \
          patch.object(oneshot, "gh_user", lambda: "someone"), \
@@ -80,7 +84,7 @@ def world(tmp_path):
          patch.object(oneshot_spec, "begin", lambda repo: None), \
          patch.object(oneshot, "launch",
                       lambda rid, work, *a, **f: oneshot.changed(rid, **f, working=work, stopped=None)):
-        yield {"workspace": workspace, "github": github, "hub": hub, "tmp": tmp_path}
+        yield {"workspace": workspace, "github": github, "hub": hub, "tmp": tmp_path, "examined": examined, "wiring": wiring}
 
 
 def made(world, **extra) -> str:
@@ -275,6 +279,7 @@ def test_bootstrap_makes_the_repository_the_spec_and_the_linked_worktree(world):
     assert spec["oneshot"]["run"] == rid and spec["workspace_mode"] == "worktree"
     assert Path(spec["worktree"]).is_dir() and spec["done"] == []
     assert json.loads((connect.RECORDS / "budget-tracker.json").read_text(encoding="utf-8"))["hash"]
+    assert world["examined"] == [(repo, True)]   # connected as `[연결]` would, its tests run within the step
     assert json.loads((oneshot.PROFILES / "webapp.json").read_text(encoding="utf-8"))["github_owner"] == "someone"
     with pytest.raises(RuntimeError):
         oneshot.save(run)                                                    # never written again
@@ -300,6 +305,29 @@ def test_a_cut_after_each_effect_resumes_without_repeating_it(world, cut):
     assert subprocess.run(["git", "rev-list", "--count", "main"], cwd=repo, capture_output=True,
                           text=True).stdout.strip() == "1"
     assert len(list((specs.SPECS / "budget-tracker").glob("*.json"))) == 1
+
+
+def test_wiring_to_confirm_stops_the_register_and_tests_cut_before_their_results_run_again(world):
+    rid = made(world)
+    world["wiring"]["needed"] = True
+    oneshot.bootstrap(rid)
+    run = oneshot.load(rid)
+    assert run["stopped"]["reason"] == "connect" and "register" not in run["steps"] and world["examined"] == []
+    world["wiring"]["needed"] = False   # the owner confirmed the move on `[연결]`
+    oneshot.changed(rid, stopped=None)
+    # The real tests, dying before they keep a result as a server going down would: the step is not recorded.
+    with patch.object(connect, "examine", EXAMINE), patch.object(connect, "hosts", lambda data: ["claude"]), \
+         patch.object(connect, "probe", side_effect=RuntimeError("server stopped during the tests")):
+        oneshot.bootstrap(rid)
+    assert oneshot.load(rid)["stopped"] and "register" not in oneshot.load(rid)["steps"]
+    # `[연결]`'s own tests still running: this step cannot wait on them, so it stops unrecorded too.
+    oneshot.changed(rid, stopped=None)
+    with patch.object(connect, "examine", EXAMINE), patch.object(connect, "_probing", {"budget-tracker"}):
+        oneshot.bootstrap(rid)
+    assert oneshot.load(rid)["stopped"]["reason"] == "connect" and "register" not in oneshot.load(rid)["steps"]
+    oneshot.changed(rid, stopped=None)
+    assert finished(world, rid)["committed"]
+    assert world["examined"] == [(world["workspace"] / "budget-tracker", True)]
 
 
 def test_an_unrecorded_same_name_remote_stops_and_is_adopted_only_on_request(world):

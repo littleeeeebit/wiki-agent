@@ -386,8 +386,7 @@ def step(rid: str, name: str, fn) -> dict:
 def s_recheck(run: dict) -> None:
     ident = run["identity"]
     known = (run.get("github") or {}).get("node_id")
-    found = conflicts(run["id"], Path(ident["path"]), ident["name"], ident["owner"], remote=not known)
-    if found:
+    if found := conflicts(run["id"], Path(ident["path"]), ident["name"], ident["owner"], remote=not known):
         raise Stop("folder", "; ".join(found))
 
 
@@ -452,6 +451,10 @@ def s_register(run: dict) -> None:
         raise Stop("folder", "이 이름으로 이 폴더를 찾지 못했다")
     text = planned(run)[".wiki/adapter.toml"]
     connect.keep(name, hash=connect.digest(text.encode("utf-8")), adapter=text, written=time.time(), handover=None)
+    if connect.hub(connect.adapter_of(path)[0])["needed"]:   # the machine's wiring moves only on `[연결]`'s confirmation
+        raise Stop("connect", "이 기계의 hook 배선이나 Codex 신뢰를 바꿔야 한다 — 프로젝트 목록에서 이 저장소의 [연결]로 확인한 뒤 [재개]")
+    if not connect.examine(path, wait=True):   # `[연결]`'s tests, in the step: a cut before their results are kept runs them again
+        raise Stop("connect", "이 저장소의 시험이 아직 돌고 있다 — 끝난 뒤 [재개]")
 
 
 def s_remote(run: dict) -> None:
@@ -480,8 +483,7 @@ def s_remote(run: dict) -> None:
     flag = "--public" if run["profile"]["visibility"] == "public" else "--private"
     if gh(["repo", "create", f"{ident['owner']}/{ident['name']}", flag]).returncode:
         raise Stop("github", "GitHub 저장소를 만들지 못했다")
-    made = remote_id(ident["owner"], ident["name"])
-    if not made:
+    if not (made := remote_id(ident["owner"], ident["name"])):
         raise Stop("github", "만든 GitHub 저장소를 확인하지 못했다")
     changed(run["id"], github={"node_id": made})
 
@@ -790,8 +792,7 @@ def intent(rid: str, body: Intent) -> dict:
         owner = gh_user()
         if not owner:
             raise HTTPException(409, "GitHub CLI 에 로그인하지 않았다")
-        found = conflicts(rid, path, name, owner)
-        if found:
+        if found := conflicts(rid, path, name, owner):
             raise HTTPException(409, "; ".join(found))
         # Identity is fixed here, under the lock, before anything is written.
         launch(rid, "profile", state="environment",
@@ -806,8 +807,7 @@ def profile(rid: str, body: Profile) -> dict:
         idle(run, "environment")
         if run.get("profile") is None:
             raise HTTPException(409, "카드가 아직 없다")
-        unknown = set(body.values) - set(SCHEMA)
-        if unknown:
+        if unknown := set(body.values) - set(SCHEMA):
             raise HTTPException(400, f"스키마에 없는 필드: {', '.join(sorted(unknown))}")
         values = {**current(run["profile"]), **body.values}
         if body.confirm:
