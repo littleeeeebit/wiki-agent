@@ -183,10 +183,24 @@ def test_a_planned_name_matches_in_any_case_and_with_a_parameter_but_not_as_a_pr
 
 
 def test_the_report_path_reaches_the_runner_as_written(tmp_path):
-    shown = tmp_path / "it's $HOME and $(x)" / "run.xml"
-    command = f'"{sys.executable}" -c "import sys; print(sys.argv[1])" ' + oneshot_build.literal(shown.as_posix())
+    shown = tmp_path / "it's $HOME, $(x) and it’s ‘quoted’ ‚so‛" / "run.xml"
+    command = f'"{sys.executable}" -c "import sys; print(ascii(sys.argv[1]))" ' + oneshot_build.literal(shown.as_posix())
     _, text, cut = specs.gate(command, tmp_path, threading.Event(), timeout=60)
-    assert not cut and shown.as_posix() in text, text
+    assert not cut and ascii(shown.as_posix()) in text, text
+
+
+def test_a_reports_file_is_read_against_the_worktree_then_against_a_runner_run_in_a_folder_below_it(tmp_path):
+    (tmp_path / "web" / "tests").mkdir(parents=True)
+    (tmp_path / "web" / "tests" / "test_budget.py").write_text("", encoding="utf-8")
+    contract = ["web/tests/test_budget.py"]
+    assert oneshot_build.source(tmp_path, "tests\\test_budget.py", contract) == "web/tests/test_budget.py"   # `cd web`
+    assert oneshot_build.source(tmp_path, "./web/tests/test_budget.py", contract) == "web/tests/test_budget.py"
+    assert oneshot_build.source(tmp_path, str(tmp_path / "web/tests/test_budget.py"), contract) == contract[0]
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_budget.py").write_text("", encoding="utf-8")
+    # a file the worktree holds at that path is that file, declared or not
+    assert oneshot_build.source(tmp_path, "tests/test_budget.py", contract) == "tests/test_budget.py"
+    assert oneshot_build.source(tmp_path, "other/test_x.py", contract) == "other/test_x.py"
 
 
 def test_a_planned_case_from_a_file_left_out_of_the_contract_is_refused(built_world):

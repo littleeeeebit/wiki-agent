@@ -53,8 +53,8 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
         return why
     slots = slots_for(None, path)
     gate, live, backend = slots.get("gate_cmd", "").strip(), slots.get("live_cmd", "").strip(), o["gate"]
-    if backend not in gate:
-        return f"어댑터의 `gate_cmd` 가 백엔드 테스트 `{backend}` 를 잃었다 — `{gate}`"
+    if why := oneshot_build.published(gate, backend):
+        return why
     if not live:
         return "어댑터의 `live_cmd` 가 비었다 — 백엔드와 화면을 함께 띄우는 명령을 적는다"
     # The backend's own gate runs as the server knows it: the adapter's naming it proves nothing it runs.

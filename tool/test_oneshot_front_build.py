@@ -128,7 +128,8 @@ def test_a_build_with_its_adapter_filled_a_green_gate_and_clean_shots_moves_to_c
 
 
 @pytest.mark.parametrize("slots, said", [
-    (adapter(gate=f'"{sys.executable}" -c "pass"'), "백엔드 테스트"),
+    (adapter(gate=f'"{sys.executable}" -c "pass"'), "로 시작하고"),
+    (adapter(gate=f"{GATE} --version"), "로 시작하고"),   # names the command, runs none of it
     (adapter(live=""), "`live_cmd` 가 비었다"),
 ])
 def test_an_adapter_that_lost_the_backend_tests_or_left_live_empty_is_refused(staged, slots, said):
@@ -139,16 +140,14 @@ def test_an_adapter_that_lost_the_backend_tests_or_left_live_empty_is_refused(st
     assert o()["stage"] == "build-front" and o()["attempts"] == 1 and said in sent[-1][2]
 
 
-def test_a_gate_that_only_names_the_backend_tests_still_runs_them(staged):
-    built(staged, slots=adapter(gate=f"{GATE} --version"))   # names `pytest`, runs none of it
-    write(staged, "test_other.py", "def test_a_backend_rule_outside_the_contract():\n    assert False\n")
-    git(staged, "add", "-A")
-    git(staged, "commit", "-m", "other")
-    sent = []
-    with patch.object(oneshot_build, "send", lambda *a: sent.append(a)), \
-         patch.object(front_build.oneshot_look, "look", lambda *a: []):
-        check(staged)()
-    assert o()["stage"] == "build-front" and "게이트 실패" in sent[-1][2]
+@pytest.mark.parametrize("gate, ok", [
+    ("pytest -q", True), ("pytest -q && npm test", True), ("pytest -q &&\nnpm --prefix web test", True),
+    ("pytest -q --version", False), ("npm test # pytest -q", False), ("npm test && pytest -q", False),
+    ("pytest -q || true", False), ("pytest -q && npm test || true", False), ("pytest -q; npm test", False),
+    ("pytest -q && npm test # x", False), ("pytest -q\nnpm test", False),
+])
+def test_the_published_gate_runs_the_contracts_command_first_and_swallows_nothing(gate, ok):
+    assert (oneshot_build.published(gate, "pytest -q") == "") is ok
 
 
 def test_a_stop_during_the_look_passes_nothing_and_leaves_the_build_resumable(staged):

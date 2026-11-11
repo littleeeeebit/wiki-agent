@@ -185,7 +185,9 @@ def test_the_gate_green_asks_for_the_text_then_opens_the_pull_request_attached_b
 
 @pytest.mark.parametrize("change, said", [
     # an adapter gate that dropped the contract's command
-    (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass"')), "잃었다"),
+    (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass"')), "로 시작하고"),
+    # the contract's command in a comment: the published gate would run only the rest
+    (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass" # {GATE}')), "로 시작하고"),
     # a configuration the tests turn never listed, skipping every pinned case: the gate still exits 0
     (lambda tree: write(tree, "conftest.py", "import pytest\n\n\ndef pytest_collection_modifyitems(items):\n"
                                              "    for item in items:\n        item.add_marker(pytest.mark.skip)\n"),

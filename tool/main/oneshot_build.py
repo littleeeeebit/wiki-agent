@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -205,11 +206,29 @@ def junit(path: Path, run, spec: dict, command: str) -> list[tuple[str, str, str
             for case in root.iter("testcase")]
 
 
+QUOTES = "'‘’‚‛"   # every character PowerShell reads as a single quote
+
+
 def literal(text: str) -> str:
     """`text` as one word the gate's shell expands nothing in: single quotes, in PowerShell on Windows and in
-    bash elsewhere (`shell.launch`), each escaping a quote its own way."""
+    bash elsewhere (`shell.launch`), each escaping a quote its own way. PowerShell doubles any quote it knows."""
 
-    return "'" + text.replace("'", "''" if os.name == "nt" else "'\\''") + "'"
+    if os.name == "nt":
+        return "'" + "".join(c * 2 if c in QUOTES else c for c in text) + "'"
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+def published(gate: str, backend: str) -> str:
+    """Why the adapter's gate, which CI and the next session run, would not run the contract's command, or
+    empty: it is that command, or that command and then more after `&&`, with nothing after it that could
+    swallow a failure or hide the rest (`||`, `;`, `#`)."""
+
+    gate = gate.strip()
+    rest = gate[len(backend):] if gate.startswith(backend) else None
+    if rest is None or rest and not re.fullmatch(r"\s*&&[\s\S]+", rest) or any(t in (rest or "") for t in ("||", ";", "#")):
+        return (f"어댑터의 `gate_cmd` 는 계약 테스트 `{backend}` 로 시작하고, 더 돌릴 명령은 그 뒤에 ` && ` 로만 잇는다 "
+                f"(`||`, `;`, `#` 없이) — `{gate}`")
+    return ""
 
 
 def named(name: str, case: str) -> bool:
@@ -220,16 +239,21 @@ def named(name: str, case: str) -> bool:
                             or case.startswith(name + " (") and case.endswith(")"))
 
 
-def source(path: Path, file: str) -> str:
-    """A report's `file`, as a worktree path: absolute ones made relative, `./` and backslashes dropped."""
+def source(path: Path, file: str, contract: list[str]) -> str:
+    """A report's `file`, as a worktree path. An absolute one is made relative. A relative one is the worktree's
+    when it names a file there; otherwise the runner ran in a folder below the root (`cd web && …`), and it is
+    the contract file it ends.  ponytail: a suffix, not the runner's real folder, which no report names."""
 
-    p = Path(file)
+    p = Path(file.replace("\\", "/"))
     if p.is_absolute():
         try:
-            p = p.resolve().relative_to(path.resolve())
+            return p.resolve().relative_to(path.resolve()).as_posix()
         except ValueError:
             return p.as_posix()
-    return p.as_posix().removeprefix("./")
+    rel = p.as_posix().removeprefix("./")
+    if (path / rel).is_file():
+        return rel
+    return next((c for c in contract if c.endswith("/" + rel)), rel)
 
 
 def red(spec: dict, found: list[tuple[str, str, str, str]]) -> str:
@@ -369,7 +393,8 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
     if why := red(spec, found):
         return why
     # A file the report names for a planned case is the case's file: one left out of `contract` is not pinned.
-    if outside := sorted({source(path, c[2]) for c in found if c[2] and any(named(t, c[1]) for t in tests)}
+    if outside := sorted({source(path, c[2], runner["contract"]) for c in found
+                          if c[2] and any(named(t, c[1]) for t in tests)}
                          - set(runner["contract"])):
         return "계획 테스트 사례가 `contract` 에 없는 파일에서 나왔다 — " + ", ".join(outside[:10])
     if (snapshot(path, names), head(path), changed(path, o["design_head"])) != before:

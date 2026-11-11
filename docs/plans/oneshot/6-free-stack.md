@@ -109,9 +109,11 @@ with one block:
 | Pinned | Every later turn ends | A `contract` or `config` file differs from `tests_head` |
 | Green | The build turn and the final gate (S8) end | A pinned case is absent, skipped, failing or reported more than once in a run of the stored command |
 
-S7 and S8 run the stored command themselves before the adapter's gate, and
-refuse an adapter whose `gate_cmd` no longer contains it, so the published
-gate keeps running the contract.
+S7 and S8 run the stored command themselves before the adapter's gate. They
+also refuse an adapter whose `gate_cmd` does not start with it, or adds
+anything after it other than ` && ` commands: no `||`, `;` or `#`, which
+could swallow its failure or hide it in a comment. The published gate, which
+CI and later sessions run, then runs the contract first.
 
 A planned name matches a testcase whose name equals it in any case, or that
 name followed by a parameter in brackets (`name[…]`) or in parentheses after
@@ -130,8 +132,11 @@ the case only when both run, because the pinned identity is then reported
 twice.
 
 The server substitutes `{report}` with a path in the run's folder, outside the
-worktree, single-quoted so neither PowerShell nor bash expands anything in it,
-and reads only that file. A run that reaches the tests turn records version 2,
+worktree, single-quoted so neither PowerShell nor bash expands anything in it
+(PowerShell's typographic single quotes are doubled like the plain one), and
+reads only that file. A report's `file` is read as a worktree path when the
+worktree holds a file there, and otherwise as the end of a `contract` path,
+since a runner started in a folder below the root names files from there. A run that reaches the tests turn records version 2,
 whatever version it started at, since its record now has version 2's shape. The adapter's `gate_cmd` becomes the
 stored command with `{report}` set to `artifacts/junit.xml`.
 

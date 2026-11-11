@@ -39,8 +39,9 @@ pinned; these files may not change at all:
 During this turn you may write `.wiki/adapter.toml`, and only during it.
 Fill `live_cmd` with one command that, run from the repository root, builds
 the screens if needed and starts the app (it reads `PORT` itself). Extend
-`gate_cmd` so it also runs the frontend's tests and build, keeping
-`{gate}` in it unchanged. Commit the adapter with the rest.
+`gate_cmd` so it also runs the frontend's tests and build: it starts with
+`{gate}` unchanged, and the frontend's commands follow after ` && `, with no
+`||`, `;` or `#` after it. Commit the adapter with the rest.
 
 ## When this turn ends
 
@@ -49,7 +50,8 @@ The server checks, in order:
 1. The `done-report` covers every item of the spec's `done` (one per screen),
    each passing.
 2. Every pinned file is unchanged since `{tests_head}`.
-3. The adapter's `gate_cmd` still runs `{gate}`, and `live_cmd` is filled.
+3. The adapter's `gate_cmd` starts with `{gate}` and adds only ` && `
+   commands, and `live_cmd` is filled.
 4. The adapter's gate passes on a clean, committed HEAD, and every planned
    backend test passes by node id.
 5. The server starts the app with `live_cmd` on a fresh data folder and again

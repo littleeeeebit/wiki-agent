@@ -106,8 +106,8 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     gate, backend = slots_for(None, path).get("gate_cmd", "").strip(), o["gate"]
     if not gate:
         return "어댑터의 `gate_cmd` 가 비었다"
-    if backend not in gate:
-        return f"어댑터의 `gate_cmd` 가 계약 테스트 `{backend}` 를 잃었다 — `{gate}`"
+    if why := oneshot_build.published(gate, backend):
+        return why
     # What the published HEAD holds, not what changed: a deleted workflow or a stray note is no CI.
     held = workflows(path)
     flows = sorted({*held, *(n for n in names if n.startswith(WORKFLOWS) and os.path.lexists(path / n))})
