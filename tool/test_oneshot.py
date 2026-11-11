@@ -25,7 +25,7 @@ LAUNCH = oneshot.launch   # the real one; `world` replaces it with a synchronous
 INTENT = {"restated": "가계부를 만든다.", "kind": "webapp", "name": "Budget Tracker", "users": "나 혼자 쓴다.",
           "first_screen": "이번 달 지출을 본다."}
 PROFILE = {**{k: f["default"] for k, f in oneshot.SCHEMA.items()}, "visibility": "private", "docs_language": "ko",
-           "github_owner": "someone", "python_env": "uv"}
+           "github_owner": "someone"}
 
 
 CODEX = [{"id": "codex:gpt-6.1-sol", "is_default": True, "efforts": [{"id": e} for e in ("", "high", "xhigh")]},
@@ -85,7 +85,7 @@ def world(tmp_path):
 
 def made(world, **extra) -> str:
     rid = "0123456789abcdef"
-    oneshot.save({"id": rid, "version": 1, "created": 0, "state": "bootstrap", "working": "bootstrap", "stopped": None,
+    oneshot.save({"id": rid, "version": oneshot.VERSION, "created": 0, "state": "bootstrap", "working": "bootstrap", "stopped": None,
                   "sentence": "가계부 만들어줘", "picked": "", "intent": {**INTENT, "name": "budget-tracker"},
                   "confirmed": True, "profile": dict(PROFILE), "proposed": {},
                   "identity": {"path": str(world["workspace"] / "budget-tracker"), "name": "budget-tracker",
@@ -108,7 +108,7 @@ def test_profile_block_refuses_fields_options_and_choices_outside_the_schema():
     assert oneshot.proposal({"llm": {"value": "anthropic", "why": "AI 요약이 있다"}})["llm"]["value"] == "anthropic"
     refused = [{"colour": {"value": "red", "why": "-"}},
                {"llm": {"value": "mistral", "why": "-"}},
-               {"backend": {"value": "node", "why": "-"}},          # in the schema, not enabled
+               {"backend": {"value": "node", "why": "-"}},          # the stack is S2's, not the card's
                {"visibility": {"value": "public", "why": "-"}},     # the person's to decide
                {"github_owner": {"value": "someone", "why": "-"}},
                {"llm": {"value": "anthropic"}}]
@@ -125,22 +125,13 @@ def test_validity_rules_on_the_card():
     assert any("라이선스" in e for e in errors)
     errors, _ = oneshot.problems({**PROFILE, "ci": "github-actions"})
     assert any("CI" in e for e in errors)
-    errors, _ = oneshot.problems({**PROFILE, "frontend": "tauri"})
-    assert any("아직 고를 수 없다" in e for e in errors)
-    _, warnings = oneshot.problems({**PROFILE, "python_env": "venv", "os_later": "other"})
-    assert any("uv" in w for w in warnings)
-    with patch.object(oneshot_profile, "conda_exe", lambda: ""):
-        errors, _ = oneshot.problems({**PROFILE, "python_env": "conda", "conda_env": ""})
-    assert any("환경 이름" in e for e in errors) and any("conda" in e for e in errors)
 
 
-def test_gate_cmd_comes_from_the_profile_never_from_guess():
-    assert oneshot.gate_cmd(PROFILE) == "uv run pytest"
-    assert oneshot.gate_cmd({**PROFILE, "python_env": "venv", "os_now": "windows"}) == ".venv/Scripts/python -m pytest"
-    assert oneshot.gate_cmd({**PROFILE, "python_env": "venv", "os_now": "macos"}) == ".venv/bin/python -m pytest"
-    with patch.object(oneshot_profile, "conda_exe", lambda: "C:/conda/Scripts/conda.exe"):
-        assert oneshot.gate_cmd({**PROFILE, "python_env": "conda", "conda_env": "tracker"}) == \
-            '"C:/conda/Scripts/conda.exe" run --no-capture-output -n tracker python -m pytest'
+def test_the_card_holds_no_stack_and_a_card_saved_with_one_loads_without_it():
+    assert not set(oneshot_profile.PARTS) & set(oneshot.SCHEMA)
+    assert not {"python_env", "conda_env", "js_pm"} & set(oneshot.SCHEMA)
+    old = {**PROFILE, "backend": "fastapi", "frontend": "vite-react", "python_env": "conda", "conda_env": "x"}
+    assert oneshot_profile.current(old) == PROFILE
 
 
 # -- The ledger -------------------------------------------------------------------------
@@ -228,7 +219,9 @@ def test_unsupported_kind_ends_the_intake(world):
 
 def test_the_card_is_prefilled_from_the_kind_and_confirmed_only_without_errors(world):
     oneshot.PROFILES.mkdir(parents=True)
-    (oneshot.PROFILES / "webapp.json").write_text(json.dumps({"styling": "css", "visibility": "public"}), "utf-8")
+    # saved before the stack left the card: `styling` loads dropped
+    (oneshot.PROFILES / "webapp.json").write_text(json.dumps({"styling": "css", "ui_language": "en",
+                                                              "visibility": "public"}), "utf-8")
     with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-intent", INTENT), {}, False)):
         rid = oneshot.start(oneshot.Start(sentence="가계부"))["id"]
         oneshot.intake(rid)
@@ -237,7 +230,8 @@ def test_the_card_is_prefilled_from_the_kind_and_confirmed_only_without_errors(w
                                                                                      "why": "요약"}}), {}, False)):
         oneshot.environment(rid)
     run = oneshot.load(rid)
-    assert run["profile"]["styling"] == "css" and run["profile"]["llm"] == "anthropic"
+    assert run["profile"]["ui_language"] == "en" and run["profile"]["llm"] == "anthropic"
+    assert "styling" not in run["profile"]
     assert run["profile"]["github_owner"] == "someone"
     with pytest.raises(HTTPException):
         oneshot.profile(rid, oneshot.Profile(values={}, confirm=True))       # docs language empty
@@ -273,10 +267,13 @@ def test_bootstrap_makes_the_repository_the_spec_and_the_linked_worktree(world):
     assert subprocess.run(["git", "branch", "--show-current"], cwd=repo, capture_output=True,
                           text=True).stdout.strip() == "main"
     assert oneshot.tracked(repo) == {".gitignore", "README.md", ".wiki/adapter.toml", ".gitattributes"}
-    assert 'gate_cmd = "uv run pytest"' in (repo / ".wiki/adapter.toml").read_text(encoding="utf-8")
+    # Nothing stack-shaped before S2: the gate waits for the tests turn's command, the README for the stack.
+    assert 'gate_cmd = ""' in (repo / ".wiki/adapter.toml").read_text(encoding="utf-8")
+    assert "## Setup" not in (repo / "README.md").read_text(encoding="utf-8")
+    assert "node_modules/" in (repo / ".gitignore").read_text(encoding="utf-8")
     spec = specs.load("budget-tracker", oneshot.BRANCH)
     assert spec["oneshot"]["run"] == rid and spec["workspace_mode"] == "worktree"
-    assert Path(spec["worktree"]).is_dir() and spec["done"] == ["uv run pytest"]
+    assert Path(spec["worktree"]).is_dir() and spec["done"] == []
     assert json.loads((connect.RECORDS / "budget-tracker.json").read_text(encoding="utf-8"))["hash"]
     assert json.loads((oneshot.PROFILES / "webapp.json").read_text(encoding="utf-8"))["github_owner"] == "someone"
     with pytest.raises(RuntimeError):
@@ -327,6 +324,43 @@ def test_a_spec_that_is_not_this_runs_stops_instead_of_being_overwritten(world):
     oneshot.bootstrap(rid)
     assert oneshot.load(rid)["stopped"]["reason"] == "folder"
     assert json.loads((specs.SPECS / "budget-tracker" / f"{oneshot.BRANCH}.json").read_text(encoding="utf-8")) == foreign
+
+
+@pytest.mark.parametrize("steps, refused", [
+    (("recheck", "folder", "files"), True),   # its README and adapter carry the old card's stack
+    (("recheck", "folder"), True),            # cut while writing them, before `files` was recorded
+    (("recheck",), False),                    # nothing written yet: the new bootstrap writes the new files
+])
+def test_a_version_2_run_whose_bootstrap_wrote_files_is_refused_on_resume(world, steps, refused):
+    rid = made(world, version=2, steps={s: 1 for s in steps}, working=None,
+               stopped={"reason": "restart", "detail": "", "ts": 0})
+    for s in steps[1:]:
+        oneshot.SUBSTEPS[s](oneshot.load(rid))
+    if steps == ("recheck", "folder"):
+        (world["workspace"] / "budget-tracker" / "README.md").write_text("# old\n\n## Setup\n", encoding="utf-8")
+    if refused:
+        with pytest.raises(HTTPException, match="새 실행"):
+            oneshot.resume(rid, oneshot.Resume())
+        assert oneshot.load(rid)["stopped"]
+    else:
+        assert oneshot.resume(rid, oneshot.Resume())["working"] == "bootstrap"
+        wrote_then_stopped_and_resumed(rid)
+
+
+def wrote_then_stopped_and_resumed(rid: str) -> None:
+    """The bootstrap writes its files through `step`, the server stops, and the run resumes after them."""
+
+    for s in ("folder", "files"):
+        oneshot.step(rid, s, oneshot.SUBSTEPS[s])
+    assert oneshot.load(rid)["version"] == oneshot.VERSION   # what it wrote is this version's
+    oneshot.save({**oneshot.load(rid), "working": None, "stopped": {"reason": "restart", "detail": "", "ts": 0}})
+    assert oneshot.resume(rid, oneshot.Resume())["working"] == "bootstrap"
+
+
+def test_a_version_2_run_waiting_at_the_card_writes_this_versions_files_and_resumes_after_them(world):
+    rid = made(world, version=2, state="environment", working=None, steps={"recheck": 1})
+    assert oneshot.profile(rid, oneshot.Profile(values=dict(PROFILE), confirm=True))["state"] == "bootstrap"
+    wrote_then_stopped_and_resumed(rid)
 
 
 def test_a_file_someone_changed_is_never_overwritten(world):

@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from common import is_junction
 
 from . import oneshot, oneshot_sheet as sheet, specs
+from .oneshot_profile import current, environment, stacked, unsettled
 from .query import ROOT
 
 SPEC_PROMPT = (ROOT / "tool/prompts/oneshot-spec.md").read_text(encoding="utf-8")
@@ -66,8 +67,9 @@ def saved(repo: str, **fields) -> dict:
 
 # -- S2 the spec conversation --------------------------------------------------------
 
-def ended(reqs: list[dict]) -> str:
-    """Empty when the conversation may end, or what is still open. The server decides, never the agent."""
+def ended(reqs: list[dict], stack: list[dict] | None = None) -> str:
+    """Empty when the conversation may end, or what is still open. The server decides, never the agent.
+    `stack` is S2's; an R1 edit (`None`) cannot change it."""
 
     if not [r for r in reqs if r["source"]["kind"] == "original"]:
         return "주인의 말에서 온 요구(`original`)가 하나도 없다"
@@ -76,6 +78,8 @@ def ended(reqs: list[dict]) -> str:
     covered = {d for s in sheet.scenarios(reqs) for d in [s["id"], *s.get("depends_on", [])]}
     if bare := [r["id"] for r in reqs if r["source"]["kind"] == "original" and r["id"] not in covered]:
         return f"시나리오가 없는 원래 요구가 있다: {', '.join(bare)}"
+    if stack is not None and (open_ := unsettled(stack)):
+        return f"주인이 아직 고르지 않은 스택: {', '.join(open_)}"
     return ""
 
 
@@ -104,11 +108,29 @@ def kept(spec: dict, value, where: str) -> tuple[list[dict], list[dict]]:
     return reqs, glossary
 
 
+def unanswered(o: dict, stack: list[dict]) -> list[str]:
+    """The parts `stack` marks `confirmed` that no owner's answer stands behind: confirmed already with the same
+    choice, or offered in the stack before the question the owner has just answered, and nothing else.
+    ponytail: that the answered question was about the stack is the prompt's to keep; the owner then sees the
+    stack again on R1."""
+
+    talk, before = o.get("talk") or [], {s["part"]: s for s in o.get("stack") or []}
+    answered = len(talk) >= 2 and talk[-1]["role"] == "owner" and bool(talk[-2].get("choices"))
+    return [s["part"] for s in stack if s["status"] == "confirmed"
+            and not (before.get(s["part"], {}).get("status") == "confirmed" and before[s["part"]]["choice"] == s["choice"])
+            and not (answered and s["part"] in before)]
+
+
 def spec_turn(final: str, spec: dict):
     found = {m.group(1): m.group(2) for m in oneshot.BLOCK.finditer(final)}
     if "oneshot-spec" not in found:
         raise ValueError("`oneshot-spec` 블록이 하나 있어야 한다")
-    reqs, glossary = kept(spec, json.loads(found["oneshot-spec"]), "S2")
+    value = json.loads(found["oneshot-spec"])
+    reqs, glossary = kept(spec, value, "S2")   # refuses anything but an object first
+    stack = stacked(value.get("stack") or [])
+    if early := unanswered(spec["oneshot"], stack):
+        raise ValueError("주인이 답하기 전에 `confirmed` 로 둔 스택 부분이 있다 — 묶음을 묻고, 주인의 답을 받은 다음 턴에 "
+                         f"확정한다: {', '.join(early)}")
     choices = None
     if "choices" in found:
         choices = json.loads(found["choices"])
@@ -116,7 +138,7 @@ def spec_turn(final: str, spec: dict):
         if len(choices.get("questions", [choices])) > 3:
             raise ValueError("한 번에 묻는 `choices` 는 세 개까지다")
     said = oneshot.BLOCK.sub("", final).strip()
-    return reqs, glossary, choices, said
+    return reqs, glossary, stack, choices, said
 
 
 def talk(repo: str) -> None:
@@ -126,7 +148,8 @@ def talk(repo: str) -> None:
     o = spec["oneshot"]
     text = (f"The owner's sentence:\n\n{o['sentence']}\n\nThe confirmed restatement:\n\n"
             f"{json.dumps(o['intent'], ensure_ascii=False)}\n\nThe environment profile:\n\n"
-            f"{json.dumps(o['profile'], ensure_ascii=False)}\n\nThe requirements so far:\n\n"
+            f"{json.dumps(current(o['profile']), ensure_ascii=False)}\n\nThe stack so far:\n\n"
+            f"{json.dumps(o.get('stack') or [], ensure_ascii=False)}\n\nThe requirements so far:\n\n"
             f"{json.dumps(spec.get('requirements') or [], ensure_ascii=False)}\n\nThe glossary so far:\n\n"
             f"{json.dumps(o.get('glossary') or [], ensure_ascii=False)}\n\nThe conversation so far:\n\n"
             + ("\n\n".join(f"[{t['role']}] {t['text']}" for t in o.get("talk") or []) or "(none yet: this is the first turn)"))
@@ -134,16 +157,17 @@ def talk(repo: str) -> None:
                            lambda final, _: spec_turn(final, spec))
     if found is None:
         return
-    reqs, glossary, choices, said = found
-    why = ended(reqs)
-    # A question in the turn that ends the conversation could never be answered: it is dropped.
-    turns = [*(o.get("talk") or []), {"role": "agent", "text": said, "choices": choices if why else None,
-                                      "ts": time.time()}]
+    reqs, glossary, stack, choices, said = found
+    # A question asked in this turn waits for its answer, whatever else is settled.
+    why = ended(reqs, stack) or ("주인의 답을 기다리는 질문이 있다" if choices else "")
+    turns = [*(o.get("talk") or []), {"role": "agent", "text": said, "choices": choices, "ts": time.time()}]
+    # The stack now lives in this spec, in version 3's shape, whatever version the run started at.
+    fields = {"glossary": glossary, "stack": stack, "talk": turns, "version": max(o.get("version", 1), 3)}
     if not why:
-        saved(repo, requirements=reqs, oneshot={"glossary": glossary, "talk": turns, "open": ""})
+        saved(repo, requirements=reqs, oneshot={**fields, "open": ""})
         handoff(repo, "design", stage="design")
     else:
-        saved(repo, requirements=reqs, oneshot={"glossary": glossary, "talk": turns, "open": why, "working": None})
+        saved(repo, requirements=reqs, oneshot={**fields, "open": why, "working": None})
 
 
 def begin(repo: str) -> None:
@@ -215,8 +239,8 @@ def design_turn(final: str, attempt: int, spec: dict, partial: set[str] | None =
 def design_text(spec: dict) -> str:
     o = spec["oneshot"]
     return (f"The owner's sentence:\n\n{o['sentence']}\n\nThe confirmed restatement:\n\n"
-            f"{json.dumps(o['intent'], ensure_ascii=False)}\n\nThe environment profile:\n\n"
-            f"{json.dumps(o['profile'], ensure_ascii=False)}\n\nThe requirements:\n\n"
+            f"{json.dumps(o['intent'], ensure_ascii=False)}\n\nThe environment profile and the stack:\n\n"
+            f"{environment(o)}\n\nThe requirements:\n\n"
             f"{json.dumps(spec.get('requirements') or [], ensure_ascii=False)}\n\nThe glossary:\n\n"
             f"{json.dumps(o.get('glossary') or [], ensure_ascii=False)}\n")
 
@@ -420,10 +444,13 @@ def view(spec: dict) -> dict:
 
 def supported(o: dict) -> None:
     """Refuses any step forward on a run of an older version already past the stage whose record changed:
-    version 1 pinned pytest node ids at the tests turn, and no command."""
+    version 1 pinned pytest node ids at the tests turn, and no command; version 2 left S2 with its stack
+    in the card's old fields, not in `stack`."""
 
     if o.get("version", 1) < 2 and o.get("tests_head"):
         raise HTTPException(409, "예전 형식으로 계약 테스트를 고정한 실행이라 이어 갈 수 없다 — 새 실행을 시작하라")
+    if o.get("version", 1) < 3 and o.get("stage") != "spec":
+        raise HTTPException(409, "스택을 환경 카드에서 정한 예전 실행이라 이어 갈 수 없다 — 새 실행을 시작하라")
 
 
 def idle(o: dict, stage: str) -> None:

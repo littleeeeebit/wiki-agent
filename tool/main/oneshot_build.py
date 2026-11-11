@@ -24,7 +24,7 @@ from xml.etree import ElementTree
 from fastapi import HTTPException
 
 from . import connect, oneshot, oneshot_spec, refactor_run, runtime, specs, work
-from .oneshot_profile import charged
+from .oneshot_profile import charged, environment
 from .query import ROOT, _lock as work_lock, hold
 
 TESTS_PROMPT = (ROOT / "tool/prompts/oneshot-tests.md").read_text(encoding="utf-8")
@@ -132,7 +132,7 @@ def planned(spec: dict) -> list[dict]:
 
 def tests_text(spec: dict) -> str:
     return TESTS_PROMPT.replace("{tests}", json.dumps(planned(spec), ensure_ascii=False, indent=2)) \
-        .replace("{profile}", json.dumps(spec["oneshot"]["profile"], ensure_ascii=False))
+        .replace("{profile}", environment(spec["oneshot"]))
 
 
 def build_text(spec: dict) -> str:

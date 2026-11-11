@@ -163,28 +163,18 @@ saved profile.
 - The model's turn returns an `oneshot-profile` block: `{"<field>": {"value":
   "…", "why": "…"}}`, only for fields it changes. A field or option outside the
   schema refuses the block.
-- Fields the intent decides (for example "uses an LLM", or conda because the
-  intent names GPU work) are proposed; fields only the owner can know (visibility,
-  docs language) are always shown empty on a first run.
+- Fields the intent decides (for example "uses an LLM") are proposed; fields
+  only the owner can know (visibility, docs language) are always shown empty
+  on a first run.
 
 ### Supported combinations
 
 Every later stage assumes a web backend and a browser frontend: S3 maps
 scenarios to endpoints, S6 needs a primary screen, R3 needs screenshots and
-walkthroughs, and the gate is built from a Python environment. So this version
-offers exactly one stack, and the card shows every other option disabled with
-"later":
-
-| Field | Selectable now |
-| --- | --- |
-| Kind | `webapp` |
-| Backend | Python FastAPI |
-| Frontend | Vite and React |
-| Python environment | `uv` `.venv`, stdlib `venv`, conda |
-| Everything else in the schema | Every option listed |
-
-A new kind or stack becomes selectable only together with its own stage
-branches, gate and review deliverables, in a later plan.
+walkthroughs. So this version offers one kind, `webapp`, and shows the other
+kinds disabled with "later". The card holds no stack: the owner picks the
+backend, frontend, styling, data store, test tool and deployment in S2, from
+options the agent offers ([step 6](6-free-stack.md)).
 
 ### Validity rules
 
@@ -193,8 +183,6 @@ on the card, not as a refusal.
 
 | Rule | Why |
 | --- | --- |
-| Stdlib `venv` with "OS later" planned warns and suggests `uv` | The venv interpreter path differs between Windows and macOS, so a committed `gate_cmd` cannot name it on both |
-| Conda needs an environment name | The README carries `conda activate <name>`, which is also what `connect.conda_python` reads |
 | Public needs a license | The overview's choice |
 | Private forbids a CI workflow file | The owner's rule: private means no hosted CI |
 
@@ -218,7 +206,7 @@ after an effect and before its record.
 | --- | --- | --- | --- |
 | 1 | Re-check the name | — | The reservation checks run again; a conflict that appeared meanwhile stops with `folder` |
 | 2 | Folder | The fixed path exists and holds only files this run wrote | Create it, or re-check the picked one is still empty |
-| 3 | Files | Each file exists with the content the run would write | `.gitignore` from the profile's languages; `.gitattributes` with `* text=auto eol=lf` when another OS is planned; a README stub with the restatement, the owner's sentence and the setup command; `LICENSE` when public; `.wiki/adapter.toml` from the profile through `connect.adapter_text` |
+| 3 | Files | Each file exists with the content the run would write | `.gitignore` wide enough for the common stacks' build and cache output; `.gitattributes` with `* text=auto eol=lf` when another OS is planned; a README stub with the restatement and the owner's sentence; `LICENSE` when public; `.wiki/adapter.toml` through `connect.adapter_text`, its `gate_cmd` empty |
 | 4 | Base commit | `main` exists and its one commit holds exactly those files, each blob byte for byte as planned, and is the recorded base when one is | Re-check every planned file on disk, initialise with `main` and commit, then check the commit the same way |
 | 5 | Register | The folder is listed by `channels.projects` under the fixed name | Register a picked folder as `[폴더 찾기]` does, with its same-name refusal; then write the adapter's hash through `connect.keep` |
 | 6 | Remote repository | The run recorded the repository's node id | Create it through `gh` with the chosen visibility and owner, and record its node id at once |
@@ -248,20 +236,15 @@ already have changed another repository's record.
 
 ### The adapter's `gate_cmd`
 
-Written from the profile, never from `connect.guess`. `guess` would see a
+Empty at bootstrap, never filled from `connect.guess`. `guess` would see a
 `pyproject.toml` later and pick the server's own `python -m pytest`, which is
 the interpreter without the project's packages; a connected repository's
-final gate once failed on 88 collection errors that way.
+final gate once failed on 88 collection errors that way. Before S2 there is
+no stack to name a command for, and the spec's `done` starts empty too.
 
-| Environment | `gate_cmd` at bootstrap |
-| --- | --- |
-| `uv` `.venv` | `uv run pytest` |
-| conda | the `conda run --no-capture-output -n <name> python -m pytest` form `connect.conda_python` builds |
-| stdlib `venv` | the interpreter path for the current OS under `.venv` |
-
-The frontend half of the gate is added in step 4, once there is a frontend to
-test. The gate is not run at bootstrap: there are no tests yet, and pytest
-exits non-zero on an empty collection. The first gate run is S4's.
+The tests turn (S4) declares the project's own test command, and the server
+writes it into `gate_cmd` and `done`. The frontend half of the gate is added
+in step 4, once there is a frontend to test. The first gate run is S4's.
 
 ### What is never done on failure
 
@@ -301,7 +284,9 @@ card. Gate sheets and the drag board are step 5.
   one spec and one worktree; a same-name folder or connection record refused
   with the existing `raw/connect/<name>.json` byte-identical and no `gh`
   call; a non-empty picked folder refused; the original checkout still on
-  `main` and unchanged after sub-step 9; the `gate_cmd` for each environment;
+  `main` and unchanged after sub-step 9; an empty `gate_cmd`, an empty `done`
+  and a README without setup commands in the base commit; a version 2 run
+  whose bootstrap wrote its files refused on resume;
   the ledger charging a USD role's unreported turn at its estimate, counting an unreported cost as unknown,
   metering Codex-only roles by hours without inventing USD across
   several turns, and restoring every total after a restart, including a

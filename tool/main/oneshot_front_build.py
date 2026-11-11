@@ -15,6 +15,7 @@ from pathlib import Path
 from wiki import slots_for
 
 from . import oneshot_build, oneshot_look, oneshot_screens as screens, oneshot_spec, runtime, specs
+from .oneshot_profile import environment
 from .query import ROOT
 
 BUILD_FRONT_PROMPT = (ROOT / "tool/prompts/oneshot-build-front.md").read_text(encoding="utf-8")
@@ -35,7 +36,7 @@ def build_front_text(spec: dict) -> str:
                                          "type": front["tokens"]["type"], "spacing": front["tokens"]["spacing"],
                                          "palette": palette, "features": o["features"],
                                          "frequency": o["frequency"]}, ensure_ascii=False, indent=2)) \
-        .replace("{viewports}", ", ".join(views(o["profile"]))).replace("{profile}", json.dumps(o["profile"]))
+        .replace("{viewports}", ", ".join(views(o["profile"]))).replace("{profile}", environment(o))
 
 
 def begin(repo: str) -> None:
