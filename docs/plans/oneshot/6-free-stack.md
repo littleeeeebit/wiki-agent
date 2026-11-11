@@ -61,9 +61,19 @@ The `oneshot-spec` block gains a `stack` list beside the requirements:
 - The first stack question offers two or three whole bundles, each naming
   every part with one reason, so one answer settles the stack. A later
   question changes one part only when the owner asks for it.
-- `status` is `confirmed` only from the owner's answer. The server ends S2
-  when every requirement is settled and every part is `confirmed`; an
-  `assumed` part keeps the conversation open.
+- `status` is `confirmed` only from the owner's answer. The server accepts a
+  part as `confirmed` when it was already confirmed with the same choice, or
+  when the owner has just answered a question and the part was offered in
+  the stack before that question. It sends back a turn that confirms any
+  other part. That the answered question was the stack's is the prompt's to
+  keep; the owner sees the stack again on R1.
+- The server ends S2 when every requirement is settled, every part is
+  `confirmed` and the turn asks nothing: a turn's question waits for its
+  answer. An `assumed` part keeps the conversation open.
+- A spec that leaves S2, or saves any S2 turn, records version 3, whatever
+  version it started at, since its stack is now in `stack`. A run resumed
+  before its bootstrap wrote a file records version 3 too, since the files
+  it writes from then on are version 3's.
 - The stack is shown at the top of the R1 sheet, read-only: changing it after
   R1 means a new run.
 

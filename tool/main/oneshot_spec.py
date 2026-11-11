@@ -108,6 +108,19 @@ def kept(spec: dict, value, where: str) -> tuple[list[dict], list[dict]]:
     return reqs, glossary
 
 
+def unanswered(o: dict, stack: list[dict]) -> list[str]:
+    """The parts `stack` marks `confirmed` that no owner's answer stands behind: confirmed already with the same
+    choice, or offered in the stack before the question the owner has just answered, and nothing else.
+    ponytail: that the answered question was about the stack is the prompt's to keep; the owner then sees the
+    stack again on R1."""
+
+    talk, before = o.get("talk") or [], {s["part"]: s for s in o.get("stack") or []}
+    answered = len(talk) >= 2 and talk[-1]["role"] == "owner" and bool(talk[-2].get("choices"))
+    return [s["part"] for s in stack if s["status"] == "confirmed"
+            and not (before.get(s["part"], {}).get("status") == "confirmed" and before[s["part"]]["choice"] == s["choice"])
+            and not (answered and s["part"] in before)]
+
+
 def spec_turn(final: str, spec: dict):
     found = {m.group(1): m.group(2) for m in oneshot.BLOCK.finditer(final)}
     if "oneshot-spec" not in found:
@@ -115,6 +128,9 @@ def spec_turn(final: str, spec: dict):
     value = json.loads(found["oneshot-spec"])
     reqs, glossary = kept(spec, value, "S2")   # refuses anything but an object first
     stack = stacked(value.get("stack") or [])
+    if early := unanswered(spec["oneshot"], stack):
+        raise ValueError("주인이 답하기 전에 `confirmed` 로 둔 스택 부분이 있다 — 묶음을 묻고, 주인의 답을 받은 다음 턴에 "
+                         f"확정한다: {', '.join(early)}")
     choices = None
     if "choices" in found:
         choices = json.loads(found["choices"])
@@ -142,16 +158,16 @@ def talk(repo: str) -> None:
     if found is None:
         return
     reqs, glossary, stack, choices, said = found
-    why = ended(reqs, stack)
-    # A question in the turn that ends the conversation could never be answered: it is dropped.
-    turns = [*(o.get("talk") or []), {"role": "agent", "text": said, "choices": choices if why else None,
-                                      "ts": time.time()}]
+    # A question asked in this turn waits for its answer, whatever else is settled.
+    why = ended(reqs, stack) or ("주인의 답을 기다리는 질문이 있다" if choices else "")
+    turns = [*(o.get("talk") or []), {"role": "agent", "text": said, "choices": choices, "ts": time.time()}]
+    # The stack now lives in this spec, in version 3's shape, whatever version the run started at.
+    fields = {"glossary": glossary, "stack": stack, "talk": turns, "version": max(o.get("version", 1), 3)}
     if not why:
-        saved(repo, requirements=reqs, oneshot={"glossary": glossary, "stack": stack, "talk": turns, "open": ""})
+        saved(repo, requirements=reqs, oneshot={**fields, "open": ""})
         handoff(repo, "design", stage="design")
     else:
-        saved(repo, requirements=reqs, oneshot={"glossary": glossary, "stack": stack, "talk": turns, "open": why,
-                                                "working": None})
+        saved(repo, requirements=reqs, oneshot={**fields, "open": why, "working": None})
 
 
 def begin(repo: str) -> None:

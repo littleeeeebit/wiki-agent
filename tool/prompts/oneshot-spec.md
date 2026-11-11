@@ -59,10 +59,13 @@ at most three questions:
   part, and its `note` gives one reason. One answer then settles the stack.
   Change a single part later only when the person asks for it.
 - A part's `status` is `confirmed` only from the person's answer; until then
-  it is `assumed` or `undecided`. You never confirm a part yourself.
+  it is `assumed` or `undecided`. You never confirm a part yourself. Offer
+  each part in `stack` as `assumed` in the turn that asks the bundle
+  question, and confirm it in the turn after the person answered. The server
+  sends back a turn that confirms a part no answer stands behind.
 - You do not end the conversation. The server ends it when every stack part
-  is `confirmed`, no requirement is `undecided` and every `original`
-  requirement has a scenario. So turn every open point into an `undecided`
+  is `confirmed`, no requirement is `undecided`, every `original`
+  requirement has a scenario and the turn asks nothing. So turn every open point into an `undecided`
   item and ask about it, or settle it as `assumed` and say so.
 
 ## Korean

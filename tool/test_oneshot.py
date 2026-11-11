@@ -344,6 +344,12 @@ def test_a_version_2_run_whose_bootstrap_wrote_files_is_refused_on_resume(world,
         assert oneshot.load(rid)["stopped"]
     else:
         assert oneshot.resume(rid, oneshot.Resume())["working"] == "bootstrap"
+        # what it writes from here is version 3's: a stop after the files resumes again
+        assert oneshot.load(rid)["version"] == oneshot.VERSION
+        oneshot.save({**oneshot.load(rid), "working": None, "stopped": {"reason": "restart", "detail": "", "ts": 0}})
+        (world["workspace"] / "budget-tracker").mkdir(parents=True, exist_ok=True)
+        (world["workspace"] / "budget-tracker" / "README.md").write_text("# budget-tracker\n", encoding="utf-8")
+        assert oneshot.resume(rid, oneshot.Resume())["working"] == "bootstrap"
 
 
 def test_a_file_someone_changed_is_never_overwritten(world):

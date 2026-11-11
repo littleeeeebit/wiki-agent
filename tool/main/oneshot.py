@@ -815,8 +815,7 @@ def profile(rid: str, body: Profile) -> dict:
                 raise HTTPException(400, "; ".join(errors))
             ident = run["identity"]
             if values["github_owner"] != ident["owner"]:
-                found = conflicts(rid, Path(ident["path"]), ident["name"], values["github_owner"])
-                if found:
+                if found := conflicts(rid, Path(ident["path"]), ident["name"], values["github_owner"]):
                     raise HTTPException(409, "; ".join(found))
                 ident = {**ident, "owner": values["github_owner"]}
             launch(rid, "bootstrap", profile=values, identity=ident, confirmed=True, state="bootstrap")
@@ -833,8 +832,9 @@ def resume(rid: str, body: Resume) -> dict:
         run = load(rid)
         if run.get("committed") or not run.get("stopped") or run.get("working"):
             raise HTTPException(409, "멈춘 실행이 아니다")
-        if run.get("version", 1) < 3 and run.get("identity") and any(   # its files, even some, carry the old card's stack
-                (Path(run["identity"]["path"]) / f).exists() for f in ("README.md", ".gitignore", ".wiki/adapter.toml")):
-            raise HTTPException(409, "예전 형식으로 기본 파일을 쓴 실행이라 이어 갈 수 없다 — 새 실행을 시작하라")
+        if run.get("version", 1) < 3:   # its files, even some, carry the old card's stack; none yet: what it writes is 3's
+            if run.get("identity") and any((Path(run["identity"]["path"]) / f).exists() for f in ("README.md", ".gitignore", ".wiki/adapter.toml")):
+                raise HTTPException(409, "예전 형식으로 기본 파일을 쓴 실행이라 이어 갈 수 없다 — 새 실행을 시작하라")
+            save({**run, "version": VERSION})
         launch(rid, RUNNING[run["state"]], **({"adopt": True} if body.adopt else {}))
     return view(load(rid))
