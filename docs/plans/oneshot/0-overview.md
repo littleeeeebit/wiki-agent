@@ -66,7 +66,7 @@ inside an autonomous stretch.
 | --- | --- | --- | --- | --- |
 | S0 Intake | One turn | Restates the request in the owner's words, names the product type (web app, CLI, desktop, API only) | `intent` with the owner's original sentence kept verbatim | The owner confirms the restatement |
 | S1 Environment | One card | Prefills every setup choice from the saved profile, asks only the changed or unknown ones | `profile` for this project | Every required choice is filled |
-| S2 Spec | A few turns of options | Asks scope, users, core scenarios, exclusions; fixes the domain vocabulary | Scenarios in Given/When/Then, glossary, exclusions | No scenario is marked undecided |
+| S2 Spec | A few turns of options | Asks scope, users, core scenarios, exclusions, and the stack as two or three whole bundles; fixes the domain vocabulary | Scenarios in Given/When/Then, glossary, exclusions, the stack | No scenario is marked undecided and every stack part is the owner's confirmed choice |
 | S3 Backend design | None | Domain model, storage schema, API contract, main flows, test plan from scenarios | The R1 sheet | Its own design lint passes |
 | R1 | Review | — | Approval or per-item edits | Approved |
 | S4 Backend build | None | Scaffolds, writes contract tests from the scenarios first, implements, runs the gate, has an independent read-only session review the diff; nothing is pushed | Passing backend with tests | Gate green and the review approves the current HEAD |
@@ -112,27 +112,21 @@ The owner named four; the full set is below. The key proposal is a saved
 profile: the first project asks everything, every later project shows one card
 "same as last time?" with only the differences highlighted.
 
-The table is the full schema. This version runs one stack end to end —
-`webapp`, FastAPI, Vite and React — and shows the other kinds and stacks
-disabled until a later plan gives them their own stages, gate and review
-deliverables ([step 2](2-bootstrap.md), "Supported combinations").
+The table is the card's whole schema. This version runs one kind end to end,
+`webapp`, and shows the other kinds disabled until a later plan gives them
+their own stages, gate and review deliverables ([step 2](2-bootstrap.md),
+"Supported combinations"). The stack is not on the card: the backend,
+frontend, styling, data store, test tool and deployment are picked by the
+owner in S2, from options the agent offers with reasons
+([step 6](6-free-stack.md)), so no stack is fixed in advance.
 
 | Choice | Options | Proposed default | What it changes downstream |
 | --- | --- | --- | --- |
 | OS now | Windows / macOS / both | The machine running the app | Script language, path handling, README commands |
 | OS later | None / the other one planned | Planned | Forbids shell-only scripts; `.gitattributes` line endings; paths through `pathlib` |
-| Python environment | `uv`-managed `.venv` / stdlib `venv` / conda | `uv` `.venv` | conda only when native scientific or GPU packages (CUDA, GDAL) are needed, so the agent asks only then |
-| Backend language and framework | Python FastAPI / Node / none | FastAPI | Contract format (OpenAPI), test runner |
-| Frontend kind | None (API or CLI) / server-rendered (Jinja and htmx) / SPA (Vite and React) / desktop (Tauri) | Vite and React, same as this app | Lets the agent reuse this app's design skills and patterns |
-| Styling | Tailwind / plain CSS tokens / component library | Tailwind with tokens on `:root` | Theming, dark mode |
-| Data store | SQLite / JSON files / Postgres | SQLite | Migrations, test fixtures |
 | Authentication | None (single local user) / local password / OAuth | None | Whole screens and tables |
-| Deployment | Local only / Docker / a cloud | Local only | Dockerfile, env handling |
 | Repository visibility | Public / private | Private | Public: GitHub Actions CI and a license; private: no hosted CI, the local gate is the only gate |
 | License (public only) | MIT / Apache-2.0 / none | MIT | `LICENSE` file |
-| Package managers | npm / pnpm; `uv` / pip | npm, `uv` | Lockfiles |
-| Tests | pytest, Vitest, Playwright | All three | Playwright also drives S7's screenshots |
-| Lint and format | ruff; Prettier or Biome | ruff, Prettier | Gate command |
 | UI language | Korean / English / both | Korean | Copy, i18n scaffolding only when both |
 | Docs and commit language | Korean / English | Asked once, saved | See the readability section: this interacts with the hub's English rule |
 | Responsive | Desktop only / desktop and mobile | Desktop and mobile | S7 viewport count |
@@ -305,4 +299,4 @@ split → frontend design → R2 → frontend build → R3 → pull request`, wi
 | 3 | [Spec and backend](3-spec-backend.md) | S2–S4: scenarios and glossary, the R1 sheet in Korean with length and translationese checks, contract-test-first build with an independent read-only review | In progress — 3a #320 (S2–R1), 3b S4 build, 3c the backend review; the real run through `split` remains |
 | 4 | [Frontend](4-frontend.md) | S5–S7: frequency map, the R2 sheet, image input in the app's sessions, the screenshot, critique and fix loop with a separate critic and the stop rule | In progress — 4a S5–R2, 4b the build and its shots, 4c the critic and R3 are built; the real run, the recorded walkthroughs and an accessibility pass remain |
 | 5 | [Screen and pull request](5-screen-pr.md) | Oneshot entry, gate sheets with per-item approval, the drag board, S8 handing the pull request to Review Loop | In progress — 5a the screens and 5b S8 with the run's summary are built; the real run end to end on a throwaway repository remains |
-| 6 | [Free stack](6-free-stack.md) | The stack chosen by the owner in S2 instead of the card, contract tests in the project's own tool, no spending ceiling | In progress — 6a removed the ceilings (#331); 6b runs the contract tests in the project's own tool |
+| 6 | [Free stack](6-free-stack.md) | The stack chosen by the owner in S2 instead of the card, contract tests in the project's own tool, no spending ceiling | In progress — 6a removed the ceilings (#331); 6b runs the contract tests in the project's own tool (#332); 6c moves the stack into S2 |

@@ -6,8 +6,9 @@ each mock page itself, and shoots it in a browser.
 
 ## What you receive
 
-The owner's sentence, the restatement, the environment profile (its
-`frontend`, `styling`, `ui_language` and `responsive` are fixed choices), the
+The owner's sentence, the restatement, the environment profile and the
+stack (the stack's `frontend` and `styling` and the profile's `ui_language`
+and `responsive` are fixed choices), the
 requirements, the glossary, the backend design, the features with their
 endpoints, the owner's frequency map, the line saying what the first screen
 is for, and the viewports the server shoots. When the owner edited items: the

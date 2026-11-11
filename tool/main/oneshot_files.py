@@ -9,21 +9,21 @@ import hashlib
 from pathlib import Path
 
 from . import connect, specs
-from .oneshot_profile import gate_cmd
+
+# Nothing stack-shaped exists before S2, so the list covers the common stacks' build and cache output.
+IGNORE = [".env", "artifacts/", ".venv/", "venv/", "__pycache__/", "*.pyc", ".pytest_cache/", "node_modules/",
+          "dist/", "build/", "target/", "bin/", "obj/", "coverage/", ".next/", ".nuxt/", ".svelte-kit/",
+          ".gradle/", "vendor/", ".DS_Store"]
 
 
 def planned(run: dict) -> dict[str, str]:
-    """Every file the base commit holds, by path, as the run writes it."""
+    """Every file the base commit holds, by path, as the run writes it. The adapter's gate is empty until
+    the tests turn declares the project's own test command (S4)."""
 
     p, intent, name = run["profile"], run["intent"], run["identity"]["name"]
-    ignore = [".venv/", "__pycache__/", "*.pyc", ".pytest_cache/", ".env", "node_modules/", "dist/", "artifacts/"]
-    setup = {"uv": "uv sync",
-             "venv": f"python -m venv .venv\n.venv/{'Scripts' if p['os_now'] == 'windows' else 'bin'}/python -m pip install -e .",
-             "conda": f"conda create -n {p.get('conda_env')} python=3.12\nconda activate {p.get('conda_env')}"}[p["python_env"]]
-    readme = (f"# {name}\n\n{intent['restated']}\n\n> {run['sentence']}\n\n"
-              f"## Setup\n\n```\n{setup}\n```\n")
-    files = {".gitignore": "\n".join(ignore) + "\n", "README.md": readme,
-             ".wiki/adapter.toml": connect.adapter_text({"gate_cmd": gate_cmd(p), "review_dir": "artifacts/review",
+    readme = f"# {name}\n\n{intent['restated']}\n\n> {run['sentence']}\n"
+    files = {".gitignore": "\n".join(IGNORE) + "\n", "README.md": readme,
+             ".wiki/adapter.toml": connect.adapter_text({"gate_cmd": "", "review_dir": "artifacts/review",
                                                          "scratch_dirs": "artifacts/", "live_cmd": "", "server_stop": ""})}
     if p["os_later"] == "other":
         files[".gitattributes"] = "* text=auto eol=lf\n"

@@ -24,6 +24,9 @@ BLOCKS = ",".join(block for block, _, _ in KINDS.values())
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 TEST_NAME = re.compile(r"test_[a-z0-9_]+")
 MAX_ASSUMPTIONS, MAX_ROWS = 7, 12
+# `oneshot_profile.PARTS`, as the sheet names them
+PART_NAMES = {"backend": "백엔드", "frontend": "프런트엔드", "styling": "스타일", "data_store": "데이터 저장",
+              "tests": "테스트", "deploy": "배포"}
 PATH = re.compile(r"/[A-Za-z0-9_.{}/-]*")
 # A path segment that is a sign-in role, whole: `/authors` is not one.
 AUTH_SEGMENT = re.compile(r"log-?(in|out)|sign-?(in|up|out)|auth|oauth2?|sessions?|tokens?|passwords?|register", re.I)
@@ -307,6 +310,12 @@ def sheet(spec: dict) -> str:
     tag = {"edited": " (고친 항목)", "consequence": " (따라 바뀜)", "again": " (다시 승인)"}
     mark = lambda i: tag.get(marks.get(i), "")   # noqa: E731
     lines = [f"# 백엔드 설계 — {spec['repo']}", "", f"> {o['sentence']}", "", o["intent"]["restated"], ""]
+    stack = {s["part"]: s for s in o.get("stack") or []}
+    if stack:   # read-only here: S2 settled it, and another stack means a new run
+        lines += ["## 스택", "", "요구 대화에서 고른 것이다. 바꾸려면 새 실행을 시작한다.", "",
+                  "| 부분 | 고른 것 | 이유 |", "| --- | --- | --- |"]
+        lines += [f"| {PART_NAMES[p]} | {_cell(s['choice'])} | {_cell(s['why'])} |" for p, s in stack.items()]
+        lines.append("")
     lines += ["## 에이전트가 정한 가정", ""]
     shown = design["assumptions"][:MAX_ASSUMPTIONS]
     lines += [f"- **{a['id']}**{mark(a['id'])} {a['what']} — 이유: {a['why']} / 버린 안: {a['rejected']}" for a in shown]
@@ -314,7 +323,7 @@ def sheet(spec: dict) -> str:
         lines.append(f"- 그 밖의 가정 {len(design['assumptions']) - MAX_ASSUMPTIONS}개는 아래 접힌 부분에 있다")
     keys = [f"{e['name']}.{f['name']}" for e in design["entities"] for f in e["fields"] if f["key"]]
     lines += ["", "## 나중에 되돌리기 어려운 것", "",
-              f"- 저장 키: {', '.join(f'`{k}`' for k in keys) or '없음'} (저장소 `{profile.get('data_store')}`)",
+              f"- 저장 키: {', '.join(f'`{k}`' for k in keys) or '없음'} (저장소: {_cell(stack['data_store']['choice']) if 'data_store' in stack else '정하지 않음'})",
               f"- 로그인: `{profile.get('auth')}`"]
     if profile.get("visibility") == "public":
         lines.append("- 공개 저장소다: 코드와 설계 문서가 모두에게 보인다")

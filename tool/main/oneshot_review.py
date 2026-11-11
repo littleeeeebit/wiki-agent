@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from agent import read_tools
 
 from . import oneshot, oneshot_build, oneshot_front, oneshot_spec, runtime, specs, work  # noqa: F401 — `oneshot_front` registers `split`
+from .oneshot_profile import environment
 from .query import ROOT, _lock as work_lock, hold
 
 REVIEW_PROMPT = (ROOT / "tool/prompts/oneshot-review.md").read_text(encoding="utf-8")
@@ -65,8 +66,8 @@ def review_text(spec: dict, head: str, how: str) -> str:
     o = spec["oneshot"]
     return (f"Review HEAD `{head}` of this repository's backend build.\n\nThe approved design:\n\n"
             f"{json.dumps(o['design'], ensure_ascii=False)}\n\nThe requirements:\n\n"
-            f"{json.dumps(spec.get('requirements') or [], ensure_ascii=False)}\n\nThe environment profile:\n\n"
-            f"{json.dumps(o['profile'], ensure_ascii=False)}\n\nThe pinned contract tests, unchanged since "
+            f"{json.dumps(spec.get('requirements') or [], ensure_ascii=False)}\n\nThe environment profile and the stack:\n\n"
+            f"{environment(o)}\n\nThe pinned contract tests, unchanged since "
             f"`{o['tests_head']}`: {', '.join(o['contract'])}.\n\nThe whole diff from the base commit "
             f"`{spec['start_head']}` to HEAD: {how}.\n")
 

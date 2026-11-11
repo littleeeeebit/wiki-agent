@@ -13,11 +13,13 @@ import pytest
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
-from main import oneshot, oneshot_sheet as sheet, oneshot_spec, specs
+from main import oneshot, oneshot_profile, oneshot_sheet as sheet, oneshot_spec, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 
-PROFILE = {"auth": "none", "data_store": "sqlite", "backend": "fastapi", "visibility": "private",
-           "docs_language": "ko"}
+PROFILE = {"auth": "none", "visibility": "private", "docs_language": "ko"}
+STACK = [{"part": p, "choice": c, "why": "주인이 골랐다", "status": "confirmed"} for p, c in (
+    ("backend", "FastAPI (Python, uv)"), ("frontend", "Vite + React"), ("styling", "Tailwind"),
+    ("data_store", "SQLite"), ("tests", "pytest"), ("deploy", "이 PC 에서만"))]
 REQS = [{"id": "R1", "text": "지출을 적으면 이번 달 합계에 더해진다", "source": {"kind": "original", "locator": "주인의 문장"},
          "status": "confirmed", "postconditions": ["합계가 늘어난다"]},
         {"id": "R2", "text": "지난 달 지출을 고르면 그 달 목록이 보인다", "source": {"kind": "decision", "locator": "답 1"},
@@ -93,10 +95,50 @@ def test_the_conversation_ends_only_when_nothing_is_undecided_and_every_original
     with replies(fenced("oneshot-spec", {"requirements": bare, "glossary": GLOSSARY})):
         oneshot_spec.talk("budget")
     assert o()["stage"] == "spec" and "시나리오가 없는" in o()["open"]
-    with replies(fenced("oneshot-spec", {"requirements": REQS, "glossary": GLOSSARY})):
+    # every requirement settled, but a stack part the owner never confirmed keeps the conversation open
+    assumed = [{**STACK[0], "status": "assumed"}, *STACK[1:5]]
+    with replies(fenced("oneshot-spec", {"stack": assumed, "requirements": REQS, "glossary": GLOSSARY})):
         oneshot_spec.talk("budget")
-    assert o()["stage"] == "design" and o()["working"] == "design"
+    assert o()["stage"] == "spec" and o()["open"].endswith("backend, deploy")
+    with replies(fenced("oneshot-spec", {"stack": STACK, "requirements": REQS, "glossary": GLOSSARY})):
+        oneshot_spec.talk("budget")
+    assert o()["stage"] == "design" and o()["working"] == "design" and o()["stack"] == STACK
     assert specs.load("budget", oneshot.BRANCH)["requirements"][0]["id"] == "R1"
+
+
+def test_a_version_2_run_past_s2_is_refused_and_one_still_in_s2_carries_on(world):
+    oneshot_spec.saved("budget", requirements=REQS, oneshot={
+        "version": 2, "glossary": GLOSSARY, "design": sheet.parsed(DESIGN), "stage": "r1", "working": None,
+        "r1": {"round": 1, "decisions": {}, "marks": {}, "warnings": []}})   # its stack is the old card's
+    every = {i: {"approve": True} for i in sheet.decidable(o()["design"], REQS)}
+    with pytest.raises(HTTPException, match="새 실행"):
+        oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions=every))
+    assert o()["stage"] == "r1"
+    oneshot_spec.saved("budget", oneshot={"stage": "spec"})
+    oneshot_spec.supported(o())   # S2 asks for the stack under the new prompt
+
+
+@pytest.mark.parametrize("stack, said", [
+    ({"backend": "FastAPI"}, "목록"),
+    ([{**STACK[0], "part": "database"}], "`part`"),
+    ([STACK[0], STACK[0]], "둘 이상"),
+    ([{**STACK[0], "choice": " "}], "`choice`"),
+    ([{**STACK[0], "status": "chosen"}], "`status`"),
+])
+def test_a_malformed_stack_is_refused(stack, said):
+    with pytest.raises(ValueError, match=said):
+        oneshot_profile.stacked(stack)
+
+
+def test_later_turns_are_told_the_stack_and_the_r1_sheet_shows_it_read_only(world):
+    oneshot_spec.saved("budget", requirements=REQS, oneshot={
+        "glossary": GLOSSARY, "stack": STACK, "design": sheet.parsed(DESIGN), "stage": "r1",
+        "profile": {**PROFILE, "backend": "node"}})   # a field an older card held is not the card's any more
+    told = json.loads(oneshot_profile.environment(o()))
+    assert told["stack"]["backend"] == "FastAPI (Python, uv)" and "backend" not in {k for k in told if k != "stack"}
+    shown = sheet.sheet(specs.load("budget", oneshot.BRANCH))
+    assert "## 스택" in shown and "| 데이터 저장 | SQLite |" in shown and "(저장소: SQLite)" in shown
+    assert shown.index("## 스택") < shown.index("## 에이전트가 정한 가정")
 
 
 def test_a_term_the_owner_used_cannot_be_renamed_and_four_questions_are_refused(world):
@@ -317,7 +359,7 @@ def test_the_end_rule_reads_the_sources_as_stored_and_an_original_cannot_be_drop
 
 def test_the_ending_turn_drops_its_question_and_keeps_no_blocks_in_the_conversation(world):
     ask = {"questions": [{"question": "더 볼까요?", "options": [{"label": "예"}]}]}
-    with replies("다 정했다.\n" + fenced("oneshot-spec", {"requirements": REQS, "glossary": GLOSSARY}) +
+    with replies("다 정했다.\n" + fenced("oneshot-spec", {"stack": STACK, "requirements": REQS, "glossary": GLOSSARY}) +
                  fenced("choices", ask)):
         oneshot_spec.talk("budget")
     last = o()["talk"][-1]
@@ -398,7 +440,7 @@ def test_a_requirement_a_redesign_adds_is_shown_and_must_be_decided_even_without
 def test_a_cycle_among_the_requirements_is_refused_in_the_conversation_where_it_can_be_fixed(world):
     cyclic = fenced("oneshot-spec", {"requirements": [{**REQS[0], "depends_on": ["R2"]}, REQS[1]],
                                      "glossary": GLOSSARY})
-    with replies(cyclic, fenced("oneshot-spec", {"requirements": REQS, "glossary": GLOSSARY})):
+    with replies(cyclic, fenced("oneshot-spec", {"stack": STACK, "requirements": REQS, "glossary": GLOSSARY})):
         oneshot_spec.talk("budget")
     assert o()["stage"] == "design"
 

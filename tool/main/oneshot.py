@@ -33,13 +33,13 @@ from workspace import TASK, create
 
 from . import channels, connect, prerequisite_review, runtime, specs
 from .oneshot_files import as_planned, git, planned, tracked  # noqa: F401 — `tracked` is read by tests
-from .oneshot_profile import (KINDS, SCHEMA, SUPPORTED_KINDS, charged, cut, gate_cmd, ledger, problems,
-                              proposal, current)
+from .oneshot_profile import (KINDS, SCHEMA, SUPPORTED_KINDS, charged, cut, ledger, problems, proposal,
+                              current)
 from .query import ROOT
 
 RUNS = ROOT / "raw" / "oneshot"
 PROFILES = RUNS / "profiles"
-VERSION = 2   # 2: the tests turn declares its runner, and its cases are pinned from a JUnit report
+VERSION = 3   # 2: the tests turn declares its runner; 3: the owner picks the stack in S2, not on the card
 BRANCH = "oneshot-initial"   # also the spec id: a valid task name, so the branch and the spec share it
 INTENT_PROMPT = (ROOT / "tool/prompts/oneshot-intent.md").read_text(encoding="utf-8")
 PROFILE_PROMPT = (ROOT / "tool/prompts/oneshot-profile.md").read_text(encoding="utf-8")
@@ -548,7 +548,7 @@ def s_spec(run: dict) -> None:
     if spec is None:
         now = time.time()
         specs.save({"id": BRANCH, "repo": name, "rev": 1, "goal": run["intent"]["restated"], "out": [],
-                    "done": [gate_cmd(run["profile"])],
+                    "done": [],   # the gate enters at S4, when the tests turn declares the command
                     "grounds": {"pages": [], "files": [], "rules": []}, "decisions": [],
                     "source": {"focus": "oneshot", "turn": now, "plan": None}, "state": "작업 중", "stopped": None,
                     "worktree": str(tree), "workspace_mode": "worktree", "branch": BRANCH, "start_head": run["base"],
@@ -833,5 +833,8 @@ def resume(rid: str, body: Resume) -> dict:
         run = load(rid)
         if run.get("committed") or not run.get("stopped") or run.get("working"):
             raise HTTPException(409, "멈춘 실행이 아니다")
+        if run.get("version", 1) < 3 and run.get("identity") and any(   # its files, even some, carry the old card's stack
+                (Path(run["identity"]["path"]) / f).exists() for f in ("README.md", ".gitignore", ".wiki/adapter.toml")):
+            raise HTTPException(409, "예전 형식으로 기본 파일을 쓴 실행이라 이어 갈 수 없다 — 새 실행을 시작하라")
         launch(rid, RUNNING[run["state"]], **({"adopt": True} if body.adopt else {}))
     return view(load(rid))

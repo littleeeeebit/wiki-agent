@@ -237,12 +237,13 @@ def test_a_planned_case_from_a_file_left_out_of_the_contract_is_refused(built_wo
     assert "`contract` 에 없는 파일" in sent[-1][2] and "tests/generated.py" in sent[-1][2] and o()["stage"] == "tests"
 
 
-def test_a_run_from_before_version_2_that_reaches_the_tests_turn_carries_on_as_version_2(built_world):
+def test_a_run_from_before_version_2_that_reaches_the_tests_turn_records_version_2(built_world):
     tree, sent = built_world
     oneshot_spec.saved("budget", oneshot={"version": 1})
     write(tree, "test_budget.py", TESTS)
     assert check(tree) is not None and o()["stage"] == "build" and o()["version"] == 2
-    oneshot_spec.supported(o())
+    with pytest.raises(HTTPException, match="스택"):   # but it left S2 before version 3: its stack is the card's
+        oneshot_spec.supported(o())
 
 
 def test_a_test_file_changed_while_its_run_is_checked_is_refused(built_world):
@@ -596,10 +597,11 @@ def test_resuming_a_stopped_build_sends_its_turn_again_with_fresh_attempts(built
 
 
 def test_the_prompts_name_the_planned_tests_and_the_pins():
-    s = {"oneshot": {"design": sheet.parsed(DESIGN), "profile": {"backend": "fastapi"}, "tests_head": "abc",
+    s = {"oneshot": {"design": sheet.parsed(DESIGN), "profile": {"auth": "none"}, "tests_head": "abc",
+                     "stack": [{"part": "tests", "choice": "pytest", "why": "-", "status": "confirmed"}],
                      "contract": ["tests/test_a.py"], "gate": "uv run pytest"}}
     tests = oneshot_build.tests_text(s)
-    assert "test_spending_adds_to_the_total" in tests and '"backend": "fastapi"' in tests and "oneshot-runner" in tests
+    assert "test_spending_adds_to_the_total" in tests and '"tests": "pytest"' in tests and "oneshot-runner" in tests
     assert "{tests}" not in tests and "{profile}" not in tests and "uv run pytest" in oneshot_build.build_text(s)
     assert json.loads(tests.split("```json\n")[1].split("```")[0])[0]["id"] == "T1"
     assert "`tests/test_a.py`" in oneshot_build.build_text(s) and "abc" in oneshot_build.build_text(s)
