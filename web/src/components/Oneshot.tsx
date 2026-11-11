@@ -13,7 +13,7 @@ type OneshotRun = {
   id: string
   state: 'intake' | 'environment' | 'bootstrap' | 'spec'
   working: string | null
-  stopped: { reason: 'block' | 'folder' | 'github' | 'restart'; detail: string; state: string } | null
+  stopped: { reason: 'block' | 'folder' | 'github' | 'connect' | 'restart'; detail: string; state: string } | null
   sentence: string
   models?: Models
   picked: string
@@ -59,7 +59,7 @@ const STEP: Record<string, string> = {
   remote: 'GitHub 저장소', origin: 'origin 연결', publish: 'main push', spec: '명세 작업 공간',
 }
 const STOP: Record<string, string> = {
-  block: '모델 답을 쓸 수 없었다', folder: '폴더나 이름 문제', github: 'GitHub 문제',
+  block: '모델 답을 쓸 수 없었다', folder: '폴더나 이름 문제', github: 'GitHub 문제', connect: '연결을 확인해야 한다',
   restart: '서버가 다시 켜져 멈췄다',
 }
 const WORKING: Record<string, string> = {
