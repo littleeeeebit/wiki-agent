@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import posixpath
 import re
 import subprocess
 import threading
@@ -174,6 +175,7 @@ def declared(path: Path, final: str) -> dict:
     if not isinstance(value, dict):
         raise ValueError(f"`{RUNNER}` 블록은 command, contract, config 를 담은 객체다")
     command, contract, config = value.get("command"), value.get("contract"), value.get("config", [])
+    folder = value.get("root", "")
     if not isinstance(command, str) or command.count("{report}") != 1 or "\n" in command:
         raise ValueError("`command` 는 JUnit 보고서 경로 자리 `{report}` 를 한 번 담은 한 줄 명령이다")
     if not (isinstance(contract, list) and contract and isinstance(config, list)
@@ -182,7 +184,11 @@ def declared(path: Path, final: str) -> dict:
     root = path.resolve()
     if bad := [f for f in contract + config if not (path / f).resolve().is_relative_to(root) or not (path / f).is_file()]:
         raise ValueError("`" + RUNNER + "` 가 적은 파일이 작업트리에 없다 — " + ", ".join(bad[:10]))
-    return {"command": command.strip(), "contract": sorted(set(contract)), "config": sorted(set(config) - set(contract))}
+    if not isinstance(folder, str) or not (path / folder).resolve().is_relative_to(root) or not (path / folder).is_dir():
+        raise ValueError(f"`root` 는 보고서의 `file` 경로가 기준으로 삼는 작업트리 안의 폴더다 — {folder}")
+    folder = (path / folder).resolve().relative_to(root).as_posix()
+    return {"command": command.strip(), "contract": sorted(set(contract)), "config": sorted(set(config) - set(contract)),
+            "root": "" if folder == "." else folder}
 
 
 def junit(path: Path, run, spec: dict, command: str) -> list[tuple[str, str, str, str]]:
@@ -221,13 +227,14 @@ def literal(text: str) -> str:
 def published(gate: str, backend: str) -> str:
     """Why the adapter's gate, which CI and the next session run, would not run the contract's command, or
     empty: it is that command, or that command and then more after `&&`, with nothing after it that could
-    swallow a failure or hide the rest (`||`, `;`, `#`)."""
+    swallow a failure or hide the rest: a new line, `||`, `;`, `#` or a lone `&`, which runs what is before it
+    in the background.  ponytail: by character, so a quoted `#` or `;` is refused too; a project script takes it."""
 
     gate = gate.strip()
     rest = gate[len(backend):] if gate.startswith(backend) else None
-    if rest is None or rest and not re.fullmatch(r"\s*&&[\s\S]+", rest) or any(t in (rest or "") for t in ("||", ";", "#")):
-        return (f"어댑터의 `gate_cmd` 는 계약 테스트 `{backend}` 로 시작하고, 더 돌릴 명령은 그 뒤에 ` && ` 로만 잇는다 "
-                f"(`||`, `;`, `#` 없이) — `{gate}`")
+    if rest is None or rest and not re.fullmatch(r"[ \t]*&&[^\r\n]+", rest) or re.search(r"\|\||;|#|&&&|(?<!&)&(?!&)", rest or ""):
+        return (f"어댑터의 `gate_cmd` 는 계약 테스트 `{backend}` 로 시작하고, 더 돌릴 명령은 같은 줄에서 ` && ` 로만 잇는다 "
+                f"(`||`, `;`, `#`, 홑 `&` 없이) — `{gate}`")
     return ""
 
 
@@ -239,21 +246,17 @@ def named(name: str, case: str) -> bool:
                             or case.startswith(name + " (") and case.endswith(")"))
 
 
-def source(path: Path, file: str, contract: list[str]) -> str:
-    """A report's `file`, as a worktree path. An absolute one is made relative. A relative one is the worktree's
-    when it names a file there; otherwise the runner ran in a folder below the root (`cd web && …`), and it is
-    the contract file it ends.  ponytail: a suffix, not the runner's real folder, which no report names."""
+def source(path: Path, file: str, root: str) -> str:
+    """A report's `file`, as a worktree path. An absolute one is made relative; a relative one is read from
+    `root`, the folder the runner block says its tool names files from (`web` for `cd web && …`)."""
 
     p = Path(file.replace("\\", "/"))
-    if p.is_absolute():
-        try:
-            return p.resolve().relative_to(path.resolve()).as_posix()
-        except ValueError:
-            return p.as_posix()
-    rel = p.as_posix().removeprefix("./")
-    if (path / rel).is_file():
-        return rel
-    return next((c for c in contract if c.endswith("/" + rel)), rel)
+    if not p.is_absolute():
+        return posixpath.normpath(posixpath.join(root, p.as_posix()))
+    try:
+        return p.resolve().relative_to(path.resolve()).as_posix()
+    except ValueError:
+        return p.as_posix()
 
 
 def red(spec: dict, found: list[tuple[str, str, str, str]]) -> str:
@@ -393,7 +396,7 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
     if why := red(spec, found):
         return why
     # A file the report names for a planned case is the case's file: one left out of `contract` is not pinned.
-    if outside := sorted({source(path, c[2], runner["contract"]) for c in found
+    if outside := sorted({source(path, c[2], runner["root"]) for c in found
                           if c[2] and any(named(t, c[1]) for t in tests)}
                          - set(runner["contract"])):
         return "계획 테스트 사례가 `contract` 에 없는 파일에서 나왔다 — " + ", ".join(outside[:10])

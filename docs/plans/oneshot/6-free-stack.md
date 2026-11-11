@@ -111,9 +111,12 @@ with one block:
 
 S7 and S8 run the stored command themselves before the adapter's gate. They
 also refuse an adapter whose `gate_cmd` does not start with it, or adds
-anything after it other than ` && ` commands: no `||`, `;` or `#`, which
-could swallow its failure or hide it in a comment. The published gate, which
-CI and later sessions run, then runs the contract first.
+anything after it other than ` && ` commands on the same line: no new line,
+`||`, `;` or lone `&`, which could run past its failure, and no `#`, which
+could hide it in a comment. The published gate, which CI and later sessions
+run, then runs the contract first and fails with it. The check reads
+characters, not shell syntax, so a quoted `#` or `;` is refused too; such a
+command goes in a project script.
 
 A planned name matches a testcase whose name equals it in any case, or that
 name followed by a parameter in brackets (`name[…]`) or in parentheses after
@@ -134,11 +137,13 @@ twice.
 The server substitutes `{report}` with a path in the run's folder, outside the
 worktree, single-quoted so neither PowerShell nor bash expands anything in it
 (PowerShell's typographic single quotes are doubled like the plain one), and
-reads only that file. A report's `file` is read as a worktree path when the
-worktree holds a file there, and otherwise as the end of a `contract` path,
-since a runner started in a folder below the root names files from there. A run that reaches the tests turn records version 2,
-whatever version it started at, since its record now has version 2's shape. The adapter's `gate_cmd` becomes the
-stored command with `{report}` set to `artifacts/junit.xml`.
+reads only that file. The block's optional `root` names the folder a
+runner started below the repository root reads files from (`web` for
+`cd web && …`). The server reads every relative `file` in the report from
+that folder and never guesses it from a path's ending. A run that reaches the
+tests turn records version 2, whatever version it started at, since its
+record now has version 2's shape. The adapter's `gate_cmd` becomes the stored
+command with `{report}` set to `artifacts/junit.xml`.
 
 ### What this gives up
 

@@ -27,7 +27,7 @@ yet.
 End the turn with one fenced block:
 
 ```oneshot-runner
-{"command": "…{report}…", "contract": ["…"], "config": ["…"]}
+{"command": "…{report}…", "contract": ["…"], "config": ["…"], "root": ""}
 ```
 
 - `command`: one line, run from the repository root, that runs every test and
@@ -38,6 +38,10 @@ End the turn with one fenced block:
   `-o junit_family=xunit1`, jest-junit with `addFileAttribute`): without it a
   test in another file whose class and name read the same can stand in for
   a planned one.
+- `root`: the folder, from the repository root, that the report's relative
+  `file` paths start from. Leave it `""` when the tool runs at the root; write
+  `web` when `command` runs it with `cd web && …` and it names files from
+  there. The server reads every relative `file` from this folder.
 - `contract`: every file that holds a planned test, or code a planned test
   runs from its own test code (a shared helper or base class).
 - `config`: the files that only configure the test tool (`pytest.ini`,

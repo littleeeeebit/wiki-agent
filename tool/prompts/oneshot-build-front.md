@@ -41,7 +41,7 @@ Fill `live_cmd` with one command that, run from the repository root, builds
 the screens if needed and starts the app (it reads `PORT` itself). Extend
 `gate_cmd` so it also runs the frontend's tests and build: it starts with
 `{gate}` unchanged, and the frontend's commands follow after ` && `, with no
-`||`, `;` or `#` after it. Commit the adapter with the rest.
+`||`, `;`, `#`, lone `&` or new line after it. Commit the adapter with the rest.
 
 ## When this turn ends
 

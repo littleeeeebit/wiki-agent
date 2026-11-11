@@ -84,10 +84,10 @@ def spec() -> dict:
     return specs.load("budget", oneshot.BRANCH)
 
 
-def told(contract=("test_budget.py",), config=(), command=RUNNER) -> str:
+def told(contract=("test_budget.py",), config=(), command=RUNNER, **more) -> str:
     """A tests turn's answer: its `oneshot-runner` block."""
 
-    return "썼다.\n" + fenced("oneshot-runner", {"command": command, "contract": list(contract), "config": list(config)})
+    return "썼다.\n" + fenced("oneshot-runner", {"command": command, "contract": list(contract), "config": list(config), **more})
 
 
 def check(tree, final=None):
@@ -189,18 +189,35 @@ def test_the_report_path_reaches_the_runner_as_written(tmp_path):
     assert not cut and ascii(shown.as_posix()) in text, text
 
 
-def test_a_reports_file_is_read_against_the_worktree_then_against_a_runner_run_in_a_folder_below_it(tmp_path):
-    (tmp_path / "web" / "tests").mkdir(parents=True)
-    (tmp_path / "web" / "tests" / "test_budget.py").write_text("", encoding="utf-8")
-    contract = ["web/tests/test_budget.py"]
-    assert oneshot_build.source(tmp_path, "tests\\test_budget.py", contract) == "web/tests/test_budget.py"   # `cd web`
-    assert oneshot_build.source(tmp_path, "./web/tests/test_budget.py", contract) == "web/tests/test_budget.py"
-    assert oneshot_build.source(tmp_path, str(tmp_path / "web/tests/test_budget.py"), contract) == contract[0]
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_budget.py").write_text("", encoding="utf-8")
-    # a file the worktree holds at that path is that file, declared or not
-    assert oneshot_build.source(tmp_path, "tests/test_budget.py", contract) == "tests/test_budget.py"
-    assert oneshot_build.source(tmp_path, "other/test_x.py", contract) == "other/test_x.py"
+def test_a_reports_relative_file_is_read_from_the_runners_declared_root_and_nothing_else(tmp_path):
+    for f in ("web/tests/test_budget.py", "api/tests/test_budget.py", "tests/test_budget.py"):
+        write(tmp_path, f, "")   # the same ending three times: none is guessed
+    assert oneshot_build.source(tmp_path, "tests\\test_budget.py", "web") == "web/tests/test_budget.py"   # `cd web`
+    assert oneshot_build.source(tmp_path, "tests/test_budget.py", "") == "tests/test_budget.py"
+    assert oneshot_build.source(tmp_path, "./web/tests/test_budget.py", "") == "web/tests/test_budget.py"
+    assert oneshot_build.source(tmp_path, "../api/tests/test_budget.py", "web") == "api/tests/test_budget.py"
+    assert oneshot_build.source(tmp_path, str(tmp_path / "web/tests/test_budget.py"), "api") == "web/tests/test_budget.py"
+
+
+@pytest.mark.parametrize("more, ok", [({"root": "web"}, True), ({}, False)])
+def test_a_runner_below_the_root_pins_its_cases_only_from_the_folder_it_declares(built_world, more, ok):
+    tree, sent = built_world
+    write(tree, "web/test_budget.py", TESTS)
+    # pytest names each case's file from its rootdir, as a runner started with `cd web` would
+    command = RUNNER + " -o junit_family=xunit1 --rootdir web web"
+    check(tree, told(contract=["web/test_budget.py"], command=command, **more))()
+    if ok:
+        assert o()["stage"] == "build" and {c[2] for c in o()["cases"]} == {"test_budget.py"}
+    else:
+        assert o()["stage"] == "tests" and "`contract` 에 없는 파일" in sent[-1][2] and "— test_budget.py" in sent[-1][2]
+
+
+@pytest.mark.parametrize("root", ["..", "missing", "web/test_budget.py", 3])
+def test_a_root_outside_the_worktree_or_not_a_folder_is_refused(built_world, root):
+    tree, sent = built_world
+    write(tree, "web/test_budget.py", TESTS)
+    check(tree, told(contract=["web/test_budget.py"], root=root))()
+    assert "`root` 는" in sent[-1][2] and o()["stage"] == "tests"
 
 
 def test_a_planned_case_from_a_file_left_out_of_the_contract_is_refused(built_world):

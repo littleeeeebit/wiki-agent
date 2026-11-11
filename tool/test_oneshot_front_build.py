@@ -141,10 +141,13 @@ def test_an_adapter_that_lost_the_backend_tests_or_left_live_empty_is_refused(st
 
 
 @pytest.mark.parametrize("gate, ok", [
-    ("pytest -q", True), ("pytest -q && npm test", True), ("pytest -q &&\nnpm --prefix web test", True),
+    ("pytest -q", True), ("pytest -q && npm test", True), ("pytest -q && npm test && npm run lint", True),
     ("pytest -q --version", False), ("npm test # pytest -q", False), ("npm test && pytest -q", False),
     ("pytest -q || true", False), ("pytest -q && npm test || true", False), ("pytest -q; npm test", False),
     ("pytest -q && npm test # x", False), ("pytest -q\nnpm test", False),
+    # a new line after the chain runs whatever the contract did; a lone `&` backgrounds the chain before it
+    ("pytest -q && npm test\nexit 0", False), ("pytest -q &&\nnpm test", False), ("pytest -q && npm test\r\nexit 0", False),
+    ("pytest -q && npm test & exit 0", False), ("pytest -q && npm test &", False), ("pytest -q &&& npm test", False),
 ])
 def test_the_published_gate_runs_the_contracts_command_first_and_swallows_nothing(gate, ok):
     assert (oneshot_build.published(gate, "pytest -q") == "") is ok
