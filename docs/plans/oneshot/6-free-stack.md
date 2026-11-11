@@ -104,14 +104,50 @@ with one block:
 | Check | When | Refused if |
 | --- | --- | --- |
 | Named | The tests turn ends | A listed file is missing or outside the worktree, or a file the turn changed names a planned test but is not in `contract` |
-| Red | The tests turn ends | A planned name is missing from the report, or passed, or was skipped, or two of its testcases carry the same `[classname, name, file]` |
+| Red | The tests turn ends | A planned name is missing from the report, or passed, or was skipped, or two of its testcases carry the same `[classname, name, file]`, or the report names a file for one that is not in `contract` |
 | Pin | The server commits the tests | — it stores `command`, `contract`, `config` and each planned case as `[classname, name, file]` from the report (`file` empty when the report has none), with `tests_head` |
 | Pinned | Every later turn ends | A `contract` or `config` file differs from `tests_head` |
-| Green | The build turn ends | A pinned case is absent, skipped, failing or reported more than once in a run of the stored command |
+| Green | The build turn and the final gate (S8) end | A pinned case is absent, skipped, failing or reported more than once in a run of the stored command |
 
-A planned name matches a testcase whose name equals it in any case, or
-continues with a parameter (`name[…]`, `name (…)`), so Go's `Test_name` and
-pytest's parameter cases match. A case is pinned by its classname, name and
+S7 and S8 run the stored command themselves before the adapter's gate. They
+also refuse an adapter whose `gate_cmd` does not start with it, or adds
+anything after it other than ` && ` commands. The published gate, which CI
+and later sessions run, then runs the contract first and fails with it.
+
+The stored command and the published gate are both one chain: plain
+commands joined only by `&&`, so each runs only after the one before it
+passed, and the chain fails with its first failure in PowerShell and bash
+alike. The tests turn's check and S7/S8 refuse anything that could end,
+hide or outlive the chain:
+
+- separators, pipes and a lone `&`: `;`, `|`, `&`, a new line;
+- comments, escapes, substitutions, groups and blocks: `#`, a backtick,
+  `$(`, brackets, braces;
+- a command that starts with a word that leaves or replaces the shell:
+  `exit`, `exec`, `return`, `eval`, `source`, `.`, `iex`, `command`,
+  `builtin`, an alias definition and the like. The word is read as the
+  shell finds it: quotes, a folder or module in front (`…\Invoke-Expression`)
+  and `.exe` are set aside, and an environment assignment in front
+  (`CI=1 exec …`) is refused outright.
+
+The check reads characters and first words, not shell syntax, so a quoted
+`;` or `(` is refused too; such a command goes in a project script.
+
+What it guards against is a command that ends the chain by mistake, such as
+a runner written with `; exit $LASTEXITCODE` or a comment. It does not
+guard against a command written to get past it: PowerShell and bash are
+whole languages, and a string check cannot follow every way either finds a
+command, nor a program that ends its parent shell from outside it. Running
+the stored command in a process of its own would close that, but the gate is
+one command line run by PowerShell on Windows and by bash elsewhere, so the
+wrapper would differ between the machines the same gate runs on. The proof
+that the contract passes is the server's own runs at S7 and S8, with
+`held()`; the published gate's form is checked on top of that.
+
+A planned name matches a testcase whose name equals it in any case, or that
+name followed by a parameter in brackets (`name[…]`) or in parentheses after
+a space (`name (…)`), so Go's `Test_name` and pytest's parameter cases match;
+any other text after the name is another test. A case is pinned by its classname, name and
 file together: a test of the same name in another class, or in another file
 the report names, never stands in for it, and a configuration that deselects
 or skips a pinned case leaves it absent or skipped at green.
@@ -125,8 +161,15 @@ the case only when both run, because the pinned identity is then reported
 twice.
 
 The server substitutes `{report}` with a path in the run's folder, outside the
-worktree, and reads only that file. The adapter's `gate_cmd` becomes the
-stored command with `{report}` set to `artifacts/junit.xml`.
+worktree, single-quoted so neither PowerShell nor bash expands anything in it
+(PowerShell's typographic single quotes are doubled like the plain one), and
+reads only that file. The block's optional `root` names the folder a
+runner started below the repository root reads files from (`web` for
+`cd web && …`). The server reads every relative `file` in the report from
+that folder and never guesses it from a path's ending. A run that reaches the
+tests turn records version 2, whatever version it started at, since its
+record now has version 2's shape. The adapter's `gate_cmd` becomes the stored
+command with `{report}` set to `artifacts/junit.xml`.
 
 ### What this gives up
 
@@ -207,8 +250,8 @@ bootstrap's `files` step and before its `commit` whose resume is refused.
 
 | Part | Scope | Status |
 | --- | --- | --- |
-| 6a | This document; budgets removed from the card, the ceilings and the screen | In progress |
-| 6b | S4 on the runner block and JUnit, S5 from `api.yaml`, S7's conventions, version 2 | Not started |
+| 6a | This document; budgets removed from the card, the ceilings and the screen | Done (#331) |
+| 6b | S4 on the runner block and JUnit, S5 from `api.yaml`, S7's conventions, version 2 | In progress |
 | 6c | The stack in S2 and on R1, the card's stack fields removed, the bootstrap without them, the prompts reading the stack, version 3 | Not started |
 
 6b goes before 6c so every merged state still runs. After 6b a new run's

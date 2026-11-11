@@ -7,13 +7,15 @@ is pushed and no pull request is made.
 
 import json
 import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
 
 from main import oneshot, oneshot_build, oneshot_critique as critique, oneshot_pr, oneshot_spec, pr_text, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
-from test_oneshot_front_build import CONTRACT, FEATURES, FREQUENCY, FRONT, GATE, Run, adapter, git, write
+from test_oneshot_front_build import (CASES, CONTRACT, FEATURES, FREQUENCY, FRONT, GATE, RUNNER, Run, adapter, git,
+                                      write)
 from test_oneshot_spec import PROFILE, fenced, world  # noqa: F401 — `world` is a fixture
 from test_specs import SUMMARIZED, Remote
 
@@ -31,7 +33,7 @@ def spec() -> dict:
 @pytest.fixture
 def finished(world):  # noqa: F811 — the imported fixture, requested by name
     write(world, "test_budget.py", CONTRACT)
-    write(world, ".gitignore", "__pycache__/\n")
+    write(world, ".gitignore", "__pycache__/\nartifacts/\n")   # as the bootstrap writes it: the gate's report lands there
     write(world, ".wiki/adapter.toml", adapter())
     git(world, "add", "-A")
     git(world, "commit", "-m", "built")
@@ -40,6 +42,7 @@ def finished(world):  # noqa: F811 — the imported fixture, requested by name
                        source={"focus": "oneshot", "turn": 1.0, "plan": None}, start_head=git(world, "rev-list", "--max-parents=0", "HEAD"),
                        oneshot={
         "stage": "pr", "tests_head": head, "front_built_head": head, "contract": ["test_budget.py"], "front": FRONT,
+        "runner": RUNNER, "gate": GATE, "cases": CASES,
         "features": FEATURES, "frequency": FREQUENCY, "first_screen": "오늘 쓴 돈을 적는다",
         "profile": {**PROFILE, "visibility": "private", "ci": "none", "os_now": "windows", "os_later": "other"},
         # As a real run reaches S8: P1's comment was applied, so the sheet holds only its later approval.
@@ -178,6 +181,24 @@ def test_the_gate_green_asks_for_the_text_then_opens_the_pull_request_attached_b
     shown = oneshot_spec.view(spec())["summary"]
     assert shown["pr"]["number"] == 7 and [g["rounds"] for g in shown["gates"]] == [2, 1, 1]
     assert shown["gates"][0]["edited"] == ["P1"] and shown["gates"][0]["reading"][0]["seconds"] == 80.0
+
+
+@pytest.mark.parametrize("change, said", [
+    # an adapter gate that dropped the contract's command
+    (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass"')), "로 시작하고"),
+    # the contract's command in a comment: the published gate would run only the rest
+    (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass" # {GATE}')), "로 시작하고"),
+    # a configuration the tests turn never listed, skipping every pinned case: the gate still exits 0
+    (lambda tree: write(tree, "conftest.py", "import pytest\n\n\ndef pytest_collection_modifyitems(items):\n"
+                                             "    for item in items:\n        item.add_marker(pytest.mark.skip)\n"),
+     "(skipped)"),
+])
+def test_the_final_gate_runs_the_contracts_command_and_checks_every_pinned_case(finished, change, said):
+    tree, sent = finished
+    change(tree)
+    readme(tree)
+    check(tree, answer(report()))()
+    assert sent[-1][1] == "pr" and said in sent[-1][2] and "final_head" not in o() and not spec().get("writing")
 
 
 def test_a_push_github_refuses_stops_the_run_with_its_reason(finished):

@@ -1,4 +1,4 @@
-"""oneshot step 4a: the feature split read from the served API, the board, the frontend design and R2.
+"""oneshot step 4a: the feature split read from the approved API, the board, the frontend design and R2.
 
 See `docs/plans/oneshot/4-frontend.md` ("S5", "S6", "R2"). Model turns (`oneshot.ask`)
 are stand-ins; Git, the project's interpreter and Playwright run for real.
@@ -6,7 +6,6 @@ are stand-ins; Git, the project's interpreter and Playwright run for real.
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -14,9 +13,10 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from main import oneshot, oneshot_build, oneshot_front as front, oneshot_screens as screens, oneshot_spec, query, specs, work
+from main import (oneshot, oneshot_build, oneshot_front as front, oneshot_screens as screens, oneshot_sheet as sheet,
+                  oneshot_spec, query, specs, work)
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
-from test_oneshot_spec import fenced, world  # noqa: F401 — `world` is a fixture
+from test_oneshot_spec import DESIGN, fenced, world  # noqa: F401 — `world` is a fixture
 
 OPS = ["GET /export", "GET /spendings", "POST /spendings"]
 FEATURES = [
@@ -106,13 +106,12 @@ def designed(tree) -> None:
 
 # -- S5 ------------------------------------------------------------------------------------
 
-def test_the_inventory_is_read_from_the_served_app(world):  # noqa: F811
-    (world / "app").mkdir()
-    (world / "app" / "main.py").write_text(
-        "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get('/spendings')\ndef listed():\n    return []\n\n\n"
-        "@app.post('/spendings')\ndef added():\n    return {}\n", encoding="utf-8")
-    with patch.object(front, "python_cmd", lambda profile: f'"{sys.executable}"'):
-        assert front.served(specs.load("budget", oneshot.BRANCH)) == ["GET /spendings", "POST /spendings"]
+def test_the_inventory_is_the_approved_api_never_a_file_the_build_can_edit(world):  # noqa: F811
+    design = sheet.parsed(DESIGN)
+    oneshot_spec.saved("budget", oneshot={"design": design})
+    (world / "docs" / "design").mkdir(parents=True)
+    (world / "docs" / "design" / "api.yaml").write_text('{"paths": {"/all": {"delete": {}}}}', encoding="utf-8")
+    assert front.served(specs.load("budget", oneshot.BRANCH)) == sorted(f"{p['method']} {p['path']}" for p in design["api"])
 
 
 @pytest.mark.parametrize("change, said", [
@@ -200,6 +199,7 @@ def screens_with(changes: dict):
     (screens_with({(1, "reached"): "deeper"}), "한 번에 닿아야"),
     (screens_with({(2, "features"): []}), "어느 화면에도 없는"),
     (screens_with({(1, "primary"): True}), "정확히 하나"),
+    (screens_with({(1, "route"): "/spendings"}), "API 경로와 겹친다"),   # the page would be the API's answer
     (blocks(**{"oneshot-mocks": {**blocks()["oneshot-mocks"], "S2": mock()}}), "data-feature"),
     (blocks(**{"oneshot-tokens": {**blocks()["oneshot-tokens"], "palettes": blocks()["oneshot-tokens"]["palettes"][:1]}}),
      "두세 개"),
@@ -279,6 +279,17 @@ def test_r2_needs_every_item_and_a_palette_then_commits_the_design(boarded):
     assert "](shots/S1-desktop.png)" in sheet_md and "| C2 (고름) |" in sheet_md
 
 
+def test_a_version_1_run_waiting_at_r2_is_refused_instead_of_built_without_a_runner(boarded):
+    designed(boarded)
+    oneshot_spec.saved("budget", oneshot={"version": 1, "tests_head": head(boarded)})   # pinned as pytest node ids
+    begun = []
+    with patch.object(front.oneshot_front_build, "begin", begun.append):
+        for act in (lambda: front.decide("budget", approve_all(palette="C2")), lambda: oneshot_spec.resume("budget")):
+            with pytest.raises(HTTPException, match="새 실행"):
+                act()
+    assert o()["stage"] == "r2" and begun == []
+
+
 def test_a_server_that_dies_before_the_front_build_starts_resumes_it(boarded):
     designed(boarded)
     seen, sent = [], []
@@ -289,7 +300,7 @@ def test_a_server_that_dies_before_the_front_build_starts_resumes_it(boarded):
     assert o()["stopped"]["reason"] == "restart"
     # what the backend's stages wrote, which this fixture skips
     oneshot_spec.saved("budget", oneshot={"tests_head": head(boarded), "contract": ["test_budget.py"],
-                                          "profile": {**o()["profile"], "python_env": "uv"}})
+                                          "gate": "uv run pytest"})
     with patch.object(oneshot_build, "send", lambda *a: sent.append(a)):
         oneshot_spec.resume("budget")
     assert sent[-1][:2] == ("budget", "build-front")

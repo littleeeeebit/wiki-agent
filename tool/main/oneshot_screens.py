@@ -32,8 +32,16 @@ def _text(item: dict, key: str, where: str) -> str:
     return " ".join(value.split())
 
 
+def api_paths(ops: list[str]) -> re.Pattern:
+    """A URL path any operation answers: `{id}` matches one segment."""
+
+    templates = sorted({op.split(" ", 1)[1] for op in ops})
+    parts = [re.sub(r"\\\{[^/]*?\\\}", "[^/]+", re.escape(t)) for t in templates]
+    return re.compile("(?:" + "|".join(parts) + r")/?") if parts else re.compile(r"(?!)")
+
+
 def operations(document) -> list[str]:
-    """`METHOD /path` for every operation the served OpenAPI document holds."""
+    """`METHOD /path` for every operation the approved OpenAPI document holds."""
 
     if not isinstance(document, dict) or not isinstance(document.get("paths"), dict):
         raise ValueError("OpenAPI 문서에 `paths` 가 없다")
@@ -166,6 +174,10 @@ def design(found: dict, feats: list[dict], frequency: dict[str, str]) -> dict:
     if missing := [b for b in BLOCKS.split(",") if b not in found]:
         raise ValueError(f"블록이 빠졌다: {', '.join(missing)}")
     screens = _screens(found["oneshot-screens"], {f["id"] for f in feats})
+    # A screen opens at its own route on the app's one port, so the API must not answer the same path.
+    api = api_paths([e for f in feats for e in f.get("endpoints") or []])
+    if clash := [s["route"] for s in screens if api.fullmatch(s["route"])]:
+        raise ValueError(f"화면 경로가 API 경로와 겹친다 — {', '.join(clash)}. 화면은 자기 경로에서 열린다")
     primary = [s for s in screens if s["primary"]]
     if len(primary) != 1 or primary[0]["reached"] != "start":
         raise ValueError("첫 화면(`primary`, `reached: start`)이 정확히 하나여야 한다")

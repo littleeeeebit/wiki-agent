@@ -22,10 +22,11 @@ from test_main import no_machine_settings  # noqa: F401 — the fixture is autou
 from test_oneshot_look import FIRST, INDEX, MAIN, OPS, SERVE
 from test_oneshot_spec import DESIGN, PROFILE, fenced, world  # noqa: F401 — `world` is a fixture
 
-GATE = f'"{sys.executable}" -m pytest'
+RUNNER = f'"{sys.executable}" -m pytest -p no:cacheprovider -q --junitxml={{report}}'
+GATE = RUNNER.replace("{report}", oneshot_build.REPORT)
 LIVE = f'"{sys.executable}" -m app'
 CONTRACT = "def test_spending_adds_to_the_total():\n    pass\n\n\ndef test_a_month_lists_its_spendings():\n    pass\n"
-NODES = {n: [f"test_budget.py::{n}"] for n in ("test_spending_adds_to_the_total", "test_a_month_lists_its_spendings")}
+CASES = [["test_budget", n, ""] for n in ("test_a_month_lists_its_spendings", "test_spending_adds_to_the_total")]
 SCREENS =[{"id": "S1", "route": "/", "purpose": "오늘 쓴 돈을 적는다", "features": ["add"], "primary": True, "reached": "start"},
            {"id": "S2", "route": "/months", "purpose": "달별로 본다", "features": ["months"], "primary": False,
             "reached": "one-click"},
@@ -74,17 +75,15 @@ def spec() -> dict:
 @pytest.fixture
 def staged(world):  # noqa: F811 — the imported fixture, requested by name
     write(world, "test_budget.py", CONTRACT)
-    write(world, ".gitignore", "__pycache__/\n")
+    write(world, ".gitignore", "__pycache__/\nartifacts/\n")
     git(world, "add", "-A")
     git(world, "commit", "-m", "contract")
     tests_head = git(world, "rev-parse", "HEAD")
     oneshot_spec.saved("budget", done=[f"{s['id']} `{s['route']}`: {s['purpose']}" for s in SCREENS], oneshot={
         "stage": "build-front", "design": sheet.parsed(DESIGN), "tests_head": tests_head, "contract": ["test_budget.py"],
-        "nodes": NODES, "front": FRONT, "features": FEATURES, "frequency": FREQUENCY, "inventory": OPS, "r2": {"palette": "C1"}, "first_screen": "오늘 쓴 돈을 적는다",
-        "profile": {**PROFILE, "python_env": "uv", "responsive": "desktop"}, "working": "build-front"})
-    with patch.object(front_build, "gate_cmd", lambda profile: GATE), \
-         patch.object(oneshot_build, "gate_cmd", lambda profile: GATE):
-        yield world
+        "runner": RUNNER, "gate": GATE, "cases": CASES, "front": FRONT, "features": FEATURES, "frequency": FREQUENCY, "inventory": OPS, "r2": {"palette": "C1"}, "first_screen": "오늘 쓴 돈을 적는다",
+        "profile": {**PROFILE, "responsive": "desktop"}, "working": "build-front"})
+    yield world
 
 
 def built(tree, first=FIRST, slots=None):
@@ -129,7 +128,8 @@ def test_a_build_with_its_adapter_filled_a_green_gate_and_clean_shots_moves_to_c
 
 
 @pytest.mark.parametrize("slots, said", [
-    (adapter(gate=f'"{sys.executable}" -c "pass"'), "백엔드 테스트"),
+    (adapter(gate=f'"{sys.executable}" -c "pass"'), "로 시작하고"),
+    (adapter(gate=f"{GATE} --version"), "로 시작하고"),   # names the command, runs none of it
     (adapter(live=""), "`live_cmd` 가 비었다"),
 ])
 def test_an_adapter_that_lost_the_backend_tests_or_left_live_empty_is_refused(staged, slots, said):
@@ -140,16 +140,27 @@ def test_an_adapter_that_lost_the_backend_tests_or_left_live_empty_is_refused(st
     assert o()["stage"] == "build-front" and o()["attempts"] == 1 and said in sent[-1][2]
 
 
-def test_a_gate_that_only_names_the_backend_tests_still_runs_them(staged):
-    built(staged, slots=adapter(gate=f"{GATE} --version"))   # names `pytest`, runs none of it
-    write(staged, "test_other.py", "def test_a_backend_rule_outside_the_contract():\n    assert False\n")
-    git(staged, "add", "-A")
-    git(staged, "commit", "-m", "other")
-    sent = []
-    with patch.object(oneshot_build, "send", lambda *a: sent.append(a)), \
-         patch.object(front_build.oneshot_look, "look", lambda *a: []):
-        check(staged)()
-    assert o()["stage"] == "build-front" and "게이트 실패" in sent[-1][2]
+@pytest.mark.parametrize("gate, ok", [
+    ("pytest -q", True), ("pytest -q && npm test", True), ("pytest -q && npm test && npm run lint", True),
+    ("pytest -q --version", False), ("npm test # pytest -q", False), ("npm test && pytest -q", False),
+    ("pytest -q || true", False), ("pytest -q && npm test || true", False), ("pytest -q; npm test", False),
+    ("pytest -q && npm test # x", False), ("pytest -q\nnpm test", False),
+    # a new line after the chain runs whatever the contract did; a lone `&` backgrounds the chain before it
+    ("pytest -q && npm test\nexit 0", False), ("pytest -q &&\nnpm test", False), ("pytest -q && npm test\r\nexit 0", False),
+    ("pytest -q && npm test & exit 0", False), ("pytest -q && npm test &", False), ("pytest -q &&& npm test", False),
+    # a command that leaves or replaces the shell, or a substitution or block that can, ends the chain early
+    ("pytest -q && exit 0", False), ("pytest -q && exec npm test", False), ("pytest -q && EXIT", False),
+    ("pytest -q && npm test $(exit 0)", False), ("pytest -q && npm test (exit)", False),
+    ("pytest -q && . {exit}", False), ("pytest -q && npm test `", False), ("pytest -q &&  && npm test", False),
+    # the same words spelled the way the shell still finds them
+    ("pytest -q && CI=1 exec npm test", False), ("pytest -q && command exec npm test", False),
+    ("pytest -q && 'exec' npm test", False), ("pytest -q && \"exit\"", False),
+    ("pytest -q && Microsoft.PowerShell.Utility\\Invoke-Expression 'exit 0'", False), ("pytest -q && /bin/kill.exe 1", False),
+    ("pytest -q && npm --prefix web test -- --run && npm --prefix web run build", True),
+    ('pytest -q && "C:\\Program Files\\nodejs\\npx.cmd" vitest run && uv run pytest && go test ./... && cargo nextest run', True),
+])
+def test_the_published_gate_runs_the_contracts_command_first_and_swallows_nothing(gate, ok):
+    assert (oneshot_build.published(gate, "pytest -q") == "") is ok
 
 
 def test_a_stop_during_the_look_passes_nothing_and_leaves_the_build_resumable(staged):
@@ -181,7 +192,7 @@ def test_a_tree_changed_while_the_app_ran_is_not_recorded_as_passed(staged):
 
 def test_a_high_finding_from_the_shots_is_sent_back_and_kept(staged):
     playwright_or_skip()
-    built(staged, FIRST.replace('<a href="#/months">달별</a>', ""))
+    built(staged, FIRST.replace('<a href="/months">달별</a>', ""))
     sent = []
     with patch.object(oneshot_build, "send", lambda *a: sent.append(a)):
         check(staged)()

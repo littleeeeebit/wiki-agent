@@ -15,7 +15,6 @@ from pathlib import Path
 from wiki import slots_for
 
 from . import oneshot_build, oneshot_look, oneshot_screens as screens, oneshot_spec, runtime, specs
-from .oneshot_profile import gate_cmd
 from .query import ROOT
 
 BUILD_FRONT_PROMPT = (ROOT / "tool/prompts/oneshot-build-front.md").read_text(encoding="utf-8")
@@ -30,7 +29,7 @@ def build_front_text(spec: dict) -> str:
     o = spec["oneshot"]
     front = {k: v for k, v in o["front"].items() if k not in ("mocks", "shots")}
     palette = next(p for p in o["front"]["tokens"]["palettes"] if p["id"] == o["r2"]["palette"])
-    return BUILD_FRONT_PROMPT.replace("{tests_head}", o["tests_head"]).replace("{gate}", gate_cmd(o["profile"])) \
+    return BUILD_FRONT_PROMPT.replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
         .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"])) \
         .replace("{design}", json.dumps({"screens": front["screens"], "states": front["states"],
                                          "type": front["tokens"]["type"], "spacing": front["tokens"]["spacing"],
@@ -53,9 +52,9 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     if why := oneshot_build.reported(spec, final) or oneshot_build.pinned(path, o):
         return why
     slots = slots_for(None, path)
-    gate, live, backend = slots.get("gate_cmd", "").strip(), slots.get("live_cmd", "").strip(), gate_cmd(o["profile"])
-    if backend not in gate:
-        return f"어댑터의 `gate_cmd` 가 백엔드 테스트 `{backend}` 를 잃었다 — `{gate}`"
+    gate, live, backend = slots.get("gate_cmd", "").strip(), slots.get("live_cmd", "").strip(), o["gate"]
+    if why := oneshot_build.published(gate, backend):
+        return why
     if not live:
         return "어댑터의 `live_cmd` 가 비었다 — 백엔드와 화면을 함께 띄우는 명령을 적는다"
     # The backend's own gate runs as the server knows it: the adapter's naming it proves nothing it runs.

@@ -1,4 +1,4 @@
-"""oneshot S5–R2: the feature split read from the served API, the owner's board, the frontend design
+"""oneshot S5–R2: the feature split read from the approved API, the owner's board, the frontend design
 shot as screenshots, and the R2 sheet's decisions.
 
 `docs/plans/oneshot/4-frontend.md` ("S5", "S6", "R2") is the design; `oneshot_screens` holds its checks.
@@ -21,18 +21,13 @@ from pydantic import BaseModel
 
 from common import is_junction
 
-from . import oneshot, oneshot_front_build, oneshot_screens as screens, oneshot_spec, runtime, specs
-from .oneshot_profile import python_cmd
+from . import oneshot, oneshot_front_build, oneshot_screens as screens, oneshot_sheet as sheet, oneshot_spec
 from .query import ROOT
 
 SPLIT_PROMPT = (ROOT / "tool/prompts/oneshot-split.md").read_text(encoding="utf-8")
 FRONTEND_PROMPT = (ROOT / "tool/prompts/oneshot-frontend.md").read_text(encoding="utf-8")
-SERVED_SECONDS = 120
 SHOT_SECONDS = 15_000   # Playwright's milliseconds per page
 SHOT_NAME = re.compile(r"S[1-9]\d*-(desktop|phone)\.png")
-# Run by the project's own interpreter in the worktree: the app's schema exactly as FastAPI serves it.
-SERVED = ("import json, sys\nsys.path.insert(0, '.')\nfrom app.main import app\n"
-          "print('OPENAPI ' + json.dumps(app.openapi()))\n")
 
 router = APIRouter()
 
@@ -40,18 +35,10 @@ router = APIRouter()
 # -- S5 the feature split ---------------------------------------------------------------------
 
 def served(spec: dict) -> list[str]:
-    """Every operation the built backend serves, read from its OpenAPI document, never written by a model."""
+    """Every operation of the API the owner approved at R1, which the contract tests exercise: the server's
+    own copy of the design, never a file the build could have edited, and no framework of its own."""
 
-    store, tree = oneshot_spec.store(spec["repo"]), Path(spec["worktree"])
-    store.folder.mkdir(parents=True, exist_ok=True)
-    script = store.folder / "served.py"
-    script.write_text(SERVED, encoding="utf-8", newline="\n")
-    code, out, cut = specs.gate(f'{python_cmd(spec["oneshot"]["profile"])} "{script.as_posix()}"', tree,
-                                runtime.stopping, timeout=SERVED_SECONDS)
-    line = next((x for x in out.splitlines() if x.startswith("OPENAPI ")), "")
-    if code != 0 or not line:
-        raise RuntimeError(f"서버의 OpenAPI 문서를 읽지 못했다 ({cut or code}) — {out.strip()[-600:]}")
-    return screens.operations(json.loads(line.removeprefix("OPENAPI ")))
+    return screens.operations(json.loads(sheet.openapi(spec)))
 
 
 def split(repo: str) -> None:
@@ -71,8 +58,8 @@ def split_turn(repo: str, store, spec: dict):
     text = (f"The owner's sentence:\n\n{o['sentence']}\n\nThe confirmed restatement:\n\n"
             f"{json.dumps(o['intent'], ensure_ascii=False)}\n\nThe requirements:\n\n"
             f"{json.dumps(spec.get('requirements') or [], ensure_ascii=False)}\n\nThe glossary:\n\n"
-            f"{json.dumps(o.get('glossary') or [], ensure_ascii=False)}\n\nEvery operation the built backend "
-            f"serves, from its OpenAPI document:\n\n" + "\n".join(f"- `{op}`" for op in ops) + "\n")
+            f"{json.dumps(o.get('glossary') or [], ensure_ascii=False)}\n\nEvery operation of the approved API, "
+            f"which the built backend serves:\n\n" + "\n".join(f"- `{op}`" for op in ops) + "\n")
     found = oneshot.turned(store, "split", SPLIT_PROMPT, text, "oneshot-features",
                            lambda value: screens.features(value, ops), Path(spec["worktree"]))
     if found is None:
