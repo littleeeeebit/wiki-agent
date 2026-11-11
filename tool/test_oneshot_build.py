@@ -605,3 +605,13 @@ def test_the_prompts_name_the_planned_tests_and_the_pins():
     assert "{tests}" not in tests and "{profile}" not in tests and "uv run pytest" in oneshot_build.build_text(s)
     assert json.loads(tests.split("```json\n")[1].split("```")[0])[0]["id"] == "T1"
     assert "`tests/test_a.py`" in oneshot_build.build_text(s) and "abc" in oneshot_build.build_text(s)
+
+
+def test_the_tests_turns_runner_closes_the_work_so_a_background_wait_does_not_hold_the_turn():
+    """The tests turn writes no done-report: its runner block is what closes it. A wait loop it left in the
+    background (an install it watched) must not keep the turn, the worktree and the stage running for good."""
+
+    closing = f"Tests written.\n\n```{oneshot_build.RUNNER}\n{{\"command\": \"cargo nextest run\"}}\n```\n"
+    assert work.SETTLING.search(closing)
+    assert work.SETTLING.search("```done-report\n{}\n```") and work.SETTLING.search("```disposition\n{}\n```")
+    assert not work.SETTLING.search("```json\n{}\n```") and not work.SETTLING.search(f"see `{oneshot_build.RUNNER}`")
