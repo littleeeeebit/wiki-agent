@@ -104,14 +104,19 @@ with one block:
 | Check | When | Refused if |
 | --- | --- | --- |
 | Named | The tests turn ends | A listed file is missing or outside the worktree, or a file the turn changed names a planned test but is not in `contract` |
-| Red | The tests turn ends | A planned name is missing from the report, or passed, or was skipped, or two of its testcases carry the same `[classname, name, file]` |
+| Red | The tests turn ends | A planned name is missing from the report, or passed, or was skipped, or two of its testcases carry the same `[classname, name, file]`, or the report names a file for one that is not in `contract` |
 | Pin | The server commits the tests | — it stores `command`, `contract`, `config` and each planned case as `[classname, name, file]` from the report (`file` empty when the report has none), with `tests_head` |
 | Pinned | Every later turn ends | A `contract` or `config` file differs from `tests_head` |
-| Green | The build turn ends | A pinned case is absent, skipped, failing or reported more than once in a run of the stored command |
+| Green | The build turn and the final gate (S8) end | A pinned case is absent, skipped, failing or reported more than once in a run of the stored command |
 
-A planned name matches a testcase whose name equals it in any case, or
-continues with a parameter (`name[…]`, `name (…)`), so Go's `Test_name` and
-pytest's parameter cases match. A case is pinned by its classname, name and
+S7 and S8 run the stored command themselves before the adapter's gate, and
+refuse an adapter whose `gate_cmd` no longer contains it, so the published
+gate keeps running the contract.
+
+A planned name matches a testcase whose name equals it in any case, or that
+name followed by a parameter in brackets (`name[…]`) or in parentheses after
+a space (`name (…)`), so Go's `Test_name` and pytest's parameter cases match;
+any other text after the name is another test. A case is pinned by its classname, name and
 file together: a test of the same name in another class, or in another file
 the report names, never stands in for it, and a configuration that deselects
 or skips a pinned case leaves it absent or skipped at green.
@@ -125,7 +130,9 @@ the case only when both run, because the pinned identity is then reported
 twice.
 
 The server substitutes `{report}` with a path in the run's folder, outside the
-worktree, and reads only that file. The adapter's `gate_cmd` becomes the
+worktree, single-quoted so neither PowerShell nor bash expands anything in it,
+and reads only that file. A run that reaches the tests turn records version 2,
+whatever version it started at, since its record now has version 2's shape. The adapter's `gate_cmd` becomes the
 stored command with `{report}` set to `artifacts/junit.xml`.
 
 ### What this gives up

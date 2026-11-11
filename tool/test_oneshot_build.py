@@ -178,6 +178,33 @@ def test_a_planned_name_matches_in_any_case_and_with_a_parameter_but_not_as_a_pr
     assert oneshot_build.named("test_add", "Test_Add") and oneshot_build.named("test_add", "test_add[1]")
     assert oneshot_build.named("test_add", "test_add (one)")
     assert not oneshot_build.named("test_add", "test_add_more") and not oneshot_build.named("test_add", "test_ad")
+    for other in ("test_add unrelated scenario", "test_add (one", "test_add[1", "test_add.extra", "test_add/sub"):
+        assert not oneshot_build.named("test_add", other), other
+
+
+def test_the_report_path_reaches_the_runner_as_written(tmp_path):
+    shown = tmp_path / "it's $HOME and $(x)" / "run.xml"
+    command = f'"{sys.executable}" -c "import sys; print(sys.argv[1])" ' + oneshot_build.literal(shown.as_posix())
+    _, text, cut = specs.gate(command, tmp_path, threading.Event(), timeout=60)
+    assert not cut and shown.as_posix() in text, text
+
+
+def test_a_planned_case_from_a_file_left_out_of_the_contract_is_refused(built_world):
+    tree, sent = built_world
+    write(tree, "test_budget.py", TESTS)
+    generated = [("tests.generated", n, "tests/generated.py", "failure")
+                 for n in ("test_a_month_lists_its_spendings", "test_spending_adds_to_the_total")]
+    with patch.object(oneshot_build, "junit", lambda *a: generated):
+        check(tree)()
+    assert "`contract` 에 없는 파일" in sent[-1][2] and "tests/generated.py" in sent[-1][2] and o()["stage"] == "tests"
+
+
+def test_a_run_from_before_version_2_that_reaches_the_tests_turn_carries_on_as_version_2(built_world):
+    tree, sent = built_world
+    oneshot_spec.saved("budget", oneshot={"version": 1})
+    write(tree, "test_budget.py", TESTS)
+    assert check(tree) is not None and o()["stage"] == "build" and o()["version"] == 2
+    oneshot_spec.supported(o())
 
 
 def test_a_test_file_changed_while_its_run_is_checked_is_refused(built_world):

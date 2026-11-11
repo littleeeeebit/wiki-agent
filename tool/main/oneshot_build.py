@@ -9,6 +9,7 @@ Nothing here pushes or opens a pull request.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 import time
@@ -191,7 +192,7 @@ def junit(path: Path, run, spec: dict, command: str) -> list[tuple[str, str, str
     folder = oneshot_spec.store(spec["repo"]).folder / "junit"
     folder.mkdir(parents=True, exist_ok=True)
     report = folder / f"run-{time.time_ns()}.xml"
-    _, text, cut = specs.gate(command.replace("{report}", f'"{report.as_posix()}"'), path, run.halt, timeout=RUN_SECONDS)
+    _, text, cut = specs.gate(command.replace("{report}", literal(report.as_posix())), path, run.halt, timeout=RUN_SECONDS)
     if cut:
         raise ValueError(f"계약 테스트 실행이 끊겼다 ({cut}) — {text.strip()[-800:]}")
     try:
@@ -204,11 +205,31 @@ def junit(path: Path, run, spec: dict, command: str) -> list[tuple[str, str, str
             for case in root.iter("testcase")]
 
 
+def literal(text: str) -> str:
+    """`text` as one word the gate's shell expands nothing in: single quotes, in PowerShell on Windows and in
+    bash elsewhere (`shell.launch`), each escaping a quote its own way."""
+
+    return "'" + text.replace("'", "''" if os.name == "nt" else "'\\''") + "'"
+
+
 def named(name: str, case: str) -> bool:
     """A testcase's name is the planned `name`, in any case, or a parameter case of it (`name[…]`, `name (…)`)."""
 
     case, name = case.lower(), name.lower()
-    return case == name or case.startswith(name) and not (case[len(name)].isalnum() or case[len(name)] == "_")
+    return case == name or (case.startswith(name + "[") and case.endswith("]")
+                            or case.startswith(name + " (") and case.endswith(")"))
+
+
+def source(path: Path, file: str) -> str:
+    """A report's `file`, as a worktree path: absolute ones made relative, `./` and backslashes dropped."""
+
+    p = Path(file)
+    if p.is_absolute():
+        try:
+            p = p.resolve().relative_to(path.resolve())
+        except ValueError:
+            return p.as_posix()
+    return p.as_posix().removeprefix("./")
 
 
 def red(spec: dict, found: list[tuple[str, str, str, str]]) -> str:
@@ -347,6 +368,10 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
     found = junit(path, run, spec, runner["command"])
     if why := red(spec, found):
         return why
+    # A file the report names for a planned case is the case's file: one left out of `contract` is not pinned.
+    if outside := sorted({source(path, c[2]) for c in found if c[2] and any(named(t, c[1]) for t in tests)}
+                         - set(runner["contract"])):
+        return "계획 테스트 사례가 `contract` 에 없는 파일에서 나왔다 — " + ", ".join(outside[:10])
     if (snapshot(path, names), head(path), changed(path, o["design_head"])) != before:
         return "계획 테스트를 돌리는 동안 작업트리가 바뀌었다"
     gate = runner["command"].replace("{report}", REPORT)
@@ -367,7 +392,8 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
     tests_head, pins = head(path), cases(spec, found)
     scenarios = [f"{r['id']}: {r['text']}" for r in spec.get("requirements") or [] if r.get("postconditions")]
     oneshot_spec.saved(spec["repo"], done=[gate, *scenarios],
-                       oneshot={"stage": "build", "tests_head": tests_head, "contract": runner["contract"] + runner["config"],
+                       # the record is version 2's now, whatever version the run started at
+                       oneshot={"version": max(o.get("version", 1), 2), "stage": "build", "tests_head": tests_head, "contract": runner["contract"] + runner["config"],
                                 "runner": runner["command"], "gate": gate, "cases": pins, "attempts": 0, "working": None})
     specs.note(run, f"계약 테스트 커밋 {tests_head[:12]} · 파일 {len(runner['contract'])}개 · 테스트 {len(pins)}개 고정")
     return ""
