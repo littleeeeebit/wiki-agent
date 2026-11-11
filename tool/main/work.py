@@ -44,10 +44,10 @@ MAX_REPLAY = 200
 # compaction of that thread (#67 R2). It is never resent, and the thread that
 # holds it is left: the next turn opens a new one that starts from `handoff`.
 REFUSED = re.compile(r"blocked by our safety systems", re.I)
-# An answer that closes the work: a completion report, a fix round's dispositions, the oneshot tests
-# turn's runner (`oneshot_build.RUNNER`). A background task still running after one is left over, and
+# An answer that closes the work: a task's completion report, a fix round's
+# dispositions. A background task still running after one is left over, and
 # the turn does not wait on it (`ChatSession.settled`).
-SETTLING = re.compile(r"^```(?:done-report|disposition|oneshot-runner)[ \t]*\r?$", re.M)
+SETTLING = re.compile(r"^```(?:done-report|disposition)[ \t]*\r?$", re.M)
 KEEPALIVE = 15.0   # seconds a tail waits before it checks the screen is still there
 HALT_WAIT = 30.0   # seconds a forced removal waits for what it stopped to let go
 

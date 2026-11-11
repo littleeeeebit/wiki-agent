@@ -607,11 +607,29 @@ def test_the_prompts_name_the_planned_tests_and_the_pins():
     assert "`tests/test_a.py`" in oneshot_build.build_text(s) and "abc" in oneshot_build.build_text(s)
 
 
-def test_the_tests_turns_runner_closes_the_work_so_a_background_wait_does_not_hold_the_turn():
-    """The tests turn writes no done-report: its runner block is what closes it. A wait loop it left in the
-    background (an install it watched) must not keep the turn, the worktree and the stage running for good."""
+def test_a_oneshot_turn_reads_its_own_closing_block_as_closing_and_only_while_it_runs(built_world):
+    """The tests turn closes with its runner block and the PR body turn with its summary, neither with a
+    done-report. A wait loop such a turn left in the background (an install it watched) held the turn, the
+    worktree and the stage for 77 minutes. The session is the worktree's: a person's turn after it, giving
+    the same block as an example, still waits for its background work."""
 
-    closing = f"Tests written.\n\n```{oneshot_build.RUNNER}\n{{\"command\": \"cargo nextest run\"}}\n```\n"
-    assert work.SETTLING.search(closing)
-    assert work.SETTLING.search("```done-report\n{}\n```") and work.SETTLING.search("```disposition\n{}\n```")
-    assert not work.SETTLING.search("```json\n{}\n```") and not work.SETTLING.search(f"see `{oneshot_build.RUNNER}`")
+    tree, _ = built_world
+    runner, summary = f"Tests written.\n\n```{oneshot_build.RUNNER}\n{{}}\n```\n", "```pr-summary\n본문\n```"
+    chat = SimpleNamespace(id="c", parent_id=None, repo=str(tree), settled=work.SETTLING.search)
+    with patch.object(work, "notice", lambda *a: None):
+        tests = oneshot_build.Turn(chat, "budget", "tests", False)
+        assert chat.settled(runner) and chat.settled("```done-report\n{}\n```") and not chat.settled(summary)
+        assert not chat.settled(f"see `{oneshot_build.RUNNER}`") and not chat.settled("```json\n{}\n```")
+        elsewhere(tests.finish)
+        assert not chat.settled(runner) and chat.settled("```done-report\n{}\n```")
+
+        old, pr = oneshot_build.Turn(chat, "budget", "tests", False), oneshot_build.Turn(chat, "budget", "pr", False)
+        assert chat.settled(summary) and not chat.settled(runner)
+        elsewhere(old.finish)   # an earlier turn's late end leaves the running turn's block alone
+        assert chat.settled(summary)
+        pr.unsent()
+        assert not chat.settled(summary)
+        build = oneshot_build.Turn(chat, "budget", "build", False)
+        assert not chat.settled(runner) and chat.settled("```done-report\n{}\n```")
+        for turn in (tests, old, pr, build):
+            turn.ended.set()

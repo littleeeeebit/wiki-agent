@@ -36,6 +36,9 @@ HANDOVERS: dict[str, tuple] = {}
 RUN_SECONDS = 900
 RUNNER = "oneshot-runner"   # the tests turn's block: the project's own test command and its files
 REPORT = "artifacts/junit.xml"   # where the adapter's gate writes the report; the server's runs write elsewhere
+# The block a stage's turn closes with besides a `done-report`: the tests turn's runner, the PR body's
+# summary. Only that turn reads it as closing, so a background wait it left does not hold it for good.
+CLOSES = {"tests": RUNNER, "pr": "pr-summary"}
 
 
 class Turn(work.Run):
@@ -48,11 +51,22 @@ class Turn(work.Run):
         self.token = uuid.uuid4().hex   # names this turn's `inflight`, so a late end clears only its own
         self.sender = threading.get_ident()   # `work.begin` ends a turn it could not start on this thread
         self.ended = threading.Event()
+        # The session is the worktree's, the person's turns included: this turn's closing block is its own.
+        block = CLOSES.get(stage)
+        self.closes = chat.settled = (re.compile(rf"^```(?:done-report|disposition|{block})[ \t]*\r?$", re.M).search
+                                      if block else work.SETTLING.search)
         threading.Thread(target=oneshot.heartbeat, args=(oneshot_spec.store(repo), self.ended), daemon=True,
                          name=f"oneshot-beat-{repo}").start()
 
+    def settle(self) -> None:
+        """The session's ordinary closing answers again, unless a later turn has set its own meanwhile."""
+
+        if getattr(self.chat, "settled", None) is self.closes:
+            self.chat.settled = work.SETTLING.search
+
     def finish(self) -> None:
         super().finish()
+        self.settle()
         if threading.get_ident() == self.sender:   # never started: no model ran, so nothing is charged
             self.unsent()
             return
@@ -72,6 +86,7 @@ class Turn(work.Run):
     def unsent(self) -> None:
         """`work.begin` refused the turn before it took it: no model ran, so nothing is charged."""
 
+        self.settle()
         self.ended.set()
         store = oneshot_spec.store(self.repo)
         with oneshot._lock:
