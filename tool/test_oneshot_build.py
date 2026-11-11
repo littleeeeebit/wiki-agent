@@ -605,3 +605,54 @@ def test_the_prompts_name_the_planned_tests_and_the_pins():
     assert "{tests}" not in tests and "{profile}" not in tests and "uv run pytest" in oneshot_build.build_text(s)
     assert json.loads(tests.split("```json\n")[1].split("```")[0])[0]["id"] == "T1"
     assert "`tests/test_a.py`" in oneshot_build.build_text(s) and "abc" in oneshot_build.build_text(s)
+
+
+def test_a_oneshot_turn_reads_its_own_closing_block_as_closing_and_only_while_it_runs(built_world):
+    """The tests turn closes with its runner block and the PR body turn with its summary, neither with a
+    done-report. A wait loop such a turn left in the background (an install it watched) held the turn, the
+    worktree and the stage for 77 minutes. The session is the worktree's: a person's turn after it, giving
+    the same block as an example, still waits for its background work."""
+
+    tree, _ = built_world
+    runner, summary = f"Tests written.\n\n```{oneshot_build.RUNNER}\n{{}}\n```\n", "```pr-summary\n본문\n```"
+    chat = SimpleNamespace(id="c", parent_id=None, repo=str(tree), settled=work.SETTLING.search)
+    with patch.object(work, "notice", lambda *a: None):
+        tests = oneshot_build.Turn(chat, "budget", "tests", False)
+        assert chat.settled(runner) and chat.settled("```done-report\n{}\n```") and not chat.settled(summary)
+        assert not chat.settled(f"see `{oneshot_build.RUNNER}`") and not chat.settled("```json\n{}\n```")
+        elsewhere(tests.finish)
+        assert not chat.settled(runner) and chat.settled("```done-report\n{}\n```")
+
+        old, pr = oneshot_build.Turn(chat, "budget", "tests", False), oneshot_build.Turn(chat, "budget", "pr", False)
+        assert chat.settled(summary) and not chat.settled(runner)
+        elsewhere(old.finish)   # an earlier turn's late end leaves the running turn's block alone
+        assert chat.settled(summary)
+        pr.unsent()
+        assert not chat.settled(summary)
+        build = oneshot_build.Turn(chat, "budget", "build", False)
+        assert not chat.settled(runner) and chat.settled("```done-report\n{}\n```")
+        for turn in (tests, old, pr, build):
+            turn.ended.set()
+
+
+def test_the_tree_goes_back_with_the_ordinary_closings_before_the_turn_ends(built_world):
+    """`work.run_turn` lets the worktree go before it ends the turn: a person's turn taking the same session
+    in between must not read the tests turn's runner block as closing its own work."""
+
+    tree, _ = built_world
+    runner = f"```{oneshot_build.RUNNER}\n{{}}\n```"
+    chat = SimpleNamespace(id="c", parent_id=None, repo=str(tree), settled=work.SETTLING.search)
+    seen = []
+
+    def begin(path, chat, text, release, turn):   # as `run_turn` ends: release, then (later) finish
+        seen.append(chat.settled(runner) is not None)
+        release()
+        seen.append((str(tree) in work._busy, chat.settled(runner) is not None))
+        turn.ended.set()
+
+    with patch.object(work, "notice", lambda *a: None), patch.object(work, "begin", begin), \
+         patch.object(work, "session", lambda *a: chat), \
+         patch.object(oneshot, "role_config", lambda *a: {"model": "m", "effort": "e"}), \
+         patch.object(oneshot, "codex_role", lambda *a: False):
+        SEND("budget", "tests", "x")
+    assert seen == [True, (False, False)]
