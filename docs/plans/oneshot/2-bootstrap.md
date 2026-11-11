@@ -208,7 +208,7 @@ after an effect and before its record.
 | 2 | Folder | The fixed path exists and holds only files this run wrote | Create it, or re-check the picked one is still empty |
 | 3 | Files | Each file exists with the content the run would write | `.gitignore` wide enough for the common stacks' build and cache output; `.gitattributes` with `* text=auto eol=lf` when another OS is planned; a README stub with the restatement and the owner's sentence; `LICENSE` when public; `.wiki/adapter.toml` through `connect.adapter_text`, its `gate_cmd` empty |
 | 4 | Base commit | `main` exists and its one commit holds exactly those files, each blob byte for byte as planned, and is the recorded base when one is | Re-check every planned file on disk, initialise with `main` and commit, then check the commit the same way |
-| 5 | Register | The folder is listed by `channels.projects` under the fixed name | Register a picked folder as `[폴더 찾기]` does, with its same-name refusal; then write the adapter's hash through `connect.keep` |
+| 5 | Register | The folder is listed by `channels.projects` under the fixed name, and its hosts' tests have kept their results | Register a picked folder as `[폴더 찾기]` does, with its same-name refusal; then write the adapter's hash through `connect.keep`, and run `[연결]`'s hosts' tests and Codex trust check within the step. Wiring that `[연결]` would ask to move (`connect.hub` needed) stops with `connect` instead; the owner confirms it there, then `[재개]` |
 | 6 | Remote repository | The run recorded the repository's node id | Create it through `gh` with the chosen visibility and owner, and record its node id at once |
 | 7 | Origin | `origin` points at that repository | Add it |
 | 8 | Push | The remote `main` is the base commit | First check again that local `main` is the base and as planned, that every fetch and push URL of `origin` is the run's URL and that the repository's node id is the recorded one; any difference stops before anything is pushed. Then push `main` with upstream |
@@ -233,6 +233,13 @@ stops with `folder` otherwise.
 `connect.keep` moved after registration on purpose: the connection record is
 keyed by folder name, and a record written before the same-name check would
 already have changed another repository's record.
+
+The tests run within sub-step 5, not on a thread after it: a server that goes
+down before they keep their results leaves the step unrecorded, so `[재개]`
+runs them again. Tests `[연결]` started for the same repository are not
+waited on: the step stops with `connect`, unrecorded, and `[재개]` after
+they finish runs its own. The machine's wiring and Codex trust are written only on the
+confirmation `[연결]` shows, never by a run.
 
 ### The adapter's `gate_cmd`
 

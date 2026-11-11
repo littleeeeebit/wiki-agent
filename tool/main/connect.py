@@ -335,9 +335,9 @@ def trusted(python: str) -> bool:
         return False
 
 
-def examine(path: Path, then=None) -> bool:
-    """Available hosts' tests and Codex's trust, on their own thread; `False` when
-    one already runs for this repository. `then` runs after, on success or not."""
+def examine(path: Path, then=None, wait: bool = False) -> bool:
+    """Available hosts' tests and Codex's trust, on their own thread or, with `wait`, on
+    this one; `False` when one already runs for this repository. `then` runs after, on success or not."""
 
     name = path.name
     with _records:
@@ -358,7 +358,7 @@ def examine(path: Path, then=None) -> bool:
         if then:
             then()
 
-    threading.Thread(target=run, daemon=True).start()
+    run() if wait else threading.Thread(target=run, daemon=True).start()
     return True
 
 
