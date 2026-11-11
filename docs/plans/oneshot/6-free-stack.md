@@ -111,14 +111,26 @@ with one block:
 
 S7 and S8 run the stored command themselves before the adapter's gate. They
 also refuse an adapter whose `gate_cmd` does not start with it, or adds
-anything after it other than ` && ` commands on the same line: no new line,
-`||`, `;` or lone `&`, which could run past its failure, and no `#`, which
-could hide it in a comment. The published gate, which CI and later sessions
-run, then runs the contract first and fails with it. The stored command
-itself holds no `#` either: the tests turn's check refuses one, since a
-comment there would swallow every ` && ` command after it. The check reads
-characters, not shell syntax, so a quoted `#` or `;` is refused too; such a
-command goes in a project script.
+anything after it other than ` && ` commands. The published gate, which CI
+and later sessions run, then runs the contract first and fails with it.
+
+The stored command and the published gate are both one chain: plain
+commands joined only by `&&`, so each runs only after the one before it
+passed, and the chain fails with its first failure in PowerShell and bash
+alike. The tests turn's check and S7/S8 refuse anything that could end,
+hide or outlive the chain:
+
+- separators, pipes and a lone `&`: `;`, `|`, `&`, a new line;
+- comments, escapes, substitutions, groups and blocks: `#`, a backtick,
+  `$(`, brackets, braces;
+- a command that starts with a word that leaves or replaces the shell:
+  `exit`, `exec`, `return`, `eval`, `source`, `.`, `iex` and the like.
+
+The check reads characters and first words, not shell syntax, so a quoted
+`;` or `(` is refused too; such a command goes in a project script. A
+program that ends its parent shell from outside it is not caught here, and
+the server's own runs at S7 and S8, with `held()`, remain what proves the
+contract.
 
 A planned name matches a testcase whose name equals it in any case, or that
 name followed by a parameter in brackets (`name[…]`) or in parentheses after

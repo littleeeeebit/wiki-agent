@@ -176,9 +176,11 @@ def declared(path: Path, final: str) -> dict:
         raise ValueError(f"`{RUNNER}` 블록은 command, contract, config 를 담은 객체다")
     command, contract, config = value.get("command"), value.get("contract"), value.get("config", [])
     folder = value.get("root", "")
-    # The published gate appends ` && …` to this command: a `#` in it would turn what follows into a comment.
-    if not isinstance(command, str) or command.count("{report}") != 1 or any(c in command for c in "\r\n#"):
-        raise ValueError("`command` 는 JUnit 보고서 경로 자리 `{report}` 를 한 번 담은 한 줄 명령이고 `#` 을 담지 않는다")
+    if not isinstance(command, str) or command.count("{report}") != 1:
+        raise ValueError("`command` 는 JUnit 보고서 경로 자리 `{report}` 를 한 번 담은 명령이다")
+    # The published gate appends ` && …` to this command: anything that ends the shell here would skip the rest.
+    if not chained(command.replace("{report}", REPORT)):
+        raise ValueError(f"`command` 는 {CHAIN}")
     if not (isinstance(contract, list) and contract and isinstance(config, list)
             and all(isinstance(f, str) and f for f in contract + config)):
         raise ValueError("`contract` 는 비지 않은 파일 목록, `config` 는 파일 목록이다")
@@ -225,17 +227,32 @@ def literal(text: str) -> str:
     return "'" + text.replace("'", "'\\''") + "'"
 
 
+# What lets a command end, hide or outlive the chain it is in, in PowerShell or bash: separators, pipes,
+# comments, escapes, substitutions, groups and blocks, a lone `&`, and the words that leave or replace the shell.
+CONTROL = re.compile(r"[\r\n;|#`(){}]|\$\(|&&&|(?<!&)&(?!&)")
+LEAVE = {"exit", "exec", "return", "break", "continue", "eval", "source", ".", "iex", "invoke-expression",
+         "trap", "logout", "kill", "stop-process", "set"}
+CHAIN = ("평범한 명령을 ` && ` 로만 잇는다 — `;`, `|`, `#`, `` ` ``, `$(`, 괄호·중괄호, 홑 `&`, 줄바꿈 없이, "
+         "어느 명령도 `exit`·`exec`·`eval`·`iex` 같은 셸 제어어로 시작하지 않는다")
+
+
+def chained(command: str) -> bool:
+    """`command` is plain commands joined by `&&` and nothing else: each runs only after the one before it
+    passed, none can end the shell early, and the chain's status is its first failure.  ponytail: by character
+    and first word, so a quoted `;` or `(` is refused too; a project script takes such a command."""
+
+    parts = command.split("&&")
+    return not CONTROL.search(command) and all(p.split() and p.split()[0].lower() not in LEAVE for p in parts)
+
+
 def published(gate: str, backend: str) -> str:
-    """Why the adapter's gate, which CI and the next session run, would not run the contract's command, or
-    empty: it is that command, or that command and then more after `&&`, with nothing after it that could
-    swallow a failure or hide the rest: a new line, `||`, `;`, `#` or a lone `&`, which runs what is before it
-    in the background.  ponytail: by character, so a quoted `#` or `;` is refused too; a project script takes it."""
+    """Why the adapter's gate, which CI and the next session run, would not run the contract's command and
+    fail with it, or empty: it is that command, or that command and then more after `&&`, all one chain."""
 
     gate = gate.strip()
     rest = gate[len(backend):] if gate.startswith(backend) else None
-    if rest is None or rest and not re.fullmatch(r"[ \t]*&&[^\r\n]+", rest) or re.search(r"\|\||;|#|&&&|(?<!&)&(?!&)", rest or ""):
-        return (f"어댑터의 `gate_cmd` 는 계약 테스트 `{backend}` 로 시작하고, 더 돌릴 명령은 같은 줄에서 ` && ` 로만 잇는다 "
-                f"(`||`, `;`, `#`, 홑 `&` 없이) — `{gate}`")
+    if rest is None or rest and not rest.lstrip().startswith("&&") or not chained(gate):
+        return f"어댑터의 `gate_cmd` 는 계약 테스트 `{backend}` 로 시작하고, 그 뒤로 {CHAIN} — `{gate}`"
     return ""
 
 

@@ -30,8 +30,11 @@ End the turn with one fenced block:
 {"command": "…{report}…", "contract": ["…"], "config": ["…"], "root": ""}
 ```
 
-- `command`: one line with no `#`, run from the repository root, that runs
-  every test and writes a JUnit XML report to `{report}`. Write `{report}` bare; the server
+- `command`: run from the repository root, it runs every test and writes a
+  JUnit XML report to `{report}`. It is plain commands joined only by
+  ` && `: no `;`, `|`, `#`, backtick, `$(`, brackets, braces, lone `&` or new
+  line, and no command that starts with a shell's own word such as `exit`,
+  `exec`, `eval` or `iex`. The published gate appends more after it. Write `{report}` bare; the server
   puts a quoted path there. Most tools write JUnit with a flag or a reporter,
   some through a small wrapper (Go through `gotestsum`). Where the tool can,
   make each testcase carry its `file` attribute (pytest with

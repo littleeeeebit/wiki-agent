@@ -148,6 +148,11 @@ def test_an_adapter_that_lost_the_backend_tests_or_left_live_empty_is_refused(st
     # a new line after the chain runs whatever the contract did; a lone `&` backgrounds the chain before it
     ("pytest -q && npm test\nexit 0", False), ("pytest -q &&\nnpm test", False), ("pytest -q && npm test\r\nexit 0", False),
     ("pytest -q && npm test & exit 0", False), ("pytest -q && npm test &", False), ("pytest -q &&& npm test", False),
+    # a command that leaves or replaces the shell, or a substitution or block that can, ends the chain early
+    ("pytest -q && exit 0", False), ("pytest -q && exec npm test", False), ("pytest -q && EXIT", False),
+    ("pytest -q && npm test $(exit 0)", False), ("pytest -q && npm test (exit)", False),
+    ("pytest -q && . {exit}", False), ("pytest -q && npm test `", False), ("pytest -q &&  && npm test", False),
+    ("pytest -q && npm --prefix web test -- --run && npm --prefix web run build", True),
 ])
 def test_the_published_gate_runs_the_contracts_command_first_and_swallows_nothing(gate, ok):
     assert (oneshot_build.published(gate, "pytest -q") == "") is ok
