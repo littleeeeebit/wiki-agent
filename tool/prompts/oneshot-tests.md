@@ -5,45 +5,66 @@ The person approved the backend design. It is committed in this worktree:
 (the OpenAPI document). No backend code exists yet, and none may be written in
 this turn.
 
+The project's environment and stack: `{profile}`. Write the tests in the test
+tool that stack uses, and set up what the tool needs to run them: the package
+manifest, the environment, the tool's own configuration file.
+
 ## What to write
 
-One test for each planned test below, with exactly its `test_name` as the
-function name, in files under `tests/`. The application will be the FastAPI
-object `app` in `app/main.py`; the tests reach it as `from app.main import
-app`, and the build will put it exactly there. Each test checks its `then` through the
-endpoints it depends on, as `api.yaml` describes them. Add `pytest` and what the
-tests need (for example the HTTP test client) to `pyproject.toml`, and create
-the environment the gate command uses, so the gate can collect the tests.
+One test for each planned test below, named exactly its `test_name`, at the
+top level of its file or class: not nested inside a suite or `describe` whose
+name the report would put in front of it. Each test checks its `then` through
+the endpoints it depends on, as `api.yaml` describes them. Reach the
+application inside each test body, so the tests run while it does not exist
+yet.
 
 ```json
 {tests}
 ```
 
-The gate command is `{gate}`.
+## What to return
+
+End the turn with one fenced block:
+
+```oneshot-runner
+{"command": "…{report}…", "contract": ["…"], "config": ["…"], "root": ""}
+```
+
+- `command`: run from the repository root, it runs every test and writes a
+  JUnit XML report to `{report}`. It is plain commands joined only by
+  ` && `: no `;`, `|`, `#`, backtick, `$(`, brackets, braces, lone `&` or new
+  line, and no command that starts with a shell's own word such as `exit`,
+  `exec`, `eval` or `iex`. The published gate appends more after it. Write `{report}` bare; the server
+  puts a quoted path there. Most tools write JUnit with a flag or a reporter,
+  some through a small wrapper (Go through `gotestsum`). Where the tool can,
+  make each testcase carry its `file` attribute (pytest with
+  `-o junit_family=xunit1`, jest-junit with `addFileAttribute`): without it a
+  test in another file whose class and name read the same can stand in for
+  a planned one.
+- `root`: the folder, from the repository root, that the report's relative
+  `file` paths start from. Leave it `""` when the tool runs at the root; write
+  `web` when `command` runs it with `cd web && …` and it names files from
+  there. The server reads every relative `file` from this folder.
+- `contract`: every file that holds a planned test, or code a planned test
+  runs from its own test code (a shared helper or base class).
+- `config`: the files that only configure the test tool (`pytest.ini`,
+  `vitest.config.ts` and the like). Keep the tool's configuration out of the
+  package manifest, which the build will still change.
 
 ## What the server checks when this turn ends
 
-1. Only test files (`tests/`, `test_*.py`, `*_test.py`, `conftest.py`) and the
-   test configuration (`pyproject.toml`, `uv.lock`, `pytest.ini`) changed since
-   the design commit.
-2. The tests collect: write `from app.main import app` inside each test
-   body, never at module level and never in a fixture, so collection succeeds
-   while the application does not exist yet.
-3. Every planned test runs and fails, in its own body, for one reason only:
-   `from app.main import app` raises `ModuleNotFoundError` because `app`
-   does not exist yet. A planned test that passes now checks nothing, a
-   skipped one checks nothing either, an error in a fixture is not a failing
-   test, and a test that fails for any other reason, an import from another
-   module included, is refused.
+1. Every file in `contract` and `config` exists in the worktree, and every
+   file changed in this turn that names a planned test is in `contract`.
+2. One run of `command` writes the report, and every planned test is in it
+   and fails or errors: a planned test that passes now checks nothing, and a
+   skipped one checks nothing either. No two of its cases share a class,
+   name and file.
 
-The server runs pytest with plugin autoloading off and `PYTEST_ADDOPTS`
-empty, so a plugin the tests need must be named in the configuration by its
-plugin name, as `addopts = -p anyio` (not `-p anyio.pytest_plugin`, which the
-gate then loads twice). Only `test_*.py` and `*_test.py` files are collected;
-a data file the tests read may sit beside them and is pinned too. When
-all three hold, the server commits the test files itself and pins them with
-the pytest configuration: from then on these files, any `conftest.py`, the
-`pytest.ini` and the `[tool.pytest]` table cannot change. Make them right now.
+When both hold, the server writes `command` into `.wiki/adapter.toml` as the
+gate, commits what this turn changed, and pins the `contract` and `config`
+files and each planned case, by its class, name and file in the report. From then on
+those files cannot change, and the build must make every pinned case pass in a
+run of `command`. Make them right now.
 
 ## In this turn
 
@@ -51,4 +72,4 @@ the pytest configuration: from then on these files, any `conftest.py`, the
   the server commits what you leave.
 - Do not push, open a pull request, or ask the person anything: nobody answers
   until the next review. Decide within the approved design.
-- Running the gate command or the tests in this repository is fine.
+- Running the tests in this repository is fine.

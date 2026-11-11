@@ -268,86 +268,55 @@ recorded leaves the stage stopped and resumable.
 ### Tests first
 
 After R1's approval, a write session receives the planned tests
-(`oneshot-tests.md`), reads the committed design, and writes only tests.
+(`oneshot-tests.md`), reads the committed design, and writes the tests in the
+project's own test tool. It ends with an `oneshot-runner` block: the one-line
+`command` that runs every test and writes a JUnit XML report to `{report}`,
+the `contract` files holding the planned tests, and the `config` files that
+change how the tool runs them. The block, the checks and what they cannot
+prove are in [step 6](6-free-stack.md#s4--contract-tests-in-the-projects-own-tool).
 The server then checks:
 
-- Since the design commit, only test paths (`tests/`, `test_*.py`,
-  `*_test.py`, `conftest.py`) and the test configuration (`pyproject.toml`,
-  `uv.lock`, `pytest.ini`) changed, committed or not.
-- Collection succeeds and names every planned test in the changed test
-  files. Matching is by the function's own name, but what is kept is each
-  node id pytest itself gave, parameter cases and inherited classes
-  included; a same-named test outside those files is not a planned test. The
-  prompt asks for the application to be imported in the test body, so the
-  tests collect before it exists.
-- Every collected node runs and fails, in its own body, because the
-  application is not there: the exception, or one it was raised from, is a
-  `ModuleNotFoundError` for `app` or a module under it. A node that passes
-  checks nothing, a skipped one neither, an error in setup or teardown is
-  not a red test, and a failure for any other reason, an `ImportError` from
-  another module included, means the test does not wait for the
-  application.
+- Every listed file exists inside the worktree, and a file the turn changed
+  that names a planned test is in `contract`.
+- One run of `command`, with `{report}` set to a path in the run's folder
+  outside the worktree, writes the report, and every planned test is in it
+  and fails or errors. A planned name matches a testcase's name in any case,
+  or followed by a parameter (`name[…]`, `name (…)`). A case that passes
+  checks nothing, a skipped one neither, and two cases with the same class,
+  name and file cannot be told apart.
+- The changed files and HEAD read the same after the run as before it, so a
+  file the run itself rewrote is never committed.
 
-Every pytest run of the contract loads `tool/main/oneshot_probe.py` by name
-(`-p oneshot_probe`), copied to a folder of its own under the run's raw
-folder, which is the only path it adds. The probe is what the server reads,
-never a report rebuilt afterwards: pytest's own node id of every collected
-test, and for each phase its outcome, whether the test's own function was
-entered, whether anything replaced how pytest runs a test, and whether the
-failure was the missing application. The probe keeps an `async def` test
-a coroutine function, so the plugin that runs it still does, and counts it
-entered only when its body starts. Each item type is compared with its own
-`runtest` as collection left it, so a `unittest.TestCase` keeps pytest's
-runner for it. pytest is given the test modules alone (`test_*.py`,
-`*_test.py`); a data file the tests read is pinned with them but never
-collected. A run of chosen nodes is given the modules of those nodes and has
-the probe deselect every other test, so no node id passes through the
-command line. A phase that is skipped, the teardown included, makes the
-whole node skipped. Plugin autoloading is off
-(`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`), so a plugin the tests need is named in
-the configuration by its plugin name (`-p anyio`), which the gate, run with
-autoloading on, accepts too; `PYTEST_ADDOPTS` is empty and no bytecode is
-written. The changed files, HEAD and the set of changed paths are read before
-the runs and again after them; any difference is a refusal, so a file the
-run itself rewrote is never committed.
-
-When all three hold, the server commits those paths alone, naming them to
-the commit so nothing else staged rides along, checks that none of them is
-left changed, and records the commit as `oneshot.tests_head`, the test files
-as `oneshot.contract` and the node ids as `oneshot.nodes`. That commit, not
-the base commit, is what later changes are compared against.
-The spec's `done` becomes the gate and one line per scenario
-(`R1: <text>`), and the build turn follows.
+When all three hold, the server writes the command, with `{report}` set to
+`artifacts/junit.xml`, into the adapter's `gate_cmd`, commits the turn's
+paths and the adapter alone, and records the commit as `oneshot.tests_head`.
+It also records `contract` plus `config` as `oneshot.contract`, the command
+as `oneshot.runner`, the gate as `oneshot.gate`, and each planned case as
+`[classname, name, file]` in `oneshot.cases`. That commit, not the base
+commit, is what later changes are compared against. The spec's `done` becomes
+the gate and one line per scenario (`R1: <text>`), and the build turn
+follows.
 
 ### Implementation
 
 The build turn (`oneshot-build.md`) names the pinned files and the checks.
 Its `done-report` must cover every `done` item (`specs.shortfall`); the
-server then runs `gate_cmd` itself on the clean, committed HEAD
+server then runs `oneshot.gate` itself on the clean, committed HEAD
 (`specs.judge`). The contract tests are protected against `tests_head` in
 two ways, because a file that is unchanged is not yet a test that ran:
 
-1. Unchanged. Before each gate, `oneshot_build` reads each pinned file at
-   `tests_head` and in the worktree and compares them with
-   `refactor_run.equivalent`, the whole-file AST comparison: nothing may be
-   added to a pinned file either, so a module-level `pytest.skip(...,
-   allow_module_level=True)` or a new `pytestmark` appended after the tests
-   is a refusal. (`_kept` is not enough here: it allows statements added
-   after the old ones.) A deleted, unreadable or unparsable pinned file is a
-   refusal. New tests go in new files. The pytest configuration is pinned
-   with them: a `pytest.ini`, `.pytest.ini`, `tox.ini`, `setup.cfg` or
-   `conftest.py` added or changed since `tests_head` (other than a pinned
-   file that is still equivalent) is a refusal, and so is a package's
-   `__init__.py` in or above a contract file's folder, which runs before its
-   tests do, and a `[tool.pytest]` table in `pyproject.toml` that differs
-   from the one at `tests_head`.
-2. Ran and passed. After the gate passes, `oneshot_build` runs exactly the
-   node ids in `oneshot.nodes` through the probe. Each pinned node must be
-   there, passed, with its own body entered and pytest's way of running a
-   test untouched. Skipped, xfailed, deselected or missing is a failure,
-   whatever the gate's exit code said; a same-named test in another file
-   stands in for nothing, and an application that replaces how pytest runs
-   tests while it is imported is caught here.
+1. Unchanged. Before each gate, `oneshot_build` compares each `contract` and
+   `config` file with its blob at `tests_head`: by blob id first, then, for
+   a Python file, with `refactor_run.equivalent`, the whole-file AST
+   comparison. A deleted or changed file is a refusal; new tests go in new
+   files.
+2. Ran and passed. After the gate passes, `oneshot_build` runs
+   `oneshot.runner` once more and reads its report. Each pinned case must be
+   there exactly once and passed; skipped, failing, missing or reported
+   twice is a failure, whatever the gate's exit code said. A same-named test
+   in another class, or in another file the report names, stands in for
+   nothing, and a configuration the tests turn never listed shows here in
+   what it does to the pinned cases.
 
 Up to three attempts, then `stopped` with `gate`. When all checks hold, the
 stage becomes `review` with the HEAD as `oneshot.built_head`; that is where
@@ -425,20 +394,22 @@ requirement that person-facing strings are written in Korean directly.
   field renamed) and an edited assumption each regenerating the tests and
   flows that depend on them and resetting their approvals; a `tests` turn
   whose planned tests fail reaching `build` without being counted as a gate
-  failure or an incomplete spec; the tests-first checks (non-test path
-  refused, passing planned test reported, a setup error and a failure that is
-  not the missing application refused, each parameter case pinned, nothing
-  staged outside the test files committed, a file changed during the run
-  refused, a stop during the check sending no build turn); a late end of an
-  earlier turn leaving the newer turn's in-flight entry alone, a turn
-  `work.begin` refused leaving nothing in flight, and a resume refused while
-  a turn is in flight, and a stop after the check sending no next turn; a
-  case pinned by its own node id through an inherited class and a parameter
-  id holding `::`; an `ImportError` from another module refused as red; a
-  new `conftest.py`, `.pytest.ini` or package `__init__.py`, a replaced test
-  body and a `[tool.pytest]` change refused in the build, and an application
-  that replaces pytest's test runner caught by the probe; a same-named passing test in
-  another file not standing in for a failing contract test; a contract test created after the
+  failure or an incomplete spec; the tests-first checks (a malformed runner
+  block, a missing listed file and an unlisted file naming a planned test
+  refused, passing or skipped planned test reported, each parameter case
+  pinned with its file when the report names one, nothing staged outside the
+  turn's files committed, a file changed during the run refused, a stop
+  during the check sending no build turn); a late end of an earlier turn
+  leaving the newer turn's in-flight entry alone, a turn `work.begin`
+  refused leaving nothing in flight, and a resume refused while a turn is in
+  flight, and a stop after the check sending no next turn; a case pinned by
+  its class through an inherited class and a parameter id holding `::`; a
+  changed `config` file refused in the build, and an unlisted configuration
+  that skips or deselects a pinned case caught at green; a same-named
+  passing test in another file not standing in for a failing contract test,
+  and a case from another file or reported twice not standing in for a
+  pinned one; a version 1 run past its tests turn refused on resume and on
+  the R2 submission; a contract test created after the
   base commit then weakened
   (an expected value changed, a skip mark, a deleted test) refused against
   `tests_head`, and a deleted or unparsable pinned file refused; a

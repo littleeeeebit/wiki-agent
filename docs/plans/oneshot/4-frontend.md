@@ -31,13 +31,13 @@ The screens that show the board and the sheets belong to
 
 ## S5 — Feature split
 
-### The inventory comes from code
+### The inventory comes from the approved API
 
-The list of actions is read from the built backend, not written by the model,
-so nothing is forgotten and nothing invented: the OpenAPI document the
-framework serves (FastAPI's `openapi.json`), or the CLI's command list for a
-`cli` run. The server reads it by importing `app.main:app` with the project's
-own interpreter (`python_cmd`, the gate's interpreter) in the worktree. One
+The list of actions is read from the OpenAPI document the owner approved at
+R1 (`docs/design/api.yaml`, the server's own copy), which the contract tests
+exercise, not written by the model, so nothing is forgotten and nothing
+invented. No stack's interpreter is needed to read it, and the build cannot
+change the copy the server reads. One
 read-only model turn only names each action in the owner's words (from the
 glossary), groups trivially related endpoints into one feature (list and
 filter are one), and proposes a class with a one-line reason, as an
@@ -164,8 +164,9 @@ as a finished turn does. The rules it must follow, all checked by the server:
   frontend's tests, in the existing `gate` shell form with its PowerShell 5
   variant, keeping the backend's gate command in it.
 - The app serves its screens and its API on one port, read from `PORT`, and
-  keeps its data under `APP_DATA_DIR`. Screens use hash routes (`/#/months`),
-  so no screen route meets an API path.
+  keeps its data under `APP_DATA_DIR`. Each screen opens at its own route as
+  a path (`/months`), and S6 refuses a screen route that an API path also
+  matches.
 - `e2e/seed.json` lists the API calls, `[{method, path, body}]`, that fill
   an empty app the way a person would.
 
@@ -187,7 +188,8 @@ linked worktree. The server then reads the committed adapter back and
 refuses the build if `gate_cmd` lost the backend's tests or `live_cmd` is
 empty. It runs the backend's gate command as the server knows it and then
 the adapter's gate, on a clean HEAD, keeps the contract tests pinned and
-every planned backend test passing by node id, as in S4, and then runs the
+every pinned backend case passing in the stored runner's report, as in S4,
+and then runs the
 harness below. After the harness the HEAD must still be the one the gate
 passed, with a clean tree; a look the owner's stop or a server shutdown cut
 short passes nothing and leaves the stage at `build-front`. A high finding

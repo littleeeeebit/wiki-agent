@@ -40,8 +40,8 @@ def look(n=1, findings=()):
 def judged(world):  # noqa: F811 — the imported fixture, requested by name
     oneshot_spec.saved("budget", oneshot={
         "stage": "critique", "front": FRONT, "features": FEATURES, "frequency": FREQUENCY, "first_screen": "오늘 쓴 돈",
-        "r2": {"palette": "C1"}, "profile": {**PROFILE, "python_env": "uv", "responsive": "desktop", "os_now": "windows", "os_later": "none"}, "looks": [look()],
-        "tests_head": "b" * 40, "contract": ["test_budget.py"], "working": "critique",
+        "r2": {"palette": "C1"}, "profile": {**PROFILE, "responsive": "desktop", "os_now": "windows", "os_later": "none"}, "looks": [look()],
+        "tests_head": "b" * 40, "contract": ["test_budget.py"], "gate": "uv run pytest", "working": "critique",
         "front_built_head": git(world, "rev-parse", "HEAD")})
     sent = []
     with patch.object(oneshot_build, "send", lambda *a: sent.append(a)):

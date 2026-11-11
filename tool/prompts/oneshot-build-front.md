@@ -19,9 +19,10 @@ pinned; these files may not change at all:
 
 ## Conventions the server relies on
 
-- The frontend lives in `web/` and follows the profile's `frontend`,
-  `styling` and `js_pm`. Screens use hash routes: the screen `/months` is
-  opened at `/#/months`, so no screen route meets an API path.
+- The frontend follows the profile's `frontend`, `styling` and `js_pm`, laid
+  out wherever that stack puts it. Each screen opens at its own route as a
+  path: the screen `/months` is served at `/months`, on a fresh load as well
+  as by a link, and no screen route meets an API path.
 - The app serves the built screens and the API on one port. It reads the port
   from the environment variable `PORT` and keeps all its data under the folder
   in `APP_DATA_DIR`, creating what it needs there; the backend's contract
@@ -38,8 +39,11 @@ pinned; these files may not change at all:
 During this turn you may write `.wiki/adapter.toml`, and only during it.
 Fill `live_cmd` with one command that, run from the repository root, builds
 the screens if needed and starts the app (it reads `PORT` itself). Extend
-`gate_cmd` so it also runs the frontend's tests and build, keeping
-`{gate}` in it unchanged. Commit the adapter with the rest.
+`gate_cmd` so it also runs the frontend's tests and build: it starts with
+`{gate}` unchanged, and the frontend's commands follow, each after ` && `:
+plain commands with no `;`, `|`, `#`, backtick, `$(`, brackets, braces, lone
+`&` or new line, none starting with a shell's own word such as `exit` or
+`exec`. Put anything more involved in a project script. Commit the adapter with the rest.
 
 ## When this turn ends
 
@@ -48,7 +52,8 @@ The server checks, in order:
 1. The `done-report` covers every item of the spec's `done` (one per screen),
    each passing.
 2. Every pinned file is unchanged since `{tests_head}`.
-3. The adapter's `gate_cmd` still runs `{gate}`, and `live_cmd` is filled.
+3. The adapter's `gate_cmd` starts with `{gate}` and adds only ` && `
+   commands, and `live_cmd` is filled.
 4. The adapter's gate passes on a clean, committed HEAD, and every planned
    backend test passes by node id.
 5. The server starts the app with `live_cmd` on a fresh data folder and again

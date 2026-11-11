@@ -103,9 +103,11 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     names = oneshot_build.changed(path, o.get("front_built_head") or o["tests_head"])
     if "README.md" not in names or not (path / "README.md").is_file():
         return "`README.md` 를 쓰지 않았다 — 설치, 실행, 테스트 명령을 적는다"
-    gate = slots_for(None, path).get("gate_cmd", "").strip()
+    gate, backend = slots_for(None, path).get("gate_cmd", "").strip(), o["gate"]
     if not gate:
         return "어댑터의 `gate_cmd` 가 비었다"
+    if why := oneshot_build.published(gate, backend):
+        return why
     # What the published HEAD holds, not what changed: a deleted workflow or a stray note is no CI.
     held = workflows(path)
     flows = sorted({*held, *(n for n in names if n.startswith(WORKFLOWS) and os.path.lexists(path / n))})
@@ -117,14 +119,18 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
                 f"게이트(`{gate}`)를 `run` 하는 job step 을 둔다")
     if why := oneshot_build.pinned(path, o):
         return why
-    verdict = specs.judge(path, [gate], run.halt, lambda text: specs.note(run, text))
+    # As at S7: the contract's command as the server stored it, then the adapter's gate, then each pinned case.
+    ran = [backend, gate] if gate != backend else [gate]
+    verdict = specs.judge(path, ran, run.halt, lambda text: specs.note(run, text))
     if not verdict["ok"]:
         return f"최종 게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
+    if why := oneshot_build.held(path, run, spec, verdict):
+        return why
     report = next(b["value"] for b in specs.blocks(final)[1] if b["name"] == "done-report")
     tail = (verdict.get("tail") or "").strip()
     # The pull request's body reads these as every spec's: the worker's report and the server's gate.
-    specs.update(spec["repo"], spec["id"], report=report, gate={"cmd": gate, "head": verdict["head"], "tail": tail,
-                                                                "selection": "full"})
+    specs.update(spec["repo"], spec["id"], report=report, gate={"cmd": "\n".join(ran), "head": verdict["head"],
+                                                                "tail": tail, "selection": "full"})
     oneshot_spec.saved(spec["repo"], oneshot={"final_head": verdict["head"], "attempts": 0})
     specs.note(run, f"최종 게이트 통과 · {verdict['head'][:12]}")
     return ""

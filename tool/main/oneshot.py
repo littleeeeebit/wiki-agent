@@ -39,7 +39,7 @@ from .query import ROOT
 
 RUNS = ROOT / "raw" / "oneshot"
 PROFILES = RUNS / "profiles"
-VERSION = 1
+VERSION = 2   # 2: the tests turn declares its runner, and its cases are pinned from a JUnit report
 BRANCH = "oneshot-initial"   # also the spec id: a valid task name, so the branch and the spec share it
 INTENT_PROMPT = (ROOT / "tool/prompts/oneshot-intent.md").read_text(encoding="utf-8")
 PROFILE_PROMPT = (ROOT / "tool/prompts/oneshot-profile.md").read_text(encoding="utf-8")
