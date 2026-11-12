@@ -43,6 +43,8 @@ export type SpecView = SpecSummary & {
   limits?: { attempts: number; refusals: number; critiques: number }
   oneshot: {
     sentence: string; models?: Models; talk?: Talk[]; attempts?: number; critiques?: Critique[]
+    /** How many `critiques` came before the count against the cap restarted (a resume, an R3 fix). */
+    critique_base?: number
     inflight?: Inflight | null; reviews?: Review[]; refused?: number; cases?: string[][]
     spend?: { usd?: number; seconds?: number; calls?: number }
     stack?: { part: string; choice: string; why: string; status: string }[]

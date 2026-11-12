@@ -559,7 +559,7 @@ export default function App() {
     : undefined)
   const spec = task?.spec ?? null
   const waiting = (task?.waiting || other?.waiting) ?? false
-  const mode = sw?.mode ?? (sw?.translate ? 'full' : 'off')
+  const mode = api.modeOf(sw)
   const on = mode !== 'off'
   const full = mode === 'full'
   const tidy = row && task?.row && row.merged && !row.dirty && !task.busy

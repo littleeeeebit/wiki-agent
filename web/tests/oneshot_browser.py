@@ -13,7 +13,7 @@ import sys
 import time
 
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from playwright.sync_api import expect, sync_playwright
 
@@ -259,9 +259,9 @@ def main():
         record = page.get_by_role("complementary", name="기록")
         expect(record).to_contain_text("$12.50 · 1시간 2분 · 호출 9번")
         looks = record.get_by_role("region", name="화면 비평")
-        expect(looks.locator("details").first).to_contain_text("6회차 높은 발견 있음")
+        expect(looks.locator("details").first).to_contain_text("2회차 높은 발견 있음 · 촬영 6")
         expect(looks.get_by_text("버튼 대비가 낮다")).to_be_visible()   # the latest open, the earlier folded
-        expect(looks.get_by_text("5회차")).to_be_visible()
+        expect(looks.get_by_text("1회차")).to_be_visible()
         trail = page.get_by_role("region", name="작업 기록")
         expect(trail.get_by_text("npm run build")).to_be_visible()
         expect(trail.get_by_text("서버가 보낸 지시")).to_be_visible()
@@ -460,5 +460,131 @@ def main():
           "a deleted run is neither kept nor reopened, while a late or listless answer deletes nothing; the drawer holds the keyboard")
 
 
+def tracking():
+    """A running stage's turn streams while its run is shown and its stream closes when another run is, however
+    often the owner goes back and forth; a stopped check counts the failed checks; critiques count by sequence,
+    their shots apart, against the cap since it restarted; a failed record read says so; partial translation
+    leaves progress in English, and the switch set elsewhere is followed at once."""
+    trees = {name: f"C:/fixture/{name}-worktrees/oneshot-initial" for name in ("a-run", "b-run", "c-run")}
+    limits = {"attempts": 3, "refusals": 5, "critiques": 6}
+    look = lambda n, clean: {"look": n, "head": "c" * 40, "clean": clean, "findings": [] if clean else [
+        {"route": "/", "viewport": "phone", "state": "empty", "what": "글자가 잘린다", "severity": "high"}]}
+    views = {
+        "a-run": run("a-run", "build", working="build", waits=False),
+        "b-run": run("b-run", "build", waits=False, stopped={"reason": "build", "detail": "검사가 세 번 실패했다"}),
+        "c-run": run("c-run", "critique", working="critique", waits=False),
+    }
+    for name, view in views.items():
+        view |= {"worktree": trees[name], "limits": limits}
+    views["a-run"]["oneshot"] |= {"attempts": 1, "inflight": {"role": "build", "codex": False, "sent": time.time(), "turn": "t1"}}
+    views["b-run"]["oneshot"] |= {"attempts": 3}
+    # Two clean looks at shot 1 (a second look at the same shots), then an R3 fix restarted the count.
+    views["c-run"]["oneshot"] |= {"critiques": [look(1, True), look(1, True), look(2, False)], "critique_base": 2}
+    state = {"open": 0, "opened": 0, "fail": 1, "mode": "partial"}
+    translations: list = []
+    fake = FastAPI()
+
+    @fake.get("/api/work/events")
+    async def events(path: str, turn: str):
+        async def stream():
+            state["open"] += 1
+            state["opened"] += 1
+            try:
+                yield ('data: {"kind": "delta", "text": "Working on the build.", "turn": "t1", "session_id": "s", '
+                       '"seq": 0}\n\n')
+                while True:   # a turn awaiting an answer: the stream stays open until the browser lets go
+                    await asyncio.sleep(0.1)
+            finally:
+                state["open"] -= 1
+        assert path == trees["a-run"] and turn == "t1", (path, turn)
+        return StreamingResponse(stream(), media_type="text/event-stream")
+
+    @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
+    async def api(path: str, request: Request):
+        if path == "oneshot-specs":
+            return {"specs": [{k: v[k] for k in ("repo", "stage", "working", "stopped", "waits")} for v in views.values()]}
+        if path.startswith("oneshot/spec/"):
+            return views[path.removeprefix("oneshot/spec/").partition("/")[0]]
+        if path == "switch":
+            return {"translate": state["mode"] != "off", "mode": state["mode"], "usage": {"month": "2026-11", "usd": 0, "limit": 10}}
+        if path == "translate":
+            texts = (await request.json())["texts"]
+            translations.extend(texts)
+            mapping = {"Built the screens.": "화면을 만들었다.", "Reading the board.": "보드를 읽는다."}
+            return {"texts": [mapping.get(t, t) for t in texts], "statuses": ["translated"] * len(texts)}
+        if path == "mobile/status":
+            return {"local": True}
+        if path == "work/log":
+            where = request.query_params.get("path")
+            if where == trees["a-run"]:
+                return {"rows": [], "session_id": "s", "busy": True, "rules": [], "queued": None,
+                        "running": {"turn": "t1", "session_id": "s", "seq": 0}}
+            if where == trees["c-run"]:
+                if state["fail"]:
+                    state["fail"] -= 1
+                    return JSONResponse({"detail": "synthetic-log-failure"}, status_code=500)
+                return {"rows": [{"role": "assistant", "text": "Built the screens.",
+                                  "steps": [{"kind": "progress", "text": "Reading the board."}]}],
+                        "session_id": "c", "busy": False, "running": None, "rules": [], "queued": None}
+            if where == trees["b-run"]:
+                return {"rows": [], "session_id": "", "busy": False, "running": None, "rules": [], "queued": None}
+        return fixture(path, request.method)
+
+    fake.mount("/", StaticFiles(directory=ROOT / "web/dist", html=True))
+    errors = []
+
+    def settled(want: int):
+        for _ in range(40):
+            if state["open"] == want:
+                return
+            time.sleep(0.1)
+        raise AssertionError(f"{state['open']} streams open, {want} wanted ({state['opened']} opened)")
+
+    with served(fake) as port, sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = page_of(browser, errors, viewport={"width": 1600, "height": 960})
+        page.goto(f"http://127.0.0.1:{port}/#oneshot")
+        rail = page.get_by_role("navigation", name="원샷 실행")
+        pick = lambda name: rail.get_by_role("button").filter(has_text=name).click()
+        trail, record = page.get_by_role("region", name="작업 기록"), page.get_by_role("complementary", name="기록")
+
+        pick("a-run")
+        expect(trail).to_contain_text("Working on the build.")
+        expect(record).to_contain_text("시도2 / 3")
+        settled(1)
+        pick("b-run")
+        expect(record).to_contain_text("검사 실패3 / 3")   # three checks failed: no fourth try
+        settled(0)
+        for name in ("a-run", "b-run", "a-run", "b-run", "a-run"):
+            pick(name)
+            expect(page.locator(".oneshot-shell main > header h1")).to_have_text(name)
+        expect(trail).to_contain_text("Working on the build.")
+        settled(1)   # the streams of the runs left are closed, however often
+        assert state["opened"] == 4, state
+
+        pick("c-run")
+        settled(0)
+        expect(trail.get_by_role("alert")).to_contain_text("작업 기록을 읽지 못했다")
+        trail.get_by_role("button", name="다시 읽기").click()
+        expect(trail.get_by_text("화면을 만들었다.")).to_be_visible()
+        expect(trail.get_by_text("Reading the board.")).to_be_visible()   # partial: progress stays as it came
+        assert "Reading the board." not in translations, translations
+        state["mode"] = "full"   # set in maintenance's settings, which tells every record
+        page.evaluate("window.dispatchEvent(new CustomEvent('switch', { detail: { translate: true, mode: 'full' } }))")
+        expect(trail.get_by_text("보드를 읽는다.")).to_be_visible()
+
+        expect(record).to_contain_text("화면 비평1 / 6 · 모두 3회")
+        looks = record.get_by_role("region", name="화면 비평")
+        expect(looks.locator("details summary")).to_have_text([
+            re.compile(r"^3회차 높은 발견 있음 · 촬영 2"), re.compile(r"^2회차 높은 발견 없음 · 촬영 1$"),
+            re.compile(r"^1회차 높은 발견 없음 · 촬영 1$")])
+        browser.close()
+    assert not errors, errors
+    print("PASS: a run's stream closes when another run is shown, however often; a stopped check shows the checks "
+          "that failed; critiques count by sequence with their shots apart, against the cap since it restarted; a "
+          "failed record read says so and reads again; partial translation leaves progress, and the switch is followed")
+
+
 if __name__ == "__main__":
     main()
+    tracking()

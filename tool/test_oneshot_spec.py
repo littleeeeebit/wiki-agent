@@ -513,6 +513,20 @@ def test_each_submission_records_how_its_sheet_was_read_and_the_rail_shows_what_
     assert oneshot_spec.listing()["specs"][0]["waits"] is False   # the edit turn runs
 
 
+def test_a_runs_worktree_reads_whatever_project_maintenance_selected(world, tmp_path):
+    """After a restart no session holds the run's worktree, and maintenance may have another project selected:
+    the oneshot window still reads the run's record, and only a worktree a run records gets past `ours`."""
+    from main import work
+    with patch.object(work, "ours", lambda path, repo=None: (_ for _ in ()).throw(HTTPException(404))):
+        with pytest.raises(HTTPException):   # no run file yet: nothing records the tree
+            work.known(str(world))
+        oneshot.RUNS.mkdir(parents=True, exist_ok=True)
+        (oneshot.RUNS / "0123456789abcdef.json").write_text(json.dumps({"spec": {"repo": "budget"}}), encoding="utf-8")
+        assert work.known(str(world)) == world and work.log(str(world))["rows"] == []
+        with pytest.raises(HTTPException):
+            work.known(str(tmp_path / "elsewhere"))
+
+
 @pytest.mark.parametrize("seconds", [1e309, 10**400, float("nan"), True, "90"])
 def test_a_reading_time_json_cannot_carry_is_kept_as_unmeasured(seconds):
     entry = oneshot_spec.read({"r1": {"round": 1}}, "r1", {"seconds": seconds}, [])["r1"][0]

@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from common import is_junction
 
-from . import oneshot, oneshot_sheet as sheet, specs
+from . import oneshot, oneshot_sheet as sheet, specs, work
 from .oneshot_profile import current, environment, stacked, unsettled
 from .query import ROOT
 
@@ -429,6 +429,17 @@ def listing() -> dict:
         if run.get("spec") and (spec := specs.load(run["spec"]["repo"], oneshot.BRANCH)) and "oneshot" in spec:
             found.append(summary(spec))
     return {"specs": found}
+
+
+def recorded(path: str) -> bool:
+    """A worktree a run's spec records: readable whatever project maintenance has selected, so the oneshot
+    window reads another project's run after a restart (`work.known`)."""
+
+    return any(run.get("spec") and (spec := specs.load(run["spec"]["repo"], oneshot.BRANCH))
+               and spec.get("worktree") == path for run in oneshot.runs())
+
+
+work.READABLE.append(recorded)
 
 
 def view(spec: dict) -> dict:

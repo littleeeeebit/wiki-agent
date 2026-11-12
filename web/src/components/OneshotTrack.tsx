@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Reply } from '@/components/Agent'
 import { Btn } from '@/components/Modal'
 import { Split, Title } from '@/components/OneshotSpec'
-import { getSwitch } from '@/lib/api'
+import { getSwitch, modeOf, type Switch, type TranslationMode } from '@/lib/api'
 import { stageLabel, type Critique, type Inflight, type Review, type SpecView } from '@/lib/oneshot'
 import { useWork } from '@/lib/work'
 import { cn } from '@/lib/utils'
@@ -69,15 +69,29 @@ const SHOWN = 6   // turns kept open; earlier ones fold behind one button
 function Log({ path }: { path: string }) {
   // Its own record: a turn the server starts here (each attempt, a review's repair) reaches it on the feed.
   const work = useWork()
-  const { load } = work
-  const [on, setOn] = useState(false)
+  const { load, forget } = work
+  const [mode, setMode] = useState<TranslationMode>('off')
   const [all, setAll] = useState(false)
+  const [failed, setFailed] = useState('')   // the path whose record could not be read
   const end = useRef<HTMLDivElement>(null)
-  // The agent's answers come in English: shown in Korean as maintenance shows them, by the same switch.
+  // The agent's answers come in English: shown in Korean as maintenance shows them, by the same switch, read
+  // again whenever it is set (`setSwitch`).
   useEffect(() => {
-    getSwitch().then((s) => setOn((s.mode ?? (s.translate ? 'full' : 'off')) !== 'off')).catch(() => {})
+    const set = (event: Event) => setMode(modeOf((event as CustomEvent<Switch>).detail))
+    getSwitch().then((s) => setMode(modeOf(s))).catch(() => {})
+    window.addEventListener('switch', set)
+    return () => window.removeEventListener('switch', set)
   }, [])
-  useEffect(() => { if (path) load(path) }, [path, load])
+  // Leaving the run closes its stream: each turn awaiting an answer would otherwise keep a connection open.
+  const read = useCallback(() => {
+    setFailed('')
+    load(path).then((ok) => { if (!ok) setFailed(path) })
+  }, [path, load])
+  useEffect(() => {
+    if (!path) return
+    read()
+    return () => forget(path)
+  }, [path, read, forget])
   const turns = (path && work.turns[path]) || []
   const last = turns.at(-1)
   const grown = turns.length + (last?.text.length ?? 0) + (last?.steps.length ?? 0)
@@ -87,7 +101,12 @@ function Log({ path }: { path: string }) {
   return (
     <section aria-label="작업 기록" className="flex flex-col gap-3">
       <Title><span>작업 기록</span>{turns.length > 0 && <span className="font-mono">턴 {turns.length}개</span>}</Title>
-      {!turns.length && (
+      {failed === path && !turns.length && (
+        <p role="alert" className="flex flex-wrap items-center gap-3 text-destructive">
+          작업 기록을 읽지 못했다.<Btn tone="ghost" onClick={read}>다시 읽기</Btn>
+        </p>
+      )}
+      {failed !== path && !turns.length && (
         <p className="text-muted-foreground">
           아직 이 실행의 작업 턴이 없다. 설계와 리뷰처럼 답이 한 번에 오는 단계의 결과는 기록에 남는다.
         </p>
@@ -102,7 +121,7 @@ function Log({ path }: { path: string }) {
         </details>
       ) : (
         <div key={t.key} className="rounded-md border border-border bg-card px-3 py-2.5">
-          <Reply turn={t} on={on} onPeek={() => {}}
+          <Reply turn={t} on={mode !== 'off'} progressOn={mode === 'full'} onPeek={() => {}}
             onAnswer={(turn, id, allow, scope, answers) => work.answer(path, turn, id, allow, scope, answers)} />
         </div>
       ))}
@@ -120,10 +139,18 @@ function Record({ view }: { view: SpecView }) {
   const o = view.oneshot
   const lim = view.limits
   const spent = o.spend ?? {}
+  const of = (n: number, cap?: number) => `${n}${cap ? ` / ${cap}` : ''}`
+  // A running check is on its next try; a stopped one counts the checks that failed, as the server does.
+  const tried: [string, string] = view.working
+    ? ['시도', of((o.attempts ?? 0) + 1, lim?.attempts)] : ['검사 실패', of(o.attempts ?? 0, lim?.attempts)]
+  // Only the critiques since the count restarted go against the cap; a cap stop restarts it at once.
+  const looks = o.critiques?.length ?? 0
+  const since = looks - (o.critique_base ?? 0)
+  const counted = since === 0 && view.stopped?.reason === 'critique' && lim ? lim.critiques : since
   const facts: [string, string][] = [
-    ...(ATTEMPTED.has(view.stage) ? [['시도', `${(o.attempts ?? 0) + 1}${lim ? ` / ${lim.attempts}` : ''}`] as [string, string]] : []),
-    ...(o.reviews?.length ? [['리뷰 거절', `${o.refused ?? 0}${lim ? ` / ${lim.refusals}` : ''}`] as [string, string]] : []),
-    ...(o.critiques?.length ? [['화면 비평', `${o.critiques.length}회${lim ? ` · 상한 ${lim.critiques}회차` : ''}`] as [string, string]] : []),
+    ...(ATTEMPTED.has(view.stage) ? [tried] : []),
+    ...(o.reviews?.length ? [['리뷰 거절', of(o.refused ?? 0, lim?.refusals)] as [string, string]] : []),
+    ...(looks ? [['화면 비평', of(counted, lim?.critiques) + (counted !== looks ? ` · 모두 ${looks}회` : '')] as [string, string]] : []),
     ...(o.cases?.length ? [['계약 테스트', `${o.cases.length}개`] as [string, string]] : []),
     ['쓴 것', [money(spent.usd), spent.seconds != null && clock(spent.seconds), spent.calls != null && `호출 ${spent.calls}번`]
       .filter(Boolean).join(' · ') || '아직 없다'],
@@ -153,7 +180,7 @@ const SEVERE: Record<string, string> = {
 function Severity({ s }: { s: string }) {
   return <span className={cn('rounded px-1 font-mono text-[11px]', SEVERE[s] ?? 'bg-secondary text-muted-foreground')}>{s}</span>
 }
-const counted = (list: { severity: string }[]) =>
+const tally = (list: { severity: string }[]) =>
   Object.entries(list.reduce<Record<string, number>>((n, f) => ({ ...n, [f.severity]: (n[f.severity] ?? 0) + 1 }), {}))
     .map(([s, n]) => `${s} ${n}`).join(' · ')
 
@@ -167,7 +194,7 @@ function Reviews({ reviews }: { reviews: Review[] }) {
           <summary className="cursor-pointer">
             <span className="font-medium">{reviews.length - i}회차</span>{' '}
             <span className={r.verdict === 'approve' ? 'text-muted-foreground' : 'text-destructive'}>{r.verdict === 'approve' ? '승인' : '거절'}</span>
-            <span className="text-[12px] text-faint"> · <code>{r.head.slice(0, 8)}</code>{r.findings.length > 0 && ` · ${counted(r.findings)}`}</span>
+            <span className="text-[12px] text-faint"> · <code>{r.head.slice(0, 8)}</code>{r.findings.length > 0 && ` · ${tally(r.findings)}`}</span>
           </summary>
           <ul className="mt-2 flex flex-col gap-2">
             {r.findings.map((f, j) => (
@@ -191,9 +218,10 @@ function Critiques({ critiques }: { critiques: Critique[] }) {
       {[...critiques].reverse().map((c, i) => (
         <details key={critiques.length - i} open={i === 0} className="rounded-md border border-border bg-background px-3 py-2">
           <summary className="cursor-pointer">
-            <span className="font-medium">{c.look}회차</span>{' '}
+            <span className="font-medium">{critiques.length - i}회차</span>{' '}
             <span className={c.clean ? 'text-muted-foreground' : 'text-destructive'}>{c.clean ? '높은 발견 없음' : '높은 발견 있음'}</span>
-            {c.findings.length > 0 && <span className="text-[12px] text-faint"> · {counted(c.findings)}</span>}
+            {/* The shots it read: a clean look is read twice, so two critiques can share one. */}
+            <span className="text-[12px] text-faint"> · 촬영 {c.look}{c.findings.length > 0 && ` · ${tally(c.findings)}`}</span>
           </summary>
           <ul className="mt-2 flex flex-col gap-2">
             {c.findings.map((f, j) => (
