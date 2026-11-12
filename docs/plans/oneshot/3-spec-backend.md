@@ -42,7 +42,7 @@ agent view, which is still under evaluation.
 `oneshot.stage`. `split` is where step 4 begins. Stops follow step 2's
 table, plus `tests` (the tests-first turn was refused three times), `gate`
 (the build could not pass its checks within its attempts) and `review` (the
-read-only review refused twice).
+read-only review refused as many times as the Review Loop's round cap).
 
 The step ships as three pull requests, in order:
 
@@ -365,10 +365,11 @@ any turn (`work.dispatch`); after a refusal it waits behind the build turn:
    turn with fresh attempts, saved with `working: "build"` and the worktree
    released before that turn is sent; a resumed build sends the same
    findings again while the refusal of the built HEAD stands. The
-   contract-test check and the gate run again; the review runs once more on
-   the new HEAD with a new frozen input.
-   A second refusal stops the run with `review`; `[재개]` counts refusals
-   afresh and reads the current HEAD again.
+   contract-test check and the gate run again; the review runs again on
+   the new HEAD with a new frozen input, and so on until an approval.
+   The refusal that reaches the Review Loop's round cap (`rounds` in its
+   settings) stops the run with `review`; `[재개]` counts refusals afresh
+   and sends that refusal's findings to the build.
 5. An approval of the HEAD the input named moves the run to `split`. Every
    verdict is kept in `oneshot.reviews`.
 
@@ -417,7 +418,8 @@ requirement that person-facing strings are written in Korean directly.
   module-level skip appended to an otherwise unchanged pinned file refused;
   a planned test skipped, xfailed or not collected counted as failing while
   the gate itself is green; review
-  refusal looping once then stopping; a verdict on an older HEAD ignored; the
+  refusal looping to the round cap then stopping, and its resume sending
+  the findings to the build; a verdict on an older HEAD ignored; the
   review turn, run with the real Codex read profile, receiving the design
   and requirements in its prompt and the diff through `pr_diff`, and
   returning a verdict on the current HEAD; a full S4 run that ends in `split` with no push, no

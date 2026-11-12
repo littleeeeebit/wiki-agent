@@ -3,7 +3,8 @@
 `docs/plans/oneshot/3-spec-backend.md` ("Backend review") is the design.
 The input is frozen per HEAD: the design and the requirements go into the turn's prompt, the diff from the
 base commit is written where `pr_diff` reads it, and a copy is kept in the run's folder as the record.
-A refusal goes to the build once; a second refusal stops the run with `review`. Nothing here pushes.
+A refusal goes to the build and the new HEAD is reviewed again, up to the Review Loop's round cap; the
+refusal that reaches it stops the run with `review`. Nothing here pushes.
 """
 
 from __future__ import annotations
@@ -23,7 +24,14 @@ from .query import ROOT, _lock as work_lock, hold
 
 REVIEW_PROMPT = (ROOT / "tool/prompts/oneshot-review.md").read_text(encoding="utf-8")
 SEVERITIES = ("P0", "P1", "P2")
-MAX_REFUSALS = 2
+
+
+def cap() -> int:
+    """Refusals before the run stops: the Review Loop's round cap, so the review and its repair loop as a PR's do."""
+
+    from . import loop   # it imports `specs`, which imports this module's neighbours
+
+    return loop.settings()["rounds"]
 
 
 def reviewer() -> dict:
@@ -189,7 +197,7 @@ def decided(repo: str, store, spec: dict, found: dict):
         oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "working": "split"})
         return lambda: oneshot_spec.handoff(repo, "split") or True   # the split holds the tree itself
     refused = int(o.get("refused") or 0) + 1
-    if refused >= MAX_REFUSALS:
+    if refused >= cap():
         store.put(reviews=reviews, refused=refused)
         store.stop("review", f"백엔드 리뷰가 {refused}번 거부했다 — " +
                    " / ".join(f"[{f['severity']}] {f['location']} {f['reason']}" for f in found["findings"][:5]))
@@ -230,15 +238,25 @@ def fixing(spec: dict, found: dict) -> str:
 def build_turn(spec: dict) -> str:
     """A resumed build's turn: the review's findings again while its refusal of the built HEAD stands."""
 
-    o = spec["oneshot"]
+    last = standing(spec["oneshot"])
+    return fixing(spec, last) if last else oneshot_build.build_text(spec)
+
+
+def standing(o: dict) -> dict | None:
+    """The last review, while it is a refusal of the built HEAD."""
+
     last = (o.get("reviews") or [None])[-1]
-    if last and last["verdict"] == "refuse" and last["head"] == o.get("built_head"):
-        return fixing(spec, last)
-    return oneshot_build.build_text(spec)
+    return last if last and last["verdict"] == "refuse" and last["head"] == o.get("built_head") else None
+
+
+def capped(o: dict) -> bool:
+    """Stopped at the cap with the built HEAD refused: `[재개]` repairs it, a second reading would only repeat."""
+
+    return int(o.get("refused") or 0) >= cap() and standing(o) is not None
 
 
 def resume(repo: str) -> None:
-    """`[재개]` in `review`: the refusals counted afresh, the review run again on the current HEAD."""
+    """`[재개]` in `review`, the built HEAD not refused at the cap: the review run again on the current HEAD."""
 
     oneshot_spec.saved(repo, oneshot={"refused": 0})
     begin(repo)

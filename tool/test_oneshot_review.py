@@ -94,18 +94,26 @@ def test_a_verdict_its_findings_do_not_justify_is_refused(reviewed, kind, findin
         oneshot_review.verdict_of({"verdict": kind, "head": head, "findings": findings}, head)
 
 
-def test_a_refusal_goes_to_the_build_once_and_a_second_stops_the_run(reviewed):
+def test_a_refusal_goes_to_the_build_each_time_until_the_round_cap_stops_the_run(reviewed):
     tree, head, sent = reviewed
-    _, asking = answers(verdict(head, "refuse", P1))
-    with asking:
-        oneshot_review.review("budget")
-    assert o()["stage"] == "build" and o()["refused"] == 1 and o()["attempts"] == 0
-    assert sent[-1][:2] == ("budget", "build") and "음수 금액을 받는다" in sent[-1][2] and "test_budget.py" in sent[-1][2]
-    oneshot_spec.saved("budget", oneshot={"stage": "review", "working": "review"})
-    _, asking = answers(verdict(head, "refuse", P1))
-    with asking:
-        oneshot_review.review("budget")
-    assert o()["stopped"]["reason"] == "review" and len(sent) == 1 and len(o()["reviews"]) == 2
+    with patch.object(loop, "settings", lambda: {"rounds": 3, "review_effort": "high"}):
+        for n in (1, 2):   # the second refusal used to stop the run: the repair loop ended after one round
+            _, asking = answers(verdict(head, "refuse", P1))
+            with asking:
+                oneshot_review.review("budget")
+            assert o()["stage"] == "build" and o()["refused"] == n and o()["attempts"] == 0 and len(sent) == n
+            assert sent[-1][:2] == ("budget", "build") and "음수 금액을 받는다" in sent[-1][2] and "test_budget.py" in sent[-1][2]
+            oneshot_spec.saved("budget", oneshot={"stage": "review", "working": "review"})
+        _, asking = answers(verdict(head, "refuse", P1))
+        with asking:
+            oneshot_review.review("budget")
+        assert o()["stopped"]["reason"] == "review" and len(sent) == 2 and len(o()["reviews"]) == 3
+        resumed = []   # `[재개]` at the cap repairs the refused HEAD; reading it again would only repeat
+        with patch.object(oneshot_build, "resume", resumed.append), \
+             patch.object(oneshot_review, "begin", lambda repo: pytest.fail("the refused HEAD was read again")):
+            oneshot_spec.resume("budget")
+    assert resumed == ["budget"] and o()["stage"] == "build" and o()["working"] == "build" and o()["refused"] == 0
+    assert "음수 금액을 받는다" in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
 
 
 def test_a_head_other_than_the_one_the_build_passed_is_not_reviewed(reviewed):
