@@ -378,9 +378,10 @@ function Items({ title, ids, decisions, marks, set, approveAll }: {
   title: string; ids: string[]; decisions: Record<string, Decision>; marks?: Record<string, string>
   set: (id: string, d: Decision) => void; approveAll?: () => void
 }) {
+  // What needs a decision again comes first and open; what stays approved sits collapsed below. The split is
+  // the sheet's as it opened (each round mounts its own), so deciding an item here never folds it away mid-edit.
+  const [again] = useState(() => ids.filter((i) => !decided(decisions[i]) || marks?.[i]))
   if (!ids.length) return null
-  // What needs a decision again comes first and open; what stays approved sits collapsed below.
-  const again = ids.filter((i) => !decided(decisions[i]) || marks?.[i])
   const settled = ids.filter((i) => !again.includes(i))
   return (
     <section aria-label={title} className="flex flex-col gap-1.5">
