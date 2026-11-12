@@ -59,10 +59,15 @@ export function useSpecs(): SpecSummary[] {
 export function useSpecList(): { specs: SpecSummary[]; removed: string[] } {
   const [list, setList] = useState<{ specs: SpecSummary[]; removed: string[] }>({ specs: [], removed: [] })
   useEffect(() => {
-    // The switch sits on maintenance's rail, which a bad answer here must not take down.
+    // The switch sits on maintenance's rail, which a bad answer here must not take down. Only the latest
+    // read counts, and only an answer that carries a list: a late older answer, or one without `specs`,
+    // would otherwise read as every run it lacks having been deleted.
+    let seq = 0
     const again = () => {
+      const mine = ++seq
       oneshotSpecs().then((d) => {
-        const specs = rows<SpecSummary>(d?.specs, ['repo', 'stage'])
+        if (mine !== seq || !Array.isArray(d?.specs)) return
+        const specs = rows<SpecSummary>(d.specs, ['repo', 'stage'])
         const now = new Set(specs.map((s) => s.repo))
         setList((was) => ({
           specs,

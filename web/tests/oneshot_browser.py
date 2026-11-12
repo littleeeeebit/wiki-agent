@@ -82,7 +82,8 @@ def main():
     views["talk-demo"]["oneshot"]["talk"] = TALK
     posted = []
     started: dict = {}
-    slow = {"start": 0.0, "fail": 0}   # a start answer held back, and S1 list reads that fail
+    # A start answer held back, S1 list reads that fail, and spec list answers that are late or carry no list.
+    slow = {"start": 0.0, "fail": 0, "bad": False, "hold": False}
     fake = FastAPI()
 
     @fake.get("/shot.png")
@@ -92,6 +93,8 @@ def main():
     @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
     async def api(path: str, request: Request):
         if path == "oneshot-specs":   # one broken item drops alone; the rest still shows
+            if slow["bad"]:   # successful answers that carry no list
+                return {"specs": None}
             return {"specs": [None, *({k: v[k] for k in ("repo", "stage", "working", "stopped", "waits")} for v in views.values())]}
         if path == "oneshot" and request.method == "POST":
             await asyncio.sleep(slow["start"])
@@ -277,6 +280,34 @@ def main():
         page.get_by_role("tab", name="원샷").click()
         expect(page.get_by_role("region", name="요구 대화")).to_be_visible()
         expect(reply).to_have_value("아직 보내지 않은 답")
+
+        # A list answer that is not the latest, or that carries no list, deletes nothing: the run and draft stay.
+        title = page.locator(".oneshot-shell main > header h1")
+        # Every list hook reads on each event, so the older reads are all held in the browser and answered late,
+        # with a list from before talk-demo existed.
+        late: list = []
+        page.route("**/api/oneshot-specs", lambda route: late.append(route) if slow["hold"] else route.continue_())
+        slow["hold"] = True
+        page.evaluate("window.dispatchEvent(new Event('spec-changed'))")   # the older reads
+        page.wait_for_timeout(300)
+        slow["hold"] = False
+        page.evaluate("window.dispatchEvent(new Event('spec-changed'))")   # the newer reads, answered first
+        page.wait_for_timeout(500)
+        assert late, "no list read was held"
+        older = [{k: v[k] for k in ("repo", "stage", "working", "stopped", "waits")}
+                 for name, v in views.items() if name != "talk-demo"]
+        for route in late:
+            route.fulfill(json={"specs": older})
+        page.wait_for_timeout(500)
+        page.unroute("**/api/oneshot-specs")
+        expect(title).to_have_text("talk-demo")
+        expect(reply).to_have_value("아직 보내지 않은 답")
+        slow["bad"] = True
+        page.evaluate("window.dispatchEvent(new Event('spec-changed'))")
+        page.wait_for_timeout(500)
+        slow["bad"] = False
+        expect(title).to_have_text("talk-demo")
+        expect(reply).to_have_value("아직 보내지 않은 답")
         page.get_by_role("tab", name="유지보수").click()
 
         # Maintenance's [새 프로젝트] opens the start form in the oneshot window.
@@ -389,7 +420,7 @@ def main():
           "the switch keeps the run shown and its draft; [새 프로젝트] opens the start form, which fixes three models "
           "picked apart; a late start answer leaves the picked run; an S1 run's row and the count follow it through "
           "a failed read; a broken list item drops alone; the run opened by default stays when the list reorders; "
-          "a deleted run is neither kept nor reopened; the drawer holds the keyboard")
+          "a deleted run is neither kept nor reopened, while a late or listless answer deletes nothing; the drawer holds the keyboard")
 
 
 if __name__ == "__main__":
