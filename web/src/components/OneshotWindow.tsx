@@ -3,7 +3,7 @@ import { Plus, Rocket } from 'lucide-react'
 import { Btn } from '@/components/Modal'
 import { Body, Intake, api, useAct, type OneshotRun } from '@/components/Oneshot'
 import { Fault, Lead, ModelsList, OneshotSpec, Top } from '@/components/OneshotSpec'
-import { follow, go, rows, useRoute, useSpecs, type Route } from '@/lib/mode'
+import { follow, forget, go, rows, useRoute, useSpecList, useSpecs, type Route } from '@/lib/mode'
 import { STAGES, type Models, type SpecSummary, type SpecView } from '@/lib/oneshot'
 import { cn } from '@/lib/utils'
 
@@ -103,7 +103,7 @@ export function OneshotIcon() {
 
 export function OneshotWindow() {
   const { mode, run: key } = useRoute()
-  const specs = useSpecs()
+  const { specs, removed } = useSpecList()
   const [runs, setRuns] = useState<OneshotRun[]>([])
   const [told, setTold] = useState<{ key: string; now: Now } | null>(null)   // what the open pane last read
   const [held, setHeld] = useState('')   // the run shown when the window was last on screen
@@ -132,9 +132,12 @@ export function OneshotWindow() {
   // while maintenance shows, the run shown before stays too.
   const first = [...open.filter((s) => s.waits), ...open].map((s) => `spec:${s.repo}`)[0]
     || (early[0] ? `run:${early[0].id}` : 'new')
-  const live = key || (held && held !== 'new' ? held : first)
-  const picked = mode === 'main' && held ? held : live
+  // A run whose spec a later read no longer lists was deleted: it is neither kept nor reopened.
+  const kept = (k: string) => !!k && !(k.startsWith('spec:') && removed.includes(k.slice(5)))
+  const live = (kept(key) && key) || (kept(held) && held !== 'new' ? held : first)
+  const picked = mode === 'main' && kept(held) ? held : live
   if (mode === 'oneshot' && held !== live) setHeld(live)
+  useEffect(() => { removed.forEach((r) => forget(`spec:${r}`)) }, [removed])
   // Until the pane has read its run, the list's row stands for it.
   const listed = specs.find((s) => `spec:${s.repo}` === picked)
   const starting = early.find((r) => `run:${r.id}` === picked)

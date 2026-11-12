@@ -118,6 +118,8 @@ def main():
             return {**fixture(path, request.method), "review_model": "codex:gpt-6.1-sol", "review_effort": "high"}
         if path.startswith("oneshot/spec/"):
             repo, _, act = path.removeprefix("oneshot/spec/").partition("/")
+            if repo not in views:   # deleted, as the server answers it
+                return JSONResponse({"detail": "원샷 명세가 없다"}, status_code=404)
             if request.method == "POST":
                 posted.append((repo, act, await request.json()))
                 if act == "say" and posted[-1][2]["text"] == REFUSED:
@@ -347,6 +349,21 @@ def main():
         page.get_by_role("tab", name="원샷").click()
         expect(page.get_by_role("region", name="요구 대화")).to_be_visible()
 
+        # A deleted run is neither kept nor reopened: picked by hand, the window falls back to the default run;
+        # opened by default, it moves on to the next. A failed read is not a deletion.
+        title = page.locator(".oneshot-shell main > header h1")
+        rail.get_by_role("button").filter(has_text="board-demo").click()
+        expect(title).to_have_text("board-demo")
+        board_view = views.pop("board-demo")
+        page.evaluate("window.dispatchEvent(new Event('server-resync'))")   # what a deletion's `sync` sends
+        expect(title).to_have_text("demo")
+        expect(page).to_have_url(re.compile(r"#oneshot$"))
+        views["board-demo"] = board_view
+        demo_view = views.pop("demo")
+        page.evaluate("window.dispatchEvent(new Event('spec-changed'))")
+        expect(title).not_to_have_text("demo")
+        views["demo"] = demo_view
+
         # Under 1100px the list is a drawer that holds the keyboard: Tab goes round inside it, Escape gives the
         # focus back to its toggle, and a run picked there takes the focus to the run's title.
         page.set_viewport_size({"width": 1000, "height": 800})
@@ -372,7 +389,7 @@ def main():
           "the switch keeps the run shown and its draft; [새 프로젝트] opens the start form, which fixes three models "
           "picked apart; a late start answer leaves the picked run; an S1 run's row and the count follow it through "
           "a failed read; a broken list item drops alone; the run opened by default stays when the list reorders; "
-          "the drawer holds the keyboard")
+          "a deleted run is neither kept nor reopened; the drawer holds the keyboard")
 
 
 if __name__ == "__main__":

@@ -40,12 +40,36 @@ export function useRoute(): Route {
   return route
 }
 
+/** A run that is gone (its spec deleted): neither the fragment nor the window's memory opens it again. */
+export const forget = (run: string) => {
+  const shown = /^#oneshot\/(.+)$/.exec(location.hash)
+  if (shown && decodeURIComponent(shown[1]) === run) {
+    last = ''
+    location.hash = 'oneshot'
+  } else if (last === run) last = ''
+}
+
 /** Every run past S1, read again whenever the server saves one or the feed resyncs. */
 export function useSpecs(): SpecSummary[] {
-  const [specs, setSpecs] = useState<SpecSummary[]>([])
+  return useSpecList().specs
+}
+
+/** The runs past S1, and the repos that a later successful read no longer lists: deleted, not merely
+ *  unread. A failed read keeps the list it had, so a dropped connection never looks like a deletion. */
+export function useSpecList(): { specs: SpecSummary[]; removed: string[] } {
+  const [list, setList] = useState<{ specs: SpecSummary[]; removed: string[] }>({ specs: [], removed: [] })
   useEffect(() => {
-    // A list or nothing: the switch sits on maintenance's rail, which a bad answer here must not take down.
-    const again = () => { oneshotSpecs().then((d) => setSpecs(rows<SpecSummary>(d?.specs, ['repo', 'stage']))).catch(() => setSpecs([])) }
+    // The switch sits on maintenance's rail, which a bad answer here must not take down.
+    const again = () => {
+      oneshotSpecs().then((d) => {
+        const specs = rows<SpecSummary>(d?.specs, ['repo', 'stage'])
+        const now = new Set(specs.map((s) => s.repo))
+        setList((was) => ({
+          specs,
+          removed: [...new Set([...was.removed, ...was.specs.map((s) => s.repo)])].filter((r) => !now.has(r)),
+        }))
+      }).catch(() => {})
+    }
     again()
     // A worker moving a run on (an automatic stage reaching a gate) saves its spec, which the feed announces;
     // a feed that reconnects or resyncs announces no single spec, so the list reads again then too.
@@ -53,5 +77,5 @@ export function useSpecs(): SpecSummary[] {
     on.forEach((name) => window.addEventListener(name, again))
     return () => on.forEach((name) => window.removeEventListener(name, again))
   }, [])
-  return specs
+  return list
 }
