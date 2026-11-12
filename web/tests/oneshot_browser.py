@@ -490,7 +490,9 @@ def tracking():
     views["d-run"]["oneshot"] |= {"critiques": [look(1, True), look(1, True)], "critique_base": 2}
     for name in ("e-run", "f-run"):
         views[name]["oneshot"] |= {"critiques": [look(n, False) for n in range(1, 7)], "critique_base": 6}
-    state = {"open": 0, "opened": 0, "fail": 1, "mode": "partial"}
+    # `times`: each stream's open (+) and close (-), seconds from the start, for a failure to show its order.
+    state = {"open": 0, "opened": 0, "fail": 1, "mode": "partial", "times": []}
+    began = time.monotonic()
     translations: list = []
     fake = FastAPI()
 
@@ -499,6 +501,7 @@ def tracking():
         async def stream():
             state["open"] += 1
             state["opened"] += 1
+            state["times"].append(f"+{time.monotonic() - began:.2f}")
             try:
                 yield ('data: {"kind": "delta", "text": "Working on the build.", "turn": "t1", "session_id": "s", '
                        '"seq": 0}\n\n')
@@ -506,6 +509,7 @@ def tracking():
                     await asyncio.sleep(0.1)
             finally:
                 state["open"] -= 1
+                state["times"].append(f"-{time.monotonic() - began:.2f}")
         assert path == trees["a-run"] and turn == "t1", (path, turn)
         return StreamingResponse(stream(), media_type="text/event-stream")
 
@@ -565,12 +569,18 @@ def tracking():
         pick("b-run")
         expect(record).to_contain_text("검사 실패3 / 3")   # three checks failed: no fourth try
         settled(0)
+        # Each visit is looked at, as the owner does: the running turn read again, its stream open while it shows,
+        # and closed once another run does — however often.
         for name in ("a-run", "b-run", "a-run", "b-run", "a-run"):
             pick(name)
-            expect(page.locator(".oneshot-shell main > header h1")).to_have_text(name)
-        expect(trail).to_contain_text("Working on the build.")
-        settled(1)   # the streams of the runs left are closed, however often
-        assert state["opened"] == 4, state
+            if name == "a-run":
+                expect(trail).to_contain_text("Working on the build.")
+                expect(record).to_contain_text("시도2 / 3")
+            else:
+                expect(record).to_contain_text("검사 실패3 / 3")
+            settled(1 if name == "a-run" else 0)
+        time.sleep(1)
+        assert state["open"] == 1 and state["opened"] == 4, state   # the one shown stays open
 
         pick("c-run")
         settled(0)
