@@ -279,9 +279,7 @@ export const peek = (repo: string, path: string, line: number) =>
  *  config values are lifted out before the request, so there is nothing for
  *  this side to mask. */
 export const render = (texts: string[], direction: 'en->ko' | 'ko->en' = 'en->ko') =>
-  post('/api/translate', { texts, direction }).then((r) =>
-    json<{ texts: string[] }>(r, '번역'),
-  )
+  post('/api/translate', { texts, direction }).then((r) => json<{ texts: string[] }>(r, '번역'))
 
 /** A verified answer's rendering. A translation that changed a number or an
  *  identifier comes back as the original, with a status saying so. */
@@ -879,8 +877,10 @@ export type TranslationMode = 'off' | 'full' | 'partial'
 export type Switch = { translate: boolean; mode?: TranslationMode; usage: Usage }
 
 export const getSwitch = () => get('/api/switch').then((r) => json<Switch>(r, '번역 스위치'))
-export const setSwitch = (mode: TranslationMode) =>
-  post('/api/switch', { mode }).then((r) => json<Switch>(r, '번역 스위치'))
+/** Set, `switch` tells every record on the page (the oneshot window's too); `modeOf` reads an older server's too. */
+export const setSwitch = (mode: TranslationMode) => post('/api/switch', { mode }).then((r) => json<Switch>(r, '번역 스위치'))
+  .then((s) => (window.dispatchEvent(new CustomEvent('switch', { detail: s })), s))
+export const modeOf = (s?: Switch | null): TranslationMode => s?.mode ?? (s?.translate ? 'full' : 'off')
 
 export const startMobile = () => post('/api/mobile/start').then((r) => json<import('./mobile').MobileStatus>(r, '휴대폰 연결'))
 export const mobileLink = () => post('/api/mobile/link').then((r) => json<{ link: string; seconds: number }>(r, '휴대폰 연결 링크'))

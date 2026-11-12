@@ -367,13 +367,14 @@ export function useWork() {
   }, [patch, readRules])
 
   // Named, so the reload after a replaced turn calls itself, not the outer binding.
-  const load = useCallback(function load(path: string) {
-    if (!path || loading.current.has(path)) return
+  // Resolves false when the record could not be read, for a screen that tells that from an empty one.
+  const load = useCallback(function load(path: string): Promise<boolean> {
+    if (!path || loading.current.has(path)) return Promise.resolve(true)
     loading.current.add(path)
     const life = lives.current.get(path) ?? 0
-    api.workLog(path)
+    return api.workLog(path)
       .then(({ rows, running, rules: list, session_id, queued: waiting }) => {
-        if ((lives.current.get(path) ?? 0) !== life) return
+        if ((lives.current.get(path) ?? 0) !== life) return true
         const past: Turn[] = rows.map((r) => ({
           key: ++seq, role: r.role, text: r.text, error: r.error, ms: r.ms, cost: r.cost_usd, model: r.model,
           tokens: r.tokens, steps: (r.steps ?? []).map(restored), answered: r.answered,
@@ -402,9 +403,11 @@ export function useWork() {
               }
             })
         }
+        return true
       })
       .catch(() => {
         if ((lives.current.get(path) ?? 0) === life) loading.current.delete(path)
+        return false
       })
   }, [follow, forget, showQueued])
 
@@ -537,11 +540,18 @@ export function useWork() {
       const path = (event as CustomEvent<string>).detail
       if (loading.current.has(path)) readRules(path)
     }
+    // A turn the server started, or a record it wrote, in a worktree this record shows (`App` passes the feed on).
+    const turned = (event: Event) => {
+      const { path, turn } = (event as CustomEvent<{ path: string; turn?: string }>).detail
+      attach(path, turn)
+    }
     window.addEventListener('server-resync', resync)
     window.addEventListener('work-state', state)
+    window.addEventListener('work-turn', turned)
     return () => {
       window.removeEventListener('server-resync', resync)
       window.removeEventListener('work-state', state)
+      window.removeEventListener('work-turn', turned)
     }
   }, [attach, readRules])
 

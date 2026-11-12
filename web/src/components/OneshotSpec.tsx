@@ -3,6 +3,7 @@ import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Choices } from '@/components/Blocks'
 import { Btn } from '@/components/Modal'
+import { Track } from '@/components/OneshotTrack'
 import { api, COLUMNS, STOP, type Decision, type Feature, type Freq, type Gate, type Palette,
   type Models, type RunSummary, type SpecView, type Talk, ROLE, modelName } from '@/lib/oneshot'
 import { cn } from '@/lib/utils'
@@ -123,12 +124,12 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   }
   if (view.stopped) {
     return (
-      <Top>
+      <Track view={view} halt={<>
         <Fault text={fault} />
         <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>
           <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resume(repo))}>재개</Btn>
         </Halt>
-      </Top>
+      </>} />
     )
   }
   return (
@@ -152,9 +153,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
           busy={busy} submit={(body) => act(() => api.decide(repo, 'r3', body))} />
       )}
       {view.stage === 'done' && view.summary && <Finished summary={view.summary} />}
-      {view.working && view.stage !== 'done' && (
-        <Top><p className="text-muted-foreground">혼자 도는 단계다. 끝나면 다음 단계가 이 자리에 열린다.</p></Top>
-      )}
+      {view.working && view.stage !== 'done' && <Track view={view} />}
     </>
   )
 }

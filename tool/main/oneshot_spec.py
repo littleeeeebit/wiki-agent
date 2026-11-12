@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from common import is_junction
 
-from . import oneshot, oneshot_sheet as sheet, specs
+from . import oneshot, oneshot_sheet as sheet, specs, work
 from .oneshot_profile import current, environment, stacked, unsettled
 from .query import ROOT
 
@@ -431,9 +431,22 @@ def listing() -> dict:
     return {"specs": found}
 
 
+def recorded(path: str) -> bool:
+    """A worktree a run's spec records: readable whatever project maintenance has selected, so the oneshot
+    window reads another project's run after a restart (`work.known`)."""
+
+    return any(run.get("spec") and (spec := specs.load(run["spec"]["repo"], oneshot.BRANCH))
+               and spec.get("worktree") == path for run in oneshot.runs())
+
+
+work.READABLE.append(recorded)
+
+
 def view(spec: dict) -> dict:
     o = spec["oneshot"]
-    out = {"repo": spec["repo"], "oneshot": o, "requirements": spec.get("requirements") or [], **summary(spec)}
+    # `worktree`: where the run's work turns go, so the screen follows them live as maintenance does.
+    out = {"repo": spec["repo"], "oneshot": o, "requirements": spec.get("requirements") or [],
+           "worktree": spec.get("worktree") or "", **summary(spec)}
     if o.get("design"):
         out["sheet"] = sheet.sheet(spec)
         out["items"] = sheet.decidable(o["design"], spec.get("requirements") or [])

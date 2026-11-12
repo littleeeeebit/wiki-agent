@@ -58,6 +58,7 @@ _busy: dict[str, object] = {}   # worktree path -> the hold of its running turn
 _runs: dict[str, "Run"] = {}    # worktree path -> its last turn, kept until the next one starts
 _turns: dict[threading.Thread, "Run"] = {}  # includes completed turns still running their callbacks
 _queued: dict[str, "Order"] = {}   # worktree path -> the instruction waiting for it to be let go
+READABLE: list = []   # `fn(path) -> bool`: worktrees a later module recorded (a oneshot run's), in any project
 _provider_usage: dict = {}
 _provider_usage_lock = threading.Lock()
 
@@ -90,12 +91,11 @@ def ours(path: str, repo: Path | None = None) -> Path:
 
 
 def known(path: str) -> Path:
-    """A path to read from: one the server made a session for, whichever
-    project that was in, or else one of the selected project's. The session's
-    path went through `ours` once, when it was made; a loop in another project
-    keeps its worktree readable after a switch."""
+    """A path to read from: one the server made a session for or a module recorded (`READABLE`), whichever project
+    that was in, or else one of the selected project's. A loop in another project keeps its worktree readable after
+    a switch, and a oneshot run's after a restart; a session's path went through `ours` once, when it was made."""
 
-    return Path(path) if path in _sessions else ours(path)
+    return Path(path) if path in _sessions or any(mine(path) for mine in READABLE) else ours(path)
 
 
 @router.get("/api/providers/{provider}/usage")
