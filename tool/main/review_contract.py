@@ -282,7 +282,7 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
                     f.kind == kind or kind == "api" and f.kind == "browser" for kind in runtime_evidence)]
                 matches = [{f.id for f in candidates if any(fnmatchcase(changed, pattern) for pattern in f.paths)}
                            for changed in paths or []]
-                mapped = bool(matches) and all(len(found) == 1 for found in matches)
+                mapped = bool(matches) and all(len(found) == 1 for found in matches) and all(any(f.id in set().union(*matches) and (f.kind == kind or kind == "api" and f.kind == "browser") for f in candidates) for kind in runtime_evidence)
                 chosen = sorted(set().union(*matches) if mapped else {f.id for f in candidates})
             flows = [catalog[i].model_dump() for i in sorted(set(chosen)) if i in catalog]
             if verification.cloud(spec) and verification.documents(path, base_oid, head):

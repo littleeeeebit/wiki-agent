@@ -115,6 +115,13 @@ def outputs(path: Path, repo: Path | None = None) -> dict:
             "staged": hashlib.sha256(git(path, "diff", "--cached", "--binary").encode("utf-8")).hexdigest()}
 
 
+def comparable(saved: dict | None, repo: Path) -> dict | None:
+    if saved and repo.resolve() == query.ROOT.resolve():
+        saved = {**saved, "files": {name: value for name, value in saved["files"].items()
+                                     if name not in (".wiki/corpus.json", ".wiki/graph.json")}}
+    return saved
+
+
 def set_aside(path: Path, spec: dict) -> bool:
     """Stash an interrupted preparation's outputs, still exactly what it saved, before a gate checks
     HEAD. A click whose final proof went stale (ai-companion: the gate command changed) kicks the
@@ -124,7 +131,7 @@ def set_aside(path: Path, spec: dict) -> bool:
     else in the tree keeps the stop; a fresh preparation follows the gate."""
     receipt = spec.get("maintenance") or {}
     repo = query.channels.repo_for(spec["repo"]) or path
-    saved = receipt.get("outputs")
+    saved = comparable(receipt.get("outputs"), repo)
     if receipt.get("state") != "interrupted" or git(path, "rev-parse", "HEAD") != receipt.get("head")             or saved != outputs(path, repo) or not all(maintained(name) or name == debt.RATCHET for name in saved["files"]):
         return False
     flagged = hidden(path, saved["files"])
@@ -229,10 +236,11 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
         receipt.get("source_head"), receipt.get("head"))
     if local != head and not (resumable and receipt.get("head") == local):
         raise ValueError("작업 폴더가 리뷰한 커밋에 있지 않다")
-    retry = resumable and receipt.get("state") == "interrupted" and receipt.get("outputs") == outputs(path, repo)
+    saved = comparable(receipt.get("outputs"), repo)
+    retry = resumable and receipt.get("state") == "interrupted" and saved == outputs(path, repo)
     if (specs.dirty(path) or resumable and receipt.get("state") == "interrupted") and not retry:
         raise ValueError("커밋하지 않은 변경이 있다 — 보존한 뒤 머지를 다시 요청하세요")
-    flagged = hidden(path, (receipt.get("outputs") or {}).get("files", {}) if retry else {})
+    flagged = hidden(path, (saved or {}).get("files", {}) if retry else {})
     branch = git(path, "branch", "--show-current")
     if branch and branch != specs.branch_of(spec):
         raise ValueError("작업 폴더가 PR 브랜치에 있지 않다")

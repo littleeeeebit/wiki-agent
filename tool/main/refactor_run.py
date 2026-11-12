@@ -561,8 +561,11 @@ def _kept(old: list, new: list, allowed: set, imports: set[str] = frozenset(), a
     every name it bound is bound as often — a later `def`, assignment or `del`
     would replace a test — except the definitions `allowed` names. A class
     keeps its header and recurses."""
-
     if not at and imports:
+        before_other = _binds([statement for statement in old if not isinstance(statement, (ast.Import, ast.ImportFrom))])
+        after_other = _binds([statement for statement in new if not isinstance(statement, (ast.Import, ast.ImportFrom))])
+        if "*" in imports or any(before_other[name] != after_other[name] for name in imports):
+            return False
         old, new = refactor_imports.without(old, imports), refactor_imports.without(new, imports)
     before, after = _binds(old), _binds(new)
     # A new `pytestmark` skips every test beside it, a new `import *` may replace any of them.
@@ -633,7 +636,7 @@ def _amendable(before: list, after: list, allowed: set, imports: set[str] = froz
 
     names = _changed(before, after) - allowed
     changed_imports = refactor_imports.changed(before, after) - imports
-    return (names, changed_imports) if (names or changed_imports) \
+    return (names, changed_imports) if "*" not in changed_imports and (names or changed_imports) \
         and _kept(before, after, allowed | names, imports | changed_imports) else None
 
 

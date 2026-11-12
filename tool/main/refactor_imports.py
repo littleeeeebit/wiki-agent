@@ -11,8 +11,9 @@ def without(body: list, allowed: set[str]) -> list:
             continue
         names = [alias for alias in statement.names if (alias.asname or alias.name).split(".")[0] not in allowed]
         if names:
-            out.append(ast.Import(names=names) if isinstance(statement, ast.Import)
-                       else ast.ImportFrom(module=statement.module, names=names, level=statement.level))
+            replacement = (ast.Import(names=names) if isinstance(statement, ast.Import)
+                           else ast.ImportFrom(module=statement.module, names=names, level=statement.level))
+            out.append(ast.copy_location(replacement, statement))
     return out
 
 

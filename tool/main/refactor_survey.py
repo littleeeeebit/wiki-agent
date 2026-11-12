@@ -354,7 +354,7 @@ def spec_shape(s, mode: str, map_: dict, root: Path) -> dict:
             raise ValueError(f"`{what}.measure.repeat` 는 1–50 정수다")
         shaped["measure"].update(argv=argv, repeat=repeat)
     amendable = mode == "simplify" or "contract_change" in shaped
-    if any(value.count("::") != 1 for value in shaped["tests"]["imports"]):
+    if any(value.count("::") != 1 or value.endswith(("::", "::*")) for value in shaped["tests"]["imports"]):
         raise ValueError(f"`{what}.tests.imports` 는 `<파일>::<모듈 import 이름>` 형식이다")
     if (shaped["tests"]["contract"] or shaped["tests"]["imports"]) and not amendable:
         # The way out goes with the refusal: told only "no", a repair drops the file the change must edit.
