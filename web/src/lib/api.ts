@@ -43,7 +43,7 @@ export type SurveySpec = {
   key: string; title: string; pipeline: string; files: string[]; creates?: string[]; boundary: string; problem: string; change: string
   impact: string; rollback: string; evidence: SurveyEvidence[]; keep: string[]; depends: string[]; risk: SurveyLevel
   verify: { method: string; criterion: string }[]; together?: string
-  tests: { add: string[]; remove: { test: string; reason: string }[]; contract: { test: string; old: string; new: string; why: string }[] }
+  tests: { add: string[]; imports?: string[]; remove: { test: string; reason: string }[]; contract: { test: string; old: string; new: string; why: string }[] }
   measure?: { metric: string; task: string; argv: string[]; repeat: number }
   hypothesis?: { claim: string; check: string }
   contract_change?: { impact: string; compatibility: string; migration: string; rollback: string }

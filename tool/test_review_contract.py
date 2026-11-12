@@ -97,7 +97,10 @@ def test_refactor_round_and_final_gate_rerun_frozen_checks_and_protect_tests(req
     assert done["rounds"][0]["review_contract"]["preservation"]["baseline"] == origin["start_head"]
     assert "preserve" in done["gate"]["cmd"]
     assert "preserve" in done["validation"]["final"]["command"]
-    assert "local_verification" not in done   # a local refactor's declared flows are not run
+    if verification_world == "cloud_world":
+        assert [row["id"] for row in done["local_verification"]["flows"]] == ["health"]
+    else:
+        assert "local_verification" not in done
     for invalid in (None, "", "HEAD", "f" * 40):
         assert selected(world, {**done, "start_head": invalid})["problems"]
     assert selected(world, {k: v for k, v in done.items() if k != "start_head"})["problems"]
