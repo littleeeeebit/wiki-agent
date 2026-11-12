@@ -149,7 +149,10 @@ function Record({ view }: { view: SpecView }) {
   // the count it reached (`counted`) — a failed critique call stops for the same reason with none.
   const looks = o.critiques?.length ?? 0
   const since = looks - (o.critique_base ?? 0)
-  const counted = since === 0 && view.stopped?.counted ? view.stopped.counted : since
+  // A cap stop saved before `counted` says the count only in its detail, which the server words the same way.
+  const before = view.stopped?.reason === 'critique' && /^(\d+)회차에도 높은 발견/.exec(view.stopped.detail)
+  const reached = view.stopped?.counted ?? (before ? Number(before[1]) : 0)
+  const counted = since === 0 && reached ? reached : since
   const facts: [string, string][] = [
     ...(ATTEMPTED.has(view.stage) ? [tried] : []),
     ...(o.reviews?.length ? [['리뷰 거절', of(o.refused ?? 0, lim?.refusals)] as [string, string]] : []),
