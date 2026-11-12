@@ -27,9 +27,11 @@ export type RunSummary = {
 export type SpecView = SpecSummary & {
   oneshot: {
     sentence: string; models?: Models; talk?: Talk[]; attempts?: number; critiques?: unknown[]
+    stack?: { part: string; choice: string; why: string; status: string }[]
     r1?: Gate; r2?: Gate; r3?: Gate; front?: { tokens: { palettes: Palette[] } }
     reading?: Record<string, { round: number; seconds: number | null; opened: string[]; edited: string[] }[]>
   }
+  requirements?: { id: string; text: string; status: string }[]
   sheet?: string; items?: string[]
   board?: { features: Feature[]; first_screen: string | null; frequency: Record<string, Freq> }
   front_sheet?: string; front_items?: string[]

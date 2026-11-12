@@ -19,6 +19,7 @@ colors:
   st-ready: "#1d7d3e"
   st-queued: "#006669"
   st-stop: "#ba2b2e"
+  progress: "#2b3a67"
   map-doc: "#878d95"
   map-page: "#3f6b8f"
   map-module: "#b9b3a4"
@@ -44,6 +45,7 @@ colors:
     st-ready: "#6fc884"
     st-queued: "#65d2d2"
     st-stop: "#ff7c75"
+    progress: "#a9b8e8"
     map-doc: "#6f757d"
     map-page: "#7fa9c9"
     map-module: "#8a8577"
@@ -84,6 +86,8 @@ components:
   - 지도 — 층 토글 · 찾기 · 되돌리기 · 지표 한 줄 · 옆 패널 · 이번 질문 경로 층과 경로 목록
   - 모달 — 설정 (일반 · 연결 · 질문 (Jev) · 리뷰) · 리뷰 루프 PR 고르기 · 연결 확인
   - 빈 상태 (면마다 하나)
+  - 창 전환 — 두 레일 맨 위의 [유지보수 · 원샷]; 결정을 기다리는 원샷 실행이 있으면 `wait` 점
+  - 원샷 창 — 실행 목록 (진행 중 · 끝남) · 단계 (시작 · 요구 · 백엔드 · 화면 · 마무리) · 지금 단계의 일
 ---
 
 # DESIGN — Screen values for this repository
@@ -138,6 +142,57 @@ The center is slightly wider than the right to give the conversation more readin
 
 The title headers of the three sides have the same height (`44px`, `h-11`). They only state what is being viewed. The tab line is `36px` (`h-9`). Settings have been moved to a modal via the gear icon — since translation and theme are things you don't touch again once set, there is no reason to use rail space.
 
+## Oneshot window
+
+```
+누가:   한두 문장으로 새 저장소를 시작한 주인
+하려고: 실행이 지금 어느 단계인지, 내가 정할 것이 있는지 보고 그 자리에서 정한다
+성공:   실행 목록에서 기다리는 실행을 바로 찾고, 고르면 전체 단계와 지금 할 일이 한 화면에 있다
+```
+
+Maintenance (the three columns above) is for keeping and extending existing
+repositories; a oneshot run, from its sentence to its pull request, has its
+own window. The two windows sit in one app window and both stay mounted, so a
+stream or a draft in one survives a look at the other. The switch
+`[유지보수 · 원샷]` is at the same place at the top of both rails, and carries a
+`wait` count of the runs that need the owner: a decision, or `[재개]` after a
+stop. The folded maintenance rail has a rocket icon with a `wait` dot. The URL
+fragment holds the window and the run (`#oneshot/spec:<repo>`,
+`#oneshot/run:<id>`, `#oneshot/new`), so the browser's back works and going
+back to the oneshot window reopens the run last shown. Maintenance's
+`[새 프로젝트]` opens the start form there.
+
+The window is laid out for 1920 × 1080 first. Two columns: the run list
+(`17rem`) and the run.
+
+| Area | Where | What |
+| --- | --- | --- |
+| Run list | Left | Three groups: `결정이 필요한 것` (label in `wait`), `도는 중`, and `끝남` folded. Each row: name (code) with `n/18`, then the stage, or `멈춤 · <stage>` in `wait`. No dots or bars: the group says what the row needs |
+| Header | Top of the run | Name (code, 17px), the sentence, the fixed models at the right, and the spine: the eighteen stages as ticks under five phases — filled behind, solid now (`wait` when it needs the owner, `progress` when it runs), outlined ahead where the owner decides |
+| Lead | Top-left of the stage | Stage name (20px) with a badge — `멈춤` and `결정 필요` in `wait`, `진행 중` in `progress` — and one line on what the stage does |
+
+Each stage takes the layout its work needs rather than one shared column:
+
+| Layout | Stages | Shape |
+| --- | --- | --- |
+| Split | Conversation, R1–R3, board, bootstrap | The work on the left, what it makes or rests on in a `34rem` side (`24rem` under 1500px), each scrolling on its own. The conversation fills the height with its answer box at the bottom beside the requirements and stack it gathered; a gate sheet reads wide beside its decisions; the board's columns sit beside the first screen they make |
+| Compare | Intent, environment card | Two blocks side by side: the owner's sentence in large type beside what the agent understood; the card beside what confirming it makes outside |
+| Top | Stop, working stages, summary | One column under the lead, `60rem` at most; the summary's stat tiles and gate table take `72rem` |
+| Centre | Start form | The form alone in the middle of the empty window |
+
+A decision that sends (`제출`, `보드 제출`, `맞다`, `확정하고 만들기`, `재개`) is
+the `wait` button at `36px`; in a split side it stays at the bottom while the
+rest scrolls.
+
+Under 1100px the run list becomes a drawer behind `실행 목록` (Escape and the
+scrim close it), the models leave the header, and a split's side goes under
+its work so the window scrolls as one. Measured on 2026-11-12 at 1920, 1440,
+1000 and 400px on every stage: no horizontal overflow.
+
+The window adds no type levels beyond the lead's 20px: label for phase, group
+and side names, body for the sentence and stage line, code for run names and
+ids, meta for counts.
+
 ## Color
 
 Neutral background with two accent colors. Selected by the user on 2026-09-25.
@@ -179,6 +234,16 @@ The dot for a task waiting for approval is `wait` instead of the status color. W
 ### A question's run
 
 No new colours (Jev stage 9, 2026-09-27). Every state is also a mark and a word, so none rests on colour: the stepper is `✓` passed, `●` now, `○` to come; evidence support is `✓` supported (`ok`), `?` unverified, `≠` conflict, `!` untrusted, `·` not cited (all `ink-soft`). `warn` stays for failure only — a cancelled run is `⏹ 멈춤` in `ink-soft`, since stopping is a person's choice, not a fault. On the run's map layer a seed is the large dot, a bridge the dashed one, cited evidence the outlined one, said in a legend above the path list.
+
+### Oneshot progress
+
+`progress` is indigo, used only in the oneshot window: each run row's 2px bar
+and the current stage's `●`. It sits apart from `ok` blue, so how far a run
+has come never reads as something to press; `wait` amber still marks a run or
+stage waiting for the owner, and a stopped run says `멈춤` in `wait`. The user
+picked indigo over the shared blue and a neutral ink on 2026-11-11. Contrast
+of the mark on its highlighted row is 9.24 in light and 7.55 in dark; the bar
+on its track is 7.61 and 6.48.
 
 ### Map
 

@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react'
-import { Btn, Modal } from '@/components/Modal'
+import { Btn } from '@/components/Modal'
+import { Fault, GO, Halt, Split, Title, Top } from '@/components/OneshotSpec'
 import { Toolbar } from '@/components/Toolbar'
 import { browseFolder, get, getLoopSettings, getOptions, json, post, type Options } from '@/lib/api'
 import { remote } from '@/lib/mobile'
-import { ModelsLine, OneshotSpec } from '@/components/OneshotSpec'
-import { ROLE, oneshotSpecs, stageLabel, type Models, type SpecSummary } from '@/lib/oneshot'
+import { ROLE, type Models } from '@/lib/oneshot'
+import { cn } from '@/lib/utils'
 
 type OneshotField = {
   options?: string[]; enabled?: string[]; text?: boolean; asked?: boolean; default: string
 }
-type OneshotRun = {
+export type OneshotRun = {
   id: string
   state: 'intake' | 'environment' | 'bootstrap' | 'spec'
   working: string | null
@@ -30,7 +31,7 @@ type OneshotRun = {
 }
 
 const answer = (r: Response) => json<OneshotRun>(r, '원샷')
-const api = {
+export const api = {
   browseFolder,
   oneshotRuns: () => get('/api/oneshot').then((r) => json<{ runs: OneshotRun[] }>(r, '원샷 목록')),
   oneshotRun: (id: string) => get(`/api/oneshot/${id}`).then(answer),
@@ -43,10 +44,10 @@ const api = {
   resumeOneshot: (id: string, adopt = false) => post(`/api/oneshot/${id}/resume`, { adopt }).then(answer),
 }
 
-/** The oneshot run's minimum screen (`docs/plans/oneshot/2-bootstrap.md`):
+/** A oneshot run's S1 parts (`docs/plans/oneshot/2-bootstrap.md`), shown in the oneshot window:
  *  the intake form, the restatement beside the owner's sentence, the
  *  environment card and the bootstrap's progress. Every stop shows its reason
- *  and `[재개]`. The server owns every rule; this screen only shows and asks. */
+ *  and `[재개]`. The server owns every rule; these parts only show and ask. */
 
 const LABEL: Record<string, string> = {
   os_now: '지금 쓰는 OS', os_later: '다른 OS 에서도', auth: '로그인',
@@ -58,7 +59,7 @@ const STEP: Record<string, string> = {
   recheck: '이름 다시 확인', folder: '폴더', files: '기본 파일', commit: '첫 커밋', register: '앱에 연결',
   remote: 'GitHub 저장소', origin: 'origin 연결', publish: 'main push', spec: '명세 작업 공간',
 }
-const STOP: Record<string, string> = {
+export const STOP: Record<string, string> = {
   block: '모델 답을 쓸 수 없었다', folder: '폴더나 이름 문제', github: 'GitHub 문제', connect: '연결을 확인해야 한다',
   restart: '서버가 다시 켜져 멈췄다',
 }
@@ -68,87 +69,27 @@ const WORKING: Record<string, string> = {
 
 const error = (err: unknown) => String(err instanceof Error ? err.message : err)
 
-export function Oneshot({ onClose, repo: picked = '' }: { onClose: () => void; repo?: string }) {
-  const [run, setRun] = useState<OneshotRun | null>(null)
-  const [repo, setRepo] = useState(picked)
-  const [open, setOpen] = useState<OneshotRun[]>([])
-  const [later, setLater] = useState<SpecSummary[]>([])
+export type Act = (fn: () => Promise<OneshotRun>) => Promise<void>
+
+/** One request at a time: what the server answers goes to `done`, a refusal to `fault`. */
+export function useAct(done: (run: OneshotRun) => void) {
   const [fault, setFault] = useState('')
   const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    api.oneshotRuns().then((d) => setOpen(d.runs)).catch((err) => setFault(error(err)))
-    oneshotSpecs().then((d) => setLater(d.specs)).catch((err) => setFault(error(err)))
-  }, [])
-
-  // While a stage runs on the server, read the run until it settles.
-  const id = run?.id
-  const working = !!run?.working
-  useEffect(() => {
-    if (!id || !working) return
-    const timer = window.setInterval(() => {
-      api.oneshotRun(id).then(setRun).catch((err) => setFault(error(err)))
-    }, 1500)
-    return () => window.clearInterval(timer)
-  }, [id, working])
-
-  async function act(fn: () => Promise<OneshotRun>) {
+  const act: Act = async (fn) => {
     setFault('')
     setBusy(true)
     try {
-      setRun(await fn())
+      done(await fn())
     } catch (err) {
       setFault(error(err))
     } finally {
       setBusy(false)
     }
   }
-
-  return (
-    <Modal title="새 프로젝트 — 원샷" wide locked={busy} onClose={onClose}>
-      <div className="flex flex-col gap-4">
-        {fault && <p role="alert" className="whitespace-pre-wrap rounded-md bg-destructive/10 px-3 py-2 text-destructive">{fault}</p>}
-        {repo && <OneshotSpec repo={repo} />}
-        {!repo && !run && <Intake open={open} later={later} busy={busy} act={act} pick={setRun} pickSpec={setRepo} />}
-        {!repo && run && <Body run={run} busy={busy} act={act} />}
-      </div>
-    </Modal>
-  )
+  return { fault, setFault, busy, act }
 }
 
-/** The runs past S1, a row above the project list: each opens in the oneshot window, marked when it waits. */
-export function OneshotRail({ open }: { open: (repo: string) => void }) {
-  const [runs, setRuns] = useState<SpecSummary[]>([])
-  useEffect(() => {
-    const read = () => { oneshotSpecs().then((d) => setRuns(d.specs.filter((s) => s.stage !== 'done'))).catch(() => setRuns([])) }
-    read()
-    // A worker moving a run on (an automatic stage reaching a gate) saves its spec, which the feed announces;
-    // a feed that reconnects or resyncs announces no single spec, so the rail reads again then too.
-    const on = ['focus', 'spec-changed', 'server-resync']
-    on.forEach((name) => window.addEventListener(name, read))
-    return () => on.forEach((name) => window.removeEventListener(name, read))
-  }, [])
-  if (!runs.length) return null
-  return (
-    <nav aria-label="원샷 실행" className="flex flex-wrap gap-1.5 border-b border-border px-5 py-2 text-[12.5px]">
-      {runs.map((s) => (
-        <button key={s.repo} type="button" onClick={() => open(s.repo)}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 hover:bg-secondary">
-          {s.waits && <span aria-label="결정을 기다린다" className="size-2 rounded-full bg-wait" />}
-          <span className="font-mono">{s.repo}</span>
-          <span className="text-muted-foreground">{s.stopped ? '멈춤' : stageLabel(s.stage)}</span>
-        </button>
-      ))}
-    </nav>
-  )
-}
-
-type Act = (fn: () => Promise<OneshotRun>) => Promise<void>
-
-function Intake({ open, later, busy, act, pick, pickSpec }: {
-  open: OneshotRun[]; later: SpecSummary[]; busy: boolean; act: Act; pick: (run: OneshotRun) => void
-  pickSpec: (repo: string) => void
-}) {
+export function Intake({ busy, act }: { busy: boolean; act: Act }) {
   const [sentence, setSentence] = useState('')
   const [path, setPath] = useState('')
   const [typing, setTyping] = useState(remote)
@@ -177,39 +118,19 @@ function Intake({ open, later, busy, act, pick, pickSpec }: {
 
   return (
     <>
-      {(open.length > 0 || later.length > 0) && (
-        <section className="flex flex-col gap-1.5">
-          <h3 className="font-semibold">끝나지 않은 실행</h3>
-          {later.filter((s) => s.stage !== 'done').map((s) => (
-            <button key={s.repo} type="button" onClick={() => pickSpec(s.repo)}
-              className="truncate rounded-md border border-border px-3 py-2 text-left hover:bg-secondary">
-              {s.waits && <span aria-label="결정을 기다린다" className="mr-1.5 inline-block size-2 rounded-full bg-wait" />}
-              {s.repo}
-              <span className="ml-2 text-muted-foreground">{s.stopped ? `멈춤 — ${s.stopped.reason}` : stageLabel(s.stage)}</span>
-            </button>
-          ))}
-          {open.map((r) => (
-            <button key={r.id} type="button" onClick={() => pick(r)}
-              className="truncate rounded-md border border-border px-3 py-2 text-left hover:bg-secondary">
-              {r.identity?.name ?? r.intent?.name ?? r.sentence}
-              <span className="ml-2 text-muted-foreground">{r.stopped ? `멈춤 — ${STOP[r.stopped.reason] ?? r.stopped.reason}` : r.state}</span>
-            </button>
-          ))}
-        </section>
-      )}
-      <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void act(() => api.startOneshot(sentence, path, models)) }}>
+      <form className="flex flex-col gap-5" onSubmit={(e) => { e.preventDefault(); void act(() => api.startOneshot(sentence, path, models)) }}>
         <label className="flex flex-col gap-1.5">
           <span className="font-semibold">무엇을 만들고 싶은가</span>
           <textarea value={sentence} onChange={(e) => setSentence(e.target.value)} rows={4} maxLength={2000}
             placeholder="한두 문장이면 된다. 예: 동네 독서 모임의 책 투표와 모임 일정을 한곳에서 관리하고 싶다"
-            className="rounded-md border border-input bg-background px-2 py-1.5 text-foreground" />
+            className={`${field} py-2 text-[15px]`} />
         </label>
         <div className="flex flex-col gap-1.5">
           <span className="font-semibold">폴더</span>
           {typing ? (
             <input aria-label="비어 있는 폴더 경로" value={path} onChange={(e) => setPath(e.target.value)}
               placeholder="비어 있는 폴더 경로 — 비우면 작업 공간에 새로 만든다"
-              className="h-7 rounded-md border border-input bg-background px-2 font-mono text-[12px] text-foreground" />
+              className={`${field} h-9 font-mono text-[12.5px]`} />
           ) : (
             <div className="flex items-center gap-2">
               <Btn onClick={() => void find()} disabled={busy}>빈 폴더 고르기</Btn>
@@ -238,109 +159,131 @@ function Intake({ open, later, busy, act, pick, pickSpec }: {
   )
 }
 
-function Body({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act }) {
-  if (run.state === 'spec') {
+/** A run before S2: its stop, what runs, or what it asks, each in its own layout. Past the bootstrap the
+ *  window opens its spec instead. */
+export function Body({ run, busy, act, fault }: { run: OneshotRun; busy: boolean; act: Act; fault: string }) {
+  if (run.stopped || run.working) {
     return (
-      <>
-        <p role="status">
-          저장소 <span className="font-mono">{run.spec?.repo}</span> 를 만들고 main 에 올렸다. 명세는 <span className="font-mono">{run.spec?.id}</span> 브랜치의
-          작업 공간에서 이어진다.
-        </p>
-        {run.spec && <OneshotSpec repo={run.spec.repo} />}
-      </>
+      <Top>
+        <Fault text={fault} />
+        {run.stopped ? <Stopped run={run} busy={busy} act={act} />
+          : <p role="status" className="text-muted-foreground">{WORKING[run.working!] ?? run.working}</p>}
+        {run.state === 'bootstrap' && <Steps run={run} />}
+      </Top>
     )
   }
-  return (
-    <>
-      <ModelsLine models={run.models} />
-      {run.stopped && <Stopped run={run} busy={busy} act={act} />}
-      {run.working && <p role="status" className="text-muted-foreground">{WORKING[run.working] ?? run.working}</p>}
-      {run.state === 'intake' && run.intent && !run.working && !run.stopped && <Restated run={run} busy={busy} act={act} />}
-      {run.state === 'environment' && run.profile && !run.working && !run.stopped && <Card run={run} busy={busy} act={act} />}
-      {run.state === 'bootstrap' && <Steps run={run} />}
-    </>
-  )
+  if (run.state === 'intake' && run.intent) return <Restated run={run} busy={busy} act={act} fault={fault} />
+  if (run.state === 'environment' && run.profile) return <Card run={run} busy={busy} act={act} fault={fault} />
+  if (run.state === 'bootstrap') {
+    return (
+      <Split label="저장소 만들기" sideLabel="만들어지는 것" side={<>
+        <Title><span>만들어지는 것</span></Title>
+        <Facts run={run} />
+      </>}>
+        <Top><Fault text={fault} /><Steps run={run} /></Top>
+      </Split>
+    )
+  }
+  return <Top><Fault text={fault} /></Top>
 }
 
 function Stopped({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act }) {
   const s = run.stopped!
   return (
-    <section role="alert" className="flex flex-col gap-2 rounded-md border border-wait/40 bg-wait/10 px-3 py-2">
-      <p className="font-semibold">멈췄다 — {STOP[s.reason] ?? s.reason}</p>
-      <p className="whitespace-pre-wrap">{s.detail}</p>
-      <div className="flex justify-end gap-2">
-        {s.reason === 'github' && (
-          <Btn disabled={busy} onClick={() => void act(() => api.resumeOneshot(run.id, true))}
-            title="GitHub 에 이미 있는 같은 이름의 빈 저장소를 이 실행의 것으로 쓴다. 커밋이 하나라도 있으면 서버가 거절한다">
-            이어 쓰기
-          </Btn>
-        )}
-        <Btn tone="primary" disabled={busy} onClick={() => void act(() => api.resumeOneshot(run.id))}>재개</Btn>
-      </div>
-    </section>
+    <Halt title={STOP[s.reason] ?? s.reason} detail={s.detail}>
+      <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resumeOneshot(run.id))}>재개</Btn>
+      {s.reason === 'github' && (
+        <Btn disabled={busy} onClick={() => void act(() => api.resumeOneshot(run.id, true))}
+          title="GitHub 에 이미 있는 같은 이름의 빈 저장소를 이 실행의 것으로 쓴다. 커밋이 하나라도 있으면 서버가 거절한다">
+          이어 쓰기
+        </Btn>
+      )}
+    </Halt>
   )
 }
 
-function Restated({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act }) {
+/** Where the run will land: the repository, its folder and who can see it. */
+function Facts({ run, draft }: { run: OneshotRun; draft?: Record<string, string | number> }) {
+  const v = draft ?? run.profile ?? {}
+  const owner = String(v.github_owner || run.identity?.owner || '')
+  const visibility = v.visibility === 'public' ? '공개' : v.visibility === 'private' ? '비공개' : '정하지 않음'
+  return (
+    <dl className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-2.5">
+      <dt className="text-muted-foreground">GitHub</dt><dd className="break-all font-mono text-[12.5px]">{owner}/{run.identity?.name}</dd>
+      <dt className="text-muted-foreground">공개 범위</dt><dd>{visibility}</dd>
+      <dt className="text-muted-foreground">로컬 폴더</dt><dd className="break-all font-mono text-[12.5px]">{run.identity?.path}</dd>
+      <dt className="text-muted-foreground">첫 커밋</dt><dd>main 에 push 한다</dd>
+    </dl>
+  )
+}
+
+const field = 'rounded-md border border-input bg-background px-3 text-foreground max-[560px]:text-base'
+
+/** The owner's sentence in large type beside what the agent understood of it. */
+function Restated({ run, busy, act, fault }: { run: OneshotRun; busy: boolean; act: Act; fault: string }) {
   const intent = run.intent!
   const [name, setName] = useState(intent.name)
   const [edit, setEdit] = useState('')
   return (
-    <section className="flex flex-col gap-3">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="flex flex-col gap-1">
-          <h3 className="font-semibold">내가 쓴 말</h3>
-          <p className="whitespace-pre-wrap text-muted-foreground">{run.sentence}</p>
-        </div>
-        <div className="flex flex-col gap-1">
-          <h3 className="font-semibold">에이전트가 이해한 것</h3>
+    <Top wide>
+      <Fault text={fault} />
+      <div className="grid max-w-[80rem] grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] items-start gap-12 max-[1100px]:grid-cols-1 max-[1100px]:gap-6">
+        <section aria-label="내가 쓴 말" className="flex flex-col gap-3">
+          <Title><span>내가 쓴 말</span></Title>
+          <p className="whitespace-pre-wrap break-keep font-heading text-[22px] leading-snug text-balance max-[560px]:text-[18px]">{run.sentence}</p>
+        </section>
+        <section aria-label="에이전트가 이해한 것" className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6 max-[560px]:p-4">
+          <Title><span>에이전트가 이해한 것</span></Title>
           <p className="whitespace-pre-wrap">{intent.restated}</p>
-          <p><span className="text-muted-foreground">쓰는 사람</span> {intent.users}</p>
-          <p><span className="text-muted-foreground">첫 화면</span> {intent.first_screen}</p>
-          <p><span className="text-muted-foreground">종류</span> <span className="font-mono">{intent.kind}</span></p>
-        </div>
+          <dl className="grid grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-2">
+            <dt className="text-muted-foreground">쓰는 사람</dt><dd>{intent.users}</dd>
+            <dt className="text-muted-foreground">첫 화면</dt><dd>{intent.first_screen}</dd>
+            <dt className="text-muted-foreground">종류</dt><dd className="font-mono">{intent.kind}</dd>
+          </dl>
+          {intent.unsupported && (
+            <p className="rounded-md bg-wait/10 px-3 py-2">
+              <span className="font-mono">{intent.kind}</span> 는 이 버전에서 만들 수 없다 — 지금은 웹앱만. 웹앱으로 만들고 싶다면 아래에 그렇게 고쳐 적어라.
+            </p>
+          )}
+          <label className="flex flex-col gap-1.5">
+            <span className="text-muted-foreground">저장소 이름</span>
+            <input value={run.picked ? run.picked.split(/[\\/]/).pop() : name} disabled={!!run.picked}
+              onChange={(e) => setName(e.target.value)}
+              title={run.picked ? '고른 폴더의 이름을 쓴다' : undefined}
+              className={`${field} h-9 font-mono text-[12.5px]`} />
+          </label>
+          <textarea aria-label="고칠 곳" value={edit} onChange={(e) => setEdit(e.target.value)} rows={2}
+            placeholder="틀린 곳이 있으면 여기에 적고 [고쳐 달라]" className={`${field} py-2`} />
+          <div className="flex justify-end gap-2">
+            <Btn className={GO} disabled={busy || !edit.trim()} onClick={() => void act(() => api.answerIntent(run.id, { confirm: false, edit }))}>고쳐 달라</Btn>
+            <Btn tone="wait" className={GO} disabled={busy || !!intent.unsupported}
+              onClick={() => void act(() => api.answerIntent(run.id, { confirm: true, name }))}>맞다</Btn>
+          </div>
+        </section>
       </div>
-      {intent.unsupported && (
-        <p className="rounded-md bg-wait/10 px-3 py-2">
-          <span className="font-mono">{intent.kind}</span> 는 이 버전에서 만들 수 없다 — 지금은 웹앱만. 웹앱으로 만들고 싶다면 아래에 그렇게 고쳐 적어라.
-        </p>
-      )}
-      <label className="flex items-center gap-2">
-        <span className="shrink-0 text-muted-foreground">저장소 이름</span>
-        <input value={run.picked ? run.picked.split(/[\\/]/).pop() : name} disabled={!!run.picked}
-          onChange={(e) => setName(e.target.value)}
-          title={run.picked ? '고른 폴더의 이름을 쓴다' : undefined}
-          className="h-7 flex-1 rounded-md border border-input bg-background px-2 font-mono text-[12px] text-foreground" />
-      </label>
-      <textarea value={edit} onChange={(e) => setEdit(e.target.value)} rows={2}
-        placeholder="틀린 곳이 있으면 여기에 적고 [고쳐 달라]"
-        className="rounded-md border border-input bg-background px-2 py-1.5 text-foreground" />
-      <div className="flex justify-end gap-2">
-        <Btn disabled={busy || !edit.trim()} onClick={() => void act(() => api.answerIntent(run.id, { confirm: false, edit }))}>고쳐 달라</Btn>
-        <Btn tone="primary" disabled={busy || !!intent.unsupported}
-          onClick={() => void act(() => api.answerIntent(run.id, { confirm: true, name }))}>맞다</Btn>
-      </div>
-    </section>
+    </Top>
   )
 }
 
-function Card({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act }) {
+/** The environment card beside what confirming it makes outside: a repository, a folder, a push. */
+function Card({ run, busy, act, fault }: { run: OneshotRun; busy: boolean; act: Act; fault: string }) {
   const [draft, setDraft] = useState<Record<string, string | number>>(run.profile!)
-  const owner = String(draft.github_owner || run.identity?.owner || '')
-  const visibility = draft.visibility === 'public' ? '공개' : draft.visibility === 'private' ? '비공개' : '(공개 범위 미정)'
   return (
-    <section className="flex flex-col gap-3">
-      <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
+    <Top wide>
+      <Fault text={fault} />
+      <div className="grid max-w-[80rem] grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] items-start gap-10 max-[1100px]:grid-cols-1 max-[1100px]:gap-6">
+      <section aria-label="환경 카드" className="flex flex-col gap-5 rounded-xl border border-border bg-card p-6 max-[560px]:p-4">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-4 max-[560px]:grid-cols-1">
         {Object.entries(run.schema).map(([key, field]) => {
           const why = run.proposed[key]?.why
           const value = draft[key] ?? ''
           const set = (v: string) => setDraft({ ...draft, [key]: v })
           return (
-            <label key={key} className="flex flex-col gap-0.5">
+            <label key={key} className="flex flex-col gap-1">
               <span className="text-muted-foreground">{LABEL[key] ?? key}{field.asked && ' — 직접 정한다'}</span>
               {field.options ? (
                 <select value={String(value)} onChange={(e) => set(e.target.value)}
-                  className="h-7 rounded-md border border-input bg-background px-1.5 font-mono text-[12px] text-foreground">
+                  className="h-9 rounded-md border border-input bg-background px-2 font-mono text-[12.5px] text-foreground max-[560px]:text-base">
                   {value === '' && <option value="">고르기</option>}
                   {field.options.map((o) => (
                     <option key={o} value={o} disabled={!!field.enabled && !field.enabled.includes(o)}>
@@ -351,9 +294,9 @@ function Card({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act }) 
               ) : (
                 <input type="text" value={String(value)}
                   onChange={(e) => set(e.target.value)}
-                  className="h-7 rounded-md border border-input bg-background px-2 font-mono text-[12px] text-foreground" />
+                  className="h-9 rounded-md border border-input bg-background px-3 font-mono text-[12.5px] text-foreground max-[560px]:text-base" />
               )}
-              {why && <span className="text-[11.5px] text-faint">{why}</span>}
+              {why && <span className="text-[12px] text-faint">{why}</span>}
             </label>
           )
         })}
@@ -364,26 +307,32 @@ function Card({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act }) 
           {run.warnings.map((w) => <li key={w} className="text-wait">{w}</li>)}
         </ul>
       )}
-      <p className="rounded-md border border-border px-3 py-2">
-        확정하면 바깥에 이렇게 남는다: GitHub 에 <span className="font-mono">{owner}/{run.identity?.name}</span> 저장소를 {visibility}로
-        만들고 첫 커밋을 main 에 push 한다. 로컬 폴더는 <span className="font-mono">{run.identity?.path}</span>.
-      </p>
       <div className="flex justify-end gap-2">
-        <Btn disabled={busy} onClick={() => void act(() => api.saveProfile(run.id, draft, false))}
+        <Btn className={GO} disabled={busy} onClick={() => void act(() => api.saveProfile(run.id, draft, false))}
           title="저장하고 문제를 다시 확인한다">저장</Btn>
-        <Btn tone="primary" disabled={busy} onClick={() => void act(() => api.saveProfile(run.id, draft, true))}>확정하고 만들기</Btn>
+        <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.saveProfile(run.id, draft, true))}>확정하고 만들기</Btn>
       </div>
-    </section>
+      </section>
+      <section aria-label="확정하면 바깥에 남는 것" className="flex flex-col gap-4 rounded-xl border border-border p-6 max-[560px]:p-4">
+        <Title><span>확정하면 바깥에 이렇게 남는다</span></Title>
+        <Facts run={run} draft={draft} />
+      </section>
+      </div>
+    </Top>
   )
 }
 
 function Steps({ run }: { run: OneshotRun }) {
   const next = run.steps_order.find((s) => !run.steps[s])
   return (
-    <ol className="flex flex-col gap-1">
+    <ol aria-label="저장소 만들기 단계" className="flex flex-col">
       {run.steps_order.map((s) => (
-        <li key={s} className={run.steps[s] ? '' : s === next ? 'font-semibold' : 'text-muted-foreground'}>
-          {run.steps[s] ? '✓' : s === next ? '→' : '·'} {STEP[s] ?? s}
+        <li key={s} aria-current={s === next ? 'step' : undefined}
+          className={cn('grid grid-cols-[1.5rem_minmax(0,1fr)] border-b border-border py-2.5 last:border-b-0',
+            run.steps[s] ? '' : s === next ? 'font-semibold' : 'text-muted-foreground')}>
+          <span aria-hidden className={run.steps[s] ? 'text-progress' : s === next ? 'text-progress' : 'text-faint'}>
+            {run.steps[s] ? '✓' : s === next ? '→' : '·'}</span>
+          <span>{STEP[s] ?? s}</span>
         </li>
       ))}
     </ol>

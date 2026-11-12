@@ -276,8 +276,8 @@ English, with the instruction that every string meant for the screen is
 written in Korean directly.
 
 The screen in this step is the minimum to drive it: a `새 프로젝트` entry on
-the project rail, the intake form, the restatement panel and the environment
-card. Gate sheets and the drag board are step 5.
+the project pane, the intake form, the restatement panel and the environment
+card, all in the oneshot window. Gate sheets and the drag board are step 5.
 
 ## Completion
 

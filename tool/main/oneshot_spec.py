@@ -517,8 +517,11 @@ def resume(repo: str) -> dict:
             return view(spec_of(repo))
         if o["stage"] == "review":   # a worker, started under the lock like the stages above
             from . import oneshot_review   # it imports this module
-            oneshot_review.resume(repo)
-            return view(spec_of(repo))
+            if not oneshot_review.capped(o):
+                oneshot_review.resume(repo)
+                return view(spec_of(repo))
+            # The cap stopped it on a refused HEAD: the findings go to the build, the refusals counted afresh.
+            o = saved(repo, oneshot={"stage": "build", "refused": 0})["oneshot"]
         saved(repo, oneshot={"working": o["stage"], "stopped": None})   # a second resume meanwhile is refused
     from . import oneshot_build   # it imports this module
     oneshot_build.resume(repo)   # outside the lock, as after the approval
