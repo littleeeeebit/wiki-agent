@@ -116,6 +116,26 @@ def test_a_refusal_goes_to_the_build_each_time_until_the_round_cap_stops_the_run
     assert "음수 금액을 받는다" in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
 
 
+@pytest.mark.parametrize("raised", [False, True])
+def test_resume_routes_on_how_the_review_stopped_not_on_todays_cap(reviewed, raised):
+    tree, head, sent = reviewed
+    with patch.object(loop, "settings", lambda: {"rounds": 1, "review_effort": "high"}):
+        _, asking = answers(verdict(head, "refuse", P1))
+        with asking:
+            oneshot_review.review("budget")
+    assert o()["stopped"]["reason"] == "review" and o()["stopped"]["capped"] == head and not sent
+    if raised:   # the cap stop restarted instead: no longer a cap stop, so the review reads the HEAD again
+        oneshot_spec.saved("budget", oneshot={"working": "review"})
+        oneshot_spec.recover()
+        assert o()["stopped"]["reason"] == "restart" and o()["refused"] == 1
+    routed = []
+    with patch.object(loop, "settings", lambda: {"rounds": 12, "review_effort": "high"}), \
+         patch.object(oneshot_build, "resume", lambda repo: routed.append("build")), \
+         patch.object(oneshot_review, "begin", lambda repo: routed.append("review")):
+        oneshot_spec.resume("budget")   # raising the cap after the stop changes nothing
+    assert routed == (["review"] if raised else ["build"])
+
+
 def test_a_head_other_than_the_one_the_build_passed_is_not_reviewed(reviewed):
     tree, _, _ = reviewed
     (tree / "late.py").write_text("x = 1\n", encoding="utf-8")

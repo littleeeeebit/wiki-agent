@@ -198,9 +198,12 @@ def decided(repo: str, store, spec: dict, found: dict):
         return lambda: oneshot_spec.handoff(repo, "split") or True   # the split holds the tree itself
     refused = int(o.get("refused") or 0) + 1
     if refused >= cap():
-        store.put(reviews=reviews, refused=refused)
-        store.stop("review", f"백엔드 리뷰가 {refused}번 거부했다 — " +
-                   " / ".join(f"[{f['severity']}] {f['location']} {f['reason']}" for f in found["findings"][:5]))
+        detail = f"백엔드 리뷰가 {refused}번 거부했다 — " + \
+            " / ".join(f"[{f['severity']}] {f['location']} {f['reason']}" for f in found["findings"][:5])
+        with oneshot._lock:   # one write: the stop names the HEAD it refused at the cap (`capped`), so a server
+            # dying in between never leaves a refusal behind a `restart`, and a later cap change moves nothing
+            store.put(reviews=reviews, refused=refused, working=None, stopped={
+                "reason": "review", "detail": detail, "state": store.get()[store.state], "capped": found["head"]})
         return None
     # `working` names the build before it is sent: a server that dies in between leaves it for `recover`.
     spec = oneshot_spec.saved(repo, oneshot={"stage": "build", "reviews": reviews, "refused": refused,
@@ -250,9 +253,11 @@ def standing(o: dict) -> dict | None:
 
 
 def capped(o: dict) -> bool:
-    """Stopped at the cap with the built HEAD refused: `[재개]` repairs it, a second reading would only repeat."""
+    """Stopped at the cap with the built HEAD refused: `[재개]` repairs it, a second reading would only repeat.
+    Read off the stop itself, never today's cap: any other stop of the review reads the HEAD again."""
 
-    return int(o.get("refused") or 0) >= cap() and standing(o) is not None
+    last = standing(o)
+    return last is not None and (o.get("stopped") or {}).get("capped") == last["head"]
 
 
 def resume(repo: str) -> None:

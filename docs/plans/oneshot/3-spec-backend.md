@@ -368,8 +368,10 @@ any turn (`work.dispatch`); after a refusal it waits behind the build turn:
    contract-test check and the gate run again; the review runs again on
    the new HEAD with a new frozen input, and so on until an approval.
    The refusal that reaches the Review Loop's round cap (`rounds` in its
-   settings) stops the run with `review`; `[재개]` counts refusals afresh
-   and sends that refusal's findings to the build.
+   settings) stops the run with `review`, the stop naming the HEAD it
+   refused; `[재개]` of that stop counts refusals afresh and sends that
+   refusal's findings to the build. Any other stop of the review (a restart,
+   a turn that failed) reads the current HEAD again, whatever the cap is now.
 5. An approval of the HEAD the input named moves the run to `split`. Every
    verdict is kept in `oneshot.reviews`.
 
