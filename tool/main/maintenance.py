@@ -130,9 +130,11 @@ def set_aside(path: Path, spec: dict) -> bool:
     never away: a person's document edit made while preparation ran is kept there too. Anything
     else in the tree keeps the stop; a fresh preparation follows the gate."""
     receipt = spec.get("maintenance") or {}
+    if receipt.get("state") != "interrupted":
+        return False
     repo = query.channels.repo_for(spec["repo"]) or path
     saved = comparable(receipt.get("outputs"), repo)
-    if receipt.get("state") != "interrupted" or git(path, "rev-parse", "HEAD") != receipt.get("head")             or saved != outputs(path, repo) or not all(maintained(name) or name == debt.RATCHET for name in saved["files"]):
+    if git(path, "rev-parse", "HEAD") != receipt.get("head") or saved != outputs(path, repo)             or not all(maintained(name) or name == debt.RATCHET for name in saved["files"]):
         return False
     flagged = hidden(path, saved["files"])
     try:

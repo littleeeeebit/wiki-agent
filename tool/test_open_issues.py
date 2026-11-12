@@ -37,6 +37,7 @@ def test_a_closing_answer_is_not_replaced_by_a_completed_background_tasks_follow
 
 
 def test_hub_output_fingerprint_ignores_indexes_rebuilt_by_the_stop_hook(tmp_path):
+    assert not maintenance.set_aside(tmp_path, {})
     path = tmp_path / "hub"
     path.mkdir()
     git(path, "init", "-q")
