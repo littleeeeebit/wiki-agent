@@ -564,7 +564,7 @@ def _kept(old: list, new: list, allowed: set, imports: set[str] = frozenset(), a
     if not at and imports:
         before_other = _binds([statement for statement in old if not isinstance(statement, (ast.Import, ast.ImportFrom))])
         after_other = _binds([statement for statement in new if not isinstance(statement, (ast.Import, ast.ImportFrom))])
-        if "*" in imports or any(before_other[name] != after_other[name] for name in imports):
+        if "*" in imports or any(before_other[name] != after_other[name] or before_other[name] and (name,) not in allowed for name in imports):
             return False
         old, new = refactor_imports.without(old, imports), refactor_imports.without(new, imports)
     before, after = _binds(old), _binds(new)

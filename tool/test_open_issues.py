@@ -125,6 +125,11 @@ def test_an_import_allowance_cannot_replace_a_binding_or_hide_a_wildcard():
     assert not refactor_run._kept(parsed("import engine"), parsed("engine = object()"), set(), {"engine"})
     assert refactor_run._amendable(parsed("def test_a(): assert False"),
                                    parsed("def test_a(): assert False\nfrom helpers import *"), set()) is None
+    old = parsed("def test_keep(): assert False\n\ndef test_other(): assert True")
+    shadowed = parsed("def test_keep(): assert False\n\ndef test_other(): assert True\nfrom math import pi as test_keep")
+    assert refactor_run._amendable(old, shadowed, set()) is None
+    assert not refactor_run._kept(old, shadowed, set(), {"test_keep"})
+    assert refactor_run._kept(old, shadowed, {("test_keep",)}, {"test_keep"})
     kept = refactor_imports.without(parsed("from app import removed, kept"), {"removed"})
     assert kept[0].lineno == 1 and [alias.name for alias in kept[0].names] == ["kept"]
 
