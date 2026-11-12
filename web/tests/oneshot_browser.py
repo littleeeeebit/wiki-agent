@@ -6,6 +6,7 @@ Run after building: python web/tests/oneshot_browser.py
 Serves web/dist with synthetic runs; the sheets are short Markdown like the server's, never a real run.
 """
 
+import asyncio
 import copy
 import re
 import sys
@@ -81,6 +82,7 @@ def main():
     views["talk-demo"]["oneshot"]["talk"] = TALK
     posted = []
     started: dict = {}
+    slow = {"start": 0.0, "fail": 0}   # a start answer held back, and S1 list reads that fail
     fake = FastAPI()
 
     @fake.get("/shot.png")
@@ -92,6 +94,7 @@ def main():
         if path == "oneshot-specs":   # one broken item drops alone; the rest still shows
             return {"specs": [None, *({k: v[k] for k in ("repo", "stage", "working", "stopped", "waits")} for v in views.values())]}
         if path == "oneshot" and request.method == "POST":
+            await asyncio.sleep(slow["start"])
             body = await request.json()
             posted.append(("", "start", body))
             started.update(id="0123456789abcdef", state="intake", working="intake", stopped=None, picked="",
@@ -99,6 +102,9 @@ def main():
                            identity=None, steps={}, spec=None, errors=[], warnings=[], schema={}, steps_order=[])
             return started
         if path == "oneshot":
+            if slow["fail"]:   # a read that fails once, as a dropped connection would
+                slow["fail"] -= 1
+                return JSONResponse({"detail": "synthetic-list-failure"}, status_code=500)
             return {"runs": [None, *([started] if started else [])]}
         if path == f"oneshot/{started.get('id')}":
             return started
@@ -144,6 +150,19 @@ def main():
         expect(need.get_by_role("button").filter(has_text=re.compile(r"^demo"))).to_be_visible()
         expect(need.get_by_role("button").filter(has_text="stopped-demo")).to_contain_text("멈춤 · 화면 비평")
         expect(rail.get_by_role("region", name="도는 중").get_by_role("button").filter(has_text="auto-demo")).to_be_visible()
+
+        # The run opened by default stays when the list reorders under it, with what was typed there.
+        expect(page.locator(".oneshot-shell main > header h1")).to_have_text("demo")
+        page.get_by_role("region", name="R1 시트").locator("[data-item=R2]").get_by_role("button", name="고침").click()
+        page.get_by_label("R2 고칠 내용").fill("합계는 달마다 따로 보여라")
+        views["demo"]["waits"] = False   # board-demo is now the first that waits
+        page.evaluate("window.dispatchEvent(new Event('spec-changed'))")
+        expect(need.get_by_role("button").filter(has_text=re.compile(r"^demo"))).to_have_count(0)
+        expect(page.locator(".oneshot-shell main > header h1")).to_have_text("demo")
+        expect(page.get_by_label("R2 고칠 내용")).to_have_value("합계는 달마다 따로 보여라")
+        views["demo"]["waits"] = True
+        page.evaluate("window.dispatchEvent(new Event('spec-changed'))")
+        rail.get_by_role("button").filter(has_text="board-demo").click()   # the sheet below starts fresh
 
         # R1: the stages, per-item decisions, the folded section and its "approve all".
         need.get_by_role("button").filter(has_text=re.compile(r"^demo")).click()
@@ -279,7 +298,17 @@ def main():
         page.get_by_role("option", name="high").click()
         expect(group["구현"].get_by_role("combobox", name="모델")).to_contain_text("Claude 기본")   # apart from 명세
         form.get_by_role("textbox").first.fill("가계부를 만들고 싶다")
+        # A start answer that lands after another run was picked only joins the list; the picked run stays.
+        slow["start"] = 1.5
         form.get_by_role("button", name="시작", exact=True).click()
+        rail = page.get_by_role("navigation", name="원샷 실행")
+        rail.get_by_role("button").filter(has_text="talk-demo").click()
+        new_row = rail.get_by_role("region", name="도는 중").get_by_role("button").filter(has_text="새 실행")
+        expect(new_row).to_be_visible(timeout=5000)
+        expect(page.get_by_role("region", name="요구 대화")).to_be_visible()
+        assert page.url.endswith("#oneshot/spec%3Atalk-demo"), page.url
+        slow["start"] = 0.0
+        new_row.click()
         models = page.locator(".oneshot-shell main > header dd")
         expect(models).to_have_text(["opus · high", "Claude 기본", "codex:gpt-6.1-sol · high", "opus · high (고정)"])
         expect(page.get_by_role("list", name="원샷 단계 1/18").locator("[aria-current=step]")).to_contain_text("하고 싶은 것")
@@ -287,14 +316,21 @@ def main():
         assert posted[-1][2]["models"] == {"spec": {"model": "opus", "effort": "high"}, "build": {"model": "", "effort": ""},
                                            "review": {"model": "codex:gpt-6.1-sol", "effort": "high"}}, posted[-1]
 
-        # The S1 run's row and the count follow what the open pane reads: running, then waiting for [맞다].
-        rail = page.get_by_role("navigation", name="원샷 실행")
-        expect(rail.get_by_role("region", name="도는 중").get_by_role("button").filter(has_text="새 실행")).to_be_visible()
+        # The S1 run's row and the count follow it while another run is open, through a failed list read:
+        # running, then waiting for [맞다].
+        expect(new_row).to_be_visible()
         expect(page.get_by_role("tab", name="원샷").get_by_label("결정이 필요한 실행 3개")).to_be_visible()   # stopped-demo resumed
+        rail.get_by_role("button").filter(has_text="talk-demo").click()
+        slow["fail"] = 1
+        page.wait_for_timeout(3500)   # one 3s re-read fails
+        assert slow["fail"] == 0, slow
+        expect(new_row).to_be_visible()
         started.update(working=None, intent={"restated": "가계부", "kind": "webapp", "name": "budget", "users": "나",
                                              "first_screen": "이번 달 합계"})
-        expect(rail.get_by_role("region", name="결정이 필요한 것").get_by_role("button").filter(has_text="budget")).to_contain_text("하고 싶은 것")
+        waiting = rail.get_by_role("region", name="결정이 필요한 것").get_by_role("button").filter(has_text="budget")
+        expect(waiting).to_contain_text("하고 싶은 것", timeout=8000)
         expect(page.get_by_role("tab", name="원샷").get_by_label("결정이 필요한 실행 4개")).to_be_visible()
+        waiting.click()
         expect(page.locator(".oneshot-shell main h2").first).to_contain_text("결정 필요")
 
         # A bootstrap that finishes while maintenance shows stays out of sight, and opens on the way back.
@@ -310,6 +346,23 @@ def main():
         assert not page.url.split("#", 1)[-1].startswith("oneshot"), page.url
         page.get_by_role("tab", name="원샷").click()
         expect(page.get_by_role("region", name="요구 대화")).to_be_visible()
+
+        # Under 1100px the list is a drawer that holds the keyboard: Tab goes round inside it, Escape gives the
+        # focus back to its toggle, and a run picked there takes the focus to the run's title.
+        page.set_viewport_size({"width": 1000, "height": 800})
+        toggle = page.get_by_role("button", name="실행 목록")
+        toggle.click()
+        inside = "() => !!document.activeElement?.closest('#oneshot-runs')"
+        assert page.evaluate(inside)
+        for key in ["Shift+Tab"] * 3 + ["Tab"] * 25:
+            page.keyboard.press(key)
+            assert page.evaluate(inside), key
+        page.keyboard.press("Escape")
+        expect(toggle).to_be_focused()
+        toggle.click()
+        page.locator("#oneshot-runs [aria-current=page]").focus()
+        page.keyboard.press("Enter")
+        expect(page.locator(".oneshot-shell main > header h1")).to_be_focused()
         browser.close()
     assert not errors, errors
     print("PASS: maintenance counts the runs that need the owner on the switch; the oneshot window groups them apart "
@@ -317,7 +370,9 @@ def main():
           "picture closes alone; the re-shown sheet opens what needs a decision again; the board moves by drag and by "
           "keys; a stopped run resumes; S2 shows its choices and keeps a refused answer; the list follows a saved spec; "
           "the switch keeps the run shown and its draft; [새 프로젝트] opens the start form, which fixes three models "
-          "picked apart; an S1 run's row and the count follow its pane; a broken list item drops alone")
+          "picked apart; a late start answer leaves the picked run; an S1 run's row and the count follow it through "
+          "a failed read; a broken list item drops alone; the run opened by default stays when the list reorders; "
+          "the drawer holds the keyboard")
 
 
 if __name__ == "__main__":

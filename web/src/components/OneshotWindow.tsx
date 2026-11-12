@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Plus, Rocket } from 'lucide-react'
 import { Btn } from '@/components/Modal'
 import { Body, Intake, api, useAct, type OneshotRun } from '@/components/Oneshot'
@@ -109,7 +109,8 @@ export function OneshotWindow() {
   const [held, setHeld] = useState('')   // the run shown when the window was last on screen
   const [drawer, setDrawer] = useState(false)   // the list under 1100px, where it slides over the run
   const readRuns = useCallback(() => {
-    api.oneshotRuns().then((d) => setRuns(rows<OneshotRun>(d?.runs, ['id', 'state']))).catch(() => setRuns([]))
+    // A failed read keeps the list it had, so the rows stay and the 3s re-read below keeps going.
+    api.oneshotRuns().then((d) => setRuns(rows<OneshotRun>(d?.runs, ['id', 'state']))).catch(() => {})
   }, [])
   useEffect(() => {
     readRuns()
@@ -126,10 +127,12 @@ export function OneshotWindow() {
     const timer = window.setInterval(readRuns, 3000)
     return () => window.clearInterval(timer)
   }, [running, readRuns])
-  // Nothing picked: the first run that waits, else the first still going, else the start form. While
-  // maintenance shows, the run shown before stays, so a half-typed answer there survives the look away.
-  const live = key || [...open.filter((s) => s.waits), ...open].map((s) => `spec:${s.repo}`)[0]
+  // Nothing picked: the first run that waits, else the first still going, else the start form. Once a run
+  // is shown it stays until another is picked, so a list that reorders never swaps out a half-typed answer;
+  // while maintenance shows, the run shown before stays too.
+  const first = [...open.filter((s) => s.waits), ...open].map((s) => `spec:${s.repo}`)[0]
     || (early[0] ? `run:${early[0].id}` : 'new')
+  const live = key || (held && held !== 'new' ? held : first)
   const picked = mode === 'main' && held ? held : live
   if (mode === 'oneshot' && held !== live) setHeld(live)
   // Until the pane has read its run, the list's row stands for it.
@@ -137,7 +140,12 @@ export function OneshotWindow() {
   const starting = early.find((r) => `run:${r.id}` === picked)
   const current = picked === 'new' ? FRESH : told?.key === picked ? told.now
     : listed ? fromSpec(listed) : starting ? fromRun(starting) : FRESH
-  const pick = (k: string) => { setDrawer(false); go('oneshot', k) }
+  // A run picked from the drawer takes the focus with it, to the run's title, as the drawer closes over the row.
+  const pick = (k: string) => {
+    if (drawer) requestAnimationFrame(() => document.querySelector<HTMLElement>('.oneshot-shell main h1')?.focus())
+    setDrawer(false)
+    go('oneshot', k)
+  }
   // What the open S1 pane reads is also the list's row for it, so the row and the count move with the pane.
   const onRun = useCallback((run: OneshotRun) => {
     setTold({ key: picked, now: fromRun(run) })
@@ -149,8 +157,23 @@ export function OneshotWindow() {
   useEffect(() => {
     if (!drawer) return
     const wide = window.matchMedia('(min-width: 1100px)')
-    const shut = () => { setDrawer(false); document.querySelector<HTMLElement>('[aria-controls="oneshot-runs"]')?.focus() }
-    const key = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') shut() }
+    // The toggle is inert until the drawer has closed, so the focus goes back to it on the next frame.
+    const shut = () => {
+      setDrawer(false)
+      requestAnimationFrame(() => document.querySelector<HTMLElement>('[aria-controls="oneshot-runs"]')?.focus())
+    }
+    // Tab and Shift+Tab go round the drawer's own controls; the window behind is inert while it is open.
+    const key = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') return shut()
+      if (e.key !== 'Tab') return
+      const stops = [...document.querySelectorAll<HTMLElement>('#oneshot-runs button, #oneshot-runs summary')]
+        .filter((el) => el.offsetParent !== null)
+      if (!stops.length) return
+      const at = stops.indexOf(document.activeElement as HTMLElement)
+      const to = at < 0 ? 0 : (at + (e.shiftKey ? -1 : 1) + stops.length) % stops.length
+      e.preventDefault()
+      stops[to].focus()
+    }
     const grow = () => { if (wide.matches) setDrawer(false) }
     document.querySelector<HTMLElement>('#oneshot-runs [aria-current=page], #oneshot-runs nav button')?.focus()
     window.addEventListener('keydown', key)
@@ -179,7 +202,7 @@ export function OneshotWindow() {
   return (
     <div className="oneshot-shell relative grid h-dvh overflow-hidden bg-background text-foreground grid-cols-[17rem_minmax(0,1fr)]
       max-[1100px]:grid-cols-1 max-[1100px]:grid-rows-[auto_minmax(0,1fr)]">
-      <div className="flex items-center justify-between gap-2.5 border-b border-sidebar-border bg-sidebar px-4 py-2 min-[1100px]:hidden">
+      <div inert={drawer} className="flex items-center justify-between gap-2.5 border-b border-sidebar-border bg-sidebar px-4 py-2 min-[1100px]:hidden">
         <ModeSwitch mode="oneshot" count={need.length} className="flex-[0_1_14rem]" />
         <Btn aria-expanded={drawer} aria-controls="oneshot-runs" onClick={() => setDrawer((o) => !o)}>실행 목록</Btn>
       </div>
@@ -216,7 +239,7 @@ export function OneshotWindow() {
         {picked !== 'new' && (
           <header className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-6 gap-y-0.5 border-b border-border bg-card px-8 pt-4 pb-3.5
             max-[1500px]:px-7 max-[560px]:px-4">
-            <h1 className="truncate font-mono text-[17px] font-semibold">{current.name}</h1>
+            <h1 tabIndex={-1} className="truncate font-mono text-[17px] font-semibold outline-none">{current.name}</h1>
             <ModelsList models={current.models} className="row-span-2 self-start max-[1100px]:hidden" />
             <p title={current.sentence} className="truncate text-muted-foreground max-[1100px]:col-span-2">{current.sentence}</p>
             <Spine now={current} />
@@ -224,7 +247,7 @@ export function OneshotWindow() {
         )}
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           <Lead.Provider value={lead}>
-            {picked === 'new' && <Start />}
+            {picked === 'new' && <Start onStarted={readRuns} />}
             {picked.startsWith('run:') && <RunPane key={picked} id={picked.slice(4)} onRun={onRun} />}
             {picked.startsWith('spec:') && <OneshotSpec key={picked} repo={picked.slice(5)} onView={onView} />}
           </Lead.Provider>
@@ -304,12 +327,21 @@ function Badge({ now }: { now: Now }) {
 }
 
 /** The start form, alone in the middle of an empty window. */
-function Start() {
-  const { fault, busy, act } = useAct((run) => follow(`run:${run.id}`))
+function Start({ onStarted }: { onStarted: () => void }) {
+  // An answer that lands after another run was picked only joins the list; it opens only while this form shows.
+  const shown = useRef(true)
+  useEffect(() => {
+    shown.current = true
+    return () => { shown.current = false }
+  }, [])
+  const { fault, busy, act } = useAct((run) => {
+    onStarted()
+    if (shown.current) follow(`run:${run.id}`)
+  })
   return (
     <div className="m-auto flex w-full max-w-[44rem] flex-col gap-5 px-6 py-10 max-[560px]:px-4">
       <div className="flex flex-col gap-1">
-        <h1 className="font-heading text-[22px] font-semibold">새 실행</h1>
+        <h1 tabIndex={-1} className="font-heading text-[22px] font-semibold outline-none">새 실행</h1>
         <p className="text-pretty text-muted-foreground">만들고 싶은 것을 한두 문장으로 적으면, 18단계를 차례로 지나 풀 리퀘스트까지 간다.
           처음의 확인과 환경 카드, 요구 대화, 세 번의 검토, 기능 보드에서만 결정을 기다린다.</p>
       </div>
