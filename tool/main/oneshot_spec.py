@@ -433,7 +433,9 @@ def listing() -> dict:
 
 def view(spec: dict) -> dict:
     o = spec["oneshot"]
-    out = {"repo": spec["repo"], "oneshot": o, "requirements": spec.get("requirements") or [], **summary(spec)}
+    # `worktree`: where the run's work turns go, so the screen follows them live as maintenance does.
+    out = {"repo": spec["repo"], "oneshot": o, "requirements": spec.get("requirements") or [],
+           "worktree": spec.get("worktree") or "", **summary(spec)}
     if o.get("design"):
         out["sheet"] = sheet.sheet(spec)
         out["items"] = sheet.decidable(o["design"], spec.get("requirements") or [])

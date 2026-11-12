@@ -10,6 +10,7 @@ import asyncio
 import copy
 import re
 import sys
+import time
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
@@ -50,6 +51,7 @@ ASKED = "한 달 예산을 어떻게 정하나?"
 TALK = [{"role": "agent", "text": "아래에서 골라라.",
          "choices": {"question": ASKED, "options": [{"label": "달마다 새로 정한다"}, {"label": "한 번 정하면 그대로 간다"}]}}]
 REFUSED = "거절될 답"
+TREE = "C:/fixture/stopped-demo-worktrees/oneshot-initial"
 PNG = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
                     "1f15c4890000000d49444154789c6360f8cfc0000003010100c9fe92ef0000000049454e44ae426082")
 
@@ -80,6 +82,15 @@ def main():
              "talk-demo": run("talk-demo", "spec", waits=True),
              "auto-demo": run("auto-demo", "build", working="build", waits=False)}
     views["talk-demo"]["oneshot"]["talk"] = TALK
+    # The stopped run's record and worktree: what the screen tracks while a stage runs on its own.
+    views["stopped-demo"] |= {"worktree": TREE, "limits": {"attempts": 3, "refusals": 5, "critiques": 6}}
+    views["stopped-demo"]["oneshot"] |= {
+        "spend": {"usd": 12.5, "seconds": 3725, "calls": 9},
+        "critiques": [{"look": 5, "head": "a" * 40, "clean": True, "findings": []},
+                      {"look": 6, "head": "b" * 40, "clean": False, "findings": [
+                          {"route": "/", "viewport": "phone", "state": "empty", "what": "버튼 대비가 낮다", "severity": "high"}]}]}
+    tree_turns = [{"role": "user", "text": "Build the screens from the board."},
+                  {"role": "assistant", "text": "Built the screens.", "steps": [{"kind": "tool", "text": "npm run build"}]}]
     posted = []
     started: dict = {}
     # A start answer held back, S1 list reads that fail, and spec list answers that are late or carry no list.
@@ -132,11 +143,14 @@ def main():
                     again["oneshot"]["r1"] = {"round": 2, "decisions": {i: {"approve": True} for i in ITEMS if i != "R2"},
                                               "marks": {"R2": "edited", "T1": "changed"}}
                     views[repo] = again
-                if act == "resume":
-                    views[repo] = {**views[repo], "stopped": None, "working": "critique"}
+                if act == "resume":   # the critic's model call, sent 75 seconds ago
+                    views[repo] = {**views[repo], "stopped": None, "working": "critique", "oneshot": {
+                        **views[repo]["oneshot"], "inflight": {"role": "critic", "codex": False, "sent": time.time() - 75}}}
             return views[repo]
         if path == "mobile/status":
             return {"local": True}
+        if path == "work/log" and request.query_params.get("path") == TREE:
+            return {"rows": tree_turns, "session_id": "tree", "busy": False, "running": None, "rules": [], "queued": None}
         return fixture(path, request.method)
 
     fake.mount("/", StaticFiles(directory=ROOT / "web/dist", html=True))
@@ -237,15 +251,31 @@ def main():
         assert posted[-1] == ("board-demo", "board", {"frequency": {"record": "sometimes", "export": "rarely", "month": "every"},
                                                        "first_screen": "오늘 쓴 돈"}), posted[-1]
 
-        # A stopped run: its reason and `[재개]`.
+        # A stopped run: its reason and `[재개]` over what happened — the record beside, the worktree's turns below.
         page.get_by_role("navigation", name="원샷 실행").get_by_role("button").filter(has_text="stopped-demo").click()
         expect(page.get_by_role("alert").filter(has_text="화면 비평이 멈췄다")).to_contain_text("6회차에도")
         lead = page.locator(".oneshot-shell main h2").first
         expect(lead).to_have_text("화면 비평 멈춤")
+        record = page.get_by_role("complementary", name="기록")
+        expect(record).to_contain_text("$12.50 · 1시간 2분 · 호출 9번")
+        looks = record.get_by_role("region", name="화면 비평")
+        expect(looks.locator("details").first).to_contain_text("6회차 높은 발견 있음")
+        expect(looks.get_by_text("버튼 대비가 낮다")).to_be_visible()   # the latest open, the earlier folded
+        expect(looks.get_by_text("5회차")).to_be_visible()
+        trail = page.get_by_role("region", name="작업 기록")
+        expect(trail.get_by_text("npm run build")).to_be_visible()
+        expect(trail.get_by_text("서버가 보낸 지시")).to_be_visible()
         page.get_by_role("button", name="재개", exact=True).click()
-        expect(lead.get_by_role("status")).to_have_text("진행 중")
+        expect(lead.get_by_role("status")).to_contain_text("진행 중")
         expect(lead).to_contain_text("화면 비평")
         assert posted[-1][:2] == ("stopped-demo", "resume"), posted[-1]
+        # Running: what runs and for how long, and a turn the server starts in the worktree shows up as it comes.
+        now = page.get_by_role("region", name="지금")
+        expect(now).to_contain_text("화면 비평 모델 호출")
+        expect(now.get_by_role("timer")).to_contain_text("1분")
+        tree_turns.append({"role": "assistant", "text": "Fixed the button contrast.", "steps": []})
+        page.evaluate(f"window.dispatchEvent(new CustomEvent('work-turn', {{ detail: {{ path: {TREE!r} }} }}))")
+        expect(trail.get_by_text("Fixed the button contrast.")).to_be_visible()
 
         # S2: the question that rides only in `choices` is shown and answered; a refused answer stays.
         page.get_by_role("navigation", name="원샷 실행").get_by_role("button").filter(has_text="talk-demo").click()
@@ -422,7 +452,8 @@ def main():
     print("PASS: maintenance counts the runs that need the owner on the switch; the oneshot window groups them apart "
           "from the running; a gate sheet needs every item, folded or not, and records the folds opened; an enlarged "
           "picture closes alone; the re-shown sheet opens what needs a decision again; the board moves by drag and by "
-          "keys; a stopped run resumes; S2 shows its choices and keeps a refused answer; the list follows a saved spec; "
+          "keys; a stopped run resumes, and a stopped or running stage shows its record and its worktree's turns as they "
+          "come; S2 shows its choices and keeps a refused answer; the list follows a saved spec; "
           "the switch keeps the run shown and its draft; [새 프로젝트] opens the start form, which fixes three models "
           "picked apart; a late start answer leaves the picked run; an S1 run's row and the count follow it through "
           "a failed read; a broken list item drops alone; the run opened by default stays when the list reorders; "

@@ -537,11 +537,18 @@ export function useWork() {
       const path = (event as CustomEvent<string>).detail
       if (loading.current.has(path)) readRules(path)
     }
+    // A turn the server started, or a record it wrote, in a worktree this record shows (`App` passes the feed on).
+    const turned = (event: Event) => {
+      const { path, turn } = (event as CustomEvent<{ path: string; turn?: string }>).detail
+      attach(path, turn)
+    }
     window.addEventListener('server-resync', resync)
     window.addEventListener('work-state', state)
+    window.addEventListener('work-turn', turned)
     return () => {
       window.removeEventListener('server-resync', resync)
       window.removeEventListener('work-state', state)
+      window.removeEventListener('work-turn', turned)
     }
   }, [attach, readRules])
 

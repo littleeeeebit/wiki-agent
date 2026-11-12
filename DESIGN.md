@@ -175,9 +175,21 @@ Each stage takes the layout its work needs rather than one shared column:
 
 | Layout | Stages | Shape |
 | --- | --- | --- |
-| Split | Conversation, R1–R3, board, bootstrap | The work on the left, what it makes or rests on in a `34rem` side (`24rem` under 1500px), each scrolling on its own. The conversation fills the height with its answer box at the bottom beside the requirements and stack it gathered; a gate sheet reads wide beside its decisions; the board's columns sit beside the first screen they make |
+| Split | Conversation, R1–R3, board, bootstrap, working stages and their stops | The work on the left, what it makes or rests on in a `34rem` side (`24rem` under 1500px), each scrolling on its own. The conversation fills the height with its answer box at the bottom beside the requirements and stack it gathered; a gate sheet reads wide beside its decisions; the board's columns sit beside the first screen they make; a working stage is followed beside its record (below) |
 | Compare | Intent, environment card | Two blocks side by side: the owner's sentence in large type beside what the agent understood; the card beside what confirming it makes outside |
-| Top | Stop, working stages, summary | One column under the lead, `60rem` at most; the summary's stat tiles and gate table take `72rem` |
+| Top | A run before S2 that stopped, summary | One column under the lead, `60rem` at most; the summary's stat tiles and gate table take `72rem` |
+
+A stage that runs on its own is followed, never hidden behind a sentence. On the
+left, `지금` says what runs (a work turn or a single model call), on which host and
+for how long, with a `progress` dot; under it the run's worktree turns stream as
+maintenance shows a task's, the server's instructions folded and the last six
+turns open. The side, `기록`, holds the tries against the server's caps (attempts,
+review refusals against the Review Loop's round cap, critique rounds), the
+contract test count and the spend, then every review and critique, the latest
+open, each finding with its severity and place. A stop puts its reason and
+`[재개]` above the same screen, so why it stopped is read off what happened. A
+finding is not waiting on the owner: the worst severity is `warn`, the rest step
+down in ink, and `wait` stays off this screen.
 | Centre | Start form | The form alone in the middle of the empty window |
 
 A decision that sends (`제출`, `보드 제출`, `맞다`, `확정하고 만들기`, `재개`) is
