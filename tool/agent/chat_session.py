@@ -1299,17 +1299,16 @@ class ChatSession:
                         # `_closing` refuses.
                         # ponytail: any steer in the turn waits for the tasks,
                         # as before; pair steers with their results to narrow it.
-                        if not (background and self.settled and self.settled(str(ev.get("result") or ""))
+                        if not (self.settled and self.settled(str(ev.get("result") or ""))
                                 and not self._steered and self._closing()):
                             yield Event("tool", f"Background · waiting for {max(len(background), followups)} "
                                                 "follow-up(s)", {"tool": "background"})
                             # A zero-turn placeholder promises a combined answer: the ordinary wait.
                             held = None if background or (injected and ev.get("num_turns") == 0) else ev
                             continue
-                        # The work is reported closed, yet tasks still run: left
-                        # over, and holding the turn would keep the review from
-                        # starting. The process and its job take them down; the
-                        # next turn resumes the conversation.
+                        # The work is reported closed, yet tasks or their
+                        # follow-ups remain. The process and its job take them
+                        # down so they cannot hold or replace the final report.
                         left = sorted(background)
                         self.close()
                         for task in left:

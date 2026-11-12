@@ -106,11 +106,20 @@ def repaired(path: Path, spec: dict) -> str:
     return head
 
 
-def outputs(path: Path) -> dict:
-    names = changes(path) | {name for name in (".wiki/corpus.json", ".wiki/graph.json") if (path / name).exists()}
+def outputs(path: Path, repo: Path | None = None) -> dict:
+    names = changes(path)
+    if (repo or path).resolve() != query.ROOT.resolve():
+        names |= {name for name in (".wiki/corpus.json", ".wiki/graph.json") if (path / name).exists()}
     return {"files": {name: outputs_hash(path / name) for name in sorted(names)},
             "working": hashlib.sha256(git(path, "diff", "HEAD", "--binary").encode("utf-8")).hexdigest(),
             "staged": hashlib.sha256(git(path, "diff", "--cached", "--binary").encode("utf-8")).hexdigest()}
+
+
+def comparable(saved: dict | None, repo: Path) -> dict | None:
+    if saved and repo.resolve() == query.ROOT.resolve():
+        saved = {**saved, "files": {name: value for name, value in saved["files"].items()
+                                     if name not in (".wiki/corpus.json", ".wiki/graph.json")}}
+    return saved
 
 
 def set_aside(path: Path, spec: dict) -> bool:
@@ -121,8 +130,11 @@ def set_aside(path: Path, spec: dict) -> bool:
     never away: a person's document edit made while preparation ran is kept there too. Anything
     else in the tree keeps the stop; a fresh preparation follows the gate."""
     receipt = spec.get("maintenance") or {}
-    saved = receipt.get("outputs")
-    if receipt.get("state") != "interrupted" or git(path, "rev-parse", "HEAD") != receipt.get("head")             or saved != outputs(path) or not all(maintained(name) or name == debt.RATCHET for name in saved["files"]):
+    if receipt.get("state") != "interrupted":
+        return False
+    repo = query.channels.repo_for(spec["repo"]) or path
+    saved = comparable(receipt.get("outputs"), repo)
+    if git(path, "rev-parse", "HEAD") != receipt.get("head") or saved != outputs(path, repo)             or not all(maintained(name) or name == debt.RATCHET for name in saved["files"]):
         return False
     flagged = hidden(path, saved["files"])
     try:
@@ -134,7 +146,7 @@ def set_aside(path: Path, spec: dict) -> bool:
                 "-m", "wiki-agent: interrupted merge preparation outputs", "--", *names)
     except Exception:
         # What is left is still a part of what was proven; its new fingerprint lets either retry go on.
-        specs.update(spec["repo"], spec["id"], maintenance={**receipt, "outputs": outputs(path)})
+        specs.update(spec["repo"], spec["id"], maintenance={**receipt, "outputs": outputs(path, repo)})
         raise
     specs.update(spec["repo"], spec["id"], maintenance=None)
     return True
@@ -226,10 +238,11 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
         receipt.get("source_head"), receipt.get("head"))
     if local != head and not (resumable and receipt.get("head") == local):
         raise ValueError("작업 폴더가 리뷰한 커밋에 있지 않다")
-    retry = resumable and receipt.get("state") == "interrupted" and receipt.get("outputs") == outputs(path)
+    saved = comparable(receipt.get("outputs"), repo)
+    retry = resumable and receipt.get("state") == "interrupted" and saved == outputs(path, repo)
     if (specs.dirty(path) or resumable and receipt.get("state") == "interrupted") and not retry:
         raise ValueError("커밋하지 않은 변경이 있다 — 보존한 뒤 머지를 다시 요청하세요")
-    flagged = hidden(path, (receipt.get("outputs") or {}).get("files", {}) if retry else {})
+    flagged = hidden(path, (saved or {}).get("files", {}) if retry else {})
     branch = git(path, "branch", "--show-current")
     if branch and branch != specs.branch_of(spec):
         raise ValueError("작업 폴더가 PR 브랜치에 있지 않다")
@@ -296,7 +309,7 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
     except Exception:
         # Normal stop/shutdown and failed tools retain exact output fingerprints.
         # A later click may retry them; changed files still need user preservation.
-        specs.update(spec["repo"], spec["id"], maintenance={**receipt, "state": "interrupted", "outputs": outputs(path)})
+        specs.update(spec["repo"], spec["id"], maintenance={**receipt, "state": "interrupted", "outputs": outputs(path, repo)})
         raise
     if prepared != head:
         specs.merge_progress(spec["repo"], spec["id"], "같은 PR에 준비 커밋 올리는 중")

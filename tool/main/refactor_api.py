@@ -336,7 +336,7 @@ def amendments_of(sid: str) -> dict:
 
 @router.post("/api/refactors/specs/{sid}/amendments")
 def amend(sid: str, body: Refreeze) -> dict:
-    """The person declares the changed definitions read at `head` in the card's test contract, by name.
+    """The person declares changed definitions and module imports read at `head` in the test contract, by name.
     Held and resumed as `remove_whole` is: a spec-update cannot reach the contract, only this can."""
 
     repo = current_repo()

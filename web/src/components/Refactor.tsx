@@ -388,9 +388,10 @@ export function SurveyDetail({ spec, korean }: { spec: api.Spec; korean: boolean
     {!!r.depends?.length && row('선행 명세', <span className="font-mono">{r.depends.join(', ')}</span>)}
     {row('테스트', <ul>
       {d.tests.add.map((x, i) => <li key={`a${i}`}>· 추가: {t(x)}</li>)}
+      {(d.tests.imports ?? []).map((x, i) => <li key={`i${i}`}>· 모듈 import 변경: <span className="font-mono">{x}</span></li>)}
       {d.tests.remove.map((x, i) => <li key={`r${i}`}>· 삭제 <span className="font-mono">{x.test}</span> — {t(x.reason)}</li>)}
       {d.tests.contract.map((x, i) => <li key={`c${i}`}>· 계약 갱신 <span className="font-mono">{x.test}</span>: {t(x.old)} → {t(x.new)} ({t(x.why)})</li>)}
-      {!d.tests.add.length && !d.tests.remove.length && !d.tests.contract.length && <li>기존 테스트를 그대로 지킨다</li>}
+      {!d.tests.add.length && !(d.tests.imports ?? []).length && !d.tests.remove.length && !d.tests.contract.length && <li>기존 테스트를 그대로 지킨다</li>}
     </ul>)}
     {d.measure && row('측정', <>{t(d.measure.metric)} · {t(d.measure.task)} · <span className="font-mono">{d.measure.argv.join(' ')}</span> × {d.measure.repeat}</>)}
     {d.hypothesis && row('성능 가설', `${t(d.hypothesis.claim)} — 확인 방법: ${t(d.hypothesis.check)}`)}

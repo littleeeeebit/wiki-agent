@@ -31,7 +31,7 @@ from fastapi import HTTPException
 import debt
 import refactor_profile
 
-from . import refactor, refactor_survey, review_contract, specs
+from . import refactor, refactor_imports, refactor_survey, review_contract, specs
 from .query import ROOT, config
 
 RUN = (ROOT / "tool/prompts/refactor-run.md").read_text(encoding="utf-8").strip()
@@ -556,12 +556,17 @@ def _binds(body: list) -> Counter:
     return found
 
 
-def _kept(old: list, new: list, allowed: set, at: tuple = ()) -> bool:
+def _kept(old: list, new: list, allowed: set, imports: set[str] = frozenset(), at: tuple = ()) -> bool:
     """Every old statement of a body is still there, unchanged and in order, and
     every name it bound is bound as often — a later `def`, assignment or `del`
     would replace a test — except the definitions `allowed` names. A class
     keeps its header and recurses."""
-
+    if not at and imports:
+        before_other = _binds([statement for statement in old if not isinstance(statement, (ast.Import, ast.ImportFrom))])
+        after_other = _binds([statement for statement in new if not isinstance(statement, (ast.Import, ast.ImportFrom))])
+        if "*" in imports or any(before_other[name] != after_other[name] or before_other[name] and (name,) not in allowed for name in imports):
+            return False
+        old, new = refactor_imports.without(old, imports), refactor_imports.without(new, imports)
     before, after = _binds(old), _binds(new)
     # A new `pytestmark` skips every test beside it, a new `import *` may replace any of them.
     if any(after[name] != before[name] for name in {*before, "pytestmark", "*"} if (*at, name) not in allowed):
@@ -572,7 +577,7 @@ def _kept(old: list, new: list, allowed: set, at: tuple = ()) -> bool:
             continue
         for t in rest:
             if isinstance(s, ast.ClassDef) and isinstance(t, ast.ClassDef) and s.name == t.name:
-                if _head(s) != _head(t) or not _kept(s.body, t.body, allowed, (*at, s.name)):
+                if _head(s) != _head(t) or not _kept(s.body, t.body, allowed, at=(*at, s.name)):
                     return False
                 break
             if ast.dump(s) == ast.dump(t):
@@ -588,22 +593,6 @@ def _defines(body: list, parts: tuple) -> bool:
     frees nothing; only the function named whole may change, since `_kept` compares a function as one."""
     found = next((s for s in body if _named(s) == parts[0]), None)
     return found is not None and (len(parts) == 1 or _defines(found.body, parts[1:]))
-
-
-def _declared(spec: dict) -> tuple[set, dict, dict]:
-    """The files a spec's test contract frees whole, the tests it frees by name, per file, and the files a
-    person approved at one content, by blob: no syntax compares a test file that is not Python by name."""
-
-    tests = spec["refactor"]["detail"].get("tests") or {}
-    entries = [*tests.get("remove", []), *tests.get("contract", [])]
-    pinned = {t["test"]: t["blob"] for t in entries if t.get("blob")}
-    declared = [t["test"] for t in entries if not t.get("blob")]
-    whole, named = {d for d in declared if "::" not in d}, {}
-    for d in declared:
-        if "::" in d:
-            file, *parts = d.split("::")
-            named.setdefault(file, set()).add(tuple(parts))
-    return whole, named, pinned
 
 
 def _changed(old: list, new: list, at: tuple = ()) -> set:
@@ -641,11 +630,14 @@ def _strays(old: list, new: list, allowed: set, at: tuple = ()) -> list:
     return found
 
 
-def _amendable(before: list, after: list, allowed: set) -> set | None:
-    """The names that, declared beside `allowed`, explain every change: None when no names do."""
+def _amendable(before: list, after: list, allowed: set, imports: set[str] = frozenset()) \
+        -> tuple[set, set[str]] | None:
+    """The definitions and module imports that, declared beside the existing contract, explain every change."""
 
     names = _changed(before, after) - allowed
-    return names if names and _kept(before, after, allowed | names) else None
+    changed_imports = refactor_imports.changed(before, after) - imports
+    return (names, changed_imports) if "*" not in changed_imports and (names or changed_imports) \
+        and _kept(before, after, allowed | names, imports | changed_imports) else None
 
 
 # What a refused deletion tells the worker: it cannot declare the file, the person can.
@@ -669,7 +661,7 @@ def contract(path: Path, spec: dict) -> str:
     changed test file that is not Python, approved at one blob: any later edit of it is refused again.
     Python is compared as syntax, so a skip mark or a shadowing redefinition is a change."""
 
-    whole, named, pinned = _declared(spec)
+    whole, named, pinned, declared_imports = refactor_imports.contract(spec)
     if _replaced(path):
         return f"테스트 계약을 대조하지 못했다 — {REPLACED}"
     start, broken = spec["start_head"], []
@@ -680,7 +672,7 @@ def contract(path: Path, spec: dict) -> str:
         old = subprocess.run(["git", "show", f"{start}:{name}"], cwd=path, capture_output=True)
         if old.returncode:
             continue   # a new test file
-        allowed = named.get(name, set())
+        allowed, imports = named.get(name, set()), declared_imports.get(name, set())
         if not (path / name).is_file():
             broken.append(f"`{name}` 삭제{WHOLE_FILE}")
             continue
@@ -698,10 +690,10 @@ def contract(path: Path, spec: dict) -> str:
             continue
         if missing := sorted("::".join(p) for p in allowed if not _defines(before, p)):
             broken.append(f"`{name}` 에 선언한 테스트가 시작 커밋에 없다: {', '.join(missing)}")
-        elif not _kept(before, after, allowed):
-            broken.append(f"`{name}` 의 기존 테스트 변경{CHANGED if _amendable(before, after, allowed) else ''}")
+        elif not _kept(before, after, allowed, imports):
+            broken.append(f"`{name}` 의 기존 테스트 변경{CHANGED if _amendable(before, after, allowed, imports) else ''}")
     return "" if not broken else ("테스트 계약 밖의 변경 — " + ", ".join(broken[:10])
-                                  + " (명세의 tests.remove·tests.contract 에 없다)")
+                                  + " (명세의 tests.remove·tests.contract·tests.imports 에 없다)")
 
 
 def restoring(path: Path, spec: dict, refusal: str) -> str:
@@ -720,7 +712,7 @@ def restoring(path: Path, spec: dict, refusal: str) -> str:
 
 
 def _restoring(path: Path, spec: dict, refusal: str) -> str:
-    whole, named, _ = _declared(spec)
+    whole, named, _, declared_imports = refactor_imports.contract(spec)
     start, files = spec["start_head"], []
     listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", start, "HEAD"], path)
     for name in listed.stdout.splitlines():
@@ -741,18 +733,20 @@ def _restoring(path: Path, spec: dict, refusal: str) -> str:
             if person:
                 return ""
             continue
-        allowed = named.get(name, set())
+        allowed, imports = named.get(name, set()), declared_imports.get(name, set())
         if not all(_defines(before, p) for p in allowed):
             return ""
-        if _kept(before, after, allowed):
+        if _kept(before, after, allowed, imports):
             continue
         try:
             # The start's own line, never `ast.unparse`, which can run out of recursion on a statement it parsed,
             # decoded as the parser decodes it: its coding cookie and newlines (`splitlines` also splits on `\f`).
             text = importlib.util.decode_source(old.stdout).split("\n")
+            clean_before = refactor_imports.without(before, imports)
+            clean_after = refactor_imports.without(after, imports)
             what = [f"`{'::'.join(p)}`" if p else
                     f"start line {s.lineno} `{text[s.lineno - 1].strip()[:80] if s.lineno <= len(text) else ''}`"
-                    for p, s in _strays(before, after, allowed)]
+                    for p, s in _strays(clean_before, clean_after, allowed)]
         except (RecursionError, ValueError, LookupError, SyntaxError):
             what = []   # still a turn: the file goes back whole to its start text
 
@@ -777,7 +771,7 @@ def removals(spec: dict) -> dict:
     whole, each with the tests named for it and its text at the start; `head` and the `digest` an approval names."""
 
     path, start, head, listed = _touched(spec, "D")
-    whole, named, _ = _declared(spec)
+    whole, named, _, _ = refactor_imports.contract(spec)
     files = []
     for name in listed:
         if debt.TEST.search(name.lower()) and name not in whole and not (path / name).exists():
@@ -792,19 +786,20 @@ def amendments(spec: dict) -> dict:
     is not Python carries its `blob` at the head instead, the content an approval frees and nothing else."""
 
     path, start, head, listed = _touched(spec, "M")
-    whole, named, pinned = _declared(spec)
+    whole, named, pinned, declared_imports = refactor_imports.contract(spec)
     files = []
     for name in listed:
         if not debt.TEST.search(name.lower()) or name in whole:
             continue
-        allowed, texts = named.get(name, set()), (_shown(path, start, name), _shown(path, head, name))
+        allowed, imports = named.get(name, set()), declared_imports.get(name, set())
+        texts = _shown(path, start, name), _shown(path, head, name)
         blob = None
         if name.endswith(".py"):
             try:
                 before, after = (ast.parse(t, type_comments=True).body for t in texts)
             except (SyntaxError, ValueError):
                 continue   # `contract` says it could not read it
-            if _kept(before, after, allowed):
+            if _kept(before, after, allowed, imports):
                 continue
         else:
             blob = specs.sh(["git", "rev-parse", f"{head}:{name}"], path).stdout.strip()
@@ -827,8 +822,11 @@ def amendments(spec: dict) -> dict:
                          "--no-renames", start, head, "--", name], path)
         if diff.returncode or not diff.stdout.strip():   # a change nobody can read is not approved
             raise HTTPException(409, f"`{name}` 의 변경을 보이지 못했다 — {specs.said(diff)}")
-        names = [] if blob else sorted("::".join(p) for p in _amendable(before, after, allowed) or ())
-        files.append({"file": name, "names": names, "diff": diff.stdout, **({"blob": blob} if blob else {})})
+        amendable = None if blob else _amendable(before, after, allowed, imports)
+        names = [] if amendable is None else sorted("::".join(p) for p in amendable[0])
+        changed_imports = [] if amendable is None else sorted(amendable[1])
+        files.append({"file": name, "names": names, "imports": changed_imports, "diff": diff.stdout,
+                      **({"blob": blob} if blob else {})})
     return _seen(spec, start, head, files)
 
 
@@ -920,22 +918,24 @@ def approve_amendment(spec: dict, head: str, digest: str) -> dict:
     a file that is not Python declared at its blob, so any later edit of it is refused."""
 
     seen = _approved(spec, amendments, head, digest)
-    if not (ready := [f for f in seen["files"] if f["names"] or f.get("blob")]):
-        raise HTTPException(409, "이름 있는 정의로 설명되는 테스트 변경이 없다 — 승인할 것이 없다")
+    if not (ready := [f for f in seen["files"] if f["names"] or f["imports"] or f.get("blob")]):
+        raise HTTPException(409, "이름 있는 정의나 모듈 import 로 설명되는 테스트 변경이 없다 — 승인할 것이 없다")
     approved = {"head": head, "ts": time.time()}
     return _declare(spec, "contract", [
         *({"test": f"{f['file']}::{n}", "old": "시작 커밋의 정의", "new": f"{head[:12]} 의 정의",
            "why": "사람이 바뀐 정의를 읽고 승인했다", "approved": approved} for f in ready for n in f["names"]),
         *({"test": f["file"], "blob": f["blob"], "old": "시작 커밋의 파일", "new": f"{head[:12]} 의 파일 그대로",
            "why": "사람이 바뀐 파일을 읽고 이 내용 그대로 승인했다", "approved": approved}
-          for f in ready if f.get("blob"))])
+          for f in ready if f.get("blob"))],
+        [f"{f['file']}::{name}" for f in ready for name in f["imports"]])
 
 
-def _declare(spec: dict, kind: str, entries: list) -> dict:
+def _declare(spec: dict, kind: str, entries: list, imports: tuple[str, ...] | list[str] = ()) -> dict:
     """`entries` added to the card's `tests.<kind>`, and its fault the contract's answer now."""
 
     tests = spec["refactor"]["detail"].get("tests") or {}
-    detail = {**spec["refactor"]["detail"], "tests": {**tests, kind: [*tests.get(kind, []), *entries]}}
+    detail = {**spec["refactor"]["detail"], "tests": {**tests, kind: [*tests.get(kind, []), *entries],
+                                                        "imports": [*tests.get("imports", []), *imports]}}
     spec = {**spec, "refactor": {**spec["refactor"], "detail": detail}}
     fault = spec.get("fault")
     if fault and fault.startswith("테스트 계약 밖의 변경"):

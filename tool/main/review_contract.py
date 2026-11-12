@@ -227,18 +227,10 @@ def coverage(selection: dict, flows: list[dict], preservation_inputs: dict | Non
         missing.append({"item_id": "criteria:performance", "reason": "representative measurement coverage unavailable"})
     return missing
 
-
 def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | None,
            head: str, base_oid: str) -> dict:
     explicit = declared(spec.get("review"))
-    if not verification.cloud(spec):
-        # Runtime receipts gate only Claude Cloud work (#58), which cannot run the
-        # local `.env`. Local and external work is gated by review and the final gate.
-        explicit = {**explicit, "flows": [],
-                    "evidence": [e for e in explicit["evidence"] if e not in ("api", "browser", "desktop")]}
     if not spec.get("refactor"):
-        # Preservation needs a refactoring run's frozen checks. An ordinary task that
-        # asked for it could never be reviewed (rfg_rag #64, #66).
         explicit = {**explicit, "criteria": [c for c in explicit["criteria"] if c != "refactor"],
                     "evidence": [e for e in explicit["evidence"] if e != "differential"]}
     criteria = {"plan", "code"} if profile == "mixed" else {profile}
@@ -258,13 +250,11 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
         try:
             frozen_digest = verification.sha(frozen.read_bytes())
             fixed = json.loads(frozen.read_text(encoding="utf-8"))
-            # A survey spec freezes its tests after its own characterization commit, past `start_head`.
             tests, baseline = fixed["tests"], fixed.get("head", spec["start_head"])
             if not isinstance(baseline, str) or len(baseline) != 40 or set(baseline) - set("0123456789abcdef"):
                 raise ValueError("Invalid refactoring baseline")
             preservation_inputs = {"baseline": baseline, "tests": tests}
             from . import specs
-
             protected = specs.sh(["git", "--literal-pathspecs", "diff", "--exit-code", baseline, head, "--", *tests], path)
             if tests and protected.returncode == 1:   # `--exit-code`: 1 is a difference, above it an error
                 problems.append("고정된 동작 보존 테스트가 바뀌었다 — 리뷰 탭에서 diff 를 읽고 [고정 테스트 변경 승인] 으로 "
@@ -273,7 +263,8 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
                 problems.append("고정된 동작 보존 테스트가 바뀌었거나 기준선을 확인하지 못했다")
         except (OSError, ValueError, KeyError, TypeError):
             problems.append("동작 보존 명세를 확인하지 못했다")
-    if verification.cloud(spec):
+    runtime_evidence = set(explicit["evidence"]) & {"api", "browser", "desktop"}
+    if verification.cloud(spec) or explicit["flows"] or runtime_evidence:
         try:
             contract, manifest_digest = verification.manifest(path)
             catalog = {f.id: f for f in contract.flows}
@@ -282,16 +273,25 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
                 problems.append("등록되지 않은 검증 흐름: " + ", ".join(sorted(unknown)))
                 rejections = [{"candidate_id": "flow:" + cid, "origin": "spec", "disposition": "rejected",
                                "reason": "unknown registered flow", "locator": "review.flows"} for cid in sorted(unknown)]
-            chosen = list(catalog)  # Cloud's complete major-flow floor remains unchanged.
+            if verification.cloud(spec):
+                chosen = list(catalog)  # Cloud's complete major-flow floor remains unchanged.
+            elif explicit["flows"]:
+                chosen = explicit["flows"]
+            else:
+                candidates = [f for f in contract.flows if any(
+                    f.kind == kind or kind == "api" and f.kind == "browser" for kind in runtime_evidence)]
+                matches = [{f.id for f in candidates if any(fnmatchcase(changed, pattern) for pattern in f.paths)}
+                           for changed in paths or []]
+                mapped = bool(matches) and all(len(found) == 1 for found in matches) and all(any(f.id in set().union(*matches) and (f.kind == kind or kind == "api" and f.kind == "browser") for f in candidates) for kind in runtime_evidence)
+                chosen = sorted(set().union(*matches) if mapped else {f.id for f in candidates})
             flows = [catalog[i].model_dump() for i in sorted(set(chosen)) if i in catalog]
-            if verification.documents(path, base_oid, head):
+            if verification.cloud(spec) and verification.documents(path, base_oid, head):
                 exemption = True
                 flows = []  # Existing, repository-declared prose exemption.
                 evidence = {"offline", *explicit["evidence"]}
         except (OSError, ValueError):
             problems.append("등록된 검증 명세를 준비해야 한다")
     from . import review_inspection
-
     inspection_catalog, inspection_paths = list(flows), sorted(set(paths)) if paths is not None else None
     inspection_identity = review_inspection.identity(spec, head, base_oid, manifest_digest, inspection_paths, flows)
     inspection_selected = review_inspection.selected(spec, inspection_identity, flows) if flows else None

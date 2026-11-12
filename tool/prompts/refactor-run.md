@@ -11,7 +11,8 @@ When the spec turns out wrong, stop and ask instead of widening it.
 
 - Test contract. Add the tests `tests.add` names and any test you need to
   guard behaviour. Existing test files may change only by adding new tests
-  to them, except the tests `tests.remove` and `tests.contract` list; the
+  to them, except the tests `tests.remove` and `tests.contract` list and the module import bindings
+  `tests.imports` names; the
   body of an existing test stays as it is, so a check that would extend one
   is a new test beside it, even where `tests.add` says to extend. The test cleanup
   pass removes nothing else; report other candidates in its `reason`. Before
@@ -22,8 +23,8 @@ When the spec turns out wrong, stop and ask instead of widening it.
   `# noqa: F401` to its line, since comments are not compared. A `spec-update` cannot
   change the test contract. When this spec's change has to edit a test or test
   double the contract does not list, make only that edit, commit, and name each
-  changed definition (`path::name`, `path::Class::method`) in your answer: the
-  person reads the diff and declares them with `[테스트 계약 변경 승인]`.
+  changed definition (`path::name`, `path::Class::method`) and module import binding (`path::binding`) in your
+  answer: the person reads the diff and declares them with `[테스트 계약 변경 승인]`.
 - Never change an expectation to make the current code pass, delete a failing
   test, or weaken a test, lint, gate or debt limit.
 - Completion. When you report done, the server runs the repository's final
