@@ -16,7 +16,8 @@ export const modelName = (role: keyof Models, m: { model: string; effort: string
   `${m.model || (role === 'review' ? '리뷰 설정 따름' : 'Claude 기본')}${m.effort ? ` · ${m.effort}` : ''}`
 export type SpecSummary = {
   repo: string; stage: string; working: string | null; waits: boolean
-  stopped: { reason: string; detail: string } | null
+  /** `counted`: the critiques a cap stop reached (`oneshot_critique`). */
+  stopped: { reason: string; detail: string; counted?: number } | null
 }
 export type Reading = { round: number; seconds: number | null; opened: string[]; edited: string[] }
 export type RunSummary = {
@@ -24,9 +25,29 @@ export type RunSummary = {
   gates: { gate: string; rounds: number; edited: string[]; reading: Reading[] }[]
   spend: { usd?: number; seconds?: number; calls?: number; unknown?: number }
 }
+/** One backend review verdict on a HEAD (`oneshot_review.decided`). */
+export type Review = {
+  verdict: 'approve' | 'refuse'; head: string; ts?: number
+  findings: { location: string; severity: string; reason: string; evidence?: string }[]
+}
+/** One look at the built screens (`oneshot_critique.judged`); `clean` has no high finding. */
+export type Critique = {
+  look: number; head: string; clean: boolean; ts?: number
+  findings: { route: string; viewport: string; state: string; what: string; severity: string }[]
+}
+/** The turn running now (`oneshot.turned`, `oneshot_build.send`): a work turn carries `turn`. */
+export type Inflight = { role: string; codex: boolean; sent: number; seen?: number; turn?: string }
 export type SpecView = SpecSummary & {
+  /** Where the run's work turns go: the screen follows them as maintenance does. */
+  worktree?: string
+  /** The server's caps on a stage's tries. */
+  limits?: { attempts: number; refusals: number; critiques: number }
   oneshot: {
-    sentence: string; models?: Models; talk?: Talk[]; attempts?: number; critiques?: unknown[]
+    sentence: string; models?: Models; talk?: Talk[]; attempts?: number; critiques?: Critique[]
+    /** How many `critiques` came before the count against the cap restarted (a resume, an R3 fix). */
+    critique_base?: number
+    inflight?: Inflight | null; reviews?: Review[]; refused?: number; cases?: string[][]
+    spend?: { usd?: number; seconds?: number; calls?: number }
     stack?: { part: string; choice: string; why: string; status: string }[]
     r1?: Gate; r2?: Gate; r3?: Gate; front?: { tokens: { palettes: Palette[] } }
     reading?: Record<string, { round: number; seconds: number | null; opened: string[]; edited: string[] }[]>
@@ -65,7 +86,7 @@ export const STAGES: { id: string; label: string; kind: 'talk' | 'gate' | 'auto'
 export const stageLabel = (id: string) => STAGES.find((s) => s.id === id)?.label ?? id
 export const STOP: Record<string, string> = {
   block: '모델 답을 쓸 수 없었다', restart: '서버가 다시 켜져 멈췄다', tests: '계약 테스트를 쓰지 못했다',
-  gate: '빌드가 검사를 통과하지 못했다', review: '백엔드 리뷰가 두 번 거절했다', critique: '화면 비평이 멈췄다',
+  gate: '빌드가 검사를 통과하지 못했다', review: '백엔드 리뷰가 라운드 상한까지 거절했다', critique: '화면 비평이 멈췄다',
 }
 export const COLUMNS: { id: Freq; label: string }[] = [
   { id: 'every', label: '늘 쓴다' }, { id: 'sometimes', label: '가끔 쓴다' },

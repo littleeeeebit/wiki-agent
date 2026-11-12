@@ -125,7 +125,7 @@ def test_the_cap_stops_with_critique_and_a_resume_counts_afresh(judged):
     with asking:
         critique.critique("budget")
     assert o()["stopped"]["reason"] == "critique" and "합계가 안 보인다" in o()["stopped"]["detail"]
-    assert o()["critique_base"] == 6
+    assert o()["critique_base"] == 6 and o()["stopped"]["counted"] == critique.MAX_ROUNDS and o()["working"] is None
 
 
 @pytest.mark.parametrize("why", ["codex", "failed"])
@@ -134,6 +134,7 @@ def test_a_critic_that_cannot_see_the_images_stops_with_critique_never_as_clean(
     with asking, patch.object(oneshot, "codex_role", lambda role="", store=None: why == "codex" and role == "critic"):
         critique.critique("budget")
     assert o()["stopped"]["reason"] == "critique" and not o().get("critiques")
+    assert "counted" not in o()["stopped"]   # no cap reached: the screen counts nothing against it
     assert (heard == []) is (why == "codex")
 
 

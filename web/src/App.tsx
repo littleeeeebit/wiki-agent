@@ -100,7 +100,6 @@ export default function App() {
   const [landscapeRail, setLandscapeRail] = useState(true)
   const [taskOptionsOpen, setTaskOptionsOpen] = useState(false)
   const work = useWork()
-  const { attach } = work
   const repo = channels[0]?.repo ?? ''
 
   useEffect(() => {
@@ -306,9 +305,10 @@ export default function App() {
         api.getChannels().then(accept).catch(() => {})
         return
       }
-      if (ev.kind === 'work-record') {
-        attach(ev.path)
-        soon()
+      // Every record of a worktree reads it again (`useWork`): this window's, and the oneshot window's own.
+      if (ev.kind === 'work-record' || ev.kind === 'turn') {
+        window.dispatchEvent(new CustomEvent('work-turn', { detail: { path: ev.path, turn: ev.kind === 'turn' ? ev.turn : undefined } }))
+        if (ev.kind === 'work-record') soon()
         return
       }
       if (ev.kind === 'work-state') {
@@ -317,10 +317,6 @@ export default function App() {
       }
       if (ev.kind === 'sync') {
         resync()
-        return
-      }
-      if (ev.kind === 'turn') {
-        attach(ev.path, ev.turn)
         return
       }
       if (ev.kind === 'connect') {
@@ -367,7 +363,7 @@ export default function App() {
       stop.abort()
       window.clearTimeout(timer)
     }
-  }, [repo, feedEpoch, attach, refresh, readSpecs, readLoops, readPrs, accept])
+  }, [repo, feedEpoch, refresh, readSpecs, readLoops, readPrs, accept])
 
   const path = selected.startsWith('spec:') ? '' : selected
   useEffect(() => {
@@ -563,7 +559,7 @@ export default function App() {
     : undefined)
   const spec = task?.spec ?? null
   const waiting = (task?.waiting || other?.waiting) ?? false
-  const mode = sw?.mode ?? (sw?.translate ? 'full' : 'off')
+  const mode = api.modeOf(sw)
   const on = mode !== 'off'
   const full = mode === 'full'
   const tidy = row && task?.row && row.merged && !row.dirty && !task.busy

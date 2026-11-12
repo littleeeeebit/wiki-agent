@@ -265,3 +265,15 @@ def resume(repo: str) -> None:
 
     oneshot_spec.saved(repo, oneshot={"refused": 0})
     begin(repo)
+
+
+def limits(spec: dict) -> dict:
+    """What the screen counts a stage's tries against: the server's own caps, never a copy on the screen."""
+
+    from . import oneshot_critique   # it imports this module
+
+    return {"limits": {"attempts": oneshot_build.MAX_ATTEMPTS, "refusals": cap(),
+                       "critiques": oneshot_critique.MAX_ROUNDS}}
+
+
+oneshot_spec.VIEWS.append(limits)

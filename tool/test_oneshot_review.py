@@ -12,7 +12,8 @@ import pytest
 from fastapi import HTTPException
 
 from agent import read_tools
-from main import loop, oneshot, oneshot_build, oneshot_review, oneshot_sheet as sheet, oneshot_spec, query, specs, work
+from main import (loop, oneshot, oneshot_build, oneshot_critique, oneshot_review, oneshot_sheet as sheet, oneshot_spec,
+                  query, specs, work)
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_spec import DESIGN, GLOSSARY, PROFILE, REQS, fenced, world  # noqa: F401 — `world` is a fixture
 
@@ -114,6 +115,15 @@ def test_a_refusal_goes_to_the_build_each_time_until_the_round_cap_stops_the_run
             oneshot_spec.resume("budget")
     assert resumed == ["budget"] and o()["stage"] == "build" and o()["working"] == "build" and o()["refused"] == 0
     assert "음수 금액을 받는다" in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
+
+
+def test_the_screen_reads_the_caps_and_the_worktree_it_follows_from_the_server(reviewed):
+    tree, _, _ = reviewed
+    with patch.object(loop, "settings", lambda: {"rounds": 5, "review_effort": "high"}):
+        shown = oneshot_spec.view(specs.load("budget", oneshot.BRANCH))
+    assert shown["limits"] == {"attempts": oneshot_build.MAX_ATTEMPTS, "refusals": 5,
+                               "critiques": oneshot_critique.MAX_ROUNDS}
+    assert shown["worktree"] and str(tree).replace("\\", "/") in shown["worktree"].replace("\\", "/")
 
 
 @pytest.mark.parametrize("raised", [False, True])
