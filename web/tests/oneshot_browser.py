@@ -1,5 +1,5 @@
-"""The oneshot window: the switch from maintenance, the run list with its waiting and stopped rows,
-the stages, a gate sheet's per-item decisions with its folded section, the re-shown sheet, the
+"""The oneshot window: the switch from maintenance with its count, the run list grouped by what needs
+the owner, the stage spine, a gate sheet's per-item decisions with its folded section, the re-shown sheet, the
 feature board by drag and by keys, a stopped run's `[재개]`, and the start form.
 
 Run after building: python web/tests/oneshot_browser.py
@@ -7,6 +7,7 @@ Serves web/dist with synthetic runs; the sheets are short Markdown like the serv
 """
 
 import copy
+import re
 import sys
 
 from fastapi import FastAPI, Request, Response
@@ -135,19 +136,21 @@ def main():
         page.goto(f"http://127.0.0.1:{port}/")
         # Maintenance says a oneshot run waits, on the switch to the oneshot window.
         switch = page.get_by_role("tablist", name="창")
-        expect(switch.get_by_role("tab", name="원샷").get_by_label("결정을 기다리는 실행이 있다")).to_be_visible()
+        expect(switch.get_by_role("tab", name="원샷").get_by_label("결정이 필요한 실행 4개")).to_be_visible()
         switch.get_by_role("tab", name="원샷").click()
         expect(page.get_by_role("tab", name="원샷")).to_have_attribute("aria-selected", "true")
         rail = page.get_by_role("navigation", name="원샷 실행")
-        expect(rail.get_by_role("button").filter(has_text="demo").first.get_by_label("결정을 기다린다")).to_be_visible()
-        expect(rail.get_by_role("button").filter(has_text="stopped-demo").get_by_label("결정을 기다린다")).to_have_count(0)
-        expect(rail.get_by_role("button").filter(has_text="stopped-demo")).to_contain_text("멈춤 — 화면 비평")
+        need = rail.get_by_role("region", name="결정이 필요한 것")
+        expect(need.get_by_role("button").filter(has_text=re.compile(r"^demo"))).to_be_visible()
+        expect(need.get_by_role("button").filter(has_text="stopped-demo")).to_contain_text("멈춤 · 화면 비평")
+        expect(rail.get_by_role("region", name="도는 중").get_by_role("button").filter(has_text="auto-demo")).to_be_visible()
 
         # R1: the stages, per-item decisions, the folded section and its "approve all".
-        rail.get_by_role("button").filter(has_text="demo").first.click()
-        strip = page.get_by_role("navigation", name="원샷 단계")
+        need.get_by_role("button").filter(has_text=re.compile(r"^demo")).click()
+        strip = page.get_by_role("list", name="원샷 단계 6/18")
         expect(strip.locator("[aria-current=step]")).to_contain_text("R1 백엔드 설계")
-        expect(strip.get_by_text("✓")).to_have_count(5)   # the start's three, the conversation, the backend design
+        # the start's three, the conversation, the backend design
+        expect(strip.locator("li li").filter(has_text="— 지남")).to_have_count(5)
         sheet = page.get_by_role("region", name="R1 시트")
         shown, folded = sheet.get_by_role("region", name="펼쳐진 항목"), sheet.get_by_role("region", name="접힌 부분의 항목")
         expect(shown.locator("[data-item]")).to_have_count(3)
@@ -206,12 +209,12 @@ def main():
 
         # A stopped run: its reason and `[재개]`.
         page.get_by_role("navigation", name="원샷 실행").get_by_role("button").filter(has_text="stopped-demo").click()
-        expect(page.get_by_role("alert").filter(has_text="멈췄다 — 화면 비평이 멈췄다")).to_contain_text("6회차에도")
-        head = page.locator(".oneshot-shell main > header")
-        expect(head.get_by_role("status")).to_have_text("멈춤 — 아래에 이유")
+        expect(page.get_by_role("alert").filter(has_text="화면 비평이 멈췄다")).to_contain_text("6회차에도")
+        lead = page.locator(".oneshot-shell main h2").first
+        expect(lead).to_have_text("화면 비평 멈춤")
         page.get_by_role("button", name="재개", exact=True).click()
-        expect(head.get_by_role("status")).to_have_text("진행 중…")
-        expect(head.get_by_role("heading")).to_have_text("화면 비평")
+        expect(lead.get_by_role("status")).to_have_text("진행 중")
+        expect(lead).to_contain_text("화면 비평")
         assert posted[-1][:2] == ("stopped-demo", "resume"), posted[-1]
 
         # S2: the question that rides only in `choices` is shown and answered; a refused answer stays.
@@ -235,14 +238,15 @@ def main():
         assert posted[-1] == ("talk-demo", "say", {"text": "좋다"}), posted[-1]
 
         # The rail follows a spec the server saves, with no focus change: an automatic stage reaching a gate.
-        row = page.get_by_role("navigation", name="원샷 실행").get_by_role("button").filter(has_text="auto-demo")
-        expect(row.get_by_label("결정을 기다린다")).to_have_count(0)
+        row = (page.get_by_role("navigation", name="원샷 실행").get_by_role("region", name="결정이 필요한 것")
+               .get_by_role("button").filter(has_text="auto-demo"))
+        expect(row).to_have_count(0)
         views["auto-demo"] = run("auto-demo", "r1")
         page.evaluate("window.dispatchEvent(new Event('spec-changed'))")
-        expect(row.get_by_label("결정을 기다린다")).to_be_visible()
+        expect(row).to_be_visible()
         views["auto-demo"] = run("auto-demo", "build", working="build", waits=False)   # and a feed resync alone
         page.evaluate("window.dispatchEvent(new Event('server-resync'))")
-        expect(row.get_by_label("결정을 기다린다")).to_have_count(0)
+        expect(row).to_have_count(0)
 
         # Back to maintenance and in again: the run last shown opens again.
         page.get_by_role("tab", name="유지보수").click()
@@ -274,16 +278,16 @@ def main():
         expect(group["구현"].get_by_role("combobox", name="모델")).to_contain_text("Claude 기본")   # apart from 명세
         form.get_by_role("textbox").first.fill("가계부를 만들고 싶다")
         form.get_by_role("button", name="시작", exact=True).click()
-        stages = page.get_by_role("region", name="실행의 단계")
-        expect(stages.get_by_text("명세 opus · high / 구현 Claude 기본 / 리뷰 codex:gpt-6.1-sol · high")).to_be_visible()
-        expect(page.get_by_role("navigation", name="원샷 단계").locator("[aria-current=step]")).to_contain_text("하고 싶은 것")
+        models = page.locator(".oneshot-shell main > header dd")
+        expect(models).to_have_text(["opus · high", "Claude 기본", "codex:gpt-6.1-sol · high", "opus · high (고정)"])
+        expect(page.get_by_role("list", name="원샷 단계 1/18").locator("[aria-current=step]")).to_contain_text("하고 싶은 것")
         assert page.url.endswith("#oneshot/run%3A0123456789abcdef"), page.url
         assert posted[-1][2]["models"] == {"spec": {"model": "opus", "effort": "high"}, "build": {"model": "", "effort": ""},
                                            "review": {"model": "codex:gpt-6.1-sol", "effort": "high"}}, posted[-1]
         browser.close()
     assert not errors, errors
-    print("PASS: maintenance marks a waiting run on the switch; the oneshot window lists runs with the waiting and the "
-          "stopped marked; a gate sheet needs every item, folded or not, and records the folds opened; an enlarged "
+    print("PASS: maintenance counts the runs that need the owner on the switch; the oneshot window groups them apart "
+          "from the running; a gate sheet needs every item, folded or not, and records the folds opened; an enlarged "
           "picture closes alone; the re-shown sheet opens what needs a decision again; the board moves by drag and by "
           "keys; a stopped run resumes; S2 shows its choices and keeps a refused answer; the list follows a saved spec; "
           "the switch keeps the run shown; [새 프로젝트] opens the start form, which fixes three models picked apart")

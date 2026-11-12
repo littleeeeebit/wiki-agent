@@ -155,28 +155,43 @@ repositories; a oneshot run, from its sentence to its pull request, has its
 own window. The two windows sit in one app window and both stay mounted, so a
 stream or a draft in one survives a look at the other. The switch
 `[유지보수 · 원샷]` is at the same place at the top of both rails, and carries a
-`wait` dot when a oneshot run waits for the owner. The folded maintenance rail
-has a rocket icon with the same dot. The URL fragment holds the window and the
-run (`#oneshot/spec:<repo>`, `#oneshot/run:<id>`, `#oneshot/new`), so the
-browser's back works and going back to the oneshot window reopens the run last
-shown. Maintenance's `[새 프로젝트]` opens the start form there.
+`wait` count of the runs that need the owner: a decision, or `[재개]` after a
+stop. The folded maintenance rail has a rocket icon with a `wait` dot. The URL
+fragment holds the window and the run (`#oneshot/spec:<repo>`,
+`#oneshot/run:<id>`, `#oneshot/new`), so the browser's back works and going
+back to the oneshot window reopens the run last shown. Maintenance's
+`[새 프로젝트]` opens the start form there.
 
-| Area | Position | Why there |
+The window is laid out for 1920 × 1080 first. Two columns: the run list
+(`17rem`) and the run.
+
+| Area | Where | What |
 | --- | --- | --- |
-| Run list | Left `15rem` | Runs still going, waiting first, then the S1 runs; finished runs fold under `끝남`. Each row: name (code), stage and `n/18` (meta), a 2px `progress` bar |
-| Stages | `17rem` | The sentence and the fixed models, then all eighteen stages under five phases (시작 · 요구 · 백엔드 · 화면 · 마무리): `✓` passed, `●` now, `○` to come, `정함` where the owner decides |
-| Now | `1fr` | The stage name and its state in the 44px header, one line on what the stage does, then what it shows or asks — the intent, the card, the conversation, a gate sheet, the board, the summary. Content keeps the header's left edge, at most `60rem` wide |
+| Run list | Left | Three groups: `결정이 필요한 것` (label in `wait`), `도는 중`, and `끝남` folded. Each row: name (code) with `n/18`, then the stage, or `멈춤 · <stage>` in `wait`. No dots or bars: the group says what the row needs |
+| Header | Top of the run | Name (code, 17px), the sentence, the fixed models at the right, and the spine: the eighteen stages as ticks under five phases — filled behind, solid now (`wait` when it needs the owner, `progress` when it runs), outlined ahead where the owner decides |
+| Lead | Top-left of the stage | Stage name (20px) with a badge — `멈춤` and `결정 필요` in `wait`, `진행 중` in `progress` — and one line on what the stage does |
 
-Under 1280px the stages fold into a `단계 n/18` disclosure at the top of Now.
-At 1100px or narrower one column remains and the run list folds behind
-`실행 목록`. Measured on 2026-11-11 at 1440, 1200, 1000 and 400px: no
-horizontal overflow; the three headers are 44px; Now's header and content
-start on the same edge.
+Each stage takes the layout its work needs rather than one shared column:
 
-The window adds no type levels: title for the app name, pane for the stage
-name, label for phase and group names, body for the stage line and the
-sentence, control for stage rows and the switch, code for run names, meta for
-a row's stage and count, `정함` and the header's state.
+| Layout | Stages | Shape |
+| --- | --- | --- |
+| Split | Conversation, R1–R3, board, bootstrap | The work on the left, what it makes or rests on in a `34rem` side (`24rem` under 1500px), each scrolling on its own. The conversation fills the height with its answer box at the bottom beside the requirements and stack it gathered; a gate sheet reads wide beside its decisions; the board's columns sit beside the first screen they make |
+| Compare | Intent, environment card | Two blocks side by side: the owner's sentence in large type beside what the agent understood; the card beside what confirming it makes outside |
+| Top | Stop, working stages, summary | One column under the lead, `60rem` at most; the summary's stat tiles and gate table take `72rem` |
+| Centre | Start form | The form alone in the middle of the empty window |
+
+A decision that sends (`제출`, `보드 제출`, `맞다`, `확정하고 만들기`, `재개`) is
+the `wait` button at `36px`; in a split side it stays at the bottom while the
+rest scrolls.
+
+Under 1100px the run list becomes a drawer behind `실행 목록` (Escape and the
+scrim close it), the models leave the header, and a split's side goes under
+its work so the window scrolls as one. Measured on 2026-11-12 at 1920, 1440,
+1000 and 400px on every stage: no horizontal overflow.
+
+The window adds no type levels beyond the lead's 20px: label for phase, group
+and side names, body for the sentence and stage line, code for run names and
+ids, meta for counts.
 
 ## Color
 
