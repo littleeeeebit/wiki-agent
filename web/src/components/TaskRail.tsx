@@ -8,6 +8,7 @@ import type { Item } from '@/components/Toolbar'
 import type { Options, Pr } from '@/lib/api'
 import type { Elsewhere, Group, Phase, Task } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
+import { ModeSwitch, OneshotIcon } from '@/components/OneshotWindow'
 import { ProviderUsage } from '@/components/ProviderUsage'
 import { UpdateCard } from '@/components/UpdateCard'
 
@@ -137,6 +138,7 @@ export function TaskRail(props: Props) {
 
       <div className={cn('shrink-0 space-y-2 border-b border-sidebar-border p-3', WIDE)}>
         <div className="rail-primary space-y-2">
+        <ModeSwitch mode="main" />
         <Picker label="프로젝트" hideLabel width="w-full" mono items={projects} value={repo}
           disabled={props.projectBusy || !options} onPick={(v) => v && v !== repo && props.onProject(v)} />
         <button type="button" onClick={props.onNew}
@@ -175,6 +177,7 @@ export function TaskRail(props: Props) {
       </div>
 
       <div className={cn('flex shrink-0 flex-col items-center gap-1 border-b border-sidebar-border py-2', NARROW)}>
+        <OneshotIcon />
         <button type="button" aria-label="새 작업" title="새 작업" onClick={props.onNew}
           className="grid size-8 place-items-center rounded-md hover:bg-sidebar-accent">
           <Plus className="size-4" />

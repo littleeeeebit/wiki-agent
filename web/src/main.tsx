@@ -1,8 +1,10 @@
-import { StrictMode } from 'react'
+import { StrictMode, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import { MobileAccess } from '@/components/MobileAccess'
+import { OneshotWindow } from '@/components/OneshotWindow'
+import { useRoute } from '@/lib/mode'
 import { openWebLink } from '@/lib/links'
 import { reportError } from '@/lib/api'
 
@@ -41,8 +43,22 @@ if (!('__TAURI_INTERNALS__' in window) && 'serviceWorker' in navigator) {
   void navigator.serviceWorker.register('/sw.js').catch(() => {})
 }
 
+/** Maintenance and the oneshot window. The oneshot window mounts when first opened, and from then on
+ *  both stay mounted: a stream or a draft in one survives a look at the other. */
+function Windows() {
+  const { mode } = useRoute()
+  const [opened, setOpened] = useState(mode === 'oneshot')
+  if (mode === 'oneshot' && !opened) setOpened(true)
+  return (
+    <>
+      <div hidden={mode !== 'main'}><App /></div>
+      {opened && <div hidden={mode !== 'oneshot'}><OneshotWindow /></div>}
+    </>
+  )
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <MobileAccess><App /></MobileAccess>
+    <MobileAccess><Windows /></MobileAccess>
   </StrictMode>,
 )
