@@ -183,7 +183,13 @@ def main():
         for item in ("R1", "E1"):
             shown.locator(f"[data-item={item}]").get_by_role("button", name="승인").click()
         shown.locator("[data-item=R2]").get_by_role("button", name="고침").click()
-        shown.get_by_label("R2 고칠 내용").fill("합계는 달마다 따로 보여라")
+        edit = shown.get_by_label("R2 고칠 내용")
+        edit.press_sequentially("합계는")   # typed key by key, the item stays open where it was, focus and all
+        expect(edit).to_be_visible()
+        expect(edit).to_be_focused()
+        edit.fill("합계는 달마다 따로 보여라")
+        for item in ("R1", "E1", "R2"):   # an item decided on this sheet stays in sight
+            expect(shown.locator(f"[data-item={item}]")).to_be_visible()
         expect(sheet.get_by_text("정하지 않은 항목 2개")).to_be_visible()
         expect(submit).to_be_disabled()   # the folded section's items are undecided, though nobody opened it
 
