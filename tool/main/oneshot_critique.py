@@ -133,9 +133,12 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict]):
                                                  "r3": {"round": (o.get("r3") or {}).get("round", 0) + 1, "decisions": {},
                                                         "marks": (o.get("r3") or {}).get("next_marks") or {}}})
     if len(ours) >= MAX_ROUNDS:
-        store.put(critiques=rounds, critique_base=len(rounds))   # `[재개]` starts a fresh count
-        store.stop("critique", f"{MAX_ROUNDS}회차에도 높은 발견이 남았다 — " + " / ".join(
-            f"{f['route']} {f['viewport']} {f['state']}: {f['what']}" for f in found if f["severity"] == "high"))
+        detail = f"{MAX_ROUNDS}회차에도 높은 발견이 남았다 — " + " / ".join(
+            f"{f['route']} {f['viewport']} {f['state']}: {f['what']}" for f in found if f["severity"] == "high")
+        with oneshot._lock:   # one write; `[재개]` starts a fresh count, and the stop keeps the count it reached
+            # (`counted`), so the screen tells a cap stop from a failed critique, which leaves no critique behind
+            store.put(critiques=rounds, critique_base=len(rounds), working=None, stopped={
+                "reason": "critique", "detail": detail, "state": store.get()[store.state], "counted": len(ours)})
         return None
     if ours[-1]["clean"] and not found:   # nothing to fix: a second look at the same shots, `working` still set
         oneshot_spec.saved(repo, oneshot={"critiques": rounds})

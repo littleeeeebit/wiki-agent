@@ -16,7 +16,8 @@ export const modelName = (role: keyof Models, m: { model: string; effort: string
   `${m.model || (role === 'review' ? '리뷰 설정 따름' : 'Claude 기본')}${m.effort ? ` · ${m.effort}` : ''}`
 export type SpecSummary = {
   repo: string; stage: string; working: string | null; waits: boolean
-  stopped: { reason: string; detail: string } | null
+  /** `counted`: the critiques a cap stop reached (`oneshot_critique`). */
+  stopped: { reason: string; detail: string; counted?: number } | null
 }
 export type Reading = { round: number; seconds: number | null; opened: string[]; edited: string[] }
 export type RunSummary = {

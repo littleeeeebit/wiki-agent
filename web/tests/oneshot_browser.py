@@ -465,7 +465,7 @@ def tracking():
     often the owner goes back and forth; a stopped check counts the failed checks; critiques count by sequence,
     their shots apart, against the cap since it restarted; a failed record read says so; partial translation
     leaves progress in English, and the switch set elsewhere is followed at once."""
-    trees = {name: f"C:/fixture/{name}-worktrees/oneshot-initial" for name in ("a-run", "b-run", "c-run")}
+    trees = {name: f"C:/fixture/{name}-worktrees/oneshot-initial" for name in ("a-run", "b-run", "c-run", "d-run", "e-run")}
     limits = {"attempts": 3, "refusals": 5, "critiques": 6}
     look = lambda n, clean: {"look": n, "head": "c" * 40, "clean": clean, "findings": [] if clean else [
         {"route": "/", "viewport": "phone", "state": "empty", "what": "글자가 잘린다", "severity": "high"}]}
@@ -473,6 +473,10 @@ def tracking():
         "a-run": run("a-run", "build", working="build", waits=False),
         "b-run": run("b-run", "build", waits=False, stopped={"reason": "build", "detail": "검사가 세 번 실패했다"}),
         "c-run": run("c-run", "critique", working="critique", waits=False),
+        # After an R3 fix, the first critique call failed: the same reason as a cap stop, and no critique.
+        "d-run": run("d-run", "critique", waits=False, stopped={"reason": "critique", "detail": "비평이 그림을 받지 못했다"}),
+        "e-run": run("e-run", "critique", waits=False, stopped={"reason": "critique", "detail": "6회차에도 높은 발견이 남았다",
+                                                               "counted": 6}),
     }
     for name, view in views.items():
         view |= {"worktree": trees[name], "limits": limits}
@@ -480,6 +484,8 @@ def tracking():
     views["b-run"]["oneshot"] |= {"attempts": 3}
     # Two clean looks at shot 1 (a second look at the same shots), then an R3 fix restarted the count.
     views["c-run"]["oneshot"] |= {"critiques": [look(1, True), look(1, True), look(2, False)], "critique_base": 2}
+    views["d-run"]["oneshot"] |= {"critiques": [look(1, True), look(1, True)], "critique_base": 2}
+    views["e-run"]["oneshot"] |= {"critiques": [look(n, False) for n in range(1, 7)], "critique_base": 6}
     state = {"open": 0, "opened": 0, "fail": 1, "mode": "partial"}
     translations: list = []
     fake = FastAPI()
@@ -526,7 +532,7 @@ def tracking():
                 return {"rows": [{"role": "assistant", "text": "Built the screens.",
                                   "steps": [{"kind": "progress", "text": "Reading the board."}]}],
                         "session_id": "c", "busy": False, "running": None, "rules": [], "queued": None}
-            if where == trees["b-run"]:
+            if where in (trees["b-run"], trees["d-run"], trees["e-run"]):
                 return {"rows": [], "session_id": "", "busy": False, "running": None, "rules": [], "queued": None}
         return fixture(path, request.method)
 
@@ -572,12 +578,20 @@ def tracking():
         state["mode"] = "full"   # set in maintenance's settings, which tells every record
         page.evaluate("window.dispatchEvent(new CustomEvent('switch', { detail: { translate: true, mode: 'full' } }))")
         expect(trail.get_by_text("보드를 읽는다.")).to_be_visible()
+        state["mode"] = "partial"   # set in another window: this one hears only the feed's `sync`, a resync
+        page.evaluate("window.dispatchEvent(new Event('server-resync'))")
+        expect(trail.get_by_text("Reading the board.")).to_be_visible()
 
         expect(record).to_contain_text("화면 비평1 / 6 · 모두 3회")
         looks = record.get_by_role("region", name="화면 비평")
         expect(looks.locator("details summary")).to_have_text([
             re.compile(r"^3회차 높은 발견 있음 · 촬영 2"), re.compile(r"^2회차 높은 발견 없음 · 촬영 1$"),
             re.compile(r"^1회차 높은 발견 없음 · 촬영 1$")])
+        pick("d-run")   # a failed call is no critique: nothing counted against the fresh cap
+        expect(record).to_contain_text("화면 비평0 / 6 · 모두 2회")
+        pick("e-run")   # the cap reached: the count restarted at once, the stop keeps what it reached
+        expect(record).to_contain_text("화면 비평6 / 6")
+        expect(record).not_to_contain_text("모두")
         browser.close()
     assert not errors, errors
     print("PASS: a run's stream closes when another run is shown, however often; a stopped check shows the checks "

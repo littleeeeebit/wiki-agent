@@ -75,18 +75,20 @@ function Log({ path }: { path: string }) {
   const [failed, setFailed] = useState('')   // the path whose record could not be read
   const end = useRef<HTMLDivElement>(null)
   // The agent's answers come in English: shown in Korean as maintenance shows them, by the same switch, read
-  // again whenever it is set (`setSwitch`).
+  // again whenever it is set here (`setSwitch`) or anywhere else (the feed's `sync` resyncs every window).
   useEffect(() => {
     const set = (event: Event) => setMode(modeOf((event as CustomEvent<Switch>).detail))
-    getSwitch().then((s) => setMode(modeOf(s))).catch(() => {})
+    const read = () => { getSwitch().then((s) => setMode(modeOf(s))).catch(() => {}) }
+    read()
     window.addEventListener('switch', set)
-    return () => window.removeEventListener('switch', set)
+    window.addEventListener('server-resync', read)
+    return () => {
+      window.removeEventListener('switch', set)
+      window.removeEventListener('server-resync', read)
+    }
   }, [])
   // Leaving the run closes its stream: each turn awaiting an answer would otherwise keep a connection open.
-  const read = useCallback(() => {
-    setFailed('')
-    load(path).then((ok) => { if (!ok) setFailed(path) })
-  }, [path, load])
+  const read = useCallback(() => { load(path).then((ok) => setFailed(ok ? '' : path)) }, [path, load])
   useEffect(() => {
     if (!path) return
     read()
@@ -143,10 +145,11 @@ function Record({ view }: { view: SpecView }) {
   // A running check is on its next try; a stopped one counts the checks that failed, as the server does.
   const tried: [string, string] = view.working
     ? ['시도', of((o.attempts ?? 0) + 1, lim?.attempts)] : ['검사 실패', of(o.attempts ?? 0, lim?.attempts)]
-  // Only the critiques since the count restarted go against the cap; a cap stop restarts it at once.
+  // Only the critiques since the count restarted go against the cap; a cap stop restarts it at once, and keeps
+  // the count it reached (`counted`) — a failed critique call stops for the same reason with none.
   const looks = o.critiques?.length ?? 0
   const since = looks - (o.critique_base ?? 0)
-  const counted = since === 0 && view.stopped?.reason === 'critique' && lim ? lim.critiques : since
+  const counted = since === 0 && view.stopped?.counted ? view.stopped.counted : since
   const facts: [string, string][] = [
     ...(ATTEMPTED.has(view.stage) ? [tried] : []),
     ...(o.reviews?.length ? [['리뷰 거절', of(o.refused ?? 0, lim?.refusals)] as [string, string]] : []),
