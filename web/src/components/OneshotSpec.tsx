@@ -511,7 +511,7 @@ function Finished({ summary }: { summary: RunSummary }) {
         <dl className="grid grid-cols-4 gap-px overflow-hidden rounded-xl border border-border bg-border max-[1100px]:grid-cols-2">
           {([
             ['풀 리퀘스트', summary.pr
-              ? <a href={summary.pr.url} target="_blank" rel="noreferrer" className="underline underline-offset-4">#{summary.pr.number}</a> : '없음'],
+              ? <a key="pr" href={summary.pr.url} target="_blank" rel="noreferrer" className="underline underline-offset-4">#{summary.pr.number}</a> : '없음'],
             ['걸린 시간', `${hours}시간`],
             [s.unknown ? `비용 (추정 ${s.unknown}턴 포함)` : '비용', `$${(s.usd ?? 0).toFixed(2)}`],
             ['턴', String(s.calls ?? 0)],

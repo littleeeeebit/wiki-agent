@@ -19,6 +19,17 @@ export const go = (mode: Route['mode'], run = '') => {
   location.hash = mode === 'main' ? '' : last ? `oneshot/${encodeURIComponent(last)}` : 'oneshot'
 }
 
+/** A run handing over to the next one (a start answered, a bootstrap finished): it opens when the oneshot
+ *  window shows, and otherwise only becomes the run the window reopens, so it never pulls maintenance away. */
+export const follow = (run: string) => {
+  if (read().mode === 'oneshot') go('oneshot', run)
+  else last = run
+}
+
+/** Keeps the items of a list answer that have the fields the screens read, so one bad item drops alone. */
+export const rows = <T>(list: unknown, fields: string[]): T[] => (Array.isArray(list) ? list : [])
+  .filter((x) => !!x && typeof x === 'object' && fields.every((f) => typeof (x as Record<string, unknown>)[f] === 'string')) as T[]
+
 export function useRoute(): Route {
   const [route, setRoute] = useState(read)
   useEffect(() => {
@@ -34,7 +45,7 @@ export function useSpecs(): SpecSummary[] {
   const [specs, setSpecs] = useState<SpecSummary[]>([])
   useEffect(() => {
     // A list or nothing: the switch sits on maintenance's rail, which a bad answer here must not take down.
-    const again = () => { oneshotSpecs().then((d) => setSpecs(Array.isArray(d?.specs) ? d.specs : [])).catch(() => setSpecs([])) }
+    const again = () => { oneshotSpecs().then((d) => setSpecs(rows<SpecSummary>(d?.specs, ['repo', 'stage']))).catch(() => setSpecs([])) }
     again()
     // A worker moving a run on (an automatic stage reaching a gate) saves its spec, which the feed announces;
     // a feed that reconnects or resyncs announces no single spec, so the list reads again then too.

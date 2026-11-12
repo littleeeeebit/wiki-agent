@@ -89,8 +89,8 @@ def main():
 
     @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
     async def api(path: str, request: Request):
-        if path == "oneshot-specs":
-            return {"specs": [{k: v[k] for k in ("repo", "stage", "working", "stopped", "waits")} for v in views.values()]}
+        if path == "oneshot-specs":   # one broken item drops alone; the rest still shows
+            return {"specs": [None, *({k: v[k] for k in ("repo", "stage", "working", "stopped", "waits")} for v in views.values())]}
         if path == "oneshot" and request.method == "POST":
             body = await request.json()
             posted.append(("", "start", body))
@@ -99,7 +99,7 @@ def main():
                            identity=None, steps={}, spec=None, errors=[], warnings=[], schema={}, steps_order=[])
             return started
         if path == "oneshot":
-            return {"runs": []}
+            return {"runs": [None, *([started] if started else [])]}
         if path == f"oneshot/{started.get('id')}":
             return started
         if path == "options":
@@ -248,12 +248,14 @@ def main():
         page.evaluate("window.dispatchEvent(new Event('server-resync'))")
         expect(row).to_have_count(0)
 
-        # Back to maintenance and in again: the run last shown opens again.
+        # Back to maintenance and in again: the run last shown opens again, with the half-typed answer kept.
+        reply.fill("아직 보내지 않은 답")
         page.get_by_role("tab", name="유지보수").click()
         expect(page.locator(".oneshot-shell")).to_be_hidden()
         page.get_by_role("button", name="프로젝트 · 연결", exact=True).click()
         page.get_by_role("tab", name="원샷").click()
         expect(page.get_by_role("region", name="요구 대화")).to_be_visible()
+        expect(reply).to_have_value("아직 보내지 않은 답")
         page.get_by_role("tab", name="유지보수").click()
 
         # Maintenance's [새 프로젝트] opens the start form in the oneshot window.
@@ -284,13 +286,38 @@ def main():
         assert page.url.endswith("#oneshot/run%3A0123456789abcdef"), page.url
         assert posted[-1][2]["models"] == {"spec": {"model": "opus", "effort": "high"}, "build": {"model": "", "effort": ""},
                                            "review": {"model": "codex:gpt-6.1-sol", "effort": "high"}}, posted[-1]
+
+        # The S1 run's row and the count follow what the open pane reads: running, then waiting for [맞다].
+        rail = page.get_by_role("navigation", name="원샷 실행")
+        expect(rail.get_by_role("region", name="도는 중").get_by_role("button").filter(has_text="새 실행")).to_be_visible()
+        expect(page.get_by_role("tab", name="원샷").get_by_label("결정이 필요한 실행 3개")).to_be_visible()   # stopped-demo resumed
+        started.update(working=None, intent={"restated": "가계부", "kind": "webapp", "name": "budget", "users": "나",
+                                             "first_screen": "이번 달 합계"})
+        expect(rail.get_by_role("region", name="결정이 필요한 것").get_by_role("button").filter(has_text="budget")).to_contain_text("하고 싶은 것")
+        expect(page.get_by_role("tab", name="원샷").get_by_label("결정이 필요한 실행 4개")).to_be_visible()
+        expect(page.locator(".oneshot-shell main h2").first).to_contain_text("결정 필요")
+
+        # A bootstrap that finishes while maintenance shows stays out of sight, and opens on the way back.
+        started.update(state="bootstrap", working="bootstrap", intent=None)
+        rail.get_by_role("button").filter(has_text="talk-demo").click()
+        page.evaluate("window.dispatchEvent(new Event('focus'))")
+        rail.get_by_role("region", name="도는 중").get_by_role("button").filter(has_text="새 실행").click()
+        expect(page.locator(".oneshot-shell main h2").first).to_contain_text("저장소 만들기")
+        page.get_by_role("tab", name="유지보수").click()
+        started.update(state="spec", working=None, spec={"repo": "talk-demo", "id": "s"})
+        page.wait_for_timeout(2500)   # the hidden pane's 1.5s read lands
+        expect(page.locator(".oneshot-shell")).to_be_hidden()
+        assert not page.url.split("#", 1)[-1].startswith("oneshot"), page.url
+        page.get_by_role("tab", name="원샷").click()
+        expect(page.get_by_role("region", name="요구 대화")).to_be_visible()
         browser.close()
     assert not errors, errors
     print("PASS: maintenance counts the runs that need the owner on the switch; the oneshot window groups them apart "
           "from the running; a gate sheet needs every item, folded or not, and records the folds opened; an enlarged "
           "picture closes alone; the re-shown sheet opens what needs a decision again; the board moves by drag and by "
           "keys; a stopped run resumes; S2 shows its choices and keeps a refused answer; the list follows a saved spec; "
-          "the switch keeps the run shown; [새 프로젝트] opens the start form, which fixes three models picked apart")
+          "the switch keeps the run shown and its draft; [새 프로젝트] opens the start form, which fixes three models "
+          "picked apart; an S1 run's row and the count follow its pane; a broken list item drops alone")
 
 
 if __name__ == "__main__":

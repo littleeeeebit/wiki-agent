@@ -3,7 +3,7 @@ import { Plus, Rocket } from 'lucide-react'
 import { Btn } from '@/components/Modal'
 import { Body, Intake, api, useAct, type OneshotRun } from '@/components/Oneshot'
 import { Fault, Lead, ModelsList, OneshotSpec, Top } from '@/components/OneshotSpec'
-import { go, useRoute, useSpecs, type Route } from '@/lib/mode'
+import { follow, go, rows, useRoute, useSpecs, type Route } from '@/lib/mode'
 import { STAGES, type Models, type SpecSummary, type SpecView } from '@/lib/oneshot'
 import { cn } from '@/lib/utils'
 
@@ -102,13 +102,14 @@ export function OneshotIcon() {
 }
 
 export function OneshotWindow() {
-  const { run: key } = useRoute()
+  const { mode, run: key } = useRoute()
   const specs = useSpecs()
   const [runs, setRuns] = useState<OneshotRun[]>([])
   const [told, setTold] = useState<{ key: string; now: Now } | null>(null)   // what the open pane last read
+  const [held, setHeld] = useState('')   // the run shown when the window was last on screen
   const [drawer, setDrawer] = useState(false)   // the list under 1100px, where it slides over the run
   const readRuns = useCallback(() => {
-    api.oneshotRuns().then((d) => setRuns(Array.isArray(d?.runs) ? d.runs : [])).catch(() => setRuns([]))
+    api.oneshotRuns().then((d) => setRuns(rows<OneshotRun>(d?.runs, ['id', 'state']))).catch(() => setRuns([]))
   }, [])
   useEffect(() => {
     readRuns()
@@ -118,16 +119,30 @@ export function OneshotWindow() {
 
   const open = specs.filter((s) => s.stage !== 'done')
   const early = runs.filter((r) => r.state !== 'spec')
-  // Nothing picked: the first run that waits, else the first still going, else the start form.
-  const picked = key || [...open.filter((s) => s.waits), ...open].map((s) => `spec:${s.repo}`)[0]
+  // The server announces no S1 change on the feed: while one runs, the list reads again on its own.
+  const running = early.some((r) => r.working)
+  useEffect(() => {
+    if (!running) return
+    const timer = window.setInterval(readRuns, 3000)
+    return () => window.clearInterval(timer)
+  }, [running, readRuns])
+  // Nothing picked: the first run that waits, else the first still going, else the start form. While
+  // maintenance shows, the run shown before stays, so a half-typed answer there survives the look away.
+  const live = key || [...open.filter((s) => s.waits), ...open].map((s) => `spec:${s.repo}`)[0]
     || (early[0] ? `run:${early[0].id}` : 'new')
+  const picked = mode === 'main' && held ? held : live
+  if (mode === 'oneshot' && held !== live) setHeld(live)
   // Until the pane has read its run, the list's row stands for it.
   const listed = specs.find((s) => `spec:${s.repo}` === picked)
   const starting = early.find((r) => `run:${r.id}` === picked)
   const current = picked === 'new' ? FRESH : told?.key === picked ? told.now
     : listed ? fromSpec(listed) : starting ? fromRun(starting) : FRESH
   const pick = (k: string) => { setDrawer(false); go('oneshot', k) }
-  const onRun = useCallback((now: Now) => setTold({ key: picked, now }), [picked])
+  // What the open S1 pane reads is also the list's row for it, so the row and the count move with the pane.
+  const onRun = useCallback((run: OneshotRun) => {
+    setTold({ key: picked, now: fromRun(run) })
+    setRuns((all) => all.some((r) => r.id === run.id) ? all.map((r) => r.id === run.id ? run : r) : [...all, run])
+  }, [picked])
   const onView = useCallback((v: SpecView) => setTold({ key: picked, now: fromView(v) }), [picked])
 
   // The drawer closes on Escape, and on its own once the window is wide enough to show the list beside the run.
@@ -143,12 +158,12 @@ export function OneshotWindow() {
     return () => { window.removeEventListener('keydown', key); wide.removeEventListener('change', grow) }
   }, [drawer])
 
-  const rows = [
+  const active = [
     ...open.map((s) => ({ key: `spec:${s.repo}`, now: fromSpec(s) })),
     ...early.map((r) => ({ key: `run:${r.id}`, now: fromRun(r) })),
   ]
-  const need = rows.filter((r) => needs(r.now))
-  const going = rows.filter((r) => !needs(r.now))
+  const need = active.filter((r) => needs(r.now))
+  const going = active.filter((r) => !needs(r.now))
   const done = specs.filter((s) => s.stage === 'done').map((s) => ({ key: `spec:${s.repo}`, now: fromSpec(s) }))
   const row = (r: { key: string; now: Now }) => <Row key={r.key} now={r.now} on={picked === r.key} pick={() => pick(r.key)} />
 
@@ -185,7 +200,7 @@ export function OneshotWindow() {
         <nav aria-label="원샷 실행" className="flex min-h-0 flex-1 flex-col gap-[18px] overflow-y-auto px-2.5 pt-3 pb-5">
           {need.length > 0 && <Group label="결정이 필요한 것" count={need.length} tone="wait">{need.map(row)}</Group>}
           {going.length > 0 && <Group label="도는 중" count={going.length}>{going.map(row)}</Group>}
-          {!rows.length && <p className="px-2 text-[12.5px] text-faint">도는 실행이 없다. [새 실행] 으로 시작한다.</p>}
+          {!active.length && <p className="px-2 text-[12.5px] text-faint">도는 실행이 없다. [새 실행] 으로 시작한다.</p>}
           {done.length > 0 && (
             <details className="group">
               <summary className="flex cursor-pointer list-none justify-between px-2 pb-2 font-heading text-[11.5px] font-semibold tracking-wide text-faint">
@@ -210,7 +225,7 @@ export function OneshotWindow() {
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           <Lead.Provider value={lead}>
             {picked === 'new' && <Start />}
-            {picked.startsWith('run:') && <RunPane key={picked} id={picked.slice(4)} onNow={onRun} />}
+            {picked.startsWith('run:') && <RunPane key={picked} id={picked.slice(4)} onRun={onRun} />}
             {picked.startsWith('spec:') && <OneshotSpec key={picked} repo={picked.slice(5)} onView={onView} />}
           </Lead.Provider>
         </div>
@@ -290,7 +305,7 @@ function Badge({ now }: { now: Now }) {
 
 /** The start form, alone in the middle of an empty window. */
 function Start() {
-  const { fault, busy, act } = useAct((run) => go('oneshot', `run:${run.id}`))
+  const { fault, busy, act } = useAct((run) => follow(`run:${run.id}`))
   return (
     <div className="m-auto flex w-full max-w-[44rem] flex-col gap-5 px-6 py-10 max-[560px]:px-4">
       <div className="flex flex-col gap-1">
@@ -305,7 +320,7 @@ function Start() {
 }
 
 /** A run before S2, read until its stage settles. Once the bootstrap hands it to its spec, the spec opens. */
-function RunPane({ id, onNow }: { id: string; onNow: (now: Now) => void }) {
+function RunPane({ id, onRun }: { id: string; onRun: (run: OneshotRun) => void }) {
   const [run, setRun] = useState<OneshotRun | null>(null)
   const { fault, setFault, busy, act } = useAct(setRun)
   useEffect(() => { api.oneshotRun(id).then(setRun).catch((err) => setFault(String(err instanceof Error ? err.message : err))) }, [id, setFault])
@@ -317,9 +332,9 @@ function RunPane({ id, onNow }: { id: string; onNow: (now: Now) => void }) {
   }, [id, working])
   useEffect(() => {
     if (!run) return
-    if (run.state === 'spec' && run.spec) go('oneshot', `spec:${run.spec.repo}`)
-    else onNow(fromRun(run))
-  }, [run, onNow])
+    if (run.state === 'spec' && run.spec) follow(`spec:${run.spec.repo}`)
+    else onRun(run)
+  }, [run, onRun])
   return run ? <Body run={run} busy={busy} act={act} fault={fault} />
     : <Top><Fault text={fault} />{!fault && <p role="status" className="text-muted-foreground">읽는 중…</p>}</Top>
 }
