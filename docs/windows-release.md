@@ -114,6 +114,9 @@ checks do not establish this isolated desktop acceptance.
 
 ### Isolated HTTPS update feed
 
+For a browser-only hosting procedure, starter files and the ordered failure
+cases, follow [Hosting the Windows update test feed](windows-update-test-feed.md).
+
 The owner selected a separate HTTPS feed for update acceptance. Supply its
 absolute `latest.json` URL before building the two test versions. The builder's
 `--update-feed <https-url>` embeds that endpoint and makes the generated
