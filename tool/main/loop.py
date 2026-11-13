@@ -2054,7 +2054,7 @@ def _finish(repo: Path, spec: dict, base: str, commit: str, text: str) -> None:
     specs.merge_progress(repo.name, spec["id"], "머지한 브랜치·리뷰 아티팩트 정리 중")
     if not shared and spec.get("worktree") and Path(spec["worktree"]).exists():
         notes.append(cleared(repo, Path(spec["worktree"])))
-    notes.append(local_pruned(repo, specs.branch_of(spec), allowed["head"] if allowed else spec["pr"].get("head", "")))
+    notes.append(local_pruned(repo, specs.branch_of(spec), allowed["head"] if allowed else spec["pr"].get("head", ""), n))
     notes.append(pruned(repo, specs.branch_of(spec), allowed["head"] if allowed else spec["pr"].get("head", "")))
     pending = any(marker in note for note in notes for marker in ("뒤처짐", "남겼다", "남김", "못했다", "대기", "폴더는"))
     if not pending:
@@ -2075,19 +2075,29 @@ def _finish(repo: Path, spec: dict, base: str, commit: str, text: str) -> None:
                          "blocked" if pending else "completed")
 
 
-def local_pruned(repo: Path, branch: str, approved: str) -> str:
+def local_pruned(repo: Path, branch: str, approved: str, pr: int = 0) -> str:
     """Delete only the reviewed local ref after returning to an updated base."""
     try:
         release = hold(work._busy, _lock, str(repo), "", kind="turn")
     except HTTPException:
         return "작업 브랜치를 다른 작업이 쓰고 있어 남겼다"
     try:
-        return _local_pruned(repo, branch, approved)
+        return _local_pruned(repo, branch, approved, pr)
     finally:
         release()
 
 
-def _local_pruned(repo: Path, branch: str, approved: str) -> str:
+def merged_at(repo: Path, pr: int, head: str) -> bool:
+    """GitHub merged `pr` at exactly `head`, so the ref loses nothing where the trees cannot show it: the base
+    changed the branch's file after it left, and the squash holds both edits (#318 with #342). Unread is `False`."""
+    try:
+        view = gh_json(repo, ["pr", "view", str(pr), "--json", "state,headRefOid"]) if pr and head else {}
+    except (RuntimeError, ValueError, OSError, subprocess.SubprocessError):
+        return False
+    return view.get("state") == "MERGED" and view.get("headRefOid") == head
+
+
+def _local_pruned(repo: Path, branch: str, approved: str, pr: int = 0) -> str:
     ref = specs.sh(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], repo)
     if ref.returncode == 1:
         return f"작업 브랜치 `{branch}` 는 이미 없다"
@@ -2097,7 +2107,7 @@ def _local_pruned(repo: Path, branch: str, approved: str) -> str:
     if trees.returncode or f"branch refs/heads/{branch}" in trees.stdout.splitlines():
         return f"작업 브랜치 `{branch}` 를 아직 쓰고 있어 남겼다"
     # Compare complete trees, including submodules and squash merges.
-    if not merged(repo, branch):
+    if not merged(repo, branch) and not merged_at(repo, pr, approved):
         return f"작업 브랜치 `{branch}` 의 머지 내용을 확인하지 못했다"
     done = specs.sh(["git", "update-ref", "-d", f"refs/heads/{branch}", approved], repo)
     if not done.returncode:

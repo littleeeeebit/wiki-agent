@@ -2516,6 +2516,28 @@ def test_legacy_cleanup_preserves_a_local_commit_added_after_review(world):
     assert not specs.load("proj", "late-local")["cleanup_complete"]
 
 
+def test_cleanup_deletes_a_branch_github_merged_at_its_head_after_the_base_changed_the_same_file(world):
+    # #318: main edited the branch's file after the branch left it; the squash held both edits, the trees
+    # could not prove the branch merged, and the pending cleanup blocked every new task on the checkout.
+    commit(world.repo, "shared.txt", "a\nb\nc\nd\ne\n")
+    git(world.repo, "push", "-q", "origin", "main")
+    spec = pr_spec(world, "both-k", 7)
+    path = Path(spec["worktree"])
+    head = commit(path, "shared.txt", "A\nb\nc\nd\ne\n")
+    git(path, "push", "-q", "origin", "both-k")
+    specs.update("proj", "both-k", state="머지 대기", pr={**spec["pr"], "head": head})
+    other = world.hub.elsewhere()
+    git(other, "checkout", "-q", "-B", "main", "origin/main")
+    commit(other, "shared.txt", "a\nb\nc\nd\nE\n")
+    git(other, "push", "-q", "origin", "main")
+    world.hub.prs[7].update(state="MERGED", merged=world.hub.squash(7))
+    assert not loop.merged(world.repo, "both-k")   # the trees alone still cannot tell
+    loop.landed(world.repo, specs.load("proj", "both-k"))
+    done = specs.load("proj", "both-k")
+    assert done["cleanup_complete"], done["cleanup"]
+    assert not git(world.repo, "branch", "--list", "both-k") and not path.exists()
+
+
 def test_merge_refuses_a_head_the_review_did_not_allow(world):
     pr_spec(world, "fix-l", 7)
     spec = looped("fix-l")
