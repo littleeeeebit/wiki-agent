@@ -39,6 +39,7 @@ from typing import Callable
 import decision
 import verify
 from common.budget import ACTION, Budget
+from common.paths import RAW
 from session_state import run as git
 from wiki import adapter_path
 
@@ -60,7 +61,7 @@ KEYED = ("repo_id", "worktree_id", "session_id", "spec_id", "spec_revision", "he
 # Refusals a proposal asked again can get past: the state moved, not the offer's rules.
 STALE = ("worktree_removed", *(f"{k}_changed" for k in KEYED), "expired", "unknown_candidate", "candidate_changed")
 EXPIRY = 120.0
-LOGS = ROOT / "raw" / "actions"
+LOGS = RAW / "actions"
 ARTIFACT = Path("eval") / "jev" / "action-policy.json"
 MAX_CHECKS = 8
 MAX_FILES = 40

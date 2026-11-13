@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from common import settings
+from common.paths import PACKAGED, RESOURCES
 
 PROVISIONAL_VERSION = "provisional-1"
 ARTIFACT = Path("eval") / "jev" / "policy.json"
@@ -92,7 +93,7 @@ def policy(model: str, path: Path | None = None, prompt_version: str | None = No
     to its own prompt digest: its rule counts as fitted only when the
     artifact's `kind_versions` names the same digest (reliability PR 4)."""
 
-    path = path or settings.HUB / ARTIFACT
+    path = path or (RESOURCES if PACKAGED else settings.HUB) / ARTIFACT
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:

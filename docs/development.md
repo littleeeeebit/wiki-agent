@@ -3,6 +3,11 @@
 How the parts fit and which document answers what is in
 [architecture](architecture.md).
 
+Packaged Windows users follow [chat setup](chat-setup.md). Building and
+publishing a self-contained installer uses the separate
+[Windows release procedure](windows-release.md); the commands below remain
+the source-development workflow.
+
 ```powershell
 python -m pip install -r requirements-dev.txt
 python -m ruff check tool

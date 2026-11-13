@@ -113,6 +113,7 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
       <Btn tone="primary" disabled={!edited || working === 'save'} onClick={save}>{working === 'save' ? '저장하는 중…' : '저장'}</Btn>}>
       <div className="space-y-5">
         <Part title="일반">
+          {options?.packaged && <Row label="PC 준비 및 서비스 키"><Btn onClick={() => { location.href = '/?onboarding=1' }}>준비 화면 열기</Btn></Row>}
           <Row label="한국어 번역" note={usage ? `이번 달 ${usage.usd == null ? '?' : `$${usage.usd.toFixed(2)}`} / ${usage.limit == null ? '한도 설정 오류 — 새 번역 중지' : usage.limit ? `$${usage.limit}` : '한도 없음'}` : undefined}>
             <select aria-label="한국어 번역 모드" className={`${field} font-sans`}
               value={sw?.mode ?? (sw?.translate ? 'full' : 'off')} disabled={!sw}

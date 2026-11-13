@@ -23,6 +23,7 @@ from agent import ChatSession, read_tools
 from common import errorlog, worktree_home
 from common import settings as settings_file
 from common.budget import Budget, Cancelled, Exhausted
+from common.paths import RAW
 from workspace import adopt, base_branch, checkout, folder_for, holder, merged, remove, worktrees
 
 from . import (channels, connect, decisions, knowledge, maintenance, pr_text, prerequisite_review, query, refactor_run,
@@ -32,7 +33,7 @@ from .review_result import (  # noqa: F401 -- preserve the loop protocol API
     FIRST, FINDING, FENCE, META, bare, parse, described, block, disposed,
 )
 
-REVIEW = ROOT / "raw" / "review"
+REVIEW = RAW / "review"
 PROMPT = (ROOT / "tool/prompts/review-round.md").read_text(encoding="utf-8")
 # The criteria a round is judged by, per profile; a mixed change gets both, once each.
 RUBRIC = review_contract.RUBRIC

@@ -42,13 +42,13 @@ import apply
 import setup_agents
 from agent import cli_command
 from common import indexes, process, shell, swap
+from common.paths import PACKAGED, RAW
 from common.host import conda_exe, environment, skill_config
 from workspace import base_branch
 
 from . import channels, powershell, specs, work
-from .query import ROOT
 
-RECORDS = ROOT / "raw" / "connect"
+RECORDS = RAW / "connect"
 PROBES = RECORDS / "probe"
 HOSTS = ("claude", "codex")
 LABEL = {"claude": "Claude", "codex": "Codex"}
@@ -149,7 +149,11 @@ CLOSED = "\0"   # the dialog opened and the person closed it
 def pick_folder(title: str = "연결할 저장소 폴더") -> str | None:
     """A folder the person picked on this machine, `CLOSED`, or None where no dialog opens."""
 
-    if sys.platform == "darwin":
+    if sys.platform == "win32":
+        title = title.replace("'", "''")
+        argv = [*shell.terminal(), "-STA", "-NoProfile", "-Command",
+                shell.resolve("folder-dialog", form="ps5", title=title)]
+    elif sys.platform == "darwin":
         argv = ["osascript", "-e", f'POSIX path of (choose folder with prompt "{title}")']
     elif sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         return None
@@ -369,6 +373,8 @@ def interpreter(data: dict | None = None) -> str:
     already name, so a server started under another Python does not read as
     a hub that has to move."""
 
+    if PACKAGED:
+        return sys.executable
     for host in hosts(data):
         for file in apply.user_files(host):
             try:

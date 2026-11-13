@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from agent import ChatSession, explain
 from common import errorlog
+from common.paths import PACKAGED, RAW
 from search import refresh
 from session_state import run
 from wiki import label, match_pages, pages
@@ -38,8 +39,8 @@ from .knowledge import Run, grounded, prepare
 from .search_prompt import SEARCH_NOTE, search_note  # noqa: F401 -- public prompt API
 
 ROOT = channels.WIKI
-LOGS = ROOT / "raw" / "chat"
-CORRECTIONS = ROOT / "raw" / "corrections.jsonl"
+LOGS = RAW / "chat"
+CORRECTIONS = RAW / "corrections.jsonl"
 
 MAX_REPLAY = 200  # How many past turns the screen restores
 
@@ -85,7 +86,12 @@ def default() -> str:
         if not isinstance(name, str):
             raise HTTPException(409, "저장된 프로젝트 설정을 읽을 수 없습니다")
         _project = name
-    if screened.get() and _project != channels.WIKI.name and channels.repo_for(_project) is None:
+    if PACKAGED and channels.repo_for(_project) is None:
+        from . import connect
+        candidates = [*connect.added_names(), *(p.name for p in (channels.WORKSPACE.iterdir() if channels.WORKSPACE.is_dir() else ())
+                                               if (p / ".git").exists())]
+        _project = next((name for name in candidates if channels.repo_for(name)), "")
+    elif screened.get() and _project != channels.WIKI.name and channels.repo_for(_project) is None:
         _project = channels.WIKI.name   # moved or gone: a fresh screen loads the hub and picks it again
     return _project
 
@@ -99,8 +105,8 @@ def project() -> str:
         return default()
     if screen != channels.WIKI.name and channels.repo_for(screen) is None:
         default()   # moved or gone (#264): the screen and a default naming it go back to the hub
-        raise HTTPException(409, f"{screen} 저장소를 찾을 수 없다. 허브로 돌아간다",
-                            headers={"X-Project-Moved": quote(channels.WIKI.name)})
+        raise HTTPException(409, f"{screen} 저장소를 찾을 수 없다. 프로젝트를 다시 선택하세요",
+                            headers={"X-Project-Moved": quote(default())})
     return screen
 
 
@@ -444,7 +450,7 @@ def options() -> dict:
         codex = channels.codex_models()
     except Exception as exc:
         error = f"Codex 모델 목록을 불러오지 못했습니다: {exc}"
-    return {"projects": channels.projects(),
+    return {"packaged": PACKAGED, "projects": channels.projects(),
             "models": channels.MODELS + codex,
             "efforts": channels.EFFORTS, "codex_error": error}
 

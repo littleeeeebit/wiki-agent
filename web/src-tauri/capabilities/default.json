@@ -14,6 +14,8 @@
     "allow-pty-close",
     "allow-open-url",
     "allow-restart",
-    "allow-new-window"
+    "allow-new-window",
+    "allow-package-update",
+    "allow-package-install"
   ]
 }

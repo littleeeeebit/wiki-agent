@@ -11,13 +11,14 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri_plugin_updater::UpdaterExt;
 
 /// How long the server gets to answer before the window says it did not.
 /// The first start imports FastAPI and reads the wiki; seconds, not minutes.
@@ -25,6 +26,8 @@ const BOOT: Duration = Duration::from_secs(40);
 
 struct Sidecar(Mutex<Option<Child>>);
 struct ServerPort(u16);
+struct Layout { root: PathBuf, data: PathBuf }
+static UPDATING: AtomicBool = AtomicBool::new(false);
 
 struct Pty {
     writer: Box<dyn Write + Send>,
@@ -45,12 +48,16 @@ static WINDOWS: AtomicU32 = AtomicU32::new(1);
 
 /// The repository this was built from. A dev-run app, so the build's own
 /// location is where the wiki is.
+#[cfg(not(desktop_bundle))]
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
 }
 
 /// `.venv`'s Python when the setup made one, else whatever `python` is.
 fn python(root: &Path) -> PathBuf {
+    if cfg!(desktop_bundle) {
+        return root.parent().unwrap().join("python").join("python.exe");
+    }
     let venv = if cfg!(windows) {
         root.join(".venv").join("Scripts").join("python.exe")
     } else {
@@ -62,18 +69,20 @@ fn python(root: &Path) -> PathBuf {
 /// Start `python tool/main` on a free port. Its stdin stays with us: when this
 /// process goes, however it goes, the pipe closes and the server shuts down
 /// with its agent processes.
-fn spawn_sidecar(root: &Path, log: &Path) -> std::io::Result<(Child, u16)> {
-    let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
+fn spawn_sidecar(root: &Path, data: &Path, log: &Path, port: Option<u16>) -> std::io::Result<(Child, u16)> {
+    let port = match port { Some(port) => port, None => TcpListener::bind("127.0.0.1:0")?.local_addr()?.port() };
     std::fs::create_dir_all(log.parent().unwrap())?;
     let mut cmd = Command::new(python(root));
     cmd.arg(root.join("tool").join("main"))
         .args(["--port", &port.to_string(), "--exit-with-stdin"])
-        .current_dir(root)
+        .current_dir(data)
+        .env("WIKI_ROOT", root)
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .stdin(Stdio::piped())
         .stdout(Stdio::from(File::create(log)?))
         .stderr(Stdio::from(File::create(log.with_extension("err.log"))?));
+    if cfg!(desktop_bundle) { cmd.env("WIKI_DATA_HOME", data); }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -188,7 +197,11 @@ fn stop_sidecar(app: &AppHandle) {
 /// the shutdown was cut short, and the shell cannot be relinked while it runs.
 #[tauri::command]
 fn restart(app: AppHandle) -> Result<(), String> {
-    let tool = repo().join("tool");
+    if cfg!(desktop_bundle) {
+        stop_children(&app);
+        app.restart();
+    }
+    let tool = app.state::<Layout>().root.join("tool");
     let pid = std::process::id();
     #[cfg(windows)]
     let launched = {
@@ -206,6 +219,60 @@ fn restart(app: AppHandle) -> Result<(), String> {
     launched.map_err(|err| format!("다시 띄우지 못했다: {err}"))?;
     app.exit(0);
     Ok(())
+}
+
+fn stop_children(app: &AppHandle) {
+    for (_, mut pty) in app.state::<Ptys>().open.lock().unwrap().drain() {
+        let _ = pty.child.kill();
+        let _ = pty.child.wait();
+    }
+    stop_sidecar(app);
+}
+
+#[tauri::command]
+async fn package_update(app: AppHandle) -> Result<serde_json::Value, String> {
+    if !cfg!(desktop_bundle) { return Ok(serde_json::json!({"packaged": false})); }
+    let updater = app.updater_builder().timeout(Duration::from_secs(30)).build().map_err(|e| e.to_string())?;
+    let update = updater.check().await.map_err(|e| e.to_string())?;
+    Ok(match update {
+        Some(update) => serde_json::json!({"packaged": true, "version": update.version, "notes": update.body}),
+        None => serde_json::json!({"packaged": true}),
+    })
+}
+
+#[tauri::command]
+async fn package_install(app: AppHandle, version: String) -> Result<(), String> {
+    if !cfg!(desktop_bundle) { return Err("개발 실행에는 설치 업데이트를 적용하지 않는다".into()); }
+    if UPDATING.swap(true, Ordering::SeqCst) { return Err("다른 창에서 업데이트 중이다".into()); }
+    let result = async {
+        let closing = app.clone();
+        let updater = app.updater_builder().timeout(Duration::from_secs(600))
+            .on_before_exit(move || { stop_children(&closing); })
+            .build().map_err(|e| e.to_string())?;
+        let update = updater.check().await.map_err(|e| e.to_string())?.ok_or("게시된 업데이트가 없다")?;
+        if update.version != version { return Err("업데이트가 바뀌었다. 다시 확인하세요".into()); }
+        let mut received: u64 = 0;
+        let bytes = update.download(|length, total| {
+            received += length as u64;
+            let _ = app.emit("package-download", serde_json::json!({"received": received, "total": total}));
+        }, || {}).await.map_err(|e| e.to_string())?;
+        // The plugin verifies the signature before closing anything. A failed download keeps the app usable.
+        if let Err(error) = update.install(bytes) {
+            // Windows may fail to launch the installer after the shutdown callback.
+            let layout = app.state::<Layout>();
+            let log = layout.data.join("raw/main.log");
+            if app.state::<Sidecar>().0.lock().unwrap().is_none() {
+                match spawn_sidecar(&layout.root, &layout.data, &log, Some(app.state::<ServerPort>().0)) {
+                    Ok((child, _)) => { app.state::<Sidecar>().0.lock().unwrap().replace(child); }
+                    Err(recovery) => return Err(format!("{error}; 서버 재시작 실패: {recovery}. 앱을 다시 여세요")),
+                }
+            }
+            return Err(error.to_string());
+        }
+        Ok(())
+    }.await;
+    UPDATING.store(false, Ordering::SeqCst);
+    result
 }
 
 // -- The terminal ---------------------------------------------------------
@@ -316,22 +383,39 @@ fn pty_close(ptys: State<Ptys>, id: u32) {
 }
 
 fn main() {
-    let root = repo();
-    let log = root.join("raw").join("main.log");
     let app = tauri::Builder::default()
         // Stands behind the page's `window.Notification`, which a webview
         // alone does not have.
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Ptys::default())
         .manage(Sidecar(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![pty_open, pty_write, pty_resize, pty_close, open_url, restart, new_window])
+        .invoke_handler(tauri::generate_handler![pty_open, pty_write, pty_resize, pty_close, open_url, restart, new_window, package_update, package_install])
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
                 end_terminals(window.app_handle(), window.label());
             }
         })
         .setup(move |app| {
-            let (child, port) = spawn_sidecar(&root, &log)?;
+            #[cfg(desktop_bundle)]
+            let root = dunce::simplified(&app.path().resource_dir()?).join("payload/app");
+            #[cfg(not(desktop_bundle))]
+            let root = repo();
+            let data = if cfg!(desktop_bundle) {
+                std::env::var_os("WIKI_DATA_HOME").map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from(std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA is missing")).join("wiki-agent"))
+            } else { root.clone() };
+            let log = data.join("raw/main.log");
+            std::fs::create_dir_all(&data)?;
+            app.manage(Layout { root: root.clone(), data: data.clone() });
+            let (child, port) = match spawn_sidecar(&root, &data, &log, None) {
+                Ok(started) => started,
+                Err(error) => {
+                    app.manage(ServerPort(0));
+                    window(app.handle(), "main", failure(&format!("서버 실행 실패: {error}"), &log))?;
+                    return Ok(());
+                }
+            };
             app.manage(ServerPort(port));
             app.state::<Sidecar>().0.lock().unwrap().replace(child);
             let handle = app.handle().clone();
@@ -342,10 +426,7 @@ fn main() {
         .expect("tauri 를 못 띄웠다");
     app.run(|app, event| {
         if let RunEvent::Exit = event {
-            for (_, mut pty) in app.state::<Ptys>().open.lock().unwrap().drain() {
-                let _ = pty.child.kill();
-            }
-            stop_sidecar(app);
+            stop_children(app);
         }
     });
 }

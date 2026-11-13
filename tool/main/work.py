@@ -29,15 +29,16 @@ from pydantic import BaseModel
 
 from agent import OUTPUT_LIMIT, ChatSession, claude_usage, codex_usage, output_of
 from common.process import background_options
+from common.paths import RAW
 from common import errorlog
 from workspace import remove, worktrees
 
 # One lock with the wiki query's. A project switch reads every hold and
 # changes the project under it, so a hold can never land in between.
 from . import memory, runtime
-from .query import ROOT, _lock, current_repo, hold, keep, project, resumable, sse, streaming
+from .query import _lock, current_repo, hold, keep, project, resumable, sse, streaming
 
-LOGS = ROOT / "raw" / "work"
+LOGS = RAW / "work"
 MAX_REPLAY = 200
 # A provider's safety refusal is decided on the request, not a flaky turn: sent
 # again into the same thread it is refused again, the second time at the

@@ -39,6 +39,7 @@ from common import settings as settings_file
 
 from . import architecture, channels, connect, improvements, loop, mobile, oneshot, oneshot_critique, oneshot_front, oneshot_spec, planning, powershell, query, recovery, refactor, refactor_api, runtime, specs, suite, survey, update, verification, wiring, work
 from .runtime import server_owner
+from . import onboarding
 
 # On Windows `mimetypes` reads the registry, where `.js` is commonly
 # `text/plain`. The browser then refuses `<script type="module">` silently:
@@ -65,6 +66,7 @@ async def lifespan(application: FastAPI):
     """
 
     with server_owner(specs.SPECS.parent):
+        onboarding.desktop_migrate.resume_import(onboarding.DATA)
         runtime.stopping.clear()
         # Only the checkout's owner rebuilds its screen: a second launch, refused
         # above, must not write into the running server's `web/dist`.
@@ -104,6 +106,7 @@ def close_turns() -> None:
     no registry holds, such as a query's explanation, included. Safe to call again."""
 
     runtime.stopping.set()
+    onboarding.close()
     powershell.close_install()
     # Every workflow is marked stopped, and kills its own providers, before any
     # other provider dies, so a turn `end_all` kills reads as a restart, not a
@@ -157,6 +160,7 @@ app.include_router(powershell.router)
 app.include_router(verification.router)
 app.include_router(mobile.router)
 app.include_router(update.router)
+app.include_router(onboarding.router)
 
 @app.exception_handler(StarletteHTTPException)
 async def http_error(request: Request, exc: StarletteHTTPException):
@@ -222,7 +226,12 @@ async def only_this_screen(request: Request, call_next):
     # check above — it would land in whichever project the server is on. The
     # screen holds everything but `/api/channels` until it knows its project;
     # this is the check behind that promise.
-    if not screen and request.method != "GET" and not pairing:
+    setup = request.url.path == "/api/onboarding" or request.url.path.startswith("/api/onboarding/")
+    if setup and remote:
+        return refused(403, "설정은 이 PC에서만 변경한다")
+    if onboarding.importing() and request.url.path.startswith("/api/") and not setup:
+        return refused(409, "가져오기가 끝나지 않았다. 준비 화면에서 다시 시도하거나 앱을 다시 시작하세요")
+    if not screen and request.method != "GET" and not pairing and not setup:
         return refused(400, "어느 프로젝트의 화면인지 모르는 쓰기는 받지 않는다")
     token, screened = query.claimed.set(unquote(screen) if screen else None), query.screened.set(True)
     try:

@@ -44,6 +44,7 @@ import urllib.request
 from pathlib import Path
 
 from common import settings
+from common.paths import DATA, RAW
 
 __all__ = ("translate", "english", "parts", "retire", "usage", "glossary", "KO_EN", "EN_KO", "checked", "added",
            "api_key", "HANGUL_WORD", "version", "MODEL", "watching")
@@ -115,7 +116,7 @@ PROMPT_VERSION = "1"
 # test, where a run seeded by an earlier one passes for reasons it did not
 # create. Tests point this somewhere disposable.
 CACHE = Path(
-    os.environ.get("TRANSLATE_CACHE") or (ROOT / "raw" / "translate-cache.sqlite3")
+    os.environ.get("TRANSLATE_CACHE") or (RAW / "translate-cache.sqlite3")
 )
 GLOSSARY = HERE / "markers" / "glossary.toml"
 # What en->ko is shown before it translates: sentences whose meaning a careless
@@ -134,7 +135,7 @@ EXAMPLES = HERE / "markers" / "examples.json"
 # `inject.py` say in their own comments that a live key makes them slow, flaky
 # and expensive. Emptying the variable stopped suppressing anything the moment
 # the file outranked it, so the file is what a test now has to point away.
-ENV = Path(os.environ.get("TRANSLATE_ENV") or (ROOT / ".env"))
+ENV = Path(os.environ.get("TRANSLATE_ENV") or (DATA / ".env"))
 
 KO_EN = "ko->en"
 EN_KO = "en->ko"
@@ -1243,7 +1244,7 @@ def retire(texts: list[str]) -> bool:
 # --------------------------------------------------------------------------
 
 BASELINE = ROOT / "docs" / "translation-baseline.json"
-REVIEW = ROOT / "raw" / "translate-review.md"
+REVIEW = RAW / "translate-review.md"
 
 # Translated by `--in-place` with no pinned original, so there is nothing to
 # hold them against; not targets.

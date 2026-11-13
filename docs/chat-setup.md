@@ -7,6 +7,82 @@ People read the Korean version of these steps in `overview/install.html`
 (sections A and D). A change to installation, login, updates or troubleshooting
 here changes that page in the same pull request.
 
+## Windows setup executable
+
+1. Download the versioned `wiki-agent_*_x64-setup.exe` from this project's
+   [releases](https://github.com/littleeeeebit/wiki-agent/releases). Run it as
+   your ordinary Windows user. Python, backend packages, the built screen,
+   and the desktop shell are included; cloning or building the app is unnecessary.
+2. The first release has no Windows publisher signature. Windows may show
+   an unknown-publisher or SmartScreen warning. Check the release source and
+   checksum before choosing whether to continue; do not disable Windows protection.
+3. Open wiki-agent from the Start menu. Select Codex or Claude Code and use
+   the preparation screen to check existing installations. Install only missing
+   tools. Installation output remains visible; cancel or retry a failed step.
+   Git, PowerShell 7, GitHub CLI, fd and jq support the existing workflows.
+   Agent installers require internet access; winget-based steps require Microsoft's
+   App Installer. The Codex control uses its official standalone installer.
+4. Open the official agent login, approve your own account in the browser,
+   and check the reported authentication result. Select the folder containing
+   your Git projects. Optional translation, Jev and Langfuse keys can be entered
+   in the preparation screen, without editing an environment file.
+5. Choose the readiness check. It verifies executable compatibility, login and
+   a Git project in the selected folder. In the app, open Projects to connect
+   that repository. Review the proposed hook changes and Codex trust separately.
+   The real-session connection test uses agent quota; start it only when you
+   intend that use. Installed settings alone do not prove that a hook fired.
+
+Settings → PC preparation reopens this screen. The CLI owns its account tokens
+in its normal user configuration. Service keys stay on this PC and are never
+returned by the preparation status API.
+
+### Records, import and uninstall
+
+Installed program resources live inside the application directory. Writable
+settings, conversations, tasks, logs, caches and optional service keys live
+under `%LOCALAPPDATA%\wiki-agent`. A project's `.wiki/` remains in that project.
+Replacing or uninstalling the program preserves these records and CLI logins.
+Uninstall through Windows Settings → Apps; deleting records is a separate,
+deliberate operation, not part of uninstall.
+
+For an existing source installation, close its app and agent sessions first.
+Before entering settings in the new app, expand the import control and select
+the old wiki-agent folder. Import refuses an active source server or a destination
+that already contains settings or history. It copies `raw/`, `.chat-local.json`,
+`.env` and `.wiki/` to a timestamped `migrations/.../original` backup and records
+SHA-256 hashes before converting relative workspace paths. The old installation
+is left intact. Hub `.wiki/` knowledge stays available in that original project
+and in the backup. Restart after import; an interrupted destination copy resumes
+before task recovery. Existing logs are kept in the backup instead of replacing
+the running app's log handles.
+
+### Packaged updates and troubleshooting
+
+The app checks the published Windows update feed automatically. Its update
+control shows a new version, download progress, failures and retry. Installation
+asks about running work across all windows, verifies the update signature, and
+closes the backend and terminals before replacement. Personal data stays outside
+the installation directory. No Git pull, pip, Node or Rust build runs on the
+user's machine. A Windows publisher signature and the update payload signature
+are different: the first installer is unsigned, but update verification is required.
+
+If download or signature verification fails, the running version remains usable.
+Retry after checking internet access and the release feed. If an installer fails
+after the app closes, reopen the installed version or run a verified newer setup.
+Do not remove the user-data directory as a troubleshooting step.
+
+Startup failures show a diagnostic window and the error-log location
+`%LOCALAPPDATA%\wiki-agent\raw\main.err.log`. A second launch must not take over
+an already-running server's records. Continue in the original window or close it
+normally. If a prerequisite command exits successfully but still cannot run,
+inspect its output and installation location, then retry the check. The preparation
+screen refreshes the Windows user and machine PATH after an install.
+
+## Development source installation
+
+The remainder of this page is the explicit source-development workflow. It
+requires the app build tools; packaged users follow the setup executable above.
+
 ## 1. Preparation first
 
 - Install Git, Python 3.11 or higher, Node.js 22.12 or higher, and Rust (<https://rustup.rs>) to build the window.
@@ -104,7 +180,7 @@ Only the terminal is omitted, and the rest is the same. To exit, use `Ctrl+C`.
 If only Codex is installed, the actual model queried during installation is selected by default. If both are installed, Claude is the default.
 To select a different CLI on the screen, that CLI must also be installed and logged in.
 
-### Updates
+### Source updates
 
 The server checks GitHub's `origin/main` against the commit it started from,
 at most once an hour. When `main` has moved on, a card at the bottom of the
@@ -166,7 +242,7 @@ Model availability and usage follow the permissions/limits of the account each p
 The app runs the CLI found in `PATH`. It uses the existing CLI settings and environment variables such as `CODEX_HOME`, `CLAUDE_CONFIG_DIR` from that PC as they are. If there is a separately specified authentication environment, check it in the status of that CLI.
 There is no step where the app reads account files, passwords, or tokens to copy them to GitHub or other team members. Since this app does not have a web account login screen or a feature to separate multiple users, each person runs it from a separate copy.
 
-## Updates/Troubleshooting
+## Source updates and troubleshooting
 
 - After updating the code, turn off the server and run the same `install` command again to re-prepare the necessary packages and screen. Existing CLI logins are maintained.
 - `.chat-local.json` only stores this PC's project folder and default model. It is excluded from Git and does not need to be delivered to other team members.

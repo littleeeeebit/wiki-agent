@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import venv
 from unittest.mock import patch
 
 import pytest
@@ -126,7 +127,7 @@ def test_install_preserves_settings_on_failure_and_saves_no_credentials(tmp_path
          patch.object(chat_local, "SETTINGS", config), \
          patch.object(setup_chat, "cli_command", side_effect=lambda name: [name]), \
          patch.object(setup_chat, "environment_python", return_value=Path(sys.executable)), \
-         patch.object(setup_chat.venv.EnvBuilder, "create"), \
+         patch.object(venv.EnvBuilder, "create"), \
          patch.object(setup_chat.subprocess, "check_output", return_value="v22.12.0"), \
          patch.object(setup_chat.subprocess, "run", side_effect=lambda args, **kw: (calls.append(args), subprocess.CompletedProcess(args, 0))[1]), \
          patch.object(chat_channels, "codex_models", return_value=models), \

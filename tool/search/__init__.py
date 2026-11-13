@@ -30,6 +30,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from common.paths import DATA, PACKAGED, RESOURCES
 
 __all__ = ("ask", "local_index", "evidence_store", "resolve", "spawn", "PORT", "HUB",
            "cache_dir", "state_path", "version", "records", "refresh", "sources", "providers",
@@ -37,7 +38,7 @@ __all__ = ("ask", "local_index", "evidence_store", "resolve", "spawn", "PORT", "
 
 HERE = Path(__file__).resolve().parent
 # The hub whose `operator/` and `craft/` every search covers. `WIKI_ROOT` as in `wiki`.
-HUB = Path(os.environ.get("WIKI_ROOT") or HERE.parents[1])
+HUB = RESOURCES if PACKAGED else Path(os.environ.get("WIKI_ROOT") or HERE.parents[1])
 
 # Next to the chat's 8787 and the mirror's 9090, and not the public copy's
 # 8790: one machine runs both, and a shared port or state file would have each
@@ -51,6 +52,8 @@ def cache_dir() -> Path:
     replace each other's half-downloaded model or vector cache.
     `WIKI_USER_HOME` stands in for the home in tests, as it does for `apply`."""
 
+    if PACKAGED and not os.environ.get("WIKI_USER_HOME"):
+        return DATA / "cache" / "search"
     return Path(os.environ.get("WIKI_USER_HOME") or Path.home()) / ".cache/wiki-agent"
 
 

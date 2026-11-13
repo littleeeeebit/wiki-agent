@@ -34,6 +34,7 @@ from pydantic import BaseModel
 import verify
 import debt
 from common import errorlog, indexes, process, python_environment, swap, worktree_home
+from common.paths import RAW
 from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
@@ -43,7 +44,7 @@ from .pr_text import body_of
 from .decisions import extra_check, recommend, registered
 from .query import ROOT, _lock, current_repo, hold, project
 
-SPECS = ROOT / "raw" / "specs"
+SPECS = RAW / "specs"
 SPEC_PROMPT = (ROOT / "tool/prompts/work-spec.md").read_text(encoding="utf-8")
 
 GATE_SECONDS = verify.FINAL_SECONDS   # a ceiling only: a stuck gate is cut by silence (`runtime.IDLE_SECONDS`)

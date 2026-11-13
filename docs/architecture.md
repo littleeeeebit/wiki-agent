@@ -4,6 +4,15 @@ For whoever maintains this program. Local setup and the checks are in
 [development](development.md); this page says how the parts fit and which
 document is the authority for each question.
 
+Windows release builds put immutable application resources and an isolated
+Python runtime in the Tauri installer. `common.paths` separates those resources
+from per-user records under `%LOCALAPPDATA%\wiki-agent`; source development keeps
+its existing layout. `main.onboarding` owns local preparation and cancellable
+installer/login process trees. Source import makes a verified backup before
+conversion and resumes interrupted writes before workflow recovery. Tauri owns
+signed update downloads and coordinates shutdown before replacement. See the
+[Windows release procedure](windows-release.md) for build inputs and acceptance.
+
 ## Documentation map
 
 One repository, three maintenance audiences, one authority per question.

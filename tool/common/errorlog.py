@@ -10,7 +10,9 @@ import sys
 import threading
 import traceback
 
-FILE = Path(__file__).resolve().parents[2] / "raw" / "errors.jsonl"
+from common.paths import RAW
+
+FILE = RAW / "errors.jsonl"
 _lock = threading.Lock()
 _logger = None
 SECRET_KEY = r"(?:access[_-]?token|refresh[_-]?token|api[_-]?key|password|secret)"

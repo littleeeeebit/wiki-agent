@@ -7,6 +7,7 @@ import { OneshotWindow } from '@/components/OneshotWindow'
 import { useRoute } from '@/lib/mode'
 import { openWebLink } from '@/lib/links'
 import { reportError } from '@/lib/api'
+import { OnboardingGate } from '@/components/Onboarding'
 
 // Bound repeated failures locally; reporting must never create another rejection.
 let errorReports = 0
@@ -59,6 +60,6 @@ function Windows() {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <MobileAccess><Windows /></MobileAccess>
+    <MobileAccess><OnboardingGate><Windows /></OnboardingGate></MobileAccess>
   </StrictMode>,
 )

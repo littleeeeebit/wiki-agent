@@ -27,6 +27,7 @@ if os.name == "nt" and os.environ.get("TEMP"):
     tempfile.tempdir = None
 
 os.environ["WIKI_USER_HOME"] = tempfile.mkdtemp(prefix="wiki-home-")
+os.environ["WIKI_DATA_HOME"] = tempfile.mkdtemp(prefix="wiki-data-")
 
 # `search.ask` reaches the daemon only when this is unset. A test that spawned
 # one would start a real daemon and download its model.

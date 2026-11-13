@@ -208,7 +208,7 @@ def linked(tmp_path, monkeypatch):
 
     hub = tmp_path / "hub"
     monkeypatch.setattr(specs, "SPECS", hub / "raw" / "specs")
-    monkeypatch.setattr(guard_grant, "HERE", hub / "tool")
+    monkeypatch.setattr(guard_grant, "RAW", hub / "raw")
     monkeypatch.setenv("WIKI_AGENT_MANAGED", "1")
     original, tree = tmp_path / "budget", tmp_path / "wt"
     original.mkdir()

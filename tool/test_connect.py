@@ -224,11 +224,14 @@ def test_the_folder_dialog_is_the_os_own_and_says_closed_apart_from_unavailable(
     ran = []
     monkeypatch.setattr(sys, "platform", platform)
     monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr(connect.shell, "terminal", lambda: ["pwsh", "-NoLogo"])
     monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/zenity" if name == "zenity" else None)
     monkeypatch.setattr(connect.subprocess, "run", lambda argv, **kw: ran.append(argv) or
                         subprocess.CompletedProcess(argv, code, out, err))
     assert connect.pick_folder() == got
-    assert ran[0][0] == {"darwin": "osascript", "linux": "zenity"}.get(platform, sys.executable)
+    assert ran[0][0] == {"darwin": "osascript", "linux": "zenity", "win32": "pwsh"}.get(platform, sys.executable)
+    if platform == "win32":
+        assert "-STA" in ran[0] and "FolderBrowserDialog" in ran[0][-1]
     monkeypatch.delenv("DISPLAY")
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     if platform == "linux":

@@ -21,9 +21,10 @@ import time
 from pathlib import Path, PurePosixPath
 
 from common.process import background_options, resumed
+from common.paths import RAW
 
 HUB = Path(__file__).resolve().parents[1]
-STORE = HUB / "raw" / "improvement"
+STORE = RAW / "improvement"
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,47}")
 STRUCTURAL = {"client_tool", "skill", "memory", "subagent"}
 SUPERVISOR = ("tool/improvement.py", "tool/improve.py", "tool/improvement_host.py",
