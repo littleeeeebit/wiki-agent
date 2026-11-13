@@ -293,7 +293,7 @@
     },
     "web/src/App.tsx": {
       "dup": 0,
-      "lines": 835,
+      "lines": 831,
       "reason": "Every spec event on the feed is passed on as `spec-changed`, so the oneshot rail reads a run that reaches a gate without a focus change (#326 round 1 P2, one line). Before that: A worktree removed under its task leaves the selection on that task's own spec, remembered while it was on screen, instead of blank; another spec naming the checkout is never taken (#203 review P2, #204 round 1). Before that: A task picked by its spec key before the worktree list arrives follows to the worktree key instead of the pane going blank (the intermittent `머지 ▸` timeout in CI, five lines). Before that: Every pane with no worktree (nothing selected, a selection whose task is gone, a spec not started) shares the empty pane's pick, and [시작] always sends it: the pick made under a stale selection or a selected draft card was keyed elsewhere and ai-coding-wiki's start still ran on Claude's default (two lines). Before that: A spec card's start, refactoring cards included, falls back to the model picked in the empty agent pane, while reopening keeps the task's own model: per-task keys alone sent an empty model and the first turn ran on the Claude default (twelve lines, the reopen path split out of start). Before that: the work model is kept per task under `spec:<repo>/<id>` instead of once per window, which carried one repository's model into rfg_rag's task; the task derivation moved above its first use (#194, ten lines). Before that: the refactoring tab's import and pane; splitting App.tsx is left to a refactor run, not this feature"
     },
     "web/src/components/Blocks.tsx": {
@@ -303,7 +303,7 @@
     },
     "web/src/components/Projects.tsx": {
       "dup": 9,
-      "lines": 219,
+      "lines": 216,
       "reason": "Shows the oneshot runs past S1 above the list; the row and its reads live in `OneshotRail` in `Oneshot.tsx` (oneshot-screens, one line). Before that: Passes the machine's PowerShell status to the separate install panel; polling, actions and markup stay in PowerShell.tsx (powershell-version-resolver-and-install, three lines). Before that: The list holds only connected repositories, so connecting a new one starts here: [폴더 찾기] opens the OS folder dialog, and where none opens (a phone, a Python without Tk) a path field takes its place. Before that: baseline at adoption"
     },
     "web/src/components/Settings.tsx": {
