@@ -33,8 +33,8 @@ def main():
     installed.mkdir()
     shutil.copyfile(image / "wiki-agent.exe", installed / "wiki-agent.exe")
     shutil.copytree(image / "payload", installed / "payload")
-    data = scratch / "사용자 데이터"
     home = scratch / "user"
+    data = home / "AppData/Local/wiki-agent-data"
     projects = scratch / "팀 프로젝트"
     (projects / "fixture/.git").mkdir(parents=True)
     for folder in (data, home, home / "AppData/Local", home / "AppData/Roaming"):
@@ -42,9 +42,9 @@ def main():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         debug = sock.getsockname()[1]
-    env = {k: v for k, v in os.environ.items() if not any(
+    env = {k: v for k, v in os.environ.items() if k != "WIKI_DATA_HOME" and not any(
         marker in k.upper() for marker in ("API_KEY", "TOKEN", "SECRET", "PASSWORD", "LANGFUSE"))}
-    env.update(WIKI_DATA_HOME=str(data), WIKI_USER_HOME=str(home), USERPROFILE=str(home), HOME=str(home),
+    env.update(WIKI_USER_HOME=str(home), USERPROFILE=str(home), HOME=str(home),
                LOCALAPPDATA=str(home / "AppData/Local"), APPDATA=str(home / "AppData/Roaming"),
                CODEX_HOME=str(home / ".codex"), CLAUDE_CONFIG_DIR=str(home / ".claude"), WIKI_SEARCH="off",
                JEV_ENV=str(home / "missing.env"), TRANSLATE_ENV=str(home / "missing.env"), WIKI_JEV_FALLBACK="off",
@@ -55,7 +55,9 @@ def main():
     child = subprocess.Popen([str(installed / "wiki-agent.exe")], cwd=scratch, env=env,
                              creationflags=process.background_options().get("creationflags", 0) | process.SUSPENDED)
     job = process.contained(child)
-    observed = {"image": str(installed), "data": str(data), "checkout": str(image),
+    observed = {"image": str(installed), "data": str(data), "build_image": str(image),
+                "release": json.loads((image / "payload/app/release.json").read_text(encoding="utf-8")),
+                "default_data_path": True,
                 "executable_sha256": hashlib.sha256((installed / "wiki-agent.exe").read_bytes()).hexdigest()}
     try:
         if os.name == "nt" and not job:
@@ -92,6 +94,7 @@ def main():
             page.get_by_role("heading", name="이 PC에서 시작하기").wait_for()
             status = page.evaluate("fetch('/api/onboarding').then(r => r.json())")
             assert Path(status["data"]) == data and status["packaged"] is True
+            assert not data.is_relative_to(home / "AppData/Local/wiki-agent")
             if "python" in status:
                 assert Path(status["python"]) == installed / "payload/python/python.exe"
                 assert Path(status["resources"]) == installed / "payload/app"

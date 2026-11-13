@@ -44,11 +44,18 @@ attempt. Successful output includes the NSIS `*-setup.exe`, `.exe.sig`,
 for the current user and bootstraps WebView2 when needed. App dependencies are
 bundled; external agent tools are prepared through onboarding.
 
+The default program directory is `%LOCALAPPDATA%\wiki-agent`; all writable
+application data, including fallback fd/jq downloads, belongs to its sibling
+`%LOCALAPPDATA%\wiki-agent-data`. Do not select the data directory as a custom
+installation directory. Uninstall and update acceptance must use the default
+data path, without a `WIKI_DATA_HOME` override that could hide a collision.
+
 The package build uses `raw/desktop/target`, separate from the running source
 window's Cargo target. Its relocated-image check can be run with
 `python web/tests/packaged_desktop.py --image raw/desktop/releases/<version> --out raw/desktop/acceptance/<version>`.
 It copies the executable and payload to a temporary path with spaces and Korean
-characters, removes developer tools from PATH, uses disposable data and login
+characters, removes developer tools from PATH, uses a disposable Windows user
+home with the real default data-folder rule and disposable login
 homes, and exercises real backend requests, terminal commands and two windows.
 This is development-host evidence, separate from installing and uninstalling
 on the owner's isolated Windows environment. `onboarding_browser.py` checks
@@ -75,10 +82,12 @@ run a verified setup; user records remain outside the installer-owned directory.
 
 ## Required acceptance
 
-Use an owner-provided disposable Windows environment with no app checkout,
+The owner chose an owner-run checklist and owner-run live hook probes. Use an
+owner-provided disposable Windows environment with no app checkout,
 Python, Node, Rust or app build tools. Start with no selected coding agent and
 install its prerequisites through onboarding. The owner completes official
-interactive login; separately authorize any agent calls used for real hooks.
+interactive login and runs the quota-consuming hook probes. These choices do
+not authorize the implementation agent to start metered sessions.
 
 1. Record the setup version, SHA-256, Windows version, clean initial tool state,
    and the disposable user profile. Install and launch from the Start menu.
@@ -102,3 +111,28 @@ interactive login; separately authorize any agent calls used for real hooks.
 Keep receipts and screenshots in ignored `raw/desktop/acceptance/`. Record the
 exact commit and installer hash with every result. Unit and fixture-browser
 checks do not establish this isolated desktop acceptance.
+
+### Isolated HTTPS update feed
+
+The owner selected a separate HTTPS feed for update acceptance. Supply its
+absolute `latest.json` URL before building the two test versions. The builder's
+`--update-feed <https-url>` embeds that endpoint and makes the generated
+manifest reference the setup beside that JSON file. It rejects HTTP, credentials,
+query parameters and fragments. Production builds omit this argument and keep
+the GitHub release feed above. Test-feed builds must never be distributed as
+production installers.
+
+Build two increasing numeric versions from the same candidate commit and with
+the same update key. Install the older test build, then place the newer build's
+`latest.json` and matching setup on the isolated HTTPS host. Keep the host's
+normal trusted certificate checks enabled. The signature is already in the
+manifest; retain the `.exe.sig` beside the build for audit. Hosting or changing
+remote assets requires the owner's publication authorization.
+
+For unavailable-download and signature-failure cases, the owner changes only
+the isolated feed: first point its asset URL at a missing file, then serve an
+invalid signature for the real setup. Record each displayed error and continued
+backend availability. Restore the exact generated manifest and perform the
+successful retry. Confirm the new version, original records and CLI login after
+restart. Keep the two installer hashes, feed URL and failure/success evidence
+with the Windows checklist. An expected error alone does not pass the upgrade.

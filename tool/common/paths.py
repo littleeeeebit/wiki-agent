@@ -7,7 +7,7 @@ from pathlib import Path
 RESOURCES = Path(__file__).resolve().parents[2]
 PACKAGED = (RESOURCES / "release.json").is_file()
 DATA = Path(os.environ.get("WIKI_DATA_HOME") or (
-    Path(os.environ["LOCALAPPDATA"]) / "wiki-agent" if PACKAGED else RESOURCES
+    Path(os.environ["LOCALAPPDATA"]) / "wiki-agent-data" if PACKAGED else RESOURCES
 )).expanduser().resolve()
 RAW = DATA / "raw"
 

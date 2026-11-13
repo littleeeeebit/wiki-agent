@@ -6,7 +6,7 @@ document is the authority for each question.
 
 Windows release builds put immutable application resources and an isolated
 Python runtime in the Tauri installer. `common.paths` separates those resources
-from per-user records under `%LOCALAPPDATA%\wiki-agent`; source development keeps
+from per-user records under `%LOCALAPPDATA%\wiki-agent-data`; source development keeps
 its existing layout. `main.onboarding` owns local preparation and cancellable
 installer/login process trees. Source import makes a verified backup before
 conversion and resumes interrupted writes before workflow recovery. Tauri owns

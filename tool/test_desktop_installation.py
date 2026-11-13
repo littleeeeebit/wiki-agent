@@ -1,5 +1,6 @@
 """Packaged boundaries: relocation, import recovery, local setup and owned children."""
 
+import argparse
 import base64
 import json
 import os
@@ -71,7 +72,9 @@ def test_relocated_package_uses_user_data_without_checkout(tmp_path):
     code = "import runpy,sys; p=runpy.run_path(sys.argv[1]); print(p['DATA']); print(p['RESOURCES']); print(p['PACKAGED'])"
     run = subprocess.run([sys.executable, "-I", "-X", "utf8", "-c", code, str(module)], cwd=tmp_path, env=env,
                          capture_output=True, text=True, encoding="utf-8", check=True)
-    assert run.stdout.splitlines() == [str(tmp_path / "별도 사용자/wiki-agent"), str(root), "True"]
+    expected = tmp_path / "별도 사용자/wiki-agent-data"
+    assert run.stdout.splitlines() == [str(expected), str(root), "True"]
+    assert not expected.is_relative_to(tmp_path / "별도 사용자/wiki-agent")
 
 
 def test_import_backs_up_exact_bytes_before_converting_and_keeps_original(tmp_path):
@@ -151,6 +154,23 @@ def test_updater_public_key_input_cannot_embed_private_key(tmp_path):
     file.write_text(base64.b64encode(b"untrusted comment: minisign encrypted secret key\nfixture").decode(), encoding="utf-8")
     with pytest.raises(ValueError, match="never a private key"):
         build_desktop.public_key(file)
+
+
+@pytest.mark.parametrize("url", ["http://test.invalid/latest.json", "https://me:secret@test.invalid/latest.json",
+                                 "https://test.invalid/latest.json?token=fixture", "https://test.invalid/latest.json#part",
+                                 "https://test.invalid:0/latest.json", "https://test.invalid/a b.json"])
+def test_test_feed_rejects_untrusted_url_forms(url):
+    with pytest.raises(argparse.ArgumentTypeError):
+        build_desktop.https_feed(url)
+
+
+def test_test_feed_keeps_assets_isolated_and_production_default_unchanged():
+    feed = "https://test.invalid:8443/updates/latest.json"
+    assert build_desktop.https_feed(feed) == feed
+    assert build_desktop.update_asset_url(feed, "0.1.4", "wiki-agent_0.1.4_x64-setup.exe") == \
+        "https://test.invalid:8443/updates/wiki-agent_0.1.4_x64-setup.exe"
+    assert build_desktop.update_asset_url(build_desktop.DEFAULT_UPDATE_FEED, "0.1.4", "setup.exe") == \
+        "https://github.com/littleeeeebit/wiki-agent/releases/download/v0.1.4/setup.exe"
 
 
 def test_readiness_requires_verified_auth_and_real_project(setup, monkeypatch):

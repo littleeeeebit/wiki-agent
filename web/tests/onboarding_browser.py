@@ -22,7 +22,7 @@ def main():
     args = parser.parse_args()
     fake = FastAPI()
     state = {"packaged": True, "complete": False, "agent": "codex", "workspace": "D:/팀 프로젝트",
-             "data": "C:/Users/fixture/AppData/Local/wiki-agent", "version": "0.1.0", "restart_required": False,
+             "data": "C:/Users/fixture/AppData/Local/wiki-agent-data", "version": "0.1.0", "restart_required": False,
              "task": {"running": False, "action": "", "output": "", "error": "", "code": None}}
     ready, logged, requests = set(), False, []
 

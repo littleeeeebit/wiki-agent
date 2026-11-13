@@ -40,7 +40,8 @@ returned by the preparation status API.
 
 Installed program resources live inside the application directory. Writable
 settings, conversations, tasks, logs, caches and optional service keys live
-under `%LOCALAPPDATA%\wiki-agent`. A project's `.wiki/` remains in that project.
+under `%LOCALAPPDATA%\wiki-agent-data`, beside the default program directory
+`%LOCALAPPDATA%\wiki-agent`. A project's `.wiki/` remains in that project.
 Replacing or uninstalling the program preserves these records and CLI logins.
 Uninstall through Windows Settings → Apps; deleting records is a separate,
 deliberate operation, not part of uninstall.
@@ -72,7 +73,7 @@ after the app closes, reopen the installed version or run a verified newer setup
 Do not remove the user-data directory as a troubleshooting step.
 
 Startup failures show a diagnostic window and the error-log location
-`%LOCALAPPDATA%\wiki-agent\raw\main.err.log`. A second launch must not take over
+`%LOCALAPPDATA%\wiki-agent-data\raw\main.err.log`. A second launch must not take over
 an already-running server's records. Continue in the original window or close it
 normally. If a prerequisite command exits successfully but still cannot run,
 inspect its output and installation location, then retry the check. The preparation

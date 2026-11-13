@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from urllib.request import urlopen
+from urllib.parse import quote, urljoin, urlsplit
 import zipfile
 
 from agent import cli_command
@@ -20,6 +21,7 @@ PYTHON_VERSION = "3.14.10"
 # Python.org's release Sigstore bundle, messageSignature.messageDigest.
 PYTHON_SHA256 = base64.b64decode("kJBeZKhAVX2MG8T1t02z1+6F4/+yF2EcrBx4E6zqQVk=").hex()
 REPOSITORY = "littleeeeebit/wiki-agent"
+DEFAULT_UPDATE_FEED = f"https://github.com/{REPOSITORY}/releases/latest/download/latest.json"
 FOLDERS = ("tool", "operator", "craft", "skills", "docs", "adapters")
 FILES = ("SCHEMA.md", "ENFORCEMENT.md", "MAINTENANCE.md", "README.md", "index.md", "DESIGN.md",
          "requirements-hooks.txt", "requirements-chat.txt", "eval/jev/policy.json")
@@ -27,6 +29,24 @@ FILES = ("SCHEMA.md", "ENFORCEMENT.md", "MAINTENANCE.md", "README.md", "index.md
 
 def run(argv, **kwargs):
     subprocess.run(list(map(str, argv)), cwd=ROOT, check=True, **kwargs)
+
+
+def https_feed(value: str) -> str:
+    try:
+        parsed = urlsplit(value)
+        if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
+                or parsed.password is not None or parsed.query or parsed.fragment
+                or any(c.isspace() for c in value) or parsed.port is not None and not 1 <= parsed.port <= 65535):
+            raise ValueError
+    except ValueError:
+        raise argparse.ArgumentTypeError("Use an HTTPS feed without credentials, query parameters or fragments") from None
+    return value
+
+
+def update_asset_url(feed: str, version: str, filename: str) -> str:
+    if feed == DEFAULT_UPDATE_FEED:
+        return f"https://github.com/{REPOSITORY}/releases/download/v{version}/{quote(filename)}"
+    return urljoin(feed, quote(filename))
 
 
 def public_key(path: Path) -> str:
@@ -103,6 +123,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
     parser.add_argument("--updater-public-key", type=Path, required=True)
+    parser.add_argument("--update-feed", type=https_feed, default=DEFAULT_UPDATE_FEED,
+                        help="Build-time HTTPS feed for isolated acceptance; defaults to production GitHub releases")
     parser.add_argument("--allow-dirty", action="store_true", help="Development artifact only; never publish")
     args = parser.parse_args()
     if os.name != "nt" or not re.fullmatch(r"\d+\.\d+\.\d+", args.version):
@@ -137,7 +159,7 @@ def main() -> None:
                               "displayLanguageSelector": True},
                     "webviewInstallMode": {"type": "embedBootstrapper"}}},
         "plugins": {"updater": {"pubkey": updater_key,
-            "endpoints": [f"https://github.com/{REPOSITORY}/releases/latest/download/latest.json"],
+            "endpoints": [args.update_feed],
             "windows": {"installMode": "passive"}}}}, indent=2) + "\n", encoding="utf-8")
     run([*cli_command("npm"), "--prefix", "web", "exec", "--", "tauri", "build", "--config", config],
         env={**os.environ, "WIKI_DESKTOP_BUNDLE": "1", "CARGO_TARGET_DIR": str(ROOT / "raw/desktop/target")})
@@ -149,7 +171,7 @@ def main() -> None:
     shutil.copyfile(ROOT / "raw/desktop/target/release/wiki-agent.exe", out / "wiki-agent.exe")
     (out / "latest.json").write_text(json.dumps({"version": args.version, "notes": f"wiki-agent {args.version}",
         "platforms": {"windows-x86_64": {"signature": signature.read_text(encoding="utf-8").strip(),
-            "url": f"https://github.com/{REPOSITORY}/releases/download/v{args.version}/{installer.name}"}}}, indent=2) + "\n", encoding="utf-8")
+            "url": update_asset_url(args.update_feed, args.version, installer.name)}}}, indent=2) + "\n", encoding="utf-8")
     print(f"Installer ready: {out / installer.name}")
 
 

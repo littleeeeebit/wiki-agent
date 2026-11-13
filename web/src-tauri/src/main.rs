@@ -403,7 +403,7 @@ fn main() {
             let root = repo();
             let data = if cfg!(desktop_bundle) {
                 std::env::var_os("WIKI_DATA_HOME").map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from(std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA is missing")).join("wiki-agent"))
+                    .unwrap_or_else(|| PathBuf::from(std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA is missing")).join("wiki-agent-data"))
             } else { root.clone() };
             let log = data.join("raw/main.log");
             std::fs::create_dir_all(&data)?;
