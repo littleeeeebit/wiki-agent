@@ -1,0 +1,456 @@
+{
+  "task": "pr219",
+  "reference": {
+    "merge_commit": {
+      "hidden": {
+        "tool/test_planning.py::test_a_decision_record_written_during_the_run_neither_stops_nor_joins_the_publication": "passed"
+      },
+      "affected": {
+        "tool/test_planning.py": true
+      }
+    },
+    "merge_base": {
+      "hidden": {
+        "tool/test_planning.py::test_a_decision_record_written_during_the_run_neither_stops_nor_joins_the_publication": "failed"
+      },
+      "affected": {
+        "tool/test_planning.py": true
+      }
+    },
+    "discriminates": true
+  },
+  "baseline": {
+    "id": "pr219",
+    "rev": 1,
+    "goal": "While a plan in a worktree is between start and handoff (any phase except `handoff` and `stopped`, including `clarify`), no chat, task or loop turn can start there and write to it, and untracked files outside the plan folder (such as the `.wiki/decisions/*.md` records the session-start hook writes) no longer stop publication as `worktree_moved`.",
+    "out": [
+      "The operational steps the owner already took (closing PR #247, resetting `plan-32916e65` to 13c11f09, the `backup/plan-32916e65-chat-18-stages` ref); this change does not touch them or the ai-companion-voice-agent repository",
+      "`tool/sync.py` and where it writes decision records; the hook keeps writing them into the checkout",
+      "The planning worker's own turns (`planning.opened` / `consume`) and the reviser's turn (`planning.revise`), which do not go through `work.begin`",
+      "Checks on files inside the plan folder and on tracked changes anywhere: these stay as strict as they are now",
+      "Any change to how a plan phase moves (`clarify`, `answer`, `resume`, `cancel`) beyond what the two fixes need"
+    ],
+    "done": [
+      "python -m ruff check tool laya",
+      "`work.begin` (tool/main/work.py) raises HTTPException 409 before it does anything else (before `refactor_continuation.take`, `diff_base`, `remember`, or starting the thread) when the repository has a plan record whose `worktree` is this path and whose `planning.phase` is not `handoff` or `stopped`. The message, in Korean, says the worktree belongs to a plan that is running or waiting for answers, and tells the person to answer the questions on the plan card",
+      "The caller's hold is released on that 409: `POST` of a chat turn returns 409, and a second chat turn on the same worktree after the plan is cancelled (phase `stopped`) or handed off (phase `handoff`) starts normally",
+      "A new test in tool/test_planning.py: a plan stopped in `clarify` with a question pending; a chat turn posted to its worktree gets 409, no turn starts (no run in `work._runs` from it, nothing remembered, HEAD unchanged). The test fails with the fix reverted",
+      "`planning.clean` takes the plan's artifact root and ignores untracked (`??`) entries outside that root, reading status with untracked files listed one by one (`-uall`) so a collapsed directory entry such as `?? .wiki/` is judged per file. It still reports any tracked change anywhere and any untracked file inside the root. Every caller in `publish` passes the root",
+      "`planning.leftover` likewise ignores untracked files outside the root when it decides whether what is uncommitted is only an interrupted write, so a half-written plan folder plus outside decision records still resumes",
+      "A new test in tool/test_planning.py: untracked `.wiki/decisions/*.md` files exist in the plan's checkout before publication; the plan reaches `handoff` with one commit that touches only the plan folder, and the decision records stay untracked and uncommitted. The test fails with the fix reverted",
+      "The existing parametrized test `test_a_write_cut_halfway_is_finished_on_resume_only_if_every_file_is_ours` still stops with `worktree_moved` for \"a person's document\" and \"a person's other file\" (inside the plan folder), and still finishes for \"nothing\" and \"a killed swap\"",
+      "`tool/test_planning.py`, `test_main`, `test_specs`, `test_loop`, `test_loop_progress`, `test_task_workflow` and `test_refactor*` all pass"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/work.py:924",
+        "tool/main/work.py:912",
+        "tool/main/loop.py:946",
+        "tool/main/planning.py:53",
+        "tool/main/planning.py:408",
+        "tool/main/planning.py:413",
+        "tool/main/planning.py:917",
+        "tool/main/planning.py:1077",
+        "tool/main/planning.py:1356",
+        "tool/main/specs.py:204",
+        "tool/test_planning.py:457",
+        "tool/test_planning.py:493",
+        "tool/sync.py"
+      ],
+      "rules": [
+        "A plan owns its worktree from start until handoff, even while it has released the worktree hold to wait in `clarify`",
+        "Publication commits exactly the plan's own paths; files outside the plan folder are never staged"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "The block lives in `work.begin`, not only in the chat endpoint",
+        "why": "Chat, `specs.start` (decide=True) and the review loop (loop.py:946) all start turns through `begin`. Any of them writing into a plan's checkout before handoff moves HEAD under the planner, which is what stopped plan-32916e65 (chat session 5cfae6b7 committed and opened PR #247 while the plan waited in `clarify`)",
+        "rejected": "Checking only in the chat POST handler, which leaves the other entry points open"
+      },
+      {
+        "what": "Every phase except `handoff` and `stopped` blocks turns, `clarify` included",
+        "why": "In `clarify` the plan lets go of the hold, so the existing hold check let the turn through, yet the planner will write and publish there once answered. `stopped` frees the worktree so a cancelled plan does not lock it forever. `handoff` is when the review loop takes over",
+        "rejected": "Keeping the hold through `clarify`, which would make a waiting plan look like a running turn to every other hold check (removal, reset, switch)"
+      },
+      {
+        "what": "`clean` ignores only untracked files outside the plan folder; tracked changes anywhere and untracked files inside the folder still count",
+        "why": "The session-start hook writes untracked `.wiki/decisions/*.md` into the checkout, and publication commits exact paths, so those files can never end up in the plan commit. A modified tracked file still means someone else is working in the checkout",
+        "rejected": "Ignoring every untracked file, which would hide a person's stray file inside the plan folder, and the existing test requires that case to stop"
+      },
+      {
+        "what": "`leftover` gets the same outside-the-root exemption (this point was settled without the requester, since nobody could be asked)",
+        "why": "Its `-uall` status check rejects any change outside the folder. With decision records present, an interrupted publish would stop on resume as `root_exists` instead of finishing, which is the same failure under another name",
+        "rejected": "Fixing `clean` alone, as the request literally names"
+      },
+      {
+        "what": "The 409 message tells the person to answer on the plan card (this point was settled without the requester, since nobody could be asked)",
+        "why": "The plan's question also shows in that checkout's chat, so a person naturally types the answer into the agent box, as happened at 06:28 with \"그래 단계를 거치자.\". The message has to send them to where the answer is actually read",
+        "rejected": "A generic \"worktree busy\" message that matches the hold's text"
+      }
+    ]
+  },
+  "enriched": {
+    "id": "pr219",
+    "rev": 1,
+    "goal": "While a plan in a worktree is between start and handoff (any phase except `handoff` and `stopped`, including `clarify`), no chat, task or loop turn can start there and write to it, and untracked files outside the plan folder (such as the `.wiki/decisions/*.md` records the session-start hook writes) no longer stop publication as `worktree_moved`.",
+    "out": [
+      "The operational steps the owner already took (closing PR #247, resetting `plan-32916e65` to 13c11f09, the `backup/plan-32916e65-chat-18-stages` ref); this change does not touch them or the ai-companion-voice-agent repository",
+      "`tool/sync.py` and where it writes decision records; the hook keeps writing them into the checkout",
+      "The planning worker's own turns (`planning.opened` / `consume`) and the reviser's turn (`planning.revise`), which do not go through `work.begin`",
+      "Checks on files inside the plan folder and on tracked changes anywhere: these stay as strict as they are now",
+      "Any change to how a plan phase moves (`clarify`, `answer`, `resume`, `cancel`) beyond what the two fixes need"
+    ],
+    "done": [
+      "python -m ruff check tool laya",
+      "`work.begin` (tool/main/work.py) raises HTTPException 409 before it does anything else (before `refactor_continuation.take`, `diff_base`, `remember`, or starting the thread) when the repository has a plan record whose `worktree` is this path and whose `planning.phase` is not `handoff` or `stopped`. The message, in Korean, says the worktree belongs to a plan that is running or waiting for answers, and tells the person to answer the questions on the plan card",
+      "The caller's hold is released on that 409: `POST` of a chat turn returns 409, and a second chat turn on the same worktree after the plan is cancelled (phase `stopped`) or handed off (phase `handoff`) starts normally",
+      "A new test in tool/test_planning.py: a plan stopped in `clarify` with a question pending; a chat turn posted to its worktree gets 409, no turn starts (no run in `work._runs` from it, nothing remembered, HEAD unchanged). The test fails with the fix reverted",
+      "`planning.clean` takes the plan's artifact root and ignores untracked (`??`) entries outside that root, reading status with untracked files listed one by one (`-uall`) so a collapsed directory entry such as `?? .wiki/` is judged per file. It still reports any tracked change anywhere and any untracked file inside the root. Every caller in `publish` passes the root",
+      "`planning.leftover` likewise ignores untracked files outside the root when it decides whether what is uncommitted is only an interrupted write, so a half-written plan folder plus outside decision records still resumes",
+      "A new test in tool/test_planning.py: untracked `.wiki/decisions/*.md` files exist in the plan's checkout before publication; the plan reaches `handoff` with one commit that touches only the plan folder, and the decision records stay untracked and uncommitted. The test fails with the fix reverted",
+      "The existing parametrized test `test_a_write_cut_halfway_is_finished_on_resume_only_if_every_file_is_ours` still stops with `worktree_moved` for \"a person's document\" and \"a person's other file\" (inside the plan folder), and still finishes for \"nothing\" and \"a killed swap\"",
+      "`tool/test_planning.py`, `test_main`, `test_specs`, `test_loop`, `test_loop_progress`, `test_task_workflow` and `test_refactor*` all pass"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/work.py:924",
+        "tool/main/work.py:912",
+        "tool/main/loop.py:946",
+        "tool/main/planning.py:53",
+        "tool/main/planning.py:408",
+        "tool/main/planning.py:413",
+        "tool/main/planning.py:917",
+        "tool/main/planning.py:1077",
+        "tool/main/planning.py:1356",
+        "tool/main/specs.py:204",
+        "tool/test_planning.py:457",
+        "tool/test_planning.py:493",
+        "tool/sync.py"
+      ],
+      "rules": [
+        "A plan owns its worktree from start until handoff, even while it has released the worktree hold to wait in `clarify`",
+        "Publication commits exactly the plan's own paths; files outside the plan folder are never staged"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "The block lives in `work.begin`, not only in the chat endpoint",
+        "why": "Chat, `specs.start` (decide=True) and the review loop (loop.py:946) all start turns through `begin`. Any of them writing into a plan's checkout before handoff moves HEAD under the planner, which is what stopped plan-32916e65 (chat session 5cfae6b7 committed and opened PR #247 while the plan waited in `clarify`)",
+        "rejected": "Checking only in the chat POST handler, which leaves the other entry points open"
+      },
+      {
+        "what": "Every phase except `handoff` and `stopped` blocks turns, `clarify` included",
+        "why": "In `clarify` the plan lets go of the hold, so the existing hold check let the turn through, yet the planner will write and publish there once answered. `stopped` frees the worktree so a cancelled plan does not lock it forever. `handoff` is when the review loop takes over",
+        "rejected": "Keeping the hold through `clarify`, which would make a waiting plan look like a running turn to every other hold check (removal, reset, switch)"
+      },
+      {
+        "what": "`clean` ignores only untracked files outside the plan folder; tracked changes anywhere and untracked files inside the folder still count",
+        "why": "The session-start hook writes untracked `.wiki/decisions/*.md` into the checkout, and publication commits exact paths, so those files can never end up in the plan commit. A modified tracked file still means someone else is working in the checkout",
+        "rejected": "Ignoring every untracked file, which would hide a person's stray file inside the plan folder, and the existing test requires that case to stop"
+      },
+      {
+        "what": "`leftover` gets the same outside-the-root exemption (this point was settled without the requester, since nobody could be asked)",
+        "why": "Its `-uall` status check rejects any change outside the folder. With decision records present, an interrupted publish would stop on resume as `root_exists` instead of finishing, which is the same failure under another name",
+        "rejected": "Fixing `clean` alone, as the request literally names"
+      },
+      {
+        "what": "The 409 message tells the person to answer on the plan card (this point was settled without the requester, since nobody could be asked)",
+        "why": "The plan's question also shows in that checkout's chat, so a person naturally types the answer into the agent box, as happened at 06:28 with \"그래 단계를 거치자.\". The message has to send them to where the answer is actually read",
+        "rejected": "A generic \"worktree busy\" message that matches the hold's text"
+      }
+    ],
+    "original": "계획이 답을 기다리는 동안 채팅 턴이 작업트리를 쓰지 못하게 하고, 결정 기록 때문에 게시가 멈추지 않게 합니다\n\n## 변경 요약\n\n- `work.begin` 이 작업트리의 계획이 시작부터 인계 사이(`handoff`·`stopped` 가 아닌 단계)에 있으면 턴을 409 로 거절합니다. 답을 기다리는(`clarify`) 동안 계획은 작업트리 hold 를 놓지만 작업트리는 여전히 계획의 것입니다. 메시지는 질문을 계획 카드에서 답하라고 안내합니다.\n- `planning.clean` 이 계획 폴더 밖의 untracked 파일을 커밋 안 된 변경으로 치지 않습니다. 세션 시작 hook(`tool/sync.py`)이 체크아웃에 쓰는 `.wiki/decisions/*.md` 결정 기록이 있으면, 이전에는 모든 계획이 게시 단계에서 `worktree_moved` 로 멈췄습니다. 계획 폴더 안의 파일 검사는 그대로입니다.\n\n## 근거\n\nai-companion-voice-agent 리펙터링 계획 `plan-32916e65` 가 \"멈춤 — 작업트리가 움직임 · HEAD 가 13c11f0 에서 움직였다\" 로 멈춤(P0).\n\n- 22:29 계획 시작, 계획자가 질문 하나를 내고 `clarify` 에서 대기. 질문은 그 체크아웃의 채팅에도 보입니다.\n- 06:28 사람이 에이전트 상자에 \"그래 단계를 거치자.\" 를 입력 → 일반 쓰기 턴(세션 5cfae6b7)이 계획을 스스로 써서 5d0073f6 커밋·push·PR #247.\n- 06:56 계획자가 이어서 10단계 초안을 쓰고 07:44 게시에서 HEAD 가 base 에서 움직인 것을 보고 멈춤.\n- 리셋 뒤 다시 이어도 그 체크아웃의 untracked 결정 기록 20개 때문에 \"작업트리에 커밋 안 된 변경이 있다\" 로 다시 멈출 상태였습니다.\n\n## 검사\n\n- `tool/test_planning.py` 36 passed. 새 검사 두 개는 수정 없이 실패함을 확인(채팅 턴이 실제로 시작됨 / 게시가 `worktree_moved` 로 멈춤).\n- `test_main`·`test_specs`·`test_loop`·`test_loop_progress`·`test_task_workflow`·`test_refactor*` 337 passed, 2 skipped.\n\n## 운영 조치(소유자 승인)\n\nPR #247 을 닫고 `plan-32916e65` 를 13c11f09 로 되돌렸습니다(18단계 커밋은 로컬 ref `backup/plan-32916e65-chat-18-stages`). 이 PR 이 머지되고 앱을 다시 켠 뒤 계획을 [재개]하면 계획자의 10단계가 게시됩니다.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "`work.begin` refuses to start any turn (chat, `specs.start` with decide=True, review loop) on a worktree that a plan record names as its `worktree` while that plan's `planning.phase` is anything other than `handoff` or `stopped`; the refusal is HTTPException 409 raised before `refactor_continuation.take`, the `diff_base` read, `remember`, or the thread start.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions 1 and 2: the block lives in `work.begin`; every phase except `handoff` and `stopped` blocks, `clarify` included"
+        },
+        "status": "confirmed",
+        "preconditions": [
+          "The caller already holds the worktree, as `begin`'s docstring requires"
+        ],
+        "postconditions": [
+          "No `Run` from the refused turn is in `work._runs`",
+          "Nothing is written to the chat memory",
+          "HEAD of the worktree is unchanged"
+        ],
+        "invariants": [
+          "A plan in `clarify` that has released its hold still blocks turns",
+          "A plan in `stopped` or `handoff` does not block turns"
+        ],
+        "failures": [
+          "The plan record cannot be read: assumed to be treated like no blocking plan, so a broken record does not lock the worktree forever"
+        ],
+        "context": [
+          "tool/main/work.py",
+          "tool/main/loop.py",
+          "tool/main/specs.py",
+          "tool/main/planning.py"
+        ],
+        "verify": [
+          {
+            "item": "`work.begin` (tool/main/work.py) raises HTTPException 409 before it does anything else (before `refactor_continuation.take`, `diff_base`, `remember`, or starting the thread) when the repository has a plan record whose `worktree` is this path and whose `planning.phase` is not `handoff` or `stopped`. The message, in Korean, says the worktree belongs to a plan that is running or waiting for answers, and tells the person to answer the questions on the plan card",
+            "expected": "409 raised with no side effects for every phase except `handoff` and `stopped`"
+          },
+          {
+            "item": "A new test in tool/test_planning.py: a plan stopped in `clarify` with a question pending; a chat turn posted to its worktree gets 409, no turn starts (no run in `work._runs` from it, nothing remembered, HEAD unchanged). The test fails with the fix reverted",
+            "expected": "Test passes with the fix and fails without it"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "When `begin` refuses a turn with 409, the `release` the caller handed over is called so the worktree hold is freed; once the plan reaches `stopped` or `handoff`, a later turn on the same worktree starts normally.",
+        "source": {
+          "kind": "repository",
+          "locator": "tool/main/work.py:924 docstring: the thread owns `release` from the call to `begin`"
+        },
+        "status": "confirmed",
+        "postconditions": [
+          "The hold on the worktree is free after the 409"
+        ],
+        "failures": [
+          "If `release` is not called, a later turn would fail on the hold instead of starting"
+        ],
+        "depends_on": [
+          "R1"
+        ],
+        "context": [
+          "tool/main/work.py"
+        ],
+        "verify": [
+          {
+            "item": "The caller's hold is released on that 409: `POST` of a chat turn returns 409, and a second chat turn on the same worktree after the plan is cancelled (phase `stopped`) or handed off (phase `handoff`) starts normally",
+            "expected": "First POST 409; POST after cancel or handoff starts a turn"
+          }
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "The 409 message is in Korean, says the worktree belongs to a plan that is running or waiting for answers, and tells the person to answer the plan's questions on the plan card rather than in the agent box.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 5: the 409 message points to the plan card"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R1"
+        ],
+        "context": [
+          "tool/main/work.py"
+        ],
+        "verify": [
+          {
+            "item": "`work.begin` (tool/main/work.py) raises HTTPException 409 before it does anything else (before `refactor_continuation.take`, `diff_base`, `remember`, or starting the thread) when the repository has a plan record whose `worktree` is this path and whose `planning.phase` is not `handoff` or `stopped`. The message, in Korean, says the worktree belongs to a plan that is running or waiting for answers, and tells the person to answer the questions on the plan card",
+            "expected": "The 409 detail names the plan and points to the plan card"
+          }
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "The planning worker's own turns (`planning.opened` / `consume`) and the reviser's turn (`planning.revise`) are not affected by the block, because they do not go through `work.begin`.",
+        "source": {
+          "kind": "repository",
+          "locator": "spec `out` item 3; tool/main/planning.py"
+        },
+        "status": "assumed",
+        "invariants": [
+          "A plan in progress can still run its planner and reviser in its own worktree"
+        ],
+        "depends_on": [
+          "R1"
+        ],
+        "context": [
+          "tool/main/planning.py"
+        ],
+        "verify": [
+          {
+            "item": "`tool/test_planning.py`, `test_main`, `test_specs`, `test_loop`, `test_loop_progress`, `test_task_workflow` and `test_refactor*` all pass",
+            "expected": "Existing planner and reviser tests still pass"
+          }
+        ]
+      },
+      {
+        "id": "R5",
+        "text": "`planning.clean` takes the plan's artifact root, reads `git status --porcelain -uall`, and ignores only untracked (`??`) entries whose path is outside that root; any tracked change anywhere and any untracked file inside the root still make it report not clean. Every call in `publish` (tool/main/planning.py:930, 940, 945, 964) passes the root.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 3: `clean` ignores only untracked files outside the plan folder"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "Publication commits exact paths, so a file outside the root never enters the plan commit",
+          "A modified tracked file anywhere still stops publication as `worktree_moved`"
+        ],
+        "failures": [
+          "A collapsed entry such as `?? .wiki/` would hide a file inside the root if status were read without `-uall`"
+        ],
+        "context": [
+          "tool/main/planning.py",
+          "tool/sync.py"
+        ],
+        "verify": [
+          {
+            "item": "`planning.clean` takes the plan's artifact root and ignores untracked (`??`) entries outside that root, reading status with untracked files listed one by one (`-uall`) so a collapsed directory entry such as `?? .wiki/` is judged per file. It still reports any tracked change anywhere and any untracked file inside the root. Every caller in `publish` passes the root",
+            "expected": "`clean` is true with only outside untracked files; false with any tracked change or untracked file inside the root"
+          },
+          {
+            "item": "A new test in tool/test_planning.py: untracked `.wiki/decisions/*.md` files exist in the plan's checkout before publication; the plan reaches `handoff` with one commit that touches only the plan folder, and the decision records stay untracked and uncommitted. The test fails with the fix reverted",
+            "expected": "Test passes with the fix and fails without it"
+          }
+        ]
+      },
+      {
+        "id": "R6",
+        "text": "`planning.leftover` ignores untracked files outside the root in its `-uall` status check, so an interrupted publish with only our documents or temporary swaps inside the folder plus outside decision records still resumes instead of stopping.",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 4: `leftover` gets the same outside-the-root exemption"
+        },
+        "status": "assumed",
+        "invariants": [
+          "Any file inside the folder that is not ours still makes `leftover` return `None`",
+          "Tracked changes outside the folder still make `leftover` return `None`"
+        ],
+        "depends_on": [
+          "R5"
+        ],
+        "context": [
+          "tool/main/planning.py"
+        ],
+        "verify": [
+          {
+            "item": "`planning.leftover` likewise ignores untracked files outside the root when it decides whether what is uncommitted is only an interrupted write, so a half-written plan folder plus outside decision records still resumes",
+            "expected": "Resume finishes publication when only outside untracked files are present beside an interrupted write"
+          }
+        ]
+      },
+      {
+        "id": "R7",
+        "text": "The protection against foreign files inside the plan folder is unchanged: the existing parametrized resume test still stops on a person's document or other file inside the folder and still finishes on nothing or a killed swap.",
+        "source": {
+          "kind": "repository",
+          "locator": "tool/test_planning.py `test_a_write_cut_halfway_is_finished_on_resume_only_if_every_file_is_ours`"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R5",
+          "R6"
+        ],
+        "context": [
+          "tool/test_planning.py"
+        ],
+        "verify": [
+          {
+            "item": "The existing parametrized test `test_a_write_cut_halfway_is_finished_on_resume_only_if_every_file_is_ours` still stops with `worktree_moved` for \"a person's document\" and \"a person's other file\" (inside the plan folder), and still finishes for \"nothing\" and \"a killed swap\"",
+            "expected": "All four cases keep their current outcome"
+          }
+        ]
+      },
+      {
+        "id": "R8",
+        "text": "The session-start hook `tool/sync.py` and where it writes `.wiki/decisions/*.md` are not changed; the decision records stay untracked in the checkout after publication.",
+        "source": {
+          "kind": "repository",
+          "locator": "spec `out` item 2; tool/sync.py"
+        },
+        "status": "confirmed",
+        "context": [
+          "tool/sync.py"
+        ],
+        "verify": [
+          {
+            "item": "A new test in tool/test_planning.py: untracked `.wiki/decisions/*.md` files exist in the plan's checkout before publication; the plan reaches `handoff` with one commit that touches only the plan folder, and the decision records stay untracked and uncommitted. The test fails with the fix reverted",
+            "expected": "Decision records remain untracked after `handoff`"
+          }
+        ]
+      },
+      {
+        "id": "R9",
+        "text": "The linter and the listed test suites pass after the change.",
+        "source": {
+          "kind": "original",
+          "locator": "the request's 검사 section"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R1",
+          "R2",
+          "R5",
+          "R6",
+          "R7"
+        ],
+        "verify": [
+          {
+            "item": "python -m ruff check tool laya",
+            "expected": "No findings"
+          },
+          {
+            "item": "`tool/test_planning.py`, `test_main`, `test_specs`, `test_loop`, `test_loop_progress`, `test_task_workflow` and `test_refactor*` all pass",
+            "expected": "All pass (skips allowed)"
+          }
+        ]
+      }
+    ],
+    "spec_version": 1,
+    "spec_digest": "4fdda7784d662df39164dea8d04dca6356f19def02e8894a8f2cc2e07c320c68"
+  },
+  "select": [
+    "R1",
+    "R2",
+    "R3",
+    "R5",
+    "R6",
+    "R7",
+    "R8",
+    "R9"
+  ],
+  "costs": {
+    "generation": {
+      "usd": 0.3146592,
+      "tokens": {
+        "input": 22,
+        "output": 6613,
+        "cache_read": 150156,
+        "cache_write": 19035
+      },
+      "turns": 15
+    },
+    "enrichment": {
+      "usd": 0.19577440000000002,
+      "tokens": {
+        "input": 6,
+        "output": 6935,
+        "cache_read": 24372,
+        "cache_write": 6522
+      },
+      "turns": 5
+    },
+    "selection": {
+      "usd": 0.042068,
+      "tokens": {
+        "input": 2,
+        "output": 377,
+        "cache_read": 0,
+        "cache_write": 4315
+      },
+      "turns": 1
+    }
+  },
+  "selection_cost": {
+    "usd": 0.042068,
+    "tokens": {
+      "input": 2,
+      "output": 377,
+      "cache_read": 0,
+      "cache_write": 4315
+    },
+    "turns": 1
+  }
+}

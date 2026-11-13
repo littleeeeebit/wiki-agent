@@ -1,0 +1,590 @@
+{
+  "task": "pr87",
+  "reference": {
+    "merge_commit": {
+      "hidden": {
+        "tool/test_connect.py::test_connection_on_a_pc_with_only_one_cli": "passed",
+        "tool/test_connect.py::test_connection_probe_does_not_start_an_uninstalled_cli": "passed",
+        "tool/test_connect.py::test_connection_hub_respects_the_adapter_when_both_clis_are_installed": "passed"
+      },
+      "affected": {
+        "tool/test_connect.py": true
+      }
+    },
+    "merge_base": {
+      "hidden": {
+        "tool/test_connect.py::test_connection_on_a_pc_with_only_one_cli": "failed",
+        "tool/test_connect.py::test_connection_probe_does_not_start_an_uninstalled_cli": "failed",
+        "tool/test_connect.py::test_connection_hub_respects_the_adapter_when_both_clis_are_installed": "failed"
+      },
+      "affected": {
+        "tool/test_connect.py": true
+      }
+    },
+    "discriminates": true
+  },
+  "baseline": {
+    "id": "pr87",
+    "rev": 1,
+    "goal": "A teammate with only Claude Code or only Codex on PATH can connect a project: user-hook install, project-hook cleanup, session checks, Codex trust, Claude skill links and the connected verdict cover only the CLIs both on PATH and declared by the adapter; no CLI at all refuses with install guidance; the confirmation screen names the tools applied and explains gate_cmd/live_cmd/server_stop and the kept project-hook protection rules",
+    "out": [
+      "Fixing the 5 existing files that already exceed line limits in `python tool/debt.py check` (changed files must not newly exceed)",
+      "Existing web lint / bundle-size warnings and Starlette warnings",
+      "A real macOS teammate install (cannot be run from this Windows machine)",
+      "Changing the setup_agents CLI's `--agent` default or flags beyond what connect needs"
+    ],
+    "done": [
+      "One helper in tool/main/connect.py works out the applied tools as the adapter's declared `agents` (both when missing or invalid) intersected with the CLIs on PATH, and status(), examine(), unwire(), _snapshot()/hub()/move() and the plan endpoint all use it",
+      "status() of a Claude-only machine with a both-declared adapter reports no Codex items (no 'Codex 시험 안 함', no 'Codex 신뢰 미확인', no Codex user-hook missing) and can reach '연결 완료'; the same holds the other way round for Codex-only",
+      "hub() on a single-CLI machine plans plan_global for only that CLI and no longer refuses with 'codex CLI를 PATH에서 찾지 못했습니다' / 'claude CLI를 ...'; Codex trust is computed and written only when Codex is applied, Claude skill links only when Claude is applied",
+      "The hub digest includes the applied tool list, so move() refuses with 409 when the selection changed between preview and confirm, and writes exactly the previewed plan otherwise",
+      "When the adapter declares one tool and both CLIs are installed, preview, digest, write and checks touch only that tool; an API regression test shows that a broken settings file of the other CLI does not block connect",
+      "With no CLI on PATH, GET /api/connect/{name}/plan reports a refusal with install guidance and POST /api/connect/{name} returns 409 without writing the adapter, the hooks or the records",
+      "New adapters still write `agents = [\"claude\", \"codex\"]` (adapter_text unchanged in that respect)",
+      "The connect confirmation modal in web/src/components/Projects.tsx shows the tools to be applied, marks gate_cmd as required and live_cmd/server_stop as optional with a one-line explanation each, and explains that the project-hook section removes old hooks while keeping the deny (protection) rules; ConnectPlan in web/src/lib/api.ts carries the new fields",
+      "Regression tests in tool/test_connect.py (and setup_agents tests where touched) cover Claude-only, Codex-only and no-CLI machines, plus the both-installed and one-declared case",
+      "Ruff on the changed Python files, wiki lint, web lint and the TypeScript/Vite build pass; `python tool/debt.py check` reports no new over-limit file among the changed files",
+      "Browser evidence: the confirmation modal is opened in the running app and shows the applied tools and the slot/protection explanations",
+      "Live evidence on this Windows machine: a new Claude session and a new Codex session each record a SessionStart injection through the connect probe after the change (record the chars observed)"
+    ],
+    "grounds": {
+      "files": [
+        "tool/main/connect.py:128",
+        "tool/main/connect.py:247",
+        "tool/main/connect.py:297",
+        "tool/main/connect.py:324",
+        "tool/main/connect.py:369",
+        "tool/main/connect.py:391",
+        "tool/main/connect.py:583",
+        "tool/main/connect.py:596",
+        "tool/setup_agents.py:223",
+        "tool/setup_agents.py:303",
+        "tool/setup_agents.py:354",
+        "web/src/components/Projects.tsx:141",
+        "web/src/lib/api.ts:738",
+        "tool/test_connect.py:250"
+      ],
+      "pages": [],
+      "rules": [
+        "craft/do-the-whole-instruction",
+        "Everything that can refuse refuses before the first write (plan_global, move)",
+        "Screen text stays Korean"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Applied tools = adapter-declared agents ∩ CLIs found by shutil.which, worked out in one place and reused by status, probes, trust, unwire and the hub move",
+        "why": "The team-shared adapter has to stay the same for every teammate while each machine only has the CLI it uses; the 1st review's P1 was exactly preview/apply/check using different selections",
+        "rejected": "A per-machine adapter edit that drops the missing CLI, which would make the shared adapter differ between teammates"
+      },
+      {
+        "what": "New adapters keep declaring both tools",
+        "why": "So teammates with different CLIs can connect the same committed adapter",
+        "rejected": "Writing only the CLIs found on the connecting machine"
+      },
+      {
+        "what": "The applied tool list goes into the hub digest",
+        "why": "move() must write exactly what was confirmed; a CLI installed or removed between preview and confirm must invalidate the confirmation",
+        "rejected": "Recomputing the selection at write time without checking it against the preview"
+      },
+      {
+        "what": "No CLI on PATH refuses connect (409) with install guidance before any write",
+        "why": "A connection with no host to inject into can never reach '연결 완료', and a half-written adapter would hide that",
+        "rejected": "Writing the adapter and leaving the status '일부' forever"
+      },
+      {
+        "what": "unwire() skips the project settings of a CLI that is not applied, including Claude's keep_denies",
+        "why": "Settled without asking: the request limits project-hook cleanup to CLIs found on PATH; a missing CLI's files are not ours to rewrite on that machine",
+        "rejected": "Always adding Claude deny rules even on a Codex-only machine"
+      },
+      {
+        "what": "macOS install verification is left out; Windows live session check and browser check are required",
+        "why": "Settled without asking: the write session runs on Windows and cannot observe macOS; the browser rendering was the stated unchecked gap that can be closed here",
+        "rejected": "Marking the work done on tests alone with no browser look at the changed modal"
+      }
+    ]
+  },
+  "enriched": {
+    "id": "pr87",
+    "rev": 1,
+    "goal": "A teammate with only Claude Code or only Codex on PATH can connect a project: user-hook install, project-hook cleanup, session checks, Codex trust, Claude skill links and the connected verdict cover only the CLIs both on PATH and declared by the adapter; no CLI at all refuses with install guidance; the confirmation screen names the tools applied and explains gate_cmd/live_cmd/server_stop and the kept project-hook protection rules",
+    "out": [
+      "Fixing the 5 existing files that already exceed line limits in `python tool/debt.py check` (changed files must not newly exceed)",
+      "Existing web lint / bundle-size warnings and Starlette warnings",
+      "A real macOS teammate install (cannot be run from this Windows machine)",
+      "Changing the setup_agents CLI's `--agent` default or flags beyond what connect needs"
+    ],
+    "done": [
+      "One helper in tool/main/connect.py works out the applied tools as the adapter's declared `agents` (both when missing or invalid) intersected with the CLIs on PATH, and status(), examine(), unwire(), _snapshot()/hub()/move() and the plan endpoint all use it",
+      "status() of a Claude-only machine with a both-declared adapter reports no Codex items (no 'Codex 시험 안 함', no 'Codex 신뢰 미확인', no Codex user-hook missing) and can reach '연결 완료'; the same holds the other way round for Codex-only",
+      "hub() on a single-CLI machine plans plan_global for only that CLI and no longer refuses with 'codex CLI를 PATH에서 찾지 못했습니다' / 'claude CLI를 ...'; Codex trust is computed and written only when Codex is applied, Claude skill links only when Claude is applied",
+      "The hub digest includes the applied tool list, so move() refuses with 409 when the selection changed between preview and confirm, and writes exactly the previewed plan otherwise",
+      "When the adapter declares one tool and both CLIs are installed, preview, digest, write and checks touch only that tool; an API regression test shows that a broken settings file of the other CLI does not block connect",
+      "With no CLI on PATH, GET /api/connect/{name}/plan reports a refusal with install guidance and POST /api/connect/{name} returns 409 without writing the adapter, the hooks or the records",
+      "New adapters still write `agents = [\"claude\", \"codex\"]` (adapter_text unchanged in that respect)",
+      "The connect confirmation modal in web/src/components/Projects.tsx shows the tools to be applied, marks gate_cmd as required and live_cmd/server_stop as optional with a one-line explanation each, and explains that the project-hook section removes old hooks while keeping the deny (protection) rules; ConnectPlan in web/src/lib/api.ts carries the new fields",
+      "Regression tests in tool/test_connect.py (and setup_agents tests where touched) cover Claude-only, Codex-only and no-CLI machines, plus the both-installed and one-declared case",
+      "Ruff on the changed Python files, wiki lint, web lint and the TypeScript/Vite build pass; `python tool/debt.py check` reports no new over-limit file among the changed files",
+      "Browser evidence: the confirmation modal is opened in the running app and shows the applied tools and the slot/protection explanations",
+      "Live evidence on this Windows machine: a new Claude session and a new Codex session each record a SessionStart injection through the connect probe after the change (record the chars observed)"
+    ],
+    "grounds": {
+      "files": [
+        "tool/main/connect.py:128",
+        "tool/main/connect.py:247",
+        "tool/main/connect.py:297",
+        "tool/main/connect.py:324",
+        "tool/main/connect.py:369",
+        "tool/main/connect.py:391",
+        "tool/main/connect.py:583",
+        "tool/main/connect.py:596",
+        "tool/setup_agents.py:223",
+        "tool/setup_agents.py:303",
+        "tool/setup_agents.py:354",
+        "web/src/components/Projects.tsx:141",
+        "web/src/lib/api.ts:738",
+        "tool/test_connect.py:250"
+      ],
+      "pages": [],
+      "rules": [
+        "craft/do-the-whole-instruction",
+        "Everything that can refuse refuses before the first write (plan_global, move)",
+        "Screen text stays Korean"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Applied tools = adapter-declared agents ∩ CLIs found by shutil.which, worked out in one place and reused by status, probes, trust, unwire and the hub move",
+        "why": "The team-shared adapter has to stay the same for every teammate while each machine only has the CLI it uses; the 1st review's P1 was exactly preview/apply/check using different selections",
+        "rejected": "A per-machine adapter edit that drops the missing CLI, which would make the shared adapter differ between teammates"
+      },
+      {
+        "what": "New adapters keep declaring both tools",
+        "why": "So teammates with different CLIs can connect the same committed adapter",
+        "rejected": "Writing only the CLIs found on the connecting machine"
+      },
+      {
+        "what": "The applied tool list goes into the hub digest",
+        "why": "move() must write exactly what was confirmed; a CLI installed or removed between preview and confirm must invalidate the confirmation",
+        "rejected": "Recomputing the selection at write time without checking it against the preview"
+      },
+      {
+        "what": "No CLI on PATH refuses connect (409) with install guidance before any write",
+        "why": "A connection with no host to inject into can never reach '연결 완료', and a half-written adapter would hide that",
+        "rejected": "Writing the adapter and leaving the status '일부' forever"
+      },
+      {
+        "what": "unwire() skips the project settings of a CLI that is not applied, including Claude's keep_denies",
+        "why": "Settled without asking: the request limits project-hook cleanup to CLIs found on PATH; a missing CLI's files are not ours to rewrite on that machine",
+        "rejected": "Always adding Claude deny rules even on a Codex-only machine"
+      },
+      {
+        "what": "macOS install verification is left out; Windows live session check and browser check are required",
+        "why": "Settled without asking: the write session runs on Windows and cannot observe macOS; the browser rendering was the stated unchecked gap that can be closed here",
+        "rejected": "Marking the work done on tests alone with no browser look at the changed modal"
+      }
+    ],
+    "original": "단일 CLI 사용 팀원의 초기 프로젝트 연결 지원\n\n## 문제와 변경\n\nClaude Code 또는 Codex 하나만 설치한 팀원 PC에서도 초기 연결이 두 CLI의 설정과 검증을 요구했습니다. 이제 PATH에서 찾은 CLI만 사용자 훅 설치, 프로젝트 훅 정리, 세션 검증과 연결 상태 판정에 사용합니다. Codex 신뢰 확인과 Claude 스킬 링크 처리도 해당 CLI가 있을 때만 수행합니다.\n\n팀에서 공유하는 adapter는 두 도구를 계속 선언하므로 팀원마다 사용하는 CLI가 달라도 같은 프로젝트를 연결할 수 있습니다. 기존 adapter가 하나만 선언한 경우에도 허브 미리보기·확인용 digest·실제 적용·검증에 같은 선택을 유지합니다. CLI가 하나도 없으면 설치 안내와 함께 연결을 거부합니다. 확인 화면에는 적용할 도구를 표시하고, 필수 `gate_cmd`와 선택 `live_cmd`·`server_stop`, 프로젝트 훅 보호 규칙 설명을 명확히 했습니다.\n\n## 검증\n\n- 최종 커밋에서 연결·설치·훅·adapter·wiki 상태 관련 테스트: 77 passed. 연결·설치·wiki 상태 관련 테스트는 정방향·역방향 모두 53 passed.\n- 최종 커밋에서 지정된 native host 경계 테스트: 34 passed, 127 deselected.\n- 변경 Python 파일 Ruff, wiki lint, 웹 lint와 TypeScript/Vite 빌드, diff 공백 검사 통과.\n- Claude 전용·Codex 전용·CLI 없음 회귀 테스트, 두 CLI가 설치됐지만 adapter는 하나만 선언하고 다른 CLI 설정은 깨진 경우의 API 회귀 테스트를 포함했습니다.\n- 수정 커밋 `90fa24b663111470d02efe6b6e444b858bed128f`에서 실제 Windows 새 Claude·Codex 세션의 SessionStart 훅 주입이 모두 성공했습니다(각 6685자). 기록: 로컬 `artifacts/review/single-cli-live-result.json`.\n\n`python tool/debt.py check`는 변경하지 않은 기존 5개 파일의 줄 수 초과로 실패합니다. 이번 변경 파일에서 새 초과는 발생하지 않았습니다. 기존 웹 lint·번들 크기 경고와 Starlette 경고가 있습니다. 실제 macOS 팀원 설치와 브라우저 렌더링은 아직 확인하지 않았습니다.\n\n## 독립 리뷰\n\nOrca의 GPT-5.6-Sol 리뷰어로 두 라운드를 진행했습니다. 1차 P1인 adapter 도구 선택과 허브 적용 범위 불일치를 수정했습니다. 2차는 최종 커밋 `90fa24b663111470d02efe6b6e444b858bed128f`에 대해 P0·P1·P2 지적 없이 `머지 허용`입니다. 로컬 결과: `artifacts/review/single-cli-round-2-result.md`.\n\n사용자가 긴급 병합을 요청하며 전체 테스트 생략을 명시했습니다. 전체 `python -m pytest tool` 게이트는 실행하지 않았으며, 위의 독립 리뷰·범위별 검사·실제 Windows 훅 검증 결과를 근거로 병합했습니다.\n",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "The tools connect applies are worked out by a single helper in tool/main/connect.py: the adapter's declared `agents` (both claude and codex when the adapter is missing, has no `agents`, or it is invalid) intersected with the CLIs found on PATH; every connect path uses that helper and nothing recomputes its own selection.",
+        "source": {
+          "kind": "original",
+          "locator": "Request, '문제와 변경' first paragraph: PATH에서 찾은 CLI만 사용자 훅 설치, 프로젝트 훅 정리, 세션 검증과 연결 상태 판정에 사용"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "status(), examine(), unwire(), _snapshot()/hub()/move() and GET /api/connect/{name}/plan all return or act on the same applied-tool list for the same project and PATH",
+          "Assumed: hub() and _snapshot() currently take no project path (connect.py:297, :317); the project's adapter selection reaches the hub preview through the plan and connect endpoints, and a project with no adapter yet counts as declaring both"
+        ],
+        "depends_on": [
+          "R13"
+        ],
+        "context": [
+          "tool/main/connect.py"
+        ],
+        "verify": [
+          {
+            "item": "One helper in tool/main/connect.py works out the applied tools as the adapter's declared `agents` (both when missing or invalid) intersected with the CLIs on PATH, and status(), examine(), unwire(), _snapshot()/hub()/move() and the plan endpoint all use it",
+            "expected": "A single helper exists and the named functions and the plan endpoint call it; no other shutil.which-based tool selection is left in the connect paths"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "On a machine with only one CLI and an adapter that declares both, the connection status reports nothing about the missing CLI and can reach '연결 완료'.",
+        "source": {
+          "kind": "original",
+          "locator": "Request, '문제와 변경' first paragraph: 연결 상태 판정"
+        },
+        "status": "confirmed",
+        "postconditions": [
+          "Claude-only: no 'Codex 시험 안 함', no 'Codex 신뢰 미확인', no missing Codex user-hook item",
+          "Codex-only: no Claude test, skill-link or user-hook item"
+        ],
+        "depends_on": [
+          "R1"
+        ],
+        "context": [
+          "tool/main/connect.py:128"
+        ],
+        "verify": [
+          {
+            "item": "status() of a Claude-only machine with a both-declared adapter reports no Codex items (no 'Codex 시험 안 함', no 'Codex 신뢰 미확인', no Codex user-hook missing) and can reach '연결 완료'; the same holds the other way round for Codex-only",
+            "expected": "Tests in tool/test_connect.py show status '연결 완료' with no items about the missing CLI, for both single-CLI cases"
+          }
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "On a single-CLI machine the hub preview and move plan user-level hooks for only that CLI and no longer refuse because the other CLI is missing; Codex trust is computed and written only when Codex is applied, and Claude skill links only when Claude is applied.",
+        "source": {
+          "kind": "original",
+          "locator": "Request, '문제와 변경' first paragraph: Codex 신뢰 확인과 Claude 스킬 링크 처리도 해당 CLI가 있을 때만 수행"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "Assumed: setup_agents.plan_global accepts a single tool name in place of \"both\" (connect.py:303 currently passes \"both\"); if it does not, connect passes the selection without changing the setup_agents CLI's `--agent` default or flags",
+          "Assumed: user-level hook files for a CLI not on PATH are never written or rewritten by move()",
+          "Undecided: move() clears every project's test results (connect.py:341-342), even projects that declare a different tool; whether that should change was not discussed"
+        ],
+        "depends_on": [
+          "R1"
+        ],
+        "context": [
+          "tool/main/connect.py:297",
+          "tool/main/connect.py:324"
+        ],
+        "verify": [
+          {
+            "item": "hub() on a single-CLI machine plans plan_global for only that CLI and no longer refuses with 'codex CLI를 PATH에서 찾지 못했습니다' / 'claude CLI를 ...'; Codex trust is computed and written only when Codex is applied, Claude skill links only when Claude is applied",
+            "expected": "hub() returns refused='' and lines only for the present CLI; trust is false and no Codex file is written on Claude-only; links is empty and no relink happens on Codex-only"
+          }
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "The hub digest covers the applied tool list, so a confirmation is only valid for the selection that was previewed.",
+        "source": {
+          "kind": "original",
+          "locator": "Request, '문제와 변경' second paragraph: 허브 미리보기·확인용 digest·실제 적용·검증에 같은 선택을 유지"
+        },
+        "status": "confirmed",
+        "failures": [
+          "A CLI installed or removed between preview and confirm makes move() return 409 and write nothing"
+        ],
+        "depends_on": [
+          "R1",
+          "R15"
+        ],
+        "context": [
+          "tool/main/connect.py:297",
+          "tool/main/connect.py:324"
+        ],
+        "verify": [
+          {
+            "item": "The hub digest includes the applied tool list, so move() refuses with 409 when the selection changed between preview and confirm, and writes exactly the previewed plan otherwise",
+            "expected": "A test changes the PATH result between plan and connect and gets 409 with no writes; an unchanged selection writes exactly the previewed lines"
+          }
+        ]
+      },
+      {
+        "id": "R5",
+        "text": "When both CLIs are installed but the adapter declares only one, preview, digest, write and checks touch only the declared tool, and a broken settings file of the other CLI does not block connect.",
+        "source": {
+          "kind": "original",
+          "locator": "Request, '검증' fourth bullet: 두 CLI가 설치됐지만 adapter는 하나만 선언하고 다른 CLI 설정은 깨진 경우의 API 회귀 테스트"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "Assumed: 'broken settings file' means the other CLI's user or project settings file does not parse as JSON"
+        ],
+        "depends_on": [
+          "R1"
+        ],
+        "context": [
+          "tool/test_connect.py"
+        ],
+        "verify": [
+          {
+            "item": "When the adapter declares one tool and both CLIs are installed, preview, digest, write and checks touch only that tool; an API regression test shows that a broken settings file of the other CLI does not block connect",
+            "expected": "An API test with both CLIs present, a one-tool adapter and an unparseable settings file for the other CLI connects successfully, and the broken file is left byte-identical"
+          }
+        ]
+      },
+      {
+        "id": "R6",
+        "text": "With no CLI on PATH, connect is refused with install guidance before anything is written.",
+        "source": {
+          "kind": "original",
+          "locator": "Request, '문제와 변경' second paragraph: CLI가 하나도 없으면 설치 안내와 함께 연결을 거부"
+        },
+        "status": "confirmed",
+        "postconditions": [
+          "No adapter file, no hook file and no record is created or changed"
+        ],
+        "invariants": [
+          "Undecided: the exact wording of the install guidance (which CLIs it names and where it links) was not settled"
+        ],
+        "depends_on": [
+          "R16"
+        ],
+        "context": [
+          "tool/main/connect.py:582",
+          "tool/main/connect.py:595"
+        ],
+        "verify": [
+          {
+            "item": "With no CLI on PATH, GET /api/connect/{name}/plan reports a refusal with install guidance and POST /api/connect/{name} returns 409 without writing the adapter, the hooks or the records",
+            "expected": "The plan response carries a non-empty refusal with install guidance; the POST returns 409 and the repository and record directories are unchanged"
+          }
+        ]
+      },
+      {
+        "id": "R7",
+        "text": "Newly written adapters keep declaring both tools.",
+        "source": {
+          "kind": "repository",
+          "locator": "tool/main/connect.py:372 adapter_text writes agents = [\"claude\", \"codex\"]"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R14"
+        ],
+        "context": [
+          "tool/main/connect.py:369"
+        ],
+        "verify": [
+          {
+            "item": "New adapters still write `agents = [\"claude\", \"codex\"]` (adapter_text unchanged in that respect)",
+            "expected": "A single-CLI connect writes an adapter whose first line is agents = [\"claude\", \"codex\"]"
+          }
+        ]
+      },
+      {
+        "id": "R8",
+        "text": "The connect confirmation modal shows the tools to be applied, marks gate_cmd as required and live_cmd/server_stop as optional with a one-line explanation each, and explains that project-hook cleanup removes old hooks while keeping the deny (protection) rules; the ConnectPlan type carries the new fields.",
+        "source": {
+          "kind": "original",
+          "locator": "Request, '문제와 변경' second paragraph: 확인 화면에는 적용할 도구를 표시하고, 필수 gate_cmd와 선택 live_cmd·server_stop, 프로젝트 훅 보호 규칙 설명"
+        },
+        "status": "confirmed",
+        "context": [
+          "web/src/components/Projects.tsx",
+          "web/src/lib/api.ts:738"
+        ],
+        "verify": [
+          {
+            "item": "The connect confirmation modal in web/src/components/Projects.tsx shows the tools to be applied, marks gate_cmd as required and live_cmd/server_stop as optional with a one-line explanation each, and explains that the project-hook section removes old hooks while keeping the deny (protection) rules; ConnectPlan in web/src/lib/api.ts carries the new fields",
+            "expected": "The modal source renders those elements and ConnectPlan types the applied-tool field(s) returned by the plan endpoint"
+          }
+        ]
+      },
+      {
+        "id": "R9",
+        "text": "Regression tests cover Claude-only, Codex-only and no-CLI machines, plus both CLIs installed with one tool declared.",
+        "source": {
+          "kind": "original",
+          "locator": "Request, '검증' fourth bullet"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R2",
+          "R3",
+          "R5",
+          "R6"
+        ],
+        "context": [
+          "tool/test_connect.py"
+        ],
+        "verify": [
+          {
+            "item": "Regression tests in tool/test_connect.py (and setup_agents tests where touched) cover Claude-only, Codex-only and no-CLI machines, plus the both-installed and one-declared case",
+            "expected": "Each of the four cases has at least one test that fails on the pre-change code and passes after"
+          }
+        ]
+      },
+      {
+        "id": "R10",
+        "text": "Static checks pass on the changed code, and no changed file newly exceeds the debt line limits.",
+        "source": {
+          "kind": "original",
+          "locator": "Request, '검증' third bullet and the debt.py paragraph"
+        },
+        "status": "confirmed",
+        "verify": [
+          {
+            "item": "Ruff on the changed Python files, wiki lint, web lint and the TypeScript/Vite build pass; `python tool/debt.py check` reports no new over-limit file among the changed files",
+            "expected": "All pass; debt.py lists only the 5 pre-existing over-limit files, none of which is a changed file"
+          }
+        ]
+      },
+      {
+        "id": "R11",
+        "text": "The changed confirmation modal is observed in the running app.",
+        "source": {
+          "kind": "decision",
+          "locator": "Decision 6: Windows live session check and browser check are required"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R8",
+          "R18"
+        ],
+        "verify": [
+          {
+            "item": "Browser evidence: the confirmation modal is opened in the running app and shows the applied tools and the slot/protection explanations",
+            "expected": "A screenshot or browser record of the open modal showing the applied tools, gate_cmd required, live_cmd/server_stop optional and the protection-rule note"
+          }
+        ]
+      },
+      {
+        "id": "R12",
+        "text": "A new Claude session and a new Codex session on this Windows machine each receive the SessionStart injection through the connect probe after the change.",
+        "source": {
+          "kind": "original",
+          "locator": "Request, '검증' fifth bullet: 실제 Windows 새 Claude·Codex 세션의 SessionStart 훅 주입"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R18"
+        ],
+        "verify": [
+          {
+            "item": "Live evidence on this Windows machine: a new Claude session and a new Codex session each record a SessionStart injection through the connect probe after the change (record the chars observed)",
+            "expected": "Both probes record a successful injection with a non-zero character count, written down in the evidence"
+          }
+        ]
+      },
+      {
+        "id": "R13",
+        "text": "Applied tools = adapter-declared agents ∩ CLIs found by shutil.which, worked out in one place and reused by status, probes, trust, unwire and the hub move; the shared adapter is never edited per machine to drop a missing CLI.",
+        "source": {
+          "kind": "decision",
+          "locator": "Decision 1"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "The committed adapter is identical for every teammate regardless of which CLI each has"
+        ]
+      },
+      {
+        "id": "R14",
+        "text": "New adapters keep declaring both tools rather than only the CLIs found on the connecting machine.",
+        "source": {
+          "kind": "decision",
+          "locator": "Decision 2"
+        },
+        "status": "confirmed"
+      },
+      {
+        "id": "R15",
+        "text": "The applied tool list goes into the hub digest; the selection is not recomputed at write time without checking it against the preview.",
+        "source": {
+          "kind": "decision",
+          "locator": "Decision 3"
+        },
+        "status": "confirmed"
+      },
+      {
+        "id": "R16",
+        "text": "No CLI on PATH refuses connect (409) with install guidance before any write, rather than writing the adapter and leaving the status '일부'.",
+        "source": {
+          "kind": "decision",
+          "locator": "Decision 4"
+        },
+        "status": "confirmed"
+      },
+      {
+        "id": "R17",
+        "text": "unwire() skips the project settings of a CLI that is not applied, including Claude's keep_denies, so a Codex-only machine never adds Claude deny rules.",
+        "source": {
+          "kind": "decision",
+          "locator": "Decision 5"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R1"
+        ],
+        "context": [
+          "tool/main/connect.py:391"
+        ],
+        "verify": [
+          {
+            "item": "On a Codex-only machine, unwire() on a project with no .claude settings file",
+            "expected": "No .claude/settings file is created and no keep_denies change is reported"
+          }
+        ]
+      },
+      {
+        "id": "R18",
+        "text": "macOS install verification stays out; the Windows live session check and the browser check of the modal are required before the work is reported done.",
+        "source": {
+          "kind": "decision",
+          "locator": "Decision 6"
+        },
+        "status": "assumed"
+      }
+    ],
+    "spec_version": 1,
+    "spec_digest": "69e46f72d36ae58d0dcc6207921c1f1efed4fa33314e9fde208132987f9680a4"
+  },
+  "select": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
+    "R8",
+    "R9",
+    "R10",
+    "R11",
+    "R12",
+    "R17"
+  ],
+  "costs": {
+    "generation": {
+      "usd": 0.3026408,
+      "tokens": {
+        "input": 16,
+        "output": 6087,
+        "cache_read": 102664,
+        "cache_write": 20038
+      },
+      "turns": 15
+    },
+    "enrichment": {
+      "usd": 0.27401680000000006,
+      "tokens": {
+        "input": 8,
+        "output": 9841,
+        "cache_read": 37704,
+        "cache_write": 8703
+      },
+      "turns": 5
+    },
+    "selection": {
+      "usd": 0.051664,
+      "tokens": {
+        "input": 2,
+        "output": 318,
+        "cache_read": 0,
+        "cache_write": 5662
+      },
+      "turns": 1
+    }
+  },
+  "selection_cost": {
+    "usd": 0.051664,
+    "tokens": {
+      "input": 2,
+      "output": 318,
+      "cache_read": 0,
+      "cache_write": 5662
+    },
+    "turns": 1
+  }
+}

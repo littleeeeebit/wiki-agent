@@ -15,8 +15,8 @@ nothing in this step pushes the branch or opens a pull request.
 
 | Need | Existing piece | Where |
 | --- | --- | --- |
-| Requirements with status and grounds | `requirements` items: `id`, `text`, `source`, `status` (`confirmed`, `assumed`, `undecided`, `not_applicable`), conditions, `verify` | `tool/main/spec_views.py` |
-| A requirement the run cannot pass | `spec_views.blocked` names a dependency on an undecided item | `tool/main/spec_views.py` |
+| Requirements with status and grounds | `requirements` items: `id`, `text`, `source`, `status` (`confirmed`, `assumed`, `undecided`, `not_applicable`), conditions, `verify`, checked by `requirements` | `tool/main/oneshot_sheet.py` |
+| A requirement the run cannot pass | `ended` names undecided items, and `cycle` refuses a loop through `depends_on` | `tool/main/oneshot_spec.py`, `tool/main/oneshot_sheet.py` |
 | Asking with options inside an answer | The `choices` block and its buttons | `tool/main/specs.py` (`blocks`, `answered`) |
 | A write session on a spec | The work session with the spec as system prompt, `done-report`, and the server rerunning `gate_cmd` | `tool/main/work.py`, `tool/prompts/work-spec.md` |
 | Leaving the done-report before the pull request | The refactor branch: a spec with its own completion returns before `pr_turn` (`refactor_run.published`) | `tool/main/specs.py:1773` |
@@ -32,9 +32,8 @@ has no pull request yet and must not push. The refactor test contract
 `start_head`, where the oneshot's contract tests do not exist yet, so it would
 skip them as new files. S4 below reuses only their parts.
 
-`SPEC_VIEWS` in the hub's `.env` stays off. The oneshot run uses the
-requirements shape and its own renderer; it does not switch on the experiment's
-agent view, which is still under evaluation.
+The oneshot run keeps its requirements in the spec record and renders them
+with its own sheet; the ordinary write session never receives them.
 
 ## Stage states
 

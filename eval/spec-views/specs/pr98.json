@@ -1,0 +1,415 @@
+{
+  "task": "pr98",
+  "reference": {
+    "merge_commit": {
+      "hidden": {
+        "tool/test_mobile.py::test_served_apk_survives_the_after_merge_scratch_cleanup": "passed"
+      },
+      "affected": {
+        "tool/test_mobile.py": true
+      }
+    },
+    "merge_base": {
+      "hidden": {
+        "tool/test_mobile.py::test_served_apk_survives_the_after_merge_scratch_cleanup": "failed"
+      },
+      "affected": {
+        "tool/test_mobile.py": true
+      }
+    },
+    "discriminates": true
+  },
+  "baseline": {
+    "id": "pr98",
+    "rev": 1,
+    "goal": "The served Android APK/AAB live in raw/android/ (beside the signing key), so post-merge cleanup of scratch_dirs can no longer delete them and /mobile-install keeps working after a merge.",
+    "out": [
+      "The temporary trycloudflare hostname changing on server restart and re-pairing the existing app via ⋮ → 연결 QR 스캔 (the person diagnosed this as operational, not a code defect)",
+      "Changing scratch_dirs itself or the post-merge cleanup behaviour",
+      "artifacts/play-protect-appeal.txt and artifacts/review stay where they are",
+      "Android app source, version number and signing setup under raw/android-signing/"
+    ],
+    "done": [
+      "tool/main/mobile.py serves the APK from raw/android/wiki-agent.apk (no remaining reference to artifacts/wiki-agent.apk in tool/main)",
+      "tool/build_android.ps1 creates raw/android/ if needed and copies the built APK to raw/android/wiki-agent.apk and the AAB to raw/android/wiki-agent.aab; its Write-Host lines print the new paths",
+      "A regression test in tool/test_mobile.py fails when mobile.APK resolves under any scratch_dirs entry (read from .wiki/adapter.toml when present, else connect.py's default 'artifacts/'). It was shown to fail with the old artifacts/ path and to pass with raw/android/",
+      "pytest tool/test_mobile.py tool/test_android_shell.py passes",
+      "docs/mobile.md (outputs paragraph, adb install line) and docs/development.md (build output paragraph) name raw/android/wiki-agent.apk and .aab, and docs/mobile.md records the incident: APK deleted by post-merge rm -rf artifacts, apk_available:false, the fix, and that a stale tunnel address needs QR re-pairing",
+      "The existing 0.1.4 release-signed APK is in raw/android/wiki-agent.apk on the running server; /api/mobile/status reports apk_available:true, and over public HTTPS /mobile-install returns 200 and /mobile-install.apk returns 200 with application/vnd.android.package-archive and a matching SHA256. If the session cannot place the file or reach the server, it stops and asks the person before reporting done",
+      "A fresh build_android.ps1 run writes raw/android/wiki-agent.apk and .aab. If hooks block powershell, the session stops and asks the person to run it and confirm the output paths before reporting done"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/mobile.py:36",
+        "tool/build_android.ps1:82",
+        "tool/main/connect.py:377",
+        "tool/test_mobile.py:46",
+        "tool/test_android_shell.py",
+        "docs/mobile.md:128",
+        "docs/mobile.md:163",
+        "docs/development.md:146",
+        ".gitignore:15"
+      ],
+      "rules": [
+        "Runtime data that must survive merges lives under raw/ (gitignored), never under scratch_dirs"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Store APK/AAB in raw/android/, next to raw/android-signing/ and raw/android-sdk/",
+        "why": "raw/* is already gitignored and is where the Android runtime data lives. Nothing cleans it after a merge, so the served file survives",
+        "rejected": "Removing artifacts/ from scratch_dirs or carving out an exception: that weakens cleanup for every other scratch output and depends on per-install adapter config"
+      },
+      {
+        "what": "No fallback to the old artifacts/wiki-agent.apk path in mobile.py",
+        "why": "A fallback would quietly bring back a location that cleanup wipes. One location keeps apk_available honest. Moving an existing file is a one-time step covered in the docs",
+        "rejected": "Checking both paths"
+      },
+      {
+        "what": "The regression test reads scratch_dirs from .wiki/adapter.toml when present and otherwise from connect.py's default",
+        "why": ".wiki/adapter.toml is local and missing from this checkout, so a test tied only to it would be skipped or fail in CI. The default still catches the original bug",
+        "rejected": "Hard-coding 'artifacts/' in the test"
+      },
+      {
+        "what": "Tunnel-address re-pairing is documented but not changed in code",
+        "why": "The person diagnosed the stale saved address after the 10-08 22:17 restart as operational, and ⋮ → 연결 QR 스캔 recovers it",
+        "rejected": "Adding a stable tunnel hostname or auto-repair in this task"
+      }
+    ]
+  },
+  "enriched": {
+    "id": "pr98",
+    "rev": 1,
+    "goal": "The served Android APK/AAB live in raw/android/ (beside the signing key), so post-merge cleanup of scratch_dirs can no longer delete them and /mobile-install keeps working after a merge.",
+    "out": [
+      "The temporary trycloudflare hostname changing on server restart and re-pairing the existing app via ⋮ → 연결 QR 스캔 (the person diagnosed this as operational, not a code defect)",
+      "Changing scratch_dirs itself or the post-merge cleanup behaviour",
+      "artifacts/play-protect-appeal.txt and artifacts/review stay where they are",
+      "Android app source, version number and signing setup under raw/android-signing/"
+    ],
+    "done": [
+      "tool/main/mobile.py serves the APK from raw/android/wiki-agent.apk (no remaining reference to artifacts/wiki-agent.apk in tool/main)",
+      "tool/build_android.ps1 creates raw/android/ if needed and copies the built APK to raw/android/wiki-agent.apk and the AAB to raw/android/wiki-agent.aab; its Write-Host lines print the new paths",
+      "A regression test in tool/test_mobile.py fails when mobile.APK resolves under any scratch_dirs entry (read from .wiki/adapter.toml when present, else connect.py's default 'artifacts/'). It was shown to fail with the old artifacts/ path and to pass with raw/android/",
+      "pytest tool/test_mobile.py tool/test_android_shell.py passes",
+      "docs/mobile.md (outputs paragraph, adb install line) and docs/development.md (build output paragraph) name raw/android/wiki-agent.apk and .aab, and docs/mobile.md records the incident: APK deleted by post-merge rm -rf artifacts, apk_available:false, the fix, and that a stale tunnel address needs QR re-pairing",
+      "The existing 0.1.4 release-signed APK is in raw/android/wiki-agent.apk on the running server; /api/mobile/status reports apk_available:true, and over public HTTPS /mobile-install returns 200 and /mobile-install.apk returns 200 with application/vnd.android.package-archive and a matching SHA256. If the session cannot place the file or reach the server, it stops and asks the person before reporting done",
+      "A fresh build_android.ps1 run writes raw/android/wiki-agent.apk and .aab. If hooks block powershell, the session stops and asks the person to run it and confirm the output paths before reporting done"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/mobile.py:36",
+        "tool/build_android.ps1:82",
+        "tool/main/connect.py:377",
+        "tool/test_mobile.py:46",
+        "tool/test_android_shell.py",
+        "docs/mobile.md:128",
+        "docs/mobile.md:163",
+        "docs/development.md:146",
+        ".gitignore:15"
+      ],
+      "rules": [
+        "Runtime data that must survive merges lives under raw/ (gitignored), never under scratch_dirs"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Store APK/AAB in raw/android/, next to raw/android-signing/ and raw/android-sdk/",
+        "why": "raw/* is already gitignored and is where the Android runtime data lives. Nothing cleans it after a merge, so the served file survives",
+        "rejected": "Removing artifacts/ from scratch_dirs or carving out an exception: that weakens cleanup for every other scratch output and depends on per-install adapter config"
+      },
+      {
+        "what": "No fallback to the old artifacts/wiki-agent.apk path in mobile.py",
+        "why": "A fallback would quietly bring back a location that cleanup wipes. One location keeps apk_available honest. Moving an existing file is a one-time step covered in the docs",
+        "rejected": "Checking both paths"
+      },
+      {
+        "what": "The regression test reads scratch_dirs from .wiki/adapter.toml when present and otherwise from connect.py's default",
+        "why": ".wiki/adapter.toml is local and missing from this checkout, so a test tied only to it would be skipped or fail in CI. The default still catches the original bug",
+        "rejected": "Hard-coding 'artifacts/' in the test"
+      },
+      {
+        "what": "Tunnel-address re-pairing is documented but not changed in code",
+        "why": "The person diagnosed the stale saved address after the 10-08 22:17 restart as operational, and ⋮ → 연결 QR 스캔 recovers it",
+        "rejected": "Adding a stable tunnel hostname or auto-repair in this task"
+      }
+    ],
+    "original": "모바일 설치 APK를 머지 후 정리 대상에서 분리 (P0)\n\n## 문제\n- Android 앱을 설치할 수 없었습니다. 설치 QR이 사라졌고 `/mobile-install`과 `/mobile-install.apk`가 404를 돌려줬습니다.\n- 기존 앱도 연결되지 않았습니다.\n\n## 원인\n- 서버가 제공하는 APK가 `artifacts/wiki-agent.apk`에 있었습니다. `.wiki/adapter.toml`은 `artifacts/` 전체를 `scratch_dirs`로 지정하고 있어서, 머지 후 정리(`rm -rf artifacts`)가 APK를 함께 삭제했습니다. 실행 중인 서버에서 `apk_available:false`인 것을 확인했습니다.\n- 기존 앱이 연결되지 않은 것은 코드 결함이 아닙니다. 10-08 22:17에 서버가 재시작되면서 임시 trycloudflare 주소가 바뀌었고, 앱은 예전 주소를 저장하고 있습니다. 앱의 ⋮ 메뉴에서 \"연결 QR 스캔\"으로 다시 페어링하면 복구됩니다.\n\n## 변경\n- `tool/main/mobile.py`와 `tool/build_android.ps1`이 APK/AAB를 `raw/android/`에서 사용하고 저장합니다. 서명 키와 같은 런타임 데이터 위치입니다.\n- APK 경로가 `scratch_dirs` 아래로 들어가면 실패하는 회귀 테스트를 추가했습니다. 예전 경로에서는 실패하고 새 경로에서는 통과하는 것을 확인했습니다.\n- `docs/mobile.md`와 `docs/development.md`의 경로를 고치고, 이번 사고 기록을 추가했습니다.\n\n## 검증\n- `pytest tool/test_mobile.py tool/test_android_shell.py`: 12개 통과\n- 남아 있던 10-03 빌드의 0.1.4 APK(현재 소스와 같은 버전, 같은 릴리스 인증서)를 다시 배치했습니다. 공개 HTTPS로 확인한 결과 `/mobile-install`이 200, `/mobile-install.apk`가 200(`application/vnd.android.package-archive`)이었고 SHA256이 일치했습니다.\n- `build_android.ps1`로 새로 빌드하지는 않았습니다. 훅이 `powershell -*` 명령을 차단합니다.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "The server resolves the downloadable APK at raw/android/wiki-agent.apk only; apk_available in /api/mobile/status reflects that file's presence.",
+        "source": {
+          "kind": "original",
+          "locator": "the request's 변경 section, first bullet"
+        },
+        "status": "confirmed",
+        "postconditions": [
+          "mobile.APK == channels.WIKI / 'raw' / 'android' / 'wiki-agent.apk'",
+          "no string 'artifacts/wiki-agent.apk' or artifacts path for the APK remains under tool/main"
+        ],
+        "invariants": [
+          "/mobile-install.apk still serves the file as attachment filename wiki-agent.apk with Cache-Control no-store"
+        ],
+        "context": [
+          "tool/main/mobile.py",
+          "tool/main/app.py"
+        ],
+        "verify": [
+          {
+            "item": "tool/main/mobile.py serves the APK from raw/android/wiki-agent.apk (no remaining reference to artifacts/wiki-agent.apk in tool/main)",
+            "expected": "grep for artifacts/wiki-agent.apk under tool/main returns nothing; mobile.APK points into raw/android/"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "build_android.ps1 creates raw/android/ when missing and writes the APK and AAB there, printing the new paths.",
+        "source": {
+          "kind": "original",
+          "locator": "the request's 변경 section, first bullet"
+        },
+        "status": "confirmed",
+        "context": [
+          "tool/build_android.ps1"
+        ],
+        "verify": [
+          {
+            "item": "tool/build_android.ps1 creates raw/android/ if needed and copies the built APK to raw/android/wiki-agent.apk and the AAB to raw/android/wiki-agent.aab; its Write-Host lines print the new paths",
+            "expected": "script contains New-Item/creation of raw/android and Copy-Item targets raw/android/wiki-agent.apk and .aab; no artifacts/wiki-agent.* target remains"
+          }
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "A regression test fails whenever the served APK path lies under any scratch_dirs entry, using .wiki/adapter.toml when present and connect.py's default otherwise.",
+        "source": {
+          "kind": "original",
+          "locator": "the request's 변경 section, second bullet"
+        },
+        "status": "assumed",
+        "failures": [
+          "test fails with mobile.APK under artifacts/",
+          "test must not be skipped when .wiki/adapter.toml is absent"
+        ],
+        "depends_on": [
+          "R1",
+          "R10"
+        ],
+        "context": [
+          "tool/test_mobile.py",
+          "tool/main/connect.py",
+          "tool/main/specs.py"
+        ],
+        "verify": [
+          {
+            "item": "A regression test in tool/test_mobile.py fails when mobile.APK resolves under any scratch_dirs entry (read from .wiki/adapter.toml when present, else connect.py's default 'artifacts/'). It was shown to fail with the old artifacts/ path and to pass with raw/android/",
+            "expected": "the test fails against the old path and passes against raw/android/, and the PR states both runs"
+          }
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "The mobile and Android shell test suites pass after the move.",
+        "source": {
+          "kind": "original",
+          "locator": "the request's 검증 section, first bullet"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R1",
+          "R3"
+        ],
+        "context": [
+          "tool/test_mobile.py",
+          "tool/test_android_shell.py"
+        ],
+        "verify": [
+          {
+            "item": "pytest tool/test_mobile.py tool/test_android_shell.py passes",
+            "expected": "all tests pass (12 at time of request)"
+          }
+        ]
+      },
+      {
+        "id": "R5",
+        "text": "Documentation names the new raw/android/ paths and records the incident and the re-pairing recovery.",
+        "source": {
+          "kind": "original",
+          "locator": "the request's 변경 section, third bullet"
+        },
+        "status": "confirmed",
+        "context": [
+          "docs/mobile.md",
+          "docs/development.md"
+        ],
+        "verify": [
+          {
+            "item": "docs/mobile.md (outputs paragraph, adb install line) and docs/development.md (build output paragraph) name raw/android/wiki-agent.apk and .aab, and docs/mobile.md records the incident: APK deleted by post-merge rm -rf artifacts, apk_available:false, the fix, and that a stale tunnel address needs QR re-pairing",
+            "expected": "no artifacts/wiki-agent.* in either doc; incident note present in docs/mobile.md"
+          }
+        ]
+      },
+      {
+        "id": "R6",
+        "text": "The running server again offers the existing 0.1.4 release-signed APK from the new location over public HTTPS.",
+        "source": {
+          "kind": "original",
+          "locator": "the request's 검증 section, second bullet"
+        },
+        "status": "assumed",
+        "preconditions": [
+          "the 10-03 0.1.4 APK, signed with the current release certificate, is still available to copy"
+        ],
+        "failures": [
+          "if the session cannot place the file or reach the server, it stops and asks the person before reporting done"
+        ],
+        "depends_on": [
+          "R1"
+        ],
+        "verify": [
+          {
+            "item": "The existing 0.1.4 release-signed APK is in raw/android/wiki-agent.apk on the running server; /api/mobile/status reports apk_available:true, and over public HTTPS /mobile-install returns 200 and /mobile-install.apk returns 200 with application/vnd.android.package-archive and a matching SHA256. If the session cannot place the file or reach the server, it stops and asks the person before reporting done",
+            "expected": "apk_available:true; 200/200 with the APK content type; SHA256 of the download equals the file's"
+          }
+        ]
+      },
+      {
+        "id": "R7",
+        "text": "A fresh Android build lands its outputs in raw/android/.",
+        "source": {
+          "kind": "original",
+          "locator": "the request's 검증 section, third bullet (fresh build not run because hooks block powershell)"
+        },
+        "status": "assumed",
+        "failures": [
+          "if hooks block powershell, the session stops and asks the person to run it and confirm the output paths before reporting done"
+        ],
+        "depends_on": [
+          "R2"
+        ],
+        "verify": [
+          {
+            "item": "A fresh build_android.ps1 run writes raw/android/wiki-agent.apk and .aab. If hooks block powershell, the session stops and asks the person to run it and confirm the output paths before reporting done",
+            "expected": "both files exist under raw/android/ with fresh timestamps, confirmed by the session or the person"
+          }
+        ]
+      },
+      {
+        "id": "R8",
+        "text": "APK/AAB are stored in raw/android/, beside raw/android-signing/ and raw/android-sdk/, rather than by changing scratch_dirs or adding a cleanup exception.",
+        "source": {
+          "kind": "decision",
+          "locator": "spec decisions[0]"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "scratch_dirs default and post-merge cleanup behaviour are unchanged"
+        ],
+        "context": [
+          "tool/main/connect.py",
+          "skills/after-merge/SKILL.md"
+        ]
+      },
+      {
+        "id": "R9",
+        "text": "mobile.py checks only the new location; no fallback to artifacts/wiki-agent.apk.",
+        "source": {
+          "kind": "decision",
+          "locator": "spec decisions[1]"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R1"
+        ],
+        "context": [
+          "tool/main/mobile.py"
+        ]
+      },
+      {
+        "id": "R10",
+        "text": "The regression test reads scratch_dirs from .wiki/adapter.toml when present and otherwise from connect.py's default, not a hard-coded 'artifacts/'.",
+        "source": {
+          "kind": "decision",
+          "locator": "spec decisions[2]"
+        },
+        "status": "assumed",
+        "context": [
+          ".wiki/adapter.toml",
+          "tool/main/connect.py",
+          "adapters/example.toml"
+        ]
+      },
+      {
+        "id": "R11",
+        "text": "Re-pairing after a tunnel address change is documented only; no code change to tunnel hostname or app reconnection.",
+        "source": {
+          "kind": "decision",
+          "locator": "spec decisions[3]"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R5"
+        ]
+      }
+    ],
+    "spec_version": 1,
+    "spec_digest": "50ff9bded4ea6f890aeb998ddf9b6867c19bce4ef62e77ad8c470f52b4e45b37"
+  },
+  "select": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
+    "R8",
+    "R9",
+    "R10"
+  ],
+  "costs": {
+    "generation": {
+      "usd": 0.148889,
+      "tokens": {
+        "input": 10,
+        "output": 4073,
+        "cache_read": 42745,
+        "cache_write": 7355
+      },
+      "turns": 7
+    },
+    "enrichment": {
+      "usd": 0.1485358,
+      "tokens": {
+        "input": 4,
+        "output": 5305,
+        "cache_read": 13579,
+        "cache_write": 4963
+      },
+      "turns": 2
+    },
+    "selection": {
+      "usd": 0.033608,
+      "tokens": {
+        "input": 2,
+        "output": 294,
+        "cache_read": 0,
+        "cache_write": 3465
+      },
+      "turns": 1
+    }
+  },
+  "selection_cost": {
+    "usd": 0.033608,
+    "tokens": {
+      "input": 2,
+      "output": 294,
+      "cache_read": 0,
+      "cache_write": 3465
+    },
+    "turns": 1
+  }
+}

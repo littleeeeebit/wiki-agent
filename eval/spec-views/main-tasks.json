@@ -1,0 +1,498 @@
+{
+  "schema": "spec-views-tasks/1",
+  "note": "Held-out tasks for main-1, replayed from merged pull requests of this repository. `source.text` is the pull request's title and body, verbatim. Hidden tests are the tests the pull request added that pass on its merge commit (skipped ones dropped); affected test files are the files holding them, as the merge base wrote them. The first ten owner-vetted tasks in the seeded order run; the rest are reserves in order.",
+  "pool": {
+    "filter": "merged squash pull requests that change Python outside tests and add 1 to 8 `def test_` in tool/ test files, at most 12 files and 5 non-test Python files, a body of at least 550 characters, none of `held_out.excluded`",
+    "order": "sorted by number, shuffled by random.Random(20261109)",
+    "eligible": "every added test passes on the merge commit (skips dropped) and one fails on the merge base; each hidden test file existed at the merge base and, as the merge base wrote it, passes on both commits within 300 s",
+    "screened": [
+      {
+        "pr": 166,
+        "eligible": true,
+        "why": ""
+      },
+      {
+        "pr": 249,
+        "eligible": false,
+        "why": "tool/test_translate.py at mc: fails"
+      },
+      {
+        "pr": 211,
+        "eligible": false,
+        "why": "reference"
+      },
+      {
+        "pr": 46,
+        "eligible": true,
+        "why": ""
+      },
+      {
+        "pr": 171,
+        "eligible": false,
+        "why": "tool/test_review_contract.py at base: over 300 s"
+      },
+      {
+        "pr": 219,
+        "eligible": true,
+        "why": ""
+      },
+      {
+        "pr": 87,
+        "eligible": true,
+        "why": ""
+      },
+      {
+        "pr": 226,
+        "eligible": false,
+        "why": "tool/test_loop.py at base: over 300 s"
+      },
+      {
+        "pr": 240,
+        "eligible": false,
+        "why": "reference"
+      },
+      {
+        "pr": 254,
+        "eligible": false,
+        "why": "tool/test_verify.py at mc: fails"
+      },
+      {
+        "pr": 221,
+        "eligible": false,
+        "why": "tool/test_agent_events.py at mc: fails"
+      },
+      {
+        "pr": 280,
+        "eligible": false,
+        "why": "tool/test_guard.py at mc: fails"
+      },
+      {
+        "pr": 250,
+        "eligible": false,
+        "why": "reference"
+      },
+      {
+        "pr": 108,
+        "eligible": false,
+        "why": "tool/test_reliability_v5.py is new in the pull request"
+      },
+      {
+        "pr": 297,
+        "eligible": false,
+        "why": "tool/test_specs.py at mc: fails"
+      },
+      {
+        "pr": 28,
+        "eligible": true,
+        "why": ""
+      },
+      {
+        "pr": 302,
+        "eligible": false,
+        "why": "tool/test_refactor_run.py at base: over 300 s"
+      },
+      {
+        "pr": 298,
+        "eligible": false,
+        "why": "tool/test_loop.py at base: over 300 s"
+      },
+      {
+        "pr": 162,
+        "eligible": false,
+        "why": "tool/test_loop.py at base: over 300 s"
+      },
+      {
+        "pr": 78,
+        "eligible": false,
+        "why": "reference"
+      },
+      {
+        "pr": 299,
+        "eligible": true,
+        "why": ""
+      },
+      {
+        "pr": 191,
+        "eligible": true,
+        "why": ""
+      },
+      {
+        "pr": 203,
+        "eligible": true,
+        "why": ""
+      },
+      {
+        "pr": 98,
+        "eligible": true,
+        "why": ""
+      },
+      {
+        "pr": 20,
+        "eligible": true,
+        "why": ""
+      },
+      {
+        "pr": 125,
+        "eligible": true,
+        "why": ""
+      },
+      {
+        "pr": 172,
+        "eligible": true,
+        "why": ""
+      },
+      {
+        "pr": 194,
+        "eligible": true,
+        "why": ""
+      }
+    ]
+  },
+  "tasks": [
+    {
+      "id": "pr166",
+      "pr": 166,
+      "merge_commit": "34a47e4f5e29bbfc000a8f4845a678623b040a42",
+      "merge_base": "d816dcdcb6f23480dd59cabe154079e0d0a01233",
+      "source": {
+        "kind": "pr_body",
+        "locator": "https://github.com/littleeeeebit/wiki-agent/pull/166",
+        "text": "사후 검증 보완: PR base·pytest 훅·취소 완료 경쟁 수정\n\n## 변경 요약\n\nCI 정책이 없는 저장소에서 명세에 base가 없고 연결된 PR만 dev를 가리키면, 최종 debt 검사가 기본 브랜치로 비교하던 누락을 고쳤습니다. 이제 명시적 명세 base, 연결된 PR base 순서를 최종 debt 검사에도 적용합니다.\n\npytest 출력 훅은 실행 파일과 Python의 -m 인자를 확인합니다. echo/printf나 Python 스크립트에 pytest가 인자로 나타나는 경우는 허용하고, 실제 pytest 실행을 tail/head로 보내는 경우는 계속 차단합니다.\n\ntime/env/timeout 옵션 뒤의 실행도 감지하며 command -v/-V 조회는 허용합니다. CI에서 드러난 공용 final 명령 기대값과 번역·TLS fixture도 보완했습니다. 제품 timeout과 검증 기준은 유지했습니다.\n\n취소된 질문의 완료 스트림이 작업 점유 해제보다 먼저 끝나 다음 질문이 잠시 거부될 수 있는 경쟁도 수정했습니다. 대화 기록 저장 시도 후 점유를 먼저 해제하고, 캡처된 실행·저장소 정보로 summary와 완료를 통지합니다.\n\n## 변경 이유\n\n- 이미 머지된 #160~164의 사후 독립 리뷰에서 발견한 base 전달 누락과 훅 오탐을 해결합니다.\n- 기존 #165 최종 CI는 이전 통합 코드의 증거로 보존하고, 이번 변경의 성공 증거와 구분합니다.\n- #160 Laya, #162 PR 복구, #163 작업 레일은 소스와 기존 통합 CI 증거로 승인됐습니다. #161과 #164의 발견 사항은 이 PR에서 해결했습니다. 과거 각 PR이 머지 당시 전체 검증을 통과했다는 의미는 아닙니다.\n\n## 검증\n\n- 수정 전 회귀 검사: base 전달 누락 1건과 문자열 명령 오탐 3건 재현.\n- 수정 후 집중 검사 19개 통과.\n- Claude/Codex 훅·설치 연결, base 선택, 정책 유무 검증을 포함한 관련 검사 66개 통과(20.44초).\n- 변경 파일 ruff, debt 검사, git diff --check 통과. UTF-8 without BOM 확인.\n- 최종 훅 집중 검사 27개 통과. GPT-5.6-Sol 독립 리뷰 6차: 224d136에서 머지 허용, 열린 P0/P1/P2 지적 없음.\n- 최초 최종 CI 39074977983: 정적 검사·Laya·웹 통과, Windows 2005개 통과·8개 실패·14개 건너뜀. 실패 기록을 보존했고 같은 커밋을 재시도하지 않았습니다.\n- 실패 경로 수정 후 집중 검사 12개 통과(48.24초). TLS에 전체 timeout을 다시 주는 변이는 검사에서 거부됐고, 번역 charge에 0.45초 지연을 주입해도 응답 오류 분류 검사가 통과했습니다.\n- 두 번째 최종 CI 39076749110: 정적 검사·Laya·웹 통과, Windows 2012개 통과·1개 실패·14개 건너뜀. 앞선 실패 8건은 모두 통과했고, 취소 완료와 점유 해제 순서의 경쟁 1건이 발견됐습니다.\n- 취소 경쟁은 finish 입구의 점유 여부를 직접 확인해 수정 전 매번 재현했고, 수정 후 수명·전환 검사 38개와 정상/실패 완료 검사 3개가 통과했습니다. 실패한 커밋을 그대로 재시도한 적은 없습니다.\n- 최종 CI: https://github.com/littleeeeebit/wiki-agent/actions/runs/39078172056 — 승인 커밋 224d136, attempt 1에서 전체 통과. Windows 2013개 통과·14개 건너뜀(923.606초), Laya 67개 통과·1개 건너뜀, 정적 검사·웹 lint·빌드·브라우저 통과.\n- 앞선 CI 두 번에서 실패한 9개 경로가 이번 JUnit에서 모두 실제 통과했음을 대조했습니다. 읽기 전용 status도 동일한 최종 증거를 재사용했고 새 검사나 CI를 시작하지 않았습니다.\n\n## 한계\n\n훅은 직접 실행과 일반 래퍼를 대상으로 하며 중첩 셸 전체를 해석하는 보안 경계는 아닙니다. 실제 Laya 라벨링·재학습, 운영 앱 재시작, 로컬 전체 pytest는 수행하지 않았습니다.\n"
+      },
+      "hidden": [
+        {
+          "path": "tool/test_specs.py",
+          "tests": [
+            "test_legacy_final_debt_check_uses_the_attached_pr_base"
+          ]
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_specs.py"
+        }
+      ],
+      "round": "python -m ruff check tool laya",
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "screen": {
+        "tool/test_specs.py@base": 163,
+        "tool/test_specs.py@mc": 88
+      },
+      "vetted_by": "Repository owner, 2026-11-09, through AskUserQuestion in the spec-views-main-experiment session: approved the hidden-test sets of the first ten tasks in the seeded draw as asserting observable behaviour derivable from each pull request's title and body, after the reference check showed them passing on the merge commit and failing on the merge base."
+    },
+    {
+      "id": "pr46",
+      "pr": 46,
+      "merge_commit": "b1de267a3020867620d1986446b06de3069b22b4",
+      "merge_base": "0a24f12becc816f52c57fc6bdc4adc732679072d",
+      "source": {
+        "kind": "pr_body",
+        "locator": "https://github.com/littleeeeebit/wiki-agent/pull/46",
+        "text": "fix: 분리된 검색 데몬의 자식이 창을 띄우지 않게 한다\n\n## 변경 요약\r\n\r\n신뢰성 계획 1단계(`docs/plans/reliability/1-processes.md`). 데스크톱 앱에서 질문할 때 콘솔 창이 번쩍이던 문제를 고친다.\r\n\r\n원인 (프로세스 캡처로 확인): `search.spawn` 은 검색 데몬을 `DETACHED_PROCESS` 로 띄워 데몬에 콘솔이 없다. 데몬이 색인하며 부르는 `git ls-files` (`tool/search/sources.py::listing`) 는 그래서 새 콘솔을 받고, 기본 터미널이 \"Windows 가 결정\" 이라 Windows Terminal 창으로 보였다. 창의 `PseudoConsoleWindow` 소유 PID 가 그 `git` 이었고, 부모는 데몬이었다. 두 번째(웜) 질문에서 재현됐다.\r\n\r\n- `tool/common/process.py::background_options()` — Windows 에서 `CREATE_NO_WINDOW`, 그 밖에서는 빈 옵션\r\n- 데몬 안에서 도는 두 실행에 적용: `sources.listing`, `daemon.orca` (`orca` 는 캡처 중 실행되지 않았다. 같은 콘솔 없는 부모라서 함께 고친다)\r\n- 회귀 테스트 1개 (`tool/test_sources.py`): 인자 그대로, 플래그 한 번, 비 Windows 에서는 빈 옵션\r\n\r\n바꾸지 않은 것: 사이드카가 직접 띄우는 자식(`git`, `gh`, `codex`, `claude`)은 사이드카의 숨은 콘솔을 물려받아 시작·콜드/웜 질문·번역·터미널 열기 내내 창이 없었다. 그래서 설계도의 `session_state`, `chat_local`, `chat_session`, `specs`, `knowledge.promote` 행은 바꾸지 않았다. `search.spawn` 과 `main.rs` 도 그대로다.\r\n\r\n## 확인\r\n\r\n- 캡처 전/후 (릴리스 앱, `raw/diagnostics/processes/{before,after}/records.jsonl`): 전 — 데몬의 `git` 에 창 1개. 후 — 같은 자리의 `git` 2회 모두 `CREATE_NO_WINDOW`, 창 없음\r\n- 앱을 닫으면 사이드카와 에이전트 자식이 남지 않는다\r\n- `python -m pytest -q tool`: 1021 통과, 2 건너뜀\r\n- `python tool/lint.py --check`: 새 발견 없음\r\n\r\n- 리뷰 1차 지적(P1)으로 바뀐 빌드에서 수용 확인을 더 돌렸다 (`raw/diagnostics/processes/accept/`)\r\n  - 진행 중 질문 멈춤: `/api/knowledge/runs/{id}/cancel` 뒤 `claude.exe` 와 그 자식(`git`, `conhost`)이 15.4초 안에 끝났고, 스트림은 멈춤으로 끝났다\r\n  - 내장 터미널: 소유자가 직접 `echo terminal-ok` 를 입력해 출력과 새 프롬프트를 확인했다. `pwsh` 콘솔은 숨은 채로 만들어졌고, 전체 실행 중 보이는 콘솔 창은 없었다\r\n  - 창 닫기: X 버튼으로 닫자 사이드카, 위키 대화의 `claude.exe`, 터미널의 `pwsh` 가 함께 정리됐다. 같은 실행에서 `taskkill` 닫기 요청 두 번은 전달됐지만 앱이 닫히지 않았다 (이전 실행에서는 닫혔다, `main.rs` 는 이 PR 에서 바뀌지 않았다)\r\n- 리뷰 루프: 1차 머지 불가(위 P1) → 2차 새 발견 없음, 머지 허용\r\n\r\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\r\n\r\n"
+      },
+      "hidden": [
+        {
+          "path": "tool/test_sources.py",
+          "tests": [
+            "test_the_listing_git_opens_no_window_and_is_otherwise_unchanged"
+          ]
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_sources.py"
+        }
+      ],
+      "round": "",
+      "gate": "python -m pytest tool",
+      "screen": {
+        "tool/test_sources.py@base": 158,
+        "tool/test_sources.py@mc": 86
+      },
+      "vetted_by": "Repository owner, 2026-11-09, through AskUserQuestion in the spec-views-main-experiment session: approved the hidden-test sets of the first ten tasks in the seeded draw as asserting observable behaviour derivable from each pull request's title and body, after the reference check showed them passing on the merge commit and failing on the merge base."
+    },
+    {
+      "id": "pr219",
+      "pr": 219,
+      "merge_commit": "9c88a3a5a605f23241acb504f08599f508e446c7",
+      "merge_base": "9fc39ca1bdc0d6f68b85c92ef5c1a6d474e3fadb",
+      "source": {
+        "kind": "pr_body",
+        "locator": "https://github.com/littleeeeebit/wiki-agent/pull/219",
+        "text": "계획이 답을 기다리는 동안 채팅 턴이 작업트리를 쓰지 못하게 하고, 결정 기록 때문에 게시가 멈추지 않게 합니다\n\n## 변경 요약\n\n- `work.begin` 이 작업트리의 계획이 시작부터 인계 사이(`handoff`·`stopped` 가 아닌 단계)에 있으면 턴을 409 로 거절합니다. 답을 기다리는(`clarify`) 동안 계획은 작업트리 hold 를 놓지만 작업트리는 여전히 계획의 것입니다. 메시지는 질문을 계획 카드에서 답하라고 안내합니다.\n- `planning.clean` 이 계획 폴더 밖의 untracked 파일을 커밋 안 된 변경으로 치지 않습니다. 세션 시작 hook(`tool/sync.py`)이 체크아웃에 쓰는 `.wiki/decisions/*.md` 결정 기록이 있으면, 이전에는 모든 계획이 게시 단계에서 `worktree_moved` 로 멈췄습니다. 계획 폴더 안의 파일 검사는 그대로입니다.\n\n## 근거\n\nai-companion-voice-agent 리펙터링 계획 `plan-32916e65` 가 \"멈춤 — 작업트리가 움직임 · HEAD 가 13c11f0 에서 움직였다\" 로 멈춤(P0).\n\n- 22:29 계획 시작, 계획자가 질문 하나를 내고 `clarify` 에서 대기. 질문은 그 체크아웃의 채팅에도 보입니다.\n- 06:28 사람이 에이전트 상자에 \"그래 단계를 거치자.\" 를 입력 → 일반 쓰기 턴(세션 5cfae6b7)이 계획을 스스로 써서 5d0073f6 커밋·push·PR #247.\n- 06:56 계획자가 이어서 10단계 초안을 쓰고 07:44 게시에서 HEAD 가 base 에서 움직인 것을 보고 멈춤.\n- 리셋 뒤 다시 이어도 그 체크아웃의 untracked 결정 기록 20개 때문에 \"작업트리에 커밋 안 된 변경이 있다\" 로 다시 멈출 상태였습니다.\n\n## 검사\n\n- `tool/test_planning.py` 36 passed. 새 검사 두 개는 수정 없이 실패함을 확인(채팅 턴이 실제로 시작됨 / 게시가 `worktree_moved` 로 멈춤).\n- `test_main`·`test_specs`·`test_loop`·`test_loop_progress`·`test_task_workflow`·`test_refactor*` 337 passed, 2 skipped.\n\n## 운영 조치(소유자 승인)\n\nPR #247 을 닫고 `plan-32916e65` 를 13c11f09 로 되돌렸습니다(18단계 커밋은 로컬 ref `backup/plan-32916e65-chat-18-stages`). 이 PR 이 머지되고 앱을 다시 켠 뒤 계획을 [재개]하면 계획자의 10단계가 게시됩니다.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n"
+      },
+      "hidden": [
+        {
+          "path": "tool/test_planning.py",
+          "tests": [
+            "test_a_decision_record_written_during_the_run_neither_stops_nor_joins_the_publication"
+          ]
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_planning.py"
+        }
+      ],
+      "round": "python -m ruff check tool laya",
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "screen": {
+        "tool/test_planning.py@base": 226,
+        "tool/test_planning.py@mc": 192
+      },
+      "vetted_by": "Repository owner, 2026-11-09, through AskUserQuestion in the spec-views-main-experiment session: approved the hidden-test sets of the first ten tasks in the seeded draw as asserting observable behaviour derivable from each pull request's title and body, after the reference check showed them passing on the merge commit and failing on the merge base."
+    },
+    {
+      "id": "pr87",
+      "pr": 87,
+      "merge_commit": "5e66685b0a28d350ad3eaad326e7ce5dbf926a19",
+      "merge_base": "4665d258ef1cad5b1372480240066cda9a759ac7",
+      "source": {
+        "kind": "pr_body",
+        "locator": "https://github.com/littleeeeebit/wiki-agent/pull/87",
+        "text": "단일 CLI 사용 팀원의 초기 프로젝트 연결 지원\n\n## 문제와 변경\n\nClaude Code 또는 Codex 하나만 설치한 팀원 PC에서도 초기 연결이 두 CLI의 설정과 검증을 요구했습니다. 이제 PATH에서 찾은 CLI만 사용자 훅 설치, 프로젝트 훅 정리, 세션 검증과 연결 상태 판정에 사용합니다. Codex 신뢰 확인과 Claude 스킬 링크 처리도 해당 CLI가 있을 때만 수행합니다.\n\n팀에서 공유하는 adapter는 두 도구를 계속 선언하므로 팀원마다 사용하는 CLI가 달라도 같은 프로젝트를 연결할 수 있습니다. 기존 adapter가 하나만 선언한 경우에도 허브 미리보기·확인용 digest·실제 적용·검증에 같은 선택을 유지합니다. CLI가 하나도 없으면 설치 안내와 함께 연결을 거부합니다. 확인 화면에는 적용할 도구를 표시하고, 필수 `gate_cmd`와 선택 `live_cmd`·`server_stop`, 프로젝트 훅 보호 규칙 설명을 명확히 했습니다.\n\n## 검증\n\n- 최종 커밋에서 연결·설치·훅·adapter·wiki 상태 관련 테스트: 77 passed. 연결·설치·wiki 상태 관련 테스트는 정방향·역방향 모두 53 passed.\n- 최종 커밋에서 지정된 native host 경계 테스트: 34 passed, 127 deselected.\n- 변경 Python 파일 Ruff, wiki lint, 웹 lint와 TypeScript/Vite 빌드, diff 공백 검사 통과.\n- Claude 전용·Codex 전용·CLI 없음 회귀 테스트, 두 CLI가 설치됐지만 adapter는 하나만 선언하고 다른 CLI 설정은 깨진 경우의 API 회귀 테스트를 포함했습니다.\n- 수정 커밋 `90fa24b663111470d02efe6b6e444b858bed128f`에서 실제 Windows 새 Claude·Codex 세션의 SessionStart 훅 주입이 모두 성공했습니다(각 6685자). 기록: 로컬 `artifacts/review/single-cli-live-result.json`.\n\n`python tool/debt.py check`는 변경하지 않은 기존 5개 파일의 줄 수 초과로 실패합니다. 이번 변경 파일에서 새 초과는 발생하지 않았습니다. 기존 웹 lint·번들 크기 경고와 Starlette 경고가 있습니다. 실제 macOS 팀원 설치와 브라우저 렌더링은 아직 확인하지 않았습니다.\n\n## 독립 리뷰\n\nOrca의 GPT-5.6-Sol 리뷰어로 두 라운드를 진행했습니다. 1차 P1인 adapter 도구 선택과 허브 적용 범위 불일치를 수정했습니다. 2차는 최종 커밋 `90fa24b663111470d02efe6b6e444b858bed128f`에 대해 P0·P1·P2 지적 없이 `머지 허용`입니다. 로컬 결과: `artifacts/review/single-cli-round-2-result.md`.\n\n사용자가 긴급 병합을 요청하며 전체 테스트 생략을 명시했습니다. 전체 `python -m pytest tool` 게이트는 실행하지 않았으며, 위의 독립 리뷰·범위별 검사·실제 Windows 훅 검증 결과를 근거로 병합했습니다.\n"
+      },
+      "hidden": [
+        {
+          "path": "tool/test_connect.py",
+          "tests": [
+            "test_connection_on_a_pc_with_only_one_cli",
+            "test_connection_probe_does_not_start_an_uninstalled_cli",
+            "test_connection_hub_respects_the_adapter_when_both_clis_are_installed"
+          ]
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_connect.py"
+        }
+      ],
+      "round": "",
+      "gate": "python -m pytest tool",
+      "screen": {
+        "tool/test_connect.py@base": 170,
+        "tool/test_connect.py@mc": 164
+      },
+      "vetted_by": "Repository owner, 2026-11-09, through AskUserQuestion in the spec-views-main-experiment session: approved the hidden-test sets of the first ten tasks in the seeded draw as asserting observable behaviour derivable from each pull request's title and body, after the reference check showed them passing on the merge commit and failing on the merge base."
+    },
+    {
+      "id": "pr28",
+      "pr": 28,
+      "merge_commit": "22fc03bc28cead29f1b0b726e07a4326faad7438",
+      "merge_base": "2a8de0102d8ad0534b6db412082c70c60970eb5c",
+      "source": {
+        "kind": "pr_body",
+        "locator": "https://github.com/littleeeeebit/wiki-agent/pull/28",
+        "text": "fix: 도는 작업이 보이게 — 게이트까지 턴으로, 실행 중 시계, 실제 명령어, 출처 찾기\n\n## 무엇이 문제였나\n\n- **P0 — 멈춘 건지 모른다.** 에이전트가 답한 뒤에도 서버는 작업트리를 쥔 채 명세 게이트(`python -m pytest tool`, 약 6분)를 돌린다. 화면은 답에서 턴을 끝냈기 때문에, 그동안 적은 다음 지시가 새 턴으로 나가 409 \"이 작업트리의 에이전트가 아직 돌고 있다\" 를 받았다. 무엇이 도는지는 화면 어디에도 없었다.\n- 출처를 누르면 \"그 파일이 없다\" 가 자주 떴다. 답이 허브 문서(`craft/…`, `operator/…`)나 파일 이름만(`7-verify.md`, `Query.tsx`) 인용하기 때문이다.\n\n## 바꾼 것\n\n- 턴은 서버의 실행이 끝날 때(스트림이 닫힐 때)까지 도는 것으로 본다. 답 뒤에 온 단계(게이트)는 답 아래에 선다.\n- 가장 최근 단계에 \"⟳ 실행 중 · m분 s초\". 모든 턴 이벤트에 서버 시각 `ts` 를 실어, 다시 붙어도 시계가 이어진다. 열린 승인은 \"답을 기다린다\", 답 뒤에는 \"마무리 중\". 두 호스트가 같다.\n- 답 뒤에 적은 지시는 \"대기 · 이 턴이 끝나면 보낸다\" 로 두었다가 끝나면 다음 턴으로 보낸다(취소 가능).\n- Claude 도구 줄에 설명 옆 실제 명령어: `Bash · Run the tests · $ python -m pytest -q tool`.\n- `/api/file`: 체크아웃 기준 → 허브 문서 → 그 이름으로 끝나는 파일 하나. 여럿이면 가장 최근에 손댄 것(커밋 안 된 것, 그다음 커밋 순), 그래도 같으면 후보를 알려 준다. 기록의 실패 인용을 모두 다시 돌려 전부 열리는 것을 확인했다.\n\n## 확인\n\n- `python -m pytest -q tool` — 490 passed (이후 `tool/test_main.py` 51 passed 재확인)\n- `npm run build` 통과\n- 창에서 실제 도는 턴으로 보는 확인은 아직\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n"
+      },
+      "hidden": [
+        {
+          "path": "tool/test_agent.py",
+          "tests": [
+            "test_a_tool_line_shows_the_command_beside_what_it_is_for"
+          ]
+        },
+        {
+          "path": "tool/test_main.py",
+          "tests": [
+            "test_a_cite_finds_its_file_the_ways_answers_write_it"
+          ]
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_agent.py"
+        },
+        {
+          "path": "tool/test_main.py"
+        }
+      ],
+      "round": "",
+      "gate": "python -m pytest tool",
+      "screen": {
+        "tool/test_agent.py@base": 34,
+        "tool/test_agent.py@mc": 22,
+        "tool/test_main.py@base": 58,
+        "tool/test_main.py@mc": 65
+      },
+      "vetted_by": "Repository owner, 2026-11-09, through AskUserQuestion in the spec-views-main-experiment session: approved the hidden-test sets of the first ten tasks in the seeded draw as asserting observable behaviour derivable from each pull request's title and body, after the reference check showed them passing on the merge commit and failing on the merge base.",
+      "excluded": "Six of the eight added tests grade a /api/work/queue request shape and a `queued` field the pull request body never names; they would grade an internal interface."
+    },
+    {
+      "id": "pr299",
+      "pr": 299,
+      "merge_commit": "2a5dd42478511ea77e762c2764dae7851eee3e1c",
+      "merge_base": "8279639664e198cd31e15e5a9bc64460f2118be3",
+      "source": {
+        "kind": "pr_body",
+        "locator": "https://github.com/littleeeeebit/wiki-agent/pull/299",
+        "text": "작업 목록이 화면이 안 읽는 것을 빼고 보내고, 비밀값 가리기를 호출마다 한 번만 한다\n\n## 무엇이 문제였나\n\n- **voice-agent 목록:** 앱에서 ai-companion-voice-agent(작업 70개)를 열면 `GET /api/specs` 한 번에 12~15초가 걸렸고, 응답은 30MB였다.\n  - `verification.sanitize`가 작업마다 리뷰 계약을 문자열 하나씩 가렸다. 문자열마다 `.env`를 다시 읽고 환경변수를 다시 훑었다. py-spy 샘플의 약 60%가 이 경로였다.\n  - 30MB 중 25MB는 라운드마다 얼려 둔 `review_contract`와 `review_shadow_attempts`였다. `web/src`는 둘 다 읽지 않는데, 명세가 저장될 때마다 다시 보냈다.\n- **번역 오버레이:** 번역 요청을 curl로 보내면 0.3초였는데, 앱 탭에서는 84.5초가 걸렸다.\n  - 앱 창(msedgewebview2)과 Chrome이 각각 6977 서버에 HTTP/1.1 연결 6개를 꽉 채우고 있었다. 계속 열린 스트림 2개(`/api/loops/events`, `/api/work/events`)와 10~20초짜리 목록 읽기 4개다.\n  - 번역 요청은 그 뒤에서 줄을 섰다. 프런트엔드로 실행할 때는 한가한 8787 서버에 붙기 때문에 빨랐다.\n\n## 바꾼 것\n\n- `verification.sanitize`는 가릴 값과 그 JSON 이스케이프 형태를 호출마다 한 번만 계산한다(`_forms`). `redact`는 `forms`를 받지 않으면 예전과 같이 동작한다.\n- `specs.listed`는 `/api/specs` 목록에서만 위 두 필드를 뺀다. `view`가 전체 명세로 머지를 판정한 뒤에 뺀다. 작업 하나만 돌려주는 응답은 그대로다.\n- 테스트 2개를 추가했다.\n  - `sanitize` 호출 한 번에 `hidden_values`를 한 번만 읽는지 확인한다.\n  - 목록에서 두 필드가 빠지고, `view`에는 남아 있는지 확인한다.\n\n## 측정\n\nvoice-agent 작업 70개 사본으로 쟀다.\n\n| 단계 | 시간 | 크기 |\n|---|---|---|\n| 수정 전 | 7.41초 | 30.4MB |\n| `sanitize` 수정 | 0.71초 | — |\n| `listed`까지 | 0.48초 | 5.7MB |\n\n## 검사\n\n- `ruff check tool laya`, `tool/lint.py --check`, `tool/debt.py check` 통과.\n- `tool/test_specs.py`, `tool/test_review_contract.py`, `tool/test_local_verification.py`: 184 passed, 1 skipped.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n"
+      },
+      "hidden": [
+        {
+          "path": "tool/test_specs.py",
+          "tests": [
+            "test_the_listing_leaves_out_what_no_screen_reads"
+          ]
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_specs.py"
+        }
+      ],
+      "round": "python -m ruff check tool laya",
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "screen": {
+        "tool/test_specs.py@base": 146,
+        "tool/test_specs.py@mc": 100
+      },
+      "vetted_by": "Repository owner, 2026-11-09, through AskUserQuestion in the spec-views-main-experiment session: approved the hidden-test sets of the first ten tasks in the seeded draw as asserting observable behaviour derivable from each pull request's title and body, after the reference check showed them passing on the merge commit and failing on the merge base."
+    },
+    {
+      "id": "pr191",
+      "pr": 191,
+      "merge_commit": "f2c6b809f261a942503bd6203fbb4eb9246357c9",
+      "merge_base": "528dd93b9c269edbff20a81bc199f4ee122ba2fb",
+      "source": {
+        "kind": "pr_body",
+        "locator": "https://github.com/littleeeeebit/wiki-agent/pull/191",
+        "text": "리뷰 루프의 수정 턴을 화면에서 고른 작업 모델로 돌리기\n\n## 변경 요약\n\n리뷰 루프 버튼이 화면에서 고른 작업 모델(에이전트 칸)을 함께 보내고, 서버는 작업 모델이 비어 있는 명세에 그 값을 채운다. 이미 작업 모델이 지정된 명세는 바꾸지 않는다.\n\n## 변경 이유\n\n- rfg_rag #74·#75·#76: 작업 모델을 `gpt-6.1-sol` 로 골랐는데 리뷰 루프가 끝난 뒤 수정 턴에 `claude-opus-5-5[1m]` 이 찍혔다.\n- 표시 오류가 아니다. 작업 셀 기록(`raw/work/rfg_rag-worktrees/*.jsonl`)의 모델은 CLI가 턴을 끝내며 돌려준 값이고, 세 PR 모두 실제로 Claude 기본 모델로 수정 턴을 돌았다.\n- 원인: GitHub PR을 그대로 들여와 만든 명세(`minimal()`)에는 작업 모델(`cell`)이 없다. 루프의 수정 턴은 `spec[\"cell\"]` 만 읽으므로 빈 값이면 Claude 기본 모델이 된다. 앱에서 작업으로 시작한 명세(#61~#67)는 `startSpec` 이 고른 모델을 넣어 `codex:gpt-6.1-sol` 로 정상이었다.\n- 리뷰어 모델(설정의 `review_model`, 지정값 `gpt-5.6-sol`)은 영향이 없었다. 리뷰 기록은 모두 지정한 모델로 남았다.\n\n## 확인\n\n- `test_a_pr_adopted_from_github_repairs_on_the_work_model_the_screen_chose`: 새 PR의 명세에 고른 모델이 들어가고 수정 턴이 그 모델로 열린다. 이미 지정된 모델은 다음 루프 시작에서 바뀌지 않는다. 수정 전 main에서는 `cell` 이 빈 값으로 남아 실패한다.\n- ruff, lint, debt 통과. `loop.py` 래칫 2733 → 2743, 이유 기록.\n- 이 작업 트리에는 `web/node_modules` 가 없어 tsc는 CI의 web 검사에 맡긴다.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+      },
+      "hidden": [
+        {
+          "path": "tool/test_loop_progress.py",
+          "tests": [
+            "test_a_pr_adopted_from_github_repairs_on_the_work_model_the_screen_chose"
+          ]
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_loop_progress.py"
+        }
+      ],
+      "round": "python -m ruff check tool laya",
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "screen": {
+        "tool/test_loop_progress.py@base": 176,
+        "tool/test_loop_progress.py@mc": 109
+      },
+      "vetted_by": "Repository owner, 2026-11-09, through AskUserQuestion in the spec-views-main-experiment session: approved the hidden-test sets of the first ten tasks in the seeded draw as asserting observable behaviour derivable from each pull request's title and body, after the reference check showed them passing on the merge commit and failing on the merge base."
+    },
+    {
+      "id": "pr203",
+      "pr": 203,
+      "merge_commit": "d22e050ddbcee957e065730e4e295399fb50b3a4",
+      "merge_base": "1d499a6e50187872353705f9f5f586a2bcf31c4f",
+      "source": {
+        "kind": "pr_body",
+        "locator": "https://github.com/littleeeeebit/wiki-agent/pull/203",
+        "text": "Fix the three intermittent CI failures\n\n## 요약\n\n10-17 이후 CI 실패 18건을 전수조사했습니다. 14건은 같은 브랜치에서 고친 실제 결함이었고, 같은 커밋 재실행으로 통과한 간헐 실패 세 종류의 원인을 찾아 고쳤습니다.\n\n## 원인과 수정\n\n- A — `web/tests/task_browser.py` 두 번째 `머지 ▸` 클릭 30초 타임아웃 (run 39342372292, 39361138526, 39534422793)\n  - 원인: 새로고침 직후 `/api/specs` 가 `/api/worktrees` 보다 먼저 오면 레일 항목 키가 `spec:<id>` 이고, 그걸 누른 뒤 작업트리 목록이 오면 키가 작업트리 경로로 바뀌어 선택이 풀린다(화면이 \"작업 선택\"으로 돌아감). 테스트만이 아니라 실제 화면 결함이다.\n  - 수정: `App.tsx` 에서 선택이 작업트리 키로 따라간다. 테스트는 그 순서를 강제로 만들어 확인한다(수정 전 실패, 수정 후 통과 확인).\n- B — `tool/test_connect.py::test_a_turn_cut_by_the_time_limit_leaves_nothing_it_committed` 가 `실패`·사유 없음 (run 39192463463)\n  - 원인: Windows 에서 다른 스레드가 기록 파일을 읽고 있으면 `replace` 가 `PermissionError` 를 낸다(로컬에서 3000회 중 1060회 재현). `specs.save` 에는 재시도가 있었지만 `connect.keep` 에는 없었다.\n  - 수정: 재시도를 `specs.swap` 으로 꺼내 둘이 같이 쓴다. 회귀 테스트 추가.\n- C — `tool/test_korean.py::test_a_resumed_batch_reads_the_private_english_that_was_checked` drift `[]` (run 39108639167)\n  - 원인: 새 번역의 4초 기한(`NORMALIZE_SECONDS`)을 CI 지연이 넘으면 그 읽기는 실패로 처리되고 drift 로 세지 않는다. 제품 동작은 맞다.\n  - 수정: `ran` 픽스처에서 기한을 넓힌다(`test_evidence.py:364` 와 같은 방식). 4.2초·9.5초 지연 주입에서도 통과.\n\n## 검증\n\n- `python web/tests/task_browser.py` 3회 연속 통과\n- `python -m pytest -q tool/test_connect.py -n 0 -k \"record_read_while or time_limit or survey\"` 7 passed\n- `python -m pytest -q tool/test_korean.py -n 0 -k \"resumed_batch or pairs_run or repetition_runs\"` 3 passed\n- `ruff`, `tool/lint.py --check`, `tool/debt.py check` 통과(래칫 세 항목은 사유와 함께 올림)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n"
+      },
+      "hidden": [
+        {
+          "path": "tool/test_connect.py",
+          "tests": [
+            "test_a_record_read_while_it_is_kept_does_not_fail_the_write"
+          ]
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_connect.py"
+        }
+      ],
+      "round": "python -m ruff check tool laya",
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "screen": {
+        "tool/test_connect.py@base": 102,
+        "tool/test_connect.py@mc": 74
+      },
+      "vetted_by": "Repository owner, 2026-11-09, through AskUserQuestion in the spec-views-main-experiment session: approved the hidden-test sets of the first ten tasks in the seeded draw as asserting observable behaviour derivable from each pull request's title and body, after the reference check showed them passing on the merge commit and failing on the merge base."
+    },
+    {
+      "id": "pr98",
+      "pr": 98,
+      "merge_commit": "046afc86de5d67d4926517e8cc253abdea3c7c7e",
+      "merge_base": "c8d586e1a239aefbdc1252e45eba5978e3fffbaa",
+      "source": {
+        "kind": "pr_body",
+        "locator": "https://github.com/littleeeeebit/wiki-agent/pull/98",
+        "text": "모바일 설치 APK를 머지 후 정리 대상에서 분리 (P0)\n\n## 문제\n- Android 앱을 설치할 수 없었습니다. 설치 QR이 사라졌고 `/mobile-install`과 `/mobile-install.apk`가 404를 돌려줬습니다.\n- 기존 앱도 연결되지 않았습니다.\n\n## 원인\n- 서버가 제공하는 APK가 `artifacts/wiki-agent.apk`에 있었습니다. `.wiki/adapter.toml`은 `artifacts/` 전체를 `scratch_dirs`로 지정하고 있어서, 머지 후 정리(`rm -rf artifacts`)가 APK를 함께 삭제했습니다. 실행 중인 서버에서 `apk_available:false`인 것을 확인했습니다.\n- 기존 앱이 연결되지 않은 것은 코드 결함이 아닙니다. 10-08 22:17에 서버가 재시작되면서 임시 trycloudflare 주소가 바뀌었고, 앱은 예전 주소를 저장하고 있습니다. 앱의 ⋮ 메뉴에서 \"연결 QR 스캔\"으로 다시 페어링하면 복구됩니다.\n\n## 변경\n- `tool/main/mobile.py`와 `tool/build_android.ps1`이 APK/AAB를 `raw/android/`에서 사용하고 저장합니다. 서명 키와 같은 런타임 데이터 위치입니다.\n- APK 경로가 `scratch_dirs` 아래로 들어가면 실패하는 회귀 테스트를 추가했습니다. 예전 경로에서는 실패하고 새 경로에서는 통과하는 것을 확인했습니다.\n- `docs/mobile.md`와 `docs/development.md`의 경로를 고치고, 이번 사고 기록을 추가했습니다.\n\n## 검증\n- `pytest tool/test_mobile.py tool/test_android_shell.py`: 12개 통과\n- 남아 있던 10-03 빌드의 0.1.4 APK(현재 소스와 같은 버전, 같은 릴리스 인증서)를 다시 배치했습니다. 공개 HTTPS로 확인한 결과 `/mobile-install`이 200, `/mobile-install.apk`가 200(`application/vnd.android.package-archive`)이었고 SHA256이 일치했습니다.\n- `build_android.ps1`로 새로 빌드하지는 않았습니다. 훅이 `powershell -*` 명령을 차단합니다.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+      },
+      "hidden": [
+        {
+          "path": "tool/test_mobile.py",
+          "tests": [
+            "test_served_apk_survives_the_after_merge_scratch_cleanup"
+          ]
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_mobile.py"
+        }
+      ],
+      "round": "",
+      "gate": "python -m pytest tool",
+      "screen": {
+        "tool/test_mobile.py@base": 10,
+        "tool/test_mobile.py@mc": 6
+      },
+      "vetted_by": "Repository owner, 2026-11-09, through AskUserQuestion in the spec-views-main-experiment session: approved the hidden-test sets of the first ten tasks in the seeded draw as asserting observable behaviour derivable from each pull request's title and body, after the reference check showed them passing on the merge commit and failing on the merge base."
+    },
+    {
+      "id": "pr125",
+      "pr": 125,
+      "merge_commit": "6d2996c645c6b0f862617511fdb55892cd83bf1a",
+      "merge_base": "f479ec4ed976626b23718da8e0be053ee5c84212",
+      "source": {
+        "kind": "pr_body",
+        "locator": "https://github.com/littleeeeebit/wiki-agent/pull/125",
+        "text": "신뢰성 v7 구현: 호스트 답 파싱, 두 액션 문구, 인용 질문을 material로\n\n## 무엇을 바꿨나\n\nv7 설계(#124)에서 정한 M1과 W·F·F2를 한 PR로 구현했습니다.\n\n- F2: `knowledge.parsed`가 전체를 JSON으로 읽지 못하면, 텍스트 끝까지 이어지는 첫 JSON 객체를 답으로 읽습니다(닫는 코드 펜스 허용). 호스트가 설명을 먼저 쓰고 답을 붙여도 폴백이 결정을 내립니다. 그런 객체가 없으면 예전처럼 실패합니다.\n- W·F: `decisions.PROMPTS`의 작업 시작(work.start)과 리뷰 수정(loop.fix) 문구를 설계 문서의 방향대로 바꿨습니다.\n- M1: `ASK`에 \"다른 사람이 한 질문을 인용한 것은, 사람이 같은 주제를 이어서 묻더라도 material\"이라는 조항을 넣었습니다.\n\n## 공개 사례로 보정한 결과\n\n- 액션: v1·v2·v5의 공개 픽스처 168개(중복 제거)를 다시 돌렸습니다.\n  - 작업 시작 81/84 → 84/84, 리뷰 수정 78/84 → 83/84\n  - 호스트 폴백 파싱 실패 2/47 → 0/35\n  - 남은 1건(v5lf09)은 바꾸기 전에도 틀리던 사례입니다.\n- M1: v3–v6의 다중 세그먼트 route 의도 255개(material 132, 요청 123)로 보정했습니다.\n  - 현재 문구: material은 Jev가 122건을 확정하고 호스트가 10건 중 6건을 맞힙니다. 틀린 4건(analysis-73·82·136, start-36)이 v5·v6에 기록된 실패입니다.\n  - 채택 문구: material은 Jev 114건, 호스트 18건 중 18건, 요청은 123건 전부 Jev가 확정합니다.\n  - 버린 초안 4개는 사람이 직접 묻는 질문의 확신도까지 낮춰 호스트 호출이 25–51건으로 늘었습니다.\n  - 호스트 호출은 기존보다 8건 많아 약 USD 0.12가 더 듭니다. 호스트는 사례마다 한 번씩만 돌렸으므로, 새 v7 세트로 다시 시험해야 합니다.\n\n자세한 내용은 `docs/plans/reliability/5-english-baseline.md`의 \"Implementation, calibrated on revealed cases\"에 있습니다.\n\n## 검사\n\n- ruff, `lint.py`, `repo_lint.py`, debt 래칫 통과. 세 파일의 래칫 기준을 이유와 함께 올렸습니다.\n- 집중 테스트 208개 통과. 전체 게이트는 진행 중입니다.\n- 탐침 비용은 합쳐 USD 1 미만입니다.\n\n## 다음\n\n새 v7 세트 초안(material ≥ 54, 그중 인용 질문 ≥ 12, 두 액션 지점마다 새 픽스처 54개), 라벨 리뷰, 동결. 유료 실행은 따로 승인을 받습니다.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n"
+      },
+      "hidden": [
+        {
+          "path": "tool/test_decision_flow.py",
+          "tests": [
+            "test_a_host_answer_after_its_reasoning_is_still_its_answer",
+            "test_text_with_no_single_answer_that_ends_it_settles_nothing"
+          ]
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_decision_flow.py"
+        }
+      ],
+      "round": "",
+      "gate": "python -m pytest tool",
+      "screen": {
+        "tool/test_decision_flow.py@base": 10,
+        "tool/test_decision_flow.py@mc": 12
+      },
+      "vetted_by": "Repository owner, 2026-11-09, through AskUserQuestion in the spec-views-main-experiment session: approved the hidden-test sets of the first ten tasks in the seeded draw as asserting observable behaviour derivable from each pull request's title and body, after the reference check showed them passing on the merge commit and failing on the merge base."
+    }
+  ],
+  "reserves": [
+    {
+      "id": "pr20",
+      "pr": 20,
+      "merge_commit": "14ab592ca4b64c1cc11e73435fc8ffc5e6975dbd",
+      "why": "its tests grade exact prompt wording and `chat.search_note`, an internal name the body never uses"
+    },
+    {
+      "id": "pr172",
+      "pr": 172,
+      "merge_commit": "2b81d5220de51aa384f330cc8b968fe827d4f610",
+      "why": "reserve"
+    },
+    {
+      "id": "pr194",
+      "pr": 194,
+      "merge_commit": "b5577568c2aad6143467e7192c7241fbf33df5de",
+      "why": "reserve"
+    }
+  ]
+}

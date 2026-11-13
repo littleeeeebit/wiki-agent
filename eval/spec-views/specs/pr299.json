@@ -1,0 +1,378 @@
+{
+  "task": "pr299",
+  "reference": {
+    "merge_commit": {
+      "hidden": {
+        "tool/test_specs.py::test_the_listing_leaves_out_what_no_screen_reads": "passed"
+      },
+      "affected": {
+        "tool/test_specs.py": true
+      }
+    },
+    "merge_base": {
+      "hidden": {
+        "tool/test_specs.py::test_the_listing_leaves_out_what_no_screen_reads": "failed"
+      },
+      "affected": {
+        "tool/test_specs.py": true
+      }
+    },
+    "discriminates": true
+  },
+  "baseline": {
+    "id": "pr299",
+    "rev": 1,
+    "goal": "GET /api/specs on a 70-task repository answers in well under a second with a few MB, because sanitize computes the values to hide once per call and the list leaves out review_contract and review_shadow_attempts, which web/src never reads",
+    "out": [
+      "single-task responses (specs.view callers in loop.py and planning.py) keep review_contract and review_shadow_attempts unchanged",
+      "stored spec records are not changed; fields are dropped only from the list response",
+      "the redaction rules themselves (which values and patterns get hidden) stay as they are",
+      "the HTTP/1.1 six-connection limit and the event streams (/api/loops/events, /api/work/events) are not redesigned"
+    ],
+    "done": [
+      "python -m ruff check tool laya",
+      "verification.sanitize builds the hidden values and their JSON-escaped forms once per top-level call (a helper such as _forms) and passes them down; redact(text, settings) without forms behaves exactly as before",
+      "a new test shows one sanitize call over a nested structure with many strings reads hidden_values exactly once, and the redacted output is identical to the old per-string result",
+      "a specs.listed helper drops review_contract and review_shadow_attempts from each task in the GET /api/specs response, plus review_contract inside rounds[] and history[].rounds[]; it runs after view(), so merge decisions (unproven, approved) still use the full spec",
+      "a new test shows those fields are absent from the /api/specs list item and still present in specs.view(repo, spec) for the same spec",
+      "the PR body reports measured /api/specs time and response size before and after on a copy of ai-companion-voice-agent (70 tasks), or on a fixture of similar size if that copy isn't available",
+      "with the app window open on the 6977 server, a translation overlay request completes in about a second, not tens of seconds; the write session asks the person to check this in the app before its done report",
+      "tool/test_specs.py, tool/test_review_contract.py and tool/test_local_verification.py pass; ruff check tool laya, tool/lint.py --check and tool/debt.py check pass"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/verification.py:207",
+        "tool/main/verification.py:222",
+        "tool/main/verification.py:239",
+        "tool/main/specs.py:519",
+        "tool/main/specs.py:869",
+        "tool/main/loop.py:1627",
+        "tool/main/review_audit.py:95",
+        "tool/main/review_contract.py:435"
+      ],
+      "rules": [
+        "craft/do-the-whole-instruction"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Compute hidden values and their JSON-escaped forms once at the sanitize entry point and pass them to redact as an optional forms argument",
+        "why": "py-spy put about 60% of the listing time here: every string re-read .env and re-scanned os.environ through hidden_values. Making forms optional keeps every existing redact caller unchanged",
+        "rejected": "caching hidden_values globally or by settings: .env and the environment can change between calls, and redaction() freezes values deliberately, so a stale cache could leak a new secret"
+      },
+      {
+        "what": "Drop review_contract and review_shadow_attempts only in the /api/specs list, after view() has run",
+        "why": "They were 25 of the 30MB, web/src never reads them, and view() needs the full spec to decide whether a task can merge. Single-task responses stay complete for any reader that needs them",
+        "rejected": "stopping view() from including them, or removing them from storage: that would change merge proofs and every single-task caller"
+      },
+      {
+        "what": "Also drop the review_contract copy frozen into each rounds[] and history[].rounds[] entry, not just the top-level field (settled without the person)",
+        "why": "The request says most of the size is the contract frozen per round (loop.py:1627 writes it into each round record), so removing only the top-level copy would not reach the measured 5.7MB",
+        "rejected": "removing only the top-level fields: leaves most of the size in place"
+      },
+      {
+        "what": "Treat the 84.5s translation delay as fixed by the faster listing, not by its own change (settled without the person)",
+        "why": "The translation request was slow only because 10–20s list reads plus two always-open streams filled the six HTTP/1.1 connections to 6977. Cutting the list to under a second frees those slots",
+        "rejected": "moving the streams to another port or adding HTTP/2: much larger change, not asked for"
+      }
+    ]
+  },
+  "enriched": {
+    "id": "pr299",
+    "rev": 1,
+    "goal": "GET /api/specs on a 70-task repository answers in well under a second with a few MB, because sanitize computes the values to hide once per call and the list leaves out review_contract and review_shadow_attempts, which web/src never reads",
+    "out": [
+      "single-task responses (specs.view callers in loop.py and planning.py) keep review_contract and review_shadow_attempts unchanged",
+      "stored spec records are not changed; fields are dropped only from the list response",
+      "the redaction rules themselves (which values and patterns get hidden) stay as they are",
+      "the HTTP/1.1 six-connection limit and the event streams (/api/loops/events, /api/work/events) are not redesigned"
+    ],
+    "done": [
+      "python -m ruff check tool laya",
+      "verification.sanitize builds the hidden values and their JSON-escaped forms once per top-level call (a helper such as _forms) and passes them down; redact(text, settings) without forms behaves exactly as before",
+      "a new test shows one sanitize call over a nested structure with many strings reads hidden_values exactly once, and the redacted output is identical to the old per-string result",
+      "a specs.listed helper drops review_contract and review_shadow_attempts from each task in the GET /api/specs response, plus review_contract inside rounds[] and history[].rounds[]; it runs after view(), so merge decisions (unproven, approved) still use the full spec",
+      "a new test shows those fields are absent from the /api/specs list item and still present in specs.view(repo, spec) for the same spec",
+      "the PR body reports measured /api/specs time and response size before and after on a copy of ai-companion-voice-agent (70 tasks), or on a fixture of similar size if that copy isn't available",
+      "with the app window open on the 6977 server, a translation overlay request completes in about a second, not tens of seconds; the write session asks the person to check this in the app before its done report",
+      "tool/test_specs.py, tool/test_review_contract.py and tool/test_local_verification.py pass; ruff check tool laya, tool/lint.py --check and tool/debt.py check pass"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/verification.py:207",
+        "tool/main/verification.py:222",
+        "tool/main/verification.py:239",
+        "tool/main/specs.py:519",
+        "tool/main/specs.py:869",
+        "tool/main/loop.py:1627",
+        "tool/main/review_audit.py:95",
+        "tool/main/review_contract.py:435"
+      ],
+      "rules": [
+        "craft/do-the-whole-instruction"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Compute hidden values and their JSON-escaped forms once at the sanitize entry point and pass them to redact as an optional forms argument",
+        "why": "py-spy put about 60% of the listing time here: every string re-read .env and re-scanned os.environ through hidden_values. Making forms optional keeps every existing redact caller unchanged",
+        "rejected": "caching hidden_values globally or by settings: .env and the environment can change between calls, and redaction() freezes values deliberately, so a stale cache could leak a new secret"
+      },
+      {
+        "what": "Drop review_contract and review_shadow_attempts only in the /api/specs list, after view() has run",
+        "why": "They were 25 of the 30MB, web/src never reads them, and view() needs the full spec to decide whether a task can merge. Single-task responses stay complete for any reader that needs them",
+        "rejected": "stopping view() from including them, or removing them from storage: that would change merge proofs and every single-task caller"
+      },
+      {
+        "what": "Also drop the review_contract copy frozen into each rounds[] and history[].rounds[] entry, not just the top-level field (settled without the person)",
+        "why": "The request says most of the size is the contract frozen per round (loop.py:1627 writes it into each round record), so removing only the top-level copy would not reach the measured 5.7MB",
+        "rejected": "removing only the top-level fields: leaves most of the size in place"
+      },
+      {
+        "what": "Treat the 84.5s translation delay as fixed by the faster listing, not by its own change (settled without the person)",
+        "why": "The translation request was slow only because 10–20s list reads plus two always-open streams filled the six HTTP/1.1 connections to 6977. Cutting the list to under a second frees those slots",
+        "rejected": "moving the streams to another port or adding HTTP/2: much larger change, not asked for"
+      }
+    ],
+    "original": "작업 목록이 화면이 안 읽는 것을 빼고 보내고, 비밀값 가리기를 호출마다 한 번만 한다\n\n## 무엇이 문제였나\n\n- **voice-agent 목록:** 앱에서 ai-companion-voice-agent(작업 70개)를 열면 `GET /api/specs` 한 번에 12~15초가 걸렸고, 응답은 30MB였다.\n  - `verification.sanitize`가 작업마다 리뷰 계약을 문자열 하나씩 가렸다. 문자열마다 `.env`를 다시 읽고 환경변수를 다시 훑었다. py-spy 샘플의 약 60%가 이 경로였다.\n  - 30MB 중 25MB는 라운드마다 얼려 둔 `review_contract`와 `review_shadow_attempts`였다. `web/src`는 둘 다 읽지 않는데, 명세가 저장될 때마다 다시 보냈다.\n- **번역 오버레이:** 번역 요청을 curl로 보내면 0.3초였는데, 앱 탭에서는 84.5초가 걸렸다.\n  - 앱 창(msedgewebview2)과 Chrome이 각각 6977 서버에 HTTP/1.1 연결 6개를 꽉 채우고 있었다. 계속 열린 스트림 2개(`/api/loops/events`, `/api/work/events`)와 10~20초짜리 목록 읽기 4개다.\n  - 번역 요청은 그 뒤에서 줄을 섰다. 프런트엔드로 실행할 때는 한가한 8787 서버에 붙기 때문에 빨랐다.\n\n## 바꾼 것\n\n- `verification.sanitize`는 가릴 값과 그 JSON 이스케이프 형태를 호출마다 한 번만 계산한다(`_forms`). `redact`는 `forms`를 받지 않으면 예전과 같이 동작한다.\n- `specs.listed`는 `/api/specs` 목록에서만 위 두 필드를 뺀다. `view`가 전체 명세로 머지를 판정한 뒤에 뺀다. 작업 하나만 돌려주는 응답은 그대로다.\n- 테스트 2개를 추가했다.\n  - `sanitize` 호출 한 번에 `hidden_values`를 한 번만 읽는지 확인한다.\n  - 목록에서 두 필드가 빠지고, `view`에는 남아 있는지 확인한다.\n\n## 측정\n\nvoice-agent 작업 70개 사본으로 쟀다.\n\n| 단계 | 시간 | 크기 |\n|---|---|---|\n| 수정 전 | 7.41초 | 30.4MB |\n| `sanitize` 수정 | 0.71초 | — |\n| `listed`까지 | 0.48초 | 5.7MB |\n\n## 검사\n\n- `ruff check tool laya`, `tool/lint.py --check`, `tool/debt.py check` 통과.\n- `tool/test_specs.py`, `tool/test_review_contract.py`, `tool/test_local_verification.py`: 184 passed, 1 skipped.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "verification.sanitize computes the hidden values and their JSON-escaped forms once per top-level call and hands them down the recursion to redact through an optional forms argument; redact without forms keeps its current behaviour, and the set of values and patterns hidden does not change",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 1: compute hidden values and escaped forms once at the sanitize entry point"
+        },
+        "status": "confirmed",
+        "preconditions": [
+          "redact (verification.py:222) currently calls hidden_values (verification.py:207) per string, and hidden_values re-reads settings['env_file'] and scans os.environ each time"
+        ],
+        "postconditions": [
+          "one top-level sanitize call reads hidden_values exactly once, however many strings the structure holds"
+        ],
+        "invariants": [
+          "redact(text, settings) with no forms argument returns exactly what it returns today",
+          "sanitized output for any input is identical to the old per-string result, including JSON-escaped values and the authorization/bearer/password/token/secret/api_key pattern rules",
+          "redaction() still freezes values from both the settings env_file and path/.env",
+          "no cache of hidden values survives beyond one sanitize call"
+        ],
+        "failures": [
+          "a global or settings-keyed cache would keep a stale value after .env or the environment changes and could leak a new secret"
+        ],
+        "context": [
+          "tool/main/verification.py",
+          "tool/test_local_verification.py"
+        ],
+        "verify": [
+          {
+            "item": "verification.sanitize builds the hidden values and their JSON-escaped forms once per top-level call (a helper such as _forms) and passes them down; redact(text, settings) without forms behaves exactly as before",
+            "expected": "sanitize computes the forms once and passes them down; existing redact callers see no change"
+          },
+          {
+            "item": "a new test shows one sanitize call over a nested structure with many strings reads hidden_values exactly once, and the redacted output is identical to the old per-string result",
+            "expected": "the test counts exactly one hidden_values call and the output matches the per-string redact result"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "GET /api/specs passes each task through a specs.listed helper after view() has run, and that helper drops review_contract and review_shadow_attempts from the list item; single-task responses and stored records keep both fields",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 2: drop the fields only in the /api/specs list, after view() has run"
+        },
+        "status": "confirmed",
+        "preconditions": [
+          "the /api/specs handler (specs.py:869) returns view(repo, current) for every task, and view (specs.py:519) merges the whole spec into its result"
+        ],
+        "postconditions": [
+          "no /api/specs list item carries review_contract or review_shadow_attempts"
+        ],
+        "invariants": [
+          "view() still receives the full spec, so unproven, approved and review_contract.view results are computed from the complete record",
+          "specs.view(repo, spec) and every single-task caller in loop.py and planning.py still return both fields",
+          "stored spec records are not rewritten; fields are dropped only from the list response",
+          "web/src reads neither field (grep of web/src finds no review_contract)"
+        ],
+        "context": [
+          "tool/main/specs.py",
+          "tool/test_specs.py",
+          "web/src"
+        ],
+        "verify": [
+          {
+            "item": "a specs.listed helper drops review_contract and review_shadow_attempts from each task in the GET /api/specs response, plus review_contract inside rounds[] and history[].rounds[]; it runs after view(), so merge decisions (unproven, approved) still use the full spec",
+            "expected": "the list items lack the fields while unproven and approved match what view() computes on the full spec"
+          },
+          {
+            "item": "a new test shows those fields are absent from the /api/specs list item and still present in specs.view(repo, spec) for the same spec",
+            "expected": "the test passes: absent from the list item, present in view()"
+          }
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "specs.listed also removes the review_contract copy frozen into each rounds[] entry and each history[].rounds[] entry of a listed task, leaving the other round fields in place",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 3: also drop the per-round review_contract copies (settled without the person)"
+        },
+        "status": "assumed",
+        "preconditions": [
+          "loop.py:1627 writes the review contract into each round record, according to the settled decision"
+        ],
+        "invariants": [
+          "round entries in single-task responses and in storage keep their review_contract"
+        ],
+        "failures": [
+          "removing only the top-level fields leaves most of the 30MB in the response"
+        ],
+        "depends_on": [
+          "R2"
+        ],
+        "context": [
+          "tool/main/loop.py",
+          "tool/main/specs.py"
+        ],
+        "verify": [
+          {
+            "item": "a specs.listed helper drops review_contract and review_shadow_attempts from each task in the GET /api/specs response, plus review_contract inside rounds[] and history[].rounds[]; it runs after view(), so merge decisions (unproven, approved) still use the full spec",
+            "expected": "no rounds[] or history[].rounds[] entry in the list response carries review_contract"
+          }
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "With the app window open on the 6977 server, a translation overlay request completes in about a second, because faster list reads free the six HTTP/1.1 connections; no separate change is made to the event streams or connection handling",
+        "source": {
+          "kind": "decision",
+          "locator": "decision 4: treat the 84.5s translation delay as fixed by the faster listing (settled without the person)"
+        },
+        "status": "assumed",
+        "preconditions": [
+          "the app window (msedgewebview2) has /api/loops/events and /api/work/events open against 6977"
+        ],
+        "invariants": [
+          "/api/loops/events and /api/work/events and the HTTP/1.1 connection limit are not redesigned"
+        ],
+        "failures": [
+          "if the overlay is still slow, the delay has another cause, and the write session reports that instead of claiming done"
+        ],
+        "depends_on": [
+          "R1",
+          "R2",
+          "R3"
+        ],
+        "verify": [
+          {
+            "item": "with the app window open on the 6977 server, a translation overlay request completes in about a second, not tens of seconds; the write session asks the person to check this in the app before its done report",
+            "expected": "the person confirms in the app that the overlay answers in about a second"
+          }
+        ]
+      },
+      {
+        "id": "R5",
+        "text": "The pull request reports measured /api/specs time and response size before and after the change on a 70-task repository",
+        "source": {
+          "kind": "original",
+          "locator": "the request's 측정 table (7.41s / 30.4MB → 0.71s → 0.48s / 5.7MB)"
+        },
+        "status": "assumed",
+        "failures": [
+          "if no copy of ai-companion-voice-agent is reachable, a fixture of similar size is measured and the PR body says so"
+        ],
+        "depends_on": [
+          "R1",
+          "R2",
+          "R3"
+        ],
+        "verify": [
+          {
+            "item": "the PR body reports measured /api/specs time and response size before and after on a copy of ai-companion-voice-agent (70 tasks), or on a fixture of similar size if that copy isn't available",
+            "expected": "the PR body has a before/after table of time and size with the data source named"
+          }
+        ]
+      },
+      {
+        "id": "R6",
+        "text": "The repository's lint, debt and affected test suites pass with the change",
+        "source": {
+          "kind": "repository",
+          "locator": "the request's 검사 section"
+        },
+        "status": "confirmed",
+        "context": [
+          "tool/test_specs.py",
+          "tool/test_review_contract.py",
+          "tool/test_local_verification.py",
+          "tool/lint.py",
+          "tool/debt.py"
+        ],
+        "verify": [
+          {
+            "item": "python -m ruff check tool laya",
+            "expected": "no findings"
+          },
+          {
+            "item": "tool/test_specs.py, tool/test_review_contract.py and tool/test_local_verification.py pass; ruff check tool laya, tool/lint.py --check and tool/debt.py check pass",
+            "expected": "all listed tests pass and every check exits cleanly"
+          }
+        ]
+      }
+    ],
+    "spec_version": 1,
+    "spec_digest": "fa7392f63eb1fbf920bccaf6e609644f827b41807f86cee0546248ae319be8bd"
+  },
+  "select": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6"
+  ],
+  "costs": {
+    "generation": {
+      "usd": 0.1934374,
+      "tokens": {
+        "input": 14,
+        "output": 4560,
+        "cache_read": 68867,
+        "cache_write": 11051
+      },
+      "turns": 11
+    },
+    "enrichment": {
+      "usd": 0.22638579999999997,
+      "tokens": {
+        "input": 10,
+        "output": 7128,
+        "cache_read": 46009,
+        "cache_write": 9323
+      },
+      "turns": 8
+    },
+    "selection": {
+      "usd": 0.031108000000000004,
+      "tokens": {
+        "input": 2,
+        "output": 203,
+        "cache_read": 0,
+        "cache_write": 3380
+      },
+      "turns": 1
+    }
+  },
+  "selection_cost": {
+    "usd": 0.031108000000000004,
+    "tokens": {
+      "input": 2,
+      "output": 203,
+      "cache_read": 0,
+      "cache_write": 3380
+    },
+    "turns": 1
+  }
+}

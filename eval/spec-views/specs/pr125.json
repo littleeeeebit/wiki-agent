@@ -1,0 +1,481 @@
+{
+  "task": "pr125",
+  "reference": {
+    "merge_commit": {
+      "hidden": {
+        "tool/test_decision_flow.py::test_a_host_answer_after_its_reasoning_is_still_its_answer": "passed",
+        "tool/test_decision_flow.py::test_text_with_no_single_answer_that_ends_it_settles_nothing": "passed"
+      },
+      "affected": {
+        "tool/test_decision_flow.py": true
+      }
+    },
+    "merge_base": {
+      "hidden": {
+        "tool/test_decision_flow.py::test_a_host_answer_after_its_reasoning_is_still_its_answer": "failed",
+        "tool/test_decision_flow.py::test_text_with_no_single_answer_that_ends_it_settles_nothing": "passed"
+      },
+      "affected": {
+        "tool/test_decision_flow.py": true
+      }
+    },
+    "discriminates": true
+  },
+  "baseline": {
+    "id": "pr125",
+    "rev": 1,
+    "goal": "Reliability v7 changes M1, W, F and F2 are in one PR: knowledge.parsed reads a host answer whose JSON object follows prose; the work.start and loop.fix prompts follow the v7 design; ASK treats a question quoted from someone else as material; and the calibration on revealed cases is recorded in the plan",
+    "out": [
+      "Drafting, label review or freezing of the fresh v7 set (material >= 54, quoted questions >= 12, 54 new fixtures per action point)",
+      "Paid runs on a fresh v7 set; those need the owner's separate approval",
+      "Option M2 (relabelling) and M3 (more cases only), both rejected in the v7 design",
+      "The specs.check and specs.candidates prompts, the route PROMPTS in knowledge.py, and the answer path, apart from what the reworded ASK changes about which segments are checked"
+    ],
+    "done": [
+      "F2: when knowledge.parsed cannot read the whole answer as JSON, it falls back to the first JSON object that runs to the end of the text, a closing code fence allowed. A prose sentence followed by {\"choice\": \"context\", ...} parses to that object. Bare JSON and a fully fenced block parse as before. Text with no such object still raises, as before. Unit tests cover each case.",
+      "A test replays the v5lf60 shape (an explanatory sentence, then the JSON object) through the host fallback and gets a decision instead of a JSONDecodeError",
+      "W: the work.start text in decisions.PROMPTS says that a specification already carries what the work needs when it states the required behavior or decision and no unresolved repository fact, rule or convention is needed to choose it. Naming files and checks alone does not override the evidence condition.",
+      "F: the loop.fix text in decisions.PROMPTS says that a finding which appeals to how other parts of the repository do something turns on a convention, even when it proposes a remedy",
+      "M1: ASK in tool/main/knowledge.py says that a question quoted from someone else is material, even when the person's own request is about the same subject",
+      "Action calibration on the deduplicated revealed fixtures of v1, v2 and v5 (168) is run and recorded. The target is work start 84/84 and review fix at least 83/84, with host-fallback parse failures at 0. v5ws05 and v5ws31 must stay evidence. Any remaining miss is named and shown to have missed before the change.",
+      "M1 calibration on every revealed v3–v6 multi-segment route intent (255: material 132, request 123) is run and recorded for both the current and the adopted wording. The record gives the material counts Jev settles and the host gets right, and shows all 123 requests still classified as requests. The rejected drafts are named with their host-call counts. The record also gives the added host calls and their USD cost.",
+      "docs/plans/reliability/5-english-baseline.md has a section 'Implementation, calibrated on revealed cases' with those results. It states that the host ran each case once, so a fresh v7 set must retest the wording. The step 6 row's status says the M1/W/F/F2 PR is up and the fresh v7 set comes next.",
+      "ruff, lint.py, repo_lint.py and the debt ratchet pass. Any raised ratchet baseline comes with its reason in the PR.",
+      "Total paid probe and calibration spending stays under USD 1 and is stated in the PR"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/knowledge.py:3311",
+        "tool/main/knowledge.py:194",
+        "tool/main/knowledge.py:1350",
+        "tool/main/knowledge.py:2794",
+        "tool/main/knowledge.py:3304",
+        "tool/eval/compare.py:484",
+        "tool/main/decisions.py:78",
+        "tool/eval/actions.py",
+        "eval/jev/reliability-v5/actions.json",
+        "eval/jev/reliability-v2/actions.json",
+        "docs/plans/reliability/5-english-baseline.md:1161",
+        "docs/plans/reliability/5-english-baseline.md:1309"
+      ],
+      "rules": [
+        "The v7 design in 5-english-baseline.md: the owner chose M1 with W, F and F2 on 2026-10-12, as one PR calibrated on revealed cases",
+        "ASK stays out of PROMPTS so the digest the fitted eval/jev/policy.json is bound to does not change"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Fix F2 in knowledge.parsed: fall back to the first JSON object that runs to the end of the text, a closing fence allowed",
+        "why": "The v5lf60 replay showed the host writing a sentence before its JSON. parsed is shared by the host fallback, the answer grader and two other readers, so one fix covers them all. Requiring the object to reach the end keeps an object merely quoted inside prose from being taken as the answer.",
+        "rejected": "Tightening the fallback prompt alone (the host already ignored the 'no prose' instruction), and taking any embedded JSON object anywhere in the text (too permissive)"
+      },
+      {
+        "what": "Reword ASK (M1) so a quoted question from someone else is material, and pick the wording that keeps direct questions confident",
+        "why": "Every recorded held-out material miss is a quoted question followed by the person's own request. The four drafts that also lowered confidence on the person's own questions raised host calls to 25–51.",
+        "rejected": "M2 relabelling (it moves the measure after seeing the failures) and M3 sample size only (it repairs nothing)"
+      },
+      {
+        "what": "Leave the fresh v7 set and its paid runs out of this PR",
+        "why": "The request lists them under 'next', and the design places them after this PR on the owner's approval of their cost. I settled this without asking, since nobody could answer in this run.",
+        "rejected": "Drafting the v7 set in the same PR"
+      },
+      {
+        "what": "No plan-row link; update the step 6 status text instead",
+        "why": "Step 6 (v7) also covers the fresh set, so this PR does not finish that row. I settled this without asking.",
+        "rejected": "Marking row 6 done when this PR goes up"
+      },
+      {
+        "what": "Calibrate on revealed cases only, within a USD 1 total probe budget",
+        "why": "This follows the method #121 used and the design's cost estimate (v5's action fixtures cost about USD 0.45). I settled this without asking.",
+        "rejected": "Running any fresh held-out set now"
+      }
+    ]
+  },
+  "enriched": {
+    "id": "pr125",
+    "rev": 1,
+    "goal": "Reliability v7 changes M1, W, F and F2 are in one PR: knowledge.parsed reads a host answer whose JSON object follows prose; the work.start and loop.fix prompts follow the v7 design; ASK treats a question quoted from someone else as material; and the calibration on revealed cases is recorded in the plan",
+    "out": [
+      "Drafting, label review or freezing of the fresh v7 set (material >= 54, quoted questions >= 12, 54 new fixtures per action point)",
+      "Paid runs on a fresh v7 set; those need the owner's separate approval",
+      "Option M2 (relabelling) and M3 (more cases only), both rejected in the v7 design",
+      "The specs.check and specs.candidates prompts, the route PROMPTS in knowledge.py, and the answer path, apart from what the reworded ASK changes about which segments are checked"
+    ],
+    "done": [
+      "F2: when knowledge.parsed cannot read the whole answer as JSON, it falls back to the first JSON object that runs to the end of the text, a closing code fence allowed. A prose sentence followed by {\"choice\": \"context\", ...} parses to that object. Bare JSON and a fully fenced block parse as before. Text with no such object still raises, as before. Unit tests cover each case.",
+      "A test replays the v5lf60 shape (an explanatory sentence, then the JSON object) through the host fallback and gets a decision instead of a JSONDecodeError",
+      "W: the work.start text in decisions.PROMPTS says that a specification already carries what the work needs when it states the required behavior or decision and no unresolved repository fact, rule or convention is needed to choose it. Naming files and checks alone does not override the evidence condition.",
+      "F: the loop.fix text in decisions.PROMPTS says that a finding which appeals to how other parts of the repository do something turns on a convention, even when it proposes a remedy",
+      "M1: ASK in tool/main/knowledge.py says that a question quoted from someone else is material, even when the person's own request is about the same subject",
+      "Action calibration on the deduplicated revealed fixtures of v1, v2 and v5 (168) is run and recorded. The target is work start 84/84 and review fix at least 83/84, with host-fallback parse failures at 0. v5ws05 and v5ws31 must stay evidence. Any remaining miss is named and shown to have missed before the change.",
+      "M1 calibration on every revealed v3–v6 multi-segment route intent (255: material 132, request 123) is run and recorded for both the current and the adopted wording. The record gives the material counts Jev settles and the host gets right, and shows all 123 requests still classified as requests. The rejected drafts are named with their host-call counts. The record also gives the added host calls and their USD cost.",
+      "docs/plans/reliability/5-english-baseline.md has a section 'Implementation, calibrated on revealed cases' with those results. It states that the host ran each case once, so a fresh v7 set must retest the wording. The step 6 row's status says the M1/W/F/F2 PR is up and the fresh v7 set comes next.",
+      "ruff, lint.py, repo_lint.py and the debt ratchet pass. Any raised ratchet baseline comes with its reason in the PR.",
+      "Total paid probe and calibration spending stays under USD 1 and is stated in the PR"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/knowledge.py:3311",
+        "tool/main/knowledge.py:194",
+        "tool/main/knowledge.py:1350",
+        "tool/main/knowledge.py:2794",
+        "tool/main/knowledge.py:3304",
+        "tool/eval/compare.py:484",
+        "tool/main/decisions.py:78",
+        "tool/eval/actions.py",
+        "eval/jev/reliability-v5/actions.json",
+        "eval/jev/reliability-v2/actions.json",
+        "docs/plans/reliability/5-english-baseline.md:1161",
+        "docs/plans/reliability/5-english-baseline.md:1309"
+      ],
+      "rules": [
+        "The v7 design in 5-english-baseline.md: the owner chose M1 with W, F and F2 on 2026-10-12, as one PR calibrated on revealed cases",
+        "ASK stays out of PROMPTS so the digest the fitted eval/jev/policy.json is bound to does not change"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Fix F2 in knowledge.parsed: fall back to the first JSON object that runs to the end of the text, a closing fence allowed",
+        "why": "The v5lf60 replay showed the host writing a sentence before its JSON. parsed is shared by the host fallback, the answer grader and two other readers, so one fix covers them all. Requiring the object to reach the end keeps an object merely quoted inside prose from being taken as the answer.",
+        "rejected": "Tightening the fallback prompt alone (the host already ignored the 'no prose' instruction), and taking any embedded JSON object anywhere in the text (too permissive)"
+      },
+      {
+        "what": "Reword ASK (M1) so a quoted question from someone else is material, and pick the wording that keeps direct questions confident",
+        "why": "Every recorded held-out material miss is a quoted question followed by the person's own request. The four drafts that also lowered confidence on the person's own questions raised host calls to 25–51.",
+        "rejected": "M2 relabelling (it moves the measure after seeing the failures) and M3 sample size only (it repairs nothing)"
+      },
+      {
+        "what": "Leave the fresh v7 set and its paid runs out of this PR",
+        "why": "The request lists them under 'next', and the design places them after this PR on the owner's approval of their cost. I settled this without asking, since nobody could answer in this run.",
+        "rejected": "Drafting the v7 set in the same PR"
+      },
+      {
+        "what": "No plan-row link; update the step 6 status text instead",
+        "why": "Step 6 (v7) also covers the fresh set, so this PR does not finish that row. I settled this without asking.",
+        "rejected": "Marking row 6 done when this PR goes up"
+      },
+      {
+        "what": "Calibrate on revealed cases only, within a USD 1 total probe budget",
+        "why": "This follows the method #121 used and the design's cost estimate (v5's action fixtures cost about USD 0.45). I settled this without asking.",
+        "rejected": "Running any fresh held-out set now"
+      }
+    ],
+    "original": "신뢰성 v7 구현: 호스트 답 파싱, 두 액션 문구, 인용 질문을 material로\n\n## 무엇을 바꿨나\n\nv7 설계(#124)에서 정한 M1과 W·F·F2를 한 PR로 구현했습니다.\n\n- F2: `knowledge.parsed`가 전체를 JSON으로 읽지 못하면, 텍스트 끝까지 이어지는 첫 JSON 객체를 답으로 읽습니다(닫는 코드 펜스 허용). 호스트가 설명을 먼저 쓰고 답을 붙여도 폴백이 결정을 내립니다. 그런 객체가 없으면 예전처럼 실패합니다.\n- W·F: `decisions.PROMPTS`의 작업 시작(work.start)과 리뷰 수정(loop.fix) 문구를 설계 문서의 방향대로 바꿨습니다.\n- M1: `ASK`에 \"다른 사람이 한 질문을 인용한 것은, 사람이 같은 주제를 이어서 묻더라도 material\"이라는 조항을 넣었습니다.\n\n## 공개 사례로 보정한 결과\n\n- 액션: v1·v2·v5의 공개 픽스처 168개(중복 제거)를 다시 돌렸습니다.\n  - 작업 시작 81/84 → 84/84, 리뷰 수정 78/84 → 83/84\n  - 호스트 폴백 파싱 실패 2/47 → 0/35\n  - 남은 1건(v5lf09)은 바꾸기 전에도 틀리던 사례입니다.\n- M1: v3–v6의 다중 세그먼트 route 의도 255개(material 132, 요청 123)로 보정했습니다.\n  - 현재 문구: material은 Jev가 122건을 확정하고 호스트가 10건 중 6건을 맞힙니다. 틀린 4건(analysis-73·82·136, start-36)이 v5·v6에 기록된 실패입니다.\n  - 채택 문구: material은 Jev 114건, 호스트 18건 중 18건, 요청은 123건 전부 Jev가 확정합니다.\n  - 버린 초안 4개는 사람이 직접 묻는 질문의 확신도까지 낮춰 호스트 호출이 25–51건으로 늘었습니다.\n  - 호스트 호출은 기존보다 8건 많아 약 USD 0.12가 더 듭니다. 호스트는 사례마다 한 번씩만 돌렸으므로, 새 v7 세트로 다시 시험해야 합니다.\n\n자세한 내용은 `docs/plans/reliability/5-english-baseline.md`의 \"Implementation, calibrated on revealed cases\"에 있습니다.\n\n## 검사\n\n- ruff, `lint.py`, `repo_lint.py`, debt 래칫 통과. 세 파일의 래칫 기준을 이유와 함께 올렸습니다.\n- 집중 테스트 208개 통과. 전체 게이트는 진행 중입니다.\n- 탐침 비용은 합쳐 USD 1 미만입니다.\n\n## 다음\n\n새 v7 세트 초안(material ≥ 54, 그중 인용 질문 ≥ 12, 두 액션 지점마다 새 픽스처 54개), 라벨 리뷰, 동결. 유료 실행은 따로 승인을 받습니다.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "knowledge.parsed falls back, when the whole answer is not JSON, to the first JSON object that runs to the end of the text (a closing code fence allowed); bare JSON and fully fenced JSON parse unchanged; text with no such object still raises.",
+        "source": {
+          "kind": "original",
+          "locator": "the request, 'What changed', F2 bullet"
+        },
+        "status": "assumed",
+        "preconditions": [
+          "knowledge.parsed is shared by the host fallback, the answer grader and other readers"
+        ],
+        "invariants": [
+          "A JSON object merely quoted inside prose, with prose after it, is not taken as the answer"
+        ],
+        "failures": [
+          "Text with no JSON object reaching the end raises as before"
+        ],
+        "context": [
+          "tool/main/knowledge.py"
+        ],
+        "verify": [
+          {
+            "item": "F2: when knowledge.parsed cannot read the whole answer as JSON, it falls back to the first JSON object that runs to the end of the text, a closing code fence allowed. A prose sentence followed by {\"choice\": \"context\", ...} parses to that object. Bare JSON and a fully fenced block parse as before. Text with no such object still raises, as before. Unit tests cover each case.",
+            "expected": "Unit tests for prose-then-object, prose-then-fenced-object, bare JSON, fully fenced JSON and no-object text all pass with the stated outcomes"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "The host fallback, given the v5lf60 answer shape (an explanatory sentence followed by the JSON object), returns a decision rather than a JSONDecodeError.",
+        "source": {
+          "kind": "repository",
+          "locator": "v5lf60 replay recorded in docs/plans/reliability/5-english-baseline.md (F2 diagnosis)"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R1"
+        ],
+        "context": [
+          "tool/main/knowledge.py",
+          "tool/main/decisions.py"
+        ],
+        "verify": [
+          {
+            "item": "A test replays the v5lf60 shape (an explanatory sentence, then the JSON object) through the host fallback and gets a decision instead of a JSONDecodeError",
+            "expected": "The test passes and the replay yields a decision"
+          }
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "The work.start prompt in decisions.PROMPTS states that a specification already carries what the work needs when it states the required behaviour or decision and no unresolved repository fact, rule or convention is needed to choose it; naming files and checks alone does not override the evidence condition.",
+        "source": {
+          "kind": "original",
+          "locator": "the request, 'What changed', W·F bullet"
+        },
+        "status": "confirmed",
+        "context": [
+          "tool/main/decisions.py"
+        ],
+        "verify": [
+          {
+            "item": "W: the work.start text in decisions.PROMPTS says that a specification already carries what the work needs when it states the required behavior or decision and no unresolved repository fact, rule or convention is needed to choose it. Naming files and checks alone does not override the evidence condition.",
+            "expected": "The work.start prompt text contains both conditions"
+          }
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "The loop.fix prompt in decisions.PROMPTS states that a finding appealing to how other parts of the repository do something turns on a convention, even when it proposes a remedy.",
+        "source": {
+          "kind": "original",
+          "locator": "the request, 'What changed', W·F bullet"
+        },
+        "status": "confirmed",
+        "context": [
+          "tool/main/decisions.py"
+        ],
+        "verify": [
+          {
+            "item": "F: the loop.fix text in decisions.PROMPTS says that a finding which appeals to how other parts of the repository do something turns on a convention, even when it proposes a remedy",
+            "expected": "The loop.fix prompt text contains that clause"
+          }
+        ]
+      },
+      {
+        "id": "R5",
+        "text": "ASK in tool/main/knowledge.py states that a question quoted from someone else is material, even when the person's own request is about the same subject.",
+        "source": {
+          "kind": "original",
+          "locator": "the request, 'What changed', M1 bullet"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "Questions the person asks directly keep their confidence; the rewording does not push them to the host"
+        ],
+        "context": [
+          "tool/main/knowledge.py"
+        ],
+        "verify": [
+          {
+            "item": "M1: ASK in tool/main/knowledge.py says that a question quoted from someone else is material, even when the person's own request is about the same subject",
+            "expected": "ASK contains the quoted-question clause"
+          }
+        ]
+      },
+      {
+        "id": "R6",
+        "text": "Action calibration on the 168 deduplicated revealed v1, v2 and v5 fixtures reaches work start 84/84, review fix at least 83/84 and zero host-fallback parse failures; v5ws05 and v5ws31 stay evidence; any remaining miss is named and shown to have missed before the change.",
+        "source": {
+          "kind": "original",
+          "locator": "the request, 'Calibrated on revealed cases', actions bullet"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R1",
+          "R3",
+          "R4"
+        ],
+        "verify": [
+          {
+            "item": "Action calibration on the deduplicated revealed fixtures of v1, v2 and v5 (168) is run and recorded. The target is work start 84/84 and review fix at least 83/84, with host-fallback parse failures at 0. v5ws05 and v5ws31 must stay evidence. Any remaining miss is named and shown to have missed before the change.",
+            "expected": "Recorded results meet the targets; v5lf09 (or any other miss) is named with its pre-change result"
+          }
+        ]
+      },
+      {
+        "id": "R7",
+        "text": "M1 calibration on all 255 revealed v3–v6 multi-segment route intents (material 132, request 123) is recorded for the current and the adopted ASK wording, with Jev-settled and host-correct material counts, all 123 requests still requests, the rejected drafts and their host-call counts, and the added host calls with their USD cost.",
+        "source": {
+          "kind": "original",
+          "locator": "the request, 'Calibrated on revealed cases', M1 bullet"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R5"
+        ],
+        "verify": [
+          {
+            "item": "M1 calibration on every revealed v3–v6 multi-segment route intent (255: material 132, request 123) is run and recorded for both the current and the adopted wording. The record gives the material counts Jev settles and the host gets right, and shows all 123 requests still classified as requests. The rejected drafts are named with their host-call counts. The record also gives the added host calls and their USD cost.",
+            "expected": "The record has both wordings' counts, 123/123 requests, the four rejected drafts with host calls, and the added calls and cost"
+          }
+        ]
+      },
+      {
+        "id": "R8",
+        "text": "docs/plans/reliability/5-english-baseline.md gains a section 'Implementation, calibrated on revealed cases' with the results, states the host ran each case once so a fresh v7 set must retest, and the step 6 row status says the M1/W/F/F2 PR is up and the fresh v7 set comes next.",
+        "source": {
+          "kind": "original",
+          "locator": "the request, closing line of 'Calibrated on revealed cases' and 'Next'"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R6",
+          "R7"
+        ],
+        "context": [
+          "docs/plans/reliability/5-english-baseline.md"
+        ],
+        "verify": [
+          {
+            "item": "docs/plans/reliability/5-english-baseline.md has a section 'Implementation, calibrated on revealed cases' with those results. It states that the host ran each case once, so a fresh v7 set must retest the wording. The step 6 row's status says the M1/W/F/F2 PR is up and the fresh v7 set comes next.",
+            "expected": "The section exists with the results and the single-run caveat; the step 6 row (currently 'In progress — designed (v7 design)…') is updated"
+          }
+        ]
+      },
+      {
+        "id": "R9",
+        "text": "ruff, lint.py, repo_lint.py and the debt ratchet pass; every raised ratchet baseline is justified in the PR.",
+        "source": {
+          "kind": "original",
+          "locator": "the request, 'Checks'"
+        },
+        "status": "confirmed",
+        "verify": [
+          {
+            "item": "ruff, lint.py, repo_lint.py and the debt ratchet pass. Any raised ratchet baseline comes with its reason in the PR.",
+            "expected": "All four pass; the PR body gives a reason for each raised baseline"
+          }
+        ]
+      },
+      {
+        "id": "R10",
+        "text": "Total paid probe and calibration spending stays under USD 1 and the PR states it.",
+        "source": {
+          "kind": "original",
+          "locator": "the request, 'Checks', probe cost bullet"
+        },
+        "status": "assumed",
+        "verify": [
+          {
+            "item": "Total paid probe and calibration spending stays under USD 1 and is stated in the PR",
+            "expected": "The PR states a total below USD 1"
+          }
+        ]
+      },
+      {
+        "id": "R11",
+        "text": "F2 is fixed in knowledge.parsed itself, with the object required to reach the end of the text, rather than by tightening the fallback prompt or accepting any embedded object.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[0]"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R1"
+        ]
+      },
+      {
+        "id": "R12",
+        "text": "M1 is the adopted ASK rewording that keeps direct questions confident; M2 relabelling and M3 more-cases-only are not done.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[1]"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R5"
+        ]
+      },
+      {
+        "id": "R13",
+        "text": "The fresh v7 set and its paid runs are not part of this PR.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[2]"
+        },
+        "status": "assumed"
+      },
+      {
+        "id": "R14",
+        "text": "The PR carries no plan-row link and does not mark step 6 done; only the step 6 status text is updated.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[3]"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R8"
+        ]
+      },
+      {
+        "id": "R15",
+        "text": "Calibration uses revealed cases only, within a USD 1 total probe budget; no fresh held-out set is run.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[4]"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R10"
+        ]
+      }
+    ],
+    "spec_version": 1,
+    "spec_digest": "2fc2fbd1665b9be167be73b21dd20f00f6e9caad5bd25f8e70bd7cacee40dfcc"
+  },
+  "select": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
+    "R8",
+    "R9",
+    "R10",
+    "R11",
+    "R13",
+    "R14"
+  ],
+  "costs": {
+    "generation": {
+      "usd": 0.19874379999999997,
+      "tokens": {
+        "input": 10,
+        "output": 4514,
+        "cache_read": 47639,
+        "cache_write": 12362
+      },
+      "turns": 10
+    },
+    "enrichment": {
+      "usd": 0.1792432,
+      "tokens": {
+        "input": 8,
+        "output": 6509,
+        "cache_read": 34676,
+        "cache_write": 5262
+      },
+      "turns": 5
+    },
+    "selection": {
+      "usd": 0.042235999999999996,
+      "tokens": {
+        "input": 2,
+        "output": 425,
+        "cache_read": 0,
+        "cache_write": 4216
+      },
+      "turns": 1
+    }
+  },
+  "selection_cost": {
+    "usd": 0.042235999999999996,
+    "tokens": {
+      "input": 2,
+      "output": 425,
+      "cache_read": 0,
+      "cache_write": 4216
+    },
+    "turns": 1
+  }
+}

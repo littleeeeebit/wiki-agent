@@ -38,8 +38,7 @@ from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
 
-from . import channels, gate_eta, pr_text, prerequisite_review, query, review_contract, runtime, spec_views, sweep, work
-from .spec_views import agent, equivalent, human  # noqa: F401 — `specs.human` and the others: this record's views
+from . import channels, gate_eta, pr_text, prerequisite_review, query, review_contract, runtime, sweep, work
 from .pr_text import body_of
 from .decisions import extra_check, recommend, registered
 from .query import ROOT, _lock, current_repo, hold, project
@@ -132,7 +131,8 @@ def save(spec: dict) -> None:
             for archived in (file.parent / "dropped").glob(f"{spec['id']}.*.json"):
                 if json.loads(archived.read_text(encoding="utf-8"))["history"][0]["ts"] == birth:
                     raise HTTPException(410, "삭제한 작업은 다시 저장할 수 없다")
-        spec_views.stamped(current, spec)
+        if current is not None and "original" in current:   # the person's words stay as first stored
+            spec["original"] = current["original"]
         file.parent.mkdir(parents=True, exist_ok=True)
         temporary = file.with_suffix(".tmp")
         temporary.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -454,7 +454,6 @@ def fields(repo: Path, block, gate: str, accepted: dict | None = None, retired: 
         "grounds": listed,
         "decisions": decided,
         **profiled(repo, block),
-        **({"requirements": spec_views.requirements(block["requirements"])} if "requirements" in block else {}),
     }
 
 
@@ -635,9 +634,6 @@ def card(repo: Path, block, gate: str, source: dict, accepted: dict | None = Non
                 and old["source"].get("session") == source["session"]:
             made["done"] = made["done"][:1] + [d for d in made["done"][1:] if d not in old["done"][:1]]   # its old gate (#310)
             old.update(made, rev=old["rev"] + 1, source=source)
-            if "requirements" not in made:   # the card as emitted again, not a leftover of the last one
-                for key in ("requirements", "spec_version", "spec_digest"):
-                    old.pop(key, None)
             save(old)
             return base
         sid = unique(repo, base)
@@ -654,8 +650,9 @@ def answered(repo: Path, found: list[dict], source: dict, accepted: dict | None 
     `accepted` bounds their grounds when the answer was verified (`fields`)."""
 
     gate = gate_of(repo)
-    # The person's words, verbatim, kept on the card and never revised (`spec_views.stamped`).
-    original = spec_views.requested(query.recall(source.get("focus") or "next", whole=True)) \
+    # The person's words, verbatim and in order, kept on the card and never revised (`save`, `REVISABLE`).
+    original = "\n\n".join(r.get("said", r.get("text", "")) for r in query.recall(
+        source.get("focus") or "next", whole=True) if r.get("role") == "user") \
         if any(b["name"] == "spec" for b in found) else ""
     out = []
     for block in found:
@@ -898,15 +895,9 @@ def listed(viewed: dict) -> dict:
     return out
 
 
-@router.get("/api/specs/{sid}/views")
-def spec_views_of(sid: str) -> dict:
-    """The human document and the agent input, rendered from the saved record."""
-    return spec_views.views(editable_task(load(current_repo().name, sid)))
-
-
 @router.put("/api/specs/{sid}")
 def edit(sid: str, body: Edit) -> dict:
-    """Revise a draft or an idle active task, preserving prior requirements."""
+    """Revise a draft or an idle active task."""
 
     repo = current_repo()
     with _lock, _files:
@@ -949,8 +940,8 @@ def edit(sid: str, body: Edit) -> dict:
 
 
 # What a revision carries: the screen's `Edit` and the agent's `spec-update` alike.
-# Never `original`, a requirement's `source` (`spec_views.stamped`) or a verification result (`spec_views.verified`).
-REVISABLE = frozenset({"rev", "reason", "goal", "out", "done", "slug", "review", "prerequisite_review", "requirements"})
+# Never `original`, the person's words (`save`).
+REVISABLE = frozenset({"rev", "reason", "goal", "out", "done", "slug", "review", "prerequisite_review"})
 
 
 def revise(repo: Path, spec: dict, change: dict) -> None:
@@ -973,12 +964,9 @@ def revise(repo: Path, spec: dict, change: dict) -> None:
     # Every revision's first item was its gate; one a changed `gate_cmd` replaced is still no item of its own (#310).
     retired = frozenset(r["done"][0] for r in [spec, *(spec.get("revisions") or [])] if r.get("done"))
     made = fields(repo, {**spec, **{k: change[k] for k in (
-        "goal", "out", "done", "review", "prerequisite_review", "requirements") if k in change}}, gate, retired=retired)
-    if "requirements" in change:
-        spec_views.introduced(spec.get("requirements") or [], made["requirements"],
-                              f"spec-update to revision {spec['rev'] + 1}: {reason.strip()}")
+        "goal", "out", "done", "review", "prerequisite_review") if k in change}}, gate, retired=retired)
     spec.setdefault("revisions", []).append({"rev": spec["rev"], "ts": time.time(), "reason": reason.strip(),
-                                            **{k: spec[k] for k in ("goal", "out", "done", "requirements") if k in spec}})
+                                            **{k: spec[k] for k in ("goal", "out", "done") if k in spec}})
     for round_ in spec.get("rounds") or []:
         round_["stale"] = True
         round_["stale_reason"] = "Specification revised"
@@ -1165,8 +1153,7 @@ def system(path: Path) -> str:
     spec = owner(path)
     if spec is None:
         return ""
-    views = spec_views.section(spec) if "requirements" in spec and spec_views.on() else ""
-    return SPEC_PROMPT.rstrip() + "\n\n" + brief(spec) + refactor_run.prompt(spec) + views
+    return SPEC_PROMPT.rstrip() + "\n\n" + brief(spec) + refactor_run.prompt(spec)
 
 
 def brief(spec: dict) -> str:
@@ -1773,7 +1760,6 @@ def _check(path: Path, run, final: str):
     # The checks this change maps to, not the whole gate: that runs once the
     # review allows the exact head (`loop.finalized`).
     verdict, record = rounded(repo, path, spec, local_base(spec, path), run.halt, lambda text: note(run, text))
-    spec_views.verified(spec, verdict)
     update(spec["repo"], spec["id"], gate=verdict)
     spec = validate(spec["repo"], spec["id"], round=record)
     if not verdict["ok"]:

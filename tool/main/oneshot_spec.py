@@ -3,7 +3,7 @@
 `docs/plans/oneshot/3-spec-backend.md` is the design.
 From the commit point on, the spec's `oneshot` field owns the run.
 Its `stage` moves `spec → design → r1 → tests`; `tests` is where the backend build begins.
-Requirements live in the spec's `requirements`, in the `spec_views` shape.
+Requirements live in the spec's `requirements`, in the shape `oneshot_sheet.requirements` checks.
 The glossary, the conversation, the design and the sheet's decisions live in `oneshot`.
 """
 
@@ -88,8 +88,8 @@ def owner_words(o: dict) -> str:
 
 
 def kept(spec: dict, value, where: str) -> tuple[list[dict], list[dict]]:
-    """An `oneshot-spec` block as the spec will store it: each kept requirement's stored `source`
-    (`spec_views.stamped`), a new one counted as a decision outside S2, no original requirement
+    """An `oneshot-spec` block as the spec will store it: each kept requirement's stored `source`,
+    a new one counted as a decision outside S2, no original requirement
     dropped, and no term the owner used renamed or removed."""
 
     reqs, glossary = sheet.requirement_block(value)

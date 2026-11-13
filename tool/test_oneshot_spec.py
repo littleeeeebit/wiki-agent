@@ -253,6 +253,29 @@ def test_a_cycle_through_the_requirements_and_a_malformed_avoid_list_are_refused
         sheet.requirement_block({"requirements": REQS, "glossary": [{**GLOSSARY[0], "avoid": 3}]})
 
 
+@pytest.mark.parametrize("bad, named", [
+    ([{**REQS[0], "owner": "x"}], "R1: 모르는 키 — owner"),
+    ([REQS[0], REQS[0]], "R1: id 가 겹친다"),
+    ([{**REQS[0], "depends_on": ["R7"]}], "R1: `depends_on` 이 정의되지 않은 id 를 가리킨다 — R7"),
+    ([{**REQS[0], "source": {"kind": "hunch", "locator": "x"}}], "R1: `source`"),
+    ([{**REQS[0], "status": "maybe"}], "R1: `status`"),
+    ([{**REQS[0], "id": "A1"}], "`id` 는 R1, R2"),
+    ([{**REQS[0], "verify": [{"item": "x"}]}], "R1: `verify`"),
+    ([{**REQS[0], "postconditions": [""]}], "R1: `postconditions`"),
+])
+def test_a_malformed_requirement_is_refused_with_the_item_and_key_named(bad, named):
+    with pytest.raises(ValueError) as caught:
+        sheet.requirement_block({"requirements": bad, "glossary": GLOSSARY})
+    assert named in str(caught.value)
+
+
+def test_a_requirement_reads_back_normalized():
+    loose = {**REQS[1], "text": "  지난 달   지출을 고르면\n그 달 목록이 보인다 ", "verify": [{"item": " 목록 ", "expected": "보인다"}]}
+    reqs, _ = sheet.requirement_block({"requirements": [REQS[0], loose], "glossary": GLOSSARY})
+    assert reqs[0] == REQS[0]
+    assert reqs[1]["text"] == REQS[1]["text"] and reqs[1]["verify"] == [{"item": "목록", "expected": "보인다"}]
+
+
 @pytest.mark.parametrize("text, pattern", [
     ("목록이 표시되어진다", "이중 피동"),
     ("사용자의 가계부의 이번 달의 합계를 본다", "의 연쇄"),

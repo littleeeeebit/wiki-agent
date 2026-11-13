@@ -1,0 +1,550 @@
+{
+  "schema": "spec-views-experiment/1",
+  "experiment": "main-1",
+  "kind": "main",
+  "code_commit": "d5cd946aa1d387581ad6d9883cac75c3a2318c8b",
+  "seed": 20261109,
+  "tasks_file": "eval/spec-views/main-tasks.json",
+  "tasks": [
+    {
+      "id": "pr166",
+      "merge_base": "d816dcdcb6f23480dd59cabe154079e0d0a01233",
+      "merge_commit": "34a47e4f5e29bbfc000a8f4845a678623b040a42",
+      "hidden": [
+        {
+          "path": "tool/test_specs.py",
+          "tests": [
+            "test_legacy_final_debt_check_uses_the_attached_pr_base"
+          ],
+          "digest": "b1248694a2252db15b8a53c2459816226533d2f428d6a3a54cca00da968329d5"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_specs.py"
+        }
+      ],
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "spec_version": 1,
+      "spec_digest": "aef5887422ef39f225c927a6b20edc0d928d80aab6d2af321f36199ef8241c8b",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R8"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr46",
+      "merge_base": "0a24f12becc816f52c57fc6bdc4adc732679072d",
+      "merge_commit": "b1de267a3020867620d1986446b06de3069b22b4",
+      "hidden": [
+        {
+          "path": "tool/test_sources.py",
+          "tests": [
+            "test_the_listing_git_opens_no_window_and_is_otherwise_unchanged"
+          ],
+          "digest": "73eea4e480bf797e9c27f892da5911427434a1bdde2a6cca8b855a9b628ab0b2"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_sources.py"
+        }
+      ],
+      "gate": "python -m pytest tool",
+      "spec_version": 1,
+      "spec_digest": "1616274c9fd09982f7bffbca844b905cd6200b0b738c14acff4fc9d2cd2fc639",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+        "R10",
+        "R11",
+        "R12",
+        "R14",
+        "R15"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr219",
+      "merge_base": "9fc39ca1bdc0d6f68b85c92ef5c1a6d474e3fadb",
+      "merge_commit": "9c88a3a5a605f23241acb504f08599f508e446c7",
+      "hidden": [
+        {
+          "path": "tool/test_planning.py",
+          "tests": [
+            "test_a_decision_record_written_during_the_run_neither_stops_nor_joins_the_publication"
+          ],
+          "digest": "809acde19e4df75a665ab155bc2e14c17e85e1b44d5f2e40a90b59a2b90d1b55"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_planning.py"
+        }
+      ],
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "spec_version": 1,
+      "spec_digest": "4fdda7784d662df39164dea8d04dca6356f19def02e8894a8f2cc2e07c320c68",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr87",
+      "merge_base": "4665d258ef1cad5b1372480240066cda9a759ac7",
+      "merge_commit": "5e66685b0a28d350ad3eaad326e7ce5dbf926a19",
+      "hidden": [
+        {
+          "path": "tool/test_connect.py",
+          "tests": [
+            "test_connection_on_a_pc_with_only_one_cli",
+            "test_connection_probe_does_not_start_an_uninstalled_cli",
+            "test_connection_hub_respects_the_adapter_when_both_clis_are_installed"
+          ],
+          "digest": "4bfd20d956641dd4cbea9541ff739268768455f9b1d826eacd1ee8aac27f1aba"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_connect.py"
+        }
+      ],
+      "gate": "python -m pytest tool",
+      "spec_version": 1,
+      "spec_digest": "69e46f72d36ae58d0dcc6207921c1f1efed4fa33314e9fde208132987f9680a4",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+        "R10",
+        "R11",
+        "R12",
+        "R17"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr28",
+      "merge_base": "2a8de0102d8ad0534b6db412082c70c60970eb5c",
+      "merge_commit": "22fc03bc28cead29f1b0b726e07a4326faad7438",
+      "hidden": [
+        {
+          "path": "tool/test_agent.py",
+          "tests": [
+            "test_a_tool_line_shows_the_command_beside_what_it_is_for"
+          ],
+          "digest": "2982e259af382722ac04a582e9527e34171ea08ea62a705db33f77feb20cdece"
+        },
+        {
+          "path": "tool/test_main.py",
+          "tests": [
+            "test_a_cite_finds_its_file_the_ways_answers_write_it"
+          ],
+          "digest": "26998f3b776995f0a3211f6e2c81972fb573f6ced89c10fc38102fc5a131c7ca"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_agent.py"
+        },
+        {
+          "path": "tool/test_main.py"
+        }
+      ],
+      "gate": "python -m pytest tool",
+      "spec_version": 1,
+      "spec_digest": "5006f9831758de9ebadc54e73ff738ddbed4182465c305e45db7c39db182c1db",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+        "R10",
+        "R11",
+        "R12",
+        "R13",
+        "R14"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr299",
+      "merge_base": "8279639664e198cd31e15e5a9bc64460f2118be3",
+      "merge_commit": "2a5dd42478511ea77e762c2764dae7851eee3e1c",
+      "hidden": [
+        {
+          "path": "tool/test_specs.py",
+          "tests": [
+            "test_the_listing_leaves_out_what_no_screen_reads"
+          ],
+          "digest": "d416d639798dcc439f8925fd785281ed470ffcddcf12e120978dfa0d227ac3b4"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_specs.py"
+        }
+      ],
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "spec_version": 1,
+      "spec_digest": "fa7392f63eb1fbf920bccaf6e609644f827b41807f86cee0546248ae319be8bd",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr191",
+      "merge_base": "528dd93b9c269edbff20a81bc199f4ee122ba2fb",
+      "merge_commit": "f2c6b809f261a942503bd6203fbb4eb9246357c9",
+      "hidden": [
+        {
+          "path": "tool/test_loop_progress.py",
+          "tests": [
+            "test_a_pr_adopted_from_github_repairs_on_the_work_model_the_screen_chose"
+          ],
+          "digest": "2eba005111afc7c643af6a80ab493d90b6ab748803a0de2e4434d8dce3831037"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_loop_progress.py"
+        }
+      ],
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "spec_version": 1,
+      "spec_digest": "e1b7f4021b61f7bbf0331297d30a2bbb5c376eef633ed70d2255d6d3a37447f6",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+        "R10",
+        "R11"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr203",
+      "merge_base": "1d499a6e50187872353705f9f5f586a2bcf31c4f",
+      "merge_commit": "d22e050ddbcee957e065730e4e295399fb50b3a4",
+      "hidden": [
+        {
+          "path": "tool/test_connect.py",
+          "tests": [
+            "test_a_record_read_while_it_is_kept_does_not_fail_the_write"
+          ],
+          "digest": "99ab1bb12963f27a2d5b3b087bdc0c9c4f8c71cbc0d3d2c69349242287456807"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_connect.py"
+        }
+      ],
+      "gate": "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0",
+      "spec_version": 1,
+      "spec_digest": "a91ecb68ae63d5937a69e65ea0a13e711577f76b899625162a954c4afe097c7e",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr98",
+      "merge_base": "c8d586e1a239aefbdc1252e45eba5978e3fffbaa",
+      "merge_commit": "046afc86de5d67d4926517e8cc253abdea3c7c7e",
+      "hidden": [
+        {
+          "path": "tool/test_mobile.py",
+          "tests": [
+            "test_served_apk_survives_the_after_merge_scratch_cleanup"
+          ],
+          "digest": "965533676c914623f67cf06a237ebe6364dedd2003729003156476bf34a5d710"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_mobile.py"
+        }
+      ],
+      "gate": "python -m pytest tool",
+      "spec_version": 1,
+      "spec_digest": "50ff9bded4ea6f890aeb998ddf9b6867c19bce4ef62e77ad8c470f52b4e45b37",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+        "R10"
+      ],
+      "equivalent": true
+    },
+    {
+      "id": "pr125",
+      "merge_base": "f479ec4ed976626b23718da8e0be053ee5c84212",
+      "merge_commit": "6d2996c645c6b0f862617511fdb55892cd83bf1a",
+      "hidden": [
+        {
+          "path": "tool/test_decision_flow.py",
+          "tests": [
+            "test_a_host_answer_after_its_reasoning_is_still_its_answer",
+            "test_text_with_no_single_answer_that_ends_it_settles_nothing"
+          ],
+          "digest": "9a6f6dcee143193db7ed80944b5de53e0558a2b2a6602ea4087eb6080970bd43"
+        }
+      ],
+      "affected": [
+        {
+          "path": "tool/test_decision_flow.py"
+        }
+      ],
+      "gate": "python -m pytest tool",
+      "spec_version": 1,
+      "spec_digest": "2fc2fbd1665b9be167be73b21dd20f00f6e9caad5bd25f8e70bd7cacee40dfcc",
+      "select": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+        "R10",
+        "R11",
+        "R13",
+        "R14"
+      ],
+      "equivalent": true
+    }
+  ],
+  "conditions": {
+    "A": "the spec brief the generator makes with SPEC_VIEWS off (specs.brief), after the work-spec rules",
+    "B": "the enriched spec as the human document (specs.human), after the work-spec rules",
+    "C": "the same frozen snapshot as JSON: id, rev, goal, out, original and specs.agent(spec) with every requirement",
+    "D": "id, rev, goal, out and specs.agent(spec, select); omitted requirements and the original by id from .spec-views/spec.json in the workspace"
+  },
+  "implementer": {
+    "name": "claude-cli",
+    "host": "Claude Code 2.1.319",
+    "model": "claude-opus-5-5",
+    "effort": "high"
+  },
+  "planner": {
+    "model": "claude-opus-5-5",
+    "effort": "high"
+  },
+  "repetitions": 2,
+  "concurrency": 3,
+  "retries": {
+    "per_cell": 0,
+    "infrastructure_reruns": 1
+  },
+  "limits": {
+    "session_seconds": 1800,
+    "cell_usd": 3.0,
+    "min_cell_usd": 0.5,
+    "prepare_usd": 2.0,
+    "tokens_per_cell": null,
+    "tokens_note": "The Claude Code CLI cannot cap tokens; every session is capped in USD (--max-budget-usd) and in wall time instead, the same for all four conditions.",
+    "test_seconds": 900,
+    "gate_seconds": 2400
+  },
+  "ceilings": {
+    "usd": 80,
+    "hours": 11
+  },
+  "pipeline": {
+    "experiment": "main-1-pipeline",
+    "conditions": {
+      "A": "the spec brief the generator makes with SPEC_VIEWS off (specs.brief), after the work-spec rules; made afresh for each repetition from the original text",
+      "D": "id, rev, goal, out and specs.agent(spec, select); omitted requirements and the original by id from .spec-views/spec.json in the workspace; generated, enriched and selected afresh for each repetition"
+    },
+    "pairs": [
+      [
+        "D",
+        "A"
+      ]
+    ],
+    "repetitions": 2,
+    "ceilings": {
+      "usd": 40,
+      "hours": 5
+    },
+    "text": "Each repetition generates a fresh spec from the pull request's original text with the `next` prompt (setting off), then enriches it and selects D's requirements, as the pilot's preparation did once. A runs on that repetition's spec brief and D on its narrowed agent view; one generation is shared by the pair, so the comparison carries generation variance on both sides. Every repetition's spec calls count toward its condition's cost; nothing is cached. Journal: `raw/eval/spec-views/main-1-pipeline.journal.jsonl`."
+  },
+  "budget": {
+    "usd": 120,
+    "hours": 16,
+    "approved_by": "Repository owner, 2026-11-08, through AskUserQuestion in the spec-views-main-experiment session, after the pilot report and the sample-size estimate below: USD 120 and 16 hours.",
+    "split": "Fixed-spec USD 80 and 11 h (preparation, cells and the production baselines); full pipeline USD 40 and 5 h. The two arms run one after the other at concurrency 3, never together.",
+    "per_task_estimate_usd": {
+      "fixed_cells": 6.58,
+      "preparation": 0.44,
+      "pipeline": 3.76,
+      "production_baseline": 0.78,
+      "total": 11.56,
+      "from": "pilot-1 journal means: cells A 0.781, B 1.017, C 0.830, D 0.660 USD (caps counted for uncosted cells); generation 0.201, enrichment 0.207, selection 0.033"
+    }
+  },
+  "sample_size": {
+    "tasks": 10,
+    "pilot_sd_of_paired_difference": 0.548,
+    "derivation": "The pilot's per-task D-A success differences have SD 0.548 (n=6). A 95% interval of half-width 0.05 needs (1.96*0.548/0.05)^2 = 462 tasks; 80% power to detect +10 points needs ((1.96+0.84)*0.548/0.10)^2 = 236. The approved USD 120 at USD 11.56 per task affords 10, so n = 10, expected half-width about 0.34. The sample cannot confirm either adoption path unless the effect is very large; a result without a supported judgment is written as further verification needed.",
+    "draw": "Tasks are taken in the seeded order (`seed`) from the eligible held-out pool (`main-tasks.json`, `pool`), the first n the owner vetted; nothing is chosen by hand after the draw."
+  },
+  "candidate": {
+    "condition": "D",
+    "why": "fixed from the pilot report: D, the narrowed agent JSON, was the only condition not below A on verified success (0.500 against A's 0.500; B and C 0.417) at nearly the same cost per verified success (USD 1.651 against 1.633). Chosen by the owner on 2026-11-08 before any main-run cell.",
+    "setting_gap": "`SPEC_VIEWS=on` today appends the full agent view (`specs.agent(spec)`) after A's brief, which is none of A to D. Adopting D therefore needs a follow-up change that makes the setting render D's selection before the setting is turned on."
+  },
+  "pairs": [
+    [
+      "A",
+      "B"
+    ],
+    [
+      "B",
+      "C"
+    ],
+    [
+      "C",
+      "D"
+    ],
+    [
+      "D",
+      "A"
+    ]
+  ],
+  "metrics": {
+    "primary": "verified task success: every hidden test passes, the affected existing test files (as the merge base wrote them) pass, and the diff changes no forbidden path; a timeout, budget or ceiling stop, or an exit without verification is a failure; the session's done-report is never evidence",
+    "unit": "one task, its repetitions averaged with equal weight per task; paired differences per task",
+    "secondary": [
+      "hidden-test pass fraction",
+      "regressions of affected tests",
+      "critical regressions",
+      "forbidden changes",
+      "failure causes",
+      "retries and infrastructure reruns",
+      "tokens",
+      "wall time",
+      "USD per cell",
+      "cost per verified success including failed runs and first-run spec generation"
+    ],
+    "definitions": {
+      "requirement satisfaction": "the fraction of a cell's hidden tests (the pull request's own tests of what it asked for) that passed, averaged over cells.",
+      "regressions": "cells whose affected existing tests, as the merge base wrote them, failed.",
+      "critical regressions": "cells meeting `critical_regression`.",
+      "missing critical conditions": "failed cells that changed non-test code, kept every affected test passing and still failed a hidden test: an implementation that missed a condition the request's tests check.",
+      "unsupported policy additions": "requirements in the specs a condition ran whose `source.kind` is `policy` and whose status is `assumed` or `undecided`: rules the enrichment added without a confirmed ground. A has none (no requirements).",
+      "unnecessary holds": "specs on which `spec_views.blocked` names a dependency on an undecided requirement, so production's first turn would have held for a person, although the merged pull request shows the task was answerable without one.",
+      "retries": "per-cell retries (fixed at 0) and infrastructure reruns.",
+      "cost per success": "every attempt's USD (a cost the CLI never reported at its cap) plus every spec call the condition needs, divided by verified successes; the ratio's interval resamples tasks."
+    }
+  },
+  "adoption": {
+    "requires": [
+      "fixed",
+      "pipeline"
+    ],
+    "quality": {
+      "min_difference": 0.05,
+      "min_low": 0.0,
+      "max_ratio_high": 1.1
+    },
+    "cost": {
+      "min_low": -0.02,
+      "max_ratio": 0.85,
+      "max_ratio_high": 1.0
+    },
+    "text": "Each comparison is the candidate D against A, success as a difference in rate and cost as the ratio of cost per verified success. Quality path: difference at least +0.05 with the 95% interval's lower end above 0, and the ratio's upper end at most 1.10. Cost path: the difference's lower end at least -0.02, the ratio at most 0.85 (15% cheaper per success) and its upper end below 1. A comparison is rejected when a critical regression blocks it or its intervals exclude both paths (difference upper end below +0.05 or ratio lower end above 1.10, and difference upper end below -0.02 or ratio lower end above 0.85); otherwise, when neither path passes, it needs further verification. These are the operating defaults the request gave, since no product criterion for spec quality is recorded in this repository; none was derived from the pilot's results. Adoption also needs implementation pass and experiment validity."
+  },
+  "critical_regression": "A cell whose diff changes a forbidden path (the evaluation config or frozen specs, a spec record, D's spec copy, a hidden test's placed name), whose affected existing tests fail, or which deletes a tracked file. Relative to A (the owner's choice, 2026-11-08): over the (task, repetition) pairs both ran, a candidate cell that changes a forbidden path or deletes a tracked file blocks adoption outright; failing affected tests block only when the candidate has more critical regressions than A.",
+  "infrastructure_rerun": "A cell whose session produced no model output and was not stopped by the harness (the CLI failed to start, or the API failed before any turn), or whose harness step raised, is journalled with infra true and run once more; the original row stays. A second infrastructure failure is final and counts as a failure. A timeout, budget or ceiling stop is never an infrastructure failure.",
+  "runner_difference": "The controlled runner differs from production: a fresh one-commit repository from git archive instead of a worktree (no history, no remote, no PR or review loop); one isolated Claude Code session per cell (--system-prompt-file replacing the host prompt, no user or project settings, hooks, CLAUDE.md, MCP servers or AskUserQuestion, nothing persisted) instead of the app's write session with hooks, Jev's first-turn file filter and a person to ask; the first turn is only `Start.`; verification runs the hidden and affected tests rather than the adapter gate. The production-runner baseline runs condition A once per task with the app's session flags (host prompt kept, the person's settings and hooks loaded) and adds the merge base's Python gate command; the npm and browser steps are left out because the archived workspace has no node_modules.",
+  "held_out": {
+    "configs": [
+      "eval/spec-views/pilot-1.json"
+    ],
+    "excluded": [
+      "pr304",
+      "pr198",
+      "pr260",
+      "pr164",
+      "pr106",
+      "pr161",
+      "pr201",
+      "pr284",
+      "pr309",
+      "pr311"
+    ],
+    "why": "pilot-1's six tasks (pr198 was also tuned on: its affected test was narrowed during the pilot), the two undecided tasks kept apart in tasks.json, and the two pull requests that built the feature and its harness."
+  },
+  "implementation": {
+    "tests": [
+      "tool/test_spec_views.py"
+    ],
+    "why": "the first task's tests: the requirements record, both renderers, the setting-off byte identity with main at fc886a3, and the harness. Run at the start of every main-run invocation; a failure refuses the run."
+  },
+  "setting": "`SPEC_VIEWS` in the hub `.env` (read through `common.settings.pick`) stays `off`, its default, whatever this report says. It is turned on only when the adoption judgment above reads adopt and the owner turns it on; for candidate D that also needs the follow-up change named under the candidate, because the setting today renders the full agent view, not D. Rollback: set `SPEC_VIEWS=off` (or delete the line) in the hub `.env` and restart wiki-agent; sessions made after that get exactly main's input again (`tool/test_spec_views.py` holds the byte identity), and a session already running keeps its prompt until it is rebuilt.",
+  "report": {
+    "resamples": 2000,
+    "markdown": "docs/research/spec-views-main.md"
+  },
+  "adjustments": []
+}

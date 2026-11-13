@@ -1,0 +1,499 @@
+{
+  "task": "pr28",
+  "reference": {
+    "merge_commit": {
+      "hidden": {
+        "tool/test_agent.py::test_a_tool_line_shows_the_command_beside_what_it_is_for": "passed",
+        "tool/test_main.py::test_a_cite_finds_its_file_the_ways_answers_write_it": "passed"
+      },
+      "affected": {
+        "tool/test_agent.py": true,
+        "tool/test_main.py": true
+      }
+    },
+    "merge_base": {
+      "hidden": {
+        "tool/test_agent.py::test_a_tool_line_shows_the_command_beside_what_it_is_for": "failed",
+        "tool/test_main.py::test_a_cite_finds_its_file_the_ways_answers_write_it": "failed"
+      },
+      "affected": {
+        "tool/test_agent.py": true,
+        "tool/test_main.py": true
+      }
+    },
+    "discriminates": true
+  },
+  "baseline": {
+    "id": "pr28",
+    "rev": 1,
+    "goal": "A work turn counts as running until the server's stream closes. While it runs, the screen shows what is running (including the gate after the answer), a live clock that survives a reattach, and the actual Bash command. A note written meanwhile waits and is sent when the turn ends. Clicking a quoted source opens it even when it is a hub page or a bare file name.",
+    "out": [
+      "How long the gate takes or what it runs (`python -m pytest tool` stays as it is)",
+      "The server's single-turn hold per worktree and its 409 for a second sender (another window can still get it)",
+      "How the answer itself quotes sources (fixed on the reading side, not by changing prompts)"
+    ],
+    "done": [
+      "In `web/src/lib/work.ts`, a `done` event no longer ends the turn: `pending` stays true and the reattach logic still treats the turn as unfinished until the stream closes. Steps that arrive after `done` (the gate's notes from `specs.check`) show under the answer in the same turn.",
+      "Every event `Run.put` emits carries a server timestamp `ts` (epoch seconds), for Claude and Codex turns alike, and `/api/work/events` replays it. A test in `tool/test_main.py` (or the work tests) asserts `ts` is present and does not decrease across a turn's events, including the gate's notes.",
+      "The latest step of a running turn shows `⟳ 실행 중 · m분 s초`, counted from that step's server `ts`. It shows `답을 기다린다` while an approval is open and `마무리 중` after the answer has arrived. The labels are the same for Claude and Codex turns. After a page reload mid-turn the clock continues from the server time, not from 0.",
+      "An instruction sent while the turn is still running (including after its answer) is shown as `대기 · 이 턴이 끝나면 보낸다`, can be cancelled, and is sent as the next turn once the stream closes. Sending this way gets no 409.",
+      "A Claude Bash tool line shows both description and command, e.g. `Bash · Run the tests · $ python -m pytest -q tool`. Other tools keep their current one-line summary. A unit test covers `_tool_brief` for Bash with and without `description`.",
+      "`/api/file` resolves in order: the path in the checkout → a hub page (`craft/…`, `operator/…`, `.md` optional) under the wiki root → the one file in the checkout whose path ends with the given name. If several match, it picks the most recently touched: uncommitted changes first (by mtime), then by last commit time. If they are still tied, it returns the candidates and the screen lists them as clickable choices. It never serves anything outside the checkout or the wiki root. Tests in `tool/test_main.py` cover each branch, including the tie and the outside-root refusal.",
+      "Every `path[:line]` citation in the existing answer records that used to fail is replayed against the new `/api/file`. All of them open, and any that do not are listed by name in the PR.",
+      "`npm run build` passes in `web/`",
+      "Observed in the app window on a real running turn: the gate step appears under the answer with a running clock, a reload keeps the clock going, a note written after the answer shows as waiting and goes out as the next turn when the gate finishes, and a Bash line shows `$ command`. If the session cannot drive the window itself, it stops before the done report and asks the person to confirm this."
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/work.py:374",
+        "tool/main/work.py:468",
+        "tool/main/work.py:547",
+        "tool/main/specs.py:786",
+        "tool/agent/chat_session.py:896",
+        "tool/main/app.py:180",
+        "tool/main/channels.py:17",
+        "tool/test_main.py:684",
+        "web/src/lib/work.ts:70",
+        "web/src/lib/work.ts:150",
+        "web/src/lib/api.ts:227",
+        "web/src/components/Query.tsx",
+        "web/src/components/Agent.tsx"
+      ],
+      "rules": [
+        "craft/do-the-whole-instruction"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "The end of a turn is the close of the server's stream, not the `done` event",
+        "why": "`run_turn` keeps holding the worktree through `specs.check` (the ~6 min gate) after `done`, and releases before `run.finish()`. So the stream close is the first moment a new turn will not hit 409.",
+        "rejected": "Moving the gate off the turn's hold onto a separate job: it would let another write land while the gate runs, which the hold exists to prevent"
+      },
+      {
+        "what": "The server stamps `ts` in `Run.put`. The screen corrects for clock skew once per stream (receipt time vs. first event `ts`) and counts the clock from the latest step's `ts`.",
+        "why": "One place covers both hosts and the gate notes. Server time makes a reattached screen continue the clock instead of restarting it.",
+        "rejected": "Timing on the client from when it saw the event: a reload would reset the clock to 0"
+      },
+      {
+        "what": "Instructions written during a running turn are queued per worktree, in order, each cancellable, and sent one by one after each stream closes",
+        "why": "Settled without the person: an ordered queue keeps every note and never sends two into one hold",
+        "rejected": "Keeping only the last note (silently drops earlier ones) or steering it into the running turn (after the answer the agent is no longer listening)"
+      },
+      {
+        "what": "The Bash brief appends `$ <command>` after the description, keeping the existing collapsed-whitespace truncation",
+        "why": "`_tool_brief` stops at the first key, so `description` hid the command entirely",
+        "rejected": "Showing only the command: the description is what the person reads first"
+      },
+      {
+        "what": "`/api/file` falls back checkout → hub page → unique name suffix. Ties are broken by recency (uncommitted mtime, then last commit), and a remaining tie returns candidates as data in a 200 reply rather than an error.",
+        "why": "Answers quote hub pages and bare names (`7-verify.md`, `Query.tsx`). The recently touched file is almost always the one meant. When it is not decidable, listing candidates beats a wrong file.",
+        "rejected": "Returning the first match: it silently opens the wrong file when names repeat"
+      }
+    ]
+  },
+  "enriched": {
+    "id": "pr28",
+    "rev": 1,
+    "goal": "A work turn counts as running until the server's stream closes. While it runs, the screen shows what is running (including the gate after the answer), a live clock that survives a reattach, and the actual Bash command. A note written meanwhile waits and is sent when the turn ends. Clicking a quoted source opens it even when it is a hub page or a bare file name.",
+    "out": [
+      "How long the gate takes or what it runs (`python -m pytest tool` stays as it is)",
+      "The server's single-turn hold per worktree and its 409 for a second sender (another window can still get it)",
+      "How the answer itself quotes sources (fixed on the reading side, not by changing prompts)"
+    ],
+    "done": [
+      "In `web/src/lib/work.ts`, a `done` event no longer ends the turn: `pending` stays true and the reattach logic still treats the turn as unfinished until the stream closes. Steps that arrive after `done` (the gate's notes from `specs.check`) show under the answer in the same turn.",
+      "Every event `Run.put` emits carries a server timestamp `ts` (epoch seconds), for Claude and Codex turns alike, and `/api/work/events` replays it. A test in `tool/test_main.py` (or the work tests) asserts `ts` is present and does not decrease across a turn's events, including the gate's notes.",
+      "The latest step of a running turn shows `⟳ 실행 중 · m분 s초`, counted from that step's server `ts`. It shows `답을 기다린다` while an approval is open and `마무리 중` after the answer has arrived. The labels are the same for Claude and Codex turns. After a page reload mid-turn the clock continues from the server time, not from 0.",
+      "An instruction sent while the turn is still running (including after its answer) is shown as `대기 · 이 턴이 끝나면 보낸다`, can be cancelled, and is sent as the next turn once the stream closes. Sending this way gets no 409.",
+      "A Claude Bash tool line shows both description and command, e.g. `Bash · Run the tests · $ python -m pytest -q tool`. Other tools keep their current one-line summary. A unit test covers `_tool_brief` for Bash with and without `description`.",
+      "`/api/file` resolves in order: the path in the checkout → a hub page (`craft/…`, `operator/…`, `.md` optional) under the wiki root → the one file in the checkout whose path ends with the given name. If several match, it picks the most recently touched: uncommitted changes first (by mtime), then by last commit time. If they are still tied, it returns the candidates and the screen lists them as clickable choices. It never serves anything outside the checkout or the wiki root. Tests in `tool/test_main.py` cover each branch, including the tie and the outside-root refusal.",
+      "Every `path[:line]` citation in the existing answer records that used to fail is replayed against the new `/api/file`. All of them open, and any that do not are listed by name in the PR.",
+      "`npm run build` passes in `web/`",
+      "Observed in the app window on a real running turn: the gate step appears under the answer with a running clock, a reload keeps the clock going, a note written after the answer shows as waiting and goes out as the next turn when the gate finishes, and a Bash line shows `$ command`. If the session cannot drive the window itself, it stops before the done report and asks the person to confirm this."
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/work.py:374",
+        "tool/main/work.py:468",
+        "tool/main/work.py:547",
+        "tool/main/specs.py:786",
+        "tool/agent/chat_session.py:896",
+        "tool/main/app.py:180",
+        "tool/main/channels.py:17",
+        "tool/test_main.py:684",
+        "web/src/lib/work.ts:70",
+        "web/src/lib/work.ts:150",
+        "web/src/lib/api.ts:227",
+        "web/src/components/Query.tsx",
+        "web/src/components/Agent.tsx"
+      ],
+      "rules": [
+        "craft/do-the-whole-instruction"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "The end of a turn is the close of the server's stream, not the `done` event",
+        "why": "`run_turn` keeps holding the worktree through `specs.check` (the ~6 min gate) after `done`, and releases before `run.finish()`. So the stream close is the first moment a new turn will not hit 409.",
+        "rejected": "Moving the gate off the turn's hold onto a separate job: it would let another write land while the gate runs, which the hold exists to prevent"
+      },
+      {
+        "what": "The server stamps `ts` in `Run.put`. The screen corrects for clock skew once per stream (receipt time vs. first event `ts`) and counts the clock from the latest step's `ts`.",
+        "why": "One place covers both hosts and the gate notes. Server time makes a reattached screen continue the clock instead of restarting it.",
+        "rejected": "Timing on the client from when it saw the event: a reload would reset the clock to 0"
+      },
+      {
+        "what": "Instructions written during a running turn are queued per worktree, in order, each cancellable, and sent one by one after each stream closes",
+        "why": "Settled without the person: an ordered queue keeps every note and never sends two into one hold",
+        "rejected": "Keeping only the last note (silently drops earlier ones) or steering it into the running turn (after the answer the agent is no longer listening)"
+      },
+      {
+        "what": "The Bash brief appends `$ <command>` after the description, keeping the existing collapsed-whitespace truncation",
+        "why": "`_tool_brief` stops at the first key, so `description` hid the command entirely",
+        "rejected": "Showing only the command: the description is what the person reads first"
+      },
+      {
+        "what": "`/api/file` falls back checkout → hub page → unique name suffix. Ties are broken by recency (uncommitted mtime, then last commit), and a remaining tie returns candidates as data in a 200 reply rather than an error.",
+        "why": "Answers quote hub pages and bare names (`7-verify.md`, `Query.tsx`). The recently touched file is almost always the one meant. When it is not decidable, listing candidates beats a wrong file.",
+        "rejected": "Returning the first match: it silently opens the wrong file when names repeat"
+      }
+    ],
+    "original": "fix: 도는 작업이 보이게 — 게이트까지 턴으로, 실행 중 시계, 실제 명령어, 출처 찾기\n\n## 무엇이 문제였나\n\n- **P0 — 멈춘 건지 모른다.** 에이전트가 답한 뒤에도 서버는 작업트리를 쥔 채 명세 게이트(`python -m pytest tool`, 약 6분)를 돌린다. 화면은 답에서 턴을 끝냈기 때문에, 그동안 적은 다음 지시가 새 턴으로 나가 409 \"이 작업트리의 에이전트가 아직 돌고 있다\" 를 받았다. 무엇이 도는지는 화면 어디에도 없었다.\n- 출처를 누르면 \"그 파일이 없다\" 가 자주 떴다. 답이 허브 문서(`craft/…`, `operator/…`)나 파일 이름만(`7-verify.md`, `Query.tsx`) 인용하기 때문이다.\n\n## 바꾼 것\n\n- 턴은 서버의 실행이 끝날 때(스트림이 닫힐 때)까지 도는 것으로 본다. 답 뒤에 온 단계(게이트)는 답 아래에 선다.\n- 가장 최근 단계에 \"⟳ 실행 중 · m분 s초\". 모든 턴 이벤트에 서버 시각 `ts` 를 실어, 다시 붙어도 시계가 이어진다. 열린 승인은 \"답을 기다린다\", 답 뒤에는 \"마무리 중\". 두 호스트가 같다.\n- 답 뒤에 적은 지시는 \"대기 · 이 턴이 끝나면 보낸다\" 로 두었다가 끝나면 다음 턴으로 보낸다(취소 가능).\n- Claude 도구 줄에 설명 옆 실제 명령어: `Bash · Run the tests · $ python -m pytest -q tool`.\n- `/api/file`: 체크아웃 기준 → 허브 문서 → 그 이름으로 끝나는 파일 하나. 여럿이면 가장 최근에 손댄 것(커밋 안 된 것, 그다음 커밋 순), 그래도 같으면 후보를 알려 준다. 기록의 실패 인용을 모두 다시 돌려 전부 열리는 것을 확인했다.\n\n## 확인\n\n- `python -m pytest -q tool` — 490 passed (이후 `tool/test_main.py` 51 passed 재확인)\n- `npm run build` 통과\n- 창에서 실제 도는 턴으로 보는 확인은 아직\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "On the screen a work turn stays running after its `done` event until the server's event stream closes. Steps that arrive after `done` (the gate's notes) are drawn under the answer in the same turn.",
+        "source": {
+          "kind": "original",
+          "locator": "PR body, 바꾼 것 bullet 1"
+        },
+        "status": "confirmed",
+        "preconditions": [
+          "`run_turn` emits `done`, then runs `specs.check` while still holding the worktree, then releases and calls `run.finish()`"
+        ],
+        "postconditions": [
+          "`pending` stays true from `done` until the stream closes",
+          "A reattach mid-gate treats the turn as unfinished and keeps tailing"
+        ],
+        "invariants": [
+          "A turn that fails before `done` still ends on stream close as before"
+        ],
+        "context": [
+          "web/src/lib/work.ts",
+          "tool/main/work.py:468",
+          "tool/main/work.py:409"
+        ],
+        "verify": [
+          {
+            "item": "In `web/src/lib/work.ts`, a `done` event no longer ends the turn: `pending` stays true and the reattach logic still treats the turn as unfinished until the stream closes. Steps that arrive after `done` (the gate's notes from `specs.check`) show under the answer in the same turn.",
+            "expected": "The gate's notes appear under the answer while the turn still shows as running, and the turn ends only when the stream closes"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "Every event a turn's `Run.put` appends carries a server timestamp `ts` in epoch seconds, for Claude and Codex turns and for the gate's notes, and replay through `/api/work/events` returns the same `ts`.",
+        "source": {
+          "kind": "original",
+          "locator": "PR body, 바꾼 것 bullet 2"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "`ts` never decreases across a turn's events",
+          "`seq` and `turn` stay as they are"
+        ],
+        "context": [
+          "tool/main/work.py:374",
+          "tool/main/work.py:573",
+          "tool/test_main.py"
+        ],
+        "verify": [
+          {
+            "item": "Every event `Run.put` emits carries a server timestamp `ts` (epoch seconds), for Claude and Codex turns alike, and `/api/work/events` replays it. A test in `tool/test_main.py` (or the work tests) asserts `ts` is present and does not decrease across a turn's events, including the gate's notes.",
+            "expected": "The test passes, and replayed events carry the same `ts` they were emitted with"
+          }
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "The latest step of a running turn shows a live clock `⟳ 실행 중 · m분 s초` counted from that step's server `ts`. It shows `답을 기다린다` while an approval is open and `마무리 중` once the answer has arrived. The labels are the same for both hosts, and the clock keeps counting from server time after a reload.",
+        "source": {
+          "kind": "original",
+          "locator": "PR body, 바꾼 것 bullet 2"
+        },
+        "status": "confirmed",
+        "failures": [
+          "A reload restarts the clock at 0",
+          "Codex turns show different labels from Claude turns"
+        ],
+        "depends_on": [
+          "R1",
+          "R2"
+        ],
+        "context": [
+          "web/src/lib/work.ts"
+        ],
+        "verify": [
+          {
+            "item": "The latest step of a running turn shows `⟳ 실행 중 · m분 s초`, counted from that step's server `ts`. It shows `답을 기다린다` while an approval is open and `마무리 중` after the answer has arrived. The labels are the same for Claude and Codex turns. After a page reload mid-turn the clock continues from the server time, not from 0.",
+            "expected": "The labels and the clock behave as described on both hosts and across a reload"
+          }
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "An instruction written while a turn is running, including after its answer, waits as `대기 · 이 턴이 끝나면 보낸다`. It can be cancelled and is sent as the next turn once the stream closes, so it never gets the 409 for a held worktree.",
+        "source": {
+          "kind": "original",
+          "locator": "PR body, 바꾼 것 bullet 3"
+        },
+        "status": "assumed",
+        "invariants": [
+          "The server's hold and its 409 for another sender are unchanged"
+        ],
+        "depends_on": [
+          "R1"
+        ],
+        "context": [
+          "web/src/lib/work.ts",
+          "tool/main/work.py:547"
+        ],
+        "verify": [
+          {
+            "item": "An instruction sent while the turn is still running (including after its answer) is shown as `대기 · 이 턴이 끝나면 보낸다`, can be cancelled, and is sent as the next turn once the stream closes. Sending this way gets no 409.",
+            "expected": "A waiting note is shown, can be cancelled, and goes out as the next turn after the stream closes without a 409"
+          }
+        ]
+      },
+      {
+        "id": "R5",
+        "text": "A Claude Bash tool line shows the description followed by `$ <command>`. Without a description it shows the command alone. Other tools keep their current brief.",
+        "source": {
+          "kind": "original",
+          "locator": "PR body, 바꾼 것 bullet 4"
+        },
+        "status": "confirmed",
+        "context": [
+          "tool/agent/chat_session.py:896"
+        ],
+        "verify": [
+          {
+            "item": "A Claude Bash tool line shows both description and command, e.g. `Bash · Run the tests · $ python -m pytest -q tool`. Other tools keep their current one-line summary. A unit test covers `_tool_brief` for Bash with and without `description`.",
+            "expected": "The `_tool_brief` tests pass for Bash with and without `description`, and the output for other tools is unchanged"
+          }
+        ]
+      },
+      {
+        "id": "R6",
+        "text": "`/api/file` resolves a quoted path in this order: the checkout, then a hub page under the wiki root (the `WIKI_ROOT` hub, `.md` optional), then the unique checkout file whose path ends with the name. A tie is broken by recency, and a tie that remains returns the candidates in a 200 reply. The screen offers those candidates as clickable choices.",
+        "source": {
+          "kind": "original",
+          "locator": "PR body, 바꾼 것 bullet 5"
+        },
+        "status": "assumed",
+        "invariants": [
+          "Nothing outside the checkout or the wiki root is ever served",
+          "A path that resolves in the checkout today returns the same lines as before"
+        ],
+        "failures": [
+          "`../` escapes and absolute paths outside both roots get 404"
+        ],
+        "context": [
+          "tool/main/app.py:180",
+          "tool/search/__init__.py:36",
+          "web/src/lib/api.ts:227",
+          "tool/test_main.py:684"
+        ],
+        "verify": [
+          {
+            "item": "`/api/file` resolves in order: the path in the checkout → a hub page (`craft/…`, `operator/…`, `.md` optional) under the wiki root → the one file in the checkout whose path ends with the given name. If several match, it picks the most recently touched: uncommitted changes first (by mtime), then by last commit time. If they are still tied, it returns the candidates and the screen lists them as clickable choices. It never serves anything outside the checkout or the wiki root. Tests in `tool/test_main.py` cover each branch, including the tie and the outside-root refusal.",
+            "expected": "Tests cover each branch, the tie and the outside-root refusal, and all pass"
+          }
+        ]
+      },
+      {
+        "id": "R7",
+        "text": "Every `path[:line]` citation in the stored answer records that used to fail to open is replayed against the new `/api/file`, and any that still fail are named in the PR.",
+        "source": {
+          "kind": "original",
+          "locator": "PR body, 바꾼 것 bullet 5"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R6"
+        ],
+        "context": [
+          "tool/main/work.py:500"
+        ],
+        "verify": [
+          {
+            "item": "Every `path[:line]` citation in the existing answer records that used to fail is replayed against the new `/api/file`. All of them open, and any that do not are listed by name in the PR.",
+            "expected": "Every citation opens, or the PR lists by name each one that does not"
+          }
+        ]
+      },
+      {
+        "id": "R8",
+        "text": "The web app still builds.",
+        "source": {
+          "kind": "original",
+          "locator": "PR body, 확인 bullet 2"
+        },
+        "status": "confirmed",
+        "context": [
+          "web/"
+        ],
+        "verify": [
+          {
+            "item": "`npm run build` passes in `web/`",
+            "expected": "The build exits 0"
+          }
+        ]
+      },
+      {
+        "id": "R9",
+        "text": "The behaviour is observed in the app window on a real running turn. If the write session cannot drive the window, it stops before its done report and asks the person to confirm.",
+        "source": {
+          "kind": "original",
+          "locator": "PR body, 확인 bullet 3"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R1",
+          "R3",
+          "R4",
+          "R5"
+        ],
+        "verify": [
+          {
+            "item": "Observed in the app window on a real running turn: the gate step appears under the answer with a running clock, a reload keeps the clock going, a note written after the answer shows as waiting and goes out as the next turn when the gate finishes, and a Bash line shows `$ command`. If the session cannot drive the window itself, it stops before the done report and asks the person to confirm this.",
+            "expected": "The session or the person observes each of the four behaviours and records that in the PR"
+          }
+        ]
+      },
+      {
+        "id": "R10",
+        "text": "A turn ends at the close of the server's stream, not at the `done` event. The gate stays inside the turn's hold rather than moving to a separate job.",
+        "source": {
+          "kind": "decision",
+          "locator": "spec decisions[0]"
+        },
+        "status": "confirmed",
+        "context": [
+          "tool/main/work.py:491",
+          "tool/main/work.py:503"
+        ]
+      },
+      {
+        "id": "R11",
+        "text": "The server stamps `ts` in `Run.put`. The screen corrects for clock skew once per stream (receipt time vs. the first event's `ts`) and counts from the latest step's `ts`, never from the client's own receipt time alone.",
+        "source": {
+          "kind": "decision",
+          "locator": "spec decisions[1]"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R2"
+        ]
+      },
+      {
+        "id": "R12",
+        "text": "Notes written during a running turn are queued per worktree, in order, each cancellable, and sent one at a time after each stream closes. None is dropped and none is steered into the running turn.",
+        "source": {
+          "kind": "decision",
+          "locator": "spec decisions[2]"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R4"
+        ]
+      },
+      {
+        "id": "R13",
+        "text": "The Bash brief appends `$ <command>` after the description and keeps the existing collapsed-whitespace truncation.",
+        "source": {
+          "kind": "decision",
+          "locator": "spec decisions[3]"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R5"
+        ]
+      },
+      {
+        "id": "R14",
+        "text": "`/api/file` falls back checkout → hub page → unique name suffix. Ties are broken by uncommitted mtime, then last commit time, and a remaining tie returns candidates as data in a 200 reply rather than the first match or an error.",
+        "source": {
+          "kind": "decision",
+          "locator": "spec decisions[4]"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R6"
+        ]
+      }
+    ],
+    "spec_version": 1,
+    "spec_digest": "5006f9831758de9ebadc54e73ff738ddbed4182465c305e45db7c39db182c1db"
+  },
+  "select": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
+    "R8",
+    "R9",
+    "R10",
+    "R11",
+    "R12",
+    "R13",
+    "R14"
+  ],
+  "costs": {
+    "generation": {
+      "usd": 0.320463,
+      "tokens": {
+        "input": 18,
+        "output": 6414,
+        "cache_read": 131995,
+        "cache_write": 20714
+      },
+      "turns": 18
+    },
+    "enrichment": {
+      "usd": 0.2508988,
+      "tokens": {
+        "input": 10,
+        "output": 7986,
+        "cache_read": 51014,
+        "cache_write": 10117
+      },
+      "turns": 8
+    },
+    "selection": {
+      "usd": 0.041256,
+      "tokens": {
+        "input": 2,
+        "output": 280,
+        "cache_read": 0,
+        "cache_write": 4456
+      },
+      "turns": 1
+    }
+  },
+  "selection_cost": {
+    "usd": 0.041256,
+    "tokens": {
+      "input": 2,
+      "output": 280,
+      "cache_read": 0,
+      "cache_write": 4456
+    },
+    "turns": 1
+  }
+}

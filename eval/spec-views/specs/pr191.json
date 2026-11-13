@@ -1,0 +1,425 @@
+{
+  "task": "pr191",
+  "reference": {
+    "merge_commit": {
+      "hidden": {
+        "tool/test_loop_progress.py::test_a_pr_adopted_from_github_repairs_on_the_work_model_the_screen_chose": "passed"
+      },
+      "affected": {
+        "tool/test_loop_progress.py": true
+      }
+    },
+    "merge_base": {
+      "hidden": {
+        "tool/test_loop_progress.py::test_a_pr_adopted_from_github_repairs_on_the_work_model_the_screen_chose": "failed"
+      },
+      "affected": {
+        "tool/test_loop_progress.py": true
+      }
+    },
+    "discriminates": true
+  },
+  "baseline": {
+    "id": "pr191",
+    "rev": 1,
+    "goal": "The review-loop button sends the work model chosen in the agent box. The server fills only specs with no work model (cell) with that value, so a PR brought in from GitHub runs its repair turns on the chosen model, and a spec that already has a model is never changed.",
+    "out": [
+      "The reviewer model (the review_model and review_effort settings) and how it is chosen",
+      "How startSpec puts cell into specs started as tasks in the app (#61–#67 already behave correctly)",
+      "Correcting the work-cell records already made for rfg_rag #74–#76, or rerunning them",
+      "The startLoops call in Review.tsx (the claude-cloud restart): it gets no new argument"
+    ],
+    "done": [
+      "python -m ruff check tool laya",
+      "test_a_pr_adopted_from_github_repairs_on_the_work_model_the_screen_chose exists and passes. It checks three things: after POST /api/loops with a choice, the spec of a newly adopted PR has cell equal to that choice; the repair turn opens work.session with that model, effort and fast; and when the loop is started again with a different choice, an already-set cell does not change",
+      "The same test fails on main before the fix, because cell stays empty",
+      "Starting a loop with no choice or an empty choice (model empty) leaves an existing spec's cell as it is and creates no new cell, and a test checks this",
+      "api.startLoops sends the choice in the body, and App.tsx onLoop passes the current choice (the agent box's choice state); tsc is left to CI's web check if node_modules is missing",
+      "ruff, lint and debt pass; if the loop.py ratchet goes up, the new value and the reason are recorded in the ratchet record"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/loop.py:934",
+        "tool/main/loop.py:2513",
+        "tool/main/loop.py:2560",
+        "tool/main/loop.py:2570",
+        "tool/main/loop.py:2588",
+        "tool/main/loop.py:2593",
+        "web/src/lib/api.ts:542",
+        "web/src/lib/api.ts:633",
+        "web/src/App.tsx:82",
+        "web/src/App.tsx:610",
+        "web/src/components/Review.tsx:212",
+        "tool/test_planning.py:262"
+      ],
+      "rules": [
+        "Only an empty cell is filled; a work model already set on a spec is never overwritten"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Add an optional cell field to the Pick body, shaped {model, effort, fast?} like startSpec's choice, and have take() write it to the spec only when spec.cell is empty or has an empty model",
+        "why": "The repair turn (loop.py:934) reads model, effort and fast together from spec['cell'], so it has to be recorded in the shape startSpec already uses for those specs to behave the same",
+        "rejected": "Sending only the model name: effort and fast would still be empty and fall back to defaults, so the turn would differ from what the screen chose"
+      },
+      {
+        "what": "Fill an empty cell on every take() path: a new PR (minimal), attaching to an existing unlinked spec (attach), and starting a spec that already exists (state PR #, mergeable, stalled, proceed)",
+        "why": "Specs already adopted, like #74–#76, have to get the model on their next loop start, and checking that 'an already-set model doesn't change on the next start' means the restart path goes through the same rule",
+        "rejected": "Filling only in minimal(): already-adopted specs with an empty cell would stay on Claude's default model forever"
+      },
+      {
+        "what": "When no choice arrives, or its model is empty, the server records nothing (settled without asking the person)",
+        "why": "Recording an empty value as cell would make it look like a choice had been made, and the next start with a real choice would then count as 'already set' and leave it alone",
+        "rejected": "Storing the empty choice as cell anyway"
+      },
+      {
+        "what": "Review.tsx's startLoops call (the claude-cloud restart) is not changed; the field is optional so it keeps its current behaviour (settled without asking the person)",
+        "why": "The request names the review-loop button, and that screen has no agent-box choice nearby; because the server treats a missing value as 'leave it', the call stays safe",
+        "rejected": "Wiring choice through to Review.tsx too: it widens the change past the request"
+      }
+    ]
+  },
+  "enriched": {
+    "id": "pr191",
+    "rev": 1,
+    "goal": "The review-loop button sends the work model chosen in the agent box. The server fills only specs with no work model (cell) with that value, so a PR brought in from GitHub runs its repair turns on the chosen model, and a spec that already has a model is never changed.",
+    "out": [
+      "The reviewer model (the review_model and review_effort settings) and how it is chosen",
+      "How startSpec puts cell into specs started as tasks in the app (#61–#67 already behave correctly)",
+      "Correcting the work-cell records already made for rfg_rag #74–#76, or rerunning them",
+      "The startLoops call in Review.tsx (the claude-cloud restart): it gets no new argument"
+    ],
+    "done": [
+      "python -m ruff check tool laya",
+      "test_a_pr_adopted_from_github_repairs_on_the_work_model_the_screen_chose exists and passes. It checks three things: after POST /api/loops with a choice, the spec of a newly adopted PR has cell equal to that choice; the repair turn opens work.session with that model, effort and fast; and when the loop is started again with a different choice, an already-set cell does not change",
+      "The same test fails on main before the fix, because cell stays empty",
+      "Starting a loop with no choice or an empty choice (model empty) leaves an existing spec's cell as it is and creates no new cell, and a test checks this",
+      "api.startLoops sends the choice in the body, and App.tsx onLoop passes the current choice (the agent box's choice state); tsc is left to CI's web check if node_modules is missing",
+      "ruff, lint and debt pass; if the loop.py ratchet goes up, the new value and the reason are recorded in the ratchet record"
+    ],
+    "grounds": {
+      "pages": [],
+      "files": [
+        "tool/main/loop.py:934",
+        "tool/main/loop.py:2513",
+        "tool/main/loop.py:2560",
+        "tool/main/loop.py:2570",
+        "tool/main/loop.py:2588",
+        "tool/main/loop.py:2593",
+        "web/src/lib/api.ts:542",
+        "web/src/lib/api.ts:633",
+        "web/src/App.tsx:82",
+        "web/src/App.tsx:610",
+        "web/src/components/Review.tsx:212",
+        "tool/test_planning.py:262"
+      ],
+      "rules": [
+        "Only an empty cell is filled; a work model already set on a spec is never overwritten"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Add an optional cell field to the Pick body, shaped {model, effort, fast?} like startSpec's choice, and have take() write it to the spec only when spec.cell is empty or has an empty model",
+        "why": "The repair turn (loop.py:934) reads model, effort and fast together from spec['cell'], so it has to be recorded in the shape startSpec already uses for those specs to behave the same",
+        "rejected": "Sending only the model name: effort and fast would still be empty and fall back to defaults, so the turn would differ from what the screen chose"
+      },
+      {
+        "what": "Fill an empty cell on every take() path: a new PR (minimal), attaching to an existing unlinked spec (attach), and starting a spec that already exists (state PR #, mergeable, stalled, proceed)",
+        "why": "Specs already adopted, like #74–#76, have to get the model on their next loop start, and checking that 'an already-set model doesn't change on the next start' means the restart path goes through the same rule",
+        "rejected": "Filling only in minimal(): already-adopted specs with an empty cell would stay on Claude's default model forever"
+      },
+      {
+        "what": "When no choice arrives, or its model is empty, the server records nothing (settled without asking the person)",
+        "why": "Recording an empty value as cell would make it look like a choice had been made, and the next start with a real choice would then count as 'already set' and leave it alone",
+        "rejected": "Storing the empty choice as cell anyway"
+      },
+      {
+        "what": "Review.tsx's startLoops call (the claude-cloud restart) is not changed; the field is optional so it keeps its current behaviour (settled without asking the person)",
+        "why": "The request names the review-loop button, and that screen has no agent-box choice nearby; because the server treats a missing value as 'leave it', the call stays safe",
+        "rejected": "Wiring choice through to Review.tsx too: it widens the change past the request"
+      }
+    ],
+    "original": "리뷰 루프의 수정 턴을 화면에서 고른 작업 모델로 돌리기\n\n## 변경 요약\n\n리뷰 루프 버튼이 화면에서 고른 작업 모델(에이전트 칸)을 함께 보내고, 서버는 작업 모델이 비어 있는 명세에 그 값을 채운다. 이미 작업 모델이 지정된 명세는 바꾸지 않는다.\n\n## 변경 이유\n\n- rfg_rag #74·#75·#76: 작업 모델을 `gpt-6.1-sol` 로 골랐는데 리뷰 루프가 끝난 뒤 수정 턴에 `claude-opus-5-5[1m]` 이 찍혔다.\n- 표시 오류가 아니다. 작업 셀 기록(`raw/work/rfg_rag-worktrees/*.jsonl`)의 모델은 CLI가 턴을 끝내며 돌려준 값이고, 세 PR 모두 실제로 Claude 기본 모델로 수정 턴을 돌았다.\n- 원인: GitHub PR을 그대로 들여와 만든 명세(`minimal()`)에는 작업 모델(`cell`)이 없다. 루프의 수정 턴은 `spec[\"cell\"]` 만 읽으므로 빈 값이면 Claude 기본 모델이 된다. 앱에서 작업으로 시작한 명세(#61~#67)는 `startSpec` 이 고른 모델을 넣어 `codex:gpt-6.1-sol` 로 정상이었다.\n- 리뷰어 모델(설정의 `review_model`, 지정값 `gpt-5.6-sol`)은 영향이 없었다. 리뷰 기록은 모두 지정한 모델로 남았다.\n\n## 확인\n\n- `test_a_pr_adopted_from_github_repairs_on_the_work_model_the_screen_chose`: 새 PR의 명세에 고른 모델이 들어가고 수정 턴이 그 모델로 열린다. 이미 지정된 모델은 다음 루프 시작에서 바뀌지 않는다. 수정 전 main에서는 `cell` 이 빈 값으로 남아 실패한다.\n- ruff, lint, debt 통과. `loop.py` 래칫 2733 → 2743, 이유 기록.\n- 이 작업 트리에는 `web/node_modules` 가 없어 tsc는 CI의 web 검사에 맡긴다.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "A loop started from the review-loop button runs its repair turns on the work model, effort and fast setting chosen in the agent box, including for a PR adopted from GitHub whose spec was made by minimal().",
+        "source": {
+          "kind": "original",
+          "locator": "the request title and its 변경 요약 / 변경 이유 sections"
+        },
+        "status": "confirmed",
+        "preconditions": [
+          "The agent box's choice has a non-empty model when the button is pressed"
+        ],
+        "postconditions": [
+          "The repair turn calls work.session(path, model, effort, fast) with the chosen values instead of empty strings"
+        ],
+        "context": [
+          "tool/main/loop.py",
+          "web/src/App.tsx",
+          "web/src/lib/api.ts"
+        ],
+        "verify": [
+          {
+            "item": "test_a_pr_adopted_from_github_repairs_on_the_work_model_the_screen_chose exists and passes. It checks three things: after POST /api/loops with a choice, the spec of a newly adopted PR has cell equal to that choice; the repair turn opens work.session with that model, effort and fast; and when the loop is started again with a different choice, an already-set cell does not change",
+            "expected": "The test passes"
+          },
+          {
+            "item": "The same test fails on main before the fix, because cell stays empty",
+            "expected": "On main the test fails at the cell assertion"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "Pick (POST /api/loops body) gains an optional cell field shaped {model, effort, fast?} like startSpec's choice; take() writes it to the spec only when spec.cell is missing or its model is empty, and never overwrites a cell whose model is set.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[0]"
+        },
+        "status": "confirmed",
+        "invariants": [
+          "A spec whose cell.model is non-empty keeps its cell byte-for-byte across any number of loop starts"
+        ],
+        "depends_on": [
+          "R1"
+        ],
+        "context": [
+          "tool/main/loop.py:2588",
+          "tool/main/loop.py:2532",
+          "web/src/lib/api.ts:542"
+        ],
+        "verify": [
+          {
+            "item": "Restart the loop for a spec whose cell is already set, sending a different choice",
+            "expected": "spec.cell is unchanged"
+          }
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "Every take() path fills an empty cell under the R2 rule: the new-PR path (minimal), attach to an existing unlinked spec, and each existing-spec path (state PR #, 머지 가능, stalled, proceed).",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[1]"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R2"
+        ],
+        "context": [
+          "tool/main/loop.py:2459",
+          "tool/main/loop.py:2532"
+        ],
+        "verify": [
+          {
+            "item": "Start a loop with a choice for an already-adopted spec whose cell is empty (like rfg_rag #74–#76)",
+            "expected": "spec.cell now equals the choice and the next repair turn uses it"
+          }
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "The cell is filled before the spec is handed to kick or proceed, so the first repair turn after this start already reads it.",
+        "source": {
+          "kind": "repository",
+          "locator": "tool/main/loop.py:2548-2584 (take calls kick/proceed right after updating the spec)"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R3"
+        ],
+        "context": [
+          "tool/main/loop.py"
+        ]
+      },
+      {
+        "id": "R5",
+        "text": "A start rejected with 409 (refusal, fork, missing gate, clash, environment change) records no cell.",
+        "source": {
+          "kind": "repository",
+          "locator": "tool/main/loop.py:2538-2577 (the HTTPException raises in take)"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R3"
+        ],
+        "context": [
+          "tool/main/loop.py"
+        ]
+      },
+      {
+        "id": "R6",
+        "text": "When no cell arrives, or its model is empty, the server records nothing: no new cell is created and an existing cell is left as it is.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[2]"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R2"
+        ],
+        "context": [
+          "tool/main/loop.py",
+          "web/src/App.tsx:82"
+        ],
+        "verify": [
+          {
+            "item": "Starting a loop with no choice or an empty choice (model empty) leaves an existing spec's cell as it is and creates no new cell, and a test checks this",
+            "expected": "The test passes; specs without cell still have no cell key or an unchanged one"
+          }
+        ]
+      },
+      {
+        "id": "R7",
+        "text": "A choice without fast is stored with fast false; effort is stored as sent, even if empty.",
+        "source": {
+          "kind": "repository",
+          "locator": "tool/main/loop.py:935 reads chosen.get('fast', False)"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R2"
+        ]
+      },
+      {
+        "id": "R8",
+        "text": "The cell is filled whatever the implementation_environment is (local, claude-cloud or external); the environment logic in take() is unchanged.",
+        "source": {
+          "kind": "repository",
+          "locator": "tool/main/loop.py:2542-2547, 2564-2565"
+        },
+        "status": "assumed",
+        "depends_on": [
+          "R3"
+        ]
+      },
+      {
+        "id": "R9",
+        "text": "api.startLoops takes an optional choice and sends it in the body; App.tsx onLoop passes the agent box's current choice state.",
+        "source": {
+          "kind": "original",
+          "locator": "변경 요약: 리뷰 루프 버튼이 화면에서 고른 작업 모델(에이전트 칸)을 함께 보내고"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R2"
+        ],
+        "context": [
+          "web/src/lib/api.ts:633",
+          "web/src/App.tsx:610",
+          "web/src/App.tsx:82"
+        ],
+        "verify": [
+          {
+            "item": "api.startLoops sends the choice in the body, and App.tsx onLoop passes the current choice (the agent box's choice state); tsc is left to CI's web check if node_modules is missing",
+            "expected": "The POST /api/loops body from the rail's button contains cell equal to App's choice"
+          }
+        ]
+      },
+      {
+        "id": "R10",
+        "text": "Review.tsx's startLoops call (the claude-cloud restart) is not changed and keeps its current behaviour, because the new field is optional.",
+        "source": {
+          "kind": "decision",
+          "locator": "decisions[3]"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R6",
+          "R9"
+        ],
+        "context": [
+          "web/src/components/Review.tsx:212"
+        ],
+        "verify": [
+          {
+            "item": "The diff of web/src/components/Review.tsx",
+            "expected": "The startLoops call at line 212 is untouched"
+          }
+        ]
+      },
+      {
+        "id": "R11",
+        "text": "The repository's checks pass, and any rise in the loop.py ratchet is recorded with its new value and reason.",
+        "source": {
+          "kind": "repository",
+          "locator": ".wiki/ratchet.json:114-116 (tool/main/loop.py lines 2733)"
+        },
+        "status": "confirmed",
+        "context": [
+          ".wiki/ratchet.json"
+        ],
+        "verify": [
+          {
+            "item": "python -m ruff check tool laya",
+            "expected": "No findings"
+          },
+          {
+            "item": "ruff, lint and debt pass; if the loop.py ratchet goes up, the new value and the reason are recorded in the ratchet record",
+            "expected": "All pass; .wiki/ratchet.json carries the new loop.py value with a reason if it rose"
+          }
+        ]
+      }
+    ],
+    "spec_version": 1,
+    "spec_digest": "e1b7f4021b61f7bbf0331297d30a2bbb5c376eef633ed70d2255d6d3a37447f6"
+  },
+  "select": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
+    "R8",
+    "R9",
+    "R10",
+    "R11"
+  ],
+  "costs": {
+    "generation": {
+      "usd": 0.13819340000000002,
+      "tokens": {
+        "input": 8,
+        "output": 3411,
+        "cache_read": 30547,
+        "cache_write": 7979
+      },
+      "turns": 8
+    },
+    "enrichment": {
+      "usd": 0.20689739999999998,
+      "tokens": {
+        "input": 8,
+        "output": 6415,
+        "cache_read": 35947,
+        "cache_write": 8922
+      },
+      "turns": 7
+    },
+    "selection": {
+      "usd": 0.030964,
+      "tokens": {
+        "input": 2,
+        "output": 245,
+        "cache_read": 0,
+        "cache_write": 3257
+      },
+      "turns": 1
+    }
+  },
+  "selection_cost": {
+    "usd": 0.030964,
+    "tokens": {
+      "input": 2,
+      "output": 245,
+      "cache_read": 0,
+      "cache_write": 3257
+    },
+    "turns": 1
+  }
+}

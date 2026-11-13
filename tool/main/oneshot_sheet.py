@@ -10,7 +10,12 @@ from __future__ import annotations
 import json
 import re
 
-from . import spec_views
+# A requirement: where it came from, whether it is decided, and its conditions.
+SOURCES = ("original", "policy", "repository", "decision")
+STATUSES = ("confirmed", "assumed", "undecided", "not_applicable")
+CONDITIONS = ("preconditions", "postconditions", "invariants", "failures")
+REQUIREMENT_KEYS = frozenset({"id", "text", "source", "status", *CONDITIONS, "depends_on", "context", "verify", "global"})
+RID = re.compile(r"R[1-9]\d*")
 
 # Each design item kind: its block, its id pattern and the keys it carries.
 KINDS = {
@@ -388,12 +393,70 @@ def openapi(spec: dict) -> str:
     return json.dumps(document, ensure_ascii=False, indent=2) + "\n"
 
 
+def _texts(value, what: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, str) and v.strip() for v in value):
+        raise ValueError(f"{what} 는 비지 않은 글줄의 목록이어야 한다")
+    return [" ".join(v.split()) for v in value]
+
+
+def requirements(value) -> list[dict]:
+    """`value` checked and normalized, raising `ValueError` that names the item and the key."""
+
+    if not isinstance(value, list):
+        raise ValueError("`requirements` 는 목록이어야 한다")
+    out, seen = [], set()
+    for n, item in enumerate(value, 1):
+        if not isinstance(item, dict):
+            raise ValueError(f"`requirements` {n}번째 항목은 객체여야 한다")
+        rid = item.get("id")
+        if not isinstance(rid, str) or not RID.fullmatch(rid):
+            raise ValueError(f"`requirements` {n}번째 항목의 `id` 는 R1, R2 … 여야 한다 — {rid!r}")
+        where = f"`requirements` {rid}"
+        if unknown := sorted(set(item) - REQUIREMENT_KEYS):
+            raise ValueError(f"{where}: 모르는 키 — {', '.join(unknown)}")
+        if rid in seen:
+            raise ValueError(f"{where}: id 가 겹친다")
+        seen.add(rid)
+        text = item.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError(f"{where}: `text` 가 비었다")
+        source = item.get("source")
+        if not isinstance(source, dict) or set(source) != {"kind", "locator"} or source["kind"] not in SOURCES \
+                or not isinstance(source["locator"], str) or not source["locator"].strip():
+            raise ValueError(f"{where}: `source` 는 {{kind: {'|'.join(SOURCES)}, locator}} 여야 한다")
+        if item.get("status") not in STATUSES:
+            raise ValueError(f"{where}: `status` 는 {', '.join(STATUSES)} 중 하나다 — {item.get('status')!r}")
+        if "global" in item and not isinstance(item["global"], bool):
+            raise ValueError(f"{where}: `global` 은 참·거짓이다")
+        verify = item.get("verify") or []
+        if not isinstance(verify, list) or not all(
+                isinstance(v, dict) and set(v) == {"item", "expected"}
+                and all(isinstance(v[k], str) and v[k].strip() for k in v) for v in verify):
+            raise ValueError(f"{where}: `verify` 항목마다 `item` 과 `expected` 가 있어야 한다")
+        made = {"id": rid, "text": " ".join(text.split()), "source": {"kind": source["kind"],
+                "locator": " ".join(source["locator"].split())}, "status": item["status"]}
+        for key in (*CONDITIONS, "depends_on", "context"):
+            if key in item:
+                made[key] = _texts(item[key], f"{where}: `{key}`")
+        if verify:
+            made["verify"] = [{k: " ".join(v[k].split()) for k in ("item", "expected")} for v in verify]
+        if item.get("global"):
+            made["global"] = True
+        out.append(made)
+    for r in out:
+        if bad := [t for t in r.get("depends_on", []) if t not in seen or t == r["id"]]:
+            raise ValueError(f"`requirements` {r['id']}: `depends_on` 이 정의되지 않은 id 를 가리킨다 — {', '.join(bad)}")
+    return out
+
+
 def requirement_block(value) -> tuple[list[dict], list[dict]]:
     """`oneshot-spec`: `{requirements, glossary}`, checked."""
 
     if not isinstance(value, dict):
         raise ValueError("`oneshot-spec` 는 `requirements` 와 `glossary` 를 가진 객체다")
-    reqs = spec_views.requirements(value.get("requirements"))
+    reqs = requirements(value.get("requirements"))
     glossary = value.get("glossary") or []
     if not isinstance(glossary, list) or not all(
             isinstance(g, dict) and all(isinstance(g.get(k), str) and g[k].strip() for k in ("term", "meaning"))

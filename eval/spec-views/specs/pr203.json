@@ -1,0 +1,375 @@
+{
+  "task": "pr203",
+  "reference": {
+    "merge_commit": {
+      "hidden": {
+        "tool/test_connect.py::test_a_record_read_while_it_is_kept_does_not_fail_the_write": "passed"
+      },
+      "affected": {
+        "tool/test_connect.py": true
+      }
+    },
+    "merge_base": {
+      "hidden": {
+        "tool/test_connect.py::test_a_record_read_while_it_is_kept_does_not_fail_the_write": "failed"
+      },
+      "affected": {
+        "tool/test_connect.py": true
+      }
+    },
+    "discriminates": true
+  },
+  "baseline": {
+    "id": "pr203",
+    "rev": 1,
+    "goal": "The three intermittent CI failures (merge-button timeout in task_browser.py, connect.keep PermissionError on Windows, test_korean resumed-batch drift []) are fixed at their causes, each with a test that would fail without its fix.",
+    "out": [
+      "The 14 other CI failures since 10-17 that were real defects already fixed on their own branches",
+      "Changing the product's 4-second NORMALIZE_SECONDS limit in tool/main/knowledge.py",
+      "Changing how the rail looks or how its rows are ordered"
+    ],
+    "done": [
+      "python -m ruff check tool laya",
+      "A: In web/src/App.tsx, when a task was selected by its `spec:<repo>/<id>` key before /api/worktrees answered, and the worktree list then shows a worktree for that spec, the selection moves to that worktree's path. The screen stays on the task and does not fall back to \"작업 선택\".",
+      "A: web/tests/task_browser.py forces /api/specs to answer before /api/worktrees after the reload (for example by holding the worktrees response), clicks the task, and the `머지 ▸` flow at lines 747-773 still passes. With the App.tsx change reverted, that forced ordering makes the test fail.",
+      "A: `python web/tests/task_browser.py` passes 3 times in a row",
+      "B: The retry-on-PermissionError swap loop moves out of specs.save (tool/main/specs.py:124-129) into a shared `specs.swap(temporary, file)`, and both specs.save and connect.keep (tool/main/connect.py:89) call it",
+      "B: A regression test in tool/test_connect.py (name containing `record_read_while`) makes `replace` raise PermissionError a few times, the way tool/test_specs.py:60 does, and asserts that connect.keep still writes the merged record. The test fails against the old connect.keep.",
+      "B: `python -m pytest -q tool/test_connect.py -n 0 -k \"record_read_while or time_limit or survey\"` passes",
+      "C: The `ran` fixture in tool/test_korean.py:549 raises knowledge.NORMALIZE_SECONDS with monkeypatch, as tool/test_evidence.py:364 does, so CI delay cannot fail the new translation's read. test_a_resumed_batch_reads_the_private_english_that_was_checked still passes when a delay of about 4.2s and about 9.5s is injected into the translator call.",
+      "C: `python -m pytest -q tool/test_korean.py -n 0 -k \"resumed_batch or pairs_run or repetition_runs\"` passes",
+      "`ruff`, `python tool/lint.py --check` and `python tool/debt.py check` pass. Any ratchet raised is raised with a reason written next to it."
+    ],
+    "grounds": {
+      "files": [
+        "web/src/App.tsx:44",
+        "web/src/App.tsx:74",
+        "web/src/App.tsx:167-181",
+        "web/tests/task_browser.py:747-773",
+        "tool/main/specs.py:106-129",
+        "tool/main/connect.py:79-91",
+        "tool/test_specs.py:60",
+        "tool/main/knowledge.py:155",
+        "tool/test_korean.py:549",
+        "tool/test_korean.py:649",
+        "tool/test_evidence.py:364"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Fix A in App.tsx: the selection follows a spec key to its worktree path when the worktree list arrives",
+        "why": "The failure is a real screen bug: whether the user's pick survives depends on which response comes back first. Only waiting longer or reordering in the test would leave users losing their selection.",
+        "rejected": "Only making the test wait for /api/worktrees before clicking"
+      },
+      {
+        "what": "The retry loop moves into specs.swap, and connect.keep calls it",
+        "why": "specs.save already has a working retry for exactly this Windows sharing violation. One shared helper keeps the two writers from drifting apart again, and connect already sits next to specs in tool/main.",
+        "rejected": "Copying the 40-try loop into connect.keep, or adding a new tool/common module just for one function"
+      },
+      {
+        "what": "C changes only the test fixture's limit, not the product's NORMALIZE_SECONDS",
+        "why": "Counting a translation that ran past its time limit as failed, not as drift, is the intended product behaviour. The test only flakes because CI is slow, and test_evidence.py already raises the limit the same way.",
+        "rejected": "Raising NORMALIZE_SECONDS in knowledge.py, or counting reads that ran out of time as drift"
+      },
+      {
+        "what": "All three fixes go in one spec on one branch",
+        "why": "The request presents them as one CI-stability change with one combined verification list. Each fix is small and touches different files.",
+        "rejected": "Three separate specs and pull requests"
+      }
+    ]
+  },
+  "enriched": {
+    "id": "pr203",
+    "rev": 1,
+    "goal": "The three intermittent CI failures (merge-button timeout in task_browser.py, connect.keep PermissionError on Windows, test_korean resumed-batch drift []) are fixed at their causes, each with a test that would fail without its fix.",
+    "out": [
+      "The 14 other CI failures since 10-17 that were real defects already fixed on their own branches",
+      "Changing the product's 4-second NORMALIZE_SECONDS limit in tool/main/knowledge.py",
+      "Changing how the rail looks or how its rows are ordered"
+    ],
+    "done": [
+      "python -m ruff check tool laya",
+      "A: In web/src/App.tsx, when a task was selected by its `spec:<repo>/<id>` key before /api/worktrees answered, and the worktree list then shows a worktree for that spec, the selection moves to that worktree's path. The screen stays on the task and does not fall back to \"작업 선택\".",
+      "A: web/tests/task_browser.py forces /api/specs to answer before /api/worktrees after the reload (for example by holding the worktrees response), clicks the task, and the `머지 ▸` flow at lines 747-773 still passes. With the App.tsx change reverted, that forced ordering makes the test fail.",
+      "A: `python web/tests/task_browser.py` passes 3 times in a row",
+      "B: The retry-on-PermissionError swap loop moves out of specs.save (tool/main/specs.py:124-129) into a shared `specs.swap(temporary, file)`, and both specs.save and connect.keep (tool/main/connect.py:89) call it",
+      "B: A regression test in tool/test_connect.py (name containing `record_read_while`) makes `replace` raise PermissionError a few times, the way tool/test_specs.py:60 does, and asserts that connect.keep still writes the merged record. The test fails against the old connect.keep.",
+      "B: `python -m pytest -q tool/test_connect.py -n 0 -k \"record_read_while or time_limit or survey\"` passes",
+      "C: The `ran` fixture in tool/test_korean.py:549 raises knowledge.NORMALIZE_SECONDS with monkeypatch, as tool/test_evidence.py:364 does, so CI delay cannot fail the new translation's read. test_a_resumed_batch_reads_the_private_english_that_was_checked still passes when a delay of about 4.2s and about 9.5s is injected into the translator call.",
+      "C: `python -m pytest -q tool/test_korean.py -n 0 -k \"resumed_batch or pairs_run or repetition_runs\"` passes",
+      "`ruff`, `python tool/lint.py --check` and `python tool/debt.py check` pass. Any ratchet raised is raised with a reason written next to it."
+    ],
+    "grounds": {
+      "files": [
+        "web/src/App.tsx:44",
+        "web/src/App.tsx:74",
+        "web/src/App.tsx:167-181",
+        "web/tests/task_browser.py:747-773",
+        "tool/main/specs.py:106-129",
+        "tool/main/connect.py:79-91",
+        "tool/test_specs.py:60",
+        "tool/main/knowledge.py:155",
+        "tool/test_korean.py:549",
+        "tool/test_korean.py:649",
+        "tool/test_evidence.py:364"
+      ]
+    },
+    "decisions": [
+      {
+        "what": "Fix A in App.tsx: the selection follows a spec key to its worktree path when the worktree list arrives",
+        "why": "The failure is a real screen bug: whether the user's pick survives depends on which response comes back first. Only waiting longer or reordering in the test would leave users losing their selection.",
+        "rejected": "Only making the test wait for /api/worktrees before clicking"
+      },
+      {
+        "what": "The retry loop moves into specs.swap, and connect.keep calls it",
+        "why": "specs.save already has a working retry for exactly this Windows sharing violation. One shared helper keeps the two writers from drifting apart again, and connect already sits next to specs in tool/main.",
+        "rejected": "Copying the 40-try loop into connect.keep, or adding a new tool/common module just for one function"
+      },
+      {
+        "what": "C changes only the test fixture's limit, not the product's NORMALIZE_SECONDS",
+        "why": "Counting a translation that ran past its time limit as failed, not as drift, is the intended product behaviour. The test only flakes because CI is slow, and test_evidence.py already raises the limit the same way.",
+        "rejected": "Raising NORMALIZE_SECONDS in knowledge.py, or counting reads that ran out of time as drift"
+      },
+      {
+        "what": "All three fixes go in one spec on one branch",
+        "why": "The request presents them as one CI-stability change with one combined verification list. Each fix is small and touches different files.",
+        "rejected": "Three separate specs and pull requests"
+      }
+    ],
+    "original": "Fix the three intermittent CI failures\n\n## 요약\n\n10-17 이후 CI 실패 18건을 전수조사했습니다. 14건은 같은 브랜치에서 고친 실제 결함이었고, 같은 커밋 재실행으로 통과한 간헐 실패 세 종류의 원인을 찾아 고쳤습니다.\n\n## 원인과 수정\n\n- A — `web/tests/task_browser.py` 두 번째 `머지 ▸` 클릭 30초 타임아웃 (run 39342372292, 39361138526, 39534422793)\n  - 원인: 새로고침 직후 `/api/specs` 가 `/api/worktrees` 보다 먼저 오면 레일 항목 키가 `spec:<id>` 이고, 그걸 누른 뒤 작업트리 목록이 오면 키가 작업트리 경로로 바뀌어 선택이 풀린다(화면이 \"작업 선택\"으로 돌아감). 테스트만이 아니라 실제 화면 결함이다.\n  - 수정: `App.tsx` 에서 선택이 작업트리 키로 따라간다. 테스트는 그 순서를 강제로 만들어 확인한다(수정 전 실패, 수정 후 통과 확인).\n- B — `tool/test_connect.py::test_a_turn_cut_by_the_time_limit_leaves_nothing_it_committed` 가 `실패`·사유 없음 (run 39192463463)\n  - 원인: Windows 에서 다른 스레드가 기록 파일을 읽고 있으면 `replace` 가 `PermissionError` 를 낸다(로컬에서 3000회 중 1060회 재현). `specs.save` 에는 재시도가 있었지만 `connect.keep` 에는 없었다.\n  - 수정: 재시도를 `specs.swap` 으로 꺼내 둘이 같이 쓴다. 회귀 테스트 추가.\n- C — `tool/test_korean.py::test_a_resumed_batch_reads_the_private_english_that_was_checked` drift `[]` (run 39108639167)\n  - 원인: 새 번역의 4초 기한(`NORMALIZE_SECONDS`)을 CI 지연이 넘으면 그 읽기는 실패로 처리되고 drift 로 세지 않는다. 제품 동작은 맞다.\n  - 수정: `ran` 픽스처에서 기한을 넓힌다(`test_evidence.py:364` 와 같은 방식). 4.2초·9.5초 지연 주입에서도 통과.\n\n## 검증\n\n- `python web/tests/task_browser.py` 3회 연속 통과\n- `python -m pytest -q tool/test_connect.py -n 0 -k \"record_read_while or time_limit or survey\"` 7 passed\n- `python -m pytest -q tool/test_korean.py -n 0 -k \"resumed_batch or pairs_run or repetition_runs\"` 3 passed\n- `ruff`, `tool/lint.py --check`, `tool/debt.py check` 통과(래칫 세 항목은 사유와 함께 올림)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "A task picked in the rail stays selected when /api/specs answers before /api/worktrees: once the worktree list arrives, the selection moves from the spec:<repo>/<id> key to that spec's worktree path. A browser test forces that ordering, and the 머지 ▸ flow passes.",
+        "source": {
+          "kind": "original",
+          "locator": "the request, section 원인과 수정, item A"
+        },
+        "status": "confirmed",
+        "preconditions": [
+          "After a reload, /api/specs has answered and /api/worktrees has not",
+          "The user clicks a task whose rail key is spec:<repo>/<id>"
+        ],
+        "postconditions": [
+          "When /api/worktrees answers with a worktree for that spec, the selected key is the worktree path",
+          "The screen stays on the task and does not show \"작업 선택\""
+        ],
+        "invariants": [
+          "The look of the rail and the order of its rows do not change"
+        ],
+        "failures": [
+          "If no worktree for that spec appears, the spec-key selection stays as it is"
+        ],
+        "context": [
+          "web/src/App.tsx",
+          "web/tests/task_browser.py"
+        ],
+        "verify": [
+          {
+            "item": "A: In web/src/App.tsx, when a task was selected by its `spec:<repo>/<id>` key before /api/worktrees answered, and the worktree list then shows a worktree for that spec, the selection moves to that worktree's path. The screen stays on the task and does not fall back to \"작업 선택\".",
+            "expected": "The selection follows to the worktree path, and the task screen stays visible"
+          },
+          {
+            "item": "A: web/tests/task_browser.py forces /api/specs to answer before /api/worktrees after the reload (for example by holding the worktrees response), clicks the task, and the `머지 ▸` flow at lines 747-773 still passes. With the App.tsx change reverted, that forced ordering makes the test fail.",
+            "expected": "Passes with the fix and fails with the App.tsx change reverted"
+          },
+          {
+            "item": "A: `python web/tests/task_browser.py` passes 3 times in a row",
+            "expected": "3 passes in a row"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "connect.keep survives the Windows PermissionError that replace raises while another thread is reading the record file, using the same retry that specs.save uses.",
+        "source": {
+          "kind": "original",
+          "locator": "the request, section 원인과 수정, item B"
+        },
+        "status": "confirmed",
+        "preconditions": [
+          "Another thread holds the record file open while connect.keep swaps the temporary file in"
+        ],
+        "postconditions": [
+          "connect.keep writes the merged record after a few PermissionErrors"
+        ],
+        "invariants": [
+          "specs.save keeps its current retry behaviour, now through specs.swap"
+        ],
+        "failures": [
+          "If PermissionError persists past the retry limit, it is raised as before rather than swallowed"
+        ],
+        "depends_on": [
+          "R5"
+        ],
+        "context": [
+          "tool/main/specs.py",
+          "tool/main/connect.py",
+          "tool/test_connect.py",
+          "tool/test_specs.py"
+        ],
+        "verify": [
+          {
+            "item": "B: The retry-on-PermissionError swap loop moves out of specs.save (tool/main/specs.py:124-129) into a shared `specs.swap(temporary, file)`, and both specs.save and connect.keep (tool/main/connect.py:89) call it",
+            "expected": "One swap helper in specs.py, called from specs.save and connect.keep"
+          },
+          {
+            "item": "B: A regression test in tool/test_connect.py (name containing `record_read_while`) makes `replace` raise PermissionError a few times, the way tool/test_specs.py:60 does, and asserts that connect.keep still writes the merged record. The test fails against the old connect.keep.",
+            "expected": "Passes with the fix and fails against the old connect.keep"
+          },
+          {
+            "item": "B: `python -m pytest -q tool/test_connect.py -n 0 -k \"record_read_while or time_limit or survey\"` passes",
+            "expected": "All selected tests pass"
+          }
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "test_a_resumed_batch_reads_the_private_english_that_was_checked no longer flakes on a slow CI: the ran fixture raises knowledge.NORMALIZE_SECONDS for the test only.",
+        "source": {
+          "kind": "original",
+          "locator": "the request, section 원인과 수정, item C"
+        },
+        "status": "assumed",
+        "invariants": [
+          "knowledge.NORMALIZE_SECONDS stays 4.0 in tool/main/knowledge.py:155",
+          "tool/test_korean.py:534 already sets NORMALIZE_SECONDS from a passed value; the new override in ran must not clash with tests that rely on that line (assumed, not checked)"
+        ],
+        "depends_on": [
+          "R6"
+        ],
+        "context": [
+          "tool/test_korean.py",
+          "tool/test_evidence.py",
+          "tool/main/knowledge.py"
+        ],
+        "verify": [
+          {
+            "item": "C: The `ran` fixture in tool/test_korean.py:549 raises knowledge.NORMALIZE_SECONDS with monkeypatch, as tool/test_evidence.py:364 does, so CI delay cannot fail the new translation's read. test_a_resumed_batch_reads_the_private_english_that_was_checked still passes when a delay of about 4.2s and about 9.5s is injected into the translator call.",
+            "expected": "Passes with 4.2s and 9.5s delays injected"
+          },
+          {
+            "item": "C: `python -m pytest -q tool/test_korean.py -n 0 -k \"resumed_batch or pairs_run or repetition_runs\"` passes",
+            "expected": "All selected tests pass"
+          }
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "Fix A in App.tsx: the selection follows a spec key to its worktree path when the worktree list arrives. Do not fix it only by making the test wait for /api/worktrees.",
+        "source": {
+          "kind": "decision",
+          "locator": "spec decision 1"
+        },
+        "status": "confirmed",
+        "depends_on": [
+          "R1"
+        ],
+        "context": [
+          "web/src/App.tsx"
+        ]
+      },
+      {
+        "id": "R5",
+        "text": "The retry loop moves into specs.swap, and connect.keep calls it. No copied loop and no new tool/common module.",
+        "source": {
+          "kind": "decision",
+          "locator": "spec decision 2"
+        },
+        "status": "assumed",
+        "invariants": [
+          "Assumed, not checked: connect.py can import specs without a circular import"
+        ],
+        "context": [
+          "tool/main/specs.py",
+          "tool/main/connect.py"
+        ]
+      },
+      {
+        "id": "R6",
+        "text": "C changes only the test fixture's limit. The product's NORMALIZE_SECONDS and the rule that a timed-out read counts as failed, not drift, stay as they are.",
+        "source": {
+          "kind": "decision",
+          "locator": "spec decision 3"
+        },
+        "status": "confirmed",
+        "context": [
+          "tool/main/knowledge.py",
+          "tool/test_korean.py"
+        ]
+      },
+      {
+        "id": "R7",
+        "text": "All three fixes go in one spec on one branch, and the repository's lint and debt gates pass. Any ratchet raised has a reason written next to it.",
+        "source": {
+          "kind": "decision",
+          "locator": "spec decision 4"
+        },
+        "status": "confirmed",
+        "verify": [
+          {
+            "item": "python -m ruff check tool laya",
+            "expected": "No findings"
+          },
+          {
+            "item": "`ruff`, `python tool/lint.py --check` and `python tool/debt.py check` pass. Any ratchet raised is raised with a reason written next to it.",
+            "expected": "All three pass, and every raised ratchet has its reason next to it"
+          }
+        ]
+      }
+    ],
+    "spec_version": 1,
+    "spec_digest": "a91ecb68ae63d5937a69e65ea0a13e711577f76b899625162a954c4afe097c7e"
+  },
+  "select": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7"
+  ],
+  "costs": {
+    "generation": {
+      "usd": 0.145497,
+      "tokens": {
+        "input": 10,
+        "output": 3666,
+        "cache_read": 42245,
+        "cache_write": 7961
+      },
+      "turns": 10
+    },
+    "enrichment": {
+      "usd": 0.1423028,
+      "tokens": {
+        "input": 4,
+        "output": 5176,
+        "cache_read": 13834,
+        "cache_write": 4500
+      },
+      "turns": 3
+    },
+    "selection": {
+      "usd": 0.028544,
+      "tokens": {
+        "input": 2,
+        "output": 108,
+        "cache_read": 0,
+        "cache_write": 3297
+      },
+      "turns": 1
+    }
+  },
+  "selection_cost": {
+    "usd": 0.028544,
+    "tokens": {
+      "input": 2,
+      "output": 108,
+      "cache_read": 0,
+      "cache_write": 3297
+    },
+    "turns": 1
+  }
+}

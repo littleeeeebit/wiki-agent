@@ -148,15 +148,16 @@ the wrong kind of text, and text written in the wrong language first.
 ### Cause 1 — the reader is given everything
 
 - One source, several views. The spec stays one structured record; each gate
-  renders only what that gate decides. This is what the spec-views experiment
-  measures for the agent side ([main-2 report](../../research/spec-views-main.md));
-  the human side is the same idea.
+  renders only what that gate decides. The spec-views experiment tried this
+  for the agent side and was inconclusive
+  ([main-2 report](../../research/spec-views-main.md)); here it serves the
+  human side.
 - A gate sheet, not a document. R1 shows at most one screen: decisions taken,
   assumptions made, what is irreversible, and what to check. Everything else is
   folded behind it. The server refuses a sheet over its length budget, the
   same way it refuses a broken `spec` block today.
-- Assumptions first. Every line carries `confirmed` or `assumed` (the status
-  `spec_views` already uses). A reader in a hurry reads only the assumed lines.
+- Assumptions first. Every line carries `confirmed` or `assumed` (a status
+  every requirement carries). A reader in a hurry reads only the assumed lines.
 - Difference only on re-show. After per-item edits the sheet shows what
   changed, never the whole again.
 

@@ -1,5 +1,7 @@
 # Spec views — pilot-1: pilot, not the main experiment
 
+The harness and the `SPEC_VIEWS` setting this report names are at commit `6c79a1b`; run its commands from a scratch worktree of that commit with `raw/eval/spec-views/` copied in. The product gives the write session the brief (`docs/plans/loop/3-spec.md`).
+
 This is a pilot. It checks the harness, the B–C equivalence, the journal and the cost accounting. Its sample is far too small to support any adoption claim, and nothing here judges adoption.
 
 Implementer: `claude-opus-5-5` at effort `high`, 2 repetitions, concurrency 3, ceilings USD 40 and 8 h. Config digest `3536e32ee2da`. Spent USD 37.9952 and 4.535 h, preparation included.
