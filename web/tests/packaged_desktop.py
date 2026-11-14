@@ -149,6 +149,13 @@ print('PASS: bundled review evidence policy')
             preferences.wait_for_function("![...document.querySelectorAll('.account-row [role=status]')].some(e => e.textContent === '확인 중…')", timeout=90000)
             out.mkdir(parents=True, exist_ok=True)
             preferences.screenshot(path=str(out / "settings-desktop.png"))
+            preferences.get_by_role("button", name="질문 · Jev", exact=True).click()
+            preferences.get_by_role("radiogroup", name="Jev 모드").wait_for()
+            preferences.get_by_role("radio", name="그림자", exact=False).check()
+            preferences.get_by_role("button", name="변경 사항 저장", exact=True).click()
+            preferences.wait_for_function("fetch('/api/jev').then(r=>r.json()).then(s=>s.mode==='shadow')")
+            preferences.screenshot(path=str(out / "machine-jev-desktop.png"))
+            observed["machine_settings_without_project"] = {"read": True, "save": True, "mode": "shadow"}
             page.evaluate("window.__TAURI_INTERNALS__.invoke('preferences_window', {page:'updates'})")
             deadline = time.monotonic() + 20
             while not any('page=updates' in p.url for c in browser.contexts for p in c.pages) and time.monotonic() < deadline:

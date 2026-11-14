@@ -228,7 +228,7 @@ def _forms(settings: dict) -> list[str]:
 def redact(text: str, settings: dict, forms: list[str] | None = None) -> str:
     for form in _forms(settings) if forms is None else forms:
         text = text.replace(form, "[redacted]")
-    text = re.sub(r"(?i)(authorization\s*[:=]\s*|bearer\s+)[^\s,\"']+", r"\1[redacted]", text)
+    text = re.sub(r"(?i)(authorization\s*[:=]\s*(?:bearer\s+)?|bearer\s+)[^\s,\"']+", r"\1[redacted]", text)
     text = re.sub(r"(?i)((?:password|token|secret|api[_-]?key)\s*[\"']?\s*[:=]\s*[\"']?)[^\s,\"']+",
                   r"\1[redacted]", text)
     return text

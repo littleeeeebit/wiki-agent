@@ -131,6 +131,54 @@ def test_import_recovers_after_interrupted_destination_write(tmp_path, monkeypat
     assert not (data / "import-pending.json").exists()
 
 
+@pytest.mark.parametrize("phase", ["write", "replace"])
+def test_import_marker_publication_is_atomic(tmp_path, monkeypatch, phase):
+    source = source_at(tmp_path / "source")
+    data = tmp_path / "data"
+    data.mkdir()
+    marker = data / "import-pending.json"
+    write, replace = Path.write_text, Path.replace
+    def interrupted_write(path, text, *args, **kwargs):
+        if phase == "write" and path.parent == data and path.name.startswith("import-pending"):
+            write(path, text[:4], *args, **kwargs)
+            raise OSError("fixture interruption")
+        return write(path, text, *args, **kwargs)
+    def interrupted_replace(path, target):
+        if phase == "replace" and Path(target) == marker:
+            raise OSError("fixture interruption")
+        return replace(path, target)
+    with monkeypatch.context() as scoped:
+        scoped.setattr(Path, "write_text", interrupted_write)
+        scoped.setattr(Path, "replace", interrupted_replace)
+        with pytest.raises(OSError, match="fixture interruption"):
+            desktop_migrate.import_source(source, data, threading.Event(), lambda text: None)
+    assert not marker.exists()
+    assert desktop_migrate.resume_import(data) is None
+    backup = desktop_migrate.import_source(source, data, threading.Event(), lambda text: None)
+    assert (data / ".env").read_bytes() == (source / ".env").read_bytes() == (backup / ".env").read_bytes()
+    assert json.loads((data / ".chat-local.json").read_text(encoding="utf-8"))["model"] == "codex:fixture"
+
+
+def test_machine_jev_settings_work_before_any_project_is_connected(setup, monkeypatch):
+    client, data, workspace = setup
+    monkeypatch.setattr(query, "PACKAGED", True)
+    monkeypatch.setattr(query.channels, "repo_for", lambda name: None)
+    monkeypatch.setenv("JEV_ENV", str(data / "absent.env"))
+    response = client.get("/api/jev")
+    assert response.status_code == 200
+    assert response.json()["mode"] == "off"
+    response = client.post("/api/jev/settings", json={"mode": "shadow", "limits": {"calls": 3}})
+    assert response.status_code == 200
+    assert response.json()["mode"] == "shadow" and response.json()["limits"]["calls"] == 3
+    assert client.get("/api/jev").json()["limits"]["calls"] == 3
+    assert query._project is None
+    monkeypatch.setattr(query.channels, "repo_for", lambda name: workspace if name == "fixture" else None)
+    response = client.post("/api/jev/settings", json={"mode": "active", "active_projects": [str(workspace)]})
+    assert response.status_code == 200 and response.json()["canary"] is True
+    assert client.get("/api/jev", headers={"X-Project": "fixture"}).json()["canary"] is False
+    assert client.get("/api/jev", headers={"X-Project": "missing"}).status_code == 409
+
+
 def test_package_staging_excludes_personal_files_and_tests(tmp_path, monkeypatch):
     root = tmp_path / "source"
     for name in ("tool/runtime.py", "tool/test_runtime.py", "operator/rule.md", ".env", "raw/chat/log.json", "web/dist/index.html"):

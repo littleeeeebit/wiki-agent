@@ -15,6 +15,23 @@ from test_review_contract import selected
 REQUIRED = {"evidence": ["api", "browser", "desktop"]}
 
 
+@pytest.mark.parametrize("credential", [
+    "token=fixture-value", "password: fixture-value", "api_key='fixture-value'",
+    "Authorization: Bearer fixture-value", "Bearer fixture-value",
+])
+def test_report_handoff_redacts_credentials_at_reviewer_boundary(world, credential):
+    spec = pr_spec(world, "report-redaction", 1, "code.py", review=REQUIRED,
+                   report=[{"item": "Runtime observations", "pass": True,
+                            "evidence": f"GET /health returned 200; {credential}; artifacts/runtime.json"}])
+    spec["report_at"] = {"head": spec["pr"]["head"], "rev": spec["rev"]}
+    result = selected(world, spec)
+    text = loop.instruction(spec, Path(spec["worktree"]), 1, result["head"], "main", True,
+                            base_oid=result["base_oid"], contract=result)
+    assert "fixture-value" not in text and "[redacted]" in text
+    assert "GET /health returned 200" in text and "artifacts/runtime.json" in text
+    assert '"pass": true' in text
+
+
 @pytest.mark.parametrize("environment", [None, "external"])
 def test_unconfigured_local_and_external_tasks_reach_read_only_review_with_evidence(world, monkeypatch, environment):
     spec = pr_spec(world, "local-evidence", 1, "code.py", review=REQUIRED, implementation_environment=environment)

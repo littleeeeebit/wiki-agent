@@ -463,7 +463,7 @@ def jev_status() -> dict:
 
     from . import decisions  # `decisions` imports this module
 
-    cfg = decision.config(current_repo())
+    cfg = decision.config(current_repo() if claimed.get() is not None else None)
     return {**cfg.status(), "agent_decisions": decisions.coverage(cfg)}
 
 

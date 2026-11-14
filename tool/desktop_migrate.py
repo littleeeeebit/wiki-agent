@@ -95,6 +95,9 @@ def import_source(source: Path, data: Path, halt: threading.Event, output) -> Pa
         (backup.parent / "complete.json").write_text(json.dumps({"source": str(source)}) + "\n", encoding="utf-8")
         if halt.is_set():
             raise InterruptedError("가져오기를 취소했다. 복구 사본을 보존했다")
-        (data / "import-pending.json").write_text(json.dumps({"backup": str(backup.relative_to(data))}) + "\n", encoding="utf-8")
+        marker = data / "import-pending.json"
+        temporary = marker.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"backup": str(backup.relative_to(data))}) + "\n", encoding="utf-8")
+        temporary.replace(marker)
         resume_import(data)
     return backup
