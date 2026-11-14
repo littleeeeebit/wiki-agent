@@ -56,6 +56,8 @@ It reads the approved environment file copied to the checkout's `.env` using
 the host's settings reader; those values override inherited process values.
 This includes `ANDROID_AVD_HOME` when the approved AVD template is outside
 the user's default Android directory.
+The collector removes every `NODE_` runtime environment variable from both
+sources before launching the approved Node binary, including mixed-case names.
 Approved binary hashes, Git blob identities, raw observations and screenshot hashes
 bind reusable receipts. Changed inputs, missing ownership or cleanup, stale
 builds and tampered artifacts refuse native acceptance. The legacy Win32

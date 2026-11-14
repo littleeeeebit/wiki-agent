@@ -208,8 +208,10 @@ def run(request):
         file = artifact / "webview-request.json"
         file.write_text(json.dumps(request), encoding="utf-8")
         argv = [request["settings"]["node"]["path"], str(Path(__file__).with_suffix(".mjs")), str(file)]
+        env = {key: value for key, value in {**os.environ, **entries(root / ".env")}.items()
+               if not key.upper().startswith("NODE_")}
         try:
-            with launched(argv, root, {**os.environ, **entries(root / ".env")}, desktop, log) as child:
+            with launched(argv, root, env, desktop, log) as child:
                 deadline = time.monotonic() + 900
                 while child.poll() is None:
                     if time.monotonic() >= deadline:

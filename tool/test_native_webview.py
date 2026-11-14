@@ -102,6 +102,33 @@ def test_owned_driver_uses_approved_environment_instead_of_launching_shell_setup
                      "target": target, "settings": settings})
 
 
+@pytest.mark.parametrize("source", ["inherited", "copied"])
+@pytest.mark.parametrize("key,value", [
+    ("NODE_OPTIONS", "--require=outside/startup.cjs"),
+    ("node_options", "--import=outside/startup.mjs"),
+    ("NODE_PATH", "outside/modules"),
+    ("NODE_EXTRA_CA_CERTS", "outside/roots.pem"),
+])
+def test_owned_driver_excludes_unmeasured_node_environment(candidate, monkeypatch, tmp_path, source, key, value):
+    root, head, target, settings = candidate
+    (root / ".env").write_text("ANDROID_AVD_HOME=C:/approved/avd\n" +
+                              (f"{key}={value}\n" if source == "copied" else ""), encoding="utf-8")
+    if source == "inherited":
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(native, "owned_desktop", lambda: nullcontext("fixture"))
+    monkeypatch.setattr(webview, "preflight", lambda *_: {})
+
+    def observed(argv, cwd, env, desktop, log):
+        assert not any(name.upper().startswith("NODE_") for name in env)
+        assert env["ANDROID_AVD_HOME"] == "C:/approved/avd"
+        raise RuntimeError("filtered environment observed")
+
+    monkeypatch.setattr(webview, "launched", observed)
+    with pytest.raises(RuntimeError, match="filtered environment observed"):
+        webview.run({"root": str(root), "artifact_dir": str(tmp_path), "head": head,
+                     "target": target, "settings": settings})
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows native preflight")
 def test_preflight_measures_reviewed_sources_and_approved_tools(candidate):
     root, head, target, settings = candidate
