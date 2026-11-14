@@ -8,7 +8,7 @@ import {EventEmitter} from 'node:events';
 import {SourceTextModule, SyntheticModule} from 'node:vm';
 import {pathToFileURL} from 'node:url';
 
-const [driver, python, root, mode] = process.argv.slice(2);
+const [driver, python, root, mode, renderer = 'auto'] = process.argv.slice(2);
 const artifact = path.join(root, 'evidence');
 const data = path.join(artifact, 'data');
 fs.mkdirSync(data, {recursive: true});
@@ -21,15 +21,15 @@ const request = {root, artifact_dir: artifact, head, python, desktop: 'fixture',
   target: {application: 'fixture', platform: 'android', package: application, activity: '.MainActivity', scenario: 'scenario.mjs',
     actions: [{assertion: 'saved', expected: 'Saved'}]},
   settings: {applications: {fixture: {binary: {path: binary, sha256: hash(fs.readFileSync(binary))},
-    adb: {path: 'fixture-adb'}, emulator: {path: 'fixture-emulator'}, avd: 'fixture', profile: 'disposable'}}}};
+    adb: {path: 'fixture-adb'}, emulator: {path: 'fixture-emulator'}, avd: 'fixture', profile: 'disposable', renderer}}}};
 const file = path.join(root, 'request.json'); fs.writeFileSync(file, JSON.stringify(request));
 let focus = 'ready', pid = 1000, startingReads = 0;
 const children = [];
-function spawn(command) {
+function spawn(command, args) {
   const child = new EventEmitter();
   Object.assign(child, {pid: ++pid, exitCode: null, signalCode: null,
     kill() {this.exitCode = 0; this.emit('exit', 0);}});
-  children.push(child); trace.push(['spawn', command]); return child;
+  children.push(child); trace.push(['spawn', command, args]); return child;
 }
 function execute(command, args) {
   if (command === python) {

@@ -58,6 +58,13 @@ class Approval(Closed):
     adb: Asset | None = None
     emulator: Asset | None = None
     avd: str = ""
+    renderer: Literal["auto", "host", "software"] = "auto"
+
+    @model_validator(mode="after")
+    def android_renderer(self):
+        if self.platform != "android" and self.renderer != "auto":
+            raise ValueError("Renderer selection applies only to Android applications")
+        return self
 
 
 class Settings(Closed):

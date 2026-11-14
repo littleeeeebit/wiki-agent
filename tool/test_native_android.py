@@ -59,3 +59,20 @@ def test_driver_recovers_only_initial_system_ui_before_focus_pid_and_debugger(tm
             "startup-system-ui.json", "startup-system-ui.xml", "startup-system-ui.png", "startup-recovery.json"}
     elif taps:
         assert not any(row[0] == "debugger" or row == ["pid", "ready"] for row in trace)
+
+
+@pytest.mark.parametrize("renderer", ["auto", "host", "software"])
+def test_driver_passes_only_the_approved_android_renderer(tmp_path, renderer):
+    fixture = Path(__file__).with_name("fixtures") / "test_android_driver.mjs"
+    driver = Path(__file__).with_name("native_webview.mjs")
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("NODE_")}
+    result = subprocess.run([shutil.which("node"), "--experimental-vm-modules", str(fixture), str(driver),
+                            sys.executable, str(tmp_path), "ready", renderer], env=env, capture_output=True,
+                            text=True, encoding="utf-8", timeout=20)
+    assert result.returncode == 0, result.stderr
+    trace = json.loads((tmp_path / "trace.json").read_text(encoding="utf-8"))
+    arguments = next(row[2] for row in trace if row[:2] == ["spawn", "fixture-emulator"])
+    if renderer == "auto":
+        assert "-gpu" not in arguments
+    else:
+        assert arguments[arguments.index("-gpu") + 1] == renderer

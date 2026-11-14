@@ -111,7 +111,8 @@ async function android() {
     const images = path.join(profile, 'emulator'); mkdirSync(images);
     // The WebView fixture uses GLES; do not initialize the unused Vulkan renderer.
     emulator = logged(approval.emulator.path, ['-avd', approval.avd, '-port', String(port), '-datadir', images,
-      '-wipe-data', '-no-snapshot', '-no-window', '-no-audio', '-no-boot-anim', '-feature', '-Vulkan'], 'emulator.log');
+      '-wipe-data', '-no-snapshot', '-no-window', '-no-audio', '-no-boot-anim', '-feature', '-Vulkan',
+      ...(approval.renderer && approval.renderer !== 'auto' ? ['-gpu', approval.renderer] : [])], 'emulator.log');
     emulator.on('error', () => {});
     emulator.on('exit', () => diagnose('emulator-exit'));
     await until(() => {

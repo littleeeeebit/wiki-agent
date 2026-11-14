@@ -71,6 +71,22 @@ def test_webview_targets_require_registered_assertions_and_explicit_platform_app
         webview.Target.model_validate({**target, "platform": "android"})
 
 
+def test_renderer_is_approved_per_android_app_with_unchanged_default(candidate):
+    _, _, _, settings = candidate
+    windows = settings["applications"]["fixture"]
+    android = {**windows, "platform": "android", "avd": "fixture"}
+    assert webview.Approval.model_validate(windows).renderer == "auto"
+    assert webview.Approval.model_validate(android).renderer == "auto"
+    for renderer in ("auto", "host", "software"):
+        approved = webview.Settings.model_validate({**settings, "applications": {
+            "fixture": windows, "android": {**android, "renderer": renderer}}})
+        assert approved.applications["android"].renderer == renderer
+        assert approved.applications["fixture"].renderer == "auto"
+    for invalid in ({**android, "renderer": "host -anything"}, {**windows, "renderer": "host"}):
+        with pytest.raises(ValueError):
+            webview.Approval.model_validate(invalid)
+
+
 def test_fixed_native_launch_bypasses_shell_and_cannot_misreport_its_command(monkeypatch, tmp_path):
     def refused(*_args, **_kwargs):
         raise AssertionError("The fixed native collector must not activate a shell")

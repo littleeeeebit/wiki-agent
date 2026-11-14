@@ -17,8 +17,12 @@ Local native approval uses `version: 2`, `host: "webview"`, a `node` asset and
 an `applications` map keyed by registered application. Each asset contains
 an absolute `path` and lowercase `sha256`. An application names its platform,
 binary asset and disposable profile label. Android also requires approved
-`adb` and `emulator` assets and an installed `avd` template name. The approval
-editor accepts the full native JSON, including the existing version 1 Win32
+`adb` and `emulator` assets and an installed `avd` template name.
+An Android approval may select a `renderer`: `auto` (the existing AVD default), `host`
+(this PC's GPU), or `software`. This setting applies only to that approved
+application and is included in evidence identity. Other applications retain
+their defaults; Windows scopes accept only `auto`.
+The approval editor accepts the full native JSON, including the existing version 1 Win32
 approval unchanged. Neither format is committed to a project.
 
 Windows processes inherit an attempt-owned desktop and kill-on-close job.
