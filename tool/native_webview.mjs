@@ -123,10 +123,14 @@ async function launch() {
   } else {
     if (!emulator) await android();
     if (!installed) {
-      adb('install', '-t', approval.binary.path);
+      // The large debug APK and first-boot package setup need more time than diagnostics.
+      console.time('Android APK installation');
+      run(approval.adb.path, ['-s', serial, 'install', '-t', approval.binary.path], {timeout: 120000});
+      console.timeEnd('Android APK installation');
       shell('pm', 'grant', target.package, 'android.permission.POST_NOTIFICATIONS');
       const remote = shell('pm', 'path', target.package).trim().replace(/^package:/, '');
-      const pulled = path.join(profile, 'installed.apk'); adb('pull', remote, pulled);
+      const pulled = path.join(profile, 'installed.apk');
+      run(approval.adb.path, ['-s', serial, 'pull', remote, pulled], {timeout: 120000});
       assert.equal(hash(readFileSync(pulled)), approval.binary.sha256, 'Installed APK differs from approval');
       for (const name of readdirSync(data)) {
         assert.match(name, /^[A-Za-z0-9_.-]+$/);
