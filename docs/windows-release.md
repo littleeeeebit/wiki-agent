@@ -33,9 +33,12 @@ generated `.pub` file as the build's public key. Set `TAURI_SIGNING_PRIVATE_KEY`
 to the private-key file path and, for a protected key,
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the build process environment.
 
-```powershell
-python tool/build_desktop.py --version 0.1.0 --updater-public-key "C:/private/wiki-agent-update.key.pub"
-```
+Run the `tool/build_desktop.py` Python script with these arguments:
+
+| Argument | Example value | Meaning |
+| --- | --- | --- |
+| `--version` | `0.1.0` | The release version with matching release notes |
+| `--updater-public-key` | `"C:/private/wiki-agent-update.key.pub"` | The generated public-key file; quote paths that contain spaces |
 
 Each version gets a new directory under `raw/desktop/releases/<version>/`.
 Add that version's user-facing notes to `docs/windows-releases.json` before
@@ -55,8 +58,15 @@ installation directory. Uninstall and update acceptance must use the default
 data path, without a `WIKI_DATA_HOME` override that could hide a collision.
 
 The package build uses `raw/desktop/target`, separate from the running source
-window's Cargo target. Its relocated-image check can be run with
-`python web/tests/packaged_desktop.py --image raw/desktop/releases/<version> --out raw/desktop/acceptance/<version>`.
+window's Cargo target. Run its relocated-image check through the
+`web/tests/packaged_desktop.py` Python script with these arguments, replacing
+`<version>` with the built release version:
+
+| Argument | Value | Meaning |
+| --- | --- | --- |
+| `--image` | `raw/desktop/releases/<version>` | The completed build directory |
+| `--out` | `raw/desktop/acceptance/<version>` | The durable receipt and screenshot directory |
+
 It copies the executable and payload to a temporary path with spaces and Korean
 characters, removes developer tools from PATH, uses a disposable Windows user
 home with the real default data-folder rule and disposable login

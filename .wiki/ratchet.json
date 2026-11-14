@@ -1,11 +1,6 @@
 {
   "exclude": [],
   "files": {
-    "tool/main/connect.py": {
-      "dup": 0,
-      "lines": 804,
-      "reason": "Packaged Python omits Tkinter; Windows folder selection uses the existing PowerShell catalogue and OS dialog."
-    },
     "laya/test_laya.py": {
       "dup": 0,
       "lines": 1576,
@@ -13,7 +8,7 @@
     },
     "tool/agent/chat_session.py": {
       "dup": 0,
-      "lines": 1396,
+      "lines": 1395,
       "reason": "A turn carries images beside its text on the Claude path, the same ones on every capacity retry, and a Codex session refuses such a turn rather than drop them: the oneshot critic must see the screenshots (oneshot step 4c). Before that: A refused turn's done event carries what the CLI went on to answer apart from the refusal notice (`answer`), for the review loop to judge (PR #275). Before that: A response the provider's safeguards stopped fails its turn as a refusal: the CLI goes on past it and ends on an ordinary result, so the stop reason is read from the partial `message_delta` (where CLI 2.1.316 streams it) and the assistant message, a child's left to the child, and the done event carries `refused` so the capacity retry never resends it (PR #273, after #272 R1 was resent and stopped as a format failure). Before that: A read session given the web tools turns Codex's own web search live, not only a source-only one: the wiki and next-task focuses had no web search on either host. Before that: A spec-sized system prompt overran Windows' 32,767-character command line (WinError 206), so Claude reads it from an owner-only file made per process, owned and removed with that process, and removed on any failure before it starts (PR #261). Before that: A turn cut off at capacity after it worked is continued (PR #221): an isolated session never resumes the id it did not persist, a continuation goes only to a Codex thread `thread/resume` reached and a fresh one stops the turn with the loss on record, and a failed Codex turn carries the usage it spent so the retries' total is charged. Before that: Providers lead their own process group on POSIX (audit R2), so Ctrl+C reaches none of them: every session with a running provider registers itself, and a server going down ends them all, a one-off explanation that no registry holds included, and refuses new ones until it starts again (`end_all`, `reopen`, `end`). Then a caller grading what the host read passes `results`, and both providers keep every tool result there whole: a tool event shows only 4000 characters, and Codex `exec` sends no result event (v5 calibration, PR #109)."
     },
     "tool/apply.py": {
@@ -111,6 +106,11 @@
       "lines": 987,
       "reason": "Registers the PowerShell catalogue check; its extraction and validation stay in shell_lint.py (powershell-version-resolver-and-install, two lines). Before that: Reports a tracked file under `eval/` that a run wrote — in a `results/` folder or a JSON named by a date or stamp — since `.gitignore` cannot catch a script that writes elsewhere, as `tool/eval/file_filter.py` did in #270 (`craft/results-stay-off-git`, PR #273). Before that: baseline at adoption"
     },
+    "tool/main/connect.py": {
+      "dup": 0,
+      "lines": 804,
+      "reason": "Packaged Python omits Tkinter; Windows folder selection uses the existing PowerShell catalogue and OS dialog."
+    },
     "tool/main/decisions.py": {
       "dup": 0,
       "lines": 1002,
@@ -148,7 +148,7 @@
     },
     "tool/main/review_contract.py": {
       "dup": 0,
-      "lines": 852,
+      "lines": 841,
       "reason": "The owner-selected merge policy collects registered flows only for Cloud; local/external evidence remains an independent-review obligation with redacted current-head report identity. Cloud required IDs can supply selection without inventing a model record. Previous: Shadow questions use grounded conditions and fit the 100 kB UTF-8 request body; shadow-3 held-out required recall reached 0.97 on Claude-labelled tasks."
     },
     "tool/main/specs.py": {
@@ -312,7 +312,7 @@
       "reason": "Shows the oneshot runs past S1 above the list; the row and its reads live in `OneshotRail` in `Oneshot.tsx` (oneshot-screens, one line). Before that: Passes the machine's PowerShell status to the separate install panel; polling, actions and markup stay in PowerShell.tsx (powershell-version-resolver-and-install, three lines). Before that: The list holds only connected repositories, so connecting a new one starts here: [폴더 찾기] opens the OS folder dialog, and where none opens (a phone, a Python without Tk) a path field takes its place. Before that: baseline at adoption"
     },
     "web/src/components/Settings.tsx": {
-      "dup": 18,
+      "dup": 9,
       "lines": 381,
       "reason": "Remote phones retain pairing and never mount local account preparation or desktop update controls. Previous: Replace the narrow modal with the approved category rail, preserve mounted drafts and every existing setting, share independent account preparation, and guard retired requests. Native window state is in SettingsWindow.tsx. Previous: Expose the existing preparation screen only for packaged installations. Previous: The review research limits (minutes, calls, tokens) a recurring finding's research starts with are set here, saved by the window's one [저장]. Before that: The model the merge's structure refresh runs on is chosen here, beside the review settings; none chosen skips the refresh. Before that: baseline at adoption"
     },
