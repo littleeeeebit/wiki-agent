@@ -231,7 +231,13 @@ async def only_this_screen(request: Request, call_next):
         return refused(403, "설정은 이 PC에서만 변경한다")
     if onboarding.importing() and request.url.path.startswith("/api/") and not setup:
         return refused(409, "가져오기가 끝나지 않았다. 준비 화면에서 다시 시도하거나 앱을 다시 시작하세요")
-    if not screen and request.method != "GET" and not pairing and not setup:
+    machine_settings = not remote and request.url.path in {
+        "/api/switch", "/api/loop/settings", "/api/connect/settings", "/api/architecture/settings",
+        "/api/recovery/settings", "/api/jev/settings", "/api/jev/probe",
+        "/api/mobile/start", "/api/mobile/link", "/api/mobile/stop",
+        "/api/folders", "/api/folders/browse",
+    }
+    if not screen and request.method != "GET" and not pairing and not setup and not machine_settings:
         return refused(400, "어느 프로젝트의 화면인지 모르는 쓰기는 받지 않는다")
     token, screened = query.claimed.set(unquote(screen) if screen else None), query.screened.set(True)
     try:

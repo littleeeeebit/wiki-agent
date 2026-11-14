@@ -48,6 +48,19 @@ def saved() -> dict:
         return {}
 
 
+def selected() -> list[str]:
+    state = saved()
+    return state.get("agents") or [state.get("agent", "codex")]
+
+
+def authenticated(provider: str) -> bool:
+    if provider != "gh":
+        return setup_chat.logged_in(provider)
+    result = subprocess.run([*cli_command("gh"), "auth", "status", "--hostname", "github.com"],
+                            capture_output=True, timeout=15, **process.background_options())
+    return result.returncode == 0
+
+
 def refresh_path() -> None:
     """New user installs become visible without restarting an already-running app."""
     if os.name != "nt":
@@ -185,8 +198,8 @@ def status(request: Request) -> dict:
     state = saved()
     with _lock:
         task = dict(_task)
-    return {"packaged": PACKAGED, "complete": bool(state.get("complete")) and channels.WORKSPACE.is_dir() if PACKAGED else True,
-            "agent": state.get("agent", "codex"), "workspace": str(channels.WORKSPACE),
+    return {"packaged": PACKAGED, "complete": bool(state.get("complete")) if PACKAGED else True,
+            "agents": selected(),
             "data": str(DATA), "version": release().get("version", "development"),
             "resources": str(RESOURCES), "python": sys.executable,
             "task": task, "restart_required": bool(state.get("restart_required") and state.get("import_process") == os.getpid())}
@@ -196,21 +209,21 @@ def status(request: Request) -> dict:
 def detection(request: Request) -> dict:
     local(request)
     refresh_path()
-    agent = saved().get("agent", "codex")
-    tools = {name: detect(name) for name in ("git", "pwsh", "gh", "fd", "jq", agent)}
-    authenticated = False
-    problem = ""
-    if tools[agent]["ready"]:
-        try:
-            authenticated = setup_chat.logged_in(agent)
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            problem = str(exc)
-    return {"tools": tools, "authenticated": authenticated, "auth_error": problem, "winget": bool(shutil.which("winget"))}
+    tools = {name: detect(name) for name in ("git", "pwsh", "gh", "fd", "jq", "codex", "claude")}
+    accounts = {}
+    for provider in ("codex", "claude", "gh"):
+        account = {"authenticated": False, "error": ""}
+        if tools[provider]["ready"]:
+            try:
+                account["authenticated"] = authenticated(provider)
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                account["error"] = str(exc)
+        accounts[provider] = account
+    return {"tools": tools, "accounts": accounts, "winget": bool(shutil.which("winget"))}
 
 
 class Configure(BaseModel):
-    agent: Literal["claude", "codex"]
-    workspace: str = ""
+    agents: list[Literal["claude", "codex"]] = Field(min_length=1, max_length=2)
 
 
 @router.post("/configure")
@@ -219,19 +232,7 @@ def configure(body: Configure, request: Request) -> dict:
     with _lock:
         if _task["running"]:
             raise HTTPException(409, "진행 중인 준비를 끝내거나 취소하세요")
-        change = {"agent": body.agent, "complete": False}
-        if body.workspace:
-            path = Path(body.workspace).expanduser()
-            if not path.is_absolute() or not path.is_dir() or path.resolve() == RESOURCES.resolve():
-                raise HTTPException(400, "프로젝트들이 있는 폴더의 절대 경로를 입력하세요")
-            if path.resolve() != channels.WORKSPACE:
-                from . import loop
-                activity = loop.loops()
-                if activity["turns"] or activity["answers"] or any(loop.LOOPING.fullmatch(row["state"]) for row in activity["loops"]):
-                    raise HTTPException(409, "다른 창의 작업과 질문이 끝난 뒤 프로젝트 폴더를 바꾸세요")
-            settings.saved(DATA / ".chat-local.json", {"workspace": str(path.resolve())})
-            channels.WORKSPACE = path.resolve()
-        settings.saved(FILE, change)
+        settings.saved(FILE, {"agents": list(dict.fromkeys(body.agents))})
     return status(request)
 
 
@@ -267,17 +268,22 @@ def install(body: Install, request: Request) -> dict:
     return start(f"install:{body.tool}", run)
 
 
+class Login(BaseModel):
+    provider: Literal["claude", "codex", "gh"]
+
+
 @router.post("/login")
-def login(request: Request) -> dict:
+def login(body: Login, request: Request) -> dict:
     local(request)
-    agent = saved().get("agent", "codex")
+    provider = body.provider
     def run():
-        if not setup_chat.logged_in(agent):
-            command([*cli_command(agent), *setup_chat.AUTH[agent][1]])
-        if not setup_chat.logged_in(agent):
+        if not authenticated(provider):
+            args = ["auth", "login", "--hostname", "github.com", "--web", "--git-protocol", "https"] if provider == "gh" else setup_chat.AUTH[provider][1]
+            command([*cli_command(provider), *args])
+        if not authenticated(provider):
             raise ValueError("로그인을 확인하지 못했다. 브라우저에서 본인 계정을 승인한 뒤 다시 시도하세요")
-        output(f"{agent}: 로그인 확인 완료")
-    return start("login", run)
+        output(f"{provider}: 로그인 확인 완료")
+    return start(f"login:{provider}", run)
 
 
 @router.post("/cancel")
@@ -285,16 +291,6 @@ def cancel(request: Request) -> dict:
     local(request)
     _halt.set()
     return {"ok": True}
-
-
-@router.post("/browse")
-def browse(request: Request) -> dict:
-    local(request)
-    from .connect import CLOSED, pick_folder
-    picked = pick_folder("프로젝트들이 들어 있는 폴더")
-    if picked is None:
-        raise HTTPException(503, "폴더 선택 창을 열지 못했다. 폴더의 전체 경로를 입력하세요")
-    return {"path": "" if picked == CLOSED else picked}
 
 
 class Keys(BaseModel):
@@ -345,20 +341,18 @@ def finish(request: Request) -> dict:
         if _task["running"]:
             raise HTTPException(409, "진행 중인 준비를 끝내거나 취소하세요")
         detected = detection(request)
-        if not all(row["ready"] for row in detected["tools"].values()) or not detected["authenticated"]:
+        agents = selected()
+        required = ["git", "pwsh", "gh", "fd", "jq", *agents]
+        if not all(detected["tools"][name]["ready"] for name in required) or not all(detected["accounts"][name]["authenticated"] for name in agents):
             raise HTTPException(409, "필수 도구 실행과 공식 로그인을 먼저 확인하세요")
-        candidates = [p for p in (channels.WORKSPACE.iterdir() if channels.WORKSPACE.is_dir() else ()) if (p / ".git").exists()]
-        if not candidates:
-            raise HTTPException(409, "선택한 폴더에 Git 프로젝트가 없다. 프로젝트가 들어 있는 폴더를 선택하세요")
-        from . import query
-        agent = saved().get("agent", "codex")
+        agent = "claude" if "claude" in agents else "codex"
         model = ""
         if agent == "codex":
             models = channels.codex_models()
             model = next((m for m in models if m.get("is_default")), models[0])["id"]
-        settings.saved(DATA / ".chat-local.json", {"model": model})
-        channels.LOCAL["model"] = model
-        query._project = candidates[0].name
+        if not saved().get("complete"):
+            settings.saved(DATA / ".chat-local.json", {"model": model})
+            channels.LOCAL["model"] = model
         settings.saved(FILE, {"complete": True, "restart_required": False})
-        output("도구 실행, 로그인, 프로젝트 위치를 확인했다. 프로젝트 연결은 앱에서 계속하세요")
+        output("도구 실행과 로그인을 확인했다. 프로젝트 경로는 앱의 프로젝트 연결에서 입력하세요")
     return status(request)

@@ -142,11 +142,19 @@ fn open_window(app: AppHandle, port: u16, log: PathBuf) {
 }
 
 fn window(app: &AppHandle, label: &str, url: Url) -> tauri::Result<tauri::WebviewWindow> {
+    let preparing = cfg!(desktop_bundle) && !std::fs::read(app.state::<Layout>().data.join("onboarding.json"))
+        .ok().and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|value| value.get("complete").and_then(|v| v.as_bool())).unwrap_or(false);
     WebviewWindowBuilder::new(app, label, WebviewUrl::External(url))
         .title("wiki-agent")
-        .inner_size(1480.0, 920.0)
-        .min_inner_size(960.0, 600.0)
+        .inner_size(if preparing { 1040.0 } else { 1480.0 }, if preparing { 700.0 } else { 920.0 })
+        .min_inner_size(if preparing { 800.0 } else { 960.0 }, 600.0)
         .build()
+}
+
+#[tauri::command]
+fn preparation_finished(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.set_size(tauri::LogicalSize::new(1480.0, 920.0)).map_err(|e| e.to_string())
 }
 
 /// Another window on the same server page. It starts on the server's default
@@ -160,6 +168,23 @@ async fn new_window(app: AppHandle, from: tauri::WebviewWindow) -> Result<(), St
     url.set_fragment(None);
     let label = format!("main-{}", WINDOWS.fetch_add(1, Ordering::SeqCst) + 1);
     window(&app, &label, url).map(|_| ()).map_err(|err| format!("창을 못 열었다: {err}"))
+}
+
+#[tauri::command]
+async fn preferences_window(app: AppHandle, from: tauri::WebviewWindow, page: String) -> Result<(), String> {
+    if page != "settings" && page != "updates" { return Err("알 수 없는 설정 창".into()); }
+    if let Some(open) = app.get_webview_window(&page) {
+        open.unminimize().map_err(|e| e.to_string())?;
+        return open.set_focus().map_err(|e| e.to_string());
+    }
+    let mut url = from.url().map_err(|e| e.to_string())?;
+    url.set_path("/");
+    url.set_query(Some(&format!("page={page}")));
+    url.set_fragment(None);
+    WebviewWindowBuilder::new(&app, &page, WebviewUrl::External(url))
+        .title(if page == "settings" { "wiki-agent · 설정" } else { "wiki-agent · 업데이트" })
+        .inner_size(1040.0, 760.0).min_inner_size(800.0, 560.0)
+        .build().map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// A closed window's terminals end with it. With another window still open
@@ -232,11 +257,18 @@ fn stop_children(app: &AppHandle) {
 #[tauri::command]
 async fn package_update(app: AppHandle) -> Result<serde_json::Value, String> {
     if !cfg!(desktop_bundle) { return Ok(serde_json::json!({"packaged": false})); }
-    let updater = app.updater_builder().timeout(Duration::from_secs(30)).build().map_err(|e| e.to_string())?;
+    let newer = std::sync::Arc::new(AtomicBool::new(false));
+    let compared = newer.clone();
+    // Keep release notes even when the published version is already installed.
+    let updater = app.updater_builder().timeout(Duration::from_secs(30))
+        .version_comparator(move |current, release| { compared.store(release.version > current, Ordering::SeqCst); true })
+        .build().map_err(|e| e.to_string())?;
     let update = updater.check().await.map_err(|e| e.to_string())?;
     Ok(match update {
-        Some(update) => serde_json::json!({"packaged": true, "version": update.version, "notes": update.body}),
-        None => serde_json::json!({"packaged": true}),
+        Some(update) => serde_json::json!({"packaged": true, "current": update.current_version,
+            "available": newer.load(Ordering::SeqCst), "version": update.version,
+            "notes": update.body, "releases": update.raw_json.get("releases")}),
+        None => serde_json::json!({"packaged": true, "current": app.package_info().version.to_string(), "available": false}),
     })
 }
 
@@ -390,7 +422,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Ptys::default())
         .manage(Sidecar(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![pty_open, pty_write, pty_resize, pty_close, open_url, restart, new_window, package_update, package_install])
+        .invoke_handler(tauri::generate_handler![pty_open, pty_write, pty_resize, pty_close, open_url, restart, new_window, preferences_window, preparation_finished, package_update, package_install])
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
                 end_terminals(window.app_handle(), window.label());

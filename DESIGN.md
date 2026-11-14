@@ -92,6 +92,26 @@ components:
 
 # DESIGN — Screen values for this repository
 
+## Desktop preferences and preparation
+
+Settings and Updates open as separate, reusable native windows on the existing
+server. Settings uses a compact category rail and aligned controls. Preparation
+shares its account, prerequisite, service-key and import panels with Settings;
+Claude, Codex and GitHub have independent readiness and login controls. Project
+paths belong to the later project connection screen, not preparation.
+
+These windows belong to the local machine and its existing CLI accounts. They
+never select a project or copy credentials. Project-bound requests retain the
+window's captured project ticket. Each mounted screen and refresh owns a
+generation; retired responses cannot change its state. Persisted settings are
+written only by explicit saves or clearly labelled immediate controls. Other
+windows re-read global settings after a save; their project selections survive.
+
+Updates explicitly reports the installed and published versions, including an
+up-to-date result, and displays release notes grouped by version. Existing
+signature verification, failure recovery and coordinated shutdown remain the
+installation boundary. Keep the current palette and type scale.
+
 These are the same values as the tokens in `web/src/index.css`. If the two diverge, this file is the reference for comparison.
 
 ## Screen List
@@ -140,7 +160,7 @@ revocation remain visible while applicable.
 
 The center is slightly wider than the right to give the conversation more reading space. Desktop conversation and agent toolbars wrap their controls to the available pane width and grow from a `44px` minimum height. Focus tabs, document scope, model choices, planning and clear context remain reachable on 16:10 screens and scaled desktop windows. Clear context is an icon on both sides, with its name in `aria-label` and `title`.
 
-The title headers of the three sides have the same height (`44px`, `h-11`). They only state what is being viewed. The tab line is `36px` (`h-9`). Settings have been moved to a modal via the gear icon — since translation and theme are things you don't touch again once set, there is no reason to use rail space.
+The title headers of the three sides have the same height (`44px`, `h-11`). They only state what is being viewed. The tab line is `36px` (`h-9`). The gear opens a separate desktop Settings window with category navigation; preferences do not occupy the task rail.
 
 ## Oneshot window
 
@@ -216,7 +236,7 @@ Neutral background with two accent colors. Selected by the user on 2026-09-25.
 
 `add`·`del` are used only for the `+`·`-` lines of a patch. Since it is a direction, not a state, values like `ok`·`warn` are not used — deleted lines are not errors.
 
-Dark is the default. Light is selected in the general settings modal and remembered per machine.
+Dark is the default. Light is selected in the general Settings window and remembered per machine.
 
 Landscape workspace controls fill only the selected mode with existing `primary`
 and use `primary-foreground` for its label. The user chose Filled blue over

@@ -21,10 +21,10 @@ def main():
     parser.add_argument("--dist", type=Path, default=ROOT / "web/dist")
     args = parser.parse_args()
     fake = FastAPI()
-    state = {"packaged": True, "complete": False, "agent": "codex", "workspace": "D:/팀 프로젝트",
+    state = {"packaged": True, "complete": False, "agents": ["codex"],
              "data": "C:/Users/fixture/AppData/Local/wiki-agent-data", "version": "0.1.0", "restart_required": False,
              "task": {"running": False, "action": "", "output": "", "error": "", "code": None}}
-    ready, logged, requests = set(), False, []
+    ready, logged, requests = set(), set(), []
 
     @fake.get("/api/mobile/status")
     def mobile():
@@ -32,28 +32,23 @@ def main():
 
     @fake.api_route("/api/onboarding{path:path}", methods=["GET", "POST"])
     async def api(path: str, request: Request):
-        nonlocal logged
         body = await request.json() if request.method == "POST" else {}
         requests.append((path, body))
         if path == "/detect":
             return {"tools": {name: {"ready": name in ready, "version": "fixture", "error": "fixture missing"}
-                              for name in ("git", "pwsh", "gh", "fd", "jq", state["agent"])},
-                    "authenticated": logged, "auth_error": "", "winget": True}
+                              for name in ("git", "pwsh", "gh", "fd", "jq", "codex", "claude")},
+                    "accounts": {name: {"authenticated": name in logged, "error": ""} for name in ("codex", "claude", "gh")}}
         if path == "/configure":
-            state["agent"] = body["agent"]
-            if body.get("workspace"):
-                state["workspace"] = body["workspace"]
+            state["agents"] = body["agents"]
         elif path == "/install":
             state["task"].update(running=True, action=f"install:{body['tool']}", output="fixture progress", error="")
         elif path == "/cancel":
             state["task"].update(running=False, code=130, error="fixture canceled")
         elif path == "/login":
-            logged = True
+            logged.add(body["provider"])
             state["task"].update(running=False, code=0, error="", output="fixture login verified")
-        elif path == "/browse":
-            return {"path": "D:/한글 폴더/projects"}
         elif path == "/finish":
-            return JSONResponse({"detail": "fixture readiness requires project connection"}, status_code=409)
+            return JSONResponse({"detail": "fixture readiness requires tools"}, status_code=409)
         return state
 
     fake.mount("/", StaticFiles(directory=args.dist, html=True))
@@ -67,41 +62,32 @@ def main():
         except Exception:
             print(json.dumps({"errors": errors, "requests": requests, "body": page.locator('body').inner_text()}, ensure_ascii=True))
             raise
-        page.get_by_label("사용할 도구").select_option("claude")
-        page.get_by_role("button", name="선택하고 확인", exact=True).click()
-        page.get_by_text("Claude Code · 준비 필요", exact=True).wait_for()
-        assert not page.get_by_text("Codex · 준비 필요", exact=True).count()
+        page.get_by_label("Claude Code 사용").check()
+        page.wait_for_function("document.querySelector('input[aria-label=\"Claude Code 사용\"]').checked")
+        assert state["agents"] == ["codex", "claude"]
+        assert page.get_by_label("Codex 사용").is_checked()
+        assert not page.get_by_role("button", name="폴더 찾기").count()
+        assert not page.locator('select').count()
         page.get_by_role("button", name="설치", exact=True).first.click()
         page.get_by_role("button", name="취소", exact=True).click()
         page.get_by_text("fixture canceled", exact=True).wait_for()
         page.get_by_role("button", name="설치", exact=True).first.click()
         page.get_by_role("button", name="취소", exact=True).click()
-        page.get_by_role("button", name="공식 로그인 열기", exact=True).click()
-        page.get_by_text("로그인 확인됨", exact=True).wait_for()
-        page.get_by_role("button", name="폴더 찾기", exact=True).click()
-        page.get_by_label("Git 프로젝트들이 들어 있는 폴더").fill("D:/한글 폴더/projects")
-        page.get_by_role("button", name="폴더 저장", exact=True).click()
-        page.get_by_text("선택 사항 · 서비스 키", exact=True).click()
+        ready.update({"codex", "claude", "gh"})
+        page.get_by_role("button", name="상태 확인", exact=True).click()
+        page.locator('.account-row').filter(has_text="GitHub").get_by_role("button", name="로그인", exact=True).click()
+        page.locator('.account-row').filter(has_text="GitHub").get_by_text("연결됨", exact=True).wait_for()
+        page.get_by_role("button", name="서비스 키", exact=True).click()
         page.get_by_label("GEMINI_API_KEY", exact=True).fill("fixture-only-key")
         page.get_by_role("button", name="서비스 키 저장", exact=True).click()
         page.wait_for_function("document.querySelector('input[type=password]').value === ''")
         page.get_by_role("button", name="준비 확인하고 앱 열기", exact=True).click()
-        page.get_by_role("alert").filter(has_text="fixture readiness requires project connection").wait_for()
-        for width, height in ((1440, 900), (960, 600), (400, 800)):
-            page.set_viewport_size({"width": width, "height": height})
-            layout = page.evaluate("""() => {
-              const controls = [...document.querySelectorAll('input,select,button')].filter(e => e.getBoundingClientRect().width);
-              return {overflow: document.documentElement.scrollWidth > innerWidth,
-                clipped: controls.filter(e => { const r=e.getBoundingClientRect(); return r.left < 0 || r.right > innerWidth }).length,
-                contentWidth: document.querySelector('main > div').getBoundingClientRect().width};
-            }""")
-            assert not layout["overflow"] and not layout["clipped"], layout
-            print(json.dumps({"viewport": [width, height], **layout}))
+        page.get_by_role("alert").filter(has_text="fixture readiness requires tools").wait_for()
         assert any(path == "/install" for path, _ in requests)
         assert any(path == "/keys" and body["values"] == {"GEMINI_API_KEY": "fixture-only-key"} for path, body in requests)
         assert not errors, errors
         browser.close()
-    print("PASS: onboarding selection, install/cancel/retry, login, workspace, secret entry, readiness errors and responsive layout")
+    print("PASS: independent agents, install/cancel/retry, GitHub login, no project picker and secret entry")
 
 
 if __name__ == "__main__":

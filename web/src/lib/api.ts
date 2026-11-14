@@ -199,10 +199,12 @@ if (claimed) known()
 export const claim = (name: string) => {
   claimed = name
   keep(name)
-  if (name) known()
+  known()
 }
 
 async function scoped(url: string, owner?: string): Promise<Record<string, string>> {
+  // Standalone preferences owns machine settings and must not wait for a project selection.
+  if (['settings', 'updates'].includes(new URLSearchParams(location.search).get('page') ?? '')) return {}
   if (!url.startsWith('/api/channels')) await claimedOnce
   const repo = owner ?? claimed
   return repo ? { 'X-Project': encodeURIComponent(repo) } : {}
@@ -820,7 +822,7 @@ export const installPowerShell = () =>
 export const connectPlan = (name: string) =>
   get(`/api/connect/${encodeURIComponent(name)}/plan`).then((r) => json<ConnectPlan>(r, '연결 계획'))
 export const connect = (name: string, body: { hub: string; survey: boolean }) =>
-  post(`/api/connect/${encodeURIComponent(name)}`, body).then((r) => json<{ ok: boolean }>(r, '연결'))
+  post(`/api/connect/${encodeURIComponent(name)}`, body, 'POST', name).then((r) => json<{ ok: boolean }>(r, '연결'))
 /** [폴더 찾기]: the OS dialog's path, '' when closed, null where no dialog opens (501). */
 export const browseFolder = () => post('/api/folders/browse').then((r) => (r.status === 501 ? null : json<{ path: string }>(r, '폴더 찾기').then((d) => d.path)))
 export const addFolder = (path: string) => post('/api/folders', { path }).then((r) => json<{ name: string }>(r, '폴더 추가'))

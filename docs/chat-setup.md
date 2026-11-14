@@ -16,23 +16,27 @@ here changes that page in the same pull request.
 2. The first release has no Windows publisher signature. Windows may show
    an unknown-publisher or SmartScreen warning. Check the release source and
    checksum before choosing whether to continue; do not disable Windows protection.
-3. Open wiki-agent from the Start menu. Select Codex or Claude Code and use
+3. Open wiki-agent from the Start menu. Select Codex, Claude Code, or both and use
    the preparation screen to check existing installations. Install only missing
    tools. Installation output remains visible; cancel or retry a failed step.
    Git, PowerShell 7, GitHub CLI, fd and jq support the existing workflows.
    Agent installers require internet access; winget-based steps require Microsoft's
    App Installer. The Codex control uses its official standalone installer.
-4. Open the official agent login, approve your own account in the browser,
-   and check the reported authentication result. Select the folder containing
-   your Git projects. Optional translation, Jev and Langfuse keys can be entered
-   in the preparation screen, without editing an environment file.
-5. Choose the readiness check. It verifies executable compatibility, login and
-   a Git project in the selected folder. In the app, open Projects to connect
-   that repository. Review the proposed hook changes and Codex trust separately.
+4. Open each selected agent's official login, approve your own account in the
+   browser, and check the reported result. GitHub has a separate optional
+   official login through GitHub CLI. Optional translation, Jev and Langfuse
+   keys have their own preparation tab, without manual environment-file editing.
+5. Choose the readiness check. It verifies executable compatibility and every
+   selected agent's login. Project discovery is not part of preparation. In the
+   app, open Projects and enter the repository path to connect it. Review the
+   proposed hook changes and Codex trust separately.
    The real-session connection test uses agent quota; start it only when you
    intend that use. Installed settings alone do not prove that a hook fired.
 
-Settings → PC preparation reopens this screen. The CLI owns its account tokens
+The gear opens a separate Settings window. Account and PC preparation can add
+another agent or GitHub later; changing categories preserves unsaved settings.
+Updates opens its own window, reports when the app is current, and lists changes
+by version before installation. The CLI owns its account tokens
 in its normal user configuration. Service keys stay on this PC and are never
 returned by the preparation status API.
 

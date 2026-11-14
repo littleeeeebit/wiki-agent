@@ -1,4 +1,4 @@
-import { StrictMode, useState } from 'react'
+import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
@@ -8,6 +8,9 @@ import { useRoute } from '@/lib/mode'
 import { openWebLink } from '@/lib/links'
 import { reportError } from '@/lib/api'
 import { OnboardingGate } from '@/components/Onboarding'
+import { SettingsWindow } from '@/components/SettingsWindow'
+import { UpdatesWindow } from '@/components/UpdateCard'
+import { leave } from '@/lib/leave'
 
 // Bound repeated failures locally; reporting must never create another rejection.
 let errorReports = 0
@@ -58,8 +61,35 @@ function Windows() {
   )
 }
 
+function Screen() {
+  const [preferences, setPreferences] = useState(false)
+  useEffect(() => {
+    const open = () => setPreferences(true)
+    window.addEventListener('preferences-open', open)
+    return () => window.removeEventListener('preferences-open', open)
+  }, [])
+  const page = new URLSearchParams(location.search).get('page')
+  useEffect(() => {
+    if (!page || !('__TAURI_INTERNALS__' in window)) return
+    let generation = true
+    let unlisten: (() => void) | undefined
+    void import('@tauri-apps/api/window').then(async ({ getCurrentWindow }) => {
+      const stop = await getCurrentWindow().onCloseRequested(async (event) => {
+        event.preventDefault()
+        if (generation && await leave(true) && generation) await getCurrentWindow().destroy()
+      })
+      if (generation) unlisten = stop
+      else stop()
+    })
+    return () => { generation = false; unlisten?.() }
+  }, [page])
+  if (page === 'settings') return <SettingsWindow />
+  if (page === 'updates') return <UpdatesWindow />
+  return <><OnboardingGate><Windows /></OnboardingGate>{preferences && <div className="fixed inset-0 z-50 bg-background"><SettingsWindow onClose={() => setPreferences(false)} /></div>}</>
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <MobileAccess><OnboardingGate><Windows /></OnboardingGate></MobileAccess>
+    <MobileAccess><Screen /></MobileAccess>
   </StrictMode>,
 )

@@ -39,6 +39,7 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(onboarding, "refresh_path", lambda: None)
     monkeypatch.setattr(onboarding, "detect", lambda name: {"ready": True, "version": "fixture", "path": name})
     monkeypatch.setattr(onboarding.setup_chat, "logged_in", lambda agent: False)
+    monkeypatch.setattr(onboarding, "authenticated", lambda provider: onboarding.setup_chat.logged_in(provider))
     monkeypatch.setattr(onboarding.channels, "codex_models", lambda: [{"id": "codex:fixture", "is_default": True}])
     monkeypatch.setattr(query, "_project", None)
     yield TestClient(app.app, base_url="http://127.0.0.1:8787"), data, workspace
@@ -173,19 +174,23 @@ def test_test_feed_keeps_assets_isolated_and_production_default_unchanged():
         "https://github.com/littleeeeebit/wiki-agent/releases/download/v0.1.4/setup.exe"
 
 
-def test_readiness_requires_verified_auth_and_real_project(setup, monkeypatch):
+def test_readiness_checks_each_selected_agent_without_project_discovery(setup, monkeypatch):
     client, data, workspace = setup
     assert client.get("/api/onboarding").json()["complete"] is False
     assert client.post("/api/onboarding/finish", json={}).status_code == 409
     monkeypatch.setattr(onboarding.setup_chat, "logged_in", lambda agent: True)
-    assert client.post("/api/onboarding/finish", json={}).status_code == 409
-    (workspace / "한글 프로젝트/.git").mkdir(parents=True)
     assert client.post("/api/onboarding/finish", json={}).json()["complete"] is True
     assert json.loads((data / ".chat-local.json").read_text())["model"] == "codex:fixture"
     assert onboarding.channels.LOCAL["model"] == "codex:fixture"
-    assert query._project == "한글 프로젝트"
+    assert query._project is None
     workspace.rename(workspace.with_name("moved-projects"))
-    assert client.get("/api/onboarding").json()["complete"] is False
+    assert client.get("/api/onboarding").json()["complete"] is True
+    assert client.post("/api/onboarding/configure", json={"agents": ["codex", "claude"]}).status_code == 200
+    monkeypatch.setattr(onboarding.setup_chat, "logged_in", lambda agent: agent == "codex")
+    assert client.post("/api/onboarding/finish", json={}).status_code == 409
+    monkeypatch.setattr(onboarding.setup_chat, "logged_in", lambda agent: agent in {"claude", "codex"})
+    assert client.post("/api/onboarding/finish", json={}).json()["complete"] is True
+    assert onboarding.channels.LOCAL["model"] == "codex:fixture"
 
 
 def test_local_setup_preserves_key_file_and_never_echoes_secrets(setup):
@@ -196,7 +201,7 @@ def test_local_setup_preserves_key_file_and_never_echoes_secrets(setup):
     assert "fixture-private-key" not in client.get("/api/onboarding").text
     assert (data / ".env").read_text() == "# keep\nOTHER=old\nGEMINI_API_KEY=fixture-private-key\n"
     assert client.post("/api/onboarding/keys", json={"values": {"PATH": "bad"}}).status_code == 400
-    assert client.post("/api/onboarding/configure", json={"agent": "codex"}, headers={"Origin": "https://other.invalid"}).status_code == 403
+    assert client.post("/api/onboarding/configure", json={"agents": ["codex"]}, headers={"Origin": "https://other.invalid"}).status_code == 403
     assert client.post("/api/config/wiki", json={}).status_code == 400
 
 
@@ -205,13 +210,57 @@ def test_login_installer_failure_and_retry_remain_unready(setup, monkeypatch):
     calls = []
     monkeypatch.setattr(onboarding, "cli_command", lambda name: [name])
     monkeypatch.setattr(onboarding, "command", lambda argv: calls.append(argv))
-    assert client.post("/api/onboarding/login", json={}).status_code == 200
+    assert client.post("/api/onboarding/login", json={"provider": "codex"}).status_code == 200
     assert wait()["code"] == 1
     assert calls == [["codex", "login"]]
     monkeypatch.setattr(onboarding.setup_chat, "logged_in", lambda name: True)
-    client.post("/api/onboarding/login", json={})
+    client.post("/api/onboarding/login", json={"provider": "codex"})
     assert wait()["code"] == 0
-    assert client.get("/api/onboarding/detect").json()["authenticated"] is True
+    assert client.get("/api/onboarding/detect").json()["accounts"]["codex"]["authenticated"] is True
+
+
+def test_legacy_agent_selection_and_github_login_keep_credentials_cli_owned(setup, monkeypatch):
+    client, data, _ = setup
+    onboarding.FILE.write_text('{"agent":"claude","complete":true}', encoding="utf-8")
+    assert client.get("/api/onboarding").json()["agents"] == ["claude"]
+    assert client.post("/api/onboarding/configure", json={"agents": []}).status_code == 422
+    assert client.post("/api/onboarding/login", json={"provider": "other"}).status_code == 422
+    authenticated = set()
+    calls = []
+    monkeypatch.setattr(onboarding, "authenticated", lambda provider: provider in authenticated)
+    monkeypatch.setattr(onboarding, "cli_command", lambda provider: [provider])
+    def command(argv):
+        calls.append(argv)
+        authenticated.add("gh")
+    monkeypatch.setattr(onboarding, "command", command)
+    client.post("/api/onboarding/login", json={"provider": "gh"})
+    assert wait()["code"] == 0
+    assert calls == [["gh", "auth", "login", "--hostname", "github.com", "--web", "--git-protocol", "https"]]
+    assert client.get("/api/onboarding/detect").json()["accounts"]["gh"]["authenticated"]
+    assert not (data / ".env").exists()
+
+
+def test_packaged_empty_project_list_reaches_connection_instead_of_failing(setup, monkeypatch):
+    client, _, _ = setup
+    monkeypatch.setattr(query, "PACKAGED", True)
+    monkeypatch.setattr(query, "project", lambda: "")
+    assert client.get("/api/channels").json() == []
+    assert client.post("/api/folders", json={"path": ""}).status_code == 400
+    assert client.post("/api/config/wiki", json={"model": "haiku"}).status_code == 400
+
+
+def test_release_history_is_versioned_and_refuses_missing_or_duplicate_notes(tmp_path, monkeypatch):
+    monkeypatch.setattr(build_desktop, "ROOT", tmp_path)
+    (tmp_path / "docs").mkdir()
+    file = tmp_path / "docs/windows-releases.json"
+    rows = [{"version": version, "notes": f"Changes {version}"} for version in ("0.1.9", "0.1.10", "0.1.8")]
+    file.write_text(json.dumps(rows), encoding="utf-8")
+    assert [row["version"] for row in build_desktop.release_history("0.1.9")] == ["0.1.9", "0.1.8"]
+    with pytest.raises(ValueError, match="Add release notes"):
+        build_desktop.release_history("0.1.11")
+    file.write_text(json.dumps(rows + [rows[0]]), encoding="utf-8")
+    with pytest.raises(ValueError, match="unique"):
+        build_desktop.release_history("0.1.9")
 
 
 def test_cancellable_process_streams_progress_and_reaps_child(setup):

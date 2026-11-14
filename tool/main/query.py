@@ -592,7 +592,7 @@ def shadow(cid: str, query: str, repo: Path, context: str, cfg: decision.Config,
 
 @router.get("/api/channels")
 def focuses() -> list[dict]:
-    return [
+    return [] if PACKAGED and not project() else [
         {"id": c.id, "label": c.label, "blurb": c.blurb,
          "live": (chat := _sessions.get(session_key(c.id))) is not None and chat.alive,
          "model_name": chat.model_name if chat is not None else "",

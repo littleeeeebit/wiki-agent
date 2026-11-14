@@ -377,11 +377,14 @@ def main():
             for mode in ("off", "partial", "full"):
                 probe = browser.new_page(viewport={"width": 1440, "height": 900})
                 probe.goto(base)
-                probe.get_by_role("button", name="설정", exact=True).first.click()
-                picker = probe.get_by_role("combobox", name="한국어 번역 모드")
+                with probe.expect_popup() as preferences:
+                    probe.get_by_role("button", name="설정", exact=True).first.click()
+                settings = preferences.value
+                settings.get_by_role("button", name="일반 및 알림", exact=True).click()
+                picker = settings.get_by_role("combobox", name="한국어 번역 모드")
                 expect(picker.locator("option")).to_have_text(["끄기", "전체 활성화", "일부 활성화"])
                 picker.select_option(mode)
-                probe.get_by_role("dialog").get_by_role("button", name="닫기", exact=True).click()
+                settings.close()
                 translations.clear()
                 probe.reload()
                 probe.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task").click()

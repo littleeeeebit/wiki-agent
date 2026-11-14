@@ -38,6 +38,10 @@ python tool/build_desktop.py --version 0.1.0 --updater-public-key "C:/private/wi
 ```
 
 Each version gets a new directory under `raw/desktop/releases/<version>/`.
+Add that version's user-facing notes to `docs/windows-releases.json` before
+building. Missing or duplicate versions are refused. The generated `latest.json`
+includes current and older entries for the separate Updates window. A successful
+check explicitly reports a current installation; a newer payload enables Install.
 An incomplete build remains there for diagnosis; use a new version for another
 attempt. Successful output includes the NSIS `*-setup.exe`, `.exe.sig`,
 `latest.json`, the staged payload and `payload-sha256.json`. The setup installs
@@ -93,8 +97,10 @@ not authorize the implementation agent to start metered sessions.
    and the disposable user profile. Install and launch from the Start menu.
 2. Exercise prerequisite success, failure, cancellation and retry. Verify the
    displayed executable paths and versions after installation, not just exit codes.
-3. Complete official login, select a workspace with spaces and Korean characters,
-   and connect a disposable Git project. Capture actual desktop interactions and
+3. Select either or both agents and complete each official login. Exercise the
+   separate GitHub login. Complete preparation without choosing a project folder,
+   then enter a disposable Git repository path with spaces and Korean characters
+   in Projects. Capture actual desktop interactions and
    backend requests. Confirm real SessionStart and other supported hook events
    from new Claude and Codex sessions; direct script invocation is separate proof.
 4. Open two windows on separate projects, exercise terminals, restart, and close
@@ -107,6 +113,10 @@ not authorize the implementation agent to start metered sessions.
    update metadata to the production feed.
 7. Uninstall through Windows and verify that conversations, task state, settings,
    project `.wiki/` and CLI credentials remain. Reinstall and confirm the records.
+8. Reopen Settings in its separate window and add the other agent. Check compact
+   controls, category changes with unsaved fields, and saved settings in the main
+   window without changing its project. Open Updates separately, explicitly check
+   a current version, and inspect changes grouped by version before a newer install.
 
 Keep receipts and screenshots in ignored `raw/desktop/acceptance/`. Record the
 exact commit and installer hash with every result. Unit and fixture-browser

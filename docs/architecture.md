@@ -13,6 +13,14 @@ conversion and resumes interrupted writes before workflow recovery. Tauri owns
 signed update downloads and coordinates shutdown before replacement. See the
 [Windows release procedure](windows-release.md) for build inputs and acceptance.
 
+Settings and Updates are singleton native windows on that same server, routed
+before task screens mount. Preparation shares account and tool controls with
+Settings; Claude, Codex and GitHub remain separate CLI-owned accounts. Local
+machine settings use a closed route list without a project ticket; repository
+writes still name their project. A first install with no repository opens the
+project connection screen. Update metadata retains versioned release notes even
+when no newer payload exists.
+
 ## Documentation map
 
 One repository, three maintenance audiences, one authority per question.

@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Dispatch, ReactNode, SetStateAction } from 'react'
-import { Btn, Modal } from '@/components/Modal'
+import { Btn } from '@/components/Modal'
+import { SetupPanel } from '@/components/Onboarding'
+import { openPreferences, settingsChanged } from '@/lib/desktop'
+import { remote } from '@/lib/mobile'
 import { MobileSettings } from '@/components/MobileAccess'
 import * as api from '@/lib/api'
 import { FAMILY } from '@/lib/run'
@@ -20,9 +23,9 @@ type Props = {
 
 const field = 'h-7 rounded-md border border-input bg-background px-2 font-mono text-[12px]'
 
-/** Everything the whole window shares, in four parts: general, connection,
- *  questions (Jev), review. What a part edits is saved by that part's own button. */
 export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, onClose }: Props) {
+  const generation = useRef(0)
+  const [section, setSection] = useState(remote ? 'mobile' : 'accounts')
   const [survey, setSurvey] = useState<SurveySettings | null>(null)
   const [savedSurvey, setSavedSurvey] = useState<SurveySettings | null>(null)
   const [structure, setStructure] = useState<api.StructureSettings | null>(null)
@@ -37,23 +40,24 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
   const [notification, setNotification] = useState('')
 
   useEffect(() => {
+    const mine = ++generation.current
     api.getConnect()
       .then(({ settings, hub }) => {
+        if (mine !== generation.current) return
         setSurvey(settings)
         setSavedSurvey(settings)
         setHub(hub)
       })
-      .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
+      .catch((err) => { if (mine === generation.current) setFault(String(err)) })
     api.getStructureSettings()
-      .then((s) => { setStructure(s); setSavedStructure(s) })
-      .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
+      .then((s) => { if (mine === generation.current) { setStructure(s); setSavedStructure(s) } })
+      .catch((err) => { if (mine === generation.current) setFault(String(err)) })
     api.getResearchSettings()
-      .then((s) => { setResearch(s); setSavedResearch(s) })
-      .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
+      .then((s) => { if (mine === generation.current) { setResearch(s); setSavedResearch(s) } })
+      .catch((err) => { if (mine === generation.current) setFault(String(err)) })
+    return () => { generation.current = mine + 1 }
   }, [])
 
-  // The form follows the server's values: opened before they arrive, a form
-  // seeded with guesses would show them and [저장] would write them.
   useEffect(() => {
     if (!loop) return
     setRounds(loop.rounds)
@@ -61,14 +65,15 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
   }, [loop])
 
   async function act(key: string, fn: () => Promise<void>) {
+    const mine = generation.current
     setFault('')
     setWorking(key)
     try {
       await fn()
     } catch (err) {
-      setFault(String(err instanceof Error ? err.message : err))
+      if (mine === generation.current) setFault(String(err))
     } finally {
-      setWorking('')
+      if (mine === generation.current) setWorking('')
     }
   }
 
@@ -76,30 +81,31 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
   const surveyEdited = JSON.stringify(survey) !== JSON.stringify(savedSurvey)
   const structureEdited = JSON.stringify(structure) !== JSON.stringify(savedStructure)
   const researchEdited = JSON.stringify(research) !== JSON.stringify(savedResearch)
-  // Jev's part keeps its own form and hands up how to save it while it differs from the server's.
   const [jevSave, setJevSave] = useState<(() => Promise<void>) | null>(null)
   const edited = loopEdited || surveyEdited || structureEdited || researchEdited || !!jevSave
-  // One [저장] for the window: each part that differs goes to its own endpoint.
   const save = () => act('save', async () => {
+    const mine = generation.current
     if (survey && surveyEdited) {
       const saved = await api.setSurveySettings(survey)
+      if (mine !== generation.current) return
       setSurvey(saved); setSavedSurvey(saved)
     }
     if (loop && loopEdited) await onLoop({ ...loop, rounds, concurrent: seats })
     if (structure && structureEdited) {
       const saved = await api.setStructureSettings(structure)
+      if (mine !== generation.current) return
       setStructure(saved); setSavedStructure(saved)
     }
     if (research && researchEdited) {
       const saved = await api.setResearchSettings(research)
+      if (mine !== generation.current) return
       setResearch(saved); setSavedResearch(saved)
     }
     await jevSave?.()
+    settingsChanged()
   })
   const usage = sw?.usage
   const models = options?.models.filter((m) => m.id) ?? []
-  // A model's own efforts, as the toolbar reads them; a model without a list
-  // takes the CLI's five.
   const efforts = (id: string) => options?.models.find((m) => m.id === id)?.efforts ?? options?.efforts ?? []
   const effortPicker =(id: string, value: string, set: (v: string) => void) => (
     <select value={value} aria-label="추론 강도" onChange={(e) => set(e.target.value)} className={`${field} w-24 font-sans`}>
@@ -109,11 +115,16 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
   )
 
   return (
-    <Modal title="설정" onClose={onClose} foot={
-      <Btn tone="primary" disabled={!edited || working === 'save'} onClick={save}>{working === 'save' ? '저장하는 중…' : '저장'}</Btn>}>
-      <div className="space-y-5">
+    <main className="preferences-window" aria-label="설정">
+      <header className="preferences-header"><div><h1>설정</h1><p>이 PC의 계정과 앱 동작을 관리한다.</p></div><Btn onClick={onClose}>닫기</Btn></header>
+      <div className="preferences-body"><nav className="preferences-nav" aria-label="설정 분류">
+        {Object.entries({ accounts: '계정 및 PC 준비', general: '일반 및 알림', connection: '프로젝트 연결', jev: '질문 · Jev', review: '리뷰', mobile: '휴대폰 연결' }).filter(([id]) => !remote || id !== 'accounts').map(([id, label]) =>
+          <button key={id} aria-current={section === id ? 'page' : undefined} onClick={() => setSection(id)}>{label}</button>)}
+        {!remote && <button onClick={() => void openPreferences('updates').catch((e) => setFault(String(e)))}>앱 업데이트 ↗</button>}
+      </nav><div className="preferences-content">
+        {!remote && <div hidden={section !== 'accounts'}><SetupPanel /></div>}
+        <div hidden={section !== 'general'}>
         <Part title="일반">
-          {options?.packaged && <Row label="PC 준비 및 서비스 키"><Btn onClick={() => { location.href = '/?onboarding=1' }}>준비 화면 열기</Btn></Row>}
           <Row label="한국어 번역" note={usage ? `이번 달 ${usage.usd == null ? '?' : `$${usage.usd.toFixed(2)}`} / ${usage.limit == null ? '한도 설정 오류 — 새 번역 중지' : usage.limit ? `$${usage.limit}` : '한도 없음'}` : undefined}>
             <select aria-label="한국어 번역 모드" className={`${field} font-sans`}
               value={sw?.mode ?? (sw?.translate ? 'full' : 'off')} disabled={!sw}
@@ -128,9 +139,9 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
               onChange={(e) => onTheme(e.target.checked ? 'dark' : 'light')} />
           </Row>
         </Part>
-
-        <MobileSettings />
-
+        </div>
+        <div hidden={section !== 'mobile'}><MobileSettings /></div>
+        <div hidden={section !== 'connection'}>
         <Part title="연결">
           <Row label="허브" note={hub ? (hub.refused ? `옮길 수 없다 — ${hub.refused}`
             : hub.needed ? '옛 허브를 가리킨다 · 첫 [연결] 때 옮긴다' : undefined) : '읽는 중…'}>
@@ -162,7 +173,8 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
             </>
           )}
         </Part>
-
+        </div>
+        <div hidden={section !== 'general'} className="mt-5">
         <Part title="알림">
           <Row label="질문 · 완료 · 실패" note="연결된 앱의 시스템 알림으로 받는다">
             <Btn onClick={() => act('notifications', async () => {
@@ -173,8 +185,9 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
           </Row>
           {notification && <p role="status">{notification}</p>}
         </Part>
-        <JevPart onEdited={setJevSave} />
-
+        </div>
+        <div hidden={section !== 'jev'}><JevPart onEdited={setJevSave} /></div>
+        <div hidden={section !== 'review'}>
         <Part title="리뷰">
           {!loop ? <p className="text-faint">읽는 중…</p> : (<>
           <Row label="라운드 상한" note="넘으면 멈추고 [계속] 을 기다린다">
@@ -217,17 +230,19 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
           </Row>
           )}
         </Part>
-
+        </div>
         {fault && <p role="alert" className="whitespace-pre-wrap text-destructive">{fault}</p>}
-      </div>
-    </Modal>
+      </div></div>
+      <footer className="preferences-footer"><span role="status">{edited ? '저장하지 않은 변경 사항이 있다' : '설정이 저장되어 있다 · 계정 작업은 즉시 적용된다'}</span>
+        <Btn tone="primary" disabled={!edited || !!working} onClick={save}>{working === 'save' ? '저장하는 중…' : '변경 사항 저장'}</Btn></footer>
+    </main>
   )
 }
 
 function Part({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="space-y-2.5">
-      <h3 className="font-heading text-[11px] font-semibold text-faint">{title}</h3>
+    <section className="settings-part">
+      <h2 className="font-heading text-[14px] font-semibold">{title}</h2>
       {children}
     </section>
   )
@@ -235,7 +250,7 @@ function Part({ title, children }: { title: string; children: ReactNode }) {
 
 function Row({ label, note, children }: { label: string; note?: string; children: ReactNode }) {
   return (
-    <label className="flex items-center justify-between gap-4">
+    <label className="settings-row">
       <span className="min-w-0">
         <span className="block">{label}</span>
         {note && <span className="block text-[12.5px] text-faint">{note}</span>}

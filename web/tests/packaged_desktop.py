@@ -92,6 +92,7 @@ def main():
             observed["initial_url"] = page.evaluate("location.href")
             assert observed["initial_url"].startswith("http://127.0.0.1:"), observed["initial_url"]
             page.get_by_role("heading", name="이 PC에서 시작하기").wait_for()
+            assert page.evaluate("innerWidth") <= 1040
             status = page.evaluate("fetch('/api/onboarding').then(r => r.json())")
             assert Path(status["data"]) == data and status["packaged"] is True
             assert not data.is_relative_to(home / "AppData/Local/wiki-agent")
@@ -107,11 +108,38 @@ def main():
                 assert failed and '다른 창에서' not in failed, failed
                 assert page.evaluate("fetch('/api/onboarding').then(r => r.ok)")
             observed["update_failure_retry"] = True
-            page.get_by_label("Git 프로젝트들이 들어 있는 폴더").fill(str(projects))
-            page.get_by_role("button", name="폴더 저장", exact=True).click()
-            page.wait_for_function("[...document.querySelectorAll('button')].some(b => b.textContent === '폴더 저장' && !b.disabled)")
-            saved = json.loads((data / ".chat-local.json").read_text(encoding="utf-8"))
-            assert Path(saved["workspace"]) == projects
+            assert not page.get_by_role("button", name="폴더 찾기").count()
+            page.get_by_label("Claude Code 사용").check()
+            page.wait_for_function("fetch('/api/onboarding').then(r=>r.json()).then(s=>s.agents.includes('claude'))")
+            assert json.loads((data / "onboarding.json").read_text(encoding="utf-8"))["agents"] == ["codex", "claude"]
+            page.evaluate("window.__TAURI_INTERNALS__.invoke('preferences_window', {page:'settings'})")
+            deadline = time.monotonic() + 20
+            while not any('page=settings' in p.url for c in browser.contexts for p in c.pages) and time.monotonic() < deadline:
+                page.wait_for_timeout(100)
+            preferences = next(p for c in browser.contexts for p in c.pages if 'page=settings' in p.url)
+            preferences.get_by_role("heading", name="설정", exact=True).wait_for()
+            page.evaluate("window.__TAURI_INTERNALS__.invoke('preferences_window', {page:'settings'})")
+            assert sum('page=settings' in p.url for c in browser.contexts for p in c.pages) == 1
+            preferences.get_by_role("button", name="일반 및 알림", exact=True).click()
+            preferences.get_by_label("한국어 번역 모드").select_option("off")
+            preferences.wait_for_function("fetch('/api/switch').then(r=>r.json()).then(s=>s.mode==='off')")
+            preferences.get_by_role("button", name="계정 및 PC 준비", exact=True).click()
+            assert preferences.get_by_label("Claude Code 사용").is_checked()
+            out.mkdir(parents=True, exist_ok=True)
+            preferences.screenshot(path=str(out / "settings-desktop.png"))
+            page.evaluate("window.__TAURI_INTERNALS__.invoke('preferences_window', {page:'updates'})")
+            deadline = time.monotonic() + 20
+            while not any('page=updates' in p.url for c in browser.contexts for p in c.pages) and time.monotonic() < deadline:
+                page.wait_for_timeout(100)
+            updates = next(p for c in browser.contexts for p in c.pages if 'page=updates' in p.url)
+            updates.get_by_role("heading", name="앱 업데이트", exact=True).wait_for()
+            updates.get_by_role("button", name="업데이트 확인", exact=True).click()
+            updates.get_by_role("status").filter(has_text="최신 버전을 사용하고 있다").wait_for(timeout=45000)
+            updates.screenshot(path=str(out / "updates-desktop.png"))
+            updates.evaluate("window.__TAURI_INTERNALS__.invoke('plugin:window|destroy')")
+            preferences.get_by_role("button", name="닫기", exact=True).click()
+            assert page.evaluate("fetch('/api/onboarding').then(r=>r.ok)")
+            observed["preferences"] = {"settings_singleton": True, "separate_updates": True, "local_setting_write": True, "latest_result": True}
             await_listen = """async () => {
               window.__fixtureTerminal = '';
               const callback = window.__TAURI_INTERNALS__.transformCallback(event => {
@@ -163,7 +191,8 @@ def main():
                     raise AssertionError("Backend survived the last window")
             except OSError:
                 pass
-        observed.update(passed=True, checks=["relocated resources", "bundled backend requests", "workspace save",
+        observed.update(passed=True, checks=["relocated resources", "bundled backend requests", "independent agents without workspace",
+                                             "singleton Settings window", "separate Update window", "actual settings save", "explicit latest result",
                                              "native terminal", "two windows share one server", "last-window shutdown"])
         (out / "receipt.json").write_text(json.dumps(observed, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(f"PASS: relocated desktop, backend, terminal and window lifecycle; receipt: {out / 'receipt.json'}")

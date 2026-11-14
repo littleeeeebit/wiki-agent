@@ -31,6 +31,21 @@ def run(argv, **kwargs):
     subprocess.run(list(map(str, argv)), cwd=ROOT, check=True, **kwargs)
 
 
+def release_history(version: str) -> list[dict]:
+    rows = json.loads((ROOT / "docs/windows-releases.json").read_text(encoding="utf-8"))
+    def number(value):
+        return tuple(map(int, value.split(".")))
+    if not isinstance(rows, list) or not rows or any(
+        not isinstance(row, dict) or not re.fullmatch(r"\d+\.\d+\.\d+", row.get("version", ""))
+        or not isinstance(row.get("notes"), str) or not row["notes"].strip() for row in rows
+    ) or len({row["version"] for row in rows}) != len(rows):
+        raise ValueError("Release history needs unique numeric versions and nonempty notes")
+    selected = sorted((row for row in rows if number(row["version"]) <= number(version)), key=lambda row: number(row["version"]), reverse=True)
+    if not selected or selected[0]["version"] != version:
+        raise ValueError(f"Add release notes for {version} to docs/windows-releases.json before building")
+    return selected
+
+
 def https_feed(value: str) -> str:
     try:
         parsed = urlsplit(value)
@@ -132,6 +147,7 @@ def main() -> None:
     if not os.environ.get("TAURI_SIGNING_PRIVATE_KEY"):
         parser.error("Set TAURI_SIGNING_PRIVATE_KEY to the ignored update key path (not a Windows signing certificate)")
     updater_key = public_key(args.updater_public_key)
+    history = release_history(args.version)
     dirty = subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT).strip()
     if dirty and not args.allow_dirty:
         parser.error("Commit source changes before building a publishable installer")
@@ -169,7 +185,7 @@ def main() -> None:
     for file in (installer, signature):
         shutil.copyfile(file, out / file.name)
     shutil.copyfile(ROOT / "raw/desktop/target/release/wiki-agent.exe", out / "wiki-agent.exe")
-    (out / "latest.json").write_text(json.dumps({"version": args.version, "notes": f"wiki-agent {args.version}",
+    (out / "latest.json").write_text(json.dumps({"version": args.version, "notes": history[0]["notes"], "releases": history,
         "platforms": {"windows-x86_64": {"signature": signature.read_text(encoding="utf-8").strip(),
             "url": update_asset_url(args.update_feed, args.version, installer.name)}}}, indent=2) + "\n", encoding="utf-8")
     print(f"Installer ready: {out / installer.name}")
