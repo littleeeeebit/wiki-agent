@@ -12,9 +12,10 @@ import sys
 import time
 import uuid
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag, model_validator
 
@@ -45,16 +46,22 @@ class NativeTarget(Closed):
 
 
 class Checkpoint(Closed):
+    """The collector reads `selector` itself; `no_requests` claims no backend request in this checkpoint."""
     assertion: str = Field(min_length=1)
     expected: str = Field(min_length=1)
+    selector: str = Field(min_length=1)
+    no_requests: bool = False
 
 
 class WebViewTarget(Closed):
-    """A Tauri/WebView app; a tracked scenario script reports each named checkpoint."""
+    """A Tauri/WebView app built from the reviewed head; a tracked scenario drives it through the collector."""
     driver: Literal["webview"]
     platform: Literal["windows", "android"]
     application: str = Field(min_length=1)
     scenario: str = Field(min_length=1)
+    build: str = Field(min_length=1)
+    output: str = Field(min_length=1)
+    origins: list[str] = Field(min_length=1)
     package: str = ""
     activity: str = ""
     build_inputs: list[str] = Field(min_length=1)
@@ -67,6 +74,11 @@ class WebViewTarget(Closed):
             raise ValueError("package and activity are required on Android and refused on Windows")
         if self.scenario not in self.build_inputs:
             raise ValueError("The WebView scenario must be a measured build input")
+        output = PurePosixPath(self.output)  # one reading on every OS: no drive, no backslash
+        if output.is_absolute() or ".." in output.parts or ":" in self.output or "\\" in self.output:
+            raise ValueError("The WebView build output must be a path inside the checkout")
+        if any(not (u := urlsplit(o)).scheme or not u.netloc or u.path or u.query or u.fragment for o in self.origins):
+            raise ValueError("WebView origins are scheme://host[:port] with no path")
         return self
 
 
@@ -86,12 +98,10 @@ class NativeSettings(Closed):
 
 
 class WebViewSettings(Closed):
-    """One approved WebView app: its exe or APK, the Node that runs scenarios, and the Android emulator."""
+    """One approved WebView app: the Node that runs scenarios and the Android emulator; no binary, it is built at the head."""
     version: Literal[1]
     host: Literal["windows-webview2", "android-emulator"]
     application: str = Field(min_length=1)
-    executable: str = Field(min_length=1)
-    executable_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     runner: str = Field(min_length=1)
     runner_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     profile: str = Field(min_length=1)

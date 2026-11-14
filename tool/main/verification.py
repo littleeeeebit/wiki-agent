@@ -284,7 +284,7 @@ def signature(repo: Path, path: Path, flow: Flow, settings: dict) -> str:
     if flow.kind == "desktop":
         identity["native"] = native_verification.approval(settings, flow.native)
         identity["collector"] = sha(Path(native_verification.__file__).read_bytes())
-        identity["executable"] = sha(Path(identity["native"]["executable"]).read_bytes())
+        identity["executable"] = sha(Path(identity["native"].get("executable") or identity["native"]["runner"]).read_bytes())
     return sha(identity)
 
 

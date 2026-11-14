@@ -366,8 +366,9 @@ const VERIFICATION_STATE: Record<LocalVerification['state'], string> = {
 /** Fields each native approval host asks for; mirrors `native_verification.NativeSettings`/`WebViewSettings`. */
 const NATIVE_KEYS: Record<string, string[]> = {
   'windows-win32': ['executable', 'executable_sha256', 'profile'],
-  'windows-webview2': ['executable', 'executable_sha256', 'runner', 'runner_sha256', 'profile'],
-  'android-emulator': ['executable', 'executable_sha256', 'runner', 'runner_sha256', 'profile', 'sdk', 'system_image'],
+  // WebView apps approve no binary: the collector builds the manifest's `output` at the reviewed head.
+  'windows-webview2': ['runner', 'runner_sha256', 'profile'],
+  'android-emulator': ['runner', 'runner_sha256', 'profile', 'sdk', 'system_image'],
 }
 
 /** Each desktop flow's application and the approval host it needs (`native_verification.host`). */
@@ -479,7 +480,7 @@ function VerificationPanel({ spec }: { spec: Spec }) {
   const labels: Record<string, string> = { environment_id: '테스트 환경 이름', test_scope: '테스트 계정·데이터 범위',
     env_file: '로컬 .env 파일의 절대 경로', browser_tool: '브라우저 검증 도구', setup: '환경 준비 명령 (선택)',
     cleanup: '테스트 데이터·서버 정리 명령 (선택)' }
-  const nativeLabels: Record<string, string> = { executable: '승인할 실행 파일(Android는 APK)의 절대 경로',
+  const nativeLabels: Record<string, string> = { executable: '승인할 실행 파일의 절대 경로',
     executable_sha256: '실행 파일 SHA-256', profile: '격리된 테스트 프로필 이름', runner: '시나리오를 실행할 Node의 절대 경로',
     runner_sha256: 'Node 실행 파일 SHA-256', sdk: 'Android SDK의 절대 경로', system_image: '에뮬레이터 시스템 이미지의 절대 경로' }
   return <section aria-label={cloud ? '클라우드 구현의 로컬 검증' : '등록 흐름의 로컬 검증'} className="mt-3 rounded-md border border-border p-3">

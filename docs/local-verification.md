@@ -209,12 +209,6 @@ is a list with one approval per registered application; a version 2 file with a
 single `native` object still reads. A Win32 approval also contains
 `version: 1`, `host: "windows-win32"`, `ownership: "launch-disposable"` and
 `desktop: "attempt-owned"`. These are closed values, not an agent-selected driver.
-
-A target with `driver: "webview"` describes a Tauri/WebView app on `windows` or
-`android`. Its approval adds the Node that runs the scenario and, for Android,
-the SDK and emulator image. The manifest and settings validate today, but
-collection refuses such a flow until its collector lands, as tracked in
-`docs/plans/native-webview/0-overview.md`.
 The executable must be a reviewed build input inside the checkout, or an approved
 `python.exe`/`pythonw.exe` running a reviewed `.py` entry point. Unattested external
 compiled builds are unsupported. Git's checkout filters map measured input bytes
@@ -229,6 +223,15 @@ input-queue identity on its owned desktop. Missing required events fail their
 assertions. Native receipts contain OS/runtime, DPI, geometry, profile/revisions,
 measured build inputs, actions and hashed artifact locators. Changed artifacts
 invalidate readiness and merge eligibility.
+
+A target with `driver: "webview"` describes a Tauri/WebView app on `windows` or
+`android`. It names the `build` command and the checkout-relative `output` it
+produces, the app's `origins`, and checkpoints whose `selector` the collector
+reads itself. Its approval names the Node that runs the scenario and, for
+Android, the SDK and emulator system image; it approves no binary, because the
+collector builds `output` at the reviewed head. The manifest and settings
+validate today, but preflight refuses such a flow with a stated reason until its
+collector lands, as tracked in `docs/plans/native-webview/0-overview.md`.
 
 This is native control/event evidence on an isolated desktop, not physical
 keyboard, compositor screenshot, installed wiki-agent hook or real-account
