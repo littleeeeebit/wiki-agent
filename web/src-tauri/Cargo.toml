@@ -11,5 +11,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 # The page's `window.Notification`: the review loop tells a person it waits.
 tauri-plugin-notification = "2"
+tauri-plugin-updater = "2"
 portable-pty = "0.9"
+dunce = "1"
 serde_json = "1"

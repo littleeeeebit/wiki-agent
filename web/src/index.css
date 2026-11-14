@@ -413,3 +413,60 @@ html[data-native-shell="android"]:is([data-mobile-layout="portrait"], [data-mobi
     @apply font-mono text-[12px] bg-secondary px-1 py-[1px] rounded-sm cursor-pointer
            underline decoration-dotted decoration-primary/60 underline-offset-2 hover:bg-accent;
 }
+/* Preferences use their own desktop window; only its content panes scroll. */
+.preferences-window, .preparation-window {
+  height: 100dvh; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--background); color: var(--foreground); font-family: var(--font-sans); font-size: 13.5px; line-height: 1.5;
+}
+.preferences-header { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.preferences-header h1 { font-size: 15px; font-weight: 600; }
+.preferences-header p { color: var(--muted-foreground); font-size: 12.5px; margin-top: 4px; }
+.preferences-body { display: grid; grid-template-columns: 184px minmax(0, 1fr); min-height: 0; flex: 1; }
+.preferences-nav { display: flex; flex-direction: column; gap: 4px; padding: 12px 8px; border-right: 1px solid var(--border); overflow: auto; }
+.preferences-nav button, .setup-tabs button { text-align: left; padding: 6px 10px; border-radius: 4px; font-size: 12.5px; }
+.preferences-nav button:hover, .setup-tabs button:hover { background: var(--secondary); }
+.preferences-nav button[aria-current], .setup-tabs button[aria-current] { background: var(--secondary); color: var(--primary); font-weight: 600; }
+.preferences-content { min-width: 0; overflow: auto; padding: 16px 20px; }
+.preferences-footer, .setup-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--border); flex-shrink: 0; font-size: 12.5px; }
+.preferences-footer { color: var(--muted-foreground); }
+.settings-part h2 { padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 52px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.settings-row > :first-child { min-width: 0; }
+.settings-row > :last-child { flex-shrink: 0; }
+.preferences-input { height: 28px; width: min(340px, 55%); min-width: 0; padding: 0 8px; border: 1px solid var(--input); border-radius: 4px; background: var(--background); font-size: 12.5px; }
+.preparation-window > .setup-panel { padding: 16px 20px 0; min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.setup-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 16px; }
+.setup-content { min-height: 0; overflow: auto; }
+.account-table { border-top: 1px solid var(--border); }
+.account-row { display: grid; grid-template-columns: minmax(120px, .8fr) minmax(180px, 1.5fr) minmax(150px, 1fr); align-items: center; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.account-heading { color: var(--muted-foreground); font-size: 11px; padding: 8px 0; }
+.account-heading > :last-child { text-align: right; }
+.setup-tools-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+.setup-tools-summary > div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px; }
+.setup-progress { border-top: 1px solid var(--border); margin-top: 16px; padding: 12px 0; font-size: 12.5px; }
+.setup-progress pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 160px; min-height: 48px; margin-top: 8px; padding: 10px 12px; background: var(--muted); font-family: var(--font-mono); font-size: 12px; }
+.preparation-window .setup-progress { margin-top: auto; flex-shrink: 0; padding-top: 12px; }
+.preparation-window .setup-progress pre { max-height: 140px; }
+.preparation-window .setup-footer { margin: 0 -20px; }
+.release-entry { border-bottom: 1px solid var(--border); padding: 16px 0; }
+.release-entry h2 { font-size: 14px; font-weight: 600; }
+.release-entry pre { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 8px; }
+@media (pointer: fine) and (min-width: 701px) {
+  :is(.preferences-window, .preparation-window) button { min-height: 28px; min-width: 0; }
+  :is(.preferences-window, .preparation-window) :is(input:not([type="checkbox"]), select) { font-size: 12.5px !important; }
+  :is(.preferences-window, .preparation-window) input[type="checkbox"] { min-height: 14px; min-width: 14px; }
+}
+@media (max-width: 700px) {
+  .preferences-body { grid-template-columns: minmax(0, 1fr); }
+  .preferences-nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--border); }
+  .preferences-header, .preferences-content { padding: 12px; }
+  .preferences-body { display: flex; flex-direction: column; }
+  .preferences-content { flex: 1; }
+  .account-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; padding: 12px 0; }
+  .account-row > :last-child { grid-column: 1 / -1; justify-content: start; }
+  .account-heading { display: none; }
+  .setup-tools-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-row { flex-wrap: wrap; }
+  .preferences-input { width: 100%; font-size: 16px; }
+  .preferences-footer, .setup-footer { flex-wrap: wrap; padding: 12px; }
+}

@@ -1,0 +1,420 @@
+"""WebView protocol refuses stale builds, changed scope and forged native proof."""
+
+import copy
+import json
+import subprocess
+import sys
+import ctypes
+import os
+import shutil
+import time
+import threading
+import hashlib
+from contextlib import nullcontext
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+import native_verification as native
+import native_webview as webview
+import native_targets as targets
+from main import verification, specs
+from common import shell
+from native_process import launched
+from common import process
+
+
+def test_owned_cleanup_regressions_use_real_node_processes():
+    subprocess.run([shutil.which("node"), "--test", str(Path(__file__).with_name("test_native_cleanup.mjs"))], check=True)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Actual Windows file sharing violation")
+def test_profile_cleanup_waits_for_a_real_process_to_release_its_file(tmp_path):
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    locked = profile / "webview.log"
+    locked.write_bytes(b"x" * 4096)
+    unrelated = tmp_path / "unrelated.txt"
+    unrelated.write_text("preserved", encoding="utf-8")
+    script = ("import ctypes, sys, time; from ctypes import wintypes as w; "
+              "k=ctypes.WinDLL('kernel32', use_last_error=True); "
+              "k.CreateFileW.argtypes=(w.LPCWSTR,w.DWORD,w.DWORD,w.LPVOID,w.DWORD,w.DWORD,w.HANDLE); "
+              "k.CreateFileW.restype=w.HANDLE; k.CloseHandle.argtypes=(w.HANDLE,); "
+              "h=k.CreateFileW(sys.argv[1],0xc0000000,0,None,3,0,None); "
+              "assert h != w.HANDLE(-1).value; "
+              "print('locked',flush=True); time.sleep(0.4); k.CloseHandle(h)")
+    child = subprocess.Popen([sys.executable, "-c", script, str(locked)], stdout=subprocess.PIPE,
+                             text=True, **process.background_options())
+    try:
+        assert child.stdout.readline().strip() == "locked"
+        with pytest.raises(OSError) as error:
+            shutil.rmtree(profile)
+        assert error.value.winerror == 32
+        webview.remove_profile(tmp_path)
+        assert not profile.exists() and unrelated.read_text(encoding="utf-8") == "preserved"
+    finally:
+        child.wait(timeout=5)
+        child.stdout.close()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Actual Windows directory removal race")
+def test_profile_cleanup_retries_a_directory_changed_after_enumeration(tmp_path, monkeypatch):
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    unrelated = tmp_path / "unrelated.txt"
+    unrelated.write_text("preserved", encoding="utf-8")
+    remove = os.rmdir
+    arrived = False
+
+    def rmdir(path, *args, **kwargs):
+        nonlocal arrived
+        if Path(path) == profile and not arrived:
+            arrived = True
+            (profile / "state.json").write_text("late shutdown state", encoding="utf-8")
+        return remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "rmdir", rmdir)
+    webview.remove_profile(tmp_path)
+    assert arrived and not profile.exists()
+    assert unrelated.read_text(encoding="utf-8") == "preserved"
+
+
+@pytest.mark.parametrize("winerror", [32, 33, 5, 145, 112])
+def test_profile_cleanup_bounds_sharing_retries_and_refuses_other_errors(tmp_path, monkeypatch, winerror):
+    (tmp_path / "profile").mkdir()
+    elapsed, attempts = [0.0], []
+    error = OSError("profile unavailable")
+    error.winerror = winerror
+
+    def remove(_):
+        attempts.append(elapsed[0])
+        raise error
+
+    monkeypatch.setattr(webview.shutil, "rmtree", remove)
+    monkeypatch.setattr(webview.time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(webview.time, "sleep", lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+    with pytest.raises(ValueError, match="Native profile cleanup failed"):
+        webview.remove_profile(tmp_path)
+    assert (5 <= elapsed[0] < 5.2) if winerror in (5, 32, 33, 145) else (elapsed[0] == 0 and len(attempts) == 1)
+    assert (tmp_path / "profile").exists()
+
+
+@pytest.mark.parametrize("primary", [None, "Original scenario failure"])
+def test_failed_profile_cleanup_never_records_success_or_hides_the_scenario_failure(candidate, tmp_path, monkeypatch, primary):
+    root, head, target, settings = candidate
+    monkeypatch.setattr(native, "owned_desktop", lambda: nullcontext("fixture"))
+    monkeypatch.setattr(webview, "preflight", lambda *_: {})
+    monkeypatch.setattr(webview, "launched", lambda *_: nullcontext(SimpleNamespace(poll=lambda: 0, wait=lambda: 0)))
+    (tmp_path / "result.json").write_text(json.dumps({"blocked": {"reason": primary}} if primary else {}), encoding="utf-8")
+
+    def refused(_):
+        raise ValueError("Native profile cleanup failed: still locked")
+
+    monkeypatch.setattr(webview, "remove_profile", refused)
+    with pytest.raises(ValueError) as error:
+        webview.run({"root": str(root), "artifact_dir": str(tmp_path), "head": head, "target": target, "settings": settings})
+    assert str(error.value) == ((primary + "; ") if primary else "") + "Native profile cleanup failed: still locked"
+    assert not (tmp_path / "cleanup.json").exists()
+
+
+@pytest.fixture
+def candidate(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=root).decode().strip()
+
+    git("init", "-q")
+    git("config", "user.name", "Fixture")
+    git("config", "user.email", "fixture@example.org")
+    (root / "scenario.mjs").write_text("export default async () => {};", encoding="utf-8")
+    (root / "app.rs").write_text("fn main() {}", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-qm", "fixture")
+    binary = tmp_path / "application.exe"
+    binary.write_bytes(b"approved fixture bytes, not executed")
+    node = tmp_path / "node.exe"
+    node.write_bytes(b"approved runtime bytes, not executed")
+    def asset(file):
+        return {"path": str(file), "sha256": native.digest(file)}
+    target = {"driver": "webview", "platform": "windows", "application": "fixture", "scenario": "scenario.mjs",
+              "build_inputs": ["*.mjs", "*.rs"], "actions": [{"assertion": "saved", "expected": "Saved"}]}
+    settings = {"version": 2, "host": "webview", "node": asset(node), "applications": {
+        "fixture": {"platform": "windows", "binary": asset(binary), "profile": "disposable"}}}
+    return root, git("rev-parse", "HEAD"), target, settings
+
+
+def test_webview_targets_require_registered_assertions_and_explicit_platform_approval(candidate):
+    _, _, target, settings = candidate
+    flow = {"id": "save", "title": "Save", "kind": "desktop", "command": "wiki-agent-native", "paths": ["*"],
+            "assertions": [{"id": "saved", "expected": "Saved"}], "native": target}
+    assert isinstance(verification.Flow.model_validate(flow).native, webview.Target)
+    assert isinstance(webview.Settings.model_validate(settings), webview.Settings)
+    for change in ({"assertions": [{"id": "other", "expected": "Saved"}]}, {"command": "node scenario.mjs"},
+                   {"native": {**target, "cdp_url": "http://localhost:9222"}}):
+        with pytest.raises(ValueError):
+            verification.Flow.model_validate({**flow, **change})
+    with pytest.raises(ValueError, match="version 2"):
+        verification.Manifest.model_validate({"version": 1, "contracts": ["api.md"], "flows": [flow]})
+    with pytest.raises(ValueError, match="package"):
+        webview.Target.model_validate({**target, "platform": "android"})
+
+
+def test_renderer_is_approved_per_android_app_with_unchanged_default(candidate):
+    _, _, _, settings = candidate
+    windows = settings["applications"]["fixture"]
+    android = {**windows, "platform": "android", "avd": "fixture"}
+    assert webview.Approval.model_validate(windows).renderer == "auto"
+    assert webview.Approval.model_validate(android).renderer == "auto"
+    for renderer in ("auto", "host", "software"):
+        approved = webview.Settings.model_validate({**settings, "applications": {
+            "fixture": windows, "android": {**android, "renderer": renderer}}})
+        assert approved.applications["android"].renderer == renderer
+        assert approved.applications["fixture"].renderer == "auto"
+    for invalid in ({**android, "renderer": "host -anything"}, {**windows, "renderer": "host"}):
+        with pytest.raises(ValueError):
+            webview.Approval.model_validate(invalid)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows native asset preflight")
+@pytest.mark.parametrize("application,asset_name", [
+    ("windows", "binary"), ("android", "binary"), ("android", "adb"), ("android", "emulator"), ("shared", "node"),
+])
+@pytest.mark.parametrize("change", ["changed", "missing"])
+def test_native_flow_assets_and_receipt_reuse_are_isolated_per_application(candidate, tmp_path, application, asset_name, change):
+    root, head, target, settings = candidate
+    windows = settings["applications"].pop("fixture")
+    android = {**windows, "platform": "android", "avd": "fixture"}
+    for name in ("binary", "adb", "emulator"):
+        file = tmp_path / ("android-" + name)
+        file.write_bytes(("approved " + name).encode())
+        android[name] = {"path": str(file), "sha256": native.digest(file)}
+    settings["applications"] = {"windows": windows, "android": android}
+    env = root / ".env"
+    env.write_text("", encoding="utf-8")
+    local = verification.LocalSettings.model_validate({"version": 2, "environment_id": "fixture",
+        "test_scope": "disposable", "env_file": str(env), "browser_tool": "fixture", "allowed_origins": ["http://127.0.0.1:8136"],
+        "revisions": {}, "manifest_digest": "0" * 64, "native": settings}).model_dump()
+    flows = [verification.Flow.model_validate({"id": platform, "title": platform, "kind": "desktop",
+        "command": "wiki-agent-native", "paths": ["*"], "assertions": [{"id": "saved", "expected": "Saved"}],
+        "native": {**target, "platform": platform, "application": platform,
+                   **({"package": "dev.example.app", "activity": ".MainActivity"} if platform == "android" else {})}})
+        for platform in ("windows", "android")]
+    signatures, builds = {}, {}
+    for flow in flows:
+        scoped = targets.approval(local, flow.native)
+        assert set(scoped["applications"]) == {flow.id}
+        assert webview.assets(settings, flow.id) == webview.assets(scoped, flow.id)
+        builds[flow.id] = webview.preflight(root, head, flow.native.model_dump(), settings)
+        signatures[flow.id] = verification.signature(root, root, flow, local)
+        other = "android" if flow.id == "windows" else "windows"
+        metadata = copy.deepcopy(local)
+        metadata["native"]["applications"][other]["profile"] = "another disposable profile"
+        assert verification.signature(root, root, flow, metadata) == signatures[flow.id]
+    assert set(local["native"]["applications"]) == {"windows", "android"}
+    asset = settings["node"] if application == "shared" else settings["applications"][application][asset_name]
+    file = Path(asset["path"])
+    if change == "missing":
+        file.unlink()
+    else:
+        file.write_bytes(b"changed fixture asset")
+    for flow in flows:
+        record = {"ok": True, "signature": signatures[flow.id], "executed_head": head,
+                  "evidence": {}, "evidence_digest": verification.sha({})}
+        if application in ("shared", flow.id):
+            with pytest.raises(ValueError, match="Approved native asset is missing or changed"):
+                webview.preflight(root, head, flow.native.model_dump(), settings)
+            if change == "missing":
+                with pytest.raises(OSError):
+                    verification.signature(root, root, flow, local)
+            else:
+                changed = verification.signature(root, root, flow, local)
+                assert changed != signatures[flow.id]
+                assert not verification.reusable(record, flow, head, changed, root)
+        else:
+            assert webview.preflight(root, head, flow.native.model_dump(), settings) == builds[flow.id]
+            unchanged = verification.signature(root, root, flow, local)
+            assert unchanged == signatures[flow.id]
+            assert verification.reusable(record, flow, head, unchanged, root) == "same commit and environment"
+
+
+@pytest.mark.parametrize("platform", ["windows", "android"])
+def test_approved_binary_contract_keeps_its_approval_and_collector_after_schema_merge(candidate, monkeypatch, platform):
+    root, head, target, approved = candidate
+    target = {**target, "platform": platform, **({"package": "dev.example.app", "activity": ".MainActivity"}
+                                               if platform == "android" else {})}
+    approved["applications"]["fixture"]["platform"] = platform
+    parsed = verification.Flow.model_validate({"id": "save", "title": "Save", "kind": "desktop",
+        "command": "wiki-agent-native", "paths": ["*"], "native": target,
+        "assertions": [{"id": "saved", "expected": "Saved"}]})
+    settings = verification.LocalSettings.model_validate({"version": 2, "environment_id": "fixture",
+        "test_scope": "disposable", "env_file": str(root / ".env"), "browser_tool": "fixture",
+        "allowed_origins": ["http://127.0.0.1:8136"], "revisions": {}, "manifest_digest": "0" * 64,
+        "native": approved}).model_dump()
+    assert isinstance(parsed.native, webview.Target)
+    assert targets.approval(settings, parsed.native) == settings["native"]
+    observed = []
+    monkeypatch.setattr(native, "preflight", lambda *args: observed.append(args) or {"fixture": "measured"})
+    assert targets.preflight(root, head, parsed.native.model_dump(), settings["native"]) == {"fixture": "measured"}
+    assert observed == [(root, head, parsed.native.model_dump(), settings["native"])]
+    wrong = copy.deepcopy(settings)
+    wrong["native"]["applications"]["fixture"]["platform"] = "android" if platform == "windows" else "windows"
+    for invalid in (wrong, {**settings, "native": []}, {**settings, "native": {}}):
+        with pytest.raises(ValueError):
+            targets.approval(invalid, parsed.native)
+
+
+def test_fixed_native_launch_bypasses_shell_and_cannot_misreport_its_command(monkeypatch, tmp_path):
+    def refused(*_args, **_kwargs):
+        raise AssertionError("The fixed native collector must not activate a shell")
+
+    monkeypatch.setattr(shell, "launch", refused)
+    argv = [sys.executable, "-c", "print('native collector')"]
+    code, output, cut = specs.gate(shell.command_line(argv), tmp_path, threading.Event(), argv=argv)
+    assert code == 0 and output.strip() == "native collector" and not cut
+    with pytest.raises(ValueError, match="recorded command"):
+        specs.judge(tmp_path, ["another command"], threading.Event(), argv=argv)
+
+
+def test_owned_driver_uses_approved_environment_instead_of_launching_shell_setup(candidate, monkeypatch, tmp_path):
+    root, head, target, settings = candidate
+    (root / ".env").write_text("ANDROID_AVD_HOME='C:/approved/avd'\n", encoding="utf-8")
+    monkeypatch.setenv("ANDROID_AVD_HOME", "C:/unrelated/avd")
+    monkeypatch.setattr(native, "owned_desktop", lambda: nullcontext("fixture"))
+    monkeypatch.setattr(webview, "preflight", lambda *_: {})
+
+    def observed(argv, cwd, env, desktop, log):
+        assert env["ANDROID_AVD_HOME"] == "C:/approved/avd"
+        assert cwd == root and desktop == "fixture"
+        assert argv[0] == settings["node"]["path"]
+        raise RuntimeError("approved environment observed")
+
+    monkeypatch.setattr(webview, "launched", observed)
+    with pytest.raises(RuntimeError, match="approved environment observed"):
+        webview.run({"root": str(root), "artifact_dir": str(tmp_path), "head": head,
+                     "target": target, "settings": settings})
+
+
+@pytest.mark.parametrize("source", ["inherited", "copied"])
+@pytest.mark.parametrize("key,value", [
+    ("NODE_OPTIONS", "--require=outside/startup.cjs"),
+    ("node_options", "--import=outside/startup.mjs"),
+    ("NODE_PATH", "outside/modules"),
+    ("NODE_EXTRA_CA_CERTS", "outside/roots.pem"),
+])
+def test_owned_driver_excludes_unmeasured_node_environment(candidate, monkeypatch, tmp_path, source, key, value):
+    root, head, target, settings = candidate
+    (root / ".env").write_text("ANDROID_AVD_HOME=C:/approved/avd\n" +
+                              (f"{key}={value}\n" if source == "copied" else ""), encoding="utf-8")
+    if source == "inherited":
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(native, "owned_desktop", lambda: nullcontext("fixture"))
+    monkeypatch.setattr(webview, "preflight", lambda *_: {})
+
+    def observed(argv, cwd, env, desktop, log):
+        assert not any(name.upper().startswith("NODE_") for name in env)
+        assert env["ANDROID_AVD_HOME"] == "C:/approved/avd"
+        raise RuntimeError("filtered environment observed")
+
+    monkeypatch.setattr(webview, "launched", observed)
+    with pytest.raises(RuntimeError, match="filtered environment observed"):
+        webview.run({"root": str(root), "artifact_dir": str(tmp_path), "head": head,
+                     "target": target, "settings": settings})
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows native preflight")
+def test_preflight_measures_reviewed_sources_and_approved_tools(candidate):
+    root, head, target, settings = candidate
+    assert set(webview.preflight(root, head, target, settings)) == {"app.rs", "scenario.mjs"}
+    for mutate in (lambda value: value["applications"]["fixture"].update(platform="android"),
+                   lambda value: value["node"].update(sha256="0" * 64)):
+        changed = copy.deepcopy(settings)
+        mutate(changed)
+        with pytest.raises(ValueError):
+            webview.preflight(root, head, target, changed)
+    (root / "app.rs").write_text("fn changed() {}", encoding="utf-8")
+    with pytest.raises(ValueError, match="reviewed head"):
+        webview.preflight(root, head, target, settings)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows native receipt validation")
+def test_native_receipt_requires_owned_process_cleanup_raw_observations_and_screenshots(candidate, tmp_path):
+    root, head, target, settings = candidate
+    artifact = tmp_path / "evidence"
+    artifact.mkdir()
+    session = {"pid": 123, "listener_pid": 124, "hwnd": 456, "geometry": [0, 0, 800, 600], "dpi": 96, "runtime": "actual runtime observation",
+               "build_head": head, "binary_sha256": settings["applications"]["fixture"]["binary"]["sha256"]}
+    raw = [{"assertion": "saved", "expected": "Saved", "actual": "Saved"}]
+    revision = {"core": head, "screen": head, "profile": hashlib.sha256(str(artifact / "data").encode()).hexdigest()}
+    for name, content in {"sessions.json": [session], "observations.json": raw, "build-observation.json": revision,
+                          "cleanup.json": {"state": "cleaned", "desktop": "owned-fixture"}}.items():
+        (artifact / name).write_text(json.dumps(content), encoding="utf-8")
+    (artifact / "screen.png").write_bytes(b"fixture for hash validation, not screenshot acceptance")
+    proof = {"application": "fixture", "host": "windows", "driver": "owned-webview-v1", "build_head": head,
+             "build_inputs": webview.preflight(root, head, target, settings), "binary_sha256": session["binary_sha256"],
+             "profile": "disposable", "revisions": {"windows": "fixture"}, "desktop": "owned-fixture",
+             "sessions": [session], "actions": raw,
+             "artifacts": [{"path": name, "sha256": native.digest(artifact / name)}
+                           for name in ("sessions.json", "observations.json", "build-observation.json", "screen.png")]}
+    receipt = {"head": head, "observations": [{"id": "saved", "expected": "Saved", "actual": "Saved", "pass": True}], "native": proof}
+    def validate(data):
+        return native.validate_receipt(data, root, artifact, target, settings, {"windows": "fixture"})
+    assert validate(receipt) == proof
+    for mutate in (lambda value: value["native"].update(host="browser"),
+                   lambda value: value["native"].update(build_head="0" * 40),
+                   lambda value: value["native"]["sessions"][0].update(pid=0),
+                   lambda value: value["observations"][0].update(actual="Unobserved"),
+                   lambda value: value["native"].update(artifacts=[])):
+        changed = copy.deepcopy(receipt)
+        mutate(changed)
+        with pytest.raises(ValueError):
+            validate(changed)
+    (artifact / "build-observation.json").write_text(json.dumps({**revision, "profile": "0" * 64}), encoding="utf-8")
+    with pytest.raises(ValueError, match="profile"):
+        validate(receipt)
+    (artifact / "build-observation.json").write_text(json.dumps(revision), encoding="utf-8")
+    (artifact / "screen.png").write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="artifact"):
+        validate(receipt)
+    (artifact / "cleanup.json").write_text('{"state":"running"}', encoding="utf-8")
+    with pytest.raises(ValueError, match="cleanup"):
+        validate(receipt)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Actual Windows owned process tree")
+def test_owned_webview_driver_tree_is_reaped_on_cancellation_and_preserves_unrelated_process(tmp_path):
+    from ctypes import wintypes as w
+
+    node = shutil.which("node")
+    assert node, "The web application toolchain includes Node"
+    marker = tmp_path / "child.txt"
+    script = tmp_path / "tree.mjs"
+    script.write_text("import {spawn} from 'node:child_process';\n"
+                      "import {writeFileSync} from 'node:fs';\n"
+                      "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {stdio:'ignore'});\n"
+                      "writeFileSync(process.argv[2], String(child.pid));\n"
+                      "setInterval(() => {}, 1000);\n", encoding="utf-8")
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.OpenProcess.argtypes, k.OpenProcess.restype = (w.DWORD, w.BOOL, w.DWORD), w.HANDLE
+    k.WaitForSingleObject.argtypes, k.CloseHandle.argtypes = (w.HANDLE, w.DWORD), (w.HANDLE,)
+    handle = None
+    unrelated = subprocess.Popen([node, "-e", "setInterval(() => {}, 1000)"], **process.background_options())
+    try:
+        with native.owned_desktop() as desktop, (tmp_path / "driver.log").open("wb") as log:
+            with pytest.raises(RuntimeError, match="cancelled"):
+                with launched([node, str(script), str(marker)], tmp_path, dict(os.environ), desktop, log):
+                    deadline = time.monotonic() + 10
+                    while not marker.exists() and time.monotonic() < deadline:
+                        time.sleep(0.05)
+                    handle = k.OpenProcess(0x100000, False, int(marker.read_text()))
+                    assert handle, "Observe the owned child before cancellation"
+                    raise RuntimeError("cancelled")
+            assert k.WaitForSingleObject(handle, 5000) == 0, "The owned grandchild must have exited"
+            assert unrelated.poll() is None
+    finally:
+        if handle:
+            k.CloseHandle(handle)
+        unrelated.terminate()
+        unrelated.wait(timeout=5)

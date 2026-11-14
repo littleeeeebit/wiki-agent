@@ -13,10 +13,11 @@ import re
 import time
 
 from agent import CodexServer, settings
+from common.paths import PACKAGED
 
 WIKI = Path(__file__).resolve().parents[2]
 LOCAL = settings()
-WORKSPACE = (WIKI / Path(LOCAL.get("workspace", "..")).expanduser()).resolve()
+WORKSPACE = (WIKI / Path(LOCAL.get("workspace", str(Path.home()) if PACKAGED else "..")).expanduser()).resolve()
 
 # What the CLI accepts by name in `--model`. An empty value means the flag is
 # not passed at all, which leaves the CLI on its own default model.
@@ -128,7 +129,7 @@ def repo_for(name: str) -> Path | None:
 
     if not name or name != Path(name).name or name in (".", ".."):
         return None
-    if name == WIKI.name:
+    if name == WIKI.name and not PACKAGED:
         return WIKI
     from . import connect
     if connect.registered(name):

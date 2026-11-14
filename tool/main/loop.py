@@ -23,6 +23,7 @@ from agent import ChatSession, read_tools
 from common import errorlog, worktree_home
 from common import settings as settings_file
 from common.budget import Budget, Cancelled, Exhausted
+from common.paths import RAW
 from workspace import adopt, base_branch, checkout, folder_for, holder, merged, remove, worktrees
 
 from . import (channels, connect, decisions, knowledge, maintenance, pr_text, prerequisite_review, query, refactor_run,
@@ -32,7 +33,7 @@ from .review_result import (  # noqa: F401 -- preserve the loop protocol API
     FIRST, FINDING, FENCE, META, bare, parse, described, block, disposed,
 )
 
-REVIEW = ROOT / "raw" / "review"
+REVIEW = RAW / "review"
 PROMPT = (ROOT / "tool/prompts/review-round.md").read_text(encoding="utf-8")
 # The criteria a round is judged by, per profile; a mixed change gets both, once each.
 RUBRIC = review_contract.RUBRIC
@@ -464,6 +465,9 @@ def fixing(n: int, findings: list[dict], said: str) -> str:
         "removing data from the remote, contacting an outside service), is `disagree`: quote the `out` item "
         "or name the action, do not do it, and leave it to the person. Commit and push the task branch. "
         "The server also synchronizes the branch before the next review.\n\n"
+        "For required runtime evidence, include a current-head `done-report` before the disposition. "
+        "Put observations, environment and build identities in the evidence itself; an ignored artifact path "
+        "alone is not inspectable by the read-only reviewer. Identify reused results and owner reports.\n\n"
         "End the answer with a fenced block whose info string is `disposition`, holding a JSON list with "
         "one entry per finding, in order: `{\"finding\": \"<its first line, copied>\", \"id\": \"<its id, "
         "when it has one, else null>\", \"action\": \"fixed\" | \"not-reproduced\" | \"disagree\", "
@@ -1272,7 +1276,7 @@ def sync_review(spec: dict, path: Path, head: str) -> None:
     if local == head:
         return
     detached = specs.sh(["git", "symbolic-ref", "-q", "HEAD"], path).returncode == 1
-    if detached or spec.get("implementation_environment", "local") != "local":
+    if detached or spec.get("implementation_environment") not in (None, "local"):
         synced = specs.sh(["git", "checkout", "--detach", head], path, 60)
     else:
         if specs.sh(["git", "merge-base", "--is-ancestor", local, head], path).returncode:
@@ -1396,7 +1400,7 @@ def step(loop: Loop) -> bool:
         f["grade"] != "P2" and not f.get("disposition")
         for f in settled(pending.get("items") or [], pending.get("disposition"))))
     if (pending.get("verdict") == "deny" and incomplete
-            and not verification.cloud(spec) and spec.get("implementation_environment", "local") == "local"):
+            and not verification.cloud(spec) and spec.get("implementation_environment") in (None, "local")):
         return corrected(loop, spec, repo, path)
     ship = cloud_shipped if verification.cloud(spec) else external_shipped if spec.get("implementation_environment") == "external" else shipped
     if not ship(loop, spec, repo, path, head, base):
@@ -2453,7 +2457,7 @@ def proceed(repo: Path, spec: dict, note: str, limits: dict | None = None) -> di
         else:
             view = gh_or_502(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "headRefName,headRefOid"])
             path = adopted(repo, view["headRefName"], view["headRefOid"],
-                           detached=spec.get("implementation_environment", "local") != "local")
+                           detached=spec.get("implementation_environment") not in (None, "local"))
             specs.update(repo.name, sid, worktree=str(path), pr={**spec["pr"], "branch": view["headRefName"]})
     elif why is Why.LEFT_QUEUE:
         view = gh_or_502(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "state,headRefOid,baseRefName"])
@@ -2655,7 +2659,7 @@ def attach(repo: Path, spec: dict, view: dict, environment: str) -> dict:
                 pr={"number": view["number"], "url": view["url"], "base": view["baseRefName"],
                     "head": view["headRefOid"], "branch": view["headRefName"]},
                 implementation_environment=(environment if environment != "local" else
-                                            fresh.get("implementation_environment", "local")), stopped=None, fault=None,
+                                            fresh.get("implementation_environment") or "local"), stopped=None, fault=None,
                 gate=None, validation=None))
             return fresh
     finally:

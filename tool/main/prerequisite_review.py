@@ -249,6 +249,7 @@ def advance(spot, spec: dict, repo: Path, path: Path, head: str, base: str) -> b
                          "선행 리뷰 뒤 전체 명세의 완료가 아직이다 — 통과 보고로 대체하지 않는다")
     _unpublished(path, fresh)
     _preserved(path, request, receipt)
-    specs.update(spot.repo, spot.sid, report=report,
+    specs.reported(path, spot, fresh, {"value": report})
+    specs.update(spot.repo, spot.sid,
                  prerequisite_review_result={**receipt, "completed": True})
     return True

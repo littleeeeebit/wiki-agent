@@ -418,6 +418,26 @@ def test_a_gathered_action_retrieves_once_under_its_cause_and_exports_no_secret(
 
 # -- ownership and versions ------------------------------------------------------------
 
+def test_default_policy_reads_resources_while_explicit_policy_keeps_its_override(tmp_path, monkeypatch):
+    import importlib
+    from common import settings
+
+    module = importlib.import_module("decision.policy")
+    resources, data = tmp_path / "resources", tmp_path / "data"
+    monkeypatch.setattr(module, "RESOURCES", resources)
+    monkeypatch.setattr(settings, "HUB", data)
+    for directory, yes in ((resources, 0.9), (data, 0.7)):
+        artifact = directory / module.ARTIFACT
+        artifact.parent.mkdir(parents=True)
+        artifact.write_text(json.dumps({"model": MODEL, "prompt_version": knowledge.PROMPT_VERSION,
+                                        "rules": {"route": {"no": 0.1, "yes": yes}}}), encoding="utf-8")
+    default = decision.policy(MODEL, prompt_version=knowledge.PROMPT_VERSION)
+    assert default.fitted == ("route",) and default.rules["route"]["yes"] == 0.9
+    assert default.source == "eval/jev/policy.json"
+    explicit = decision.policy(MODEL, data / module.ARTIFACT, knowledge.PROMPT_VERSION)
+    assert explicit.fitted == ("route",) and explicit.rules["route"]["yes"] == 0.7
+
+
 def test_coverage_names_every_owner_and_what_is_still_provisional():
     items = {i["point"]: i for i in decisions.coverage(decision.Config("active", MODEL, "file"))["items"]}
     for i in items.values():

@@ -39,6 +39,7 @@ from typing import Callable
 import decision
 import verify
 from common.budget import ACTION, Budget
+from common.paths import RAW
 from session_state import run as git
 from wiki import adapter_path
 
@@ -60,7 +61,7 @@ KEYED = ("repo_id", "worktree_id", "session_id", "spec_id", "spec_revision", "he
 # Refusals a proposal asked again can get past: the state moved, not the offer's rules.
 STALE = ("worktree_removed", *(f"{k}_changed" for k in KEYED), "expired", "unknown_candidate", "candidate_changed")
 EXPIRY = 120.0
-LOGS = ROOT / "raw" / "actions"
+LOGS = RAW / "actions"
 ARTIFACT = Path("eval") / "jev" / "action-policy.json"
 MAX_CHECKS = 8
 MAX_FILES = 40
@@ -163,8 +164,10 @@ HOST = ("Tool selection inside a Claude or Codex session is the host's own plann
 # Jev question kinds it rests on — a point with none is not Jev's — and `policy` names which policy holds them.
 ADMITTED = "code: `admit` checks repository, spec revision, HEAD, session, expiry, the candidate and idempotency"
 OWNERS = [
-    *({"point": p, "owner": "jev", "allowed_operations": [], "kinds": ("action",), "policy": "review-inspection-1",
-       "authority": "code validates current-head registered flows and measured receipts; uncertainty stops pending; no host fallback"}
+    *({"point": p, "owner": "jev", "allowed_operations": [], "kinds": ("action",), "policy": "review-inspection-5",
+       "authority": ("an explicit full required catalog is selected by code; optional choices remain Jev-owned; "
+                     "code validates current-head registered flows; no uncertain optional fallback" if p == "review.selection"
+                     else "code validates measured receipts; uncertainty stops pending; no host fallback")}
       for p in ("review.selection", "review.judgment")),
     *({"point": p, "owner": "jev", "allowed_operations": POINTS[p]["operations"], "authority": ADMITTED,
        "kinds": ("action",), "policy": "action"} for p in ("work.start", "specs.check", "loop.fix")),

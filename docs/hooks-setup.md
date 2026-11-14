@@ -10,6 +10,14 @@ page in the same pull request.
 
 ## 1. Prepare the wiki
 
+For the packaged Windows app, use its preparation and Projects connection
+screens. Hook commands resolve the installed `payload/python/python.exe` and
+`payload/app/tool/hook.py`, including paths with spaces and Korean characters.
+The standalone bundled interpreter derives user data from the installed layout;
+hooks do not require an environment inherited from the desktop window. The
+commands below are the source-installation workflow. Project trust, hook trust
+and real-event confirmation remain separate for both installation forms.
+
 First, sign in to the CLIs you need with your own account, following the
 [chat install guide](chat-setup.md). If you do not need the chat screen,
 preparing `python -m pip install -r <wiki path>/requirements-hooks.txt` in a

@@ -4,6 +4,23 @@ For whoever maintains this program. Local setup and the checks are in
 [development](development.md); this page says how the parts fit and which
 document is the authority for each question.
 
+Windows release builds put immutable application resources and an isolated
+Python runtime in the Tauri installer. `common.paths` separates those resources
+from per-user records under `%LOCALAPPDATA%\wiki-agent-data`; source development keeps
+its existing layout. `main.onboarding` owns local preparation and cancellable
+installer/login process trees. Source import makes a verified backup before
+conversion and resumes interrupted writes before workflow recovery. Tauri owns
+signed update downloads and coordinates shutdown before replacement. See the
+[Windows release procedure](windows-release.md) for build inputs and acceptance.
+
+Settings and Updates are singleton native windows on that same server, routed
+before task screens mount. Preparation shares account and tool controls with
+Settings; Claude, Codex and GitHub remain separate CLI-owned accounts. Local
+machine settings use a closed route list without a project ticket; repository
+writes still name their project. A first install with no repository opens the
+project connection screen. Update metadata retains versioned release notes even
+when no newer payload exists.
+
 ## Documentation map
 
 One repository, three maintenance audiences, one authority per question.
@@ -315,10 +332,13 @@ distinguishes these existing paths and records a synthetic Jev selection
 evaluation. `tool/main/review_contract.py` now composes the existing profile,
 explicit task facets and registered flows before each round. Refactoring reruns
 its frozen preservation check; changed obligations or receipts invalidate
-approval. Jev records optional additions in shadow mode only. Ordinary local
-runtime requirements currently validate existing receipts or wait for their
-execution owner; they do not grant Cloud reviewer tools or automatically start
-a new live executor. Native-host collection remains unimplemented.
+approval. Jev records optional additions in shadow mode only. Local and external
+runtime requirements remain independent-review obligations, even with named flows
+or configured catalogs. Current implementation reports and cited artifacts reach the reviewer
+as claims to assess, with machine observations distinguished from owner reports.
+Only Cloud retains registered execution and receipt gates, including native-host
+collection. Neither path
+grants ordinary reviewers execution tools or bypasses the final gate.
 
 The [four-stage review-routing plan](plans/review-routing/0-overview.md)
 separates the completed deterministic baseline from contextual shadow advice,

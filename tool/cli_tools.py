@@ -23,6 +23,7 @@ import time
 import zipfile
 from pathlib import Path
 from urllib.request import urlopen
+from common.paths import DATA, PACKAGED
 
 PACKAGES = {"fd": "sharkdp.fd", "jq": "jqlang.jq"}
 WINGET = ["install", "--exact", "--silent", "--disable-interactivity",
@@ -40,6 +41,8 @@ _stalled = False   # winget timed out once in this process
 
 
 def bin_dir() -> Path:
+    if PACKAGED:
+        return DATA / "bin"
     return Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "wiki-agent" / "bin"
 
 

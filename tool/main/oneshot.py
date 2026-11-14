@@ -29,6 +29,7 @@ from pydantic import BaseModel
 
 from agent import ChatSession
 from common import swap, worktree_home
+from common.paths import RAW
 from workspace import TASK, create
 
 from . import channels, connect, prerequisite_review, runtime, specs
@@ -37,7 +38,7 @@ from .oneshot_profile import (KINDS, SCHEMA, SUPPORTED_KINDS, charged, cut, ledg
                               current)
 from .query import ROOT
 
-RUNS = ROOT / "raw" / "oneshot"
+RUNS = RAW / "oneshot"
 PROFILES = RUNS / "profiles"
 VERSION = 3   # 2: the tests turn declares its runner; 3: the owner picks the stack in S2, not on the card
 BRANCH = "oneshot-initial"   # also the spec id: a valid task name, so the branch and the spec share it

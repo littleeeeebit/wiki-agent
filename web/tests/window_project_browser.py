@@ -13,7 +13,7 @@ lets a window start.
 import asyncio
 import json
 import sys
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -108,7 +108,10 @@ def main():
         a.reload()
         expect(picker(a)).to_contain_text("fixture-a")
         a.get_by_text("fixture-a-task").first.wait_for()
-        assert from_a and all(named == "fixture-a" for _, named in from_a), from_a
+        onboarding = [(url, named) for url, named in from_a if urlsplit(url).path == "/api/onboarding"]
+        project_requests = [(url, named) for url, named in from_a if urlsplit(url).path != "/api/onboarding"]
+        assert onboarding and all(not named for _, named in onboarding), onboarding
+        assert project_requests and all(named == "fixture-a" for _, named in project_requests), project_requests
 
         other = a.get_by_role("button", name="fixture-b/fixture-b")
         other.wait_for()

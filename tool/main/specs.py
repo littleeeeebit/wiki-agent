@@ -33,7 +33,8 @@ from pydantic import BaseModel
 
 import verify
 import debt
-from common import errorlog, indexes, process, python_environment, swap, worktree_home
+from common import errorlog, indexes, process, python_environment, shell, swap, worktree_home
+from common.paths import RAW
 from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
@@ -43,7 +44,7 @@ from .pr_text import body_of
 from .decisions import extra_check, recommend, registered
 from .query import ROOT, _lock, current_repo, hold, project
 
-SPECS = ROOT / "raw" / "specs"
+SPECS = RAW / "specs"
 SPEC_PROMPT = (ROOT / "tool/prompts/work-spec.md").read_text(encoding="utf-8")
 
 GATE_SECONDS = verify.FINAL_SECONDS   # a ceiling only: a stuck gate is cut by silence (`runtime.IDLE_SECONDS`)
@@ -1182,7 +1183,7 @@ def kill(proc: subprocess.Popen) -> None:
 
 
 def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None,
-         *, timeout: float | None = None, owned_jobs: list | None = None) -> tuple[int | None, str, str]:
+         *, timeout: float | None = None, owned_jobs: list | None = None, argv: list[str] | None = None) -> tuple[int | None, str, str]:
     """Run the adapter's shell command as `(code, output, cut reason)`.
     Check cancellation and the deadline during execution and after completion."""
 
@@ -1194,16 +1195,19 @@ def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None,
         scratch = Path(env.get("TEMP") or tempfile.gettempdir()) / "wiki-agent-gate"
         scratch.mkdir(exist_ok=True)
         env["TMPDIR"] = env["TEMP"] = env["TMP"] = str(scratch)
-    return runtime.gate(cmd, cwd, halt, env, GATE_SECONDS if timeout is None else timeout, owned_jobs, kill)
+    direct = {"argv": argv} if argv is not None else {}
+    return runtime.gate(cmd, cwd, halt, env, GATE_SECONDS if timeout is None else timeout, owned_jobs, kill, **direct)
 
 
 def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text: None, env: dict | None = None,
-          *, timeout: float | None = None) -> dict:
+          *, timeout: float | None = None, argv: list[str] | None = None) -> dict:
     """Check a clean HEAD with one shared command deadline, stopping on failure.
     Read HEAD and status before and after: commands that change either fail.
     The server verifies reports and review rounds through this same boundary."""
 
     started = time.monotonic()
+    if argv is not None and (len(cmds) != 1 or cmds[0] != shell.command_line(argv)):
+        raise ValueError("A direct native launch must match its one recorded command")
     deadline = started + (GATE_SECONDS if timeout is None else timeout)
     cmd = " && ".join(cmds)
     before = status(path)
@@ -1215,7 +1219,8 @@ def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text:
     code, out, cut = None, "", ""
     for one in cmds:
         noted(f"게이트 · {one}")
-        code, out, cut = gate(one, path, halt, env=env, timeout=deadline - time.monotonic())
+        direct = {"argv": argv} if argv is not None else {}
+        code, out, cut = gate(one, path, halt, env=env, timeout=deadline - time.monotonic(), **direct)
         if code != 0:
             break
     moved = "게이트가 HEAD 를 바꿨다" if sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != head else \
@@ -1414,6 +1419,15 @@ def proven(spec: dict, head: str, base_oid: str, digested: str) -> str:
 def valid(items) -> bool:
     return isinstance(items, list) and bool(items) and all(
         isinstance(i, dict) and isinstance(i.get("item"), str) and isinstance(i.get("pass"), bool) for i in items)
+
+
+def reported(path: Path, run, spec: dict, report: dict) -> dict:
+    """Bind a completion report while its work turn still owns the checkout; grant no transition."""
+    if "error" in report or not valid(report.get("value")):
+        raise ValueError(f"완료 보고를 읽지 못했다 — {report.get('error') or '항목마다 item 과 pass 가 있어야 한다'}")
+    return update(spec["repo"], spec["id"], report=report["value"], report_asked=False, summary=None,
+                  report_at={"head": sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), "rev": spec["rev"],
+                             "turn": getattr(run, "turn", None)})
 
 
 def shortfall(items: list[dict], spec: dict) -> str:
@@ -1694,6 +1708,14 @@ def _check(path: Path, run, final: str):
         if asks(final):
             loop.asked(spec["repo"], spec["id"])
             return None
+        report = next((b for b in blocks(final)[1] if b["name"] == "done-report"), None)
+        # The prerequisite owner records acceptance only after checking its committed verdict.
+        if report is not None and (not spec.get("prerequisite_review")
+                                   or (spec.get("prerequisite_review_result") or {}).get("completed")):
+            try:
+                spec = reported(path, run, spec, report)
+            except ValueError as exc:
+                return failed(run, spec, str(exc))
         if spec["state"] == "멈춤" and (spec.get("stopped") or {}).get("reason") == loop.Why.ASKED.value:
             return lambda: loop.answered(repo, spec["id"], run, str(path))   # the person answered it
         allowed = approved(spec)
@@ -1736,14 +1758,11 @@ def _check(path: Path, run, final: str):
         # A request a person's turn kept from being sent was never asked: the next miss is a first one.
         return lambda: again(path, run.chat, REPORT_MISSING, spec) or update(spec["repo"], spec["id"],
                                                                               report_asked=False)
-    if "error" in report or not valid(report.get("value")):
-        return failed(run, spec, f"완료 보고를 읽지 못했다 — {report.get('error') or '항목마다 item 과 pass 가 있어야 한다'}")
+    try:
+        spec = reported(path, run, spec, report)
+    except ValueError as exc:
+        return failed(run, spec, str(exc))
     items = report["value"]
-    # `report_at`: the head, revision and turn the report speaks for, so `resumed` reuses it only while the
-    # first two stand and the turn's record ended neither stopped nor failed.
-    spec = update(spec["repo"], spec["id"], report=items, report_asked=False, summary=None,   # text is per head
-                  report_at={"head": sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), "rev": spec["rev"],
-                             "turn": getattr(run, "turn", None)})
     if short := shortfall(items, spec):
         return failed(run, spec, short)
     cleanup = next((b.get("value") for b in blocks(final)[1] if b["name"] == "test-cleanup"), None)

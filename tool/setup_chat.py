@@ -11,9 +11,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import venv
 
 from agent import ROOT, SETTINGS, cli_command, settings
+from common.process import background_options
 
 AUTH = {
     "claude": (["auth", "status"], ["auth", "login"]),
@@ -23,7 +23,7 @@ AUTH = {
 
 def logged_in(agent):
     result = subprocess.run([*cli_command(agent), *AUTH[agent][0]], cwd=ROOT,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, **background_options())
     if result.returncode not in (0, 1):
         raise ValueError(f"{agent}: 로그인 상태 확인 실패. CLI를 갱신하고 직접 상태를 확인하세요.")
     return result.returncode == 0
@@ -47,6 +47,8 @@ def environment_python():
 
 
 def install(agents, workspace):
+    import venv
+
     if sys.version_info < (3, 11):
         raise ValueError("Python 3.11 이상으로 실행하세요.")
     workspace = workspace.expanduser().resolve()

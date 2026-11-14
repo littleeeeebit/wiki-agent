@@ -81,7 +81,7 @@ def prepare(repo, path, settings):
         destination.chmod(0o600)
 
 
-def gate(cmd, cwd, halt, env, timeout, owned_jobs, kill):
+def gate(cmd, cwd, halt, env, timeout, owned_jobs, kill, *, argv=None):
     budget = verification_budget.get()
     timeout = min(timeout, budget.left()) if budget else timeout
     if halt.is_set() or timeout <= 0:
@@ -94,7 +94,7 @@ def gate(cmd, cwd, halt, env, timeout, owned_jobs, kill):
         fd, name = tempfile.mkstemp(dir=scratch)
         try:
             with open(fd, "w+", encoding="utf-8", errors="replace") as output, open(name, "rb") as reader:
-                return _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, reader, seen)
+                return _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, reader, seen, direct=argv)
         finally:
             try:
                 os.unlink(name)
@@ -102,10 +102,10 @@ def gate(cmd, cwd, halt, env, timeout, owned_jobs, kill):
                 pass   # ponytail: a background child still holding stdout keeps the file; TEMP collects it
     # A background setup child may inherit stdout; file capture never waits for its EOF.
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace", dir=scratch) as output:
-        return _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output)
+        return _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, direct=argv)
 
 
-def _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, reader=None, seen=None):
+def _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, reader=None, seen=None, *, direct=None):
     """`gate`'s run into `output`; `seen` gets the last 4 KB of `reader` about once a second.
     Python writes to a file in blocks: unbuffered, each test's mark reaches `output` as it passes."""
 
@@ -113,7 +113,7 @@ def _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, reader=No
     size, grew = 0, shown
     env = {**(os.environ if env is None else env), "PYTHONUNBUFFERED": "1"}
     try:
-        argv, use_shell = shell.launch("gate", command=cmd)
+        argv, use_shell = (direct, False) if direct is not None else shell.launch("gate", command=cmd)
     except ValueError as exc:
         return None, "", str(exc)
     proc = subprocess.Popen(argv, shell=use_shell, cwd=cwd, env=env, stdin=subprocess.DEVNULL,

@@ -1,15 +1,113 @@
-# Local verification of cloud implementations
+# Registered local verification
+
+Registered runtime checks apply to local, external and Cloud tasks when required
+by their acceptance contract. They do not change the implementation environment;
+only `implementation_environment: "claude-cloud"` selects the Claude Cloud path.
+
+## Owned WebView applications
+
+Version 2 desktop flows also accept `native.driver: "webview"` with an explicit
+`platform` of `windows` or `android`, an `application`, a tracked `.mjs`
+`scenario`, Git-matched `build_inputs` patterns, and assertion/expected pairs
+in `actions`. Android additionally names its package and activity. The fixed
+host driver imports the reviewed scenario and provides an owned application
+session; it never accepts a caller-supplied CDP address or running device.
+
+Local native approval uses `version: 2`, `host: "webview"`, a `node` asset and
+an `applications` map keyed by registered application. Each asset contains
+an absolute `path` and lowercase `sha256`. An application names its platform,
+binary asset and disposable profile label. Android also requires approved
+`adb` and `emulator` assets and an installed `avd` template name.
+An Android approval may select a `renderer`: `auto` (the existing AVD default), `host`
+(this PC's GPU), or `software`. This setting applies only to that approved
+application and is included in evidence identity. Other applications retain
+their defaults; Windows scopes accept only `auto`.
+The approval editor accepts the full native JSON for this approved-binary format.
+Version 2 single Win32 approvals remain readable; the field editor saves these
+and the build-on-review approvals below as version 3 per-application lists.
+None of these local approval formats is committed to a project.
+
+Windows processes inherit an attempt-owned desktop and kill-on-close job.
+Cleanup terminates the owned process handles rather than contacting an emulator
+console port. An already exited emulator needs no second shutdown. Every resource
+is attempted even if another cleanup fails; cleanup errors supplement the original
+failure instead of replacing it. An emulator crash still blocks acceptance.
+Android runs a newly launched emulator with fresh writable images under the
+attempt directory; an existing emulator or physical device is never selected.
+The WebView fixture uses GLES with Vulkan disabled, following the emulator's
+[troubleshooting guidance](https://developer.android.com/studio/run/emulator-troubleshooting?hl=en).
+Large debug APK installation and the installed-package verification copy each
+allow up to 120 seconds; diagnostic commands retain their 30-second limit.
+The enclosing verification deadline still bounds the complete attempt.
+Before waiting for app focus, process discovery or debugger connection, a
+disposable Android emulator may recover once
+from the System UI startup ANR by selecting its observed native Wait control.
+The collector retains the original focus, UI hierarchy and screenshot as hashed
+artifacts and then requires app focus again. App errors, unknown dialogs and
+focus loss after startup remain failures; no application action is retried.
+Scenarios seed `artifact/data` and use `start(dataDirectory)`, `restart()`,
+`page`, `pageFor(url)`, `context`, `until` and `observe(assertion, actual, page)`.
+Every observation records the native
+process/window or installed package/activity, runtime and screenshots.
+
+An application exposes its compiled backend revision as
+`window.__WIKI_NATIVE_BUILD_HEAD__` and its screen revision in a `wiki-build-head` meta
+element. Both must equal the reviewed head before actions begin.
+`window.__WIKI_NATIVE_PROFILE__` contains the SHA-256 of the actual data-directory
+path. Windows apps honor `WIKI_NATIVE_PROFILE`; Android uses the installed
+package's private directory on the fresh emulator. A profile mismatch blocks
+mutations. `record(name, data)` adds hash-bound JSON snapshots to the receipt.
+The fixed native collector launches directly, without a shell activation step.
+It reads the approved environment file copied to the checkout's `.env` using
+the host's settings reader; those values override inherited process values.
+This includes `ANDROID_AVD_HOME` when the approved AVD template is outside
+the user's default Android directory.
+The collector removes every `NODE_` runtime environment variable from both
+sources before launching the approved Node binary, including mixed-case names.
+Approved binary hashes, Git blob identities, raw observations and screenshot hashes
+bind reusable receipts. Changed inputs, missing ownership or cleanup, stale
+builds and tampered artifacts refuse native acceptance. The legacy Win32
+control/event collector and its validation remain available.
 
 Claude Code Cloud implements from the repository. A separate local reviewer
 checks the resulting commit with this machine's test API, dataset and browser
 configuration. Cloud does not receive `.env`, credentials or private datasets.
 The existing `plan`, `code` and `mixed` profiles still determine review criteria.
-Locally implemented and external tasks keep their existing review and final gate.
-Registered runtime flows gate only Claude Code Cloud work, which cannot run the
-local `.env`. A local or external task's `review.flows` and its `api`, `browser`
-and `desktop` evidence are not collected and do not hold review or merge. Jev
-selects a Cloud task's registered checks before collection and judges their
-measured receipts. The independent reviewer remains separate.
+Locally implemented and external tasks keep their independent review and final
+gate. Requested `api`, `browser` and `desktop` evidence remains mandatory, but
+registered execution runs only for Claude Code Cloud work. Local and external
+tasks never start registered execution from evidence labels, named flows,
+existing catalogs or local settings. The reviewer assesses the current
+implementation report, cited artifacts and observations. Owner reports remain
+identified as reports; a pass flag cannot
+certify behavior. Missing, stale or insufficient evidence requires a concrete
+review finding rather than a permanent catalog-preparation stop.
+
+After Review Loop authorization, Cloud keeps its complete major-flow floor and
+requires registered execution and current receipts. Missing or invalid Cloud
+catalogs and settings cannot silently downgrade to report review.
+When `review.flows` explicitly requires every offered registered check, the host
+uses that fixed list without a model selection call. The contract records
+`inspection_source: "spec"`; it does not manufacture a Jev selection record.
+Otherwise Jev selects applicable registered checks before collection, and
+uncertain optional choices still stop preparation. In both cases Jev judges
+measured receipts, and the independent reviewer remains separate. Required
+flow selection cannot supply missing receipts or turn a failed check into a pass.
+
+The review contract records whether registered execution is required. Supplied
+reports are bound to their reported commit and specification revision, included
+in review identity, and redacted before handoff. Changing a report invalidates
+approval; changing this policy also requires a fresh independent review. The
+report-review path grants no execution tools, automatic pass or merge permission.
+
+Initial implementation and repair turns use the same completion-report recorder.
+It binds the report while the turn still owns the checkout, before the next review
+instruction is frozen. A cleanup-only follow-up retains that report. Include the
+observations, environment and tested build identity in the report itself: ordinary
+read-only review does not automatically expose ignored artifact directories.
+An unset implementation environment retains local repair and branch behavior
+through restart recovery; it does not turn an unfinished correction into an
+external review or skip its completion report.
 
 The Cloud review cell also executes verification commands and creates test
 scripts, fixtures and receipts. Codex uses `workspace-write` with
@@ -137,8 +235,8 @@ local execution settings and dependency locks also invalidate evidence.
 
 This collection runs for Claude Code Cloud tasks only; local and external tasks
 skip it. After the existing offline and frozen-preservation checks, the
-authorized loop collects only its enforced flow IDs. A plan-only artifact cannot launch the future
-application. The existing final gate still runs after independent review.
+authorized loop collects only its enforced flow IDs. A plan-only artifact cannot
+launch the future application. The existing final gate still runs after independent review.
 
 Execution binds receipts to the specification, head/base, selected contract,
 manifest, commands and environment. Setup and flow attempts are persisted before
@@ -179,6 +277,9 @@ Win32 with direct child control IDs. It launches a disposable app on an
 attempt-owned Win32 desktop; it never switches the user's input desktop or
 attaches to an existing app. Unsupported hosts, selectors and build identities
 stay preparation failures. This does not make Orca a runtime dependency.
+
+The following example and approval fields apply to the Win32 control driver.
+The owned WebView driver above has its own target and approval format.
 
 Example native flow, inside the version-2 manifest:
 
@@ -223,7 +324,7 @@ assertions. Native receipts contain OS/runtime, DPI, geometry, profile/revisions
 measured build inputs, actions and hashed artifact locators. Changed artifacts
 invalidate readiness and merge eligibility.
 
-A target with `driver: "webview"` describes a Tauri/WebView app on `windows` or
+A build-on-review target with `driver: "webview"` describes a Tauri/WebView app on `windows` or
 `android`. It names the `build` command and the checkout-relative `output` it
 produces, the app's `origins` and native-bridge `calls`, and checkpoints whose
 `selector` the collector reads itself. Its approval names the Node that runs
@@ -232,6 +333,8 @@ and the system image with a content digest. It approves no app binary, because
 the collector builds `output` at the reviewed head. The manifest and settings
 validate today, but preflight refuses such a flow with a stated reason until its
 collector lands, as tracked in `docs/plans/native-webview/0-overview.md`.
+The approved-binary contract above remains executable; neither target format
+falls back to the other's approval or collector when its prerequisites fail.
 
 This is native control/event evidence on an isolated desktop, not physical
 keyboard, compositor screenshot, installed wiki-agent hook or real-account
