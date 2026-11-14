@@ -363,7 +363,7 @@ const VERIFICATION_STATE: Record<LocalVerification['state'], string> = {
   failed: '실행 검증 실패 · 구현 수정 필요',
 }
 
-/** Fields each native approval host asks for; mirrors `native_verification.NativeSettings`/`WebViewSettings`. */
+/** Fields for the per-application approvals in native_targets. */
 const NATIVE_KEYS: Record<string, string[]> = {
   'windows-win32': ['executable', 'executable_sha256', 'profile'],
   // WebView apps approve no binary: the collector builds the manifest's `output` at the reviewed head.
@@ -423,11 +423,23 @@ function VerificationPanel({ spec }: { spec: Spec }) {
         fields[key] = String(saved[key] ?? '')
       }
       fields.allowed_origins = (saved.allowed_origins as string[] | undefined)?.join('\n') ?? ''
-      // Settings version 2 held one approval; version 3 holds one per application.
-      const approvals = ([] as Record<string, unknown>[]).concat((saved.native as Record<string, unknown>[] | undefined) ?? [])
-      for (const [application, host] of Object.entries(nativeApps(found.manifest?.flows))) {
-        const approval = approvals.find((a) => a.application === application && a.host === host)
-        for (const key of NATIVE_KEYS[host]) fields[`native:${application}:${key}`] = String(approval?.[key] ?? '')
+      if (found.manifest?.flows.some((f) => f.kind === 'desktop'
+        && (f.native as { driver?: string }).driver === 'webview' && !('build' in (f.native as object)))) {
+        const targets = found.manifest.flows.filter((f) => f.kind === 'desktop')
+          .map((f) => f.native as { driver?: string; application: string; platform?: string })
+          .filter((t) => t.driver === 'webview')
+        const asset = { path: '', sha256: '' }
+        const initial = { version: 2, host: 'webview', node: asset, applications: Object.fromEntries(targets.map((t) => [t.application, {
+              platform: t.platform, binary: asset, profile: '', ...(t.platform === 'android' ? { adb: asset, emulator: asset, avd: '' } : {}),
+            }])) }
+        fields.native_scope = JSON.stringify(saved.native ?? initial, null, 2)
+      } else {
+        // Settings version 2 held one approval; version 3 holds one per application.
+        const approvals = ([] as Record<string, unknown>[]).concat((saved.native as Record<string, unknown>[] | undefined) ?? [])
+        for (const [application, host] of Object.entries(nativeApps(found.manifest?.flows))) {
+          const approval = approvals.find((a) => a.application === application && a.host === host)
+          for (const key of NATIVE_KEYS[host]) fields[`native:${application}:${key}`] = String(approval?.[key] ?? '')
+        }
       }
       for (const key of new Set(found.manifest?.flows.flatMap((f) => f.environments) ?? [])) fields[`revision:${key}`] = revisions?.[key] ?? ''
       setValues(fields)
@@ -446,14 +458,15 @@ function VerificationPanel({ spec }: { spec: Spec }) {
     try {
       const revisions = Object.fromEntries(Object.entries(values).filter(([k]) => k.startsWith('revision:'))
         .map(([k, v]) => [k.slice(9), v]))
-      const native = Object.entries(nativeApps(config?.manifest?.flows)).map(([application, host]) => ({
+      const rawNative = 'native_scope' in values
+      const native = rawNative ? JSON.parse(values.native_scope) : Object.entries(nativeApps(config?.manifest?.flows)).map(([application, host]) => ({
         version: 1, host, application,
         ...Object.fromEntries(NATIVE_KEYS[host].map((k) => [k, values[`native:${application}:${k}`] ?? ''])),
         ...(host === 'windows-win32' ? { ownership: 'launch-disposable', desktop: 'attempt-owned' } : {}),
       }))
-      const body = { ...config?.settings, ...Object.fromEntries(Object.entries(values).filter(([k]) => !k.startsWith('revision:') && !k.startsWith('native:'))),
+      const body = { ...config?.settings, ...Object.fromEntries(Object.entries(values).filter(([k]) => !k.startsWith('revision:') && !k.startsWith('native:') && k !== 'native_scope')),
         revisions, allowed_origins: values.allowed_origins.split('\n').map((v) => v.trim()).filter(Boolean),
-        ...(native.length ? { version: 3, native } : {}),
+        ...(rawNative ? { version: 2, native } : native.length ? { version: 3, native } : {}),
         manifest_digest: config!.manifest_digest }
       const found = await api.saveVerificationConfig(owner.repo, owner.id, body)
       if (generation.current === ticket) { setConfig(found); setEditing(false) }
@@ -518,6 +531,11 @@ function VerificationPanel({ spec }: { spec: Spec }) {
         <span className="block text-faint">{key.slice(9)} 버전 · 환경이 바뀌면 갱신</span>
         <input required disabled={working} value={values[key]} onChange={(e) => setValues((was) => ({ ...was, [key]: e.target.value }))}
           className="h-7 w-full rounded-md border border-border bg-background px-2" /></label>)}
+      {'native_scope' in values && <label className="block">
+        <span className="block text-faint">네이티브 실행 승인 · 플랫폼별 앱, 도구의 절대 경로와 SHA-256</span>
+        <textarea required disabled={working} rows={12} value={values.native_scope}
+          onChange={(e) => setValues((was) => ({ ...was, native_scope: e.target.value }))}
+          className="w-full rounded-md border border-border bg-background px-2 py-1 font-mono" /></label>}
       {Object.keys(values).filter((k) => k.startsWith('native:')).map((key) => <label key={key} className="block">
         <span className="block text-faint">{key.slice(7, key.lastIndexOf(':'))} · {nativeLabels[key.slice(key.lastIndexOf(':') + 1)]}</span>
         <input required disabled={working} value={values[key]} onChange={(e) => setValues((was) => ({ ...was, [key]: e.target.value }))}

@@ -11,6 +11,7 @@ import decision
 import pytest
 
 from fixtures.review_decision import evaluate
+from common.budget import Budget
 from common.language import language
 from main import decisions, review_inspection, specs, verification
 from test_local_verification import cloud_spec, cloud_world, git_world  # noqa: F401
@@ -38,6 +39,48 @@ def routing(calls, *, skip=(), judgment="covered"):
                             "probabilities": {key: float(key == choice) for key in offered}}
         return answers
     return inspect
+
+
+def test_native_inventories_fit_judgment_without_cutting_observations_or_changing_receipts(cloud_world, monkeypatch):
+    assert {o["policy"] for o in decisions.OWNERS if o["point"] in ("review.selection", "review.judgment")} == {
+        review_inspection.POLICY.version}
+    flows, rows, calls = [], {}, []
+    for name in ("api", "browser", "windows", "android"):
+        flows.append({"id": name, "assertions": [{"id": "saved", "expected": "Saved subtitles"}]})
+        evidence = {"observations": [{"id": "saved", "expected": "Saved subtitles", "actual": "Subtitle absent", "pass": False}],
+                    "requests": [{"method": "GET", "url": "http://127.0.0.1:8136/subtitles", "status": 404}],
+                    "actions": [{"action": "click", "target": "Open saved video", "actual": "No subtitles"}]}
+        if name in ("windows", "android"):
+            evidence["native"] = {"application": name, "host": name, "driver": "owned-webview-v1",
+                "build_head": "a" * 40, "binary_sha256": "b" * 64, "profile": "disposable",
+                "sessions": [{"pid": 123, "geometry": [0, 0, 800, 600], "runtime": "observed runtime"}],
+                "actions": [{"assertion": "saved", "expected": "Saved subtitles", "actual": "Subtitle absent"}],
+                "build_inputs": {f"src/source-{i}.rs": "c" * 64 for i in range(700)},
+                "artifacts": [{"path": f"screen-{i}.png", "sha256": "d" * 64} for i in range(40)]}
+        rows[name] = {"evidence": evidence}
+    original = copy.deepcopy(rows)
+    assert len(json.dumps(rows)) > 32000
+    state = review_inspection.judgment_context("binding", flows, rows, {})
+    assert rows == original and len(json.dumps(state, ensure_ascii=False)) < 32000
+    for flow in state["flows"]:
+        expected = verification.clean_evidence(rows[flow["id"]]["evidence"], {})
+        for key in ("observations", "requests", "actions"):
+            assert flow["evidence"][key] == expected[key]
+        if native := flow["evidence"].get("native"):
+            for key in ("build_inputs", "artifacts"):
+                inventory = expected["native"].pop(key)
+                assert native[key] == {"count": len(inventory), "sha256": verification.sha(inventory)}
+            assert {k: v for k, v in native.items() if k not in ("build_inputs", "artifacts")} == expected["native"]
+    monkeypatch.setattr(decisions, "transport", lambda cfg: routing(calls, judgment="insufficient"))
+    result = review_inspection.ask(cloud_world.repo, state, [f["id"] for f in flows], "judgment",
+                                   threading.Event(), Budget(**review_inspection.LIMITS))
+    assert result["status"] == "decided" and len(calls) == 1
+    assert review_inspection.choices(result, "binding", [f["id"] for f in flows], {"covered", "insufficient"}) == {
+        f["id"]: "insufficient" for f in flows}
+    request = result["request"]
+    assert len(json.dumps(request, ensure_ascii=False).encode("utf-8")) < 90000
+    assert len(decision.wire(request["model"], request["state_en"], {
+        k: v["question"] for k, v in request["questions"].items()})) < decision.MAX_BODY
 
 
 def catalog(world, count=15):
@@ -94,6 +137,34 @@ def test_missing_jev_stops_before_any_expensive_collection(cloud_world, monkeypa
     done = looped("cloud")
     assert done["state"] == "멈춤" and not Reviewer.made and not Worker.made
     assert done["review_inspection"]["selection"]["reason"] == "missing_key"
+
+
+@pytest.mark.parametrize("judgment", ["covered", "defer"])
+def test_full_required_catalog_collects_without_selection_but_still_requires_measured_judgment(cloud_world, monkeypatch, judgment):
+    world, calls = cloud_world, []
+    cloud_spec(world, review={"flows": ["health"]})
+    monkeypatch.setattr(decisions, "transport", lambda cfg: routing(calls, judgment=judgment))
+    done = looped("cloud")
+    assert [phase for phase, _ in calls] == ["judgment"]
+    assert "selection" not in done["review_inspection"]
+    assert done["local_verification"]["flows"][0]["evidence"]["requests"][0]["status"] == 200
+    contract = review_inspection.current(world.repo, Path(done["worktree"]), done, done["pr"]["head"],
+                                          done["local_verification"]["base_oid"])
+    assert contract["inspection_selected"] and contract["inspection_source"] == "spec"
+    if judgment == "covered":
+        assert done["state"] == "머지 가능" and Reviewer.made
+    else:
+        assert done["state"] == "멈춤" and not Reviewer.made
+        assert done["review_inspection"]["judgment"]["status"] == "uncertain"
+
+
+def test_required_catalog_cannot_invent_or_drop_a_flow():
+    flows = [{"id": name} for name in ("api", "browser", "windows", "android")]
+    spec = {"review": {"flows": [f["id"] for f in flows]}}
+    assert review_inspection.selected(spec, "current binding", flows) == [f["id"] for f in flows]
+    for required in ([], ["api"], ["api", "browser", "windows", "missing"]):
+        assert review_inspection.selected({"review": {"flows": required}}, "current binding", flows) is None
+    assert not review_inspection.required_catalog(spec, [])
 
 
 def test_uncertain_selection_still_stops_before_collection(cloud_world, monkeypatch):

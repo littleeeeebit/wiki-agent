@@ -86,6 +86,10 @@ Existing settings are merged, never overwritten.
 
 ### The team installer
 
+Windows desktop users start with the [setup executable and guided
+preparation](chat-setup.md#windows-setup-executable). The source and hooks-only
+commands below remain available for developers and standalone rule installations.
+
 `tool/setup_agents.py` checks the environment, the wiki version and the host,
 then installs and verifies through the existing `apply.py`. It depends on
 neither the project name nor a sibling folder name, and it does not copy an

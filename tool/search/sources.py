@@ -31,6 +31,7 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
+from common.paths import PACKAGED, RAW
 
 from common.language import language
 from common.process import background_options
@@ -96,7 +97,7 @@ def listing(hub: Path, project: Path | None) -> list[Path]:
         mine += sorted((project / ".wiki" / folder).glob("*.md"))
     seen = {p.resolve() for p in files}
     candidates = files + [p for p in dict.fromkeys(mine) if p.resolve() not in seen and not p.resolve().name.endswith(".raw.md")]
-    private = (hub / "raw" / "improvement").resolve()
+    private = ((RAW if PACKAGED else hub / "raw") / "improvement").resolve()
     selected = project.resolve()
     # A Git outage must not make another project's experimental checkout
     # searchable through the hub's recursive fallback. An explicitly selected

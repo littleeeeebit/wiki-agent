@@ -80,8 +80,9 @@ def compose(contract: dict, observation: dict | None = None) -> dict:
     close(items, "candidate", flows)
     out["candidate"] = selected_sets(items, "candidate")
     selected_flows = [f for f in flows if f["id"] in out["candidate"]["flows"]]
+    manual = {"evidence:" + name for name in out["enforced"]["evidence"] if name in ("api", "browser", "desktop")} if not out.get("registered_runtime", True) else set()
     unresolved += [{**r, "scope": "candidate"} for r in coverage(out["candidate"], selected_flows, out["preservation"])
-                   if {**r, "scope": "enforced"} not in unresolved]
+                   if r["item_id"] not in manual and {**r, "scope": "enforced"} not in unresolved]
     out["items"] = sorted(items.values(), key=lambda r: r["id"])
     for row in out["items"]:
         row["grounds"].sort(key=lambda g: json.dumps(g, sort_keys=True))

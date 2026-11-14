@@ -26,15 +26,16 @@ from pydantic import BaseModel, Field
 
 from common.process import background_options
 from common import errorlog
+from common.paths import RAW
 
-from . import channels, mobile_transport, query
+from . import mobile_transport, query
 
 HOST = "mobile.wiki-agent.invalid"
 COOKIE = "__Host-wiki-mobile"
 LOCAL = {"127.0.0.1", "localhost"}
 LIFETIME = 30 * 24 * 60 * 60
 # Not under artifacts/: after-merge clears that scratch directory (scratch_dirs).
-APK = channels.WIKI / "raw" / "android" / "wiki-agent.apk"
+APK = RAW / "android" / "wiki-agent.apk"
 router = APIRouter(prefix="/api/mobile")
 
 
@@ -158,7 +159,7 @@ class Companion:
 
     def prepare(self, cancel):
         try:
-            directory = channels.WIKI / "raw" / "mobile-runtime" / mobile_transport.VERSION
+            directory = RAW / "mobile-runtime" / mobile_transport.VERSION
             binary = mobile_transport.cloudflared(directory)
             directory.mkdir(parents=True, exist_ok=True)
             config = directory / "config.yml"

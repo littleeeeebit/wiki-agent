@@ -1309,8 +1309,8 @@ def test_a_write_that_names_no_project_is_refused(tmp_path):
     bare = TestClient(main_app.app, base_url="http://127.0.0.1:8787")
     with patch.object(chat, "session", side_effect=AssertionError("reached a session")):
         assert bare.post("/api/say/wiki", json={"text": "묻는다"}).status_code == 400
-    assert bare.post("/api/switch", json={"translate": False}).status_code == 400
-    assert bare.get("/api/switch").json()["translate"] is True   # reading needs no project
+    assert bare.post("/api/switch", json={"mode": "off"}).status_code == 200
+    assert bare.get("/api/switch").json()["translate"] is False
     assert bare.get("/api/log/wiki").json() == []
 
 

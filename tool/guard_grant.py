@@ -23,7 +23,8 @@ import shutil
 import tempfile
 
 from common import is_junction, layout  # noqa: F401 -- `guard_git.common_dir` reads `layout` from here
-from guard import HERE, contained, real_path
+from guard import contained, real_path
+from common.paths import RAW
 
 
 @dataclass
@@ -176,7 +177,7 @@ def task_spec(top: Path, gitdir: Path, main: Path) -> dict:
     branch = head.removeprefix("ref: refs/heads/") if head.startswith("ref: ") else ""
     sid = re.sub(r"-{2,}", "-", re.sub(r"[^a-z0-9-]+", "-", branch.lower())).strip("-")[:64].rstrip("-")
     try:
-        spec = json.loads((HERE.parent / "raw/specs" / main.name / f"{sid}.json").read_text(encoding="utf-8"))
+        spec = json.loads((RAW / "specs" / main.name / f"{sid}.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     worktree = spec.get("worktree") if isinstance(spec, dict) else None

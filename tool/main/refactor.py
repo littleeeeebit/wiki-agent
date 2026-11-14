@@ -23,12 +23,13 @@ import improvement
 import refactor_profile
 from agent import ChatSession
 from common import errorlog
+from common.paths import RAW
 from common.budget import Budget, Cancelled
 
 from . import refactor_survey, runtime, specs, work
-from .query import ROOT, _lock
+from .query import _lock
 
-RUNS = ROOT / "raw" / "refactor" / "runs"
+RUNS = RAW / "refactor" / "runs"
 LEGACY = ("cleanup", "restructure", "full")   # the earlier workflow's modes: read, never run
 REQUEST = re.compile(r"[A-Za-z0-9-]{8,64}")
 

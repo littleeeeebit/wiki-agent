@@ -401,6 +401,12 @@ def launch(name: str, **values: str) -> tuple[str | list[str], bool]:
     if os.name != "nt":
         return resolve(name, form="bash", **values), True
     ps = chosen()
+    # Store-packaged shells broker children outside the caller's process job.
+    if name in ("gate", "registered-check") and "windowsapps" in {part.lower() for part in Path(ps.executable).parts}:
+        owned = [item for item in detect() if "windowsapps" not in {part.lower() for part in Path(item.executable).parts}]
+        if not owned:
+            raise Refusal("검증 프로세스를 관리하려면 스토어 버전이 아닌 PowerShell이 필요하다.")
+        ps = max(owned, key=lambda item: item.major)
     line = resolve(name, form=ps.form, **values)
     # Preserve native exit codes; a PowerShell statement failure is also a
     # failed check. Both versions support these explicit encoding settings.

@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 
 from agent import cli_command
 from common import errorlog
+from common.paths import PACKAGED, RAW
 
 from . import mobile
 from .channels import WIKI
@@ -51,10 +52,10 @@ def ancestor(older: str, newer: str) -> bool:
     return git("merge-base", "--is-ancestor", older, newer).returncode == 0
 
 
-STARTED = git("rev-parse", "HEAD").stdout.strip()
+STARTED = "" if PACKAGED else git("rev-parse", "HEAD").stdout.strip()
 # `나중에` outlives the window: the app's page gets a new port, so a new
 # browser storage, every time it opens.
-LATER = WIKI / "raw" / "update-later"
+LATER = RAW / "update-later"
 _lock = threading.Lock()
 _applying = threading.Lock()
 _cached: tuple[float, dict] | None = None
@@ -65,6 +66,8 @@ _failed = ""      # why the last preparation stopped; shown until one succeeds
 def check() -> dict:
     """The update state, from a fresh fetch of `origin/main`."""
 
+    if PACKAGED:
+        return {"state": "current", "packaged": True}
     try:
         if git("fetch", "--quiet", "origin", "main", timeout=60).returncode:
             return {"state": "unknown"}
@@ -120,6 +123,8 @@ def apply() -> dict:
     """
 
     global _prepared, _failed
+    if PACKAGED:
+        raise HTTPException(409, "설치 앱에서는 창의 앱 업데이트를 사용하세요")
     if not _applying.acquire(blocking=False):
         raise HTTPException(409, "업데이트를 이미 받는 중입니다")
     try:
@@ -163,6 +168,8 @@ def screen_stale(root=None) -> bool:
     server's answers with the old screen (Codex's `choices` arrived as raw
     JSON). The same files as `steps` count; a checkout stamps what it changed."""
 
+    if PACKAGED:
+        return False
     root = root or WIKI
     index = root / "web" / "dist" / "index.html"
     if not index.is_file():

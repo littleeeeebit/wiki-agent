@@ -592,7 +592,7 @@ def test_a_plan_task_writes_only_under_its_artifact_root(repo, monkeypatch, tmp_
     (hub.parent / "raw/specs/repo").mkdir(parents=True)
     (hub.parent / "raw/specs/repo/task.json").write_text(json.dumps(
         {"review_profile": "plan", "artifact_root": "docs/plans/x", "worktree": str(repo)}), encoding="utf-8")
-    monkeypatch.setattr(guard_grant, "HERE", hub)
+    monkeypatch.setattr(guard_grant, "RAW", hub.parent / "raw")
     assert call(repo, "echo x > docs/plans/x/1-step.md") is None
     assert "쓰기 루트 밖이다" in call(repo, "echo x > tool/a.py")
 
@@ -604,7 +604,7 @@ def test_a_task_that_fills_the_slots_may_write_the_adapter_and_nothing_else_prot
     (hub.parent / "raw/specs/repo").mkdir(parents=True)
     (hub.parent / "raw/specs/repo/task.json").write_text(json.dumps(
         {"worktree": str(repo), **({"adapter": True} if fills else {})}), encoding="utf-8")
-    monkeypatch.setattr(guard_grant, "HERE", hub)
+    monkeypatch.setattr(guard_grant, "RAW", hub.parent / "raw")
     adapter = str(repo / ".wiki/adapter.toml")
     for denied in (call(repo, tool="Edit", file_path=adapter, old_string="a", new_string="b"),
                    call(repo, "git add .wiki/adapter.toml")):
@@ -619,7 +619,7 @@ def flag_slots(repo: Path, monkeypatch, tmp_path: Path, sid: str = "task") -> No
     (hub.parent / "raw/specs/repo").mkdir(parents=True)
     (hub.parent / "raw/specs/repo" / f"{sid}.json").write_text(json.dumps(
         {"worktree": str(repo), "branch": sid, "adapter": True}), encoding="utf-8")
-    monkeypatch.setattr(guard_grant, "HERE", hub)
+    monkeypatch.setattr(guard_grant, "RAW", hub.parent / "raw")
 
 
 @pytest.mark.parametrize("link", ["hard", pytest.param("symbolic", marks=pytest.mark.skipif(

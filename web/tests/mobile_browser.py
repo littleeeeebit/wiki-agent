@@ -31,6 +31,12 @@ from main import app, mobile, query  # noqa: E402
 
 
 def fixture(path, method):
+    if path == "onboarding":
+        return {"packaged": False, "complete": True, "agents": ["codex"], "data": "fixture", "version": "development", "restart_required": False,
+                "task": {"running": False, "action": "", "output": "", "error": ""}}
+    if path == "onboarding/detect":
+        return {"tools": {n: {"ready": True, "version": "fixture"} for n in ("git", "pwsh", "gh", "fd", "jq", "codex", "claude")},
+                "accounts": {n: {"authenticated": True, "error": ""} for n in ("codex", "claude", "gh")}}
     if path == "channels":
         return [{"id": cid, "label": label, "blurb": "Synthetic conversation", "live": False,
                  "repo": "fixture", "remote": "", "model": "", "model_name": "Default", "effort": ""}
@@ -447,38 +453,41 @@ def main():
                 mobile.companion.origin = "https://fixture.trycloudflare.com"
                 page.set_viewport_size({"width": 1440, "height": 900})
                 page.wait_for_function("document.documentElement.dataset.mobileLayout === 'desktop'")
-                page.get_by_role("button", name="설정", exact=True).click()
-                install_qr = page.get_by_role("img", name="Android 앱 설치 QR 코드", exact=True)
+                with page.expect_popup() as preferences:
+                    page.get_by_role("button", name="설정", exact=True).click()
+                settings = preferences.value
+                settings.get_by_role("button", name="휴대폰 연결", exact=True).click()
+                install_qr = settings.get_by_role("img", name="Android 앱 설치 QR 코드", exact=True)
                 install_qr.wait_for()
                 installation = install_qr.inner_html()
-                page.context.grant_permissions(["clipboard-read", "clipboard-write"])
-                page.get_by_role("button", name="설치 링크 복사", exact=True).click()
-                assert page.evaluate("navigator.clipboard.readText()") == mobile.companion.origin + "/mobile-install"
+                settings.context.grant_permissions(["clipboard-read", "clipboard-write"])
+                settings.get_by_role("button", name="설치 링크 복사", exact=True).click()
+                assert settings.evaluate("navigator.clipboard.readText()") == mobile.companion.origin + "/mobile-install"
                 for width in (1440, 400):
-                    page.set_viewport_size({"width": width, "height": 900})
+                    settings.set_viewport_size({"width": width, "height": 900})
                     assert install_qr.bounding_box()["width"] <= 232
-                    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-                page.screenshot(path=str(ROOT / "artifacts" / "mobile-apk-install-qr-fixture.png"))
-                page.get_by_role("button", name="연결 링크 만들기", exact=True).click()
-                qr = page.get_by_role("img", name="휴대폰 연결 QR 코드", exact=True)
+                    assert settings.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                settings.screenshot(path=str(ROOT / "artifacts" / "mobile-apk-install-qr-fixture.png"))
+                settings.get_by_role("button", name="연결 링크 만들기", exact=True).click()
+                qr = settings.get_by_role("img", name="휴대폰 연결 QR 코드", exact=True)
                 qr.wait_for()
                 first = qr.inner_html()
-                page.get_by_role("button", name="연결 링크 만들기", exact=True).click()
-                page.wait_for_function("old => document.querySelector('svg[aria-label=\"휴대폰 연결 QR 코드\"]').innerHTML !== old", arg=first)
+                settings.get_by_role("button", name="연결 링크 만들기", exact=True).click()
+                settings.wait_for_function("old => document.querySelector('svg[aria-label=\"휴대폰 연결 QR 코드\"]').innerHTML !== old", arg=first)
                 qr.screenshot(path=str(ROOT / "artifacts" / "mobile-pairing-qr-fixture.png"))
                 (ROOT / "artifacts" / "mobile-pairing-qr-fixture.txt").write_text(
-                    page.get_by_role("textbox", name="휴대폰 연결 링크", exact=True).input_value(), encoding="utf-8")
-                page.context.grant_permissions(["clipboard-read", "clipboard-write"])
-                page.get_by_role("button", name="링크 복사", exact=True).click()
-                assert page.evaluate("navigator.clipboard.readText()") == page.get_by_role(
+                    settings.get_by_role("textbox", name="휴대폰 연결 링크", exact=True).input_value(), encoding="utf-8")
+                settings.context.grant_permissions(["clipboard-read", "clipboard-write"])
+                settings.get_by_role("button", name="링크 복사", exact=True).click()
+                assert settings.evaluate("navigator.clipboard.readText()") == settings.get_by_role(
                     "textbox", name="휴대폰 연결 링크", exact=True).input_value()
-                page.clock.install()
-                page.clock.fast_forward(301_000)
+                settings.clock.install()
+                settings.clock.fast_forward(301_000)
                 qr.wait_for(state="detached")
                 assert install_qr.inner_html() == installation, "installation QR outlives pairing expiry"
-                page.get_by_text("연결 링크가 만료됐습니다. 새로 만드세요.", exact=True).wait_for()
+                settings.get_by_text("연결 링크가 만료됐습니다. 새로 만드세요.", exact=True).wait_for()
                 print("PASS: QR regeneration, copy fallback and expiry")
-                page.get_by_role("button", name="닫기", exact=True).click()
+                settings.get_by_role("button", name="닫기", exact=True).click()
                 installer = browser.new_page(viewport={"width": 400, "height": 800})
                 installer.goto(base + "/mobile-install")
                 for width in (320, 400, 844):
@@ -544,11 +553,14 @@ def main():
                 mock_phone.close()
                 if opts.live_tunnel:
                     page.set_viewport_size({"width": 1440, "height": 900})
-                    page.get_by_role("button", name="설정", exact=True).click()
-                    page.get_by_role("button", name="외부 연결 켜기", exact=True).click()
+                    with page.expect_popup() as preferences:
+                        page.get_by_role("button", name="설정", exact=True).click()
+                    settings = preferences.value
+                    settings.get_by_role("button", name="휴대폰 연결", exact=True).click()
+                    settings.get_by_role("button", name="외부 연결 켜기", exact=True).click()
                     # The first click must produce a QR without a second pairing click.
-                    page.get_by_role("textbox", name="휴대폰 연결 링크", exact=True).wait_for(timeout=180000)
-                    link = page.get_by_role("textbox", name="휴대폰 연결 링크", exact=True).input_value()
+                    settings.get_by_role("textbox", name="휴대폰 연결 링크", exact=True).wait_for(timeout=180000)
+                    link = settings.get_by_role("textbox", name="휴대폰 연결 링크", exact=True).input_value()
                     phone = browser.new_page(viewport={"width": 400, "height": 800})
                     phone.on("pageerror", lambda error: errors.append(str(error)))
                     phone.route("https://fonts.googleapis.com/**", lambda route: route.abort())

@@ -35,7 +35,9 @@ import improvement  # noqa: E402
 from common.process import SUSPENDED, background_options, contained, resumed, terminated  # noqa: E402
 from wiki import slots_for  # noqa: E402
 
-STORE = improvement.HUB / "raw" / "refactor"
+from common.paths import RAW  # noqa: E402
+
+STORE = RAW / "refactor"
 CANDIDATES = {"L0": 1, "L1": 2, "L2": 3, "L3": 3}
 BLOCK_MAX = 80     # a longer indented body counts as debt
 TAIL = 4000

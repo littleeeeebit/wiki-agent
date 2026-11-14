@@ -20,12 +20,23 @@ def native(line: str) -> Command:
     return Command(line, line, line)
 
 
+FOLDER_DIALOG = (
+    "Add-Type -AssemblyName System.Windows.Forms; "
+    "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog; "
+    "$dialog.Description = '{title}'; $dialog.ShowNewFolderButton = $false; "
+    "try {{ if ($dialog.ShowDialog() -eq 'OK') {{ [Console]::OutputEncoding = "
+    "[System.Text.UTF8Encoding]::new($false); [Console]::WriteLine($dialog.SelectedPath) }} }} "
+    "finally {{ $dialog.Dispose() }}"
+)
+
+
 COMMANDS = {
     # All six focuses share search_note; retrospective also uses transcript.
     "search": Command("{python} {script} --project {repo}", "& {python} {script} --project {repo}",
                       "& {python} {script} --project {repo}"),
     "hook": Command("{command}", "& {command}", "& {command}"),
     "terminal": Command("", "-NoLogo -NoProfile", "-NoLogo -NoProfile"),
+    "folder-dialog": Command("", FOLDER_DIALOG, FOLDER_DIALOG),
     # Repository-owned gate/registered-check text is validated after substitution.
     "gate": Command("{command}", "{command}", "{ps5_command}"),
     "registered-check": Command("{command}", "{command}", "{ps5_command}"),
@@ -50,6 +61,8 @@ COMMANDS = {
 # Exact CLI and PowerShell examples in current and historical documentation.
 # These are an inventory, not permission to execute a research example.
 DOCUMENTED = (
+    'python web/tests/packaged_desktop.py --image raw/desktop/releases/<version> --out raw/desktop/acceptance/<version>',
+    'python tool/build_desktop.py --version 0.1.0 --updater-public-key "C:/private/wiki-agent-update.key.pub"',
     "$map = @{ powershell = 'value' }",
     "$map = @{ pwsh -NoProfile = 'value' }",
     '$program = ({value}); Write-Output $program',

@@ -11,14 +11,15 @@ import subprocess
 import sys
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from common import process
+import native_webview
+from native_process import launched
 
 
 class Closed(BaseModel):
@@ -54,27 +55,45 @@ class NativeSettings(Closed):
 
 
 def digest(file: Path) -> str:
-    return hashlib.sha256(file.read_bytes()).hexdigest()
+    measured = hashlib.sha256()
+    with file.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            measured.update(chunk)
+    return measured.hexdigest()
 
 
 def build_identity(root: Path, head: str, inputs: list[str]) -> dict:
     """Measure launch inputs against Git blobs, including binary build artifacts."""
-    measured = {}
+    before = {}
     for name in inputs:
         file = root / name
         if Path(name).is_absolute() or root.resolve() not in file.resolve().parents or file.is_symlink():
             raise ValueError("Native build inputs must stay inside the checkout")
-        done = subprocess.run(["git", "rev-parse", f"{head}:{name}"], cwd=root, capture_output=True,
-                              timeout=30, **process.background_options())
-        actual = subprocess.run(["git", "hash-object", "--path=" + name, name], cwd=root, capture_output=True,
-                                timeout=30, **process.background_options())
-        if done.returncode or actual.returncode or done.stdout.strip() != actual.stdout.strip():
+        before[name] = digest(file)
+    tree = subprocess.run(["git", "ls-tree", "-r", "-z", "--full-tree", head], cwd=root, capture_output=True,
+                          timeout=30, check=True, **process.background_options())
+    blobs = {}
+    for row in tree.stdout.split(b"\0"):
+        if row:
+            metadata, name = row.split(b"\t", 1)
+            blobs[name.decode("utf-8")] = metadata.split()[-1].decode("ascii")
+    actual = subprocess.run(["git", "hash-object", "--stdin-paths"], cwd=root, capture_output=True,
+                            input="".join(json.dumps(name, ensure_ascii=False) + "\n" for name in inputs).encode("utf-8"),
+                            timeout=30, check=True, **process.background_options())
+    hashes = actual.stdout.decode("ascii").splitlines()
+    if len(hashes) != len(inputs):
+        raise ValueError("Native build input measurement is incomplete")
+    measured = {}
+    for name, blob in zip(inputs, hashes, strict=True):
+        if blob != blobs.get(name) or digest(root / name) != before[name]:
             raise ValueError("Native build input differs from the reviewed head: " + name)
-        measured[name] = {"sha256": digest(file), "git_blob": done.stdout.decode("ascii").strip()}
+        measured[name] = {"sha256": before[name], "git_blob": blob}
     return measured
 
 
 def preflight(root: Path, head: str, target: dict, settings: dict) -> dict:
+    if target.get("driver") == "webview":
+        return native_webview.preflight(root, head, target, settings)
     target, settings = NativeTarget.model_validate(target), NativeSettings.model_validate(settings)
     if sys.platform != "win32" or settings.host != "windows-win32":
         raise ValueError("Native collector supports Windows Win32 only")
@@ -94,6 +113,8 @@ def preflight(root: Path, head: str, target: dict, settings: dict) -> dict:
 def validate_receipt(data: dict, root: Path, artifact: Path, target: dict, settings: dict, revisions: dict,
                      *, redact_text=None) -> dict:
     """Browser output cannot satisfy native identity, action, event or ownership proof."""
+    if target.get("driver") == "webview":
+        return native_webview.validate_receipt(data, root, artifact, target, settings, revisions, redact_text=redact_text)
     build = preflight(root, data["head"], target, settings)
     native = data.get("native")
     fields = {"application", "host", "driver", "executable_path_digest", "executable_sha256", "build_head", "build_inputs",
@@ -188,6 +209,8 @@ def owned_desktop():
 
 
 def run(request: dict) -> dict:
+    if request["target"].get("driver") == "webview":
+        return native_webview.run(request)
     preflight(Path(request["root"]), request["head"], request["target"], request["settings"])
     with owned_desktop() as desktop:
         return _run({**request, "desktop": desktop})
@@ -270,68 +293,14 @@ def _run(request: dict) -> dict:
     env = {**os.environ, "WIKI_NATIVE_PROFILE": str(artifact / "profile"),
            "WIKI_NATIVE_EVENTS": str(artifact / "events.jsonl")}
     (artifact / "profile").mkdir()
-    with (artifact / "process.log").open("wb") as log:
-        # Python's STARTUPINFO does not forward lpDesktop to CreateProcess.
-        # Use the native structure so an arbitrary approved Win32 app launches
-        # on the attempt desktop, without needing a cooperative app adapter.
-        import msvcrt
-
-        class Startup(ctypes.Structure):
-            _fields_ = [("size", w.DWORD), ("reserved", w.LPWSTR), ("desktop", w.LPWSTR), ("title", w.LPWSTR),
-                        ("x", w.DWORD), ("y", w.DWORD), ("width", w.DWORD), ("height", w.DWORD),
-                        ("chars_x", w.DWORD), ("chars_y", w.DWORD), ("fill", w.DWORD), ("flags", w.DWORD),
-                        ("show", w.WORD), ("reserved_size", w.WORD), ("reserved_ptr", w.LPVOID),
-                        ("stdin", w.HANDLE), ("stdout", w.HANDLE), ("stderr", w.HANDLE)]
-
-        class ProcessInfo(ctypes.Structure):
-            _fields_ = [("process", w.HANDLE), ("thread", w.HANDLE), ("pid", w.DWORD), ("tid", w.DWORD)]
-
-        k.CreateProcessW.argtypes = (w.LPCWSTR, w.LPWSTR, w.LPVOID, w.LPVOID, w.BOOL, w.DWORD,
-                                     w.LPVOID, w.LPCWSTR, ctypes.POINTER(Startup), ctypes.POINTER(ProcessInfo))
-        k.CreateProcessW.restype = w.BOOL
-        with open(os.devnull, "rb") as null:
-            handles = [msvcrt.get_osfhandle(file.fileno()) for file in (null, log)]
-            for handle in handles:
-                os.set_handle_inheritable(handle, True)
-            startup = Startup(size=ctypes.sizeof(Startup), desktop=request["desktop"], flags=0x100,
-                              stdin=handles[0], stdout=handles[1], stderr=handles[1])
-            info = ProcessInfo()
-            command = ctypes.create_unicode_buffer(subprocess.list2cmdline([settings["executable"], *target["arguments"]]))
-            environment = ctypes.create_unicode_buffer("\0".join(f"{key}={value}" for key, value in sorted(env.items())) + "\0")
-            try:
-                created = k.CreateProcessW(settings["executable"], command, None, None, True,
-                                            subprocess.CREATE_NO_WINDOW | process.SUSPENDED | 0x400,
-                                            environment, str(root), ctypes.byref(startup), ctypes.byref(info))
-            finally:
-                for handle in handles:
-                    os.set_handle_inheritable(handle, False)
-            if not created:
-                raise ctypes.WinError(ctypes.get_last_error())
-        k.CloseHandle(info.thread)
-
-        def poll():
-            if k.WaitForSingleObject(info.process, 0) == 0x102:
-                return None
-            code = w.DWORD()
-            if not k.GetExitCodeProcess(info.process, ctypes.byref(code)):
-                raise ctypes.WinError(ctypes.get_last_error())
-            return code.value
-
-        def wait(timeout):
-            if k.WaitForSingleObject(info.process, int(timeout * 1000)) != 0:
-                raise ValueError("Owned native process did not finish cleanup")
-
-        proc = SimpleNamespace(pid=info.pid, _handle=info.process, poll=poll, wait=wait,
-                               kill=lambda: k.TerminateProcess(info.process, 1))
-        job = process.contained(proc)
+    with (artifact / "process.log").open("wb") as log, ExitStack() as cleanup:
+        proc = cleanup.enter_context(launched([settings["executable"], *target["arguments"]],
+                                             root, env, request["desktop"], log))
         ownership = {"pid": proc.pid, "hwnd": None, "executable": settings["executable"],
                      "profile": str(artifact / "profile"), "desktop": request["desktop"], "state": "running"}
         owned = artifact / "ownership.json"
         try:
             owned.write_text(json.dumps(ownership), encoding="utf-8")
-            if not job:
-                raise ValueError("Cannot establish owned native process cleanup")
-            process.resumed(proc)
             hwnd, deadline = None, time.monotonic() + 10
             while hwnd is None and time.monotonic() < deadline and proc.poll() is None:
                 matches = []
@@ -421,16 +390,9 @@ def _run(request: dict) -> dict:
                               for file in [observed_file, artifact / "events.jsonl"] if file.exists()]})
             return receipt
         finally:
-            if job:
-                process.terminated(job)
-            elif proc.poll() is None:
-                proc.kill()
-            try:
-                proc.wait(timeout=5)
-                ownership["state"] = "cleaned"
-                owned.write_text(json.dumps(ownership), encoding="utf-8")
-            finally:
-                k.CloseHandle(info.process)
+            cleanup.close()
+            ownership["state"] = "cleaned"
+            owned.write_text(json.dumps(ownership), encoding="utf-8")
 
 
 def main():
@@ -438,7 +400,7 @@ def main():
     request = json.loads(Path(os.environ["WIKI_VERIFICATION_NATIVE_REQUEST"]).read_text(encoding="utf-8"))
     try:
         result = run(request)
-    except (ValueError, OSError, subprocess.SubprocessError, AttributeError) as exc:
+    except (ValueError, OSError, subprocess.SubprocessError, AttributeError, KeyError) as exc:
         result = {key: request[key] for key in ("head", "flow", "environment_id", "test_scope")}
         result["blocked"] = {"prerequisite": "native", "reason": str(exc)}
     print("```local-evidence\n" + json.dumps(result) + "\n```")

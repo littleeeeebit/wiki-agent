@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 import apply
 from common import indexes
+from common.paths import PACKAGED
 
 from . import channels, connect, work
 from .query import ROOT
@@ -71,6 +72,8 @@ def watch(halt: threading.Event, every: float = EVERY) -> None:
 
 
 def refused() -> str:
+    if PACKAGED:
+        return ""
     branch = hub_branch()
     if branch == "main":
         return ""

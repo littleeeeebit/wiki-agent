@@ -55,6 +55,7 @@ def test_webview_targets_validate_beside_unchanged_win32_targets():
     assert set(parsed.flows[0].native.model_dump()) == {*win32, "arguments"}
     assert verification.Flow.model_validate({**old, "native": {**win32, "driver": "win32"}})
     for wrong in (webview_flow("android", package=""), webview_flow("windows", package="com.example.vto"),
+                  {**webview_flow("windows"), "native": {k: v for k, v in webview_flow("windows")["native"].items() if k != "build"}},
                   webview_flow("windows", scenario="scripts/other.mjs"), webview_flow("windows", driver="cdp"),
                   webview_flow("windows", window_class="Fixture"),
                   webview_flow("windows", actions=[{"assertion": "other", "expected": "Saved", "selector": "#status"}]),
@@ -77,7 +78,7 @@ def test_driver_schemas_stay_out_of_the_hashed_collector_module():
     # A desktop flow's signature hashes native_verification.py (`identity["collector"]`), so a
     # schema-only change there would revoke every stored Win32 pass.
     collector = Path(native.__file__).read_text(encoding="utf-8")
-    assert "native_targets" not in collector and "WebView" not in collector
+    assert "native_targets" not in collector and "class WebViewTarget" not in collector
     assert not hasattr(native, "WebViewTarget") and not hasattr(native, "approval")
 
 

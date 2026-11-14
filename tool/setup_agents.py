@@ -16,6 +16,7 @@ import sys
 
 from common import is_junction  # tests and callers read it from here too
 from common import shell
+from common.paths import PACKAGED, release
 
 WIKI = Path(__file__).resolve().parents[1]
 SETTINGS = {"claude": ".claude/settings.json", "codex": ".codex/hooks.json"}
@@ -74,7 +75,7 @@ def install(project, choice, check, allow_dirty=False):
         if any(char in str(path) for char in ('"', '$', '`', '\n', '\r')):
             raise ValueError(f"고정 위키의 셸 인용이 지원하지 않는 문자가 경로에 있습니다: {path}. "
                              "따옴표·달러·백틱·줄바꿈 없는 경로로 옮기세요. 공백·한글은 지원합니다.")
-    actual = run(["git", "rev-parse", "HEAD"], wiki).strip()
+    actual = release()["revision"] if PACKAGED else run(["git", "rev-parse", "HEAD"], wiki).strip()
     if project == wiki:
         # The wiki targeting itself. Both the version pin and the dirty check
         # become self-referential: the pin goes stale on every commit, and
@@ -89,8 +90,9 @@ def install(project, choice, check, allow_dirty=False):
             raise ValueError(f"위키 버전 불일치: 기대 {revision}, 현재 {actual}. "
                              "기존 작업을 보존한 별도 checkout을 준비하세요. 자동 checkout은 하지 않습니다.")
         runtime = ("tool", "operator", "craft", "skills")
-        dirty = run(["git", "diff", "--name-only", "HEAD", "--", *runtime], wiki)
-        dirty += run(["git", "ls-files", "--others", "--exclude-standard", "--", *runtime], wiki)
+        dirty = "" if PACKAGED else run(["git", "diff", "--name-only", "HEAD", "--", *runtime], wiki)
+        if not PACKAGED:
+            dirty += run(["git", "ls-files", "--others", "--exclude-standard", "--", *runtime], wiki)
         if dirty.strip() and not allow_dirty:
             raise ValueError("고정 버전과 다른 위키 실행 코드·규칙이 있습니다. 깨끗한 별도 checkout을 사용하세요:\n" + dirty)
         if allow_dirty:

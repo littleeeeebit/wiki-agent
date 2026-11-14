@@ -124,10 +124,15 @@ def test_a_missing_tool_starts_one_background_install_and_says_so(no_path, monke
     assert started == [[sys.executable, cli_tools.__file__, "fd"]], "the second call finds the first running"
 
 
-def test_a_stalled_winget_falls_back_to_the_pinned_release_file(no_path, monkeypatch):
+@pytest.mark.parametrize("packaged", [False, True])
+def test_a_stalled_winget_falls_back_to_the_pinned_release_file(no_path, monkeypatch, packaged):
     """Setup runs winget, then the release file when winget times out; a wrong digest installs nothing."""
 
     monkeypatch.setattr(cli_tools.sys, "platform", "win32")
+    monkeypatch.setattr(cli_tools, "PACKAGED", packaged)
+    monkeypatch.setattr(cli_tools, "DATA", no_path.parents[1] / "wiki-agent-data")
+    expected_bin = no_path.parents[1] / ("wiki-agent-data" if packaged else "wiki-agent") / "bin"
+    assert cli_tools.bin_dir() == expected_bin
     monkeypatch.setattr(cli_tools.shutil, "which", lambda name: "winget.exe" if name == "winget" else None)
     monkeypatch.setattr(cli_tools, "_stalled", False)
     ran = []

@@ -30,9 +30,10 @@ import threading
 from pathlib import Path
 
 from common import swap
+from common.paths import DATA
 
 # The hub checkout this code runs from; its `.env` is the default file.
-HUB = Path(__file__).resolve().parents[2]
+HUB = DATA
 
 COMMENT = re.compile(r"\s#")
 

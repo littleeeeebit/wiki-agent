@@ -10,7 +10,7 @@ import type { Seed } from '@/components/Query'
 import { Projects } from '@/components/Projects'
 import { RepoMap } from '@/components/RepoMap'
 import { Review } from '@/components/Review'
-import { Settings } from '@/components/Settings'
+import { openPreferences } from '@/lib/desktop'
 import { LiveChanges } from '@/components/LiveChanges'
 import { Architecture } from '@/components/Architecture'
 import { Suite } from '@/components/Suite'
@@ -80,7 +80,6 @@ export default function App() {
   // A run's paths on the map, kept with the project it ran in: another
   // project's map never draws them.
   const [mapRun, setMapRun] = useState<{ repo: string; run: RunSummary } | null>(null)
-  const [setting, setSetting] = useState(false)
   const [queryBusy, setQueryBusy] = useState(false)
   // Each task keeps its own work model (`choiceKey`): a model picked in one
   // task, or in another repository, never becomes another task's selection.
@@ -94,6 +93,19 @@ export default function App() {
   const [loopRows, setLoopRows] = useState<LoopRow[]>([])
   const [turnsElsewhere, setTurnsElsewhere] = useState<api.TurnRow[]>([])
   const [loopSettings, setLoopSettings] = useState<LoopSettings | null>(null)
+  useEffect(() => {
+    const sync = (event?: StorageEvent) => {
+      if (!event || event.key === 'theme') setTheme(stored('theme', 'dark'))
+      if (!event || event.key === 'settings-changed') {
+        void api.getSwitch().then(setSw).catch(() => {})
+        void api.getLoopSettings().then(setLoopSettings).catch(() => {})
+      }
+    }
+    const local = () => sync()
+    window.addEventListener('storage', sync)
+    window.addEventListener('preferences-saved', local)
+    return () => { window.removeEventListener('storage', sync); window.removeEventListener('preferences-saved', local) }
+  }, [])
   const [tab, setTab] = useState<Tab>('agent')
   const [mobilePane, setMobilePane] = useState<'tasks' | 'chat' | 'task'>('tasks')
   const [landscapeView, setLandscapeView] = useState<'workspace' | 'chat' | 'task'>('workspace')
@@ -130,6 +142,7 @@ export default function App() {
     expected.current = of
     api.claim(of)
     setChannels(list)
+    if (!list.length) { setView('projects'); setMobilePane('chat') }
   }, [])
 
   /** The screen moves to project `now`, however it learned of it — its own
@@ -224,7 +237,10 @@ export default function App() {
     api.getOptions().then(setOptions).catch((err) => setFault(String(err)))
     // The projects' connection states ride on the options; the rail shows
     // the current one's, so a connection read again reads them again.
-    const reread = () => api.getOptions().then(setOptions).catch(() => {})
+    const reread = () => {
+      void api.getOptions().then(setOptions).catch(() => {})
+      if (!expected.current) void api.getChannels().then(accept).catch(() => {})
+    }
     window.addEventListener('connect-changed', reread)
     return () => window.removeEventListener('connect-changed', reread)
   }, [])
@@ -410,14 +426,6 @@ export default function App() {
       setFault(String(err))
     }
   }, [channels, follow])
-
-  const flip = useCallback(async (mode: api.TranslationMode) => {
-    try {
-      setSw(await api.setSwitch(mode))
-    } catch (err) {
-      setFault(String(err))
-    }
-  }, [])
 
   // Open approvals by worktree, as this window's streams know them.
   const asks = (p: string) => (work.turns[p] ?? []).filter((t) => t.pending)
@@ -612,7 +620,7 @@ export default function App() {
           <ListOrdered className="size-4" />
         </Btn>}
         {mobilePane === 'task' && tidy && <Btn tone="ghost" className="portrait-header-action" onClick={() => void remove(row!.path)}>정리</Btn>}
-        <button type="button" aria-label="설정" onClick={() => setSetting(true)} className="grid size-11 shrink-0 place-items-center rounded-md text-muted-foreground">
+        <button type="button" aria-label="설정" onClick={() => void openPreferences('settings').catch((e) => setFault(String(e)))} className="grid size-11 shrink-0 place-items-center rounded-md text-muted-foreground">
           <Gear className="size-5" />
         </button>
       </header>
@@ -637,7 +645,7 @@ export default function App() {
         }}
         onSelect={(key) => { setSelected(key); setTaskOptionsOpen(false); setMobilePane('task'); setLandscapeView('workspace') }}
         onRemove={(target) => void remove(target, true)}
-        onSettings={() => setSetting(true)}
+        onSettings={() => void openPreferences('settings').catch((e) => setFault(String(e)))}
         onNew={() => {
           setView('chat')
           setSeed({ focus: 'next', text: NEW_TASK })
@@ -822,10 +830,6 @@ export default function App() {
         ))}
       </nav>
 
-      {setting && (
-        <Settings sw={sw} theme={theme} options={options} loop={loopSettings} onSwitch={flip} onTheme={setTheme}
-          onLoop={async (s) => setLoopSettings(await api.setLoopSettings(s))} onClose={() => setSetting(false)} />
-      )}
     </div>
   )
 }

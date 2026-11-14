@@ -99,6 +99,22 @@ def test_a_probe_that_timed_out_is_asked_again_rather_than_kept(monkeypatch):
     assert shell.chosen().major == 7 and calls == ["pwsh", "pwsh"], "an answered probe is kept"
 
 
+@pytest.mark.parametrize("command", ["gate", "registered-check"])
+@pytest.mark.parametrize("fallback", [False, True])
+def test_owned_checks_never_launch_through_a_store_package(monkeypatch, command, fallback):
+    windows(monkeypatch)
+    store = shell.PowerShell("C:/Program Files/WindowsApps/PowerShell/pwsh.exe", "7.6.1", 7)
+    classic = shell.PowerShell("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "5.1.1", 5)
+    monkeypatch.setattr(shell, "_detected", (store, classic) if fallback else (store,))
+    if fallback:
+        argv, use_shell = shell.launch(command, command="Write-Output ready")
+        assert argv[0] == classic.executable and not use_shell
+        assert shell.chosen() == store, "Interactive preference stays unchanged"
+    else:
+        with pytest.raises(ValueError, match="PowerShell"):
+            shell.launch(command, command="Write-Output ready")
+
+
 @pytest.mark.parametrize("line,feature", [
     ("${x}?.Name", "?."), ("$x ?? 'fallback'", "??"), ("$x ? 1 : 0", "ternary"),
     ("1 | ForEach-Object -Parallel { $_ }", "ForEach-Object -Parallel"),
@@ -170,6 +186,9 @@ def test_real_shell_preserves_native_exit_code_and_utf8_output(tmp_path, monkeyp
     command = "& " + shell.quote(Path(sys.executable).as_posix(), "ps5") + ' -c "print(\'한글\'); raise SystemExit(13)"'
     code, output, cut = runtime.gate(command, tmp_path, threading.Event(),
                                    {**os.environ, "PYTHONIOENCODING": "utf-8"}, 15, None, specs.kill)
+    if "windowsapps" in {part.lower() for part in Path(executable).parts}:
+        assert code is None and not output and "스토어 버전이 아닌 PowerShell" in cut
+        return
     assert (code, output.strip(), cut) == (13, "한글", "")
 
 

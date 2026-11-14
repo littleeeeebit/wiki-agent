@@ -35,9 +35,10 @@ def test_served_apk_survives_the_after_merge_scratch_cleanup():
     local = app.ROOT / ".wiki/adapter.toml"
     if local.is_file():
         scratch.append(tomllib.loads(local.read_text(encoding="utf-8"))["slots"]["scratch_dirs"])
-    rel = mobile.APK.relative_to(app.ROOT).as_posix()
+    assert mobile.APK == mobile.RAW / "android/wiki-agent.apk"
     for entry in ",".join(scratch).split(","):
-        assert not rel.startswith(entry.strip().rstrip("/") + "/"), "after-merge would delete the served APK"
+        scratch_path = (app.ROOT / entry.strip()).resolve()
+        assert not mobile.APK.resolve().is_relative_to(scratch_path), "after-merge would delete the served APK"
 
 
 def browsers():
@@ -228,7 +229,7 @@ def test_start_prepares_its_own_runtime_and_reaps_the_child(companion, tmp_path,
         ready.set()
         return True
 
-    with patch.object(mobile.channels, "WIKI", tmp_path), \
+    with patch.object(mobile, "RAW", tmp_path / "raw"), \
          patch.object(mobile.mobile_transport, "cloudflared", return_value=Path("managed-cloudflared")), \
          patch.object(mobile.subprocess, "Popen", Tunnel), patch.object(companion, "wait_ready", checked):
         desktop.post("/api/mobile/start").raise_for_status()
@@ -278,7 +279,7 @@ def test_cancel_during_download_never_launches_a_tunnel(companion, tmp_path):
         assert release.wait(120)
         return Path("managed-cloudflared")
 
-    with patch.object(mobile.channels, "WIKI", tmp_path), \
+    with patch.object(mobile, "RAW", tmp_path / "raw"), \
          patch.object(mobile.mobile_transport, "cloudflared", download), patch.object(mobile.subprocess, "Popen") as launch:
         thread = threading.Thread(target=companion.prepare, args=(companion.cancel,))
         thread.start()
@@ -297,7 +298,7 @@ def test_failed_quic_retries_http2_automatically(companion, tmp_path):
     companion.origin = ""
     companion.starting = True
     processes = [Mock(poll=Mock(return_value=None)), Mock(poll=Mock(return_value=None))]
-    with patch.object(mobile.channels, "WIKI", tmp_path), \
+    with patch.object(mobile, "RAW", tmp_path / "raw"), \
          patch.object(mobile.mobile_transport, "cloudflared", return_value=Path("managed-cloudflared")), \
          patch.object(mobile.subprocess, "Popen", side_effect=processes) as launch, \
          patch.object(companion, "read"), patch.object(companion, "wait_ready", side_effect=[False, True]):

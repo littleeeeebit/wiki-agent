@@ -18,9 +18,10 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 from common.process import background_options
+from common.paths import DATA
 
 ROOT = Path(__file__).resolve().parents[2]
-SETTINGS = ROOT / ".chat-local.json"
+SETTINGS = DATA / ".chat-local.json"
 
 
 def settings():

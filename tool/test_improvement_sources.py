@@ -30,3 +30,19 @@ def test_private_project_trials_never_enter_hub_retrieval(tmp_path, monkeypatch,
         assert sources.listing(hub, private.parent) == [private]
     assert corpus.walk(hub, [".", "raw"]) == [own]
     assert corpus.walk(hub, [str(private.relative_to(hub))]) == []
+
+
+def test_packaged_private_trials_stay_out_of_user_data_discovery(tmp_path, monkeypatch):
+    hub = tmp_path / "resources"
+    hub.mkdir()
+    data = tmp_path / "user-data"
+    public = data / "README.md"
+    private = data / "raw/improvement/project/run/README.md"
+    private.parent.mkdir(parents=True)
+    public.write_text("Selected project", encoding="utf-8")
+    private.write_text("Other project", encoding="utf-8")
+    monkeypatch.setattr(sources, "PACKAGED", True)
+    monkeypatch.setattr(sources, "RAW", data / "raw")
+    monkeypatch.setattr(sources.subprocess, "run", lambda *args, **kwargs:
+                        subprocess.CompletedProcess(args, 0, b"README.md\0raw/improvement/project/run/README.md\0"))
+    assert sources.listing(hub, data) == [public]

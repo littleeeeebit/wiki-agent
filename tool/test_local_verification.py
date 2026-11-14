@@ -151,7 +151,7 @@ def repair_cloud(world, spec, name="repair.py"):
     return head
 
 
-@pytest.mark.parametrize("owner", ["local", "external"])
+@pytest.mark.parametrize("owner", [None, "local", "external"])
 @pytest.mark.parametrize("review", [{"flows": ["health"]}, {"evidence": ["api"]}, {"evidence": ["browser"]},
                                     {"evidence": ["desktop"]}])
 def test_runtime_declarations_do_not_gate_local_or_external_work(cloud_world, owner, review):
@@ -162,7 +162,9 @@ def test_runtime_declarations_do_not_gate_local_or_external_work(cloud_world, ow
     world.failed.touch()
     done = looped(spec["id"])
     assert done["state"] == "머지 가능", done.get("stopped")
-    assert done["rounds"][0]["review_contract"]["evidence"] == ["offline"] and "local_verification" not in done
+    expected = {"offline", *review.get("evidence", [])} | ({"api"} if "browser" in review.get("evidence", []) else set())
+    assert done["rounds"][0]["review_contract"]["evidence"] == sorted(expected)
+    assert not done["rounds"][0]["review_contract"]["flows"] and "local_verification" not in done
     assert Reviewer.made[0].tools == loop.REVIEW_TOOLS and not Worker.made
     assert "## Registered runtime evidence" not in (world.tmp / "review/proj/1/round-1.md").read_text(encoding="utf-8")
     assert specs.view(world.repo, done)["unproven"] == ""
@@ -286,7 +288,8 @@ def test_identical_user_env_is_not_claimed_or_overwritten_on_later_source_change
     assert (path / ".env").read_bytes() == before
 
 
-def test_owned_gate_cancellation_reaps_descendants_and_preserves_unrelated_process(tmp_path):
+@pytest.mark.parametrize("direct", [False, True])
+def test_owned_gate_cancellation_reaps_descendants_and_preserves_unrelated_process(tmp_path, direct):
     script = tmp_path / "tree.py"
     marker = tmp_path / "pid.txt"
     script.write_text("import subprocess, sys, time\n"
@@ -299,7 +302,8 @@ def test_owned_gate_cancellation_reaps_descendants_and_preserves_unrelated_proce
                                  **process.background_options())
     result = []
     command = subprocess.list2cmdline([sys.executable, str(script), str(marker)])
-    worker = threading.Thread(target=lambda: result.append(specs.gate(command, tmp_path, halt)))
+    options = {"argv": [sys.executable, str(script), str(marker)]} if direct else {}
+    worker = threading.Thread(target=lambda: result.append(specs.gate(command, tmp_path, halt, **options)))
     worker.start()
     try:
         waited(marker.exists)

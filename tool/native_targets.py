@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from pydantic import Discriminator, Field, Tag, model_validator
 
 import native_verification
+import native_webview
 from native_verification import Closed, NativeSettings, NativeTarget
 
 
@@ -70,8 +71,17 @@ class WebViewTarget(Closed):
         return self
 
 
-Target = Annotated[Annotated[Win32Target, Tag("win32")] | Annotated[WebViewTarget, Tag("webview")],
-                   Discriminator(lambda v: v.get("driver", "win32") if isinstance(v, dict) else v.driver)]
+def target_driver(value) -> str:
+    if isinstance(value, native_webview.Target):
+        return "approved-webview"
+    if isinstance(value, dict):
+        driver = value.get("driver", "win32")
+        return "approved-webview" if driver == "webview" and "build" not in value else driver
+    return value.driver
+
+
+Target = Annotated[Annotated[Win32Target, Tag("win32")] | Annotated[WebViewTarget, Tag("webview")]
+                   | Annotated[native_webview.Target, Tag("approved-webview")], Discriminator(target_driver)]
 
 
 class WebViewSettings(Closed):
@@ -104,16 +114,24 @@ ANDROID_HOST = ("sdk", "adb", "adb_sha256", "emulator", "emulator_sha256", "syst
 Approval = Annotated[NativeSettings | WebViewSettings, Field(discriminator="host")]
 
 
-def host(target: Win32Target | WebViewTarget) -> str:
+def host(target: Win32Target | WebViewTarget | native_webview.Target) -> str:
     """The approval host a target needs."""
+    if isinstance(target, native_webview.Target):
+        return "webview"
     if target.driver == "win32":
         return "windows-win32"
     return "android-emulator" if target.platform == "android" else "windows-webview2"
 
 
-def approval(settings: dict, target: Win32Target | WebViewTarget) -> dict:
+def approval(settings: dict, target: Win32Target | WebViewTarget | native_webview.Target) -> dict:
     """The approval for `target`: settings version 2 holds one, version 3 one per application."""
     native = settings.get("native")
+    if isinstance(target, native_webview.Target):
+        approved = native_webview.approval(native, target.application)
+        app = approved.applications.get(target.application)
+        if not app or app.platform != target.platform:
+            raise ValueError("등록된 플랫폼과 앱의 격리 실행 범위를 명시적으로 승인한다")
+        return approved.model_dump()
     for row in native if isinstance(native, list) else [native] if native else []:
         if row.get("application") == target.application and row.get("host") == host(target):
             return row
@@ -122,7 +140,7 @@ def approval(settings: dict, target: Win32Target | WebViewTarget) -> dict:
 
 def preflight(root, head: str, target: dict, settings: dict) -> dict:
     """Route a target to its collector's preflight; a driver without a collector fails closed."""
-    if target.get("driver") == "webview":
+    if target.get("driver") == "webview" and "build" in target:
         # ponytail: refused until the WebView collectors land (docs/plans/native-webview, steps 2-3).
         raise ValueError("WebView 네이티브 수집기는 아직 없다 — 이 흐름은 지금 수집할 수 없다")
     return native_verification.preflight(root, head, target, settings)
