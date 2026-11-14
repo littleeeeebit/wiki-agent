@@ -178,6 +178,68 @@ def test_renderer_is_approved_per_android_app_with_unchanged_default(candidate):
             webview.Approval.model_validate(invalid)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows native asset preflight")
+@pytest.mark.parametrize("application,asset_name", [
+    ("windows", "binary"), ("android", "binary"), ("android", "adb"), ("android", "emulator"), ("shared", "node"),
+])
+@pytest.mark.parametrize("change", ["changed", "missing"])
+def test_native_flow_assets_and_receipt_reuse_are_isolated_per_application(candidate, tmp_path, application, asset_name, change):
+    root, head, target, settings = candidate
+    windows = settings["applications"].pop("fixture")
+    android = {**windows, "platform": "android", "avd": "fixture"}
+    for name in ("binary", "adb", "emulator"):
+        file = tmp_path / ("android-" + name)
+        file.write_bytes(("approved " + name).encode())
+        android[name] = {"path": str(file), "sha256": native.digest(file)}
+    settings["applications"] = {"windows": windows, "android": android}
+    env = root / ".env"
+    env.write_text("", encoding="utf-8")
+    local = verification.LocalSettings.model_validate({"version": 2, "environment_id": "fixture",
+        "test_scope": "disposable", "env_file": str(env), "browser_tool": "fixture", "allowed_origins": ["http://127.0.0.1:8136"],
+        "revisions": {}, "manifest_digest": "0" * 64, "native": settings}).model_dump()
+    flows = [verification.Flow.model_validate({"id": platform, "title": platform, "kind": "desktop",
+        "command": "wiki-agent-native", "paths": ["*"], "assertions": [{"id": "saved", "expected": "Saved"}],
+        "native": {**target, "platform": platform, "application": platform,
+                   **({"package": "dev.example.app", "activity": ".MainActivity"} if platform == "android" else {})}})
+        for platform in ("windows", "android")]
+    signatures, builds = {}, {}
+    for flow in flows:
+        scoped = targets.approval(local, flow.native)
+        assert set(scoped["applications"]) == {flow.id}
+        assert webview.assets(settings, flow.id) == webview.assets(scoped, flow.id)
+        builds[flow.id] = webview.preflight(root, head, flow.native.model_dump(), settings)
+        signatures[flow.id] = verification.signature(root, root, flow, local)
+        other = "android" if flow.id == "windows" else "windows"
+        metadata = copy.deepcopy(local)
+        metadata["native"]["applications"][other]["profile"] = "another disposable profile"
+        assert verification.signature(root, root, flow, metadata) == signatures[flow.id]
+    assert set(local["native"]["applications"]) == {"windows", "android"}
+    asset = settings["node"] if application == "shared" else settings["applications"][application][asset_name]
+    file = Path(asset["path"])
+    if change == "missing":
+        file.unlink()
+    else:
+        file.write_bytes(b"changed fixture asset")
+    for flow in flows:
+        record = {"ok": True, "signature": signatures[flow.id], "executed_head": head,
+                  "evidence": {}, "evidence_digest": verification.sha({})}
+        if application in ("shared", flow.id):
+            with pytest.raises(ValueError, match="Approved native asset is missing or changed"):
+                webview.preflight(root, head, flow.native.model_dump(), settings)
+            if change == "missing":
+                with pytest.raises(OSError):
+                    verification.signature(root, root, flow, local)
+            else:
+                changed = verification.signature(root, root, flow, local)
+                assert changed != signatures[flow.id]
+                assert not verification.reusable(record, flow, head, changed, root)
+        else:
+            assert webview.preflight(root, head, flow.native.model_dump(), settings) == builds[flow.id]
+            unchanged = verification.signature(root, root, flow, local)
+            assert unchanged == signatures[flow.id]
+            assert verification.reusable(record, flow, head, unchanged, root) == "same commit and environment"
+
+
 @pytest.mark.parametrize("platform", ["windows", "android"])
 def test_approved_binary_contract_keeps_its_approval_and_collector_after_schema_merge(candidate, monkeypatch, platform):
     root, head, target, approved = candidate

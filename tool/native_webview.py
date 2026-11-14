@@ -74,16 +74,23 @@ class Settings(Closed):
     applications: dict[str, Approval] = Field(min_length=1)
 
 
-def assets(settings: dict) -> list[dict]:
-    approved = Settings.model_validate(settings)
-    return [approved.node.model_dump(), *[asset.model_dump() for app in approved.applications.values()
-                                         for asset in (app.binary, app.adb, app.emulator) if asset]]
+def approval(settings: dict, application: str) -> Settings:
+    if isinstance(settings, dict) and isinstance(settings.get("applications"), dict):
+        settings = {**settings, "applications": {application: settings["applications"].get(application)}}
+    return Settings.model_validate(settings)
+
+
+def assets(settings: dict, application: str) -> list[dict]:
+    approved = approval(settings, application)
+    app = approved.applications[application]
+    return [approved.node.model_dump(), *[asset.model_dump() for asset in (app.binary, app.adb, app.emulator) if asset]]
 
 
 def preflight(root: Path, head: str, target: dict, settings: dict) -> dict:
     import native_verification as native
 
-    target, approved = Target.model_validate(target), Settings.model_validate(settings)
+    target = Target.model_validate(target)
+    approved = approval(settings, target.application)
     if sys.platform != "win32":
         raise ValueError("WebView native verification currently requires a Windows host")
     app = approved.applications.get(target.application)
@@ -91,7 +98,7 @@ def preflight(root: Path, head: str, target: dict, settings: dict) -> dict:
         raise ValueError("The native platform/application is not approved")
     if app.platform == "android" and (not app.adb or not app.emulator or not app.avd):
         raise ValueError("Android requires approved adb, emulator and a disposable AVD template")
-    for asset in assets(settings):
+    for asset in assets(settings, target.application):
         file = Path(asset["path"])
         if not file.is_absolute() or file.is_symlink() or not file.is_file() or native.digest(file) != asset["sha256"]:
             raise ValueError("Approved native asset is missing or changed: " + file.name)

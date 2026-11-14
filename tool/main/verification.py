@@ -291,7 +291,7 @@ def signature(repo: Path, path: Path, flow: Flow, settings: dict) -> str:
         if isinstance(flow.native, native_webview.Target):
             identity["webview_collector"] = native_webview.collector_digest()
             identity["assets"] = [{**asset, "actual": native_verification.digest(Path(asset["path"]))}
-                                  for asset in native_webview.assets(identity["native"])]
+                                  for asset in native_webview.assets(identity["native"], flow.native.application)]
         else:
             identity["executable"] = sha(Path(identity["native"].get("executable") or identity["native"]["runner"]).read_bytes())
     return sha(identity)

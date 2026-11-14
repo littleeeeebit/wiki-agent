@@ -127,11 +127,11 @@ def approval(settings: dict, target: Win32Target | WebViewTarget | native_webvie
     """The approval for `target`: settings version 2 holds one, version 3 one per application."""
     native = settings.get("native")
     if isinstance(target, native_webview.Target):
-        approved = native_webview.Settings.model_validate(native)
+        approved = native_webview.approval(native, target.application)
         app = approved.applications.get(target.application)
         if not app or app.platform != target.platform:
             raise ValueError("등록된 플랫폼과 앱의 격리 실행 범위를 명시적으로 승인한다")
-        return native
+        return approved.model_dump()
     for row in native if isinstance(native, list) else [native] if native else []:
         if row.get("application") == target.application and row.get("host") == host(target):
             return row
