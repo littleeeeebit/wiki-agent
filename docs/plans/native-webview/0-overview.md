@@ -132,10 +132,15 @@ this on a real run.
 1. Create an AVD from the approved system image under an attempt-owned
    `ANDROID_AVD_HOME`. Boot it with `-wipe-data` on a console port that no
    existing device uses, which fixes its serial as `emulator-<port>`. Refuse if
-   that serial already appears in `adb devices`. Then confirm that the serial
+   that serial already appears in the owned server's device list. Then confirm that the serial
    reports `ro.kernel.qemu=1` and that its emulator process is the one launched.
-2. Every `adb` call and forward names that serial with `-s`; nothing runs
-   against a default or physical device.
+2. The collector runs its own ADB server. Before step 1 it picks a free port,
+   records it in the ownership record, and starts the server from the approved
+   `adb` with `-P <port> start-server`. The server's stable identity is recorded
+   as soon as it is up. The emulator is launched with `ANDROID_ADB_SERVER_PORT`
+   set to that port, so it registers only with that server. Every `adb` call and
+   forward names both `-P <port>` and `-s <serial>`. Nothing reaches the user's
+   default server on port 5037, a default device or a physical device.
 3. Build `output` at the reviewed head, install that APK, and confirm that the
    installed package's path digest matches the measured file.
 4. Start `package/activity`, confirm the foreground activity and the app's pid,
@@ -143,9 +148,12 @@ this on a real run.
    collector-owned proxy and checkpoint reads as on Windows apply.
 5. After a navigation or restart, wait for the target and reacquire it by pid.
    A restart checkpoint restarts the app without clearing storage.
-6. Record the emulator pid, serial, AVD home and forwards, plus the Windows
-   fields with package, activity and APK digest. Then remove the forwards, kill
-   that emulator pid and delete its AVD home.
+6. Record the ADB server port and identity, the emulator pid, serial, AVD home
+   and forwards, plus the Windows fields with package, activity and APK digest.
+   Then remove the forwards, kill that emulator pid, stop the owned server with
+   its `kill-server` on `-P <port>`, and delete the AVD home. A server started by
+   `start-server` may run outside the collector's job, so it is cleaned through
+   its record, never through the job alone.
 
 ### Receipts and cleanup
 
@@ -157,7 +165,7 @@ Cleanup is proven on every outcome: success, a failed assertion, a preparation
 failure, a timeout and a cancellation. The collector writes its ownership record
 before its first mutation, ahead of the build and of any folder it creates. It
 then adds each resource just before creating it: processes, profile folders, AVD
-home, emulator pid, serial and forwards. The record lives in the flow's artifact
+home, ADB server port and process, emulator pid, serial and forwards. The record lives in the flow's artifact
 folder, so it outlives the collector.
 
 A pid alone is not an ownership token, because Windows reuses pids once a
@@ -174,8 +182,10 @@ it signals a live pid, it reads that process's creation time and executable
 again. It acts only when both match the record. Any mismatch means the pid now
 belongs to another process. That process is left running, and the recorded one
 counts as exited. It removes recorded forwards with
-`adb -s <serial> forward --remove` only while that serial still answers as the
-recorded emulator. It deletes recorded folders only inside the artifact folder.
+`forward --remove`, naming `-P <port>` and `-s <serial>`, only while that serial still answers
+as the recorded emulator on the recorded server. It then stops that server with
+`kill-server` on `-P <port>`, and kills the server's pid only after the same
+identity check. It deletes recorded folders only inside the artifact folder.
 It touches nothing the record does not name. Only then does it validate that the
 record reads `cleaned`.
 
@@ -202,7 +212,7 @@ Each step is a separate PR, approved before the next starts.
 | --- | --- | --- | --- |
 | 1 | Manifest variant | `driver` union, Win32 default, WebView fields and validation; settings version 3 with per-application approvals; current manifests and settings still pass; a real run proving a WebView flow fails closed before any setup, build or review | In progress |
 | 2 | Windows WebView2 collector | Head build and launch of `output`, process-tree check of the endpoint, collector-owned proxy and checkpoint reads, cleanup proven on every outcome; one real Tauri fixture run, plus refusals for a wrong pid or endpoint, a new target, navigation outside `origins`, a stale or prebuilt binary, a `no_requests` checkpoint that made a request or call, a request to an unregistered origin, a collector killed mid-run whose recorded resources the orchestrator then cleans, a recorded pid reused by another process that the cleanup leaves running, a failed cleanup, and a Win32 receipt offered for a WebView flow and the reverse | Planned |
-| 3 | Android emulator collector | Owned AVD and serial, head-built APK identity, pid-bound attach, restart without data loss, cleanup proof; one real fixture run, plus refusals for an existing serial or physical device, a wrong pid, a replaced `adb`, emulator or system image, a killed collector whose forwards and AVD home the orchestrator then cleans, a reused emulator pid or serial that the cleanup leaves alone, and a failed cleanup, with a pre-existing emulator left untouched | Planned |
+| 3 | Android emulator collector | Owned AVD and serial, head-built APK identity, pid-bound attach, restart without data loss, cleanup proof; one real fixture run, plus refusals for an existing serial or physical device, a wrong pid, a replaced `adb`, emulator or system image, a killed collector whose forwards and AVD home the orchestrator then cleans, a reused emulator pid or serial that the cleanup leaves alone, an owned ADB server stopped on every outcome while a pre-existing default server on port 5037 and its devices survive untouched, and a failed cleanup, with a pre-existing emulator left untouched | Planned |
 | 4 | Cross-driver checks | Mixed Win32/WebView manifests in one run, and the full hosted gate | Planned |
 | 5 | PR #4 flows | `video-translate-overlay-2` registers its two flows against the new driver and its review passes local verification | Planned |
 
