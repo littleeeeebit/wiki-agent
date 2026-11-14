@@ -5,10 +5,10 @@ checks the resulting commit with this machine's test API, dataset and browser
 configuration. Cloud does not receive `.env`, credentials or private datasets.
 The existing `plan`, `code` and `mixed` profiles still determine review criteria.
 Locally implemented and external tasks keep their existing review and final gate.
-After Review Loop authorization, their explicit `review.flows` and requested
-`api`, `browser` and `desktop` evidence select registered runtime flows and hold
-review until current receipts exist. Cloud keeps its complete major-flow floor.
-Jev selects applicable registered checks before collection and judges their
+Registered runtime flows gate only Claude Code Cloud work, which cannot run the
+local `.env`. A local or external task's `review.flows` and its `api`, `browser`
+and `desktop` evidence are not collected and do not hold review or merge. Jev
+selects a Cloud task's registered checks before collection and judges their
 measured receipts. The independent reviewer remains separate.
 
 The Cloud review cell also executes verification commands and creates test
@@ -135,10 +135,9 @@ local execution settings and dependency locks also invalidate evidence.
 
 ## Registered local and Windows native collection
 
-This collection runs after an authorized review loop for local, external and
-Claude Code Cloud tasks. Local and external tasks collect only their enforced
-flow IDs; Cloud retains its complete catalog. After the existing offline and
-frozen-preservation checks, a plan-only artifact cannot launch the future
+This collection runs for Claude Code Cloud tasks only; local and external tasks
+skip it. After the existing offline and frozen-preservation checks, the
+authorized loop collects only its enforced flow IDs. A plan-only artifact cannot launch the future
 application. The existing final gate still runs after independent review.
 
 Execution binds receipts to the specification, head/base, selected contract,
