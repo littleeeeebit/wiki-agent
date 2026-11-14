@@ -368,7 +368,8 @@ const NATIVE_KEYS: Record<string, string[]> = {
   'windows-win32': ['executable', 'executable_sha256', 'profile'],
   // WebView apps approve no binary: the collector builds the manifest's `output` at the reviewed head.
   'windows-webview2': ['runner', 'runner_sha256', 'profile'],
-  'android-emulator': ['runner', 'runner_sha256', 'profile', 'sdk', 'system_image'],
+  'android-emulator': ['runner', 'runner_sha256', 'profile', 'sdk', 'adb', 'adb_sha256', 'emulator', 'emulator_sha256',
+    'system_image', 'system_image_sha256'],
 }
 
 /** Each desktop flow's application and the approval host it needs (`native_verification.host`). */
@@ -482,7 +483,9 @@ function VerificationPanel({ spec }: { spec: Spec }) {
     cleanup: '테스트 데이터·서버 정리 명령 (선택)' }
   const nativeLabels: Record<string, string> = { executable: '승인할 실행 파일의 절대 경로',
     executable_sha256: '실행 파일 SHA-256', profile: '격리된 테스트 프로필 이름', runner: '시나리오를 실행할 Node의 절대 경로',
-    runner_sha256: 'Node 실행 파일 SHA-256', sdk: 'Android SDK의 절대 경로', system_image: '에뮬레이터 시스템 이미지의 절대 경로' }
+    runner_sha256: 'Node 실행 파일 SHA-256', sdk: 'Android SDK의 절대 경로', adb: 'adb 실행 파일의 절대 경로', adb_sha256: 'adb SHA-256',
+    emulator: '에뮬레이터 실행 파일의 절대 경로', emulator_sha256: '에뮬레이터 SHA-256',
+    system_image: '에뮬레이터 시스템 이미지의 절대 경로', system_image_sha256: '시스템 이미지 내용 다이제스트' }
   return <section aria-label={cloud ? '클라우드 구현의 로컬 검증' : '등록 흐름의 로컬 검증'} className="mt-3 rounded-md border border-border p-3">
     <div className="font-heading text-[11px] font-semibold">{cloud ? 'Claude Code Cloud → 로컬 검증' : '등록 흐름 → 로컬 검증'}</div>
     <p className="mt-1">{record ? VERIFICATION_STATE[record.state] : '로컬 검증 대기'}</p>

@@ -62,6 +62,7 @@ class WebViewTarget(Closed):
     build: str = Field(min_length=1)
     output: str = Field(min_length=1)
     origins: list[str] = Field(min_length=1)
+    calls: list[str] = Field(default_factory=list)  # native-bridge origins, e.g. Tauri's http://ipc.localhost
     package: str = ""
     activity: str = ""
     build_inputs: list[str] = Field(min_length=1)
@@ -77,7 +78,8 @@ class WebViewTarget(Closed):
         output = PurePosixPath(self.output)  # one reading on every OS: no drive, no backslash
         if output.is_absolute() or ".." in output.parts or ":" in self.output or "\\" in self.output:
             raise ValueError("The WebView build output must be a path inside the checkout")
-        if any(not (u := urlsplit(o)).scheme or not u.netloc or u.path or u.query or u.fragment for o in self.origins):
+        if any(not (u := urlsplit(o)).scheme or not u.netloc or u.path or u.query or u.fragment
+               for o in [*self.origins, *self.calls]):
             raise ValueError("WebView origins are scheme://host[:port] with no path")
         return self
 
@@ -105,15 +107,24 @@ class WebViewSettings(Closed):
     runner: str = Field(min_length=1)
     runner_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     profile: str = Field(min_length=1)
+    # Android only: the host that installs, drives and observes the app, each bound by content.
     sdk: str = ""
+    adb: str = ""
+    adb_sha256: str = Field("", pattern=r"^([0-9a-f]{64})?$")
+    emulator: str = ""
+    emulator_sha256: str = Field("", pattern=r"^([0-9a-f]{64})?$")
     system_image: str = ""
+    system_image_sha256: str = Field("", pattern=r"^([0-9a-f]{64})?$")  # over sorted relative paths and file hashes
 
     @model_validator(mode="after")
     def emulator_fields(self):
         android = self.host == "android-emulator"
-        if bool(self.sdk) is not android or bool(self.system_image) is not android:
-            raise ValueError("sdk and system_image are required for the Android emulator and refused on Windows")
+        if any(bool(getattr(self, key)) is not android for key in ANDROID_HOST):
+            raise ValueError("The Android host fields are required for the emulator and refused on Windows")
         return self
+
+
+ANDROID_HOST = ("sdk", "adb", "adb_sha256", "emulator", "emulator_sha256", "system_image", "system_image_sha256")
 
 
 Approval = Annotated[NativeSettings | WebViewSettings, Field(discriminator="host")]

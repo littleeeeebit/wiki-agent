@@ -60,6 +60,7 @@ def test_webview_targets_validate_beside_unchanged_win32_targets():
                   webview_flow("windows", actions=[{"assertion": "saved", "expected": "Saved"}]),
                   webview_flow("windows", output="../prebuilt/vto.exe"), webview_flow("windows", output="C:/vto/vto.exe"),
                   webview_flow("windows", origins=["http://tauri.localhost/index.html"]), webview_flow("windows", origins=[]),
+                  webview_flow("windows", calls=["http://ipc.localhost/invoke"]),
                   {**webview_flow("windows"), "native": {**webview_flow("windows")["native"], "executable": "C:/vto/vto.exe"}}):
         with pytest.raises(ValueError):
             verification.Flow.model_validate(wrong)
@@ -75,7 +76,9 @@ def test_version_three_holds_one_approval_per_application(tmp_path):
     windows = {"version": 1, "host": "windows-webview2", "application": "vto-windows",
                "runner": "C:/node/node.exe", "runner_sha256": "3" * 64, "profile": "p"}
     android = {**windows, "host": "android-emulator", "application": "vto-android",
-               "sdk": "C:/android/sdk", "system_image": "C:/android/sdk/system-images/android-35"}
+               "sdk": "C:/android/sdk", "adb": "C:/android/sdk/platform-tools/adb.exe", "adb_sha256": "4" * 64,
+               "emulator": "C:/android/sdk/emulator/emulator.exe", "emulator_sha256": "5" * 64,
+               "system_image": "C:/android/sdk/system-images/android-35", "system_image_sha256": "6" * 64}
     settings = verification.LocalSettings.model_validate({**base, "version": 3, "native": [win32, windows, android]}).model_dump()
     targets = [verification.Flow.model_validate(webview_flow(p)).native for p in ("windows", "android")]
     assert [native.approval(settings, t)["host"] for t in targets] == ["windows-webview2", "android-emulator"]
@@ -89,9 +92,32 @@ def test_version_three_holds_one_approval_per_application(tmp_path):
     for wrong in ({"version": 2, "native": [windows]}, {"version": 3, "native": win32},
                   {"version": 3, "native": [windows, windows]}, {"version": 3, "native": [{**windows, "sdk": "C:/sdk"}]},
                   {"version": 3, "native": [{**windows, "executable": "C:/vto/vto.exe", "executable_sha256": "2" * 64}]},
-                  {"version": 3, "native": [{**android, "system_image": ""}]}):
+                  {"version": 3, "native": [{**android, "system_image": ""}]},
+                  {"version": 3, "native": [{**android, "adb_sha256": ""}]},
+                  {"version": 3, "native": [{**windows, "emulator": "C:/emulator.exe"}]}):
         with pytest.raises(ValueError):
             verification.LocalSettings.model_validate({**base, **wrong})
+
+
+def test_a_webview_flow_fails_closed_before_any_setup_build_or_review(cloud_world):
+    world = cloud_world
+    marker = world.tmp / "ran"
+    flow = {**webview_flow("windows"), "paths": ["*.py"]}
+    flow["native"]["build"] = f"python -c \"open(r'{marker}-build', 'w')\""
+    manifest = {"version": 2, "contracts": ["api-contract.md"], "flows": [flow]}
+    (world.repo / verification.MANIFEST).write_text(json.dumps(manifest), encoding="utf-8")
+    commit(world.repo, "webview-contract.txt")
+    git(world.repo, "push", "origin", "main")
+    approval = {"version": 1, "host": "windows-webview2", "application": "vto-windows", "runner": sys.executable,
+                "runner_sha256": native.digest(Path(sys.executable)), "profile": "isolated-test-profile"}
+    settings = {**world.settings, "version": 3, "manifest_digest": verification.manifest(world.repo)[1],
+                "setup": f"python -c \"open(r'{marker}-setup', 'w')\"", "native": [approval]}
+    assert client().put("/api/verification/config", json=settings).status_code == 200
+    spec = cloud_spec(world, "webview-closed", 1, "change.py", review={"flows": [flow["id"]]})
+    stopped = looped(spec["id"])
+    assert stopped["state"] == "멈춤" and not Reviewer.made and not Worker.made
+    assert "WebView" in json.dumps(stopped, ensure_ascii=False)
+    assert not any(world.tmp.glob("ran-*")), "nothing may run before the collector exists"
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Actual Windows native acceptance requires Win32")
