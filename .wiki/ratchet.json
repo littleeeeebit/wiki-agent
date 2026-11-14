@@ -128,8 +128,8 @@
     },
     "tool/main/oneshot.py": {
       "dup": 0,
-      "lines": 841,
-      "reason": "Resolve writable records through the shared packaged user-data path while retaining immutable resource paths. Previous: The start fixes three models (spec, build, review), each a model and an effort checked against the model's own listed efforts (`channels.efforts_of`), and names \"the Review Loop's model\" then, so a later settings change moves nothing; `role_config` reads a role's group from the run's store, and the commit point hands them to the spec's `cell` and `reviewer`, since every turn read the window's `next` model at the moment it ran and the owner could not tell which model was working (oneshot-models, PR #329 round 1, forty-two lines). Before that: baseline under the new-file cap."
+      "lines": 859,
+      "reason": "Every oneshot turn runs isolated in a stage folder outside the hub checkout (`WORK`, `folder`, which moves a folder an older version left in `raw/oneshot`): inside the hub a turn read its branch, commits and wiki as the product's own context, and a manga translator's intake came back as Rust Tauri desktop (eighteen lines). Before that: Resolve writable records through the shared packaged user-data path while retaining immutable resource paths. Previous: The start fixes three models (spec, build, review), each a model and an effort checked against the model's own listed efforts (`channels.efforts_of`), and names \"the Review Loop's model\" then, so a later settings change moves nothing; `role_config` reads a role's group from the run's store, and the commit point hands them to the spec's `cell` and `reviewer`, since every turn read the window's `next` model at the moment it ran and the owner could not tell which model was working (oneshot-models, PR #329 round 1, forty-two lines). Before that: baseline under the new-file cap."
     },
     "tool/main/planning.py": {
       "dup": 18,

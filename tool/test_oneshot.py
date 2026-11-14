@@ -713,3 +713,34 @@ def test_a_named_review_model_keeps_its_default_effort_after_the_pr(world, tmp_p
          patch.dict(loop._cells, clear=True), patch.object(loop, "settings", lambda *a: {**loop.DEFAULTS, "review_effort": "high"}):
         loop.cell(spec, tmp_path)
     assert made_with == [("opus", "")]   # the CLI's default, as before the PR — never the settings' `high`
+
+
+def test_turns_run_isolated_in_a_folder_outside_the_hub_checkout(tmp_path):
+    """Inside the hub a turn read its branch, commits and wiki as the product's own context."""
+
+    rid, runs, outside = "0123456789abcdef", tmp_path / "hub" / "raw" / "oneshot", tmp_path / "data" / "oneshot"
+    (runs / rid).mkdir(parents=True)
+    (runs / rid / "kept.txt").write_text("kept", encoding="utf-8")
+    opened = {}
+
+    class Session:
+        is_codex = False
+
+        def __init__(self, repo, **options):
+            opened.update(options, repo=Path(repo))
+
+        def say(self, text, stopping, images):
+            yield SimpleNamespace(kind="done", text="answer", meta={})
+
+        def close(self):
+            pass
+
+    with patch.object(oneshot, "RUNS", runs), patch.object(oneshot, "WORK", outside), \
+         patch.object(oneshot, "ChatSession", Session), \
+         patch.object(oneshot, "load", lambda rid: {"models": {"spec": {"model": "m", "effort": "high"}}}):
+        store = oneshot.run_store(rid)
+        assert oneshot.ask(store, "intake", "system", "text")[0] == "answer"
+        assert oneshot_spec.store("budget").folder == outside / "spec-budget"
+    assert store.folder == outside / rid and (store.folder / "kept.txt").read_text(encoding="utf-8") == "kept"
+    assert not (runs / rid).exists()   # an older run's folder moved, files and all
+    assert opened["repo"] == store.folder and opened["isolated"] is True
