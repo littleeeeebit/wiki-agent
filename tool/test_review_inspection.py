@@ -96,6 +96,34 @@ def test_missing_jev_stops_before_any_expensive_collection(cloud_world, monkeypa
     assert done["review_inspection"]["selection"]["reason"] == "missing_key"
 
 
+@pytest.mark.parametrize("judgment", ["covered", "defer"])
+def test_full_required_catalog_collects_without_selection_but_still_requires_measured_judgment(cloud_world, monkeypatch, judgment):
+    world, calls = cloud_world, []
+    cloud_spec(world, review={"flows": ["health"]})
+    monkeypatch.setattr(decisions, "transport", lambda cfg: routing(calls, judgment=judgment))
+    done = looped("cloud")
+    assert [phase for phase, _ in calls] == ["judgment"]
+    assert "selection" not in done["review_inspection"]
+    assert done["local_verification"]["flows"][0]["evidence"]["requests"][0]["status"] == 200
+    contract = review_inspection.current(world.repo, Path(done["worktree"]), done, done["pr"]["head"],
+                                          done["local_verification"]["base_oid"])
+    assert contract["inspection_selected"] and contract["inspection_source"] == "spec"
+    if judgment == "covered":
+        assert done["state"] == "머지 가능" and Reviewer.made
+    else:
+        assert done["state"] == "멈춤" and not Reviewer.made
+        assert done["review_inspection"]["judgment"]["status"] == "uncertain"
+
+
+def test_required_catalog_cannot_invent_or_drop_a_flow():
+    flows = [{"id": name} for name in ("api", "browser", "windows", "android")]
+    spec = {"review": {"flows": [f["id"] for f in flows]}}
+    assert review_inspection.selected(spec, "current binding", flows) == [f["id"] for f in flows]
+    for required in ([], ["api"], ["api", "browser", "windows", "missing"]):
+        assert review_inspection.selected({"review": {"flows": required}}, "current binding", flows) is None
+    assert not review_inspection.required_catalog(spec, [])
+
+
 def test_uncertain_selection_still_stops_before_collection(cloud_world, monkeypatch):
     calls = []
     def uncertain(state, questions, trace, budget, stage):

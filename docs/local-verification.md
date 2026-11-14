@@ -60,8 +60,13 @@ automatic verification configuration still require registered execution and
 current receipts. An existing catalog also keeps that path for requested runtime
 evidence. Missing or invalid catalogs and settings cannot silently downgrade a
 configured repository to report review. Cloud keeps its complete major-flow floor.
-Jev selects applicable registered checks before collection and judges their
-measured receipts. The independent reviewer remains separate.
+When `review.flows` explicitly requires every offered registered check, the host
+uses that fixed list without a model selection call. The contract records
+`inspection_source: "spec"`; it does not manufacture a Jev selection record.
+Otherwise Jev selects applicable registered checks before collection, and
+uncertain optional choices still stop preparation. In both cases Jev judges
+measured receipts, and the independent reviewer remains separate. Required
+flow selection cannot supply missing receipts or turn a failed check into a pass.
 
 The review contract records whether registered execution is required. Supplied
 reports are bound to their reported commit and specification revision, included

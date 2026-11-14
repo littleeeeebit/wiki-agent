@@ -164,8 +164,10 @@ HOST = ("Tool selection inside a Claude or Codex session is the host's own plann
 # Jev question kinds it rests on — a point with none is not Jev's — and `policy` names which policy holds them.
 ADMITTED = "code: `admit` checks repository, spec revision, HEAD, session, expiry, the candidate and idempotency"
 OWNERS = [
-    *({"point": p, "owner": "jev", "allowed_operations": [], "kinds": ("action",), "policy": "review-inspection-1",
-       "authority": "code validates current-head registered flows and measured receipts; uncertainty stops pending; no host fallback"}
+    *({"point": p, "owner": "jev", "allowed_operations": [], "kinds": ("action",), "policy": "review-inspection-4",
+       "authority": ("an explicit full required catalog is selected by code; optional choices remain Jev-owned; "
+                     "code validates current-head registered flows; no uncertain optional fallback" if p == "review.selection"
+                     else "code validates measured receipts; uncertainty stops pending; no host fallback")}
       for p in ("review.selection", "review.judgment")),
     *({"point": p, "owner": "jev", "allowed_operations": POINTS[p]["operations"], "authority": ADMITTED,
        "kinds": ("action",), "policy": "action"} for p in ("work.start", "specs.check", "loop.fix")),

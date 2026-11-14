@@ -11,15 +11,15 @@ import subprocess
 import sys
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from common import process
 import native_webview
+from native_process import launched
 
 
 class Closed(BaseModel):
@@ -293,68 +293,14 @@ def _run(request: dict) -> dict:
     env = {**os.environ, "WIKI_NATIVE_PROFILE": str(artifact / "profile"),
            "WIKI_NATIVE_EVENTS": str(artifact / "events.jsonl")}
     (artifact / "profile").mkdir()
-    with (artifact / "process.log").open("wb") as log:
-        # Python's STARTUPINFO does not forward lpDesktop to CreateProcess.
-        # Use the native structure so an arbitrary approved Win32 app launches
-        # on the attempt desktop, without needing a cooperative app adapter.
-        import msvcrt
-
-        class Startup(ctypes.Structure):
-            _fields_ = [("size", w.DWORD), ("reserved", w.LPWSTR), ("desktop", w.LPWSTR), ("title", w.LPWSTR),
-                        ("x", w.DWORD), ("y", w.DWORD), ("width", w.DWORD), ("height", w.DWORD),
-                        ("chars_x", w.DWORD), ("chars_y", w.DWORD), ("fill", w.DWORD), ("flags", w.DWORD),
-                        ("show", w.WORD), ("reserved_size", w.WORD), ("reserved_ptr", w.LPVOID),
-                        ("stdin", w.HANDLE), ("stdout", w.HANDLE), ("stderr", w.HANDLE)]
-
-        class ProcessInfo(ctypes.Structure):
-            _fields_ = [("process", w.HANDLE), ("thread", w.HANDLE), ("pid", w.DWORD), ("tid", w.DWORD)]
-
-        k.CreateProcessW.argtypes = (w.LPCWSTR, w.LPWSTR, w.LPVOID, w.LPVOID, w.BOOL, w.DWORD,
-                                     w.LPVOID, w.LPCWSTR, ctypes.POINTER(Startup), ctypes.POINTER(ProcessInfo))
-        k.CreateProcessW.restype = w.BOOL
-        with open(os.devnull, "rb") as null:
-            handles = [msvcrt.get_osfhandle(file.fileno()) for file in (null, log)]
-            for handle in handles:
-                os.set_handle_inheritable(handle, True)
-            startup = Startup(size=ctypes.sizeof(Startup), desktop=request["desktop"], flags=0x100,
-                              stdin=handles[0], stdout=handles[1], stderr=handles[1])
-            info = ProcessInfo()
-            command = ctypes.create_unicode_buffer(subprocess.list2cmdline([settings["executable"], *target["arguments"]]))
-            environment = ctypes.create_unicode_buffer("\0".join(f"{key}={value}" for key, value in sorted(env.items())) + "\0")
-            try:
-                created = k.CreateProcessW(settings["executable"], command, None, None, True,
-                                            subprocess.CREATE_NO_WINDOW | process.SUSPENDED | 0x400,
-                                            environment, str(root), ctypes.byref(startup), ctypes.byref(info))
-            finally:
-                for handle in handles:
-                    os.set_handle_inheritable(handle, False)
-            if not created:
-                raise ctypes.WinError(ctypes.get_last_error())
-        k.CloseHandle(info.thread)
-
-        def poll():
-            if k.WaitForSingleObject(info.process, 0) == 0x102:
-                return None
-            code = w.DWORD()
-            if not k.GetExitCodeProcess(info.process, ctypes.byref(code)):
-                raise ctypes.WinError(ctypes.get_last_error())
-            return code.value
-
-        def wait(timeout):
-            if k.WaitForSingleObject(info.process, int(timeout * 1000)) != 0:
-                raise ValueError("Owned native process did not finish cleanup")
-
-        proc = SimpleNamespace(pid=info.pid, _handle=info.process, poll=poll, wait=wait,
-                               kill=lambda: k.TerminateProcess(info.process, 1))
-        job = process.contained(proc)
+    with (artifact / "process.log").open("wb") as log, ExitStack() as cleanup:
+        proc = cleanup.enter_context(launched([settings["executable"], *target["arguments"]],
+                                             root, env, request["desktop"], log))
         ownership = {"pid": proc.pid, "hwnd": None, "executable": settings["executable"],
                      "profile": str(artifact / "profile"), "desktop": request["desktop"], "state": "running"}
         owned = artifact / "ownership.json"
         try:
             owned.write_text(json.dumps(ownership), encoding="utf-8")
-            if not job:
-                raise ValueError("Cannot establish owned native process cleanup")
-            process.resumed(proc)
             hwnd, deadline = None, time.monotonic() + 10
             while hwnd is None and time.monotonic() < deadline and proc.poll() is None:
                 matches = []
@@ -444,16 +390,9 @@ def _run(request: dict) -> dict:
                               for file in [observed_file, artifact / "events.jsonl"] if file.exists()]})
             return receipt
         finally:
-            if job:
-                process.terminated(job)
-            elif proc.poll() is None:
-                proc.kill()
-            try:
-                proc.wait(timeout=5)
-                ownership["state"] = "cleaned"
-                owned.write_text(json.dumps(ownership), encoding="utf-8")
-            finally:
-                k.CloseHandle(info.process)
+            cleanup.close()
+            ownership["state"] = "cleaned"
+            owned.write_text(json.dumps(ownership), encoding="utf-8")
 
 
 def main():

@@ -12,7 +12,7 @@ from common.budget import Budget, Cancelled, Exhausted
 
 from . import decisions, review_contract, runtime, specs, verification
 
-POLICY = decision.Policy("review-inspection-3", {"action": {"confidence": 0.6, "margin": 0.2}})
+POLICY = decision.Policy("review-inspection-4", {"action": {"confidence": 0.6, "margin": 0.2}})
 LIMITS = {"seconds": 15, "calls": 1, "candidates": 0}
 DIFF_SECONDS = 2
 PROMPT = {"selection": "Select the smallest set of checks that proves the current task's acceptance. "
@@ -71,7 +71,13 @@ def choices(record: dict, binding: str, ids: list[str], options: set[str]) -> di
         return None
 
 
+def required_catalog(spec: dict, flows: list[dict]) -> bool:
+    return bool(flows) and {f["id"] for f in flows} == set(review_contract.declared(spec.get("review"))["flows"])
+
+
 def selected(spec: dict, binding: str, flows: list[dict]) -> list[str] | None:
+    if required_catalog(spec, flows):
+        return [f["id"] for f in flows]
     rows = choices((spec.get("review_inspection") or {}).get("selection") or {}, binding,
                    [f["id"] for f in flows], {"run", "skip"})
     if rows is None:
@@ -142,6 +148,8 @@ def ask(repo: Path, state: dict, ids: list[str], stage: str, halt, budget: Budge
 def prepare(repo: Path, path: Path, spec: dict, contract: dict, halt) -> tuple[dict, dict]:
     if not contract["flows"] or contract["problems"]:
         return spec, contract
+    if required_catalog(spec, contract["inspection_catalog"]):
+        return spec, contract  # The owner already required every offered flow; no choice remains.
     binding = contract["inspection_identity"]
     saved = (spec.get("review_inspection") or {}).get("selection") or {}
     cfg = decision.config(repo)

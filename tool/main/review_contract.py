@@ -341,7 +341,7 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
                 else "F10" if explicit["flows"] else "F11", "flow_id": flow["id"],
                 "assertions": [a["id"] for a in flow["assertions"]], "input_digest": manifest_digest,
                 "impact_paths": sorted({p for p in paths or [] if any(fnmatchcase(p, g) for g in flow["paths"])}),
-                "reason": "Jev grounded selection" if inspection_selected is not None else "cloud full catalog" if verification.cloud(spec) else "explicit registered IDs"
+                "reason": "explicit registered IDs" if flow["id"] in explicit["flows"] else "Jev grounded selection" if inspection_selected is not None else "cloud full catalog" if verification.cloud(spec) else "explicit registered IDs"
                 if explicit["flows"] else "mapped impact" if mapped else "shared/unmapped/unknown impact: full catalog"})
     close(items, "enforced", flows)
     if profile == "plan" and flows:
@@ -362,6 +362,7 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
            "diff_digest": diff["input_digest"], "closure_version": CLOSURE_VERSION,
            "prose_exemption": exemption, "inspection_identity": inspection_identity,
            "inspection_selected": inspection_selected is not None,
+           "inspection_source": "spec" if review_inspection.required_catalog(spec, inspection_catalog) else "jev" if inspection_selected is not None else None,
            "rubric_digest": verification.sha({k: RUBRIC[k] for k in ("plan", "code") if k in criteria}),
            "facet_digest": verification.sha({"criteria": {k: CRITERIA[k] for k in sorted(criteria & CRITERIA.keys())},
                                               "evidence": {k: EVIDENCE[k] for k in sorted(evidence)}})}
