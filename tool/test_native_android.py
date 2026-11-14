@@ -44,4 +44,4 @@ def test_collector_cli_reads_observed_files_and_returns_only_eligible_native_con
     hierarchy.write_text("<hierarchy>" + WAIT + "</hierarchy>", encoding="utf-8")
     output = subprocess.check_output([sys.executable, str(Path(__file__).with_name("native_webview.py")),
         "android-wait", str(focus), str(hierarchy)], text=True)
-    assert json.loads(output) == (system_ui_wait_button(FOCUS, hierarchy.read_text()) if system_ui else None)
+    assert json.loads(output) == (system_ui_wait_button(FOCUS, hierarchy.read_text(encoding="utf-8")) if system_ui else None)
