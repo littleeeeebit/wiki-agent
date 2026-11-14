@@ -63,13 +63,18 @@ over its own DevTools session, and compares that text with `expected`. The
 selectors and the zero-work claims sit in the manifest, so the reviewer sees
 exactly what is observed.
 
+Every request the collector sees during the whole run must go to a registered
+origin: the app's own `origins`, the local settings' `allowed_origins`, or
+`calls`. A request to any other origin fails the flow closed, whatever the
+checkpoints say. The existing receipt contract treats an unapproved API origin
+the same way.
+
 A checkpoint's interval runs from the scenario's `begin` message to the
 collector's read; the proxy logs both on the collector's own clock. When
 `no_requests` is set, the collector's network log for that interval must show no
-request to any origin in the local settings' `allowed_origins` and no request to
-any origin in `calls`. Requests to other origins, such as the app's own assets,
-are recorded but do not count. A bridge that the collector cannot see as a
-request cannot be named in `calls`. Preflight refuses a `no_requests`
+request to `allowed_origins` or `calls`. Requests to the app's own `origins`,
+such as its assets, do not count against it. A bridge that the collector cannot
+see as a request cannot be named in `calls`. Preflight refuses a `no_requests`
 checkpoint on an app whose `calls` is empty, because nothing there could prove
 zero work.
 
@@ -155,15 +160,24 @@ then adds each resource just before creating it: processes, profile folders, AVD
 home, emulator pid, serial and forwards. The record lives in the flow's artifact
 folder, so it outlives the collector.
 
+A pid alone is not an ownership token, because Windows reuses pids once a
+process exits. Each recorded process therefore carries a stable identity: its pid,
+its creation time, its executable path and SHA-256, and its parent pid as
+observed at launch. An emulator also carries its console serial.
+
 The orchestrator owns the end of that record. When the collector exits on its
 own, it has already cleaned what it recorded. When the collector is killed on a
 timeout or a cancellation, the gate's process-tree kill stops its processes but
 not its folders or `adb` forwards. The orchestrator then reads the persisted
-record and cleans exactly the resources listed there, with a bounded time. It
-kills recorded pids still alive, removes recorded forwards with
-`adb -s <serial> forward --remove`, and deletes recorded folders inside the
-artifact folder. It touches nothing the record does not name. Only then does it
-validate that the record reads `cleaned`.
+record and cleans exactly the resources listed there, with a bounded time. Before
+it signals a live pid, it reads that process's creation time and executable
+again. It acts only when both match the record. Any mismatch means the pid now
+belongs to another process. That process is left running, and the recorded one
+counts as exited. It removes recorded forwards with
+`adb -s <serial> forward --remove` only while that serial still answers as the
+recorded emulator. It deletes recorded folders only inside the artifact folder.
+It touches nothing the record does not name. Only then does it validate that the
+record reads `cleaned`.
 
 Today `receipt` raises on a `blocked` result before any native validation runs,
 so this changes too. A desktop flow's outcome, blocked, timed out or cancelled
@@ -187,8 +201,8 @@ Each step is a separate PR, approved before the next starts.
 | # | Stage | Deliverable | Status |
 | --- | --- | --- | --- |
 | 1 | Manifest variant | `driver` union, Win32 default, WebView fields and validation; settings version 3 with per-application approvals; current manifests and settings still pass; a real run proving a WebView flow fails closed before any setup, build or review | In progress |
-| 2 | Windows WebView2 collector | Head build and launch of `output`, process-tree check of the endpoint, collector-owned proxy and checkpoint reads, cleanup proven on every outcome; one real Tauri fixture run, plus refusals for a wrong pid or endpoint, a new target, navigation outside `origins`, a stale or prebuilt binary, a `no_requests` checkpoint that made a request or call, a collector killed mid-run whose recorded resources the orchestrator then cleans, a failed cleanup, and a Win32 receipt offered for a WebView flow and the reverse | Planned |
-| 3 | Android emulator collector | Owned AVD and serial, head-built APK identity, pid-bound attach, restart without data loss, cleanup proof; one real fixture run, plus refusals for an existing serial or physical device, a wrong pid, a replaced `adb`, emulator or system image, a killed collector whose forwards and AVD home the orchestrator then cleans, and a failed cleanup, with a pre-existing emulator left untouched | Planned |
+| 2 | Windows WebView2 collector | Head build and launch of `output`, process-tree check of the endpoint, collector-owned proxy and checkpoint reads, cleanup proven on every outcome; one real Tauri fixture run, plus refusals for a wrong pid or endpoint, a new target, navigation outside `origins`, a stale or prebuilt binary, a `no_requests` checkpoint that made a request or call, a request to an unregistered origin, a collector killed mid-run whose recorded resources the orchestrator then cleans, a recorded pid reused by another process that the cleanup leaves running, a failed cleanup, and a Win32 receipt offered for a WebView flow and the reverse | Planned |
+| 3 | Android emulator collector | Owned AVD and serial, head-built APK identity, pid-bound attach, restart without data loss, cleanup proof; one real fixture run, plus refusals for an existing serial or physical device, a wrong pid, a replaced `adb`, emulator or system image, a killed collector whose forwards and AVD home the orchestrator then cleans, a reused emulator pid or serial that the cleanup leaves alone, and a failed cleanup, with a pre-existing emulator left untouched | Planned |
 | 4 | Cross-driver checks | Mixed Win32/WebView manifests in one run, and the full hosted gate | Planned |
 | 5 | PR #4 flows | `video-translate-overlay-2` registers its two flows against the new driver and its review passes local verification | Planned |
 
