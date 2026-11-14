@@ -205,6 +205,21 @@ def validate_receipt(data, root, artifact, target, settings, revisions, *, redac
     return observed
 
 
+def remove_profile(artifact):
+    profile = artifact / "profile"
+    deadline = time.monotonic() + 5
+    while profile.exists():
+        if profile.is_symlink() or profile.resolve().parent != artifact.resolve():
+            raise ValueError("Native profile cleanup escaped its attempt directory")
+        try:
+            shutil.rmtree(profile)
+        except OSError as error:
+            # WebView can still be releasing file handles after its owner exits.
+            if getattr(error, "winerror", None) not in (32, 33) or time.monotonic() >= deadline:
+                raise ValueError(f"Native profile cleanup failed: {error}") from error
+            time.sleep(0.1)
+
+
 def run(request):
     import native_verification as native
 
@@ -217,6 +232,7 @@ def run(request):
         argv = [request["settings"]["node"]["path"], str(Path(__file__).with_suffix(".mjs")), str(file)]
         env = {key: value for key, value in {**os.environ, **entries(root / ".env")}.items()
                if not key.upper().startswith("NODE_")}
+        failure = None
         try:
             with launched(argv, root, env, desktop, log) as child:
                 deadline = time.monotonic() + 900
@@ -225,16 +241,20 @@ def run(request):
                         raise ValueError("Native WebView scenario exceeded its deadline")
                     time.sleep(0.1)
                 code = child.wait()
+            result = json.loads((artifact / "result.json").read_text(encoding="utf-8"))
+            if code or "blocked" in result:
+                raise ValueError(result.get("blocked", {}).get("reason", "Native scenario failed; see owned driver log"))
+        except BaseException as error:
+            failure = error
+            raise
         finally:
-            profile = artifact / "profile"
-            if profile.exists():
-                if profile.is_symlink() or profile.resolve().parent != artifact.resolve():
-                    raise ValueError("Native profile cleanup escaped its attempt directory")
-                shutil.rmtree(profile)
+            try:
+                remove_profile(artifact)
+            except Exception as cleanup:
+                if failure:
+                    raise ValueError(f"{failure}; {cleanup}") from cleanup
+                raise
         (artifact / "cleanup.json").write_text(json.dumps({"state": "cleaned", "desktop": desktop}), encoding="utf-8")
-        result = json.loads((artifact / "result.json").read_text(encoding="utf-8"))
-        if code or "blocked" in result:
-            raise ValueError(result.get("blocked", {}).get("reason", "Native scenario failed; see owned driver log"))
         result["native"]["build_inputs"] = preflight(root, request["head"], request["target"], request["settings"])
         return result
 

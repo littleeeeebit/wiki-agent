@@ -12,6 +12,7 @@ import threading
 import hashlib
 from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -25,6 +26,72 @@ from common import process
 
 def test_owned_cleanup_regressions_use_real_node_processes():
     subprocess.run([shutil.which("node"), "--test", str(Path(__file__).with_name("test_native_cleanup.mjs"))], check=True)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Actual Windows file sharing violation")
+def test_profile_cleanup_waits_for_a_real_process_to_release_its_file(tmp_path):
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    locked = profile / "webview.log"
+    unrelated = tmp_path / "unrelated.txt"
+    unrelated.write_text("preserved", encoding="utf-8")
+    script = ("import ctypes, sys, time; from ctypes import wintypes as w; "
+              "k=ctypes.WinDLL('kernel32', use_last_error=True); "
+              "k.CreateFileW.argtypes=(w.LPCWSTR,w.DWORD,w.DWORD,w.LPVOID,w.DWORD,w.DWORD,w.HANDLE); "
+              "k.CreateFileW.restype=w.HANDLE; k.CloseHandle.argtypes=(w.HANDLE,); "
+              "h=k.CreateFileW(sys.argv[1],0x40000000,0,None,2,0,None); "
+              "assert h != w.HANDLE(-1).value; print('locked',flush=True); "
+              "time.sleep(0.4); k.CloseHandle(h)")
+    child = subprocess.Popen([sys.executable, "-c", script, str(locked)], stdout=subprocess.PIPE,
+                             text=True, **process.background_options())
+    try:
+        assert child.stdout.readline().strip() == "locked"
+        with pytest.raises(OSError) as error:
+            shutil.rmtree(profile)
+        assert error.value.winerror == 32
+        webview.remove_profile(tmp_path)
+        assert not profile.exists() and unrelated.read_text(encoding="utf-8") == "preserved"
+    finally:
+        child.wait(timeout=5)
+        child.stdout.close()
+
+
+@pytest.mark.parametrize("winerror", [32, 33, 5])
+def test_profile_cleanup_bounds_sharing_retries_and_refuses_other_errors(tmp_path, monkeypatch, winerror):
+    (tmp_path / "profile").mkdir()
+    elapsed, attempts = [0.0], []
+    error = PermissionError("still locked" if winerror in (32, 33) else "access denied")
+    error.winerror = winerror
+
+    def remove(_):
+        attempts.append(elapsed[0])
+        raise error
+
+    monkeypatch.setattr(webview.shutil, "rmtree", remove)
+    monkeypatch.setattr(webview.time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(webview.time, "sleep", lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+    with pytest.raises(ValueError, match="Native profile cleanup failed"):
+        webview.remove_profile(tmp_path)
+    assert (5 <= elapsed[0] < 5.2) if winerror in (32, 33) else (elapsed[0] == 0 and len(attempts) == 1)
+    assert (tmp_path / "profile").exists()
+
+
+@pytest.mark.parametrize("primary", [None, "Original scenario failure"])
+def test_failed_profile_cleanup_never_records_success_or_hides_the_scenario_failure(candidate, tmp_path, monkeypatch, primary):
+    root, head, target, settings = candidate
+    monkeypatch.setattr(native, "owned_desktop", lambda: nullcontext("fixture"))
+    monkeypatch.setattr(webview, "preflight", lambda *_: {})
+    monkeypatch.setattr(webview, "launched", lambda *_: nullcontext(SimpleNamespace(poll=lambda: 0, wait=lambda: 0)))
+    (tmp_path / "result.json").write_text(json.dumps({"blocked": {"reason": primary}} if primary else {}), encoding="utf-8")
+
+    def refused(_):
+        raise ValueError("Native profile cleanup failed: still locked")
+
+    monkeypatch.setattr(webview, "remove_profile", refused)
+    with pytest.raises(ValueError) as error:
+        webview.run({"root": str(root), "artifact_dir": str(tmp_path), "head": head, "target": target, "settings": settings})
+    assert str(error.value) == ((primary + "; ") if primary else "") + "Native profile cleanup failed: still locked"
+    assert not (tmp_path / "cleanup.json").exists()
 
 
 @pytest.fixture
