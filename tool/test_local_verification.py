@@ -685,6 +685,15 @@ def test_offline_and_review_same_head_recovery_requires_investigation(cloud_worl
         assert receipt["retry_reason"] == "Investigated nondeterminism; isolated and measured fixture"
 
 
+def test_a_refused_manifest_names_each_field_at_fault():
+    with pytest.raises(ValueError) as caught:
+        verification.Manifest.model_validate_json('{"flows": [{"id": "x"}], "unknown": 1}')
+    said = verification.refused(caught.value, shown=2)
+    assert said == "version: Field required; contracts: Field required 외 6개", said
+    assert verification.refused(ValueError("verification.json 을 저장소에 커밋해야 한다")) == \
+        "verification.json 을 저장소에 커밋해야 한다"
+
+
 def test_setup_rejects_stale_manifest_and_requests_from_another_project(cloud_world):
     world = cloud_world
     cloud_spec(world)

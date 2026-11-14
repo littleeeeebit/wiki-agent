@@ -18,7 +18,7 @@ from typing import Literal
 from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 import native_verification
 
@@ -161,6 +161,16 @@ def manifest(path: Path, *, budget=None) -> tuple[Manifest, str]:
             raise ValueError(f"저장소에 커밋된 API·데이터 명세가 필요하다: {ref}")
     check()
     return parsed, sha(data)
+
+
+def refused(exc: Exception, shown: int = 5) -> str:
+    """Why `manifest` refused the file, each field at fault by its path: swallowed, a stop hid 46 errors in one
+    desktop flow (video-translate-overlay-2 #4). Pydantic's own text adds a docs link to every one."""
+    errors = exc.errors() if isinstance(exc, ValidationError) else []
+    if not errors:
+        return str(exc)
+    said = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in errors[:shown])
+    return said + (f" 외 {len(errors) - shown}개" if len(errors) > shown else "")
 
 
 def local(repo: Path) -> dict:
