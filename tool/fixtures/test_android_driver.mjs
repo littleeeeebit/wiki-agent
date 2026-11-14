@@ -8,7 +8,7 @@ import {EventEmitter} from 'node:events';
 import {SourceTextModule, SyntheticModule} from 'node:vm';
 import {pathToFileURL} from 'node:url';
 
-const [driver, python, root, mode, renderer = 'auto'] = process.argv.slice(2);
+const [driver, python, root, mode, renderer = 'auto', activity = '.MainActivity', focusLine] = process.argv.slice(2);
 const artifact = path.join(root, 'evidence');
 const data = path.join(artifact, 'data');
 fs.mkdirSync(data, {recursive: true});
@@ -18,7 +18,7 @@ const binary = path.join(root, 'fixture.apk'); fs.writeFileSync(binary, 'offline
 const head = 'a'.repeat(40), application = 'dev.example.app';
 const request = {root, artifact_dir: artifact, head, python, desktop: 'fixture',
   flow: 'startup', environment_id: 'offline', test_scope: 'simulated adapters', revisions: {},
-  target: {application: 'fixture', platform: 'android', package: application, activity: '.MainActivity', scenario: 'scenario.mjs',
+  target: {driver: 'webview', application: 'fixture', platform: 'android', package: application, activity, scenario: 'scenario.mjs',
     actions: [{assertion: 'saved', expected: 'Saved'}]},
   settings: {applications: {fixture: {binary: {path: binary, sha256: hash(fs.readFileSync(binary))},
     adb: {path: 'fixture-adb'}, emulator: {path: 'fixture-emulator'}, avd: 'fixture', profile: 'disposable', renderer}}}};
@@ -58,7 +58,7 @@ function execute(command, args) {
   if (words[0] === 'dumpsys') {
     if (focus === 'starting' && ++startingReads >= 2) focus = 'ready';
     trace.push(['focus', focus]);
-    return focus === 'ready' ? `mCurrentFocus=Window{1 u0 ${application}/.MainActivity}\n` :
+    return focus === 'ready' ? (focusLine ?? `mCurrentFocus=Window{1 u0 ${application}/.MainActivity}\n`) :
       `mCurrentFocus=Window{1 u0 Application Not Responding: ${focus === 'system_ui' ? 'com.android.systemui' : application}}\n`;
   }
   if (words[0] === 'pidof') {trace.push(['pid', focus]); assert.equal(focus, 'ready'); return '3001';}

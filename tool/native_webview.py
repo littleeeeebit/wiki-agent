@@ -185,9 +185,14 @@ def validate_receipt(data, root, artifact, target, settings, revisions, *, redac
             raise ValueError("Native verdict differs from observed result")
     required = {"sessions.json", "observations.json", "build-observation.json"}
     if target["platform"] == "android":
-        component = target["package"] + "/" + (target["package"] + target["activity"] if target["activity"].startswith(".") else target["activity"])
+        package, activity = target["package"], target["activity"]
+        activity = package + activity if activity.startswith(".") else activity
         focus = json.loads((artifact / "android-focus.json").read_text(encoding="utf-8"))
-        if not any("mCurrentFocus" in line and component in line for line in focus.get("lines", [])):
+        components = [match.groups() for line in focus.get("lines", []) if (match := re.fullmatch(
+            r"\s*mCurrentFocus=Window\{[^{}\r\n]*?\s([^\s/{}]+)/([^\s/{}]+)(?:\s[^{}\r\n]*)?\}\s*", line))]
+        if not any(found_package == package and (package + found_activity if found_activity.startswith(".")
+                                                else found_activity) == activity
+                   for found_package, found_activity in components):
             raise ValueError("Native Android activity focus is missing")
         required.add("android-focus.json")
     if not any(a.get("path", "").endswith(".png") for a in observed["artifacts"]):

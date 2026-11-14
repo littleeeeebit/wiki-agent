@@ -64,7 +64,12 @@ function emulatorListener() {
 function androidFocus() {
   const lines = shell('dumpsys', 'window').split('\n').filter(line => /mCurrentFocus|mFocusedApp/.test(line));
   save('android-focus.json', {lines});
-  return lines.some(line => /mCurrentFocus/.test(line) && line.includes(`${target.package}/`));
+  const activity = target.activity.startsWith('.') ? target.package + target.activity : target.activity;
+  return lines.some(line => {
+    const component = line.match(/^\s*mCurrentFocus=Window\{[^{}\r\n]*?\s([^\s/{}]+)\/([^\s/{}]+)(?:\s[^{}\r\n]*)?\}\s*$/);
+    return component && component[1] === target.package &&
+      (component[2].startsWith('.') ? target.package + component[2] : component[2]) === activity;
+  });
 }
 async function prepareAndroidStartupFocus() {
   if (androidFocus()) return;
