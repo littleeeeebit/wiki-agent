@@ -24,6 +24,9 @@ approval unchanged. Neither format is committed to a project.
 Windows processes inherit an attempt-owned desktop and kill-on-close job.
 Android runs a newly launched emulator with fresh writable images under the
 attempt directory; an existing emulator or physical device is never selected.
+Large debug APK installation and the installed-package verification copy each
+allow up to 120 seconds; diagnostic commands retain their 30-second limit.
+The enclosing verification deadline still bounds the complete attempt.
 Scenarios seed `artifact/data` and use `start(dataDirectory)`, `restart()`,
 `page`, `pageFor(url)`, `context`, `until` and `observe(assertion, actual, page)`.
 Every observation records the native
