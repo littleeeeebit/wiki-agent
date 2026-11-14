@@ -33,7 +33,7 @@ from pydantic import BaseModel
 
 import verify
 import debt
-from common import errorlog, indexes, process, python_environment, swap, worktree_home
+from common import errorlog, indexes, process, python_environment, shell, swap, worktree_home
 from common.paths import RAW
 from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
@@ -1183,7 +1183,7 @@ def kill(proc: subprocess.Popen) -> None:
 
 
 def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None,
-         *, timeout: float | None = None, owned_jobs: list | None = None) -> tuple[int | None, str, str]:
+         *, timeout: float | None = None, owned_jobs: list | None = None, argv: list[str] | None = None) -> tuple[int | None, str, str]:
     """Run the adapter's shell command as `(code, output, cut reason)`.
     Check cancellation and the deadline during execution and after completion."""
 
@@ -1195,16 +1195,19 @@ def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None,
         scratch = Path(env.get("TEMP") or tempfile.gettempdir()) / "wiki-agent-gate"
         scratch.mkdir(exist_ok=True)
         env["TMPDIR"] = env["TEMP"] = env["TMP"] = str(scratch)
-    return runtime.gate(cmd, cwd, halt, env, GATE_SECONDS if timeout is None else timeout, owned_jobs, kill)
+    direct = {"argv": argv} if argv is not None else {}
+    return runtime.gate(cmd, cwd, halt, env, GATE_SECONDS if timeout is None else timeout, owned_jobs, kill, **direct)
 
 
 def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text: None, env: dict | None = None,
-          *, timeout: float | None = None) -> dict:
+          *, timeout: float | None = None, argv: list[str] | None = None) -> dict:
     """Check a clean HEAD with one shared command deadline, stopping on failure.
     Read HEAD and status before and after: commands that change either fail.
     The server verifies reports and review rounds through this same boundary."""
 
     started = time.monotonic()
+    if argv is not None and (len(cmds) != 1 or cmds[0] != shell.command_line(argv)):
+        raise ValueError("A direct native launch must match its one recorded command")
     deadline = started + (GATE_SECONDS if timeout is None else timeout)
     cmd = " && ".join(cmds)
     before = status(path)
@@ -1216,7 +1219,8 @@ def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text:
     code, out, cut = None, "", ""
     for one in cmds:
         noted(f"게이트 · {one}")
-        code, out, cut = gate(one, path, halt, env=env, timeout=deadline - time.monotonic())
+        direct = {"argv": argv} if argv is not None else {}
+        code, out, cut = gate(one, path, halt, env=env, timeout=deadline - time.monotonic(), **direct)
         if code != 0:
             break
     moved = "게이트가 HEAD 를 바꿨다" if sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != head else \

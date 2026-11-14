@@ -1,5 +1,43 @@
 # Local verification of cloud implementations
 
+## Owned WebView applications
+
+Version 2 desktop flows also accept `native.driver: "webview"` with an explicit
+`platform` of `windows` or `android`, an `application`, a tracked `.mjs`
+`scenario`, Git-matched `build_inputs` patterns, and assertion/expected pairs
+in `actions`. Android additionally names its package and activity. The fixed
+host driver imports the reviewed scenario and provides an owned application
+session; it never accepts a caller-supplied CDP address or running device.
+
+Local native approval uses `version: 2`, `host: "webview"`, a `node` asset and
+an `applications` map keyed by registered application. Each asset contains
+an absolute `path` and lowercase `sha256`. An application names its platform,
+binary asset and disposable profile label. Android also requires approved
+`adb` and `emulator` assets and an installed `avd` template name. The approval
+editor accepts the full native JSON, including the existing version 1 Win32
+approval unchanged. Neither format is committed to a project.
+
+Windows processes inherit an attempt-owned desktop and kill-on-close job.
+Android runs a newly launched emulator with fresh writable images under the
+attempt directory; an existing emulator or physical device is never selected.
+Scenarios seed `artifact/data` and use `start(dataDirectory)`, `restart()`,
+`page`, `pageFor(url)`, `context`, `until` and `observe(assertion, actual, page)`.
+Every observation records the native
+process/window or installed package/activity, runtime and screenshots.
+
+An application exposes its compiled backend revision as
+`window.__WIKI_NATIVE_BUILD_HEAD__` and its screen revision in a `wiki-build-head` meta
+element. Both must equal the reviewed head before actions begin.
+`window.__WIKI_NATIVE_PROFILE__` contains the SHA-256 of the actual data-directory
+path. Windows apps honor `WIKI_NATIVE_PROFILE`; Android uses the installed
+package's private directory on the fresh emulator. A profile mismatch blocks
+mutations. `record(name, data)` adds hash-bound JSON snapshots to the receipt.
+The fixed native collector launches directly, without a shell activation step.
+Approved binary hashes, Git blob identities, raw observations and screenshot hashes
+bind reusable receipts. Changed inputs, missing ownership or cleanup, stale
+builds and tampered artifacts refuse native acceptance. The legacy Win32
+control/event collector and its validation remain available.
+
 Claude Code Cloud implements from the repository. A separate local reviewer
 checks the resulting commit with this machine's test API, dataset and browser
 configuration. Cloud does not receive `.env`, credentials or private datasets.
@@ -205,6 +243,9 @@ Win32 with direct child control IDs. It launches a disposable app on an
 attempt-owned Win32 desktop; it never switches the user's input desktop or
 attaches to an existing app. Unsupported hosts, selectors and build identities
 stay preparation failures. This does not make Orca a runtime dependency.
+
+The following example and approval fields apply to the Win32 control driver.
+The owned WebView driver above has its own target and approval format.
 
 Example native flow, inside the version-2 manifest:
 

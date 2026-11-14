@@ -19,6 +19,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from common import process
+import native_webview
 
 
 class Closed(BaseModel):
@@ -54,27 +55,45 @@ class NativeSettings(Closed):
 
 
 def digest(file: Path) -> str:
-    return hashlib.sha256(file.read_bytes()).hexdigest()
+    measured = hashlib.sha256()
+    with file.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            measured.update(chunk)
+    return measured.hexdigest()
 
 
 def build_identity(root: Path, head: str, inputs: list[str]) -> dict:
     """Measure launch inputs against Git blobs, including binary build artifacts."""
-    measured = {}
+    before = {}
     for name in inputs:
         file = root / name
         if Path(name).is_absolute() or root.resolve() not in file.resolve().parents or file.is_symlink():
             raise ValueError("Native build inputs must stay inside the checkout")
-        done = subprocess.run(["git", "rev-parse", f"{head}:{name}"], cwd=root, capture_output=True,
-                              timeout=30, **process.background_options())
-        actual = subprocess.run(["git", "hash-object", "--path=" + name, name], cwd=root, capture_output=True,
-                                timeout=30, **process.background_options())
-        if done.returncode or actual.returncode or done.stdout.strip() != actual.stdout.strip():
+        before[name] = digest(file)
+    tree = subprocess.run(["git", "ls-tree", "-r", "-z", "--full-tree", head], cwd=root, capture_output=True,
+                          timeout=30, check=True, **process.background_options())
+    blobs = {}
+    for row in tree.stdout.split(b"\0"):
+        if row:
+            metadata, name = row.split(b"\t", 1)
+            blobs[name.decode("utf-8")] = metadata.split()[-1].decode("ascii")
+    actual = subprocess.run(["git", "hash-object", "--stdin-paths"], cwd=root, capture_output=True,
+                            input="".join(json.dumps(name, ensure_ascii=False) + "\n" for name in inputs).encode("utf-8"),
+                            timeout=30, check=True, **process.background_options())
+    hashes = actual.stdout.decode("ascii").splitlines()
+    if len(hashes) != len(inputs):
+        raise ValueError("Native build input measurement is incomplete")
+    measured = {}
+    for name, blob in zip(inputs, hashes, strict=True):
+        if blob != blobs.get(name) or digest(root / name) != before[name]:
             raise ValueError("Native build input differs from the reviewed head: " + name)
-        measured[name] = {"sha256": digest(file), "git_blob": done.stdout.decode("ascii").strip()}
+        measured[name] = {"sha256": before[name], "git_blob": blob}
     return measured
 
 
 def preflight(root: Path, head: str, target: dict, settings: dict) -> dict:
+    if target.get("driver") == "webview":
+        return native_webview.preflight(root, head, target, settings)
     target, settings = NativeTarget.model_validate(target), NativeSettings.model_validate(settings)
     if sys.platform != "win32" or settings.host != "windows-win32":
         raise ValueError("Native collector supports Windows Win32 only")
@@ -94,6 +113,8 @@ def preflight(root: Path, head: str, target: dict, settings: dict) -> dict:
 def validate_receipt(data: dict, root: Path, artifact: Path, target: dict, settings: dict, revisions: dict,
                      *, redact_text=None) -> dict:
     """Browser output cannot satisfy native identity, action, event or ownership proof."""
+    if target.get("driver") == "webview":
+        return native_webview.validate_receipt(data, root, artifact, target, settings, revisions, redact_text=redact_text)
     build = preflight(root, data["head"], target, settings)
     native = data.get("native")
     fields = {"application", "host", "driver", "executable_path_digest", "executable_sha256", "build_head", "build_inputs",
@@ -188,6 +209,8 @@ def owned_desktop():
 
 
 def run(request: dict) -> dict:
+    if request["target"].get("driver") == "webview":
+        return native_webview.run(request)
     preflight(Path(request["root"]), request["head"], request["target"], request["settings"])
     with owned_desktop() as desktop:
         return _run({**request, "desktop": desktop})
@@ -438,7 +461,7 @@ def main():
     request = json.loads(Path(os.environ["WIKI_VERIFICATION_NATIVE_REQUEST"]).read_text(encoding="utf-8"))
     try:
         result = run(request)
-    except (ValueError, OSError, subprocess.SubprocessError, AttributeError) as exc:
+    except (ValueError, OSError, subprocess.SubprocessError, AttributeError, KeyError) as exc:
         result = {key: request[key] for key in ("head", "flow", "environment_id", "test_scope")}
         result["blocked"] = {"prerequisite": "native", "reason": str(exc)}
     print("```local-evidence\n" + json.dumps(result) + "\n```")

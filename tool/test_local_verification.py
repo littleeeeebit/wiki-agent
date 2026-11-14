@@ -269,7 +269,8 @@ def test_identical_user_env_is_not_claimed_or_overwritten_on_later_source_change
     assert (path / ".env").read_bytes() == before
 
 
-def test_owned_gate_cancellation_reaps_descendants_and_preserves_unrelated_process(tmp_path):
+@pytest.mark.parametrize("direct", [False, True])
+def test_owned_gate_cancellation_reaps_descendants_and_preserves_unrelated_process(tmp_path, direct):
     script = tmp_path / "tree.py"
     marker = tmp_path / "pid.txt"
     script.write_text("import subprocess, sys, time\n"
@@ -282,7 +283,8 @@ def test_owned_gate_cancellation_reaps_descendants_and_preserves_unrelated_proce
                                  **process.background_options())
     result = []
     command = subprocess.list2cmdline([sys.executable, str(script), str(marker)])
-    worker = threading.Thread(target=lambda: result.append(specs.gate(command, tmp_path, halt)))
+    options = {"argv": [sys.executable, str(script), str(marker)]} if direct else {}
+    worker = threading.Thread(target=lambda: result.append(specs.gate(command, tmp_path, halt, **options)))
     worker.start()
     try:
         waited(marker.exists)

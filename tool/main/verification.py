@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 import native_verification
+import native_webview
 
 from common.settings import unquote
 from common import indexes, process, shell
@@ -52,7 +53,7 @@ class Flow(Contract):
     paths: list[str] = Field(min_length=1)
     environments: list[str] = Field(default_factory=lambda: ["api", "dataset", "settings"], min_length=1)
     assertions: list[Assertion] = Field(min_length=1)
-    native: native_verification.NativeTarget | None = None
+    native: native_verification.NativeTarget | native_webview.Target | None = None
 
     @model_validator(mode="after")
     def native_contract(self):
@@ -92,7 +93,7 @@ class LocalSettings(Contract):
     cleanup: str = ""
     redact_values: list[str] = Field(default_factory=list)
     manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    native: native_verification.NativeSettings | None = None
+    native: native_verification.NativeSettings | native_webview.Settings | None = None
 
     @model_validator(mode="after")
     def versioned_native(self):
@@ -283,7 +284,12 @@ def signature(repo: Path, path: Path, flow: Flow, settings: dict) -> str:
             raise ValueError("승인된 Windows 네이티브 테스트 범위를 준비해야 한다")
         identity["native"] = settings["native"]
         identity["collector"] = sha(Path(native_verification.__file__).read_bytes())
-        identity["executable"] = sha(Path(settings["native"]["executable"]).read_bytes())
+        if isinstance(flow.native, native_webview.Target):
+            identity["webview_collector"] = native_webview.collector_digest()
+            identity["assets"] = [{**asset, "actual": native_verification.digest(Path(asset["path"]))}
+                                  for asset in native_webview.assets(settings["native"])]
+        else:
+            identity["executable"] = sha(Path(settings["native"]["executable"]).read_bytes())
     return sha(identity)
 
 
@@ -644,6 +650,7 @@ def _execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt:
             flow_artifact = artifact / flow.id
             flow_artifact.mkdir()
             row["artifact_dir"] = str(flow_artifact)
+            direct = {}
             if flow.kind == "desktop":
                 request = {"root": str(path), "artifact_dir": str(flow_artifact), "head": head, "flow": flow.id,
                            "environment_id": settings["environment_id"], "test_scope": settings["test_scope"],
@@ -654,7 +661,8 @@ def _execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt:
                 env["WIKI_VERIFICATION_NATIVE_REQUEST"] = str(request_file)
                 argv = [sys.executable, str(Path(native_verification.__file__).resolve())]
                 command = shell.command_line(argv)
-            verdict = specs.judge(path, [command], halt, env=env, timeout=min(runtime.FLOW_SECONDS, budget.left()))
+                direct = {"argv": argv}
+            verdict = specs.judge(path, [command], halt, env=env, timeout=min(runtime.FLOW_SECONDS, budget.left()), **direct)
             if verdict.get("code") is None and not halt.is_set():
                 row.update(reason="선택 흐름 실행 시간 제한을 넘었다", log=redact(verdict["tail"], settings),
                            finished_at=time.time(), blocked=True, elapsed_seconds=verdict.get("elapsed_seconds"))
@@ -929,7 +937,11 @@ def set_config(body: LocalSettings, sid: str | None = None) -> dict:
                 raise ValueError("확인한 검증 명세가 바뀌었다 — 다시 읽는다")
             for flow in parsed.flows:
                 if flow.kind == "desktop":
-                    if not body.native or body.native.application != flow.native.application:
+                    if isinstance(flow.native, native_webview.Target):
+                        approved = body.native.applications.get(flow.native.application) if isinstance(body.native, native_webview.Settings) else None
+                        if not approved or approved.platform != flow.native.platform:
+                            raise ValueError("등록된 플랫폼과 앱의 격리 실행 범위를 명시적으로 승인한다")
+                    elif not isinstance(body.native, native_verification.NativeSettings) or body.native.application != flow.native.application:
                         raise ValueError("등록된 네이티브 앱·실행 파일·작업 전용 데스크톱 범위를 명시적으로 승인한다")
             if any(not body.revisions.get(k) for f in parsed.flows for k in f.environments):
                 raise ValueError("흐름이 사용하는 환경 버전을 모두 지정한다")
