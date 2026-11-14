@@ -214,8 +214,8 @@ def remove_profile(artifact):
         try:
             shutil.rmtree(profile)
         except OSError as error:
-            # WebView can still be releasing file handles after its owner exits.
-            if getattr(error, "winerror", None) not in (32, 33) or time.monotonic() >= deadline:
+            # Handles and pending deletes can outlive the WebView owner briefly.
+            if getattr(error, "winerror", None) not in (5, 32, 33) or time.monotonic() >= deadline:
                 raise ValueError(f"Native profile cleanup failed: {error}") from error
             time.sleep(0.1)
 

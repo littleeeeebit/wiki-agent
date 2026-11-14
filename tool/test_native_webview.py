@@ -33,15 +33,16 @@ def test_profile_cleanup_waits_for_a_real_process_to_release_its_file(tmp_path):
     profile = tmp_path / "profile"
     profile.mkdir()
     locked = profile / "webview.log"
+    locked.write_bytes(b"x" * 4096)
     unrelated = tmp_path / "unrelated.txt"
     unrelated.write_text("preserved", encoding="utf-8")
     script = ("import ctypes, sys, time; from ctypes import wintypes as w; "
               "k=ctypes.WinDLL('kernel32', use_last_error=True); "
               "k.CreateFileW.argtypes=(w.LPCWSTR,w.DWORD,w.DWORD,w.LPVOID,w.DWORD,w.DWORD,w.HANDLE); "
               "k.CreateFileW.restype=w.HANDLE; k.CloseHandle.argtypes=(w.HANDLE,); "
-              "h=k.CreateFileW(sys.argv[1],0x40000000,0,None,2,0,None); "
-              "assert h != w.HANDLE(-1).value; print('locked',flush=True); "
-              "time.sleep(0.4); k.CloseHandle(h)")
+              "h=k.CreateFileW(sys.argv[1],0xc0000000,0,None,3,0,None); "
+              "assert h != w.HANDLE(-1).value; "
+              "print('locked',flush=True); time.sleep(0.4); k.CloseHandle(h)")
     child = subprocess.Popen([sys.executable, "-c", script, str(locked)], stdout=subprocess.PIPE,
                              text=True, **process.background_options())
     try:
@@ -56,11 +57,11 @@ def test_profile_cleanup_waits_for_a_real_process_to_release_its_file(tmp_path):
         child.stdout.close()
 
 
-@pytest.mark.parametrize("winerror", [32, 33, 5])
+@pytest.mark.parametrize("winerror", [32, 33, 5, 112])
 def test_profile_cleanup_bounds_sharing_retries_and_refuses_other_errors(tmp_path, monkeypatch, winerror):
     (tmp_path / "profile").mkdir()
     elapsed, attempts = [0.0], []
-    error = PermissionError("still locked" if winerror in (32, 33) else "access denied")
+    error = OSError("profile unavailable")
     error.winerror = winerror
 
     def remove(_):
@@ -72,7 +73,7 @@ def test_profile_cleanup_bounds_sharing_retries_and_refuses_other_errors(tmp_pat
     monkeypatch.setattr(webview.time, "sleep", lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
     with pytest.raises(ValueError, match="Native profile cleanup failed"):
         webview.remove_profile(tmp_path)
-    assert (5 <= elapsed[0] < 5.2) if winerror in (32, 33) else (elapsed[0] == 0 and len(attempts) == 1)
+    assert (5 <= elapsed[0] < 5.2) if winerror in (5, 32, 33) else (elapsed[0] == 0 and len(attempts) == 1)
     assert (tmp_path / "profile").exists()
 
 
