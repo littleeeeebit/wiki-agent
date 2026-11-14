@@ -33,6 +33,10 @@ path. Windows apps honor `WIKI_NATIVE_PROFILE`; Android uses the installed
 package's private directory on the fresh emulator. A profile mismatch blocks
 mutations. `record(name, data)` adds hash-bound JSON snapshots to the receipt.
 The fixed native collector launches directly, without a shell activation step.
+It reads the approved environment file copied to the checkout's `.env` using
+the host's settings reader; those values override inherited process values.
+This includes `ANDROID_AVD_HOME` when the approved AVD template is outside
+the user's default Android directory.
 Approved binary hashes, Git blob identities, raw observations and screenshot hashes
 bind reusable receipts. Changed inputs, missing ownership or cleanup, stale
 builds and tampered artifacts refuse native acceptance. The legacy Win32

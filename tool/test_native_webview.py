@@ -10,6 +10,7 @@ import shutil
 import time
 import threading
 import hashlib
+from contextlib import nullcontext
 
 import pytest
 
@@ -75,6 +76,25 @@ def test_fixed_native_launch_bypasses_shell_and_cannot_misreport_its_command(mon
     assert code == 0 and output.strip() == "native collector" and not cut
     with pytest.raises(ValueError, match="recorded command"):
         specs.judge(tmp_path, ["another command"], threading.Event(), argv=argv)
+
+
+def test_owned_driver_uses_approved_environment_instead_of_launching_shell_setup(candidate, monkeypatch, tmp_path):
+    root, head, target, settings = candidate
+    (root / ".env").write_text("ANDROID_AVD_HOME='C:/approved/avd'\n", encoding="utf-8")
+    monkeypatch.setenv("ANDROID_AVD_HOME", "C:/unrelated/avd")
+    monkeypatch.setattr(native, "owned_desktop", lambda: nullcontext("fixture"))
+    monkeypatch.setattr(webview, "preflight", lambda *_: {})
+
+    def observed(argv, cwd, env, desktop, log):
+        assert env["ANDROID_AVD_HOME"] == "C:/approved/avd"
+        assert cwd == root and desktop == "fixture"
+        assert argv[0] == settings["node"]["path"]
+        raise RuntimeError("approved environment observed")
+
+    monkeypatch.setattr(webview, "launched", observed)
+    with pytest.raises(RuntimeError, match="approved environment observed"):
+        webview.run({"root": str(root), "artifact_dir": str(tmp_path), "head": head,
+                     "target": target, "settings": settings})
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows native preflight")

@@ -14,6 +14,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from common import process
+from common.settings import entries
 from native_process import launched
 
 
@@ -186,7 +187,7 @@ def run(request):
         file.write_text(json.dumps(request), encoding="utf-8")
         argv = [request["settings"]["node"]["path"], str(Path(__file__).with_suffix(".mjs")), str(file)]
         try:
-            with launched(argv, root, dict(os.environ), desktop, log) as child:
+            with launched(argv, root, {**os.environ, **entries(root / ".env")}, desktop, log) as child:
                 deadline = time.monotonic() + 900
                 while child.poll() is None:
                     if time.monotonic() >= deadline:
