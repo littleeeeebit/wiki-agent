@@ -8,7 +8,9 @@ import sys
 import time
 from pathlib import Path
 
-LOGS = Path(__file__).resolve().parent.parent / "raw" / "chat"
+from common.paths import RAW
+
+LOGS = RAW / "chat"
 
 
 def post(channel: str, text: str, source: str = "", *, project: Path) -> None:

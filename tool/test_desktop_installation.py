@@ -78,6 +78,54 @@ def test_relocated_package_uses_user_data_without_checkout(tmp_path):
     assert not expected.is_relative_to(tmp_path / "별도 사용자/wiki-agent")
 
 
+@pytest.mark.parametrize("storage", ["source", "packaged-default", "packaged-override"])
+def test_external_briefings_share_server_storage_across_channels(tmp_path, storage):
+    resources = build_desktop.stage(tmp_path / "설치 폴더/payload", "0.1.0", "fixture-head")
+    if storage == "source":
+        (resources / "release.json").unlink()
+    project = tmp_path / "팀 프로젝트"
+    (project / ".git").mkdir(parents=True)
+    env = {k: v for k, v in os.environ.items() if k.upper() not in {"WIKI_DATA_HOME", "WIKI_ROOT"}}
+    env["LOCALAPPDATA"] = str(tmp_path / "사용자 폴더")
+    data = resources if storage == "source" else Path(env["LOCALAPPDATA"]) / "wiki-agent-data"
+    if storage == "packaged-override":
+        data = tmp_path / "별도 데이터"
+        env["WIKI_DATA_HOME"] = str(data)
+    code = '''import json, subprocess, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from main import query
+from main.channels import BY_ID
+project = Path(sys.argv[2])
+query.current_repo = lambda: project
+app = FastAPI()
+app.include_router(query.router)
+client = TestClient(app)
+for channel in BY_ID:
+    text = "Briefing for " + channel + " 한글"
+    posted = subprocess.run([sys.executable, "-X", "utf8", str(Path(sys.argv[1]) / "chat_post.py"),
+        "--channel", channel, "--project", str(project), "--source", "fixture"],
+        input=text, capture_output=True, text=True, encoding="utf-8", timeout=30)
+    assert posted.returncode == 0, posted.stderr
+    response = client.get("/api/log/" + channel)
+    assert response.status_code == 200, response.text
+    rows = response.json()
+    assert len(rows) == 1 and rows[0]["text"] == text and rows[0]["source"] == "fixture", rows
+    assert rows[0]["repo"] == str(project), rows
+print(json.dumps(sorted(BY_ID)))
+'''
+    run = subprocess.run([sys.executable, "-I", "-X", "utf8", "-c", code, str(resources / "tool"), str(project)],
+                         cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8", timeout=120)
+    assert run.returncode == 0, run.stdout + run.stderr
+    channels = json.loads(run.stdout)
+    assert "retro" in channels
+    assert sorted(p.stem for p in (data / "raw/chat").glob("*.jsonl")) == channels
+    if storage != "source":
+        assert not (resources / "raw/chat").exists()
+
+
 def test_import_backs_up_exact_bytes_before_converting_and_keeps_original(tmp_path):
     source = source_at(tmp_path / "기존 설치")
     data = tmp_path / "새 데이터"
