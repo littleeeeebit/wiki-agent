@@ -228,7 +228,9 @@ def _forms(settings: dict) -> list[str]:
 
 def redact(text: str, settings: dict, forms: list[str] | None = None) -> str:
     for form in _forms(settings) if forms is None else forms:
-        text = text.replace(form, "[redacted]")
+        # Scalar settings must not erase digits inside unrelated hashes, versions or addresses.
+        text = re.sub(r"(?<![\w.])" + re.escape(form) + r"(?![\w.])", "[redacted]", text) \
+            if re.fullmatch(r"[-+]?\d+(?:\.\d+)?", form) else text.replace(form, "[redacted]")
     text = re.sub(r"(?i)(authorization\s*[:=]\s*(?:bearer\s+)?|bearer\s+)[^\s,\"']+", r"\1[redacted]", text)
     text = re.sub(r"(?i)((?:password|token|secret|api[_-]?key)\s*[\"']?\s*[:=]\s*[\"']?)[^\s,\"']+",
                   r"\1[redacted]", text)

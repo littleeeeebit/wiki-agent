@@ -16,6 +16,13 @@ from test_review_contract import selected
 REQUIRED = {"evidence": ["api", "browser", "desktop"]}
 
 
+@pytest.mark.parametrize("scalar", ["0", "200", "3.14", "-1"])
+def test_numeric_redaction_masks_whole_values_and_preserves_composite_identities(scalar):
+    sample = f"{scalar} version={scalar}.12 digest=ab{scalar}cd token={scalar}"
+    expected = f"[redacted] version={scalar}.12 digest=ab{scalar}cd token=[redacted]"
+    assert verification.redact(sample, {"redact_values": [scalar]}) == expected
+
+
 @pytest.mark.parametrize("environment,detached", [(None, False), ("local", False), ("external", True), ("claude-cloud", True)])
 def test_review_sync_preserves_local_branch_for_default_environment(world, environment, detached):
     spec = pr_spec(world, "sync-environment", 7, "code.py", implementation_environment=environment)
@@ -121,11 +128,13 @@ def test_report_handoff_redacts_credentials_at_reviewer_boundary(world, credenti
                    report=[{"item": "Runtime observations", "pass": True,
                             "evidence": f"GET /health returned 200; {credential}; artifacts/runtime.json"}])
     spec["report_at"] = {"head": spec["pr"]["head"], "rev": spec["rev"]}
+    (Path(spec["worktree"]) / ".env").write_text("TRANSLATE_MONTHLY_USD=0\n", encoding="utf-8")
     result = selected(world, spec)
     text = loop.instruction(spec, Path(spec["worktree"]), 1, result["head"], "main", True,
                             base_oid=result["base_oid"], contract=result)
     assert "fixture-value" not in text and "[redacted]" in text
     assert "GET /health returned 200" in text and "artifacts/runtime.json" in text
+    assert spec["pr"]["head"] in text
     assert '"pass": true' in text
 
 

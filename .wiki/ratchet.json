@@ -158,8 +158,8 @@
     },
     "tool/main/verification.py": {
       "dup": 12,
-      "lines": 1007,
-      "reason": "The approved owned WebView collector validates native target and tool approval before direct execution; existing registered execution remains mandatory. Previous: `sanitize` reads the hidden values once per call (`_forms`), not once per string: every listing sanitized each task's contract re-reading the env file per string, 7 s for one repository; within a value the longer form goes first, since a literal ending in a backslash split its escaped form (#299 round 1; six lines). Before that: `checkout_proven` leaves out the start hook's receipt-matching rebuilt indexes, as `specs.status` does (one line). Before that: Stage 4 extends the existing verifier with selected-flow/spec binding, owner outcomes, approved native contracts, native receipt validation and setup cancellation outcomes."
+      "lines": 1009,
+      "reason": "Numeric hidden values redact whole scalar tokens while preserving unrelated commit hashes, versions and addresses in reviewer evidence. Previous: The approved owned WebView collector validates native target and tool approval before direct execution; existing registered execution remains mandatory. Previous: `sanitize` reads the hidden values once per call (`_forms`), not once per string: every listing sanitized each task's contract re-reading the env file per string, 7 s for one repository; within a value the longer form goes first, since a literal ending in a backslash split its escaped form (#299 round 1; six lines). Before that: `checkout_proven` leaves out the start hook's receipt-matching rebuilt indexes, as `specs.status` does (one line). Before that: Stage 4 extends the existing verifier with selected-flow/spec binding, owner outcomes, approved native contracts, native receipt validation and setup cancellation outcomes."
     },
     "tool/main/work.py": {
       "dup": 0,
