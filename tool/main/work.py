@@ -643,6 +643,7 @@ class Run:
         self.halt = threading.Event()   # set by a stop; the session reads it too
         self.wake = threading.Condition()
         self.diff_base: str | None = None
+        self.report_at: dict | None = None
 
     def put(self, payload: dict) -> None:
         if payload.get("kind") == "error" or (payload.get("meta") or {}).get("error"):

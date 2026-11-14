@@ -5,6 +5,7 @@
 import hashlib
 import json
 import re
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -12,9 +13,9 @@ from unittest.mock import patch
 import pytest
 
 from agent import read_tools
-from main import loop, prerequisite_review, specs, verification
+from main import loop, prerequisite_review, query, specs, verification, work
 from test_loop import (  # noqa: F401 -- isolated real-Git world
-    Reviewer, Worker, allow, client, git, no_machine_settings, pr_spec, template, waited, world,
+    Reviewer, Worker, allow, client, commit, deny, git, no_machine_settings, pr_spec, template, waited, world,
 )
 
 
@@ -134,6 +135,7 @@ def test_one_review_request_hands_off_before_full_acceptance_and_preserves_its_g
         assert fresh["report"] and fresh["report"][0]["pass"]
         assert fresh["report_at"]["head"] == git(path, "rev-parse", "HEAD")
         assert fresh["report_at"]["rev"] == fresh["rev"]
+        assert fresh["report_at"]["turn"]
     else:
         assert fresh["state"] == "멈춤" and not fresh["rounds"]
         assert not (fresh.get("validation") or {}).get("final")
@@ -151,6 +153,73 @@ def test_one_review_request_hands_off_before_full_acceptance_and_preserves_its_g
             waited(lambda: not loop._loops)
             assert specs.load("proj", spec["id"])["state"] == "머지 가능"
             assert len(inspected) == 1, "resume reuses the bound independent verdict"
+
+
+def test_prerequisite_report_keeps_its_turn_head_when_another_turn_commits_after_release(world, monkeypatch):
+    spec, path = prepared(world)
+    specs.update("proj", spec["id"], review={"evidence": ["api", "browser", "desktop"]})
+    loop.store(rounds=1)
+    binding, committed = threading.Event(), threading.Event()
+    heads, errors, reviewed = {}, [], []
+
+    def finish(work_path, halt):
+        receipt = specs.load("proj", spec["id"])["prerequisite_review_result"]
+        (work_path / "review.json").write_text(json.dumps(receipt["result"]), encoding="utf-8")
+        heads["reported"] = commit(work_path, "application.json", '{"applied":true}\n')
+        heads["turn"] = work._runs[str(path)].turn
+        return ("```test-cleanup\n" + json.dumps({"audited": [], "removed": [], "reason": "Data evidence only"})
+                + "\n```\n```done-report\n" + json.dumps([{"item": spec["done"][0], "pass": True,
+                    "evidence": "Observed before the checkout was released"}]) + "\n```")
+
+    def review(first, text):
+        if "prerequisite-result" in text:
+            identity = re.search(r"Reviewer identity: `([^`]+)`", text)[1]
+            return first + "\n```prerequisite-result\n" + json.dumps({
+                "reviewer_session": identity, "verdict": "pass", "reviewed_rows": ["value"]}) + "\n```"
+        reviewed.append(text)
+        assert heads["later"] in text
+        assert "No current-head implementation report is available" in text
+        assert "Observed before the checkout was released" not in text
+        return deny("[P1] application.json:1 — Current runtime observations are missing")(first, text)
+
+    def later_turn():
+        try:
+            assert binding.wait(120)
+            release = query.hold(work._busy, work._lock, str(path), "fixture checkout is held", kind="turn")
+            try:
+                heads["later"] = commit(path, "later.txt", "Another turn committed\n")
+            finally:
+                release()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            committed.set()
+
+    reported = specs.reported
+
+    def bind(*args, **kwargs):
+        binding.set()
+        assert committed.wait(30)
+        assert not errors, errors
+        return reported(*args, **kwargs)
+
+    monkeypatch.setattr(specs, "reported", bind)
+    Reviewer.replies, Worker.replies = [review, review], [finish]
+    thread = threading.Thread(target=later_turn)
+    thread.start()
+    try:
+        response = client().post("/api/loops", json={"prs": [11]})
+        response.raise_for_status()
+        waited(lambda: not loop._loops)
+    finally:
+        binding.set()
+        thread.join(35)
+    assert not thread.is_alive() and not errors, errors
+    fresh = specs.load("proj", spec["id"])
+    assert heads["reported"] != heads["later"] == git(path, "rev-parse", "HEAD")
+    assert fresh["report_at"] == {"head": heads["reported"], "rev": spec["rev"], "turn": heads["turn"]}
+    assert reviewed and fresh["state"] != "머지 가능"
+    assert not (fresh.get("validation") or {}).get("final")
 
 
 def test_snapshot_rejects_untracked_sources_and_changes_when_reviewed_input_changes(world):

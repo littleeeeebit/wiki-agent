@@ -241,7 +241,9 @@ def advance(spot, spec: dict, repo: Path, path: Path, head: str, base: str) -> b
         return False
     fresh = specs.load(spot.repo, spot.sid)
     report = loop.block("done-report", answer)
-    if (verification.sha(snapshot(path, fresh)) != signature or not specs.valid(report)
+    at = spot.report_at
+    if (not at or not at.get("head") or at.get("rev") != fresh["rev"]
+            or verification.sha(snapshot(path, fresh)) != signature or not specs.valid(report)
             or len(report) != len(fresh["done"])
             or any(not item["pass"] or item["item"] != required
                    for item, required in zip(report, fresh["done"]))):
@@ -249,7 +251,7 @@ def advance(spot, spec: dict, repo: Path, path: Path, head: str, base: str) -> b
                          "선행 리뷰 뒤 전체 명세의 완료가 아직이다 — 통과 보고로 대체하지 않는다")
     _unpublished(path, fresh)
     _preserved(path, request, receipt)
-    specs.reported(path, spot, fresh, {"value": report})
+    specs.reported(path, spot, fresh, {"value": report}, at=at)
     specs.update(spot.repo, spot.sid,
                  prerequisite_review_result={**receipt, "completed": True})
     return True

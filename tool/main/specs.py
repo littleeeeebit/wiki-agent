@@ -1421,13 +1421,18 @@ def valid(items) -> bool:
         isinstance(i, dict) and isinstance(i.get("item"), str) and isinstance(i.get("pass"), bool) for i in items)
 
 
-def reported(path: Path, run, spec: dict, report: dict) -> dict:
-    """Bind a completion report while its work turn still owns the checkout; grant no transition."""
+def report_identity(path: Path, run, spec: dict) -> dict:
+    """Capture only while the reporting turn holds the checkout."""
+    return {"head": sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), "rev": spec["rev"],
+            "turn": getattr(run, "turn", None)}
+
+
+def reported(path: Path, run, spec: dict, report: dict, *, at: dict | None = None) -> dict:
+    """Keep a held turn's identity; deferred acceptance supplies its earlier capture."""
     if "error" in report or not valid(report.get("value")):
         raise ValueError(f"완료 보고를 읽지 못했다 — {report.get('error') or '항목마다 item 과 pass 가 있어야 한다'}")
     return update(spec["repo"], spec["id"], report=report["value"], report_asked=False, summary=None,
-                  report_at={"head": sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), "rev": spec["rev"],
-                             "turn": getattr(run, "turn", None)})
+                  report_at=report_identity(path, run, spec) if at is None else at)
 
 
 def shortfall(items: list[dict], spec: dict) -> str:
@@ -1710,12 +1715,15 @@ def _check(path: Path, run, final: str):
             return None
         report = next((b for b in blocks(final)[1] if b["name"] == "done-report"), None)
         # The prerequisite owner records acceptance only after checking its committed verdict.
-        if report is not None and (not spec.get("prerequisite_review")
-                                   or (spec.get("prerequisite_review_result") or {}).get("completed")):
-            try:
-                spec = reported(path, run, spec, report)
-            except ValueError as exc:
-                return failed(run, spec, str(exc))
+        if report is not None:
+            if spec.get("prerequisite_review") and not (spec.get("prerequisite_review_result") or {}).get("completed"):
+                if "error" not in report and valid(report.get("value")):
+                    run.report_at = report_identity(path, run, spec)
+            else:
+                try:
+                    spec = reported(path, run, spec, report)
+                except ValueError as exc:
+                    return failed(run, spec, str(exc))
         if spec["state"] == "멈춤" and (spec.get("stopped") or {}).get("reason") == loop.Why.ASKED.value:
             return lambda: loop.answered(repo, spec["id"], run, str(path))   # the person answered it
         allowed = approved(spec)

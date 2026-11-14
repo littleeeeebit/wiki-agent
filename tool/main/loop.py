@@ -634,6 +634,7 @@ class Loop:
         self.halt = threading.Event()
         self.chat: ChatSession | None = None   # the review cell's turn, while one runs
         self.run: work.Run | None = None        # the work cell's turn, while one runs
+        self.report_at: dict | None = None      # the last work turn's identity, captured before release
         self.refused = False   # a response of the last turn was cut; the answer it went on to is kept
         self.thread: threading.Thread | None = None
 
@@ -956,6 +957,7 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     time that changes. A plan's documents are revised by a read-only session
     whose files the server writes (`planning.revise`), never by a write session."""
 
+    loop.report_at = None
     if spec.get("planning"):
         from . import planning  # `planning` imports this module
 
@@ -991,6 +993,7 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
                 specs.publish(specs.load(loop.repo, loop.sid) or spec)
     finally:
         loop.run = None
+        loop.report_at = run.report_at
     if loop.halt.is_set():
         return None
     end = next((e for e in reversed(run.events) if e["kind"] in ("done", "error")), None)
