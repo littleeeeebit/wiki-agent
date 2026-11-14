@@ -289,8 +289,8 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
                 exemption = True
                 flows = []  # Existing, repository-declared prose exemption.
                 evidence = {"offline", *explicit["evidence"]}
-        except (OSError, ValueError):
-            problems.append("등록된 검증 명세를 준비해야 한다")
+        except (OSError, ValueError) as exc:
+            problems.append(f"등록된 검증 명세를 준비해야 한다 — {verification.refused(exc)}")
     from . import review_inspection
     inspection_catalog, inspection_paths = list(flows), sorted(set(paths)) if paths is not None else None
     inspection_identity = review_inspection.identity(spec, head, base_oid, manifest_digest, inspection_paths, flows)
