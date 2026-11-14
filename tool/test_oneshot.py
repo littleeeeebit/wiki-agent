@@ -779,3 +779,24 @@ def test_concurrent_first_uses_pick_the_same_moved_folder(tmp_path):
          patch.object(oneshot.os, "replace", slow), ThreadPoolExecutor(max_workers=2) as pool:
         picked = set(pool.map(use, [0, 1]))
     assert picked == {outside / "spec-budget"} and not (runs / "spec-budget").exists()
+
+
+def test_a_failed_move_keeps_the_old_folder_until_a_restart(tmp_path):
+    """A store kept the old path after a refused move; a later move hid its new screenshots."""
+
+    runs, outside, original = tmp_path / "hub" / "raw" / "oneshot", tmp_path / "data" / "oneshot", os.replace
+    (runs / "spec-budget").mkdir(parents=True)
+    refused = [True]
+
+    def held(source, destination):
+        if refused.pop() if refused else False:
+            raise PermissionError("held open")
+        return original(source, destination)
+
+    with patch.object(oneshot, "RUNS", runs), patch.object(oneshot, "WORK", outside), \
+         patch.object(oneshot.os, "replace", held), patch.object(oneshot, "_stay", set()):
+        assert oneshot.folder("spec-budget") == runs / "spec-budget"
+        assert oneshot.folder("spec-budget") == runs / "spec-budget"   # the handle closed; still the same folder
+    with patch.object(oneshot, "RUNS", runs), patch.object(oneshot, "WORK", outside), \
+         patch.object(oneshot, "_stay", set()):   # a restart moves it
+        assert oneshot.folder("spec-budget") == outside / "spec-budget" and not (runs / "spec-budget").exists()

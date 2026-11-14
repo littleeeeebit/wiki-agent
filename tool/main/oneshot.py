@@ -45,6 +45,7 @@ PROFILES = RUNS / "profiles"
 # there read its branch, commits and wiki as the product's own (a manga translator came back as Tauri desktop).
 WORK = (Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".local/share") / "wiki-agent-data/oneshot"
         if DATA == RESOURCES else None)
+_stay: set = set()   # names whose move failed in this process; a store may hold the old path, so it stays
 VERSION = 3   # 2: the tests turn declares its runner; 3: the owner picks the stack in S2, not on the card
 BRANCH = "oneshot-initial"   # also the spec id: a valid task name, so the branch and the spec share it
 INTENT_PROMPT = (ROOT / "tool/prompts/oneshot-intent.md").read_text(encoding="utf-8")
@@ -136,15 +137,15 @@ class Store:
 def folder(name: str) -> Path:
     """A stage folder outside every repository; one an older version left in `raw/oneshot` moves there."""
     old, new = RUNS / name, (WORK or RUNS) / name
-    with _lock:   # two first uses must not pick different folders
-        if WORK and old.is_dir() and not new.exists():
+    with _lock:   # every caller in this process keeps the folder the first one chose
+        if WORK and name not in _stay and old.is_dir() and not new.exists():
             new.parent.mkdir(parents=True, exist_ok=True)
             try:
                 os.replace(old, new)
-            except OSError:
+            except OSError:   # a file held open: the old folder stays until a restart moves it
                 if not new.exists():
-                    return old   # a file held open; the next call moves it
-    return new
+                    _stay.add(name)
+        return old if name in _stay else new
 
 
 def run_store(rid: str) -> Store:
