@@ -1,4 +1,8 @@
-# Local verification of cloud implementations
+# Registered local verification
+
+Registered runtime checks apply to local, external and Cloud tasks when required
+by their acceptance contract. They do not change the implementation environment;
+only `implementation_environment: "claude-cloud"` selects the Claude Cloud path.
 
 ## Owned WebView applications
 
