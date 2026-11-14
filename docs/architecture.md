@@ -333,9 +333,12 @@ evaluation. `tool/main/review_contract.py` now composes the existing profile,
 explicit task facets and registered flows before each round. Refactoring reruns
 its frozen preservation check; changed obligations or receipts invalidate
 approval. Jev records optional additions in shadow mode only. Ordinary local
-runtime requirements currently validate existing receipts or wait for their
-execution owner; they do not grant Cloud reviewer tools or automatically start
-a new live executor. Native-host collection remains unimplemented.
+runtime requirements without a configured catalog remain independent-review
+obligations. Current implementation reports and cited artifacts reach the reviewer
+as claims to assess, with machine observations distinguished from owner reports.
+Cloud, explicitly named flows and configured verification retain registered
+execution and receipt gates, including native-host collection. Neither path
+grants ordinary reviewers execution tools or bypasses the final gate.
 
 The [four-stage review-routing plan](plans/review-routing/0-overview.md)
 separates the completed deterministic baseline from contextual shadow advice,

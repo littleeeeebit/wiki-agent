@@ -4,12 +4,28 @@ Claude Code Cloud implements from the repository. A separate local reviewer
 checks the resulting commit with this machine's test API, dataset and browser
 configuration. Cloud does not receive `.env`, credentials or private datasets.
 The existing `plan`, `code` and `mixed` profiles still determine review criteria.
-Locally implemented and external tasks keep their existing review and final gate.
-After Review Loop authorization, their explicit `review.flows` and requested
-`api`, `browser` and `desktop` evidence select registered runtime flows and hold
-review until current receipts exist. Cloud keeps its complete major-flow floor.
+Locally implemented and external tasks keep their independent review and final
+gate. Requested `api`, `browser` and `desktop` evidence remains mandatory, but
+those labels alone do not require every repository to adopt an executable
+verification catalog. Without a catalog or configured automatic verification,
+the reviewer assesses the current implementation report, cited artifacts and
+observations. Owner reports remain identified as reports; a pass flag cannot
+certify behavior. Missing, stale or insufficient evidence requires a concrete
+review finding rather than a permanent catalog-preparation stop.
+
+After Review Loop authorization, explicitly named `review.flows` and existing
+automatic verification configuration still require registered execution and
+current receipts. An existing catalog also keeps that path for requested runtime
+evidence. Missing or invalid catalogs and settings cannot silently downgrade a
+configured repository to report review. Cloud keeps its complete major-flow floor.
 Jev selects applicable registered checks before collection and judges their
 measured receipts. The independent reviewer remains separate.
+
+The review contract records whether registered execution is required. Supplied
+reports are bound to their reported commit and specification revision, included
+in review identity, and redacted before handoff. Changing a report invalidates
+approval; changing this policy also requires a fresh independent review. The
+report-review path grants no execution tools, automatic pass or merge permission.
 
 The Cloud review cell also executes verification commands and creates test
 scripts, fixtures and receipts. Codex uses `workspace-write` with

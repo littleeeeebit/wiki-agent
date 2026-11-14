@@ -52,10 +52,31 @@ def main():
                WEBVIEW2_USER_DATA_FOLDER=str(scratch / "webview"),
                PATH=os.pathsep.join([str(Path(os.environ["SystemRoot"]) / "System32"),
                                     str(Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0")]))
+    review_repo = scratch / "검증 저장소"
+    review_repo.mkdir()
+    policy_check = """import sys
+from pathlib import Path
+from main import review_contract as c
+repo = Path(sys.argv[1])
+for environment in (None, 'external', 'claude-cloud'):
+    spec = {'id':'isolated-review', 'repo':'fixture', 'rev':1, 'goal':'Inspect supplied observations',
+            'done':['gate'], 'out':[], 'implementation_environment':environment,
+            'review':{'evidence':['api','browser','desktop']}}
+    result = c.select(repo,repo,spec,'code',['change.py'],'a'*40,'b'*40)
+    assert result['evidence'] == ['api','browser','desktop','offline'], result
+    assert result['registered_runtime'] == (environment == 'claude-cloud'), result
+    assert bool(result['problems']) == (environment == 'claude-cloud'), result
+print('PASS: bundled review evidence policy')
+"""
+    checked = subprocess.run([str(installed / "payload/python/python.exe"), "-c", policy_check, str(review_repo)],
+                             cwd=scratch, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=30, **process.background_options())
+    assert checked.returncode == 0, checked.stdout + checked.stderr
     child = subprocess.Popen([str(installed / "wiki-agent.exe")], cwd=scratch, env=env,
                              creationflags=process.background_options().get("creationflags", 0) | process.SUSPENDED)
     job = process.contained(child)
     observed = {"image": str(installed), "data": str(data), "build_image": str(image),
+                "review_evidence_policy": checked.stdout.strip(),
                 "release": json.loads((image / "payload/app/release.json").read_text(encoding="utf-8")),
                 "default_data_path": True,
                 "executable_sha256": hashlib.sha256((installed / "wiki-agent.exe").read_bytes()).hexdigest()}

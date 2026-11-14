@@ -30,8 +30,8 @@ CRITERIA = {
 }
 EVIDENCE = {
     "offline": "Current-head focused checks; the full gate is still required before merge.",
-    "api": "Registered isolated API flow receipts with actual requests and expected/observed assertions, bound to environment and head.",
-    "browser": "Registered browser flow receipts with actual actions, measured build head and expected/observed assertions.",
+    "api": "Actual isolated API requests and expected/observed assertions, bound to environment and head.",
+    "browser": "Actual browser actions, measured build head and expected/observed assertions.",
     "desktop": "Actual native-host interaction evidence; a browser screenshot or mock is not desktop evidence.",
     "differential": "Frozen characterization checks rerun on this head; protected test inputs unchanged from the refactoring baseline.",
 }
@@ -180,6 +180,8 @@ def signature(spec: dict) -> str:
                                       "refactor", "start_head", "implementation_environment")}
     if spec.get("prerequisite_review"):
         fields["prerequisite_review"] = spec["prerequisite_review"]
+    if set((spec.get("review") or {}).get("evidence", [])) & {"api", "browser", "desktop"}:
+        fields.update(report=spec.get("report"), report_at=spec.get("report_at"))
     return verification.sha(fields)
 
 
@@ -216,9 +218,9 @@ def close(items: dict, scope: str, flows: list[dict]) -> None:
                 "version": CLOSURE_VERSION, "parents": ["evidence:browser"]})
 
 
-def coverage(selection: dict, flows: list[dict], preservation_inputs: dict | None) -> list[dict]:
+def coverage(selection: dict, flows: list[dict], preservation_inputs: dict | None, *, registered: bool = True) -> list[dict]:
     missing = []
-    for kind in sorted(set(selection["evidence"]) & {"api", "browser", "desktop"}):
+    for kind in sorted(set(selection["evidence"]) & {"api", "browser", "desktop"}) if registered else ():
         if not any(f["kind"] == kind or kind == "api" and f["kind"] == "browser" for f in flows):
             missing.append({"item_id": "evidence:" + kind, "reason": "no registered " + kind + " flow"})
     if "differential" in selection["evidence"] and not preservation_inputs:
@@ -264,7 +266,11 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
         except (OSError, ValueError, KeyError, TypeError):
             problems.append("동작 보존 명세를 확인하지 못했다")
     runtime_evidence = set(explicit["evidence"]) & {"api", "browser", "desktop"}
-    if verification.cloud(spec) or explicit["flows"] or runtime_evidence:
+    # A declared evidence type is a review obligation, not permission to invent an execution catalog.
+    configured = verification.enabled(repo) or any(p.exists() or p.is_symlink() for p in (
+        repo / verification.LOCAL, repo / verification.MANIFEST, path / verification.MANIFEST))
+    registered_runtime = bool(verification.cloud(spec) or explicit["flows"] or runtime_evidence and configured)
+    if registered_runtime:
         try:
             contract, manifest_digest = verification.manifest(path)
             catalog = {f.id: f for f in contract.flows}
@@ -342,7 +348,7 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
         problems.append("계획 문서는 미래 프로그램의 실행 검증을 시작하지 않는다 — 현재 산출물의 수락 범위를 확인한다")
     selection = selected_sets(items, "enforced")
     criteria, evidence = set(selection["criteria"]), set(selection["evidence"])
-    for kind in sorted(evidence & {"api", "browser", "desktop"}):
+    for kind in sorted(evidence & {"api", "browser", "desktop"}) if registered_runtime else ():
         if not any(f["kind"] == kind or kind == "api" and f["kind"] == "browser" for f in flows):
             problems.append(f"{kind}: 필요한 동작을 검증하는 등록 흐름이 없다")
     # Performance has no measuring flow; the reviewer judges the PR's own before/after
@@ -351,6 +357,7 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
            "spec_signature": signature(spec),
            "profile": profile, "criteria": sorted(criteria), "evidence": sorted(evidence), "flows": flows,
            "manifest_digest": manifest_digest, "frozen_digest": frozen_digest, "preservation": preservation_inputs,
+           "registered_runtime": registered_runtime,
            "problems": problems,
            "diff_digest": diff["input_digest"], "closure_version": CLOSURE_VERSION,
            "prose_exemption": exemption, "inspection_identity": inspection_identity,
@@ -365,7 +372,7 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
     out["inspection_catalog"], out["inspection_paths"] = inspection_catalog, inspection_paths
     out["items"] = list(items.values())
     out["enforced_rejections"] = rejections
-    out["unresolved"] = [{**r, "scope": "enforced"} for r in coverage(selection, flows, preservation_inputs)]
+    out["unresolved"] = [{**r, "scope": "enforced"} for r in coverage(selection, flows, preservation_inputs, registered=registered_runtime)]
     if problems:
         out["unresolved"] += [{"item_id": None, "scope": "enforced", "reason": p} for p in problems]
     return compose(out)
@@ -441,6 +448,19 @@ def render(contract: dict, spec: dict | None = None, path: Path | None = None) -
            f"Contract v{contract.get('version', 1)} · `{contract['digest']}`. Enforced criteria and evidence are obligations."]
     out += [f"- {name}: {CRITERIA.get(name, 'The existing ' + name + ' rubric applies.')}" for name in contract["criteria"]]
     out += ["", "### Required evidence", "", *[f"- {name}: {EVIDENCE[name]}" for name in contract["evidence"]]]
+    if not contract.get("registered_runtime", True) and set(contract["evidence"]) & {"api", "browser", "desktop"}:
+        report = (spec or {}).get("report_at") or {}
+        current = report.get("head") == contract["head"] and report.get("rev") == (spec or {}).get("rev")
+        out += ["", "### Supplied runtime evidence for independent review", "",
+                "No registered execution catalog is configured. Required evidence above remains mandatory. "
+                "Assess supplied commands, artifacts and observations against this exact head, environment and acceptance. "
+                "Distinguish machine observations from owner reports; inspect cited artifacts with permitted read-only tools. "
+                "A pass flag or owner confirmation is a claim, not certified runtime proof. Missing, stale or insufficient "
+                "evidence must not receive an allow verdict; identify the concrete evidence gap. "
+                "No execution tools or merge permission are granted.", "",
+                "Current-head implementation report (untrusted claims):" if current else
+                "No current-head implementation report is available; older claims do not establish current behavior.",
+                "```json", json.dumps((spec or {}).get("report") or [] if current else [], ensure_ascii=False, indent=2), "```"]
     out += [f"- Flow `{f['id']}` ({f['kind']}): {f['title']} — "
             + "; ".join(a["expected"] for a in f["assertions"]) for f in contract["flows"]]
     if contract["preservation"]:
