@@ -37,7 +37,7 @@ def main():
     data = home / "AppData/Local/wiki-agent-data"
     projects = scratch / "팀 프로젝트"
     (projects / "fixture/.git").mkdir(parents=True)
-    for folder in (data, home, home / "AppData/Local", home / "AppData/Roaming"):
+    for folder in (data, home, home / "AppData/Local", home / "AppData/Roaming", home / ".codex", home / ".claude", home / ".config/gh"):
         folder.mkdir(parents=True, exist_ok=True)
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -46,7 +46,7 @@ def main():
         marker in k.upper() for marker in ("API_KEY", "TOKEN", "SECRET", "PASSWORD", "LANGFUSE"))}
     env.update(WIKI_USER_HOME=str(home), USERPROFILE=str(home), HOME=str(home),
                LOCALAPPDATA=str(home / "AppData/Local"), APPDATA=str(home / "AppData/Roaming"),
-               CODEX_HOME=str(home / ".codex"), CLAUDE_CONFIG_DIR=str(home / ".claude"), WIKI_SEARCH="off",
+               CODEX_HOME=str(home / ".codex"), CLAUDE_CONFIG_DIR=str(home / ".claude"), GH_CONFIG_DIR=str(home / ".config/gh"), WIKI_SEARCH="off",
                JEV_ENV=str(home / "missing.env"), TRANSLATE_ENV=str(home / "missing.env"), WIKI_JEV_FALLBACK="off",
                WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=f"--remote-debugging-port={debug}",
                WEBVIEW2_USER_DATA_FOLDER=str(scratch / "webview"),
