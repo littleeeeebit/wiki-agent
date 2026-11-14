@@ -10,6 +10,7 @@ import os
 import subprocess
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -744,3 +745,37 @@ def test_turns_run_isolated_in_a_folder_outside_the_hub_checkout(tmp_path):
     assert store.folder == outside / rid and (store.folder / "kept.txt").read_text(encoding="utf-8") == "kept"
     assert not (runs / rid).exists()   # an older run's folder moved, files and all
     assert opened["repo"] == store.folder and opened["isolated"] is True
+    # A Codex turn keeps `app-server` and its read tools (`pr_diff`, `repo_*`); isolated Codex has none.
+    with patch.object(oneshot, "RUNS", runs), patch.object(oneshot, "WORK", outside), \
+         patch.object(oneshot, "ChatSession", Session), \
+         patch.object(oneshot, "load", lambda rid: {"models": {"review": {"model": "codex:gpt", "effort": "high"}}}):
+        oneshot.ask(oneshot.run_store(rid), "review", "system", "text")
+    assert opened["model"] == "codex:gpt" and opened["isolated"] is False
+
+
+def test_concurrent_first_uses_pick_the_same_moved_folder(tmp_path):
+    """A caller whose move lost the race to another must not keep the folder that just moved away."""
+
+    runs, outside, original = tmp_path / "hub" / "raw" / "oneshot", tmp_path / "data" / "oneshot", os.replace
+    (runs / "spec-budget").mkdir(parents=True)
+    second, moved, calls = threading.Event(), threading.Event(), []
+
+    def slow(source, destination):
+        calls.append(source)
+        if len(calls) > 1:   # the loser renames only after the winner's move
+            moved.wait(5)
+            return original(source, destination)
+        second.wait(5)
+        time.sleep(0.3)   # the second caller reaches its own check meanwhile
+        original(source, destination)
+        moved.set()
+
+    def use(n):
+        if n:
+            second.set()
+        return oneshot.folder("spec-budget")
+
+    with patch.object(oneshot, "RUNS", runs), patch.object(oneshot, "WORK", outside), \
+         patch.object(oneshot.os, "replace", slow), ThreadPoolExecutor(max_workers=2) as pool:
+        picked = set(pool.map(use, [0, 1]))
+    assert picked == {outside / "spec-budget"} and not (runs / "spec-budget").exists()

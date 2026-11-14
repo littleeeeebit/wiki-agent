@@ -136,12 +136,14 @@ class Store:
 def folder(name: str) -> Path:
     """A stage folder outside every repository; one an older version left in `raw/oneshot` moves there."""
     old, new = RUNS / name, (WORK or RUNS) / name
-    if WORK and old.is_dir() and not new.exists():
-        new.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            os.replace(old, new)
-        except OSError:
-            return old   # a file held open; the next call moves it
+    with _lock:   # two first uses must not pick different folders
+        if WORK and old.is_dir() and not new.exists():
+            new.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.replace(old, new)
+            except OSError:
+                if not new.exists():
+                    return old   # a file held open; the next call moves it
     return new
 
 
@@ -210,8 +212,10 @@ def ask(store: Store, role: str, system: str, text: str, where: Path | None = No
     cfg = role_config(role, store)
     where = where or store.folder
     where.mkdir(parents=True, exist_ok=True)
-    # Isolated: no hooks, settings or app instructions; the prompt is the whole context.
-    chat = ChatSession(where, tools=TOOLS, system=system, model=cfg["model"], effort=cfg["effort"], isolated=True)
+    # Claude isolated: no hooks, settings or app instructions. Codex stays on `app-server`, whose read-only
+    # session already drops shell and connectors and carries `pr_diff`/`repo_*`; isolated it is tool-less `exec`.
+    chat = ChatSession(where, tools=TOOLS, system=system, model=cfg["model"], effort=cfg["effort"],
+                       isolated=not str(cfg["model"] or "").startswith("codex:"))
     final, meta, failed = "", {}, ""
     ended = threading.Event()
     threading.Thread(target=heartbeat, args=(store, ended), daemon=True, name=f"oneshot-beat-{store.key}").start()
