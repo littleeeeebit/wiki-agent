@@ -121,7 +121,7 @@ Each step is a separate PR, approved before the next starts.
 
 | # | Stage | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Manifest variant | `driver` union, Win32 default, WebView fields and validation; settings version 3 with per-application approvals; current manifests and settings still pass | Planned |
+| 1 | Manifest variant | `driver` union, Win32 default, WebView fields and validation; settings version 3 with per-application approvals; current manifests and settings still pass | In progress |
 | 2 | Windows WebView2 collector | Owned launch, process-tree check of the debugging endpoint, scenario runner, receipt and its validator; one real Tauri fixture run | Planned |
 | 3 | Android emulator collector | Disposable emulator, APK identity, pid-bound WebView attach, restart without data loss, cleanup proof; one real fixture run | Planned |
 | 4 | Negative checks | Wrong pid or endpoint, swapped driver receipts, unregistered navigation, failed cleanup, zero-work claim without evidence — each refused | Planned |
@@ -131,9 +131,11 @@ Step 1 alone already lets PR #4's manifest validate, but its review would still
 stop at collection; only steps 2 and 3 produce evidence. Steps 2 and 3 can run
 in either order. Step 5 happens in that project, not here.
 
-## Open questions
+## Runtime choices
 
-- Scenario runtime: Node with a pinned WebDriver/CDP client, or Python. The work
-  cell's draft uses a `.mjs` script; the collector then needs an approved Node.
-- Whether the Android collector belongs on this PC at all, given the emulator's
-  size and boot time, or only on a host that already has the SDK.
+Scenarios are Node `.mjs` scripts driven over the Chrome DevTools Protocol with
+a pinned client. The approval records the Node executable and its SHA-256 like
+any other approved runner.
+
+The Android collector runs on this PC. The Android SDK and the approved emulator
+image live outside the checkout, and the approval records their paths and hashes.
