@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import native_targets as targets
 import native_verification as native
 from main import loop, review_contract, verification
 from test_local_verification import cloud_spec, cloud_world, git_world  # noqa: F401
@@ -49,7 +50,7 @@ def test_webview_targets_validate_beside_unchanged_win32_targets():
     old = {**webview_flow("windows"), "id": "win32", "native": win32}
     parsed = verification.Manifest.model_validate({"version": 2, "contracts": ["api.md"],
                                                    "flows": [old, webview_flow("windows"), webview_flow("android")]})
-    assert [type(f.native) for f in parsed.flows] == [native.NativeTarget, native.WebViewTarget, native.WebViewTarget]
+    assert [type(f.native) for f in parsed.flows] == [targets.Win32Target, targets.WebViewTarget, targets.WebViewTarget]
     # A Win32 dump stays byte-identical, so its approved signature survives; naming the default is accepted.
     assert set(parsed.flows[0].native.model_dump()) == {*win32, "arguments"}
     assert verification.Flow.model_validate({**old, "native": {**win32, "driver": "win32"}})
@@ -61,11 +62,23 @@ def test_webview_targets_validate_beside_unchanged_win32_targets():
                   webview_flow("windows", output="../prebuilt/vto.exe"), webview_flow("windows", output="C:/vto/vto.exe"),
                   webview_flow("windows", origins=["http://tauri.localhost/index.html"]), webview_flow("windows", origins=[]),
                   webview_flow("windows", calls=["http://ipc.localhost/invoke"]),
+                  webview_flow("windows", origins=["http://user:secret@tauri.localhost"]),
+                  webview_flow("windows", origins=["http://tauri.localhost:not-a-port"]),
+                  webview_flow("windows", calls=["http://ipc.localhost:99999"]), webview_flow("windows", calls=["http://:80"]),
                   {**webview_flow("windows"), "native": {**webview_flow("windows")["native"], "executable": "C:/vto/vto.exe"}}):
         with pytest.raises(ValueError):
             verification.Flow.model_validate(wrong)
+    assert verification.Flow.model_validate(webview_flow("windows", origins=["http://tauri.localhost:1420"]))
     with pytest.raises(ValueError, match="WebView"):
-        native.preflight(Path("."), "0" * 40, parsed.flows[1].native.model_dump(), {})
+        targets.preflight(Path("."), "0" * 40, parsed.flows[1].native.model_dump(), {})
+
+
+def test_driver_schemas_stay_out_of_the_hashed_collector_module():
+    # A desktop flow's signature hashes native_verification.py (`identity["collector"]`), so a
+    # schema-only change there would revoke every stored Win32 pass.
+    collector = Path(native.__file__).read_text(encoding="utf-8")
+    assert "native_targets" not in collector and "WebView" not in collector
+    assert not hasattr(native, "WebViewTarget") and not hasattr(native, "approval")
 
 
 def test_version_three_holds_one_approval_per_application(tmp_path):
@@ -80,15 +93,15 @@ def test_version_three_holds_one_approval_per_application(tmp_path):
                "emulator": "C:/android/sdk/emulator/emulator.exe", "emulator_sha256": "5" * 64,
                "system_image": "C:/android/sdk/system-images/android-35", "system_image_sha256": "6" * 64}
     settings = verification.LocalSettings.model_validate({**base, "version": 3, "native": [win32, windows, android]}).model_dump()
-    targets = [verification.Flow.model_validate(webview_flow(p)).native for p in ("windows", "android")]
-    assert [native.approval(settings, t)["host"] for t in targets] == ["windows-webview2", "android-emulator"]
+    webviews = [verification.Flow.model_validate(webview_flow(p)).native for p in ("windows", "android")]
+    assert [targets.approval(settings, t)["host"] for t in webviews] == ["windows-webview2", "android-emulator"]
     # Version 2 keeps its single Win32 approval; an approval for the wrong host does not count.
     v2 = verification.LocalSettings.model_validate({**base, "version": 2, "native": win32}).model_dump()
-    assert native.approval(v2, native.NativeTarget.model_validate(
+    assert targets.approval(v2, targets.Win32Target.model_validate(
         {"application": "fixture", "window_class": "F", "build_inputs": ["a.py"],
          "actions": [{"assertion": "a", "action": "click", "control_id": 1, "observe_id": 1, "expected": "x"}]})) == win32
     with pytest.raises(ValueError, match="vto-android"):
-        native.approval({"native": [{**windows, "application": "vto-android"}]}, targets[1])
+        targets.approval({"native": [{**windows, "application": "vto-android"}]}, webviews[1])
     for wrong in ({"version": 2, "native": [windows]}, {"version": 3, "native": win32},
                   {"version": 3, "native": [windows, windows]}, {"version": 3, "native": [{**windows, "sdk": "C:/sdk"}]},
                   {"version": 3, "native": [{**windows, "executable": "C:/vto/vto.exe", "executable_sha256": "2" * 64}]},

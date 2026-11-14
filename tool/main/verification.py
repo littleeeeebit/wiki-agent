@@ -20,6 +20,7 @@ from urllib.parse import quote, urlsplit
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+import native_targets
 import native_verification
 
 from common.settings import unquote
@@ -52,7 +53,7 @@ class Flow(Contract):
     paths: list[str] = Field(min_length=1)
     environments: list[str] = Field(default_factory=lambda: ["api", "dataset", "settings"], min_length=1)
     assertions: list[Assertion] = Field(min_length=1)
-    native: native_verification.Target | None = None
+    native: native_targets.Target | None = None
 
     @model_validator(mode="after")
     def native_contract(self):
@@ -92,7 +93,7 @@ class LocalSettings(Contract):
     cleanup: str = ""
     redact_values: list[str] = Field(default_factory=list)
     manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    native: native_verification.NativeSettings | list[native_verification.Approval] | None = None
+    native: native_verification.NativeSettings | list[native_targets.Approval] | None = None
 
     @model_validator(mode="after")
     def versioned_native(self):
@@ -282,7 +283,7 @@ def signature(repo: Path, path: Path, flow: Flow, settings: dict) -> str:
                 "revisions": {k: settings["revisions"].get(k) for k in flow.environments},
                 "env": sha(content), "runtime": specs.digest(repo, path, flow.command)}
     if flow.kind == "desktop":
-        identity["native"] = native_verification.approval(settings, flow.native)
+        identity["native"] = native_targets.approval(settings, flow.native)
         identity["collector"] = sha(Path(native_verification.__file__).read_bytes())
         identity["executable"] = sha(Path(identity["native"].get("executable") or identity["native"]["runner"]).read_bytes())
     return sha(identity)
@@ -342,7 +343,7 @@ def receipt(output: str, flow: Flow, head: str, settings: dict,
         if path is None or artifact is None or data.get("version") != 2:
             raise ValueError("Native evidence requires version 2 and owned artifact/build identity")
         kept["native"] = native_verification.validate_receipt(data, path, artifact, flow.native.model_dump(),
-                                                             native_verification.approval(settings, flow.native),
+                                                             native_targets.approval(settings, flow.native),
                                                              settings["revisions"])
     return clean_evidence(kept, settings)
 
@@ -573,8 +574,7 @@ def _execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt:
         raise ValueError("각 흐름이 사용하는 API·데이터·설정 버전을 기록해야 한다")
     for flow in selected:
         if flow.kind == "desktop":
-            native_verification.preflight(path, head, flow.native.model_dump(),
-                                          native_verification.approval(settings, flow.native))
+            native_targets.preflight(path, head, flow.native.model_dump(), native_targets.approval(settings, flow.native))
     prepare(repo, path, settings)
     settings = redaction(settings, path)
     previous_record = spec.get("local_verification") or {}
@@ -625,7 +625,7 @@ def _execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt:
                 try:
                     native_verification.validate_receipt({"head": before["executed_head"], **before["evidence"]}, path,
                                                          Path(before["artifact_dir"]), flow.native.model_dump(),
-                                                         native_verification.approval(settings, flow.native),
+                                                         native_targets.approval(settings, flow.native),
                                                          settings["revisions"],
                                                          redact_text=lambda text: redact(text, settings))
                 except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
@@ -649,7 +649,7 @@ def _execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt:
             if flow.kind == "desktop":
                 request = {"root": str(path), "artifact_dir": str(flow_artifact), "head": head, "flow": flow.id,
                            "environment_id": settings["environment_id"], "test_scope": settings["test_scope"],
-                           "revisions": settings["revisions"], "settings": native_verification.approval(settings, flow.native),
+                           "revisions": settings["revisions"], "settings": native_targets.approval(settings, flow.native),
                            "target": flow.native.model_dump()}
                 request_file = flow_artifact / "request.json"
                 request_file.write_text(json.dumps(request), encoding="utf-8")
@@ -795,7 +795,7 @@ def proven(repo: Path, path: Path, spec: dict, head: str, base_oid: str, *, flow
             if flow.kind == "desktop":
                 native_verification.validate_receipt({"head": row.get("executed_head"), **row["evidence"]}, path,
                                                      Path(row["artifact_dir"]), flow.native.model_dump(),
-                                                     native_verification.approval(settings, flow.native),
+                                                     native_targets.approval(settings, flow.native),
                                                      settings["revisions"],
                                                      redact_text=lambda text: redact(text, settings))
     except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError):
@@ -932,7 +932,7 @@ def set_config(body: LocalSettings, sid: str | None = None) -> dict:
                 raise ValueError("확인한 검증 명세가 바뀌었다 — 다시 읽는다")
             for flow in parsed.flows:
                 if flow.kind == "desktop":
-                    native_verification.approval(body.model_dump(), flow.native)
+                    native_targets.approval(body.model_dump(), flow.native)
             if any(not body.revisions.get(k) for f in parsed.flows for k in f.environments):
                 raise ValueError("흐름이 사용하는 환경 버전을 모두 지정한다")
             source = Path(body.env_file)
