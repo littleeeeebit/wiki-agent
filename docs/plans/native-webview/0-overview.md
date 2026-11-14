@@ -52,16 +52,26 @@ unchanged and keeps `extra="forbid"`. The new shape is `driver: "webview"`.
 | `scenario` | A tracked script path, also listed in `build_inputs` |
 | `build`, `output` | The command that builds the app from the checkout, and the checkout-relative path of the exe or APK it produces |
 | `origins` | The app's own origins; a navigation or new target outside them is refused |
+| `calls` | The origins of the app's native bridge, such as Tauri's `http://ipc.localhost`; requests to them count as calls |
 | `package`, `activity` | Required on Android, refused on Windows |
 | `build_inputs` | Tracked files or globs, expanded against `git ls-files` at the reviewed head and measured like today |
 | `actions` | Checkpoints `{assertion, expected, selector, no_requests}`; they cover each registered assertion exactly once, as now |
 
 The scenario script holds the steps that drive the screen. It does not judge
 them. At each checkpoint the collector reads the registered `selector` itself,
-over its own DevTools session, and compares that text with `expected`. When
-`no_requests` is set, the collector's own network log for that checkpoint must
-show no request to the app's backend. The selectors and the zero-work claims sit
-in the manifest, so the reviewer sees exactly what is observed.
+over its own DevTools session, and compares that text with `expected`. The
+selectors and the zero-work claims sit in the manifest, so the reviewer sees
+exactly what is observed.
+
+A checkpoint's interval runs from the scenario's `begin` message to the
+collector's read; the proxy logs both on the collector's own clock. When
+`no_requests` is set, the collector's network log for that interval must show no
+request to any origin in the local settings' `allowed_origins` and no request to
+any origin in `calls`. Requests to other origins, such as the app's own assets,
+are recorded but do not count. A bridge that the collector cannot see as a
+request cannot be named in `calls`. Preflight refuses a `no_requests`
+checkpoint on an app whose `calls` is empty, because nothing there could prove
+zero work.
 
 The `build` command and `output` path are part of the manifest, so the existing
 manifest approval (`manifest_digest`) covers them. The collector runs `build` in
@@ -75,17 +85,24 @@ build input.
 `LocalSettings.native` becomes a list of approvals keyed by `application`, at
 settings version 3. Version 2 with a single Win32 approval stays readable. A
 WebView approval names the host (`windows-webview2` or `android-emulator`), the
-Node that runs scenarios with its SHA-256, the profile, and for Android the SDK
-and emulator system image. It approves no binary, since the binary is built from
-the head. Approving a new application still goes through the existing setup
+Node that runs scenarios with its SHA-256 and the profile. For Android it also
+names the `adb` and `emulator` executables with their SHA-256 and the system
+image folder with a content digest over its files (sorted relative path and
+SHA-256 of each). Preflight measures all of them again, and they enter the run
+signature, so replacing any of them at the same path revokes earlier passes. It
+approves no app binary, since the app is built from the head. Approving a new application still goes through the existing setup
 approval; nothing is approved by being present in a manifest.
 
 Every current reader of the single approval moves to one lookup by application
 and host: the run signature, preflight, the runner request, receipt validation,
 evidence reuse, the merge-time check and `set_config`. The Review tab form shows
-one approval group per desktop application and saves version 3. Until a driver's
-collector exists, a flow on that driver stops at preflight with a stated reason.
-It never validates and is silently skipped.
+one approval group per desktop application and saves version 3.
+
+Until a driver's collector exists, its flows fail closed. Preflight refuses such
+a flow with a stated reason before anything runs: no setup command, no build, no
+collector, no review dispatch. The task stays stopped at local verification
+preparation until the collector lands. Step 1 carries a regression that proves
+this on a real run.
 
 ### Windows collector
 
@@ -132,14 +149,28 @@ set that `validate_receipt` checks the same way it checks Win32 receipts. A
 WebView receipt cannot satisfy a Win32 target, and the reverse is refused too.
 
 Cleanup is proven on every outcome: success, a failed assertion, a preparation
-failure, a timeout and a cancellation. The collector always writes an ownership
-record of what it created: processes, profile folders, emulator, serial and
-forwards. Today `receipt` raises on a `blocked` result before any native
-validation runs, so this changes too. For a desktop flow, the orchestrator first
-validates that the ownership record is `cleaned`, and only then accepts the
-outcome. That covers a blocked, timed-out or cancelled run as well. A missing or
-unclean record holds the flow as blocked with that reason, whatever the scenario
-reported. The rule applies to the Win32 driver as well.
+failure, a timeout and a cancellation. The collector writes its ownership record
+before its first mutation, ahead of the build and of any folder it creates. It
+then adds each resource just before creating it: processes, profile folders, AVD
+home, emulator pid, serial and forwards. The record lives in the flow's artifact
+folder, so it outlives the collector.
+
+The orchestrator owns the end of that record. When the collector exits on its
+own, it has already cleaned what it recorded. When the collector is killed on a
+timeout or a cancellation, the gate's process-tree kill stops its processes but
+not its folders or `adb` forwards. The orchestrator then reads the persisted
+record and cleans exactly the resources listed there, with a bounded time. It
+kills recorded pids still alive, removes recorded forwards with
+`adb -s <serial> forward --remove`, and deletes recorded folders inside the
+artifact folder. It touches nothing the record does not name. Only then does it
+validate that the record reads `cleaned`.
+
+Today `receipt` raises on a `blocked` result before any native validation runs,
+so this changes too. A desktop flow's outcome, blocked, timed out or cancelled
+included, is accepted only after that validation. A missing record, or a
+resource still present after cleanup, holds the flow as blocked and names what
+is left, whatever the scenario reported. The rule applies to the Win32 driver as
+well.
 
 ### What does not change
 
@@ -155,10 +186,10 @@ Each step is a separate PR, approved before the next starts.
 
 | # | Stage | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Manifest variant | `driver` union, Win32 default, WebView fields and validation; settings version 3 with per-application approvals; current manifests and settings still pass | In progress |
-| 2 | Windows WebView2 collector | Head build and launch of `output`, process-tree check of the endpoint, collector-owned proxy and checkpoint reads, cleanup proven on every outcome; one real Tauri fixture run, plus refusals for a wrong pid or endpoint, a new target, navigation outside `origins`, a stale or prebuilt binary, a `no_requests` checkpoint that made a request, and a failed cleanup | Planned |
-| 3 | Android emulator collector | Owned AVD and serial, head-built APK identity, pid-bound attach, restart without data loss, cleanup proof; one real fixture run, plus refusals for an existing serial or physical device, a wrong pid, and a failed cleanup, with a pre-existing emulator left untouched | Planned |
-| 4 | Cross-driver checks | A Win32 receipt for a WebView flow and the reverse, mixed Win32/WebView manifests, and the full hosted gate | Planned |
+| 1 | Manifest variant | `driver` union, Win32 default, WebView fields and validation; settings version 3 with per-application approvals; current manifests and settings still pass; a real run proving a WebView flow fails closed before any setup, build or review | In progress |
+| 2 | Windows WebView2 collector | Head build and launch of `output`, process-tree check of the endpoint, collector-owned proxy and checkpoint reads, cleanup proven on every outcome; one real Tauri fixture run, plus refusals for a wrong pid or endpoint, a new target, navigation outside `origins`, a stale or prebuilt binary, a `no_requests` checkpoint that made a request or call, a collector killed mid-run whose recorded resources the orchestrator then cleans, a failed cleanup, and a Win32 receipt offered for a WebView flow and the reverse | Planned |
+| 3 | Android emulator collector | Owned AVD and serial, head-built APK identity, pid-bound attach, restart without data loss, cleanup proof; one real fixture run, plus refusals for an existing serial or physical device, a wrong pid, a replaced `adb`, emulator or system image, a killed collector whose forwards and AVD home the orchestrator then cleans, and a failed cleanup, with a pre-existing emulator left untouched | Planned |
+| 4 | Cross-driver checks | Mixed Win32/WebView manifests in one run, and the full hosted gate | Planned |
 | 5 | PR #4 flows | `video-translate-overlay-2` registers its two flows against the new driver and its review passes local verification | Planned |
 
 Step 1 alone already lets PR #4's manifest validate. Its review would still stop
