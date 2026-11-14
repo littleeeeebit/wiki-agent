@@ -12,7 +12,7 @@ from common.budget import Budget, Cancelled, Exhausted
 
 from . import decisions, review_contract, runtime, specs, verification
 
-POLICY = decision.Policy("review-inspection-4", {"action": {"confidence": 0.6, "margin": 0.2}})
+POLICY = decision.Policy("review-inspection-5", {"action": {"confidence": 0.6, "margin": 0.2}})
 LIMITS = {"seconds": 15, "calls": 1, "candidates": 0}
 DIFF_SECONDS = 2
 PROMPT = {"selection": "Select the smallest set of checks that proves the current task's acceptance. "
@@ -24,7 +24,9 @@ PROMPT = {"selection": "Select the smallest set of checks that proves the curren
           "A previous failure remains recorded but does not require rerunning an unrelated check. "
           "Do not substitute a broad whole-repository suite for a missing task-specific check.",
           "judgment": "Judge this flow's measured receipt against all its assertions. Covered means every "
-          "assertion is observed; insufficient means acceptance is not proved. Never invent observations."}
+          "assertion is observed; insufficient means acceptance is not proved. Never invent observations. "
+          "Native source and artifact inventories were validated locally and are represented by count and "
+          "digest; these establish identity, not behavioral coverage. Judge coverage from the measured evidence."}
 
 
 def diff_context(text: str, limit: int = 10000) -> dict:
@@ -208,6 +210,30 @@ def judgment_problem(spec: dict, contract: dict) -> str:
     return "" if rows and all(v == "covered" for v in rows.values()) else "Jev 실행 증거 판단 대기"
 
 
+def judgment_context(binding: str, flows: list[dict], rows: dict, settings: dict) -> dict:
+    # `clean_evidence` already redacts the measured text; the rest is protocol metadata.
+    state = {"input_identity": binding,
+        "flows": [{"id": f["id"], "assertions": f["assertions"], "evidence": verification.clean_evidence(
+            rows[f["id"]]["evidence"], settings)} for f in flows],
+        "grounds": [{"id": f["id"], "locator": "Measured receipt for " + f["id"],
+                     "text": "See this flow's measured requests, actions and observations in state.flows."}
+                    for f in flows]}
+    for flow in state["flows"]:
+        if native := flow["evidence"].get("native"):
+            # The full inventories stay in the bound receipt, checked before judgment.
+            for key in ("build_inputs", "artifacts"):
+                if key in native:
+                    native[key] = {"count": len(native[key]), "sha256": verification.sha(native[key])}
+    # Measured control names and quoted filenames are literals, not prose to translate.
+    for flow in state["flows"]:
+        for key in ("observations", "actions"):
+            for row in flow["evidence"][key]:
+                for name in set(re.findall(r"'([^'\n]+\.[A-Za-z0-9]{1,10})'", row["actual"])):
+                    row["actual"] = row["actual"].replace(name, f"`{name}`")
+                row["actual"] = re.sub(r"([ᄀ-ᇿ㄰-㆏가-힯]+)(?= shown\b)", r"`\1`", row["actual"])
+    return state
+
+
 def assess(repo: Path, path: Path, spec: dict, contract: dict, halt) -> dict:
     if not contract["flows"] or not judgment_problem(spec, contract):
         return spec
@@ -217,20 +243,7 @@ def assess(repo: Path, path: Path, spec: dict, contract: dict, halt) -> dict:
     binding = verification.sha({"selection": contract["digest"], "evidence": verification.evidence_identity(spec)})
     rows = {r["id"]: r for r in spec["local_verification"]["flows"]}
     settings = verification.redaction(verification.local(repo), path)
-    # `clean_evidence` already redacts the measured text; the rest is protocol metadata.
-    state = {"input_identity": binding,
-        "flows": [{"id": f["id"], "assertions": f["assertions"], "evidence": verification.clean_evidence(
-            rows[f["id"]]["evidence"], settings)} for f in contract["flows"]],
-        "grounds": [{"id": f["id"], "locator": "Measured receipt for " + f["id"],
-                     "text": "See this flow's measured requests, actions and observations in state.flows."}
-                    for f in contract["flows"]]}
-    # Measured control names and quoted filenames are literals, not prose to translate.
-    for flow in state["flows"]:
-        for key in ("observations", "actions"):
-            for row in flow["evidence"][key]:
-                for name in set(re.findall(r"'([^'\n]+\.[A-Za-z0-9]{1,10})'", row["actual"])):
-                    row["actual"] = row["actual"].replace(name, f"`{name}`")
-                row["actual"] = re.sub(r"([ᄀ-ᇿ㄰-㆏가-힯]+)(?= shown\b)", r"`\1`", row["actual"])
+    state = judgment_context(binding, contract["flows"], rows, settings)
     total = runtime.verification_budget.get()
     observation = ask(repo, state, ids, "judgment", halt, Budget(
         **{**LIMITS, "seconds": min(LIMITS["seconds"], total.left()) if total else LIMITS["seconds"]}, cancel=halt))

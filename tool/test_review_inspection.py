@@ -11,6 +11,7 @@ import decision
 import pytest
 
 from fixtures.review_decision import evaluate
+from common.budget import Budget
 from common.language import language
 from main import decisions, review_inspection, specs, verification
 from test_local_verification import cloud_spec, cloud_world, git_world  # noqa: F401
@@ -38,6 +39,48 @@ def routing(calls, *, skip=(), judgment="covered"):
                             "probabilities": {key: float(key == choice) for key in offered}}
         return answers
     return inspect
+
+
+def test_native_inventories_fit_judgment_without_cutting_observations_or_changing_receipts(cloud_world, monkeypatch):
+    assert {o["policy"] for o in decisions.OWNERS if o["point"] in ("review.selection", "review.judgment")} == {
+        review_inspection.POLICY.version}
+    flows, rows, calls = [], {}, []
+    for name in ("api", "browser", "windows", "android"):
+        flows.append({"id": name, "assertions": [{"id": "saved", "expected": "Saved subtitles"}]})
+        evidence = {"observations": [{"id": "saved", "expected": "Saved subtitles", "actual": "Subtitle absent", "pass": False}],
+                    "requests": [{"method": "GET", "url": "http://127.0.0.1:8136/subtitles", "status": 404}],
+                    "actions": [{"action": "click", "target": "Open saved video", "actual": "No subtitles"}]}
+        if name in ("windows", "android"):
+            evidence["native"] = {"application": name, "host": name, "driver": "owned-webview-v1",
+                "build_head": "a" * 40, "binary_sha256": "b" * 64, "profile": "disposable",
+                "sessions": [{"pid": 123, "geometry": [0, 0, 800, 600], "runtime": "observed runtime"}],
+                "actions": [{"assertion": "saved", "expected": "Saved subtitles", "actual": "Subtitle absent"}],
+                "build_inputs": {f"src/source-{i}.rs": "c" * 64 for i in range(700)},
+                "artifacts": [{"path": f"screen-{i}.png", "sha256": "d" * 64} for i in range(40)]}
+        rows[name] = {"evidence": evidence}
+    original = copy.deepcopy(rows)
+    assert len(json.dumps(rows)) > 32000
+    state = review_inspection.judgment_context("binding", flows, rows, {})
+    assert rows == original and len(json.dumps(state, ensure_ascii=False)) < 32000
+    for flow in state["flows"]:
+        expected = verification.clean_evidence(rows[flow["id"]]["evidence"], {})
+        for key in ("observations", "requests", "actions"):
+            assert flow["evidence"][key] == expected[key]
+        if native := flow["evidence"].get("native"):
+            for key in ("build_inputs", "artifacts"):
+                inventory = expected["native"].pop(key)
+                assert native[key] == {"count": len(inventory), "sha256": verification.sha(inventory)}
+            assert {k: v for k, v in native.items() if k not in ("build_inputs", "artifacts")} == expected["native"]
+    monkeypatch.setattr(decisions, "transport", lambda cfg: routing(calls, judgment="insufficient"))
+    result = review_inspection.ask(cloud_world.repo, state, [f["id"] for f in flows], "judgment",
+                                   threading.Event(), Budget(**review_inspection.LIMITS))
+    assert result["status"] == "decided" and len(calls) == 1
+    assert review_inspection.choices(result, "binding", [f["id"] for f in flows], {"covered", "insufficient"}) == {
+        f["id"]: "insufficient" for f in flows}
+    request = result["request"]
+    assert len(json.dumps(request, ensure_ascii=False).encode("utf-8")) < 90000
+    assert len(decision.wire(request["model"], request["state_en"], {
+        k: v["question"] for k, v in request["questions"].items()})) < decision.MAX_BODY
 
 
 def catalog(world, count=15):
