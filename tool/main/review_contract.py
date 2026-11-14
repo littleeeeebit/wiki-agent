@@ -232,6 +232,9 @@ def coverage(selection: dict, flows: list[dict], preservation_inputs: dict | Non
 def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | None,
            head: str, base_oid: str) -> dict:
     explicit = declared(spec.get("review"))
+    if not verification.cloud(spec):
+        # Local declarations remain review obligations, never registered execution requests.
+        explicit = {**explicit, "flows": []}
     if not spec.get("refactor"):
         explicit = {**explicit, "criteria": [c for c in explicit["criteria"] if c != "refactor"],
                     "evidence": [e for e in explicit["evidence"] if e != "differential"]}
@@ -265,11 +268,7 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
                 problems.append("고정된 동작 보존 테스트가 바뀌었거나 기준선을 확인하지 못했다")
         except (OSError, ValueError, KeyError, TypeError):
             problems.append("동작 보존 명세를 확인하지 못했다")
-    runtime_evidence = set(explicit["evidence"]) & {"api", "browser", "desktop"}
-    # A declared evidence type is a review obligation, not permission to invent an execution catalog.
-    configured = verification.enabled(repo) or any(p.exists() or p.is_symlink() for p in (
-        repo / verification.LOCAL, repo / verification.MANIFEST, path / verification.MANIFEST))
-    registered_runtime = bool(verification.cloud(spec) or explicit["flows"] or runtime_evidence and configured)
+    registered_runtime = verification.cloud(spec)
     if registered_runtime:
         try:
             contract, manifest_digest = verification.manifest(path)
@@ -279,19 +278,9 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
                 problems.append("등록되지 않은 검증 흐름: " + ", ".join(sorted(unknown)))
                 rejections = [{"candidate_id": "flow:" + cid, "origin": "spec", "disposition": "rejected",
                                "reason": "unknown registered flow", "locator": "review.flows"} for cid in sorted(unknown)]
-            if verification.cloud(spec):
-                chosen = list(catalog)  # Cloud's complete major-flow floor remains unchanged.
-            elif explicit["flows"]:
-                chosen = explicit["flows"]
-            else:
-                candidates = [f for f in contract.flows if any(
-                    f.kind == kind or kind == "api" and f.kind == "browser" for kind in runtime_evidence)]
-                matches = [{f.id for f in candidates if any(fnmatchcase(changed, pattern) for pattern in f.paths)}
-                           for changed in paths or []]
-                mapped = bool(matches) and all(len(found) == 1 for found in matches) and all(any(f.id in set().union(*matches) and (f.kind == kind or kind == "api" and f.kind == "browser") for f in candidates) for kind in runtime_evidence)
-                chosen = sorted(set().union(*matches) if mapped else {f.id for f in candidates})
+            chosen = list(catalog)  # Cloud's complete major-flow floor remains unchanged.
             flows = [catalog[i].model_dump() for i in sorted(set(chosen)) if i in catalog]
-            if verification.cloud(spec) and verification.documents(path, base_oid, head):
+            if verification.documents(path, base_oid, head):
                 exemption = True
                 flows = []  # Existing, repository-declared prose exemption.
                 evidence = {"offline", *explicit["evidence"]}

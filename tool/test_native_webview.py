@@ -18,6 +18,7 @@ import pytest
 
 import native_verification as native
 import native_webview as webview
+import native_targets as targets
 from main import verification, specs
 from common import shell
 from native_process import launched
@@ -175,6 +176,32 @@ def test_renderer_is_approved_per_android_app_with_unchanged_default(candidate):
     for invalid in ({**android, "renderer": "host -anything"}, {**windows, "renderer": "host"}):
         with pytest.raises(ValueError):
             webview.Approval.model_validate(invalid)
+
+
+@pytest.mark.parametrize("platform", ["windows", "android"])
+def test_approved_binary_contract_keeps_its_approval_and_collector_after_schema_merge(candidate, monkeypatch, platform):
+    root, head, target, approved = candidate
+    target = {**target, "platform": platform, **({"package": "dev.example.app", "activity": ".MainActivity"}
+                                               if platform == "android" else {})}
+    approved["applications"]["fixture"]["platform"] = platform
+    parsed = verification.Flow.model_validate({"id": "save", "title": "Save", "kind": "desktop",
+        "command": "wiki-agent-native", "paths": ["*"], "native": target,
+        "assertions": [{"id": "saved", "expected": "Saved"}]})
+    settings = verification.LocalSettings.model_validate({"version": 2, "environment_id": "fixture",
+        "test_scope": "disposable", "env_file": str(root / ".env"), "browser_tool": "fixture",
+        "allowed_origins": ["http://127.0.0.1:8136"], "revisions": {}, "manifest_digest": "0" * 64,
+        "native": approved}).model_dump()
+    assert isinstance(parsed.native, webview.Target)
+    assert targets.approval(settings, parsed.native) == settings["native"]
+    observed = []
+    monkeypatch.setattr(native, "preflight", lambda *args: observed.append(args) or {"fixture": "measured"})
+    assert targets.preflight(root, head, parsed.native.model_dump(), settings["native"]) == {"fixture": "measured"}
+    assert observed == [(root, head, parsed.native.model_dump(), settings["native"])]
+    wrong = copy.deepcopy(settings)
+    wrong["native"]["applications"]["fixture"]["platform"] = "android" if platform == "windows" else "windows"
+    for invalid in (wrong, {**settings, "native": []}, {**settings, "native": {}}):
+        with pytest.raises(ValueError):
+            targets.approval(invalid, parsed.native)
 
 
 def test_fixed_native_launch_bypasses_shell_and_cannot_misreport_its_command(monkeypatch, tmp_path):

@@ -149,7 +149,7 @@
     "tool/main/review_contract.py": {
       "dup": 0,
       "lines": 852,
-      "reason": "Record whether exact required registered IDs supplied selection, without inventing a model inspection record. Previous: The owner-selected local/external evidence policy separates independent assessment from registered execution. Required evidence remains in review; current-head reports are redacted and identity-bound. Cloud, explicit flows and existing catalogs/settings keep their execution gates. Previous: The review shadow asks each candidate against its own required/unneeded conditions (rubric text moved out to tool/prompts/review-shadow.json), fits its state beside the questions in Jev's 100 kB body in UTF-8 bytes (`fit_body`), and adds a candidate unless Jev is three quarters sure it is unneeded (the policy's `add_at`, also read for shadow-3 records from the PR's first head that applied it unrecorded): on 2026-11-04 Claude-labelled real tasks the held-out required recall went from 0.03 to 0.97 (review-shadow-golden). Before that, `fitted` was added because 892 Oct–Nov 2026 observations sent nothing as `context_too_large`."
+      "reason": "The owner-selected merge policy collects registered flows only for Cloud; local/external evidence remains an independent-review obligation with redacted current-head report identity. Cloud required IDs can supply selection without inventing a model record. Previous: Shadow questions use grounded conditions and fit the 100 kB UTF-8 request body; shadow-3 held-out required recall reached 0.97 on Claude-labelled tasks."
     },
     "tool/main/specs.py": {
       "dup": 0,
@@ -158,8 +158,8 @@
     },
     "tool/main/verification.py": {
       "dup": 12,
-      "lines": 1009,
-      "reason": "Numeric hidden values redact whole scalar tokens while preserving unrelated commit hashes, versions and addresses in reviewer evidence. Previous: The approved owned WebView collector validates native target and tool approval before direct execution; existing registered execution remains mandatory. Previous: `sanitize` reads the hidden values once per call (`_forms`), not once per string: every listing sanitized each task's contract re-reading the env file per string, 7 s for one repository; within a value the longer form goes first, since a literal ending in a backslash split its escaped form (#299 round 1; six lines). Before that: `checkout_proven` leaves out the start hook's receipt-matching rebuilt indexes, as `specs.status` does (one line). Before that: Stage 4 extends the existing verifier with selected-flow/spec binding, owner outcomes, approved native contracts, native receipt validation and setup cancellation outcomes."
+      "lines": 1007,
+      "reason": "Integration preserves version 3 per-application approvals and version 2 owned WebView approvals through native_targets.approval, including measured tool assets. Numeric hidden values redact scalar tokens while preserving commit hashes, versions and addresses. Previous: The owned collector validates native targets before direct execution; schemas remain outside its hashed module. Previous: `sanitize` reads hidden values once per call (`_forms`), not once per string (#299). `checkout_proven` excludes receipt-matching rebuilt indexes. Stage 4 binds selected flows, native receipts, ownership and cleanup to verification."
     },
     "tool/main/work.py": {
       "dup": 0,
@@ -238,8 +238,8 @@
     },
     "tool/test_local_verification.py": {
       "dup": 6,
-      "lines": 1409,
-      "reason": "Pins that `sanitize` reads the hidden values once per call, and that a secret ending in a backslash leaves valid JSON (#299 round 1; eleven lines). Before that: Pins that a refused cloud review's handoff carries no environment secret (#175 round 1). Before that: Stage 4 verifies actual automatic local/external API and browser collection, owner routing, subset approval, cleanup, process ownership and setup cancellation in every implementation owner's executor and loop."
+      "lines": 1413,
+      "reason": "Merge integration checks default/local/external owners across named flows and evidence labels: no registered execution, while requested evidence reaches independent review. Previous: Pins that sanitize reads hidden values once per call and preserves JSON after redaction (#299); Cloud handoffs exclude environment secrets (#175). Stage 4 covers Cloud collection, ownership, cleanup, cancellation and selected-flow reuse."
     },
     "tool/test_loop.py": {
       "dup": 19,

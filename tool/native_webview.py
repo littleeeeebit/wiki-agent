@@ -260,6 +260,7 @@ def run(request):
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")
     if len(sys.argv) != 4 or sys.argv[1] != "android-wait":
         raise ValueError("Expected android-wait with observed focus and hierarchy files")
     focus = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))

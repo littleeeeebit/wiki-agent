@@ -151,6 +151,25 @@ def repair_cloud(world, spec, name="repair.py"):
     return head
 
 
+@pytest.mark.parametrize("owner", [None, "local", "external"])
+@pytest.mark.parametrize("review", [{"flows": ["health"]}, {"evidence": ["api"]}, {"evidence": ["browser"]},
+                                    {"evidence": ["desktop"]}])
+def test_runtime_declarations_do_not_gate_local_or_external_work(cloud_world, owner, review):
+    """Runtime receipts gate only Claude Cloud work; a failing flow is never run here."""
+
+    world = cloud_world
+    spec = pr_spec(world, "local-runtime", 1, "change.py", implementation_environment=owner, review=review)
+    world.failed.touch()
+    done = looped(spec["id"])
+    assert done["state"] == "머지 가능", done.get("stopped")
+    expected = {"offline", *review.get("evidence", [])} | ({"api"} if "browser" in review.get("evidence", []) else set())
+    assert done["rounds"][0]["review_contract"]["evidence"] == sorted(expected)
+    assert not done["rounds"][0]["review_contract"]["flows"] and "local_verification" not in done
+    assert Reviewer.made[0].tools == loop.REVIEW_TOOLS and not Worker.made
+    assert "## Registered runtime evidence" not in (world.tmp / "review/proj/1/round-1.md").read_text(encoding="utf-8")
+    assert specs.view(world.repo, done)["unproven"] == ""
+
+
 def test_selected_subset_unknown_ids_and_stale_contract_stop_before_setup(cloud_world, monkeypatch):
     world = cloud_world
     world.contract["flows"].append({**world.contract["flows"][0], "id": "unselected",

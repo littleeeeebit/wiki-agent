@@ -20,6 +20,7 @@ from urllib.parse import quote, urlsplit
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+import native_targets
 import native_verification
 import native_webview
 
@@ -53,7 +54,7 @@ class Flow(Contract):
     paths: list[str] = Field(min_length=1)
     environments: list[str] = Field(default_factory=lambda: ["api", "dataset", "settings"], min_length=1)
     assertions: list[Assertion] = Field(min_length=1)
-    native: native_verification.NativeTarget | native_webview.Target | None = None
+    native: native_targets.Target | None = None
 
     @model_validator(mode="after")
     def native_contract(self):
@@ -82,7 +83,7 @@ class Manifest(Contract):
 
 
 class LocalSettings(Contract):
-    version: Literal[1, 2] = 1
+    version: Literal[1, 2, 3] = 1
     environment_id: str = Field(min_length=1)
     test_scope: str = Field(min_length=1)
     env_file: str = Field(min_length=1)
@@ -93,12 +94,15 @@ class LocalSettings(Contract):
     cleanup: str = ""
     redact_values: list[str] = Field(default_factory=list)
     manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    native: native_verification.NativeSettings | native_webview.Settings | None = None
+    native: native_verification.NativeSettings | native_webview.Settings | list[native_targets.Approval] | None = None
 
     @model_validator(mode="after")
     def versioned_native(self):
-        if self.native is not None and self.version != 2:
-            raise ValueError("Native scope approval requires local settings version 2")
+        if isinstance(self.native, list):
+            if self.version != 3 or len({a.application for a in self.native}) != len(self.native):
+                raise ValueError("Native approvals per application require local settings version 3, one per application")
+        elif self.native is not None and self.version != 2:
+            raise ValueError("A single native scope approval requires local settings version 2")
         return self
 
 
@@ -282,16 +286,14 @@ def signature(repo: Path, path: Path, flow: Flow, settings: dict) -> str:
                 "revisions": {k: settings["revisions"].get(k) for k in flow.environments},
                 "env": sha(content), "runtime": specs.digest(repo, path, flow.command)}
     if flow.kind == "desktop":
-        if not settings.get("native"):
-            raise ValueError("승인된 Windows 네이티브 테스트 범위를 준비해야 한다")
-        identity["native"] = settings["native"]
+        identity["native"] = native_targets.approval(settings, flow.native)
         identity["collector"] = sha(Path(native_verification.__file__).read_bytes())
         if isinstance(flow.native, native_webview.Target):
             identity["webview_collector"] = native_webview.collector_digest()
             identity["assets"] = [{**asset, "actual": native_verification.digest(Path(asset["path"]))}
-                                  for asset in native_webview.assets(settings["native"])]
+                                  for asset in native_webview.assets(identity["native"])]
         else:
-            identity["executable"] = sha(Path(settings["native"]["executable"]).read_bytes())
+            identity["executable"] = sha(Path(identity["native"].get("executable") or identity["native"]["runner"]).read_bytes())
     return sha(identity)
 
 
@@ -349,7 +351,8 @@ def receipt(output: str, flow: Flow, head: str, settings: dict,
         if path is None or artifact is None or data.get("version") != 2:
             raise ValueError("Native evidence requires version 2 and owned artifact/build identity")
         kept["native"] = native_verification.validate_receipt(data, path, artifact, flow.native.model_dump(),
-                                                             settings.get("native"), settings["revisions"])
+                                                             native_targets.approval(settings, flow.native),
+                                                             settings["revisions"])
     return clean_evidence(kept, settings)
 
 
@@ -579,9 +582,7 @@ def _execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt:
         raise ValueError("각 흐름이 사용하는 API·데이터·설정 버전을 기록해야 한다")
     for flow in selected:
         if flow.kind == "desktop":
-            if not settings.get("native"):
-                raise ValueError("승인된 Windows 네이티브 테스트 범위를 준비해야 한다")
-            native_verification.preflight(path, head, flow.native.model_dump(), settings["native"])
+            native_targets.preflight(path, head, flow.native.model_dump(), native_targets.approval(settings, flow.native))
     prepare(repo, path, settings)
     settings = redaction(settings, path)
     previous_record = spec.get("local_verification") or {}
@@ -632,7 +633,8 @@ def _execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt:
                 try:
                     native_verification.validate_receipt({"head": before["executed_head"], **before["evidence"]}, path,
                                                          Path(before["artifact_dir"]), flow.native.model_dump(),
-                                                         settings["native"], settings["revisions"],
+                                                         native_targets.approval(settings, flow.native),
+                                                         settings["revisions"],
                                                          redact_text=lambda text: redact(text, settings))
                 except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
                     reuse = ""
@@ -656,7 +658,7 @@ def _execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt:
             if flow.kind == "desktop":
                 request = {"root": str(path), "artifact_dir": str(flow_artifact), "head": head, "flow": flow.id,
                            "environment_id": settings["environment_id"], "test_scope": settings["test_scope"],
-                           "revisions": settings["revisions"], "settings": settings["native"],
+                           "revisions": settings["revisions"], "settings": native_targets.approval(settings, flow.native),
                            "target": flow.native.model_dump()}
                 request_file = flow_artifact / "request.json"
                 request_file.write_text(json.dumps(request), encoding="utf-8")
@@ -803,7 +805,8 @@ def proven(repo: Path, path: Path, spec: dict, head: str, base_oid: str, *, flow
             if flow.kind == "desktop":
                 native_verification.validate_receipt({"head": row.get("executed_head"), **row["evidence"]}, path,
                                                      Path(row["artifact_dir"]), flow.native.model_dump(),
-                                                     settings["native"], settings["revisions"],
+                                                     native_targets.approval(settings, flow.native),
+                                                     settings["revisions"],
                                                      redact_text=lambda text: redact(text, settings))
     except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError):
         return "로컬 검증 환경을 확인하지 못했다"
@@ -939,12 +942,7 @@ def set_config(body: LocalSettings, sid: str | None = None) -> dict:
                 raise ValueError("확인한 검증 명세가 바뀌었다 — 다시 읽는다")
             for flow in parsed.flows:
                 if flow.kind == "desktop":
-                    if isinstance(flow.native, native_webview.Target):
-                        approved = body.native.applications.get(flow.native.application) if isinstance(body.native, native_webview.Settings) else None
-                        if not approved or approved.platform != flow.native.platform:
-                            raise ValueError("등록된 플랫폼과 앱의 격리 실행 범위를 명시적으로 승인한다")
-                    elif not isinstance(body.native, native_verification.NativeSettings) or body.native.application != flow.native.application:
-                        raise ValueError("등록된 네이티브 앱·실행 파일·작업 전용 데스크톱 범위를 명시적으로 승인한다")
+                    native_targets.approval(body.model_dump(), flow.native)
             if any(not body.revisions.get(k) for f in parsed.flows for k in f.environments):
                 raise ValueError("흐름이 사용하는 환경 버전을 모두 지정한다")
             source = Path(body.env_file)

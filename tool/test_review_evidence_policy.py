@@ -165,9 +165,9 @@ def test_unconfigured_local_and_external_tasks_reach_read_only_review_with_evide
     assert "local_verification" not in done and not any(c[:3] == ["gh", "pr", "merge"] for c in world.hub.calls)
 
 
-@pytest.mark.parametrize("environment,flows", [("claude-cloud", []), (None, ["health"]), ("external", ["health"])])
-def test_cloud_and_explicit_flow_requests_still_require_registered_execution(world, environment, flows):
-    spec = pr_spec(world, "registered-required", 1, "code.py", implementation_environment=environment,
+@pytest.mark.parametrize("flows", [[], ["health"]])
+def test_cloud_requests_still_require_registered_execution(world, flows):
+    spec = pr_spec(world, "registered-required", 1, "code.py", implementation_environment="claude-cloud",
                    review={**REQUIRED, "flows": flows})
     result = selected(world, spec)
     assert result["registered_runtime"] and result["problems"]
@@ -178,24 +178,14 @@ def test_cloud_and_explicit_flow_requests_still_require_registered_execution(wor
 
 
 @pytest.mark.parametrize("marker", [verification.LOCAL, ".wiki/verification.protection.json", verification.MANIFEST])
-def test_broken_configured_registration_is_not_downgraded_to_report_review(world, marker):
+def test_broken_cloud_registration_is_not_downgraded_to_report_review(world, marker):
     file = world.repo / marker
     file.parent.mkdir(parents=True, exist_ok=True)
     file.write_text("{}", encoding="utf-8")
-    spec = pr_spec(world, "configured-evidence", 1, "code.py", review=REQUIRED)
+    spec = pr_spec(world, "configured-evidence", 1, "code.py", review=REQUIRED, implementation_environment="claude-cloud")
     result = selected(world, spec)
     assert result["registered_runtime"] and result["problems"]
     assert contract.ready(world.repo, Path(spec["worktree"]), spec, result)
-
-
-def test_existing_local_registered_flow_still_executes_and_requires_its_receipt(cloud_world):
-    world = cloud_world
-    spec = pr_spec(world, "registered-local", 1, "code.py", review={"evidence": ["api"]})
-    assert selected(world, spec)["registered_runtime"]
-    done = looped(spec["id"])
-    assert done["state"] == "머지 가능"
-    assert done["local_verification"]["flows"][0]["evidence"]["requests"][0]["status"] == 200
-    assert "Registered runtime evidence" in order(world, 1, 1)
 
 
 @pytest.mark.parametrize("changed", ["head", "rev"])

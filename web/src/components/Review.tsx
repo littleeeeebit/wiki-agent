@@ -363,6 +363,27 @@ const VERIFICATION_STATE: Record<LocalVerification['state'], string> = {
   failed: '실행 검증 실패 · 구현 수정 필요',
 }
 
+/** Fields for the per-application approvals in native_targets. */
+const NATIVE_KEYS: Record<string, string[]> = {
+  'windows-win32': ['executable', 'executable_sha256', 'profile'],
+  // WebView apps approve no binary: the collector builds the manifest's `output` at the reviewed head.
+  'windows-webview2': ['runner', 'runner_sha256', 'profile'],
+  'android-emulator': ['runner', 'runner_sha256', 'profile', 'sdk', 'adb', 'adb_sha256', 'emulator', 'emulator_sha256',
+    'system_image', 'system_image_sha256'],
+}
+
+/** Each desktop flow's application and the approval host it needs (`native_verification.host`). */
+function nativeApps(flows: { kind: string; native?: unknown }[] | undefined) {
+  const apps: Record<string, string> = {}
+  for (const f of flows ?? []) {
+    const target = f.native as { application?: string; driver?: string; platform?: string } | null | undefined
+    if (f.kind !== 'desktop' || !target?.application) continue
+    apps[target.application] = target.driver !== 'webview' ? 'windows-win32'
+      : target.platform === 'android' ? 'android-emulator' : 'windows-webview2'
+  }
+  return apps
+}
+
 /** Repository-specific setup and receipts stay in the existing review tab.
  * Requests retain the repository captured on mount; retired results are dropped. */
 function VerificationPanel({ spec }: { spec: Spec }) {
@@ -402,18 +423,23 @@ function VerificationPanel({ spec }: { spec: Spec }) {
         fields[key] = String(saved[key] ?? '')
       }
       fields.allowed_origins = (saved.allowed_origins as string[] | undefined)?.join('\n') ?? ''
-      if (found.manifest?.flows.some((f) => f.kind === 'desktop')) {
-        const native = saved.native as Record<string, unknown> | undefined
+      if (found.manifest?.flows.some((f) => f.kind === 'desktop'
+        && (f.native as { driver?: string }).driver === 'webview' && !('build' in (f.native as object)))) {
         const targets = found.manifest.flows.filter((f) => f.kind === 'desktop')
           .map((f) => f.native as { driver?: string; application: string; platform?: string })
+          .filter((t) => t.driver === 'webview')
         const asset = { path: '', sha256: '' }
-        const initial = targets.every((t) => t.driver === 'webview')
-          ? { version: 2, host: 'webview', node: asset, applications: Object.fromEntries(targets.map((t) => [t.application, {
+        const initial = { version: 2, host: 'webview', node: asset, applications: Object.fromEntries(targets.map((t) => [t.application, {
               platform: t.platform, binary: asset, profile: '', ...(t.platform === 'android' ? { adb: asset, emulator: asset, avd: '' } : {}),
             }])) }
-          : { version: 1, host: 'windows-win32', application: targets[0].application, executable: '', executable_sha256: '',
-              profile: '', ownership: 'launch-disposable', desktop: 'attempt-owned' }
-        fields.native_scope = JSON.stringify(native ?? initial, null, 2)
+        fields.native_scope = JSON.stringify(saved.native ?? initial, null, 2)
+      } else {
+        // Settings version 2 held one approval; version 3 holds one per application.
+        const approvals = ([] as Record<string, unknown>[]).concat((saved.native as Record<string, unknown>[] | undefined) ?? [])
+        for (const [application, host] of Object.entries(nativeApps(found.manifest?.flows))) {
+          const approval = approvals.find((a) => a.application === application && a.host === host)
+          for (const key of NATIVE_KEYS[host]) fields[`native:${application}:${key}`] = String(approval?.[key] ?? '')
+        }
       }
       for (const key of new Set(found.manifest?.flows.flatMap((f) => f.environments) ?? [])) fields[`revision:${key}`] = revisions?.[key] ?? ''
       setValues(fields)
@@ -432,11 +458,15 @@ function VerificationPanel({ spec }: { spec: Spec }) {
     try {
       const revisions = Object.fromEntries(Object.entries(values).filter(([k]) => k.startsWith('revision:'))
         .map(([k, v]) => [k.slice(9), v]))
-      const hasNative = config?.manifest?.flows.some((f) => f.kind === 'desktop')
-      const native = hasNative ? JSON.parse(values.native_scope) : null
-      const body = { ...config?.settings, ...Object.fromEntries(Object.entries(values).filter(([k]) => !k.startsWith('revision:') && k !== 'native_scope')),
+      const rawNative = 'native_scope' in values
+      const native = rawNative ? JSON.parse(values.native_scope) : Object.entries(nativeApps(config?.manifest?.flows)).map(([application, host]) => ({
+        version: 1, host, application,
+        ...Object.fromEntries(NATIVE_KEYS[host].map((k) => [k, values[`native:${application}:${k}`] ?? ''])),
+        ...(host === 'windows-win32' ? { ownership: 'launch-disposable', desktop: 'attempt-owned' } : {}),
+      }))
+      const body = { ...config?.settings, ...Object.fromEntries(Object.entries(values).filter(([k]) => !k.startsWith('revision:') && !k.startsWith('native:') && k !== 'native_scope')),
         revisions, allowed_origins: values.allowed_origins.split('\n').map((v) => v.trim()).filter(Boolean),
-        ...(hasNative ? { version: 2, native } : {}),
+        ...(rawNative ? { version: 2, native } : native.length ? { version: 3, native } : {}),
         manifest_digest: config!.manifest_digest }
       const found = await api.saveVerificationConfig(owner.repo, owner.id, body)
       if (generation.current === ticket) { setConfig(found); setEditing(false) }
@@ -464,6 +494,11 @@ function VerificationPanel({ spec }: { spec: Spec }) {
   const labels: Record<string, string> = { environment_id: '테스트 환경 이름', test_scope: '테스트 계정·데이터 범위',
     env_file: '로컬 .env 파일의 절대 경로', browser_tool: '브라우저 검증 도구', setup: '환경 준비 명령 (선택)',
     cleanup: '테스트 데이터·서버 정리 명령 (선택)' }
+  const nativeLabels: Record<string, string> = { executable: '승인할 실행 파일의 절대 경로',
+    executable_sha256: '실행 파일 SHA-256', profile: '격리된 테스트 프로필 이름', runner: '시나리오를 실행할 Node의 절대 경로',
+    runner_sha256: 'Node 실행 파일 SHA-256', sdk: 'Android SDK의 절대 경로', adb: 'adb 실행 파일의 절대 경로', adb_sha256: 'adb SHA-256',
+    emulator: '에뮬레이터 실행 파일의 절대 경로', emulator_sha256: '에뮬레이터 SHA-256',
+    system_image: '에뮬레이터 시스템 이미지의 절대 경로', system_image_sha256: '시스템 이미지 내용 다이제스트' }
   return <section aria-label={cloud ? '클라우드 구현의 로컬 검증' : '등록 흐름의 로컬 검증'} className="mt-3 rounded-md border border-border p-3">
     <div className="font-heading text-[11px] font-semibold">{cloud ? 'Claude Code Cloud → 로컬 검증' : '등록 흐름 → 로컬 검증'}</div>
     <p className="mt-1">{record ? VERIFICATION_STATE[record.state] : '로컬 검증 대기'}</p>
@@ -501,7 +536,11 @@ function VerificationPanel({ spec }: { spec: Spec }) {
         <textarea required disabled={working} rows={12} value={values.native_scope}
           onChange={(e) => setValues((was) => ({ ...was, native_scope: e.target.value }))}
           className="w-full rounded-md border border-border bg-background px-2 py-1 font-mono" /></label>}
-      {config.manifest.flows.some((f) => f.kind === 'desktop') && <p className="text-faint">작업 전용 데스크톱과 임시 Android 에뮬레이터에서 실행한다. 기존 앱이나 기기에 연결하지 않는다.</p>}
+      {Object.keys(values).filter((k) => k.startsWith('native:')).map((key) => <label key={key} className="block">
+        <span className="block text-faint">{key.slice(7, key.lastIndexOf(':'))} · {nativeLabels[key.slice(key.lastIndexOf(':') + 1)]}</span>
+        <input required disabled={working} value={values[key]} onChange={(e) => setValues((was) => ({ ...was, [key]: e.target.value }))}
+          className="h-7 w-full rounded-md border border-border bg-background px-2" /></label>)}
+      {config.manifest.flows.some((f) => f.kind === 'desktop') && <p className="text-faint">Windows 테스트 앱은 작업 전용 데스크톱에서, Android 앱은 일회용 에뮬레이터에서 실행한다. 기존 앱·기기에 연결하지 않는다.</p>}
       <details><summary className="cursor-pointer text-primary">승인할 주요 흐름과 실행 명령</summary>
         <ul className="mt-1 space-y-1">{config.manifest.flows.map((f) => <li key={f.id}>
           {f.title} · {f.kind}<code className="block break-all font-mono text-[12px]">{f.command}</code>

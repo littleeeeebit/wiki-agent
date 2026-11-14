@@ -100,6 +100,7 @@ def observe(pid, executable, expected_hash, desktop, port):
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")
     if sys.argv[1] == "listener":
         print(json.dumps({"pid": listener_owner(int(sys.argv[2]), int(sys.argv[3]))}))
     else:
