@@ -105,7 +105,7 @@ def preflight(root: Path, head: str, target: dict, settings: dict) -> dict:
 
 def collector_digest() -> str:
     sources = {name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in
-               ("native_webview.py", "native_webview.mjs", "native_process.py", "native_window.py")}
+               ("native_webview.py", "native_webview.mjs", "native_process.py", "native_window.py", "native_cleanup.mjs")}
     return hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest()
 
 

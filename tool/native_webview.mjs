@@ -7,6 +7,7 @@ import net from 'node:net';
 import path from 'node:path';
 import {createRequire} from 'node:module';
 import {fileURLToPath, pathToFileURL} from 'node:url';
+import {childAlive, stopOwned as stop, cleanupOwned} from './native_cleanup.mjs';
 
 const request = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 const {root, artifact_dir: artifact, target, settings, head} = request;
@@ -38,8 +39,7 @@ const owned = file => {
 const profile = path.join(artifact, 'profile'); mkdirSync(profile);
 const sessions = [], actions = [], artifacts = [];
 const lifecycle = [];
-let child, emulator, browser, context, page, serial, forward, data, debugPort, measuredHead, logcat, androidPid, installed = false;
-const childAlive = proc => proc && Number.isInteger(proc.pid) && proc.exitCode === null && proc.signalCode === null;
+let child, emulator, browser, context, page, serial, forward, data, debugPort, measuredHead, logcat, androidPid, installed = false, startupRecoveryUsed = false;
 function diagnose(event) {
   const state = {event, time: Date.now(), emulator: emulator && {pid: emulator.pid, code: emulator.exitCode, signal: emulator.signalCode}};
   if (serial) {
@@ -53,11 +53,6 @@ function logged(file, args, name, options = {}) {
   try {return spawn(file, args, {windowsHide: true, ...options, stdio: ['ignore', descriptor, descriptor]});}
   finally {closeSync(descriptor);}
 }
-const stop = async proc => {
-  if (!childAlive(proc)) return;
-  const exited = new Promise(resolve => proc.once('exit', resolve)); proc.kill();
-  await Promise.race([exited, sleep(5000).then(() => {if (childAlive(proc)) throw new Error('Owned process did not stop');})]);
-};
 const adb = (...args) => run(approval.adb.path, ['-s', serial, ...args]);
 const shell = (...args) => adb('shell', ...args.map(arg => `'${String(arg).replaceAll("'", "'\\''")}'`));
 const addArtifact = name => artifacts.push({path: name, sha256: hash(readFileSync(path.join(artifact, name)))});
@@ -75,6 +70,9 @@ async function prepareAndroidStartupFocus() {
   if (androidFocus()) return;
   emulatorListener();
   const initial = JSON.parse(readFileSync(path.join(artifact, 'android-focus.json'), 'utf8'));
+  if (!initial.lines.some(line => /mCurrentFocus=.*Application Not Responding: com\.android\.systemui\}/.test(line))) return;
+  assert.ok(!startupRecoveryUsed, 'System UI startup failure recurred; recovery refused');
+  startupRecoveryUsed = true;
   save('startup-system-ui.json', initial); addArtifact('startup-system-ui.json');
   shell('uiautomator', 'dump', '/data/local/tmp/wiki-startup.xml');
   writeFileSync(path.join(artifact, 'startup-system-ui.xml'), shell('cat', '/data/local/tmp/wiki-startup.xml'));
@@ -165,7 +163,10 @@ async function launch() {
       installed = true;
     }
     shell('am', 'start', '-n', `${target.package}/${target.activity}`);
-    await until(androidFocus);
+    await until(async () => {
+      if (sessions.length === 0 && actions.length === 0) await prepareAndroidStartupFocus();
+      return androidFocus();
+    });
     const pid = await until(() => Number(shell('pidof', target.package).trim()));
     androidPid = pid;
     logcat = logged(approval.adb.path, ['-s', serial, 'logcat', '--pid', String(pid)], `android-app-${sessions.length}.log`);
@@ -208,7 +209,6 @@ async function checkpoint(label) {
   } else {
     const listener = emulatorListener();
     const pid = Number(shell('pidof', target.package).trim()); assert.ok(pid > 0);
-    if (label === 'launch' && sessions.length === 0 && actions.length === 0) await prepareAndroidStartupFocus();
     assert.ok(androidFocus(), 'Installed app lost native focus');
     observed = {pid, package: target.package, activity: target.activity, emulator_pid: emulator.pid, listener_pid: listener,
       fingerprint: hash(shell('getprop', 'ro.build.fingerprint'))};
@@ -282,11 +282,10 @@ try {
   console.error(error.stack);
   process.exitCode = 1;
 } finally {
-  try {
-    if (browser) await browser.close();
-    await stop(logcat);
-    if (target.platform === 'windows') await stop(child);
-    if (emulator) {try {adb('emu', 'kill');} finally {await stop(emulator);}}
-  } catch (error) {result = {blocked: {prerequisite: 'native', reason: `Native cleanup failed: ${error.message}`}}; process.exitCode = 1;}
+  result = await cleanupOwned(result, [
+    ['browser', () => browser?.close()], ['logcat', () => stop(logcat)],
+    ['application', () => stop(child)], ['emulator', () => stop(emulator)],
+  ]);
+  if (result.blocked) process.exitCode = 1;
   save('result.json', result);
 }

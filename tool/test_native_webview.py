@@ -11,6 +11,7 @@ import time
 import threading
 import hashlib
 from contextlib import nullcontext
+from pathlib import Path
 
 import pytest
 
@@ -20,6 +21,10 @@ from main import verification, specs
 from common import shell
 from native_process import launched
 from common import process
+
+
+def test_owned_cleanup_regressions_use_real_node_processes():
+    subprocess.run([shutil.which("node"), "--test", str(Path(__file__).with_name("test_native_cleanup.mjs"))], check=True)
 
 
 @pytest.fixture

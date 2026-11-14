@@ -22,6 +22,10 @@ editor accepts the full native JSON, including the existing version 1 Win32
 approval unchanged. Neither format is committed to a project.
 
 Windows processes inherit an attempt-owned desktop and kill-on-close job.
+Cleanup terminates the owned process handles rather than contacting an emulator
+console port. An already exited emulator needs no second shutdown. Every resource
+is attempted even if another cleanup fails; cleanup errors supplement the original
+failure instead of replacing it. An emulator crash still blocks acceptance.
 Android runs a newly launched emulator with fresh writable images under the
 attempt directory; an existing emulator or physical device is never selected.
 The WebView fixture uses GLES with Vulkan disabled, following the emulator's
@@ -29,7 +33,8 @@ The WebView fixture uses GLES with Vulkan disabled, following the emulator's
 Large debug APK installation and the installed-package verification copy each
 allow up to 120 seconds; diagnostic commands retain their 30-second limit.
 The enclosing verification deadline still bounds the complete attempt.
-Before its first observation, a disposable Android emulator may recover once
+Before waiting for app focus, process discovery or debugger connection, a
+disposable Android emulator may recover once
 from the System UI startup ANR by selecting its observed native Wait control.
 The collector retains the original focus, UI hierarchy and screenshot as hashed
 artifacts and then requires app focus again. App errors, unknown dialogs and
