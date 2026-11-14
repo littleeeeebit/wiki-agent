@@ -32,6 +32,9 @@ It binds the report while the turn still owns the checkout, before the next revi
 instruction is frozen. A cleanup-only follow-up retains that report. Include the
 observations, environment and tested build identity in the report itself: ordinary
 read-only review does not automatically expose ignored artifact directories.
+An unset implementation environment retains local repair and branch behavior
+through restart recovery; it does not turn an unfinished correction into an
+external review or skip its completion report.
 
 The Cloud review cell also executes verification commands and creates test
 scripts, fixtures and receipts. Codex uses `workspace-write` with

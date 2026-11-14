@@ -16,6 +16,37 @@ from test_review_contract import selected
 REQUIRED = {"evidence": ["api", "browser", "desktop"]}
 
 
+@pytest.mark.parametrize("environment,detached", [(None, False), ("local", False), ("external", True), ("claude-cloud", True)])
+def test_review_sync_preserves_local_branch_for_default_environment(world, environment, detached):
+    spec = pr_spec(world, "sync-environment", 7, "code.py", implementation_environment=environment)
+    path = Path(spec["worktree"])
+    head = world.hub.push_elsewhere(7)
+    loop.sync_review(spec, path, head)
+    assert git(path, "rev-parse", "HEAD") == head
+    assert (specs.sh(["git", "symbolic-ref", "-q", "HEAD"], path).returncode == 1) == detached
+
+
+@pytest.mark.parametrize("environment", [None, "local"])
+def test_resumed_local_repair_collects_completion_before_next_review(world, environment):
+    spec = pr_spec(world, "resume-report", 7, "code.py", review=REQUIRED, implementation_environment=environment)
+    finding = "[P1] code.py:1 — Preserve the pending correction across recovery"
+    Reviewer.replies = [deny(finding)]
+    Worker.replies = ["", ""]
+    stopped = looped(spec["id"])
+    assert stopped["state"] == "멈춤" and len(stopped["rounds"]) == 1
+    def repair(path, halt):
+        commit(path, "repair.py")
+        report = [{"item": spec["done"][0], "pass": True, "evidence": "Recovered runtime observations"}]
+        return "```done-report\n" + json.dumps(report) + "\n```\n" + CLEANED + "```disposition\n" + json.dumps([
+            {"finding": finding, "action": "fixed", "evidence": "Observed repaired behavior"}]) + "\n```"
+    Worker.replies = [repair]
+    Reviewer.replies = [allow]
+    done = looped(spec["id"])
+    assert done["state"] == "머지 가능" and len(done["rounds"]) == 2
+    assert done["report"] and done["report_at"]["head"] == done["rounds"][-1]["head"]
+    assert "Recovered runtime observations" in order(world, 7, 2)
+
+
 @pytest.mark.parametrize("state", ["고치는 중 R1", "멈춤"])
 @pytest.mark.parametrize("shape", ["valid", "failed", "malformed", "absent"])
 def test_repair_report_capture_cannot_authorize_workflow_transitions(world, monkeypatch, state, shape):

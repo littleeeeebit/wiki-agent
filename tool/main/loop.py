@@ -1276,7 +1276,7 @@ def sync_review(spec: dict, path: Path, head: str) -> None:
     if local == head:
         return
     detached = specs.sh(["git", "symbolic-ref", "-q", "HEAD"], path).returncode == 1
-    if detached or spec.get("implementation_environment", "local") != "local":
+    if detached or spec.get("implementation_environment") not in (None, "local"):
         synced = specs.sh(["git", "checkout", "--detach", head], path, 60)
     else:
         if specs.sh(["git", "merge-base", "--is-ancestor", local, head], path).returncode:
@@ -1400,7 +1400,7 @@ def step(loop: Loop) -> bool:
         f["grade"] != "P2" and not f.get("disposition")
         for f in settled(pending.get("items") or [], pending.get("disposition"))))
     if (pending.get("verdict") == "deny" and incomplete
-            and not verification.cloud(spec) and spec.get("implementation_environment", "local") == "local"):
+            and not verification.cloud(spec) and spec.get("implementation_environment") in (None, "local")):
         return corrected(loop, spec, repo, path)
     ship = cloud_shipped if verification.cloud(spec) else external_shipped if spec.get("implementation_environment") == "external" else shipped
     if not ship(loop, spec, repo, path, head, base):
@@ -2457,7 +2457,7 @@ def proceed(repo: Path, spec: dict, note: str, limits: dict | None = None) -> di
         else:
             view = gh_or_502(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "headRefName,headRefOid"])
             path = adopted(repo, view["headRefName"], view["headRefOid"],
-                           detached=spec.get("implementation_environment", "local") != "local")
+                           detached=spec.get("implementation_environment") not in (None, "local"))
             specs.update(repo.name, sid, worktree=str(path), pr={**spec["pr"], "branch": view["headRefName"]})
     elif why is Why.LEFT_QUEUE:
         view = gh_or_502(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "state,headRefOid,baseRefName"])
@@ -2659,7 +2659,7 @@ def attach(repo: Path, spec: dict, view: dict, environment: str) -> dict:
                 pr={"number": view["number"], "url": view["url"], "base": view["baseRefName"],
                     "head": view["headRefOid"], "branch": view["headRefName"]},
                 implementation_environment=(environment if environment != "local" else
-                                            fresh.get("implementation_environment", "local")), stopped=None, fault=None,
+                                            fresh.get("implementation_environment") or "local"), stopped=None, fault=None,
                 gate=None, validation=None))
             return fresh
     finally:
