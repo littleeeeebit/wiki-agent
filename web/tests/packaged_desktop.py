@@ -13,7 +13,7 @@ import tempfile
 import time
 from urllib.request import urlopen
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error, sync_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tool"))
 from common import process  # noqa: E402
@@ -125,6 +125,7 @@ def main():
             preferences.wait_for_function("fetch('/api/switch').then(r=>r.json()).then(s=>s.mode==='off')")
             preferences.get_by_role("button", name="계정 및 PC 준비", exact=True).click()
             assert preferences.get_by_label("Claude Code 사용").is_checked()
+            preferences.wait_for_function("![...document.querySelectorAll('.account-row [role=status]')].some(e => e.textContent === '확인 중…')", timeout=90000)
             out.mkdir(parents=True, exist_ok=True)
             preferences.screenshot(path=str(out / "settings-desktop.png"))
             page.evaluate("window.__TAURI_INTERNALS__.invoke('preferences_window', {page:'updates'})")
@@ -136,7 +137,12 @@ def main():
             updates.get_by_role("button", name="업데이트 확인", exact=True).click()
             updates.get_by_role("status").filter(has_text="최신 버전을 사용하고 있다").wait_for(timeout=45000)
             updates.screenshot(path=str(out / "updates-desktop.png"))
-            updates.evaluate("window.__TAURI_INTERNALS__.invoke('plugin:window|destroy')")
+            try:
+                updates.evaluate("window.__TAURI_INTERNALS__.invoke('plugin:window|destroy')")
+            except Error:
+                if not updates.is_closed():
+                    raise
+            assert updates.is_closed()
             preferences.get_by_role("button", name="닫기", exact=True).click()
             assert page.evaluate("fetch('/api/onboarding').then(r=>r.ok)")
             observed["preferences"] = {"settings_singleton": True, "separate_updates": True, "local_setting_write": True, "latest_result": True}
