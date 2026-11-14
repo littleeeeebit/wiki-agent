@@ -415,11 +415,14 @@ fn pty_close(ptys: State<Ptys>, id: u32) {
 }
 
 fn main() {
-    let app = tauri::Builder::default()
-        // Stands behind the page's `window.Notification`, which a webview
-        // alone does not have.
-        .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+    // Stands behind the page's `window.Notification`, which a webview
+    // alone does not have.
+    let app = tauri::Builder::default().plugin(tauri_plugin_notification::init());
+    // Only `tool/build_desktop.py` writes `plugins.updater`; registered without it the
+    // plugin fails to load and a dev run (`tool/app.cmd`) died before its window opened.
+    #[cfg(desktop_bundle)]
+    let app = app.plugin(tauri_plugin_updater::Builder::new().build());
+    let app = app
         .manage(Ptys::default())
         .manage(Sidecar(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![pty_open, pty_write, pty_resize, pty_close, open_url, restart, new_window, preferences_window, preparation_finished, package_update, package_install])
