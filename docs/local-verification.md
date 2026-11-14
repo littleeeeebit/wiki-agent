@@ -204,9 +204,17 @@ Example native flow, inside the version-2 manifest:
 
 The Review tab shows setup for a Cloud task once collection is pending. Inspect
 the complete native target/actions and approve the application, executable path,
-SHA-256 and disposable profile. Its saved `native` object also contains
+SHA-256 and disposable profile. The settings save at version 3, where `native`
+is a list with one approval per registered application; a version 2 file with a
+single `native` object still reads. A Win32 approval also contains
 `version: 1`, `host: "windows-win32"`, `ownership: "launch-disposable"` and
 `desktop: "attempt-owned"`. These are closed values, not an agent-selected driver.
+
+A target with `driver: "webview"` describes a Tauri/WebView app on `windows` or
+`android`. Its approval adds the Node that runs the scenario and, for Android,
+the SDK and emulator image. The manifest and settings validate today, but
+collection refuses such a flow until its collector lands, as tracked in
+`docs/plans/native-webview/0-overview.md`.
 The executable must be a reviewed build input inside the checkout, or an approved
 `python.exe`/`pythonw.exe` running a reviewed `.py` entry point. Unattested external
 compiled builds are unsupported. Git's checkout filters map measured input bytes

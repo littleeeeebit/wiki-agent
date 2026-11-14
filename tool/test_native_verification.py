@@ -32,6 +32,61 @@ def test_version_one_rejects_native_and_unknown_native_scope():
         verification.Flow.model_validate(flow)
 
 
+def webview_flow(platform: str, **changed) -> dict:
+    target = {"driver": "webview", "platform": platform, "application": f"vto-{platform}",
+              "scenario": "scripts/scenario.mjs", "build_inputs": ["scripts/scenario.mjs", "src/**/*.ts"],
+              "actions": [{"assertion": "saved", "expected": "Saved"}],
+              **({"package": "com.example.vto", "activity": ".MainActivity"} if platform == "android" else {}), **changed}
+    return {"id": f"save-{platform}", "title": "Save", "kind": "desktop", "command": "wiki-agent-native",
+            "paths": ["src"], "assertions": [{"id": "saved", "expected": "Saved"}], "native": target}
+
+
+def test_webview_targets_validate_beside_unchanged_win32_targets():
+    win32 = {"application": "fixture", "window_class": "Fixture", "build_inputs": ["app.py"],
+             "actions": [{"assertion": "saved", "action": "click", "control_id": 1, "observe_id": 2, "expected": "Saved"}]}
+    old = {**webview_flow("windows"), "id": "win32", "native": win32}
+    parsed = verification.Manifest.model_validate({"version": 2, "contracts": ["api.md"],
+                                                   "flows": [old, webview_flow("windows"), webview_flow("android")]})
+    assert [type(f.native) for f in parsed.flows] == [native.NativeTarget, native.WebViewTarget, native.WebViewTarget]
+    # A Win32 dump stays byte-identical, so its approved signature survives; naming the default is accepted.
+    assert set(parsed.flows[0].native.model_dump()) == {*win32, "arguments"}
+    assert verification.Flow.model_validate({**old, "native": {**win32, "driver": "win32"}})
+    for wrong in (webview_flow("android", package=""), webview_flow("windows", package="com.example.vto"),
+                  webview_flow("windows", scenario="scripts/other.mjs"), webview_flow("windows", driver="cdp"),
+                  webview_flow("windows", window_class="Fixture"),
+                  webview_flow("windows", actions=[{"assertion": "other", "expected": "Saved"}])):
+        with pytest.raises(ValueError):
+            verification.Flow.model_validate(wrong)
+    with pytest.raises(ValueError, match="WebView"):
+        native.preflight(Path("."), "0" * 40, parsed.flows[1].native.model_dump(), {})
+
+
+def test_version_three_holds_one_approval_per_application(tmp_path):
+    base = {"environment_id": "local", "test_scope": "fixture", "env_file": "C:/x/.env", "browser_tool": "chrome",
+            "allowed_origins": ["http://127.0.0.1:1"], "revisions": {}, "manifest_digest": "0" * 64}
+    win32 = {"version": 1, "host": "windows-win32", "application": "fixture", "executable": "C:/py/python.exe",
+             "executable_sha256": "1" * 64, "ownership": "launch-disposable", "desktop": "attempt-owned", "profile": "p"}
+    windows = {"version": 1, "host": "windows-webview2", "application": "vto-windows", "executable": "C:/vto/app.exe",
+               "executable_sha256": "2" * 64, "runner": "C:/node/node.exe", "runner_sha256": "3" * 64, "profile": "p"}
+    android = {**windows, "host": "android-emulator", "application": "vto-android", "executable": "C:/vto/app.apk",
+               "sdk": "C:/android/sdk", "system_image": "C:/android/sdk/system-images/android-35"}
+    settings = verification.LocalSettings.model_validate({**base, "version": 3, "native": [win32, windows, android]}).model_dump()
+    targets = [verification.Flow.model_validate(webview_flow(p)).native for p in ("windows", "android")]
+    assert [native.approval(settings, t)["executable"] for t in targets] == ["C:/vto/app.exe", "C:/vto/app.apk"]
+    # Version 2 keeps its single Win32 approval; an approval for the wrong host does not count.
+    v2 = verification.LocalSettings.model_validate({**base, "version": 2, "native": win32}).model_dump()
+    assert native.approval(v2, native.NativeTarget.model_validate(
+        {"application": "fixture", "window_class": "F", "build_inputs": ["a.py"],
+         "actions": [{"assertion": "a", "action": "click", "control_id": 1, "observe_id": 1, "expected": "x"}]})) == win32
+    with pytest.raises(ValueError, match="vto-android"):
+        native.approval({"native": [{**windows, "application": "vto-android"}]}, targets[1])
+    for wrong in ({"version": 2, "native": [windows]}, {"version": 3, "native": win32},
+                  {"version": 3, "native": [windows, windows]}, {"version": 3, "native": [{**windows, "sdk": "C:/sdk"}]},
+                  {"version": 3, "native": [{**android, "system_image": ""}]}):
+        with pytest.raises(ValueError):
+            verification.LocalSettings.model_validate({**base, **wrong})
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Actual Windows native acceptance requires Win32")
 def test_actual_native_window_event_identity_and_read_only_handoff(cloud_world):
     world = cloud_world
@@ -93,6 +148,11 @@ def test_actual_native_window_event_identity_and_read_only_handoff(cloud_world):
     negative = cloud_spec(world, "native-wrong-selector", 2, "negative.py", review={"flows": ["native-save"]})
     refused = client().put(f"/api/verification/config?sid={negative['id']}", json={**settings, "version": 1, "native": None})
     assert refused.status_code == 400
+    # Version 3 approves per application; the negatives below then run through the saved list.
+    other = {**settings, "version": 3, "native": [{**settings["native"], "application": "other"}]}
+    assert client().put(f"/api/verification/config?sid={negative['id']}", json=other).status_code == 400
+    listed = client().put(f"/api/verification/config?sid={negative['id']}", json={**settings, "version": 3, "native": [settings["native"]]})
+    assert listed.status_code == 200 and isinstance(verification.local(world.repo)["native"], list)
     reviewers = len(Reviewer.made)
     stopped = looped(negative["id"])
     assert stopped["state"] == "멈춤" and len(Reviewer.made) == reviewers

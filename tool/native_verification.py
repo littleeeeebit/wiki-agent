@@ -14,9 +14,9 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag, model_validator
 
 from common import process
 
@@ -35,11 +35,43 @@ class NativeAction(Closed):
 
 
 class NativeTarget(Closed):
+    # Excluded from dumps so existing Win32 flows keep their approved signatures.
+    driver: Literal["win32"] = Field("win32", exclude=True)
     application: str = Field(min_length=1)
     window_class: str = Field(min_length=1)
     arguments: list[str] = Field(default_factory=list)
     build_inputs: list[str] = Field(min_length=1)
     actions: list[NativeAction] = Field(min_length=1)
+
+
+class Checkpoint(Closed):
+    assertion: str = Field(min_length=1)
+    expected: str = Field(min_length=1)
+
+
+class WebViewTarget(Closed):
+    """A Tauri/WebView app; a tracked scenario script reports each named checkpoint."""
+    driver: Literal["webview"]
+    platform: Literal["windows", "android"]
+    application: str = Field(min_length=1)
+    scenario: str = Field(min_length=1)
+    package: str = ""
+    activity: str = ""
+    build_inputs: list[str] = Field(min_length=1)
+    actions: list[Checkpoint] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def platform_fields(self):
+        android = self.platform == "android"
+        if bool(self.package) is not android or bool(self.activity) is not android:
+            raise ValueError("package and activity are required on Android and refused on Windows")
+        if self.scenario not in self.build_inputs:
+            raise ValueError("The WebView scenario must be a measured build input")
+        return self
+
+
+Target = Annotated[Annotated[NativeTarget, Tag("win32")] | Annotated[WebViewTarget, Tag("webview")],
+                   Discriminator(lambda v: v.get("driver", "win32") if isinstance(v, dict) else v.driver)]
 
 
 class NativeSettings(Closed):
@@ -51,6 +83,46 @@ class NativeSettings(Closed):
     ownership: Literal["launch-disposable"]
     desktop: Literal["attempt-owned"]
     profile: str = Field(min_length=1)
+
+
+class WebViewSettings(Closed):
+    """One approved WebView app: its exe or APK, the Node that runs scenarios, and the Android emulator."""
+    version: Literal[1]
+    host: Literal["windows-webview2", "android-emulator"]
+    application: str = Field(min_length=1)
+    executable: str = Field(min_length=1)
+    executable_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    runner: str = Field(min_length=1)
+    runner_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    profile: str = Field(min_length=1)
+    sdk: str = ""
+    system_image: str = ""
+
+    @model_validator(mode="after")
+    def emulator_fields(self):
+        android = self.host == "android-emulator"
+        if bool(self.sdk) is not android or bool(self.system_image) is not android:
+            raise ValueError("sdk and system_image are required for the Android emulator and refused on Windows")
+        return self
+
+
+Approval = Annotated[NativeSettings | WebViewSettings, Field(discriminator="host")]
+
+
+def host(target: NativeTarget | WebViewTarget) -> str:
+    """The approval host a target needs."""
+    if target.driver == "win32":
+        return "windows-win32"
+    return "android-emulator" if target.platform == "android" else "windows-webview2"
+
+
+def approval(settings: dict, target: NativeTarget | WebViewTarget) -> dict:
+    """The approval for `target`: settings version 2 holds one, version 3 one per application."""
+    native = settings.get("native")
+    for row in native if isinstance(native, list) else [native] if native else []:
+        if row.get("application") == target.application and row.get("host") == host(target):
+            return row
+    raise ValueError(f"승인된 네이티브 테스트 범위가 없다 — {target.application} ({host(target)})")
 
 
 def digest(file: Path) -> str:
@@ -75,6 +147,9 @@ def build_identity(root: Path, head: str, inputs: list[str]) -> dict:
 
 
 def preflight(root: Path, head: str, target: dict, settings: dict) -> dict:
+    if target.get("driver") == "webview":
+        # ponytail: refused until the WebView collectors land (docs/plans/native-webview, steps 2-3).
+        raise ValueError("WebView 네이티브 수집기는 아직 없다 — 이 흐름은 지금 수집할 수 없다")
     target, settings = NativeTarget.model_validate(target), NativeSettings.model_validate(settings)
     if sys.platform != "win32" or settings.host != "windows-win32":
         raise ValueError("Native collector supports Windows Win32 only")
