@@ -3,16 +3,82 @@
 # ruff: noqa: F811 — pytest injects shared fixtures by name.
 
 import copy
+import json
 from pathlib import Path
 
 import pytest
 
-from main import loop, review_contract as contract, specs, verification
-from test_loop import Reviewer, Worker, deny, looped, no_machine_settings, order, pr_spec, template, world  # noqa: F401
+from main import loop, review_contract as contract, specs, verification, work
+from test_loop import CLEANED, Reviewer, Worker, allow, commit, deny, git, looped, no_machine_settings, order, pr_spec, template, world  # noqa: F401
 from test_local_verification import cloud_world, git_world  # noqa: F401
 from test_review_contract import selected
 
 REQUIRED = {"evidence": ["api", "browser", "desktop"]}
+
+
+@pytest.mark.parametrize("state", ["고치는 중 R1", "멈춤"])
+@pytest.mark.parametrize("shape", ["valid", "failed", "malformed", "absent"])
+def test_repair_report_capture_cannot_authorize_workflow_transitions(world, monkeypatch, state, shape):
+    spec = pr_spec(world, "report-authority", 7, "code.py", review=REQUIRED, state=state)
+    path = Path(spec["worktree"])
+    run = work.Run(Worker(path), person=True)
+    monkeypatch.setattr(specs, "rounded", lambda *a, **k: pytest.fail("Report capture cannot execute a gate"))
+    monkeypatch.setattr(specs, "pr_turn", lambda *a, **k: pytest.fail("Report capture cannot publish"))
+    value = [{"item": spec["done"][0], "pass": shape != "failed", "evidence": "Observed runtime behavior"}]
+    answer = "No completion report" if shape == "absent" else "```done-report\n" + ("{" if shape == "malformed" else json.dumps(value)) + "\n```"
+    assert specs.check(path, run, answer) is None
+    current = specs.load(spec["repo"], spec["id"])
+    assert current["state"] == state and current["gate"] == spec["gate"] and not current["rounds"]
+    if shape in {"valid", "failed"}:
+        assert current["report"] == value and current["report_at"]["turn"] == run.turn
+    else:
+        assert current["report"] is None
+    assert bool(current["fault"]) == (shape == "malformed")
+
+
+@pytest.mark.parametrize("environment", [None, "external"])
+@pytest.mark.parametrize("cleanup_followup", [False, True])
+def test_repair_report_reaches_the_next_frozen_reviewer_handoff(world, environment, cleanup_followup):
+    spec = pr_spec(world, "repair-report", 7, "code.py", review=REQUIRED, implementation_environment=environment)
+    spec = specs.update(spec["repo"], spec["id"], report=[{"item": spec["done"][0], "pass": True,
+                        "evidence": "Earlier observations"}], report_at={"head": spec["pr"]["head"], "rev": spec["rev"]})
+    finding = "[P1] code.py:1 — Preserve runtime observations through repair completion"
+    proof = {}
+    def repair(path, halt):
+        head = commit(path, "repair.py")
+        proof.update(head=head, environment_id="isolated-desktop", installer_sha256="1" * 64,
+                     requests=[{"method": "GET", "path": "/health", "status": 200}],
+                     assertions=[{"expected": "Settings save survives reload", "actual": "Settings save survives reload"}])
+        report = [{"item": spec["done"][0], "pass": True, "evidence": json.dumps(proof) + " token=fixture-value"}]
+        return "```done-report\n" + json.dumps(report) + "\n```\n" + ("" if cleanup_followup else CLEANED) + disposition
+    def inspect(first, text):
+        frozen = order(world, 7, 2)
+        assert "Current-head implementation report" in frozen
+        assert all(value in frozen for value in (proof["head"], "isolated-desktop", "Settings save survives reload", "1" * 64))
+        assert "Earlier observations" not in frozen and "fixture-value" not in frozen
+        return allow(first, text)
+    disposition = "```disposition\n" + json.dumps([{"finding": finding, "action": "fixed", "evidence": "Runtime observations collected"}]) + "\n```"
+    if environment == "external":
+        Reviewer.replies = [deny(finding)]
+        waiting = looped(spec["id"])
+        assert waiting["state"] == "멈춤" and not Worker.made
+        path = Path(spec["worktree"])
+        run = work.Run(Worker(path), person=True)
+        assert specs.check(path, run, repair(path, run.halt)) is None
+        if cleanup_followup:
+            assert specs.check(path, run, CLEANED + disposition) is None
+        git(path, "push", "-q", "origin", spec["id"])
+        Reviewer.replies = [inspect]
+    else:
+        Reviewer.replies = [deny(finding), inspect]
+        Worker.replies = [repair, CLEANED + disposition] if cleanup_followup else [repair]
+    done = looped(spec["id"])
+    assert done["state"] == "머지 가능"
+    assert done["report_at"]["head"] == done["rounds"][-1]["head"] == proof["head"]
+    assert done["report_at"]["rev"] == spec["rev"] and done["report_at"]["turn"]
+    assert done["report"][0]["evidence"].startswith(json.dumps(proof))
+    assert all(r.tools == loop.REVIEW_TOOLS and not r.verification for r in Reviewer.made)
+    assert not any(c[:3] == ["gh", "pr", "merge"] for c in world.hub.calls)
 
 
 @pytest.mark.parametrize("credential", [

@@ -27,6 +27,12 @@ in review identity, and redacted before handoff. Changing a report invalidates
 approval; changing this policy also requires a fresh independent review. The
 report-review path grants no execution tools, automatic pass or merge permission.
 
+Initial implementation and repair turns use the same completion-report recorder.
+It binds the report while the turn still owns the checkout, before the next review
+instruction is frozen. A cleanup-only follow-up retains that report. Include the
+observations, environment and tested build identity in the report itself: ordinary
+read-only review does not automatically expose ignored artifact directories.
+
 The Cloud review cell also executes verification commands and creates test
 scripts, fixtures and receipts. Codex uses `workspace-write` with
 `approvalPolicy: never`, not the ordinary read-only review profile or

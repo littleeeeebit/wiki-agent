@@ -1417,6 +1417,15 @@ def valid(items) -> bool:
         isinstance(i, dict) and isinstance(i.get("item"), str) and isinstance(i.get("pass"), bool) for i in items)
 
 
+def reported(path: Path, run, spec: dict, report: dict) -> dict:
+    """Bind a completion report while its work turn still owns the checkout; grant no transition."""
+    if "error" in report or not valid(report.get("value")):
+        raise ValueError(f"완료 보고를 읽지 못했다 — {report.get('error') or '항목마다 item 과 pass 가 있어야 한다'}")
+    return update(spec["repo"], spec["id"], report=report["value"], report_asked=False, summary=None,
+                  report_at={"head": sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), "rev": spec["rev"],
+                             "turn": getattr(run, "turn", None)})
+
+
 def shortfall(items: list[dict], spec: dict) -> str:
     """Why a report is not judged, item by number, or empty: a bare "failed or missing" left everyone guessing (#310).
     Items are named missing only when every reported text matches one item and each missing text is wholly
@@ -1695,6 +1704,12 @@ def _check(path: Path, run, final: str):
         if asks(final):
             loop.asked(spec["repo"], spec["id"])
             return None
+        report = next((b for b in blocks(final)[1] if b["name"] == "done-report"), None)
+        if report is not None:
+            try:
+                spec = reported(path, run, spec, report)
+            except ValueError as exc:
+                return failed(run, spec, str(exc))
         if spec["state"] == "멈춤" and (spec.get("stopped") or {}).get("reason") == loop.Why.ASKED.value:
             return lambda: loop.answered(repo, spec["id"], run, str(path))   # the person answered it
         allowed = approved(spec)
@@ -1737,14 +1752,11 @@ def _check(path: Path, run, final: str):
         # A request a person's turn kept from being sent was never asked: the next miss is a first one.
         return lambda: again(path, run.chat, REPORT_MISSING, spec) or update(spec["repo"], spec["id"],
                                                                               report_asked=False)
-    if "error" in report or not valid(report.get("value")):
-        return failed(run, spec, f"완료 보고를 읽지 못했다 — {report.get('error') or '항목마다 item 과 pass 가 있어야 한다'}")
+    try:
+        spec = reported(path, run, spec, report)
+    except ValueError as exc:
+        return failed(run, spec, str(exc))
     items = report["value"]
-    # `report_at`: the head, revision and turn the report speaks for, so `resumed` reuses it only while the
-    # first two stand and the turn's record ended neither stopped nor failed.
-    spec = update(spec["repo"], spec["id"], report=items, report_asked=False, summary=None,   # text is per head
-                  report_at={"head": sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), "rev": spec["rev"],
-                             "turn": getattr(run, "turn", None)})
     if short := shortfall(items, spec):
         return failed(run, spec, short)
     cleanup = next((b.get("value") for b in blocks(final)[1] if b["name"] == "test-cleanup"), None)
