@@ -134,6 +134,18 @@ this on a real run.
    existing device uses, which fixes its serial as `emulator-<port>`. Refuse if
    that serial already appears in the owned server's device list. Then confirm that the serial
    reports `ro.kernel.qemu=1` and that its emulator process is the one launched.
+
+   An ADB server scans the emulator ports 5555 to 5585 when it starts, and
+   connects to any `adbd` it finds there. The user's default server could
+   therefore find the owned emulator if it started or restarted mid-run. So the
+   console port is an even port from 5586 up, which puts the emulator's `adbd`
+   port, one above it, outside that scan. The owned server still gets the
+   emulator, because the emulator registers itself with the server named by
+   `ANDROID_ADB_SERVER_PORT`; that server never has to scan for it. A server
+   configured with a wider scan through `ADB_LOCAL_TRANSPORT_MAX_PORT` could
+   still reach the port. The collector refuses to run when that variable is set
+   in its own environment. It records in the receipt that a user server started
+   with it is outside this guarantee.
 2. The collector runs its own ADB server. Before step 1 it picks a free port,
    records it in the ownership record, and starts the server from the approved
    `adb` with `-P <port> start-server`. A free port is not a reserved port, so the
@@ -235,7 +247,7 @@ Each step is a separate PR, approved before the next starts.
 | --- | --- | --- | --- |
 | 1 | Manifest variant | `driver` union, Win32 default, WebView fields and validation; settings version 3 with per-application approvals; current manifests and settings still pass; a real run proving a WebView flow fails closed before any setup, build or review | In progress |
 | 2 | Windows WebView2 collector | Head build and launch of `output`, process-tree check of the endpoint, collector-owned proxy and checkpoint reads, cleanup proven on every outcome; one real Tauri fixture run, plus refusals for a wrong pid or endpoint, a new target, navigation outside `origins`, a stale or prebuilt binary, a `no_requests` checkpoint that made a request or call, a request to an unregistered origin, a collector killed mid-run whose recorded resources the orchestrator then cleans, a recorded pid reused by another process that the cleanup leaves running, a failed cleanup, and a Win32 receipt offered for a WebView flow and the reverse | Planned |
-| 3 | Android emulator collector | Owned AVD and serial, head-built APK identity, pid-bound attach, restart without data loss, cleanup proof; one real fixture run, plus refusals for an existing serial or physical device, a wrong pid, a replaced `adb`, emulator or system image, a killed collector whose forwards and AVD home the orchestrator then cleans, a reused emulator pid or serial that the cleanup leaves alone, an owned ADB server stopped on every outcome while a pre-existing default server on port 5037 and its devices survive untouched, an unrelated server that takes the chosen or recorded port being neither adopted nor stopped, a concurrent server started from the same approved `adb` failing adoption, an owned server and forward that outlive their control listener being found and cleaned, and a failed cleanup, with a pre-existing emulator left untouched | Planned |
+| 3 | Android emulator collector | Owned AVD and serial, head-built APK identity, pid-bound attach, restart without data loss, cleanup proof; one real fixture run, plus refusals for an existing serial or physical device, a wrong pid, a replaced `adb`, emulator or system image, a killed collector whose forwards and AVD home the orchestrator then cleans, a reused emulator pid or serial that the cleanup leaves alone, an owned ADB server stopped on every outcome while a pre-existing default server on port 5037 and its devices survive untouched, a default server started or restarted while the owned emulator is live whose device list stays without it, an unrelated server that takes the chosen or recorded port being neither adopted nor stopped, a concurrent server started from the same approved `adb` failing adoption, an owned server and forward that outlive their control listener being found and cleaned, and a failed cleanup, with a pre-existing emulator left untouched | Planned |
 | 4 | Cross-driver checks | Mixed Win32/WebView manifests in one run, and the full hosted gate | Planned |
 | 5 | PR #4 flows | `video-translate-overlay-2` registers its two flows against the new driver and its review passes local verification | Planned |
 
