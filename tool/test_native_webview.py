@@ -57,7 +57,29 @@ def test_profile_cleanup_waits_for_a_real_process_to_release_its_file(tmp_path):
         child.stdout.close()
 
 
-@pytest.mark.parametrize("winerror", [32, 33, 5, 112])
+@pytest.mark.skipif(sys.platform != "win32", reason="Actual Windows directory removal race")
+def test_profile_cleanup_retries_a_directory_changed_after_enumeration(tmp_path, monkeypatch):
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    unrelated = tmp_path / "unrelated.txt"
+    unrelated.write_text("preserved", encoding="utf-8")
+    remove = os.rmdir
+    arrived = False
+
+    def rmdir(path, *args, **kwargs):
+        nonlocal arrived
+        if Path(path) == profile and not arrived:
+            arrived = True
+            (profile / "state.json").write_text("late shutdown state", encoding="utf-8")
+        return remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "rmdir", rmdir)
+    webview.remove_profile(tmp_path)
+    assert arrived and not profile.exists()
+    assert unrelated.read_text(encoding="utf-8") == "preserved"
+
+
+@pytest.mark.parametrize("winerror", [32, 33, 5, 145, 112])
 def test_profile_cleanup_bounds_sharing_retries_and_refuses_other_errors(tmp_path, monkeypatch, winerror):
     (tmp_path / "profile").mkdir()
     elapsed, attempts = [0.0], []
@@ -73,7 +95,7 @@ def test_profile_cleanup_bounds_sharing_retries_and_refuses_other_errors(tmp_pat
     monkeypatch.setattr(webview.time, "sleep", lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
     with pytest.raises(ValueError, match="Native profile cleanup failed"):
         webview.remove_profile(tmp_path)
-    assert (5 <= elapsed[0] < 5.2) if winerror in (5, 32, 33) else (elapsed[0] == 0 and len(attempts) == 1)
+    assert (5 <= elapsed[0] < 5.2) if winerror in (5, 32, 33, 145) else (elapsed[0] == 0 and len(attempts) == 1)
     assert (tmp_path / "profile").exists()
 
 
