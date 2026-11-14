@@ -71,6 +71,28 @@ function androidFocus() {
   save('android-focus.json', {lines});
   return lines.some(line => /mCurrentFocus/.test(line) && line.includes(`${target.package}/`));
 }
+async function prepareAndroidStartupFocus() {
+  if (androidFocus()) return;
+  emulatorListener();
+  const initial = JSON.parse(readFileSync(path.join(artifact, 'android-focus.json'), 'utf8'));
+  save('startup-system-ui.json', initial); addArtifact('startup-system-ui.json');
+  shell('uiautomator', 'dump', '/data/local/tmp/wiki-startup.xml');
+  writeFileSync(path.join(artifact, 'startup-system-ui.xml'), shell('cat', '/data/local/tmp/wiki-startup.xml'));
+  shell('rm', '/data/local/tmp/wiki-startup.xml'); addArtifact('startup-system-ui.xml');
+  const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), 'native_webview.py');
+  const button = JSON.parse(run(request.python, [helper, 'android-wait', path.join(artifact, 'startup-system-ui.json'), path.join(artifact, 'startup-system-ui.xml')]));
+  assert.ok(button, 'Startup focus belongs to an unexpected window; native recovery refused');
+  writeFileSync(path.join(artifact, 'startup-system-ui.png'), execFileSync(approval.adb.path,
+    ['-s', serial, 'exec-out', 'screencap', '-p'], {windowsHide: true, timeout: 30000}));
+  addArtifact('startup-system-ui.png');
+  if (androidFocus()) return;
+  assert.deepEqual(JSON.parse(readFileSync(path.join(artifact, 'android-focus.json'), 'utf8')), initial,
+    'Startup focus changed before the System UI Wait action');
+  emulatorListener();
+  shell('input', 'tap', String(button.x), String(button.y));
+  save('startup-recovery.json', {action: 'wait', ...button}); addArtifact('startup-recovery.json');
+  await until(androidFocus);
+}
 async function androidTargets(url) {
   emulatorListener();
   assert.equal(Number(shell('pidof', target.package).trim()), androidPid, 'Owned Android application process changed');
@@ -89,8 +111,9 @@ async function android() {
     serial = `emulator-${port}`;
     // All writable emulator images belong to this attempt; the AVD is only a template.
     const images = path.join(profile, 'emulator'); mkdirSync(images);
+    // The WebView fixture uses GLES; do not initialize the unused Vulkan renderer.
     emulator = logged(approval.emulator.path, ['-avd', approval.avd, '-port', String(port), '-datadir', images,
-      '-wipe-data', '-no-snapshot', '-no-window', '-no-audio', '-no-boot-anim'], 'emulator.log');
+      '-wipe-data', '-no-snapshot', '-no-window', '-no-audio', '-no-boot-anim', '-feature', '-Vulkan'], 'emulator.log');
     emulator.on('error', () => {});
     emulator.on('exit', () => diagnose('emulator-exit'));
     await until(() => {
@@ -185,6 +208,7 @@ async function checkpoint(label) {
   } else {
     const listener = emulatorListener();
     const pid = Number(shell('pidof', target.package).trim()); assert.ok(pid > 0);
+    if (label === 'launch' && sessions.length === 0 && actions.length === 0) await prepareAndroidStartupFocus();
     assert.ok(androidFocus(), 'Installed app lost native focus');
     observed = {pid, package: target.package, activity: target.activity, emulator_pid: emulator.pid, listener_pid: listener,
       fingerprint: hash(shell('getprop', 'ro.build.fingerprint'))};

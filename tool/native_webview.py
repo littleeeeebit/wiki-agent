@@ -7,9 +7,11 @@ import subprocess
 import sys
 import time
 import shutil
+import re
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Literal
+from xml.etree import ElementTree
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -105,6 +107,26 @@ def collector_digest() -> str:
     sources = {name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in
                ("native_webview.py", "native_webview.mjs", "native_process.py", "native_window.py")}
     return hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest()
+
+
+def system_ui_wait_button(lines, hierarchy):
+    current = [line.strip() for line in lines if line.strip().startswith("mCurrentFocus=")]
+    if len(current) != 1 or not re.fullmatch(
+        r"mCurrentFocus=Window\{[^{}]* Application Not Responding: com\.android\.systemui\}", current[0]
+    ):
+        return None
+    buttons = [node for node in ElementTree.fromstring(hierarchy).iter("node") if
+               node.get("resource-id") == "android:id/aerr_wait" and node.get("package") == "android"
+               and node.get("enabled") == "true" and node.get("clickable") == "true"]
+    if len(buttons) != 1:
+        raise ValueError("System UI startup dialog has no unique enabled native Wait control")
+    bounds = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", buttons[0].get("bounds", ""))
+    if not bounds:
+        raise ValueError("System UI Wait control has invalid bounds")
+    left, top, right, bottom = map(int, bounds.groups())
+    if not (0 <= left < right <= 16384 and 0 <= top < bottom <= 16384):
+        raise ValueError("System UI Wait control has invalid bounds")
+    return {"control": "android:id/aerr_wait", "x": (left + right) // 2, "y": (top + bottom) // 2}
 
 
 def validate_receipt(data, root, artifact, target, settings, revisions, *, redact_text=None):
@@ -206,3 +228,10 @@ def run(request):
             raise ValueError(result.get("blocked", {}).get("reason", "Native scenario failed; see owned driver log"))
         result["native"]["build_inputs"] = preflight(root, request["head"], request["target"], request["settings"])
         return result
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 4 or sys.argv[1] != "android-wait":
+        raise ValueError("Expected android-wait with observed focus and hierarchy files")
+    focus = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+    print(json.dumps(system_ui_wait_button(focus["lines"], Path(sys.argv[3]).read_text(encoding="utf-8"))))

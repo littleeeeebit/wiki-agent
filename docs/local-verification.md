@@ -24,9 +24,16 @@ approval unchanged. Neither format is committed to a project.
 Windows processes inherit an attempt-owned desktop and kill-on-close job.
 Android runs a newly launched emulator with fresh writable images under the
 attempt directory; an existing emulator or physical device is never selected.
+The WebView fixture uses GLES with Vulkan disabled, following the emulator's
+[troubleshooting guidance](https://developer.android.com/studio/run/emulator-troubleshooting?hl=en).
 Large debug APK installation and the installed-package verification copy each
 allow up to 120 seconds; diagnostic commands retain their 30-second limit.
 The enclosing verification deadline still bounds the complete attempt.
+Before its first observation, a disposable Android emulator may recover once
+from the System UI startup ANR by selecting its observed native Wait control.
+The collector retains the original focus, UI hierarchy and screenshot as hashed
+artifacts and then requires app focus again. App errors, unknown dialogs and
+focus loss after startup remain failures; no application action is retried.
 Scenarios seed `artifact/data` and use `start(dataDirectory)`, `restart()`,
 `page`, `pageFor(url)`, `context`, `until` and `observe(assertion, actual, page)`.
 Every observation records the native
