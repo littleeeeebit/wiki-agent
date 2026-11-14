@@ -1709,7 +1709,9 @@ def _check(path: Path, run, final: str):
             loop.asked(spec["repo"], spec["id"])
             return None
         report = next((b for b in blocks(final)[1] if b["name"] == "done-report"), None)
-        if report is not None:
+        # The prerequisite owner records acceptance only after checking its committed verdict.
+        if report is not None and (not spec.get("prerequisite_review")
+                                   or (spec.get("prerequisite_review_result") or {}).get("completed")):
             try:
                 spec = reported(path, run, spec, report)
             except ValueError as exc:

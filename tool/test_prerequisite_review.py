@@ -121,6 +121,7 @@ def test_one_review_request_hands_off_before_full_acceptance_and_preserves_its_g
     assert fresh["goal"] == spec["goal"] and fresh["done"] == spec["done"]
     if not commit_result:
         assert fresh["state"] == "멈춤" and not fresh["rounds"] and not fresh.get("report")
+        assert not fresh.get("report_at")
         assert not fresh["prerequisite_review_result"]["completed"]
         assert git(world.origin, "rev-parse", spec["id"]) == original_head
     elif complete and blocked_acceptance:
@@ -131,6 +132,8 @@ def test_one_review_request_hands_off_before_full_acceptance_and_preserves_its_g
         assert fresh["state"] == "머지 가능" and fresh["validation"]["final"]["ok"]
         assert len(fresh["rounds"]) == 1 and fresh["prerequisite_review_result"]["completed"]
         assert fresh["report"] and fresh["report"][0]["pass"]
+        assert fresh["report_at"]["head"] == git(path, "rev-parse", "HEAD")
+        assert fresh["report_at"]["rev"] == fresh["rev"]
     else:
         assert fresh["state"] == "멈춤" and not fresh["rounds"]
         assert not (fresh.get("validation") or {}).get("final")

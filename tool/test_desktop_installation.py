@@ -80,7 +80,10 @@ def test_relocated_package_uses_user_data_without_checkout(tmp_path):
 
 @pytest.mark.parametrize("storage", ["source", "packaged-default", "packaged-override"])
 def test_external_briefings_share_server_storage_across_channels(tmp_path, storage):
-    resources = build_desktop.stage(tmp_path / "설치 폴더/payload", "0.1.0", "fixture-head")
+    screen = tmp_path / "screen"
+    screen.mkdir()
+    (screen / "index.html").write_text("<!doctype html><title>Fixture</title>", encoding="utf-8")
+    resources = build_desktop.stage(tmp_path / "설치 폴더/payload", "0.1.0", "fixture-head", screen=screen)
     if storage == "source":
         (resources / "release.json").unlink()
     project = tmp_path / "팀 프로젝트"

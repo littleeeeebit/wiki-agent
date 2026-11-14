@@ -20,8 +20,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from common import settings
-from common.paths import PACKAGED, RESOURCES
+from common.paths import RESOURCES
 
 PROVISIONAL_VERSION = "provisional-1"
 ARTIFACT = Path("eval") / "jev" / "policy.json"
@@ -93,7 +92,7 @@ def policy(model: str, path: Path | None = None, prompt_version: str | None = No
     to its own prompt digest: its rule counts as fitted only when the
     artifact's `kind_versions` names the same digest (reliability PR 4)."""
 
-    path = path or (RESOURCES if PACKAGED else settings.HUB) / ARTIFACT
+    path = path or RESOURCES / ARTIFACT
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -115,7 +114,7 @@ def policy(model: str, path: Path | None = None, prompt_version: str | None = No
     body = json.dumps({"model": model, "rules": rules, "fitted": fitted}, sort_keys=True)
     version = "fitted-" + hashlib.sha256(body.encode()).hexdigest()[:12]
     try:
-        where = path.resolve().relative_to(settings.HUB.resolve()).as_posix()
+        where = path.resolve().relative_to(RESOURCES.resolve()).as_posix()
     except ValueError:
         where = path.name   # a record names no folder of this machine
     return Policy(version, rules, fitted, where,
