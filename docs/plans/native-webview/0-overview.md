@@ -138,10 +138,15 @@ this on a real run.
    records it in the ownership record, and starts the server from the approved
    `adb` with `-P <port> start-server`. A free port is not a reserved port, so the
    collector then reads the process that holds the port's listener from the
-   system TCP table. It adopts that server only when the process was created after
-   the attempt started, from the approved `adb` path with the approved SHA-256.
-   Otherwise another server won the port: the collector neither uses nor stops
-   it, and the run fails at preparation. The adopted server's stable identity is
+   system TCP table. The `start-server` client is itself a recorded process: the
+   collector launches it and records its stable identity first. The client spawns
+   the server. The collector adopts the listener only when three things hold: the
+   listening process runs the approved `adb` path with the approved SHA-256, its
+   parent pid is that recorded client, and the client's creation time still
+   matches the record. A recently started copy of the same binary, from another
+   attempt or from the user, fails the parent test. Otherwise another server won
+   the port: the collector neither uses nor stops it, and the run fails at
+   preparation. The adopted server's stable identity is
    recorded at once. The emulator is launched with `ANDROID_ADB_SERVER_PORT` set
    to that port, so it registers only with that server. Every `adb` call and
    forward names both `-P <port>` and `-s <serial>`. Each one is preceded by the
@@ -172,7 +177,8 @@ Cleanup is proven on every outcome: success, a failed assertion, a preparation
 failure, a timeout and a cancellation. The collector writes its ownership record
 before its first mutation, ahead of the build and of any folder it creates. It
 then adds each resource just before creating it: processes, profile folders, AVD
-home, ADB server port and process, emulator pid, serial and forwards. The record lives in the flow's artifact
+home, the `start-server` client, ADB server port and process, emulator pid,
+serial, and forwards with their local ports. The record lives in the flow's artifact
 folder, so it outlives the collector.
 
 A pid alone is not an ownership token, because Windows reuses pids once a
@@ -190,14 +196,19 @@ again. It acts only when both match the record. Any mismatch means the pid now
 belongs to another process. That process is left running, and the recorded one
 counts as exited. A port gets the same treatment as a pid. Before any command
 addressed to the recorded ADB port, the orchestrator reads the process that holds
-that port's listener and compares its identity with the recorded server. If the
-listener is gone, or belongs to any other process, nothing is sent to that port.
-The recorded server then counts as exited, and its forwards went with it. Only
-while the listener still matches does it remove recorded forwards with
-`forward --remove`, naming `-P <port>` and `-s <serial>`, and only while that
-serial still answers as the recorded emulator. It then stops the server with
-`kill-server` on `-P <port>`, and kills the server's pid after the pid identity
-check. It deletes recorded folders only inside the artifact folder.
+that port's listener and compares its identity with the recorded server. While
+it matches, the orchestrator removes recorded forwards with `forward --remove`,
+naming `-P <port>` and `-s <serial>`, but only while that serial still answers
+as the recorded emulator. It then stops the server with `kill-server` on
+`-P <port>`.
+
+If the listener is gone, or belongs to any other process, nothing is sent to that
+port. Losing the listener does not prove that the server exited, though. Either
+way, the orchestrator next reads the recorded server pid. If that process still
+matches its recorded identity, it is killed after the pid identity check. Last,
+it checks each recorded forward's local port, which the record holds, in the
+TCP table. A listener there that belongs to the recorded server's identity is a
+resource still present. A listener held by any other process is not touched. It deletes recorded folders only inside the artifact folder.
 It touches nothing the record does not name. Only then does it validate that the
 record reads `cleaned`.
 
@@ -224,7 +235,7 @@ Each step is a separate PR, approved before the next starts.
 | --- | --- | --- | --- |
 | 1 | Manifest variant | `driver` union, Win32 default, WebView fields and validation; settings version 3 with per-application approvals; current manifests and settings still pass; a real run proving a WebView flow fails closed before any setup, build or review | In progress |
 | 2 | Windows WebView2 collector | Head build and launch of `output`, process-tree check of the endpoint, collector-owned proxy and checkpoint reads, cleanup proven on every outcome; one real Tauri fixture run, plus refusals for a wrong pid or endpoint, a new target, navigation outside `origins`, a stale or prebuilt binary, a `no_requests` checkpoint that made a request or call, a request to an unregistered origin, a collector killed mid-run whose recorded resources the orchestrator then cleans, a recorded pid reused by another process that the cleanup leaves running, a failed cleanup, and a Win32 receipt offered for a WebView flow and the reverse | Planned |
-| 3 | Android emulator collector | Owned AVD and serial, head-built APK identity, pid-bound attach, restart without data loss, cleanup proof; one real fixture run, plus refusals for an existing serial or physical device, a wrong pid, a replaced `adb`, emulator or system image, a killed collector whose forwards and AVD home the orchestrator then cleans, a reused emulator pid or serial that the cleanup leaves alone, an owned ADB server stopped on every outcome while a pre-existing default server on port 5037 and its devices survive untouched, an unrelated server that takes the chosen or recorded port being neither adopted nor stopped, and a failed cleanup, with a pre-existing emulator left untouched | Planned |
+| 3 | Android emulator collector | Owned AVD and serial, head-built APK identity, pid-bound attach, restart without data loss, cleanup proof; one real fixture run, plus refusals for an existing serial or physical device, a wrong pid, a replaced `adb`, emulator or system image, a killed collector whose forwards and AVD home the orchestrator then cleans, a reused emulator pid or serial that the cleanup leaves alone, an owned ADB server stopped on every outcome while a pre-existing default server on port 5037 and its devices survive untouched, an unrelated server that takes the chosen or recorded port being neither adopted nor stopped, a concurrent server started from the same approved `adb` failing adoption, an owned server and forward that outlive their control listener being found and cleaned, and a failed cleanup, with a pre-existing emulator left untouched | Planned |
 | 4 | Cross-driver checks | Mixed Win32/WebView manifests in one run, and the full hosted gate | Planned |
 | 5 | PR #4 flows | `video-translate-overlay-2` registers its two flows against the new driver and its review passes local verification | Planned |
 
