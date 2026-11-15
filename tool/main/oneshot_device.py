@@ -172,7 +172,8 @@ class Device:
         return android_owned.call(self.folder, list(args), timeout=timeout, binary=binary)
 
     def install(self, apk: str, package: str) -> None:
-        self.adb("install", "-r", "-t", str((self.tree / apk).resolve()), timeout=INSTALL_SECONDS)
+        # Never `-r`: an installation already there, the run's or another's, fails the install instead.
+        self.adb("install", "-t", str((self.tree / apk).resolve()), timeout=INSTALL_SECONDS)
         if not self.adb("shell", "pm", "path", package).strip().startswith("package:"):
             raise ValueError(f"`{apk}` 를 설치했는데 `{package}` 가 기기에 없다 — `{BLOCK}` 의 package 가 그 APK 의 것이어야 한다")
 

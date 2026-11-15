@@ -627,11 +627,12 @@ def phone_round():
         "status": "waiting", "detail": "휴대폰이 잠겨 있다 — 잠금을 풀고 화면을 켠 채로 다시 시작한다", "findings": [
             {"screen": "S1", "state": "full", "what": "앱이 죽거나 응답하지 않았다", "severity": "high"}]}}
     android["phone_owned"] = [{"serial": "OLD1", "model": "", "packages": ["com.example.app.oneshot01"], "state": "pending",
-                               "left": ["com.example.app.oneshot01"], "apks": {}}]
+                               "left": ["com.example.app.oneshot01"], "digests": {}}]
     views = {"phone-demo": android}
     phones = {"devices": [{"serial": "R5CR10ABCDE", "state": "device", "model": "SM G991N"},
                           {"serial": "ZY22", "state": "unauthorized", "model": ""}]}
     posted: list = []
+    listed: list = []
     fake = FastAPI()
 
     @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
@@ -639,6 +640,7 @@ def phone_round():
         if path == "oneshot-specs":
             return {"specs": [{k: v[k] for k in ("repo", "stage", "working", "stopped", "waits", "kind")} for v in views.values()]}
         if path == "oneshot/spec/phone-demo/phone/devices":
+            listed.append(views["phone-demo"]["stage"])
             return phones
         if path.startswith("oneshot/spec/phone-demo"):
             if request.method == "POST":
@@ -687,11 +689,20 @@ def phone_round():
         running.get_by_role("button", name="멈춤").click()
         page.wait_for_timeout(300)
         assert posted[-1] == ("phone/stop", {}), posted
+        # A passed round whose cleanup was left pending: at R3 the notice itself looks the phones up.
+        views["phone-demo"] = {**android, "stage": "r3", "waits": False, "stopped": {
+            "reason": "kind", "state": "r3", "detail": "R3 시트가 들어오면 이어 간다"}}
+        page.reload()
+        notice = page.get_by_role("status").filter(has_text="OLD1")
+        expect(notice).to_be_visible()
+        with page.expect_response(lambda r: r.url.endswith("/phone/devices")):
+            page.get_by_role("button", name="휴대폰 찾기").click()
+        assert listed[-1] == "r3", listed
         browser.close()
     assert not errors, errors
     print("PASS: an Android run's spine holds the phone round; phones are looked up on request, an unauthorized one "
           "cannot be picked, and an empty list names another ADB server; the pick sends the serial and the keep choice; "
-          "a running round stops on request; an unfinished cleanup is shown on the run")
+          "a running round stops on request; an unfinished cleanup is shown on the run and finished from it at R3")
 
 
 if __name__ == "__main__":

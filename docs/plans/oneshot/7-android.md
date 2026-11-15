@@ -396,19 +396,30 @@ How 7f1 builds it (`tool/android_phone.py`, `tool/main/oneshot_phone.py`):
   activity by its full class. The block's packages must end with it, and the
   test package follows the app's. So the emulator's look already installs
   the ids the phone gets.
-- The round holds the worktree on the head the emulator's look passed, and
-  checks each APK's SHA-256 against the one saved at that pass. A moved head
-  or a changed APK goes back to the build.
+- The round holds the worktree on the head the emulator's look passed. The
+  APKs are build outputs Git does not track, so the round copies them into
+  the run's folder and checks each copy's SHA-256 against the one saved at
+  that pass. It installs from those copies. A moved head, or an APK that is
+  missing or changed, goes back to the build.
 - Before installing, the round checks:
   - the picked serial is listed as `device`;
   - the screen is not locked (after a wake key);
   - no package exists, read exactly off `pm list packages`. An existing one
     stops the round with no record and nothing installed or removed.
-- The record goes in `oneshot.phone_owned`, one entry per round. It is saved
-  before the first install and settled on every exit: `cleaned`, `pending`
-  with what is left, or `released` when the owner kept a passing app. A later
-  listing that shows the serial finishes every `owning` or `pending` entry
-  for it. The record also covers a round a restart cut.
+- Installs never pass `-r`, so an id another installer takes after the check
+  fails the install instead of being replaced. After each install, the
+  digest of the `base.apk` that `pm path` names must match the passed one.
+- The record goes in `oneshot.phone_owned`, one entry per round. It names each
+  package with the digest it must hold, and is saved before the first install.
+  It is settled on every exit: `cleaned`, `pending` with what is left, or
+  `released` when the owner kept a passing app. The cleanup removes a package
+  only when its installed `base.apk` holds the recorded digest. Another
+  installation is listed as `foreign` and left alone. A later listing that
+  shows the serial finishes every `owning` or `pending` entry for it. The
+  record also covers a round a restart cut.
+- The listing runs at any stage except during the round itself. The run's
+  notice of an unfinished cleanup carries `[휴대폰 찾기]`, so a passed round's
+  cleanup left pending at R3 can still be finished.
 - The screens use the shared inspection with 7e. Mechanical checks use the
   phone's own `wm size` and `wm density`. A crash is read from the event log
   since the screen opened, by the device's clock, never by clearing the log.

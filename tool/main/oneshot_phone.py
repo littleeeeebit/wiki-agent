@@ -14,6 +14,7 @@ then through the emulator loop to the phone again. A pass stops before R3, whose
 from __future__ import annotations
 
 import re
+import shutil
 import threading
 import time
 from contextlib import contextmanager
@@ -31,6 +32,7 @@ from .oneshot_profile import kind_of
 
 STAGE = "phone"
 SERIAL = re.compile(r"[A-Za-z0-9._:-]{1,64}")
+APK_PATH = re.compile(r"/data/app/[A-Za-z0-9._=~+/-]+\.apk")
 LOCKED = ("mDreamingLockscreen=true", "isKeyguardShowing=true", "mShowingLockscreen=true")
 SWIPES = 4
 
@@ -80,22 +82,45 @@ def on_phone(home: Path, package: str) -> bool:
     return f"package:{package}" in call(home, "shell", "pm", "list", "packages", package).split()
 
 
-def uninstalled(home: Path, packages: list[str]) -> list[str]:
-    """Each package removed, then checked gone; the ones still there, or unknown on a phone that left."""
+def installed_digest(home: Path, package: str) -> str | None:
+    """The SHA-256 of the APK the phone holds for `package` (`pm path`'s `base.apk`); `None` when unreadable.
+    An install copies the APK as it is, so the digest says whose installation it is."""
 
-    for package in packages:
+    paths = [line.removeprefix("package:").strip() for line in call(home, "shell", "pm", "path", package).splitlines()
+             if line.startswith("package:")]
+    apk = next((p for p in paths if p.endswith("/base.apk")), paths[0] if paths else "")
+    if not APK_PATH.fullmatch(apk):   # the path goes into the phone's shell: nothing but a plain path
+        return None
+    found = call(home, "shell", "sha256sum", apk).split()
+    return found[0].lower() if found and re.fullmatch(r"[0-9a-fA-F]{64}", found[0]) else None
+
+
+def uninstalled(home: Path, digests: dict[str, str]) -> tuple[list[str], list[str]]:
+    """Each package removed that holds exactly the APK this run installed, then checked gone. What is left
+    (still there, or unknown on a phone that left), and what is another installation, never touched."""
+
+    left, foreign = [], []
+    for package, digest in digests.items():
         try:
-            call(home, "uninstall", package)
-        except ValueError:
-            pass
-    left = []
-    for package in packages:
-        try:
-            if on_phone(home, package):
+            if not on_phone(home, package):
+                continue
+            found = installed_digest(home, package)
+            if found is None:
                 left.append(package)
+            elif found != digest:
+                foreign.append(package)
+            else:
+                call(home, "uninstall", package)
+                if on_phone(home, package):
+                    left.append(package)
         except ValueError:
             left.append(package)
-    return left
+    return left, foreign
+
+
+def settle(repo: str, home: Path, index: int, digests: dict[str, str]) -> None:
+    left, foreign = uninstalled(home, digests)
+    recorded(repo, index, state="pending" if left else "cleaned", left=left, foreign=foreign, ts=time.time())
 
 
 def owning(o: dict) -> list[dict]:
@@ -126,8 +151,7 @@ def tidy(repo: str, home: Path, found: list[dict]) -> None:
     for index, r in enumerate(oneshot_spec.spec_of(repo)["oneshot"].get("phone_owned") or []):
         if r["state"] in ("owning", "pending") and r["serial"] in listed:
             android_phone.bind(home, r["serial"])
-            left = uninstalled(home, r["packages"])
-            recorded(repo, index, state="pending" if left else "cleaned", left=left, ts=time.time())
+            settle(repo, home, index, r["digests"])
     android_phone.bind(home, "")
 
 
@@ -184,8 +208,9 @@ def measure(d: device.Device, spec: dict) -> tuple[dict, int | None]:
     return frames, used
 
 
-def drive(repo: str, home: Path, spec: dict, tree: Path, stopped) -> dict:
-    """The round on the picked phone: its outcome, `passed`, `failed` with findings, or why it did not run."""
+def drive(repo: str, home: Path, spec: dict, frozen: Path, stopped) -> dict:
+    """The round on the picked phone, installing from `frozen`, the APKs copied out of the worktree and checked
+    against the emulator's look: its outcome, `passed`, `failed` with findings, or why it did not run."""
 
     o = spec["oneshot"]
     serial, keep, n = o["phone"]["serial"], bool(o["phone"].get("keep")), int(o["phone"].get("round") or 0) + 1
@@ -202,14 +227,18 @@ def drive(repo: str, home: Path, spec: dict, tree: Path, stopped) -> dict:
         return {"status": "taken", "detail": f"휴대폰에 `{', '.join(taken)}` 가 이미 있다 — 덮어 설치하지 않는다. "
                                               "지운 뒤 다시 시작하거나 다른 휴대폰을 고른다"}
     size = measured(home)
-    # Saved before the first install: whatever happens next, the record names what may be on the phone.
-    index = recorded(repo, serial=serial, model=picked["model"], packages=packages, apks=o["apks"],
+    # Saved before the first install: whatever happens next, the record names what may be on the phone, and
+    # the digest each package must hold for its cleanup to remove it. Another installer's copy never matches.
+    digests = {package: o["apks"][apk] for apk, package in device.apks(o["device"])}
+    index = recorded(repo, serial=serial, model=picked["model"], packages=packages, digests=digests,
                      state="owning", left=[], ts=time.time())
     passed = False
     try:
-        d = device.Device(home, o["device"], size, tree)
+        d = device.Device(home, o["device"], size, frozen)
         for apk, package in device.apks(o["device"]):
-            d.install(apk, package)
+            d.install(apk, package)   # never over an installation: an id taken since the check fails here
+            if installed_digest(home, package) != digests[package]:
+                raise ValueError(f"휴대폰에 설치된 `{package}` 가 에뮬레이터 검사를 통과한 APK 와 다르다")
         findings = device.inspect(d, spec, base(repo) / "shots" / f"p{n}", stopped)
         if locked(home):   # the screen went off mid-round: its shots show the lock, not the app
             return {"status": "locked", "detail": "검사 중에 휴대폰이 잠겼다 — 화면 꺼짐 시간을 늘리고 다시 시작한다"}
@@ -222,8 +251,7 @@ def drive(repo: str, home: Path, spec: dict, tree: Path, stopped) -> dict:
         if passed and keep:
             recorded(repo, index, state="released", ts=time.time())
         else:
-            left = uninstalled(home, packages)
-            recorded(repo, index, state="pending" if left else "cleaned", left=left, ts=time.time())
+            settle(repo, home, index, digests)
         try:
             call(home, "shell", "rm", "-f", device.DUMP)
         except ValueError:
@@ -239,15 +267,32 @@ def phone_round(repo: str) -> None:
 
     def body(store, spec, tree):
         o = spec["oneshot"]
-        if device.digests(tree, o["device"]) != o.get("apks"):
+        # The APKs are build outputs Git does not track: a build outside the run can change them while the round
+        # runs. The round installs copies, checked here against the digests the emulator's look passed.
+        frozen = base(repo) / "apks" / f"r{time.time_ns()}"
+        try:
+            if why := device.built(tree, o["device"]):
+                raise ValueError(why)
+            for apk, _ in device.apks(o["device"]):
+                (frozen / apk).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(tree / apk, frozen / apk)
+            same = device.digests(frozen, o["device"]) == o.get("apks")
+        except (OSError, ValueError) as exc:
+            shutil.rmtree(frozen, ignore_errors=True)
+            review.rebuild(repo, store, f"휴대폰에 올릴 APK 를 읽지 못했다 — {exc}", front_build.STAGE)
+            return None
+        if not same:
+            shutil.rmtree(frozen, ignore_errors=True)
             review.rebuild(repo, store, "휴대폰에 올릴 APK 가 에뮬레이터 검사를 통과한 것과 다르다", front_build.STAGE)
             return None
         try:
             with phone_server(repo) as home:
-                outcome = drive(repo, home, spec, tree, stopped)
+                outcome = drive(repo, home, spec, frozen, stopped)
         except Exception as exc:   # a phone pulled out, a refused command, a stop: the prompt stands again
             outcome = {"status": "stopped" if stopped() else "error",
                        "detail": "휴대폰 회차를 멈췄다" if stopped() else f"휴대폰 회차가 끝나지 못했다 — {exc}"}
+        finally:
+            shutil.rmtree(frozen, ignore_errors=True)
         return lambda: settled(repo, outcome)
 
     review.holding(repo, "휴대폰 회차", body, "front_built_head", front_build.STAGE)
@@ -318,9 +363,10 @@ def refused(exc: Exception) -> HTTPException:
 @router.get("/api/oneshot/spec/{repo}/phone/devices")
 def devices(repo: str) -> dict:
     """The phones the run's own server sees, each with its state and model; a pending cleanup on one of
-    them is finished on the way."""
+    them is finished on the way. At any stage: a passed round's cleanup can be pending at R3."""
 
-    oneshot_spec.idle(oneshot_spec.spec_of(repo)["oneshot"], STAGE)
+    if oneshot_spec.spec_of(repo)["oneshot"].get("working") == STAGE:
+        raise HTTPException(409, "휴대폰 회차가 돌고 있다 — 끝난 뒤 다시 한다")
     try:
         with phone_server(repo) as home:
             found = android_phone.listed(home)

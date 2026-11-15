@@ -126,9 +126,14 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
       {view.phone_owned?.map((r) => (
         <p key={`${r.serial}-${r.packages.join()}`} role="status" className="rounded-md bg-wait/10 px-3 py-2">
           휴대폰 <span className="font-mono">{r.serial}</span> 에 이 실행이 설치한 앱이 남아 있다: {(r.left.length ? r.left : r.packages).join(', ')}.
-          그 휴대폰을 연결하고 휴대폰 회차에서 [휴대폰 찾기] 를 누르면 지운다.
+          그 휴대폰을 연결하고 [휴대폰 찾기] 를 누르면 지운다.
         </p>
       ))}
+      {/* Any stage: a passed round's cleanup can be left pending at R3, where no phone prompt stands. */}
+      {!!view.phone_owned?.length && (
+        <Btn className="self-start" disabled={busy}
+          onClick={() => void act(async () => { await api.phones(repo); return api.view(repo) })}>휴대폰 찾기</Btn>
+      )}
     </div>
   )
   if (view.stage === 'spec') {
