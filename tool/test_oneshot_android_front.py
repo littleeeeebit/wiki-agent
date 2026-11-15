@@ -181,9 +181,15 @@ def png(width: int, height: int, colour: int = 0, depth: int = 8, interlace: int
     (png(5000, 2400), None),   # past the reference phone
     # Ancillary chunks a decoder reads, empty: the picture is kept without them.
     *[(png(40, 40, colour=2)[:33] + chunk(name, b"") + png(40, 40, colour=2)[33:], (40, 40))
-      for name in (b"sRGB", b"gAMA", b"pHYs", b"tRNS")],
+      for name in (b"sRGB", b"gAMA", b"pHYs")],
+    # Transparency is part of the picture: kept when whole and before the pixels, refused otherwise.
+    (png(40, 40, colour=2)[:33] + chunk(b"tRNS", b"") + png(40, 40, colour=2)[33:], None),
+    (png(40, 40)[:-12] + chunk(b"tRNS", b"\x00\x00") + png(40, 40)[-12:], None),
+    (png(40, 40, colour=6)[:33] + chunk(b"tRNS", b"\x00\x00") + png(40, 40, colour=6)[33:], None),
+    (png(40, 40)[:33] + chunk(b"tRNS", b"\x00\x00") + png(40, 40)[33:], (40, 40)),
 ], ids=["grey", "interlaced", "deep", "header", "filter", "short", "palette", "depth", "two-headers", "empty-idat",
-        "text", "grey-palette", "too-wide", "srgb", "gama", "phys", "trns"])
+        "text", "grey-palette", "too-wide", "srgb", "gama", "phys", "trns-empty", "trns-late", "trns-alpha",
+        "trns-grey"])
 def test_a_picture_counts_only_as_a_whole_png_whose_rows_decode(data, size):
     found = screens.picture(data, (5000 - 1, 2472))
     assert (found[0] if found else None) == size
@@ -195,6 +201,12 @@ def test_a_picture_counts_only_as_a_whole_png_whose_rows_decode(data, size):
     except ImportError:
         return
     assert Image.open(io.BytesIO(found[1])).size == size and Image.open(io.BytesIO(found[1])).load()
+    # What is kept looks as drawn, transparency included, wherever Pillow reads the drawn file itself.
+    try:
+        drawn = Image.open(io.BytesIO(data)).convert("RGBA")
+    except (OSError, ValueError):
+        return
+    assert drawn.tobytes() == Image.open(io.BytesIO(found[1])).convert("RGBA").tobytes()
 
 
 def test_a_huge_declared_size_is_refused_before_anything_is_allocated_for_it():

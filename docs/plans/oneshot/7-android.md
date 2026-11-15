@@ -192,7 +192,8 @@ How 7c builds it:
 - A screen's source carries `feature:<id>` for each feature it shows. Each
   picture is a complete PNG (checksums, every row of pixels) at the reference
   device's size, within 3%. It is kept rebuilt from the chunks those checks
-  read, without its ancillary metadata.
+  read, its transparency (`tRNS`) included and its other ancillary metadata
+  left out.
 - The preview command is code the model wrote, and it runs with the server
   account's rights, as S4's contract tests and gate already do for every kind.
   Unpacking into the run's folder keeps the worktree out of the command's own

@@ -224,6 +224,7 @@ CHANNELS = {0: 1, 2: 3, 4: 2, 6: 4}   # a PNG colour type's samples per pixel
 # The bit depths each colour type allows. A palette image (type 3) is not taken: its indices could point past
 # its palette, and preview tools write grey or true colour.
 DEPTHS = {0: (1, 2, 4, 8, 16), 2: (8, 16), 4: (8, 16), 6: (8, 16)}
+TRNS = {0: 2, 2: 6}   # a transparency chunk's length for grey and true colour; types with alpha carry none
 ADAM7 = ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2))
 
 
@@ -262,8 +263,10 @@ def picture(data: bytes, largest: tuple[int, int]) -> tuple[tuple[int, int], byt
     the chunks come in order (`ordered`); it is no larger than `largest`, refused before anything is allocated
     for it; its colour type is grey or true colour with a bit depth that type allows; and its pixels inflate
     to exactly the scanlines its header promises, each opening with a defined filter (0–4). Every byte after
-    that is a valid sample. The picture kept is rebuilt from `IHDR`, the `IDAT` run and `IEND` alone: an
-    ancillary chunk a decoder might read and refuse (`sRGB`, `gAMA`, …) is dropped, so what is kept decodes."""
+    that is a valid sample. The picture kept is rebuilt from `IHDR`, a `tRNS` (which marks pixels as
+    transparent, so it is part of the picture: one of its exact length before the pixels, or the picture is
+    refused), the `IDAT` run and `IEND`. Any other ancillary chunk a decoder might read and refuse (`sRGB`,
+    `gAMA`, …) is dropped, so what is kept decodes and looks as the preview drew it."""
 
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         return None
@@ -279,7 +282,10 @@ def picture(data: bytes, largest: tuple[int, int]) -> tuple[tuple[int, int], byt
         return None
     width, height, depth, colour, method, filtering, interlace = struct.unpack(">IIBBBBB", chunks[0][1])
     if depth not in DEPTHS.get(colour, ()) or not 0 < width <= largest[0] or not 0 < height <= largest[1] \
-            or method or filtering or interlace not in (0, 1) or not ordered([n for n, _ in chunks], colour):
+            or method or filtering or interlace not in (0, 1) or not ordered(names := [n for n, _ in chunks], colour):
+        return None
+    if b"tRNS" in names and (names.count(b"tRNS") > 1 or names.index(b"tRNS") > names.index(b"IDAT")
+                             or len(chunks[names.index(b"tRNS")][1]) != TRNS.get(colour)):
         return None
     lines = scanlines(width, height, CHANNELS[colour] * depth, interlace)
     try:   # bounded: a picture that inflates past its own size is not one
@@ -294,7 +300,7 @@ def picture(data: bytes, largest: tuple[int, int]) -> tuple[tuple[int, int], byt
             return None
         at += n
     kept = b"".join(struct.pack(">I", len(body)) + name + body + struct.pack(">I", zlib.crc32(name + body))
-                    for name, body in chunks if name in (b"IHDR", b"IDAT", b"IEND"))
+                    for name, body in chunks if name in (b"IHDR", b"tRNS", b"IDAT", b"IEND"))
     return (width, height), data[:8] + kept
 
 
