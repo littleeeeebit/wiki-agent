@@ -44,6 +44,7 @@ export type SpecView = SpecSummary & {
   limits?: { attempts: number; refusals: number; critiques: number }
   oneshot: {
     sentence: string; models?: Models; talk?: Talk[]; attempts?: number; critiques?: Critique[]
+    intent?: { kind?: string }
     /** How many `critiques` came before the count against the cap restarted (a resume, an R3 fix). */
     critique_base?: number
     inflight?: Inflight | null; reviews?: Review[]; refused?: number; cases?: string[][]
@@ -87,6 +88,7 @@ export const stageLabel = (id: string) => STAGES.find((s) => s.id === id)?.label
 export const STOP: Record<string, string> = {
   block: '모델 답을 쓸 수 없었다', restart: '서버가 다시 켜져 멈췄다', tests: '계약 테스트를 쓰지 못했다',
   gate: '빌드가 검사를 통과하지 못했다', review: '백엔드 리뷰가 라운드 상한까지 거절했다', critique: '화면 비평이 멈췄다',
+  kind: '이 종류는 여기까지',
 }
 export const COLUMNS: { id: Freq; label: string }[] = [
   { id: 'every', label: '늘 쓴다' }, { id: 'sometimes', label: '가끔 쓴다' },

@@ -93,6 +93,19 @@ def test_the_owners_complete_sdk_is_used_and_a_partial_one_is_not(home):
     assert all(p["version"] == "36.0.0" for p in found["pieces"] if p["key"] != "jdk")
 
 
+def test_a_build_runs_on_the_found_toolchain_with_its_caches_and_preferences_in_the_application_folder(home):
+    with pytest.raises(ValueError, match="JDK 17"):
+        android.build_env()
+    sdk(android.ROOT / "sdk")
+    jdk(android.ROOT / "jdk-17", "17.0.21")
+    with patch.dict(os.environ, {"ANDROID_SDK_ROOT": str(home / "owners-sdk"), "PATH": "C:/owner/bin"}):
+        env = android.build_env()
+    assert env["JAVA_HOME"] == str(android.ROOT / "jdk-17") and env["ANDROID_HOME"] == str(android.ROOT / "sdk")
+    assert env["ANDROID_USER_HOME"] == str(android.ROOT / "user") and env["GRADLE_USER_HOME"] == str(android.ROOT / "gradle")
+    assert "ANDROID_SDK_ROOT" not in env and (android.ROOT / "gradle").is_dir()
+    assert env["PATH"].split(os.pathsep)[:2] == [str(android.ROOT / "jdk-17" / "bin"), str(android.ROOT / "sdk" / "platform-tools")]
+
+
 def test_the_newest_stable_windows_command_line_tools_are_picked():
     assert android.cmdline_tools(MANIFEST) == (android.REPOSITORY + "new-win.zip", "new")
     with pytest.raises(ValueError):

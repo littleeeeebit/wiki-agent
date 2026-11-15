@@ -126,7 +126,20 @@ with no emulator, as step 6 decided for every stack: Gradle's JVM unit tests
 for Kotlin, `flutter test` for Flutter, `cargo test` for a Tauri core. The
 runner writes the same JUnit report, and the pinned cases are checked the same
 way. The gate is that runner's test task, the stack's lint, and a debug APK
-build. The independent read-only review of the diff is unchanged.
+build: the tests turn names the lint and the APK command beside the test
+command, and the server joins the three with ` && `. The independent
+read-only review of the diff is unchanged, with a reviewer's brief for an
+app's core.
+
+The server runs the contract tests and the gate on the toolchain the card
+found. The owner's `ANDROID_*` variables are left out. Gradle's caches and the
+SDK tools' preferences, the debug signing key among them, live under the
+toolchain's folder. The turns are told the same variables for their own runs.
+
+S3 writes `docs/design/core.md` (the sheet) and `docs/design/core.json` (the
+modules and the calls leaving the phone) where a web app gets `backend.md` and
+`api.yaml`. The base commit's `.gitignore` adds `local.properties` and the
+IDE's folders.
 
 ### S5 and S6
 
@@ -246,7 +259,7 @@ Each step is a separate PR, approved before the next starts.
 | # | Stage | Deliverable | Status |
 | --- | --- | --- | --- |
 | 7a | Kind and toolchain | `android` in the kinds with the intake's definitions, the toolchain preflight with the owner-pressed install, the `device` field and `android.json` profile | Done |
-| 7b | Core path | S2 stack parts and capability requirements for `android`, the S3 module design and R1 module table, S4 contract tests and gate in the stack's own host-side runner | Planned |
+| 7b | Core path | S2 stack parts and capability requirements for `android`, the S3 module design and R1 module table, S4 contract tests and gate in the stack's own host-side runner | Done |
 | 7c | Screens without an emulator | S5 from contracts and platform surfaces, S6 rendered by the stack's preview tool at the device size | Planned |
 | 7d | Owned emulator | The native-webview step 3 collector resumed as shared infrastructure, with its refusals and cleanup proof | Planned |
 | 7e | Emulator loop | S7 on the owned emulator: install, scenarios, screenshots, mechanical and placement checks resolved from the real native hierarchy (cases: a build that moves a feature from its approved place, a correctly absent `never` feature, a leaked `never` control), critic, fixture viewer | Planned |
@@ -254,7 +267,10 @@ Each step is a separate PR, approved before the next starts.
 | 7g | Real run | The screen translator sentence from intake to the first pull request | Planned |
 
 7a alone stops the refusal: the run continues to S1, and later stages wait
-behind a stated reason until their step lands. The wait is enforced where a
+behind a stated reason until their step lands. With 7b the run goes through
+the bootstrap and the core build. Once the core review approves, it stops
+with reason `kind` before the split. A card that 7a stopped opens again on
+resume, so the owner can confirm it into the bootstrap. The wait is enforced where a
 stage starts, at the automatic handoffs (S2 to design, R1 to tests, R2 to the
 build) and the owner's resume routes alike, not only by hiding a button. 7b and 7c need no emulator.
 7d to 7f need the toolchain on this PC.

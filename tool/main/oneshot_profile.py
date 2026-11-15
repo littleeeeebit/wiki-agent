@@ -18,9 +18,9 @@ TURN_SECONDS = 600.0  # a cut turn's time before the role has a longest turn on 
 
 KINDS = ("webapp", "android", "api", "cli", "desktop", "data")
 SUPPORTED_KINDS = ("webapp", "android")
-# The last state a kind reaches in this version; its later stages wait for their plan step
-# (`docs/plans/oneshot/7-android.md`, 7b onwards). A kind not here runs to the end.
-REACHES = {"android": "environment"}
+# The last stage a kind reaches in this version; its later stages wait for their plan step
+# (`docs/plans/oneshot/7-android.md`, 7c onwards). A kind not here runs to the end.
+REACHES = {"android": "review"}
 # The reference phone S7 shoots (`device` replaces `responsive` for `android`): emulator hardware profiles.
 DEVICES = {"medium-phone": {"label": "보통 폰", "width": 1080, "height": 2400, "dpi": 420},
            "galaxy-s21": {"label": "Galaxy S21", "width": 1080, "height": 2400, "dpi": 421},
@@ -45,7 +45,18 @@ FIELDS = {*SCHEMA, "device"}   # every kind's card fields
 OWNER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
 # The stack is the owner's, picked in S2 (`docs/plans/oneshot/6-free-stack.md`); the card holds none of it.
 PARTS = ("backend", "frontend", "styling", "data_store", "tests", "deploy")
+ANDROID_PARTS = ("language", "ui", "core", "data_store", "tests", "build")
 STATUSES = ("confirmed", "assumed", "undecided")
+
+
+def kind_of(o: dict) -> str:
+    """The run's kind, from its record or its spec's `oneshot` field: a record from before kinds is a web app's."""
+
+    return (o.get("intent") or {}).get("kind", "webapp")
+
+
+def parts(kind: str = "webapp") -> tuple[str, ...]:
+    return ANDROID_PARTS if kind == "android" else PARTS
 
 
 def schema(kind: str = "webapp") -> dict[str, dict]:
@@ -109,16 +120,16 @@ def problems(profile: dict, kind: str = "webapp") -> tuple[list[str], list[str]]
     return errors, warnings
 
 
-def stacked(value) -> list[dict]:
-    """The `stack` list of an `oneshot-spec` block, checked: `[{part, choice, why, status}]`, each part at
-    most once. A part may still be missing; the conversation ends only when every part is confirmed."""
+def stacked(value, kind: str = "webapp") -> list[dict]:
+    """The `stack` list of an `oneshot-spec` block, checked: `[{part, choice, why, status}]`, each of the kind's
+    parts at most once. A part may still be missing; the conversation ends only when every part is confirmed."""
 
     if not isinstance(value, list):
         raise ValueError("`stack` 는 목록이어야 한다")
-    out, seen = [], set()
+    out, seen, names = [], set(), parts(kind)
     for item in value:
-        if not isinstance(item, dict) or item.get("part") not in PARTS:
-            raise ValueError(f"`stack` 의 `part` 는 {', '.join(PARTS)} 중 하나다")
+        if not isinstance(item, dict) or item.get("part") not in names:
+            raise ValueError(f"`stack` 의 `part` 는 {', '.join(names)} 중 하나다")
         if item["part"] in seen:
             raise ValueError(f"`stack` 에 `{item['part']}` 가 둘 이상이다")
         if not all(isinstance(item.get(k), str) and item[k].strip() for k in ("choice", "why")):
@@ -128,14 +139,14 @@ def stacked(value) -> list[dict]:
         seen.add(item["part"])
         out.append({"part": item["part"], "choice": item["choice"].strip(), "why": " ".join(item["why"].split()),
                     "status": item["status"]})
-    return sorted(out, key=lambda s: PARTS.index(s["part"]))
+    return sorted(out, key=lambda s: names.index(s["part"]))
 
 
-def unsettled(stack: list[dict]) -> list[str]:
-    """The parts the owner has not confirmed yet, in the plan's order."""
+def unsettled(stack: list[dict], kind: str = "webapp") -> list[str]:
+    """The kind's parts the owner has not confirmed yet, in the plan's order."""
 
     confirmed = {s["part"] for s in stack if s["status"] == "confirmed"}
-    return [p for p in PARTS if p not in confirmed]
+    return [p for p in parts(kind) if p not in confirmed]
 
 
 def environment(o: dict) -> str:

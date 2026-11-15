@@ -222,8 +222,8 @@ def test_unsupported_kind_ends_the_intake(world):
     assert "webapp" in refused.value.detail
 
 
-def test_an_android_app_reaches_its_card_and_stops_there_without_making_anything(world):
-    """A manga screen translator for a Galaxy S21 was refused as `desktop`; `android` now runs to S1."""
+def test_an_android_app_confirms_its_card_into_the_bootstrap_with_its_own_ignores(world):
+    """A manga screen translator for a Galaxy S21 was refused as `desktop`; `android` now runs past S1."""
 
     with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-intent", {**INTENT, "kind": "android"}), {}, False)):
         rid = oneshot.start(oneshot.Start(sentence="갤럭시 S21 에서 만화를 번역하는 앱"))["id"]
@@ -244,15 +244,19 @@ def test_an_android_app_reaches_its_card_and_stops_there_without_making_anything
         with pytest.raises(HTTPException):
             oneshot.profile(rid, oneshot.Profile(values={"responsive": "desktop"}))
     with patch.object(oneshot.oneshot_android, "status", lambda: {"missing": []}):
-        stopped = oneshot.profile(rid, oneshot.Profile(values={"docs_language": "ko", "visibility": "private"},
-                                                       confirm=True))
-    assert stopped["stopped"]["reason"] == "kind" and stopped["state"] == "environment"
-    assert not stopped.get("confirmed") and not world["github"].repos   # no repository, folder or push
-    assert not (world["workspace"] / "budget-tracker").exists()
-    assert json.loads((oneshot.PROFILES / "android.json").read_text("utf-8"))["device"] == "galaxy-s21"
-    with pytest.raises(HTTPException) as refused:   # later stages wait for their step on every route in
-        oneshot.resume(rid, oneshot.Resume())
-    assert "7b" in refused.value.detail
+        shown = oneshot.profile(rid, oneshot.Profile(values={"docs_language": "ko", "visibility": "private"},
+                                                     confirm=True))
+    assert shown["state"] == "bootstrap" and shown["confirmed"] and shown["profile"]["device"] == "galaxy-s21"
+    ignored = oneshot.planned(oneshot.load(rid))[".gitignore"].splitlines()
+    assert "local.properties" in ignored and ".gradle/" in ignored   # this PC's SDK path never enters the repo
+
+
+def test_a_card_an_earlier_version_stopped_at_its_kind_opens_again_for_the_owner(world):
+    rid = made(world, state="environment", working=None, confirmed=False,
+               intent={**INTENT, "name": "budget-tracker", "kind": "android"},
+               stopped={"reason": "kind", "detail": "7b 가 들어오면 이어 간다", "state": "environment"})
+    shown = oneshot.resume(rid, oneshot.Resume())
+    assert shown["stopped"] is None and shown["state"] == "environment" and not shown.get("working")
 
 
 def test_the_card_is_prefilled_from_the_kind_and_confirmed_only_without_errors(world):

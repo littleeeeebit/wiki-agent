@@ -114,21 +114,24 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
 
   if (!view) return <Top><p role="status" className="text-muted-foreground">{fault || '읽는 중…'}</p></Top>
   const o = view.oneshot
+  const android = o.intent?.kind === 'android'
   const idle = !view.working && !view.stopped
+  // A `kind` stop waits for this kind's next stage to ship: no resume reaches it.
+  const resume = view.stopped?.reason !== 'kind' && (
+    <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resume(repo))}>재개</Btn>)
   const faulted = fault && <div className="px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4"><Fault text={fault} /></div>
   if (view.stage === 'spec') {
     return <>{faulted}<Conversation talk={o.talk ?? []} requirements={view.requirements ?? []} stack={o.stack ?? []}
+      android={android}
       halt={view.stopped && <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>
-        <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resume(repo))}>재개</Btn></Halt>}
+        {resume}</Halt>}
       busy={busy || !idle} send={(text) => act(() => api.say(repo, text))} /></>
   }
   if (view.stopped) {
     return (
       <Track view={view} halt={<>
         <Fault text={fault} />
-        <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>
-          <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resume(repo))}>재개</Btn>
-        </Halt>
+        <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>{resume}</Halt>
       </>} />
     )
   }
@@ -158,16 +161,21 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   )
 }
 
+/** The stack's parts as S2 asks them (`oneshot_profile.PARTS`, `ANDROID_PARTS`). */
 const PART: Record<string, string> = {
   backend: '백엔드', frontend: '화면', styling: '스타일', data_store: '저장소', tests: '테스트', deploy: '배포',
+}
+const ANDROID_PART: Record<string, string> = {
+  language: '언어', ui: '화면', core: '핵심 로직', data_store: '저장소', tests: '테스트', build: '빌드',
 }
 
 /** The S2 conversation filling the height with its answer box held at the bottom, beside the requirements and
  *  the stack it has gathered so far. */
-function Conversation({ talk, requirements, stack, halt, busy, send }: {
+function Conversation({ talk, requirements, stack, android, halt, busy, send }: {
   talk: Talk[]; requirements: NonNullable<SpecView['requirements']>; stack: NonNullable<SpecView['oneshot']['stack']>
-  halt: ReactNode; busy: boolean; send: (text: string) => Promise<boolean>
+  android: boolean; halt: ReactNode; busy: boolean; send: (text: string) => Promise<boolean>
 }) {
+  const names = android ? ANDROID_PART : PART
   const [text, setText] = useState('')
   const thread = useRef<HTMLDivElement>(null)
   useEffect(() => { thread.current?.scrollTo({ top: thread.current.scrollHeight }) }, [talk.length])
@@ -188,17 +196,17 @@ function Conversation({ talk, requirements, stack, halt, busy, send }: {
       ) : <p className="text-muted-foreground">아직 없다. 질문에 답하면 여기에 쌓인다.</p>}
       <Title><span>스택</span><span className="font-mono">{open ? `${open}개 남음` : ''}</span></Title>
       <dl className="grid grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-2 pb-6">
-        {Object.keys(PART).map((p) => {
+        {Object.keys(names).map((p) => {
           const s = stack.find((x) => x.part === p)
           return [
-            <dt key={`${p}-t`} className="text-muted-foreground">{PART[p]}</dt>,
+            <dt key={`${p}-t`} className="text-muted-foreground">{names[p]}</dt>,
             <dd key={`${p}-d`} title={s?.why} className={cn(!s || s.status !== 'confirmed' ? 'text-faint' : '')}>
               {s ? `${s.choice}${s.status === 'confirmed' ? '' : ' (아직 묻는 중)'}` : '아직 안 정함'}
             </dd>,
           ]
         })}
       </dl>
-      <p className="pb-6 text-[12.5px] text-muted-foreground">스택이 다 정해지고 물을 것이 없으면 대화가 끝나고 백엔드 설계로 넘어간다.</p>
+      <p className="pb-6 text-[12.5px] text-muted-foreground">스택이 다 정해지고 물을 것이 없으면 대화가 끝나고 {android ? '핵심 설계' : '백엔드 설계'}로 넘어간다.</p>
     </>}>
       <div className="flex min-h-0 flex-1 flex-col max-[1100px]:min-h-[34rem]">
         <div ref={thread} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-10 py-5 max-[1500px]:px-7 max-[560px]:px-4">

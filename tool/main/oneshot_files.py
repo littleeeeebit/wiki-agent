@@ -14,6 +14,8 @@ from . import connect, specs
 IGNORE = [".env", "artifacts/", ".venv/", "venv/", "__pycache__/", "*.pyc", ".pytest_cache/", "node_modules/",
           "dist/", "build/", "target/", "bin/", "obj/", "coverage/", ".next/", ".nuxt/", ".svelte-kit/",
           ".gradle/", "vendor/", ".DS_Store"]
+# An Android project's machine-local files: `local.properties` names this PC's SDK folder.
+ANDROID_IGNORE = ["local.properties", ".idea/", "*.iml", ".cxx/", ".externalNativeBuild/", "captures/"]
 
 
 def planned(run: dict) -> dict[str, str]:
@@ -22,7 +24,8 @@ def planned(run: dict) -> dict[str, str]:
 
     p, intent, name = run["profile"], run["intent"], run["identity"]["name"]
     readme = f"# {name}\n\n{intent['restated']}\n\n> {run['sentence']}\n"
-    files = {".gitignore": "\n".join(IGNORE) + "\n", "README.md": readme,
+    ignore = IGNORE + (ANDROID_IGNORE if intent.get("kind") == "android" else [])
+    files = {".gitignore": "\n".join(ignore) + "\n", "README.md": readme,
              ".wiki/adapter.toml": connect.adapter_text({"gate_cmd": "", "review_dir": "artifacts/review",
                                                          "scratch_dirs": "artifacts/", "live_cmd": "", "server_stop": ""})}
     if p["os_later"] == "other":

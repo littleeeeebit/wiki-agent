@@ -241,6 +241,32 @@ def close_install() -> None:
         _thread.join()
 
 
+def isolated(sdk: Path, home: str, user: Path) -> dict:
+    """This server's environment with the owner's `ANDROID_*` variables left out, pointed at one SDK and JDK,
+    and with the Android tools' preferences (the debug signing key among them) in `user`."""
+
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("ANDROID_")}
+    env.update(JAVA_HOME=home, ANDROID_HOME=str(sdk), ANDROID_USER_HOME=str(user))
+    return env
+
+
+def build_env() -> dict:
+    """What an Android run's builds run in: the gate and the contract tests. Gradle's own caches and the SDK
+    tools' preferences stay under `ROOT`, and the JDK comes first on `PATH`."""
+
+    found = status()
+    if found["missing"]:
+        raise ValueError(missing()[0])
+    user, gradle = owned(ROOT / "user"), owned(ROOT / "gradle")
+    for made in (user, gradle):
+        made.mkdir(parents=True, exist_ok=True)
+    env = isolated(Path(found["sdk"]), found["jdk"], user)
+    path = next((k for k in env if k.upper() == "PATH"), "PATH")
+    env.update(GRADLE_USER_HOME=str(gradle), **{path: os.pathsep.join(
+        [str(Path(found["jdk"]) / "bin"), str(Path(found["sdk"]) / "platform-tools"), env.get(path, "")])})
+    return env
+
+
 def sdkmanager(sdk: Path, home: str, wanted: list[str]) -> None:
     """Every package in one `sdkmanager` run, its tree owned by a process job. Its preferences and temporary
     files stay under `ROOT`; each licence it asks for is answered yes, as the card says pressing does."""
@@ -251,9 +277,8 @@ def sdkmanager(sdk: Path, home: str, wanted: list[str]) -> None:
         made.mkdir(parents=True, exist_ok=True)
     if any(c in str(ROOT) for c in '"%^&|<>!'):
         raise ValueError(f"{ROOT} 에 명령에 쓸 수 없는 글자가 있다")
-    env = {k: v for k, v in os.environ.items() if not k.startswith("ANDROID_")}
-    env.update(JAVA_HOME=home, ANDROID_HOME=str(sdk), ANDROID_USER_HOME=str(user), TEMP=str(scratch),
-               TMP=str(scratch), JAVA_TOOL_OPTIONS=f'-Djava.io.tmpdir="{scratch}"')
+    env = isolated(sdk, home, user)
+    env.update(TEMP=str(scratch), TMP=str(scratch), JAVA_TOOL_OPTIONS=f'-Djava.io.tmpdir="{scratch}"')
     # `sdkmanager` compares each answer line to `y` untrimmed; a piped `echo` block adds a space, a file does not.
     answers = owned(scratch / "licence-answers.txt")
     answers.write_bytes(b"y\n" * ANSWERS)

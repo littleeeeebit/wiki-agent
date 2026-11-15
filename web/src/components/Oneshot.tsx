@@ -201,9 +201,10 @@ function Stopped({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act 
   const s = run.stopped!
   return (
     <Halt title={STOP[s.reason] ?? s.reason} detail={s.detail}>
-      {s.reason !== 'kind' && (
-        <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resumeOneshot(run.id))}>재개</Btn>
-      )}
+      {/* A card an earlier version stopped at `kind`: its resume opens the card again for the owner's confirm. */}
+      <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resumeOneshot(run.id))}>
+        {s.reason === 'kind' ? '카드로 돌아가기' : '재개'}
+      </Btn>
       {s.reason === 'github' && (
         <Btn disabled={busy} onClick={() => void act(() => api.resumeOneshot(run.id, true))}
           title="GitHub 에 이미 있는 같은 이름의 빈 저장소를 이 실행의 것으로 쓴다. 커밋이 하나라도 있으면 서버가 거절한다">
@@ -254,7 +255,7 @@ function Restated({ run, busy, act, fault }: { run: OneshotRun; busy: boolean; a
           </dl>
           {intent.unsupported && (
             <p className="rounded-md bg-wait/10 px-3 py-2">
-              <span className="font-mono">{intent.kind}</span> 는 이 버전에서 만들 수 없다 — 지금은 웹앱만. 웹앱으로 만들고 싶다면 아래에 그렇게 고쳐 적어라.
+              <span className="font-mono">{intent.kind}</span> 는 이 버전에서 만들 수 없다 — 지금은 웹앱과 Android 앱만. 둘 중 하나로 만들고 싶다면 아래에 그렇게 고쳐 적어라.
             </p>
           )}
           <label className="flex flex-col gap-1.5">
