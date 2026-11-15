@@ -67,7 +67,7 @@ def grants(spec: dict) -> list[str]:
 
 
 def scenarios(spec: dict) -> list[str]:
-    """The core scenarios' requirement ids: each has an instrumented test `scenario_<id>…`."""
+    """The core scenarios' requirement ids: each has an instrumented test `scenario_<id>_…`."""
 
     return [r["id"] for r in spec.get("requirements") or [] if r.get("postconditions")]
 
@@ -252,17 +252,31 @@ def present(root: ElementTree.Element) -> set[str]:
 
 
 def labelled(node: ElementTree.Element) -> bool:
-    return any(n.get("text", "").strip() or n.get("content-desc", "").strip() for n in node.iter("node"))
+    """Some text or description a reader speaks: an exported `feature:<id>` is an identity, not a label."""
+
+    return any(n.get("text", "").strip() or (d := n.get("content-desc", "").strip()) and not d.startswith("feature:")
+               for n in node.iter("node"))
+
+
+def owned(root: ElementTree.Element, package: str) -> set[int]:
+    """The app's own nodes: its package's, and every view under a `feature:<id>` the app exported, which a
+    notification's views carry while System UI draws them."""
+
+    out = {id(n) for n in root.iter("node") if n.get("package") == package}
+    for n in root.iter("node"):
+        if feature(n):
+            out |= {id(child) for child in n.iter("node")}
+    return out
 
 
 def mechanical(root: ElementTree.Element, package: str, size: dict, pixels) -> list[str]:
     """What the accessibility scanner and a person would catch on the app's own nodes: a view past the
     screen's edge, a touch target under 48 dp, a control with no label, and text without contrast."""
 
-    out, least = [], TARGET_DP * size["dpi"] / 160
+    out, least, mine = [], TARGET_DP * size["dpi"] / 160, owned(root, package)
     for node in root.iter("node"):
         box = bounds(node)
-        if node.get("package") != package or not box or box[2] <= box[0] or box[3] <= box[1] \
+        if id(node) not in mine or not box or box[2] <= box[0] or box[3] <= box[1] \
                 or node.get("visible-to-user", "true") != "true":
             continue
         name = node.get("resource-id") or node.get("text") or node.get("class", "")
@@ -330,17 +344,33 @@ def instrumented(output: str) -> list[tuple[str, str, int, str]]:
     return out
 
 
+def completed(output: str) -> bool:
+    """The run reached its end: `am instrument` reports `INSTRUMENTATION_CODE: -1` (`RESULT_OK`) only after
+    the runner finished, and nothing aborted, failed or crashed it on the way."""
+
+    ended = [line.split(":", 1)[1].strip() for line in output.splitlines() if line.startswith("INSTRUMENTATION_CODE:")]
+    return ended == ["-1"] and not any(word in output for word in (
+        "INSTRUMENTATION_ABORTED", "INSTRUMENTATION_FAILED", "INSTRUMENTATION_RESULT: shortMsg"))
+
+
+def covers(test: str, rid: str) -> bool:
+    """`test` is `rid`'s scenario test: `scenario_<id>` itself or followed by `_`, so R10's never stands in for R1's."""
+
+    name, stem = test.lower(), f"scenario_{rid.lower()}"
+    return name == stem or name.startswith(stem + "_")
+
+
 def scenario_findings(output: str, wanted: list[str], first: str) -> list[dict]:
     results, out = instrumented(output), []
-    if "INSTRUMENTATION_RESULT: shortMsg" in output or "INSTRUMENTATION_FAILED" in output:
+    if not completed(output):
         out.append(finding(first, "full", f"시나리오 테스트가 끝까지 돌지 못했다 — {output.strip()[-300:]}"))
     for cls, test, code, stack in results:
         if code != 0:
             what = "건너뛰었다" if code in (-3, -4) else "실패했다"
             out.append(finding(first, "full", f"시나리오 테스트 `{cls}#{test}` 가 {what} — {stack.strip()[:200]}"))
     for rid in wanted:
-        if not any(test.lower().startswith(f"scenario_{rid.lower()}") for _, test, _, _ in results):
-            out.append(finding(first, "full", f"시나리오 {rid} 의 계측 테스트(`scenario_{rid}…`)가 돌지 않았다"))
+        if not any(covers(test, rid) for _, test, _, _ in results):
+            out.append(finding(first, "full", f"시나리오 {rid} 의 계측 테스트(`scenario_{rid}_…`)가 돌지 않았다"))
     return out
 
 
@@ -357,12 +387,14 @@ def look(tree: Path, device: dict, spec: dict, base: Path, folder: Path, stopped
     for old in folder.glob("*.png"):
         old.unlink()
     cleaned(base)
-    owned = base / f"r{time.time_ns()}"
-    owned.mkdir(parents=True)
-    findings, seen = [], {f: False for f in frequency}
-    with android_owned.boot(owned, tools(), device={k: size[k] for k in ("width", "height", "dpi")}):
+    home = base / f"r{time.time_ns()}"
+    home.mkdir(parents=True)
+    # `seen`: in a `full` hierarchy, where every shown feature must appear; `anywhere`: in any state's, where
+    # a `never` feature must not.
+    findings, seen, anywhere = [], {f: False for f in frequency}, set()
+    with android_owned.boot(home, tools(), device={k: size[k] for k in ("width", "height", "dpi")}):
         halted(stopped)
-        d = Device(owned, device, size, tree)
+        d = Device(home, device, size, tree)
         d.install(device["apk"], device["package"])
         d.install(device["tests"]["apk"], device["tests"]["runner"].split("/")[0])
         if "fixture" in device:
@@ -371,7 +403,7 @@ def look(tree: Path, device: dict, spec: dict, base: Path, folder: Path, stopped
         for s in front["screens"]:
             for state in STATES:
                 halted(stopped)
-                findings += shot(d, s, state, folder, seen)
+                findings += shot(d, s, state, folder, seen, anywhere)
         halted(stopped)
         findings += placement(d, front, frequency, stopped)
         halted(stopped)
@@ -385,14 +417,14 @@ def look(tree: Path, device: dict, spec: dict, base: Path, folder: Path, stopped
             findings.append(finding(first["id"], "full", f"시나리오 테스트 중에 {why}"))
     first = next(s for s in front["screens"] if s["primary"])
     for f, cls in frequency.items():
-        if cls == "never" and seen[f]:
+        if cls == "never" and f in anywhere:
             findings.append(finding(first["id"], "full", f"화면에 없기로 한 `{f}` 의 컨트롤이 화면에 있다"))
         if cls != "never" and not seen[f]:
             findings.append(finding(first["id"], "full", f"`feature:{f}` 가 어느 화면의 계층에도 없다"))
     return findings
 
 
-def shot(d: Device, s: dict, state: str, folder: Path, seen: dict) -> list[dict]:
+def shot(d: Device, s: dict, state: str, folder: Path, seen: dict, anywhere: set) -> list[dict]:
     if why := d.open(s, state):
         return [finding(s["id"], state, why)]
     try:
@@ -404,6 +436,7 @@ def shot(d: Device, s: dict, state: str, folder: Path, seen: dict) -> list[dict]
     out = [finding(s["id"], state, what) for what in mechanical(root, d.d["package"], d.size, pixels)]
     if why := d.died():
         out.append(finding(s["id"], state, why))
+    anywhere |= present(root)
     if state == "full":
         for f in present(root) & set(seen):
             seen[f] = True

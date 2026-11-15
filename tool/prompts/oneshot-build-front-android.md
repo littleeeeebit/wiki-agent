@@ -44,10 +44,12 @@ these permissions, the ones the approved requirements state: {permissions}.
   `Modifier.semantics { testTagsAsResourceId = true }` on the hierarchy that
   holds it, in Flutter `Semantics(identifier: "feature:<id>")`. A
   notification's views carry it as their content description in the debug
-  build. A `never` feature has no control anywhere.
-- Each core scenario has an instrumented test named `scenario_<id>…` (for
-  `R3`, `scenario_R3_marksTheRegionTranslated`), driving the app through UI
-  Automator or the stack's test runner on the device:
+  build. A `never` feature has no control anywhere, in any state.
+- Each core scenario has an instrumented test named `scenario_<id>_…` (for
+  `R3`, `scenario_R3_marksTheRegionTranslated`; `R30`'s never counts for
+  `R3`), driving the app through UI Automator or the stack's test runner on
+  the device. The run must finish: an aborted or crashed instrumentation fails
+  every scenario.
 
 {scenarios}
 

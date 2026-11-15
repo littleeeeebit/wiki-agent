@@ -308,7 +308,9 @@ How 7e builds it:
 - The hierarchy is UI Automator's dump. A feature is found by `feature:<id>`
   as a resource id (Compose's exported test tag, Flutter's identifier), or as
   a content description on a notification's views, which carry no tag.
-- The mechanical checks read the app's own nodes, all high:
+- The mechanical checks read the app's own nodes, all high. Those are its
+  package's, and every view under an exported `feature:<id>`, which is how a
+  notification's controls are found while System UI draws them:
   - a crash or ANR in the event log since the screen opened;
   - a view past the screen's edge;
   - a clickable node under 48 dp;
@@ -322,10 +324,13 @@ How 7e builds it:
 - The placement rules are the web's, read off the first screen's hierarchy
   in the `full` state. One action is one tap on a control in view, after
   relaunching the first screen. A feature that never appears in any `full`
-  hierarchy, or a `never` feature that does, is a finding.
+  hierarchy is a finding, and so is a `never` feature in any state's.
 - The scenarios run once per look as `am instrument -w -r` on the test APK.
-  Each scenario requirement needs a test named `scenario_<id>…`. A failed,
-  skipped or missing one is high, and so is a run that could not start.
+  Each scenario requirement needs a test named `scenario_<id>` or
+  `scenario_<id>_…`, so `R10`'s test never stands in for `R1`'s. A failed,
+  skipped or missing one is high. So is a run that did not end with
+  `INSTRUMENTATION_CODE: -1`, or one that reports an abort, a failure or a
+  crash.
 - The critic names an Android screen by its id where a web screen has its
   route. Two clean rounds stop the run with reason `kind` at `r3` until the
   phone round (7f). A run an earlier version stopped at `build-front` becomes

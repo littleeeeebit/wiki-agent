@@ -193,6 +193,48 @@ def test_a_crash_and_a_failed_or_missing_scenario_test_are_refused(phone, tmp_pa
     assert "시나리오 R3 의 계측 테스트" in found
 
 
+def test_another_scenarios_test_never_stands_in_for_a_missing_one(phone, tmp_path):
+    phone.instrument = PASSED.replace("scenario_R1_", "scenario_R10_")
+    found = whats(looked(phone, tmp_path, android_spec(reqs=[*REQS, {"id": "R10", "text": "x", "postconditions": ["y"]}])))
+    assert "시나리오 R1 의 계측 테스트" in found and "시나리오 R10" not in found
+    assert device.covers("scenario_R1", "R1") and device.covers("SCENARIO_r1_adds", "R1")
+    assert not device.covers("scenario_R10_adds", "R1") and not device.covers("scenario_R1adds", "R1")
+
+
+@pytest.mark.parametrize("output", [
+    PASSED.split("INSTRUMENTATION_RESULT:")[0] + "INSTRUMENTATION_ABORTED: System has crashed.\n",
+    PASSED.replace("INSTRUMENTATION_CODE: -1", "INSTRUMENTATION_CODE: 0"),
+    PASSED.split("INSTRUMENTATION_RESULT:")[0],   # cut before the run reported its end
+])
+def test_a_run_that_did_not_reach_its_end_fails_even_after_every_test_passed(phone, tmp_path, output):
+    phone.instrument = output
+    assert "시나리오 테스트가 끝까지 돌지 못했다" in whats(looked(phone, tmp_path))
+
+
+@pytest.mark.parametrize("state", ["empty", "loading", "error"])
+def test_a_never_control_in_any_state_is_refused(phone, tmp_path, state):
+    call, at = phone.call, {}
+
+    def stateful(folder, args, **options):
+        if args[:3] == ["shell", "am", "start"]:
+            at["state"] = args[-1]
+        if args[:2] == ["exec-out", "cat"] and phone.at == "S2" and at.get("state") == state:
+            return xml(phone.screens["S2"] + [node("sync", "동기화", box=(48, 900, 1032, 1044), clickable=True)])
+        return call(folder, args, **options)
+
+    with patch.object(android_owned, "call", stateful):
+        assert "화면에 없기로 한 `sync`" in whats(looked(phone, tmp_path))
+
+
+def test_a_notification_control_system_ui_draws_is_checked_as_the_apps_own(phone, tmp_path):
+    phone.screens["S3"] = [node("export", "", box=(10, 10, 20, 20), clickable=True, package="com.android.systemui",
+                                desc="feature:export"),
+                           node(text="시계", box=(-30, 0, 10, 10), package="com.android.systemui")]   # System UI's own
+    found = whats(looked(phone, tmp_path))
+    assert "48dp 보다 작다" in found and "읽을 이름" in found   # an identity is not a label
+    assert "시계" not in found
+
+
 def test_a_runner_the_test_apk_does_not_hold_and_an_activity_that_does_not_open_are_findings(phone, tmp_path):
     call = phone.call
 
