@@ -113,6 +113,27 @@ def test_a_valid_core_passes_and_a_web_block_is_not_one():
     assert sheet.blocks("android") == "oneshot-modules,oneshot-outside,oneshot-assumptions,oneshot-tests"
 
 
+def test_an_app_that_never_leaves_the_phone_passes_with_no_outside_calls():
+    offline = {**core_with({("oneshot-modules", 1, "calls"): []}), "oneshot-outside": []}
+    sheet.checked(sheet.parsed(offline, "android"), REQS, GLOSSARY, {}, "android")
+
+
+def test_an_edit_reaches_the_modules_a_changed_module_calls_and_is_called_by():
+    design = sheet.parsed(DESIGN, "android")
+    assert "M2" in sheet.dependents(design, REQS, {"R1"})            # R1's module M1 calls M2
+    assert {"M1", "X1", "T1"} <= sheet.dependents(design, REQS, {"M2"})   # M2's caller, callee and test
+
+
+def test_a_module_past_the_table_shows_its_contract_and_calls_on_the_sheet():
+    blocks = json.loads(json.dumps(DESIGN))
+    blocks["oneshot-modules"] += [{**DESIGN["oneshot-modules"][1], "id": f"M{i}", "name": f"Module{i}",
+                                   "contract": f"계약{i}", "calls": ["M2"], "depends_on": ["R1"]} for i in range(3, 14)]
+    spec = {"repo": "budget", "requirements": REQS, "oneshot": {
+        "sentence": "만화 화면 번역기", "intent": {"kind": "android", "restated": "만화 화면 번역기를 만든다."},
+        "profile": {}, "glossary": GLOSSARY, "design": sheet.parsed(blocks, "android")}}
+    assert "Module13: 계약 계약13 / 부르는 것 M2 / 입력" in sheet.sheet(spec)
+
+
 def test_the_core_design_turn_is_shown_as_a_module_sheet(android):
     oneshot_spec.saved("budget", requirements=REQS, oneshot={"glossary": GLOSSARY, "stack": STACK, "stage": "design"})
     told = []

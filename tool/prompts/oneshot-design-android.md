@@ -30,7 +30,8 @@ it fails. `state` is what it keeps between calls and `stores` is what it keeps
 on the phone across launches; leave either `""` when there is none. `calls`
 names the other modules and the outside calls it makes. An outside call
 (`X`) is anything that leaves the phone: an API, a download, a cloud model.
-Its `failure` says what the app does when the call fails or is slow.
+Its `failure` says what the app does when the call fails or is slow. An app
+that never leaves the phone returns `oneshot-outside` as `[]`.
 
 Design the modules so their contracts can be tested on this PC without an
 emulator: logic that reads the screen, decides or translates takes plain

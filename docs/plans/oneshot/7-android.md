@@ -119,6 +119,12 @@ is where the owner reads how scrolling is told from page swipes, how a region
 already translated is recognised, and how sound effects are skipped. Those
 three were the owner's own questions.
 
+An app that never leaves the phone has no outside calls. A module past the
+table's budget shows its contract and calls in the folded part, because the
+owner approves it too. An R1 edit reaches along `calls` in both directions:
+a changed contract moves its callers, and a changed caller may need its
+callees changed.
+
 ### S4 — core build
 
 Contract tests come first, in the chosen stack's own host-side test runner,

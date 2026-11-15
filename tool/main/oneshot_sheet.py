@@ -106,9 +106,12 @@ def blocks(kind: str = "webapp") -> str:
     return ",".join(block for block, _, _ in table(kind).values())
 
 
+EMPTY = {"outside"}   # an app that never leaves the phone has no outside calls
+
+
 def _items(name: str, value, kinds: dict = KINDS) -> list[dict]:
     block, rid, keys = kinds[name]
-    if not isinstance(value, list) or not value:
+    if not isinstance(value, list) or not value and name not in EMPTY:
         raise ValueError(f"`{block}` 는 비지 않은 목록이어야 한다")
     out, seen = [], set()
     for n, item in enumerate(value, 1):
@@ -351,12 +354,17 @@ def soft(design: dict, reqs: list[dict], glossary: list[dict]) -> list[str]:
 
 
 def dependents(design: dict, reqs: list[dict], start: set[str]) -> set[str]:
-    """`start` and every item whose `depends_on` reaches one of them, transitively."""
+    """`start` and every item whose `depends_on` reaches one of them, transitively. A module's `calls`
+    link it to what it calls both ways: a changed contract moves its callers, and a changed caller may
+    need its callees changed."""
 
     items = list(every(design, reqs).values())
+    calls = [(i["id"], c) for i in items for c in i.get("calls", [])]
     reached = set(start)
     while True:
-        more = {i["id"] for i in items if i["id"] not in reached and set(i.get("depends_on", [])) & reached}
+        more = {i["id"] for i in items if set(i.get("depends_on", [])) & reached}
+        more |= {b for a, b in calls if a in reached} | {a for a, b in calls if b in reached}
+        more -= reached
         if not more:
             return reached
         reached |= more
@@ -455,8 +463,9 @@ def sheet(spec: dict) -> str:
     for f in design["flows"]:
         lines += [f"### {f['id']}{mark(f['id'])} {f['name']}", "", "```mermaid", "sequenceDiagram",
                   *[f"    {_actor(s['from'])}->>{_actor(s['to'])}: {_said(s['say'])}" for s in f["steps"]], "```", ""]
-    for p in design["api"]:
-        lines.append(f"- **{p['id']}**{mark(p['id'])} `{p['method']} {p['path']}` 요청 {_shape(p['request'])} / "
+    for n, p in enumerate(design["api"]):   # an endpoint past the table shows what it does here
+        tabled = "" if n < MAX_ROWS else f"{p['does']} / "
+        lines.append(f"- **{p['id']}**{mark(p['id'])} `{p['method']} {p['path']}` {tabled}요청 {_shape(p['request'])} / "
                      f"응답 {_shape(p['response'])} / 오류 {', '.join(p['errors']) or '없음'}")
     return "\n".join(lines + folded_tail(design, glossary, mark))
 
@@ -501,8 +510,9 @@ def core_sheet(spec: dict) -> str:
                   for x in design["outside"]]
     lines += tested_scenarios(design, reqs, mark)
     lines += ["", "<details><summary>모듈의 입력·출력·상태, 테스트, 용어집</summary>", ""]
-    for m in design["modules"]:
-        lines.append(f"- **{m['id']}**{mark(m['id'])} {m['name']}: 입력 {_shape(m['inputs'])} / 출력 {_shape(m['outputs'])} / "
+    for n, m in enumerate(design["modules"]):   # a module past the table shows its contract and calls here
+        tabled = "" if n < MAX_ROWS else f"계약 {m['contract']} / 부르는 것 {', '.join(m['calls']) or '없음'} / "
+        lines.append(f"- **{m['id']}**{mark(m['id'])} {m['name']}: {tabled}입력 {_shape(m['inputs'])} / 출력 {_shape(m['outputs'])} / "
                      f"오류 {', '.join(m['errors']) or '없음'} / 상태 {m['state'] or '없음'}")
     return "\n".join(lines + folded_tail(design, glossary, mark))
 
