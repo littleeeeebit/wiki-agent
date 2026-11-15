@@ -235,7 +235,7 @@ Each step is a separate PR, approved before the next starts.
 
 | # | Stage | Deliverable | Status |
 | --- | --- | --- | --- |
-| 7a | Kind and toolchain | `android` in the kinds with the intake's definitions, the toolchain preflight with the owner-pressed install, the `device` field and `android.json` profile | Planned |
+| 7a | Kind and toolchain | `android` in the kinds with the intake's definitions, the toolchain preflight with the owner-pressed install, the `device` field and `android.json` profile | Done |
 | 7b | Core path | S2 stack parts and capability requirements for `android`, the S3 module design and R1 module table, S4 contract tests and gate in the stack's own host-side runner | Planned |
 | 7c | Screens without an emulator | S5 from contracts and platform surfaces, S6 rendered by the stack's preview tool at the device size | Planned |
 | 7d | Owned emulator | The native-webview step 3 collector resumed as shared infrastructure, with its refusals and cleanup proof | Planned |

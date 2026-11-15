@@ -16,8 +16,15 @@ from common import settings
 ESTIMATE_USD = 2.0   # a USD-metered role's first turn, before any sample; `.env` may override per role
 TURN_SECONDS = 600.0  # a cut turn's time before the role has a longest turn on record
 
-KINDS = ("webapp", "api", "cli", "desktop", "data")
-SUPPORTED_KINDS = ("webapp",)
+KINDS = ("webapp", "android", "api", "cli", "desktop", "data")
+SUPPORTED_KINDS = ("webapp", "android")
+# The last state a kind reaches in this version; its later stages wait for their plan step
+# (`docs/plans/oneshot/7-android.md`, 7b onwards). A kind not here runs to the end.
+REACHES = {"android": "environment"}
+# The reference phone S7 shoots (`device` replaces `responsive` for `android`): emulator hardware profiles.
+DEVICES = {"medium-phone": {"label": "보통 폰", "width": 1080, "height": 2400, "dpi": 420},
+           "galaxy-s21": {"label": "Galaxy S21", "width": 1080, "height": 2400, "dpi": 421},
+           "small-phone": {"label": "작은 폰", "width": 720, "height": 1280, "dpi": 320}}
 
 # The schema is the server's, never the model's: a field or option outside it refuses the block.
 # `enabled` narrows what this version can run end to end; `asked` fields start empty on a kind's first run.
@@ -34,26 +41,36 @@ SCHEMA: dict[str, dict] = {
     "llm": {"options": ["none", "anthropic", "openai", "other"], "default": "none"},
     "github_owner": {"text": True, "default": "", "asked": True},
 }
+FIELDS = {*SCHEMA, "device"}   # every kind's card fields
 OWNER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
 # The stack is the owner's, picked in S2 (`docs/plans/oneshot/6-free-stack.md`); the card holds none of it.
 PARTS = ("backend", "frontend", "styling", "data_store", "tests", "deploy")
 STATUSES = ("confirmed", "assumed", "undecided")
 
 
+def schema(kind: str = "webapp") -> dict[str, dict]:
+    """The card's fields for `kind`: an `android` card names its reference phone instead of web viewports."""
+
+    if kind != "android":
+        return SCHEMA
+    return {("device" if k == "responsive" else k): ({"options": list(DEVICES), "default": "medium-phone"}
+                                                      if k == "responsive" else f) for k, f in SCHEMA.items()}
+
+
 def current(profile: dict | None) -> dict | None:
     """A card's values in today's schema: a field a later version dropped is no longer the card's."""
 
-    return None if profile is None else {k: v for k, v in profile.items() if k in SCHEMA}
+    return None if profile is None else {k: v for k, v in profile.items() if k in FIELDS}
 
 
-def proposal(value) -> dict:
-    """The model's `oneshot-profile` block, checked against the schema: `{field: {value, why}}`."""
+def proposal(value, kind: str = "webapp") -> dict:
+    """The model's `oneshot-profile` block, checked against the kind's schema: `{field: {value, why}}`."""
 
     if not isinstance(value, dict):
         raise ValueError("`oneshot-profile` 는 필드별 객체여야 한다")
-    out = {}
+    out, fields = {}, schema(kind)
     for name, item in value.items():
-        field = SCHEMA.get(name)
+        field = fields.get(name)
         if field is None:
             raise ValueError(f"스키마에 없는 필드다: {name}")
         if not isinstance(item, dict) or not isinstance(item.get("why"), str) or "value" not in item:
@@ -69,11 +86,11 @@ def proposal(value) -> dict:
     return out
 
 
-def problems(profile: dict) -> tuple[list[str], list[str]]:
+def problems(profile: dict, kind: str = "webapp") -> tuple[list[str], list[str]]:
     """`(errors, warnings)` for the card. Errors keep it from being confirmed."""
 
     errors, warnings = [], []
-    for name, field in SCHEMA.items():
+    for name, field in schema(kind).items():
         v = profile.get(name, "")
         if v in ("", None):
             errors.append(f"`{name}` 을 채워야 한다")

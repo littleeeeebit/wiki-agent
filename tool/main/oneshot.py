@@ -33,9 +33,9 @@ from common import swap, worktree_home
 from common.paths import DATA, RAW, RESOURCES
 from workspace import TASK, create
 
-from . import channels, connect, prerequisite_review, runtime, specs
+from . import channels, connect, oneshot_android, prerequisite_review, runtime, specs
 from .oneshot_files import as_planned, git, planned, tracked  # noqa: F401 — `tracked` is read by tests
-from .oneshot_profile import (KINDS, SCHEMA, SUPPORTED_KINDS, charged, cut, ledger, problems, proposal,
+from .oneshot_profile import (DEVICES, KINDS, REACHES, SUPPORTED_KINDS, charged, cut, ledger, problems, proposal, schema,
                               current)
 from .query import ROOT
 
@@ -165,8 +165,9 @@ def saved_profile(kind: str) -> dict:
 def prefilled(kind: str) -> dict:
     """The kind's saved profile over the schema's defaults; `asked` fields stay empty on a first run."""
 
-    base = {k: f["default"] for k, f in SCHEMA.items()}
-    return {**base, **{k: v for k, v in saved_profile(kind).items() if k in SCHEMA}}
+    fields = schema(kind)
+    base = {k: f["default"] for k, f in fields.items()}
+    return {**base, **{k: v for k, v in saved_profile(kind).items() if k in fields}}
 
 
 # -- Model turns -----------------------------------------------------------------------
@@ -372,11 +373,12 @@ def environment(rid: str) -> None:
     base = prefilled(kind)
     if not base.get("github_owner"):
         base["github_owner"] = gh_user()
-    shown = {k: {**{x: f[x] for x in ("options", "enabled", "text") if x in f}} for k, f in SCHEMA.items()}
+    shown = {k: {**{x: f[x] for x in ("options", "enabled", "text") if x in f}} for k, f in schema(kind).items()}
     text = (f"The owner's sentence:\n\n{run['sentence']}\n\nThe confirmed restatement:\n\n"
             f"{json.dumps(run['intent'], ensure_ascii=False)}\n\nThe schema:\n\n{json.dumps(shown)}\n\n"
-            f"The prefilled profile:\n\n{json.dumps(base, ensure_ascii=False)}\n")
-    found = turned(rid, "profile", PROFILE_PROMPT, text, "oneshot-profile", proposal)
+            + (f"The `device` options:\n\n{json.dumps(DEVICES, ensure_ascii=False)}\n\n" if "device" in shown else "")
+            + f"The prefilled profile:\n\n{json.dumps(base, ensure_ascii=False)}\n")
+    found = turned(rid, "profile", PROFILE_PROMPT, text, "oneshot-profile", lambda v: proposal(v, kind))
     if found is not None:
         values = {**base, **{k: v["value"] for k, v in found.items()}}
         changed(rid, profile=values, proposed=found, working=None)
@@ -688,10 +690,20 @@ def restarted(store: Store) -> None:
         store.stop("restart", "서버가 다시 켜졌다")
 
 
+def card_errors(run: dict, profile: dict) -> tuple[list[str], list[str]]:
+    """The card's problems for the run's kind; an `android` card also needs the toolchain."""
+
+    kind = (run.get("intent") or {}).get("kind", "webapp")
+    errors, warnings = problems(profile, kind)
+    return errors + (oneshot_android.missing() if kind == "android" else []), warnings
+
+
 def view(run: dict) -> dict:
-    errors, warnings = problems(run["profile"]) if run.get("profile") else ([], [])
+    kind = (run.get("intent") or {}).get("kind", "webapp")
+    errors, warnings = card_errors(run, run["profile"]) if run.get("profile") else ([], [])
     return {**{k: v for k, v in run.items() if k != "license_text"}, "profile": current(run.get("profile")),
-            "errors": errors, "warnings": warnings, "schema": SCHEMA, "steps_order": list(STEPS)}
+            "errors": errors, "warnings": warnings, "schema": schema(kind), "steps_order": list(STEPS),
+            **({"devices": DEVICES, "toolchain": oneshot_android.status()} if kind == "android" else {})}
 
 
 # -- HTTP ------------------------------------------------------------------------------------------
@@ -798,7 +810,7 @@ def intent(rid: str, body: Intent) -> dict:
             launch(rid, "intake", body.edit.strip())
             return view(load(rid))
         if run["intent"].get("unsupported"):
-            raise HTTPException(409, f"`{run['intent']['kind']}` 는 이 버전에서 만들 수 없다 — 지금은 webapp 만")
+            raise HTTPException(409, f"`{run['intent']['kind']}` 는 이 버전에서 만들 수 없다 — 지금은 {', '.join(SUPPORTED_KINDS)} 만")
         name = specs.slugged(body.name or run["intent"]["name"])
         if run["picked"]:
             path = Path(run["picked"])
@@ -831,13 +843,21 @@ def profile(rid: str, body: Profile) -> dict:
         idle(run, "environment")
         if run.get("profile") is None:
             raise HTTPException(409, "카드가 아직 없다")
-        if unknown := set(body.values) - set(SCHEMA):
+        kind = run["intent"]["kind"]
+        if unknown := set(body.values) - set(schema(kind)):
             raise HTTPException(400, f"스키마에 없는 필드: {', '.join(sorted(unknown))}")
         values = {**current(run["profile"]), **body.values}
         if body.confirm:
-            errors, _ = problems(values)
+            errors, _ = card_errors(run, values)
             if errors:
                 raise HTTPException(400, "; ".join(errors))
+            if REACHES.get(kind) == "environment":   # nothing outside is made: its next stages are not in yet
+                PROFILES.mkdir(parents=True, exist_ok=True)
+                (PROFILES / f"{kind}.json").write_text(json.dumps(values, ensure_ascii=False, indent=2) + "\n",
+                                                       encoding="utf-8", newline="\n")
+                changed(rid, profile=values)
+                return view(stop(rid, "kind", f"`{kind}` 는 이 버전에서 환경 카드까지 간다 — 카드는 저장했고, "
+                                              "다음 단계(docs/plans/oneshot/7-android.md 7b)가 들어오면 이어 간다"))
             ident = run["identity"]
             if values["github_owner"] != ident["owner"]:
                 if found := conflicts(rid, Path(ident["path"]), ident["name"], values["github_owner"]):
@@ -857,6 +877,8 @@ def resume(rid: str, body: Resume) -> dict:
         run = load(rid)
         if run.get("committed") or not run.get("stopped") or run.get("working"):
             raise HTTPException(409, "멈춘 실행이 아니다")
+        if run["stopped"]["reason"] == "kind":
+            raise HTTPException(409, run["stopped"]["detail"])
         if run.get("version", 1) < 3 and run.get("identity") and any(   # its files, even some, carry the old card's stack
                 (Path(run["identity"]["path"]) / f).exists() for f in ("README.md", ".gitignore", ".wiki/adapter.toml")):
             raise HTTPException(409, "예전 형식으로 기본 파일을 쓴 실행이라 이어 갈 수 없다 — 새 실행을 시작하라")

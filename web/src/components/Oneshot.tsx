@@ -14,7 +14,7 @@ export type OneshotRun = {
   id: string
   state: 'intake' | 'environment' | 'bootstrap' | 'spec'
   working: string | null
-  stopped: { reason: 'block' | 'folder' | 'github' | 'connect' | 'restart'; detail: string; state: string } | null
+  stopped: { reason: 'block' | 'folder' | 'github' | 'connect' | 'restart' | 'kind'; detail: string; state: string } | null
   sentence: string
   models?: Models
   picked: string
@@ -28,6 +28,14 @@ export type OneshotRun = {
   warnings: string[]
   schema: Record<string, OneshotField>
   steps_order: string[]
+  devices?: Record<string, { label: string; width: number; height: number; dpi: number }>
+  toolchain?: Toolchain
+}
+type Toolchain = {
+  sdk: string
+  pieces: { key: string; label: string; path: string; version: string }[]
+  missing: string[]
+  job: { state: 'idle' | 'running' | 'done' | 'failed'; step: string; error: string; log: string[] }
 }
 
 const answer = (r: Response) => json<OneshotRun>(r, '원샷')
@@ -42,6 +50,8 @@ export const api = {
   saveProfile: (id: string, values: Record<string, string | number>, confirm: boolean) =>
     post(`/api/oneshot/${id}/profile`, { values, confirm }).then(answer),
   resumeOneshot: (id: string, adopt = false) => post(`/api/oneshot/${id}/resume`, { adopt }).then(answer),
+  toolchain: () => get('/api/oneshot-android/toolchain').then((r) => json<Toolchain>(r, 'Android 도구')),
+  installToolchain: () => post('/api/oneshot-android/toolchain/install', {}).then((r) => json<Toolchain>(r, 'Android 도구 설치')),
 }
 
 /** A oneshot run's S1 parts (`docs/plans/oneshot/2-bootstrap.md`), shown in the oneshot window:
@@ -52,7 +62,7 @@ export const api = {
 const LABEL: Record<string, string> = {
   os_now: '지금 쓰는 OS', os_later: '다른 OS 에서도', auth: '로그인',
   visibility: 'GitHub 공개 범위', license: '라이선스', ci: 'CI',
-  ui_language: '화면 언어', docs_language: '문서 언어', responsive: '화면 크기', llm: 'LLM 사용',
+  ui_language: '화면 언어', docs_language: '문서 언어', responsive: '화면 크기', device: '기준 기기', llm: 'LLM 사용',
   github_owner: 'GitHub 소유자',
 }
 const STEP: Record<string, string> = {
@@ -61,7 +71,7 @@ const STEP: Record<string, string> = {
 }
 export const STOP: Record<string, string> = {
   block: '모델 답을 쓸 수 없었다', folder: '폴더나 이름 문제', github: 'GitHub 문제', connect: '연결을 확인해야 한다',
-  restart: '서버가 다시 켜져 멈췄다',
+  restart: '서버가 다시 켜져 멈췄다', kind: '이 종류는 여기까지',
 }
 const WORKING: Record<string, string> = {
   intake: '하고 싶은 것을 다시 정리하는 중…', profile: '환경 카드를 채우는 중…', bootstrap: '저장소를 만드는 중…',
@@ -191,7 +201,9 @@ function Stopped({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act 
   const s = run.stopped!
   return (
     <Halt title={STOP[s.reason] ?? s.reason} detail={s.detail}>
-      <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resumeOneshot(run.id))}>재개</Btn>
+      {s.reason !== 'kind' && (
+        <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resumeOneshot(run.id))}>재개</Btn>
+      )}
       {s.reason === 'github' && (
         <Btn disabled={busy} onClick={() => void act(() => api.resumeOneshot(run.id, true))}
           title="GitHub 에 이미 있는 같은 이름의 빈 저장소를 이 실행의 것으로 쓴다. 커밋이 하나라도 있으면 서버가 거절한다">
@@ -287,7 +299,9 @@ function Card({ run, busy, act, fault }: { run: OneshotRun; busy: boolean; act: 
                   {value === '' && <option value="">고르기</option>}
                   {field.options.map((o) => (
                     <option key={o} value={o} disabled={!!field.enabled && !field.enabled.includes(o)}>
-                      {o}{field.enabled && !field.enabled.includes(o) ? ' (아직 없음)' : ''}
+                      {key === 'device' && run.devices?.[o]
+                        ? `${run.devices[o].label} — ${run.devices[o].width}×${run.devices[o].height}, ${run.devices[o].dpi} dpi`
+                        : o}{field.enabled && !field.enabled.includes(o) ? ' (아직 없음)' : ''}
                     </option>
                   ))}
                 </select>
@@ -310,15 +324,62 @@ function Card({ run, busy, act, fault }: { run: OneshotRun; busy: boolean; act: 
       <div className="flex justify-end gap-2">
         <Btn className={GO} disabled={busy} onClick={() => void act(() => api.saveProfile(run.id, draft, false))}
           title="저장하고 문제를 다시 확인한다">저장</Btn>
-        <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.saveProfile(run.id, draft, true))}>확정하고 만들기</Btn>
+        <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.saveProfile(run.id, draft, true))}>{run.toolchain ? '확정' : '확정하고 만들기'}</Btn>
       </div>
       </section>
-      <section aria-label="확정하면 바깥에 남는 것" className="flex flex-col gap-4 rounded-xl border border-border p-6 max-[560px]:p-4">
-        <Title><span>확정하면 바깥에 이렇게 남는다</span></Title>
-        <Facts run={run} draft={draft} />
-      </section>
+      {run.toolchain ? <Tools initial={run.toolchain} busy={busy} /> : (
+        <section aria-label="확정하면 바깥에 남는 것" className="flex flex-col gap-4 rounded-xl border border-border p-6 max-[560px]:p-4">
+          <Title><span>확정하면 바깥에 이렇게 남는다</span></Title>
+          <Facts run={run} draft={draft} />
+        </section>
+      )}
       </div>
     </Top>
+  )
+}
+
+/** An `android` card's toolchain: each piece found or missing, and the owner's one install action. */
+function Tools({ initial, busy }: { initial: Toolchain; busy: boolean }) {
+  const [tools, setTools] = useState(initial)
+  const [fault, setFault] = useState('')
+  const running = tools.job.state === 'running'
+  useEffect(() => {
+    if (!running) return
+    const timer = setInterval(() => { api.toolchain().then(setTools).catch(() => {}) }, 3000)
+    return () => clearInterval(timer)
+  }, [running])
+  const press = () => {
+    setFault('')
+    api.installToolchain().then(setTools).catch((err) => setFault(error(err)))
+  }
+  return (
+    <section aria-label="Android 도구" className="flex flex-col gap-4 rounded-xl border border-border p-6 max-[560px]:p-4">
+      <Title><span>Android 도구</span></Title>
+      <ul className="flex flex-col gap-1.5">
+        {tools.pieces.map((p) => (
+          <li key={p.key} className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-x-2">
+            <span aria-hidden className={p.path ? 'text-progress' : 'text-destructive'}>{p.path ? '✓' : '×'}</span>
+            <span>{p.label}{p.version && <span className="text-muted-foreground"> {p.version}</span>}
+              {!p.path && <span className="text-muted-foreground"> — 없음</span>}</span>
+          </li>
+        ))}
+      </ul>
+      {running && <p role="status" className="text-muted-foreground">{tools.job.step || '설치하는 중…'}</p>}
+      {tools.job.state === 'failed' && <p className="text-destructive">{tools.job.error}</p>}
+      <Fault text={fault} />
+      {tools.missing.length > 0 && (
+        <>
+          <p className="text-[12.5px] text-muted-foreground">
+            [도구 설치]를 누르면 JDK 17 과 Android SDK(플랫폼 도구, 에뮬레이터, 플랫폼, 빌드 도구, 시스템 이미지)를
+            {' '}<span className="break-all font-mono">{tools.sdk}</span> 옆에 수 GB 내려받는다. 다른 폴더나 PATH 는
+            바꾸지 않는다. 누르는 것은 Android SDK 라이선스에 동의하는 것이다.
+          </p>
+          <div className="flex justify-end">
+            <Btn tone="wait" className={GO} disabled={busy || running} onClick={press}>{running ? '설치하는 중…' : '도구 설치'}</Btn>
+          </div>
+        </>
+      )}
+    </section>
   )
 }
 
