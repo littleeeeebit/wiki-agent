@@ -627,7 +627,9 @@ def phone_round():
         "status": "waiting", "detail": "휴대폰이 잠겨 있다 — 잠금을 풀고 화면을 켠 채로 다시 시작한다", "findings": [
             {"screen": "S1", "state": "full", "what": "앱이 죽거나 응답하지 않았다", "severity": "high"}]}}
     android["phone_owned"] = [{"serial": "OLD1", "model": "", "packages": ["com.example.app.oneshot01"], "state": "pending",
-                               "left": ["com.example.app.oneshot01"], "digests": {}}]
+                               "left": ["com.example.app.oneshot01"], "digests": {}},
+                              {"serial": "OLD2", "model": "", "packages": ["com.example.app.oneshot02"], "state": "unsure",
+                               "left": [], "unsure": ["com.example.app.oneshot02"], "digests": {}}]
     views = {"phone-demo": android}
     phones = {"devices": [{"serial": "R5CR10ABCDE", "state": "device", "model": "SM G991N"},
                           {"serial": "ZY22", "state": "unauthorized", "model": ""}]}
@@ -665,6 +667,7 @@ def phone_round():
         strip = page.get_by_role("list", name="원샷 단계 16/19")
         expect(strip.locator("[aria-current=step]")).to_contain_text("휴대폰 회차")
         expect(page.get_by_role("status").filter(has_text="OLD1")).to_contain_text("com.example.app.oneshot01")
+        expect(page.get_by_role("status").filter(has_text="OLD2")).to_contain_text("직접 지우고")
         expect(page.get_by_role("alert").filter(has_text="잠겨 있다")).to_be_visible()
         expect(page.get_by_role("region", name="지난 휴대폰 회차")).to_contain_text("앱이 죽거나 응답하지 않았다")
         side = page.get_by_role("complementary", name="연결된 휴대폰")

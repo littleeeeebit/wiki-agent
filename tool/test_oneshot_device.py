@@ -8,6 +8,7 @@ owned emulator itself is `test_android_owned`'s. The build check runs for real o
 
 import json
 from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import patch
 from xml.sax.saxutils import quoteattr
 
@@ -383,6 +384,32 @@ def test_an_android_build_with_its_device_block_and_clean_shots_moves_to_critiqu
     assert then is not None and o()["stage"] == "critique", o().get("stopped")
     assert o()["device"] == DEVICE and o()["looks"][0]["findings"] == []
     assert (oneshot_spec.store("budget").folder / "build" / "r1" / "S1-phone-full.png").is_file()
+
+
+def test_the_emulator_installs_copies_whose_digests_the_phone_round_must_match(android_build, phone, monkeypatch):
+    """The APKs as a real build leaves them, untracked: one rebuilt while the emulator runs moves neither HEAD
+    nor the tree's state, and the digests saved are still those of the bytes the emulator installed."""
+
+    git(android_build, "rm", "--cached", "-q", "--", DEVICE["apk"], DEVICE["tests"]["apk"])
+    ignored = android_build / ".gitignore"
+    ignored.write_text((ignored.read_text(encoding="utf-8") if ignored.exists() else "") + "\napp/\n", encoding="utf-8")
+    git(android_build, "add", ".gitignore")
+    git(android_build, "commit", "-q", "-m", "Keep the APK outputs untracked")
+    installed, original = {}, android_owned.call
+
+    def rebuilt(folder, args, **kw):
+        if args[0] == "install":
+            installed[Path(args[-1]).name] = android_owned.sha256(Path(args[-1]))
+        if args[:3] == ["shell", "am", "instrument"]:
+            write(android_build, DEVICE["apk"], "rebuilt while the emulator ran")
+        return original(folder, args, **kw)
+
+    monkeypatch.setattr(android_owned, "call", rebuilt)
+    oneshot_build.checked(android_build, Run(), spec(), report() + fenced("oneshot-device", DEVICE))
+    assert o()["stage"] == "critique", o().get("stopped")
+    assert o()["apks"][DEVICE["apk"]] == installed["app-debug.apk"] != android_owned.sha256(android_build / DEVICE["apk"])
+    assert all(a[:3] == ["install", "-R", "-t"] for a in phone.sent if a[0] == "install")
+    assert not any((oneshot_spec.store("budget").folder / "apks").iterdir())
 
 
 def test_an_android_build_without_its_device_block_is_sent_back(android_build):

@@ -7,6 +7,7 @@ context that only writes the server's record, so `bind` and the serial each devi
 """
 
 import json
+import re
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path
@@ -34,7 +35,7 @@ class Handset(Phone):
         self.phones = {SERIAL: ("device", "SM_G991N"), OTHER: ("device", "Pixel_8")}
         # What is installed: each package with the SHA-256 of the APK it was installed from.
         self.present, self.addressed, self.locked, self.gone, self.on_call = {}, [], False, False, None
-        self.ids = {DEVICE["apk"]: PKG, DEVICE["tests"]["apk"]: TESTS}
+        self.ids, self.root = {DEVICE["apk"]: PKG, DEVICE["tests"]["apk"]: TESTS}, "/data/app"
 
     def call(self, folder, args, *, device=True, timeout=0, binary=False, stream=False):
         if device:
@@ -56,14 +57,15 @@ class Handset(Phone):
             return "Success\n"
         if args[0] == "install":
             package = next(p for apk, p in self.ids.items() if args[-1].replace("\\", "/").endswith(apk))
-            if package in self.present and "-r" not in args:
+            # As Android's package manager: it replaces an existing installation unless given `-R`.
+            if package in self.present and "-R" in args:
                 raise ValueError("Failure [INSTALL_FAILED_ALREADY_EXISTS]")
             self.present[package] = android_owned.sha256(Path(args[-1]))
             return "Success\n"
         if args[:3] == ["shell", "pm", "path"]:
-            return f"package:/data/app/~~a1==/{args[3]}-b2==/base.apk\n" if args[3] in self.present else ""
+            return f"package:{self.root}/~~a1==/{args[3]}-b2==/base.apk\n" if args[3] in self.present else ""
         if args[:2] == ["shell", "sha256sum"]:
-            package = args[2].split("/")[4].rsplit("-", 1)[0]
+            package = re.search(r"/~~a1==/(.+)-b2==/base\.apk$", args[2]).group(1)
             return f"{self.present[package]}  {args[2]}\n"
         if args[:3] == ["shell", "wm", "size"]:
             return "Physical size: 1080x2400\n"
@@ -120,8 +122,26 @@ def test_a_clean_round_on_the_picked_phone_waits_before_r3_and_leaves_nothing_on
     assert after["phone_owned"][-1] | {"ts": 0} == {"serial": SERIAL, "model": "SM G991N", "packages": [PKG, TESTS],
                                                     "digests": {PKG: after["apks"][DEVICE["apk"]],
                                                                 TESTS: after["apks"][DEVICE["tests"]["apk"]]},
-                                                    "state": "cleaned", "left": [], "foreign": [], "ts": 0}
+                                                    "installed": [PKG, TESTS], "state": "cleaned", "left": [],
+                                                    "foreign": [], "unsure": [], "ts": 0}
     assert "phone_owned" not in phone_round.extra(spec())
+
+
+def test_an_app_on_adopted_storage_is_checked_and_cleaned(handset):
+    handset.root = "/mnt/expand/01234567-89ab-cdef-0123-456789abcdef/app"
+    after = played(handset)
+    assert after["phone"]["status"] == "passed" and handset.present == {}
+    assert after["phone_owned"][-1]["state"] == "cleaned"
+
+
+@pytest.mark.parametrize("root", ["/data/local/tmp", "/data/app/../local/tmp", "/data/app/x;reboot"])
+def test_an_apk_path_outside_where_apps_are_kept_is_never_sent_to_the_phones_shell(handset, root):
+    handset.root = root
+    after = played(handset)
+    assert after["phone"]["status"] == "waiting" and "다르다" in after["phone"]["detail"]
+    assert not any(a[:2] == ["shell", "sha256sum"] for a in handset.sent)
+    # The digest it would be removed by cannot be read: the cleanup stays pending, shown on the run.
+    assert after["phone_owned"][-1]["state"] == "pending" and PKG in handset.present
 
 
 def test_a_passing_app_the_owner_keeps_stays_installed_and_its_record_is_released(handset):
@@ -190,16 +210,30 @@ def test_a_phone_pulled_out_mid_round_leaves_a_pending_cleanup_finished_when_it_
 def test_a_round_cut_by_a_restart_is_cleaned_on_the_next_listing(handset):
     mine = o()["apks"][DEVICE["apk"]]
     phone_round.recorded("budget", serial=SERIAL, model="", packages=[PKG, TESTS], digests={PKG: mine, TESTS: "a" * 64},
-                         state="owning", left=[])
+                         installed=[PKG, TESTS], state="owning", left=[])
     handset.present = {PKG: mine, TESTS: "b" * 64}   # the tests' id now holds another installer's APK
     phone_round.devices("budget")
     assert handset.present == {TESTS: "b" * 64}
     assert {"state": "cleaned", "left": [], "foreign": [TESTS]}.items() <= o()["phone_owned"][-1].items()
 
 
-def test_an_installation_another_installer_made_after_the_check_is_never_removed(handset):
-    """The id taken between the check and the install: the install fails (never `-r`), and the cleanup removes
-    only a package holding this run's APK."""
+def test_the_same_apk_installed_by_the_owner_after_a_crash_is_never_removed(handset):
+    """The server died after the record was saved and before an install was confirmed: the same bytes on the
+    phone prove nothing about who installed them, so they stay, shown on the run until the owner removes them."""
+
+    mine = o()["apks"][DEVICE["apk"]]
+    phone_round.recorded("budget", serial=SERIAL, model="", packages=[PKG], digests={PKG: mine}, installed=[],
+                         state="owning", left=[])
+    handset.present = {PKG: mine}
+    assert [r["state"] for r in phone_round.devices("budget")["owned"]] == ["unsure"]
+    assert handset.present == {PKG: mine} and phone_round.extra(spec())["phone_owned"][0]["unsure"] == [PKG]
+    handset.present = {}   # the owner removed it
+    assert phone_round.devices("budget")["owned"] == [] and o()["phone_owned"][-1]["state"] == "cleaned"
+
+
+def test_an_installation_another_installer_made_after_the_check_is_never_replaced_nor_removed(handset):
+    """The id taken between the check and the install: `-R` fails the install, as Android replaces by default,
+    and the cleanup removes only a package this run is known to have installed."""
 
     def raced(args):
         if args[0] == "install" and PKG not in handset.present:
@@ -208,8 +242,8 @@ def test_an_installation_another_installer_made_after_the_check_is_never_removed
     after = played(handset)
     assert after["stage"] == "phone" and "끝나지 못했다" in after["phone"]["detail"]
     assert handset.present == {PKG: "c" * 64}
-    assert {"state": "cleaned", "foreign": [PKG]}.items() <= after["phone_owned"][-1].items()
-    assert all("-r" not in a for a in handset.sent if a[0] == "install")
+    assert {"state": "cleaned", "foreign": [PKG], "installed": []}.items() <= after["phone_owned"][-1].items()
+    assert all(a[:3] == ["install", "-R", "-t"] for a in handset.sent if a[0] == "install")
 
 
 def test_a_cleanup_left_pending_by_a_passing_round_is_finished_at_r3(handset):

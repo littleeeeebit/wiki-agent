@@ -396,27 +396,41 @@ How 7f1 builds it (`tool/android_phone.py`, `tool/main/oneshot_phone.py`):
   activity by its full class. The block's packages must end with it, and the
   test package follows the app's. So the emulator's look already installs
   the ids the phone gets.
-- The round holds the worktree on the head the emulator's look passed. The
-  APKs are build outputs Git does not track, so the round copies them into
-  the run's folder and checks each copy's SHA-256 against the one saved at
-  that pass. It installs from those copies. A moved head, or an APK that is
+- The APKs are build outputs Git does not track, so a build outside the run
+  can change them. Both devices install copies in the run's folder. The
+  emulator's look copies the APKs after the gate, installs the copies and
+  saves their SHA-256s. The round holds the worktree on the head that look
+  passed, copies the APKs again, and checks each copy against the saved
+  digest. It installs from those copies. A moved head, or an APK that is
   missing or changed, goes back to the build.
 - Before installing, the round checks:
   - the picked serial is listed as `device`;
   - the screen is not locked (after a wake key);
   - no package exists, read exactly off `pm list packages`. An existing one
     stops the round with no record and nothing installed or removed.
-- Installs never pass `-r`, so an id another installer takes after the check
-  fails the install instead of being replaced. After each install, the
-  digest of the `base.apk` that `pm path` names must match the passed one.
+- Installs pass `-R`. Android's package manager replaces an existing
+  installation by default and ignores `-r`. So an id another installer takes
+  after the check fails the install instead of being replaced. After each
+  install, the digest of the `base.apk` that `pm path` names must match the
+  passed one. That path must lie under `/data/app` or an adopted volume's
+  `/mnt/expand/<uuid>/app` before it is sent to the phone's shell.
 - The record goes in `oneshot.phone_owned`, one entry per round. It names each
   package with the digest it must hold, and is saved before the first install.
-  It is settled on every exit: `cleaned`, `pending` with what is left, or
-  `released` when the owner kept a passing app. The cleanup removes a package
-  only when its installed `base.apk` holds the recorded digest. Another
-  installation is listed as `foreign` and left alone. A later listing that
-  shows the serial finishes every `owning` or `pending` entry for it. The
-  record also covers a round a restart cut.
+  A package joins its `installed` list once its install command succeeds,
+  which under `-R` proves the installation is the run's. The record is settled
+  on every exit:
+  - `cleaned`;
+  - `pending`, with what is left;
+  - `unsure`, for a package that is on the phone but was never confirmed as
+    installed, such as after a crash between the record and the install. The
+    same APK the owner installed is not the run's, so it is shown and never
+    removed;
+  - `released`, when the owner kept a passing app.
+- The cleanup removes a package only when it is in `installed` and its
+  `base.apk` holds the recorded digest. Another APK is listed as `foreign` and
+  left alone. A later listing that shows the serial settles every `owning`,
+  `pending` or `unsure` entry for it again. The record also covers a round a
+  restart cut.
 - The listing runs at any stage except during the round itself. The run's
   notice of an unfinished cleanup carries `[휴대폰 찾기]`, so a passed round's
   cleanup left pending at R3 can still be finished.

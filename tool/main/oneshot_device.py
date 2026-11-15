@@ -12,6 +12,7 @@ The emulator is `android_owned`'s, cleaned on every exit; a placement or mechani
 from __future__ import annotations
 
 import re
+import shutil
 import time
 from pathlib import Path
 from xml.etree import ElementTree
@@ -171,9 +172,13 @@ class Device:
     def adb(self, *args, timeout: float = android_owned.CALL_SECONDS, binary: bool = False):
         return android_owned.call(self.folder, list(args), timeout=timeout, binary=binary)
 
-    def install(self, apk: str, package: str) -> None:
-        # Never `-r`: an installation already there, the run's or another's, fails the install instead.
-        self.adb("install", "-t", str((self.tree / apk).resolve()), timeout=INSTALL_SECONDS)
+    def install(self, apk: str, package: str, done=lambda: None) -> None:
+        """`done` runs once the install command succeeded: with `-R`, the proof the installation is this one."""
+
+        # `-R`: the package manager replaces an existing installation unless told not to (`-r` is ignored), so
+        # an installation already there, the run's or another's, fails the install instead.
+        self.adb("install", "-R", "-t", str((self.tree / apk).resolve()), timeout=INSTALL_SECONDS)
+        done()
         if not self.adb("shell", "pm", "path", package).strip().startswith("package:"):
             raise ValueError(f"`{apk}` 를 설치했는데 `{package}` 가 기기에 없다 — `{BLOCK}` 의 package 가 그 APK 의 것이어야 한다")
 
@@ -420,6 +425,16 @@ def digests(tree: Path, device: dict) -> dict[str, str]:
     """Each APK's SHA-256: the phone round installs exactly what the emulator's look passed."""
 
     return {apk: android_owned.sha256(tree / apk) for apk, _ in apks(device)}
+
+
+def frozen(tree: Path, device: dict, into: Path) -> dict[str, str]:
+    """Each APK copied into `into`, a folder the run owns, and the copies' digests. The APKs are build outputs
+    Git does not track, so a build outside the run can change them; a device installs the copies instead."""
+
+    for apk, _ in apks(device):
+        (into / apk).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(tree / apk, into / apk)
+    return digests(into, device)
 
 
 def apks(device: dict) -> list[tuple[str, str]]:

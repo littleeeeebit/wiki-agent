@@ -123,7 +123,12 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
     <div className="flex flex-col gap-2 px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
       <Fault text={fault} />
       {/* Shown on the run, whatever its stage, until the phone is listed again and the cleanup finishes. */}
-      {view.phone_owned?.map((r) => (
+      {view.phone_owned?.map((r) => r.state === 'unsure' ? (
+        <p key={`${r.serial}-${r.packages.join()}`} role="status" className="rounded-md bg-wait/10 px-3 py-2">
+          휴대폰 <span className="font-mono">{r.serial}</span> 에 이 실행의 앱이 있지만, 이 실행이 설치를 마쳤는지 확인하지 못해 지우지
+          않았다: {(r.unsure ?? []).join(', ')}. 필요 없으면 휴대폰에서 직접 지우고 [휴대폰 찾기] 를 누른다.
+        </p>
+      ) : (
         <p key={`${r.serial}-${r.packages.join()}`} role="status" className="rounded-md bg-wait/10 px-3 py-2">
           휴대폰 <span className="font-mono">{r.serial}</span> 에 이 실행이 설치한 앱이 남아 있다: {(r.left.length ? r.left : r.packages).join(', ')}.
           그 휴대폰을 연결하고 [휴대폰 찾기] 를 누르면 지운다.

@@ -10,6 +10,8 @@ goes back to the turn. A pass leaves the run at `critique`, where the critic tak
 from __future__ import annotations
 
 import json
+import shutil
+import time
 from pathlib import Path
 
 from wiki import slots_for
@@ -84,7 +86,15 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     stopped = lambda: run.halt.is_set() or runtime.stopping.is_set()   # noqa: E731
     shots = store.folder / "build" / f"r{n}"
     if android:
-        findings = oneshot_device.look(path, device, spec, store.folder / "device", shots, stopped)
+        # The emulator installs copies, and their digests are what the phone round must install again.
+        copies = store.folder / "apks" / f"look-{time.time_ns()}"
+        try:
+            apks = oneshot_device.frozen(path, device, copies)
+            findings = oneshot_device.look(copies, device, spec, store.folder / "device", shots, stopped)
+        except OSError as exc:
+            return f"게이트 뒤의 APK 를 복사하지 못했다 — {exc}"
+        finally:
+            shutil.rmtree(copies, ignore_errors=True)
     else:
         findings = oneshot_look.look(path, live, o["front"], o["frequency"], o["inventory"], views(o["profile"]),
                                      shots, stopped)
@@ -103,8 +113,7 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     # The fixes this turn was sent with are built now: a resumed build no longer carries them.
     oneshot_spec.saved(spec["repo"], oneshot={"stage": "critique", "front_built_head": verdict["head"], "looks": looks,
                                               "attempts": 0, "working": "critique", "fix": None,
-                                              **({"device": device, "apks": oneshot_device.digests(path, device)}
-                                                 if android else {})})
+                                              **({"device": device, "apks": apks} if android else {})})
     specs.note(run, f"화면 빌드 통과 · {verdict['head'][:12]}")
     return ""
 
