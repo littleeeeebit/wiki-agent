@@ -111,15 +111,25 @@ three were the owner's own questions.
 
 ### S4 — core build
 
-Contract tests come first, in the project's own test tool, and run on the JVM
-without an emulator. The gate is that tool's test task, its lint, and a debug
-APK build. The independent read-only review of the diff is unchanged.
+Contract tests come first, in the chosen stack's own host-side test runner,
+with no emulator, as step 6 decided for every stack: Gradle's JVM unit tests
+for Kotlin, `flutter test` for Flutter, `cargo test` for a Tauri core. The
+runner writes the same JUnit report, and the pinned cases are checked the same
+way. The gate is that runner's test task, the stack's lint, and a debug APK
+build. The independent read-only review of the diff is unchanged.
 
 ### S5 and S6
 
 S5 reads the features off the core contracts and the platform surfaces: the
 app's screens, the overlay's controls, the notification, the settings. The
-four columns are unchanged.
+four columns are unchanged, and so is the map's force: it constrains S6 and S7
+as on the web.
+
+On the web a feature is found by its `data-feature` attribute. A native
+screen has no DOM, so each approved feature id is carried on its control as
+the stack's test identity: `testTag("feature:<id>")` in Compose, a
+`Key("feature:<id>")` in Flutter, surfaced to UI Automator as the resource id.
+S6 and S7 find controls through it.
 
 S6 renders the low-fidelity screens as screenshots without an emulator, with
 the stack's own preview tool (for Compose, a JVM screenshot library), at the
@@ -142,9 +152,14 @@ a second one.
 3. Mechanical checks, all high when they fail: a crash or ANR in the app's
    logcat, a view outside the screen, touch targets under 48 dp, text cut off,
    contrast, and the accessibility scanner's findings.
-4. The separate critic reads the screenshots in the `design-pass` order, as on
+4. Placement, also high, with the web's rules read off the UI hierarchy: an
+   `every` feature is visible on the first surface, a `sometimes` one is
+   reached in one action, a `rarely` one is absent from the primary surface,
+   and a `never` one is absent from the app. An approved feature with no test
+   identity is a finding too. A round with any of these is not clean.
+5. The separate critic reads the screenshots in the `design-pass` order, as on
    the web.
-5. Fix, then go to 1. The stop rule and the round cap are the web's.
+6. Fix, then go to 1. The stop rule and the round cap are the web's.
 
 An app that reads another app's screen needs that other app. The run installs
 a fixture viewer from its own test sources, which shows known pages:
@@ -155,17 +170,38 @@ known.
 ### Before R3 — one round on the owner's phone
 
 After the emulator loop stops, the run asks the owner to connect the reference
-phone over USB with debugging on. This is one prompt, not a fourth review. On
-that phone the run only does three things:
+phone over USB with debugging on. This is one prompt, not a fourth review.
 
-- Install the debug APK under its own package, and the fixture viewer.
-- Run the same scenarios and take screenshots.
-- Read the app's own frame timing (`dumpsys gfxinfo` for its package) and its
-  memory.
+The run waits for the phone. The state is saved and resumable: no timeout
+drops the round, and a restart returns to the same prompt. R3 opens only on a
+phone round that passed on the exact APK and head R3 shows. A failed scenario,
+crash or high finding on the phone goes back into the emulator loop as that
+round's findings, then to the phone again. A new head makes an earlier phone
+result stale. The owner can still stop the run, as at any stage.
 
-It touches no other app or data, and it uninstalls both packages afterwards
-unless the owner keeps them. A phone that is not connected within the wait
-skips this round, and the R3 sheet says so at the top.
+This is a separate physical-device path. The emulator collector keeps
+refusing physical devices, and nothing here weakens that.
+
+- Which phone. The prompt lists the connected devices with their serial and
+  model, and the owner picks one. Every command names that serial (`adb -s`),
+  and so does every retry and cleanup. A phone with another serial is never
+  addressed, even when it is the only one connected.
+- Which packages. The app and the fixture viewer install under run-specific
+  package ids (an application id suffix carrying the run id). Before any
+  install the run checks that neither id exists on the phone; if one does, it
+  stops and says so instead of reinstalling over it.
+- What the run owns. Before installing, it saves an ownership record: the
+  serial, both package ids and the APK's hash. Cleanup uninstalls only what
+  that record names, then checks both packages are gone. It runs on every
+  outcome, pass, fail, cancel or disconnect. A cleanup that could not finish
+  stays pending across restarts, is retried when the same serial reconnects,
+  and is shown on the run until it is done. When the owner keeps the app, the
+  record is released instead.
+
+On that phone the run does only three things: install the two packages, run
+the same scenarios with screenshots and the placement check, and read the
+app's own frame timing (`dumpsys gfxinfo` for its package) and memory. It
+touches no other app or data.
 
 ### R3 and S8
 
@@ -189,13 +225,15 @@ Each step is a separate PR, approved before the next starts.
 | # | Stage | Deliverable | Status |
 | --- | --- | --- | --- |
 | 7a | Kind and toolchain | `android` in the kinds with the intake's definitions, the toolchain preflight with the owner-pressed install, the `device` field and `android.json` profile | Planned |
-| 7b | Core path | S2 stack parts and capability requirements for `android`, the S3 module design and R1 module table, S4 contract tests and gate in the project's tool | Planned |
+| 7b | Core path | S2 stack parts and capability requirements for `android`, the S3 module design and R1 module table, S4 contract tests and gate in the stack's own host-side runner | Planned |
 | 7c | Screens without an emulator | S5 from contracts and platform surfaces, S6 rendered by the stack's preview tool at the device size | Planned |
 | 7d | Owned emulator | The native-webview step 3 collector resumed as shared infrastructure, with its refusals and cleanup proof | Planned |
-| 7e | Emulator loop | S7 on the owned emulator: install, scenarios, screenshots, mechanical checks, critic, fixture viewer | Planned |
-| 7f | Phone round and S8 | The connected-phone round before R3, the R3 sheet, S8's README, APK and optional workflow | Planned |
+| 7e | Emulator loop | S7 on the owned emulator: install, scenarios, screenshots, mechanical and placement checks (with a case where a build moves a feature from its approved place), critic, fixture viewer | Planned |
+| 7f | Phone round and S8 | The connected-phone round before R3: the resumable wait, the bound serial, run-specific packages, the ownership record and its cleanup; the R3 sheet, S8's README, APK and optional workflow | Planned |
 | 7g | Real run | The screen translator sentence from intake to the first pull request | Planned |
 
 7a alone stops the refusal: the run continues to S1, and later stages wait
-behind a stated reason until their step lands. 7b and 7c need no emulator.
+behind a stated reason until their step lands. The wait is enforced where a
+stage starts, at the automatic handoffs (S2 to design, R1 to tests, R2 to the
+build) and the owner's resume routes alike, not only by hiding a button. 7b and 7c need no emulator.
 7d to 7f need the toolchain on this PC.
