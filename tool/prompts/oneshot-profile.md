@@ -22,7 +22,10 @@ A short answer for the person, then exactly one fenced block named
 
 - Change a field only when the request gives a concrete reason: the sentence
   names an AI feature (`llm`), several users with accounts (`auth`), use on
-  a phone (`responsive`), and the like. Otherwise leave it out. The stack is
+  a phone (`responsive`), and the like. Otherwise leave it out.
+- An `android` card has `device` instead of `responsive`: the reference
+  phone whose screen is checked. When the sentence names a phone model in
+  the `device` options, propose it; otherwise leave the default. The stack is
   not on the card: the person picks it later, in the requirements
   conversation.
 - Never propose an option outside the schema, or one outside `enabled`.

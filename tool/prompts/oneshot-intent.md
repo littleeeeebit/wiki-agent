@@ -21,8 +21,22 @@ A short answer for the person, then exactly one fenced block named
 
 - `restated`: two or three sentences saying what will be built and for
   whom.
-- `kind`: one of `webapp`, `api`, `cli`, `desktop`, `data` — the product
-  type the sentence describes, not the one you would prefer.
+- `kind`: the product type the sentence describes, not the one you would
+  prefer. One of:
+  - `webapp`: used in a web browser, on a computer or a phone.
+  - `android`: an app installed on an Android phone. Its logic runs on the
+    phone, and it may call outside APIs. Choose it when the sentence names a
+    phone, a phone model, or something only an installed app can do, such as
+    reading another app's screen or drawing over it.
+  - `api`: a server other programs call, with no screen of its own.
+  - `cli`: a command run in a terminal.
+  - `desktop`: a program installed on a Windows or macOS computer.
+  - `data`: a pipeline, analysis or report over data, with no interactive
+    screen.
+
+  A sentence that asks for an iPhone app too is still `android`; say in
+  `restated` that iOS is not part of this version. Never pick a kind, a
+  framework or a language because of anything outside the sentence.
 - `name`: the repository and folder name: lowercase ASCII letters, digits and
   `-`, short, derived from the person's words.
 - `users`: who uses it, one sentence.

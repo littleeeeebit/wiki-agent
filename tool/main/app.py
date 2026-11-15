@@ -37,7 +37,7 @@ import agent
 from common import errorlog
 from common import settings as settings_file
 
-from . import architecture, channels, connect, improvements, loop, mobile, oneshot, oneshot_critique, oneshot_front, oneshot_spec, planning, powershell, query, recovery, refactor, refactor_api, runtime, specs, suite, survey, update, verification, wiring, work
+from . import architecture, channels, connect, improvements, loop, mobile, oneshot, oneshot_android, oneshot_critique, oneshot_front, oneshot_spec, planning, powershell, query, recovery, refactor, refactor_api, runtime, specs, suite, survey, update, verification, wiring, work
 from .runtime import server_owner
 from . import onboarding
 
@@ -108,6 +108,7 @@ def close_turns() -> None:
     runtime.stopping.set()
     onboarding.close()
     powershell.close_install()
+    oneshot_android.close_install()
     # Every workflow is marked stopped, and kills its own providers, before any
     # other provider dies, so a turn `end_all` kills reads as a restart, not a
     # failure. Queries keep no workflow and close only after their providers
@@ -149,6 +150,7 @@ app.include_router(loop.router)
 app.include_router(recovery.router)
 app.include_router(planning.router)
 app.include_router(oneshot.router)
+app.include_router(oneshot_android.router)
 app.include_router(oneshot_spec.router)
 app.include_router(oneshot_front.router)
 app.include_router(oneshot_critique.router)

@@ -26,7 +26,7 @@ EXAMINE = connect.examine   # the real one; `world` replaces it with a recorder
 
 INTENT = {"restated": "가계부를 만든다.", "kind": "webapp", "name": "Budget Tracker", "users": "나 혼자 쓴다.",
           "first_screen": "이번 달 지출을 본다."}
-PROFILE = {**{k: f["default"] for k, f in oneshot.SCHEMA.items()}, "visibility": "private", "docs_language": "ko",
+PROFILE = {**{k: f["default"] for k, f in oneshot_profile.SCHEMA.items()}, "visibility": "private", "docs_language": "ko",
            "github_owner": "someone"}
 
 
@@ -133,8 +133,8 @@ def test_validity_rules_on_the_card():
 
 
 def test_the_card_holds_no_stack_and_a_card_saved_with_one_loads_without_it():
-    assert not set(oneshot_profile.PARTS) & set(oneshot.SCHEMA)
-    assert not {"python_env", "conda_env", "js_pm"} & set(oneshot.SCHEMA)
+    assert not set(oneshot_profile.PARTS) & oneshot_profile.FIELDS
+    assert not {"python_env", "conda_env", "js_pm"} & oneshot_profile.FIELDS
     old = {**PROFILE, "backend": "fastapi", "frontend": "vite-react", "python_env": "conda", "conda_env": "x"}
     assert oneshot_profile.current(old) == PROFILE
 
@@ -220,6 +220,39 @@ def test_unsupported_kind_ends_the_intake(world):
     with pytest.raises(HTTPException) as refused:
         oneshot.intent(rid, oneshot.Intent(confirm=True))
     assert "webapp" in refused.value.detail
+
+
+def test_an_android_app_reaches_its_card_and_stops_there_without_making_anything(world):
+    """A manga screen translator for a Galaxy S21 was refused as `desktop`; `android` now runs to S1."""
+
+    with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-intent", {**INTENT, "kind": "android"}), {}, False)):
+        rid = oneshot.start(oneshot.Start(sentence="갤럭시 S21 에서 만화를 번역하는 앱"))["id"]
+        oneshot.intake(rid)
+    oneshot.intent(rid, oneshot.Intent(confirm=True))
+    told = []
+    with patch.object(oneshot, "ask", lambda store, role, system, text, *a: told.append(text) or (
+            fenced("oneshot-profile", {"device": {"value": "galaxy-s21", "why": "S21 기준"}}), {}, False)):
+        oneshot.environment(rid)
+    assert "galaxy-s21" in told[0] and "responsive" not in told[0]
+    with patch.object(oneshot.oneshot_android, "status", lambda: {"missing": ["JDK 17"]}):
+        shown = oneshot.view(oneshot.load(rid))
+        assert "device" in shown["schema"] and "responsive" not in shown["schema"]
+        assert shown["profile"]["device"] == "galaxy-s21" and "toolchain" in shown
+        with pytest.raises(HTTPException) as refused:   # no toolchain, no confirmed card
+            oneshot.profile(rid, oneshot.Profile(values={"docs_language": "ko", "visibility": "private"}, confirm=True))
+        assert "JDK 17" in refused.value.detail
+        with pytest.raises(HTTPException):
+            oneshot.profile(rid, oneshot.Profile(values={"responsive": "desktop"}))
+    with patch.object(oneshot.oneshot_android, "status", lambda: {"missing": []}):
+        stopped = oneshot.profile(rid, oneshot.Profile(values={"docs_language": "ko", "visibility": "private"},
+                                                       confirm=True))
+    assert stopped["stopped"]["reason"] == "kind" and stopped["state"] == "environment"
+    assert not stopped.get("confirmed") and not world["github"].repos   # no repository, folder or push
+    assert not (world["workspace"] / "budget-tracker").exists()
+    assert json.loads((oneshot.PROFILES / "android.json").read_text("utf-8"))["device"] == "galaxy-s21"
+    with pytest.raises(HTTPException) as refused:   # later stages wait for their step on every route in
+        oneshot.resume(rid, oneshot.Resume())
+    assert "7b" in refused.value.detail
 
 
 def test_the_card_is_prefilled_from_the_kind_and_confirmed_only_without_errors(world):

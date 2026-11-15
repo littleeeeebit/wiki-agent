@@ -73,6 +73,16 @@ run never does it unasked: the card offers it as an action the owner presses.
 The run records the paths and versions it built with. The receipt names them,
 so a later round on another SDK is visible.
 
+The install writes only inside its own folder. Each write, replace and
+delete checks right before it acts that its path is under that folder with
+no link or junction on the way. A junction that already exists, or one that
+appears during a network wait, is refused. A process of the owner's that
+swaps folders in the moment between a check and its write is outside this
+boundary, because it already holds the rights to the owner's SDK. The
+licence answers reach `sdkmanager` from a file as bare `y` lines. Silence is
+not a stop for the install: the three-hour limit and the server's stop flag
+bound it.
+
 ### S1 — the card
 
 For `android`, `responsive` is replaced by `device`: the reference device
@@ -235,7 +245,7 @@ Each step is a separate PR, approved before the next starts.
 
 | # | Stage | Deliverable | Status |
 | --- | --- | --- | --- |
-| 7a | Kind and toolchain | `android` in the kinds with the intake's definitions, the toolchain preflight with the owner-pressed install, the `device` field and `android.json` profile | Planned |
+| 7a | Kind and toolchain | `android` in the kinds with the intake's definitions, the toolchain preflight with the owner-pressed install, the `device` field and `android.json` profile | Done |
 | 7b | Core path | S2 stack parts and capability requirements for `android`, the S3 module design and R1 module table, S4 contract tests and gate in the stack's own host-side runner | Planned |
 | 7c | Screens without an emulator | S5 from contracts and platform surfaces, S6 rendered by the stack's preview tool at the device size | Planned |
 | 7d | Owned emulator | The native-webview step 3 collector resumed as shared infrastructure, with its refusals and cleanup proof | Planned |
