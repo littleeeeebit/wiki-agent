@@ -126,10 +126,19 @@ four columns are unchanged, and so is the map's force: it constrains S6 and S7
 as on the web.
 
 On the web a feature is found by its `data-feature` attribute. A native
-screen has no DOM, so each approved feature id is carried on its control as
-the stack's test identity: `testTag("feature:<id>")` in Compose, a
-`Key("feature:<id>")` in Flutter, surfaced to UI Automator as the resource id.
-S6 and S7 find controls through it.
+screen has no DOM, so each feature shown in the UI (`every`, `sometimes`,
+`rarely`) carries `feature:<id>` on its control, exported to the native
+hierarchy UI Automator reads. A tag alone is not exported, so the stack contract
+names the export too:
+
+- Compose: `testTag("feature:<id>")`, with `testTagsAsResourceId = true` on the
+  containing hierarchy.
+- Flutter: `Semantics(identifier: "feature:<id>")`. A widget `Key` is still
+  allowed for the host-side preview tests, but it is not what S7 finds.
+
+S6 finds controls through the stack's own test tree and S7 through the native
+resource id; both name the same feature. A `never` feature has no control and
+needs no identity.
 
 S6 renders the low-fidelity screens as screenshots without an emulator, with
 the stack's own preview tool (for Compose, a JVM screenshot library), at the
@@ -155,8 +164,10 @@ a second one.
 4. Placement, also high, with the web's rules read off the UI hierarchy: an
    `every` feature is visible on the first surface, a `sometimes` one is
    reached in one action, a `rarely` one is absent from the primary surface,
-   and a `never` one is absent from the app. An approved feature with no test
-   identity is a finding too. A round with any of these is not clean.
+   and a `never` one has no control anywhere in the UI (its logic stays). An
+   `every`, `sometimes` or `rarely` feature whose identity is missing from the
+   native hierarchy is a finding too. A `never` feature with no control
+   passes. A round with any finding here is not clean.
 5. The separate critic reads the screenshots in the `design-pass` order, as on
    the web.
 6. Fix, then go to 1. The stop rule and the round cap are the web's.
@@ -228,7 +239,7 @@ Each step is a separate PR, approved before the next starts.
 | 7b | Core path | S2 stack parts and capability requirements for `android`, the S3 module design and R1 module table, S4 contract tests and gate in the stack's own host-side runner | Planned |
 | 7c | Screens without an emulator | S5 from contracts and platform surfaces, S6 rendered by the stack's preview tool at the device size | Planned |
 | 7d | Owned emulator | The native-webview step 3 collector resumed as shared infrastructure, with its refusals and cleanup proof | Planned |
-| 7e | Emulator loop | S7 on the owned emulator: install, scenarios, screenshots, mechanical and placement checks (with a case where a build moves a feature from its approved place), critic, fixture viewer | Planned |
+| 7e | Emulator loop | S7 on the owned emulator: install, scenarios, screenshots, mechanical and placement checks resolved from the real native hierarchy (cases: a build that moves a feature from its approved place, a correctly absent `never` feature, a leaked `never` control), critic, fixture viewer | Planned |
 | 7f | Phone round and S8 | The connected-phone round before R3: the resumable wait, the bound serial, run-specific packages, the ownership record and its cleanup; the R3 sheet, S8's README, APK and optional workflow | Planned |
 | 7g | Real run | The screen translator sentence from intake to the first pull request | Planned |
 
