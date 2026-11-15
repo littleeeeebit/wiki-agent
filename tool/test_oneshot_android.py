@@ -4,13 +4,13 @@ import hashlib
 import io
 import json
 import os
-import subprocess
-import time
+import threading
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 
 from main import oneshot_android as android
 
@@ -42,18 +42,21 @@ def home(tmp_path):
         yield tmp_path
 
 
-def jdk(where: Path, version: str) -> Path:
+def jdk(where: Path, version: str, launchers=("java", "javac")) -> Path:
     (where / "bin").mkdir(parents=True)
-    (where / "bin" / f"javac{android.EXE}").write_text("")
+    for launcher in launchers:
+        (where / "bin" / f"{launcher}{android.EXE}").write_text("")
     (where / "release").write_text(f'JAVA_VERSION="{version}"\n')
     return where
 
 
-def sdk(root: Path, skip: str = "") -> Path:
-    for key, _, proof, folder in android.PIECES:
+def sdk(root: Path, skip: str = "", without: str = "") -> Path:
+    for key, _, folder, proofs in android.PIECES:
         if key != skip:
-            (root / proof).parent.mkdir(parents=True, exist_ok=True)
-            (root / proof).write_text("")
+            for proof in proofs:
+                if proof != without:
+                    (root / folder / proof).parent.mkdir(parents=True, exist_ok=True)
+                    (root / folder / proof).write_text("")
             (root / folder / "source.properties").write_text("Pkg.Revision=36.0.0\n")
     return root
 
@@ -73,6 +76,14 @@ def test_a_jdk_before_17_is_not_the_toolchains(home):
     assert found["jdk"] == str(home / "jdk17") and "JDK 17" not in found["missing"]
 
 
+def test_metadata_without_the_launchers_is_not_a_tool(home):
+    """A damaged SDK or JDK kept its `source.properties` and `release`; it cannot run, so it stays missing."""
+
+    sdk(android.ROOT / "sdk", without=f"aapt2{android.EXE}")
+    jdk(android.ROOT / "jdk-17", "17.0.21", launchers=("javac",))
+    assert set(android.status()["missing"]) == {"JDK 17", f"빌드 도구 {android.BUILD_TOOLS}"}
+
+
 def test_the_owners_complete_sdk_is_used_and_a_partial_one_is_not(home):
     os.environ["ANDROID_HOME"] = str(sdk(home / "partial", skip="image"))
     assert android.status()["sdk"] == str(android.ROOT / "sdk")
@@ -88,14 +99,14 @@ def test_the_newest_stable_windows_command_line_tools_are_picked():
         android.cmdline_tools(b"<sdk-repository/>")
 
 
-def test_a_download_is_kept_only_when_its_checksum_matches(tmp_path):
-    source = tmp_path / "archive.zip"
+def test_a_download_is_kept_only_when_its_checksum_matches(home):
+    source = home / "archive.zip"
     source.write_bytes(b"archive bytes")
-    good = hashlib.sha256(b"archive bytes").hexdigest()
+    good, out = hashlib.sha256(b"archive bytes").hexdigest(), android.ROOT / "downloads"
     with pytest.raises(ValueError):
-        android.download(source.as_uri(), tmp_path / "out" / "a.zip", "sha256", "0" * 64)
-    assert not list((tmp_path / "out").iterdir())   # nothing half-kept
-    assert android.download(source.as_uri(), tmp_path / "out" / "a.zip", "sha256", good).read_bytes() == b"archive bytes"
+        android.download(source.as_uri(), out / "a.zip", "sha256", "0" * 64)
+    assert not list(out.iterdir())   # nothing half-kept
+    assert android.download(source.as_uri(), out / "a.zip", "sha256", good).read_bytes() == b"archive bytes"
 
 
 def zipped(top: str, files: dict) -> bytes:
@@ -110,7 +121,7 @@ def zipped(top: str, files: dict) -> bytes:
 def test_install_checks_each_archive_runs_sdkmanager_once_and_writes_a_receipt(home):
     served = home / "served"
     served.mkdir()
-    jdk_zip = zipped("jdk-17.0.21+7", {"release": 'JAVA_VERSION="17.0.21"\n', "bin/javac.exe": ""})
+    jdk_zip = zipped("jdk-17.0.21+7", {"release": 'JAVA_VERSION="17.0.21"\n', "bin/java.exe": "", "bin/javac.exe": ""})
     (served / "jdk.zip").write_bytes(jdk_zip)
     (served / "jdk.zip.sha256sum.txt").write_text(f"{hashlib.sha256(jdk_zip).hexdigest()}  jdk.zip\n")
     tools = zipped("cmdline-tools", {"bin/sdkmanager.bat": "", "source.properties": "Pkg.Revision=23.0\n"})
@@ -119,26 +130,27 @@ def test_install_checks_each_archive_runs_sdkmanager_once_and_writes_a_receipt(h
                                                                 f"<checksum>{hashlib.sha1(tools).hexdigest()}</checksum>".encode()))
     ran = []
 
-    def sdkmanager(command, **options):
-        ran.append((command, options["env"]["JAVA_HOME"], options["input"]))
+    def gate(cmd, cwd, halt, env, timeout, owned_jobs, kill, argv=None):
+        ran.append((argv, env))
         sdk(android.ROOT / "sdk")
-        return subprocess.CompletedProcess(command, 0, "done\n", "")
+        return 0, "done\n", ""
 
     with patch.object(android, "JDK_URL", (served / "jdk.zip").as_uri()), \
          patch.object(android, "REPOSITORY", served.as_uri() + "/"), \
-         patch.object(android.subprocess, "run", sdkmanager):
+         patch.object(android.runtime, "gate", gate), \
+         patch.dict(os.environ, {"ANDROID_USER_HOME": str(home / "owners-prefs")}):
         assert android.install()
         assert not android.install()   # one job at a time
-        for _ in range(200):
-            if android.status()["job"]["state"] != "running":
-                break
-            time.sleep(0.05)
+        android.close_install()
     found = android.status()
     assert found["job"]["state"] == "done", found["job"]
     assert found["missing"] == [] and found["jdk"] == str(android.ROOT / "jdk-17")
-    (command, java_home, answers), = ran
-    assert command[1] == f"--sdk_root={android.ROOT / 'sdk'}" and android.IMAGE in command
-    assert java_home == str(android.ROOT / "jdk-17") and answers.startswith("y\n")
+    (line, env), = ran
+    assert f'--sdk_root="{android.ROOT / "sdk"}"' in line and f'"{android.IMAGE}"' in line and "echo y" in line
+    # Preferences and temporary files stay in the application's folder, never the owner's.
+    assert env["JAVA_HOME"] == str(android.ROOT / "jdk-17") and env["ANDROID_USER_HOME"] == str(android.ROOT / "user")
+    assert env["TEMP"] == env["TMP"] == str(android.ROOT / "tmp")
+    assert not (android.ROOT / "installing").exists()
     receipt = json.loads((android.ROOT / "receipt.json").read_text(encoding="utf-8"))
     assert [s.get("url") for s in receipt["sources"][:2]] == [(served / "jdk.zip").as_uri(),
                                                               (served / "new-win.zip").as_uri()]
@@ -152,10 +164,39 @@ def test_a_checksum_that_does_not_match_fails_the_install_and_installs_nothing(h
     (served / "jdk.zip.sha256sum.txt").write_text("0" * 64 + "  jdk.zip\n")
     with patch.object(android, "JDK_URL", (served / "jdk.zip").as_uri()):
         android.install()
-        for _ in range(200):
-            if android.status()["job"]["state"] != "running":
-                break
-            time.sleep(0.05)
+        android.close_install()
     found = android.status()
     assert found["job"]["state"] == "failed" and "체크섬" in found["job"]["error"]
     assert not (android.ROOT / "jdk-17").exists() and not (android.ROOT / "receipt.json").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junctions are Windows'")
+def test_nothing_is_written_or_deleted_through_a_junction_out_of_the_application_folder(home):
+    """A junction at `sdk/cmdline-tools` into an owner's SDK made the unpack delete the owner's `latest`."""
+
+    import _winapi
+
+    owners = home / "owner-sdk" / "cmdline-tools"
+    (owners / "latest").mkdir(parents=True)
+    (owners / "latest" / "owner.txt").write_text("owner SDK file")
+    (android.ROOT / "sdk").mkdir(parents=True)
+    _winapi.CreateJunction(str(owners), str(android.ROOT / "sdk" / "cmdline-tools"))
+    archive = android.ROOT / "downloads" / "tools.zip"
+    archive.parent.mkdir()
+    archive.write_bytes(zipped("cmdline-tools", {"bin/sdkmanager.bat": "fixture"}))
+    with pytest.raises(ValueError, match="링크"):
+        android.unpack(archive, android.ROOT / "sdk" / "cmdline-tools" / "latest")
+    assert (owners / "latest" / "owner.txt").read_text() == "owner SDK file"
+    with pytest.raises(ValueError, match="밖"):
+        android.owned(home / "elsewhere")
+
+
+def test_a_start_while_stopping_is_refused_and_a_cut_install_shows_after_a_restart(home):
+    with patch.object(android.runtime, "stopping", threading.Event()) as stopping:
+        stopping.set()
+        with pytest.raises(HTTPException):
+            android.install()
+    android.ROOT.mkdir(parents=True)
+    (android.ROOT / "installing").write_text("0")   # the marker a server left when it went down
+    found = android.status()["job"]
+    assert found["state"] == "failed" and "끊겼다" in found["error"]

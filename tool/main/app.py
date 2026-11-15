@@ -108,6 +108,7 @@ def close_turns() -> None:
     runtime.stopping.set()
     onboarding.close()
     powershell.close_install()
+    oneshot_android.close_install()
     # Every workflow is marked stopped, and kills its own providers, before any
     # other provider dies, so a turn `end_all` kills reads as a restart, not a
     # failure. Queries keep no workflow and close only after their providers
