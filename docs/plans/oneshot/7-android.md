@@ -194,8 +194,8 @@ This is a separate physical-device path. The emulator collector keeps
 refusing physical devices, and nothing here weakens that.
 
 - Which phone. The prompt lists the connected devices with their serial and
-  model, and the owner picks one. Every command names that serial (`adb -s`),
-  and so does every retry and cleanup. A phone with another serial is never
+  model, and the owner picks one. Every ADB command names that serial
+  explicitly, and so does every retry and cleanup. A phone with another serial is never
   addressed, even when it is the only one connected.
 - Which packages. The app and the fixture viewer install under run-specific
   package ids (an application id suffix carrying the run id). Before any
