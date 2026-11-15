@@ -83,26 +83,43 @@ def on_phone(home: Path, package: str) -> bool:
     return f"package:{package}" in call(home, "shell", "pm", "list", "packages", package).split()
 
 
-def installed_digest(home: Path, package: str) -> str | None:
-    """The SHA-256 of the APK the phone holds for `package` (`pm path`'s `base.apk`); `None` when unreadable.
-    An install copies the APK as it is, so the digest says whose installation it is."""
+def base_apk(home: Path, package: str) -> str | None:
+    """`pm path`'s `base.apk` for `package`, or `None` unless it is a plain path under where apps are kept:
+    it goes into the phone's shell."""
 
     paths = [line.removeprefix("package:").strip() for line in call(home, "shell", "pm", "path", package).splitlines()
              if line.startswith("package:")]
     apk = next((p for p in paths if p.endswith("/base.apk")), "")
-    # The path goes into the phone's shell: nothing but a plain path under where apps are kept.
-    if not APK_PATH.fullmatch(apk) or "/../" in apk or "/./" in apk:
+    return apk if APK_PATH.fullmatch(apk) and "/../" not in apk and "/./" not in apk else None
+
+
+def installed_digest(home: Path, package: str) -> str | None:
+    """The SHA-256 of the APK the phone holds for `package`; `None` when unreadable. An install copies the APK
+    as it is, so the digest says which APK it is."""
+
+    if not (apk := base_apk(home, package)):
         return None
     found = call(home, "shell", "sha256sum", apk).split()
     return found[0].lower() if found and re.fullmatch(r"[0-9a-fA-F]{64}", found[0]) else None
 
 
-def uninstalled(home: Path, digests: dict[str, str], installed: list[str]) -> tuple[list[str], list[str], list[str]]:
-    """Each package removed that this run's install is known to have put there (`installed`) and that still
-    holds exactly that APK, then checked gone. What is left (still there, or unknown on a phone that left),
-    what is another installation (another APK: the run only ever installs its own), and what may be the run's
-    APK with no proof this run installed it: an install a crash or a failed command cut short. Neither of the
-    last two is ever touched."""
+def instance(home: Path, package: str) -> str | None:
+    """Which installation of `package` this is: its `base.apk` path, which the package manager draws afresh
+    on each install since Android 11, and its first install time, which a reinstall resets."""
+
+    if not (apk := base_apk(home, package)):
+        return None
+    found = re.search(r"firstInstallTime=([0-9: -]+)", call(home, "shell", "dumpsys", "package", package))
+    return f"{apk} {found.group(1).strip() if found else ''}"
+
+
+def uninstalled(home: Path, digests: dict[str, str], installed: dict[str, str | None]) \
+        -> tuple[list[str], list[str], list[str]]:
+    """Each package removed that is still the very installation this run made (`installed`, read right after
+    its install) and holds exactly that APK, then checked gone. What is left (still there, or unknown on a
+    phone that left), what is another installation (another APK: the run only ever installs its own), and
+    what may be the run's APK with no proof it is the run's installation: an install a crash or a failed
+    command cut short, or the owner's reinstall of the same APK. Neither of the last two is ever touched."""
 
     left, foreign, unsure = [], [], []
     for package, digest in digests.items():
@@ -112,7 +129,7 @@ def uninstalled(home: Path, digests: dict[str, str], installed: list[str]) -> tu
             found = installed_digest(home, package)
             if found is not None and found != digest:
                 foreign.append(package)
-            elif package not in installed:
+            elif not installed.get(package) or (found is not None and instance(home, package) != installed[package]):
                 unsure.append(package)
             elif found is None:
                 left.append(package)
@@ -130,7 +147,7 @@ def settle(repo: str, home: Path, index: int) -> None:
     the run cannot tell its installation from the owner's of the same APK."""
 
     r = oneshot_spec.spec_of(repo)["oneshot"]["phone_owned"][index]
-    left, foreign, unsure = uninstalled(home, r["digests"], r.get("installed") or [])
+    left, foreign, unsure = uninstalled(home, r["digests"], r.get("installed") or {})
     state = "pending" if left else "unsure" if unsure else "cleaned"
     recorded(repo, index, state=state, left=left, foreign=foreign, unsure=unsure, ts=time.time())
 
@@ -241,34 +258,38 @@ def drive(repo: str, home: Path, spec: dict, frozen: Path, stopped) -> dict:
                                               "지운 뒤 다시 시작하거나 다른 휴대폰을 고른다"}
     size = measured(home)
     # Saved before the first install: whatever happens next, the record names what may be on the phone and
-    # the digest each package must hold. Only a package in `installed`, added once its install command
-    # succeeded, is ever removed: the same APK the owner installed is not the run's.
+    # the digest each package must hold. Only the very installation in `installed` is ever removed: a package
+    # joins it once its install command succeeded (under `-R`, the run's own), with that installation's
+    # `instance` read right after. The same APK the owner installed, before or since, is not the run's.
     digests = {package: o["apks"][apk] for apk, package in device.apks(o["device"])}
     index = recorded(repo, serial=serial, model=picked["model"], packages=packages, digests=digests,
-                     installed=[], state="owning", left=[], ts=time.time())
-    passed, installed = False, []
+                     installed={}, state="owning", left=[], ts=time.time())
+    passed, installed = False, {}
 
-    def mine(package: str) -> None:
-        installed.append(package)
-        recorded(repo, index, installed=list(installed))
+    def mine(package: str, which: str | None) -> None:
+        installed[package] = which
+        recorded(repo, index, installed=dict(installed))
 
     try:
         d = device.Device(home, o["device"], size, frozen)
         for apk, package in device.apks(o["device"]):
             # Never over an installation: an id taken since the check fails the install here.
-            d.install(apk, package, lambda p=package: mine(p))
+            d.install(apk, package, lambda p=package: mine(p, None))
+            mine(package, instance(home, package))
             if installed_digest(home, package) != digests[package]:
                 raise ValueError(f"휴대폰에 설치된 `{package}` 가 에뮬레이터 검사를 통과한 APK 와 다르다")
         findings = device.inspect(d, spec, base(repo) / "shots" / f"p{n}", stopped)
+        device.halted(stopped)   # a stop during the scenarios: never a pass, and the apps come off
         if locked(home):   # the screen went off mid-round: its shots show the lock, not the app
             return {"status": "locked", "detail": "검사 중에 휴대폰이 잠겼다 — 화면 꺼짐 시간을 늘리고 다시 시작한다"}
         frames, used = measure(d, spec)
+        device.halted(stopped)
         passed = not any(f["severity"] == "high" for f in findings)
         return {"status": "passed" if passed else "failed", "round": n, "model": picked["model"], "size": size,
                 "findings": findings, "timing": frames, "memory_kb": used, "head": o["front_built_head"],
                 "apks": o["apks"], "detail": ""}
     finally:
-        if passed and keep:
+        if passed and keep and not stopped():
             recorded(repo, index, state="released", ts=time.time())
         else:
             settle(repo, home, index)
@@ -309,6 +330,8 @@ def phone_round(repo: str) -> None:
                        "detail": "휴대폰 회차를 멈췄다" if stopped() else f"휴대폰 회차가 끝나지 못했다 — {exc}"}
         finally:
             shutil.rmtree(frozen, ignore_errors=True)
+        if stopped():   # a stop accepted while the round returned: never committed as its outcome
+            outcome = {"status": "stopped", "detail": "휴대폰 회차를 멈췄다"}
         return lambda: settled(repo, outcome)
 
     review.holding(repo, "휴대폰 회차", body, "front_built_head", front_build.STAGE)

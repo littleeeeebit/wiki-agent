@@ -36,6 +36,16 @@ class Handset(Phone):
         # What is installed: each package with the SHA-256 of the APK it was installed from.
         self.present, self.addressed, self.locked, self.gone, self.on_call = {}, [], False, False, None
         self.ids, self.root = {DEVICE["apk"]: PKG, DEVICE["tests"]["apk"]: TESTS}, "/data/app"
+        # Each installation's number: the package manager's fresh code path and install time come from it.
+        self.instances, self.installs = {}, 0
+
+    def installed(self, package: str, digest: str) -> None:
+        self.installs += 1
+        self.present[package], self.instances[package] = digest, self.installs
+
+    def which(self, package: str) -> str:
+        n = self.instances.get(package, 0)
+        return f"{self.root}/~~a{n}==/{package}-b2==/base.apk 2026-11-16 07:50:{n:02d}"
 
     def call(self, folder, args, *, device=True, timeout=0, binary=False, stream=False):
         if device:
@@ -60,12 +70,15 @@ class Handset(Phone):
             # As Android's package manager: it replaces an existing installation unless given `-R`.
             if package in self.present and "-R" in args:
                 raise ValueError("Failure [INSTALL_FAILED_ALREADY_EXISTS]")
-            self.present[package] = android_owned.sha256(Path(args[-1]))
+            self.installed(package, android_owned.sha256(Path(args[-1])))
             return "Success\n"
         if args[:3] == ["shell", "pm", "path"]:
-            return f"package:{self.root}/~~a1==/{args[3]}-b2==/base.apk\n" if args[3] in self.present else ""
+            return f"package:{self.which(args[3]).split()[0]}\n" if args[3] in self.present else ""
+        if args[:3] == ["shell", "dumpsys", "package"]:
+            return (f"Packages:\n  Package [{args[3]}] (5a1b2c):\n    firstInstallTime={self.which(args[3]).split(' ', 1)[1]}\n"
+                    if args[3] in self.present else "")
         if args[:2] == ["shell", "sha256sum"]:
-            package = re.search(r"/~~a1==/(.+)-b2==/base\.apk$", args[2]).group(1)
+            package = re.search(r"/~~a\d+==/(.+)-b2==/base\.apk$", args[2]).group(1)
             return f"{self.present[package]}  {args[2]}\n"
         if args[:3] == ["shell", "wm", "size"]:
             return "Physical size: 1080x2400\n"
@@ -122,7 +135,9 @@ def test_a_clean_round_on_the_picked_phone_waits_before_r3_and_leaves_nothing_on
     assert after["phone_owned"][-1] | {"ts": 0} == {"serial": SERIAL, "model": "SM G991N", "packages": [PKG, TESTS],
                                                     "digests": {PKG: after["apks"][DEVICE["apk"]],
                                                                 TESTS: after["apks"][DEVICE["tests"]["apk"]]},
-                                                    "installed": [PKG, TESTS], "state": "cleaned", "left": [],
+                                                    "installed": {PKG: "/data/app/~~a1==/" f"{PKG}-b2==/base.apk 2026-11-16 07:50:01",
+                                                                  TESTS: f"/data/app/~~a2==/{TESTS}-b2==/base.apk 2026-11-16 07:50:02"},
+                                                    "state": "cleaned", "left": [],
                                                     "foreign": [], "unsure": [], "ts": 0}
     assert "phone_owned" not in phone_round.extra(spec())
 
@@ -140,8 +155,8 @@ def test_an_apk_path_outside_where_apps_are_kept_is_never_sent_to_the_phones_she
     after = played(handset)
     assert after["phone"]["status"] == "waiting" and "다르다" in after["phone"]["detail"]
     assert not any(a[:2] == ["shell", "sha256sum"] for a in handset.sent)
-    # The digest it would be removed by cannot be read: the cleanup stays pending, shown on the run.
-    assert after["phone_owned"][-1]["state"] == "pending" and PKG in handset.present
+    # Its installation cannot be identified: shown on the run, never removed.
+    assert after["phone_owned"][-1]["state"] == "unsure" and PKG in handset.present
 
 
 def test_a_passing_app_the_owner_keeps_stays_installed_and_its_record_is_released(handset):
@@ -192,7 +207,7 @@ def test_a_locked_phone_is_asked_to_be_unlocked_and_nothing_is_installed(handset
 
 def test_a_phone_pulled_out_mid_round_leaves_a_pending_cleanup_finished_when_it_returns(handset):
     def unplug(args):
-        if args[0] == "install" and "androidTest" in args[-1]:
+        if args[:3] == ["shell", "am", "start"]:
             handset.gone = True
 
     handset.on_call = unplug
@@ -210,7 +225,7 @@ def test_a_phone_pulled_out_mid_round_leaves_a_pending_cleanup_finished_when_it_
 def test_a_round_cut_by_a_restart_is_cleaned_on_the_next_listing(handset):
     mine = o()["apks"][DEVICE["apk"]]
     phone_round.recorded("budget", serial=SERIAL, model="", packages=[PKG, TESTS], digests={PKG: mine, TESTS: "a" * 64},
-                         installed=[PKG, TESTS], state="owning", left=[])
+                         installed={PKG: handset.which(PKG), TESTS: handset.which(TESTS)}, state="owning", left=[])
     handset.present = {PKG: mine, TESTS: "b" * 64}   # the tests' id now holds another installer's APK
     phone_round.devices("budget")
     assert handset.present == {TESTS: "b" * 64}
@@ -222,7 +237,7 @@ def test_the_same_apk_installed_by_the_owner_after_a_crash_is_never_removed(hand
     phone prove nothing about who installed them, so they stay, shown on the run until the owner removes them."""
 
     mine = o()["apks"][DEVICE["apk"]]
-    phone_round.recorded("budget", serial=SERIAL, model="", packages=[PKG], digests={PKG: mine}, installed=[],
+    phone_round.recorded("budget", serial=SERIAL, model="", packages=[PKG], digests={PKG: mine}, installed={},
                          state="owning", left=[])
     handset.present = {PKG: mine}
     assert [r["state"] for r in phone_round.devices("budget")["owned"]] == ["unsure"]
@@ -242,7 +257,7 @@ def test_an_installation_another_installer_made_after_the_check_is_never_replace
     after = played(handset)
     assert after["stage"] == "phone" and "끝나지 못했다" in after["phone"]["detail"]
     assert handset.present == {PKG: "c" * 64}
-    assert {"state": "cleaned", "foreign": [PKG], "installed": []}.items() <= after["phone_owned"][-1].items()
+    assert {"state": "cleaned", "foreign": [PKG], "installed": {}}.items() <= after["phone_owned"][-1].items()
     assert all(a[:3] == ["install", "-R", "-t"] for a in handset.sent if a[0] == "install")
 
 
@@ -257,6 +272,22 @@ def test_a_cleanup_left_pending_by_a_passing_round_is_finished_at_r3(handset):
     handset.gone, handset.on_call = False, None
     assert phone_round.devices("budget")["owned"] == []
     assert handset.present == {} and o()["phone_owned"][-1]["state"] == "cleaned"
+
+
+def test_the_owners_reinstall_of_the_same_apk_while_cleanup_waits_is_never_removed(handset):
+    """The run's installation removed and the same APK installed again by the owner while the phone was away:
+    the cleanup sees another installation, not the run's, and leaves it."""
+
+    def unplug_at_memory(args):
+        if args[:3] == ["shell", "dumpsys", "meminfo"]:
+            handset.gone = True
+    handset.on_call = unplug_at_memory
+    assert played(handset)["phone_owned"][-1]["state"] == "pending"
+    handset.gone, handset.on_call = False, None
+    handset.installed(PKG, handset.present.pop(PKG))   # the owner's uninstall and reinstall
+    phone_round.devices("budget")
+    assert PKG in handset.present and TESTS not in handset.present
+    assert {"state": "unsure", "unsure": [PKG]}.items() <= o()["phone_owned"][-1].items()
 
 
 def untracked(h):
@@ -300,6 +331,16 @@ def test_a_stopped_round_removes_what_it_installed(handset):
     handset.on_call = stop_at_first_screen
     after = played(handset)
     assert after["phone"]["status"] == "waiting" and after["phone"]["detail"] == "휴대폰 회차를 멈췄다"
+    assert handset.present == {} and after["phone_owned"][-1]["state"] == "cleaned"
+
+
+@pytest.mark.parametrize("late", [["shell", "am", "instrument"], ["shell", "dumpsys", "meminfo"]])
+def test_a_stop_late_in_the_round_is_never_a_pass_and_the_kept_apps_come_off(handset, monkeypatch, late):
+    monkeypatch.setattr(oneshot_spec, "view", lambda s: s)   # the test spec carries no sheet to render
+    handset.on_call = lambda args: args[:3] == late and phone_round.stop("budget")
+    after = played(handset, keep=True)
+    assert after["stage"] == "phone" and after["phone"]["status"] == "waiting"
+    assert after["phone"]["detail"] == "휴대폰 회차를 멈췄다"
     assert handset.present == {} and after["phone_owned"][-1]["state"] == "cleaned"
 
 

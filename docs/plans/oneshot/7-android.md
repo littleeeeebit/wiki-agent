@@ -416,19 +416,25 @@ How 7f1 builds it (`tool/android_phone.py`, `tool/main/oneshot_phone.py`):
   `/mnt/expand/<uuid>/app` before it is sent to the phone's shell.
 - The record goes in `oneshot.phone_owned`, one entry per round. It names each
   package with the digest it must hold, and is saved before the first install.
-  A package joins its `installed` list once its install command succeeds,
-  which under `-R` proves the installation is the run's. The record is settled
-  on every exit:
+  A package joins its `installed` map once its install command succeeds,
+  which under `-R` proves the installation is the run's. Right after, the map
+  records which installation it is: the `base.apk` path, which the package
+  manager draws afresh on each install since Android 11, and the
+  `firstInstallTime` from `dumpsys package`. The record is settled on every
+  exit:
   - `cleaned`;
   - `pending`, with what is left;
-  - `unsure`, for a package that is on the phone but was never confirmed as
-    installed, such as after a crash between the record and the install. The
-    same APK the owner installed is not the run's, so it is shown and never
-    removed;
+  - `unsure`, for a package on the phone that cannot be tied to the run's
+    installation. Examples are a crash between the record and the install, or
+    the owner reinstalling the same APK while the cleanup waited. The same APK
+    the owner installed is not the run's, so it is shown and never removed;
   - `released`, when the owner kept a passing app.
-- The cleanup removes a package only when it is in `installed` and its
-  `base.apk` holds the recorded digest. Another APK is listed as `foreign` and
-  left alone. A later listing that shows the serial settles every `owning`,
+- The cleanup removes a package only when it is still the installation in
+  `installed` and its `base.apk` holds the recorded digest. Another APK is
+  listed as `foreign` and left alone.
+- A stop is checked again after the scenarios and after the measurements, and
+  once more before the outcome is applied. A stopped round never passes, and
+  the apps come off even when the owner chose to keep them. A later listing that shows the serial settles every `owning`,
   `pending` or `unsure` entry for it again. The record also covers a round a
   restart cut.
 - The listing runs at any stage except during the round itself. The run's
