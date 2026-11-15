@@ -220,13 +220,30 @@ def preview(value, screens: list[dict]) -> tuple[dict[str, str], dict]:
                    "command": value["command"].strip(), "shots": value["shots"]}
 
 
-CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}   # a PNG colour type's samples per pixel
+CHANNELS = {0: 1, 2: 3, 4: 2, 6: 4}   # a PNG colour type's samples per pixel
+# The bit depths each colour type allows. A palette image (type 3) is not taken: its indices could point past
+# its palette, and preview tools write grey or true colour.
+DEPTHS = {0: (1, 2, 4, 8, 16), 2: (8, 16), 4: (8, 16), 6: (8, 16)}
+ADAM7 = ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2))
+
+
+def scanlines(width: int, height: int, bits: int, interlace: int) -> list[int]:
+    """Each scanline's length in bytes, its filter byte included, in the order the pixels hold them."""
+
+    passes = ADAM7 if interlace else ((0, 0, 1, 1),)
+    out = []
+    for x, y, dx, dy in passes:
+        w, h = (width - x + dx - 1) // dx, (height - y + dy - 1) // dy
+        if w > 0:
+            out += [1 + (w * bits + 7) // 8] * max(h, 0)
+    return out
 
 
 def png_size(data: bytes) -> tuple[int, int] | None:
     """A complete PNG's width and height, or `None`: every chunk's checksum holds, it runs from `IHDR` to
-    `IEND`, and its pixels decompress to exactly the rows its header promises (an interlaced one, to no more
-    than twice that)."""
+    `IEND`, its colour type is grey or true colour with a bit depth that type allows, and its pixels inflate
+    to exactly the scanlines its header promises, each opening with a defined filter (0–4). Every byte after
+    that is a valid sample, so a picture that passes decodes."""
 
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         return None
@@ -240,15 +257,22 @@ def png_size(data: bytes) -> tuple[int, int] | None:
         at += 12 + n
     if not chunks or chunks[0][0] != b"IHDR" or len(chunks[0][1]) != 13 or chunks[-1][0] != b"IEND":
         return None
-    width, height, depth, colour, _, _, interlace = struct.unpack(">IIBBBBB", chunks[0][1])
-    if colour not in CHANNELS or not width or not height or interlace not in (0, 1):
+    width, height, depth, colour, method, filtering, interlace = struct.unpack(">IIBBBBB", chunks[0][1])
+    if depth not in DEPTHS.get(colour, ()) or not width or not height or method or filtering or interlace not in (0, 1):
         return None
-    rows = height * (1 + (width * CHANNELS[colour] * depth + 7) // 8)
+    lines = scanlines(width, height, CHANNELS[colour] * depth, interlace)
     try:   # bounded: a picture that inflates past its own size is not one
-        pixels = zlib.decompressobj().decompress(b"".join(b for name, b in chunks if name == b"IDAT"), 2 * rows + 1)
+        pixels = zlib.decompressobj().decompress(b"".join(b for name, b in chunks if name == b"IDAT"), sum(lines) + 1)
     except zlib.error:
         return None
-    return (width, height) if (len(pixels) == rows if interlace == 0 else rows <= len(pixels) <= 2 * rows) else None
+    if len(pixels) != sum(lines):
+        return None
+    at = 0
+    for n in lines:
+        if pixels[at] > 4:
+            return None
+        at += n
+    return width, height
 
 
 def sized(size: tuple[int, int] | None, device: dict) -> bool:

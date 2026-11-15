@@ -6,9 +6,12 @@ preview tool with no emulator, and R2's approval stopping before the frontend bu
 
 from __future__ import annotations
 
+import io
 import json
 import os
+import struct
 import subprocess
+import zlib
 from unittest.mock import patch
 
 import pytest
@@ -143,6 +146,39 @@ def test_a_feature_list_that_invents_drops_or_shares_a_core_part_is_refused(chan
 def test_a_screen_or_a_mock_outside_the_rules_is_refused(change, said):
     with pytest.raises(ValueError, match=said):
         screens.design(blocks(**change), FEATURES, FREQUENCY, android=True)
+
+
+def png(width: int, height: int, colour: int = 0, depth: int = 8, interlace: int = 0, filter_byte: int = 0,
+        rows: list[int] | None = None) -> bytes:
+    def chunk(name: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + name + data + struct.pack(">I", zlib.crc32(name + data))
+
+    lines = rows if rows is not None else screens.scanlines(width, height, screens.CHANNELS.get(colour, 1) * depth,
+                                                           interlace)
+    pixels = b"".join(bytes([filter_byte]) + b"\x00" * (n - 1) for n in lines)
+    extra = chunk(b"PLTE", b"\x00\x00\x00") if colour == 3 else b""
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, depth, colour, 0, 0, interlace))
+            + extra + chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b""))
+
+
+@pytest.mark.parametrize("data, size", [
+    (png(1080, 2400), (1080, 2400)),
+    (png(33, 21, colour=6, interlace=1), (33, 21)),   # Adam7's seven passes, the last ones partial
+    (png(1080, 2400, colour=2, depth=16), (1080, 2400)),
+    (png(1080, 2400)[:29], None),   # the header alone
+    (png(1080, 2400, filter_byte=255), None),   # rows of the right length that no decoder can unfilter
+    (png(40, 40, rows=[41] * 39), None),   # a row short
+    (png(40, 40, colour=3), None),   # a palette image
+    (png(40, 40, colour=2, depth=4), None),   # a depth true colour does not allow
+], ids=["grey", "interlaced", "deep", "header", "filter", "short", "palette", "depth"])
+def test_a_picture_counts_only_as_a_whole_png_whose_rows_decode(data, size):
+    assert screens.png_size(data) == size
+    try:
+        from PIL import Image
+    except ImportError:
+        return
+    if size:   # what the server takes, a real decoder opens
+        assert Image.open(io.BytesIO(data)).size == size and Image.open(io.BytesIO(data)).load()
 
 
 def test_the_preview_draws_each_screen_on_the_unpacked_head_and_keeps_only_the_pictures(boarded):

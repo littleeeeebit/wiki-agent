@@ -49,7 +49,8 @@ golden test under `flutter test`.
   `$(`, brackets, braces, lone `&` or line break. For Gradle, add
   `--no-daemon`.
 - The command writes one PNG per screen to `<shots>/<screen id>.png`, at the
-  reference phone's full size in pixels. An overlay is drawn over a plain
+  reference phone's full size in pixels, in grey or true colour (not a
+  palette PNG). An overlay is drawn over a plain
   stand-in page, and a notification in a stand-in shade, both filling the
   phone's frame.
 
