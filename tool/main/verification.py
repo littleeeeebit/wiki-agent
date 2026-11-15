@@ -20,6 +20,7 @@ from urllib.parse import quote, urlsplit
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+import android_owned
 import native_targets
 import native_verification
 import native_webview
@@ -290,8 +291,7 @@ def signature(repo: Path, path: Path, flow: Flow, settings: dict) -> str:
         identity["collector"] = sha(Path(native_verification.__file__).read_bytes())
         if isinstance(flow.native, native_webview.Target):
             identity["webview_collector"] = native_webview.collector_digest()
-            identity["assets"] = [{**asset, "actual": native_verification.digest(Path(asset["path"]))}
-                                  for asset in native_webview.assets(identity["native"], flow.native.application)]
+            identity["assets"] = native_webview.measured(identity["native"], flow.native.application)
         else:
             identity["executable"] = sha(Path(identity["native"].get("executable") or identity["native"]["runner"]).read_bytes())
     return sha(identity)
@@ -667,6 +667,11 @@ def _execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt:
                 command = shell.command_line(argv)
                 direct = {"argv": argv}
             verdict = specs.judge(path, [command], halt, env=env, timeout=min(runtime.FLOW_SECONDS, budget.left()), **direct)
+            # A killed collector cleaned nothing; its ownership record names what it left. On every outcome.
+            if left := android_owned.cleanup(flow_artifact):
+                row.update(reason="Android 정리가 끝나지 않았다: " + ", ".join(left), log=redact(verdict["tail"], settings),
+                           finished_at=time.time(), blocked=True)
+                return pending(repo, keep(spec, flows=[*rows, row]), head, row["reason"])
             if verdict.get("code") is None and not halt.is_set():
                 row.update(reason="선택 흐름 실행 시간 제한을 넘었다", log=redact(verdict["tail"], settings),
                            finished_at=time.time(), blocked=True, elapsed_seconds=verdict.get("elapsed_seconds"))

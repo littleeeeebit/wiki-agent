@@ -430,7 +430,7 @@ function VerificationPanel({ spec }: { spec: Spec }) {
           .filter((t) => t.driver === 'webview')
         const asset = { path: '', sha256: '' }
         const initial = { version: 2, host: 'webview', node: asset, applications: Object.fromEntries(targets.map((t) => [t.application, {
-              platform: t.platform, binary: asset, profile: '', ...(t.platform === 'android' ? { adb: asset, emulator: asset, avd: '' } : {}),
+              platform: t.platform, binary: asset, profile: '', ...(t.platform === 'android' ? { adb: asset, emulator: asset, image: asset } : {}),
             }])) }
         fields.native_scope = JSON.stringify(saved.native ?? initial, null, 2)
       } else {

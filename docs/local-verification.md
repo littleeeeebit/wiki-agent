@@ -17,8 +17,12 @@ Local native approval uses `version: 2`, `host: "webview"`, a `node` asset and
 an `applications` map keyed by registered application. Each asset contains
 an absolute `path` and lowercase `sha256`. An application names its platform,
 binary asset and disposable profile label. Android also requires approved
-`adb` and `emulator` assets and an installed `avd` template name.
-An Android approval may select a `renderer`: `auto` (the existing AVD default), `host`
+`adb` and `emulator` assets and an `image`: the system image folder at
+`system-images/<platform>/<tag>/<abi>` inside its SDK, whose `sha256` is
+`android_owned.image_digest` (each file's relative path and SHA-256, sorted).
+An approval that still names an `avd` template is refused until it is approved
+again with its image.
+An Android approval may select a `renderer`: `auto` (the emulator's default), `host`
 (this PC's GPU), or `software`. This setting applies only to that approved
 application and is included in evidence identity. Other applications retain
 their defaults; Windows scopes accept only `auto`.
@@ -32,8 +36,33 @@ Cleanup terminates the owned process handles rather than contacting an emulator
 console port. An already exited emulator needs no second shutdown. Every resource
 is attempted even if another cleanup fails; cleanup errors supplement the original
 failure instead of replacing it. An emulator crash still blocks acceptance.
-Android runs a newly launched emulator with fresh writable images under the
-attempt directory; an existing emulator or physical device is never selected.
+Android runs on an emulator the attempt owns (`tool/android_owned.py`). The
+attempt starts its own ADB server on a free port, with emulator scanning, USB
+and mDNS discovery off (`ADB_EMU`, `ADB_LOCAL_TRANSPORT_MAX_PORT`, `ADB_USB`,
+`ADB_MDNS`), and adopts the port's listener only when it is the approved `adb`
+started by its own client. It refuses an `adb` older than 37.0.1, the release
+verified to honour those variables. The AVD is written from the approved image
+under the attempt directory and boots with `-wipe-data` on an even console port
+from 5586, outside any server's emulator scan. The emulator registers only with
+the owned server. Every `adb` call names that server's port and the owned
+serial, after checking that both ports' listeners are still the recorded
+processes. An owned server that sees any other device refuses the run before
+booting, so the owner's default server on 5037, its emulators and any physical
+device are never reached.
+
+The ownership record, `android-ownership.json` in the flow's artifact folder,
+is written before the first mutation and names each resource before it
+exists: the server's port and process, its start-server client, the emulator
+and its console process, the serial, forwards and the AVD folder. Each process
+is recorded by pid, creation time, image and parent. Cleanup runs on every
+outcome from the collector, and again from the orchestrator after the collector
+exits or is killed. It removes recorded forwards, kills recorded processes only
+after checking their identity on the killing handle, and sends `kill-server`
+only while the port's listener is the recorded server. Then it deletes the
+recorded folders inside the artifact folder. A reused pid or port is left
+alone. A flow whose record does not end `cleaned` is held at preparation,
+naming what is left, and a receipt is accepted only with a cleaned record
+naming the emulator its sessions ran on.
 The WebView fixture uses GLES with Vulkan disabled, following the emulator's
 [troubleshooting guidance](https://developer.android.com/studio/run/emulator-troubleshooting?hl=en).
 Large debug APK installation and the installed-package verification copy each

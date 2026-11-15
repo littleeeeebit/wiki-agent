@@ -8,6 +8,7 @@ import os
 import shutil
 from pathlib import Path
 
+import android_owned
 import native_verification
 import native_webview
 from native_webview import system_ui_wait_button
@@ -38,7 +39,7 @@ def test_collector_and_receipt_require_the_same_exact_android_activity(tmp_path,
 
     def collect(root, line):
         result = subprocess.run([shutil.which("node"), "--experimental-vm-modules", str(fixture), str(driver),
-                                 sys.executable, str(root), "ready", "auto", activity, line], env=env,
+                                 sys.executable, str(root), "ready", activity, line], env=env,
                                 capture_output=True, text=True, encoding="utf-8", timeout=20)
         observed = json.loads((root / "evidence/result.json").read_text(encoding="utf-8"))
         return result, observed
@@ -57,10 +58,18 @@ def test_collector_and_receipt_require_the_same_exact_android_activity(tmp_path,
     artifact = root / "evidence"
     # The wrapper records cleanup after Node exits; asset/build preflight uses simulated adapters.
     (artifact / "cleanup.json").write_text(json.dumps({"state": "cleaned", "desktop": "fixture"}), encoding="utf-8")
+    owned = {"state": "cleaned", "emulator": {"pid": 2001}, "console_process": {"pid": 2002}}
+    android_owned.save(artifact, owned)
     request = json.loads((root / "request.json").read_text(encoding="utf-8"))
     monkeypatch.setattr(native_webview, "preflight", lambda *_: {})
     if accepted:
         assert native_verification.validate_receipt(receipt, root, artifact, request["target"], request["settings"], {}) == receipt["native"]
+        # A session on an emulator the record does not name, or an unproven cleanup, is refused.
+        for record, message in (({**owned, "emulator": {"pid": 9}}, "does not name"),
+                                ({**owned, "state": "failed"}, "cleanup is not proven")):
+            android_owned.save(artifact, record)
+            with pytest.raises(ValueError, match=message):
+                native_verification.validate_receipt(receipt, root, artifact, request["target"], request["settings"], {})
     else:
         with pytest.raises(ValueError, match="Native Android activity focus is missing"):
             native_verification.validate_receipt(receipt, root, artifact, request["target"], request["settings"], {})
@@ -110,20 +119,5 @@ def test_driver_recovers_only_initial_system_ui_before_focus_pid_and_debugger(tm
             "startup-system-ui.json", "startup-system-ui.xml", "startup-system-ui.png", "startup-recovery.json"}
     elif taps:
         assert not any(row[0] == "debugger" or row == ["pid", "ready"] for row in trace)
-
-
-@pytest.mark.parametrize("renderer", ["auto", "host", "software"])
-def test_driver_passes_only_the_approved_android_renderer(tmp_path, renderer):
-    fixture = Path(__file__).with_name("fixtures") / "test_android_driver.mjs"
-    driver = Path(__file__).with_name("native_webview.mjs")
-    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("NODE_")}
-    result = subprocess.run([shutil.which("node"), "--experimental-vm-modules", str(fixture), str(driver),
-                            sys.executable, str(tmp_path), "ready", renderer], env=env, capture_output=True,
-                            text=True, encoding="utf-8", timeout=20)
-    assert result.returncode == 0, result.stderr
-    trace = json.loads((tmp_path / "trace.json").read_text(encoding="utf-8"))
-    arguments = next(row[2] for row in trace if row[:2] == ["spawn", "fixture-emulator"])
-    if renderer == "auto":
-        assert "-gpu" not in arguments
-    else:
-        assert arguments[arguments.index("-gpu") + 1] == renderer
+    # The debugging forward is made and removed only through the helper that records it.
+    assert ["forward", "localabstract:webview_devtools_remote_3001"] in trace or not passed

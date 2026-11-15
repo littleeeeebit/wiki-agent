@@ -8,6 +8,7 @@ import sys
 import time
 import shutil
 import re
+from contextlib import contextmanager
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Literal
@@ -15,6 +16,7 @@ from xml.etree import ElementTree
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+import android_owned
 from common import process
 from common.settings import entries
 from native_process import launched
@@ -57,7 +59,7 @@ class Approval(Closed):
     profile: str = Field(min_length=1)
     adb: Asset | None = None
     emulator: Asset | None = None
-    avd: str = ""
+    image: Asset | None = None   # a system image folder; its `sha256` is `android_owned.image_digest`
     renderer: Literal["auto", "host", "software"] = "auto"
 
     @model_validator(mode="after")
@@ -81,9 +83,22 @@ def approval(settings: dict, application: str) -> Settings:
 
 
 def assets(settings: dict, application: str) -> list[dict]:
+    """The approved files, each measured by its SHA-256. The system image is a folder: see `measured`."""
+
     approved = approval(settings, application)
     app = approved.applications[application]
     return [approved.node.model_dump(), *[asset.model_dump() for asset in (app.binary, app.adb, app.emulator) if asset]]
+
+
+def measured(settings: dict, application: str) -> list[dict]:
+    """Each approved asset with what it measures now: files by SHA-256, an Android system image folder by
+    `android_owned.image_digest`. A run signature holds these, so a replaced one revokes earlier passes."""
+
+    import native_verification as native
+
+    app = approval(settings, application).applications[application]
+    images = [{**app.image.model_dump(), "actual": android_owned.image_digest(Path(app.image.path))}] if app.image else []
+    return [{**asset, "actual": native.digest(Path(asset["path"]))} for asset in assets(settings, application)] + images
 
 
 def preflight(root: Path, head: str, target: dict, settings: dict) -> dict:
@@ -96,8 +111,10 @@ def preflight(root: Path, head: str, target: dict, settings: dict) -> dict:
     app = approved.applications.get(target.application)
     if not app or app.platform != target.platform:
         raise ValueError("The native platform/application is not approved")
-    if app.platform == "android" and (not app.adb or not app.emulator or not app.avd):
-        raise ValueError("Android requires approved adb, emulator and a disposable AVD template")
+    if app.platform == "android" and (not app.adb or not app.emulator or not app.image):
+        raise ValueError("Android requires approved adb, emulator and system image (re-approve an AVD template)")
+    if app.image and not Path(app.image.path).is_dir():
+        raise ValueError("The approved system image folder is missing")
     for asset in assets(settings, target.application):
         file = Path(asset["path"])
         if not file.is_absolute() or file.is_symlink() or not file.is_file() or native.digest(file) != asset["sha256"]:
@@ -119,7 +136,8 @@ def preflight(root: Path, head: str, target: dict, settings: dict) -> dict:
 
 def collector_digest() -> str:
     sources = {name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in
-               ("native_webview.py", "native_webview.mjs", "native_process.py", "native_window.py", "native_cleanup.mjs")}
+               ("native_webview.py", "native_webview.mjs", "native_process.py", "native_window.py", "native_cleanup.mjs",
+                "android_owned.py")}
     return hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest()
 
 
@@ -178,6 +196,13 @@ def validate_receipt(data, root, artifact, target, settings, revisions, *, redac
         if target["platform"] == "android" and (session.get("package") != target["package"]
                                                 or not session.get("emulator_pid") or not session.get("activity")):
             raise ValueError("Installed Android application observation is missing")
+    if target["platform"] == "android":
+        owned = android_owned.load(artifact)
+        if not owned or owned.get("state") != "cleaned" or not owned.get("emulator") or not owned.get("console_process"):
+            raise ValueError("The owned Android emulator's cleanup is not proven")
+        if any(session.get("emulator_pid") != owned["emulator"]["pid"]
+               or session.get("listener_pid") != owned["console_process"]["pid"] for session in journal):
+            raise ValueError("A session ran on an emulator its ownership record does not name")
     raw = json.loads((artifact / "observations.json").read_text(encoding="utf-8"))
     if len(raw) != len(target["actions"]) or len(observed["actions"]) != len(raw):
         raise ValueError("Registered native observations are incomplete")
@@ -232,13 +257,31 @@ def remove_profile(artifact):
             time.sleep(0.1)
 
 
+@contextmanager
+def owned_android(request, artifact):
+    """For an Android target, an emulator booted by `android_owned` and cleaned on every exit, described
+    for the driver; nothing for Windows."""
+
+    target = request["target"]
+    if target["platform"] != "android":
+        yield None
+        return
+    app = approval(request["settings"], target["application"]).applications[target["application"]]
+    tools = {key: getattr(app, key).model_dump() for key in ("adb", "emulator", "image")}
+    with android_owned.boot(artifact, tools, renderer=app.renderer) as serial:
+        record = android_owned.load(artifact)
+        yield {"helper": android_owned.__file__, "serial": serial, "emulator_pid": record["emulator"]["pid"],
+               "listener_pid": record["console_process"]["pid"]}
+
+
 def run(request):
     import native_verification as native
 
     root, artifact = Path(request["root"]), Path(request["artifact_dir"])
     preflight(root, request["head"], request["target"], request["settings"])
-    with native.owned_desktop() as desktop, (artifact / "driver.log").open("wb") as log:
-        request = {**request, "desktop": desktop, "python": sys.executable}
+    with native.owned_desktop() as desktop, (artifact / "driver.log").open("wb") as log, \
+            owned_android(request, artifact) as android:
+        request = {**request, "desktop": desktop, "python": sys.executable, "android": android}
         file = artifact / "webview-request.json"
         file.write_text(json.dumps(request), encoding="utf-8")
         argv = [request["settings"]["node"]["path"], str(Path(__file__).with_suffix(".mjs")), str(file)]

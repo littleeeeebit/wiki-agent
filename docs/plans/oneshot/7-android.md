@@ -221,6 +221,33 @@ outside the default scan, and cleanup proven on every outcome. That collector
 is on hold. This step resumes it as shared infrastructure instead of building
 a second one.
 
+How 7d builds it:
+
+- The owned emulator is one module, `tool/android_owned.py`. Its `boot()`
+  yields a booted serial and cleans on every exit. The WebView driver uses
+  it, and S7 will use it in 7e. The DevTools proxy, the head-built APK and the
+  receipt redesign from the native WebView plan's step 3 stay on hold with
+  that plan.
+- The driver no longer starts an emulator or calls `adb` itself. Every call
+  goes through the module's command line, which checks the listeners first.
+  An approval names the system image folder instead of an AVD template.
+- The owned server's discovery is closed by `ADB_EMU=0`,
+  `ADB_LOCAL_TRANSPORT_MAX_PORT=5554`, `ADB_USB=0` and `ADB_MDNS=0`. These are
+  read in adb's own source (`client/main.cpp`, `client/mdns_utils.cpp`),
+  though adb's built-in help lists only the scan port. The floor is the release
+  verified here, 37.0.1, so an older `adb` is refused rather than trusted.
+- The orchestrator cleans from the record after every desktop flow, whatever
+  its outcome, and holds the flow at preparation while anything is left.
+- One real run on this PC used another project's SDK, read-only: platform tools
+  37.0.1, emulator 37.2.13 and an `android-34` Google APIs x86_64 image on
+  WHPX. It booted in 79 seconds. The owned server listed only `emulator-5586`.
+  A server started mid-run with ordinary discovery listed no device. Cleanup
+  left no recorded process, listener or folder. The default server it found
+  on 5037 kept its identity and its port.
+- The emulator cannot create its own home folder, so the module creates it.
+  Without it, the emulator retried its lock file forever and wrote gigabytes
+  of log before the boot deadline.
+
 1. Boot the AVD with the reference device's profile, install the APK, grant
    only the permissions the scenarios state, start the app.
 2. Drive each core scenario through the platform's UI automation (UI Automator
@@ -305,7 +332,7 @@ Each step is a separate PR, approved before the next starts.
 | 7a | Kind and toolchain | `android` in the kinds with the intake's definitions, the toolchain preflight with the owner-pressed install, the `device` field and `android.json` profile | Done |
 | 7b | Core path | S2 stack parts and capability requirements for `android`, the S3 module design and R1 module table, S4 contract tests and gate in the stack's own host-side runner | Done |
 | 7c | Screens without an emulator | S5 from contracts and platform surfaces, S6 rendered by the stack's preview tool at the device size | Done |
-| 7d | Owned emulator | The native-webview step 3 collector resumed as shared infrastructure, with its refusals and cleanup proof | Planned |
+| 7d | Owned emulator | The native-webview step 3 collector resumed as shared infrastructure, with its refusals and cleanup proof | Done |
 | 7e | Emulator loop | S7 on the owned emulator: install, scenarios, screenshots, mechanical and placement checks resolved from the real native hierarchy (cases: a build that moves a feature from its approved place, a correctly absent `never` feature, a leaked `never` control), critic, fixture viewer | Planned |
 | 7f | Phone round and S8 | The connected-phone round before R3: the resumable wait, the bound serial, run-specific packages, the ownership record and its cleanup; the R3 sheet, S8's README, APK and optional workflow | Planned |
 | 7g | Real run | The screen translator sentence from intake to the first pull request | Planned |

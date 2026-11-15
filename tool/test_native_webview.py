@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import android_owned
 import native_verification as native
 import native_webview as webview
 import native_targets as targets
@@ -165,7 +166,7 @@ def test_webview_targets_require_registered_assertions_and_explicit_platform_app
 def test_renderer_is_approved_per_android_app_with_unchanged_default(candidate):
     _, _, _, settings = candidate
     windows = settings["applications"]["fixture"]
-    android = {**windows, "platform": "android", "avd": "fixture"}
+    android = {**windows, "platform": "android", "image": {"path": "C:/sdk/system-images/a/b/c", "sha256": "0" * 64}}
     assert webview.Approval.model_validate(windows).renderer == "auto"
     assert webview.Approval.model_validate(android).renderer == "auto"
     for renderer in ("auto", "host", "software"):
@@ -186,7 +187,10 @@ def test_renderer_is_approved_per_android_app_with_unchanged_default(candidate):
 def test_native_flow_assets_and_receipt_reuse_are_isolated_per_application(candidate, tmp_path, application, asset_name, change):
     root, head, target, settings = candidate
     windows = settings["applications"].pop("fixture")
-    android = {**windows, "platform": "android", "avd": "fixture"}
+    image = tmp_path / "sdk/system-images/android-34/google_apis/x86_64"
+    image.mkdir(parents=True)
+    (image / "system.img").write_bytes(b"approved image")
+    android = {**windows, "platform": "android", "image": {"path": str(image), "sha256": android_owned.image_digest(image)}}
     for name in ("binary", "adb", "emulator"):
         file = tmp_path / ("android-" + name)
         file.write_bytes(("approved " + name).encode())
