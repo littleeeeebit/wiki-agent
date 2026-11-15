@@ -1,6 +1,6 @@
 """The oneshot window: the switch from maintenance with its count, the run list grouped by what needs
 the owner, the stage spine, a gate sheet's per-item decisions with its folded section, the re-shown sheet, the
-feature board by drag and by keys, a stopped run's `[재개]`, and the start form.
+feature board by drag and by keys, a stopped run's `[재개]`, the start form, and an Android run's phone round.
 
 Run after building: python web/tests/oneshot_browser.py
 Serves web/dist with synthetic runs; the sheets are short Markdown like the server's, never a real run.
@@ -617,6 +617,84 @@ def tracking():
           "failed record read says so and reads again; partial translation leaves progress, and the switch is followed")
 
 
+def phone_round():
+    """An Android run's phone round: its spine holds the round, the phones are looked up on request, an
+    unauthorized one cannot be picked, the pick sends its serial and whether to keep the app, a running round
+    can be stopped, an empty list says another ADB server may hold the phone, and an unfinished cleanup is
+    shown on the run."""
+    android = run("phone-demo", "phone", waits=True, kind="android")
+    android["oneshot"] |= {"intent": {"kind": "android"}, "phone": {
+        "status": "waiting", "detail": "휴대폰이 잠겨 있다 — 잠금을 풀고 화면을 켠 채로 다시 시작한다", "findings": [
+            {"screen": "S1", "state": "full", "what": "앱이 죽거나 응답하지 않았다", "severity": "high"}]}}
+    android["phone_owned"] = [{"serial": "OLD1", "model": "", "packages": ["com.example.app.oneshot01"], "state": "pending",
+                               "left": ["com.example.app.oneshot01"], "apks": {}}]
+    views = {"phone-demo": android}
+    phones = {"devices": [{"serial": "R5CR10ABCDE", "state": "device", "model": "SM G991N"},
+                          {"serial": "ZY22", "state": "unauthorized", "model": ""}]}
+    posted: list = []
+    fake = FastAPI()
+
+    @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
+    async def api(path: str, request: Request):
+        if path == "oneshot-specs":
+            return {"specs": [{k: v[k] for k in ("repo", "stage", "working", "stopped", "waits", "kind")} for v in views.values()]}
+        if path == "oneshot/spec/phone-demo/phone/devices":
+            return phones
+        if path.startswith("oneshot/spec/phone-demo"):
+            if request.method == "POST":
+                act = path.removeprefix("oneshot/spec/phone-demo/")
+                posted.append((act, await request.json()))
+                if act == "phone":
+                    views["phone-demo"] = {**android, "working": "phone", "waits": False, "worktree": "C:/fixture/phone",
+                                           "oneshot": {**android["oneshot"], "phone": {"status": "running", "serial": "R5CR10ABCDE"}}}
+            return views["phone-demo"]
+        if path == "mobile/status":
+            return {"local": True}
+        if path == "work/log":
+            return {"rows": [], "session_id": "", "busy": False, "running": None, "rules": [], "queued": None}
+        return fixture(path, request.method)
+
+    fake.mount("/", StaticFiles(directory=ROOT / "web/dist", html=True))
+    errors = []
+    with served(fake) as port, sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = page_of(browser, errors, viewport={"width": 1600, "height": 960})
+        page.goto(f"http://127.0.0.1:{port}/#oneshot")
+        strip = page.get_by_role("list", name="원샷 단계 16/19")
+        expect(strip.locator("[aria-current=step]")).to_contain_text("휴대폰 회차")
+        expect(page.get_by_role("status").filter(has_text="OLD1")).to_contain_text("com.example.app.oneshot01")
+        expect(page.get_by_role("alert").filter(has_text="잠겨 있다")).to_be_visible()
+        expect(page.get_by_role("region", name="지난 휴대폰 회차")).to_contain_text("앱이 죽거나 응답하지 않았다")
+        side = page.get_by_role("complementary", name="연결된 휴대폰")
+        go = side.get_by_role("button", name="이 휴대폰에서 검사")
+        expect(go).to_be_disabled()
+        phones["devices"] = []
+        side.get_by_role("button", name="휴대폰 찾기").click()
+        expect(side).to_contain_text("다른 ADB 서버")
+        phones["devices"] = [{"serial": "R5CR10ABCDE", "state": "device", "model": "SM G991N"},
+                             {"serial": "ZY22", "state": "unauthorized", "model": ""}]
+        side.get_by_role("button", name="다시 찾기").click()
+        expect(side.get_by_role("radio", name=re.compile("ZY22"))).to_be_disabled()
+        expect(side).to_contain_text("USB 디버깅을 허용한다")
+        side.get_by_role("radio", name=re.compile("SM G991N")).check()
+        side.get_by_role("checkbox", name="통과하면 앱을 휴대폰에 남긴다").check()
+        expect(go).to_be_enabled()
+        with page.expect_response(lambda r: r.request.method == "POST"):
+            go.click()
+        assert posted[-1] == ("phone", {"serial": "R5CR10ABCDE", "keep": True}), posted
+        running = page.get_by_role("region", name="휴대폰 회차", exact=True)
+        expect(running).to_contain_text("R5CR10ABCDE")
+        running.get_by_role("button", name="멈춤").click()
+        page.wait_for_timeout(300)
+        assert posted[-1] == ("phone/stop", {}), posted
+        browser.close()
+    assert not errors, errors
+    print("PASS: an Android run's spine holds the phone round; phones are looked up on request, an unauthorized one "
+          "cannot be picked, and an empty list names another ADB server; the pick sends the serial and the keep choice; "
+          "a running round stops on request; an unfinished cleanup is shown on the run")
+
+
 if __name__ == "__main__":
     main()
     tracking()
+    phone_round()

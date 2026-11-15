@@ -531,7 +531,7 @@ def test_each_submission_records_how_its_sheet_was_read_and_the_rail_shows_what_
     (oneshot.RUNS / "0123456789abcdef.json").write_text(json.dumps({"committed": True, "spec": {"repo": "budget"}}),
                                                          encoding="utf-8")
     assert oneshot_spec.listing() == {"specs": [{"repo": "budget", "stage": "r1", "working": None, "stopped": None,
-                                                 "waits": True}]}
+                                                 "kind": "webapp", "waits": True}]}
     oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions=everything(P1="응답 필드를 sum 으로 바꿔라"),
                                                          reading={"seconds": 92.04, "opened": ["흐름", 3, "흐름"]}))
     assert o()["reading"] == {"r1": [{"round": 1, "seconds": 92.0, "opened": ["흐름"], "edited": ["P1"],

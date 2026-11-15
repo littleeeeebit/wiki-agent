@@ -4,11 +4,12 @@ import { Btn } from '@/components/Modal'
 import { Body, Intake, api, useAct, type OneshotRun } from '@/components/Oneshot'
 import { Fault, Lead, ModelsList, OneshotSpec, Top } from '@/components/OneshotSpec'
 import { follow, forget, go, rows, useRoute, useSpecList, useSpecs, type Route } from '@/lib/mode'
-import { STAGES, type Models, type SpecSummary, type SpecView } from '@/lib/oneshot'
+import { STAGES, stagesOf, type Models, type SpecSummary, type SpecView } from '@/lib/oneshot'
 import { cn } from '@/lib/utils'
 
 /** The oneshot window (`DESIGN.md`, "Oneshot window"): the runs on the left, and the chosen run on the
- *  right under a header of its name, sentence, models and the eighteen stages as one spine. Each stage
+ *  right under a header of its name, sentence, models and its stages as one spine (eighteen, and the
+ *  phone round for an Android app). Each stage
  *  lays itself out (`OneshotSpec` `Split`, `Top`). Maintenance is the other window; the switch at the top
  *  of both rails moves between them, and both stay mounted. Under 1100px the list is a drawer. */
 
@@ -20,7 +21,7 @@ const ALL = [
 const PHASES: { name: string; ids: string[] }[] = [
   { name: '시작', ids: ['intake', 'environment', 'bootstrap'] }, { name: '요구', ids: ['spec'] },
   { name: '백엔드', ids: ['design', 'r1', 'tests', 'build', 'review'] },
-  { name: '화면', ids: ['split', 'board', 'frontend', 'r2', 'build-front', 'critique', 'r3'] },
+  { name: '화면', ids: ['split', 'board', 'frontend', 'r2', 'build-front', 'critique', 'phone', 'r3'] },
   { name: '마무리', ids: ['pr', 'done'] },
 ]
 const HINT: Record<string, string> = {
@@ -39,23 +40,28 @@ const HINT: Record<string, string> = {
   r2: '화면 설계를 항목마다 정하고 색 배합을 하나 고른다.',
   'build-front': '화면을 만든다. 혼자 돈다.',
   critique: '만든 화면을 찍어 비평하고 고친다. 혼자 돈다.',
+  phone: '휴대폰을 USB 로 연결해 고르면, 에뮬레이터를 통과한 앱을 그 휴대폰에서 한 번 더 검사하고 지운다.',
   r3: '완성 화면을 항목마다 승인하거나 고친다.',
   pr: '풀 리퀘스트를 연다. 혼자 돈다.',
   done: '끝났다. 리뷰 루프는 유지보수 창의 작업 목록에서 이어진다.',
 }
-const at = (stage: string) => ALL.findIndex((s) => s.id === stage)
+const label = (stage: string) => (ALL.find((s) => s.id === stage) ?? ALL[0]).label
 
 /** Where a run is, read the same way from a run before S2, a spec past it, or the start form. */
 type Now = {
-  stage: string; name: string; sentence: string; models?: Models
+  stage: string; name: string; sentence: string; models?: Models; kind?: string
   working: boolean; stopped: boolean; waits: boolean; line?: string
 }
+/** The run's own stages, and where it is among them. */
+const steps = (now: Now) => stagesOf(ALL, now.kind)
+const at = (now: Now, stage = now.stage) => steps(now).findIndex((s) => s.id === stage)
 const fromRun = (r: OneshotRun): Now => ({
   stage: r.state, name: r.identity?.name ?? r.intent?.name ?? '새 실행', sentence: r.sentence, models: r.models,
+  kind: r.intent?.kind,
   working: !!r.working, stopped: !!r.stopped, waits: !r.working && !r.stopped && (r.state === 'environment' || (r.state === 'intake' && !!r.intent)),
 })
 const fromSpec = (s: SpecSummary): Now => ({
-  stage: s.stage, name: s.repo, sentence: '', working: !!s.working, stopped: !!s.stopped, waits: s.waits,
+  stage: s.stage, name: s.repo, sentence: '', kind: s.kind, working: !!s.working, stopped: !!s.stopped, waits: s.waits,
 })
 const fromView = (v: SpecView): Now => ({
   ...fromSpec(v), sentence: v.oneshot.sentence, models: v.oneshot.models,
@@ -196,7 +202,7 @@ export function OneshotWindow() {
   const lead = picked !== 'new' && (
     <div className="flex flex-col gap-1">
       <h2 className="flex flex-wrap items-center gap-2.5 font-heading text-[20px] font-semibold">
-        {ALL[Math.max(0, at(current.stage))].label} <Badge now={current} />
+        {label(current.stage)} <Badge now={current} />
       </h2>
       {HINT[current.stage] && <p className="max-w-[44em] text-pretty text-muted-foreground">{HINT[current.stage]}</p>}
     </div>
@@ -274,35 +280,37 @@ function Group({ label, count, tone, children }: { label: string; count: number;
 /** A run in the list: its name and how far it is, then the stage it is at, or why it stopped. */
 function Row({ now, on, pick }: { now: Now; on: boolean; pick: () => void }) {
   const done = now.stage === 'done'
-  const step = Math.max(0, at(now.stage))
+  const step = Math.max(0, at(now))
+  const all = steps(now)
   return (
     <button type="button" onClick={pick} aria-current={on ? 'page' : undefined}
       className={cn('grid w-full grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-2 rounded-lg px-2.5 py-2 text-left [@media(hover:hover)]:hover:bg-sidebar-accent',
         on && 'bg-card shadow-[0_0_0_1px_var(--border)]')}>
       <span className="truncate font-mono text-[13px]">{now.name}</span>
-      <span className="font-mono text-[11px] tabular-nums text-faint">{done ? '' : `${step + 1}/${ALL.length}`}</span>
+      <span className="font-mono text-[11px] tabular-nums text-faint">{done ? '' : `${step + 1}/${all.length}`}</span>
       <span className={cn('col-span-2 truncate text-[12.5px]', now.stopped ? 'text-wait' : 'text-muted-foreground')}>
-        {now.stopped ? `멈춤 · ${ALL[step].label}` : ALL[step].label}
+        {now.stopped ? `멈춤 · ${all[step].label}` : all[step].label}
       </span>
     </button>
   )
 }
 
-/** The eighteen stages as ticks under their phases: filled behind, solid now (amber when it needs the owner),
+/** The run's stages as ticks under their phases: filled behind, solid now (amber when it needs the owner),
  *  and outlined ahead where the owner decides. */
 function Spine({ now }: { now: Now }) {
-  const here = at(now.stage)
+  const here = at(now)
   const done = now.stage === 'done'
+  const all = steps(now)
   return (
-    <ol aria-label={`원샷 단계 ${Math.min(here + 1, ALL.length)}/${ALL.length}`} className="col-span-2 mt-3 flex max-w-[64rem] gap-4 max-[560px]:gap-1.5">
-      {PHASES.map((p) => (
+    <ol aria-label={`원샷 단계 ${Math.min(here + 1, all.length)}/${all.length}`} className="col-span-2 mt-3 flex max-w-[64rem] gap-4 max-[560px]:gap-1.5">
+      {PHASES.map((p) => ({ ...p, ids: p.ids.filter((id) => at(now, id) >= 0) })).map((p) => (
         <li key={p.name} className="flex min-w-0 flex-col gap-1.5" style={{ flex: `${p.ids.length} 1 0` }}>
           <span aria-hidden className={cn('whitespace-nowrap font-heading text-[11px] font-semibold tracking-wide',
             p.ids.includes(now.stage) ? 'text-foreground' : 'text-faint')}>{p.name}</span>
           <ol className="flex gap-[3px]">
             {p.ids.map((id) => {
-              const i = at(id)
-              const s = ALL[i]
+              const i = at(now, id)
+              const s = all[i]
               const past = i < here || done
               const current = i === here && !done
               return (

@@ -188,7 +188,7 @@ The window is laid out for 1920 × 1080 first. Two columns: the run list
 | Area | Where | What |
 | --- | --- | --- |
 | Run list | Left | Three groups: `결정이 필요한 것` (label in `wait`), `도는 중`, and `끝남` folded. Each row: name (code) with `n/18`, then the stage, or `멈춤 · <stage>` in `wait`. No dots or bars: the group says what the row needs |
-| Header | Top of the run | Name (code, 17px), the sentence, the fixed models at the right, and the spine: the eighteen stages as ticks under five phases — filled behind, solid now (`wait` when it needs the owner, `progress` when it runs), outlined ahead where the owner decides |
+| Header | Top of the run | Name (code, 17px), the sentence, the fixed models at the right, and the spine: the run's stages (eighteen; an Android run adds the phone round before R3) as ticks under five phases — filled behind, solid now (`wait` when it needs the owner, `progress` when it runs), outlined ahead where the owner decides |
 | Lead | Top-left of the stage | Stage name (20px) with a badge — `멈춤` and `결정 필요` in `wait`, `진행 중` in `progress` — and one line on what the stage does |
 
 Each stage takes the layout its work needs rather than one shared column:

@@ -130,12 +130,9 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict]):
                                             "clean": not any(f["severity"] == "high" for f in found + look["findings"]),
                                             "ts": time.time()}]
     ours = rounds[int(o.get("critique_base") or 0):]
-    if len(ours) >= 2 and ours[-1]["clean"] and ours[-2]["clean"] and KIND_STOPS.get(kind_of(o)) == "r3":
-        # The kind waits before R3 in this version: the owner's phone round comes first (7f).
-        return oneshot_spec.saved(repo, oneshot={"critiques": rounds, "stage": "r3", "working": None, "stopped": {
-            "reason": "kind", "state": "r3",
-            "detail": f"`{kind_of(o)}` 는 이 버전에서 에뮬레이터 화면 검사까지 간다 — 높은 발견 없는 회차가 두 번 이어졌고, "
-                      "R3 앞의 휴대폰 회차(docs/plans/oneshot/7-android.md 7f)가 들어오면 이어 간다"}})
+    if len(ours) >= 2 and ours[-1]["clean"] and ours[-2]["clean"] and kind_of(o) == "android":
+        from . import oneshot_phone   # it imports this module
+        return oneshot_phone.waits(repo, rounds)   # the owner's phone comes before R3
     if len(ours) >= 2 and ours[-1]["clean"] and ours[-2]["clean"]:
         return oneshot_spec.saved(repo, oneshot={"critiques": rounds, "stage": "r3", "working": None,
                                                  "r3": {"round": (o.get("r3") or {}).get("round", 0) + 1, "decisions": {},

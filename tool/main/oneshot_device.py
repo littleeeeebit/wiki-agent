@@ -82,10 +82,18 @@ def _apk(tree: Path, value, where: str) -> str:
     return value
 
 
-def declared(tree: Path, final: str, needs_fixture: bool) -> dict:
+def suffix(o: dict) -> str:
+    """The run's application id suffix: every package the run installs carries it, so on the owner's phone
+    none of them is an app already there."""
+
+    return f".oneshot{o['run']}" if o.get("run") else ""
+
+
+def declared(tree: Path, final: str, needs_fixture: bool, ending: str = "") -> dict:
     """The build turn's `oneshot-device` block, checked for shape: the APK the gate builds, its package and
     launch activity, the instrumented test APK and its runner, and the fixture viewer when the app reads
-    another app's screen. Whether the APKs exist is `built`'s, after the gate."""
+    another app's screen, each package ending with the run's suffix `ending`. Whether the APKs exist is
+    `built`'s, after the gate."""
 
     value = oneshot.block(final, BLOCK)
     if not isinstance(value, dict) or not isinstance(value.get("tests"), dict):
@@ -105,6 +113,14 @@ def declared(tree: Path, final: str, needs_fixture: bool) -> dict:
                 or not PACKAGE.fullmatch(fixture["package"]) or fixture["package"] == out["package"]:
             raise ValueError(f"다른 앱의 화면을 읽는 앱이라 `{BLOCK}` 에 fixture{{apk, package}} (고정 장면 뷰어)가 있어야 한다")
         out["fixture"] = {"apk": _apk(tree, fixture.get("apk"), "fixture.apk"), "package": fixture["package"]}
+    if ending:
+        tests = out["tests"]["runner"].split("/")[0]
+        if not out["package"].endswith(ending) or not tests.startswith(out["package"] + ".") \
+                or ("fixture" in out and not out["fixture"]["package"].endswith(ending)):
+            raise ValueError(f"`{BLOCK}` 의 패키지가 이 실행의 것이 아니다 — 앱과 fixture 의 applicationId 는 `{ending}` 로 "
+                             "끝나고, 테스트 패키지는 앱의 것에 이어진다")
+        if out["activity"].startswith("."):   # it would resolve under the suffixed package, where no class is
+            raise ValueError(f"`{BLOCK}` 의 activity 는 클래스의 전체 이름이다 — 접미사는 패키지만 바꾼다")
     return out
 
 
@@ -150,7 +166,7 @@ class Device:
     """The owned emulator as the look drives it: every command through `android_owned.call`."""
 
     def __init__(self, folder: Path, device: dict, size: dict, tree: Path):
-        self.folder, self.d, self.size, self.tree = folder, device, size, tree
+        self.folder, self.d, self.size, self.tree, self.since = folder, device, size, tree, ""
 
     def adb(self, *args, timeout: float = android_owned.CALL_SECONDS, binary: bool = False):
         return android_owned.call(self.folder, list(args), timeout=timeout, binary=binary)
@@ -180,7 +196,8 @@ class Device:
     def open(self, screen: dict, state: str) -> str:
         """The screen in the state, drawn by the debug build; empty, or why it did not open."""
 
-        self.adb("logcat", "-b", "all", "-c")
+        # The device's clock, not a cleared log: on the owner's phone the log is not the run's to clear.
+        self.since = self.adb("shell", "date", "+%s").strip()
         out = self.adb("shell", "am", "start", "-W", "-S", "-n", f"{self.d['package']}/{self.d['activity']}",
                        "--es", "oneshot.screen", screen["id"], "--es", "oneshot.state", state)
         # `Status: timeout` is a launch through a trampoline activity that outlived `-W`'s wait, not a failure.
@@ -211,7 +228,8 @@ class Device:
     def died(self) -> str:
         """A crash or ANR of the app since the last `open`, from the event log; empty when none."""
 
-        lines = [line for line in self.adb("logcat", "-d", "-b", "events").splitlines()
+        since = ["-T", f"{self.since}.000"] if self.since.isdigit() else []
+        lines = [line for line in self.adb("logcat", "-d", "-b", "events", *since).splitlines()
                  if ("am_crash" in line or "am_anr" in line) and self.d["package"] in line]
         return f"앱이 죽거나 응답하지 않았다 — {lines[0].strip()[:200]}" if lines else ""
 
@@ -385,42 +403,59 @@ def look(tree: Path, device: dict, spec: dict, base: Path, folder: Path, stopped
     """Every screen in every state shot into `folder` as `<screen>-phone-<state>.png` on an emulator the run
     owns under `base`; the findings, placement and scenarios included. The emulator is cleaned on every exit."""
 
-    o = spec["oneshot"]
-    front, frequency = o["front"], o["frequency"]
-    size = DEVICES[o["profile"]["device"]]
-    folder.mkdir(parents=True, exist_ok=True)
-    for old in folder.glob("*.png"):
-        old.unlink()
+    size = DEVICES[spec["oneshot"]["profile"]["device"]]
     cleaned(base)
     home = base / f"r{time.time_ns()}"
     home.mkdir(parents=True)
-    # `seen`: in a `full` hierarchy, where every shown feature must appear; `anywhere`: in any state's, where
-    # a `never` feature must not.
-    findings, seen, anywhere = [], {f: False for f in frequency}, set()
     with android_owned.boot(home, tools(), device={k: size[k] for k in ("width", "height", "dpi")}):
         halted(stopped)
         d = Device(home, device, size, tree)
-        d.install(device["apk"], device["package"])
-        d.install(device["tests"]["apk"], device["tests"]["runner"].split("/")[0])
-        if "fixture" in device:
-            d.install(device["fixture"]["apk"], device["fixture"]["package"])
-        d.grant(grants(spec), "fixture" in device)
-        for s in front["screens"]:
-            for state in STATES:
-                halted(stopped)
-                findings += shot(d, s, state, folder, seen, anywhere)
-        halted(stopped)
-        findings += placement(d, front, frequency, stopped)
-        halted(stopped)
-        first = next(s for s in front["screens"] if s["primary"])
-        try:
-            output = d.adb("shell", "am", "instrument", "-w", "-r", device["tests"]["runner"], timeout=TESTS_SECONDS)
-        except ValueError as exc:   # a runner the test APK does not hold exits non-zero
-            output = f"INSTRUMENTATION_FAILED: {exc}"
-        findings += scenario_findings(output, scenarios(spec), first["id"])
-        if why := d.died():
-            findings.append(finding(first["id"], "full", f"시나리오 테스트 중에 {why}"))
+        for apk, package in apks(device):
+            d.install(apk, package)
+        return inspect(d, spec, folder, stopped)
+
+
+def digests(tree: Path, device: dict) -> dict[str, str]:
+    """Each APK's SHA-256: the phone round installs exactly what the emulator's look passed."""
+
+    return {apk: android_owned.sha256(tree / apk) for apk, _ in apks(device)}
+
+
+def apks(device: dict) -> list[tuple[str, str]]:
+    """Each APK the block names with the package it installs: the app, its tests, and the fixture viewer."""
+
+    return [(device["apk"], device["package"]), (device["tests"]["apk"], device["tests"]["runner"].split("/")[0]),
+            *([(device["fixture"]["apk"], device["fixture"]["package"])] if "fixture" in device else [])]
+
+
+def inspect(d: Device, spec: dict, folder: Path, stopped=never) -> list[dict]:
+    """On a device with the APKs installed: every screen in every state shot into `folder`, the mechanical,
+    placement and coverage findings, and the scenarios. The emulator's look and the phone round share it."""
+
+    o = spec["oneshot"]
+    front, frequency = o["front"], o["frequency"]
+    folder.mkdir(parents=True, exist_ok=True)
+    for old in folder.glob("*.png"):
+        old.unlink()
+    # `seen`: in a `full` hierarchy, where every shown feature must appear; `anywhere`: in any state's, where
+    # a `never` feature must not.
+    findings, seen, anywhere = [], {f: False for f in frequency}, set()
+    d.grant(grants(spec), "fixture" in d.d)
+    for s in front["screens"]:
+        for state in STATES:
+            halted(stopped)
+            findings += shot(d, s, state, folder, seen, anywhere)
+    halted(stopped)
+    findings += placement(d, front, frequency, stopped)
+    halted(stopped)
     first = next(s for s in front["screens"] if s["primary"])
+    try:
+        output = d.adb("shell", "am", "instrument", "-w", "-r", d.d["tests"]["runner"], timeout=TESTS_SECONDS)
+    except ValueError as exc:   # a runner the test APK does not hold exits non-zero
+        output = f"INSTRUMENTATION_FAILED: {exc}"
+    findings += scenario_findings(output, scenarios(spec), first["id"])
+    if why := d.died():
+        findings.append(finding(first["id"], "full", f"시나리오 테스트 중에 {why}"))
     for f, cls in frequency.items():
         if cls == "never" and f in anywhere:
             findings.append(finding(first["id"], "full", f"화면에 없기로 한 `{f}` 의 컨트롤이 화면에 있다"))

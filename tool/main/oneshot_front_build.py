@@ -43,6 +43,7 @@ def build_front_text(spec: dict) -> str:
         .replace("{device}", f"{size['width']}×{size['height']} px at {size['dpi']} dpi") \
         .replace("{scenarios}", "\n".join(f"- `{r}`" for r in oneshot_device.scenarios(spec)) or "- (none)") \
         .replace("{permissions}", ", ".join(f"`{p}`" for p in oneshot_device.grants(spec)) or "none") \
+        .replace("{suffix}", oneshot_device.suffix(o)) \
         .replace("{fixture}", "yes" if oneshot_device.reads_screen(spec) else "no")
 
 
@@ -65,7 +66,7 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
         return why
     android = kind_of(o) == "android"
     if android:   # an app on a phone has no `live_cmd`: its block names the APKs the emulator installs
-        device = oneshot_device.declared(path, final, oneshot_device.reads_screen(spec))
+        device = oneshot_device.declared(path, final, oneshot_device.reads_screen(spec), oneshot_device.suffix(o))
     elif not live:
         return "어댑터의 `live_cmd` 가 비었다 — 백엔드와 화면을 함께 띄우는 명령을 적는다"
     # The backend's own gate runs as the server knows it: the adapter's naming it proves nothing it runs.
@@ -102,7 +103,8 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     # The fixes this turn was sent with are built now: a resumed build no longer carries them.
     oneshot_spec.saved(spec["repo"], oneshot={"stage": "critique", "front_built_head": verdict["head"], "looks": looks,
                                               "attempts": 0, "working": "critique", "fix": None,
-                                              **({"device": device} if android else {})})
+                                              **({"device": device, "apks": oneshot_device.digests(path, device)}
+                                                 if android else {})})
     specs.note(run, f"화면 빌드 통과 · {verdict['head'][:12]}")
     return ""
 

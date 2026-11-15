@@ -4,8 +4,8 @@ import remarkGfm from 'remark-gfm'
 import { Choices } from '@/components/Blocks'
 import { Btn } from '@/components/Modal'
 import { Track } from '@/components/OneshotTrack'
-import { api, COLUMNS, STOP, type Decision, type Feature, type Freq, type Gate, type Palette,
-  type Models, type RunSummary, type SpecView, type Talk, ROLE, modelName } from '@/lib/oneshot'
+import { api, COLUMNS, STOP, type Decision, type Feature, type Freq, type Gate, type Handset, type Palette,
+  type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, ROLE, modelName } from '@/lib/oneshot'
 import { cn } from '@/lib/utils'
 
 /** Which model each part of the run uses, fixed at its start. */
@@ -119,7 +119,18 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   // A `kind` stop waits for this kind's next stage to ship: no resume reaches it.
   const resume = view.stopped?.reason !== 'kind' && (
     <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resume(repo))}>재개</Btn>)
-  const faulted = fault && <div className="px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4"><Fault text={fault} /></div>
+  const faulted = (fault || !!view.phone_owned?.length) && (
+    <div className="flex flex-col gap-2 px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
+      <Fault text={fault} />
+      {/* Shown on the run, whatever its stage, until the phone is listed again and the cleanup finishes. */}
+      {view.phone_owned?.map((r) => (
+        <p key={`${r.serial}-${r.packages.join()}`} role="status" className="rounded-md bg-wait/10 px-3 py-2">
+          휴대폰 <span className="font-mono">{r.serial}</span> 에 이 실행이 설치한 앱이 남아 있다: {(r.left.length ? r.left : r.packages).join(', ')}.
+          그 휴대폰을 연결하고 휴대폰 회차에서 [휴대폰 찾기] 를 누르면 지운다.
+        </p>
+      ))}
+    </div>
+  )
   if (view.stage === 'spec') {
     return <>{faulted}<Conversation talk={o.talk ?? []} requirements={view.requirements ?? []} stack={o.stack ?? []}
       android={android}
@@ -131,6 +142,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
     return (
       <Track view={view} halt={<>
         <Fault text={fault} />
+        {view.phone_owned?.length ? faulted : null}
         <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>{resume}</Halt>
       </>} />
     )
@@ -151,13 +163,99 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
           reopen={() => act(() => api.decide(repo, 'r2', { reopen: true }))}
           submit={(body) => act(() => api.decide(repo, 'r2', body))} />
       )}
+      {idle && view.stage === 'phone' && (
+        <PhonePick repo={repo} round={o.phone} busy={busy} act={act} />
+      )}
       {idle && view.stage === 'r3' && view.r3_sheet && o.r3 && (
         <Sheet key={`r3-${o.r3.round}`} gate="r3" text={view.r3_sheet} items={view.r3_items ?? []} state={o.r3}
           busy={busy} submit={(body) => act(() => api.decide(repo, 'r3', body))} />
       )}
       {view.stage === 'done' && view.summary && <Finished summary={view.summary} />}
-      {view.working && view.stage !== 'done' && <Track view={view} />}
+      {view.working && view.stage !== 'done' && <Track view={view} halt={view.working === 'phone' && (
+        <section aria-label="휴대폰 회차" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-5 py-4">
+          <p>휴대폰 <span className="font-mono">{o.phone?.serial}</span> 에서 화면과 시나리오를 검사하는 중이다. 끝나면 설치한 앱을 지운다.</p>
+          <Btn disabled={busy} onClick={() => void act(() => api.stopPhone(repo))}>멈춤</Btn>
+        </section>
+      )} />}
     </>
+  )
+}
+
+// -- The phone round before R3 -------------------------------------------------------------
+
+/** The prompt to connect the owner's phone: the phones the run's own ADB server lists, one picked by its
+ *  serial, and whether a passing app stays on it. The last round's outcome and any unfinished cleanup sit
+ *  beside it. The server owns every rule; a refused pick comes back as the fault. */
+function PhonePick({ repo, round, busy, act }: {
+  repo: string; round?: PhoneRound; busy: boolean; act: (fn: () => Promise<SpecView>) => Promise<boolean>
+}) {
+  const [found, setFound] = useState<{ devices: Handset[] } | null>(null)
+  const [looking, setLooking] = useState(false)
+  const [fault, setFault] = useState('')
+  const [serial, setSerial] = useState(round?.serial ?? '')
+  const [keep, setKeep] = useState(!!round?.keep)
+  async function look() {
+    setFault('')
+    setLooking(true)
+    try {
+      setFound(await api.phones(repo))
+      await act(() => api.view(repo))   // a cleanup the listing finished leaves the run's notice
+    } catch (err) { setFault(error(err)) } finally { setLooking(false) }
+  }
+  const ready = found?.devices.filter((d) => d.state === 'device') ?? []
+  const high = round?.findings?.filter((f) => f.severity === 'high') ?? []
+  return (
+    <Split label="휴대폰 회차" sideLabel="연결된 휴대폰" side={<>
+      <Title><span>연결된 휴대폰</span><span className="font-mono">{found ? ready.length : ''}</span></Title>
+      <Btn disabled={looking || busy} onClick={() => void look()}>{looking ? '찾는 중…' : found ? '다시 찾기' : '휴대폰 찾기'}</Btn>
+      <Fault text={fault} />
+      {found && !found.devices.length && (
+        <p className="text-muted-foreground">휴대폰이 보이지 않는다. USB 디버깅을 켜고 연결했는지 본다. 다른 ADB 서버(Android Studio 같은)가
+          휴대폰을 잡고 있으면 이 실행의 서버에는 보이지 않으니, 그 서버를 닫고 다시 찾는다.</p>
+      )}
+      {!!found?.devices.length && (
+        <fieldset className="flex flex-col gap-1.5">
+          <legend className="sr-only">검사할 휴대폰</legend>
+          {found.devices.map((d) => (
+            <label key={d.serial} className={cn('flex items-baseline gap-2.5 rounded-md border border-border px-3 py-2.5',
+              d.state !== 'device' && 'text-muted-foreground')}>
+              <input type="radio" name="phone" value={d.serial} checked={serial === d.serial} disabled={d.state !== 'device'}
+                onChange={() => setSerial(d.serial)} />
+              <span className="flex min-w-0 flex-col">
+                <span>{d.model || '이름 없는 기기'}</span>
+                <span className="font-mono text-[12px] text-faint">{d.serial}</span>
+                {d.state === 'unauthorized' && <span className="text-[12.5px]">휴대폰 화면에서 USB 디버깅을 허용한다</span>}
+                {d.state !== 'device' && d.state !== 'unauthorized' && <span className="text-[12.5px]">{d.state}</span>}
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      )}
+      <label className="flex items-baseline gap-2.5">
+        <input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} />
+        <span>통과하면 앱을 휴대폰에 남긴다</span>
+      </label>
+      <Decide>
+        <Btn tone="wait" className={GO} disabled={busy || looking || !ready.some((d) => d.serial === serial)}
+          onClick={() => void act(() => api.phone(repo, serial, keep))}>이 휴대폰에서 검사</Btn>
+      </Decide>
+    </>}>
+      <div className="flex max-w-[44rem] flex-col gap-4 px-10 py-6 max-[1500px]:px-7 max-[560px]:px-4">
+        <p>에뮬레이터에서 두 번 깨끗하게 통과한 앱을 휴대폰에서 한 번 더 본다. 휴대폰을 USB 로 연결하고, 개발자 옵션에서 USB
+          디버깅을 켜고, 잠금을 푼 채로 둔다.</p>
+        <p className="text-muted-foreground">이 실행만의 패키지 이름으로 설치하고, 모든 화면과 시나리오, 첫 화면의 프레임 시간과 메모리를 잰
+          뒤 지운다. 고른 휴대폰 말고는 아무 기기에도 명령을 보내지 않고, 다른 앱이나 데이터는 건드리지 않는다.</p>
+        {round?.detail && <p role="alert" className="rounded-md bg-wait/10 px-3 py-2">{round.detail}</p>}
+        {high.length > 0 && (
+          <section aria-label="지난 휴대폰 회차" className="flex flex-col gap-2">
+            <Title><span>지난 회차에서 고친 것</span><span className="font-mono">{high.length}</span></Title>
+            <ul className="flex flex-col gap-1.5">
+              {high.map((f, i) => <li key={i}><span className="font-mono text-[12px] text-faint">{f.screen} {f.state}</span> {f.what}</li>)}
+            </ul>
+          </section>
+        )}
+      </div>
+    </Split>
   )
 }
 

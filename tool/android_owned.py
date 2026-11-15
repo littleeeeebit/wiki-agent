@@ -2,7 +2,8 @@
 `docs/plans/oneshot/7-android.md`, step 7d): its own ADB server, an AVD under the run's folder, a console
 port outside every ADB server's scan, and an ownership record that outlives the process.
 
-Nothing here reaches the owner's default ADB server on port 5037, a default device or a physical device.
+Nothing here reaches the owner's default ADB server on port 5037, a default device or a physical device;
+the phone round's server (`android_phone`, record kind `phone`) is the one owned server with USB open.
 Every `adb` call names the owned server's port, and the owned serial once there is one. Each call first
 checks that the port's listener is still the recorded server and the console's listener the recorded
 emulator. The record is written before the first mutation, and each resource joins it just before it is
@@ -252,7 +253,8 @@ def call(folder: Path, args: list[str], *, device: bool = True, timeout: float =
     record = load(folder)
     if not record or not server_ok(record):
         raise ValueError("The owned ADB server is gone or its port belongs to another process")
-    if device and not (record.get("serial") and emulator_ok(record)):
+    # A phone has no console: its serial is the one the owner picked, bound before any device command.
+    if device and not (record.get("serial") and (record.get("kind") == "phone" or emulator_ok(record))):
         raise ValueError("The owned emulator is gone or its console port belongs to another process")
     with Relay(record["server"]) as relay:
         argv = [record["tools"]["adb"]["path"], "-P", str(relay.port),
@@ -334,20 +336,18 @@ def avd(home: Path, image: Path, device: dict) -> None:
 
 
 @contextmanager
-def boot(folder: Path, tools: dict, device: dict | None = None, renderer: str = "auto"):
-    """A booted emulator only this run's ADB server sees, yielding its serial; cleaned on every exit."""
+def owning(folder: Path, tools: dict, kind: str = "emulator"):
+    """A fresh ownership record in `folder`, yielded; what it names is cleaned on every exit."""
 
     folder = Path(folder)
     if load(folder) is not None:
         raise ValueError("This folder already holds an Android ownership record")
-    record = {"state": "owning", "tools": tools, "server": None, "client": None, "emulator": None,
+    record = {"state": "owning", "kind": kind, "tools": tools, "server": None, "client": None, "emulator": None,
               "console": None, "console_process": None, "serial": None, "forwards": [], "folders": []}
     save(folder, record)
     failure = None
     try:
-        checked(tools)
-        _start(folder, record, Path(tools["image"]["path"]), device or DEVICE, renderer)
-        yield load(folder)["serial"]
+        yield record
     except BaseException as error:
         failure = error
         raise
@@ -360,12 +360,26 @@ def boot(folder: Path, tools: dict, device: dict | None = None, renderer: str = 
             raise ValueError(f"{failure}; {message}") from failure
 
 
-def _start(folder: Path, record: dict, image: Path, device: dict, renderer: str) -> None:
-    adb, emulator = record["tools"]["adb"]["path"], record["tools"]["emulator"]["path"]
+@contextmanager
+def boot(folder: Path, tools: dict, device: dict | None = None, renderer: str = "auto"):
+    """A booted emulator only this run's ADB server sees, yielding its serial; cleaned on every exit."""
+
+    with owning(folder, tools) as record:
+        checked(tools)
+        serve(folder, record)
+        _start(folder, record, Path(tools["image"]["path"]), device or DEVICE, renderer)
+        yield load(folder)["serial"]
+
+
+def serve(folder: Path, record: dict, extra: dict | None = None) -> None:
+    """The record's own ADB server started and identified on a free port; `extra` opens its discovery
+    (the phone round's `ADB_USB`)."""
+
+    adb = record["tools"]["adb"]["path"]
     record["server"] = {"port": free_port()}
     save(folder, record)
     client = launched(folder, record, "client", [adb, "-P", str(record["server"]["port"]), "start-server"],
-                      environment(), folder / "adb-server.log")
+                      environment(extra), folder / "adb-server.log")
     if client.wait(60):
         raise ValueError("The owned adb start-server failed")
     held = listeners(record["server"]["port"])
@@ -375,6 +389,10 @@ def _start(folder: Path, record: dict, image: Path, device: dict, renderer: str)
         raise ValueError("Another process holds the owned ADB port; it is neither adopted nor stopped")
     record["server"] = {"port": record["server"]["port"], **found}
     save(folder, record)
+
+
+def _start(folder: Path, record: dict, image: Path, device: dict, renderer: str) -> None:
+    emulator = record["tools"]["emulator"]["path"]
     if devices(folder):
         raise ValueError("The owned ADB server sees devices it did not start")
     console = next((p for p in range(FIRST_CONSOLE, LAST_CONSOLE, 2) if not listeners(p) | listeners(p + 1)), None)
