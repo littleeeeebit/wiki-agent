@@ -22,8 +22,7 @@ BUILD_FRONT_PROMPT = (ROOT / "tool/prompts/oneshot-build-front.md").read_text(en
 STAGE = "build-front"
 
 
-def views(profile: dict) -> list[str]:
-    return list(screens.VIEWPORTS) if profile.get("responsive") == "desktop-mobile" else ["desktop"]
+views = screens.views
 
 
 def build_front_text(spec: dict) -> str:

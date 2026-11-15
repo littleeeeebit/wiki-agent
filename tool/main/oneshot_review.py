@@ -19,7 +19,7 @@ from fastapi import HTTPException
 from agent import read_tools
 
 from . import oneshot, oneshot_build, oneshot_front, oneshot_spec, runtime, specs, work  # noqa: F401 — `oneshot_front` registers `split`
-from .oneshot_profile import REACHES, environment, kind_of
+from .oneshot_profile import environment, kind_of
 from .query import _lock as work_lock, hold
 
 SEVERITIES = ("P0", "P1", "P2")
@@ -192,14 +192,6 @@ def decided(repo: str, store, spec: dict, found: dict):
 
     o = spec["oneshot"]
     reviews = [*(o.get("reviews") or []), {**found, "ts": time.time()}]
-    if found["verdict"] == "approve" and REACHES.get(kind_of(o)) == "review":
-        # This version's last stage for the kind: one write, so no restart finds the split started.
-        with oneshot._lock:
-            store.put(stage="split", reviews=reviews, working=None, stopped={
-                "reason": "kind", "state": "split",
-                "detail": f"`{kind_of(o)}` 는 이 버전에서 핵심 빌드와 그 리뷰까지 간다 — 리뷰가 승인했고, 다음 단계"
-                          "(docs/plans/oneshot/7-android.md 7c, 에뮬레이터 없는 화면)가 들어오면 이어 간다"})
-        return None
     if found["verdict"] == "approve":
         # `working` names the split before its worker starts: a server that dies in between leaves it for `recover`.
         oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "working": "split"})

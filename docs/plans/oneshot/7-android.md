@@ -173,6 +173,44 @@ S6 renders the low-fidelity screens as screenshots without an emulator, with
 the stack's own preview tool (for Compose, a JVM screenshot library), at the
 reference device's size. The R2 sheet is unchanged.
 
+How 7c builds it:
+
+- S5's inventory is the approved core: every module in the server's copy of
+  the design, and every requirement with a `capability`. Each feature names
+  its `parts` from that inventory, and every part sits in exactly one feature,
+  as every served operation does on the web. A helper module the person never
+  touches goes into a `never` feature.
+- An S6 screen names its `surface` instead of a route: `screen`, `overlay`
+  (drawn over another app) or `notification`. The placement rules are the
+  web's.
+- The S6 turn stays read-only. Its `oneshot-mocks` block holds the mock
+  sources as files, the file that draws each screen, a preview command and
+  the folder it writes `<screen id>.png` to. The command follows the same
+  plain-chain rule as S4's commands. The server unpacks the reviewed HEAD's
+  files, with no Git folder, into the run's folder, adds the mock files, runs
+  the command on the card's toolchain and keeps only the pictures.
+- A screen's source carries `feature:<id>` for each feature it shows. Each
+  picture is a complete PNG (checksums, every row of pixels) at the reference
+  device's size, within 3%. It is kept rebuilt from the chunks those checks
+  read, its transparency (`tRNS`) included and its other ancillary metadata
+  left out.
+- The preview command is code the model wrote, and it runs with the server
+  account's rights, as S4's contract tests and gate already do for every kind.
+  Unpacking into the run's folder keeps the worktree out of the command's own
+  folder, but it is not a sandbox: a command that writes elsewhere on purpose
+  is not stopped. The owner decided on 2026-11-15 to keep this boundary for
+  7c. Isolating model-written code covers S4, S6 and S7 together and is its own
+  later step, not part of 7c.
+- The command's deadline is 30 minutes, and a quiet spell does not cut it
+  sooner: a first run downloads its Gradle dependencies.
+- An earlier version's `kind` stop at a stage this version runs becomes a
+  resumable `restart` stop when the server starts.
+- An edit turn keeps the shared preview files and the command as they were,
+  as it keeps the tokens.
+- R2's approval commits `docs/design/screens.md`, the mock files under
+  `docs/design/mock/` and the pictures under `docs/design/shots/`. The run then
+  stops with reason `kind` at `build-front` until 7e.
+
 ### S7 — the emulator loop
 
 Each round installs the debug APK on an emulator the run owns. Isolation is
@@ -266,7 +304,7 @@ Each step is a separate PR, approved before the next starts.
 | --- | --- | --- | --- |
 | 7a | Kind and toolchain | `android` in the kinds with the intake's definitions, the toolchain preflight with the owner-pressed install, the `device` field and `android.json` profile | Done |
 | 7b | Core path | S2 stack parts and capability requirements for `android`, the S3 module design and R1 module table, S4 contract tests and gate in the stack's own host-side runner | Done |
-| 7c | Screens without an emulator | S5 from contracts and platform surfaces, S6 rendered by the stack's preview tool at the device size | Planned |
+| 7c | Screens without an emulator | S5 from contracts and platform surfaces, S6 rendered by the stack's preview tool at the device size | Done |
 | 7d | Owned emulator | The native-webview step 3 collector resumed as shared infrastructure, with its refusals and cleanup proof | Planned |
 | 7e | Emulator loop | S7 on the owned emulator: install, scenarios, screenshots, mechanical and placement checks resolved from the real native hierarchy (cases: a build that moves a feature from its approved place, a correctly absent `never` feature, a leaked `never` control), critic, fixture viewer | Planned |
 | 7f | Phone round and S8 | The connected-phone round before R3: the resumable wait, the bound serial, run-specific packages, the ownership record and its cleanup; the R3 sheet, S8's README, APK and optional workflow | Planned |
@@ -274,8 +312,9 @@ Each step is a separate PR, approved before the next starts.
 
 7a alone stops the refusal: the run continues to S1, and later stages wait
 behind a stated reason until their step lands. With 7b the run goes through
-the bootstrap and the core build. Once the core review approves, it stops
-with reason `kind` before the split. A card that 7a stopped opens again on
+the bootstrap and the core build. With 7c it goes on through the split, the
+board, the screens and R2. Once R2 approves, it stops with reason `kind` before
+the frontend build. A card that 7a stopped opens again on
 resume, so the owner can confirm it into the bootstrap. The wait is enforced where a
 stage starts, at the automatic handoffs (S2 to design, R1 to tests, R2 to the
 build) and the owner's resume routes alike, not only by hiding a button. 7b and 7c need no emulator.

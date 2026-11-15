@@ -1182,9 +1182,9 @@ def kill(proc: subprocess.Popen) -> None:
         os.killpg(proc.pid, signal.SIGKILL)
 
 
-def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None,
-         *, timeout: float | None = None, owned_jobs: list | None = None, argv: list[str] | None = None) -> tuple[int | None, str, str]:
-    """Run the adapter's shell command as `(code, output, cut reason)`.
+def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None, *, timeout: float | None = None,
+         owned_jobs: list | None = None, argv: list[str] | None = None, idle: float | None = None) -> tuple[int | None, str, str]:
+    """Run the adapter's shell command as `(code, output, cut reason)`; `idle` replaces runtime's quiet limit.
     Check cancellation and the deadline during execution and after completion."""
 
     env = python_environment(env)
@@ -1195,7 +1195,7 @@ def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None,
         scratch = Path(env.get("TEMP") or tempfile.gettempdir()) / "wiki-agent-gate"
         scratch.mkdir(exist_ok=True)
         env["TMPDIR"] = env["TEMP"] = env["TMP"] = str(scratch)
-    direct = {"argv": argv} if argv is not None else {}
+    direct = {k: v for k, v in (("argv", argv), ("idle", idle)) if v is not None}
     return runtime.gate(cmd, cwd, halt, env, GATE_SECONDS if timeout is None else timeout, owned_jobs, kill, **direct)
 
 

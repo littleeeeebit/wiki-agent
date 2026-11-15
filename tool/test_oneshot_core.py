@@ -10,7 +10,6 @@ import subprocess
 from unittest.mock import patch
 
 import pytest
-from fastapi import HTTPException
 
 from main import oneshot, oneshot_build, oneshot_profile, oneshot_review, oneshot_sheet as sheet, oneshot_spec, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
@@ -206,21 +205,16 @@ def test_the_contract_runs_and_the_gate_get_the_toolchain_and_the_turns_are_told
 
 # -- After the review ------------------------------------------------------------------------
 
-def test_an_approved_android_core_stops_before_the_screens_on_every_route(android):
+def test_an_approved_android_core_goes_on_to_the_split(android):
     oneshot_spec.saved("budget", oneshot={"stage": "review", "working": "review", "built_head": "abc"})
     store, spec = oneshot_spec.store("budget"), specs.load("budget", oneshot.BRANCH)
     started = []
     with patch.object(oneshot_spec, "handoff", lambda *a, **k: started.append(a)):
         following = oneshot_review.decided("budget", store, spec, {"verdict": "approve", "head": "abc", "findings": []})
-    assert following is None and not started   # the split never starts
-    now = o()
-    assert now["stage"] == "split" and not now["working"] and now["stopped"]["reason"] == "kind"
-    assert "7c" in now["stopped"]["detail"] and now["reviews"][-1]["verdict"] == "approve"
-    with pytest.raises(HTTPException) as refused:
-        oneshot_spec.resume("budget")
-    assert refused.value.status_code == 409 and "7c" in refused.value.detail
+        assert following() and started == [("budget", "split")]
+    assert o()["stage"] == "split" and o()["working"] == "split" and not o().get("stopped")
 
 
 def test_every_android_prompt_exists_and_says_android():
-    for name in ("spec", "design", "tests", "build", "review"):
+    for name in ("spec", "design", "tests", "build", "review", "split", "frontend"):
         assert "Android" in oneshot.prompt(name, "android") and "Android" not in oneshot.prompt(name)
