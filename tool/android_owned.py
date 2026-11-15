@@ -159,6 +159,7 @@ class Relay:
 
     def __init__(self, server: dict):
         self.server, self.refused, self.joins = server, "", []
+        self.sockets, self.lock, self.closed = set(), threading.Lock(), False
         self.listener = socket.socket()
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
@@ -172,15 +173,40 @@ class Relay:
         return self
 
     def __exit__(self, *_):
+        # Stop accepting first, then end every connection the relay still holds: a killed client leaves
+        # the reverse pump blocked on a server that keeps its end open without answering.
+        with self.lock:
+            self.closed = True
         self.listener.close()
-        for join in [self.accepting, *self.joins]:
+        self.accepting.join(5)
+        with self.lock:
+            held = list(self.sockets)
+        for held_socket in held:
+            try:
+                held_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            held_socket.close()
+        for join in self.joins:
             join.join(5)
+
+    def _held(self, connection: socket.socket) -> bool:
+        """Track `connection` for `__exit__`; `False`, with it closed, once the relay is closing."""
+
+        with self.lock:
+            if not self.closed:
+                self.sockets.add(connection)
+                return True
+        connection.close()
+        return False
 
     def _accept(self) -> None:
         while True:
             try:
                 client, _ = self.listener.accept()
             except OSError:
+                return
+            if not self._held(client):
                 return
             join = threading.Thread(target=self._join, args=(client,), daemon=True)
             self.joins.append(join)
@@ -205,6 +231,8 @@ class Relay:
                 upstream = socket.create_connection(("127.0.0.1", self.server["port"]), timeout=10)
             except OSError:
                 return self._refuse(client, "the owned ADB server is gone")
+            if not self._held(upstream):
+                return None
             with upstream:
                 if peer(self.server["port"], upstream.getsockname()[1]) != {self.server["pid"]} \
                         or not same(self.server, identity(self.server["pid"])):

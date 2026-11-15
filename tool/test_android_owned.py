@@ -440,3 +440,36 @@ def test_the_real_relay_joins_only_the_recorded_server():
             assert through(relay).startswith(b"FAIL") and "another process" in relay.refused
     with owned.Relay({"port": port, **me}) as relay:   # nothing listens any more
         assert through(relay).startswith(b"FAIL") and "gone" in relay.refused
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows TCP table")
+def test_a_relay_whose_client_died_on_a_stalled_server_ends_its_connections_on_exit():
+    import threading
+    import time
+
+    got, release = threading.Event(), threading.Event()
+
+    def stalled(listener):
+        with listener.accept()[0] as upstream:   # reads the request and never answers or closes
+            upstream.recv(64)
+            got.set()
+            release.wait(30)
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        server = threading.Thread(target=stalled, args=(listener,), daemon=True)
+        server.start()
+        try:
+            with owned.Relay({"port": port, **native_process.identity(os.getpid())}) as relay:
+                client = socket.create_connection(("127.0.0.1", relay.port), timeout=10)
+                client.sendall(b"host:version")
+                assert got.wait(10)
+                client.close()   # the adb client killed on its timeout
+                exiting = time.monotonic()
+            assert time.monotonic() - exiting < 3
+            assert not any(join.is_alive() for join in relay.joins) and all(s.fileno() == -1 for s in relay.sockets)
+        finally:
+            release.set()
+            server.join(5)
