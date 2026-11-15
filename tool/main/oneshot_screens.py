@@ -7,6 +7,8 @@ the owner's frequency map, the R2 sheet rendered from them, and what an edit rea
 from __future__ import annotations
 
 import re
+import struct
+import zlib
 
 from .oneshot_sheet import translationese
 
@@ -218,12 +220,35 @@ def preview(value, screens: list[dict]) -> tuple[dict[str, str], dict]:
                    "command": value["command"].strip(), "shots": value["shots"]}
 
 
-def png_size(data: bytes) -> tuple[int, int] | None:
-    """A PNG's width and height from its header, or `None` for anything else."""
+CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}   # a PNG colour type's samples per pixel
 
-    if data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+
+def png_size(data: bytes) -> tuple[int, int] | None:
+    """A complete PNG's width and height, or `None`: every chunk's checksum holds, it runs from `IHDR` to
+    `IEND`, and its pixels decompress to exactly the rows its header promises (an interlaced one, to no more
+    than twice that)."""
+
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
         return None
-    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    at, chunks = 8, []
+    while at + 12 <= len(data) and (not chunks or chunks[-1][0] != b"IEND"):
+        n, name = int.from_bytes(data[at:at + 4], "big"), data[at + 4:at + 8]
+        body, crc = data[at + 8:at + 8 + n], data[at + 8 + n:at + 12 + n]
+        if len(body) != n or len(crc) != 4 or zlib.crc32(name + body) != int.from_bytes(crc, "big"):
+            return None
+        chunks.append((name, body))
+        at += 12 + n
+    if not chunks or chunks[0][0] != b"IHDR" or len(chunks[0][1]) != 13 or chunks[-1][0] != b"IEND":
+        return None
+    width, height, depth, colour, _, _, interlace = struct.unpack(">IIBBBBB", chunks[0][1])
+    if colour not in CHANNELS or not width or not height or interlace not in (0, 1):
+        return None
+    rows = height * (1 + (width * CHANNELS[colour] * depth + 7) // 8)
+    try:   # bounded: a picture that inflates past its own size is not one
+        pixels = zlib.decompressobj().decompress(b"".join(b for name, b in chunks if name == b"IDAT"), 2 * rows + 1)
+    except zlib.error:
+        return None
+    return (width, height) if (len(pixels) == rows if interlace == 0 else rows <= len(pixels) <= 2 * rows) else None
 
 
 def sized(size: tuple[int, int] | None, device: dict) -> bool:
@@ -282,9 +307,11 @@ def decidable(front: dict) -> list[str]:
 
 
 def every(front: dict) -> dict[str, object]:
-    """Each R2 item's content, to tell what an edit changed: a screen with its mock, a screen's states."""
+    """Each R2 item's content, to tell what an edit changed: a screen with its mock, a screen's states. An
+    Android screen's mock includes the file it is drawn from, since the preview reads that path."""
 
-    return {**{s["id"]: [s, front["mocks"][s["id"]]] for s in front["screens"]},
+    drawn = (front.get("preview") or {}).get("screens") or {}
+    return {**{s["id"]: [s, front["mocks"][s["id"]], drawn.get(s["id"])] for s in front["screens"]},
             **{f"{sid}.states": st for sid, st in front["states"].items()}}
 
 

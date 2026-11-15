@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from common import is_junction
 
 from . import oneshot, oneshot_sheet as sheet, specs, work
-from .oneshot_profile import current, environment, kind_of, stacked, unsettled
+from .oneshot_profile import KIND_STOPS, current, environment, kind_of, stacked, unsettled
 
 RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}   # a later stage's module adds its own
 SHEETS = {"r1"}   # a stage whose sheet stands when its edit turn stopped
@@ -363,13 +363,18 @@ def start(repo: str, work: str, *args, **fields) -> None:
 
 def recover() -> None:
     """A stage running when the server stopped, and a first S2 turn the bootstrap's hand-over never
-    started, are both left stopped with `restart`, so `[재개]` takes them on."""
+    started, are both left stopped with `restart`, so `[재개]` takes them on. So is a stage an earlier
+    version stopped at for its kind and this version runs."""
 
     for folder in specs.SPECS.glob("*"):
         spec = specs.load(folder.name, oneshot.BRANCH) if folder.is_dir() else None
         o = (spec or {}).get("oneshot") or {}
         if o and spec.get("adapter"):   # a restart can cut a turn before its end clears the adapter grant
             saved(folder.name, adapter=False)
+        stop = o.get("stopped") or {}
+        if stop.get("reason") == "kind" and o.get("stage") != KIND_STOPS.get(kind_of(o)):
+            saved(folder.name, oneshot={"stopped": {**stop, "reason": "restart",
+                                                    "detail": "이 버전은 이 단계를 이어 간다 — [재개]를 누르면 시작한다"}})
         if o.get("working") or (o and o.get("stage") == "spec" and not o.get("talk") and not o.get("stopped")
                                 and handed(o)):
             oneshot.restarted(store(folder.name))

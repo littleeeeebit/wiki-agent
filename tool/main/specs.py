@@ -1183,9 +1183,11 @@ def kill(proc: subprocess.Popen) -> None:
 
 
 def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None,
-         *, timeout: float | None = None, owned_jobs: list | None = None, argv: list[str] | None = None) -> tuple[int | None, str, str]:
+         *, timeout: float | None = None, owned_jobs: list | None = None, argv: list[str] | None = None,
+         idle: float | None = None) -> tuple[int | None, str, str]:
     """Run the adapter's shell command as `(code, output, cut reason)`.
-    Check cancellation and the deadline during execution and after completion."""
+    Check cancellation and the deadline during execution and after completion. `idle` replaces the quiet
+    spell after which a run counts as stuck, for a command that can rightly stay silent longer."""
 
     env = python_environment(env)
     if os.name == "nt":
@@ -1196,6 +1198,8 @@ def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None,
         scratch.mkdir(exist_ok=True)
         env["TMPDIR"] = env["TEMP"] = env["TMP"] = str(scratch)
     direct = {"argv": argv} if argv is not None else {}
+    if idle is not None:
+        direct["idle"] = idle
     return runtime.gate(cmd, cwd, halt, env, GATE_SECONDS if timeout is None else timeout, owned_jobs, kill, **direct)
 
 

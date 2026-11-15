@@ -26,7 +26,7 @@ from common import is_junction
 
 from . import oneshot, oneshot_android, oneshot_build, oneshot_front_build, oneshot_screens as screens, \
     oneshot_sheet as sheet, oneshot_spec, runtime, specs
-from .oneshot_profile import DEVICES, REACHES, kind_of
+from .oneshot_profile import DEVICES, KIND_STOPS, kind_of
 
 SHOT_SECONDS = 15_000   # Playwright's milliseconds per page
 PREVIEW_SECONDS = 1800   # an Android preview's first run downloads its Gradle dependencies
@@ -205,7 +205,9 @@ def photographed(spec: dict, preview: dict, folder: Path) -> None:
                 raise ValueError(f"목업 파일 자리가 프로젝트 밖을 가리킨다: {name}")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding="utf-8", newline="\n")
-        code, out, cut = specs.gate(preview["command"], project, runtime.stopping, env=env, timeout=PREVIEW_SECONDS)
+        # A first run can download quietly for long: only the deadline cuts it, never a silent spell.
+        code, out, cut = specs.gate(preview["command"], project, runtime.stopping, env=env, timeout=PREVIEW_SECONDS,
+                                    idle=PREVIEW_SECONDS)
         if cut or code:
             raise ValueError(f"화면 사진 명령이 {f'끊겼다 ({cut})' if cut else f'{code} 로 끝났다'} — {out.strip()[-800:]}")
         problems = []
@@ -355,7 +357,7 @@ def record(repo: str, store, spec: dict, tree: Path) -> bool:
     head = oneshot_spec.commit(repo, tree, list(copies), f"Record the approved frontend design (R2 round {o['r2']['round']})")
     if not head:
         return False
-    if REACHES.get(kind_of(o)) == "r2":   # this version's last stage for the kind: one write, nothing starts the build
+    if KIND_STOPS.get(kind_of(o)) == "build-front":   # the kind waits here in this version: one write, nothing starts the build
         oneshot_spec.saved(repo, oneshot={"stage": "build-front", "front_head": head, "working": None, "stopped": {
             "reason": "kind", "state": "build-front",
             "detail": f"`{kind_of(o)}` 는 이 버전에서 R2 화면 설계까지 간다 — 승인한 화면을 커밋했고, 다음 단계"

@@ -29,15 +29,21 @@ FREQUENCY = {"start-translation": "every", "seen-boxes": "never"}
 SHOTS = "build/mock-shots"
 
 
-def shooter(width: int = 1080, height: int = 2400) -> str:
-    """A stand-in preview tool: it refuses to run inside a Git checkout, and writes each screen's PNG header."""
+def shooter(width: int = 1080, height: int = 2400, whole: bool = True) -> str:
+    """A stand-in preview tool: it refuses to run inside a Git checkout, and writes each screen as a grey PNG
+    (or, not `whole`, as the PNG's first 29 bytes alone)."""
 
-    return ("import pathlib, struct\n"
+    return ("import pathlib, struct, zlib\n"
             "assert not pathlib.Path('.git').exists() and pathlib.Path('README.md').is_file()\n"
+            "def chunk(name, data):\n"
+            "    return struct.pack('>I', len(data)) + name + data + struct.pack('>I', zlib.crc32(name + data))\n"
+            f"w, h = {width}, {height}\n"
+            "png = (b'\\x89PNG\\r\\n\\x1a\\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 0, 0, 0, 0)) +\n"
+            "       chunk(b'IDAT', zlib.compress(b'\\x00' * ((w + 1) * h))) + chunk(b'IEND', b''))\n"
+            f"png = png if {whole} else png[:29]\n"
             f"out = pathlib.Path('{SHOTS}')\nout.mkdir(parents=True, exist_ok=True)\n"
             "for sid in ('S1', 'S2'):\n"
-            "    (out / f'{sid}.png').write_bytes(b'\\x89PNG\\r\\n\\x1a\\n' + struct.pack('>I', 13) + b'IHDR' +\n"
-            f"        struct.pack('>II', {width}, {height}) + b'\\x08\\x06\\x00\\x00\\x00')\n")
+            "    (out / f'{sid}.png').write_bytes(png)\n")
 
 
 def mocks(**files) -> dict:
@@ -155,12 +161,15 @@ def test_the_preview_draws_each_screen_on_the_unpacked_head_and_keeps_only_the_p
 
 @pytest.mark.parametrize("found, said", [
     (mocks(**{"shoot.py": shooter(width=720, height=1600)}), "S1: `build/mock-shots/S1.png` 가 720×1600px 다"),
+    (mocks(**{"shoot.py": shooter(whole=False)}), "S1: `build/mock-shots/S1.png` 가 PNG 로 없다"),
+    # Quiet past the shared quiet limit, which the test shortens: only the preview's deadline may cut it.
+    (mocks(**{"shoot.py": "import time\ntime.sleep(1)\nraise SystemExit(3)\n"}), "3 로 끝났다"),
     (mocks(**{"shoot.py": "raise SystemExit(3)"}), "3 로 끝났다"),
     ({**mocks(), "command": "python shoot.py; del README.md"}, "` && ` 로만"),
 ])
 def test_a_preview_that_fails_or_draws_the_wrong_size_is_sent_back_once(boarded, found, said):
     heard, asking = replies(answer(blocks(**{"oneshot-mocks": found})), answer(blocks()))
-    with asking:
+    with asking, patch.object(front.runtime, "IDLE_SECONDS", 0.3):
         front.frontend("budget")
     assert o()["stage"] == "r2" and said in heard[1][1]
 
@@ -178,7 +187,18 @@ def test_an_edit_keeps_the_previews_shared_files(boarded):
     assert o()["r2"]["round"] == 2 and o()["front"]["shots"] == 2
 
 
-# -- R2 ------------------------------------------------------------------------------------
+def test_an_edit_that_rebinds_a_screen_outside_its_reach_to_another_file_is_sent_back(boarded):
+    designed()
+    swapped = mocks()
+    swapped["files"]["mock/S1.kt"], swapped["files"]["mock/S2.kt"] = swapped["files"]["mock/S2.kt"], swapped["files"]["mock/S1.kt"]
+    swapped["screens"] = {"S1": "mock/S2.kt", "S2": "mock/S1.kt"}   # each screen's source moves with it
+    heard, asking = replies(answer(blocks(**{"oneshot-mocks": swapped})), answer(blocks()))
+    with asking:
+        front.refront("budget", {"S1": "단추를 작게"}, ["S1", "S1.states"])
+    assert "범위 밖 항목을 바꾸거나 지웠다: S2" in heard[1][1]
+
+
+# -- R2------------------------------------------------------------------------------------
 
 def test_the_approved_screens_are_committed_and_the_run_stops_before_the_frontend_build(boarded):
     designed()
@@ -196,3 +216,14 @@ def test_the_approved_screens_are_committed_and_the_run_stops_before_the_fronten
     with pytest.raises(HTTPException) as refused:
         oneshot_spec.resume("budget")
     assert refused.value.status_code == 409 and "7e" in refused.value.detail
+    oneshot_spec.recover()   # a restart keeps this version's own stop
+    assert o()["stopped"]["reason"] == "kind"
+
+
+def test_a_core_an_earlier_version_stopped_before_the_split_resumes_into_it_after_a_restart(android):
+    oneshot_spec.saved("budget", oneshot={"stage": "split", "working": None, "stopped": {
+        "reason": "kind", "state": "split", "detail": "7c 가 들어오면 이어 간다"}})
+    oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "restart" and o()["stage"] == "split"
+    oneshot_spec.resume("budget")
+    assert o()["working"] == "split" and not o()["stopped"]
