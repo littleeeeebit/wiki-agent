@@ -211,6 +211,11 @@ def test_a_run_that_did_not_reach_its_end_fails_even_after_every_test_passed(pho
     assert "시나리오 테스트가 끝까지 돌지 못했다" in whats(looked(phone, tmp_path))
 
 
+def test_a_passing_test_named_for_a_failure_record_is_not_one(phone, tmp_path):
+    phone.instrument = PASSED.replace("scenario_R1_addsToTheTotal", "scenario_R1_shows_INSTRUMENTATION_FAILED_message")
+    assert looked(phone, tmp_path) == []
+
+
 @pytest.mark.parametrize("state", ["empty", "loading", "error"])
 def test_a_never_control_in_any_state_is_refused(phone, tmp_path, state):
     call, at = phone.call, {}
@@ -233,6 +238,18 @@ def test_a_notification_control_system_ui_draws_is_checked_as_the_apps_own(phone
     found = whats(looked(phone, tmp_path))
     assert "48dp 보다 작다" in found and "읽을 이름" in found   # an identity is not a label
     assert "시계" not in found
+
+
+def test_the_fixture_viewers_tagged_controls_under_an_overlay_are_not_the_apps(phone, tmp_path):
+    fixture = "com.example.fixture"
+    phone.screens["S1"] += [node("viewer-next", "다음", box=(10, 10, 20, 20), clickable=True, package=fixture),
+                            node("sync", "동기화", box=(48, 900, 1032, 1044), clickable=True, package=fixture)]
+    screens = [{**s, "surface": "overlay"} if s["id"] == "S1" else s for s in SCREENS]
+    s = android_spec(reqs=[*REQS, {"id": "R3", "text": "다른 앱 화면을 읽는다",
+                                   "capability": {"permission": "MediaProjection", "prompt": "화면 캡처", "risk": "화면"}}])
+    s["oneshot"]["front"] = {"screens": screens}
+    with_fixture = {**DEVICE, "fixture": {"apk": "fixture/f.apk", "package": fixture}}
+    assert device.look(phone.tree, with_fixture, s, tmp_path / "device", tmp_path / "shots") == []
 
 
 def test_a_runner_the_test_apk_does_not_hold_and_an_activity_that_does_not_open_are_findings(phone, tmp_path):

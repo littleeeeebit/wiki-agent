@@ -33,6 +33,7 @@ MAX_TAPS = 15
 INSTALL_SECONDS = 300
 TESTS_SECONDS = 1800
 DUMP = "/data/local/tmp/oneshot-window.xml"
+SYSTEM_UI = "com.android.systemui"   # draws the shade, so an app's notification views carry its package
 PACKAGE = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+")
 ACTIVITY = re.compile(r"\.?[A-Za-z][A-Za-z0-9_$]*(\.[A-Za-z][A-Za-z0-9_$]*)*")
 RUNNER = re.compile(PACKAGE.pattern + r"/" + ACTIVITY.pattern)
@@ -243,12 +244,14 @@ def on_screen(node: ElementTree.Element, size: dict) -> bool:
         and box[2] > 0 and box[3] > 0 and box[0] < size["width"] and box[1] < size["height"]
 
 
-def shown(root: ElementTree.Element, size: dict) -> set[str]:
-    return {f for n in root.iter("node") if (f := feature(n)) and on_screen(n, size)}
+def shown(root: ElementTree.Element, size: dict, package: str) -> set[str]:
+    mine = owned(root, package)
+    return {f for n in root.iter("node") if id(n) in mine and (f := feature(n)) and on_screen(n, size)}
 
 
-def present(root: ElementTree.Element) -> set[str]:
-    return {f for n in root.iter("node") if (f := feature(n))}
+def present(root: ElementTree.Element, package: str) -> set[str]:
+    mine = owned(root, package)
+    return {f for n in root.iter("node") if id(n) in mine and (f := feature(n))}
 
 
 def labelled(node: ElementTree.Element) -> bool:
@@ -259,12 +262,12 @@ def labelled(node: ElementTree.Element) -> bool:
 
 
 def owned(root: ElementTree.Element, package: str) -> set[int]:
-    """The app's own nodes: its package's, and every view under a `feature:<id>` the app exported, which a
-    notification's views carry while System UI draws them."""
+    """The app's own nodes: its package's, and every view under a `feature:<id>` System UI draws, which is the
+    app's notification in the shade. Another app's, such as the fixture viewer's, stay out even when tagged."""
 
     out = {id(n) for n in root.iter("node") if n.get("package") == package}
     for n in root.iter("node"):
-        if feature(n):
+        if n.get("package") == SYSTEM_UI and feature(n):
             out |= {id(child) for child in n.iter("node")}
     return out
 
@@ -346,11 +349,13 @@ def instrumented(output: str) -> list[tuple[str, str, int, str]]:
 
 def completed(output: str) -> bool:
     """The run reached its end: `am instrument` reports `INSTRUMENTATION_CODE: -1` (`RESULT_OK`) only after
-    the runner finished, and nothing aborted, failed or crashed it on the way."""
+    the runner finished, and no record aborted, failed or crashed it on the way. The records are read at the
+    start of a line, so a test named for the word, inside a status line, is not one."""
 
-    ended = [line.split(":", 1)[1].strip() for line in output.splitlines() if line.startswith("INSTRUMENTATION_CODE:")]
-    return ended == ["-1"] and not any(word in output for word in (
-        "INSTRUMENTATION_ABORTED", "INSTRUMENTATION_FAILED", "INSTRUMENTATION_RESULT: shortMsg"))
+    lines = output.splitlines()
+    ended = [line.split(":", 1)[1].strip() for line in lines if line.startswith("INSTRUMENTATION_CODE:")]
+    return ended == ["-1"] and not any(line.startswith(("INSTRUMENTATION_ABORTED:", "INSTRUMENTATION_FAILED:",
+                                                        "INSTRUMENTATION_RESULT: shortMsg=")) for line in lines)
 
 
 def covers(test: str, rid: str) -> bool:
@@ -436,9 +441,10 @@ def shot(d: Device, s: dict, state: str, folder: Path, seen: dict, anywhere: set
     out = [finding(s["id"], state, what) for what in mechanical(root, d.d["package"], d.size, pixels)]
     if why := d.died():
         out.append(finding(s["id"], state, why))
-    anywhere |= present(root)
+    there = present(root, d.d["package"])
+    anywhere |= there
     if state == "full":
-        for f in present(root) & set(seen):
+        for f in there & set(seen):
             seen[f] = True
     return out
 
@@ -451,7 +457,7 @@ def placement(d: Device, front: dict, frequency: dict, stopped=never) -> list[di
         return [finding(first["id"], "full", why)]
     root = d.hierarchy()
     d.close(first)
-    visible, there, out = shown(root, d.size), present(root), []
+    visible, there, out = shown(root, d.size, d.d["package"]), present(root, d.d["package"]), []
     for f, cls in frequency.items():
         if cls == "every" and f not in visible:
             out.append(finding(first["id"], "full", f"늘 쓰는 기능 `{f}` 가 첫 화면에 바로 보이지 않는다"))
@@ -474,6 +480,6 @@ def one_tap(d: Device, first: dict, root: ElementTree.Element, fid: str, stopped
         d.tap((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
         after = d.hierarchy()
         d.close(first)
-        if fid in shown(after, d.size):
+        if fid in shown(after, d.size, d.d["package"]):
             return True
     return False
