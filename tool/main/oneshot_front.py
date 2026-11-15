@@ -217,12 +217,12 @@ def photographed(spec: dict, preview: dict, folder: Path) -> None:
         for sid in preview["screens"]:
             picture = project / preview["shots"] / f"{sid}.png"
             data = picture.read_bytes() if picture.is_file() else b""
-            size = screens.png_size(data, screens.largest(device))
-            if not screens.sized(size, device):
-                problems.append(f"{sid}: `{preview['shots']}/{sid}.png` 가 " +
-                                (f"{size[0]}×{size[1]}px 다" if size else "기준 폰보다 크지 않은 온전한 PNG 로 없다"))
-            else:
-                (folder / f"{sid}-phone.png").write_bytes(data)
+            found = screens.picture(data, screens.largest(device))
+            if not found or not screens.sized(found[0], device):
+                problems.append(f"{sid}: `{preview['shots']}/{sid}.png` 가 " + (
+                    f"{found[0][0]}×{found[0][1]}px 다" if found else "기준 폰보다 크지 않은 온전한 PNG 로 없다"))
+            else:   # the picture as checked: no chunk the checks did not read
+                (folder / f"{sid}-phone.png").write_bytes(found[1])
         if problems:
             raise ValueError(f"화면 사진이 기준 폰 {device['width']}×{device['height']}px 로 찍히지 않았다 — " +
                              " / ".join(problems) + f" — 명령 출력: {out.strip()[-400:]}")

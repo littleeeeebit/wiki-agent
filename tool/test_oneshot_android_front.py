@@ -179,16 +179,22 @@ def png(width: int, height: int, colour: int = 0, depth: int = 8, interlace: int
     (png(40, 40)[:33] + chunk(b"tEXt", b"a\x00b") + png(40, 40)[33:], (40, 40)),   # an ancillary chunk too
     (png(40, 40)[:33] + chunk(b"PLTE", b"\x00\x00\x00") + png(40, 40)[33:], None),   # a palette in a grey image
     (png(5000, 2400), None),   # past the reference phone
+    # Ancillary chunks a decoder reads, empty: the picture is kept without them.
+    *[(png(40, 40, colour=2)[:33] + chunk(name, b"") + png(40, 40, colour=2)[33:], (40, 40))
+      for name in (b"sRGB", b"gAMA", b"pHYs", b"tRNS")],
 ], ids=["grey", "interlaced", "deep", "header", "filter", "short", "palette", "depth", "two-headers", "empty-idat",
-        "text", "grey-palette", "too-wide"])
+        "text", "grey-palette", "too-wide", "srgb", "gama", "phys", "trns"])
 def test_a_picture_counts_only_as_a_whole_png_whose_rows_decode(data, size):
-    assert screens.png_size(data, (5000 - 1, 2472)) == size
+    found = screens.picture(data, (5000 - 1, 2472))
+    assert (found[0] if found else None) == size
+    if not size:
+        return
+    assert screens.picture(found[1], (5000 - 1, 2472)) == found   # what is kept holds the checked chunks alone
     try:
         from PIL import Image
     except ImportError:
         return
-    if size:   # what the server takes, a real decoder opens
-        assert Image.open(io.BytesIO(data)).size == size and Image.open(io.BytesIO(data)).load()
+    assert Image.open(io.BytesIO(found[1])).size == size and Image.open(io.BytesIO(found[1])).load()
 
 
 def test_a_huge_declared_size_is_refused_before_anything_is_allocated_for_it():
@@ -196,7 +202,7 @@ def test_a_huge_declared_size_is_refused_before_anything_is_allocated_for_it():
             chunk(b"IDAT", zlib.compress(b"\x00\x00")) + chunk(b"IEND", b""))
     tracemalloc.start()
     try:
-        assert screens.png_size(tiny, screens.largest({"width": 1080, "height": 2400})) is None
+        assert screens.picture(tiny, screens.largest({"width": 1080, "height": 2400})) is None
         peak = tracemalloc.get_traced_memory()[1]
     finally:
         tracemalloc.stop()

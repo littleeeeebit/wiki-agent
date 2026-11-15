@@ -257,12 +257,13 @@ def ordered(names: list[bytes], colour: int) -> bool:
     return bool(middle) and set(middle) == {b"IDAT"} and runs == list(range(runs[0], runs[-1] + 1))
 
 
-def png_size(data: bytes, largest: tuple[int, int]) -> tuple[int, int] | None:
-    """A complete PNG's width and height, or `None`: every chunk's checksum holds and the chunks come in
-    order (`ordered`), it is no larger than `largest`, its colour type is grey or true colour with a bit depth
-    that type allows, and its pixels inflate to exactly the scanlines its header promises, each opening with a
-    defined filter (0–4). Every byte after that is a valid sample, so a picture that passes decodes. The size
-    is refused before anything is allocated for it."""
+def picture(data: bytes, largest: tuple[int, int]) -> tuple[tuple[int, int], bytes] | None:
+    """A complete PNG's width and height and the picture as kept, or `None`. Every chunk's checksum holds and
+    the chunks come in order (`ordered`); it is no larger than `largest`, refused before anything is allocated
+    for it; its colour type is grey or true colour with a bit depth that type allows; and its pixels inflate
+    to exactly the scanlines its header promises, each opening with a defined filter (0–4). Every byte after
+    that is a valid sample. The picture kept is rebuilt from `IHDR`, the `IDAT` run and `IEND` alone: an
+    ancillary chunk a decoder might read and refuse (`sRGB`, `gAMA`, …) is dropped, so what is kept decodes."""
 
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         return None
@@ -292,7 +293,9 @@ def png_size(data: bytes, largest: tuple[int, int]) -> tuple[int, int] | None:
         if pixels[at] > 4:
             return None
         at += n
-    return width, height
+    kept = b"".join(struct.pack(">I", len(body)) + name + body + struct.pack(">I", zlib.crc32(name + body))
+                    for name, body in chunks if name in (b"IHDR", b"IDAT", b"IEND"))
+    return (width, height), data[:8] + kept
 
 
 def largest(device: dict) -> tuple[int, int]:
