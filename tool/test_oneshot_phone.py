@@ -9,6 +9,7 @@ context that only writes the server's record, so `bind` and the serial each devi
 import json
 import re
 import subprocess
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from fastapi import HTTPException
 import android_owned
 import android_phone
 from main import oneshot_build, oneshot_critique as critique, oneshot_device as device, oneshot_phone as phone_round, \
-    oneshot_spec
+    oneshot_review as review, oneshot_spec
 from test_oneshot_device import (DEVICE, PKG, Phone, android_build, clean_app, phone)  # noqa: F401 — fixtures
 from test_oneshot_front_build import git, o, spec, staged  # noqa: F401 — `staged` is a fixture
 from test_oneshot_spec import world  # noqa: F401 — the temporary worktree's fixture
@@ -36,7 +37,7 @@ class Handset(Phone):
         # What is installed: each package with the SHA-256 of the APK it was installed from.
         self.present, self.addressed, self.locked, self.gone, self.on_call = {}, [], False, False, None
         self.ids, self.root = {DEVICE["apk"]: PKG, DEVICE["tests"]["apk"]: TESTS}, "/data/app"
-        # Each installation's number: the package manager's fresh code path and install time come from it.
+        # Each installation's number: the package manager's fresh code path, inode and mtime come from it.
         self.instances, self.installs = {}, 0
 
     def installed(self, package: str, digest: str) -> None:
@@ -45,7 +46,7 @@ class Handset(Phone):
 
     def which(self, package: str) -> str:
         n = self.instances.get(package, 0)
-        return f"{self.root}/~~a{n}==/{package}-b2==/base.apk 2026-11-16 07:50:{n:02d}"
+        return f"{self.root}/~~a{n}==/{package}-b2==/base.apk {4000 + n} {1794780000 + n}"
 
     def call(self, folder, args, *, device=True, timeout=0, binary=False, stream=False):
         if device:
@@ -74,9 +75,9 @@ class Handset(Phone):
             return "Success\n"
         if args[:3] == ["shell", "pm", "path"]:
             return f"package:{self.which(args[3]).split()[0]}\n" if args[3] in self.present else ""
-        if args[:3] == ["shell", "dumpsys", "package"]:
-            return (f"Packages:\n  Package [{args[3]}] (5a1b2c):\n    firstInstallTime={self.which(args[3]).split(' ', 1)[1]}\n"
-                    if args[3] in self.present else "")
+        if args[:4] == ["shell", "stat", "-c", "%i %Y"]:
+            package = re.search(r"/~~a\d+==/(.+)-b2==/base\.apk$", args[4]).group(1)
+            return self.which(package).split(" ", 1)[1] + "\n"
         if args[:2] == ["shell", "sha256sum"]:
             package = re.search(r"/~~a\d+==/(.+)-b2==/base\.apk$", args[2]).group(1)
             return f"{self.present[package]}  {args[2]}\n"
@@ -118,9 +119,17 @@ def handset(android_build, phone, monkeypatch):  # noqa: F811 — the imported f
 def played(h, serial=SERIAL, keep=False):
     """A round on `serial`, run in this thread as the worker would."""
 
-    oneshot_spec.saved("budget", oneshot={"working": "phone", "phone": {**o()["phone"], "serial": serial, "keep": keep}})
+    picked(serial, keep)
     phone_round.phone_round("budget")
     return o()
+
+
+def picked(serial=SERIAL, keep=False):
+    """What `pick` saves and clears before the worker starts."""
+
+    phone_round._halts.setdefault("budget", threading.Event()).clear()
+    phone_round._final.discard("budget")
+    oneshot_spec.saved("budget", oneshot={"working": "phone", "phone": {**o()["phone"], "serial": serial, "keep": keep}})
 
 
 def test_a_clean_round_on_the_picked_phone_waits_before_r3_and_leaves_nothing_on_it(handset):
@@ -135,8 +144,8 @@ def test_a_clean_round_on_the_picked_phone_waits_before_r3_and_leaves_nothing_on
     assert after["phone_owned"][-1] | {"ts": 0} == {"serial": SERIAL, "model": "SM G991N", "packages": [PKG, TESTS],
                                                     "digests": {PKG: after["apks"][DEVICE["apk"]],
                                                                 TESTS: after["apks"][DEVICE["tests"]["apk"]]},
-                                                    "installed": {PKG: "/data/app/~~a1==/" f"{PKG}-b2==/base.apk 2026-11-16 07:50:01",
-                                                                  TESTS: f"/data/app/~~a2==/{TESTS}-b2==/base.apk 2026-11-16 07:50:02"},
+                                                    "installed": {PKG: f"/data/app/~~a1==/{PKG}-b2==/base.apk 4001 1794780001",
+                                                                  TESTS: f"/data/app/~~a2==/{TESTS}-b2==/base.apk 4002 1794780002"},
                                                     "state": "cleaned", "left": [],
                                                     "foreign": [], "unsure": [], "ts": 0}
     assert "phone_owned" not in phone_round.extra(spec())
@@ -334,7 +343,7 @@ def test_a_stopped_round_removes_what_it_installed(handset):
     assert handset.present == {} and after["phone_owned"][-1]["state"] == "cleaned"
 
 
-@pytest.mark.parametrize("late", [["shell", "am", "instrument"], ["shell", "dumpsys", "meminfo"]])
+@pytest.mark.parametrize("late", [["shell", "am", "instrument"], ["shell", "dumpsys", "meminfo"], ["shell", "rm", "-f"]])
 def test_a_stop_late_in_the_round_is_never_a_pass_and_the_kept_apps_come_off(handset, monkeypatch, late):
     monkeypatch.setattr(oneshot_spec, "view", lambda s: s)   # the test spec carries no sheet to render
     handset.on_call = lambda args: args[:3] == late and phone_round.stop("budget")
@@ -342,6 +351,36 @@ def test_a_stop_late_in_the_round_is_never_a_pass_and_the_kept_apps_come_off(han
     assert after["stage"] == "phone" and after["phone"]["status"] == "waiting"
     assert after["phone"]["detail"] == "휴대폰 회차를 멈췄다"
     assert handset.present == {} and after["phone_owned"][-1]["state"] == "cleaned"
+
+
+def test_a_stop_before_the_worker_starts_holds(handset, monkeypatch):
+    """`pick` publishes the round before its thread runs: a stop in between is not cleared by the worker."""
+
+    monkeypatch.setattr(oneshot_spec, "view", lambda s: s)
+    picked(keep=True)
+    phone_round.stop("budget")
+    phone_round.phone_round("budget")
+    assert o()["stage"] == "phone" and o()["phone"]["detail"] == "휴대폰 회차를 멈췄다" and handset.present == {}
+
+
+def test_a_round_that_settled_what_stays_on_the_phone_refuses_a_stop(handset, monkeypatch):
+    """Past the round's own end, the worktree's last check still runs: a stop then is refused, never accepted
+    and then ignored."""
+
+    monkeypatch.setattr(oneshot_spec, "view", lambda s: s)
+    refusals, moved = [], review.moved
+
+    def stop_at_the_last_check(*args):
+        if phone_round._final:
+            with pytest.raises(HTTPException) as refused:
+                phone_round.stop("budget")
+            refusals.append(refused.value.status_code)
+        return moved(*args)
+
+    monkeypatch.setattr(review, "moved", stop_at_the_last_check)
+    after = played(handset, keep=True)
+    assert refusals and set(refusals) == {409}
+    assert after["stage"] == "r3" and after["phone_owned"][-1]["state"] == "released"
 
 
 def test_an_apk_that_changed_since_the_emulators_look_goes_back_to_the_build(handset):

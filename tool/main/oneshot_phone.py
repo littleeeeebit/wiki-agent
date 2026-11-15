@@ -40,6 +40,10 @@ SWIPES = 4
 router = APIRouter()
 _adb = threading.Lock()   # one owned USB server at a time: Windows lets one ADB server hold a phone
 _halts: dict[str, threading.Event] = {}
+# A stop and the round's own end are decided under one lock: once a round settled what stays on the phone
+# (`_final`), a stop is refused, so an accepted stop always means the apps come off and nothing passes.
+_ending = threading.Lock()
+_final: set[str] = set()
 
 
 def base(repo: str) -> Path:
@@ -104,13 +108,14 @@ def installed_digest(home: Path, package: str) -> str | None:
 
 
 def instance(home: Path, package: str) -> str | None:
-    """Which installation of `package` this is: its `base.apk` path, which the package manager draws afresh
-    on each install since Android 11, and its first install time, which a reinstall resets."""
+    """Which installation of `package` this is, or `None` when unreadable: its `base.apk` path, which the
+    package manager draws afresh on each install since Android 11, with that file's inode and modification
+    time in epoch seconds, which a reinstall writes anew and no time zone changes."""
 
     if not (apk := base_apk(home, package)):
         return None
-    found = re.search(r"firstInstallTime=([0-9: -]+)", call(home, "shell", "dumpsys", "package", package))
-    return f"{apk} {found.group(1).strip() if found else ''}"
+    found = call(home, "shell", "stat", "-c", "%i %Y", apk).strip()
+    return f"{apk} {found}" if re.fullmatch(r"\d+ \d+", found) else None
 
 
 def uninstalled(home: Path, digests: dict[str, str], installed: dict[str, str | None]) \
@@ -289,21 +294,24 @@ def drive(repo: str, home: Path, spec: dict, frozen: Path, stopped) -> dict:
                 "findings": findings, "timing": frames, "memory_kb": used, "head": o["front_built_head"],
                 "apks": o["apks"], "detail": ""}
     finally:
-        if passed and keep and not stopped():
-            recorded(repo, index, state="released", ts=time.time())
-        else:
-            settle(repo, home, index)
         try:
             call(home, "shell", "rm", "-f", device.DUMP)
         except ValueError:
             pass
+        with _ending:   # from here a stop is refused; one accepted before it takes the cleanup
+            if final := not stopped():
+                _final.add(repo)
+        if passed and keep and final:
+            recorded(repo, index, state="released", ts=time.time())
+        else:
+            settle(repo, home, index)
 
 
 def phone_round(repo: str) -> None:
-    """The worker: the round holds the worktree on the HEAD the emulator's look passed, as the critic does."""
+    """The worker: the round holds the worktree on the HEAD the emulator's look passed, as the critic does.
+    Its halt was cleared by the pick that started it: a stop accepted since then is never lost."""
 
     halt = _halts.setdefault(repo, threading.Event())
-    halt.clear()
     stopped = lambda: halt.is_set() or runtime.stopping.is_set()   # noqa: E731
 
     def body(store, spec, tree):
@@ -330,7 +338,7 @@ def phone_round(repo: str) -> None:
                        "detail": "휴대폰 회차를 멈췄다" if stopped() else f"휴대폰 회차가 끝나지 못했다 — {exc}"}
         finally:
             shutil.rmtree(frozen, ignore_errors=True)
-        if stopped():   # a stop accepted while the round returned: never committed as its outcome
+        if repo not in _final and stopped():   # a stop accepted before the round ended: never its outcome
             outcome = {"status": "stopped", "detail": "휴대폰 회차를 멈췄다"}
         return lambda: settled(repo, outcome)
 
@@ -423,17 +431,24 @@ def pick(repo: str, body: Pick) -> dict:
         o = oneshot_spec.spec_of(repo)["oneshot"]
         oneshot_spec.idle(o, STAGE)
         phone = {**(o.get("phone") or {}), "status": "running", "serial": body.serial, "keep": body.keep, "detail": ""}
+        with _ending:   # a fresh round: cleared before `working` names it, so a stop from then on holds
+            _halts.setdefault(repo, threading.Event()).clear()
+            _final.discard(repo)
         oneshot_spec.start(repo, STAGE, phone=phone)
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
 
 @router.post("/api/oneshot/spec/{repo}/phone/stop")
 def stop(repo: str) -> dict:
-    """The running round stops at its next step; what it installed is removed on the way out."""
+    """The running round stops at its next step; what it installed is removed on the way out. A round that
+    already settled what stays on the phone is past stopping."""
 
     if oneshot_spec.spec_of(repo)["oneshot"].get("working") != STAGE:
         raise HTTPException(409, "휴대폰 회차가 돌고 있지 않다")
-    _halts.setdefault(repo, threading.Event()).set()
+    with _ending:   # taken after the spec's lock, never inside it: `pick` holds the spec's lock, then this
+        if repo in _final:
+            raise HTTPException(409, "휴대폰 회차가 이미 끝나는 중이다")
+        _halts.setdefault(repo, threading.Event()).set()
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
 

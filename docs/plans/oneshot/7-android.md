@@ -418,10 +418,11 @@ How 7f1 builds it (`tool/android_phone.py`, `tool/main/oneshot_phone.py`):
   package with the digest it must hold, and is saved before the first install.
   A package joins its `installed` map once its install command succeeds,
   which under `-R` proves the installation is the run's. Right after, the map
-  records which installation it is: the `base.apk` path, which the package
-  manager draws afresh on each install since Android 11, and the
-  `firstInstallTime` from `dumpsys package`. The record is settled on every
-  exit:
+  records which installation it is. That is the `base.apk` path, which the
+  package manager draws afresh on each install since Android 11, with the
+  file's inode and modification time in epoch seconds from `stat`. A
+  reinstall writes them anew, and a time zone change does not touch them.
+  The record is settled on every exit:
   - `cleaned`;
   - `pending`, with what is left;
   - `unsure`, for a package on the phone that cannot be tied to the run's
@@ -432,9 +433,12 @@ How 7f1 builds it (`tool/android_phone.py`, `tool/main/oneshot_phone.py`):
 - The cleanup removes a package only when it is still the installation in
   `installed` and its `base.apk` holds the recorded digest. Another APK is
   listed as `foreign` and left alone.
-- A stop is checked again after the scenarios and after the measurements, and
-  once more before the outcome is applied. A stopped round never passes, and
-  the apps come off even when the owner chose to keep them. A later listing that shows the serial settles every `owning`,
+- The pick clears the stop before the round is published, so a stop that
+  arrives before the worker runs holds. The round checks for a stop after the
+  scenarios and after the measurements. At its end, under one lock with the
+  stop handler, it settles what stays on the phone. A stop accepted before
+  that point means the round never passes and its apps come off, even when
+  the owner chose to keep them. After that point a stop is refused. A later listing that shows the serial settles every `owning`,
   `pending` or `unsure` entry for it again. The record also covers a round a
   restart cut.
 - The listing runs at any stage except during the round itself. The run's
