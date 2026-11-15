@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from . import oneshot, oneshot_build, oneshot_front_build as front_build, oneshot_pr, oneshot_review as review, \
     oneshot_screens as screens, oneshot_spec
+from .oneshot_profile import KIND_STOPS, kind_of
 from .query import ROOT
 
 CRITIC_PROMPT = (ROOT / "tool/prompts/oneshot-critic.md").read_text(encoding="utf-8")
@@ -68,7 +69,8 @@ def critique_of(value, spec: dict) -> list[dict]:
     """An `oneshot-critique` block, checked: each finding names a screen route, a viewport and a state."""
 
     o = spec["oneshot"]
-    routes, views = {s["route"] for s in o["front"]["screens"]}, front_build.views(o["profile"])
+    # An Android screen has no route: the critic names it by its id.
+    routes, views = {s.get("route") or s["id"] for s in o["front"]["screens"]}, front_build.views(o["profile"])
     if not isinstance(value, list):
         raise ValueError("`oneshot-critique` 는 발견의 목록이다 (없으면 빈 목록)")
     out = []
@@ -128,6 +130,12 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict]):
                                             "clean": not any(f["severity"] == "high" for f in found + look["findings"]),
                                             "ts": time.time()}]
     ours = rounds[int(o.get("critique_base") or 0):]
+    if len(ours) >= 2 and ours[-1]["clean"] and ours[-2]["clean"] and KIND_STOPS.get(kind_of(o)) == "r3":
+        # The kind waits before R3 in this version: the owner's phone round comes first (7f).
+        return oneshot_spec.saved(repo, oneshot={"critiques": rounds, "stage": "r3", "working": None, "stopped": {
+            "reason": "kind", "state": "r3",
+            "detail": f"`{kind_of(o)}` 는 이 버전에서 에뮬레이터 화면 검사까지 간다 — 높은 발견 없는 회차가 두 번 이어졌고, "
+                      "R3 앞의 휴대폰 회차(docs/plans/oneshot/7-android.md 7f)가 들어오면 이어 간다"}})
     if len(ours) >= 2 and ours[-1]["clean"] and ours[-2]["clean"]:
         return oneshot_spec.saved(repo, oneshot={"critiques": rounds, "stage": "r3", "working": None,
                                                  "r3": {"round": (o.get("r3") or {}).get("round", 0) + 1, "decisions": {},
@@ -215,7 +223,7 @@ class Decisions(BaseModel):
 
 def extra(spec: dict) -> dict:
     o = spec["oneshot"]
-    if o.get("stage") != "r3":
+    if o.get("stage") != "r3" or KIND_STOPS.get(kind_of(o)) == "r3":   # a kind stopped before R3 has no sheet yet
         return {"critiques": o.get("critiques") or []} if o.get("critiques") else {}
     return {"critiques": o.get("critiques") or [], "r3_items": [s["id"] for s in o["front"]["screens"]],
             "r3_sheet": r3_sheet(spec, lambda n, name: f"/api/oneshot/spec/{spec['repo']}/look/{n}/{name}")}

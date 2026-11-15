@@ -26,7 +26,7 @@ from common import is_junction
 
 from . import oneshot, oneshot_android, oneshot_build, oneshot_front_build, oneshot_screens as screens, \
     oneshot_sheet as sheet, oneshot_spec, runtime, specs
-from .oneshot_profile import DEVICES, KIND_STOPS, kind_of
+from .oneshot_profile import DEVICES, kind_of
 
 SHOT_SECONDS = 15_000   # Playwright's milliseconds per page
 PREVIEW_SECONDS = 1800   # an Android preview's first run downloads its Gradle dependencies
@@ -360,15 +360,9 @@ def record(repo: str, store, spec: dict, tree: Path) -> bool:
     head = oneshot_spec.commit(repo, tree, list(copies), f"Record the approved frontend design (R2 round {o['r2']['round']})")
     if not head:
         return False
-    if KIND_STOPS.get(kind_of(o)) == "build-front":   # the kind waits here in this version: one write, nothing starts the build
-        oneshot_spec.saved(repo, oneshot={"stage": "build-front", "front_head": head, "working": None, "stopped": {
-            "reason": "kind", "state": "build-front",
-            "detail": f"`{kind_of(o)}` 는 이 버전에서 R2 화면 설계까지 간다 — 승인한 화면을 커밋했고, 다음 단계"
-                      "(docs/plans/oneshot/7-android.md 7d·7e, 에뮬레이터)가 들어오면 이어 간다"}})
-        return True
     # `working` names the build before its turn is sent: a server that dies in between leaves it for `recover`,
     # and the screens are already the spec's `done` that the resumed turn reports against.
-    oneshot_spec.saved(repo, done=[f"{s['id']} `{s['route']}`: {s['purpose']}" for s in front["screens"]],
+    oneshot_spec.saved(repo, done=[f"{s['id']} {screens.place(s)}: {s['purpose']}" for s in front["screens"]],
                        oneshot={"stage": "build-front", "front_head": head, "working": "build-front", "attempts": 0})
     return True
 

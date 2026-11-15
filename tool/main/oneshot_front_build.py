@@ -14,11 +14,10 @@ from pathlib import Path
 
 from wiki import slots_for
 
-from . import oneshot_build, oneshot_look, oneshot_screens as screens, oneshot_spec, runtime, specs
-from .oneshot_profile import environment
-from .query import ROOT
+from . import oneshot, oneshot_build, oneshot_device, oneshot_look, oneshot_screens as screens, oneshot_spec, runtime, \
+    specs
+from .oneshot_profile import DEVICES, environment, kind_of
 
-BUILD_FRONT_PROMPT = (ROOT / "tool/prompts/oneshot-build-front.md").read_text(encoding="utf-8")
 STAGE = "build-front"
 
 
@@ -27,15 +26,24 @@ views = screens.views
 
 def build_front_text(spec: dict) -> str:
     o = spec["oneshot"]
-    front = {k: v for k, v in o["front"].items() if k not in ("mocks", "shots")}
+    android = kind_of(o) == "android"
+    front = {k: v for k, v in o["front"].items() if k not in ("mocks", "shots", "preview")}
     palette = next(p for p in o["front"]["tokens"]["palettes"] if p["id"] == o["r2"]["palette"])
-    return BUILD_FRONT_PROMPT.replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
+    text = oneshot.prompt(STAGE, kind_of(o)).replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
         .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"])) \
         .replace("{design}", json.dumps({"screens": front["screens"], "states": front["states"],
                                          "type": front["tokens"]["type"], "spacing": front["tokens"]["spacing"],
                                          "palette": palette, "features": o["features"],
                                          "frequency": o["frequency"]}, ensure_ascii=False, indent=2)) \
         .replace("{viewports}", ", ".join(views(o["profile"]))).replace("{profile}", environment(o))
+    if not android:
+        return text
+    size = DEVICES[o["profile"]["device"]]
+    return text.replace("{toolchain}", oneshot_build.toolchain_text(spec)) \
+        .replace("{device}", f"{size['width']}×{size['height']} px at {size['dpi']} dpi") \
+        .replace("{scenarios}", "\n".join(f"- `{r}`" for r in oneshot_device.scenarios(spec)) or "- (none)") \
+        .replace("{permissions}", ", ".join(f"`{p}`" for p in oneshot_device.grants(spec)) or "none") \
+        .replace("{fixture}", "yes" if oneshot_device.reads_screen(spec) else "no")
 
 
 def begin(repo: str) -> None:
@@ -55,21 +63,30 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     gate, live, backend = slots.get("gate_cmd", "").strip(), slots.get("live_cmd", "").strip(), o["gate"]
     if why := oneshot_build.published(gate, backend):
         return why
-    if not live:
+    android = kind_of(o) == "android"
+    if android:   # an app on a phone has no `live_cmd`: its block names the APKs the emulator installs
+        device = oneshot_device.declared(path, final, oneshot_device.reads_screen(spec))
+    elif not live:
         return "어댑터의 `live_cmd` 가 비었다 — 백엔드와 화면을 함께 띄우는 명령을 적는다"
     # The backend's own gate runs as the server knows it: the adapter's naming it proves nothing it runs.
     verdict = specs.judge(path, [backend, gate] if gate != backend else [gate], run.halt,
-                          lambda text: specs.note(run, text))
+                          lambda text: specs.note(run, text), env=oneshot_build.toolchain(spec))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := oneshot_build.held(path, run, spec, verdict):
         return why
+    if android and (why := oneshot_device.built(path, device)):
+        return why
     store = oneshot_spec.store(spec["repo"])
     n = len(o.get("looks") or []) + 1
-    specs.note(run, f"앱을 띄워 화면을 찍는다 · {n}회차")
+    specs.note(run, f"{'에뮬레이터에 앱을 설치해' if android else '앱을 띄워'} 화면을 찍는다 · {n}회차")
     stopped = lambda: run.halt.is_set() or runtime.stopping.is_set()   # noqa: E731
-    findings = oneshot_look.look(path, live, o["front"], o["frequency"], o["inventory"], views(o["profile"]),
-                                 store.folder / "build" / f"r{n}", stopped)
+    shots = store.folder / "build" / f"r{n}"
+    if android:
+        findings = oneshot_device.look(path, device, spec, store.folder / "device", shots, stopped)
+    else:
+        findings = oneshot_look.look(path, live, o["front"], o["frequency"], o["inventory"], views(o["profile"]),
+                                     shots, stopped)
     if stopped():   # a look cut short passes nothing: the stage stays `build-front`, resumable
         return "화면 검사 중에 멈췄다 — [재개] 로 빌드부터 다시 검사한다"
     # The app ran the tree's code, `live_cmd` may build: what was shot must still be the HEAD the gate passed.
@@ -84,7 +101,8 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     # `working` names the critique before its worker starts: a server that dies in between leaves it for `recover`.
     # The fixes this turn was sent with are built now: a resumed build no longer carries them.
     oneshot_spec.saved(spec["repo"], oneshot={"stage": "critique", "front_built_head": verdict["head"], "looks": looks,
-                                              "attempts": 0, "working": "critique", "fix": None})
+                                              "attempts": 0, "working": "critique", "fix": None,
+                                              **({"device": device} if android else {})})
     specs.note(run, f"화면 빌드 통과 · {verdict['head'][:12]}")
     return ""
 

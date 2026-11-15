@@ -208,8 +208,8 @@ How 7c builds it:
 - An edit turn keeps the shared preview files and the command as they were,
   as it keeps the tokens.
 - R2's approval commits `docs/design/screens.md`, the mock files under
-  `docs/design/mock/` and the pictures under `docs/design/shots/`. The run then
-  stops with reason `kind` at `build-front` until 7e.
+  `docs/design/mock/` and the pictures under `docs/design/shots/`, and starts
+  the screen build.
 
 ### S7 — the emulator loop
 
@@ -280,6 +280,70 @@ vertical-scroll chapters, swipe-paged chapters, and pages with sound-effect
 lettering. The scenarios then run against content whose correct answer is
 known.
 
+How 7e builds it:
+
+- The build turn is the web's `build-front` turn with its own prompt. An app
+  on a phone has no `live_cmd`. Instead, the turn ends with an
+  `oneshot-device` block naming the debug APK, its package and launch
+  activity, the instrumented test APK with its runner, and the fixture viewer
+  when the app reads another app's screen. A capability whose permission names
+  MediaProjection or an accessibility service counts as reading another app's
+  screen. The gate it publishes starts with S4's gate and adds the test APK's
+  build. After the gate, every APK the block names must be a plain file in
+  the tree.
+- The server, not a model, drives the emulator (`tool/main/oneshot_device.py`).
+  Each look boots a fresh `android_owned` emulator at the reference phone's
+  size. It first cleans every earlier look's record, so a look a server crash
+  cut short is cleaned before the next boots, and one that cannot be cleaned
+  stops the look. Then it installs the APKs. It grants only the
+  `android.permission.*` names the approved requirements state: overlay
+  drawing goes through `appops`, the others through `pm grant`, and screen
+  capture consent goes through `PROJECT_MEDIA` for a screen-reading app.
+- A screen opens in a state the way a web route opens with a seeded or held
+  API: the debug build reads the launch extras `oneshot.screen` and
+  `oneshot.state` and draws that screen in that state from its own sample
+  data. An overlay is shot over the fixture viewer, or the launcher when
+  there is none. A notification is shot with the shade expanded. Each state
+  is saved as `<screen>-phone-<state>.png`, the name the critic already reads.
+- The hierarchy is UI Automator's dump. A feature is found by `feature:<id>`
+  as a resource id (Compose's exported test tag, Flutter's identifier), or as
+  a content description on a notification's views, which carry no tag.
+- The mechanical checks and the placement read the app's own nodes, all
+  high. Those are its package's, and every view under a `feature:<id>` that
+  System UI draws, which is how a notification's controls are found in the
+  shade. The fixture viewer's views stay out, tagged or not:
+  - a crash or ANR in the event log since the screen opened;
+  - a view past the screen's edge;
+  - a clickable node under 48 dp;
+  - a clickable node with no text or description in it;
+  - text whose ink and ground contrast less than 3:1. That last one compares
+    the darkest and lightest twentieth of the raw frame's pixels inside the
+    text's box.
+
+  Text cut off is the critic's: the hierarchy carries the whole string
+  whether or not it is ellipsized.
+- The placement rules are the web's, read off the first screen's hierarchy
+  in the `full` state. One action is one tap on a control in view, after
+  relaunching the first screen. A feature that never appears in any `full`
+  hierarchy is a finding, and so is a `never` feature in any state's.
+- The scenarios run once per look as `am instrument -w -r` on the test APK.
+  Each scenario requirement needs a test named `scenario_<id>` or
+  `scenario_<id>_…`, so `R10`'s test never stands in for `R1`'s. A failed,
+  skipped or missing one is high. So is a run that did not end with
+  `INSTRUMENTATION_CODE: -1`, or one with a line that starts an abort, a
+  failure or a crash record. A test whose name holds those words is not one.
+- The critic names an Android screen by its id where a web screen has its
+  route. Two clean rounds stop the run with reason `kind` at `r3` until the
+  phone round (7f). A run an earlier version stopped at `build-front` becomes
+  resumable when the server starts.
+- A real emulator on this PC checked the harness's commands, driving the
+  Settings app with the other project's SDK, read-only:
+  - the launch and its `Status: timeout` through a trampoline activity;
+  - the hierarchy dump, a tap, the raw frame's header and the PNG;
+  - the event log, and the non-zero exit of a missing instrumentation.
+
+  Cleanup left nothing, and the 5037 server kept its identity.
+
 ### Before R3 — one round on the owner's phone
 
 After the emulator loop stops, the run asks the owner to connect the reference
@@ -341,7 +405,7 @@ Each step is a separate PR, approved before the next starts.
 | 7b | Core path | S2 stack parts and capability requirements for `android`, the S3 module design and R1 module table, S4 contract tests and gate in the stack's own host-side runner | Done |
 | 7c | Screens without an emulator | S5 from contracts and platform surfaces, S6 rendered by the stack's preview tool at the device size | Done |
 | 7d | Owned emulator | The native-webview step 3 collector resumed as shared infrastructure, with its refusals and cleanup proof | Done |
-| 7e | Emulator loop | S7 on the owned emulator: install, scenarios, screenshots, mechanical and placement checks resolved from the real native hierarchy (cases: a build that moves a feature from its approved place, a correctly absent `never` feature, a leaked `never` control), critic, fixture viewer | Planned |
+| 7e | Emulator loop | S7 on the owned emulator: install, scenarios, screenshots, mechanical and placement checks resolved from the real native hierarchy (cases: a build that moves a feature from its approved place, a correctly absent `never` feature, a leaked `never` control), critic, fixture viewer | Done |
 | 7f | Phone round and S8 | The connected-phone round before R3: the resumable wait, the bound serial, run-specific packages, the ownership record and its cleanup; the R3 sheet, S8's README, APK and optional workflow | Planned |
 | 7g | Real run | The screen translator sentence from intake to the first pull request | Planned |
 
