@@ -114,8 +114,9 @@ def instance(home: Path, package: str) -> str | None:
 
     if not (apk := base_apk(home, package)):
         return None
-    found = call(home, "shell", "stat", "-c", "%i %Y", apk).strip()
-    return f"{apk} {found}" if re.fullmatch(r"\d+ \d+", found) else None
+    # `adb shell` joins its words with spaces, unquoted: the format holds none.
+    found = call(home, "shell", "stat", "-c", "%i:%Y", apk).strip()
+    return f"{apk} {found}" if re.fullmatch(r"\d+:\d+", found) else None
 
 
 def uninstalled(home: Path, digests: dict[str, str], installed: dict[str, str | None]) \

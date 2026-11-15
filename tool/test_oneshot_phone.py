@@ -8,6 +8,7 @@ context that only writes the server's record, so `bind` and the serial each devi
 
 import json
 import re
+import shlex
 import subprocess
 import threading
 from contextlib import contextmanager
@@ -46,7 +47,7 @@ class Handset(Phone):
 
     def which(self, package: str) -> str:
         n = self.instances.get(package, 0)
-        return f"{self.root}/~~a{n}==/{package}-b2==/base.apk {4000 + n} {1794780000 + n}"
+        return f"{self.root}/~~a{n}==/{package}-b2==/base.apk {4000 + n}:{1794780000 + n}"
 
     def call(self, folder, args, *, device=True, timeout=0, binary=False, stream=False):
         if device:
@@ -55,6 +56,8 @@ class Handset(Phone):
             self.addressed.append(serial)
             if self.gone:
                 raise ValueError("adb: device 'R5CR10ABCDE' not found")
+        if args[0] == "shell":   # `adb shell` joins its words with spaces, unquoted, for the phone's shell
+            assert shlex.split(" ".join(args[1:])) == args[1:], f"the phone's shell would split {args}"
         if self.on_call:
             self.on_call(args)
         if args[:2] == ["devices", "-l"]:
@@ -75,7 +78,7 @@ class Handset(Phone):
             return "Success\n"
         if args[:3] == ["shell", "pm", "path"]:
             return f"package:{self.which(args[3]).split()[0]}\n" if args[3] in self.present else ""
-        if args[:4] == ["shell", "stat", "-c", "%i %Y"]:
+        if args[:4] == ["shell", "stat", "-c", "%i:%Y"]:
             package = re.search(r"/~~a\d+==/(.+)-b2==/base\.apk$", args[4]).group(1)
             return self.which(package).split(" ", 1)[1] + "\n"
         if args[:2] == ["shell", "sha256sum"]:
@@ -144,8 +147,8 @@ def test_a_clean_round_on_the_picked_phone_waits_before_r3_and_leaves_nothing_on
     assert after["phone_owned"][-1] | {"ts": 0} == {"serial": SERIAL, "model": "SM G991N", "packages": [PKG, TESTS],
                                                     "digests": {PKG: after["apks"][DEVICE["apk"]],
                                                                 TESTS: after["apks"][DEVICE["tests"]["apk"]]},
-                                                    "installed": {PKG: f"/data/app/~~a1==/{PKG}-b2==/base.apk 4001 1794780001",
-                                                                  TESTS: f"/data/app/~~a2==/{TESTS}-b2==/base.apk 4002 1794780002"},
+                                                    "installed": {PKG: f"/data/app/~~a1==/{PKG}-b2==/base.apk 4001:1794780001",
+                                                                  TESTS: f"/data/app/~~a2==/{TESTS}-b2==/base.apk 4002:1794780002"},
                                                     "state": "cleaned", "left": [],
                                                     "foreign": [], "unsure": [], "ts": 0}
     assert "phone_owned" not in phone_round.extra(spec())
