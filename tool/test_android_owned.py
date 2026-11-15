@@ -33,8 +33,9 @@ class World:
         self.tools = {"adb": {"path": str(self.adb), "sha256": owned.sha256(self.adb)},
                       "emulator": {"path": str(self.emulator), "sha256": owned.sha256(self.emulator)},
                       "image": {"path": str(self.image), "sha256": owned.image_digest(self.image)}}
-        self.procs, self.listen, self.clock, self.next = {}, {}, 1000, 200
+        self.procs, self.listen, self.clock, self.next, self.ever = {}, {}, 1000, 200, {}
         self.argvs, self.envs, self.stubborn = [], {}, set()
+        self.connecting = None        # runs as a client connects, after the owned checks passed
         self.extra_devices, self.version = [], "37.0.1"
         self.taken_by = None          # a pid that grabs the owned port before the owned server does
         self.server_parent = None     # the parent pid the owned server reports, when not its client
@@ -44,7 +45,7 @@ class World:
 
     def add(self, pid, exe, parent, ports=()):
         self.clock += 1
-        self.procs[pid] = {"pid": pid, "created": self.clock, "exe": exe, "parent": parent}
+        self.procs[pid] = self.ever[pid] = {"pid": pid, "created": self.clock, "exe": exe, "parent": parent}
         for port in ports:
             self.listen.setdefault(port, set()).add(pid)
         return pid
@@ -66,6 +67,8 @@ class World:
     def Popen(self, argv, env=None, **_):
         world, pid = self, self.spawn(argv[0], 1)
         self.envs[argv[0] if "start-server" not in argv else "start-server"] = env
+        if argv[0] == str(self.adb) and "start-server" not in argv:
+            return self.command(argv, pid)
         self.argvs.append(argv)
 
         class Proc:
@@ -97,25 +100,35 @@ class World:
 
         return Proc()
 
+    def command(self, argv, client):
+        """An adb client: it connects to whatever holds the port, starting a server there if nothing does."""
+
+        self.argvs.append(argv)
+        assert argv[1] == "-P", argv   # every owned call names the owned port
+        port, rest = int(argv[2]), argv[3:]
+        if self.connecting:
+            self.connecting()
+        if not self.listen.get(port):
+            self.spawn(self.adb, client, [port])
+        if rest[0] == "-s":
+            rest = rest[2:]
+        out = ""
+        if rest == ["devices"]:
+            qemus = [p for p in self.procs.values() if p["exe"].endswith("qemu.exe") and p["pid"] != USER_EMULATOR]
+            serials = [f"emulator-{min(k for k, v in self.listen.items() if q['pid'] in v)}" for q in qemus]
+            out = "List of devices attached\n" + "".join(f"{s}\tdevice\n" for s in [*serials, *self.extra_devices])
+        elif rest[:2] == ["shell", "getprop"]:
+            out = {"sys.boot_completed": self.boot, "ro.kernel.qemu": "1"}[rest[2]]
+        elif rest[0] == "forward" and rest[1].startswith("tcp:"):
+            self.listen.setdefault(int(rest[1][4:]), set()).update(self.listen[port])   # the server listens
+        self.kill(client)
+        return SimpleNamespace(pid=client, _handle=client, returncode=0, kill=lambda: None,
+                               communicate=lambda timeout=None: (out.encode(), b""))
+
     def run(self, argv, text=False, **_):
         self.argvs.append(argv)
-        out = ""
-        if argv[1:] == ["version"]:
-            out = f"Android Debug Bridge version 1.0.41\nVersion {self.version}-15733141\n"
-        else:
-            assert argv[0] == str(self.adb) and argv[1] == "-P", argv   # every owned call names the owned port
-            port, rest = int(argv[2]), argv[3:]
-            if rest[0] == "-s":
-                rest = rest[2:]
-            if rest == ["devices"]:
-                qemus = [p for p in self.procs.values() if p["exe"].endswith("qemu.exe") and p["pid"] != USER_EMULATOR]
-                serials = [f"emulator-{min(k for k, v in self.listen.items() if q['pid'] in v)}" for q in qemus]
-                out = "List of devices attached\n" + "".join(f"{s}\tdevice\n" for s in [*serials, *self.extra_devices])
-            elif rest == ["kill-server"]:
-                for pid in list(self.listen.get(port, ())):
-                    self.kill(pid)
-            elif rest[:2] == ["shell", "getprop"]:
-                out = {"sys.boot_completed": self.boot, "ro.kernel.qemu": "1"}[rest[2]]
+        assert argv[1:] == ["version"], argv
+        out = f"Android Debug Bridge version 1.0.41\nVersion {self.version}-15733141\n"
         return subprocess.CompletedProcess(argv, 0, out if text else out.encode(), "" if text else b"")
 
     def terminate(self, recorded, wait=10):
@@ -126,15 +139,15 @@ class World:
         self.kill(recorded["pid"])
         return True
 
-    def identity(self, pid, handle=None):
-        found = self.procs.get(pid)
+    def identity(self, pid, handle=None, live=True):
+        found = self.procs.get(pid) or (None if live else self.ever.get(pid))
         return dict(found) if found else None
 
 
 @pytest.fixture
 def world(tmp_path, monkeypatch):
     w = World(tmp_path)
-    fake = SimpleNamespace(Popen=w.Popen, run=w.run, call=w.run, DEVNULL=subprocess.DEVNULL,
+    fake = SimpleNamespace(Popen=w.Popen, run=w.run, DEVNULL=subprocess.DEVNULL, PIPE=subprocess.PIPE,
                            CREATE_NO_WINDOW=0, TimeoutExpired=subprocess.TimeoutExpired)
     monkeypatch.setattr(owned, "subprocess", fake)
     monkeypatch.setattr(owned, "process", SimpleNamespace(SUSPENDED=0, background_options=dict, terminated=lambda job: None,
@@ -175,7 +188,8 @@ def test_a_boot_runs_its_own_closed_server_and_emulator_and_cleans_exactly_them(
     record = owned.load(world.folder)
     assert record["state"] == "cleaned" and record["left"] == []
     assert not (world.folder / "android").exists()
-    assert ["kill-server"] == next(a[3:] for a in world.argvs if a[-1] == "kill-server")
+    assert record["server"]["pid"] not in world.procs and not world.listen[local]
+    assert not any("kill-server" in a or "--remove" in a for a in world.argvs)
     assert not any(p["exe"].endswith(("qemu.exe", "emulator.exe")) and p["pid"] != USER_EMULATOR for p in world.procs.values())
     assert all(a[1:] == ["version"] or a[1:3] == ["-P", str(record["server"]["port"])] for a in world.argvs
                if a[0] == str(world.adb) and "start-server" not in a)
@@ -229,12 +243,12 @@ def test_a_replaced_tool_or_an_old_adb_refuses_before_anything_starts(world, cha
 
 
 def test_a_killed_collector_is_cleaned_by_the_orchestrator_from_its_record(world):
-    _context, serial = booted(world)
+    _context, _serial = booted(world)   # held: a dropped context would clean up as it is collected
     local = owned.forward(world.folder, "localabstract:webview_devtools_remote_1")
     owned._jobs.clear()   # the collector died: its jobs and memory are gone, the record is not
+    sent = len(world.argvs)
     assert owned.cleanup(world.folder) == []
-    removes = [a for a in world.argvs if "--remove" in a]
-    assert removes and all(a[3:6] == ["-s", serial, "forward"] and a[-1] == f"tcp:{local}" for a in removes)
+    assert world.argvs[sent:] == [] and not world.listen[local]   # the forward closed with its server
     assert owned.load(world.folder)["state"] == "cleaned" and not (world.folder / "android").exists()
     assert owned.cleanup(world.folder) == []   # idempotent
 
@@ -264,6 +278,47 @@ def test_a_server_that_lost_its_listener_gets_no_command_and_is_killed_by_identi
     assert owned.cleanup(world.folder) == []
     assert not any(a[0] == str(world.adb) for a in world.argvs[sent:])
     assert record["server"]["pid"] not in world.procs
+
+
+def test_a_server_replaced_between_the_check_and_the_connection_is_neither_trusted_nor_stopped(world):
+    _context, _serial = booted(world)
+    server = owned.load(world.folder)["server"]
+    foreign = []
+
+    def replaced():
+        world.connecting = None
+        world.kill(server["pid"])
+        foreign.append(world.spawn(world.adb, 999, [server["port"]]))   # another run's server takes the port
+
+    world.connecting = replaced
+    with pytest.raises(ValueError, match="changed during the call"):
+        owned.call(world.folder, ["shell", "getprop", "ro.kernel.qemu"])
+    owned._jobs.clear()
+    assert owned.cleanup(world.folder) == [] and foreign[0] in world.procs
+
+
+def test_a_server_a_call_started_after_the_owned_one_vanished_is_stopped(world):
+    _context, _serial = booted(world)
+    server = owned.load(world.folder)["server"]
+
+    def vanished():
+        world.connecting = None
+        world.kill(server["pid"])
+
+    world.connecting = vanished
+    with pytest.raises(ValueError, match="changed during the call"):
+        owned.call(world.folder, ["shell", "getprop", "ro.kernel.qemu"])
+    assert not world.listen[server["port"]], "the client's own server must not outlive the call"
+
+
+def test_a_folder_already_in_the_run_folder_is_never_owned_or_deleted(world):
+    existing = world.folder / "android"
+    existing.mkdir()
+    (existing / "kept.txt").write_text("not this run's", encoding="utf-8")
+    with pytest.raises(ValueError, match="not this run's"):
+        booted(world)
+    assert (existing / "kept.txt").read_text(encoding="utf-8") == "not this run's"
+    assert owned.load(world.folder)["folders"] == [] and owned.load(world.folder)["state"] == "cleaned"
 
 
 def test_a_cleanup_that_cannot_finish_says_what_is_left_and_fails_the_run(world):

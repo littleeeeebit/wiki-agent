@@ -238,6 +238,10 @@ How 7d builds it:
   verified here, 37.0.1, so an older `adb` is refused rather than trusted.
 - The orchestrator cleans from the record after every desktop flow, whatever
   its outcome, and holds the flow at preparation while anything is left.
+- Cleanup differs from the native WebView plan's wording on one point. It
+  sends no `kill-server` or `forward --remove`, since either reaches whatever
+  holds the port when the client connects. It kills the recorded server by
+  identity, and its forwards close with it.
 - One real run on this PC used another project's SDK, read-only: platform tools
   37.0.1, emulator 37.2.13 and an `android-34` Google APIs x86_64 image on
   WHPX. It booted in 79 seconds. The owned server listed only `emulator-5586`.

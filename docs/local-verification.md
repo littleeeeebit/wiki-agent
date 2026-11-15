@@ -56,11 +56,15 @@ exists: the server's port and process, its start-server client, the emulator
 and its console process, the serial, forwards and the AVD folder. Each process
 is recorded by pid, creation time, image and parent. Cleanup runs on every
 outcome from the collector, and again from the orchestrator after the collector
-exits or is killed. It removes recorded forwards, kills recorded processes only
-after checking their identity on the killing handle, and sends `kill-server`
-only while the port's listener is the recorded server. Then it deletes the
-recorded folders inside the artifact folder. A reused pid or port is left
-alone. A flow whose record does not end `cleaned` is held at preparation,
+exits or is killed. It sends nothing to a port, because a port-addressed
+`kill-server` or `forward --remove` reaches whatever holds the port at that
+moment. It kills each recorded process only after checking its identity on the
+killing handle; the server's forwards are its own listeners and close with it.
+Then it deletes the recorded folders inside the artifact folder. A folder that
+already existed is never recorded. A reused pid or port is left alone. An
+ordinary call checks the listeners again after it returns. If the server
+changed in between, the answer is discarded, and a server the call's own
+client started on the empty port is stopped by identity. A flow whose record does not end `cleaned` is held at preparation,
 naming what is left, and a receipt is accepted only with a cleaned record
 naming the emulator its sessions ran on.
 The WebView fixture uses GLES with Vulkan disabled, following the emulator's

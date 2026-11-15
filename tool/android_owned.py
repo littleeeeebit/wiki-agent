@@ -135,10 +135,25 @@ def emulator_ok(record: dict) -> bool:
     return bool(console) and listeners(record["console"]) == {console["pid"]} and same(console, identity(console["pid"]))
 
 
+def stray(record: dict, client: dict | None) -> bool:
+    """A server `client` started on the owned port, found by its parent and creation order and stopped by
+    identity. An adb client starts one when it finds no server there. `True` when there was one."""
+
+    found = False
+    for pid in listeners(record["server"]["port"]):
+        here = identity(pid)
+        if client and here and here["parent"] == client["pid"] and here["created"] >= client["created"]:
+            terminate(here)
+            found = True
+    return found
+
+
 def call(folder: Path, args: list[str], *, device: bool = True, timeout: float = CALL_SECONDS,
          binary: bool = False, stream: bool = False):
-    """`adb -P <owned port> [-s <owned serial>] args`, only after the listener checks. `stream` hands
-    adb this process's own output and waits for it, as `logcat` needs."""
+    """`adb -P <owned port> [-s <owned serial>] args`, between two listener checks. The server can vanish
+    between the first check and the client's connection. Then the client reaches another process's
+    server or starts its own, and the second check discards the answer and stops any server it started.
+    `stream` hands adb this process's own output and waits for it, as `logcat` needs."""
 
     record = load(folder)
     if not record or not server_ok(record):
@@ -149,11 +164,25 @@ def call(folder: Path, args: list[str], *, device: bool = True, timeout: float =
             *(["-s", record["serial"]] if device else []), *args]
     if stream:
         sys.stdout.flush()
-        return subprocess.call(argv, env=environment(), **process.background_options())
-    done = subprocess.run(argv, capture_output=True, timeout=timeout, env=environment(), **process.background_options())
-    if done.returncode:
-        raise ValueError(f"adb {' '.join(args[:2])} failed: {done.stderr.decode('utf-8', 'replace').strip()[:300]}")
-    return done.stdout if binary else done.stdout.decode("utf-8", "replace")
+    pipe = None if stream else subprocess.PIPE
+    proc = subprocess.Popen(argv, env=environment(), stdin=subprocess.DEVNULL, stdout=pipe, stderr=pipe,
+                            **process.background_options())
+    client = identity(proc.pid, proc._handle, live=False)
+    try:
+        out, err = proc.communicate(timeout=None if stream else timeout)
+    except BaseException:
+        proc.kill()
+        proc.communicate()
+        raise
+    finally:
+        changed = stray(record, client) or not server_ok(record)
+    if changed:
+        raise ValueError("The owned ADB server changed during the call; its answer is discarded")
+    if stream:
+        return proc.returncode
+    if proc.returncode:
+        raise ValueError(f"adb {' '.join(args[:2])} failed: {err.decode('utf-8', 'replace').strip()[:300]}")
+    return out if binary else out.decode("utf-8", "replace")
 
 
 def devices(folder: Path) -> list[str]:
@@ -266,7 +295,13 @@ def _start(folder: Path, record: dict, image: Path, device: dict, renderer: str)
     record["folders"].append(HOME)
     save(folder, record)
     home = folder / HOME
-    for made in (home, home / "emulator", home / "user"):   # the emulator cannot create its own home folder
+    try:
+        home.mkdir()   # atomic: a folder already there is someone else's and leaves the record at once
+    except FileExistsError:
+        record["folders"].remove(HOME)
+        save(folder, record)
+        raise ValueError(f"{home} already exists; it is not this run's") from None
+    for made in (home / "emulator", home / "user"):   # the emulator cannot create its own home folder
         made.mkdir()
     avd(home, image, device)
     sdk = image.parents[3]
@@ -339,26 +374,15 @@ def cleanup(folder: Path, seconds: float = 60) -> list[str]:
         return []
     if record["state"] == "cleaned":
         return []
+    # Nothing is sent to a port: a port-addressed `kill-server` or `forward --remove` reaches whatever holds
+    # the port at that moment. Each recorded process is killed on the handle that checked its identity;
+    # the server's forwards are its own listeners and close with it.
     deadline, left = time.monotonic() + seconds, []
-    alive = server_ok(record)
-    if alive and record.get("serial") and emulator_ok(record):
-        for local in record["forwards"]:
-            try:
-                call(folder, ["forward", "--remove", f"tcp:{local}"], timeout=10)
-            except (ValueError, subprocess.TimeoutExpired):
-                pass
     for key in ("console_process", "emulator", "client"):
         if record.get(key) and not terminate(record[key]):
             left.append(key)
-    if alive:
-        try:
-            call(folder, ["kill-server"], device=False, timeout=10)
-        except (ValueError, subprocess.TimeoutExpired):
-            pass
     server = record.get("server") or {}
     if "pid" in server:
-        while alive and same(server, identity(server["pid"])) and time.monotonic() < deadline - 40:
-            time.sleep(0.2)   # `kill-server` was sent: give it the first third of the time to exit
         if not terminate(server):
             left.append("server")
         for local in [server["port"], *record["forwards"]]:

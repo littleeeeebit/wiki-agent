@@ -52,25 +52,25 @@ def parents() -> dict[int, int]:
     return found
 
 
-def _described(k, w, handle, pid: int) -> dict | None:
+def _described(k, w, handle, pid: int, live: bool = True) -> dict | None:
     times = [w.FILETIME() for _ in range(4)]
     image, size, code = ctypes.create_unicode_buffer(32768), w.DWORD(32768), w.DWORD()
     if not k.GetProcessTimes(handle, *[ctypes.byref(t) for t in times]) \
             or not k.QueryFullProcessImageNameW(handle, 0, image, ctypes.byref(size)) \
-            or not k.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value != 259:   # STILL_ACTIVE
+            or not k.GetExitCodeProcess(handle, ctypes.byref(code)) or (live and code.value != 259):   # STILL_ACTIVE
         return None
     created = times[0].dwHighDateTime << 32 | times[0].dwLowDateTime
     return {"pid": pid, "created": created, "exe": os.path.normcase(image.value), "parent": parents().get(pid, 0)}
 
 
-def identity(pid: int, handle=None) -> dict | None:
+def identity(pid: int, handle=None, live: bool = True) -> dict | None:
     """A live process's stable identity: pid, creation time (FILETIME ticks), image path (case-folded) and
     the parent pid recorded at its creation. `None` once it has exited or cannot be read. `handle` reads a
-    process this one started, whose handle it holds."""
+    process this one started, whose handle it holds; with `live=False` even after it has exited."""
 
     k, w = _kernel()
     if handle is not None:
-        return _described(k, w, int(handle), pid)
+        return _described(k, w, int(handle), pid, live)
     opened = k.OpenProcess(QUERY, False, pid)
     if not opened:
         return None
