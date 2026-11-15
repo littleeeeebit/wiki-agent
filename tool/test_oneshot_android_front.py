@@ -16,7 +16,6 @@ import zlib
 from unittest.mock import patch
 
 import pytest
-from fastapi import HTTPException
 
 from main import oneshot, oneshot_front as front, oneshot_screens as screens, oneshot_sheet as sheet, oneshot_spec, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
@@ -276,24 +275,26 @@ def test_an_edit_that_rebinds_a_screen_outside_its_reach_to_another_file_is_sent
 
 # -- R2------------------------------------------------------------------------------------
 
-def test_the_approved_screens_are_committed_and_the_run_stops_before_the_frontend_build(boarded):
+def test_the_approved_screens_are_committed_and_the_screen_build_starts(boarded):
     designed()
     begun = []
     with patch.object(front.oneshot_front_build, "begin", begun.append):
         front.decide("budget", front.R2(decisions={i: {"approve": True} for i in screens.decidable(o()["front"])},
                                         palette="C2"))
-    assert not begun and o()["stage"] == "build-front" and not o()["working"]
-    assert o()["stopped"]["reason"] == "kind" and "7e" in o()["stopped"]["detail"]
+    assert begun == ["budget"] and o()["stage"] == "build-front" and o()["working"] == "build-front"
+    assert not o().get("stopped") and oneshot_spec.spec_of("budget")["done"][0].startswith("S1 다른 앱 위: ")
     for name in ("docs/design/screens.md", "docs/design/mock/mock/S1.kt", "docs/design/mock/shoot.py",
                  "docs/design/shots/S1-phone.png"):
         assert (boarded / name).is_file(), name
     assert not (boarded / "docs/design/frontend.md").exists() and o()["front_head"] == head(boarded)
     assert "](shots/S1-phone.png)" in (boarded / "docs/design/screens.md").read_text(encoding="utf-8")
-    with pytest.raises(HTTPException) as refused:
-        oneshot_spec.resume("budget")
-    assert refused.value.status_code == 409 and "7e" in refused.value.detail
-    oneshot_spec.recover()   # a restart keeps this version's own stop
-    assert o()["stopped"]["reason"] == "kind"
+
+
+def test_screens_an_earlier_version_stopped_before_their_build_resume_into_it_after_a_restart(android):
+    oneshot_spec.saved("budget", oneshot={"stage": "build-front", "working": None, "stopped": {
+        "reason": "kind", "state": "build-front", "detail": "7d·7e 가 들어오면 이어 간다"}})
+    oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "restart" and o()["stage"] == "build-front"
 
 
 def test_a_core_an_earlier_version_stopped_before_the_split_resumes_into_it_after_a_restart(android):
