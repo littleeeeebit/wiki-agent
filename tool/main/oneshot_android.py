@@ -119,7 +119,11 @@ def missing() -> list[str]:
 
 def owned(path: Path) -> Path:
     """`path` when it is `ROOT`'s own: under `ROOT`, and no folder from `ROOT` down to it is a link or a
-    junction, which could lead into an owner's SDK. Anything else is refused before it is written."""
+    junction, which could lead into an owner's SDK. Anything else is refused before it is written.
+
+    Each write, replace and delete checks right before it acts, so a junction that was there or appeared
+    during a network wait is refused. A process of the owner's that swaps folders in the microseconds
+    between a check and its write is outside this: it already holds the rights to the owner's SDK."""
 
     root, target = Path(os.path.abspath(ROOT)), Path(os.path.abspath(path))
     if not target.is_relative_to(root):
@@ -132,6 +136,15 @@ def owned(path: Path) -> Path:
     return target
 
 
+def discard(path: Path) -> None:
+    """Cleanup that never follows a link: a path that is no longer `ROOT`'s own is left alone."""
+
+    try:
+        owned(path).unlink(missing_ok=True)
+    except (OSError, ValueError):
+        pass
+
+
 def fetch(url: str, timeout: float = 60) -> bytes:
     with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "wiki-agent"}),
                                 timeout=timeout) as answer:
@@ -141,12 +154,12 @@ def fetch(url: str, timeout: float = 60) -> bytes:
 def download(url: str, to: Path, algorithm: str, checksum: str) -> Path:
     """`url` into `to`, kept only when its `algorithm` digest is `checksum`; a server stop cuts it."""
 
-    to = owned(to)
-    to.parent.mkdir(parents=True, exist_ok=True)
+    owned(to.parent).mkdir(parents=True, exist_ok=True)
     digest, partial = hashlib.new(algorithm), owned(to.with_suffix(to.suffix + ".part"))
     try:
+        # The partial file opens after the response arrives, so its check follows the network wait.
         with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "wiki-agent"}),
-                                    timeout=120) as answer, partial.open("wb") as out:
+                                    timeout=120) as answer, owned(partial).open("wb") as out:
             while chunk := answer.read(1 << 20):
                 if runtime.stopping.is_set():
                     raise ValueError("서버가 종료 중이다")
@@ -154,10 +167,10 @@ def download(url: str, to: Path, algorithm: str, checksum: str) -> Path:
                 out.write(chunk)
         if digest.hexdigest().lower() != checksum.lower():
             raise ValueError(f"{url} 의 체크섬이 맞지 않는다")
+        os.replace(owned(partial), owned(to))
     except BaseException:
-        partial.unlink(missing_ok=True)
+        discard(partial)
         raise
-    os.replace(partial, to)
     return to
 
 
@@ -185,18 +198,17 @@ def cmdline_tools(manifest: bytes) -> tuple[str, str]:
 def unpack(archive: Path, to: Path) -> None:
     """The archive's single top folder becomes `to`; both are `ROOT`'s own or nothing is touched."""
 
-    archive, to = owned(archive), owned(to)
-    temporary = owned(archive.with_suffix(".unpacked"))
-    shutil.rmtree(temporary, ignore_errors=True)
-    with zipfile.ZipFile(archive) as z:
-        z.extractall(temporary)
+    temporary = archive.with_suffix(".unpacked")
+    shutil.rmtree(owned(temporary), ignore_errors=True)
+    with zipfile.ZipFile(owned(archive)) as z:
+        z.extractall(owned(temporary))
     tops = list(temporary.iterdir())
     if len(tops) != 1 or not tops[0].is_dir():
         raise ValueError(f"{archive.name} 의 맨 위 폴더가 하나가 아니다")
-    to.parent.mkdir(parents=True, exist_ok=True)
+    owned(to.parent).mkdir(parents=True, exist_ok=True)
     shutil.rmtree(owned(to), ignore_errors=True)
-    os.replace(tops[0], to)
-    shutil.rmtree(temporary, ignore_errors=True)
+    os.replace(owned(tops[0]), owned(to))
+    shutil.rmtree(owned(temporary), ignore_errors=True)
 
 
 def note(step: str = "", line: str = "") -> None:
@@ -242,10 +254,14 @@ def sdkmanager(sdk: Path, home: str, wanted: list[str]) -> None:
     env = {k: v for k, v in os.environ.items() if not k.startswith("ANDROID_")}
     env.update(JAVA_HOME=home, ANDROID_HOME=str(sdk), ANDROID_USER_HOME=str(user), TEMP=str(scratch),
                TMP=str(scratch), JAVA_TOOL_OPTIONS=f'-Djava.io.tmpdir="{scratch}"')
+    # `sdkmanager` compares each answer line to `y` untrimmed; a piped `echo` block adds a space, a file does not.
+    answers = owned(scratch / "licence-answers.txt")
+    answers.write_bytes(b"y\n" * ANSWERS)
     packages = " ".join(f'"{p}"' for p in wanted)
-    line = (f'cmd.exe /d /s /c "(for /l %i in (1,1,{ANSWERS}) do @echo y) | '
-            f'"{tool}" --sdk_root="{sdk}" --install {packages}"')
-    code, text, cut = runtime.gate(None, str(ROOT), runtime.stopping, env, 3 * 3600, None, specs.kill, argv=line)
+    line = f'cmd.exe /d /s /c ""{tool}" --sdk_root="{sdk}" --install {packages} < "{answers}""'
+    # A multi-gigabyte download prints little; the three hours and the stop flag bound it, not silence.
+    code, text, cut = runtime.gate(None, str(ROOT), runtime.stopping, env, 3 * 3600, None, specs.kill, argv=line,
+                                   idle=3 * 3600)
     for out in text.splitlines()[-40:]:
         note(line=out)
     if cut or code:
@@ -253,12 +269,13 @@ def sdkmanager(sdk: Path, home: str, wanted: list[str]) -> None:
 
 
 def _install() -> None:
-    sources = []
+    sources, marked = [], False
     try:
         if os.name != "nt":
             raise ValueError("이 버전은 Windows 에서만 Android 도구를 설치한다")
         owned(ROOT).mkdir(parents=True, exist_ok=True)
         owned(ROOT / "installing").write_text(str(time.time()), encoding="utf-8")
+        marked = True
         now = status()
         downloads, sdk, home = ROOT / "downloads", owned(ROOT / "sdk"), now["jdk"]
         if not home:
@@ -282,12 +299,13 @@ def _install() -> None:
         owned(ROOT / "receipt.json").write_text(json.dumps({"at": time.time(), "sdk": after["sdk"], "jdk": after["jdk"],
                                                             "pieces": after["pieces"], "sources": sources},
                                                            ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        (ROOT / "installing").unlink(missing_ok=True)
+        discard(ROOT / "installing")
         with _lock:
             _job.update(state="done", step="설치를 마쳤다")
     except Exception as exc:   # the owner reads what failed and presses again
-        if not runtime.stopping.is_set():   # a stop keeps the marker: the next server shows the cut install
-            (ROOT / "installing").unlink(missing_ok=True)
+        # Only this attempt's own marker; a stop keeps it, so the next server shows the cut install.
+        if marked and not runtime.stopping.is_set():
+            discard(ROOT / "installing")
         with _lock:
             _job.update(state="failed", error=f"{type(exc).__name__}: {exc}")
 

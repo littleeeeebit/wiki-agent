@@ -81,7 +81,9 @@ def prepare(repo, path, settings):
         destination.chmod(0o600)
 
 
-def gate(cmd, cwd, halt, env, timeout, owned_jobs, kill, *, argv=None):
+def gate(cmd, cwd, halt, env, timeout, owned_jobs, kill, *, argv=None, idle=None):
+    """`idle` replaces `IDLE_SECONDS` for a child that is quiet while it works, such as an installer."""
+
     budget = verification_budget.get()
     timeout = min(timeout, budget.left()) if budget else timeout
     if halt.is_set() or timeout <= 0:
@@ -94,7 +96,8 @@ def gate(cmd, cwd, halt, env, timeout, owned_jobs, kill, *, argv=None):
         fd, name = tempfile.mkstemp(dir=scratch)
         try:
             with open(fd, "w+", encoding="utf-8", errors="replace") as output, open(name, "rb") as reader:
-                return _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, reader, seen, direct=argv)
+                return _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, reader, seen,
+                                 direct=argv, idle=idle)
         finally:
             try:
                 os.unlink(name)
@@ -102,10 +105,11 @@ def gate(cmd, cwd, halt, env, timeout, owned_jobs, kill, *, argv=None):
                 pass   # ponytail: a background child still holding stdout keeps the file; TEMP collects it
     # A background setup child may inherit stdout; file capture never waits for its EOF.
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace", dir=scratch) as output:
-        return _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, direct=argv)
+        return _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, direct=argv, idle=idle)
 
 
-def _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, reader=None, seen=None, *, direct=None):
+def _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, reader=None, seen=None, *, direct=None,
+              idle=None):
     """`gate`'s run into `output`; `seen` gets the last 4 KB of `reader` about once a second.
     Python writes to a file in blocks: unbuffered, each test's mark reaches `output` as it passes."""
 
@@ -142,7 +146,7 @@ def _captured(cmd, cwd, halt, env, deadline, owned_jobs, kill, output, reader=No
                     if seen:
                         reader.seek(max(0, os.fstat(reader.fileno()).st_size - 4096))
                         seen(reader.read())
-                stuck = now - grew > IDLE_SECONDS
+                stuck = now - grew > (IDLE_SECONDS if idle is None else idle)
                 if halt.is_set() or now > deadline or stuck:
                     cut = "사람이 멈춤" if halt.is_set() else STUCK if stuck else "검증 실행 시간 제한을 넘었다"
                     process.killed(job) if job else kill(proc)

@@ -73,6 +73,16 @@ run never does it unasked: the card offers it as an action the owner presses.
 The run records the paths and versions it built with. The receipt names them,
 so a later round on another SDK is visible.
 
+The install writes only inside its own folder. Each write, replace and
+delete checks right before it acts that its path is under that folder with
+no link or junction on the way. A junction that already exists, or one that
+appears during a network wait, is refused. A process of the owner's that
+swaps folders in the moment between a check and its write is outside this
+boundary, because it already holds the rights to the owner's SDK. The
+licence answers reach `sdkmanager` from a file as bare `y` lines. Silence is
+not a stop for the install: the three-hour limit and the server's stop flag
+bound it.
+
 ### S1 — the card
 
 For `android`, `responsive` is replaced by `device`: the reference device

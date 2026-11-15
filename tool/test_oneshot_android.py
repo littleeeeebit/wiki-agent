@@ -130,7 +130,8 @@ def test_install_checks_each_archive_runs_sdkmanager_once_and_writes_a_receipt(h
                                                                 f"<checksum>{hashlib.sha1(tools).hexdigest()}</checksum>".encode()))
     ran = []
 
-    def gate(cmd, cwd, halt, env, timeout, owned_jobs, kill, argv=None):
+    def gate(cmd, cwd, halt, env, timeout, owned_jobs, kill, argv=None, idle=None):
+        assert idle == timeout   # silence alone never cuts the install
         ran.append((argv, env))
         sdk(android.ROOT / "sdk")
         return 0, "done\n", ""
@@ -146,7 +147,9 @@ def test_install_checks_each_archive_runs_sdkmanager_once_and_writes_a_receipt(h
     assert found["job"]["state"] == "done", found["job"]
     assert found["missing"] == [] and found["jdk"] == str(android.ROOT / "jdk-17")
     (line, env), = ran
-    assert f'--sdk_root="{android.ROOT / "sdk"}"' in line and f'"{android.IMAGE}"' in line and "echo y" in line
+    answers = android.ROOT / "tmp" / "licence-answers.txt"
+    assert f'--sdk_root="{android.ROOT / "sdk"}"' in line and f'"{android.IMAGE}"' in line and f'< "{answers}"' in line
+    assert answers.read_bytes() == b"y\n" * android.ANSWERS
     # Preferences and temporary files stay in the application's folder, never the owner's.
     assert env["JAVA_HOME"] == str(android.ROOT / "jdk-17") and env["ANDROID_USER_HOME"] == str(android.ROOT / "user")
     assert env["TEMP"] == env["TMP"] == str(android.ROOT / "tmp")
@@ -189,6 +192,61 @@ def test_nothing_is_written_or_deleted_through_a_junction_out_of_the_application
     assert (owners / "latest" / "owner.txt").read_text() == "owner SDK file"
     with pytest.raises(ValueError, match="밖"):
         android.owned(home / "elsewhere")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junctions are Windows'")
+def test_a_refused_root_deletes_nothing_behind_it(home):
+    """`ROOT` a junction: the install refuses it, and its cleanup leaves the owner's `installing` alone."""
+
+    import _winapi
+
+    outside = home / "owners-folder"
+    outside.mkdir()
+    (outside / "installing").write_text("owner file")
+    _winapi.CreateJunction(str(outside), str(android.ROOT))
+    with patch.object(android.runtime, "stopping", threading.Event()):
+        android._install()
+    assert android._job["state"] == "failed" and "링크" in android._job["error"]
+    assert (outside / "installing").read_text() == "owner file"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junctions are Windows'")
+def test_a_junction_made_during_the_network_wait_is_refused(home):
+    import _winapi
+
+    downloads, outside = android.ROOT / "downloads", home / "owner"
+    downloads.mkdir(parents=True)
+    outside.mkdir()
+    (outside / "tools.zip").write_bytes(b"owner archive")
+
+    def answer(*_, **__):
+        downloads.rmdir()
+        _winapi.CreateJunction(str(outside), str(downloads))
+        return io.BytesIO(b"fixture archive")
+
+    with patch.object(android.urllib.request, "urlopen", answer), pytest.raises(ValueError, match="링크"):
+        android.download("https://example.invalid/x", downloads / "tools.zip", "sha256",
+                         hashlib.sha256(b"fixture archive").hexdigest())
+    assert sorted(p.name for p in outside.iterdir()) == ["tools.zip"]
+    assert (outside / "tools.zip").read_bytes() == b"owner archive"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the install runs on Windows only")
+def test_the_real_command_line_gives_bare_yes_answers_and_outlasts_a_quiet_spell(home):
+    """A fake `sdkmanager.bat` reads its first answer the way Android's reader does, untrimmed, after a
+    silence longer than the verification gate's idle limit; the real `cmd.exe` line and gate run it."""
+
+    root = home / "app with spaces"
+    check = home / "check.py"
+    check.write_text("import sys, time\nline = sys.stdin.readline().rstrip('\\r\\n')\ntime.sleep(1.5)\n"
+                     "print(repr(line))\nsys.exit(0 if line.lower() in ('y', 'yes') else 7)\n")
+    tool = root / "sdk" / android.PIECES[0][2] / android.PIECES[0][3][0]
+    tool.parent.mkdir(parents=True)
+    tool.write_text(f'@echo off\n"{os.sys.executable}" "{check}"\n')
+    with patch.object(android, "ROOT", root), patch.object(android.runtime, "IDLE_SECONDS", 0.3), \
+         patch.object(android.runtime, "stopping", threading.Event()):
+        android.sdkmanager(root / "sdk", str(root / "jdk with spaces"), ["platform-tools"])
+    assert android._job["log"] == ["'y'"]
 
 
 def test_a_start_while_stopping_is_refused_and_a_cut_install_shows_after_a_restart(home):
