@@ -184,7 +184,10 @@ def shared(preview: dict) -> dict:
 def photographed(spec: dict, preview: dict, folder: Path) -> None:
     """An Android app's mocks drawn by the stack's own preview tool, with no emulator: the reviewed HEAD unpacked
     into the run's folder, the mock files added and the preview command run on the card's toolchain. Only the
-    pictures stay, `<folder>/<screen>-phone.png`, each at the reference phone's size."""
+    pictures stay, `<folder>/<screen>-phone.png`, each at the reference phone's size.
+
+    The command is model-written code run with the server's rights, as S4's contract tests and gate are; the
+    scratch folder is not a sandbox (`docs/plans/oneshot/7-android.md`, "How 7c builds it")."""
 
     if not oneshot_build.chained(preview["command"]):
         raise ValueError(f"`oneshot-mocks` 의 command 는 {oneshot_build.CHAIN}")
