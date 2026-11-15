@@ -158,8 +158,8 @@
     },
     "tool/main/verification.py": {
       "dup": 12,
-      "lines": 1007,
-      "reason": "Integration preserves version 3 per-application approvals and version 2 owned WebView approvals through native_targets.approval, including measured tool assets. Numeric hidden values redact scalar tokens while preserving commit hashes, versions and addresses. Previous: The owned collector validates native targets before direct execution; schemas remain outside its hashed module. Previous: `sanitize` reads hidden values once per call (`_forms`), not once per string (#299). `checkout_proven` excludes receipt-matching rebuilt indexes. Stage 4 binds selected flows, native receipts, ownership and cleanup to verification."
+      "lines": 1012,
+      "reason": "The orchestrator cleans an Android flow's ownership record after every desktop flow, killed collector included, and holds the flow at preparation while anything is left (oneshot 7d). Previous: Integration preserves version 3 per-application approvals and version 2 owned WebView approvals through native_targets.approval, including measured tool assets. Numeric hidden values redact scalar tokens while preserving commit hashes, versions and addresses. Previous: The owned collector validates native targets before direct execution; schemas remain outside its hashed module. Previous: `sanitize` reads hidden values once per call (`_forms`), not once per string (#299). `checkout_proven` excludes receipt-matching rebuilt indexes. Stage 4 binds selected flows, native receipts, ownership and cleanup to verification."
     },
     "tool/main/work.py": {
       "dup": 0,

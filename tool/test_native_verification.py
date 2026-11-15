@@ -134,9 +134,9 @@ def test_a_webview_flow_fails_closed_before_any_setup_build_or_review(cloud_worl
     assert not any(world.tmp.glob("ran-*")), "nothing may run before the collector exists"
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Actual Windows native acceptance requires Win32")
-def test_actual_native_window_event_identity_and_read_only_handoff(cloud_world):
-    world = cloud_world
+def win32_task(world, name):
+    """A Cloud task whose one desktop flow drives the real Win32 fixture: (target, manifest, settings, spec)."""
+
     fixture = Path(__file__).with_name("fixtures") / "native_window.py"
     (world.repo / "native_app.py").write_bytes(fixture.read_bytes())
     target = {"application": "disposable-win32-fixture", "window_class": "WikiVerificationFixture",
@@ -154,7 +154,23 @@ def test_actual_native_window_event_identity_and_read_only_handoff(cloud_world):
                            "executable": sys.executable, "executable_sha256": native.digest(Path(sys.executable)),
                            "ownership": "launch-disposable", "desktop": "attempt-owned", "profile": "isolated-test-profile"}}
     (world.repo / verification.LOCAL).write_text(json.dumps(settings), encoding="utf-8")
-    spec = cloud_spec(world, "native-acceptance", 1, "change.py", review={"flows": ["native-save"]})
+    return target, manifest, settings, cloud_spec(world, name, 1, "change.py", review={"flows": ["native-save"]})
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Actual Windows native acceptance requires Win32")
+def test_a_desktop_flow_whose_recorded_android_resources_remain_is_held_at_preparation(cloud_world, monkeypatch):
+    *_, spec = win32_task(cloud_world, "native-left")
+    cleaned = []
+    monkeypatch.setattr(verification.android_owned, "cleanup", lambda folder: cleaned.append(folder) or ["emulator"])
+    stopped = looped(spec["id"])
+    assert cleaned and stopped["state"] == "멈춤" and not Reviewer.made
+    assert "Android 정리가 끝나지 않았다: emulator" in json.dumps(stopped, ensure_ascii=False)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Actual Windows native acceptance requires Win32")
+def test_actual_native_window_event_identity_and_read_only_handoff(cloud_world):
+    world = cloud_world
+    target, manifest, settings, spec = win32_task(world, "native-acceptance")
     done = looped(spec["id"])
     assert done["state"] == "머지 가능", done.get("stopped")
     assert Reviewer.made[0].tools == loop.CLOUD_TOOLS and not Worker.made

@@ -39,10 +39,13 @@ const owned = file => {
 const profile = path.join(artifact, 'profile'); mkdirSync(profile);
 const sessions = [], actions = [], artifacts = [];
 const lifecycle = [];
-let child, emulator, browser, context, page, serial, forward, data, debugPort, measuredHead, logcat, androidPid, installed = false, startupRecoveryUsed = false;
+// The emulator is booted and cleaned by the Python wrapper (android_owned.py). Every adb call goes through
+// that module, which checks the owned server's and console's listeners before naming its port and serial.
+const android = request.android;
+let child, browser, context, page, forward, data, debugPort, measuredHead, logcat, androidPid, installed = false, startupRecoveryUsed = false;
 function diagnose(event) {
-  const state = {event, time: Date.now(), emulator: emulator && {pid: emulator.pid, code: emulator.exitCode, signal: emulator.signalCode}};
-  if (serial) {
+  const state = {event, time: Date.now()};
+  if (android) {
     try {state.transport = adb('get-state').trim(); state.app_pid = shell('pidof', target.package).trim();}
     catch (error) {state.error = error.message;}
   }
@@ -53,14 +56,12 @@ function logged(file, args, name, options = {}) {
   try {return spawn(file, args, {windowsHide: true, ...options, stdio: ['ignore', descriptor, descriptor]});}
   finally {closeSync(descriptor);}
 }
-const adb = (...args) => run(approval.adb.path, ['-s', serial, ...args]);
+const device = (args, options) => run(request.python, [android.helper, 'adb', artifact, ...args], options);
+const adb = (...args) => device(args);
+const screen = (timeout = 30000) => execFileSync(request.python, [android.helper, 'adb', artifact, 'exec-out', 'screencap', '-p'],
+  {windowsHide: true, timeout});
 const shell = (...args) => adb('shell', ...args.map(arg => `'${String(arg).replaceAll("'", "'\\''")}'`));
 const addArtifact = name => artifacts.push({path: name, sha256: hash(readFileSync(path.join(artifact, name)))});
-function emulatorListener() {
-  assert.ok(childAlive(emulator), 'Owned emulator exited');
-  const file = path.join(path.dirname(fileURLToPath(import.meta.url)), 'native_window.py');
-  return JSON.parse(run(request.python, [file, 'listener', serial.slice('emulator-'.length), String(emulator.pid)])).pid;
-}
 function androidFocus() {
   const lines = shell('dumpsys', 'window').split('\n').filter(line => /mCurrentFocus|mFocusedApp/.test(line));
   save('android-focus.json', {lines});
@@ -73,7 +74,6 @@ function androidFocus() {
 }
 async function prepareAndroidStartupFocus() {
   if (androidFocus()) return;
-  emulatorListener();
   const initial = JSON.parse(readFileSync(path.join(artifact, 'android-focus.json'), 'utf8'));
   if (!initial.lines.some(line => /mCurrentFocus=.*Application Not Responding: com\.android\.systemui\}/.test(line))) return;
   assert.ok(!startupRecoveryUsed, 'System UI startup failure recurred; recovery refused');
@@ -85,19 +85,16 @@ async function prepareAndroidStartupFocus() {
   const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), 'native_webview.py');
   const button = JSON.parse(run(request.python, [helper, 'android-wait', path.join(artifact, 'startup-system-ui.json'), path.join(artifact, 'startup-system-ui.xml')]));
   assert.ok(button, 'Startup focus belongs to an unexpected window; native recovery refused');
-  writeFileSync(path.join(artifact, 'startup-system-ui.png'), execFileSync(approval.adb.path,
-    ['-s', serial, 'exec-out', 'screencap', '-p'], {windowsHide: true, timeout: 30000}));
+  writeFileSync(path.join(artifact, 'startup-system-ui.png'), screen());
   addArtifact('startup-system-ui.png');
   if (androidFocus()) return;
   assert.deepEqual(JSON.parse(readFileSync(path.join(artifact, 'android-focus.json'), 'utf8')), initial,
     'Startup focus changed before the System UI Wait action');
-  emulatorListener();
   shell('input', 'tap', String(button.x), String(button.y));
   save('startup-recovery.json', {action: 'wait', ...button}); addArtifact('startup-recovery.json');
   await until(androidFocus);
 }
 async function androidTargets(url) {
-  emulatorListener();
   assert.equal(Number(shell('pidof', target.package).trim()), androidPid, 'Owned Android application process changed');
   return until(async () => {
     const response = await fetch(`http://127.0.0.1:${forward}/json/list`);
@@ -107,30 +104,12 @@ async function androidTargets(url) {
   });
 }
 
-async function android() {
-  for (let port = 5554; port < 5586; port += 2) {
-    const devices = run(approval.adb.path, ['devices']);
-    if (devices.includes(`emulator-${port}`)) continue;
-    serial = `emulator-${port}`;
-    // All writable emulator images belong to this attempt; the AVD is only a template.
-    const images = path.join(profile, 'emulator'); mkdirSync(images);
-    // The WebView fixture uses GLES; do not initialize the unused Vulkan renderer.
-    emulator = logged(approval.emulator.path, ['-avd', approval.avd, '-port', String(port), '-datadir', images,
-      '-wipe-data', '-no-snapshot', '-no-window', '-no-audio', '-no-boot-anim', '-feature', '-Vulkan',
-      ...(approval.renderer && approval.renderer !== 'auto' ? ['-gpu', approval.renderer] : [])], 'emulator.log');
-    emulator.on('error', () => {});
-    emulator.on('exit', () => diagnose('emulator-exit'));
-    await until(() => {
-      assert.ok(childAlive(emulator), 'Owned emulator exited');
-      return shell('getprop', 'sys.boot_completed').trim() === '1';
-    }, 180000);
-    emulatorListener();
-    shell('input', 'keyevent', 'KEYCODE_WAKEUP');
-    shell('wm', 'dismiss-keyguard');
-    shell('settings', 'put', 'system', 'screen_off_timeout', '1800000');
-    return;
-  }
-  throw new Error('No unused emulator console port');
+let awake = false;
+function wake() {
+  shell('input', 'keyevent', 'KEYCODE_WAKEUP');
+  shell('wm', 'dismiss-keyguard');
+  shell('settings', 'put', 'system', 'screen_off_timeout', '1800000');
+  awake = true;
 }
 
 async function launch() {
@@ -148,16 +127,17 @@ async function launch() {
     });
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`, {noDefaults: true});
   } else {
-    if (!emulator) await android();
+    assert.ok(android, 'The Android emulator was not booted by its owner');
+    if (!awake) wake();
     if (!installed) {
       // The large debug APK and first-boot package setup need more time than diagnostics.
       console.time('Android APK installation');
-      run(approval.adb.path, ['-s', serial, 'install', '-t', approval.binary.path], {timeout: 120000});
+      device(['install', '-t', approval.binary.path], {timeout: 120000});
       console.timeEnd('Android APK installation');
       shell('pm', 'grant', target.package, 'android.permission.POST_NOTIFICATIONS');
       const remote = shell('pm', 'path', target.package).trim().replace(/^package:/, '');
       const pulled = path.join(profile, 'installed.apk');
-      run(approval.adb.path, ['-s', serial, 'pull', remote, pulled], {timeout: 120000});
+      device(['pull', remote, pulled], {timeout: 120000});
       assert.equal(hash(readFileSync(pulled)), approval.binary.sha256, 'Installed APK differs from approval');
       for (const name of readdirSync(data)) {
         assert.match(name, /^[A-Za-z0-9_.-]+$/);
@@ -175,10 +155,9 @@ async function launch() {
     });
     const pid = await until(() => Number(shell('pidof', target.package).trim()));
     androidPid = pid;
-    logcat = logged(approval.adb.path, ['-s', serial, 'logcat', '--pid', String(pid)], `android-app-${sessions.length}.log`);
-    forward = await freePort();
+    logcat = logged(request.python, [android.helper, 'adb', artifact, 'logcat', '--pid', String(pid)], `android-app-${sessions.length}.log`);
     await until(() => shell('cat', '/proc/net/unix').includes(`@webview_devtools_remote_${pid}`));
-    adb('forward', `tcp:${forward}`, `localabstract:webview_devtools_remote_${pid}`);
+    forward = Number(run(request.python, [android.helper, 'forward', artifact, `localabstract:webview_devtools_remote_${pid}`]).trim());
     await androidTargets();
     browser = await until(async () => chromium.connectOverCDP(`http://127.0.0.1:${forward}`, {noDefaults: true}));
   }
@@ -213,14 +192,13 @@ async function checkpoint(label) {
     const native = inspectWindows();
     observed = {pid: native.pid, listener_pid: native.listener_pid, ...native.windows[0]};
   } else {
-    const listener = emulatorListener();
     const pid = Number(shell('pidof', target.package).trim()); assert.ok(pid > 0);
     assert.ok(androidFocus(), 'Installed app lost native focus');
-    observed = {pid, package: target.package, activity: target.activity, emulator_pid: emulator.pid, listener_pid: listener,
-      fingerprint: hash(shell('getprop', 'ro.build.fingerprint'))};
-    const screen = `android-${sessions.length}.png`;
-    writeFileSync(path.join(artifact, screen), execFileSync(approval.adb.path, ['-s', serial, 'exec-out', 'screencap', '-p'], {windowsHide: true, timeout: 30000}));
-    addArtifact(screen);
+    observed = {pid, package: target.package, activity: target.activity, emulator_pid: android.emulator_pid,
+      listener_pid: android.listener_pid, fingerprint: hash(shell('getprop', 'ro.build.fingerprint'))};
+    const shot = `android-${sessions.length}.png`;
+    writeFileSync(path.join(artifact, shot), screen());
+    addArtifact(shot);
   }
   sessions.push({...observed, label, runtime: browser.version(), build_head: measuredHead, binary_sha256: approval.binary.sha256});
   save('sessions.json', sessions);
@@ -234,7 +212,10 @@ const session = {
     await browser.close(); browser = null;
     await stop(logcat); logcat = null;
     if (target.platform === 'windows') await stop(child);
-    else {shell('am', 'force-stop', target.package); adb('forward', '--remove', `tcp:${forward}`); forward = null;}
+    else {
+      shell('am', 'force-stop', target.package);
+      run(request.python, [android.helper, 'unforward', artifact, String(forward)]); forward = null;
+    }
     await launch();
   },
   async pageFor(url) {
@@ -280,9 +261,8 @@ try {
       build_head: measuredHead, build_inputs: {}, binary_sha256: approval.binary.sha256, profile: approval.profile,
       revisions: request.revisions, desktop: request.desktop, sessions, actions, artifacts}};
 } catch (error) {
-  if (target.platform === 'android' && emulator && serial) {
-    try {writeFileSync(path.join(artifact, 'failure.png'), execFileSync(approval.adb.path,
-      ['-s', serial, 'exec-out', 'screencap', '-p'], {windowsHide: true, timeout: 10000}));} catch {}
+  if (target.platform === 'android' && android) {
+    try {writeFileSync(path.join(artifact, 'failure.png'), screen(10000));} catch {}
   }
   result = {blocked: {prerequisite: 'native', reason: error.message}};
   console.error(error.stack);
@@ -290,7 +270,7 @@ try {
 } finally {
   result = await cleanupOwned(result, [
     ['browser', () => browser?.close()], ['logcat', () => stop(logcat)],
-    ['application', () => stop(child)], ['emulator', () => stop(emulator)],
+    ['application', () => stop(child)],
   ]);
   if (result.blocked) process.exitCode = 1;
   save('result.json', result);

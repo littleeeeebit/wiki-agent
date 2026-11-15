@@ -8,7 +8,8 @@ import {EventEmitter} from 'node:events';
 import {SourceTextModule, SyntheticModule} from 'node:vm';
 import {pathToFileURL} from 'node:url';
 
-const [driver, python, root, mode, renderer = 'auto', activity = '.MainActivity', focusLine] = process.argv.slice(2);
+const [driver, python, root, mode, activity = '.MainActivity', focusLine] = process.argv.slice(2);
+const helper = path.join(path.dirname(driver), 'android_owned.py');
 const artifact = path.join(root, 'evidence');
 const data = path.join(artifact, 'data');
 fs.mkdirSync(data, {recursive: true});
@@ -17,11 +18,12 @@ const hash = value => createHash('sha256').update(value).digest('hex');
 const binary = path.join(root, 'fixture.apk'); fs.writeFileSync(binary, 'offline fixture');
 const head = 'a'.repeat(40), application = 'dev.example.app';
 const request = {root, artifact_dir: artifact, head, python, desktop: 'fixture',
+  android: {helper, serial: 'emulator-5586', emulator_pid: 2001, listener_pid: 2002},
   flow: 'startup', environment_id: 'offline', test_scope: 'simulated adapters', revisions: {},
   target: {driver: 'webview', application: 'fixture', platform: 'android', package: application, activity, scenario: 'scenario.mjs',
     actions: [{assertion: 'saved', expected: 'Saved'}]},
   settings: {applications: {fixture: {binary: {path: binary, sha256: hash(fs.readFileSync(binary))},
-    adb: {path: 'fixture-adb'}, emulator: {path: 'fixture-emulator'}, avd: 'fixture', profile: 'disposable', renderer}}}};
+    adb: {path: 'fixture-adb'}, emulator: {path: 'fixture-emulator'}, image: {path: 'fixture-image'}, profile: 'disposable'}}}};
 const file = path.join(root, 'request.json'); fs.writeFileSync(file, JSON.stringify(request));
 let focus = 'ready', pid = 1000, startingReads = 0;
 const children = [];
@@ -32,18 +34,23 @@ function spawn(command, args) {
   children.push(child); trace.push(['spawn', command, args]); return child;
 }
 function execute(command, args) {
-  if (command === python) {
-    if (args[0].endsWith('native_window.py')) return JSON.stringify({pid: 1001});
-    assert.equal(args[0], driver.replace(/\.mjs$/, '.py'));
-    assert.equal(args[1], 'android-wait');
-    trace.push(['recognize']);
-    return execFileSync(python, args, {encoding: 'utf8'});
+  assert.equal(command, python, 'Every device call goes through the owned-emulator helper');
+  if (args[0] === helper) {
+    assert.equal(args[2], artifact);
+    if (args[1] === 'forward') {trace.push(['forward', args[3]]); return '5590\n';}
+    if (args[1] === 'unforward') {trace.push(['unforward', args[3]]); return '';}
+    assert.equal(args[1], 'adb');
+    return device(args.slice(3).map(value => String(value).replace(/^'|'$/g, '')));
   }
-  assert.equal(command, 'fixture-adb');
-  if (args[0] === 'devices') return 'List of devices attached\n';
-  const cmd = args.slice(2).map(value => String(value).replace(/^'|'$/g, ''));
+  assert.equal(args[0], driver.replace(/\.mjs$/, '.py'));
+  assert.equal(args[1], 'android-wait');
+  trace.push(['recognize']);
+  return execFileSync(python, args, {encoding: 'utf8'});
+}
+function device(cmd) {
   if (cmd[0] === 'install') return 'Success';
   if (cmd[0] === 'pull') {fs.copyFileSync(binary, cmd[2]); return '';}
+  if (cmd[0] === 'forward') throw new Error('Forwards are made only through the helper, which records them');
   if (cmd[0] === 'exec-out') return Buffer.from('offline screenshot placeholder');
   if (cmd[0] === 'get-state') return 'device';
   if (cmd[0] !== 'shell') return '';
