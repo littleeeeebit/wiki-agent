@@ -19,8 +19,8 @@ TURN_SECONDS = 600.0  # a cut turn's time before the role has a longest turn on 
 KINDS = ("webapp", "android", "api", "cli", "desktop", "data")
 SUPPORTED_KINDS = ("webapp", "android")
 # The last stage a kind reaches in this version; its later stages wait for their plan step
-# (`docs/plans/oneshot/7-android.md`, 7c onwards). A kind not here runs to the end.
-REACHES = {"android": "review"}
+# (`docs/plans/oneshot/7-android.md`, 7d onwards). A kind not here runs to the end.
+REACHES = {"android": "r2"}
 # The reference phone S7 shoots (`device` replaces `responsive` for `android`): emulator hardware profiles.
 DEVICES = {"medium-phone": {"label": "보통 폰", "width": 1080, "height": 2400, "dpi": 420},
            "galaxy-s21": {"label": "Galaxy S21", "width": 1080, "height": 2400, "dpi": 421},

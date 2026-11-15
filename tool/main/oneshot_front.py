@@ -9,9 +9,12 @@ Both model turns are read-only; the server writes and shoots the mock pages in t
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import shutil
+import subprocess
+import tarfile
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -21,12 +24,12 @@ from pydantic import BaseModel
 
 from common import is_junction
 
-from . import oneshot, oneshot_front_build, oneshot_screens as screens, oneshot_sheet as sheet, oneshot_spec
-from .query import ROOT
+from . import oneshot, oneshot_android, oneshot_build, oneshot_front_build, oneshot_screens as screens, \
+    oneshot_sheet as sheet, oneshot_spec, runtime, specs
+from .oneshot_profile import DEVICES, REACHES, kind_of
 
-SPLIT_PROMPT = (ROOT / "tool/prompts/oneshot-split.md").read_text(encoding="utf-8")
-FRONTEND_PROMPT = (ROOT / "tool/prompts/oneshot-frontend.md").read_text(encoding="utf-8")
 SHOT_SECONDS = 15_000   # Playwright's milliseconds per page
+PREVIEW_SECONDS = 1800   # an Android preview's first run downloads its Gradle dependencies
 SHOT_NAME = re.compile(r"S[1-9]\d*-(desktop|phone)\.png")
 
 router = APIRouter()
@@ -41,6 +44,27 @@ def served(spec: dict) -> list[str]:
     return screens.operations(json.loads(sheet.openapi(spec)))
 
 
+def inventory(spec: dict) -> list[str]:
+    """What the features are read from: the served API, or an Android app's approved core — every module in
+    the server's own copy of the design and every requirement with a platform capability."""
+
+    if kind_of(spec["oneshot"]) != "android":
+        return served(spec)
+    return [m["id"] for m in spec["oneshot"]["design"]["modules"]] + \
+        [r["id"] for r in spec.get("requirements") or [] if r.get("capability")]
+
+
+def listed(spec: dict, ops: list[str]) -> str:
+    if kind_of(spec["oneshot"]) != "android":
+        return "Every operation of the approved API, which the built backend serves:\n\n" + \
+            "\n".join(f"- `{op}`" for op in ops) + "\n"
+    said = {m["id"]: f"{m['name']} — {m['contract']}" for m in spec["oneshot"]["design"]["modules"]}
+    said |= {r["id"]: f"`{r['capability']['permission']}` — {r['text']}" for r in spec.get("requirements") or []
+             if r.get("capability")}
+    return "Every part of the approved core, its modules and its platform capabilities:\n\n" + \
+        "\n".join(f"- `{i}` {said[i]}" for i in ops) + "\n"
+
+
 def split(repo: str) -> None:
     """One read-only turn: each served operation named in the owner's words, grouped, and given a class.
     It holds the worktree from reading the app until the features are saved (`oneshot_review.holding`)."""
@@ -51,17 +75,18 @@ def split(repo: str) -> None:
 def split_turn(repo: str, store, spec: dict):
     o = spec["oneshot"]
     try:
-        ops = served(spec)
+        ops = inventory(spec)
     except (RuntimeError, ValueError, OSError) as exc:
         store.stop("block", str(exc))
         return None
+    kind = kind_of(o)
     text = (f"The owner's sentence:\n\n{o['sentence']}\n\nThe confirmed restatement:\n\n"
             f"{json.dumps(o['intent'], ensure_ascii=False)}\n\nThe requirements:\n\n"
             f"{json.dumps(spec.get('requirements') or [], ensure_ascii=False)}\n\nThe glossary:\n\n"
-            f"{json.dumps(o.get('glossary') or [], ensure_ascii=False)}\n\nEvery operation of the approved API, "
-            f"which the built backend serves:\n\n" + "\n".join(f"- `{op}`" for op in ops) + "\n")
-    found = oneshot.turned(store, "split", SPLIT_PROMPT, text, "oneshot-features",
-                           lambda value: screens.features(value, ops), Path(spec["worktree"]))
+            f"{json.dumps(o.get('glossary') or [], ensure_ascii=False)}\n\n" + listed(spec, ops))
+    key = "parts" if kind == "android" else "endpoints"
+    found = oneshot.turned(store, "split", oneshot.prompt("split", kind), text, "oneshot-features",
+                           lambda value: screens.features(value, ops, key), Path(spec["worktree"]))
     if found is None:
         return None
     return lambda: oneshot_spec.saved(repo, oneshot={
@@ -79,8 +104,7 @@ def review():
 
 # -- S6 the frontend design -------------------------------------------------------------------
 
-def views(profile: dict) -> list[str]:
-    return list(screens.VIEWPORTS) if profile.get("responsive") == "desktop-mobile" else ["desktop"]
+views = screens.views
 
 
 def shoot(mocks: dict[str, str], folder: Path, viewports: list[str]) -> dict[str, list[str]]:
@@ -139,22 +163,89 @@ def shot_one(browser, page_file: Path, view: str, found: list[str]) -> None:
         context.close()
 
 
+def unpacked(tree: Path, into: Path) -> None:
+    """The worktree's HEAD as plain files in `into`: no `.git`, and no link leading out of it."""
+
+    done = subprocess.run(["git", "archive", "--format=tar", "HEAD"], cwd=tree, capture_output=True, timeout=300)
+    if done.returncode:
+        raise ValueError(f"git archive 실패 — {done.stderr.decode(errors='replace').strip()[-300:]}")
+    with tarfile.open(fileobj=io.BytesIO(done.stdout)) as tar:
+        tar.extractall(into, filter="data")
+
+
+def shared(preview: dict) -> dict:
+    """What no R2 item holds: the preview's files other than the screens' own, its command and its folder."""
+
+    own = set(preview["screens"].values())
+    return {"files": {p: t for p, t in preview["files"].items() if p not in own},
+            "command": preview["command"], "shots": preview["shots"]}
+
+
+def photographed(spec: dict, preview: dict, folder: Path) -> None:
+    """An Android app's mocks drawn by the stack's own preview tool, with no emulator: the reviewed HEAD unpacked
+    into the run's folder, the mock files added and the preview command run on the card's toolchain. Only the
+    pictures stay, `<folder>/<screen>-phone.png`, each at the reference phone's size."""
+
+    if not oneshot_build.chained(preview["command"]):
+        raise ValueError(f"`oneshot-mocks` 의 command 는 {oneshot_build.CHAIN}")
+    device = DEVICES[spec["oneshot"]["profile"]["device"]]
+    try:   # a missing toolchain refuses before anything is unpacked
+        env = oneshot_android.build_env()
+    except OSError as exc:
+        raise ValueError(f"Android 도구를 읽지 못했다 — {exc}") from exc
+    shutil.rmtree(folder, ignore_errors=True)
+    project = folder / "project"
+    project.mkdir(parents=True)
+    try:
+        unpacked(Path(spec["worktree"]), project)
+        root = project.resolve()
+        for name, text in preview["files"].items():
+            target = project / name
+            if not target.resolve().is_relative_to(root):
+                raise ValueError(f"목업 파일 자리가 프로젝트 밖을 가리킨다: {name}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8", newline="\n")
+        code, out, cut = specs.gate(preview["command"], project, runtime.stopping, env=env, timeout=PREVIEW_SECONDS)
+        if cut or code:
+            raise ValueError(f"화면 사진 명령이 {f'끊겼다 ({cut})' if cut else f'{code} 로 끝났다'} — {out.strip()[-800:]}")
+        problems = []
+        for sid in preview["screens"]:
+            picture = project / preview["shots"] / f"{sid}.png"
+            data = picture.read_bytes() if picture.is_file() else b""
+            size = screens.png_size(data)
+            if not screens.sized(size, device):
+                problems.append(f"{sid}: `{preview['shots']}/{sid}.png` 가 " +
+                                (f"{size[0]}×{size[1]}px 다" if size else "PNG 로 없다"))
+            else:
+                (folder / f"{sid}-phone.png").write_bytes(data)
+        if problems:
+            raise ValueError(f"화면 사진이 기준 폰 {device['width']}×{device['height']}px 로 찍히지 않았다 — " +
+                             " / ".join(problems) + f" — 명령 출력: {out.strip()[-400:]}")
+    finally:
+        shutil.rmtree(project, ignore_errors=True)
+
+
 def front_turn(final: str, attempt: int, spec: dict, reach: set[str] | None = None) -> tuple[dict, list[str]]:
     """The four S6 blocks checked against the owner's map, outside an edit's reach unchanged, then shot."""
 
     o = spec["oneshot"]
-    front = screens.design(oneshot_spec.blocks(final), o["features"], o["frequency"])
+    android = kind_of(o) == "android"
+    front = screens.design(oneshot_spec.blocks(final), o["features"], o["frequency"], android)
     if reach is not None:   # an approval outside the reach survives, so nothing outside it may move
         old, new = screens.every(o["front"]), screens.every(front)
         if moved := sorted(i for i in old if i not in reach and old[i] != new.get(i)):
             raise ValueError(f"고치라고 한 범위 밖 항목을 바꾸거나 지웠다: {', '.join(moved)} — 그대로 두어라")
         if front["tokens"] != o["front"]["tokens"]:   # no item holds them: the owner's palette stands as chosen
             raise ValueError("화면을 고치는 턴이 색 배합·글자 크기·간격(`tokens`)을 바꿨다 — 그대로 두어라")
+        if android and shared(front["preview"]) != shared(o["front"]["preview"]):
+            raise ValueError("화면을 고치는 턴이 화면 밖의 미리보기 파일·명령·사진 폴더를 바꿨다 — 그대로 두어라")
     warnings = screens.soft(front)
     if warnings and attempt == 0:
         raise ValueError("다음을 고쳐 다시 내라 — " + " / ".join(warnings[:12]))
     n = int(o.get("shots") or 0) + 1
-    if broken := shoot(front["mocks"], shots(spec["repo"], n), views(o["profile"])):
+    if android:
+        photographed(spec, front["preview"], shots(spec["repo"], n))
+    elif broken := shoot(front["mocks"], shots(spec["repo"], n), views(o["profile"])):
         raise ValueError("목업이 깨끗하게 열리지 않는다 (외부 자원 없이 한 파일로 써라) — " +
                          " / ".join(f"{sid}: {'; '.join(found[:3])}" for sid, found in broken.items()))
     return {**front, "shots": n}, warnings
@@ -166,18 +257,26 @@ def shots(repo: str, n: int) -> Path:
 
 def front_text(spec: dict) -> str:
     o = spec["oneshot"]
-    return (oneshot_spec.design_text(spec) + f"\nThe backend design:\n\n{json.dumps(o['design'], ensure_ascii=False)}"
-            f"\n\nThe features, each with its served endpoints:\n\n{json.dumps(o['features'], ensure_ascii=False)}"
+    if kind_of(o) == "android":
+        device = DEVICES[o["profile"]["device"]]
+        designed, parts = "core", "core parts"
+        shot = (f"The reference phone each screen is shot at: {device['label']}, {device['width']}×{device['height']} px "
+                f"at {device['dpi']} dpi.\n\nThe toolchain the preview command runs on:\n\n"
+                f"{oneshot_build.toolchain_text(spec)}\n")
+    else:
+        designed, parts, shot = "backend", "served endpoints", f"Viewports shot: {', '.join(views(o['profile']))}\n"
+    return (oneshot_spec.design_text(spec) + f"\nThe {designed} design:\n\n{json.dumps(o['design'], ensure_ascii=False)}"
+            f"\n\nThe features, each with its {parts}:\n\n{json.dumps(o['features'], ensure_ascii=False)}"
             f"\n\nThe owner's frequency map:\n\n{json.dumps(o['frequency'], ensure_ascii=False)}"
-            f"\n\nThe first screen is for: {o['first_screen']}\n\nViewports shot: {', '.join(views(o['profile']))}\n")
+            f"\n\nThe first screen is for: {o['first_screen']}\n\n" + shot)
 
 
 def frontend(repo: str) -> None:
     """One S6 turn in the worktree, read-only; the server checks the blocks, shoots the mocks and shows R2."""
 
     def body(store, spec, tree):
-        found = oneshot.turned(store, "frontend", FRONTEND_PROMPT, front_text(spec), screens.BLOCKS,
-                               lambda final, attempt: front_turn(final, attempt, spec), tree)
+        found = oneshot.turned(store, "frontend", oneshot.prompt("frontend", kind_of(spec["oneshot"])), front_text(spec),
+                               screens.BLOCKS, lambda final, attempt: front_turn(final, attempt, spec), tree)
         if found is None:
             return None
         front, warnings = found
@@ -196,12 +295,14 @@ def refront(repo: str, comments: dict[str, str], reach: list[str]) -> None:
 
 def refront_turn(repo: str, store, spec: dict, tree: Path, comments: dict[str, str], reach: list[str]):
     o = spec["oneshot"]
+    # An Android design's per-screen sources are its preview's files, so they are sent once.
+    left = {"shots", "mocks"} if "preview" in o["front"] else {"shots"}
     text = (front_text(spec) + f"\nThe current frontend design:\n\n"
-            f"{json.dumps({k: v for k, v in o['front'].items() if k != 'shots'}, ensure_ascii=False)}"
+            f"{json.dumps({k: v for k, v in o['front'].items() if k not in left}, ensure_ascii=False)}"
             f"\n\nThe owner edited these items, with these comments:\n\n{json.dumps(comments, ensure_ascii=False)}"
             f"\n\nReplace every item in this set and keep the rest as it is: {', '.join(reach)}. "
             "Return all four blocks in full.\n")
-    found = oneshot.turned(store, "frontend", FRONTEND_PROMPT, text, screens.BLOCKS,
+    found = oneshot.turned(store, "frontend", oneshot.prompt("frontend", kind_of(o)), text, screens.BLOCKS,
                            lambda final, attempt: front_turn(final, attempt, spec, set(reach)), tree)
     if found is None:
         return None
@@ -231,8 +332,10 @@ def approved(repo: str) -> None:
 def record(repo: str, store, spec: dict, tree: Path) -> bool:
     o = spec["oneshot"]
     front, source = o["front"], shots(repo, o["front"]["shots"])
-    copies = {"docs/design/frontend.md": None,
-              **{f"docs/design/mock/{s['id']}.html": source / f"{s['id']}.html" for s in front["screens"]},
+    # An Android app's mocks are its preview's source files, written as they were shot.
+    mocks = {f"docs/design/mock/{p}": text for p, text in front["preview"]["files"].items()} if "preview" in front \
+        else {f"docs/design/mock/{s['id']}.html": source / f"{s['id']}.html" for s in front["screens"]}
+    copies = {f"docs/design/{'screens' if 'preview' in front else 'frontend'}.md": None, **mocks,
               **{f"docs/design/shots/{s['id']}-{v}.png": source / f"{s['id']}-{v}.png"
                  for s in front["screens"] for v in views(o["profile"])}}
     root = tree.resolve()
@@ -244,14 +347,20 @@ def record(repo: str, store, spec: dict, tree: Path) -> bool:
             return False
     for name, src in copies.items():
         (tree / name).parent.mkdir(parents=True, exist_ok=True)
-        if src is None:
-            (tree / name).write_text(screens.sheet(spec, lambda sid, v: f"shots/{sid}-{v}.png"),
-                                     encoding="utf-8", newline="\n")
+        if src is None or isinstance(src, str):
+            text = screens.sheet(spec, lambda sid, v: f"shots/{sid}-{v}.png") if src is None else src
+            (tree / name).write_text(text, encoding="utf-8", newline="\n")
         else:
             shutil.copyfile(src, tree / name)
     head = oneshot_spec.commit(repo, tree, list(copies), f"Record the approved frontend design (R2 round {o['r2']['round']})")
     if not head:
         return False
+    if REACHES.get(kind_of(o)) == "r2":   # this version's last stage for the kind: one write, nothing starts the build
+        oneshot_spec.saved(repo, oneshot={"stage": "build-front", "front_head": head, "working": None, "stopped": {
+            "reason": "kind", "state": "build-front",
+            "detail": f"`{kind_of(o)}` 는 이 버전에서 R2 화면 설계까지 간다 — 승인한 화면을 커밋했고, 다음 단계"
+                      "(docs/plans/oneshot/7-android.md 7d·7e, 에뮬레이터)가 들어오면 이어 간다"}})
+        return True
     # `working` names the build before its turn is sent: a server that dies in between leaves it for `recover`,
     # and the screens are already the spec's `done` that the resumed turn reports against.
     oneshot_spec.saved(repo, done=[f"{s['id']} `{s['route']}`: {s['purpose']}" for s in front["screens"]],
@@ -333,7 +442,8 @@ def decide(repo: str, body: R2) -> dict:
             raise HTTPException(400, "색 배합을 하나 골라라")
         oneshot_spec.saved(repo, oneshot={"r2": r2, "reading": reading})
         approved(repo)
-    if oneshot_spec.spec_of(repo)["oneshot"]["stage"] == "build-front":   # outside the lock: the turn takes the worktree's hold
+    after = oneshot_spec.spec_of(repo)["oneshot"]
+    if after["stage"] == "build-front" and not after.get("stopped"):   # outside the lock: the turn takes the worktree's hold
         oneshot_front_build.begin(repo)
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 

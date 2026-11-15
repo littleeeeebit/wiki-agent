@@ -3,7 +3,8 @@ import { get, json, post, type ChoiceQuestion } from '@/lib/api'
 /** The oneshot run's data past S1 and its requests (`tool/main/oneshot_spec.py` `view`). */
 
 export type Decision = { approve?: boolean; edit?: string }
-export type Feature = { id: string; name: string; class: Freq; why: string; endpoints: string[] }
+// A web app's feature names its served endpoints; an Android app's names its core parts.
+export type Feature = { id: string; name: string; class: Freq; why: string; endpoints?: string[]; parts?: string[] }
 export type Freq = 'every' | 'sometimes' | 'rarely' | 'never'
 export type Palette = { id: string; name: string; colors: Record<string, string> }
 export type Gate = { round: number; decisions: Record<string, Decision>; marks?: Record<string, string>; palette?: string }
