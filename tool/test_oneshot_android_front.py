@@ -11,6 +11,7 @@ import json
 import os
 import struct
 import subprocess
+import tracemalloc
 import zlib
 from unittest.mock import patch
 
@@ -148,11 +149,12 @@ def test_a_screen_or_a_mock_outside_the_rules_is_refused(change, said):
         screens.design(blocks(**change), FEATURES, FREQUENCY, android=True)
 
 
+def chunk(name: bytes, data: bytes) -> bytes:
+    return struct.pack(">I", len(data)) + name + data + struct.pack(">I", zlib.crc32(name + data))
+
+
 def png(width: int, height: int, colour: int = 0, depth: int = 8, interlace: int = 0, filter_byte: int = 0,
         rows: list[int] | None = None) -> bytes:
-    def chunk(name: bytes, data: bytes) -> bytes:
-        return struct.pack(">I", len(data)) + name + data + struct.pack(">I", zlib.crc32(name + data))
-
     lines = rows if rows is not None else screens.scanlines(width, height, screens.CHANNELS.get(colour, 1) * depth,
                                                            interlace)
     pixels = b"".join(bytes([filter_byte]) + b"\x00" * (n - 1) for n in lines)
@@ -170,15 +172,35 @@ def png(width: int, height: int, colour: int = 0, depth: int = 8, interlace: int
     (png(40, 40, rows=[41] * 39), None),   # a row short
     (png(40, 40, colour=3), None),   # a palette image
     (png(40, 40, colour=2, depth=4), None),   # a depth true colour does not allow
-], ids=["grey", "interlaced", "deep", "header", "filter", "short", "palette", "depth"])
+    # A second header a decoder follows instead of the first, and an IEND that is not last.
+    (png(1080, 2400)[:33] + chunk(b"IHDR", struct.pack(">IIBBBBB", 2160, 4800, 8, 0, 0, 0, 0)) + png(1080, 2400)[33:],
+     None),
+    (png(40, 40)[:-12] + chunk(b"IDAT", b"") + png(40, 40)[-12:], (40, 40)),   # an empty IDAT in the run is fine
+    (png(40, 40)[:33] + chunk(b"tEXt", b"a\x00b") + png(40, 40)[33:], (40, 40)),   # an ancillary chunk too
+    (png(40, 40)[:33] + chunk(b"PLTE", b"\x00\x00\x00") + png(40, 40)[33:], None),   # a palette in a grey image
+    (png(5000, 2400), None),   # past the reference phone
+], ids=["grey", "interlaced", "deep", "header", "filter", "short", "palette", "depth", "two-headers", "empty-idat",
+        "text", "grey-palette", "too-wide"])
 def test_a_picture_counts_only_as_a_whole_png_whose_rows_decode(data, size):
-    assert screens.png_size(data) == size
+    assert screens.png_size(data, (5000 - 1, 2472)) == size
     try:
         from PIL import Image
     except ImportError:
         return
     if size:   # what the server takes, a real decoder opens
         assert Image.open(io.BytesIO(data)).size == size and Image.open(io.BytesIO(data)).load()
+
+
+def test_a_huge_declared_size_is_refused_before_anything_is_allocated_for_it():
+    tiny = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1_000_000, 8, 0, 0, 0, 0)) +
+            chunk(b"IDAT", zlib.compress(b"\x00\x00")) + chunk(b"IEND", b""))
+    tracemalloc.start()
+    try:
+        assert screens.png_size(tiny, screens.largest({"width": 1080, "height": 2400})) is None
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 100_000
 
 
 def test_the_preview_draws_each_screen_on_the_unpacked_head_and_keeps_only_the_pictures(boarded):
@@ -197,7 +219,7 @@ def test_the_preview_draws_each_screen_on_the_unpacked_head_and_keeps_only_the_p
 
 @pytest.mark.parametrize("found, said", [
     (mocks(**{"shoot.py": shooter(width=720, height=1600)}), "S1: `build/mock-shots/S1.png` 가 720×1600px 다"),
-    (mocks(**{"shoot.py": shooter(whole=False)}), "S1: `build/mock-shots/S1.png` 가 PNG 로 없다"),
+    (mocks(**{"shoot.py": shooter(whole=False)}), "S1: `build/mock-shots/S1.png` 가 기준 폰보다 크지 않은 온전한 PNG 로 없다"),
     # Quiet past the shared quiet limit, which the test shortens: only the preview's deadline may cut it.
     (mocks(**{"shoot.py": "import time\ntime.sleep(1)\nraise SystemExit(3)\n"}), "3 로 끝났다"),
     (mocks(**{"shoot.py": "raise SystemExit(3)"}), "3 로 끝났다"),

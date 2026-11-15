@@ -239,11 +239,30 @@ def scanlines(width: int, height: int, bits: int, interlace: int) -> list[int]:
     return out
 
 
-def png_size(data: bytes) -> tuple[int, int] | None:
-    """A complete PNG's width and height, or `None`: every chunk's checksum holds, it runs from `IHDR` to
-    `IEND`, its colour type is grey or true colour with a bit depth that type allows, and its pixels inflate
-    to exactly the scanlines its header promises, each opening with a defined filter (0–4). Every byte after
-    that is a valid sample, so a picture that passes decodes."""
+def ordered(names: list[bytes], colour: int) -> bool:
+    """The chunks in the one order a decoder reads: `IHDR` first, at most one `PLTE` (never for grey), one
+    unbroken run of `IDAT`, `IEND` last, and no other critical chunk. Ancillary chunks may sit elsewhere."""
+
+    if not all(n.isalpha() for n in names):
+        return False
+    critical = [n for n in names if n[:1].isupper()]
+    if critical[:1] != [b"IHDR"] or critical[-1:] != [b"IEND"]:
+        return False
+    middle = critical[1:-1]
+    if middle[:1] == [b"PLTE"]:
+        if colour in (0, 4):
+            return False
+        middle = middle[1:]
+    runs = [i for i, n in enumerate(names) if n == b"IDAT"]
+    return bool(middle) and set(middle) == {b"IDAT"} and runs == list(range(runs[0], runs[-1] + 1))
+
+
+def png_size(data: bytes, largest: tuple[int, int]) -> tuple[int, int] | None:
+    """A complete PNG's width and height, or `None`: every chunk's checksum holds and the chunks come in
+    order (`ordered`), it is no larger than `largest`, its colour type is grey or true colour with a bit depth
+    that type allows, and its pixels inflate to exactly the scanlines its header promises, each opening with a
+    defined filter (0–4). Every byte after that is a valid sample, so a picture that passes decodes. The size
+    is refused before anything is allocated for it."""
 
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         return None
@@ -255,10 +274,11 @@ def png_size(data: bytes) -> tuple[int, int] | None:
             return None
         chunks.append((name, body))
         at += 12 + n
-    if not chunks or chunks[0][0] != b"IHDR" or len(chunks[0][1]) != 13 or chunks[-1][0] != b"IEND":
+    if not chunks or chunks[0][0] != b"IHDR" or len(chunks[0][1]) != 13:
         return None
     width, height, depth, colour, method, filtering, interlace = struct.unpack(">IIBBBBB", chunks[0][1])
-    if depth not in DEPTHS.get(colour, ()) or not width or not height or method or filtering or interlace not in (0, 1):
+    if depth not in DEPTHS.get(colour, ()) or not 0 < width <= largest[0] or not 0 < height <= largest[1] \
+            or method or filtering or interlace not in (0, 1) or not ordered([n for n, _ in chunks], colour):
         return None
     lines = scanlines(width, height, CHANNELS[colour] * depth, interlace)
     try:   # bounded: a picture that inflates past its own size is not one
@@ -273,6 +293,12 @@ def png_size(data: bytes) -> tuple[int, int] | None:
             return None
         at += n
     return width, height
+
+
+def largest(device: dict) -> tuple[int, int]:
+    """The largest picture a preview of `device` may write: its size and the slack."""
+
+    return int(device["width"] * (1 + SIZE_SLACK)), int(device["height"] * (1 + SIZE_SLACK))
 
 
 def sized(size: tuple[int, int] | None, device: dict) -> bool:
