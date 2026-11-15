@@ -52,25 +52,25 @@ def parents() -> dict[int, int]:
     return found
 
 
-def _described(k, w, handle, pid: int, live: bool = True) -> dict | None:
+def _described(k, w, handle, pid: int) -> dict | None:
     times = [w.FILETIME() for _ in range(4)]
     image, size, code = ctypes.create_unicode_buffer(32768), w.DWORD(32768), w.DWORD()
     if not k.GetProcessTimes(handle, *[ctypes.byref(t) for t in times]) \
             or not k.QueryFullProcessImageNameW(handle, 0, image, ctypes.byref(size)) \
-            or not k.GetExitCodeProcess(handle, ctypes.byref(code)) or (live and code.value != 259):   # STILL_ACTIVE
+            or not k.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value != 259:   # STILL_ACTIVE
         return None
     created = times[0].dwHighDateTime << 32 | times[0].dwLowDateTime
     return {"pid": pid, "created": created, "exe": os.path.normcase(image.value), "parent": parents().get(pid, 0)}
 
 
-def identity(pid: int, handle=None, live: bool = True) -> dict | None:
+def identity(pid: int, handle=None) -> dict | None:
     """A live process's stable identity: pid, creation time (FILETIME ticks), image path (case-folded) and
     the parent pid recorded at its creation. `None` once it has exited or cannot be read. `handle` reads a
-    process this one started, whose handle it holds; with `live=False` even after it has exited."""
+    process this one started, whose handle it holds."""
 
     k, w = _kernel()
     if handle is not None:
-        return _described(k, w, int(handle), pid, live)
+        return _described(k, w, int(handle), pid)
     opened = k.OpenProcess(QUERY, False, pid)
     if not opened:
         return None
@@ -103,27 +103,40 @@ def terminate(recorded: dict, wait: float = 10) -> bool:
         k.CloseHandle(handle)
 
 
-def listeners(port: int) -> set[int]:
-    """The pids holding a listening TCP socket on `port`, on any local address, IPv4 or IPv6."""
+def _sockets(kind: int) -> list[tuple[int, int, int, int]]:
+    """Every TCP socket of a table class, IPv4 and IPv6: (state, local port, remote port, owning pid)."""
 
-    k, w = _kernel()
+    _k, w = _kernel()
     ip = ctypes.WinDLL("iphlpapi", use_last_error=True)
     ip.GetExtendedTcpTable.argtypes = (w.LPVOID, ctypes.POINTER(w.DWORD), w.BOOL, w.ULONG, ctypes.c_int, w.ULONG)
-    found = set()
-    # (address family, DWORDs per row, index of the state, of the local port and of the owning pid)
-    for family, width, state, at, owner in ((socket.AF_INET, 6, 0, 2, 5), (23, 14, 12, 5, 13)):
+    found = []
+    # (address family, DWORDs per row, index of the state, local port, remote port and owning pid)
+    for family, width, state, here, there, owner in ((socket.AF_INET, 6, 0, 2, 4, 5), (23, 14, 12, 5, 11, 13)):
         size = w.DWORD()
-        ip.GetExtendedTcpTable(None, ctypes.byref(size), False, family, 3, 0)   # TCP_TABLE_OWNER_PID_LISTENER
+        ip.GetExtendedTcpTable(None, ctypes.byref(size), False, family, kind, 0)
         table = ctypes.create_string_buffer(size.value + 4096)
         size = w.DWORD(len(table))
-        if ip.GetExtendedTcpTable(table, ctypes.byref(size), False, family, 3, 0):
+        if ip.GetExtendedTcpTable(table, ctypes.byref(size), False, family, kind, 0):
             raise ValueError("Cannot read the TCP table")
         values = ctypes.cast(table, ctypes.POINTER(w.DWORD))
         for row in range(values[0]):
             cells = [values[1 + row * width + i] for i in range(width)]
-            if cells[state] == 2 and socket.ntohs(cells[at] & 0xFFFF) == port:
-                found.add(int(cells[owner]))
+            found.append((int(cells[state]), socket.ntohs(cells[here] & 0xFFFF), socket.ntohs(cells[there] & 0xFFFF),
+                          int(cells[owner])))
     return found
+
+
+def listeners(port: int) -> set[int]:
+    """The pids holding a listening TCP socket on `port`, on any local address, IPv4 or IPv6."""
+
+    return {pid for state, here, _, pid in _sockets(3) if state == 2 and here == port}   # OWNER_PID_LISTENER
+
+
+def peer(port: int, client: int) -> set[int]:
+    """The pids holding the accepted end of a loopback connection from local port `client` to `port`: who
+    actually answers a socket this process connected."""
+
+    return {pid for state, here, there, pid in _sockets(5) if state != 2 and here == port and there == client}
 
 
 @contextmanager

@@ -44,9 +44,12 @@ started by its own client. It refuses an `adb` older than 37.0.1, the release
 verified to honour those variables. The AVD is written from the approved image
 under the attempt directory and boots with `-wipe-data` on an even console port
 from 5586, outside any server's emulator scan. The emulator registers only with
-the owned server. Every `adb` call names that server's port and the owned
-serial, after checking that both ports' listeners are still the recorded
-processes. An owned server that sees any other device refuses the run before
+the owned server. Every `adb` call names the owned serial and reaches the
+server only through a loopback relay the calling process holds. The relay joins
+a connection to the server only after the TCP table shows that the recorded
+server holds the accepted end of that same connection. Anything else gets
+adb's `FAIL`, so a process that took the port never sees a request, and the
+client never meets an empty port where it would start a server of its own. An owned server that sees any other device refuses the run before
 booting, so the owner's default server on 5037, its emulators and any physical
 device are never reached.
 
@@ -60,11 +63,10 @@ exits or is killed. It sends nothing to a port, because a port-addressed
 `kill-server` or `forward --remove` reaches whatever holds the port at that
 moment. It kills each recorded process only after checking its identity on the
 killing handle; the server's forwards are its own listeners and close with it.
-Then it deletes the recorded folders inside the artifact folder. A folder that
-already existed is never recorded. A reused pid or port is left alone. An
-ordinary call checks the listeners again after it returns. If the server
-changed in between, the answer is discarded, and a server the call's own
-client started on the empty port is stopped by identity. A flow whose record does not end `cleaned` is held at preparation,
+Then it deletes the recorded folders inside the artifact folder. The AVD home
+gets a random name that is recorded before the folder is made, so the record
+never names a folder that already existed, even when the run dies in between.
+A reused pid or port is left alone. A flow whose record does not end `cleaned` is held at preparation,
 naming what is left, and a receipt is accepted only with a cleaned record
 naming the emulator its sessions ran on.
 The WebView fixture uses GLES with Vulkan disabled, following the emulator's

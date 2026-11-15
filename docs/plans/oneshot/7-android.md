@@ -229,8 +229,12 @@ How 7d builds it:
   receipt redesign from the native WebView plan's step 3 stay on hold with
   that plan.
 - The driver no longer starts an emulator or calls `adb` itself. Every call
-  goes through the module's command line, which checks the listeners first.
-  An approval names the system image folder instead of an AVD template.
+  goes through the module's command line. The module's `adb` client connects
+  only to a relay the module holds, and the relay joins a connection to the
+  server only after the TCP table shows the recorded server answering it.
+  A check made before the call could not stop a request from reaching a
+  server that took the port in between. An approval names the system image
+  folder instead of an AVD template.
 - The owned server's discovery is closed by `ADB_EMU=0`,
   `ADB_LOCAL_TRANSPORT_MAX_PORT=5554`, `ADB_USB=0` and `ADB_MDNS=0`. These are
   read in adb's own source (`client/main.cpp`, `client/mdns_utils.cpp`),

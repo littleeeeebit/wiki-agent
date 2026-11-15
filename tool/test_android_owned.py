@@ -33,7 +33,7 @@ class World:
         self.tools = {"adb": {"path": str(self.adb), "sha256": owned.sha256(self.adb)},
                       "emulator": {"path": str(self.emulator), "sha256": owned.sha256(self.emulator)},
                       "image": {"path": str(self.image), "sha256": owned.image_digest(self.image)}}
-        self.procs, self.listen, self.clock, self.next, self.ever = {}, {}, 1000, 200, {}
+        self.procs, self.listen, self.clock, self.next, self.relays = {}, {}, 1000, 200, {}
         self.argvs, self.envs, self.stubborn = [], {}, set()
         self.connecting = None        # runs as a client connects, after the owned checks passed
         self.extra_devices, self.version = [], "37.0.1"
@@ -45,7 +45,7 @@ class World:
 
     def add(self, pid, exe, parent, ports=()):
         self.clock += 1
-        self.procs[pid] = self.ever[pid] = {"pid": pid, "created": self.clock, "exe": exe, "parent": parent}
+        self.procs[pid] = {"pid": pid, "created": self.clock, "exe": exe, "parent": parent}
         for port in ports:
             self.listen.setdefault(port, set()).add(pid)
         return pid
@@ -67,8 +67,6 @@ class World:
     def Popen(self, argv, env=None, **_):
         world, pid = self, self.spawn(argv[0], 1)
         self.envs[argv[0] if "start-server" not in argv else "start-server"] = env
-        if argv[0] == str(self.adb) and "start-server" not in argv:
-            return self.command(argv, pid)
         self.argvs.append(argv)
 
         class Proc:
@@ -100,16 +98,22 @@ class World:
 
         return Proc()
 
-    def command(self, argv, client):
-        """An adb client: it connects to whatever holds the port, starting a server there if nothing does."""
+    def run(self, argv, text=False, **options):
+        """`adb version`, or an adb client that reaches the owned server only through its relay."""
 
         self.argvs.append(argv)
-        assert argv[1] == "-P", argv   # every owned call names the owned port
-        port, rest = int(argv[2]), argv[3:]
+        self.options = options
+        if argv[1:] == ["version"]:
+            out = f"Android Debug Bridge version 1.0.41\nVersion {self.version}-15733141\n"
+            return subprocess.CompletedProcess(argv, 0, out if text else out.encode(), "" if text else b"")
+        assert argv[1] == "-P" and int(argv[2]) in self.relays, argv   # every call goes through a relay
+        relay, rest = self.relays[int(argv[2])], argv[3:]
         if self.connecting:
             self.connecting()
-        if not self.listen.get(port):
-            self.spawn(self.adb, client, [port])
+        server = relay.server
+        if self.listen.get(server["port"]) != {server["pid"]} or not native_process.same(server, self.identity(server["pid"])):
+            relay.refused = "the owned ADB server's port belongs to another process"
+            return subprocess.CompletedProcess(argv, 1, b"", b"FAIL")   # nothing reached the other server
         if rest[0] == "-s":
             rest = rest[2:]
         out = ""
@@ -120,16 +124,24 @@ class World:
         elif rest[:2] == ["shell", "getprop"]:
             out = {"sys.boot_completed": self.boot, "ro.kernel.qemu": "1"}[rest[2]]
         elif rest[0] == "forward" and rest[1].startswith("tcp:"):
-            self.listen.setdefault(int(rest[1][4:]), set()).update(self.listen[port])   # the server listens
-        self.kill(client)
-        return SimpleNamespace(pid=client, _handle=client, returncode=0, kill=lambda: None,
-                               communicate=lambda timeout=None: (out.encode(), b""))
+            self.listen.setdefault(int(rest[1][4:]), set()).add(server["pid"])   # the server listens there
+        return subprocess.CompletedProcess(argv, 0, out.encode(), b"")
 
-    def run(self, argv, text=False, **_):
-        self.argvs.append(argv)
-        assert argv[1:] == ["version"], argv
-        out = f"Android Debug Bridge version 1.0.41\nVersion {self.version}-15733141\n"
-        return subprocess.CompletedProcess(argv, 0, out if text else out.encode(), "" if text else b"")
+    def Relay(self, server):
+        world = self
+
+        class Relay:
+            def __init__(self):
+                self.server, self.refused, self.port = server, "", 40000 + len(world.relays)
+                world.relays[self.port] = self
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                pass
+
+        return Relay()
 
     def terminate(self, recorded, wait=10):
         if not native_process.same(recorded, self.identity(recorded["pid"])):
@@ -139,17 +151,18 @@ class World:
         self.kill(recorded["pid"])
         return True
 
-    def identity(self, pid, handle=None, live=True):
-        found = self.procs.get(pid) or (None if live else self.ever.get(pid))
+    def identity(self, pid, handle=None):
+        found = self.procs.get(pid)
         return dict(found) if found else None
 
 
 @pytest.fixture
 def world(tmp_path, monkeypatch):
     w = World(tmp_path)
-    fake = SimpleNamespace(Popen=w.Popen, run=w.run, DEVNULL=subprocess.DEVNULL, PIPE=subprocess.PIPE,
+    fake = SimpleNamespace(Popen=w.Popen, run=w.run, DEVNULL=subprocess.DEVNULL,
                            CREATE_NO_WINDOW=0, TimeoutExpired=subprocess.TimeoutExpired)
     monkeypatch.setattr(owned, "subprocess", fake)
+    monkeypatch.setattr(owned, "Relay", w.Relay)
     monkeypatch.setattr(owned, "process", SimpleNamespace(SUSPENDED=0, background_options=dict, terminated=lambda job: None,
                                                           contained=lambda proc: "job", resumed=lambda proc: proc.resume()))
     monkeypatch.setattr(owned, "listeners", lambda port: set(w.listen.get(port, ())))
@@ -181,17 +194,19 @@ def test_a_boot_runs_its_own_closed_server_and_emulator_and_cleans_exactly_them(
         assert all(Path(env[key]).is_dir() for key in ("ANDROID_AVD_HOME", "ANDROID_EMULATOR_HOME", "ANDROID_USER_HOME"))
         emulator = next(a for a in world.argvs if a[0] == str(world.emulator))
         assert emulator[emulator.index("-gpu") + 1] == "host" and "-wipe-data" in emulator
-        config = (world.folder / "android/avd/owned.avd/config.ini").read_text(encoding="utf-8")
+        home = world.folder / record["folders"][0]
+        config = (home / "avd/owned.avd/config.ini").read_text(encoding="utf-8")
         assert "hw.lcd.width=720" in config and "image.sysdir.1=system-images/android-34/google_apis/x86_64/" in config
         local = owned.forward(world.folder, "localabstract:webview_devtools_remote_1")
         assert owned.load(world.folder)["forwards"] == [local]
     record = owned.load(world.folder)
     assert record["state"] == "cleaned" and record["left"] == []
-    assert not (world.folder / "android").exists()
+    assert not home.exists()
     assert record["server"]["pid"] not in world.procs and not world.listen[local]
     assert not any("kill-server" in a or "--remove" in a for a in world.argvs)
     assert not any(p["exe"].endswith(("qemu.exe", "emulator.exe")) and p["pid"] != USER_EMULATOR for p in world.procs.values())
-    assert all(a[1:] == ["version"] or a[1:3] == ["-P", str(record["server"]["port"])] for a in world.argvs
+    # Only start-server names the owned port; every other client reaches the server through a relay.
+    assert all(a[1:] == ["version"] or int(a[2]) in world.relays for a in world.argvs
                if a[0] == str(world.adb) and "start-server" not in a)
 
 
@@ -245,11 +260,12 @@ def test_a_replaced_tool_or_an_old_adb_refuses_before_anything_starts(world, cha
 def test_a_killed_collector_is_cleaned_by_the_orchestrator_from_its_record(world):
     _context, _serial = booted(world)   # held: a dropped context would clean up as it is collected
     local = owned.forward(world.folder, "localabstract:webview_devtools_remote_1")
+    home = world.folder / owned.load(world.folder)["folders"][0]
     owned._jobs.clear()   # the collector died: its jobs and memory are gone, the record is not
     sent = len(world.argvs)
     assert owned.cleanup(world.folder) == []
     assert world.argvs[sent:] == [] and not world.listen[local]   # the forward closed with its server
-    assert owned.load(world.folder)["state"] == "cleaned" and not (world.folder / "android").exists()
+    assert owned.load(world.folder)["state"] == "cleaned" and not home.exists()
     assert owned.cleanup(world.folder) == []   # idempotent
 
 
@@ -280,7 +296,7 @@ def test_a_server_that_lost_its_listener_gets_no_command_and_is_killed_by_identi
     assert record["server"]["pid"] not in world.procs
 
 
-def test_a_server_replaced_between_the_check_and_the_connection_is_neither_trusted_nor_stopped(world):
+def test_a_forward_sent_while_another_server_took_the_port_never_reaches_it(world):
     _context, _serial = booted(world)
     server = owned.load(world.folder)["server"]
     foreign = []
@@ -291,34 +307,73 @@ def test_a_server_replaced_between_the_check_and_the_connection_is_neither_trust
         foreign.append(world.spawn(world.adb, 999, [server["port"]]))   # another run's server takes the port
 
     world.connecting = replaced
-    with pytest.raises(ValueError, match="changed during the call"):
-        owned.call(world.folder, ["shell", "getprop", "ro.kernel.qemu"])
+    ports = set(world.listen)
+    with pytest.raises(ValueError, match="reached nothing"):
+        owned.forward(world.folder, "localabstract:webview_devtools_remote_1")
+    assert not any(foreign[0] in world.listen[p] for p in set(world.listen) - ports), "the other server got a forward"
     owned._jobs.clear()
     assert owned.cleanup(world.folder) == [] and foreign[0] in world.procs
 
 
-def test_a_server_a_call_started_after_the_owned_one_vanished_is_stopped(world):
+def test_a_call_after_the_owned_server_vanished_starts_no_server(world):
     _context, _serial = booted(world)
     server = owned.load(world.folder)["server"]
+    before = {p for p, v in world.procs.items() if v["exe"] == os.path.normcase(str(world.adb))}
 
     def vanished():
         world.connecting = None
         world.kill(server["pid"])
 
     world.connecting = vanished
-    with pytest.raises(ValueError, match="changed during the call"):
+    with pytest.raises(ValueError, match="reached nothing"):
         owned.call(world.folder, ["shell", "getprop", "ro.kernel.qemu"])
-    assert not world.listen[server["port"]], "the client's own server must not outlive the call"
+    assert not world.listen[server["port"]]
+    assert {p for p, v in world.procs.items() if v["exe"] == os.path.normcase(str(world.adb))} <= before
+
+
+def test_a_streamed_logcat_writes_to_the_helpers_own_output(world):
+    _context, _serial = booted(world)
+    assert owned.main(["adb", str(world.folder), "logcat"]) == 0
+    # Left to inherit, the real adb wrote into the hidden console CREATE_NO_WINDOW gave it.
+    assert world.options["stdout"] is sys.stdout and world.options["stderr"] is sys.stderr
+
+
+def kept(path):
+    path.mkdir()
+    (path / "kept.txt").write_text("not this run's", encoding="utf-8")
+    return path / "kept.txt"
 
 
 def test_a_folder_already_in_the_run_folder_is_never_owned_or_deleted(world):
-    existing = world.folder / "android"
-    existing.mkdir()
-    (existing / "kept.txt").write_text("not this run's", encoding="utf-8")
+    existing = kept(world.folder / "android")
+    with owned.boot(world.folder, world.tools):
+        assert owned.load(world.folder)["folders"][0].startswith("android-")
+    assert existing.read_text(encoding="utf-8") == "not this run's"
+
+
+def test_a_colliding_folder_name_is_refused_and_kept(world, monkeypatch):
+    monkeypatch.setattr(owned.secrets, "token_hex", lambda _n: "0" * 16)
+    existing = kept(world.folder / ("android-" + "0" * 16))
     with pytest.raises(ValueError, match="not this run's"):
         booted(world)
-    assert (existing / "kept.txt").read_text(encoding="utf-8") == "not this run's"
+    assert existing.read_text(encoding="utf-8") == "not this run's"
     assert owned.load(world.folder)["folders"] == [] and owned.load(world.folder)["state"] == "cleaned"
+
+
+def test_a_boot_interrupted_between_naming_and_making_its_folder_deletes_nothing_else(world, monkeypatch):
+    existing, save, fired = kept(world.folder / "android"), owned.save, []
+
+    def interrupted(folder, record):
+        save(folder, record)
+        if record["folders"] and not (folder / record["folders"][0]).exists() and not fired:
+            fired.append(True)
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(owned, "save", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        booted(world)
+    assert existing.read_text(encoding="utf-8") == "not this run's"
+    assert owned.load(world.folder)["state"] == "cleaned"
 
 
 def test_a_cleanup_that_cannot_finish_says_what_is_left_and_fails_the_run(world):
@@ -353,3 +408,35 @@ def test_the_real_identity_listener_and_terminate_helpers():
         assert native_process.terminate(recorded) and child.wait(5) is not None
     finally:
         child.kill()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows TCP table")
+def test_the_real_relay_joins_only_the_recorded_server():
+    import threading
+
+    def echo(listener):
+        while True:
+            try:
+                peer, _ = listener.accept()
+            except OSError:
+                return
+            with peer:
+                peer.sendall(peer.recv(64))
+
+    def through(relay):
+        with socket.create_connection(("127.0.0.1", relay.port), timeout=10) as client:
+            client.sendall(b"host:version")
+            return client.recv(64)
+
+    me = native_process.identity(os.getpid())
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        threading.Thread(target=echo, args=(listener,), daemon=True).start()
+        with owned.Relay({"port": port, **me}) as relay:
+            assert through(relay) == b"host:version" and not relay.refused
+        with owned.Relay({"port": port, **me, "pid": os.getppid()}) as relay:   # the record names another
+            assert through(relay).startswith(b"FAIL") and "another process" in relay.refused
+    with owned.Relay({"port": port, **me}) as relay:   # nothing listens any more
+        assert through(relay).startswith(b"FAIL") and "gone" in relay.refused

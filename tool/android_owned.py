@@ -20,16 +20,18 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
 
 from common import is_junction, process
-from native_process import identity, listeners, parents, same, terminate
+from native_process import identity, listeners, parents, peer, same, terminate
 
 RECORD = "android-ownership.json"
 FIRST_CONSOLE, LAST_CONSOLE = 5586, 5700   # even console ports; each one's adbd port is one above it
@@ -135,24 +137,88 @@ def emulator_ok(record: dict) -> bool:
     return bool(console) and listeners(record["console"]) == {console["pid"]} and same(console, identity(console["pid"]))
 
 
-def stray(record: dict, client: dict | None) -> bool:
-    """A server `client` started on the owned port, found by its parent and creation order and stopped by
-    identity. An adb client starts one when it finds no server there. `True` when there was one."""
+def _pump(source: socket.socket, sink: socket.socket) -> None:
+    try:
+        while data := source.recv(1 << 16):
+            sink.sendall(data)
+    except OSError:
+        pass
+    finally:
+        try:
+            sink.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
 
-    found = False
-    for pid in listeners(record["server"]["port"]):
-        here = identity(pid)
-        if client and here and here["parent"] == client["pid"] and here["created"] >= client["created"]:
-            terminate(here)
-            found = True
-    return found
+
+class Relay:
+    """A loopback port this process holds, exclusively, for one adb client. Each connection the client
+    opens is joined to the owned server only once the TCP table shows that the accepted end of the upstream
+    connection belongs to the recorded server. The check is bound to the very connection that carries
+    the request: a server that took the port is answered with adb's `FAIL` and never sees a byte. The
+    client never meets an empty port either, so it never starts a server of its own."""
+
+    def __init__(self, server: dict):
+        self.server, self.refused, self.joins = server, "", []
+        self.listener = socket.socket()
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        self.listener.bind(("127.0.0.1", 0))
+        self.listener.listen(16)
+        self.port = self.listener.getsockname()[1]
+        self.accepting = threading.Thread(target=self._accept, daemon=True)
+        self.accepting.start()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.listener.close()
+        for join in [self.accepting, *self.joins]:
+            join.join(5)
+
+    def _accept(self) -> None:
+        while True:
+            try:
+                client, _ = self.listener.accept()
+            except OSError:
+                return
+            join = threading.Thread(target=self._join, args=(client,), daemon=True)
+            self.joins.append(join)
+            join.start()
+
+    def _refuse(self, client: socket.socket, why: str) -> None:
+        self.refused = why
+        message = why.encode()
+        try:
+            client.settimeout(2)
+            client.sendall(b"FAIL" + b"%04x" % len(message) + message)
+            # Closing over the client's unread request would reset the connection and lose the reply.
+            client.shutdown(socket.SHUT_WR)
+            while client.recv(1 << 16):
+                pass
+        except OSError:
+            pass
+
+    def _join(self, client: socket.socket) -> None:
+        with client:
+            try:
+                upstream = socket.create_connection(("127.0.0.1", self.server["port"]), timeout=10)
+            except OSError:
+                return self._refuse(client, "the owned ADB server is gone")
+            with upstream:
+                if peer(self.server["port"], upstream.getsockname()[1]) != {self.server["pid"]} \
+                        or not same(self.server, identity(self.server["pid"])):
+                    return self._refuse(client, "the owned ADB server's port belongs to another process")
+                upstream.settimeout(None)
+                back = threading.Thread(target=_pump, args=(upstream, client), daemon=True)
+                back.start()
+                _pump(client, upstream)
+                back.join()
 
 
 def call(folder: Path, args: list[str], *, device: bool = True, timeout: float = CALL_SECONDS,
          binary: bool = False, stream: bool = False):
-    """`adb -P <owned port> [-s <owned serial>] args`, between two listener checks. The server can vanish
-    between the first check and the client's connection. Then the client reaches another process's
-    server or starts its own, and the second check discards the answer and stops any server it started.
+    """`adb [-s <owned serial>] args` through a `Relay` to the owned server, after the listener checks.
     `stream` hands adb this process's own output and waits for it, as `logcat` needs."""
 
     record = load(folder)
@@ -160,29 +226,24 @@ def call(folder: Path, args: list[str], *, device: bool = True, timeout: float =
         raise ValueError("The owned ADB server is gone or its port belongs to another process")
     if device and not (record.get("serial") and emulator_ok(record)):
         raise ValueError("The owned emulator is gone or its console port belongs to another process")
-    argv = [record["tools"]["adb"]["path"], "-P", str(record["server"]["port"]),
-            *(["-s", record["serial"]] if device else []), *args]
+    with Relay(record["server"]) as relay:
+        argv = [record["tools"]["adb"]["path"], "-P", str(relay.port),
+                *(["-s", record["serial"]] if device else []), *args]
+        if stream:
+            sys.stdout.flush()
+            # Named outright: a child given a console of its own writes there, not to inherited handles.
+            done = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr,
+                                  env=environment(), **process.background_options())
+        else:
+            done = subprocess.run(argv, capture_output=True, timeout=timeout, env=environment(),
+                                  **process.background_options())
+    if relay.refused:
+        raise ValueError(f"adb {' '.join(args[:2])} reached nothing: {relay.refused}")
     if stream:
-        sys.stdout.flush()
-    pipe = None if stream else subprocess.PIPE
-    proc = subprocess.Popen(argv, env=environment(), stdin=subprocess.DEVNULL, stdout=pipe, stderr=pipe,
-                            **process.background_options())
-    client = identity(proc.pid, proc._handle, live=False)
-    try:
-        out, err = proc.communicate(timeout=None if stream else timeout)
-    except BaseException:
-        proc.kill()
-        proc.communicate()
-        raise
-    finally:
-        changed = stray(record, client) or not server_ok(record)
-    if changed:
-        raise ValueError("The owned ADB server changed during the call; its answer is discarded")
-    if stream:
-        return proc.returncode
-    if proc.returncode:
-        raise ValueError(f"adb {' '.join(args[:2])} failed: {err.decode('utf-8', 'replace').strip()[:300]}")
-    return out if binary else out.decode("utf-8", "replace")
+        return done.returncode
+    if done.returncode:
+        raise ValueError(f"adb {' '.join(args[:2])} failed: {done.stderr.decode('utf-8', 'replace').strip()[:300]}")
+    return done.stdout if binary else done.stdout.decode("utf-8", "replace")
 
 
 def devices(folder: Path) -> list[str]:
@@ -291,14 +352,17 @@ def _start(folder: Path, record: dict, image: Path, device: dict, renderer: str)
     console = next((p for p in range(FIRST_CONSOLE, LAST_CONSOLE, 2) if not listeners(p) | listeners(p + 1)), None)
     if console is None:
         raise ValueError("No unused emulator console port")
+    # A name no folder can already have, so the record never names one this run did not make, even when
+    # the run dies between saving the name and creating the folder.
+    name = f"{HOME}-{secrets.token_hex(8)}"
     record.update(console=console, serial=f"emulator-{console}")
-    record["folders"].append(HOME)
+    record["folders"].append(name)
     save(folder, record)
-    home = folder / HOME
+    home = folder / name
     try:
-        home.mkdir()   # atomic: a folder already there is someone else's and leaves the record at once
+        home.mkdir()
     except FileExistsError:
-        record["folders"].remove(HOME)
+        record["folders"].remove(name)
         save(folder, record)
         raise ValueError(f"{home} already exists; it is not this run's") from None
     for made in (home / "emulator", home / "user"):   # the emulator cannot create its own home folder
