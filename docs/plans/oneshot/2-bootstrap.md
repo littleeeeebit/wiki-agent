@@ -176,10 +176,10 @@ kinds disabled with "later". The card holds no stack: the owner picks the
 backend, frontend, styling, data store, test tool and deployment in S2, from
 options the agent offers ([step 6](6-free-stack.md)).
 
-`android` ([step 7](7-android.md)) also runs, up to this card. Its card names
-a reference phone (`device`) instead of `responsive`, needs the Android
-toolchain, and stops once confirmed: the card is saved and nothing is created
-outside until the later Android steps land.
+`android` ([step 7](7-android.md)) also runs. Its card names a reference
+phone (`device`) instead of `responsive` and needs the Android toolchain.
+Once confirmed it goes through this same bootstrap, with `local.properties`
+and the IDE's folders added to `.gitignore`.
 
 ### Validity rules
 

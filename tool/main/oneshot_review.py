@@ -19,10 +19,9 @@ from fastapi import HTTPException
 from agent import read_tools
 
 from . import oneshot, oneshot_build, oneshot_front, oneshot_spec, runtime, specs, work  # noqa: F401 — `oneshot_front` registers `split`
-from .oneshot_profile import environment
-from .query import ROOT, _lock as work_lock, hold
+from .oneshot_profile import REACHES, environment, kind_of
+from .query import _lock as work_lock, hold
 
-REVIEW_PROMPT = (ROOT / "tool/prompts/oneshot-review.md").read_text(encoding="utf-8")
 SEVERITIES = ("P0", "P1", "P2")
 
 
@@ -72,7 +71,8 @@ def frozen(spec: dict) -> tuple[str, str]:
 
 def review_text(spec: dict, head: str, how: str) -> str:
     o = spec["oneshot"]
-    return (f"Review HEAD `{head}` of this repository's backend build.\n\nThe approved design:\n\n"
+    built = "core" if kind_of(o) == "android" else "backend"
+    return (f"Review HEAD `{head}` of this repository's {built} build.\n\nThe approved design:\n\n"
             f"{json.dumps(o['design'], ensure_ascii=False)}\n\nThe requirements:\n\n"
             f"{json.dumps(spec.get('requirements') or [], ensure_ascii=False)}\n\nThe environment profile and the stack:\n\n"
             f"{environment(o)}\n\nThe pinned contract tests, unchanged since "
@@ -192,6 +192,14 @@ def decided(repo: str, store, spec: dict, found: dict):
 
     o = spec["oneshot"]
     reviews = [*(o.get("reviews") or []), {**found, "ts": time.time()}]
+    if found["verdict"] == "approve" and REACHES.get(kind_of(o)) == "review":
+        # This version's last stage for the kind: one write, so no restart finds the split started.
+        with oneshot._lock:
+            store.put(stage="split", reviews=reviews, working=None, stopped={
+                "reason": "kind", "state": "split",
+                "detail": f"`{kind_of(o)}` 는 이 버전에서 핵심 빌드와 그 리뷰까지 간다 — 리뷰가 승인했고, 다음 단계"
+                          "(docs/plans/oneshot/7-android.md 7c, 에뮬레이터 없는 화면)가 들어오면 이어 간다"})
+        return None
     if found["verdict"] == "approve":
         # `working` names the split before its worker starts: a server that dies in between leaves it for `recover`.
         oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "working": "split"})
@@ -219,7 +227,8 @@ def verdict(store, spec: dict, tree: Path) -> dict | None:
     except (ValueError, OSError, RuntimeError) as exc:
         store.stop("review", str(exc))
         return None
-    return oneshot.turned(store, "review", REVIEW_PROMPT, review_text(spec, head, how), "oneshot-review",
+    return oneshot.turned(store, "review", oneshot.prompt("review", kind_of(spec["oneshot"])), review_text(spec, head, how),
+                          "oneshot-review",
                           lambda value: verdict_of(value, head), tree)
 
 

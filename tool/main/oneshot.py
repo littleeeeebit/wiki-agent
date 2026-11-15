@@ -35,7 +35,7 @@ from workspace import TASK, create
 
 from . import channels, connect, oneshot_android, prerequisite_review, runtime, specs
 from .oneshot_files import as_planned, git, planned, tracked  # noqa: F401 — `tracked` is read by tests
-from .oneshot_profile import (DEVICES, KINDS, REACHES, SUPPORTED_KINDS, charged, cut, ledger, problems, proposal, schema,
+from .oneshot_profile import (DEVICES, KINDS, SUPPORTED_KINDS, charged, cut, ledger, problems, proposal, schema,
                               current)
 from .query import ROOT
 
@@ -235,6 +235,12 @@ def ask(store: Store, role: str, system: str, text: str, where: Path | None = No
     if failed:
         raise Failed(failed, meta)
     return final, meta, chat.is_codex
+
+
+def prompt(name: str, kind: str = "webapp") -> str:
+    """`tool/prompts/oneshot-{name}.md`, or its `-android` version for an Android run."""
+
+    return (ROOT / f"tool/prompts/oneshot-{name}{'-android' if kind == 'android' else ''}.md").read_text(encoding="utf-8")
 
 
 def block(final: str, name: str):
@@ -851,13 +857,6 @@ def profile(rid: str, body: Profile) -> dict:
             errors, _ = card_errors(run, values)
             if errors:
                 raise HTTPException(400, "; ".join(errors))
-            if REACHES.get(kind) == "environment":   # nothing outside is made: its next stages are not in yet
-                PROFILES.mkdir(parents=True, exist_ok=True)
-                (PROFILES / f"{kind}.json").write_text(json.dumps(values, ensure_ascii=False, indent=2) + "\n",
-                                                       encoding="utf-8", newline="\n")
-                changed(rid, profile=values)
-                return view(stop(rid, "kind", f"`{kind}` 는 이 버전에서 환경 카드까지 간다 — 카드는 저장했고, "
-                                              "다음 단계(docs/plans/oneshot/7-android.md 7b)가 들어오면 이어 간다"))
             ident = run["identity"]
             if values["github_owner"] != ident["owner"]:
                 if found := conflicts(rid, Path(ident["path"]), ident["name"], values["github_owner"]):
@@ -877,8 +876,8 @@ def resume(rid: str, body: Resume) -> dict:
         run = load(rid)
         if run.get("committed") or not run.get("stopped") or run.get("working"):
             raise HTTPException(409, "멈춘 실행이 아니다")
-        if run["stopped"]["reason"] == "kind":
-            raise HTTPException(409, run["stopped"]["detail"])
+        if run["stopped"]["reason"] == "kind":   # a card an earlier version kept: the kind goes on now, so the
+            return view(changed(rid, stopped=None))   # card waits for the owner's confirm again
         if run.get("version", 1) < 3 and run.get("identity") and any(   # its files, even some, carry the old card's stack
                 (Path(run["identity"]["path"]) / f).exists() for f in ("README.md", ".gitignore", ".wiki/adapter.toml")):
             raise HTTPException(409, "예전 형식으로 기본 파일을 쓴 실행이라 이어 갈 수 없다 — 새 실행을 시작하라")

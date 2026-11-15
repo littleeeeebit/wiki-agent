@@ -23,12 +23,10 @@ from xml.etree import ElementTree
 
 from fastapi import HTTPException
 
-from . import connect, oneshot, oneshot_spec, refactor_run, runtime, specs, work
-from .oneshot_profile import charged, environment
-from .query import ROOT, _lock as work_lock, hold
+from . import connect, oneshot, oneshot_android, oneshot_spec, refactor_run, runtime, specs, work
+from .oneshot_profile import charged, environment, kind_of
+from .query import _lock as work_lock, hold
 
-TESTS_PROMPT = (ROOT / "tool/prompts/oneshot-tests.md").read_text(encoding="utf-8")
-BUILD_PROMPT = (ROOT / "tool/prompts/oneshot-build.md").read_text(encoding="utf-8")
 MAX_ATTEMPTS = 3
 GRANTS: set[str] = set()   # a stage whose turn may write the worktree's adapter, only while it runs
 # A stage's turn another module checks while its condition on the spec holds: `(applies, check)`.
@@ -147,15 +145,38 @@ def planned(spec: dict) -> list[dict]:
             for t in spec["oneshot"]["design"]["tests"]]
 
 
+TOOLCHAIN = ("JAVA_HOME", "ANDROID_HOME", "ANDROID_USER_HOME", "GRADLE_USER_HOME")
+
+
+def toolchain(spec: dict) -> dict | None:
+    """The environment an Android run's tests and gate run in, or `None` for the server's own."""
+
+    return oneshot_android.build_env() if kind_of(spec["oneshot"]) == "android" else None
+
+
+def toolchain_text(spec: dict) -> str:
+    """The variables a turn sets for its own Android builds, as the server's runs set them."""
+
+    try:
+        env = oneshot_android.build_env()
+    except (ValueError, OSError) as exc:
+        return f"(the toolchain is not ready: {exc})"
+    return "\n".join(f"- `{k}={env[k]}`" for k in TOOLCHAIN)
+
+
 def tests_text(spec: dict) -> str:
-    return TESTS_PROMPT.replace("{tests}", json.dumps(planned(spec), ensure_ascii=False, indent=2)) \
+    kind = kind_of(spec["oneshot"])
+    text = oneshot.prompt("tests", kind).replace("{tests}", json.dumps(planned(spec), ensure_ascii=False, indent=2)) \
         .replace("{profile}", environment(spec["oneshot"]))
+    return text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text
 
 
 def build_text(spec: dict) -> str:
     o = spec["oneshot"]
-    return BUILD_PROMPT.replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
+    kind = kind_of(o)
+    text = oneshot.prompt("build", kind).replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
         .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"]))
+    return text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text
 
 
 def begin(repo: str) -> None:
@@ -184,9 +205,10 @@ def changed(path: Path, since: str) -> list[str]:
     return sorted(names)
 
 
-def declared(path: Path, final: str) -> dict:
+def declared(path: Path, final: str, kind: str = "webapp") -> dict:
     """The tests turn's `oneshot-runner` block, checked: one command that runs every test and writes a JUnit
-    report to `{report}`, the files holding the contract tests, and the files configuring the tool."""
+    report to `{report}`, the files holding the contract tests, and the files configuring the tool. An Android
+    app's block also names its lint and its debug APK build, which the gate runs after the tests."""
 
     value = oneshot.block(final, RUNNER)
     if not isinstance(value, dict):
@@ -198,6 +220,11 @@ def declared(path: Path, final: str) -> dict:
     # The published gate appends ` && …` to this command: anything that ends the shell here would skip the rest.
     if not chained(command.replace("{report}", REPORT)):
         raise ValueError(f"`command` 는 {CHAIN}")
+    after = []
+    for key in ("lint", "apk") if kind == "android" else ():
+        if not isinstance(value.get(key), str) or "{report}" in value[key] or not chained(value[key]):
+            raise ValueError(f"`{key}` 는 스택의 {'린트' if key == 'lint' else '디버그 APK 빌드'} 명령이고, {CHAIN}")
+        after.append(value[key].strip())
     if not (isinstance(contract, list) and contract and isinstance(config, list)
             and all(isinstance(f, str) and f for f in contract + config)):
         raise ValueError("`contract` 는 비지 않은 파일 목록, `config` 는 파일 목록이다")
@@ -208,7 +235,7 @@ def declared(path: Path, final: str) -> dict:
         raise ValueError(f"`root` 는 보고서의 `file` 경로가 기준으로 삼는 작업트리 안의 폴더다 — {folder}")
     folder = (path / folder).resolve().relative_to(root).as_posix()
     return {"command": command.strip(), "contract": sorted(set(contract)), "config": sorted(set(config) - set(contract)),
-            "root": "" if folder == "." else folder}
+            "root": "" if folder == "." else folder, "after": after}
 
 
 def junit(path: Path, run, spec: dict, command: str) -> list[tuple[str, str, str, str]]:
@@ -219,7 +246,8 @@ def junit(path: Path, run, spec: dict, command: str) -> list[tuple[str, str, str
     folder = oneshot_spec.store(spec["repo"]).folder / "junit"
     folder.mkdir(parents=True, exist_ok=True)
     report = folder / f"run-{time.time_ns()}.xml"
-    _, text, cut = specs.gate(command.replace("{report}", literal(report.as_posix())), path, run.halt, timeout=RUN_SECONDS)
+    _, text, cut = specs.gate(command.replace("{report}", literal(report.as_posix())), path, run.halt,
+                              env=toolchain(spec), timeout=RUN_SECONDS)
     if cut:
         raise ValueError(f"계약 테스트 실행이 끊겼다 ({cut}) — {text.strip()[-800:]}")
     try:
@@ -429,7 +457,7 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
     o = spec["oneshot"]
     if specs.sh(["git", "merge-base", "--is-ancestor", o["design_head"], "HEAD"], path).returncode:
         return f"HEAD 가 승인된 설계 커밋 {o['design_head'][:12]} 위에 있지 않다"
-    runner = declared(path, final)
+    runner = declared(path, final, kind_of(o))
     names = changed(path, o["design_head"])
     # A case is pinned by its class and name, its file only when named: a planned test outside the named files
     # could be weakened later with nothing to show for it.
@@ -449,7 +477,7 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
         return "계획 테스트 사례가 `contract` 에 없는 파일에서 나왔다 — " + ", ".join(outside[:10])
     if (snapshot(path, names), head(path), changed(path, o["design_head"])) != before:
         return "계획 테스트를 돌리는 동안 작업트리가 바뀌었다"
-    gate = runner["command"].replace("{report}", REPORT)
+    gate = " && ".join([runner["command"].replace("{report}", REPORT), *runner["after"]])
     adapter = path / ".wiki" / "adapter.toml"
     try:
         slots = tomllib.loads(adapter.read_text(encoding="utf-8")).get("slots", {})
@@ -485,7 +513,7 @@ def built(path: Path, run, spec: dict, final: str) -> str:
     o = spec["oneshot"]
     if why := reported(spec, final) or pinned(path, o):
         return why
-    verdict = specs.judge(path, [o["gate"]], run.halt, lambda text: specs.note(run, text))
+    verdict = specs.judge(path, [o["gate"]], run.halt, lambda text: specs.note(run, text), env=toolchain(spec))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := held(path, run, spec, verdict):

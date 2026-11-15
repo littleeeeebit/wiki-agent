@@ -315,6 +315,8 @@ def test_the_design_turn_is_asked_again_once_for_translationese_then_shown_with_
 def test_the_sheet_keeps_its_order_and_folds_past_the_length_budget(world):
     many = json.loads(json.dumps(DESIGN))
     many["oneshot-assumptions"] = [{**DESIGN["oneshot-assumptions"][0], "id": f"A{n}"} for n in range(1, 10)]
+    many["oneshot-api"] += [{**DESIGN["oneshot-api"][0], "id": f"P{n}", "path": f"/more{n}", "does": f"더하기{n}"}
+                            for n in range(20, 33)]
     design = sheet.parsed(many)
     assert any("가정이 9개" in w for w in sheet.soft(design, REQS, GLOSSARY))
     oneshot_spec.saved("budget", requirements=REQS, oneshot={"glossary": GLOSSARY, "design": design})
@@ -323,6 +325,7 @@ def test_the_sheet_keeps_its_order_and_folds_past_the_length_budget(world):
              "## 시나리오와 확인할 테스트", "<details>"]
     assert [text.index(h) for h in order] == sorted(text.index(h) for h in order)
     assert "그 밖의 가정 2개" in text and "`Spending.id`" in text and "test_spending_adds_to_the_total" in text
+    assert "/more32` 더하기32 / 요청" in text   # an endpoint past the table shows what it does in the fold
     assert json.loads(sheet.openapi(specs.load("budget", oneshot.BRANCH)))["paths"]["/spendings"]["post"]["operationId"] == "P1"
 
 

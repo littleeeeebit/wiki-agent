@@ -21,11 +21,8 @@ from pydantic import BaseModel
 from common import is_junction
 
 from . import oneshot, oneshot_sheet as sheet, specs, work
-from .oneshot_profile import current, environment, stacked, unsettled
-from .query import ROOT
+from .oneshot_profile import current, environment, kind_of, stacked, unsettled
 
-SPEC_PROMPT = (ROOT / "tool/prompts/oneshot-spec.md").read_text(encoding="utf-8")
-DESIGN_PROMPT = (ROOT / "tool/prompts/oneshot-design.md").read_text(encoding="utf-8")
 RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}   # a later stage's module adds its own
 SHEETS = {"r1"}   # a stage whose sheet stands when its edit turn stopped
 TURNS = {"tests", "build"}   # a stage run as a work turn (`oneshot_build.STAGES`), resumed by sending it again
@@ -67,9 +64,9 @@ def saved(repo: str, **fields) -> dict:
 
 # -- S2 the spec conversation --------------------------------------------------------
 
-def ended(reqs: list[dict], stack: list[dict] | None = None) -> str:
+def ended(reqs: list[dict], stack: list[dict] | None = None, kind: str = "webapp") -> str:
     """Empty when the conversation may end, or what is still open. The server decides, never the agent.
-    `stack` is S2's; an R1 edit (`None`) cannot change it."""
+    `stack` is S2's, with the run's `kind`'s parts; an R1 edit (`None`) cannot change it."""
 
     if not [r for r in reqs if r["source"]["kind"] == "original"]:
         return "주인의 말에서 온 요구(`original`)가 하나도 없다"
@@ -78,7 +75,7 @@ def ended(reqs: list[dict], stack: list[dict] | None = None) -> str:
     covered = {d for s in sheet.scenarios(reqs) for d in [s["id"], *s.get("depends_on", [])]}
     if bare := [r["id"] for r in reqs if r["source"]["kind"] == "original" and r["id"] not in covered]:
         return f"시나리오가 없는 원래 요구가 있다: {', '.join(bare)}"
-    if stack is not None and (open_ := unsettled(stack)):
+    if stack is not None and (open_ := unsettled(stack, kind)):
         return f"주인이 아직 고르지 않은 스택: {', '.join(open_)}"
     return ""
 
@@ -127,7 +124,7 @@ def spec_turn(final: str, spec: dict):
         raise ValueError("`oneshot-spec` 블록이 하나 있어야 한다")
     value = json.loads(found["oneshot-spec"])
     reqs, glossary = kept(spec, value, "S2")   # refuses anything but an object first
-    stack = stacked(value.get("stack") or [])
+    stack = stacked(value.get("stack") or [], kind_of(spec["oneshot"]))
     if early := unanswered(spec["oneshot"], stack):
         raise ValueError("주인이 답하기 전에 `confirmed` 로 둔 스택 부분이 있다 — 묶음을 묻고, 주인의 답을 받은 다음 턴에 "
                          f"확정한다: {', '.join(early)}")
@@ -153,13 +150,13 @@ def talk(repo: str) -> None:
             f"{json.dumps(spec.get('requirements') or [], ensure_ascii=False)}\n\nThe glossary so far:\n\n"
             f"{json.dumps(o.get('glossary') or [], ensure_ascii=False)}\n\nThe conversation so far:\n\n"
             + ("\n\n".join(f"[{t['role']}] {t['text']}" for t in o.get("talk") or []) or "(none yet: this is the first turn)"))
-    found = oneshot.turned(store(repo), "spec", SPEC_PROMPT, text, "oneshot-spec,choices",
+    found = oneshot.turned(store(repo), "spec", oneshot.prompt("spec", kind_of(o)), text, "oneshot-spec,choices",
                            lambda final, _: spec_turn(final, spec))
     if found is None:
         return
     reqs, glossary, stack, choices, said = found
     # A question asked in this turn waits for its answer, whatever else is settled.
-    why = ended(reqs, stack) or ("주인의 답을 기다리는 질문이 있다" if choices else "")
+    why = ended(reqs, stack, kind_of(o)) or ("주인의 답을 기다리는 질문이 있다" if choices else "")
     turns = [*(o.get("talk") or []), {"role": "agent", "text": said, "choices": choices, "ts": time.time()}]
     # The stack now lives in this spec, in version 3's shape, whatever version the run started at.
     fields = {"glossary": glossary, "stack": stack, "talk": turns, "version": max(o.get("version", 1), 3)}
@@ -224,12 +221,13 @@ def design_turn(final: str, attempt: int, spec: dict, partial: set[str] | None =
         reqs, glossary = kept(spec, found["oneshot-spec"], f"R1 {spec['oneshot']['r1']['round']}회차 고침")
         if why := ended(reqs):
             raise ValueError(why)
-    design = sheet.parsed(found)
+    kind = kind_of(spec["oneshot"])
+    design = sheet.parsed(found, kind)
     if partial is not None:   # an approval outside the reach survives, so nothing outside it may move
         old, new = sheet.every(spec["oneshot"]["design"], spec.get("requirements") or []), sheet.every(design, reqs)
         if moved := sorted(i for i in old if i not in partial and old[i] != new.get(i)):
             raise ValueError(f"고치라고 한 범위 밖 항목을 바꾸거나 지웠다: {', '.join(moved)} — 그대로 두어라")
-    sheet.checked(design, reqs, glossary, spec["oneshot"]["profile"])
+    sheet.checked(design, reqs, glossary, spec["oneshot"]["profile"], kind)
     warnings = sheet.soft(design, reqs, glossary)
     if warnings and attempt == 0:
         raise ValueError("다음을 고쳐 다시 내라 — " + " / ".join(warnings[:12]))
@@ -249,7 +247,8 @@ def design(repo: str) -> None:
     """One S3 turn in the worktree, read-only; the server checks the blocks and shows the sheet."""
 
     spec = spec_of(repo)
-    found = oneshot.turned(store(repo), "design", DESIGN_PROMPT, design_text(spec), sheet.BLOCKS,
+    kind = kind_of(spec["oneshot"])
+    found = oneshot.turned(store(repo), "design", oneshot.prompt("design", kind), design_text(spec), sheet.blocks(kind),
                            lambda final, attempt: design_turn(final, attempt, spec), Path(spec["worktree"]))
     if found is None:
         return
@@ -266,9 +265,10 @@ def redesign(repo: str, comments: dict[str, str], reach: list[str]) -> None:
     spec = spec_of(repo)
     text = (design_text(spec) + f"\nThe current design:\n\n{json.dumps(spec['oneshot']['design'], ensure_ascii=False)}"
             f"\n\nThe owner edited these items, with these comments:\n\n{json.dumps(comments, ensure_ascii=False)}"
-            f"\n\nReplace every item in this set and keep the rest as it is: {', '.join(reach)}. Return all five "
-            "design blocks in full, and an `oneshot-spec` block in full when a requirement changes.\n")
-    found = oneshot.turned(store(repo), "design", DESIGN_PROMPT, text, sheet.BLOCKS + ",oneshot-spec",
+            f"\n\nReplace every item in this set and keep the rest as it is: {', '.join(reach)}. Return every "
+            "design block in full, and an `oneshot-spec` block in full when a requirement changes.\n")
+    kind = kind_of(spec["oneshot"])
+    found = oneshot.turned(store(repo), "design", oneshot.prompt("design", kind), text, sheet.blocks(kind) + ",oneshot-spec",
                            lambda final, attempt: design_turn(final, attempt, spec, set(reach)), Path(spec["worktree"]))
     if found is None:
         return
@@ -291,14 +291,18 @@ def approved(repo: str) -> None:
     if not tree or not docs.is_relative_to(tree):
         store(repo).stop("folder", f"작업트리가 `{oneshot.BRANCH}` 브랜치의 그 작업트리가 아니다: {spec['worktree']}")
         return
-    files = ["docs/design/backend.md", "docs/design/api.yaml"]
+    # An Android app's core: the sheet and the module contracts the tests are written from.
+    written = ({"core.md": sheet.sheet, "core.json": sheet.core} if kind_of(o) == "android" else
+               {"backend.md": sheet.sheet, "api.yaml": sheet.openapi})
+    files = [f"docs/design/{name}" for name in written]
     if linked := [f for f in files if (tree / f).is_symlink() or not (tree / f).resolve().is_relative_to(tree)]:
         store(repo).stop("folder", f"설계 문서 자리가 작업트리 밖을 가리킨다: {', '.join(linked)}")
         return
     docs.mkdir(parents=True, exist_ok=True)
-    (docs / "backend.md").write_text(sheet.sheet(spec), encoding="utf-8", newline="\n")
-    (docs / "api.yaml").write_text(sheet.openapi(spec), encoding="utf-8", newline="\n")
-    head = commit(repo, tree, files, f"Record the approved backend design (R1 round {o['r1']['round']})")
+    for name, render in written.items():
+        (docs / name).write_text(render(spec), encoding="utf-8", newline="\n")
+    head = commit(repo, tree, files, f"Record the approved {'core' if kind_of(o) == 'android' else 'backend'} design "
+                                     f"(R1 round {o['r1']['round']})")
     if head:
         saved(repo, oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
 
@@ -519,6 +523,8 @@ def resume(repo: str) -> dict:
         supported(o)
         if not o.get("stopped") or o.get("working"):
             raise HTTPException(409, "멈춘 단계가 아니다")
+        if o["stopped"]["reason"] == "kind":   # the kind's next stage is not in this version: no route starts it
+            raise HTTPException(409, o["stopped"]["detail"])
         if o.get("inflight"):   # its `Turn.finish` has not run: the next turn would lose that turn's charge
             raise HTTPException(409, "앞 턴의 비용을 아직 매기는 중이다 — 잠시 뒤 다시 하라")
         if o["stage"] not in (*RUNNING, *TURNS, *SHEETS, "review"):
