@@ -10,6 +10,7 @@ import os
 import subprocess
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -713,3 +714,89 @@ def test_a_named_review_model_keeps_its_default_effort_after_the_pr(world, tmp_p
          patch.dict(loop._cells, clear=True), patch.object(loop, "settings", lambda *a: {**loop.DEFAULTS, "review_effort": "high"}):
         loop.cell(spec, tmp_path)
     assert made_with == [("opus", "")]   # the CLI's default, as before the PR — never the settings' `high`
+
+
+def test_turns_run_isolated_in_a_folder_outside_the_hub_checkout(tmp_path):
+    """Inside the hub a turn read its branch, commits and wiki as the product's own context."""
+
+    rid, runs, outside = "0123456789abcdef", tmp_path / "hub" / "raw" / "oneshot", tmp_path / "data" / "oneshot"
+    (runs / rid).mkdir(parents=True)
+    (runs / rid / "kept.txt").write_text("kept", encoding="utf-8")
+    opened = {}
+
+    class Session:
+        is_codex = False
+
+        def __init__(self, repo, **options):
+            opened.update(options, repo=Path(repo))
+
+        def say(self, text, stopping, images):
+            yield SimpleNamespace(kind="done", text="answer", meta={})
+
+        def close(self):
+            pass
+
+    with patch.object(oneshot, "RUNS", runs), patch.object(oneshot, "WORK", outside), \
+         patch.object(oneshot, "ChatSession", Session), \
+         patch.object(oneshot, "load", lambda rid: {"models": {"spec": {"model": "m", "effort": "high"}}}):
+        store = oneshot.run_store(rid)
+        assert oneshot.ask(store, "intake", "system", "text")[0] == "answer"
+        assert oneshot_spec.store("budget").folder == outside / "spec-budget"
+    assert store.folder == outside / rid and (store.folder / "kept.txt").read_text(encoding="utf-8") == "kept"
+    assert not (runs / rid).exists()   # an older run's folder moved, files and all
+    assert opened["repo"] == store.folder and opened["isolated"] is True
+    # A Codex turn keeps `app-server` and its read tools (`pr_diff`, `repo_*`); isolated Codex has none.
+    with patch.object(oneshot, "RUNS", runs), patch.object(oneshot, "WORK", outside), \
+         patch.object(oneshot, "ChatSession", Session), \
+         patch.object(oneshot, "load", lambda rid: {"models": {"review": {"model": "codex:gpt", "effort": "high"}}}):
+        oneshot.ask(oneshot.run_store(rid), "review", "system", "text")
+    assert opened["model"] == "codex:gpt" and opened["isolated"] is False
+
+
+def test_concurrent_first_uses_pick_the_same_moved_folder(tmp_path):
+    """A caller whose move lost the race to another must not keep the folder that just moved away."""
+
+    runs, outside, original = tmp_path / "hub" / "raw" / "oneshot", tmp_path / "data" / "oneshot", os.replace
+    (runs / "spec-budget").mkdir(parents=True)
+    second, moved, calls = threading.Event(), threading.Event(), []
+
+    def slow(source, destination):
+        calls.append(source)
+        if len(calls) > 1:   # the loser renames only after the winner's move
+            moved.wait(5)
+            return original(source, destination)
+        second.wait(5)
+        time.sleep(0.3)   # the second caller reaches its own check meanwhile
+        original(source, destination)
+        moved.set()
+
+    def use(n):
+        if n:
+            second.set()
+        return oneshot.folder("spec-budget")
+
+    with patch.object(oneshot, "RUNS", runs), patch.object(oneshot, "WORK", outside), \
+         patch.object(oneshot.os, "replace", slow), ThreadPoolExecutor(max_workers=2) as pool:
+        picked = set(pool.map(use, [0, 1]))
+    assert picked == {outside / "spec-budget"} and not (runs / "spec-budget").exists()
+
+
+def test_a_failed_move_keeps_the_old_folder_until_a_restart(tmp_path):
+    """A store kept the old path after a refused move; a later move hid its new screenshots."""
+
+    runs, outside, original = tmp_path / "hub" / "raw" / "oneshot", tmp_path / "data" / "oneshot", os.replace
+    (runs / "spec-budget").mkdir(parents=True)
+    refused = [True]
+
+    def held(source, destination):
+        if refused.pop() if refused else False:
+            raise PermissionError("held open")
+        return original(source, destination)
+
+    with patch.object(oneshot, "RUNS", runs), patch.object(oneshot, "WORK", outside), \
+         patch.object(oneshot.os, "replace", held), patch.object(oneshot, "_stay", set()):
+        assert oneshot.folder("spec-budget") == runs / "spec-budget"
+        assert oneshot.folder("spec-budget") == runs / "spec-budget"   # the handle closed; still the same folder
+    with patch.object(oneshot, "RUNS", runs), patch.object(oneshot, "WORK", outside), \
+         patch.object(oneshot, "_stay", set()):   # a restart moves it
+        assert oneshot.folder("spec-budget") == outside / "spec-budget" and not (runs / "spec-budget").exists()

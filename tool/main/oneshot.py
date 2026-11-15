@@ -18,6 +18,7 @@ are English.
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import threading
@@ -29,7 +30,7 @@ from pydantic import BaseModel
 
 from agent import ChatSession
 from common import swap, worktree_home
-from common.paths import RAW
+from common.paths import DATA, RAW, RESOURCES
 from workspace import TASK, create
 
 from . import channels, connect, prerequisite_review, runtime, specs
@@ -40,6 +41,11 @@ from .query import ROOT
 
 RUNS = RAW / "oneshot"
 PROFILES = RUNS / "profiles"
+# Stage folders, where every turn runs: an unpackaged install keeps `raw/` in the hub checkout, and a turn
+# there read its branch, commits and wiki as the product's own (a manga translator came back as Tauri desktop).
+WORK = (Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".local/share") / "wiki-agent-data/oneshot"
+        if DATA == RESOURCES else None)
+_stay: set = set()   # names whose move failed in this process; a store may hold the old path, so it stays
 VERSION = 3   # 2: the tests turn declares its runner; 3: the owner picks the stack in S2, not on the card
 BRANCH = "oneshot-initial"   # also the spec id: a valid task name, so the branch and the spec share it
 INTENT_PROMPT = (ROOT / "tool/prompts/oneshot-intent.md").read_text(encoding="utf-8")
@@ -128,8 +134,22 @@ class Store:
         return current.get("profile") if self.active(current) else None
 
 
+def folder(name: str) -> Path:
+    """A stage folder outside every repository; one an older version left in `raw/oneshot` moves there."""
+    old, new = RUNS / name, (WORK or RUNS) / name
+    with _lock:   # every caller in this process keeps the folder the first one chose
+        if WORK and name not in _stay and old.is_dir() and not new.exists():
+            new.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.replace(old, new)
+            except OSError:   # a file held open: the old folder stays until a restart moves it
+                if not new.exists():
+                    _stay.add(name)
+        return old if name in _stay else new
+
+
 def run_store(rid: str) -> Store:
-    return Store(rid, lambda: load(rid), lambda **f: changed(rid, **f), "state", RUNS / rid,
+    return Store(rid, lambda: load(rid), lambda **f: changed(rid, **f), "state", folder(rid),
                  lambda run: bool(run.get("confirmed")))
 
 
@@ -193,7 +213,10 @@ def ask(store: Store, role: str, system: str, text: str, where: Path | None = No
     cfg = role_config(role, store)
     where = where or store.folder
     where.mkdir(parents=True, exist_ok=True)
-    chat = ChatSession(where, tools=TOOLS, system=system, model=cfg["model"], effort=cfg["effort"])
+    # Claude isolated: no hooks, settings or app instructions. Codex stays on `app-server`, whose read-only
+    # session already drops shell and connectors and carries `pr_diff`/`repo_*`; isolated it is tool-less `exec`.
+    chat = ChatSession(where, tools=TOOLS, system=system, model=cfg["model"], effort=cfg["effort"],
+                       isolated=not str(cfg["model"] or "").startswith("codex:"))
     final, meta, failed = "", {}, ""
     ended = threading.Event()
     threading.Thread(target=heartbeat, args=(store, ended), daemon=True, name=f"oneshot-beat-{store.key}").start()

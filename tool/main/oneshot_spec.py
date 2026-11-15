@@ -42,7 +42,7 @@ def store(repo: str) -> oneshot.Store:
     def put(**fields) -> dict:
         return saved(repo, oneshot=fields)["oneshot"]
 
-    return oneshot.Store(f"spec:{repo}", get, put, "stage", oneshot.RUNS / f"spec-{repo}", lambda o: True)
+    return oneshot.Store(f"spec:{repo}", get, put, "stage", oneshot.folder(f"spec-{repo}"), lambda o: True)
 
 
 def spec_of(repo: str) -> dict:
