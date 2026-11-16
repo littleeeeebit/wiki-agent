@@ -24,8 +24,8 @@ from pydantic import BaseModel
 
 from common import is_junction
 
-from . import oneshot, oneshot_android, oneshot_build, oneshot_front_build, oneshot_screens as screens, \
-    oneshot_sheet as sheet, oneshot_spec, runtime, specs
+from . import oneshot, oneshot_android, oneshot_brief as brief, oneshot_build, oneshot_front_build, \
+    oneshot_screens as screens, oneshot_sheet as sheet, oneshot_spec, runtime, specs
 from .oneshot_profile import DEVICES, kind_of
 
 SHOT_SECONDS = 15_000   # Playwright's milliseconds per page
@@ -285,11 +285,17 @@ def frontend(repo: str) -> None:
         if found is None:
             return None
         front, warnings = found
-        return lambda: oneshot_spec.saved(repo, oneshot={
-            "front": front, "shots": front["shots"], "stage": "r2", "working": None,
-            "r2": {"round": 1, "decisions": {}, "marks": {}, "warnings": warnings, "palette": ""}})
+        return lambda: briefing(repo, {"front": front, "shots": front["shots"], "stage": "r2",
+                                       "r2": {"round": 1, "decisions": {}, "marks": {}, "warnings": warnings, "palette": ""}})
 
     review().holding(repo, "화면 설계", body)
+
+
+def briefing(repo: str, fields: dict):
+    """R2 saved under `working: brief`, and the brief written once the worktree is let go: it reads none."""
+
+    oneshot_spec.saved(repo, oneshot={**fields, "working": "brief"})
+    return lambda: oneshot_spec.briefed(repo, "r2")
 
 
 def refront(repo: str, comments: dict[str, str], reach: list[str]) -> None:
@@ -316,10 +322,9 @@ def refront_turn(repo: str, store, spec: dict, tree: Path, comments: dict[str, s
     marks, decisions = oneshot_spec.marked(screens.decidable(front), comments, reach, screens.every(o["front"]),
                                            screens.every(front), r2["decisions"])
     palette = r2["palette"] if r2["palette"] in {p["id"] for p in front["tokens"]["palettes"]} else ""
-    return lambda: oneshot_spec.saved(repo, oneshot={
-        "front": front, "shots": front["shots"], "working": None,
-        "r2": {"round": r2["round"] + 1, "decisions": decisions, "marks": marks, "warnings": warnings,
-               "palette": palette}})
+    return lambda: briefing(repo, {"front": front, "shots": front["shots"],
+                                   "r2": {"round": r2["round"] + 1, "decisions": decisions, "marks": marks,
+                                          "warnings": warnings, "palette": palette}})
 
 
 # -- R2 approved ------------------------------------------------------------------------------
@@ -384,6 +389,9 @@ class R2(BaseModel):
     palette: str = ""
     reopen: bool = False
     reading: dict = {}
+    source: str = ""   # as on R1 (`oneshot_spec.Decisions`)
+    lines: dict[str, dict] = {}
+    rest: bool = False
 
 
 def extra(spec: dict) -> dict:
@@ -393,8 +401,12 @@ def extra(spec: dict) -> dict:
                         "frequency": o.get("frequency") or {f["id"]: f["class"] for f in o["features"]}}
     if o.get("front"):
         n = o["front"]["shots"]
-        out["front_sheet"] = screens.sheet(spec, lambda sid, v: f"/api/oneshot/spec/{spec['repo']}/shot/{n}/{sid}-{v}.png")
+        shot = lambda sid, v: f"/api/oneshot/spec/{spec['repo']}/shot/{n}/{sid}-{v}.png"   # noqa: E731
+        out["front_sheet"] = screens.sheet(spec, shot)
         out["front_items"] = screens.decidable(o["front"])
+        # The brief's pictures sit with each screen's confirmation line.
+        out["front_brief"] = {**brief.shown(spec, "r2"),
+                              "pictures": {s["id"]: [shot(s["id"], v) for v in views(o["profile"])] for s in o["front"]["screens"]}}
     return out
 
 
@@ -425,14 +437,16 @@ def decide(repo: str, body: R2) -> dict:
         spec = oneshot_spec.spec_of(repo)
         o = spec["oneshot"]
         oneshot_spec.idle(o, "r2")
+        items = screens.decidable(o["front"])
+        given, briefed = oneshot_spec.on_brief(spec, "r2", items, body)   # a stale tab reopens nothing either
         if body.reopen:   # the placement was wrong, not the screen: every S6 result and R2 decision goes
             return oneshot_spec.view(oneshot_spec.saved(repo, oneshot={"stage": "board", "front": None, "r2": None}))
-        decisions, comments = oneshot_spec.decided(screens.decidable(o["front"]), o["r2"]["decisions"], body.decisions)
+        decisions, comments = oneshot_spec.decided(items, o["r2"]["decisions"], given)
         palette = body.palette or o["r2"]["palette"]
         if palette and palette not in {p["id"] for p in o["front"]["tokens"]["palettes"]}:
             raise HTTPException(400, f"없는 색 배합이다: {palette}")
         r2 = {**o["r2"], "decisions": decisions, "palette": palette}
-        reading = oneshot_spec.read(o, "r2", body.reading, comments)
+        reading = oneshot_spec.read(o, "r2", body.reading, comments, briefed)
         if comments:
             reach = sorted(screens.dependents(set(comments)))
             oneshot_spec.start(repo, "refront", comments, reach, r2=r2, reading=reading)

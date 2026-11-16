@@ -351,6 +351,11 @@ def test_the_writer_runs_with_no_tools_on_either_provider(world):  # noqa: F811 
     assert opened.count("closed") == 2
 
 
+def test_a_server_that_died_writing_a_later_reviews_brief_marks_that_review_failed():
+    fields = brief.recovered({"stage": "r2", "working": "brief", "brief": {"r1": {"source": "a"}}})
+    assert "다시 켜져" in fields["brief"]["r2"]["failed"] and fields["brief"]["r1"] == {"source": "a"}
+
+
 def test_a_failure_reading_the_spec_for_the_brief_leaves_it_failed_and_never_stops_the_run(world):  # noqa: F811
     at_design()
     oneshot_spec.saved("budget", oneshot={"stage": "r1", "design": sheet.parsed(DESIGN), "working": "brief",

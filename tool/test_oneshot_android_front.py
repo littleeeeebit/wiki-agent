@@ -17,7 +17,8 @@ from unittest.mock import patch
 
 import pytest
 
-from main import oneshot, oneshot_front as front, oneshot_screens as screens, oneshot_sheet as sheet, oneshot_spec, specs
+from main import (oneshot, oneshot_brief as brief, oneshot_front as front, oneshot_screens as screens,
+                  oneshot_sheet as sheet, oneshot_spec, specs)
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_core import DESIGN, GLOSSARY, REQS
 from test_oneshot_front import answer, head, o, replies
@@ -280,7 +281,7 @@ def test_the_approved_screens_are_committed_and_the_screen_build_starts(boarded)
     begun = []
     with patch.object(front.oneshot_front_build, "begin", begun.append):
         front.decide("budget", front.R2(decisions={i: {"approve": True} for i in screens.decidable(o()["front"])},
-                                        palette="C2"))
+                                        palette="C2", source=brief.source(brief.snapshot(oneshot_spec.spec_of("budget"), "r2"))))
     assert begun == ["budget"] and o()["stage"] == "build-front" and o()["working"] == "build-front"
     assert not o().get("stopped") and oneshot_spec.spec_of("budget")["done"][0].startswith("S1 다른 앱 위: ")
     for name in ("docs/design/screens.md", "docs/design/mock/mock/S1.kt", "docs/design/mock/shoot.py",

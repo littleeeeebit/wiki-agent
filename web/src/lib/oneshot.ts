@@ -14,6 +14,8 @@ export type Gate = { round: number; decisions: Record<string, Decision>; marks?:
 export type Brief = {
   source: string; sections?: { name: string; text: string }[]; confirm?: { key: string; text: string }[]
   lines?: Record<string, string[]>; failed?: string
+  /** R2: each screen's pictures, shown with its confirmation line. */
+  pictures?: Record<string, string[]>
 }
 export type Talk ={ role: 'owner' | 'agent'; text: string; choices?: ChoiceQuestion | { questions: ChoiceQuestion[] } | null }
 /** The three models a run fixes at its start (`tool/main/oneshot.py` `Models`); a run from before them has none. */
@@ -77,7 +79,7 @@ export type SpecView = SpecSummary & {
   requirements?: { id: string; text: string; status: string }[]
   sheet?: string; items?: string[]; brief?: Brief
   board?: { features: Feature[]; first_screen: string | null; frequency: Record<string, Freq> }
-  front_sheet?: string; front_items?: string[]
+  front_sheet?: string; front_items?: string[]; front_brief?: Brief
   r3_sheet?: string; r3_items?: string[]
   summary?: RunSummary
   /** A phone round's cleanup that has not finished: shown until that phone is listed again. */

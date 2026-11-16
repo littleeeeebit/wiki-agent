@@ -341,6 +341,26 @@ Every case runs offline on mocked model output; none needs a real run.
 - On Android, `알아 두실 것` must cite every requirement with a
   `capability` and every outside call.
 
+## How 8c1 shows R2
+
+- The R2 snapshot carries `gate: r2`. R1's carries none, so the briefs 8a
+  stored keep their `source`. It holds the sentence, the screens, their
+  states, the palettes, `front.shots` (a new design or edit turn shoots
+  again under a new number), what the first screen is for, the features (id,
+  name, why), the frequency map, the profile, the round and the marks.
+- The screen design and `refront` save R2 under `working: brief`. The brief
+  is written once the worktree is let go, because it reads none.
+- The writer writes `한 줄`, `화면` and `기능이 놓인 자리`, plus one line per
+  screen. The pictures and the palettes come from the spec, not the writer:
+  each screen's pictures sit with its line, and the palette is picked
+  beside them as before. So the R2 brief has no `색` section.
+- The checks add these. Every feature on a screen is named by its name in
+  `기능이 놓인 자리`. No feature id, screen route or color code appears. A
+  citation names a screen or a palette.
+- An R2 submission, `[기능 보드 다시 열기]` included, carries `source` and is
+  checked like R1's (`oneshot_spec.on_brief`). A line's edit reaches both
+  the screen and its states.
+
 ## Decided
 
 The owner decided these on 2026-11-16, by options.
@@ -357,4 +377,5 @@ The owner decided these on 2026-11-16, by options.
 | --- | --- | --- | --- |
 | 8a | The brief | The `oneshot-brief` turn on the review model, the snapshot and its `source`, the mandatory lines and the checks, `oneshot.brief` kept out of every agent input; written after `design` and `redesign`; the isolation, stale, snapshot and fallback cases | Done — `oneshot_brief` |
 | 8b | R1 on the brief | The brief first with every line's decision checked, then reduced to items, one approval for the rest, `source` required on every R1 submission, today's sheet folded below; the Android case | Done — R1 opens on the brief |
-| 8c | R2 and R3 on the brief | Their briefs after S6 and `refront`, and after the critique loop and phone round; R3's finding references, their screens and the reduction; the R2 coverage, R3 mapping, R3 reduction and missing-line cases | Planned |
+| 8c1 | R2 on the brief | Its brief after S6 and `refront`, one line per screen with its pictures, the palette still picked; `source` on every R2 submission; the R2 coverage and missing-line cases | Done — R2 opens on the brief |
+| 8c2 | R3 on the brief | Its brief after the critique loop and phone round; R3's finding references, their screens and the reduction; the comparison baseline for "what changed since R2"; the R3 mapping and reduction cases | Planned |
