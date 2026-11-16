@@ -90,11 +90,22 @@ the brief; they still reach the redo turn and the PR's history as today.
 
 ### The gate's identity
 
-Every review has a server-owned identity, `source`: a hash of the gate's
-inputs and its round. At R1 that is the requirements, the glossary, the
-restated goal and the design. At R2 it is the S6 result (`front`). At R3 it
-is `front` with the last look, the last critique and the phone round's
-findings.
+Each review has one snapshot: the exact data its brief is written from, built
+by the server. Every fact a section states must come from it, since the
+writer has no tools. The snapshot is the writer's whole input besides the
+mandatory lines, and the review's identity, `source`, is a hash of it.
+
+| Review | Snapshot |
+| --- | --- |
+| R1 | The owner's sentence, the restated goal, requirements, glossary, stack, design, the profile (kind, visibility, login), the round and its `marks` |
+| R2 | The owner's sentence, `front` (screens, states, palettes), the features with their names, the frequency map, the first screen, the profile, the round and its `marks` |
+| R3 | The R2 snapshot's fields with the final `front`, the findings left from the last critique and the last look, and on Android the phone round's findings, timing, memory and device (model, size, dpi), and the round |
+
+The snapshot leaves out the brief itself, the reading record and anything
+that changes without changing the gate, such as spend and timestamps. A
+check before generation refuses a snapshot that lacks a field a required
+section reads, such as an Android R3 whose phone round recorded no
+measurements; the section then says the value was not read.
 
 - The brief is stored with the `source` it was written from. A generation
   result whose `source` no longer matches the gate is dropped, not stored.
@@ -113,11 +124,14 @@ A confirmation line is one entry under `확인해 주세요`. The server, not th
 brief's writer, fixes which lines must exist and which items each covers.
 The writer only words them.
 
-| Review | Mandatory lines | Each line covers |
+| Review | Mandatory lines, by key | Each line covers |
 | --- | --- | --- |
-| R1 | One per `assumed` requirement and one per assumption, plus one per item `marked` since the last round | The ids it cites, at least the one it is for |
-| R2 | One per screen | `S<n>` and `S<n>.states` |
-| R3 | One per finding left, as a reference `L<n>` | The screen that finding belongs to |
+| R1 | One per `assumed` requirement and one per assumption, plus one per item `marked` since the last round, keyed by that item's id | That item |
+| R2 | One per screen, keyed by the screen's id | `S<n>` and `S<n>.states` |
+| R3 | One per finding left, keyed `L<n>` | The screen that finding belongs to |
+
+The writer may mention other ids in a line's wording, but they decide
+nothing: a line covers only what this table gives it.
 
 R2 has no record of which screens or states the owner asked for: the
 frequency map records how often a feature is used, not an approved layout.
@@ -127,12 +141,26 @@ gain is its wording, not fewer decisions.
 At R3 the server numbers the findings left in one snapshot: the last
 critique's findings, the last look's mechanical findings and the phone
 round's findings, in the order `r3_sheet` lists them. Each gets a reference
-`L<n>` and a screen. A phone finding names its screen. A critic or
-mechanical finding is matched to the screen whose `route` or `surface` it
-names; one that matches none belongs to the first screen, and its line says
-so.
+`L<n>` and a screen, resolved in this order, the first that matches:
 
-Line decisions reduce to item decisions before `decided` runs:
+1. a `screen` field naming a screen id: a mechanical finding
+   (`oneshot_look`) and a phone finding carry one;
+2. on Android, a critic finding's `route`, which the critic's check already
+   holds to a screen id;
+3. on a web app, a critic finding's `route` matched against the screens'
+   routes;
+4. otherwise the first screen, and the line says the finding named no
+   screen.
+
+A brief submission is checked before anything is reduced. It must carry one
+decision for every mandatory line of the current `source`, no unknown line
+key, and each decision valid: an approval, or an edit with a comment. A
+missing line is refused with 400 even when another line covering the same
+screen is approved, and even when the submission asks for bulk approval. A
+full-sheet submission carries no line keys and is checked as today.
+
+Line decisions then reduce to item decisions, and `decided` runs on the
+result with its usual check that every item has a decision:
 
 - every item a line covers takes that line's decision;
 - an item covered by several lines, or by a line and the folded sheet, takes
@@ -188,15 +216,15 @@ percentiles and PSS memory.
 One turn after each turn that ends at a review, with no tools and no
 worktree, on the run's review model (`run["models"]`). That model did not
 write the design, so it reads the spec afresh rather than echoing it. Its
-input is the gate's inputs, the mandatory lines with what each covers, and
-the owner's sentence. Its output is one `oneshot-brief` block. The server
+input is the review's snapshot and the mandatory lines with what each
+covers. Its output is one `oneshot-brief` block. The server
 checks the block before the review shows it:
 
 - every section is present and within its length, and the whole brief stays
   under a ceiling, 4,000 characters by default;
 - every mandatory line is present, exactly once, and no other line is under
   `확인해 주세요`;
-- every cited id exists in the gate's inputs;
+- every cited id exists in the snapshot;
 - at R1, `빼기로 한 것` names every `not_applicable` requirement;
 - no backticked code, test name or endpoint path;
 - the translationese check passes, as on every gate sheet.
@@ -240,6 +268,15 @@ Every case runs offline on mocked model output; none needs a real run.
 - R3 reduction. Two findings on one screen, one approved and one edited,
   reduce to an edit carrying that comment. Two edits keep both comments. A
   phone finding on Android reaches its screen.
+- R3 mapping. A web mechanical finding on `S2` (its `screen` field), an
+  Android critic finding with `route: S2`, and a web critic finding on the
+  second screen's route all reach `S2`, not the first screen; only a finding
+  naming no screen falls back, with its note.
+- Missing line. With `L1` and `L2` both on `S1`, a submission approving `L1`
+  and omitting `L2` is refused with 400, with and without bulk approval, and
+  nothing is approved.
+- Snapshot. Changing only the profile's visibility changes R1's `source`
+  and the brief's `알아 두실 것`; changing only spend changes neither.
 - Fallback. A brief invalid twice leaves the full sheet with every item of
   `decidable`, and approving only part of it is refused as today.
 - Android. The R1 brief of a `core_sheet` design names every permission and
@@ -259,6 +296,6 @@ The owner decided these on 2026-11-16, by options.
 
 | # | Stage | Deliverable | Status |
 | --- | --- | --- | --- |
-| 8a | The brief | The `oneshot-brief` turn on the review model, the gate's `source`, the mandatory lines and the checks, `oneshot.brief` kept out of every agent input; written after `design` and `redesign`; the isolation, stale and fallback cases | Planned |
-| 8b | R1 on the brief | The brief first with per-line decisions reduced to items, one approval for the rest, `source` required on every R1 submission, today's sheet folded below; the Android case | Planned |
-| 8c | R2 and R3 on the brief | Their briefs after S6 and `refront`, and after the critique loop and phone round; R3's finding references and reduction; the R2 coverage and R3 reduction cases | Planned |
+| 8a | The brief | The `oneshot-brief` turn on the review model, the snapshot and its `source`, the mandatory lines and the checks, `oneshot.brief` kept out of every agent input; written after `design` and `redesign`; the isolation, stale, snapshot and fallback cases | Planned |
+| 8b | R1 on the brief | The brief first with every line's decision checked, then reduced to items, one approval for the rest, `source` required on every R1 submission, today's sheet folded below; the Android case | Planned |
+| 8c | R2 and R3 on the brief | Their briefs after S6 and `refront`, and after the critique loop and phone round; R3's finding references, their screens and the reduction; the R2 coverage, R3 mapping, R3 reduction and missing-line cases | Planned |
