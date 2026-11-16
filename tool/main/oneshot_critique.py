@@ -297,12 +297,15 @@ def brief_pictures(spec: dict, shot, phone_shot) -> dict[str, list[str]]:
 
 def asked_fixes(spec: dict, body: Decisions, briefed: bool, comments: dict[str, str]) -> list[dict]:
     """The owner's R3 edits as the builder's findings. On the brief, one per finding edited, carrying that
-    finding (the builder never sees the brief's `L<n>`), and one per item edited on the folded sheet."""
+    finding with where it was seen (the builder never sees the brief's `L<n>` or its pictures, and the
+    harness says the same words of different states), and one per item edited on the folded sheet."""
 
     if not briefed:
         return [{"severity": "high", "screen": k, "what": v} for k, v in comments.items()]
     left = {f["key"]: f for f in brief.snapshot(spec, "r3")["findings"]}
-    return [*({"severity": "high", "screen": left[k]["screen"], "finding": left[k]["what"], "what": d["edit"].strip()}
+    return [*({"severity": "high", "screen": left[k]["screen"],
+               **{at: left[k][at] for at in ("viewport", "state") if left[k].get(at)},
+               "finding": left[k]["what"], "what": d["edit"].strip()}
               for k, d in body.lines.items() if d.get("edit")),
             *({"severity": "high", "screen": i, "what": d["edit"].strip()}
               for i, d in body.decisions.items() if i in comments and brief.valid(d) and d.get("edit"))]

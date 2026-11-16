@@ -369,8 +369,10 @@ Every case runs offline on mocked model output; none needs a real run.
     each with its screen (`on_screen`, the order under "Confirmation
     lines"), whether it named one, and who found it;
   - `looks`: the first and last passing looks, the before and after;
-  - `fixed`: what earlier critique rounds sent to the builder, the latest
-    20, which is what changed since R2;
+  - `fixed`: what was sent back since R2, in order, the latest 20: each
+    look's high findings, which go to the build's retry before a critic
+    sees that look, and each earlier critique's findings; this is what
+    changed since R2;
   - `phone`: on Android, the phone round's device and measurements.
 - The critique loop's two clean rounds, and on Android the phone round's
   pass, save R3 under `working: brief`. The brief is written once the tree
@@ -383,7 +385,9 @@ Every case runs offline on mocked model output; none needs a real run.
   approves every screen.
 - Every R3 submission carries `source` (`oneshot_spec.on_brief`). An edited
   line goes to the builder as its own finding, on that finding's screen,
-  carrying the finding it answers, since the builder never sees `L<n>`. An
+  carrying the finding it answers and its viewport and state, since the
+  builder never sees `L<n>` or the pictures, and the harness words
+  findings of different states alike. An
   item edited on the folded sheet goes as today. The screen's decision
   keeps the joined comments for the marks and the reading record.
 

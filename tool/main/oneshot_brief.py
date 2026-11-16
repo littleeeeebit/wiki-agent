@@ -90,7 +90,11 @@ def finished(o: dict) -> dict:
         left.append({"key": f"L{n}", "screen": sid or next((s["id"] for s in screens if s.get("primary")), ""),
                      "named": bool(sid), "from": who,
                      **{k: f[k] for k in ("severity", "viewport", "state", "what", "fix") if f.get(k)}})
-    fixed = [{"screen": on_screen(f, screens), "what": f["what"]} for c in critiques[:-1] for f in c.get("findings") or []]
+    # What was sent back since R2, in the order it was: a look's high findings go to the build's retry before
+    # any critic sees that look, and an earlier critique's findings to the fix turn after it.
+    sent = [(x["round"], 0, f) for x in o.get("looks") or [] for f in x["findings"] if f["severity"] == "high"]
+    sent += [(c.get("look", 0), 1, f) for c in critiques[:-1] for f in c.get("findings") or []]
+    fixed = [{"screen": on_screen(f, screens), "what": f["what"]} for _, _, f in sorted(sent, key=lambda s: s[:2])]
     return {"findings": left, "fixed": fixed[-FIXED:],
             "looks": {"before": looks[0]["round"], "after": looks[-1]["round"]} if looks else {},
             "phone": {k: phone.get(k) for k in ("model", "size", "timing", "memory_kb", "round")} if phone else None}

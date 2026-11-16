@@ -367,6 +367,11 @@ def test_r3_findings_reach_their_screens_and_only_one_naming_none_falls_back():
     done = brief.finished(android)
     assert [(f["key"], f["screen"], f["from"]) for f in done["findings"]] == [("L1", "S2", "critic"), ("L2", "S3", "phone")]
     assert done["fixed"] == [{"screen": "S3", "what": "고침"}] and done["phone"]["model"] == "Pixel"
+    # A look's high finding went back to the build's retry before any critic saw it: it changed since R2 too.
+    broken = {**low, "severity": "high", "screen": "S1", "what": "콘솔 오류"}
+    retried = {**web, "looks": [{"round": 1, "findings": [broken]}, *web["looks"]],
+               "critiques": [{"look": 2, "findings": [{**low, "route": "/", "what": "여백"}]}, *web["critiques"]]}
+    assert brief.finished(retried)["fixed"] == [{"screen": "S1", "what": "콘솔 오류"}, {"screen": "S1", "what": "여백"}]
 
 
 def test_a_server_that_died_writing_a_later_reviews_brief_marks_that_review_failed():

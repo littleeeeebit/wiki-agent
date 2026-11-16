@@ -216,7 +216,8 @@ def test_r3_opens_on_its_brief_one_line_per_finding_and_an_edited_line_reaches_t
     assert refused.value.status_code == 409 and o()["stage"] == "r3"
     critique.decide("budget", on_r3(lines={"L1": {"approve": True}, "L2": {"edit": "안내를 크게"}, "L3": {"approve": True}},
                                     rest=True))
-    assert o()["fix"]["findings"] == [{"severity": "high", "screen": "S2", "finding": "빈 화면 안내가 작다", "what": "안내를 크게"}]
+    assert o()["fix"]["findings"] == [{"severity": "high", "screen": "S2", "viewport": "desktop", "state": "empty",
+                                       "finding": "빈 화면 안내가 작다", "what": "안내를 크게"}]
     assert o()["reading"]["r3"][-1]["brief"] is True and o()["r3"]["next_marks"] == {"S2": "edited"}
     assert "브리프표식삼삼" not in sent[-1][2] and "빈 화면 안내가 작다" in sent[-1][2]   # the builder never reads the brief
     assert "브리프표식삼삼" not in critique.r3_sheet(oneshot_spec.spec_of("budget"), lambda n, name: name)
@@ -228,6 +229,17 @@ def test_r3_opens_on_its_brief_one_line_per_finding_and_an_edited_line_reaches_t
     oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None})
     critique.decide("budget", on_r3(lines={k: {"approve": True} for k in r3["lines"]}, rest=True))
     assert o()["stage"] == "pr"
+
+
+def test_two_findings_the_harness_words_alike_reach_the_builder_apart_by_where_they_were_seen():
+    seen = [("desktop", "full"), ("phone", "empty")]
+    spec = {"oneshot": {"front": {"screens": [{"id": "S1", "route": "/", "primary": True}]},
+                        "looks": [{"round": 1, "findings": [{"severity": "medium", "screen": "S1", "viewport": v,
+                                                             "state": s, "what": "가로로 넘친다"} for v, s in seen]}]}}
+    asked = [critique.asked_fixes(spec, critique.Decisions(lines={k: {"edit": "고쳐라"} if k == edited else {"approve": True}
+                                                                  for k in ("L1", "L2")}), True, {"S1": "고쳐라"})
+             for edited in ("L1", "L2")]
+    assert [(f["viewport"], f["state"]) for fixes in asked for f in fixes] == seen
 
 
 # -- The tree the critic judged, the hand-overs, the shots it sees ---------------------------
