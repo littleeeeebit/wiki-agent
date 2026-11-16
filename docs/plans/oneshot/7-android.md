@@ -498,7 +498,8 @@ How 7f2 builds it (`tool/main/oneshot_critique.py`, `tool/main/oneshot_pr.py`,
   Android gate does, and the APK must exist after it. While the check still
   holds the worktree, the APK is copied into the run's folder and hashed.
   The APK is a build output Git does not track, so the run never reads it
-  off the tree again.
+  off the tree again. A copy that fails leaves nothing behind, and the pull
+  request still opens with the reason in its body.
 - Before the pull request's text is asked, that copy goes to a draft
   prerelease tagged `oneshot-apk-<head>`. The pull request's body links it
   with the build commit and its SHA-256, and the finished run's summary shows

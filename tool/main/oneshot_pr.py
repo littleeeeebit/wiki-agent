@@ -148,8 +148,8 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
             return why
         try:
             frozen = froze(spec, verdict["head"])
-        except OSError as exc:
-            return f"최종 게이트가 만든 APK 를 복사하지 못했다 — {exc}"
+        except OSError as exc:   # the attachment is optional: the pull request opens and its body says why
+            frozen = {"head": verdict["head"], "error": f"최종 게이트가 만든 APK 를 복사하지 못했다 — {exc}"}
     report = next(b["value"] for b in specs.blocks(final)[1] if b["name"] == "done-report")
     tail = (verdict.get("tail") or "").strip()
     # The pull request's body reads these as every spec's: the worker's report and the server's gate.
@@ -181,9 +181,13 @@ def froze(spec: dict, head: str) -> dict:
     base = oneshot_spec.store(spec["repo"]).folder / "release"
     shutil.rmtree(base, ignore_errors=True)
     name, into = f"{spec['repo']}-{head[:12]}-debug.apk", base / f"r{time.time_ns()}"
-    into.mkdir(parents=True)
-    shutil.copyfile(Path(spec["worktree"]) / spec["oneshot"]["device"]["apk"], into / name)
-    return {"head": head, "name": name, "path": str(into / name), "sha256": android_owned.sha256(into / name)}
+    try:
+        into.mkdir(parents=True)
+        shutil.copyfile(Path(spec["worktree"]) / spec["oneshot"]["device"]["apk"], into / name)
+        return {"head": head, "name": name, "path": str(into / name), "sha256": android_owned.sha256(into / name)}
+    except OSError:
+        shutil.rmtree(into, ignore_errors=True)   # never a partial copy left behind
+        raise
 
 
 def _url(done: subprocess.CompletedProcess) -> str | None:
@@ -198,8 +202,8 @@ def released(spec: dict) -> dict:
 
     o, path = spec["oneshot"], Path(spec["worktree"])
     head, frozen, old = o["final_head"], o.get("apk_frozen") or {}, o.get("apk") or {}
-    if frozen.get("head") != head:
-        return {"head": head, "error": "최종 게이트가 고정한 APK 가 없다"}
+    if frozen.get("head") != head or frozen.get("error"):
+        return {"head": head, "error": frozen.get("error") or "최종 게이트가 고정한 APK 가 없다"}
     # A resumed S8 asks for the text again: the same APK is not uploaded twice, a rebuilt one replaces it.
     if old.get("url") and (old.get("head"), old.get("sha256")) == (head, frozen["sha256"]):
         shutil.rmtree(Path(frozen["path"]).parent, ignore_errors=True)

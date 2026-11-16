@@ -380,6 +380,29 @@ def test_a_same_head_rebuild_the_resumed_final_gate_passes_replaces_the_released
     assert o()["apk"]["url"] == URL and o()["apk"]["tag"] == first["tag"]
 
 
+def test_an_apk_that_cannot_be_copied_still_opens_the_pull_request_and_leaves_no_partial_copy(android):
+    tree, sent = android
+    untracked_apks(tree)
+    copies = []
+
+    def broken(source, target):
+        Path(target).write_bytes(b"partial")
+        copies.append(Path(target))
+        raise OSError("No space left on device")
+
+    releases = Releases()
+    with patch.object(oneshot_pr.shutil, "copyfile", broken), patch.object(specs, "sh", releases), \
+            patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    assert sent[-1][2].startswith("Write the pull request's text.") and spec()["writing"] and o()["final_head"]
+    assert "No space left on device" in o()["apk"]["error"] and not releases.calls
+    assert copies and not copies[0].parent.exists()
+    remote = Remote()
+    with patch.object(specs, "sh", remote):
+        check(tree, SUMMARIZED)
+    assert remote.created() and "디버그 APK 를 Release 에 올리지 못했다 — 최종 게이트가 만든 APK 를 복사하지 못했다" in remote.body
+
+
 def test_a_release_whose_reply_was_lost_gets_the_apk_again_and_a_failed_one_is_said_in_the_body(android):
     tree, _ = android
     readme(tree)
