@@ -19,8 +19,8 @@ from fastapi import HTTPException
 
 import android_owned
 import android_phone
-from main import oneshot_build, oneshot_critique as critique, oneshot_device as device, oneshot_phone as phone_round, \
-    oneshot_review as review, oneshot_spec
+from main import oneshot_brief as brief, oneshot_build, oneshot_critique as critique, oneshot_device as device, \
+    oneshot_phone as phone_round, oneshot_review as review, oneshot_spec
 from test_oneshot_device import (DEVICE, PKG, Phone, android_build, clean_app, phone)  # noqa: F401 — fixtures
 from test_oneshot_front_build import git, o, spec, staged  # noqa: F401 — `staged` is a fixture
 from test_oneshot_spec import world  # noqa: F401 — the temporary worktree's fixture
@@ -165,6 +165,15 @@ def test_the_r3_sheet_after_a_phone_round_shows_the_phone_its_timing_and_each_co
     assert "7ms · 14ms · 32ms" in sheet and "| 메모리(PSS) | 83.4MB |" in sheet
     assert "- R1 지출을 적으면 합계에 더해진다 — 끝나면: 합계가 늘었다" in sheet and "R2 알림" not in sheet
     assert str(phone_round.phone_shot("budget", 1, "S1-phone-full.png").path).endswith("S1-phone-full.png")
+    # The brief's turn ran after the round (a stand-in that answers nothing): the review shows its sheet, the
+    # phone's pictures and measurements are the brief's, and its writer must say how the phone went.
+    shown, snap = critique.extra(spec())["r3_brief"], brief.snapshot(spec(), "r3")
+    assert not spec()["oneshot"]["working"] and shown["failed"]
+    assert shown["pictures"]["화면"][-1] == "/api/oneshot/spec/budget/phone/shot/1/S1-phone-full.png"
+    assert snap["phone"]["model"] == "SM G991N" and snap["phone"]["timing"]["p90_ms"] == 14
+    plain = {"sections": [{"name": "한 줄", "text": "알림을 받아 적습니다."}, {"name": "화면", "text": "첫 화면입니다."}], "confirm": []}
+    with pytest.raises(ValueError, match="휴대폰 회차가 있었다"):
+        brief.checked(plain, snap, brief.lines(snap), 1)
     for n, name in [(1, "S1-desktop-full.png"), (1, "../p1/S1-phone-full.png"), (2, "S1-phone-full.png")]:
         with pytest.raises(HTTPException):
             phone_round.phone_shot("budget", n, name)

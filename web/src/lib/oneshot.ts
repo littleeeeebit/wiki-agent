@@ -8,13 +8,13 @@ export type Feature = { id: string; name: string; class: Freq; why: string; endp
 export type Freq = 'every' | 'sometimes' | 'rarely' | 'never'
 export type Palette = { id: string; name: string; colors: Record<string, string> }
 export type Gate = { round: number; decisions: Record<string, Decision>; marks?: Record<string, string>; palette?: string }
-/** R1's brief for the owner (`oneshot_brief.shown`): always the gate's `source`, which every submission carries;
+/** A review's brief for the owner (`oneshot_brief.shown`): always the gate's `source`, which every submission carries;
  *  the brief's sections and confirmation lines (`lines`: key → the items it covers) when one was written for this
  *  gate, else why the review shows its full sheet. */
 export type Brief = {
   source: string; sections?: { name: string; text: string }[]; confirm?: { key: string; text: string }[]
   lines?: Record<string, string[]>; failed?: string
-  /** R2: each screen's pictures, shown with its confirmation line. */
+  /** R2 and R3: pictures by confirmation line, or by section (R3's `화면`: the first screen before and after). */
   pictures?: Record<string, string[]>
 }
 export type Talk ={ role: 'owner' | 'agent'; text: string; choices?: ChoiceQuestion | { questions: ChoiceQuestion[] } | null }
@@ -80,7 +80,7 @@ export type SpecView = SpecSummary & {
   sheet?: string; items?: string[]; brief?: Brief
   board?: { features: Feature[]; first_screen: string | null; frequency: Record<string, Freq> }
   front_sheet?: string; front_items?: string[]; front_brief?: Brief
-  r3_sheet?: string; r3_items?: string[]
+  r3_sheet?: string; r3_items?: string[]; r3_brief?: Brief
   summary?: RunSummary
   /** A phone round's cleanup that has not finished: shown until that phone is listed again. */
   phone_owned?: Owned[]

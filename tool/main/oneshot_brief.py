@@ -2,7 +2,8 @@
 
 `docs/plans/oneshot/8-human-sheet.md` is the design. The agent's spec stays as it is; the brief lives in
 `oneshot.brief`, keyed by review, and nothing but the owner's view reads it. R1's brief is written after
-`design` and `redesign`, R2's after the screen design and `refront`. A brief that cannot be written leaves
+`design` and `redesign`, R2's after the screen design and `refront`, R3's after the critique loop (and on
+Android the phone round) passes. A brief that cannot be written leaves
 the review on its full sheet and never stops the run. A snapshot names its review in `gate`; R1's carries
 none, so the briefs 8a stored keep their `source`.
 """
@@ -26,8 +27,12 @@ R1_SECTIONS = ("한 줄", "쓰는 장면", "물어보신 것", "돌아가는 순
 R1_OPTIONAL = {"물어보신 것", "돌아가는 순서", "빼기로 한 것"}   # a sentence may ask nothing; an app may have no pipeline
 # R2's sections; the screens' pictures sit with their confirmation lines and the palettes beside, from the spec.
 R2_SECTIONS = ("한 줄", "화면", "기능이 놓인 자리")
-SECTIONS = {"r1": R1_SECTIONS, "r2": R2_SECTIONS}
-OPTIONAL = {"r1": R1_OPTIONAL, "r2": set()}
+# R3's: placement was fixed at R2 and the build stays within it, so nothing moved to tell; `휴대폰에서` is an
+# Android app's, which alone has a phone round.
+R3_SECTIONS = ("한 줄", "화면", "휴대폰에서")
+SECTIONS = {"r1": R1_SECTIONS, "r2": R2_SECTIONS, "r3": R3_SECTIONS}
+OPTIONAL = {"r1": R1_OPTIONAL, "r2": set(), "r3": {"휴대폰에서"}}
+FIXED = 20   # the latest fixes since R2 the R3 snapshot keeps: "what changed" needs the gist, not every round
 CITED = re.compile(r"\(([^()]*)\)")
 ID = re.compile(r"\b[A-Z]{1,2}\d+\b")
 CITATION = re.compile(r"\s*[A-Z]{1,2}\d+(?:\s*[,·]\s*[A-Z]{1,2}\d+)*\s*")
@@ -50,19 +55,57 @@ def snapshot(spec: dict, gate: str = "r1") -> dict:
     profile = o.get("profile") or {}
     shown = {"kind": kind_of(o), "visibility": profile.get("visibility"), "auth": profile.get("auth")}
     at = o.get(gate) or {}
-    if gate == "r2":
+    if gate in ("r2", "r3"):
         front = o.get("front") or {}
         # `shots` numbers the pictures: a new design or an edit turn shoots them again under a new number.
-        return {"gate": "r2", "sentence": o.get("sentence") or "", "screens": front.get("screens") or [],
+        snap = {"gate": gate, "sentence": o.get("sentence") or "", "screens": front.get("screens") or [],
                 "states": front.get("states") or {}, "palettes": (front.get("tokens") or {}).get("palettes") or [],
                 "shots": front.get("shots"), "first_screen": o.get("first_screen") or "",
                 "features": [{k: f[k] for k in ("id", "name", "why")} for f in o.get("features") or []],
                 "frequency": o.get("frequency") or {}, "profile": shown,
                 "round": at.get("round", 1), "marks": at.get("marks") or {}}
+        return snap | (finished(o) if gate == "r3" else {})
     return {"sentence": o.get("sentence") or "", "restated": (o.get("intent") or {}).get("restated") or "",
             "requirements": spec.get("requirements") or [], "glossary": o.get("glossary") or [],
             "stack": o.get("stack") or [], "design": o.get("design") or {}, "profile": shown,
             "round": at.get("round", 1), "marks": at.get("marks") or {}}
+
+
+def finished(o: dict) -> dict:
+    """R3's own fields: the findings left, numbered `L<n>` in the order `r3_sheet` lists them, each on its
+    screen; the looks a before and after compare; the fixes since R2; and on Android the phone round's
+    device and measurements."""
+
+    screens = (o.get("front") or {}).get("screens") or []
+    looks = [x for x in o.get("looks") or [] if not any(f["severity"] == "high" for f in x["findings"])]
+    phone = o.get("phone") or {}
+    phone = phone if kind_of(o) == "android" and phone.get("round") else {}
+    critiques = o.get("critiques") or []
+    said = [("critic", f) for f in (critiques[-1:] or [{}])[0].get("findings", [])]
+    said += [("harness", f) for f in (looks[-1]["findings"] if looks else [])]
+    said += [("phone", f) for f in phone.get("findings") or []]
+    left = []
+    for n, (who, f) in enumerate(said, 1):
+        sid = on_screen(f, screens)
+        left.append({"key": f"L{n}", "screen": sid or next((s["id"] for s in screens if s.get("primary")), ""),
+                     "named": bool(sid), "from": who,
+                     **{k: f[k] for k in ("severity", "viewport", "state", "what", "fix") if f.get(k)}})
+    # What was sent back since R2, in the order it was: a look's high findings go to the build's retry before
+    # any critic sees that look, and an earlier critique's findings to the fix turn after it.
+    sent = [(x["round"], 0, f) for x in o.get("looks") or [] for f in x["findings"] if f["severity"] == "high"]
+    sent += [(c.get("look", 0), 1, f) for c in critiques[:-1] for f in c.get("findings") or []]
+    fixed = [{"screen": on_screen(f, screens), "what": f["what"]} for _, _, f in sorted(sent, key=lambda s: s[:2])]
+    return {"findings": left, "fixed": fixed[-FIXED:],
+            "looks": {"before": looks[0]["round"], "after": looks[-1]["round"]} if looks else {},
+            "phone": {k: phone.get(k) for k in ("model", "size", "timing", "memory_kb", "round")} if phone else None}
+
+
+def on_screen(f: dict, screens: list[dict]) -> str:
+    """The screen a finding belongs to, the first that matches: its `screen` field (the harness's and the
+    phone's), its `route` as an id (the critic's on Android), its `route` as a web route; else empty."""
+
+    ids, routes = {s["id"] for s in screens}, {s["route"]: s["id"] for s in screens if s.get("route")}
+    return next((v for v in (f.get("screen"), f.get("route")) if v in ids), "") or routes.get(f.get("route"), "")
 
 
 def source(snap: dict) -> str:
@@ -72,7 +115,8 @@ def source(snap: dict) -> str:
 def lacking(snap: dict) -> str:
     """Empty when the snapshot holds what every required section reads, else what is missing."""
 
-    needed = ("sentence", "screens", "features") if gate_of(snap) == "r2" else ("sentence", "restated", "requirements", "design")
+    needed = {"r1": ("sentence", "restated", "requirements", "design"), "r2": ("sentence", "screens", "features"),
+              "r3": ("sentence", "screens", "looks")}[gate_of(snap)]
     missing = [k for k in needed if not snap[k]]
     return f"요약에 쓸 정보가 없다: {', '.join(missing)}" if missing else ""
 
@@ -80,10 +124,13 @@ def lacking(snap: dict) -> str:
 def lines(snap: dict) -> dict[str, list[str]]:
     """A review's mandatory confirmation lines, by key, each with the items it covers. The server fixes them;
     the writer words them. R1: every `assumed` requirement, every assumption, and every item marked since the
-    last round. R2: one per screen, covering the screen and its states."""
+    last round. R2: one per screen, covering the screen and its states. R3: one per finding left, covering
+    its screen."""
 
     if gate_of(snap) == "r2":
         return {s["id"]: [s["id"], f"{s['id']}.states"] for s in snap["screens"]}
+    if gate_of(snap) == "r3":
+        return {f["key"]: [f["screen"]] for f in snap["findings"]}
     keys = [r["id"] for r in snap["requirements"] if r.get("status") == "assumed"]
     keys += [a["id"] for a in snap["design"].get("assumptions") or []]
     keys += [k for k in snap["marks"] if k not in keys]
@@ -91,6 +138,12 @@ def lines(snap: dict) -> dict[str, list[str]]:
 
 
 def about(snap: dict, key: str) -> str:
+    if gate_of(snap) == "r3":
+        f = next(f for f in snap["findings"] if f["key"] == key)
+        where = f["screen"] if f["named"] else f"{f['screen']} (the finding named no screen: say so)"
+        seen = ", ".join(f[k] for k in ("severity", "viewport", "state") if f.get(k))
+        return (f"{key} on {where}, found by the {f['from']} ({seen}): {f['what']}"
+                + (f"; the suggested fix: {f['fix']}" if f.get("fix") else ""))
     if gate_of(snap) == "r2":
         s = next(s for s in snap["screens"] if s["id"] == key)
         st = snap["states"].get(key) or {}
@@ -139,18 +192,19 @@ def checked(value, snap: dict, mandatory: dict[str, list[str]], attempt: int) ->
     if (total := sum(len(t) for _, t in texts)) > MAX_BRIEF:
         raise ValueError(f"요약이 {total}자다 — {MAX_BRIEF}자 안으로 줄여라")
     # A citation is parentheses holding ids and nothing else, `(R3, A2)`: `(갤럭시 S21)` and `(A4 용지)` are words.
-    r2 = gate_of(snap) == "r2"
-    known = ({s["id"] for s in snap["screens"]} | {p["id"] for p in snap["palettes"]} if r2
+    shown_screens = gate_of(snap) != "r1"   # R2 and R3 are about the screens
+    known = ({s["id"] for s in snap["screens"]} | {p["id"] for p in snap["palettes"]}
+             | {f["key"] for f in snap.get("findings") or []} if shown_screens
              else set(sheet.decidable(snap["design"], snap["requirements"])))
     cited = {i for _, t in texts for c in CITED.finditer(t) if CITATION.fullmatch(c.group(1)) for i in ID.findall(c.group(1))}
     if unknown := sorted(cited - known):
         raise ValueError(f"명세에 없는 번호를 댔다: {', '.join(unknown)}")
-    paths = ({s["route"] for s in snap["screens"] if len(s.get("route") or "") > 1} if r2
+    paths = ({s["route"] for s in snap["screens"] if len(s.get("route") or "") > 1} if shown_screens
              else {p["path"] for p in snap["design"].get("api") or [] if len(p.get("path") or "") > 1})
     if named := sorted({p for _, t in texts for p in paths if re.search(rf"{re.escape(p)}(?![\w-])", t)}):
-        what = "화면 경로" if r2 else "엔드포인트 경로"   # with or without a method
+        what = "화면 경로" if shown_screens else "엔드포인트 경로"   # with or without a method
         raise ValueError(f"사람이 읽는 요약에 쓰지 않는 표기가 있다: {what} {', '.join(named)}")
-    (screens_checked if r2 else design_checked)(snap, sections, texts)
+    (screens_checked if shown_screens else design_checked)(snap, sections, texts)
     if banned := sorted({f"{n} {what}" for n, t in texts for what, p in BANNED.items() if p.search(t)}):
         raise ValueError(f"사람이 읽는 요약에 쓰지 않는 표기가 있다: {'; '.join(banned)}")
     warnings = [f"{n} 번역체: " + "; ".join(f"{p} `{s}`" for p, s in hits) for n, t in texts if (hits := sheet.translationese(t))]
@@ -160,11 +214,18 @@ def checked(value, snap: dict, mandatory: dict[str, list[str]], attempt: int) ->
 
 
 def screens_checked(snap: dict, sections: list[dict], texts: list[tuple[str, str]]) -> None:
-    """R2: every feature on a screen named by its name where it sits, and no feature id in the owner's words."""
+    """R2: every feature on a screen named by its name where it sits. R3: `휴대폰에서` exactly when the app
+    had a phone round. Both: no feature id in the owner's words."""
 
+    names = {s["name"] for s in sections}
     placed = next((s["text"] for s in sections if s["name"] == "기능이 놓인 자리"), "")
-    if unnamed := [f["name"] for f in snap["features"] if snap["frequency"].get(f["id"]) != "never" and f["name"] not in placed]:
+    if gate_of(snap) == "r2" and (unnamed := [f["name"] for f in snap["features"]
+                                              if snap["frequency"].get(f["id"]) != "never" and f["name"] not in placed]):
         raise ValueError(f"`기능이 놓인 자리` 에 빠진 기능이 있다 — 이름 그대로 써라: {', '.join(unnamed)}")
+    if gate_of(snap) == "r3" and snap["phone"] and "휴대폰에서" not in names:
+        raise ValueError("휴대폰 회차가 있었다 — `휴대폰에서` 섹션이 빠졌다")
+    if gate_of(snap) == "r3" and not snap["phone"] and "휴대폰에서" in names:
+        raise ValueError("휴대폰 회차가 없었다 — `휴대폰에서` 섹션은 두지 않는다")
     if coded := sorted({f["id"] for f in snap["features"] for _, t in texts if re.search(rf"(?<![\w-]){re.escape(f['id'])}(?![\w-])", t)}):
         raise ValueError(f"기능은 이름으로 쓴다, 코드 이름이 아니다: {', '.join(coded)}")
 

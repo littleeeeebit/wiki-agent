@@ -265,6 +265,14 @@ def briefed(repo: str, gate: str = "r1") -> None:
     brief.write(store(repo), lambda: spec_of(repo), lambda **f: saved(repo, oneshot=f), gate)
 
 
+def briefing(repo: str, gate: str, fields: dict):
+    """A review opened from a stage that holds the worktree (`oneshot_review.holding`): saved under
+    `working: brief`, and the brief written by what this returns, once the tree is let go: it reads none."""
+
+    saved(repo, oneshot={**fields, "working": "brief"})
+    return lambda: briefed(repo, gate)
+
+
 # -- R1 the sheet and its decisions ------------------------------------------------------
 
 def redesign(repo: str, comments: dict[str, str], reach: list[str]) -> None:

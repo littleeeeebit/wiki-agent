@@ -16,6 +16,7 @@ import pytest
 import android_owned
 from main import oneshot, oneshot_build, oneshot_critique as critique, oneshot_pr, oneshot_spec, pr_text, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
+from test_oneshot_critique import on_r3
 from test_oneshot_device import DEVICE
 from test_oneshot_front_build import (CASES, CONTRACT, FEATURES, FREQUENCY, FRONT, GATE, RUNNER, Run, adapter, git,
                                       write)
@@ -86,7 +87,7 @@ def readme(tree, *more):
 def test_r3s_approval_sends_the_readme_turn_for_both_systems_and_no_workflow_for_a_private_repository(finished):
     _, sent = finished
     oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None, "r3": {"round": 1, "decisions": {}}})
-    critique.decide("budget", critique.Decisions(decisions={s["id"]: {"approve": True} for s in FRONT["screens"]}))
+    critique.decide("budget", on_r3(decisions={s["id"]: {"approve": True} for s in FRONT["screens"]}))
     stage, text = sent[-1][1:]
     assert stage == "pr" and "Windows and macOS" in text and GATE in text and "Write no CI workflow" in text
     assert o()["reading"]["r3"][0]["edited"] == []
@@ -308,7 +309,7 @@ class Releases:
 def test_an_android_apps_readme_turn_names_the_apk_and_its_install_and_a_public_workflow_its_sdk(android):
     _, sent = android
     oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None, "r3": {"round": 1, "decisions": {}}})
-    critique.decide("budget", critique.Decisions(decisions={s["id"]: {"approve": True} for s in FRONT["screens"]}))
+    critique.decide("budget", on_r3(decisions={s["id"]: {"approve": True} for s in FRONT["screens"]}))
     text = sent[-1][2]
     assert f"`{DEVICE['apk']}`" in text and "adb's install command" in text and "Write no CI workflow" in text
     oneshot_spec.saved("budget", oneshot={"profile": {**o()["profile"], "visibility": "public", "ci": "github-actions"}})

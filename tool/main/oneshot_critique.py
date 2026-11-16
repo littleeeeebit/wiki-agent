@@ -17,8 +17,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import oneshot, oneshot_build, oneshot_front_build as front_build, oneshot_pr, oneshot_review as review, \
-    oneshot_screens as screens, oneshot_spec
+from . import oneshot, oneshot_brief as brief, oneshot_build, oneshot_front_build as front_build, oneshot_pr, \
+    oneshot_review as review, oneshot_screens as screens, oneshot_spec
 from .oneshot_profile import KIND_STOPS, kind_of
 from .query import ROOT
 
@@ -134,7 +134,7 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict]):
         from . import oneshot_phone   # it imports this module
         return oneshot_phone.waits(repo, rounds)   # the owner's phone comes before R3
     if len(ours) >= 2 and ours[-1]["clean"] and ours[-2]["clean"]:
-        return oneshot_spec.saved(repo, oneshot={"critiques": rounds, "stage": "r3", "working": None, "r3": opening(o)})
+        return oneshot_spec.briefing(repo, "r3", {"critiques": rounds, "stage": "r3", "r3": opening(o)})
     if len(ours) >= MAX_ROUNDS:
         detail = f"{MAX_ROUNDS}회차에도 높은 발견이 남았다 — " + " / ".join(
             f"{f['route']} {f['viewport']} {f['state']}: {f['what']}" for f in found if f["severity"] == "high")
@@ -258,8 +258,11 @@ def walkthroughs(spec: dict) -> list[str]:
 
 
 class Decisions(BaseModel):
-    decisions: dict[str, dict]
+    decisions: dict[str, dict] = {}
     reading: dict = {}
+    source: str = ""   # as on R1 (`oneshot_spec.Decisions`)
+    lines: dict[str, dict] = {}
+    rest: bool = False
 
 
 def extra(spec: dict) -> dict:
@@ -268,8 +271,44 @@ def extra(spec: dict) -> dict:
         return {"critiques": o.get("critiques") or []} if o.get("critiques") else {}
     phone_shot = (lambda n, name: f"/api/oneshot/spec/{spec['repo']}/phone/shot/{n}/{name}") \
         if kind_of(o) == "android" else None
+    shot = lambda n, name: f"/api/oneshot/spec/{spec['repo']}/look/{n}/{name}"   # noqa: E731
     return {"critiques": o.get("critiques") or [], "r3_items": [s["id"] for s in o["front"]["screens"]],
-            "r3_sheet": r3_sheet(spec, lambda n, name: f"/api/oneshot/spec/{spec['repo']}/look/{n}/{name}", phone_shot)}
+            "r3_sheet": r3_sheet(spec, shot, phone_shot),
+            "r3_brief": {**brief.shown(spec, "r3"), "pictures": brief_pictures(spec, shot, phone_shot)}}
+
+
+def brief_pictures(spec: dict, shot, phone_shot) -> dict[str, list[str]]:
+    """The R3 brief's pictures, from the spec: the first screen before and after under `화면`, and with each
+    finding's line the shot it was found on."""
+
+    snap = brief.snapshot(spec, "r3")
+    looks, phone, views = snap["looks"], snap["phone"], front_build.views(spec["oneshot"]["profile"])
+    if not looks:
+        return {}
+    first = next(s["id"] for s in snap["screens"] if s["primary"])
+    out = {"화면": [shot(looks["before"], f"{first}-{views[0]}-full.png"), shot(looks["after"], f"{first}-{views[0]}-full.png"),
+                  *([phone_shot(phone["round"], f"{first}-phone-full.png")] if phone else [])]}
+    for f in snap["findings"]:
+        state = f.get("state") if f.get("state") in STATES else "full"
+        out[f["key"]] = ([phone_shot(phone["round"], f"{f['screen']}-phone-{state}.png")] if f["from"] == "phone"
+                         else [shot(looks["after"], f"{f['screen']}-{f.get('viewport') or views[0]}-{state}.png")])
+    return out
+
+
+def asked_fixes(spec: dict, body: Decisions, briefed: bool, comments: dict[str, str]) -> list[dict]:
+    """The owner's R3 edits as the builder's findings. On the brief, one per finding edited, carrying that
+    finding with where it was seen (the builder never sees the brief's `L<n>` or its pictures, and the
+    harness says the same words of different states), and one per item edited on the folded sheet."""
+
+    if not briefed:
+        return [{"severity": "high", "screen": k, "what": v} for k, v in comments.items()]
+    left = {f["key"]: f for f in brief.snapshot(spec, "r3")["findings"]}
+    return [*({"severity": "high", "screen": left[k]["screen"],
+               **{at: left[k][at] for at in ("viewport", "state") if left[k].get(at)},
+               "finding": left[k]["what"], "what": d["edit"].strip()}
+              for k, d in body.lines.items() if d.get("edit")),
+            *({"severity": "high", "screen": i, "what": d["edit"].strip()}
+              for i, d in body.decisions.items() if i in comments and brief.valid(d) and d.get("edit"))]
 
 
 oneshot_spec.VIEWS.append(extra)
@@ -284,9 +323,10 @@ def decide(repo: str, body: Decisions) -> dict:
         spec = oneshot_spec.spec_of(repo)
         o = spec["oneshot"]
         oneshot_spec.idle(o, "r3")
-        decisions, comments = oneshot_spec.decided([s["id"] for s in o["front"]["screens"]], o["r3"]["decisions"],
-                                                   body.decisions)
-        reading = oneshot_spec.read(o, "r3", body.reading, comments)
+        items = [s["id"] for s in o["front"]["screens"]]
+        given, briefed = oneshot_spec.on_brief(spec, "r3", items, body)
+        decisions, comments = oneshot_spec.decided(items, o["r3"]["decisions"], given)
+        reading = oneshot_spec.read(o, "r3", body.reading, comments, briefed)
         if not comments:
             oneshot_spec.saved(repo, oneshot={"r3": {**o["r3"], "decisions": decisions}, "reading": reading})
             approved(repo)
@@ -297,7 +337,7 @@ def decide(repo: str, body: Decisions) -> dict:
                 "stage": front_build.STAGE, "attempts": 0, "critique_base": len(o.get("critiques") or []),
                 "working": front_build.STAGE, "reading": reading,
                 "fix": {"who": "The owner reviewed the finished screens (R3)",
-                        "findings": [{"severity": "high", "screen": k, "what": v} for k, v in comments.items()]},
+                        "findings": asked_fixes(spec, body, briefed, comments)},
                 "r3": {**o["r3"], "decisions": decisions, "next_marks": {k: "edited" for k in comments}}})
     if not comments:
         if oneshot_spec.spec_of(repo)["oneshot"]["stage"] == oneshot_pr.STAGE:   # outside the lock: the turn takes the worktree's hold

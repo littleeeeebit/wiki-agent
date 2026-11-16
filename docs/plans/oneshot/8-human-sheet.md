@@ -206,7 +206,7 @@ percentiles and PSS memory.
 | --- | --- | --- |
 | 한 줄 | What the screens let the owner do | What the finished screens do, and what changed since R2 |
 | 화면 | Each screen's picture with one sentence on what it is for | The first screen's pictures, before and after |
-| 기능이 놓인 자리 | Each feature by name and where it sits, in a sentence where it differs from the owner's map | The same, only where it moved since R2 |
+| 기능이 놓인 자리 | Each feature by name and where it sits, in a sentence where it differs from the owner's map | Not shown: the placement is fixed at R2 and the build stays within it |
 | 확인해 주세요 | One line per screen, on the screen and its states | One line per finding left, in words, with its likely effect on use |
 | 색 | The palettes as named swatches | Not shown |
 | 휴대폰에서 | Not shown | On Android: whether it felt smooth and how much memory it used, in words, beside the measured values |
@@ -361,6 +361,36 @@ Every case runs offline on mocked model output; none needs a real run.
   checked like R1's (`oneshot_spec.on_brief`). A line's edit reaches both
   the screen and its states.
 
+## How 8c2 shows R3
+
+- The R3 snapshot is R2's fields under `gate: r3` with R3's round and marks,
+  plus R3's own (`oneshot_brief.finished`):
+  - `findings`: the findings left, numbered `L<n>` in `r3_sheet`'s order,
+    each with its screen (`on_screen`, the order under "Confirmation
+    lines"), whether it named one, and who found it;
+  - `looks`: the first and last passing looks, the before and after;
+  - `fixed`: what was sent back since R2, in order, the latest 20: each
+    look's high findings, which go to the build's retry before a critic
+    sees that look, and each earlier critique's findings; this is what
+    changed since R2;
+  - `phone`: on Android, the phone round's device and measurements.
+- The critique loop's two clean rounds, and on Android the phone round's
+  pass, save R3 under `working: brief`. The brief is written once the tree
+  is let go (`oneshot_spec.briefing`, which R2 uses too).
+- The writer writes `한 줄` and `화면`, and `휴대폰에서` exactly when there
+  was a phone round, plus one line per finding. The pictures come from the
+  spec: the first screen before and after under `화면`, the phone's beside
+  them, and each finding's shot (its screen, viewport and state) by its
+  line. A run with no finding left has no line: approving the brief
+  approves every screen.
+- Every R3 submission carries `source` (`oneshot_spec.on_brief`). An edited
+  line goes to the builder as its own finding, on that finding's screen,
+  carrying the finding it answers and its viewport and state, since the
+  builder never sees `L<n>` or the pictures, and the harness words
+  findings of different states alike. An
+  item edited on the folded sheet goes as today. The screen's decision
+  keeps the joined comments for the marks and the reading record.
+
 ## Decided
 
 The owner decided these on 2026-11-16, by options.
@@ -378,4 +408,4 @@ The owner decided these on 2026-11-16, by options.
 | 8a | The brief | The `oneshot-brief` turn on the review model, the snapshot and its `source`, the mandatory lines and the checks, `oneshot.brief` kept out of every agent input; written after `design` and `redesign`; the isolation, stale, snapshot and fallback cases | Done — `oneshot_brief` |
 | 8b | R1 on the brief | The brief first with every line's decision checked, then reduced to items, one approval for the rest, `source` required on every R1 submission, today's sheet folded below; the Android case | Done — R1 opens on the brief |
 | 8c1 | R2 on the brief | Its brief after S6 and `refront`, one line per screen with its pictures, the palette still picked; `source` on every R2 submission; the R2 coverage and missing-line cases | Done — R2 opens on the brief |
-| 8c2 | R3 on the brief | Its brief after the critique loop and phone round; R3's finding references, their screens and the reduction; the comparison baseline for "what changed since R2"; the R3 mapping and reduction cases | Planned |
+| 8c2 | R3 on the brief | Its brief after the critique loop and phone round; R3's finding references, their screens and the reduction; the comparison baseline for "what changed since R2"; the R3 mapping and reduction cases | Done — R3 opens on the brief |
