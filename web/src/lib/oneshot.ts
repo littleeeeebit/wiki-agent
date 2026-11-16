@@ -121,8 +121,15 @@ export const stagesOf = <T extends { id: string }>(stages: readonly T[], kind?: 
 export const STOP: Record<string, string> = {
   block: '모델 답을 쓸 수 없었다', restart: '서버가 다시 켜져 멈췄다', tests: '계약 테스트를 쓰지 못했다',
   gate: '빌드가 검사를 통과하지 못했다', review: '백엔드 리뷰가 라운드 상한까지 거절했다', critique: '화면 비평이 멈췄다',
-  kind: '이 종류는 여기까지',
+  kind: '이 종류는 여기까지', rekind: '고른 종류로는 만들 수 없는 요구',
 }
+/** The kinds the owner picks on the start screen (`tool/main/oneshot.py` `Start.kinds`); `soon` ones are shown off. */
+export const KINDS: { id: string; label: string; note: string; soon?: string }[] = [
+  { id: 'webapp', label: '웹앱', note: '브라우저에서 쓴다' },
+  { id: 'android', label: 'Android 앱', note: '휴대폰에 설치한다' },
+  { id: 'desktop', label: 'PC 앱', note: 'Windows 에 설치한다', soon: '계획 9e 에서 열린다' },
+]
+export const kindLabel = (id: string) => KINDS.find((k) => k.id === id)?.label ?? id
 export const COLUMNS: { id: Freq; label: string }[] = [
   { id: 'every', label: '늘 쓴다' }, { id: 'sometimes', label: '가끔 쓴다' },
   { id: 'rarely', label: '드물게 쓴다' }, { id: 'never', label: '화면에 없다' },

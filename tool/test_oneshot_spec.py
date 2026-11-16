@@ -162,6 +162,24 @@ def test_a_stack_confirmed_before_the_owner_answered_is_sent_back(world):
     assert o()["stage"] == "design"
 
 
+def test_a_requirement_the_owner_keeps_beyond_the_kind_stops_the_run_for_good(world):
+    beyond = {"requirement": "R1", "reason": "웹앱은 다른 앱 화면 위에 그릴 수 없다"}
+    for bad, said in (({**beyond, "requirement": "R9"}, "`kinds_mismatch`"), ({**beyond, "reason": " "}, "`kinds_mismatch`")):
+        with pytest.raises(ValueError, match=said):
+            oneshot_spec.spec_turn(fenced("oneshot-spec", {"requirements": REQS, "glossary": GLOSSARY, "kinds_mismatch": bad}),
+                                   specs.load("budget", oneshot.BRANCH))
+    with pytest.raises(ValueError, match="묻지 않는다"):   # the stopping turn asks nothing
+        oneshot_spec.spec_turn(fenced("oneshot-spec", {"requirements": REQS, "glossary": GLOSSARY, "kinds_mismatch": beyond})
+                               + fenced("choices", BUNDLES), specs.load("budget", oneshot.BRANCH))
+    with replies(fenced("oneshot-spec", {"requirements": REQS, "glossary": GLOSSARY, "kinds_mismatch": beyond})):
+        oneshot_spec.talk("budget")
+    assert o()["stopped"]["reason"] == "rekind" and "R1" in o()["stopped"]["detail"] and o()["stage"] == "spec"
+    assert o()["mismatch"] == beyond and not o().get("working")
+    with pytest.raises(HTTPException) as refused:
+        oneshot_spec.resume("budget")
+    assert refused.value.status_code == 409 and o()["stopped"]["reason"] == "rekind"
+
+
 @pytest.mark.parametrize("stack, said", [
     ({"backend": "FastAPI"}, "목록"),
     ([{**STACK[0], "part": "database"}], "`part`"),

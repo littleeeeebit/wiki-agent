@@ -446,6 +446,13 @@ def main():
         page.get_by_role("option", name="high").click()
         expect(group["구현"].get_by_role("combobox", name="모델")).to_contain_text("Claude 기본")   # apart from 명세
         form.get_by_role("textbox").first.fill("가계부를 만들고 싶다")
+        # Nothing is preselected: the start waits for the owner's kind, and PC 앱 is not open yet.
+        expect(form.get_by_role("button", name="시작", exact=True)).to_be_disabled()
+        expect(form.get_by_role("checkbox", name="PC 앱")).to_be_disabled()
+        form.get_by_role("checkbox", name="Android 앱").check()
+        form.get_by_role("checkbox", name="웹앱").check()
+        expect(form.get_by_text("확인 단계에서 멈춘다")).to_be_visible()
+        form.get_by_role("checkbox", name="Android 앱").uncheck()
         # A start answer that lands after another run was picked only joins the list; the picked run stays.
         slow["start"] = 1.5
         form.get_by_role("button", name="시작", exact=True).click()
@@ -463,6 +470,7 @@ def main():
         assert page.url.endswith("#oneshot/run%3A0123456789abcdef"), page.url
         assert posted[-1][2]["models"] == {"spec": {"model": "opus", "effort": "high"}, "build": {"model": "", "effort": ""},
                                            "review": {"model": "codex:gpt-6.1-sol", "effort": "high"}}, posted[-1]
+        assert posted[-1][2]["kinds"] == ["webapp"], posted[-1]
 
         # The S1 run's row and the count follow it while another run is open, through a failed list read:
         # running, then waiting for [맞다].

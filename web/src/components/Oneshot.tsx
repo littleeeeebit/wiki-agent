@@ -4,7 +4,7 @@ import { Fault, GO, Halt, Split, Title, Top } from '@/components/OneshotSpec'
 import { Toolbar } from '@/components/Toolbar'
 import { browseFolder, get, getLoopSettings, getOptions, json, post, type Options } from '@/lib/api'
 import { remote } from '@/lib/mobile'
-import { ROLE, type Models } from '@/lib/oneshot'
+import { KINDS, kindLabel, ROLE, type Models } from '@/lib/oneshot'
 import { cn } from '@/lib/utils'
 
 type OneshotField = {
@@ -14,11 +14,12 @@ export type OneshotRun = {
   id: string
   state: 'intake' | 'environment' | 'bootstrap' | 'spec'
   working: string | null
-  stopped: { reason: 'block' | 'folder' | 'github' | 'connect' | 'restart' | 'kind'; detail: string; state: string } | null
+  stopped: { reason: 'block' | 'folder' | 'github' | 'connect' | 'restart' | 'kind' | 'kinds'; detail: string; state: string } | null
   sentence: string
   models?: Models
   picked: string
-  intent: { restated: string; kind: string; name: string; users: string; first_screen: string; unsupported?: boolean } | null
+  intent: { restated: string; kind: string; kinds?: string[]; name: string; users: string; first_screen: string
+    unsupported?: boolean } | null
   profile: Record<string, string | number> | null
   proposed: Record<string, { value: string | number; why: string }>
   identity: { path: string; name: string; owner: string } | null
@@ -43,8 +44,8 @@ export const api = {
   browseFolder,
   oneshotRuns: () => get('/api/oneshot').then((r) => json<{ runs: OneshotRun[] }>(r, '원샷 목록')),
   oneshotRun: (id: string) => get(`/api/oneshot/${id}`).then(answer),
-  startOneshot: (sentence: string, path: string, models: Models) =>
-    post('/api/oneshot', { sentence, path, models }).then(answer),
+  startOneshot: (sentence: string, path: string, models: Models, kinds: string[]) =>
+    post('/api/oneshot', { sentence, path, models, kinds }).then(answer),
   answerIntent: (id: string, body: { confirm: boolean; edit?: string; name?: string }) =>
     post(`/api/oneshot/${id}/intent`, body).then(answer),
   saveProfile: (id: string, values: Record<string, string | number>, confirm: boolean) =>
@@ -71,7 +72,7 @@ const STEP: Record<string, string> = {
 }
 export const STOP: Record<string, string> = {
   block: '모델 답을 쓸 수 없었다', folder: '폴더나 이름 문제', github: 'GitHub 문제', connect: '연결을 확인해야 한다',
-  restart: '서버가 다시 켜져 멈췄다', kind: '이 종류는 여기까지',
+  restart: '서버가 다시 켜져 멈췄다', kind: '이 종류는 여기까지', kinds: '이 실행은 이어 갈 수 없다',
 }
 const WORKING: Record<string, string> = {
   intake: '하고 싶은 것을 다시 정리하는 중…', profile: '환경 카드를 채우는 중…', bootstrap: '저장소를 만드는 중…',
@@ -102,6 +103,7 @@ export function useAct(done: (run: OneshotRun) => void) {
 export function Intake({ busy, act }: { busy: boolean; act: Act }) {
   const [sentence, setSentence] = useState('')
   const [path, setPath] = useState('')
+  const [kinds, setKinds] = useState<string[]>([])   // nothing preselected: the owner picks every kind
   const [typing, setTyping] = useState(remote)
   const [options, setOptions] = useState<Options | null>(null)
   const none = { model: '', effort: '' }
@@ -128,13 +130,29 @@ export function Intake({ busy, act }: { busy: boolean; act: Act }) {
 
   return (
     <>
-      <form className="flex flex-col gap-5" onSubmit={(e) => { e.preventDefault(); void act(() => api.startOneshot(sentence, path, models)) }}>
+      <form className="flex flex-col gap-5" onSubmit={(e) => { e.preventDefault(); void act(() => api.startOneshot(sentence, path, models, kinds)) }}>
         <label className="flex flex-col gap-1.5">
           <span className="font-semibold">무엇을 만들고 싶은가</span>
           <textarea value={sentence} onChange={(e) => setSentence(e.target.value)} rows={4} maxLength={2000}
             placeholder="한두 문장이면 된다. 예: 동네 독서 모임의 책 투표와 모임 일정을 한곳에서 관리하고 싶다"
             className={`${field} py-2 text-[15px]`} />
         </label>
+        <fieldset className="flex flex-col gap-1.5">
+          <legend className="font-semibold">어떤 형태로 만드나 — 여러 개를 골라도 된다</legend>
+          <div className="flex flex-wrap gap-x-5 gap-y-2">
+            {KINDS.map((k) => (
+              <label key={k.id} className={cn('flex items-center gap-2', k.soon && 'text-muted-foreground')}>
+                <input type="checkbox" checked={kinds.includes(k.id)} disabled={busy || !!k.soon}
+                  onChange={(e) => setKinds((ks) => e.target.checked ? [...ks, k.id] : ks.filter((x) => x !== k.id))} />
+                <span className="font-medium">{k.label}</span>
+                <span className="text-[12px] text-muted-foreground">{k.soon ?? k.note}</span>
+              </label>
+            ))}
+          </div>
+          {kinds.length > 1 && (
+            <p className="text-[12px] text-wait">여러 형태를 한 실행에서 만드는 것은 아직 확인 단계에서 멈춘다 (계획 9b).</p>
+          )}
+        </fieldset>
         <div className="flex flex-col gap-1.5">
           <span className="font-semibold">폴더</span>
           {typing ? (
@@ -162,7 +180,7 @@ export function Intake({ busy, act }: { busy: boolean; act: Act }) {
           <p className="text-[12px] text-muted-foreground">화면 비평은 이미지를 읽어야 해서 opus · high 로 고정이다.</p>
         </fieldset>
         <div className="flex justify-end">
-          <Btn type="submit" tone="primary" disabled={busy || !sentence.trim()}>{busy ? '시작하는 중…' : '시작'}</Btn>
+          <Btn type="submit" tone="primary" disabled={busy || !sentence.trim() || !kinds.length}>{busy ? '시작하는 중…' : '시작'}</Btn>
         </div>
       </form>
     </>
@@ -201,10 +219,13 @@ function Stopped({ run, busy, act }: { run: OneshotRun; busy: boolean; act: Act 
   const s = run.stopped!
   return (
     <Halt title={STOP[s.reason] ?? s.reason} detail={s.detail}>
-      {/* A card an earlier version stopped at `kind`: its resume opens the card again for the owner's confirm. */}
-      <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resumeOneshot(run.id))}>
-        {s.reason === 'kind' ? '카드로 돌아가기' : '재개'}
-      </Btn>
+      {/* A card an earlier version stopped at `kind`: its resume opens the card again for the owner's confirm.
+          A run stopped at `kinds` has no resume: the owner starts a new run. */}
+      {s.reason !== 'kinds' && (
+        <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resumeOneshot(run.id))}>
+          {s.reason === 'kind' ? '카드로 돌아가기' : '재개'}
+        </Btn>
+      )}
       {s.reason === 'github' && (
         <Btn disabled={busy} onClick={() => void act(() => api.resumeOneshot(run.id, true))}
           title="GitHub 에 이미 있는 같은 이름의 빈 저장소를 이 실행의 것으로 쓴다. 커밋이 하나라도 있으면 서버가 거절한다">
@@ -251,11 +272,12 @@ function Restated({ run, busy, act, fault }: { run: OneshotRun; busy: boolean; a
           <dl className="grid grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-2">
             <dt className="text-muted-foreground">쓰는 사람</dt><dd>{intent.users}</dd>
             <dt className="text-muted-foreground">첫 화면</dt><dd>{intent.first_screen}</dd>
-            <dt className="text-muted-foreground">종류</dt><dd className="font-mono">{intent.kind}</dd>
+            <dt className="text-muted-foreground">형태</dt>
+            <dd>{(intent.kinds ?? [intent.kind]).map(kindLabel).join(' · ')} <span className="text-muted-foreground">— 내가 고른 것</span></dd>
           </dl>
           {intent.unsupported && (
             <p className="rounded-md bg-wait/10 px-3 py-2">
-              <span className="font-mono">{intent.kind}</span> 는 이 버전에서 만들 수 없다 — 지금은 웹앱과 Android 앱만. 둘 중 하나로 만들고 싶다면 아래에 그렇게 고쳐 적어라.
+              <span className="font-mono">{intent.kind}</span> 는 이 버전에서 만들 수 없다 — 지금은 웹앱과 Android 앱만. 새 실행을 시작해 형태를 골라라.
             </p>
           )}
           <label className="flex flex-col gap-1.5">

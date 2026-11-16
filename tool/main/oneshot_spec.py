@@ -135,8 +135,15 @@ def spec_turn(final: str, spec: dict):
         specs._shape("choices", choices)
         if len(choices.get("questions", [choices])) > 3:
             raise ValueError("한 번에 묻는 `choices` 는 세 개까지다")
+    if (mismatch := value.get("kinds_mismatch")) is not None:
+        if (not isinstance(mismatch, dict) or mismatch.get("requirement") not in {r["id"] for r in reqs}
+                or not isinstance(mismatch.get("reason"), str) or not mismatch["reason"].strip()):
+            raise ValueError("`kinds_mismatch` 는 `requirement`(요구 id)와 `reason` 을 가진 객체다")
+        if choices:
+            raise ValueError("`kinds_mismatch` 를 내는 턴은 아무것도 묻지 않는다")
+        mismatch = {"requirement": mismatch["requirement"], "reason": mismatch["reason"].strip()}
     said = oneshot.BLOCK.sub("", final).strip()
-    return reqs, glossary, stack, choices, said
+    return reqs, glossary, stack, choices, said, mismatch
 
 
 def talk(repo: str) -> None:
@@ -155,12 +162,17 @@ def talk(repo: str) -> None:
                            lambda final, _: spec_turn(final, spec))
     if found is None:
         return
-    reqs, glossary, stack, choices, said = found
+    reqs, glossary, stack, choices, said, mismatch = found
     # A question asked in this turn waits for its answer, whatever else is settled.
     why = ended(reqs, stack, kind_of(o)) or ("주인의 답을 기다리는 질문이 있다" if choices else "")
     turns = [*(o.get("talk") or []), {"role": "agent", "text": said, "choices": choices, "ts": time.time()}]
     # The stack now lives in this spec, in version 3's shape, whatever version the run started at.
     fields = {"glossary": glossary, "stack": stack, "talk": turns, "version": max(o.get("version", 1), 3)}
+    if mismatch:   # the owner kept a requirement the run's kind cannot meet: every later stage builds that kind
+        saved(repo, requirements=reqs, oneshot={**fields, "open": "", "working": None, "mismatch": mismatch})
+        store(repo).stop("rekind", f"`{mismatch['requirement']}` 는 이 실행의 종류로 만들 수 없다 — {mismatch['reason']}. "
+                                   "새 실행을 시작해 종류를 다시 골라라")
+        return
     if not why:
         saved(repo, requirements=reqs, oneshot={**fields, "open": ""})
         handoff(repo, "design", stage="design")
@@ -580,7 +592,8 @@ def resume(repo: str) -> dict:
         supported(o)
         if not o.get("stopped") or o.get("working"):
             raise HTTPException(409, "멈춘 단계가 아니다")
-        if o["stopped"]["reason"] == "kind":   # the kind's next stage is not in this version: no route starts it
+        # The kind's next stage is not in this version, or the owner kept a requirement the kind cannot meet.
+        if o["stopped"]["reason"] in ("kind", "rekind"):
             raise HTTPException(409, o["stopped"]["detail"])
         thread = oneshot._workers.get(store(repo).key)
         if (settle := brief.orphaned(o)) and not (thread and thread.is_alive()):   # no turn left to charge it

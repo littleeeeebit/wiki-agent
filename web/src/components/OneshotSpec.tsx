@@ -117,7 +117,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   const android = o.intent?.kind === 'android'
   const idle = !view.working && !view.stopped
   // A `kind` stop waits for this kind's next stage to ship: no resume reaches it.
-  const resume = view.stopped?.reason !== 'kind' && (
+  const resume = !['kind', 'rekind'].includes(view.stopped?.reason ?? '') && (
     <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resume(repo))}>재개</Btn>)
   const faulted = (fault || !!view.phone_owned?.length) && (
     <div className="flex flex-col gap-2 px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
