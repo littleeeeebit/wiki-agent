@@ -7,9 +7,10 @@ import json
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 
 from main import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, oneshot_spec
-from test_oneshot_spec import DESIGN, GLOSSARY, REQS, answer, design_with, fenced, o, replies, world  # noqa: F401
+from test_oneshot_spec import DESIGN, GLOSSARY, REQS, answer, design_with, fenced, o, on_sheet, replies, world  # noqa: F401
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 
 MARKER = "브리프표식칠칠"
@@ -54,7 +55,7 @@ def test_the_brief_is_written_after_the_design_and_kept_out_of_every_agent_input
     # Nothing an agent or a file reads carries it: the design prompt, the sheet, the design files, the edit turn.
     assert MARKER not in oneshot_spec.design_text(spec) and MARKER not in sheet.sheet(spec)
     items = sheet.decidable(o()["design"], ASSUMED)
-    oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions={
+    oneshot_spec.decide("budget", on_sheet(decisions={
         i: ({"edit": "응답을 sum 으로"} if i == "P1" else {"approve": True}) for i in items}))
     redone = design_with({("oneshot-api", 0, "response"): {"sum": "int"}, ("oneshot-tests", 0, "then"): "sum 이 3000원이다"})
     with patch.object(oneshot, "ask", lambda store, role, system, text, *r: (
@@ -161,7 +162,7 @@ def test_a_charge_that_could_not_be_saved_is_settled_once_before_the_run_goes_id
     oneshot_spec.recover()   # nothing left in flight to charge again
     assert o()["spend"]["calls"] == 1 and not o().get("stopped")
     items = sheet.decidable(o()["design"], ASSUMED)
-    oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions={i: {"approve": True} for i in items}))
+    oneshot_spec.decide("budget", on_sheet(decisions={i: {"approve": True} for i in items}))
     assert o()["stage"] == "tests" and o()["spend"]["calls"] == 1
 
 
@@ -188,6 +189,103 @@ def test_a_run_stopped_after_both_charge_saves_failed_settles_its_turn_once_and_
     assert o().get("inflight") is None and o()["spend"]["calls"] == 1 and not o().get("stopped") and o()["stage"] == "r1"
     oneshot_spec.recover()   # nothing charged twice
     assert o()["spend"]["calls"] == 1
+
+
+# -- 8b: R1 decided on the brief ------------------------------------------------------------
+
+def briefed() -> dict:
+    """A run at R1 with a brief written for its design: the brief as the owner's view gives it."""
+
+    at_design()
+    with patch.object(oneshot, "ask", lambda store, role, *r: (
+            answer() if role == "design" else fenced("oneshot-brief", good()), {"cost_usd": 0.1}, False)):
+        oneshot_spec.design("budget")
+    return oneshot_spec.status("budget")["brief"]
+
+
+BOTH = {"R3": {"approve": True}, "A1": {"approve": True}}
+
+
+def test_the_view_shows_the_brief_and_approving_it_approves_every_other_item(world):  # noqa: F811
+    gate = briefed()
+    assert gate["lines"] == {"R3": ["R3"], "A1": ["A1"]} and MARKER in gate["sections"][0]["text"]
+    assert [c["key"] for c in gate["confirm"]] == ["R3", "A1"]
+    oneshot_spec.decide("budget", on_sheet(decisions={}, lines=BOTH, rest=True, reading={"seconds": 40}))
+    assert o()["stage"] == "tests" and o()["reading"]["r1"][-1]["brief"] is True
+    assert set(o()["r1"]["decisions"]) == set(sheet.decidable(o()["design"], ASSUMED))
+
+
+def test_a_line_edit_and_a_sheet_edit_of_one_item_both_reach_the_redesign(world):  # noqa: F811
+    briefed()
+    started = []
+    with patch.object(oneshot_spec, "start", lambda repo, work, *a, **f: started.append((work, a, f))):
+        oneshot_spec.decide("budget", on_sheet(
+            decisions={"R3": {"edit": "맥판도 빼라"}, "P1": {"approve": True}},
+            lines={"R3": {"edit": "윈도우판은 빼라"}, "A1": {"edit": "주 단위로 나눠라"}}, rest=True))
+    work, (comments, reach), fields = started[0]
+    assert work == "redesign" and comments == {"R3": "[확인 줄 R3] 윈도우판은 빼라\n\n[전체 시트] 맥판도 빼라",
+                                               "A1": "주 단위로 나눠라"}
+    assert fields["r1"]["decisions"]["P1"] == {"approve": True} and fields["reading"]["r1"][-1]["brief"] is True
+
+
+@pytest.mark.parametrize("lines, rest, said", [
+    ({"R3": {"approve": True}}, False, "아직 정하지 않은 확인 줄이 있다: A1"),
+    ({"R3": {"approve": True}}, True, "아직 정하지 않은 확인 줄이 있다: A1"),   # bulk approval does not fill a line
+    ({**BOTH, "P1": {"approve": True}}, True, "요약에 없는 확인 줄이다: P1"),
+    ({**BOTH, "A1": {"edit": " "}}, True, "A1: 확인 줄을 승인하거나"),
+    ({"R3": {"approve": True}}, False, None),   # the folded sheet decides every other item, but still not A1
+])
+def test_a_brief_submission_missing_or_mangling_a_line_is_refused_and_approves_nothing(world, lines, rest, said):  # noqa: F811
+    briefed()
+    every = {i: {"approve": True} for i in sheet.decidable(o()["design"], ASSUMED) if i not in lines}
+    with pytest.raises(HTTPException) as refused:
+        oneshot_spec.decide("budget", on_sheet(decisions=every if said is None else {}, lines=lines, rest=rest))
+    assert refused.value.status_code == 400 and (said or "아직 정하지 않은 확인 줄이 있다: A1") in refused.value.detail
+    assert o()["stage"] == "r1" and o()["r1"]["decisions"] == {}
+
+
+def test_a_submission_on_a_gate_that_changed_is_refused_and_the_stale_brief_is_not_shown(world):  # noqa: F811
+    gate = briefed()
+    design = o()["design"]
+    changed = {**design, "assumptions": [{**design["assumptions"][0], "what": "달은 25일에 끊는다"}]}
+    oneshot_spec.saved("budget", oneshot={"design": changed})   # the same ids, another A1
+    stale = oneshot_spec.Decisions(source=gate["source"], decisions={}, lines=BOTH, rest=True)
+    with pytest.raises(HTTPException) as refused:
+        oneshot_spec.decide("budget", stale)
+    assert refused.value.status_code == 409 and o()["stage"] == "r1" and o()["r1"]["decisions"] == {}
+    now = oneshot_spec.status("budget")["brief"]
+    assert now["source"] != gate["source"] and "lines" not in now and now["failed"]
+    with pytest.raises(HTTPException) as refused:   # no brief for this gate: only the full sheet decides it
+        oneshot_spec.decide("budget", on_sheet(decisions={}, lines=BOTH, rest=True))
+    assert refused.value.status_code == 409 and "요약이 없다" in refused.value.detail
+    with pytest.raises(HTTPException) as refused:
+        oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions={}))   # no `source` at all
+    assert refused.value.status_code == 409
+
+
+def test_an_edit_left_by_a_redesign_that_failed_is_not_approved_away_by_the_brief(world):  # noqa: F811
+    gate = briefed()
+    # The redesign turn failed: the design and its brief stand, the owner's P1 edit is still saved.
+    oneshot_spec.saved("budget", oneshot={"r1": {**o()["r1"], "decisions": {"P1": {"edit": "응답을 sum 으로"}}}})
+    assert oneshot_spec.status("budget")["brief"]["source"] == gate["source"]
+    started = []
+    with patch.object(oneshot_spec, "start", lambda repo, work, *a, **f: started.append((work, a))):
+        oneshot_spec.decide("budget", on_sheet(decisions={}, lines=BOTH, rest=True))
+    assert started[0][0] == "redesign" and started[0][1][0] == {"P1": "응답을 sum 으로"}
+
+
+def test_a_failed_brief_leaves_the_full_sheet_whose_partial_approval_is_refused(world):  # noqa: F811
+    at_design()
+    with replies(answer(), "요약 없음", "요약 없음"):
+        oneshot_spec.design("budget")
+    gate = oneshot_spec.status("budget")["brief"]
+    assert "두 번 거부" in gate["failed"] and "lines" not in gate
+    items = sheet.decidable(o()["design"], ASSUMED)
+    with pytest.raises(HTTPException) as refused:
+        oneshot_spec.decide("budget", on_sheet(decisions={i: {"approve": True} for i in items[1:]}))
+    assert refused.value.status_code == 400 and o()["stage"] == "r1"
+    oneshot_spec.decide("budget", on_sheet(decisions={i: {"approve": True} for i in items}))
+    assert o()["stage"] == "tests" and o()["reading"]["r1"][-1]["brief"] is False
 
 
 def snap():

@@ -119,12 +119,70 @@ def checked(value, snap: dict, mandatory: dict[str, list[str]], attempt: int) ->
     out_text = next((s["text"] for s in sections if s["name"] == "빼기로 한 것"), "")
     if unnamed := [i for i in left_out if not re.search(rf"\b{i}\b", out_text)]:
         raise ValueError(f"`빼기로 한 것` 에 빠진 요구가 있다: {', '.join(unnamed)}")
+    if "modules" in snap["design"]:   # an Android app: every permission and every call leaving the phone is named
+        risky = [r["id"] for r in snap["requirements"] if r.get("capability")]
+        risky += [x["id"] for x in snap["design"].get("outside") or []]
+        note = next((s["text"] for s in sections if s["name"] == "알아 두실 것"), "")
+        if unnamed := [i for i in risky if not re.search(rf"\b{i}\b", note)]:
+            raise ValueError(f"`알아 두실 것` 에 빠진 권한이나 폰 밖으로 나가는 호출이 있다: {', '.join(unnamed)}")
     if banned := sorted({f"{n} {what}" for n, t in texts for what, p in BANNED.items() if p.search(t)}):
         raise ValueError(f"사람이 읽는 요약에 쓰지 않는 표기가 있다: {'; '.join(banned)}")
     warnings = [f"{n} 번역체: " + "; ".join(f"{p} `{s}`" for p, s in hits) for n, t in texts if (hits := sheet.translationese(t))]
     if warnings and attempt == 0:
         raise ValueError("번역체가 있다 — " + " / ".join(warnings))
     return {"sections": sections, "confirm": confirm, "warnings": warnings}
+
+
+def shown(spec: dict) -> dict:
+    """R1's brief as the owner's view gives it: always the gate's current `source`; the brief when one was
+    written from that `source` and still passes today's checks (a brief stored by an earlier version may
+    not), else `failed` with why the review shows its full sheet (none for a run from before the brief)."""
+
+    snap = snapshot(spec)
+    src = source(snap)
+    entry = (spec["oneshot"].get("brief") or {}).get("r1") or {}
+    if entry.get("source") == src and not entry.get("failed"):
+        mandatory = lines(snap)
+        try:
+            ok = checked(entry, snap, mandatory, 1)
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:
+            return {"source": src, "failed": f"저장된 요약이 지금 검사를 통과하지 못했다 — {exc}"}
+        return {"source": src, "sections": ok["sections"], "confirm": ok["confirm"], "lines": mandatory,
+                "warnings": ok["warnings"]}
+    if entry.get("failed") and entry.get("source") in (src, None):
+        return {"source": src, "failed": entry["failed"]}
+    return {"source": src, **({"failed": "요약을 지금 설계로 다시 쓰지 못했다"} if entry else {})}
+
+
+def valid(d) -> bool:
+    return isinstance(d, dict) and (d.get("approve") is True and not d.get("edit")
+                                    or isinstance(d.get("edit"), str) and bool(d["edit"].strip()))
+
+
+def reduced(mandatory: dict[str, list[str]], given: dict, sheet_given: dict, rest: bool, items: list[str]) -> dict:
+    """A brief submission's item decisions, or `ValueError`. Every line is checked first: each mandatory line
+    decided, validly, and no other. Then each item a line covers takes its decision; an item covered more than
+    once takes every edit, joined, each prefixed with where it came from, and an edit wins over an approval.
+    `rest` approves every item still undecided. A decision from the folded sheet joins as its own line;
+    one that is not valid passes through for `decided` to refuse as it does today."""
+
+    if unknown := sorted(set(given) - set(mandatory)):
+        raise ValueError(f"요약에 없는 확인 줄이다: {', '.join(unknown)}")
+    if missing := [k for k in mandatory if k not in given]:
+        raise ValueError(f"아직 정하지 않은 확인 줄이 있다: {', '.join(missing)}")
+    if bad := [k for k in mandatory if not valid(given[k])]:
+        raise ValueError(f"{', '.join(bad)}: 확인 줄을 승인하거나 고칠 내용을 적어라")
+    said = [(f"확인 줄 {k}", given[k], i) for k, covered in mandatory.items() for i in covered]
+    said += [("전체 시트", d, i) for i, d in sheet_given.items() if valid(d)]
+    edits: dict[str, list[tuple[str, str]]] = {}
+    out = {i: {"approve": True} for i in items} if rest else {}
+    for where, d, i in said:
+        if d.get("edit"):
+            edits.setdefault(i, []).append((where, d["edit"].strip()))
+        else:
+            out[i] = {"approve": True}
+    out |= {i: {"edit": e[0][1] if len(e) == 1 else "\n\n".join(f"[{w}] {t}" for w, t in e)} for i, e in edits.items()}
+    return out | {i: d for i, d in sheet_given.items() if not valid(d)}
 
 
 def write(store: oneshot.Store, spec_of, save) -> None:

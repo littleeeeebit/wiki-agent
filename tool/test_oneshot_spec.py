@@ -83,6 +83,12 @@ def o() -> dict:
     return specs.load("budget", oneshot.BRANCH)["oneshot"]
 
 
+def on_sheet(**fields) -> oneshot_spec.Decisions:
+    """An R1 submission made on the gate as it stands, carrying that gate's `source`."""
+
+    return oneshot_spec.Decisions(source=oneshot_spec.view(oneshot_spec.spec_of("budget"))["brief"]["source"], **fields)
+
+
 BUNDLES = {"questions": [{"question": "어느 묶음으로 만들까요?", "options": [{"label": "FastAPI + React"}, {"label": "Django"}]}]}
 
 
@@ -124,7 +130,7 @@ def test_a_version_2_run_past_s2_is_refused_and_one_still_in_s2_carries_on(world
         "r1": {"round": 1, "decisions": {}, "marks": {}, "warnings": []}})   # its stack is the old card's
     every = {i: {"approve": True} for i in sheet.decidable(o()["design"], REQS)}
     with pytest.raises(HTTPException, match="새 실행"):
-        oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions=every))
+        oneshot_spec.decide("budget", on_sheet(decisions=every))
     assert o()["stage"] == "r1"
     oneshot_spec.saved("budget", oneshot={"stage": "spec"})
     oneshot_spec.supported(o())   # S2 asks for the stack under the new prompt
@@ -347,15 +353,15 @@ def test_a_submission_with_any_item_undecided_is_refused(world):
     partial = everything()
     partial.pop("F1")   # a folded item counts as much as an unfolded one
     with pytest.raises(HTTPException) as refused:
-        oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions=partial))
+        oneshot_spec.decide("budget", on_sheet(decisions=partial))
     assert refused.value.status_code == 400 and "F1" in refused.value.detail
     with pytest.raises(HTTPException):
-        oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions={**everything(), "Z9": {"approve": True}}))
+        oneshot_spec.decide("budget", on_sheet(decisions={**everything(), "Z9": {"approve": True}}))
 
 
 def test_approving_every_item_writes_and_commits_the_design_and_moves_to_tests(world):
     at_r1(world)
-    oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions=everything()))
+    oneshot_spec.decide("budget", on_sheet(decisions=everything()))
     assert o()["stage"] == "tests" and o()["design_head"]
     assert (world / "docs/design/backend.md").read_text(encoding="utf-8").startswith("# 백엔드 설계")
     shown = subprocess.run(["git", "show", "--stat", "HEAD"], cwd=world, capture_output=True, text=True).stdout
@@ -373,7 +379,7 @@ def test_an_edit_reaches_everything_built_on_it(edited, reached):
 
 def test_an_edited_endpoint_regenerates_its_dependents_and_resets_their_approvals(world):
     at_r1(world)
-    oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions=everything(P1="응답 필드를 sum 으로 바꿔라")))
+    oneshot_spec.decide("budget", on_sheet(decisions=everything(P1="응답 필드를 sum 으로 바꿔라")))
     assert o()["working"] == "redesign"
     renamed = design_with({("oneshot-api", 0, "response"): {"sum": "int"},
                             ("oneshot-tests", 0, "then"): "sum 이 3000원이다"})
@@ -474,7 +480,7 @@ def test_the_approval_commits_only_the_design_files_and_the_sheet_escapes_what_i
     at_r1(world)
     (world / "other.txt").write_text("staged meanwhile", encoding="utf-8")
     subprocess.run(["git", "add", "other.txt"], cwd=world, check=True)
-    oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions=everything()))
+    oneshot_spec.decide("budget", on_sheet(decisions=everything()))
     shown = subprocess.run(["git", "show", "--name-only", "--format=", "HEAD"], cwd=world, capture_output=True,
                            text=True).stdout.split()
     assert shown == ["docs/design/api.yaml", "docs/design/backend.md"]
@@ -500,7 +506,7 @@ def test_a_requirement_a_redesign_adds_is_shown_and_must_be_decided_even_without
     assert spec["requirements"][2]["source"]["kind"] == "decision" and o()["r1"]["marks"]["R3"] == "consequence"
     assert "기록은 90일 동안 둔다 (지켜야 할 조건" in sheet.sheet(spec)
     with pytest.raises(HTTPException, match="R3"):
-        oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions={k: {"approve": True} for k in reach}))
+        oneshot_spec.decide("budget", on_sheet(decisions={k: {"approve": True} for k in reach}))
 
 
 def test_a_cycle_among_the_requirements_is_refused_in_the_conversation_where_it_can_be_fixed(world):
@@ -521,7 +527,7 @@ def test_a_design_file_that_is_a_link_stops_the_approval_before_anything_is_writ
         (world / "docs/design/backend.md").symlink_to(outside)
     except OSError:
         pytest.skip("this account cannot make symbolic links")
-    oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions=everything()))
+    oneshot_spec.decide("budget", on_sheet(decisions=everything()))
     assert o()["stopped"]["reason"] == "folder" and outside.read_text(encoding="utf-8") == "keep"
 
 
@@ -532,10 +538,10 @@ def test_each_submission_records_how_its_sheet_was_read_and_the_rail_shows_what_
                                                          encoding="utf-8")
     assert oneshot_spec.listing() == {"specs": [{"repo": "budget", "stage": "r1", "working": None, "stopped": None,
                                                  "kind": "webapp", "waits": True}]}
-    oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions=everything(P1="응답 필드를 sum 으로 바꿔라"),
+    oneshot_spec.decide("budget", on_sheet(decisions=everything(P1="응답 필드를 sum 으로 바꿔라"),
                                                          reading={"seconds": 92.04, "opened": ["흐름", 3, "흐름"]}))
     assert o()["reading"] == {"r1": [{"round": 1, "seconds": 92.0, "opened": ["흐름"], "edited": ["P1"],
-                                      "edits": {"P1": "응답 필드를 sum 으로 바꿔라"}}]}
+                                      "edits": {"P1": "응답 필드를 sum 으로 바꿔라"}, "brief": False}]}
     assert oneshot_spec.listing()["specs"][0]["waits"] is False   # the edit turn runs
 
 
