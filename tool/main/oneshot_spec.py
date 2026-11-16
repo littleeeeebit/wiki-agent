@@ -259,10 +259,10 @@ def design(repo: str) -> None:
     briefed(repo)
 
 
-def briefed(repo: str) -> None:
-    """R1's brief for the design just saved (`oneshot_brief`); it clears `working` whatever happens."""
+def briefed(repo: str, gate: str = "r1") -> None:
+    """A review's brief for what was just saved (`oneshot_brief`); it clears `working` whatever happens."""
 
-    brief.write(store(repo), lambda: spec_of(repo), lambda **f: saved(repo, oneshot=f))
+    brief.write(store(repo), lambda: spec_of(repo), lambda **f: saved(repo, oneshot=f), gate)
 
 
 # -- R1 the sheet and its decisions ------------------------------------------------------
@@ -412,9 +412,30 @@ class Say(BaseModel):
 class Decisions(BaseModel):
     decisions: dict[str, dict]
     reading: dict = {}   # how the sheet was read: `seconds` open and the folds `opened`
-    source: str = ""   # the gate the owner saw (`oneshot_brief.shown`); R1 refuses any other with 409
-    lines: dict[str, dict] = {}   # R1's brief: one decision per confirmation line, by key
-    rest: bool = False   # R1's brief: approve every item no line or sheet decision covers
+    source: str = ""   # the gate the owner saw (`oneshot_brief.shown`); any other is refused with 409
+    lines: dict[str, dict] = {}   # the brief: one decision per confirmation line, by key
+    rest: bool = False   # the brief: approve every item no line or sheet decision covers
+
+
+def on_brief(spec: dict, gate: str, items: list[str], body) -> tuple[dict, bool]:
+    """A review's submission as item decisions for `decided`, and whether it was made on the brief. It must
+    name the gate the owner saw (`source`, 409 otherwise). On the brief (`lines` or `rest`), every line is
+    checked first and then reduced (`oneshot_brief.reduced`); an edit saved before an edit turn that failed
+    is still pending, and `rest` never approves it away."""
+
+    gate_now = brief.shown(spec, gate)
+    if body.source != gate_now["source"]:
+        raise HTTPException(409, "시트가 그 사이 바뀌었다 — 다시 불러와 새 시트로 정하라")
+    if not (body.lines or body.rest):
+        return body.decisions, False
+    if "lines" not in gate_now:
+        raise HTTPException(409, "이 시트에는 요약이 없다 — 항목마다 정하라")
+    pending = {i for i, d in spec["oneshot"][gate]["decisions"].items() if (d or {}).get("edit")}
+    try:
+        return brief.reduced(gate_now["lines"], body.lines, body.decisions, body.rest,
+                             [i for i in items if i not in pending]), True
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 WAITS = {"r1", "board", "r2", "r3"}   # stages that wait for the owner; `spec` waits on the agent's question
@@ -528,20 +549,7 @@ def decide(repo: str, body: Decisions) -> dict:
         o = spec["oneshot"]
         idle(o, "r1")
         items = sheet.decidable(o["design"], spec.get("requirements") or [])
-        gate = brief.shown(spec)
-        if body.source != gate["source"]:
-            raise HTTPException(409, "시트가 그 사이 바뀌었다 — 다시 불러와 새 시트로 정하라")
-        given, briefed = body.decisions, bool(body.lines or body.rest)
-        if briefed:
-            if "lines" not in gate:
-                raise HTTPException(409, "이 시트에는 요약이 없다 — 항목마다 정하라")
-            # An edit saved before a redesign turn that failed is still pending: `rest` never approves it away.
-            pending = {i for i, d in o["r1"]["decisions"].items() if (d or {}).get("edit")}
-            try:
-                given = brief.reduced(gate["lines"], body.lines, body.decisions, body.rest,
-                                      [i for i in items if i not in pending])
-            except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
+        given, briefed = on_brief(spec, "r1", items, body)
         decisions, comments = decided(items, o["r1"]["decisions"], given)
         if comments:
             reach = sorted(sheet.dependents(o["design"], spec.get("requirements") or [], set(comments)))

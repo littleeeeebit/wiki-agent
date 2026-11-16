@@ -169,10 +169,11 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
         <Board name={view.repo} board={view.board} busy={busy} submit={(f, line) => act(() => api.board(repo, f, line))} />
       )}
       {idle && view.stage === 'r2' && view.front_sheet && o.r2 && (
-        <Sheet key={`r2-${o.r2.round}`} gate="r2" text={view.front_sheet} items={view.front_items ?? []} state={o.r2}
-          busy={busy} palettes={o.front?.tokens.palettes ?? []}
-          reopen={() => act(() => api.decide(repo, 'r2', { reopen: true }))}
-          submit={(body) => act(() => api.decide(repo, 'r2', body))} />
+        <Sheet key={`r2-${o.r2.round}-${view.front_brief?.source}`} gate="r2" text={view.front_sheet}
+          items={view.front_items ?? []} state={o.r2} busy={busy} palettes={o.front?.tokens.palettes ?? []}
+          brief={view.front_brief}
+          reopen={() => act(() => api.decide(repo, 'r2', { reopen: true, source: view.front_brief?.source }))}
+          submit={(body) => act(() => api.decide(repo, 'r2', { ...body, source: view.front_brief?.source }))} />
       )}
       {idle && view.stage === 'phone' && (
         <PhonePick repo={repo} round={o.phone} busy={busy} act={act} />
@@ -394,8 +395,8 @@ function Md({ text, zoom }: { text: string; zoom: (src: string) => void }) {
   )
 }
 
-/** The brief's sections before its confirmation lines; the rest follow them (`oneshot_brief.R1_SECTIONS`). */
-const BEFORE_LINES = ['한 줄', '쓰는 장면', '물어보신 것', '돌아가는 순서']
+/** The brief's sections before its confirmation lines; the rest follow them (`oneshot_brief.SECTIONS`). */
+const BEFORE_LINES = ['한 줄', '쓰는 장면', '물어보신 것', '돌아가는 순서', '화면', '기능이 놓인 자리']
 const FULL_SHEET = '전체 설계 시트'
 
 export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen, brief }: {
@@ -443,8 +444,28 @@ export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen
         approveAll={() => approveAll(folded)} />
     )}
   </>
+  const picker = palettes && palettes.length > 0 && (
+    <fieldset className="flex flex-col gap-2">
+      <legend className="mb-2 font-semibold">색 배합 하나</legend>
+      {palettes.map((p) => (
+        <label key={p.id} className={cn('flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2', palette === p.id ? 'border-primary' : 'border-border')}>
+          <input type="radio" name="palette" value={p.id} checked={palette === p.id} onChange={() => setPalette(p.id)} />
+          {Object.values(p.colors).map((c) => <span key={c} className="size-4 rounded-sm border border-border" style={{ background: c }} />)}
+          <span className="font-mono text-[12px]">{p.id}</span> {p.name}
+        </label>
+      ))}
+    </fieldset>
+  )
+  const reopener = reopen && (
+    <Btn disabled={busy} onClick={() => void reopen()} title="기능의 자리가 틀렸다: 화면 설계를 버리고 기능 보드로 돌아간다">기능 보드 다시 열기</Btn>
+  )
 
   if (keys && brief) {
+    // Every item no line covers is approved with the brief: none at R2, where each screen has its line.
+    const covered = new Set(Object.values(brief.lines ?? {}).flat())
+    const others = items.filter((i) => !covered.has(i)).length
+    const ready = undecided.length ? `정하지 않은 것 ${undecided.length}개` : needPalette ? '색 배합을 골라라'
+      : others ? `제출하면 나머지 항목 ${others}개는 요약대로 승인한다` : '모두 정했다'
     const said = (names: string[]) => brief.sections?.filter((s) => names.includes(s.name)).map((s) => (
       <section key={s.name} aria-label={s.name} className="flex flex-col gap-1.5">
         <h3 className="font-heading text-[15px] font-semibold">{s.name}</h3>
@@ -454,6 +475,7 @@ export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen
     const after = brief.sections?.map((s) => s.name).filter((n) => !BEFORE_LINES.includes(n)) ?? []
     return (
       <Split label={`${gate.toUpperCase()} 요약`} sideLabel="결정" side={<>
+        {picker}
         <Title><span>확인해 주세요</span><span className="font-mono">{keys.length - keys.filter((k) => !decided(lines[k])).length}/{keys.length}</span></Title>
         {brief.confirm?.map((c) => (
           <Item key={c.key} id={c.key} text={c.text} line d={lines[c.key]}
@@ -465,14 +487,15 @@ export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen
           <div className="flex flex-col gap-3 pt-2">{sheetItems}</div>
         </details>
         <Decide>
-          <span role="status" className="text-muted-foreground">
-            {undecided.length ? `정하지 않은 것 ${undecided.length}개` : '제출하면 나머지 항목은 요약대로 승인한다'}
-          </span>
-          <Btn tone="wait" className={GO} disabled={busy || undecided.length > 0}
-            onClick={() => void submit({ decisions: clean(decisions, touched), lines: clean(lines, keys), rest: true,
-              reading: reading() })}>
-            요약대로 제출
-          </Btn>
+          <span role="status" className="text-muted-foreground">{ready}</span>
+          <div className="flex flex-wrap justify-end gap-2">
+            {reopener}
+            <Btn tone="wait" className={GO} disabled={busy || undecided.length > 0 || needPalette}
+              onClick={() => void submit({ decisions: clean(decisions, touched), lines: clean(lines, keys), rest: true,
+                palette: palette || undefined, reading: reading() })}>
+              요약대로 제출
+            </Btn>
+          </div>
         </Decide>
       </>}>
         <div className="flex w-full max-w-[60rem] flex-col gap-5 px-10 py-6 max-[1500px]:px-7 max-[560px]:px-4">
@@ -481,7 +504,19 @@ export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen
             <section aria-label="확인해 주세요 줄" className="flex flex-col gap-1.5 rounded-md bg-wait/10 px-4 py-3">
               <h3 className="font-heading text-[15px] font-semibold">확인해 주세요</h3>
               <ul className="flex list-disc flex-col gap-1 pl-5">
-                {brief.confirm?.map((c) => <li key={c.key}>{c.text} <span className="font-mono text-[12px] text-faint">({c.key})</span></li>)}
+                {brief.confirm?.map((c) => (
+                  <li key={c.key}>{c.text} <span className="font-mono text-[12px] text-faint">({c.key})</span>
+                    {!!brief.pictures?.[c.key]?.length && (
+                      <span className="mt-1.5 flex flex-wrap gap-2">
+                        {brief.pictures[c.key].map((src) => (
+                          <button key={src} type="button" onClick={() => setZoom(src)} title="크게 본다">
+                            <img src={src} alt={`${c.key} 화면`} loading="lazy" className="max-h-64 rounded border border-border" />
+                          </button>
+                        ))}
+                      </span>
+                    )}
+                  </li>
+                ))}
               </ul>
               <p className="text-[12.5px] text-muted-foreground">에이전트가 혼자 정한 것이다. 오른쪽에서 한 줄씩 승인하거나 고친다.</p>
             </section>
@@ -501,25 +536,14 @@ export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen
   return (
     <Split label={`${gate.toUpperCase()} 시트`} sideLabel="결정" side={<>
       <Title><span>결정</span><span className="font-mono">{items.length - undecided.length}/{items.length}</span></Title>
-      {palettes && palettes.length > 0 && (
-        <fieldset className="flex flex-col gap-2">
-          <legend className="mb-2 font-semibold">색 배합 하나</legend>
-          {palettes.map((p) => (
-            <label key={p.id} className={cn('flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2', palette === p.id ? 'border-primary' : 'border-border')}>
-              <input type="radio" name="palette" value={p.id} checked={palette === p.id} onChange={() => setPalette(p.id)} />
-              {Object.values(p.colors).map((c) => <span key={c} className="size-4 rounded-sm border border-border" style={{ background: c }} />)}
-              <span className="font-mono text-[12px]">{p.id}</span> {p.name}
-            </label>
-          ))}
-        </fieldset>
-      )}
+      {picker}
       {sheetItems}
       <Decide>
         <span role="status" className="text-muted-foreground">
           {undecided.length ? `정하지 않은 항목 ${undecided.length}개` : needPalette ? '색 배합을 골라라' : '모두 정했다'}
         </span>
         <div className="flex flex-wrap justify-end gap-2">
-          {reopen && <Btn disabled={busy} onClick={() => void reopen()} title="기능의 자리가 틀렸다: 화면 설계를 버리고 기능 보드로 돌아간다">기능 보드 다시 열기</Btn>}
+          {reopener}
           <Btn tone="wait" className={GO} disabled={busy || undecided.length > 0 || needPalette}
             onClick={() => void submit({ decisions: clean(decisions, items), palette: palette || undefined,
               reading: reading() })}>

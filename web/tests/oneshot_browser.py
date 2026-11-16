@@ -265,6 +265,33 @@ def main():
         assert body["reading"]["opened"] == ["전체 시트의 항목", "전체 설계 시트"], body
         del views["demo"]["brief"]
 
+        # R2 on its brief: one line per screen with that screen's pictures, the palette still picked beside it.
+        r1_view = copy.deepcopy(views["demo"])
+        views["demo"] |= {"stage": "r2", "front_sheet": "# 화면 설계 — demo\n\n![S1 desktop](/shot.png)\n",
+                          "front_items": ["S1", "S1.states"],
+                          "front_brief": {"source": "f" * 64, "lines": {"S1": ["S1", "S1.states"]},
+                                          "pictures": {"S1": ["/shot.png"]},
+                                          "confirm": [{"key": "S1", "text": "금액 칸이 맨 위에 있습니다."}],
+                                          "sections": [{"name": "한 줄", "text": "그날 쓴 돈을 적는 화면입니다."}]}}
+        views["demo"]["oneshot"] |= {"stage": "r2", "r2": {"round": 1, "decisions": {}, "marks": {}, "palette": ""},
+                                     "front": {"tokens": {"palettes": [
+                                         {"id": "C1", "name": "차분한 초록", "colors": {"primary": "#2f6f4e"}}]}}}
+        rail.get_by_role("button").filter(has_text="board-demo").click()
+        need.get_by_role("button").filter(has_text=re.compile(r"^demo")).click()
+        screens = page.get_by_role("region", name="R2 요약")
+        expect(screens.get_by_role("button", name="S1 화면")).to_be_visible()
+        send = screens.get_by_role("button", name="요약대로 제출")
+        screens.locator("[data-line=S1]").get_by_role("button", name="승인").click()
+        expect(send).to_be_disabled()   # no palette picked yet
+        screens.get_by_role("radio").check()
+        expect(send).to_be_enabled()
+        with posting(page):
+            send.click()
+        repo, act, body = posted[-1]
+        assert (repo, act, body["source"], body["palette"]) == ("demo", "r2", "f" * 64, "C1"), body
+        assert body["lines"] == {"S1": {"approve": True}} and body["decisions"] == {}, body
+        views["demo"] = r1_view
+
         # The board: one card dragged, one moved with the arrow keys, the whole map sent once.
         page.get_by_role("navigation", name="원샷 실행").get_by_role("button").filter(has_text="board-demo").click()
         board = page.get_by_role("region", name="기능 보드")
@@ -481,7 +508,8 @@ def main():
     print("PASS: maintenance counts the runs that need the owner on the switch; the oneshot window groups them apart "
           "from the running; a gate sheet needs every item, folded or not, and records the folds opened; an enlarged "
           "picture closes alone; the re-shown sheet opens what needs a decision again; R1 on the brief decides each "
-          "confirmation line and sends only the sheet items touched beside them;the board moves by drag and by "
+          "confirmation line and sends only the sheet items touched beside them; R2 on its brief shows each screen's "
+          "pictures with its line and still needs a palette; the board moves by drag and by "
           "keys; a stopped run resumes, and a stopped or running stage shows its record and its worktree's turns as they "
           "come; S2 shows its choices and keeps a refused answer; the list follows a saved spec; "
           "the switch keeps the run shown and its draft; [새 프로젝트] opens the start form, which fixes three models "

@@ -5,6 +5,7 @@ are stand-ins; Git, the project's interpreter and Playwright run for real.
 """
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,7 +14,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from main import (oneshot, oneshot_build, oneshot_front as front, oneshot_screens as screens, oneshot_sheet as sheet,
+from main import (oneshot, oneshot_brief as brief, oneshot_build, oneshot_front as front, oneshot_screens as screens, oneshot_sheet as sheet,
                   oneshot_spec, query, specs, work)
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_spec import DESIGN, fenced, world  # noqa: F401 — `world` is a fixture
@@ -68,7 +69,7 @@ def answer(found: dict) -> str:
 def replies(*texts):
     heard, queue = [], list(texts)
 
-    def ask(store, role, system, text, where=None, images=()):
+    def ask(store, role, system, text, where=None, images=(), tools=None):
         heard.append((role, text))
         return queue.pop(0), {"cost_usd": 0.1}, False
 
@@ -257,14 +258,20 @@ def test_translationese_is_sent_back_once_then_kept_as_a_warning(boarded):
 
 # -- R2 ---------------------------------------------------------------------------------------
 
+def on_r2(**more) -> front.R2:
+    """An R2 submission made on the gate as it stands, carrying that gate's `source`."""
+
+    return front.R2(source=oneshot_spec.view(oneshot_spec.spec_of("budget"))["front_brief"]["source"], **more)
+
+
 def approve_all(**more):
-    return front.R2(decisions={i: {"approve": True} for i in screens.decidable(o()["front"])}, **more)
+    return on_r2(decisions={i: {"approve": True} for i in screens.decidable(o()["front"])}, **more)
 
 
 def test_r2_needs_every_item_and_a_palette_then_commits_the_design(boarded):
     designed(boarded)
     with pytest.raises(HTTPException, match="정하지 않은"):
-        front.decide("budget", front.R2(decisions={"S1": {"approve": True}}, palette="C1"))
+        front.decide("budget", on_r2(decisions={"S1": {"approve": True}}, palette="C1"))
     with pytest.raises(HTTPException, match="색 배합"):
         front.decide("budget", approve_all())
     with pytest.raises(HTTPException, match="없는 색"):
@@ -323,7 +330,7 @@ def test_an_instruction_queued_before_the_approval_waits_for_the_front_build(boa
 
 def test_an_edit_reaches_the_screens_states_and_keeps_the_rest_approved(boarded):
     designed(boarded)
-    front.decide("budget", front.R2(decisions={**approve_all().decisions, "S2": {"edit": "목록을 표로"}}, palette="C1"))
+    front.decide("budget", on_r2(decisions={**approve_all().decisions, "S2": {"edit": "목록을 표로"}}, palette="C1"))
     assert o()["working"] == "refront"
     oneshot_spec.saved("budget", oneshot={"working": None})
     moved = screens_with({(1, "purpose"): "지난 달 지출을 표로 본다"})
@@ -340,7 +347,7 @@ def test_an_edit_reaches_the_screens_states_and_keeps_the_rest_approved(boarded)
 
 def test_an_edit_that_changes_the_tokens_is_sent_back_and_the_chosen_palette_stands(boarded):
     designed(boarded)
-    front.decide("budget", front.R2(decisions={**approve_all().decisions, "S2": {"edit": "목록을 표로"}}, palette="C1"))
+    front.decide("budget", on_r2(decisions={**approve_all().decisions, "S2": {"edit": "목록을 표로"}}, palette="C1"))
     oneshot_spec.saved("budget", oneshot={"working": None})
     recolored = screens_with({(1, "purpose"): "지난 달 지출을 표로 본다"})
     recolored["oneshot-tokens"]["palettes"][0]["colors"]["primary"] = "#ff0000"
@@ -350,6 +357,55 @@ def test_an_edit_that_changes_the_tokens_is_sent_back_and_the_chosen_palette_sta
     with asking:
         front.refront("budget", {"S2": "목록을 표로"}, ["S2", "S2.states"])
     assert "tokens" in heard[1][1] and o()["front"]["tokens"] == blocks()["oneshot-tokens"] and o()["r2"]["palette"] == "C1"
+
+
+R2_BRIEF = {"sections": [
+    {"name": "한 줄", "text": "그날 쓴 돈을 적고 지난 달을 훑어보는 화면입니다. 브리프표식이이"},
+    {"name": "화면", "text": "첫 화면에서 오늘 쓴 돈을 적습니다. (S1) 지난 달 지출을 훑어봅니다. (S2) 자료를 파일로 받습니다. (S3)"},
+    {"name": "기능이 놓인 자리", "text": "지출 적기는 첫 화면에, 달별 목록은 한 번 눌러 가는 화면에, 내보내기는 설정 안쪽에 둡니다."}],
+    "confirm": [{"key": "S1", "text": "금액 칸이 맨 위에 있고, 지출이 없으면 안내 한 줄이 뜹니다."},
+                {"key": "S2", "text": "달마다 목록이 나오고, 불러오는 동안 회색 줄이 보입니다."},
+                {"key": "S3", "text": "파일 받기 단추 하나가 있고, 실패하면 다시 시도 단추가 뜹니다."}]}
+
+
+def test_r2_opens_on_its_brief_one_line_per_screen_and_its_checks_refuse_code_names(boarded):
+    playwright_or_skip()
+    _, asking = replies(answer(blocks()), fenced("oneshot-brief", R2_BRIEF), fenced("oneshot-brief", R2_BRIEF))
+    with asking:
+        front.frontend("budget")
+    shown = oneshot_spec.view(oneshot_spec.spec_of("budget"))["front_brief"]
+    assert o()["stage"] == "r2" and not o()["working"] and "failed" not in shown, shown
+    assert shown["lines"] == {"S1": ["S1", "S1.states"], "S2": ["S2", "S2.states"], "S3": ["S3", "S3.states"]}
+    assert shown["pictures"]["S2"] == ["/api/oneshot/spec/budget/shot/1/S2-desktop.png"]
+    spec = oneshot_spec.spec_of("budget")   # nothing an agent or a file reads carries the brief
+    assert "브리프표식이이" not in front.front_text(spec) + screens.sheet(spec, lambda sid, v: "")
+    snap = brief.snapshot(spec, "r2")
+    for changed, said in [
+        ({2: "지출 적기는 첫 화면에 둡니다."}, "빠진 기능이 있다 — 이름 그대로 써라: 달별 목록, 내보내기"),
+        ({2: R2_BRIEF["sections"][2]["text"] + " month-list 도 있습니다."}, "코드 이름이 아니다: month-list"),
+        ({1: "지난 달은 /months 에서 봅니다. (S2)"}, "화면 경로 /months"),
+        ({0: "초록(#2f6f4e) 화면입니다."}, "색 코드"),
+        ({1: "설정 화면입니다. (S9)"}, "없는 번호를 댔다: S9"),
+    ]:
+        value = {**R2_BRIEF, "sections": [{**s, "text": changed.get(n, s["text"])} for n, s in enumerate(R2_BRIEF["sections"])]}
+        with pytest.raises(ValueError, match=re.escape(said)):
+            brief.checked(value, snap, shown["lines"], 1)
+    with pytest.raises(ValueError, match="빠졌다: S3"):
+        brief.checked({**R2_BRIEF, "confirm": R2_BRIEF["confirm"][:2]}, snap, shown["lines"], 1)
+    every = {k: {"approve": True} for k in shown["lines"]}
+    with pytest.raises(HTTPException) as refused:   # a tab left open on another gate
+        front.decide("budget", front.R2(source="0" * 64, lines=every, rest=True, palette="C1"))
+    assert refused.value.status_code == 409
+    started = []
+    with patch.object(oneshot_spec, "start", lambda repo, work, *a, **f: started.append((work, a, f))):
+        front.decide("budget", on_r2(lines={**every, "S2": {"edit": "목록을 표로"}}, rest=True, palette="C1"))
+    work, (comments, reach), fields = started[0]
+    assert work == "refront" and comments == {"S2": "목록을 표로", "S2.states": "목록을 표로"}
+    assert fields["reading"]["r2"][-1]["brief"] is True and fields["r2"]["palette"] == "C1"
+    begun = []
+    with patch.object(front.oneshot_front_build, "begin", begun.append):
+        front.decide("budget", on_r2(lines=every, rest=True, palette="C1"))
+    assert o()["stage"] == "build-front" and begun == ["budget"]
 
 
 def test_a_junction_on_the_way_to_the_design_stops_the_approval_before_anything_is_written(boarded, tmp_path):
@@ -404,7 +460,7 @@ def test_a_split_after_a_rebuild_drops_the_old_design_and_shows_the_new_board(bo
 
 def test_reopening_the_board_discards_the_design_and_its_approvals(boarded):
     designed(boarded)
-    front.decide("budget", front.R2(reopen=True))
+    front.decide("budget", on_r2(reopen=True))
     assert o()["stage"] == "board" and o()["front"] is None and o()["r2"] is None
     assert "front_sheet" not in oneshot_spec.view(specs.load("budget", oneshot.BRANCH))
 
