@@ -275,27 +275,34 @@ def android(finished, monkeypatch):
     return tree, sent
 
 
-class Releases:
-    """`gh release` as GitHub answers it, every other command run for real: `create` fails `failing` times
-    with its reply lost after making the release, then succeeds."""
+URL = "https://github.com/me/budget/releases/tag/untagged-1a2b"
 
-    def __init__(self, failing=0, viewed=True):
-        self.calls, self.failing, self.viewed, self.uploaded = [], failing, viewed, []
+
+class Releases:
+    """`gh release` as GitHub answers it, every other command run for real. `lost`: a create makes the release
+    and its reply is lost; `broken`: a create makes nothing and fails."""
+
+    def __init__(self, lost=False, broken=False):
+        self.calls, self.lost, self.broken, self.made, self.assets = [], lost, broken, False, []
         self.real = specs.sh
 
     def __call__(self, args, cwd, timeout=60):
         if args[:2] != ["gh", "release"]:
             return self.real(args, cwd, timeout)
         self.calls.append(args)
-        url = "https://github.com/me/budget/releases/tag/untagged-1a2b"
-        if args[2] in ("create", "upload"):
-            self.uploaded.append(android_owned.sha256(Path(args[4])))
-        if args[2] == "create" and self.failing:
-            self.failing -= 1
-            return subprocess.CompletedProcess(args, 1, "", "HTTP 422: tag already exists")
-        if args[2] == "view" and not self.viewed:
-            return subprocess.CompletedProcess(args, 1, "", "release not found")
-        return subprocess.CompletedProcess(args, 0, f"{url}\n", "")
+        failed = subprocess.CompletedProcess(args, 1, "", "HTTP 404: release not found")
+        if args[2] == "view":
+            return subprocess.CompletedProcess(args, 0, f"{URL}\n", "") if self.made else failed
+        if args[2] == "upload" and not self.made:
+            return failed
+        if args[2] == "create" and self.broken:
+            return subprocess.CompletedProcess(args, 1, "", "HTTP 422: Validation Failed")
+        self.made = True
+        self.assets = [android_owned.sha256(Path(args[4]))]   # `--clobber`: the one asset of that name
+        if args[2] == "create" and self.lost:
+            self.lost = False
+            return subprocess.CompletedProcess(args, 1, "", "connection reset")
+        return subprocess.CompletedProcess(args, 0, f"{URL}\n" if args[2] == "create" else "", "")
 
 
 def test_an_android_apps_readme_turn_names_the_apk_and_its_install_and_a_public_workflow_its_sdk(android):
@@ -317,38 +324,82 @@ def test_an_android_apps_apk_goes_to_a_draft_prerelease_the_pull_request_links(a
     with patch.object(specs, "sh", releases), patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         check(tree, answer(report()))()
     head, digest = git(tree, "rev-parse", "HEAD"), android_owned.sha256(tree / DEVICE["apk"])
-    create = releases.calls[0]
-    assert create[:3] == ["gh", "release", "create"] and {"--draft", "--prerelease"} <= set(create)
+    assert [c[2] for c in releases.calls] == ["view", "create"]
+    create = releases.calls[1]
+    assert {"--draft", "--prerelease"} <= set(create)
     assert create[3] == f"oneshot-apk-{head[:12]}" and create[4].endswith(f"budget-{head[:12]}-debug.apk")
     apk = o()["apk"]
-    assert apk == {"head": head, "name": f"budget-{head[:12]}-debug.apk", "sha256": digest, "tag": create[3],
-                   "url": "https://github.com/me/budget/releases/tag/untagged-1a2b"}
-    assert releases.uploaded == [digest] and not Path(create[4]).exists()   # the copy it uploaded is gone
+    assert apk == {"head": head, "name": f"budget-{head[:12]}-debug.apk", "sha256": digest, "tag": create[3], "url": URL}
+    assert releases.assets == [digest] and not Path(create[4]).exists()   # the copy it uploaded is gone
     with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         oneshot_pr.asked("budget")   # a resumed S8 asks for the text again: the release is not made twice
-    assert len(releases.calls) == 1
+    assert len(releases.calls) == 2
     remote = Remote()
     with patch.object(specs, "sh", remote):
         check(tree, SUMMARIZED)
-    assert f"[budget-{head[:12]}-debug.apk](https://github.com/me/budget/releases/tag/untagged-1a2b)" in remote.body
+    assert f"[budget-{head[:12]}-debug.apk]({URL})" in remote.body
     assert f"SHA-256 `{digest}`" in remote.body
     assert oneshot_spec.view(spec())["summary"]["apk"]["url"] == apk["url"]
+
+
+def untracked_apks(tree):
+    """The APKs as a real Android build leaves them: outputs Git ignores."""
+
+    write(tree, ".gitignore", "__pycache__/\nartifacts/\n*.apk\n")
+    git(tree, "rm", "-q", "--cached", "--", DEVICE["apk"], DEVICE["tests"]["apk"])
+    git(tree, "add", ".gitignore")
+    git(tree, "commit", "-m", "ignore built APKs")
+    readme(tree)
+
+
+def test_the_release_holds_the_apk_the_final_gate_passed_even_when_the_tree_rebuilds_it_after(android):
+    tree, _ = android
+    untracked_apks(tree)
+    passed = android_owned.sha256(tree / DEVICE["apk"])
+    then = check(tree, answer(report()))
+    write(tree, DEVICE["apk"], "another build after the final gate")   # Git sees nothing: the APK is ignored
+    releases = Releases()
+    with patch.object(specs, "sh", releases), patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        then()
+    assert releases.assets == [passed] and o()["apk"]["sha256"] == passed
+
+
+def test_a_same_head_rebuild_the_resumed_final_gate_passes_replaces_the_released_apk(android):
+    tree, _ = android
+    untracked_apks(tree)
+    releases = Releases()
+    with patch.object(specs, "sh", releases), patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+        first = o()["apk"]
+        oneshot_pr.restart(spec())
+        write(tree, DEVICE["apk"], "a rebuild at the same commit")
+        rebuilt = android_owned.sha256(tree / DEVICE["apk"])
+        check(tree, answer(report()))()
+    assert [c[2] for c in releases.calls] == ["view", "create", "view", "upload"] and "--clobber" in releases.calls[-1]
+    assert first["sha256"] != rebuilt and o()["apk"]["sha256"] == rebuilt and releases.assets == [rebuilt]
+    assert o()["apk"]["url"] == URL and o()["apk"]["tag"] == first["tag"]
 
 
 def test_a_release_whose_reply_was_lost_gets_the_apk_again_and_a_failed_one_is_said_in_the_body(android):
     tree, _ = android
     readme(tree)
-    releases = Releases(failing=1)
+    releases = Releases(lost=True)
     with patch.object(specs, "sh", releases), patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         check(tree, answer(report()))()
-    assert [c[2] for c in releases.calls] == ["create", "upload", "view"] and "--clobber" in releases.calls[1]
-    assert o()["apk"]["url"].endswith("untagged-1a2b")
+    assert [c[2] for c in releases.calls] == ["view", "create", "view", "upload"] and "--clobber" in releases.calls[-1]
+    assert o()["apk"]["url"] == URL and releases.assets == [o()["apk"]["sha256"]]
     oneshot_spec.saved("budget", oneshot={"apk": None})
-    with patch.object(specs, "sh", Releases(failing=1, viewed=False)), \
+    with patch.object(specs, "sh", Releases(broken=True)), \
+            patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        oneshot_pr.asked("budget")   # the frozen copy went with the first upload: nothing is read off the tree
+    assert "고정한 APK 사본이 없거나 바뀌었다" in o()["apk"]["error"] and "url" not in o()["apk"]
+    assert "디버그 APK 를 Release 에 올리지 못했다 — 최종 게이트가 고정한" in "\n".join(pr_text.apk_section(spec()))
+    tree_copy = oneshot_pr.froze(spec(), o()["final_head"])
+    oneshot_spec.saved("budget", oneshot={"apk_frozen": tree_copy})
+    with patch.object(specs, "sh", Releases(broken=True)), \
             patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         oneshot_pr.asked("budget")
-    assert "tag already exists" in o()["apk"]["error"] and "url" not in o()["apk"]
-    assert "디버그 APK 를 Release 에 올리지 못했다 — gh release 실패" in "\n".join(pr_text.apk_section(spec()))
+    assert "Validation Failed" in o()["apk"]["error"] and not Path(tree_copy["path"]).exists()
 
 
 def test_an_android_app_without_its_apk_after_the_final_gate_is_sent_back(android):

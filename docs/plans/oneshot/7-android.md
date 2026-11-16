@@ -495,15 +495,18 @@ How 7f2 builds it (`tool/main/oneshot_critique.py`, `tool/main/oneshot_pr.py`,
   APK plus adb's install command with its path. A public repository's workflow sets
   up a JDK and the Android SDK before the gate.
 - The final gate runs in the toolchain's environment, as every earlier
-  Android gate does, and the APK must exist after it.
-- Before the pull request's text is asked, the APK the final gate built is
-  copied and attached to a draft prerelease tagged `oneshot-apk-<head>`. The
-  pull request's body links it with the build commit and its SHA-256, and the
-  finished run's summary shows the link. A release that already exists for
-  that head, because a reply was lost, gets the asset again with
-  `--clobber`. A resumed S8 reuses a release already made for the same head.
-  A release that cannot be made does not stop the pull request: the body says
-  why.
+  Android gate does, and the APK must exist after it. While the check still
+  holds the worktree, the APK is copied into the run's folder and hashed.
+  The APK is a build output Git does not track, so the run never reads it
+  off the tree again.
+- Before the pull request's text is asked, that copy goes to a draft
+  prerelease tagged `oneshot-apk-<head>`. The pull request's body links it
+  with the build commit and its SHA-256, and the finished run's summary shows
+  the link. A release already there for that tag gets the copy as its asset
+  with `--clobber`. That covers an earlier upload and a create whose reply
+  was lost, without leaving a second draft. A resumed S8 reuses the release
+  only when its digest is the one the latest final gate froze. A release that
+  cannot be made does not stop the pull request: the body says why.
 
 ## What does not change
 

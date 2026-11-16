@@ -142,14 +142,21 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
         return f"최종 게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := oneshot_build.held(path, run, spec, verdict):
         return why
-    if kind_of(o) == "android" and (why := oneshot_device.built(path, o["device"])):   # the APK S8 attaches
-        return why
+    frozen = None
+    if kind_of(o) == "android":   # the APK S8 attaches, frozen while the check still holds the tree
+        if why := oneshot_device.built(path, o["device"]):
+            return why
+        try:
+            frozen = froze(spec, verdict["head"])
+        except OSError as exc:
+            return f"최종 게이트가 만든 APK 를 복사하지 못했다 — {exc}"
     report = next(b["value"] for b in specs.blocks(final)[1] if b["name"] == "done-report")
     tail = (verdict.get("tail") or "").strip()
     # The pull request's body reads these as every spec's: the worker's report and the server's gate.
     specs.update(spec["repo"], spec["id"], report=report, gate={"cmd": "\n".join(ran), "head": verdict["head"],
                                                                 "tail": tail, "selection": "full"})
-    oneshot_spec.saved(spec["repo"], oneshot={"final_head": verdict["head"], "attempts": 0})
+    oneshot_spec.saved(spec["repo"], oneshot={"final_head": verdict["head"], "attempts": 0,
+                                              **({"apk_frozen": frozen} if frozen else {})})
     specs.note(run, f"최종 게이트 통과 · {verdict['head'][:12]}")
     return ""
 
@@ -166,43 +173,61 @@ def decisions(o: dict) -> list[str]:
     return out
 
 
+def froze(spec: dict, head: str) -> dict:
+    """The APK the final gate just built, copied out of the worktree while the check holds it, with its
+    digest: the APK is a build output Git does not track, so nothing read from the tree later is the one the
+    gate passed. An earlier gate's copy goes first."""
+
+    base = oneshot_spec.store(spec["repo"]).folder / "release"
+    shutil.rmtree(base, ignore_errors=True)
+    name, into = f"{spec['repo']}-{head[:12]}-debug.apk", base / f"r{time.time_ns()}"
+    into.mkdir(parents=True)
+    shutil.copyfile(Path(spec["worktree"]) / spec["oneshot"]["device"]["apk"], into / name)
+    return {"head": head, "name": name, "path": str(into / name), "sha256": android_owned.sha256(into / name)}
+
+
+def _url(done: subprocess.CompletedProcess) -> str | None:
+    found = re.findall(r"https://\S+/releases/\S+", done.stdout or "") if not done.returncode else []
+    return found[-1] if found else None
+
+
 def released(spec: dict) -> dict:
-    """An Android app's debug APK as the final gate built it, attached to a draft prerelease of the repository,
-    which the pull request's body links: the URL, the asset's name and digest and the head, or why it could not.
-    The owner decided on 2026-11-16 that a Release holds it: it works for a private repository and keeps."""
+    """The APK the final gate froze, attached to a draft prerelease of the repository, which the pull request's
+    body links: the URL, the asset's name and digest and the head, or why it could not. The owner decided on
+    2026-11-16 that a Release holds it: it works for a private repository and keeps."""
 
     o, path = spec["oneshot"], Path(spec["worktree"])
-    head = o["final_head"]
-    if (o.get("apk") or {}).get("head") == head and o["apk"].get("url"):   # a resumed S8 asks for the text again
-        return o["apk"]
-    name, tag = f"{spec['repo']}-{head[:12]}-debug.apk", f"oneshot-apk-{head[:12]}"
-    folder = oneshot_spec.store(spec["repo"]).folder / "release" / f"r{time.time_ns()}"
+    head, frozen, old = o["final_head"], o.get("apk_frozen") or {}, o.get("apk") or {}
+    if frozen.get("head") != head:
+        return {"head": head, "error": "최종 게이트가 고정한 APK 가 없다"}
+    # A resumed S8 asks for the text again: the same APK is not uploaded twice, a rebuilt one replaces it.
+    if old.get("url") and (old.get("head"), old.get("sha256")) == (head, frozen["sha256"]):
+        shutil.rmtree(Path(frozen["path"]).parent, ignore_errors=True)
+        return old
+    file, tag = Path(frozen["path"]), f"oneshot-apk-{head[:12]}"
+    view = ["gh", "release", "view", tag, "--json", "url", "--jq", ".url"]
+    upload = ["gh", "release", "upload", tag, str(file), "--clobber"]
     try:
-        if why := oneshot_device.built(path, o["device"]):
-            raise ValueError(why)
-        # A copy, uploaded and hashed as one: the APK is a build output Git does not track.
-        folder.mkdir(parents=True)
-        shutil.copyfile(path / o["device"]["apk"], folder / name)
-        digest = android_owned.sha256(folder / name)
-        done = specs.sh(["gh", "release", "create", tag, str(folder / name), "--draft", "--prerelease",
-                         "--title", f"{spec['repo']} 디버그 APK · {head[:12]}",
-                         "--notes", f"원샷 실행의 첫 PR 이 링크하는 디버그 APK 다. 빌드 커밋 `{head}`."],
-                        path, RELEASE_SECONDS)
-        url = re.findall(r"https://\S+/releases/\S+", done.stdout or "")
+        if not file.is_file() or android_owned.sha256(file) != frozen["sha256"]:
+            raise ValueError("최종 게이트가 고정한 APK 사본이 없거나 바뀌었다")
+        # This head's release already there (an earlier upload, or a create whose reply was lost) gets this
+        # APK as its asset: a second draft of the same tag would leave the first behind.
+        if url := _url(specs.sh(view, path, 60)):
+            done = specs.sh(upload, path, RELEASE_SECONDS)
+        else:
+            done = specs.sh(["gh", "release", "create", tag, str(file), "--draft", "--prerelease",
+                             "--title", f"{spec['repo']} 디버그 APK · {head[:12]}",
+                             "--notes", f"원샷 실행의 첫 PR 이 링크하는 디버그 APK 다. 빌드 커밋 `{head}`."],
+                            path, RELEASE_SECONDS)
+            if not (url := _url(done)) and (url := _url(specs.sh(view, path, 60))):
+                done = specs.sh(upload, path, RELEASE_SECONDS)
         if done.returncode or not url:
-            # An earlier S8 made this head's release and lost the reply, or failed its upload: this APK
-            # replaces its asset, so the digest the body names is the uploaded file's.
-            again = specs.sh(["gh", "release", "upload", tag, str(folder / name), "--clobber"], path, RELEASE_SECONDS)
-            seen = specs.sh(["gh", "release", "view", tag, "--json", "url", "--jq", ".url"], path, 60) \
-                if not again.returncode else again
-            url = re.findall(r"https://\S+/releases/\S+", seen.stdout or "") if not seen.returncode else []
-            if not url:
-                raise ValueError(f"gh release 실패 — {((done.stderr or done.stdout or '').strip())[-300:]}")
-        return {"head": head, "name": name, "sha256": digest, "url": url[-1], "tag": tag}
+            raise ValueError(f"gh release 실패 — {((done.stderr or done.stdout or '').strip())[-300:]}")
+        return {"head": head, "name": frozen["name"], "sha256": frozen["sha256"], "url": url, "tag": tag}
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         return {"head": head, "error": str(exc) or type(exc).__name__}
     finally:
-        shutil.rmtree(folder, ignore_errors=True)
+        shutil.rmtree(file.parent, ignore_errors=True)
 
 
 def asked(repo: str) -> None:
