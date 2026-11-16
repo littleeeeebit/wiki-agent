@@ -16,7 +16,7 @@ export const ROLE = { spec: '명세', build: '구현', review: '리뷰' } as con
 export const modelName = (role: keyof Models, m: { model: string; effort: string }) =>
   `${m.model || (role === 'review' ? '리뷰 설정 따름' : 'Claude 기본')}${m.effort ? ` · ${m.effort}` : ''}`
 export type SpecSummary = {
-  repo: string; stage: string; working: string | null; waits: boolean
+  repo: string; stage: string; working: string | null; waits: boolean; kind?: string
   /** `counted`: the critiques a cap stop reached (`oneshot_critique`). */
   stopped: { reason: string; detail: string; counted?: number } | null
 }
@@ -36,6 +36,17 @@ export type Critique = {
   look: number; head: string; clean: boolean; ts?: number
   findings: { route: string; viewport: string; state: string; what: string; severity: string }[]
 }
+/** One phone the run's own ADB server lists (`android_phone.listed`). */
+export type Handset = { serial: string; state: string; model: string }
+/** What a phone round installed and whether it is gone again (`oneshot_phone.recorded`). */
+export type Owned = { serial: string; model: string; packages: string[]; state: string; left: string[]; unsure?: string[] }
+/** The phone round before R3 (`oneshot_phone`): `waiting` for the owner's pick, then its last outcome. */
+export type PhoneRound = {
+  status: string; detail?: string; serial?: string; keep?: boolean; round?: number; model?: string
+  findings?: { screen: string; state: string; what: string; severity: string }[]
+  timing?: { frames: number | null; janky_percent: number | null; p50_ms: number | null; p90_ms: number | null }
+  memory_kb?: number | null
+}
 /** The turn running now (`oneshot.turned`, `oneshot_build.send`): a work turn carries `turn`. */
 export type Inflight = { role: string; codex: boolean; sent: number; seen?: number; turn?: string }
 export type SpecView = SpecSummary & {
@@ -51,7 +62,7 @@ export type SpecView = SpecSummary & {
     inflight?: Inflight | null; reviews?: Review[]; refused?: number; cases?: string[][]
     spend?: { usd?: number; seconds?: number; calls?: number }
     stack?: { part: string; choice: string; why: string; status: string }[]
-    r1?: Gate; r2?: Gate; r3?: Gate; front?: { tokens: { palettes: Palette[] } }
+    r1?: Gate; r2?: Gate; r3?: Gate; front?: { tokens: { palettes: Palette[] } }; phone?: PhoneRound
     reading?: Record<string, { round: number; seconds: number | null; opened: string[]; edited: string[] }[]>
   }
   requirements?: { id: string; text: string; status: string }[]
@@ -60,6 +71,8 @@ export type SpecView = SpecSummary & {
   front_sheet?: string; front_items?: string[]
   r3_sheet?: string; r3_items?: string[]
   summary?: RunSummary
+  /** A phone round's cleanup that has not finished: shown until that phone is listed again. */
+  phone_owned?: Owned[]
 }
 
 export const base = (repo: string) => `/api/oneshot/spec/${repo}`
@@ -72,6 +85,10 @@ export const api = {
   board: (repo: string, frequency: Record<string, Freq>, first_screen: string) =>
     post(`${base(repo)}/board`, { frequency, first_screen }).then(answer),
   decide: (repo: string, gate: string, body: object) => post(`${base(repo)}/${gate}`, body).then(answer),
+  phones: (repo: string) => get(`${base(repo)}/phone/devices`)
+    .then((r) => json<{ devices: Handset[]; owned: Owned[] }>(r, '연결된 휴대폰')),
+  phone: (repo: string, serial: string, keep: boolean) => post(`${base(repo)}/phone`, { serial, keep }).then(answer),
+  stopPhone: (repo: string) => post(`${base(repo)}/phone/stop`, {}).then(answer),
 }
 
 // The stages in order. `talk` and `gate` wait for the owner; the rest run on their own.
@@ -82,10 +99,14 @@ export const STAGES: { id: string; label: string; kind: 'talk' | 'gate' | 'auto'
   { id: 'split', label: '기능 나누기', kind: 'auto' }, { id: 'board', label: '기능 보드', kind: 'talk' },
   { id: 'frontend', label: '화면 설계', kind: 'auto' }, { id: 'r2', label: 'R2 화면 설계', kind: 'gate' },
   { id: 'build-front', label: '프런트엔드 빌드', kind: 'auto' }, { id: 'critique', label: '화면 비평', kind: 'auto' },
-  { id: 'r3', label: 'R3 완성 화면', kind: 'gate' }, { id: 'pr', label: '풀 리퀘스트', kind: 'auto' },
+  // An Android app's only (`stagesOf`): one round on the owner's phone before R3.
+  { id: 'phone', label: '휴대폰 회차', kind: 'gate' }, { id: 'r3', label: 'R3 완성 화면', kind: 'gate' }, { id: 'pr', label: '풀 리퀘스트', kind: 'auto' },
   { id: 'done', label: '끝', kind: 'auto' },
 ]
 export const stageLabel = (id: string) => STAGES.find((s) => s.id === id)?.label ?? id
+/** The stages a run of `kind` passes through: the phone round is an Android app's alone. */
+export const stagesOf = <T extends { id: string }>(stages: readonly T[], kind?: string) =>
+  stages.filter((s) => s.id !== 'phone' || kind === 'android')
 export const STOP: Record<string, string> = {
   block: '모델 답을 쓸 수 없었다', restart: '서버가 다시 켜져 멈췄다', tests: '계약 테스트를 쓰지 못했다',
   gate: '빌드가 검사를 통과하지 못했다', review: '백엔드 리뷰가 라운드 상한까지 거절했다', critique: '화면 비평이 멈췄다',

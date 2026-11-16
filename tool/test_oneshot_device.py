@@ -8,6 +8,7 @@ owned emulator itself is `test_android_owned`'s. The build check runs for real o
 
 import json
 from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import patch
 from xml.sax.saxutils import quoteattr
 
@@ -19,8 +20,9 @@ from test_main import no_machine_settings  # noqa: F401 — the fixture is autou
 from test_oneshot_front_build import Run, git, o, report, spec, staged, write  # noqa: F401 — `staged` is a fixture
 from test_oneshot_spec import fenced, world  # noqa: F401 — `world` is the temporary worktree's fixture
 
-PKG, SIZE = "com.example.budget", {"width": 1080, "height": 2400, "dpi": 420}
-DEVICE = {"apk": "app/app-debug.apk", "package": PKG, "activity": ".MainActivity",
+SUFFIX = ".oneshot0123456789abcdef"   # the test spec's run id (`test_oneshot_spec.world`)
+PKG, SIZE = f"com.example.budget{SUFFIX}", {"width": 1080, "height": 2400, "dpi": 420}
+DEVICE = {"apk": "app/app-debug.apk", "package": PKG, "activity": "com.example.budget.MainActivity",
           "tests": {"apk": "app/app-debug-androidTest.apk", "runner": f"{PKG}.test/androidx.test.runner.AndroidJUnitRunner"}}
 SCREENS = [{"id": "S1", "surface": "screen", "purpose": "오늘 쓴 돈을 적는다", "features": ["add"], "primary": True,
             "reached": "start"},
@@ -145,7 +147,7 @@ def test_every_screen_in_every_state_is_shot_on_an_owned_emulator_and_a_clean_ap
     grants = [a for a in phone.sent if a[:2] in (["shell", "pm"], ["shell", "appops"]) and "path" not in a]
     assert grants == [["shell", "pm", "grant", PKG, "android.permission.POST_NOTIFICATIONS"]]
     assert ["shell", "cmd", "statusbar", "expand-notifications"] in phone.sent
-    assert ["shell", "am", "start", "-W", "-S", "-n", f"{PKG}/.MainActivity", "--es", "oneshot.screen", "S2",
+    assert ["shell", "am", "start", "-W", "-S", "-n", f"{PKG}/com.example.budget.MainActivity", "--es", "oneshot.screen", "S2",
             "--es", "oneshot.state", "loading"] in phone.sent
 
 
@@ -335,6 +337,18 @@ def test_a_device_block_outside_its_shape_is_refused(tmp_path, block, needs, sai
         device.declared(tmp_path, fenced("oneshot-device", block), needs)
 
 
+@pytest.mark.parametrize("block, said", [
+    ({**DEVICE, "package": "com.example.budget"}, "이 실행의 것이 아니다"),   # an id the owner's phone may hold
+    ({**DEVICE, "tests": {**DEVICE["tests"], "runner": "com.other.test/Runner"}}, "이 실행의 것이 아니다"),
+    ({**DEVICE, "fixture": {"apk": "f.apk", "package": "com.example.fixture"}}, "이 실행의 것이 아니다"),
+    ({**DEVICE, "activity": ".MainActivity"}, "전체 이름"),   # it would resolve under the suffixed package
+])
+def test_every_package_carries_the_runs_suffix(tmp_path, block, said):
+    with pytest.raises(ValueError, match=said):
+        device.declared(tmp_path, fenced("oneshot-device", block), "fixture" in block, SUFFIX)
+    assert device.declared(tmp_path, fenced("oneshot-device", DEVICE), False, SUFFIX)["package"] == PKG
+
+
 def test_a_screen_reading_app_names_its_fixture_viewer_and_every_apk_must_be_built(tmp_path):
     block = {**DEVICE, "fixture": {"apk": "fixture/f.apk", "package": f"{PKG}.fixture"}}
     found = device.declared(tmp_path, fenced("oneshot-device", block), True)
@@ -372,6 +386,32 @@ def test_an_android_build_with_its_device_block_and_clean_shots_moves_to_critiqu
     assert (oneshot_spec.store("budget").folder / "build" / "r1" / "S1-phone-full.png").is_file()
 
 
+def test_the_emulator_installs_copies_whose_digests_the_phone_round_must_match(android_build, phone, monkeypatch):
+    """The APKs as a real build leaves them, untracked: one rebuilt while the emulator runs moves neither HEAD
+    nor the tree's state, and the digests saved are still those of the bytes the emulator installed."""
+
+    git(android_build, "rm", "--cached", "-q", "--", DEVICE["apk"], DEVICE["tests"]["apk"])
+    ignored = android_build / ".gitignore"
+    ignored.write_text((ignored.read_text(encoding="utf-8") if ignored.exists() else "") + "\napp/\n", encoding="utf-8")
+    git(android_build, "add", ".gitignore")
+    git(android_build, "commit", "-q", "-m", "Keep the APK outputs untracked")
+    installed, original = {}, android_owned.call
+
+    def rebuilt(folder, args, **kw):
+        if args[0] == "install":
+            installed[Path(args[-1]).name] = android_owned.sha256(Path(args[-1]))
+        if args[:3] == ["shell", "am", "instrument"]:
+            write(android_build, DEVICE["apk"], "rebuilt while the emulator ran")
+        return original(folder, args, **kw)
+
+    monkeypatch.setattr(android_owned, "call", rebuilt)
+    oneshot_build.checked(android_build, Run(), spec(), report() + fenced("oneshot-device", DEVICE))
+    assert o()["stage"] == "critique", o().get("stopped")
+    assert o()["apks"][DEVICE["apk"]] == installed["app-debug.apk"] != android_owned.sha256(android_build / DEVICE["apk"])
+    assert all(a[:3] == ["install", "-R", "-t"] for a in phone.sent if a[0] == "install")
+    assert not any((oneshot_spec.store("budget").folder / "apks").iterdir())
+
+
 def test_an_android_build_without_its_device_block_is_sent_back(android_build):
     sent = []
     with patch.object(oneshot_build, "send", lambda *a: sent.append(a)):
@@ -379,12 +419,19 @@ def test_an_android_build_without_its_device_block_is_sent_back(android_build):
     assert o()["stage"] == "build-front" and "`oneshot-device` 블록이 하나 있어야 한다" in sent[-1][2]
 
 
-def test_two_clean_android_rounds_stop_before_r3_for_the_phone_round(android_build):
+def test_two_clean_android_rounds_wait_for_the_owners_phone_before_r3(android_build):
     look = {"round": 2, "head": "abc", "findings": []}
     oneshot_spec.saved("budget", oneshot={"critiques": [{"look": 1, "head": "abc", "findings": [], "clean": True}],
                                           "looks": [look]})
     critique.judged("budget", oneshot_spec.store("budget"), spec(), look, [])
-    assert o()["stage"] == "r3" and o()["stopped"]["reason"] == "kind" and "7f" in o()["stopped"]["detail"]
-    assert "r3_sheet" not in critique.extra(spec())
-    oneshot_spec.recover()   # this version's own stop survives a restart
-    assert o()["stopped"]["reason"] == "kind"
+    assert o()["stage"] == "phone" and not o().get("stopped") and o()["phone"]["status"] == "waiting"
+    assert oneshot_spec.summary(spec())["waits"] and "r3_sheet" not in critique.extra(spec())
+    oneshot_spec.recover()   # the wait survives a restart: no timeout drops it
+    assert o()["stage"] == "phone" and not o().get("stopped")
+
+
+def test_a_run_an_earlier_version_stopped_before_r3_waits_for_the_phone(android_build):
+    oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None, "stopped": {
+        "reason": "kind", "state": "r3", "detail": "7f"}})
+    oneshot_spec.recover()
+    assert o()["stage"] == "phone" and not o().get("stopped") and o()["phone"]["status"] == "waiting"

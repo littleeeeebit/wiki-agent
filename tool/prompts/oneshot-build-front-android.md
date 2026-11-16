@@ -53,6 +53,11 @@ these permissions, the ones the approved requirements state: {permissions}.
 
 {scenarios}
 
+- The debug build's application id ends with `{suffix}`: in Gradle,
+  `applicationIdSuffix = "{suffix}"` on the debug build type, the fixture
+  viewer's too, and the instrumented tests' package follows the app's. Before
+  R3 the run installs these exact APKs on the owner's phone, so no id may
+  name an app already there.
 - Does this app read another app's screen: {fixture}. When it does, the
   project builds a fixture viewer from its own test sources: a second app,
   with its own package id, that shows known pages (vertical-scroll chapters,
@@ -73,12 +78,14 @@ End the turn with exactly one fenced block whose info string is
 `oneshot-device`, holding JSON:
 
 ```oneshot-device
-{"apk": "app/build/outputs/apk/debug/app-debug.apk", "package": "com.example.app", "activity": ".MainActivity",
- "tests": {"apk": "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk", "runner": "com.example.app.test/androidx.test.runner.AndroidJUnitRunner"},
- "fixture": {"apk": "fixture/build/outputs/apk/debug/fixture-debug.apk", "package": "com.example.app.fixture"}}
+{"apk": "app/build/outputs/apk/debug/app-debug.apk", "package": "com.example.app{suffix}", "activity": "com.example.app.MainActivity",
+ "tests": {"apk": "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk", "runner": "com.example.app{suffix}.test/androidx.test.runner.AndroidJUnitRunner"},
+ "fixture": {"apk": "fixture/build/outputs/apk/debug/fixture-debug.apk", "package": "com.example.app.fixture{suffix}"}}
 ```
 
 Paths are relative to the repository root and are what `gate_cmd` builds.
+`activity` is the full class name: the suffix changes the package, not the
+classes.
 Leave `fixture` out when the app reads no other app's screen.
 
 ## When this turn ends

@@ -27,6 +27,7 @@ RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}   # a later sta
 SHEETS = {"r1"}   # a stage whose sheet stands when its edit turn stopped
 TURNS = {"tests", "build"}   # a stage run as a work turn (`oneshot_build.STAGES`), resumed by sending it again
 VIEWS: list = []   # a later stage's fields for the screen, `fn(spec) -> dict`
+RECOVERS: list = []   # a later stage's start-up repair of a run an earlier version left, `fn(repo, o)`
 MAX_TALK = 4_000
 
 router = APIRouter()
@@ -371,6 +372,9 @@ def recover() -> None:
         o = (spec or {}).get("oneshot") or {}
         if o and spec.get("adapter"):   # a restart can cut a turn before its end clears the adapter grant
             saved(folder.name, adapter=False)
+        for repair in RECOVERS if o else ():
+            repair(folder.name, o)
+            o = specs.load(folder.name, oneshot.BRANCH)["oneshot"]
         stop = o.get("stopped") or {}
         if stop.get("reason") == "kind" and o.get("stage") != KIND_STOPS.get(kind_of(o)):
             saved(folder.name, oneshot={"stopped": {**stop, "reason": "restart",
@@ -426,7 +430,7 @@ def summary(spec: dict) -> dict:
     o = spec["oneshot"]
     asked = o["stage"] == "spec" and (o.get("talk") or [{}])[-1].get("role") == "agent"
     return {"repo": spec["repo"], "stage": o["stage"], "working": o.get("working"), "stopped": o.get("stopped"),
-            "waits": not o.get("working") and not o.get("stopped") and (o["stage"] in WAITS or asked)}
+            "kind": kind_of(o), "waits": not o.get("working") and not o.get("stopped") and (o["stage"] in WAITS or asked)}
 
 
 @router.get("/api/oneshot-specs")

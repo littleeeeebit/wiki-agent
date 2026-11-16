@@ -333,8 +333,8 @@ How 7e builds it:
   `INSTRUMENTATION_CODE: -1`, or one with a line that starts an abort, a
   failure or a crash record. A test whose name holds those words is not one.
 - The critic names an Android screen by its id where a web screen has its
-  route. Two clean rounds stop the run with reason `kind` at `r3` until the
-  phone round (7f). A run an earlier version stopped at `build-front` becomes
+  route. Two clean rounds open the phone round (below). A run an earlier
+  version stopped at `build-front` becomes
   resumable when the server starts.
 - A real emulator on this PC checked the harness's commands, driving the
   Settings app with the other project's SDK, read-only:
@@ -380,6 +380,88 @@ the same scenarios with screenshots and the placement check, and read the
 app's own frame timing (`dumpsys gfxinfo` for its package) and memory. It
 touches no other app or data.
 
+How 7f1 builds it (`tool/android_phone.py`, `tool/main/oneshot_phone.py`):
+
+- The phone is reached through the run's own ADB server, decided with the
+  owner on 2026-11-16: `android_owned`'s server with its USB backend on and
+  emulator scan and mDNS off, on its own port, cleaned by the same record.
+  Port 5037 is never used. Windows lets one ADB server hold a USB phone, so
+  when another server holds it the list is empty, and the prompt says to close
+  that server. One phone server runs at a time.
+- The server is started per action: listing the phones on `[휴대폰 찾기]`,
+  and the round itself. Every device command waits until `bind` names the
+  picked serial, and passes it with `-s`.
+- The suffix is `.oneshot<run id>`. The build-front turn sets it as the debug
+  build's `applicationIdSuffix`, on the fixture viewer too, and names the
+  activity by its full class. The block's packages must end with it, and the
+  test package follows the app's. So the emulator's look already installs
+  the ids the phone gets.
+- The APKs are build outputs Git does not track, so a build outside the run
+  can change them. Both devices install copies in the run's folder. The
+  emulator's look copies the APKs after the gate, installs the copies and
+  saves their SHA-256s. The round holds the worktree on the head that look
+  passed, copies the APKs again, and checks each copy against the saved
+  digest. It installs from those copies. A moved head, or an APK that is
+  missing or changed, goes back to the build.
+- Before installing, the round checks:
+  - the picked serial is listed as `device`;
+  - the screen is not locked (after a wake key);
+  - no package exists, read exactly off `pm list packages`. An existing one
+    stops the round with no record and nothing installed or removed.
+- Installs pass `-R`. Android's package manager replaces an existing
+  installation by default and ignores `-r`. So an id another installer takes
+  after the check fails the install instead of being replaced. After each
+  install, the digest of the `base.apk` that `pm path` names must match the
+  passed one. That path must lie under `/data/app` or an adopted volume's
+  `/mnt/expand/<uuid>/app` before it is sent to the phone's shell.
+- The record goes in `oneshot.phone_owned`, one entry per round. It names each
+  package with the digest it must hold, and is saved before the first install.
+  A package joins its `installed` map once its install command succeeds,
+  which under `-R` proves the installation is the run's. Right after, the map
+  records which installation it is. That is the `base.apk` path, which the
+  package manager draws afresh on each install since Android 11, with the
+  file's inode and modification time in epoch seconds from `stat`. A
+  reinstall writes them anew, and a time zone change does not touch them.
+  The record is settled on every exit:
+  - `cleaned`;
+  - `pending`, with what is left;
+  - `unsure`, for a package on the phone that cannot be tied to the run's
+    installation. Examples are a crash between the record and the install, or
+    the owner reinstalling the same APK while the cleanup waited. The same APK
+    the owner installed is not the run's, so it is shown and never removed;
+  - `released`, when the owner kept a passing app.
+- The cleanup removes a package only when it is still the installation in
+  `installed` and its `base.apk` holds the recorded digest. Another APK is
+  listed as `foreign` and left alone.
+- The pick clears the stop before the round is published, so a stop that
+  arrives before the worker runs holds. The round checks for a stop after the
+  scenarios and after the measurements. At its end, under one lock with the
+  stop handler, it settles what stays on the phone. A stop accepted before
+  that point means the round never passes and its apps come off, even when
+  the owner chose to keep them. After that point a stop is refused. A later listing that shows the serial settles every `owning`,
+  `pending` or `unsure` entry for it again. The record also covers a round a
+  restart cut.
+- The listing runs at any stage except during the round itself. The run's
+  notice of an unfinished cleanup carries `[휴대폰 찾기]`, so a passed round's
+  cleanup left pending at R3 can still be finished.
+- The screens use the shared inspection with 7e. Mechanical checks use the
+  phone's own `wm size` and `wm density`. A crash is read from the event log
+  since the screen opened, by the device's clock, never by clearing the log.
+  The emulator does the same.
+- Frame timing comes from `dumpsys gfxinfo` after a reset and four swipes on
+  the first screen in `full`: frames, janky share, the 50th, 90th and 99th
+  percentiles. Memory is the total PSS from `dumpsys meminfo`. Neither is a
+  finding; R3 shows them.
+- The outcome decides what follows:
+  - a pass stops with reason `kind` at `r3` until 7f2 brings R3's sheet;
+  - a high finding goes to the build-front turn as the round's fix, and the
+    critic's stop rule counts its two clean rounds afresh;
+  - a phone missing, locked, holding an id, stopped or failing returns to the
+    prompt with the reason.
+- A restart mid-round returns to the prompt on `[재개]`. A run an earlier
+  version stopped at `r3` for its kind waits for the phone instead.
+- The spine shows the round for an Android run only.
+
 ### R3 and S8
 
 R3 shows the emulator's final screenshots, the phone's screenshots and frame
@@ -406,7 +488,8 @@ Each step is a separate PR, approved before the next starts.
 | 7c | Screens without an emulator | S5 from contracts and platform surfaces, S6 rendered by the stack's preview tool at the device size | Done |
 | 7d | Owned emulator | The native-webview step 3 collector resumed as shared infrastructure, with its refusals and cleanup proof | Done |
 | 7e | Emulator loop | S7 on the owned emulator: install, scenarios, screenshots, mechanical and placement checks resolved from the real native hierarchy (cases: a build that moves a feature from its approved place, a correctly absent `never` feature, a leaked `never` control), critic, fixture viewer | Done |
-| 7f | Phone round and S8 | The connected-phone round before R3: the resumable wait, the bound serial, run-specific packages, the ownership record and its cleanup; the R3 sheet, S8's README, APK and optional workflow | Planned |
+| 7f1 | Phone round | The connected-phone round before R3: the resumable wait, the bound serial, run-specific packages, the ownership record and its cleanup | Done |
+| 7f2 | R3 and S8 | The R3 sheet with the phone's results, S8's README, APK and optional workflow | Planned |
 | 7g | Real run | The screen translator sentence from intake to the first pull request | Planned |
 
 7a alone stops the refusal: the run continues to S1, and later stages wait
@@ -417,4 +500,5 @@ the frontend build. A card that 7a stopped opens again on
 resume, so the owner can confirm it into the bootstrap. The wait is enforced where a
 stage starts, at the automatic handoffs (S2 to design, R1 to tests, R2 to the
 build) and the owner's resume routes alike, not only by hiding a button. 7b and 7c need no emulator.
-7d to 7f need the toolchain on this PC.
+7d to 7f2 need the toolchain on this PC. On 2026-11-16 the owner split 7f
+into 7f1 and 7f2, so each PR's review stays short.
