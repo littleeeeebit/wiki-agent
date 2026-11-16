@@ -14,7 +14,7 @@ import re
 import time
 
 from . import oneshot, oneshot_sheet as sheet
-from .oneshot_profile import charged, kind_of
+from .oneshot_profile import charged, cut, kind_of
 
 PROMPT = oneshot.ROOT / "tool/prompts/oneshot-brief.md"
 MAX_BRIEF = 4_000      # characters, the whole brief
@@ -138,9 +138,33 @@ def write(store: oneshot.Store, spec_of, save) -> None:
     except Exception as exc:   # the brief is the owner's convenience: no failure in it may stop the run
         with oneshot._lock:   # a save that fails here too reaches the worker's guard, which stops with why
             o = spec_of()["oneshot"]
-            if o.get("working") == "brief":
-                failed = {"source": None, "failed": f"예상하지 못한 실패 — {type(exc).__name__}: {exc}"}
-                save(brief={**(o.get("brief") or {}), "r1": failed}, working=None)
+            if o.get("working") != "brief":
+                return
+            failed = {"source": None, "failed": f"예상하지 못한 실패 — {type(exc).__name__}: {exc}"}
+            fields = {"brief": {**(o.get("brief") or {}), "r1": failed}, "working": None}
+            # The run goes idle here, so a turn whose charge was not saved is settled in this same save, once.
+            if isinstance(exc, Unsettled):
+                fields.update(inflight=None, spend=exc.spend)
+            elif (flight := o.get("inflight") or {}).get("role") == "brief":
+                sent = float(flight.get("sent") or time.time())
+                fields.update(inflight=None, spend=cut(o.get("spend"), "brief", flight.get("codex", False),
+                                                       max(0.0, time.time() - sent), 0.0))
+            save(**fields)
+
+
+class Unsettled(RuntimeError):
+    """A finished turn whose charge could not be saved; `spend` is the ledger with it charged."""
+
+    def __init__(self, cause: Exception, spend: dict) -> None:
+        super().__init__(f"턴의 비용을 저장하지 못했다 — {cause}")
+        self.spend = spend
+
+
+def settled(store: oneshot.Store, spend: dict) -> None:
+    try:
+        store.put(inflight=None, spend=spend)
+    except Exception as exc:
+        raise Unsettled(exc, spend) from exc
 
 
 def written(store: oneshot.Store, spec_of, save) -> None:
@@ -179,12 +203,11 @@ def asked(store: oneshot.Store, snap: dict, mandatory: dict[str, list[str]]) -> 
         except Exception as exc:
             with oneshot._lock:
                 cost = (getattr(exc, "meta", None) or {}).get("cost_usd")
-                store.put(inflight=None, spend=charged(store.get().get("spend"), "brief", codex, cost,
-                                                       time.monotonic() - started))
+                settled(store, charged(store.get().get("spend"), "brief", codex, cost, time.monotonic() - started))
             return {"failed": f"요약 턴이 실패했다 — {exc}"}
         with oneshot._lock:
-            store.put(inflight=None, spend=charged(store.get().get("spend"), "brief", codex, meta.get("cost_usd"),
-                                                   time.monotonic() - started))
+            settled(store, charged(store.get().get("spend"), "brief", codex, meta.get("cost_usd"),
+                                   time.monotonic() - started))
         try:
             return checked(oneshot.block(final, "oneshot-brief"), snap, mandatory, attempt)
         except (ValueError, TypeError, KeyError, AttributeError) as exc:

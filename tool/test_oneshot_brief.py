@@ -122,6 +122,43 @@ def test_a_server_that_died_writing_the_brief_leaves_it_failed_and_the_sheet_res
     assert not o().get("stopped") and o()["stage"] == "r1"
 
 
+@pytest.mark.parametrize("answered", [True, False])   # a finished turn, and a broken one
+def test_a_charge_that_could_not_be_saved_is_settled_once_before_the_run_goes_idle(world, answered):  # noqa: F811
+    at_design()
+    oneshot_spec.saved("budget", oneshot={"stage": "r1", "design": sheet.parsed(DESIGN), "working": "brief",
+                                          "r1": {"round": 1, "decisions": {}, "marks": {}}})
+    real = oneshot_spec.store("budget")
+    failing = [True]
+
+    class Flaky:
+        key, folder = real.key, real.folder
+
+        def get(self):
+            return real.get()
+
+        def put(self, **fields):
+            if failing[0] and "spend" in fields and fields.get("inflight", "absent") is None:
+                failing[0] = False
+                raise OSError("비용을 한 번 저장하지 못했다")
+            return real.put(**fields)
+
+    def ask(*a):
+        if not answered:
+            raise oneshot.Failed("끊겼다", {"cost_usd": 0.2})
+        return fenced("oneshot-brief", good()), {"cost_usd": 0.1}, False
+
+    with patch.object(oneshot, "ask", ask):
+        brief.write(Flaky(), lambda: oneshot_spec.spec_of("budget"), lambda **f: oneshot_spec.saved("budget", oneshot=f))
+    assert "비용을 한 번 저장하지 못했다" in o()["brief"]["r1"]["failed"]
+    assert o()["spend"]["calls"] == 1 and o()["spend"]["usd"] == (0.1 if answered else 0.2)
+    assert o().get("inflight") is None and not o()["working"] and not o().get("stopped")
+    oneshot_spec.recover()   # nothing left in flight to charge again
+    assert o()["spend"]["calls"] == 1 and not o().get("stopped")
+    items = sheet.decidable(o()["design"], ASSUMED)
+    oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions={i: {"approve": True} for i in items}))
+    assert o()["stage"] == "tests" and o()["spend"]["calls"] == 1
+
+
 def snap():
     return {"sentence": "가계부", "restated": "가계부를 만든다.", "requirements": ASSUMED, "glossary": GLOSSARY,
             "stack": [], "design": sheet.parsed(DESIGN), "profile": {}, "round": 1, "marks": {}}
