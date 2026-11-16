@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from common import is_junction
 
-from . import oneshot, oneshot_sheet as sheet, specs, work
+from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, specs, work
 from .oneshot_profile import KIND_STOPS, current, environment, kind_of, stacked, unsettled
 
 RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}   # a later stage's module adds its own
@@ -254,8 +254,15 @@ def design(repo: str) -> None:
     if found is None:
         return
     made, _, _, warnings = found
-    saved(repo, oneshot={"design": made, "stage": "r1", "working": None,
+    saved(repo, oneshot={"design": made, "stage": "r1", "working": "brief",
                          "r1": {"round": 1, "decisions": {}, "marks": {}, "warnings": warnings}})
+    briefed(repo)
+
+
+def briefed(repo: str) -> None:
+    """R1's brief for the design just saved (`oneshot_brief`); it clears `working` whatever happens."""
+
+    brief.write(store(repo), lambda: spec_of(repo), lambda **f: saved(repo, oneshot=f))
 
 
 # -- R1 the sheet and its decisions ------------------------------------------------------
@@ -279,8 +286,9 @@ def redesign(repo: str, comments: dict[str, str], reach: list[str]) -> None:
     r1 = spec["oneshot"]["r1"]
     marks, decisions = marked(sheet.decidable(made, reqs), comments, reach, old, new, r1["decisions"])
     saved(repo, requirements=reqs, oneshot={
-        "design": made, "glossary": glossary, "working": None,
+        "design": made, "glossary": glossary, "working": "brief",
         "r1": {"round": r1["round"] + 1, "decisions": decisions, "marks": marks, "warnings": warnings}})
+    briefed(repo)
 
 
 def approved(repo: str) -> None:
@@ -375,6 +383,8 @@ def recover() -> None:
         for repair in RECOVERS if o else ():
             repair(folder.name, o)
             o = specs.load(folder.name, oneshot.BRANCH)["oneshot"]
+        if o and (cut := brief.recovered(o)) is not None:   # a brief the server went down writing
+            o = saved(folder.name, oneshot={"brief": cut})["oneshot"]
         stop = o.get("stopped") or {}
         if stop.get("reason") == "kind" and o.get("stage") != KIND_STOPS.get(kind_of(o)):
             saved(folder.name, oneshot={"stopped": {**stop, "reason": "restart",
