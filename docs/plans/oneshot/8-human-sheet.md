@@ -71,15 +71,75 @@ builds better.
 
 The agent's spec stays exactly as S2, S3 and S6 make it. Every later turn
 reads only that. The owner's page, the brief, is generated from it after each
-turn that ends at a review. It is stored beside it, shown at that review, and
-never put in any agent's prompt, the design files, the pull request or the S8
-summary.
+turn that ends at a review. It is stored in its own field, `oneshot.brief`,
+keyed by review, and shown at that review.
+
+The existing sheet renderers do not change. `oneshot_sheet.sheet` still
+writes the design files at R1 approval, `oneshot_screens.sheet` is still
+recorded at R2 and still reaches the critic, and `r3_sheet` still renders R3.
+The brief is rendered beside them from `oneshot.brief` alone. Nothing reads
+that field except the owner's view: no agent's prompt, no design file, no
+pull request text and no S8 summary. The owner's own edit comments are not
+the brief; they still reach the redo turn and the PR's history as today.
 
 | Review | Brief written after | Approving the brief approves |
 | --- | --- | --- |
-| R1 | `design`, `redesign` | Every requirement and design item |
-| R2 | The S6 screen design and `refront` | Every screen and its states; the palette is still picked |
-| R3 | The critique loop's last round, and the phone round on Android | Every screen |
+| R1 | `design`, `redesign` | Every requirement and design item not on a confirmation line |
+| R2 | The S6 screen design and `refront` | Nothing extra: every R2 item is on a confirmation line; the palette is still picked |
+| R3 | The critique loop's last round, and the phone round on Android | Every screen with no finding left |
+
+### The gate's identity
+
+Every review has a server-owned identity, `source`: a hash of the gate's
+inputs and its round. At R1 that is the requirements, the glossary, the
+restated goal and the design. At R2 it is the S6 result (`front`). At R3 it
+is `front` with the last look, the last critique and the phone round's
+findings.
+
+- The brief is stored with the `source` it was written from. A generation
+  result whose `source` no longer matches the gate is dropped, not stored.
+- The owner's view returns the current `source`, with or without a brief.
+  Every submission carries it, from the brief or from the full sheet, and a
+  submission whose `source` differs from the gate's is refused with 409 and
+  a notice to reload. So a tab left open on round 1 cannot approve round 2.
+- Bulk approval expands against the full item set of the gate that `source`
+  names, the same list `decidable` gives today. Explicit edits stay as they
+  are, and `marked` still resets the approvals of edited, changed and
+  re-shown items.
+
+### Confirmation lines
+
+A confirmation line is one entry under `확인해 주세요`. The server, not the
+brief's writer, fixes which lines must exist and which items each covers.
+The writer only words them.
+
+| Review | Mandatory lines | Each line covers |
+| --- | --- | --- |
+| R1 | One per `assumed` requirement and one per assumption, plus one per item `marked` since the last round | The ids it cites, at least the one it is for |
+| R2 | One per screen | `S<n>` and `S<n>.states` |
+| R3 | One per finding left, as a reference `L<n>` | The screen that finding belongs to |
+
+R2 has no record of which screens or states the owner asked for: the
+frequency map records how often a feature is used, not an approved layout.
+So every screen and its states are confirmed on a line, and the R2 brief's
+gain is its wording, not fewer decisions.
+
+At R3 the server numbers the findings left in one snapshot: the last
+critique's findings, the last look's mechanical findings and the phone
+round's findings, in the order `r3_sheet` lists them. Each gets a reference
+`L<n>` and a screen. A phone finding names its screen. A critic or
+mechanical finding is matched to the screen whose `route` or `surface` it
+names; one that matches none belongs to the first screen, and its line says
+so.
+
+Line decisions reduce to item decisions before `decided` runs:
+
+- every item a line covers takes that line's decision;
+- an item covered by several lines, or by a line and the folded sheet, takes
+  every edit, joined, each comment kept whole and prefixed with its line;
+- an edit always wins over an approval of the same item;
+- at R3 the screen's builder finding carries each joined comment, one per
+  finding edited.
 
 ### The R1 brief
 
@@ -92,10 +152,15 @@ comes from, so the brief and the spec can be checked against each other.
 | 쓰는 장면 | The app in use, five to ten numbered steps | Scenarios with postconditions |
 | 물어보신 것 | Each question the owner's sentence asks, answered in a paragraph, with the alternatives the agent dropped | Requirements and assumptions |
 | 돌아가는 순서 | The pipeline in four to six steps, when the app has one | Flows and assumptions |
-| 확인해 주세요 | Every decision the owner did not make, one line each | `assumed` requirements and every assumption |
+| 확인해 주세요 | The mandatory lines above, one each | `assumed` requirements, assumptions, marked items |
 | 빼기로 한 것 | One line each | `not_applicable` requirements |
 | 알아 두실 것 | Costs, risks, a public repository, what only a real device can check, and any contradiction between the restated goal and the requirements | Profile, stack, requirements |
 | 다 됐다고 보는 기준 | Five to ten observable outcomes | Tests, rewritten without numbers or names |
+
+On Android the design is `core_sheet`'s: modules (`M`), outside calls (`X`)
+and platform permissions. Its brief adds every permission and outside call
+to `알아 두실 것`, and the item set bulk approval expands to is
+`decidable`'s for that design.
 
 The brief is plain Korean in the owner's words. It holds no code names, field
 types, endpoint paths, test names or cross-references between numbers. The
@@ -114,7 +179,7 @@ percentiles and PSS memory.
 | 한 줄 | What the screens let the owner do | What the finished screens do, and what changed since R2 |
 | 화면 | Each screen's picture with one sentence on what it is for | The first screen's pictures, before and after |
 | 기능이 놓인 자리 | Each feature by name and where it sits, in a sentence where it differs from the owner's map | The same, only where it moved since R2 |
-| 확인해 주세요 | Every screen, state wording and placement the owner did not ask for | Every finding the stop rule left, in words, with its likely effect on use |
+| 확인해 주세요 | One line per screen, on the screen and its states | One line per finding left, in words, with its likely effect on use |
 | 색 | The palettes as named swatches | Not shown |
 | 휴대폰에서 | Not shown | On Android: whether it felt smooth and how much memory it used, in words, beside the measured values |
 
@@ -123,37 +188,62 @@ percentiles and PSS memory.
 One turn after each turn that ends at a review, with no tools and no
 worktree, on the run's review model (`run["models"]`). That model did not
 write the design, so it reads the spec afresh rather than echoing it. Its
-input is the review's sheet data and the owner's sentence; its output is
-one `oneshot-brief` block. The server checks the block before the review
-shows it:
+input is the gate's inputs, the mandatory lines with what each covers, and
+the owner's sentence. Its output is one `oneshot-brief` block. The server
+checks the block before the review shows it:
 
 - every section is present and within its length, and the whole brief stays
   under a ceiling, 4,000 characters by default;
-- every cited id exists in the spec;
-- in R1, `확인해 주세요` names every `assumed` requirement and every
-  assumption, and `빼기로 한 것` every `not_applicable` requirement;
-- in R3, `확인해 주세요` names every finding left;
+- every mandatory line is present, exactly once, and no other line is under
+  `확인해 주세요`;
+- every cited id exists in the gate's inputs;
+- at R1, `빼기로 한 것` names every `not_applicable` requirement;
 - no backticked code, test name or endpoint path;
 - the translationese check passes, as on every gate sheet.
 
 A failed check sends the turn back once with the reasons. A brief that still
-fails leaves the review on today's sheet, with a notice saying why. The run
-never stops because of the brief.
+fails leaves the review on today's sheet with its full decision set, every
+item decided one by one, and a notice saying why. The run never stops because
+of the brief.
 
 ### Deciding on the brief
 
-Each review opens on its brief. Each `확인해 주세요` line is decided on its
-own: approve, or edit with a comment, as items are today. Approving the brief
-approves every other item of that review at once. Today's full sheet stays
-below, folded, for an owner who wants it, and any item there can still be
-edited. At R2 the owner still picks the palette, as today.
+Each review opens on its brief. Each line under `확인해 주세요` is decided on
+its own: approve, or edit with a comment, as items are today. Approving the
+brief approves the rest of that review's items at once. Today's full sheet
+stays below, folded, for an owner who wants it, and any item there can still
+be edited. At R2 the owner still picks the palette, as today.
 
-An edit on a brief line is a comment on the ids it cites. It goes to the
-review's existing redo path exactly as an item's edit does now: `redesign`
-at R1, `refront` at R2, and at R3 the builder's fix turn with the loop run
-again. The brief is then written again from the result. The reading record
-(`oneshot.reading`) keeps the seconds, the folds opened and the edits, so the
-next real run shows whether the owner read the page.
+The reduced edits go to the review's existing redo path exactly as an item's
+edit does now: `redesign` at R1, `refront` at R2, and at R3 the builder's fix
+turn with the loop run again. The brief is then written again from the
+result, under the new `source`. The reading record (`oneshot.reading`) keeps
+the seconds, the folds opened and the edits, so the next real run shows
+whether the owner read the page.
+
+## Acceptance
+
+Every case runs offline on mocked model output; none needs a real run.
+
+- Isolation. A brief carrying a unique marker string: the marker appears in
+  the owner's view and in `oneshot.brief`, and nowhere in any later turn's
+  prompt, the critic's input, `docs/design/`, the PR-writing input, the PR
+  body or the S8 summary. An owner's edit comment still reaches the redo
+  turn.
+- Stale approval. The owner's view is read, a redesign changes an item under
+  the same ids, and the old `source` is submitted: refused with 409, and
+  nothing is approved. A brief generated for the old `source` and arriving
+  late is dropped.
+- R2 coverage. A brief missing the line for one screen fails its check, and
+  bulk approval is not offered until a brief with every screen's line passes
+  or the review falls back to the full sheet.
+- R3 reduction. Two findings on one screen, one approved and one edited,
+  reduce to an edit carrying that comment. Two edits keep both comments. A
+  phone finding on Android reaches its screen.
+- Fallback. A brief invalid twice leaves the full sheet with every item of
+  `decidable`, and approving only part of it is refused as today.
+- Android. The R1 brief of a `core_sheet` design names every permission and
+  outside call, and bulk approval covers its `M` and `X` items.
 
 ## Decided
 
@@ -169,6 +259,6 @@ The owner decided these on 2026-11-16, by options.
 
 | # | Stage | Deliverable | Status |
 | --- | --- | --- | --- |
-| 8a | The brief | The `oneshot-brief` turn on the review model, its checks, storage beside the spec, kept out of every agent prompt; written after `design` and `redesign` | Planned |
-| 8b | R1 on the brief | The brief first with per-line decisions on `확인해 주세요`, one approval for the rest, today's sheet folded below | Planned |
-| 8c | R2 and R3 on the brief | Their briefs after S6 and `refront`, and after the critique loop and phone round, decided the same way | Planned |
+| 8a | The brief | The `oneshot-brief` turn on the review model, the gate's `source`, the mandatory lines and the checks, `oneshot.brief` kept out of every agent input; written after `design` and `redesign`; the isolation, stale and fallback cases | Planned |
+| 8b | R1 on the brief | The brief first with per-line decisions reduced to items, one approval for the rest, `source` required on every R1 submission, today's sheet folded below; the Android case | Planned |
+| 8c | R2 and R3 on the brief | Their briefs after S6 and `refront`, and after the critique loop and phone round; R3's finding references and reduction; the R2 coverage and R3 reduction cases | Planned |
