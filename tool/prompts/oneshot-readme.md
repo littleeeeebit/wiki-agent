@@ -14,7 +14,7 @@ left before the first pull request is the page a newcomer reads first.
   above where the commands differ.
 - Run: the command that starts the application, and where it is then served.
 - Test: the gate command, `{gate}`, and what it covers.
-
+{android}
 Every command must be one that works in this repository as committed. Write
 the README in the language the design documents are written in.
 

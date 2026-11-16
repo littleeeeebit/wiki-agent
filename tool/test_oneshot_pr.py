@@ -8,12 +8,15 @@ is pushed and no pull request is made.
 import json
 import subprocess
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+import android_owned
 from main import oneshot, oneshot_build, oneshot_critique as critique, oneshot_pr, oneshot_spec, pr_text, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
+from test_oneshot_device import DEVICE
 from test_oneshot_front_build import (CASES, CONTRACT, FEATURES, FREQUENCY, FRONT, GATE, RUNNER, Run, adapter, git,
                                       write)
 from test_oneshot_spec import PROFILE, fenced, world  # noqa: F401 — `world` is a fixture
@@ -254,6 +257,106 @@ def test_a_restart_before_the_text_is_asked_again_leaves_the_run_resumable(finis
     assert o()["stopped"]["reason"] == "restart"
     oneshot_spec.resume("budget")
     assert sent[-1][1] == "pr" and "README.md" in sent[-1][2] and not spec().get("writing")
+
+
+# -- An Android app's S8 (`docs/plans/oneshot/7-android.md`, "R3 and S8") ---------------------------------
+
+@pytest.fixture
+def android(finished, monkeypatch):
+    tree, sent = finished
+    oneshot_spec.saved("budget", oneshot={"intent": {"kind": "android"}, "device": DEVICE})
+    monkeypatch.setattr(oneshot_build, "toolchain", lambda spec: None)   # the gate runs as the test's own Python
+    for apk in (DEVICE["apk"], DEVICE["tests"]["apk"]):
+        write(tree, apk, "apk")
+    git(tree, "add", "-A")
+    git(tree, "commit", "-m", "apks")
+    head = git(tree, "rev-parse", "HEAD")
+    oneshot_spec.saved("budget", oneshot={"tests_head": head, "front_built_head": head})
+    return tree, sent
+
+
+class Releases:
+    """`gh release` as GitHub answers it, every other command run for real: `create` fails `failing` times
+    with its reply lost after making the release, then succeeds."""
+
+    def __init__(self, failing=0, viewed=True):
+        self.calls, self.failing, self.viewed, self.uploaded = [], failing, viewed, []
+        self.real = specs.sh
+
+    def __call__(self, args, cwd, timeout=60):
+        if args[:2] != ["gh", "release"]:
+            return self.real(args, cwd, timeout)
+        self.calls.append(args)
+        url = "https://github.com/me/budget/releases/tag/untagged-1a2b"
+        if args[2] in ("create", "upload"):
+            self.uploaded.append(android_owned.sha256(Path(args[4])))
+        if args[2] == "create" and self.failing:
+            self.failing -= 1
+            return subprocess.CompletedProcess(args, 1, "", "HTTP 422: tag already exists")
+        if args[2] == "view" and not self.viewed:
+            return subprocess.CompletedProcess(args, 1, "", "release not found")
+        return subprocess.CompletedProcess(args, 0, f"{url}\n", "")
+
+
+def test_an_android_apps_readme_turn_names_the_apk_and_its_install_and_a_public_workflow_its_sdk(android):
+    _, sent = android
+    oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None, "r3": {"round": 1, "decisions": {}}})
+    critique.decide("budget", critique.Decisions(decisions={s["id"]: {"approve": True} for s in FRONT["screens"]}))
+    text = sent[-1][2]
+    assert f"`{DEVICE['apk']}`" in text and "adb's install command" in text and "Write no CI workflow" in text
+    oneshot_spec.saved("budget", oneshot={"profile": {**o()["profile"], "visibility": "public", "ci": "github-actions"}})
+    assert "`android-actions/setup-android`" in oneshot_pr.readme_text(spec())
+    oneshot_spec.saved("budget", oneshot={"intent": {"kind": "webapp"}})
+    assert "adb's" not in oneshot_pr.readme_text(spec()) and "setup-android" not in oneshot_pr.readme_text(spec())
+
+
+def test_an_android_apps_apk_goes_to_a_draft_prerelease_the_pull_request_links(android):
+    tree, sent = android
+    readme(tree)
+    releases = Releases()
+    with patch.object(specs, "sh", releases), patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    head, digest = git(tree, "rev-parse", "HEAD"), android_owned.sha256(tree / DEVICE["apk"])
+    create = releases.calls[0]
+    assert create[:3] == ["gh", "release", "create"] and {"--draft", "--prerelease"} <= set(create)
+    assert create[3] == f"oneshot-apk-{head[:12]}" and create[4].endswith(f"budget-{head[:12]}-debug.apk")
+    apk = o()["apk"]
+    assert apk == {"head": head, "name": f"budget-{head[:12]}-debug.apk", "sha256": digest, "tag": create[3],
+                   "url": "https://github.com/me/budget/releases/tag/untagged-1a2b"}
+    assert releases.uploaded == [digest] and not Path(create[4]).exists()   # the copy it uploaded is gone
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        oneshot_pr.asked("budget")   # a resumed S8 asks for the text again: the release is not made twice
+    assert len(releases.calls) == 1
+    remote = Remote()
+    with patch.object(specs, "sh", remote):
+        check(tree, SUMMARIZED)
+    assert f"[budget-{head[:12]}-debug.apk](https://github.com/me/budget/releases/tag/untagged-1a2b)" in remote.body
+    assert f"SHA-256 `{digest}`" in remote.body
+    assert oneshot_spec.view(spec())["summary"]["apk"]["url"] == apk["url"]
+
+
+def test_a_release_whose_reply_was_lost_gets_the_apk_again_and_a_failed_one_is_said_in_the_body(android):
+    tree, _ = android
+    readme(tree)
+    releases = Releases(failing=1)
+    with patch.object(specs, "sh", releases), patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    assert [c[2] for c in releases.calls] == ["create", "upload", "view"] and "--clobber" in releases.calls[1]
+    assert o()["apk"]["url"].endswith("untagged-1a2b")
+    oneshot_spec.saved("budget", oneshot={"apk": None})
+    with patch.object(specs, "sh", Releases(failing=1, viewed=False)), \
+            patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        oneshot_pr.asked("budget")
+    assert "tag already exists" in o()["apk"]["error"] and "url" not in o()["apk"]
+    assert "디버그 APK 를 Release 에 올리지 못했다 — gh release 실패" in "\n".join(pr_text.apk_section(spec()))
+
+
+def test_an_android_app_without_its_apk_after_the_final_gate_is_sent_back(android):
+    tree, sent = android
+    git(tree, "rm", "-q", DEVICE["apk"])
+    readme(tree)
+    check(tree, answer(report()))()
+    assert sent[-1][1] == "pr" and f"`{DEVICE['apk']}`" in sent[-1][2] and "final_head" not in o()
 
 
 def test_a_resumed_s8_starts_again_from_its_readme_turn(finished):

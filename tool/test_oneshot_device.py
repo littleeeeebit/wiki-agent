@@ -435,3 +435,11 @@ def test_a_run_an_earlier_version_stopped_before_r3_waits_for_the_phone(android_
         "reason": "kind", "state": "r3", "detail": "7f"}})
     oneshot_spec.recover()
     assert o()["stage"] == "phone" and not o().get("stopped") and o()["phone"]["status"] == "waiting"
+
+
+def test_a_run_an_earlier_version_stopped_after_its_phone_round_passed_opens_r3(android_build):
+    oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None, "phone": {"status": "passed", "round": 1},
+                                          "stopped": {"reason": "kind", "state": "r3", "detail": "7f2"}})
+    oneshot_spec.recover()
+    assert o()["stage"] == "r3" and not o().get("stopped") and o()["r3"] == {"round": 1, "decisions": {}, "marks": {}}
+    assert o()["phone"]["status"] == "passed"

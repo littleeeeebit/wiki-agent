@@ -10,14 +10,20 @@ From `PR #n` on the spec follows the ordinary cycle, and the run keeps its summa
 from __future__ import annotations
 
 import os
+import re
+import shutil
+import subprocess
 import threading
+import time
 from pathlib import Path
 
 import yaml
 
+import android_owned
 from wiki import slots_for
 
-from . import oneshot_build, oneshot_spec, pr_text, specs
+from . import oneshot_build, oneshot_device, oneshot_spec, pr_text, specs
+from .oneshot_profile import kind_of
 from .query import ROOT
 
 README_PROMPT = (ROOT / "tool/prompts/oneshot-readme.md").read_text(encoding="utf-8")
@@ -27,6 +33,7 @@ WORKFLOWS = ".github/workflows/"
 CI = f"{WORKFLOWS}ci.yml"
 # The workflow's events. Written unquoted: `test_prerequisite_review` reads a quoted push as a git push.
 TRIGGERS = set("push pull_request".split())
+RELEASE_SECONDS = 600   # the upload of a debug APK of tens of megabytes
 
 
 def readme_text(spec: dict) -> str:
@@ -35,11 +42,20 @@ def readme_text(spec: dict) -> str:
     both = [OS_NAMES[now]] + ([OS_NAMES["macos" if now == "windows" else "windows"]]
                               if profile.get("os_later") == "other" else [])
     public = profile.get("visibility") == "public" and profile.get("ci") == "github-actions"
+    android = kind_of(spec["oneshot"]) == "android"
+    job = ("a job on `ubuntu-latest` that sets up a JDK (`actions/setup-java`) and the Android SDK "
+           "(`android-actions/setup-android`), then a step that `run`s the gate command above, as written"
+           if android else "a job whose step `run`s the gate command above, as written")
     return (README_PROMPT.replace("{os}", " and ".join(both))
             .replace("{gate}", slots_for(None, Path(spec["worktree"])).get("gate_cmd", "").strip())
-            .replace("{workflow}", "Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and a job "
-                                   "whose step `run`s the gate command above, as written." if public else
-                     "Write no CI workflow: this repository gets none, and the server refuses one."))
+            .replace("{android}", f"""
+This is an Android app. Setup names the JDK and the Android SDK the build
+needs. Run is instead the command that builds the debug APK,
+`{spec['oneshot']['device']['apk']}`, and the one that installs it on a phone
+connected with USB debugging on: adb's install command with that APK's path.
+""" if android else "")
+            .replace("{workflow}", f"Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and {job}."
+                     if public else "Write no CI workflow: this repository gets none, and the server refuses one."))
 
 
 def begin(repo: str) -> None:
@@ -121,10 +137,12 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
         return why
     # As at S7: the contract's command as the server stored it, then the adapter's gate, then each pinned case.
     ran = [backend, gate] if gate != backend else [gate]
-    verdict = specs.judge(path, ran, run.halt, lambda text: specs.note(run, text))
+    verdict = specs.judge(path, ran, run.halt, lambda text: specs.note(run, text), env=oneshot_build.toolchain(spec))
     if not verdict["ok"]:
         return f"최종 게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := oneshot_build.held(path, run, spec, verdict):
+        return why
+    if kind_of(o) == "android" and (why := oneshot_device.built(path, o["device"])):   # the APK S8 attaches
         return why
     report = next(b["value"] for b in specs.blocks(final)[1] if b["name"] == "done-report")
     tail = (verdict.get("tail") or "").strip()
@@ -148,10 +166,52 @@ def decisions(o: dict) -> list[str]:
     return out
 
 
+def released(spec: dict) -> dict:
+    """An Android app's debug APK as the final gate built it, attached to a draft prerelease of the repository,
+    which the pull request's body links: the URL, the asset's name and digest and the head, or why it could not.
+    The owner decided on 2026-11-16 that a Release holds it: it works for a private repository and keeps."""
+
+    o, path = spec["oneshot"], Path(spec["worktree"])
+    head = o["final_head"]
+    if (o.get("apk") or {}).get("head") == head and o["apk"].get("url"):   # a resumed S8 asks for the text again
+        return o["apk"]
+    name, tag = f"{spec['repo']}-{head[:12]}-debug.apk", f"oneshot-apk-{head[:12]}"
+    folder = oneshot_spec.store(spec["repo"]).folder / "release" / f"r{time.time_ns()}"
+    try:
+        if why := oneshot_device.built(path, o["device"]):
+            raise ValueError(why)
+        # A copy, uploaded and hashed as one: the APK is a build output Git does not track.
+        folder.mkdir(parents=True)
+        shutil.copyfile(path / o["device"]["apk"], folder / name)
+        digest = android_owned.sha256(folder / name)
+        done = specs.sh(["gh", "release", "create", tag, str(folder / name), "--draft", "--prerelease",
+                         "--title", f"{spec['repo']} 디버그 APK · {head[:12]}",
+                         "--notes", f"원샷 실행의 첫 PR 이 링크하는 디버그 APK 다. 빌드 커밋 `{head}`."],
+                        path, RELEASE_SECONDS)
+        url = re.findall(r"https://\S+/releases/\S+", done.stdout or "")
+        if done.returncode or not url:
+            # An earlier S8 made this head's release and lost the reply, or failed its upload: this APK
+            # replaces its asset, so the digest the body names is the uploaded file's.
+            again = specs.sh(["gh", "release", "upload", tag, str(folder / name), "--clobber"], path, RELEASE_SECONDS)
+            seen = specs.sh(["gh", "release", "view", tag, "--json", "url", "--jq", ".url"], path, 60) \
+                if not again.returncode else again
+            url = re.findall(r"https://\S+/releases/\S+", seen.stdout or "") if not seen.returncode else []
+            if not url:
+                raise ValueError(f"gh release 실패 — {((done.stderr or done.stdout or '').strip())[-300:]}")
+        return {"head": head, "name": name, "sha256": digest, "url": url[-1], "tag": tag}
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        return {"head": head, "error": str(exc) or type(exc).__name__}
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
 def asked(repo: str) -> None:
-    """The gate passed: one turn asks the worker for the pull request's text, as every spec's does."""
+    """The gate passed: an Android app's APK goes up for the pull request to link, then one turn asks the
+    worker for the pull request's text, as every spec's does."""
 
     spec = oneshot_spec.spec_of(repo)
+    if kind_of(spec["oneshot"]) == "android":
+        spec = oneshot_spec.saved(repo, oneshot={"apk": released(spec)})
     path, head = Path(spec["worktree"]), oneshot_spec.spec_of(repo)["oneshot"]["final_head"]
     spec = specs.update(repo, spec["id"], writing={"head": head, "asked": 1})
     said = decisions(spec["oneshot"])
@@ -201,7 +261,7 @@ def summary(spec: dict) -> dict:
                        "edited": sorted({i for e in reading.get(g) or [] for i in e.get("edited") or []})}
                       for g in ("r1", "r2", "r3")],
             "spend": o.get("spend") or {}, "critiques": len(o.get("critiques") or []),
-            "looks": len(o.get("looks") or [])}
+            "looks": len(o.get("looks") or []), "apk": o.get("apk")}
 
 
 def extra(spec: dict) -> dict:

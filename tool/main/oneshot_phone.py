@@ -8,7 +8,7 @@ ids, after an ownership record names them. On the phone it runs the same screens
 the emulator, then reads the app's own frame timing and memory. It uninstalls what the record names on every
 outcome, unless the owner keeps a passing app; a cleanup the phone's absence cut short stays pending and is
 finished when that serial is listed again. A high finding goes back to the build as the round's findings,
-then through the emulator loop to the phone again. A pass stops before R3, whose sheet is step 7f2.
+then through the emulator loop to the phone again. A pass opens R3, whose sheet shows the round (step 7f2).
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import android_owned
@@ -33,6 +34,7 @@ from .oneshot_profile import kind_of
 STAGE = "phone"
 SERIAL = re.compile(r"[A-Za-z0-9._:-]{1,64}")
 # Where the package manager keeps an app: internal storage, or an adopted volume (`/mnt/expand/<uuid>/app`).
+SHOT = re.compile(r"S[1-9]\d*-phone-(empty|full|loading|error)\.png")
 APK_PATH = re.compile(r"(/data|/mnt/expand/[0-9a-fA-F-]{1,64})/app/[A-Za-z0-9._=~+/-]+/base\.apk")
 LOCKED = ("mDreamingLockscreen=true", "isKeyguardShowing=true", "mShowingLockscreen=true")
 SWIPES = 4
@@ -347,17 +349,15 @@ def phone_round(repo: str) -> None:
 
 
 def settled(repo: str, outcome: dict):
-    """The outcome applied: R3's wait on a pass, the build with the phone's findings on a fail, else the prompt."""
+    """The outcome applied: R3's sheet on a pass, the build with the phone's findings on a fail, else the prompt."""
 
+    from . import oneshot_critique   # it imports this module
     with oneshot._lock:
         o = oneshot_spec.spec_of(repo)["oneshot"]
         result = {**(o.get("phone") or {}), **outcome}
         if outcome["status"] == "passed":
-            # The kind waits before R3 in this version: R3's sheet for a phone app is step 7f2.
-            return oneshot_spec.saved(repo, oneshot={"phone": result, "stage": "r3", "working": None, "stopped": {
-                "reason": "kind", "state": "r3",
-                "detail": f"`{kind_of(o)}` 는 이 버전에서 휴대폰 회차까지 간다 — {outcome['model'] or '휴대폰'} 에서 통과했다. "
-                          "R3 시트(docs/plans/oneshot/7-android.md 7f2)가 들어오면 이어 간다"}})
+            return oneshot_spec.saved(repo, oneshot={"phone": result, "stage": "r3", "working": None,
+                                                     "r3": oneshot_critique.opening(o)})
         if outcome["status"] != "failed":
             oneshot_spec.saved(repo, oneshot={"phone": {**result, "status": "waiting"}, "working": None})
             return None
@@ -369,7 +369,6 @@ def settled(repo: str, outcome: dict):
             "critique_base": len(o.get("critiques") or []),
             "fix": {"who": f"The run's round on the owner's phone ({outcome['model'] or 'a physical phone'}) found these",
                     "findings": high}})
-    from . import oneshot_critique   # it imports this module
     return lambda: oneshot_build.send(repo, front_build.STAGE, oneshot_critique.front_turn(spec))
 
 
@@ -382,11 +381,16 @@ def waits(repo: str, rounds: list[dict]) -> dict:
 
 
 def earlier(repo: str, o: dict) -> None:
-    """A run an earlier version stopped before R3 with no phone round: this version waits for the phone."""
+    """A run an earlier version stopped before R3 for its kind: with no phone round passed, this version waits
+    for the phone; with one passed, it opens R3's sheet."""
 
+    from . import oneshot_critique   # it imports this module
     stop = o.get("stopped") or {}
-    if kind_of(o) == "android" and o.get("stage") == "r3" and stop.get("reason") == "kind" \
-            and (o.get("phone") or {}).get("status") != "passed":
+    if kind_of(o) != "android" or o.get("stage") != "r3" or stop.get("reason") != "kind":
+        return
+    if (o.get("phone") or {}).get("status") == "passed":
+        oneshot_spec.saved(repo, oneshot={"stopped": None, "working": None, "r3": oneshot_critique.opening(o)})
+    else:
         oneshot_spec.saved(repo, oneshot={"stage": STAGE, "stopped": None, "working": None,
                                           "phone": {**(o.get("phone") or {}), "status": "waiting", "detail": ""}})
 
@@ -406,6 +410,17 @@ class Pick(BaseModel):
 
 def refused(exc: Exception) -> HTTPException:
     return HTTPException(409, str(exc))
+
+
+@router.get("/api/oneshot/spec/{repo}/phone/shot/{n}/{name}")
+def phone_shot(repo: str, n: int, name: str) -> FileResponse:
+    """A phone round's screenshot, for R3's sheet."""
+
+    oneshot_spec.spec_of(repo)   # a repository with a oneshot spec, never a path
+    path = SHOT.fullmatch(name) and oneshot_spec.within(oneshot_spec.store(repo).folder, "phone", "shots", f"p{n}", name)
+    if not path or not path.is_file():   # a link or a junction on the way never serves a file outside the run
+        raise HTTPException(404, "그런 휴대폰 사진이 없다")
+    return FileResponse(path, media_type="image/png")
 
 
 @router.get("/api/oneshot/spec/{repo}/phone/devices")
