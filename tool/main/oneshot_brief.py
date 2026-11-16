@@ -135,14 +135,20 @@ def checked(value, snap: dict, mandatory: dict[str, list[str]], attempt: int) ->
 
 def shown(spec: dict) -> dict:
     """R1's brief as the owner's view gives it: always the gate's current `source`; the brief when one was
-    written from that `source`, else `failed` with why the review shows its full sheet (none for a run from
-    before the brief)."""
+    written from that `source` and still passes today's checks (a brief stored by an earlier version may
+    not), else `failed` with why the review shows its full sheet (none for a run from before the brief)."""
 
-    src = source(snapshot(spec))
+    snap = snapshot(spec)
+    src = source(snap)
     entry = (spec["oneshot"].get("brief") or {}).get("r1") or {}
     if entry.get("source") == src and not entry.get("failed"):
-        return {"source": src, **{k: entry[k] for k in ("sections", "confirm", "lines")},
-                "warnings": entry.get("warnings") or []}
+        mandatory = lines(snap)
+        try:
+            ok = checked(entry, snap, mandatory, 1)
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:
+            return {"source": src, "failed": f"저장된 요약이 지금 검사를 통과하지 못했다 — {exc}"}
+        return {"source": src, "sections": ok["sections"], "confirm": ok["confirm"], "lines": mandatory,
+                "warnings": ok["warnings"]}
     if entry.get("failed") and entry.get("source") in (src, None):
         return {"source": src, "failed": entry["failed"]}
     return {"source": src, **({"failed": "요약을 지금 설계로 다시 쓰지 못했다"} if entry else {})}

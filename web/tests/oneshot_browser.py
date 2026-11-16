@@ -238,6 +238,8 @@ def main():
 
         # R1 on the brief: its sections first, one decision per confirmation line, the full sheet folded below,
         # and only the items decided there sent beside the lines; the rest are approved with them.
+        # E1's edit was saved before a redesign that failed: still the owner's, sent with the brief untouched.
+        views["demo"]["oneshot"]["r1"]["decisions"]["E1"] = {"edit": "월 합계를 함께 돌려라"}
         views["demo"]["brief"] = {"source": "s" * 64, "lines": {"R2": ["R2"]},
                                   "confirm": [{"key": "R2", "text": "지난 달은 고를 때만 불러옵니다."}],
                                   "sections": [{"name": "한 줄", "text": "달마다 쓴 돈을 적는 가계부입니다."},
@@ -258,7 +260,8 @@ def main():
             send.click()
         repo, act, body = posted[-1]
         assert (repo, act, body["source"], body["rest"]) == ("demo", "r1", "s" * 64, True), body
-        assert body["lines"] == {"R2": {"edit": "지난 달도 바로 보여라"}} and body["decisions"] == {"R2": {"approve": True}}, body
+        assert body["lines"] == {"R2": {"edit": "지난 달도 바로 보여라"}}, body
+        assert body["decisions"] == {"E1": {"edit": "월 합계를 함께 돌려라"}, "R2": {"approve": True}}, body
         assert body["reading"]["opened"] == ["전체 시트의 항목", "전체 설계 시트"], body
         del views["demo"]["brief"]
 

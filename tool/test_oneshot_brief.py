@@ -263,6 +263,17 @@ def test_a_submission_on_a_gate_that_changed_is_refused_and_the_stale_brief_is_n
     assert refused.value.status_code == 409
 
 
+def test_an_edit_left_by_a_redesign_that_failed_is_not_approved_away_by_the_brief(world):  # noqa: F811
+    gate = briefed()
+    # The redesign turn failed: the design and its brief stand, the owner's P1 edit is still saved.
+    oneshot_spec.saved("budget", oneshot={"r1": {**o()["r1"], "decisions": {"P1": {"edit": "응답을 sum 으로"}}}})
+    assert oneshot_spec.status("budget")["brief"]["source"] == gate["source"]
+    started = []
+    with patch.object(oneshot_spec, "start", lambda repo, work, *a, **f: started.append((work, a))):
+        oneshot_spec.decide("budget", on_sheet(decisions={}, lines=BOTH, rest=True))
+    assert started[0][0] == "redesign" and started[0][1][0] == {"P1": "응답을 sum 으로"}
+
+
 def test_a_failed_brief_leaves_the_full_sheet_whose_partial_approval_is_refused(world):  # noqa: F811
     at_design()
     with replies(answer(), "요약 없음", "요약 없음"):

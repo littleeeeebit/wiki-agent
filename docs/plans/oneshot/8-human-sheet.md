@@ -318,8 +318,13 @@ Every case runs offline on mocked model output; none needs a real run.
 
 - The owner's view carries `brief` (`oneshot_brief.shown`): always the gate's
   current `source`; the sections, lines and their coverage when the stored
-  brief was written from that `source`; otherwise `failed` with why. A brief
-  written for an earlier gate is not shown.
+  brief was written from that `source` and still passes today's checks;
+  otherwise `failed` with why. A brief written for an earlier gate is not
+  shown, and neither is one an earlier version stored that today's checks
+  refuse.
+- An edit saved before a redesign turn that failed is still pending. `rest`
+  never approves it, and the screen sends it again until the owner changes
+  it.
 - An R1 submission carries `source`, `lines` (one decision per line) and
   `rest`. A `source` other than the gate's is refused with 409 before
   anything else, and so is a missing one. `lines` or `rest` without a shown

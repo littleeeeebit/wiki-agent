@@ -404,7 +404,8 @@ export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen
 }) {
   const [decisions, setDecisions] = useState<Record<string, Decision>>(state.decisions)
   const [lines, setLines] = useState<Record<string, Decision>>({})
-  const [touched, setTouched] = useState<string[]>([])
+  // An edit saved before a redesign turn that failed is still the owner's: sent again until they change it.
+  const [touched, setTouched] = useState<string[]>(() => items.filter((i) => !!state.decisions[i]?.edit?.trim()))
   const [palette, setPalette] = useState(state.palette ?? '')
   const [opened, setOpened] = useState<string[]>([])
   const [zoom, setZoom] = useState('')

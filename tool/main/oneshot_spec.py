@@ -535,8 +535,11 @@ def decide(repo: str, body: Decisions) -> dict:
         if briefed:
             if "lines" not in gate:
                 raise HTTPException(409, "이 시트에는 요약이 없다 — 항목마다 정하라")
+            # An edit saved before a redesign turn that failed is still pending: `rest` never approves it away.
+            pending = {i for i, d in o["r1"]["decisions"].items() if (d or {}).get("edit")}
             try:
-                given = brief.reduced(gate["lines"], body.lines, body.decisions, body.rest, items)
+                given = brief.reduced(gate["lines"], body.lines, body.decisions, body.rest,
+                                      [i for i in items if i not in pending])
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
         decisions, comments = decided(items, o["r1"]["decisions"], given)

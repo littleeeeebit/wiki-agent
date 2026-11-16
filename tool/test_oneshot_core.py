@@ -10,6 +10,7 @@ import subprocess
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 
 from main import (oneshot, oneshot_brief as brief, oneshot_build, oneshot_profile, oneshot_review,
                   oneshot_sheet as sheet, oneshot_spec, specs)
@@ -185,6 +186,25 @@ def test_the_core_brief_names_every_permission_and_outside_call_and_approves_the
     lines = {"R2": {"approve": True}, "A1": {"approve": True}}
     oneshot_spec.decide("budget", on_sheet(decisions={}, lines=lines, rest=True))
     assert o()["stage"] == "tests" and {"M1", "M2", "X1", "T1"} <= set(o()["r1"]["decisions"])
+
+
+def test_a_stored_brief_that_fails_todays_checks_is_not_shown(android):
+    """A brief an earlier version stored, for the same gate, that names no outside call: the full sheet decides."""
+
+    oneshot_spec.saved("budget", requirements=REQS, oneshot={
+        "glossary": GLOSSARY, "stack": STACK, "stage": "r1", "design": sheet.parsed(DESIGN, "android"),
+        "r1": {"round": 1, "decisions": {}, "marks": {}, "warnings": []}})
+    spec = specs.load("budget", oneshot.BRANCH)
+    silent = [{**s, "text": "화면 녹화 허락을 받습니다. (R2)"} if s["name"] == "알아 두실 것" else s for s in CORE_BRIEF["sections"]]
+    stored = {"source": brief.source(brief.snapshot(spec)), "lines": {"R2": ["R2"], "A1": ["A1"]},
+              "sections": silent, "confirm": CORE_BRIEF["confirm"], "warnings": []}
+    oneshot_spec.saved("budget", oneshot={"brief": {"r1": stored}})
+    gate = oneshot_spec.status("budget")["brief"]
+    assert "lines" not in gate and "X1" in gate["failed"]
+    with pytest.raises(HTTPException) as refused:
+        oneshot_spec.decide("budget", on_sheet(decisions={}, lines={"R2": {"approve": True}, "A1": {"approve": True}},
+                                               rest=True))
+    assert refused.value.status_code == 409 and o()["stage"] == "r1"
 
 
 # -- S4 ----------------------------------------------------------------------------------------
