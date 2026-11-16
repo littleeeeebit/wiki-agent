@@ -6,12 +6,13 @@ the real session sends with them is in `test_session_images.py`.
 """
 
 import os
+import re
 from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
 
-from main import oneshot, oneshot_build, oneshot_critique as critique, oneshot_spec, specs
+from main import oneshot, oneshot_brief as brief, oneshot_build, oneshot_critique as critique, oneshot_spec, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_front_build import FEATURES, FREQUENCY, FRONT
 from test_oneshot_review import git
@@ -25,6 +26,12 @@ LOW = {**HIGH, "severity": "low", "what": "여백이 좁다", "fix": "여백을 
 
 def o() -> dict:
     return specs.load("budget", oneshot.BRANCH)["oneshot"]
+
+
+def on_r3(**fields) -> critique.Decisions:
+    """An R3 submission made on the gate as it stands, carrying that gate's `source`."""
+
+    return critique.Decisions(source=brief.source(brief.snapshot(oneshot_spec.spec_of("budget"), "r3")), **fields)
 
 
 def look(n=1, findings=()):
@@ -51,7 +58,7 @@ def judged(world):  # noqa: F811 — the imported fixture, requested by name
 def critic(*answers):
     heard, queue = [], list(answers)
 
-    def ask(store, role, system, text, where=None, images=()):
+    def ask(store, role, system, text, where=None, images=(), tools=None):
         heard.append((role, text, images))
         answer = queue.pop(0)
         if isinstance(answer, Exception):
@@ -161,13 +168,65 @@ def test_r3_approval_moves_to_the_pull_request_and_an_edit_runs_the_loop_again(j
     _, sent = judged
     at_r3()
     with pytest.raises(HTTPException, match="정하지 않은"):
-        critique.decide("budget", critique.Decisions(decisions={"S1": {"approve": True}}))
-    critique.decide("budget", critique.Decisions(decisions={"S1": {"approve": True}, "S2": {"edit": "표로 바꿔라"},
+        critique.decide("budget", on_r3(decisions={"S1": {"approve": True}}))
+    critique.decide("budget", on_r3(decisions={"S1": {"approve": True}, "S2": {"edit": "표로 바꿔라"},
                                                              "S3": {"approve": True}}))
     assert o()["stage"] == "build-front" and o()["critique_base"] == 1 and "표로 바꿔라" in sent[-1][2]
     assert o()["r3"]["next_marks"] == {"S2": "edited"}
     oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None})
-    critique.decide("budget", critique.Decisions(decisions={"S2": {"approve": True}}))
+    critique.decide("budget", on_r3(decisions={"S2": {"approve": True}}))
+    assert o()["stage"] == "pr"
+
+
+ON_S2 = {**LOW, "route": "/months", "what": "목록 글씨가 작다", "fix": "글씨를 키운다"}
+R3_BRIEF = {"sections": [{"name": "한 줄", "text": "완성된 화면으로 지출을 적고 달별로 봅니다. 브리프표식삼삼"},
+                         {"name": "화면", "text": "첫 화면은 처음보다 합계가 잘 보입니다. (S1)"}],
+            "confirm": [{"key": "L1", "text": "달별 화면의 목록 글씨가 조금 작습니다."},
+                        {"key": "L2", "text": "달별 화면이 비었을 때 안내가 작습니다."},
+                        {"key": "L3", "text": "어느 화면인지 적히지 않은 발견입니다. 글꼴이 섞여 보입니다."}]}
+
+
+def test_r3_opens_on_its_brief_one_line_per_finding_and_an_edited_line_reaches_the_builder_with_its_finding(judged):
+    _, sent = judged
+    harness = [{"severity": "low", "screen": "S2", "viewport": "desktop", "state": "empty", "what": "빈 화면 안내가 작다"},
+               {"severity": "low", "screen": None, "viewport": "desktop", "state": "full", "what": "글꼴이 섞였다"}]
+    oneshot_spec.saved("budget", oneshot={"looks": [look(1, harness)]})
+    brief_block = fenced("oneshot-brief", R3_BRIEF)
+    _, asking = critic(said(), said(ON_S2), brief_block, brief_block)
+    with asking:
+        critique.critique("budget")
+        critique.critique("budget")
+    shown = oneshot_spec.view(oneshot_spec.spec_of("budget"))
+    r3 = shown["r3_brief"]
+    assert o()["stage"] == "r3" and not o()["working"] and "failed" not in r3, r3
+    assert r3["lines"] == {"L1": ["S2"], "L2": ["S2"], "L3": ["S1"]}
+    assert r3["pictures"]["L2"] == ["/api/oneshot/spec/budget/look/1/S2-desktop-empty.png"]
+    assert r3["pictures"]["화면"] == ["/api/oneshot/spec/budget/look/1/S1-desktop-full.png"] * 2
+    snap = brief.snapshot(oneshot_spec.spec_of("budget"), "r3")
+    for changed, said_why in [({0: "달별 화면은 /months 에 있습니다."}, "화면 경로 /months"),
+                              ({1: "첫 화면입니다. (L9)"}, "없는 번호를 댔다: L9")]:
+        value = {**R3_BRIEF, "sections": [{**s, "text": changed.get(n, s["text"])} for n, s in enumerate(R3_BRIEF["sections"])]}
+        with pytest.raises(ValueError, match=re.escape(said_why)):
+            brief.checked(value, snap, r3["lines"], 1)
+    phone = {**R3_BRIEF, "sections": [*R3_BRIEF["sections"], {"name": "휴대폰에서", "text": "부드럽게 움직였습니다."}]}
+    with pytest.raises(ValueError, match="휴대폰 회차가 없었다"):
+        brief.checked(phone, snap, r3["lines"], 1)
+    with pytest.raises(HTTPException) as refused:
+        critique.decide("budget", critique.Decisions(source="0" * 64, lines={k: {"approve": True} for k in r3["lines"]}, rest=True))
+    assert refused.value.status_code == 409 and o()["stage"] == "r3"
+    critique.decide("budget", on_r3(lines={"L1": {"approve": True}, "L2": {"edit": "안내를 크게"}, "L3": {"approve": True}},
+                                    rest=True))
+    assert o()["fix"]["findings"] == [{"severity": "high", "screen": "S2", "finding": "빈 화면 안내가 작다", "what": "안내를 크게"}]
+    assert o()["reading"]["r3"][-1]["brief"] is True and o()["r3"]["next_marks"] == {"S2": "edited"}
+    assert "브리프표식삼삼" not in sent[-1][2] and "빈 화면 안내가 작다" in sent[-1][2]   # the builder never reads the brief
+    assert "브리프표식삼삼" not in critique.r3_sheet(oneshot_spec.spec_of("budget"), lambda n, name: name)
+    oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None})   # the same gate, shown again
+    critique.decide("budget", on_r3(lines={"L1": {"edit": "글씨를 키워라"}, "L2": {"edit": "안내를 크게"},
+                                           "L3": {"approve": True}}, rest=True))
+    assert [f["finding"] for f in o()["fix"]["findings"]] == ["목록 글씨가 작다", "빈 화면 안내가 작다"]
+    assert "[확인 줄 L1] 글씨를 키워라" in o()["r3"]["decisions"]["S2"]["edit"]
+    oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None})
+    critique.decide("budget", on_r3(lines={k: {"approve": True} for k in r3["lines"]}, rest=True))
     assert o()["stage"] == "pr"
 
 
@@ -194,7 +253,7 @@ def test_a_tree_changed_after_the_shots_is_neither_judged_nor_approved(judged, c
         (tree / "later.txt").unlink()
     at_r3()
     changed()
-    critique.decide("budget", critique.Decisions(decisions={s["id"]: {"approve": True} for s in FRONT["screens"]}))
+    critique.decide("budget", on_r3(decisions={s["id"]: {"approve": True} for s in FRONT["screens"]}))
     assert o()["stage"] == "build-front" and o()["stopped"]["reason"] == "gate"
 
 
@@ -202,7 +261,7 @@ def test_a_tree_changed_after_the_shots_is_neither_judged_nor_approved(judged, c
 def test_fixes_whose_turn_was_never_sent_go_again_on_resume(judged, cut):
     _, sent = judged
     at_r3()
-    critique.decide("budget", critique.Decisions(decisions={"S1": {"approve": True}, "S2": {"edit": "R3_ONLY_EDIT 표로"},
+    critique.decide("budget", on_r3(decisions={"S1": {"approve": True}, "S2": {"edit": "R3_ONLY_EDIT 표로"},
                                                              "S3": {"approve": True}}))
     assert o()["working"] == "build-front" and o()["fix"]["findings"][0]["what"] == "R3_ONLY_EDIT 표로"
     if cut == "restart":   # the server died before the turn went out
@@ -256,12 +315,12 @@ def test_a_round_folder_that_links_outside_the_run_is_never_served_nor_shown(jud
 def test_an_r3_approval_the_worktree_refused_is_resumed_and_approved_again(judged):
     tree, _ = judged
     at_r3()
-    everything = critique.Decisions(decisions={s["id"]: {"approve": True} for s in FRONT["screens"]})
+    everything = on_r3(decisions={s["id"]: {"approve": True} for s in FRONT["screens"]})
     git(tree, "checkout", "-q", "-b", "elsewhere")
     critique.decide("budget", everything)
     assert o()["stage"] == "r3" and o()["stopped"]["reason"] == "folder"
     git(tree, "checkout", "-q", oneshot.BRANCH)
     oneshot_spec.resume("budget")
     assert o()["stage"] == "r3" and not o()["stopped"] and o()["r3"]["decisions"]
-    critique.decide("budget", critique.Decisions(decisions={}))
+    critique.decide("budget", on_r3(decisions={}))
     assert o()["stage"] == "pr"

@@ -351,6 +351,24 @@ def test_the_writer_runs_with_no_tools_on_either_provider(world):  # noqa: F811 
     assert opened.count("closed") == 2
 
 
+def test_r3_findings_reach_their_screens_and_only_one_naming_none_falls_back():
+    screens = [{"id": "S1", "route": "/", "primary": True}, {"id": "S2", "route": "/months", "primary": False},
+               {"id": "S3", "route": "/settings", "primary": False}]
+    low = {"severity": "low", "viewport": "desktop", "state": "full", "what": "좁다"}
+    web = {"front": {"screens": screens}, "critiques": [{"findings": [{**low, "route": "/months"}]}],
+           "looks": [{"round": 1, "findings": []}, {"round": 2, "findings": [{**low, "screen": "S2"}, {**low, "screen": None}]}]}
+    assert [(f["key"], f["screen"], f["named"]) for f in brief.finished(web)["findings"]] == [
+        ("L1", "S2", True), ("L2", "S2", True), ("L3", "S1", False)]
+    assert brief.finished(web)["looks"] == {"before": 1, "after": 2} and brief.finished(web)["phone"] is None
+    android = {"intent": {"kind": "android"}, "front": {"screens": [{k: v for k, v in s.items() if k != "route"} for s in screens]},
+               "critiques": [{"findings": [{"what": "고침", "route": "S3"}]}, {"findings": [{**low, "route": "S2"}]}],
+               "looks": [{"round": 1, "findings": []}],
+               "phone": {"round": 1, "model": "Pixel", "findings": [{"severity": "low", "screen": "S3", "state": "full", "what": "느리다"}]}}
+    done = brief.finished(android)
+    assert [(f["key"], f["screen"], f["from"]) for f in done["findings"]] == [("L1", "S2", "critic"), ("L2", "S3", "phone")]
+    assert done["fixed"] == [{"screen": "S3", "what": "고침"}] and done["phone"]["model"] == "Pixel"
+
+
 def test_a_server_that_died_writing_a_later_reviews_brief_marks_that_review_failed():
     fields = brief.recovered({"stage": "r2", "working": "brief", "brief": {"r1": {"source": "a"}}})
     assert "다시 켜져" in fields["brief"]["r2"]["failed"] and fields["brief"]["r1"] == {"source": "a"}

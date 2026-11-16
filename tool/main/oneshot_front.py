@@ -285,17 +285,11 @@ def frontend(repo: str) -> None:
         if found is None:
             return None
         front, warnings = found
-        return lambda: briefing(repo, {"front": front, "shots": front["shots"], "stage": "r2",
-                                       "r2": {"round": 1, "decisions": {}, "marks": {}, "warnings": warnings, "palette": ""}})
+        return lambda: oneshot_spec.briefing(repo, "r2", {
+            "front": front, "shots": front["shots"], "stage": "r2",
+            "r2": {"round": 1, "decisions": {}, "marks": {}, "warnings": warnings, "palette": ""}})
 
     review().holding(repo, "화면 설계", body)
-
-
-def briefing(repo: str, fields: dict):
-    """R2 saved under `working: brief`, and the brief written once the worktree is let go: it reads none."""
-
-    oneshot_spec.saved(repo, oneshot={**fields, "working": "brief"})
-    return lambda: oneshot_spec.briefed(repo, "r2")
 
 
 def refront(repo: str, comments: dict[str, str], reach: list[str]) -> None:
@@ -322,9 +316,10 @@ def refront_turn(repo: str, store, spec: dict, tree: Path, comments: dict[str, s
     marks, decisions = oneshot_spec.marked(screens.decidable(front), comments, reach, screens.every(o["front"]),
                                            screens.every(front), r2["decisions"])
     palette = r2["palette"] if r2["palette"] in {p["id"] for p in front["tokens"]["palettes"]} else ""
-    return lambda: briefing(repo, {"front": front, "shots": front["shots"],
-                                   "r2": {"round": r2["round"] + 1, "decisions": decisions, "marks": marks,
-                                          "warnings": warnings, "palette": palette}})
+    return lambda: oneshot_spec.briefing(repo, "r2", {
+        "front": front, "shots": front["shots"],
+        "r2": {"round": r2["round"] + 1, "decisions": decisions, "marks": marks, "warnings": warnings,
+               "palette": palette}})
 
 
 # -- R2 approved ------------------------------------------------------------------------------

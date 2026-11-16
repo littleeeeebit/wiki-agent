@@ -179,8 +179,9 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
         <PhonePick repo={repo} round={o.phone} busy={busy} act={act} />
       )}
       {idle && view.stage === 'r3' && view.r3_sheet && o.r3 && (
-        <Sheet key={`r3-${o.r3.round}`} gate="r3" text={view.r3_sheet} items={view.r3_items ?? []} state={o.r3}
-          busy={busy} submit={(body) => act(() => api.decide(repo, 'r3', body))} />
+        <Sheet key={`r3-${o.r3.round}-${view.r3_brief?.source}`} gate="r3" text={view.r3_sheet}
+          items={view.r3_items ?? []} state={o.r3} busy={busy} brief={view.r3_brief}
+          submit={(body) => act(() => api.decide(repo, 'r3', { ...body, source: view.r3_brief?.source }))} />
       )}
       {view.stage === 'done' && view.summary && <Finished summary={view.summary} />}
       {view.working && view.stage !== 'done' && <Track view={view} halt={view.working === 'phone' && (
@@ -466,10 +467,22 @@ export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen
     const others = items.filter((i) => !covered.has(i)).length
     const ready = undecided.length ? `정하지 않은 것 ${undecided.length}개` : needPalette ? '색 배합을 골라라'
       : others ? `제출하면 나머지 항목 ${others}개는 요약대로 승인한다` : '모두 정했다'
+    // The pictures the server gives a line or a section (R2's screens, R3's findings and its before and after).
+    const shots = (key: string) => !!brief.pictures?.[key]?.length && (
+      <span className="mt-1.5 flex flex-wrap gap-2">
+        {brief.pictures[key].map((src, n) => (
+          <button key={`${src}-${n}`} type="button" onClick={() => setZoom(src)} title="크게 본다">
+            <img src={src} alt={brief.pictures![key].length > 1 ? `${key} 사진 ${n + 1}` : `${key} 화면`} loading="lazy"
+              className="max-h-64 rounded border border-border" />
+          </button>
+        ))}
+      </span>
+    )
     const said = (names: string[]) => brief.sections?.filter((s) => names.includes(s.name)).map((s) => (
       <section key={s.name} aria-label={s.name} className="flex flex-col gap-1.5">
         <h3 className="font-heading text-[15px] font-semibold">{s.name}</h3>
         <p className="whitespace-pre-wrap">{s.text}</p>
+        {shots(s.name)}
       </section>
     ))
     const after = brief.sections?.map((s) => s.name).filter((n) => !BEFORE_LINES.includes(n)) ?? []
@@ -506,15 +519,7 @@ export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen
               <ul className="flex list-disc flex-col gap-1 pl-5">
                 {brief.confirm?.map((c) => (
                   <li key={c.key}>{c.text} <span className="font-mono text-[12px] text-faint">({c.key})</span>
-                    {!!brief.pictures?.[c.key]?.length && (
-                      <span className="mt-1.5 flex flex-wrap gap-2">
-                        {brief.pictures[c.key].map((src) => (
-                          <button key={src} type="button" onClick={() => setZoom(src)} title="크게 본다">
-                            <img src={src} alt={`${c.key} 화면`} loading="lazy" className="max-h-64 rounded border border-border" />
-                          </button>
-                        ))}
-                      </span>
-                    )}
+                    {shots(c.key)}
                   </li>
                 ))}
               </ul>

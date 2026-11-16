@@ -349,15 +349,15 @@ def phone_round(repo: str) -> None:
 
 
 def settled(repo: str, outcome: dict):
-    """The outcome applied: R3's sheet on a pass, the build with the phone's findings on a fail, else the prompt."""
+    """The outcome applied: R3's sheet on a pass (its brief written once the tree is let go), the build with
+    the phone's findings on a fail, else the prompt."""
 
     from . import oneshot_critique   # it imports this module
     with oneshot._lock:
         o = oneshot_spec.spec_of(repo)["oneshot"]
         result = {**(o.get("phone") or {}), **outcome}
         if outcome["status"] == "passed":
-            return oneshot_spec.saved(repo, oneshot={"phone": result, "stage": "r3", "working": None,
-                                                     "r3": oneshot_critique.opening(o)})
+            return oneshot_spec.briefing(repo, "r3", {"phone": result, "stage": "r3", "r3": oneshot_critique.opening(o)})
         if outcome["status"] != "failed":
             oneshot_spec.saved(repo, oneshot={"phone": {**result, "status": "waiting"}, "working": None})
             return None

@@ -290,6 +290,29 @@ def main():
         repo, act, body = posted[-1]
         assert (repo, act, body["source"], body["palette"]) == ("demo", "r2", "f" * 64, "C1"), body
         assert body["lines"] == {"S1": {"approve": True}} and body["decisions"] == {}, body
+
+        # R3 on its brief: the first screen before and after under its section, each finding's shot by its line,
+        # and the screens no finding names approved with the brief.
+        views["demo"] = copy.deepcopy(r1_view)
+        views["demo"] |= {"stage": "r3", "r3_sheet": "# 완성된 화면 — demo\n", "r3_items": ["S1", "S2"],
+                          "r3_brief": {"source": "e" * 64, "lines": {"L1": ["S2"]},
+                                       "pictures": {"화면": ["/before.png", "/after.png"], "L1": ["/found.png"]},
+                                       "confirm": [{"key": "L1", "text": "달별 화면의 글씨가 작습니다."}],
+                                       "sections": [{"name": "한 줄", "text": "완성된 화면입니다."},
+                                                    {"name": "화면", "text": "첫 화면의 합계가 커졌습니다."}]}}
+        views["demo"]["oneshot"] |= {"stage": "r3", "r3": {"round": 1, "decisions": {}, "marks": {}}}
+        rail.get_by_role("button").filter(has_text="board-demo").click()
+        need.get_by_role("button").filter(has_text=re.compile(r"^demo")).click()
+        finished = page.get_by_role("region", name="R3 요약")
+        expect(finished.get_by_role("region", name="화면").get_by_role("button", name="화면 사진 2")).to_be_visible()
+        expect(finished.get_by_role("button", name="L1 화면")).to_be_visible()
+        finished.locator("[data-line=L1]").get_by_role("button", name="승인").click()
+        expect(finished.get_by_role("status").filter(has_text="나머지 항목 1개")).to_be_visible()
+        with posting(page):
+            finished.get_by_role("button", name="요약대로 제출").click()
+        repo, act, body = posted[-1]
+        assert (repo, act, body["source"], body["rest"]) == ("demo", "r3", "e" * 64, True), body
+        assert body["lines"] == {"L1": {"approve": True}} and "palette" not in body, body
         views["demo"] = r1_view
 
         # The board: one card dragged, one moved with the arrow keys, the whole map sent once.
@@ -509,7 +532,8 @@ def main():
           "from the running; a gate sheet needs every item, folded or not, and records the folds opened; an enlarged "
           "picture closes alone; the re-shown sheet opens what needs a decision again; R1 on the brief decides each "
           "confirmation line and sends only the sheet items touched beside them; R2 on its brief shows each screen's "
-          "pictures with its line and still needs a palette; the board moves by drag and by "
+          "pictures with its line and still needs a palette; R3 on its brief shows the first screen before and "
+          "after and each finding's shot by its line; the board moves by drag and by "
           "keys; a stopped run resumes, and a stopped or running stage shows its record and its worktree's turns as they "
           "come; S2 shows its choices and keeps a refused answer; the list follows a saved spec; "
           "the switch keeps the run shown and its draft; [새 프로젝트] opens the start form, which fixes three models "
