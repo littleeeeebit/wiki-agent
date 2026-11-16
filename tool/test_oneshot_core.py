@@ -11,9 +11,10 @@ from unittest.mock import patch
 
 import pytest
 
-from main import oneshot, oneshot_build, oneshot_profile, oneshot_review, oneshot_sheet as sheet, oneshot_spec, specs
+from main import (oneshot, oneshot_brief as brief, oneshot_build, oneshot_profile, oneshot_review,
+                  oneshot_sheet as sheet, oneshot_spec, specs)
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
-from test_oneshot_spec import fenced, o, world  # noqa: F401 — `world` is the temporary worktree's fixture
+from test_oneshot_spec import fenced, o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
 
 STACK = [{"part": p, "choice": c, "why": "주인이 골랐다", "status": "confirmed"} for p, c in (
     ("language", "Kotlin 2"), ("ui", "Jetpack Compose"), ("core", "ML Kit 글자 인식"), ("data_store", "Room"),
@@ -153,12 +154,37 @@ def test_approving_the_core_writes_its_sheet_and_contracts_and_moves_to_tests(an
         "glossary": GLOSSARY, "stack": STACK, "stage": "r1", "design": sheet.parsed(DESIGN, "android"),
         "r1": {"round": 1, "decisions": {}, "marks": {}, "warnings": []}})
     items = sheet.decidable(o()["design"], REQS)
-    oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions={i: {"approve": True} for i in items}))
+    oneshot_spec.decide("budget", on_sheet(decisions={i: {"approve": True} for i in items}))
     assert o()["stage"] == "tests"
     assert (android / "docs/design/core.md").read_text(encoding="utf-8").startswith("# 핵심 설계")
     assert json.loads((android / "docs/design/core.json").read_text(encoding="utf-8"))["modules"][1]["id"] == "M2"
     shown = subprocess.run(["git", "show", "--stat", "HEAD"], cwd=android, capture_output=True, text=True).stdout
     assert "docs/design/core.json" in shown and "api.yaml" not in shown and "core design" in shown
+
+
+CORE_BRIEF = {"sections": [
+    {"name": "한 줄", "text": "만화를 넘기면 새 말풍선만 한국어로 옮겨 보여 주는 앱입니다."},
+    {"name": "쓰는 장면", "text": "1. 만화 앱을 엽니다. 2. 페이지를 넘깁니다. 3. 새 말풍선 위에 번역이 뜹니다. (R1)"},
+    {"name": "알아 두실 것", "text": "다른 앱 화면을 읽으려고 화면 녹화 허락을 받습니다. (R2) 대사는 번역 서비스로 보냅니다. (X1)"},
+    {"name": "다 됐다고 보는 기준", "text": "이미 옮긴 말풍선은 다시 옮기지 않습니다."}],
+    "confirm": [{"key": "R2", "text": "화면을 읽으려면 녹화 허락이 필요합니다."},
+                {"key": "A1", "text": "스크롤과 페이지 넘김을 화면이 움직인 양으로 가릅니다."}]}
+
+
+def test_the_core_brief_names_every_permission_and_outside_call_and_approves_the_modules(android):
+    oneshot_spec.saved("budget", requirements=REQS, oneshot={"glossary": GLOSSARY, "stack": STACK, "stage": "design"})
+    silent = {**CORE_BRIEF, "sections": [{**s, "text": "화면 녹화 허락을 받습니다. (R2)"} if s["name"] == "알아 두실 것" else s
+                                         for s in CORE_BRIEF["sections"]]}
+    with pytest.raises(ValueError, match="폰 밖으로 나가는 호출이 있다: X1"):
+        brief.checked(silent, brief.snapshot({**specs.load("budget", oneshot.BRANCH), "oneshot": {
+            **o(), "design": sheet.parsed(DESIGN, "android")}}), {"R2": ["R2"], "A1": ["A1"]}, 1)
+    with patch.object(oneshot, "ask", lambda store, role, *r: (
+            answer() if role == "design" else fenced("oneshot-brief", CORE_BRIEF), {"cost_usd": 0.1}, False)):
+        oneshot_spec.design("budget")
+    assert oneshot_spec.status("budget")["brief"]["lines"] == {"R2": ["R2"], "A1": ["A1"]}
+    lines = {"R2": {"approve": True}, "A1": {"approve": True}}
+    oneshot_spec.decide("budget", on_sheet(decisions={}, lines=lines, rest=True))
+    assert o()["stage"] == "tests" and {"M1", "M2", "X1", "T1"} <= set(o()["r1"]["decisions"])
 
 
 # -- S4 ----------------------------------------------------------------------------------------

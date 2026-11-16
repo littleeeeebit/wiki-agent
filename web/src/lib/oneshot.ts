@@ -8,7 +8,14 @@ export type Feature = { id: string; name: string; class: Freq; why: string; endp
 export type Freq = 'every' | 'sometimes' | 'rarely' | 'never'
 export type Palette = { id: string; name: string; colors: Record<string, string> }
 export type Gate = { round: number; decisions: Record<string, Decision>; marks?: Record<string, string>; palette?: string }
-export type Talk = { role: 'owner' | 'agent'; text: string; choices?: ChoiceQuestion | { questions: ChoiceQuestion[] } | null }
+/** R1's brief for the owner (`oneshot_brief.shown`): always the gate's `source`, which every submission carries;
+ *  the brief's sections and confirmation lines (`lines`: key → the items it covers) when one was written for this
+ *  gate, else why the review shows its full sheet. */
+export type Brief = {
+  source: string; sections?: { name: string; text: string }[]; confirm?: { key: string; text: string }[]
+  lines?: Record<string, string[]>; failed?: string
+}
+export type Talk ={ role: 'owner' | 'agent'; text: string; choices?: ChoiceQuestion | { questions: ChoiceQuestion[] } | null }
 /** The three models a run fixes at its start (`tool/main/oneshot.py` `Models`); a run from before them has none. */
 export type Models = Record<'spec' | 'build' | 'review', { model: string; effort: string }>
 export const ROLE = { spec: '명세', build: '구현', review: '리뷰' } as const
@@ -68,7 +75,7 @@ export type SpecView = SpecSummary & {
     reading?: Record<string, { round: number; seconds: number | null; opened: string[]; edited: string[] }[]>
   }
   requirements?: { id: string; text: string; status: string }[]
-  sheet?: string; items?: string[]
+  sheet?: string; items?: string[]; brief?: Brief
   board?: { features: Feature[]; first_screen: string | null; frequency: Record<string, Freq> }
   front_sheet?: string; front_items?: string[]
   r3_sheet?: string; r3_items?: string[]

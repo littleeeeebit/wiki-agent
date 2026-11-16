@@ -412,15 +412,19 @@ class Say(BaseModel):
 class Decisions(BaseModel):
     decisions: dict[str, dict]
     reading: dict = {}   # how the sheet was read: `seconds` open and the folds `opened`
+    source: str = ""   # the gate the owner saw (`oneshot_brief.shown`); R1 refuses any other with 409
+    lines: dict[str, dict] = {}   # R1's brief: one decision per confirmation line, by key
+    rest: bool = False   # R1's brief: approve every item no line or sheet decision covers
 
 
 WAITS = {"r1", "board", "r2", "r3"}   # stages that wait for the owner; `spec` waits on the agent's question
 
 
-def read(o: dict, gate: str, given: dict, edited) -> dict:
+def read(o: dict, gate: str, given: dict, edited, briefed: bool = False) -> dict:
     """`oneshot.reading` with one more submission of `gate`: the round, the seconds the sheet was open,
-    the folds opened and the items edited with their comments (`edited`, item → comment). The sheet's
-    decisions drop a comment once it is applied, so this is where S8 finds what the owner changed."""
+    the folds opened, the items edited with their comments (`edited`, item → comment) and whether it was
+    decided on the brief. The sheet's decisions drop a comment once it is applied, so this is where S8
+    finds what the owner changed."""
 
     seconds = given.get("seconds")
     try:   # `1e309` arrives as inf and `10**400` overflows a float: neither could be sent back as JSON
@@ -431,7 +435,7 @@ def read(o: dict, gate: str, given: dict, edited) -> dict:
     entry = {"round": (o.get(gate) or {}).get("round", 1),
              "seconds": round(seconds, 1) if seconds is not None and math.isfinite(seconds) and seconds >= 0 else None,
              "opened": sorted({x for x in opened if isinstance(x, str)})[:20] if isinstance(opened, list) else [],
-             "edited": sorted(edited), "edits": {i: edited[i] for i in sorted(edited)}}
+             "edited": sorted(edited), "edits": {i: edited[i] for i in sorted(edited)}, "brief": briefed}
     earlier = o.get("reading") or {}
     return {**earlier, gate: [*(earlier.get(gate) or []), entry]}
 
@@ -473,6 +477,7 @@ def view(spec: dict) -> dict:
     if o.get("design"):
         out["sheet"] = sheet.sheet(spec)
         out["items"] = sheet.decidable(o["design"], spec.get("requirements") or [])
+        out["brief"] = brief.shown(spec)
     for more in VIEWS:
         out.update(more(spec))
     return out
@@ -514,20 +519,34 @@ def say(repo: str, body: Say) -> dict:
 
 @router.post("/api/oneshot/spec/{repo}/r1")
 def decide(repo: str, body: Decisions) -> dict:
-    """Every item on the sheet, folded or not, decided at once: approve, or edit with a comment."""
+    """Every item on the sheet, folded or not, decided at once: approve, or edit with a comment. On the brief,
+    each confirmation line is decided and `rest` approves the others (`oneshot_brief.reduced`). Either way the
+    submission names the gate it was made on, its `source`."""
 
     with oneshot._lock:
         spec = spec_of(repo)
         o = spec["oneshot"]
         idle(o, "r1")
         items = sheet.decidable(o["design"], spec.get("requirements") or [])
-        decisions, comments = decided(items, o["r1"]["decisions"], body.decisions)
+        gate = brief.shown(spec)
+        if body.source != gate["source"]:
+            raise HTTPException(409, "시트가 그 사이 바뀌었다 — 다시 불러와 새 시트로 정하라")
+        given, briefed = body.decisions, bool(body.lines or body.rest)
+        if briefed:
+            if "lines" not in gate:
+                raise HTTPException(409, "이 시트에는 요약이 없다 — 항목마다 정하라")
+            try:
+                given = brief.reduced(gate["lines"], body.lines, body.decisions, body.rest, items)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        decisions, comments = decided(items, o["r1"]["decisions"], given)
         if comments:
             reach = sorted(sheet.dependents(o["design"], spec.get("requirements") or [], set(comments)))
             start(repo, "redesign", comments, reach, r1={**o["r1"], "decisions": decisions},
-                  reading=read(o, "r1", body.reading, comments))
+                  reading=read(o, "r1", body.reading, comments, briefed))
             return view(spec_of(repo))
-        saved(repo, oneshot={"r1": {**o["r1"], "decisions": decisions}, "reading": read(o, "r1", body.reading, ())})
+        saved(repo, oneshot={"r1": {**o["r1"], "decisions": decisions},
+                             "reading": read(o, "r1", body.reading, (), briefed)})
         approved(repo)
     from . import oneshot_build   # it imports this module
     if spec_of(repo)["oneshot"]["stage"] == "tests":   # outside the lock: the turn takes the worktree's hold

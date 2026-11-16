@@ -314,6 +314,28 @@ Every case runs offline on mocked model output; none needs a real run.
   failed before `oneshot.restarted` charges the cut turn and stops the stage
   with `restart`; `[재개]` returns to the sheet.
 
+## How 8b shows it
+
+- The owner's view carries `brief` (`oneshot_brief.shown`): always the gate's
+  current `source`; the sections, lines and their coverage when the stored
+  brief was written from that `source`; otherwise `failed` with why. A brief
+  written for an earlier gate is not shown.
+- An R1 submission carries `source`, `lines` (one decision per line) and
+  `rest`. A `source` other than the gate's is refused with 409 before
+  anything else, and so is a missing one. `lines` or `rest` without a shown
+  brief is refused with 409.
+- `oneshot_brief.reduced` checks every line first, then reduces. Edits are
+  joined with `[확인 줄 R3]` and `[전체 시트]` prefixes when an item has more
+  than one, and a single edit is kept as written. A sheet decision that is
+  not valid passes through for `decided` to refuse.
+- The reading record notes `brief: true` when the submission was made on
+  the brief.
+- The screen opens on the brief with its lines beside it. The full sheet
+  and its items stay folded below, and only items the owner touched there
+  are sent. A failed brief shows the full sheet with its reason above.
+- On Android, `알아 두실 것` must cite every requirement with a
+  `capability` and every outside call.
+
 ## Decided
 
 The owner decided these on 2026-11-16, by options.
@@ -328,6 +350,6 @@ The owner decided these on 2026-11-16, by options.
 
 | # | Stage | Deliverable | Status |
 | --- | --- | --- | --- |
-| 8a | The brief | The `oneshot-brief` turn on the review model, the snapshot and its `source`, the mandatory lines and the checks, `oneshot.brief` kept out of every agent input; written after `design` and `redesign`; the isolation, stale, snapshot and fallback cases | Done — `oneshot_brief`, stored but not yet shown (8b) |
-| 8b | R1 on the brief | The brief first with every line's decision checked, then reduced to items, one approval for the rest, `source` required on every R1 submission, today's sheet folded below; the Android case | Planned |
+| 8a | The brief | The `oneshot-brief` turn on the review model, the snapshot and its `source`, the mandatory lines and the checks, `oneshot.brief` kept out of every agent input; written after `design` and `redesign`; the isolation, stale, snapshot and fallback cases | Done — `oneshot_brief` |
+| 8b | R1 on the brief | The brief first with every line's decision checked, then reduced to items, one approval for the rest, `source` required on every R1 submission, today's sheet folded below; the Android case | Done — R1 opens on the brief |
 | 8c | R2 and R3 on the brief | Their briefs after S6 and `refront`, and after the critique loop and phone round; R3's finding references, their screens and the reduction; the R2 coverage, R3 mapping, R3 reduction and missing-line cases | Planned |

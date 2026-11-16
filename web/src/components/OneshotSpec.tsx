@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { Choices } from '@/components/Blocks'
 import { Btn } from '@/components/Modal'
 import { Track } from '@/components/OneshotTrack'
-import { api, COLUMNS, STOP, type Decision, type Feature, type Freq, type Gate, type Handset, type Palette,
+import { api, COLUMNS, STOP, type Brief, type Decision, type Feature, type Freq, type Gate, type Handset, type Palette,
   type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, ROLE, modelName } from '@/lib/oneshot'
 import { cn } from '@/lib/utils'
 
@@ -161,8 +161,9 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
     <>
       {faulted}
       {idle && view.stage === 'r1' && view.sheet && o.r1 && (
-        <Sheet key={`r1-${o.r1.round}`} gate="r1" text={view.sheet} items={view.items ?? []} state={o.r1} busy={busy}
-          submit={(body) => act(() => api.decide(repo, 'r1', body))} />
+        <Sheet key={`r1-${o.r1.round}-${view.brief?.source}`} gate="r1" text={view.sheet} items={view.items ?? []}
+          state={o.r1} busy={busy} brief={view.brief}
+          submit={(body) => act(() => api.decide(repo, 'r1', { ...body, source: view.brief?.source }))} />
       )}
       {idle && view.stage === 'board' && view.board && (
         <Board name={view.repo} board={view.board} busy={busy} submit={(f, line) => act(() => api.board(repo, f, line))} />
@@ -393,11 +394,17 @@ function Md({ text, zoom }: { text: string; zoom: (src: string) => void }) {
   )
 }
 
-export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen }: {
+/** The brief's sections before its confirmation lines; the rest follow them (`oneshot_brief.R1_SECTIONS`). */
+const BEFORE_LINES = ['한 줄', '쓰는 장면', '물어보신 것', '돌아가는 순서']
+const FULL_SHEET = '전체 설계 시트'
+
+export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen, brief }: {
   gate: 'r1' | 'r2' | 'r3'; text: string; items: string[]; state: Gate; busy: boolean
-  submit: (body: object) => Promise<unknown>; palettes?: Palette[]; reopen?: () => Promise<unknown>
+  submit: (body: object) => Promise<unknown>; palettes?: Palette[]; reopen?: () => Promise<unknown>; brief?: Brief
 }) {
   const [decisions, setDecisions] = useState<Record<string, Decision>>(state.decisions)
+  const [lines, setLines] = useState<Record<string, Decision>>({})
+  const [touched, setTouched] = useState<string[]>([])
   const [palette, setPalette] = useState(state.palette ?? '')
   const [opened, setOpened] = useState<string[]>([])
   const [zoom, setZoom] = useState('')
@@ -407,10 +414,87 @@ export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen
   const shown = sections.filter(([, s]) => s === null).map(([t]) => t).join('\n')
   // An item the shown text names sits with it; the rest belong to the folded sections.
   const folded = items.filter((i) => !named(shown, i))
-  const undecided = items.filter((i) => !decided(decisions[i]))
+  // On a brief, each confirmation line is decided and every other item is approved with it, unless the owner
+  // decided it on the full sheet below: only those items are sent, each still needing a valid decision.
+  const keys = brief?.lines ? Object.keys(brief.lines) : null
+  const undecided = keys
+    ? [...keys.filter((k) => !decided(lines[k])), ...touched.filter((i) => !decided(decisions[i]))]
+    : items.filter((i) => !decided(decisions[i]))
   const needPalette = !!palettes?.length && !palette
-  const set = (id: string, d: Decision) => setDecisions((all) => ({ ...all, [id]: d }))
-  const approveAll = (ids: string[]) => setDecisions((all) => ({ ...all, ...Object.fromEntries(ids.map((i) => [i, { approve: true }])) }))
+  const set = (id: string, d: Decision) => {
+    setDecisions((all) => ({ ...all, [id]: d }))
+    setTouched((t) => (t.includes(id) ? t : [...t, id]))
+  }
+  const approveAll = (ids: string[]) => ids.forEach((i) => set(i, { approve: true }))
+  const reading = () => ({ seconds: (Date.now() - since.current) / 1000, opened })
+  const open = (name: string) => setOpened((o) => (o.includes(name) ? o : [...o, name]))
+  const fullSheet = sections.map(([t, summary], n) => summary === null ? <Md key={n} text={t} zoom={setZoom} /> : (
+    <details key={n} className="my-3 rounded-md border border-border px-4 py-2"
+      onToggle={(e) => { if ((e.target as HTMLDetailsElement).open) open(summary) }}>
+      <summary className="cursor-pointer font-semibold">{summary}</summary>
+      <Md text={t} zoom={setZoom} />
+    </details>
+  ))
+  const sheetItems = <>
+    <Items title="펼쳐진 항목" ids={items.filter((i) => !folded.includes(i))} decisions={decisions} marks={state.marks} set={set} />
+    {folded.length > 0 && (
+      <Items title="접힌 부분의 항목" ids={folded} decisions={decisions} marks={state.marks} set={set}
+        approveAll={() => approveAll(folded)} />
+    )}
+  </>
+
+  if (keys && brief) {
+    const said = (names: string[]) => brief.sections?.filter((s) => names.includes(s.name)).map((s) => (
+      <section key={s.name} aria-label={s.name} className="flex flex-col gap-1.5">
+        <h3 className="font-heading text-[15px] font-semibold">{s.name}</h3>
+        <p className="whitespace-pre-wrap">{s.text}</p>
+      </section>
+    ))
+    const after = brief.sections?.map((s) => s.name).filter((n) => !BEFORE_LINES.includes(n)) ?? []
+    return (
+      <Split label={`${gate.toUpperCase()} 요약`} sideLabel="결정" side={<>
+        <Title><span>확인해 주세요</span><span className="font-mono">{keys.length - keys.filter((k) => !decided(lines[k])).length}/{keys.length}</span></Title>
+        {brief.confirm?.map((c) => (
+          <Item key={c.key} id={c.key} text={c.text} line d={lines[c.key]}
+            set={(id, d) => setLines((all) => ({ ...all, [id]: d }))} />
+        ))}
+        {!keys.length && <p className="text-muted-foreground">따로 확인할 줄이 없다.</p>}
+        <details className="flex flex-col gap-2" onToggle={(e) => { if ((e.target as HTMLDetailsElement).open) open('전체 시트의 항목') }}>
+          <summary className="cursor-pointer text-muted-foreground">전체 시트의 항목 {items.length}개 — 하나씩 고칠 수도 있다</summary>
+          <div className="flex flex-col gap-3 pt-2">{sheetItems}</div>
+        </details>
+        <Decide>
+          <span role="status" className="text-muted-foreground">
+            {undecided.length ? `정하지 않은 것 ${undecided.length}개` : '제출하면 나머지 항목은 요약대로 승인한다'}
+          </span>
+          <Btn tone="wait" className={GO} disabled={busy || undecided.length > 0}
+            onClick={() => void submit({ decisions: clean(decisions, touched), lines: clean(lines, keys), rest: true,
+              reading: reading() })}>
+            요약대로 제출
+          </Btn>
+        </Decide>
+      </>}>
+        <div className="flex w-full max-w-[60rem] flex-col gap-5 px-10 py-6 max-[1500px]:px-7 max-[560px]:px-4">
+          {said(BEFORE_LINES)}
+          {keys.length > 0 && (
+            <section aria-label="확인해 주세요 줄" className="flex flex-col gap-1.5 rounded-md bg-wait/10 px-4 py-3">
+              <h3 className="font-heading text-[15px] font-semibold">확인해 주세요</h3>
+              <ul className="flex list-disc flex-col gap-1 pl-5">
+                {brief.confirm?.map((c) => <li key={c.key}>{c.text} <span className="font-mono text-[12px] text-faint">({c.key})</span></li>)}
+              </ul>
+              <p className="text-[12.5px] text-muted-foreground">에이전트가 혼자 정한 것이다. 오른쪽에서 한 줄씩 승인하거나 고친다.</p>
+            </section>
+          )}
+          {said(after)}
+          <details className="rounded-md border border-border px-4 py-2" onToggle={(e) => { if ((e.target as HTMLDetailsElement).open) open(FULL_SHEET) }}>
+            <summary className="cursor-pointer font-semibold">{FULL_SHEET}</summary>
+            {fullSheet}
+          </details>
+        </div>
+        {zoom && <Zoom src={zoom} close={() => setZoom('')} />}
+      </Split>
+    )
+  }
 
   // The sheet reads wide on the left; every decision on it sits beside, with [제출] held at the bottom.
   return (
@@ -428,11 +512,7 @@ export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen
           ))}
         </fieldset>
       )}
-      <Items title="펼쳐진 항목" ids={items.filter((i) => !folded.includes(i))} decisions={decisions} marks={state.marks} set={set} />
-      {folded.length > 0 && (
-        <Items title="접힌 부분의 항목" ids={folded} decisions={decisions} marks={state.marks} set={set}
-          approveAll={() => approveAll(folded)} />
-      )}
+      {sheetItems}
       <Decide>
         <span role="status" className="text-muted-foreground">
           {undecided.length ? `정하지 않은 항목 ${undecided.length}개` : needPalette ? '색 배합을 골라라' : '모두 정했다'}
@@ -441,20 +521,15 @@ export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen
           {reopen && <Btn disabled={busy} onClick={() => void reopen()} title="기능의 자리가 틀렸다: 화면 설계를 버리고 기능 보드로 돌아간다">기능 보드 다시 열기</Btn>}
           <Btn tone="wait" className={GO} disabled={busy || undecided.length > 0 || needPalette}
             onClick={() => void submit({ decisions: clean(decisions, items), palette: palette || undefined,
-              reading: { seconds: (Date.now() - since.current) / 1000, opened } })}>
+              reading: reading() })}>
             제출
           </Btn>
         </div>
       </Decide>
     </>}>
       <div className="w-full max-w-[60rem] px-10 py-6 max-[1500px]:px-7 max-[560px]:px-4">
-        {sections.map(([t, summary], n) => summary === null ? <Md key={n} text={t} zoom={setZoom} /> : (
-          <details key={n} className="my-3 rounded-md border border-border px-4 py-2"
-            onToggle={(e) => { if ((e.target as HTMLDetailsElement).open) setOpened((o) => o.includes(summary) ? o : [...o, summary]) }}>
-            <summary className="cursor-pointer font-semibold">{summary}</summary>
-            <Md text={t} zoom={setZoom} />
-          </details>
-        ))}
+        {brief?.failed && <p role="status" className="mb-4 rounded-md bg-wait/10 px-3 py-2">요약을 쓰지 못해 전체 시트로 정한다 — {brief.failed}</p>}
+        {fullSheet}
       </div>
       {zoom && <Zoom src={zoom} close={() => setZoom('')} />}
     </Split>
@@ -515,19 +590,27 @@ function Items({ title, ids, decisions, marks, set, approveAll }: {
   )
 }
 
-function Item({ id, d, mark, set }: { id: string; d?: Decision; mark?: string; set: (id: string, d: Decision) => void }) {
+/** One decision: an item of the sheet, or with `line` one of the brief's confirmation lines and its `text`. */
+function Item({ id, d, mark, set, text, line }: {
+  id: string; d?: Decision; mark?: string; set: (id: string, d: Decision) => void; text?: string; line?: boolean
+}) {
   const editing = d?.edit !== undefined
+  const name = line ? `확인 줄 ${id}` : id
   return (
-    <div className="flex flex-col gap-1.5 rounded-md border border-border bg-background px-3 py-2" data-item={id}>
+    <div className="flex flex-col gap-1.5 rounded-md border border-border bg-background px-3 py-2"
+      {...(line ? { 'data-line': id } : { 'data-item': id })}>
       <div className="flex items-center gap-2">
         <span className="font-mono">{id}</span>
         {mark && <span className="rounded bg-wait/15 px-1 text-[11px] text-wait">다시 볼 것</span>}
         <span className="flex-1" />
-        <Btn tone={d?.approve ? 'primary' : 'plain'} aria-pressed={!!d?.approve} onClick={() => set(id, { approve: true })}>승인</Btn>
-        <Btn tone={editing ? 'wait' : 'plain'} aria-pressed={editing} onClick={() => set(id, { edit: d?.edit ?? '' })}>고침</Btn>
+        <Btn tone={d?.approve ? 'primary' : 'plain'} aria-pressed={!!d?.approve} aria-label={`${name} 승인`}
+          onClick={() => set(id, { approve: true })}>승인</Btn>
+        <Btn tone={editing ? 'wait' : 'plain'} aria-pressed={editing} aria-label={`${name} 고침`}
+          onClick={() => set(id, { edit: d?.edit ?? '' })}>고침</Btn>
       </div>
+      {text && <p>{text}</p>}
       {editing && (
-        <textarea aria-label={`${id} 고칠 내용`} value={d?.edit ?? ''} rows={2} onChange={(e) => set(id, { edit: e.target.value })}
+        <textarea aria-label={`${name} 고칠 내용`} value={d?.edit ?? ''} rows={2} onChange={(e) => set(id, { edit: e.target.value })}
           className="rounded-md border border-input bg-background px-2 py-1 text-foreground" />
       )}
     </div>

@@ -236,6 +236,32 @@ def main():
         expect(sheet.locator("[data-item=R1]")).to_be_hidden()
         expect(sheet.get_by_text("정하지 않은 항목 1개")).to_be_visible()
 
+        # R1 on the brief: its sections first, one decision per confirmation line, the full sheet folded below,
+        # and only the items decided there sent beside the lines; the rest are approved with them.
+        views["demo"]["brief"] = {"source": "s" * 64, "lines": {"R2": ["R2"]},
+                                  "confirm": [{"key": "R2", "text": "지난 달은 고를 때만 불러옵니다."}],
+                                  "sections": [{"name": "한 줄", "text": "달마다 쓴 돈을 적는 가계부입니다."},
+                                               {"name": "알아 두실 것", "text": "이 PC 에서만 돌아갑니다."}]}
+        rail.get_by_role("button").filter(has_text="board-demo").click()
+        need.get_by_role("button").filter(has_text=re.compile(r"^demo")).click()
+        summary = page.get_by_role("region", name="R1 요약")
+        expect(summary.get_by_role("region", name="한 줄")).to_contain_text("가계부")
+        send = summary.get_by_role("button", name="요약대로 제출")
+        expect(send).to_be_disabled()   # the confirmation line is not decided yet
+        summary.locator("[data-line=R2]").get_by_role("button", name="고침").click()
+        summary.get_by_label("확인 줄 R2 고칠 내용").fill("지난 달도 바로 보여라")
+        summary.get_by_text("전체 시트의 항목 5개").click()
+        summary.locator("[data-item=R2]").get_by_role("button", name="승인").click()
+        summary.get_by_text("전체 설계 시트", exact=True).click()
+        expect(send).to_be_enabled()
+        with posting(page):
+            send.click()
+        repo, act, body = posted[-1]
+        assert (repo, act, body["source"], body["rest"]) == ("demo", "r1", "s" * 64, True), body
+        assert body["lines"] == {"R2": {"edit": "지난 달도 바로 보여라"}} and body["decisions"] == {"R2": {"approve": True}}, body
+        assert body["reading"]["opened"] == ["전체 시트의 항목", "전체 설계 시트"], body
+        del views["demo"]["brief"]
+
         # The board: one card dragged, one moved with the arrow keys, the whole map sent once.
         page.get_by_role("navigation", name="원샷 실행").get_by_role("button").filter(has_text="board-demo").click()
         board = page.get_by_role("region", name="기능 보드")
@@ -451,7 +477,8 @@ def main():
     assert not errors, errors
     print("PASS: maintenance counts the runs that need the owner on the switch; the oneshot window groups them apart "
           "from the running; a gate sheet needs every item, folded or not, and records the folds opened; an enlarged "
-          "picture closes alone; the re-shown sheet opens what needs a decision again; the board moves by drag and by "
+          "picture closes alone; the re-shown sheet opens what needs a decision again; R1 on the brief decides each "
+          "confirmation line and sends only the sheet items touched beside them;the board moves by drag and by "
           "keys; a stopped run resumes, and a stopped or running stage shows its record and its worktree's turns as they "
           "come; S2 shows its choices and keeps a refused answer; the list follows a saved spec; "
           "the switch keeps the run shown and its draft; [새 프로젝트] opens the start form, which fixes three models "
