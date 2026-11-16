@@ -113,16 +113,18 @@ kind's own parts with that kind:
 A requirement may name the kinds it applies to; one that names none applies
 to all. A platform capability (screen capture, drawing over other apps) names
 its kind and carries its prompt and risk, as in step 7. Which picked kinds a
-requirement applies to is the owner's: when a requirement that applies to
-all cannot be met by one of them, the agent asks, as a `choices` question,
-which of the picked kinds it applies to. A mixed run whose platform
+requirement applies to is the owner's. Every kind a requirement applies to
+must be able to meet it. When one cannot, the agent asks, as one `choices`
+question, whether to narrow the requirement to the picked kinds that can
+meet it, or to change the requirement. A mixed run whose platform
 capabilities each name a capable kind is valid. A web app and an Android app
 that capture the screen only on Android is one.
 
-The run cannot go on only when a requirement the owner confirmed cannot be
-met by any of the kinds it applies to. The agent then says so in the person's
-words, adds `"kinds_mismatch"` with the requirement and its reason to the
-`oneshot-spec` block and asks nothing more. The run stops with reason
+The run cannot go on when the owner keeps a requirement applying to a kind
+that cannot meet it, by answering neither narrow nor change. It also cannot
+go on when none of the picked kinds can meet a confirmed requirement. The
+agent then says so in the person's words, adds `"kinds_mismatch"` with the
+requirement and its reason to the `oneshot-spec` block and asks nothing more. The run stops with reason
 `rekind`, which no `[재개]` takes on: the owner starts a new run with the
 kinds they now pick. The agent never names the kinds the run should have.
 
