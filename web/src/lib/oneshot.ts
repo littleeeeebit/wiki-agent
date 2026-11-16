@@ -25,6 +25,8 @@ export type RunSummary = {
   sentence: string; pr: { number: number; url: string; branch: string } | null; critiques: number; looks: number
   gates: { gate: string; rounds: number; edited: string[]; reading: Reading[] }[]
   spend: { usd?: number; seconds?: number; calls?: number; unknown?: number }
+  /** An Android app's debug APK on a draft prerelease (`oneshot_pr.released`), or why it is not there. */
+  apk?: { url?: string; name?: string; error?: string } | null
 }
 /** One backend review verdict on a HEAD (`oneshot_review.decided`). */
 export type Review = {

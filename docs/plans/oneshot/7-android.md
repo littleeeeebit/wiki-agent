@@ -453,13 +453,14 @@ How 7f1 builds it (`tool/android_phone.py`, `tool/main/oneshot_phone.py`):
   percentiles. Memory is the total PSS from `dumpsys meminfo`. Neither is a
   finding; R3 shows them.
 - The outcome decides what follows:
-  - a pass stops with reason `kind` at `r3` until 7f2 brings R3's sheet;
+  - a pass opens R3's sheet;
   - a high finding goes to the build-front turn as the round's fix, and the
     critic's stop rule counts its two clean rounds afresh;
   - a phone missing, locked, holding an id, stopped or failing returns to the
     prompt with the reason.
 - A restart mid-round returns to the prompt on `[재개]`. A run an earlier
-  version stopped at `r3` for its kind waits for the phone instead.
+  version stopped at `r3` for its kind waits for the phone instead, or opens
+  R3's sheet when its phone round had passed.
 - The spine shows the round for an Android run only.
 
 ### R3 and S8
@@ -469,6 +470,44 @@ timing, and one walkthrough per core scenario. S8 writes a README with the
 build and install commands, attaches the debug APK to the pull request's
 summary, and adds an Android build workflow only when the repository is
 public. The review loop runs on the pull request as for every kind.
+
+On 2026-11-16 the owner chose how the APK is attached: as an asset of a
+draft prerelease on the repository. That works for a private repository and
+does not expire. An Actions artifact and no attachment were turned down.
+
+How 7f2 builds it (`tool/main/oneshot_critique.py`, `tool/main/oneshot_pr.py`,
+`tool/main/pr_text.py`):
+
+- `android` leaves `KIND_STOPS`, so it runs to the end. A phone round's pass
+  opens R3 as two clean critiques open it for a web app.
+- R3's sheet keeps the web app's layout and adds three things for an
+  Android app:
+  - each screen's phone shots next to the emulator's, served from the
+    round's own `phone/shots/p<n>`;
+  - the phone's model, screen and the frame timing and memory it measured;
+  - each core scenario, the requirement with postconditions, with what holds
+    after it. Its instrumented test passed on both devices, or the round
+    would not have passed.
+- The phone's own findings that are not high join the sheet's list of what
+  was left.
+- S8's README turn for an Android app asks for the JDK and the Android SDK in
+  setup, and in place of a run command, the command that builds the debug
+  APK plus adb's install command with its path. A public repository's workflow sets
+  up a JDK and the Android SDK before the gate.
+- The final gate runs in the toolchain's environment, as every earlier
+  Android gate does, and the APK must exist after it. While the check still
+  holds the worktree, the APK is copied into the run's folder and hashed.
+  The APK is a build output Git does not track, so the run never reads it
+  off the tree again. A copy that fails leaves nothing behind, and the pull
+  request still opens with the reason in its body.
+- Before the pull request's text is asked, that copy goes to a draft
+  prerelease tagged `oneshot-apk-<head>`. The pull request's body links it
+  with the build commit and its SHA-256, and the finished run's summary shows
+  the link. A release already there for that tag gets the copy as its asset
+  with `--clobber`. That covers an earlier upload and a create whose reply
+  was lost, without leaving a second draft. A resumed S8 reuses the release
+  only when its digest is the one the latest final gate froze. A release that
+  cannot be made does not stop the pull request: the body says why.
 
 ## What does not change
 
@@ -489,7 +528,7 @@ Each step is a separate PR, approved before the next starts.
 | 7d | Owned emulator | The native-webview step 3 collector resumed as shared infrastructure, with its refusals and cleanup proof | Done |
 | 7e | Emulator loop | S7 on the owned emulator: install, scenarios, screenshots, mechanical and placement checks resolved from the real native hierarchy (cases: a build that moves a feature from its approved place, a correctly absent `never` feature, a leaked `never` control), critic, fixture viewer | Done |
 | 7f1 | Phone round | The connected-phone round before R3: the resumable wait, the bound serial, run-specific packages, the ownership record and its cleanup | Done |
-| 7f2 | R3 and S8 | The R3 sheet with the phone's results, S8's README, APK and optional workflow | Planned |
+| 7f2 | R3 and S8 | The R3 sheet with the phone's results, S8's README, APK and optional workflow | Done |
 | 7g | Real run | The screen translator sentence from intake to the first pull request | Planned |
 
 7a alone stops the refusal: the run continues to S1, and later stages wait

@@ -135,9 +135,9 @@ def picked(serial=SERIAL, keep=False):
     oneshot_spec.saved("budget", oneshot={"working": "phone", "phone": {**o()["phone"], "serial": serial, "keep": keep}})
 
 
-def test_a_clean_round_on_the_picked_phone_waits_before_r3_and_leaves_nothing_on_it(handset):
+def test_a_clean_round_on_the_picked_phone_opens_r3_and_leaves_nothing_on_it(handset):
     after = played(handset)
-    assert after["stage"] == "r3" and after["stopped"]["reason"] == "kind" and "SM G991N" in after["stopped"]["detail"]
+    assert after["stage"] == "r3" and not after.get("stopped") and after["r3"] == {"round": 1, "decisions": {}, "marks": {}}
     result = after["phone"]
     assert result["status"] == "passed" and result["head"] == after["front_built_head"] and result["apks"] == after["apks"]
     assert result["timing"]["janky_percent"] == 5.0 and result["timing"]["p90_ms"] == 14 and result["memory_kb"] == 85432
@@ -152,6 +152,22 @@ def test_a_clean_round_on_the_picked_phone_waits_before_r3_and_leaves_nothing_on
                                                     "state": "cleaned", "left": [],
                                                     "foreign": [], "unsure": [], "ts": 0}
     assert "phone_owned" not in phone_round.extra(spec())
+
+
+def test_the_r3_sheet_after_a_phone_round_shows_the_phone_its_timing_and_each_core_scenario(handset):
+    played(handset)
+    oneshot_spec.saved("budget", oneshot={"looks": [{"round": 3, "head": "abc", "findings": []}]})
+    sheet = critique.extra(spec())["r3_sheet"]
+    assert "/api/oneshot/spec/budget/look/3/S1-phone-full.png" in sheet and "`notification`" in sheet
+    assert "/api/oneshot/spec/budget/phone/shot/1/S1-phone-full.png" in sheet
+    assert "/api/oneshot/spec/budget/phone/shot/1/S3-phone-error.png" in sheet
+    assert "## 휴대폰에서 — SM G991N (1080×2400, 420dpi)" in sheet and "| 버벅인 프레임 | 6 (5%) |" in sheet
+    assert "7ms · 14ms · 32ms" in sheet and "| 메모리(PSS) | 83.4MB |" in sheet
+    assert "- R1 지출을 적으면 합계에 더해진다 — 끝나면: 합계가 늘었다" in sheet and "R2 알림" not in sheet
+    assert str(phone_round.phone_shot("budget", 1, "S1-phone-full.png").path).endswith("S1-phone-full.png")
+    for n, name in [(1, "S1-desktop-full.png"), (1, "../p1/S1-phone-full.png"), (2, "S1-phone-full.png")]:
+        with pytest.raises(HTTPException):
+            phone_round.phone_shot("budget", n, name)
 
 
 def test_an_app_on_adopted_storage_is_checked_and_cleaned(handset):

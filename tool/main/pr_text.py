@@ -197,6 +197,18 @@ def _files(numstat: str) -> list[str]:
     return lines
 
 
+def apk_section(spec: dict) -> list[str]:
+    """A oneshot Android app's debug APK, as S8 attached it to a draft prerelease, or why it is not there."""
+
+    apk = (spec.get("oneshot") or {}).get("apk")
+    if not apk:
+        return []
+    if not apk.get("url"):
+        return ["## APK", "", f"디버그 APK 를 Release 에 올리지 못했다 — {apk['error']}", ""]
+    return ["## APK", "", f"- 디버그 APK: [{apk['name']}]({apk['url']}) — 초안 프리릴리스에 올렸다",
+            f"  - 빌드 커밋 `{apk['head'][:12]}` · SHA-256 `{apk['sha256']}`", ""]
+
+
 def body_of(spec: dict, numstat: str = "") -> str:
     """The pull request's body. The section names are the ones
     `harvest.record` reads: `배경` and `변경 이유` become the record's why,
@@ -226,7 +238,7 @@ def body_of(spec: dict, numstat: str = "") -> str:
     if files := _files(numstat):
         lines += ["## 바뀐 파일", "", *files, ""]
     from . import refactor_run
-    lines += [*sweep.section(spec.get("test_cleanup")), *refactor_run.section(spec)]
+    lines += [*sweep.section(spec.get("test_cleanup")), *refactor_run.section(spec), *apk_section(spec)]
     grounds = spec["grounds"]
     cited = ", ".join(f"`{g}`" for g in grounds["pages"] + grounds["files"]) or "없음"
     lines += ["## 명세", "", f"`raw/specs/{spec['repo']}/{spec['id']}.json` · 근거: {cited}", ""]

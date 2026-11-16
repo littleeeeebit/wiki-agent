@@ -134,9 +134,7 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict]):
         from . import oneshot_phone   # it imports this module
         return oneshot_phone.waits(repo, rounds)   # the owner's phone comes before R3
     if len(ours) >= 2 and ours[-1]["clean"] and ours[-2]["clean"]:
-        return oneshot_spec.saved(repo, oneshot={"critiques": rounds, "stage": "r3", "working": None,
-                                                 "r3": {"round": (o.get("r3") or {}).get("round", 0) + 1, "decisions": {},
-                                                        "marks": (o.get("r3") or {}).get("next_marks") or {}}})
+        return oneshot_spec.saved(repo, oneshot={"critiques": rounds, "stage": "r3", "working": None, "r3": opening(o)})
     if len(ours) >= MAX_ROUNDS:
         detail = f"{MAX_ROUNDS}회차에도 높은 발견이 남았다 — " + " / ".join(
             f"{f['route']} {f['viewport']} {f['state']}: {f['what']}" for f in found if f["severity"] == "high")
@@ -156,6 +154,13 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict]):
                                              "fix": {"who": "An independent read-only critic judged the screenshots",
                                                      "findings": todo}})
     return lambda: oneshot_build.send(repo, front_build.STAGE, front_turn(spec))
+
+
+def opening(o: dict) -> dict:
+    """R3's next round: no decisions yet, the screens the owner's last edits changed marked."""
+
+    return {"round": (o.get("r3") or {}).get("round", 0) + 1, "decisions": {},
+            "marks": (o.get("r3") or {}).get("next_marks") or {}}
 
 
 def front_turn(spec: dict) -> str:
@@ -180,30 +185,42 @@ oneshot_build.STAGES[front_build.STAGE] = (*oneshot_build.STAGES[front_build.STA
 
 # -- R3 ------------------------------------------------------------------------------------------
 
-def r3_sheet(spec: dict, shot) -> str:
-    """The R3 sheet in Markdown; `shot(round, name)` gives a screenshot's URL."""
+def r3_sheet(spec: dict, shot, phone_shot=None) -> str:
+    """The R3 sheet in Markdown; `shot(round, name)` gives a screenshot's URL, and `phone_shot(round, name)`
+    one of the phone round's, for an Android app (`docs/plans/oneshot/7-android.md`, "R3 and S8")."""
 
     o = spec["oneshot"]
     front, views = o["front"], front_build.views(o["profile"])
+    phone = (o.get("phone") or {}) if phone_shot and (o.get("phone") or {}).get("round") else {}
     passed = [x for x in o["looks"] if not any(f["severity"] == "high" for f in x["findings"])]
     first_look, last = passed[0], passed[-1]
     marks = (o.get("r3") or {}).get("marks") or {}
     mark = lambda i: " (고친 화면)" if marks.get(i) else ""   # noqa: E731
+    place = lambda s: s.get("route") or s.get("surface")   # noqa: E731 — a web route, or an Android surface
     primary = next(s for s in front["screens"] if s["primary"])
-    lines = [f"# 완성된 화면 — {spec['repo']}", "", f"## 첫 화면 {primary['id']}{mark(primary['id'])} `{primary['route']}`",
-             "", *[f"![{primary['id']} {v}]({shot(last['round'], f'{primary['id']}-{v}-full.png')})" for v in views], "",
-             "## 기능이 놓인 자리", "", "| 칸 | 기능 | 화면 |", "| --- | --- | --- |"]
+    lines = [f"# 완성된 화면 — {spec['repo']}", "", f"## 첫 화면 {primary['id']}{mark(primary['id'])} `{place(primary)}`",
+             "", *[f"![{primary['id']} {v}]({shot(last['round'], f'{primary['id']}-{v}-full.png')})" for v in views],
+             *([f"![{primary['id']} 휴대폰]({phone_shot(phone['round'], f'{primary['id']}-phone-full.png')})"] if phone else []),
+             "", "## 기능이 놓인 자리", "", "| 칸 | 기능 | 화면 |", "| --- | --- | --- |"]
     for f in o["features"]:
         where = [s["id"] for s in front["screens"] if f["id"] in s["features"]]
         lines.append(f"| {screens.CLASS_NAMES[o['frequency'][f['id']]]} | {f['name']} (`{f['id']}`) | {', '.join(where) or '없음'} |")
     left = [*(o.get("critiques") or [{}])[-1].get("findings", []), *last["findings"]]
-    lines += ["", "## 남긴 발견", "", "높은 발견이 없는 회차가 두 번 이어져 멈춤 규칙이 남긴 것이다." if left else "없다.", ""]
+    on_phone = phone.get("findings") or []
+    lines += ["", "## 남긴 발견", "",
+              "높은 발견이 없는 회차가 두 번 이어져 멈춤 규칙이 남긴 것이다." if left or on_phone else "없다.", ""]
     lines += [f"- [{f['severity']}] {f.get('route') or f.get('screen')} {f['viewport']} {f['state']}: {f['what']}"
               + (f" → {f['fix']}" if f.get("fix") else "") for f in left]
+    lines += [f"- [{f['severity']}] 휴대폰 {f['screen']} {f['state']}: {f['what']}" for f in on_phone]
+    if phone:
+        lines += ["", *measured(phone), "", *walkthroughs(spec)]
     lines += ["", "<details><summary>다른 화면, 상태, 회차마다의 전후, 기계 검사 기록</summary>", ""]
     for s in front["screens"]:
-        lines += [f"### {s['id']}{mark(s['id'])} `{s['route']}` — {s['purpose']}", "",
+        lines += [f"### {s['id']}{mark(s['id'])} `{place(s)}` — {s['purpose']}", "",
                   *[f"![{s['id']} {state}]({shot(last['round'], f'{s['id']}-{views[0]}-{state}.png')})" for state in STATES],
+                  *(["", *[f"휴대폰 {state}: ![{s['id']} 휴대폰 {state}]"
+                           f"({phone_shot(phone['round'], f'{s['id']}-phone-{state}.png')})" for state in STATES]]
+                    if phone else []),
                   "", f"전: ![{s['id']} 처음]({shot(first_look['round'], f'{s['id']}-{views[0]}-full.png')}) "
                   f"후: ![{s['id']} 마지막]({shot(last['round'], f'{s['id']}-{views[0]}-full.png')})", ""]
     for x in o["looks"]:
@@ -211,6 +228,33 @@ def r3_sheet(spec: dict, shot) -> str:
         lines.append(f"- {x['round']}회차 `{x['head'][:12]}`: 높음 {counts['high']}, 보통 {counts['medium']}, 낮음 {counts['low']}")
     lines += ["", "</details>", ""]
     return "\n".join(lines)
+
+
+def measured(phone: dict) -> list[str]:
+    """The phone round's device and what it read off the app's first screen: frame timing and memory."""
+
+    size, t = phone.get("size") or {}, phone.get("timing") or {}
+    value = lambda v, unit="": "읽지 못함" if v is None else f"{v:g}{unit}"   # noqa: E731
+    memory = phone.get("memory_kb")
+    return [f"## 휴대폰에서 — {phone.get('model') or '이름 없는 기기'} "
+            f"({size.get('width')}×{size.get('height')}, {size.get('dpi')}dpi)", "",
+            "첫 화면을 네 번 쓸어 넘기는 동안 앱이 그린 프레임과, 그때의 메모리다.", "",
+            "| 잰 것 | 값 |", "| --- | --- |",
+            f"| 그린 프레임 | {value(t.get('frames'))} |",
+            f"| 버벅인 프레임 | {value(t.get('janky'))} ({value(t.get('janky_percent'), '%')}) |",
+            f"| 프레임 시간 50·90·99번째 백분위 | {value(t.get('p50_ms'), 'ms')} · {value(t.get('p90_ms'), 'ms')} · "
+            f"{value(t.get('p99_ms'), 'ms')} |",
+            f"| 메모리(PSS) | {'읽지 못함' if memory is None else f'{memory / 1024:.1f}MB'} |"]
+
+
+def walkthroughs(spec: dict) -> list[str]:
+    """Each core scenario as the owner reads it: what it does and what holds after. Its instrumented test ran
+    on the emulator and on the phone, and a failure on either would have been a high finding."""
+
+    reqs = [r for r in spec.get("requirements") or [] if r.get("postconditions")]
+    return ["## 핵심 시나리오", "",
+            "각 시나리오의 계측 테스트가 에뮬레이터와 휴대폰에서 모두 통과했다." if reqs else "핵심 시나리오가 없다.", "",
+            *[f"- {r['id']} {r['text']} — 끝나면: {' / '.join(r['postconditions'])}" for r in reqs]]
 
 
 class Decisions(BaseModel):
@@ -222,8 +266,10 @@ def extra(spec: dict) -> dict:
     o = spec["oneshot"]
     if o.get("stage") != "r3" or KIND_STOPS.get(kind_of(o)) == "r3":   # a kind stopped before R3 has no sheet yet
         return {"critiques": o.get("critiques") or []} if o.get("critiques") else {}
+    phone_shot = (lambda n, name: f"/api/oneshot/spec/{spec['repo']}/phone/shot/{n}/{name}") \
+        if kind_of(o) == "android" else None
     return {"critiques": o.get("critiques") or [], "r3_items": [s["id"] for s in o["front"]["screens"]],
-            "r3_sheet": r3_sheet(spec, lambda n, name: f"/api/oneshot/spec/{spec['repo']}/look/{n}/{name}")}
+            "r3_sheet": r3_sheet(spec, lambda n, name: f"/api/oneshot/spec/{spec['repo']}/look/{n}/{name}", phone_shot)}
 
 
 oneshot_spec.VIEWS.append(extra)
