@@ -51,13 +51,13 @@ translator is two kinds at once, and the owner knew which.
 | Start screen | The sentence and the three models; no kind |
 | S0 | `oneshot-intent` returns `kind`; `intent_of` checks it is one of `KINDS` |
 | Card | `종류` shown as text; the owner can only type a correction for the intake to restate |
-| Record | `intent.kind`, one string; `kind_of(o)` reads it, 38 calls in 10 modules |
+| Record | `intent.kind`, one string; `kind_of(o)` reads it in 9 modules, and `oneshot.py` reads `intent["kind"]` directly for the card, the profile and the bootstrap |
 | Prompts | A web prompt and an `-android` one for each of 8 turns |
 | S1 | `schema(kind)`: `responsive` for a web app, `device` for an Android app |
 | S2 | `parts(kind)`: `PARTS` or `ANDROID_PARTS` |
 | S3 | A web app's API table, or an Android app's modules (`M`), outside calls (`X`) and permissions |
 | S5–S7 | Playwright on a web app's routes, or the run's emulator and the owner's phone for an Android app |
-| `desktop` | In `KINDS` for the intake; refused at the card, with no stage that builds it |
+| `desktop` | In `KINDS` for the intake, which marks it unsupported; the restatement cannot be confirmed, so the run never reaches S1, and no stage builds it. Every non-Android kind would get the web parts, prompts, API sheet and API-based split |
 
 ## Design
 
@@ -89,12 +89,18 @@ The card's fields are the union of every picked kind's: `responsive` for a
 web app, `device` for an Android app, and for `desktop` the window size S7
 shoots at. Shared fields (`visibility`, `license`, `ci`, `ui_language`,
 `docs_language`, `llm`, `github_owner`, `auth`) appear once. Each kind's
-saved profile still holds its own last answers.
+saved profile still holds its own last answers. A shared field is prefilled
+only when every picked kind's saved profile holds the same value; otherwise
+it starts empty and the owner fills it. Once the card is confirmed, each
+picked kind's saved profile is written with the shared fields and that
+kind's own fields.
 
 ### S2 — one conversation
 
-One conversation covers every picked kind. A run of one kind keeps today's
-parts. A run of several names the shared parts once (`core`, the language and
+One conversation covers every picked kind. A run of `webapp` alone or
+`android` alone keeps today's parts. A run of `desktop` alone takes
+Android's six parts (`language`, `ui`, `core`, `data_store`, `tests`,
+`build`) and its core path (below). A run of several names the shared parts once (`core`, the language and
 framework of the logic every kind uses, `data_store` and `tests`) and each
 kind's own parts with that kind:
 
@@ -106,31 +112,63 @@ kind's own parts with that kind:
 
 A requirement may name the kinds it applies to; one that names none applies
 to all. A platform capability (screen capture, drawing over other apps) names
-its kind and carries its prompt and risk, as in step 7.
+its kind and carries its prompt and risk, as in step 7. Which picked kinds a
+requirement applies to is the owner's: when a requirement that applies to
+all cannot be met by one of them, the agent asks, as a `choices` question,
+which of the picked kinds it applies to. A mixed run whose platform
+capabilities each name a capable kind is valid. A web app and an Android app
+that capture the screen only on Android is one.
 
-When the answers make the product something a picked kind cannot be, the
-agent says so in the person's words, adds `"kinds_mismatch"` with its reason
-to the `oneshot-spec` block and asks nothing more. The run stops with reason
+The run cannot go on only when a requirement the owner confirmed cannot be
+met by any of the kinds it applies to. The agent then says so in the person's
+words, adds `"kinds_mismatch"` with the requirement and its reason to the
+`oneshot-spec` block and asks nothing more. The run stops with reason
 `rekind`, which no `[재개]` takes on: the owner starts a new run with the
 kinds they now pick. The agent never names the kinds the run should have.
 
 ### S3, R1 and S4 — one core
 
-The core design is step 7's shape for every run of several kinds: modules
-(`M`) with their contracts, outside calls (`X`), and each kind's permissions.
-A web app among the kinds adds its server's API (`A`), which the other kinds
-may call. The R1 sheet and its brief show, for each kind, the modules it uses
-and the permissions it asks for. S4 builds the core contract-test first, in
-the stack's host runner, once. The backend review reads the core once; a
-finding only a device can show is deferred to that kind's S7 (step 9c).
+The core design is step 7's shape for every run of several kinds and for
+`desktop` alone: modules (`M`) with their contracts, outside calls (`X`),
+assumptions (`A`) and each kind's permissions. A web app among the kinds adds
+its server's API as endpoints (`P`), the prefix the web sheet already uses,
+which the other kinds may call. The R1 sheet and its brief show, for each
+kind, the modules it uses and the permissions it asks for. S4 builds the core
+contract-test first, in the stack's host runner, once.
+
+### The backend review and what only a device can show
+
+The backend review reads the core once. A finding may be deferred to a
+device only when the evidence it asks for is the app running on a phone or
+in a Windows session, which the host's contract tests cannot run: scroll
+tracking in another app, an overlay's insets, a permission prompt. The
+reviewer marks it `device`, naming the kind, the requirement and the check
+that would show it: a scenario test, run in that kind's S7 loop, whose
+postcondition is the finding's. Anything the code or the host tests can show
+wrong stays a blocker, as today: wrong logic, a missing or wrong contract
+test, a contract the code breaks.
+
+A review whose only P0 and P1 findings are `device` findings approves. Each
+deferral is saved in the spec's `owed` list with its kind, requirement,
+finding and check, and survives a restart. The kind's S7 loop runs each owed
+check on the device. A clean round counts only when every owed check for
+that kind passed on that round's HEAD; a failing one goes to the builder as a
+finding. R3 shows each owed item with the round that closed it. A run never
+reaches R3 with an owed check unrun.
 
 ### S5 to R2 — screens for each kind
 
-The split reads features off the core once. The board is shown once, since
-how often a feature is used does not depend on the kind, with a first screen
-for each kind. S6 designs and previews each kind's screens, the way that kind
-does. Each screen carries its `kind`, and R2 shows every kind's screens in
-one sheet, grouped by kind, one confirmation line per screen.
+The split reads features off the core once. Each feature carries the kinds
+it applies to: the kinds every one of its parts applies to. A part that
+applies to all kinds does not narrow it, and an Android-only capability
+makes the feature Android's. A feature whose parts leave no kind is refused
+at the split. The board is shown once, since how often a feature is used
+does not depend on the kind, with a first screen for each kind. S6 designs
+and previews each kind's screens, the way that kind does. Each screen
+carries its `kind`, and R2 shows every kind's screens in one sheet, grouped
+by kind, one confirmation line per screen. Every placement, coverage and
+scenario check in a kind's S6 and S7 reads only the features that apply to
+that kind.
 
 ### S7 to R3 — each kind's loop, one R3
 
@@ -166,7 +204,9 @@ its refusals and its cleanup proof, as 7d's emulator was.
 
 ## What does not change
 
-- A run of one kind behaves as today: its prompts, parts, card and stages.
+- A run of `webapp` alone or `android` alone behaves as today: its prompts,
+  parts, card and stages, apart from the device deferral in its backend
+  review.
 - Each review's brief (step 8), the stop rules and the caps.
 - The live screen translator run is left as it is. It keeps its `webapp`
   record until the owner stops it.
@@ -180,8 +220,8 @@ step 7's did.
 | # | Stage | Deliverable | Status |
 | --- | --- | --- | --- |
 | 9a | The owner picks | The start screen's kinds, the intake restating them and returning none, `kinds` on the record with old records read as one, the card showing them, S2's `rekind` stop; a run of one kind runs end to end as today | Planned |
-| 9b | One core for several kinds | The union card, S2's shared and per-kind parts and per-kind requirements, the core design and R1 across kinds, S4 and the backend review once | Planned |
-| 9c | Screens for each kind | The split and the board once, S6 and R2 across kinds, the build's per-kind gate, each kind's S7 loop in turn, R3 across kinds, S8 with every kind's artifacts | Planned |
+| 9b | One core for several kinds | The union card with its prefill and write-back, S2's shared and per-kind parts and per-kind requirements, the core design and R1 across kinds, S4 and the backend review once; the `device` deferral and `owed` list, closed in Android's S7 loop | Planned |
+| 9c | Screens for each kind | Each feature's kinds, the split and the board once, S6 and R2 across kinds, the build's per-kind gate, each kind's S7 loop in turn with its owed checks, R3 across kinds, S8 with every kind's artifacts | Planned |
 | 9d | Desktop session | The run-owned Windows session for S7: the research note, starting the app apart from the owner's windows, reading its UI tree, refusals and cleanup proof | Planned |
-| 9e | Desktop screens | `desktop` through S1, S2, S6, S7, R3 and S8, alone and with other kinds | Planned |
+| 9e | Desktop | `desktop` alone and with other kinds: its card, S2 parts and prompts, the core path (S3, R1, S4, the backend review, the split off modules), S6, S7 with its owed checks, R3 and S8 | Planned |
 | 9f | Real run | The screen translator as `android` and `desktop`, from the start screen to the first pull request | Planned |
