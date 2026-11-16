@@ -296,8 +296,14 @@ Every case runs offline on mocked model output; none needs a real run.
 - The block is `{"sections": [{name, text}], "confirm": [{key, text}]}`.
   `물어보신 것`, `돌아가는 순서` and `빼기로 한 것` may be left out, the last
   only when no requirement is `not_applicable`.
-- A cited id is checked only when its prefix is one the spec's ids use, so
-  `(갤럭시 S21)` is not taken for an item.
+- A citation is parentheses holding ids and nothing else, `(R3, A2)`, and
+  every id in it must exist. `(갤럭시 S21)` and `(A4 용지)` are words, not
+  citations. The design's endpoint paths are refused even without their
+  method.
+- The writer's turn runs with no tools on either provider (`oneshot.ask`
+  with `tools=""`, isolated), in the run's own folder.
+- Any failure reading or saving around the turn records a failed brief and
+  clears `working`; only a save that fails again reaches the worker's guard.
 - Translationese refuses the first answer and is kept as a warning on the
   second, as the design turn does.
 - At start-up, a run left under `working: brief` gets its brief marked

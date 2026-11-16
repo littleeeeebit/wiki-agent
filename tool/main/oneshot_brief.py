@@ -25,6 +25,7 @@ R1_SECTIONS = ("한 줄", "쓰는 장면", "물어보신 것", "돌아가는 순
 R1_OPTIONAL = {"물어보신 것", "돌아가는 순서", "빼기로 한 것"}   # a sentence may ask nothing; an app may have no pipeline
 CITED = re.compile(r"\(([^()]*)\)")
 ID = re.compile(r"\b[A-Z]{1,2}\d+\b")
+CITATION = re.compile(r"\s*[A-Z]{1,2}\d+(?:\s*[,·]\s*[A-Z]{1,2}\d+)*\s*")
 BANNED = {"코드 표기(`)": re.compile(r"`"), "테스트 이름": re.compile(r"\btest_\w+"),
           "엔드포인트 경로": re.compile(r"\b(?:GET|POST|PUT|PATCH|DELETE)\s+/")}
 
@@ -106,12 +107,14 @@ def checked(value, snap: dict, mandatory: dict[str, list[str]], attempt: int) ->
         raise ValueError(f"너무 길다: {', '.join(long)}")
     if (total := sum(len(t) for _, t in texts)) > MAX_BRIEF:
         raise ValueError(f"요약이 {total}자다 — {MAX_BRIEF}자 안으로 줄여라")
+    # A citation is parentheses holding ids and nothing else, `(R3, A2)`: `(갤럭시 S21)` and `(A4 용지)` are words.
     known = set(sheet.decidable(snap["design"], snap["requirements"]))
-    prefixes = {re.match(r"[A-Z]+", i).group() for i in known}   # `(갤럭시 S21)` names a phone, not an item
-    cited = {m.group() for _, t in texts for c in CITED.finditer(t) for m in ID.finditer(c.group(1))
-             if re.match(r"[A-Z]+", m.group()).group() in prefixes}
+    cited = {i for _, t in texts for c in CITED.finditer(t) if CITATION.fullmatch(c.group(1)) for i in ID.findall(c.group(1))}
     if unknown := sorted(cited - known):
         raise ValueError(f"명세에 없는 번호를 댔다: {', '.join(unknown)}")
+    paths = {p["path"] for p in snap["design"].get("api") or [] if len(p.get("path") or "") > 1}
+    if named := sorted({p for _, t in texts for p in paths if p in t}):   # a path without its method is still one
+        raise ValueError(f"사람이 읽는 요약에 쓰지 않는 표기가 있다: 엔드포인트 경로 {', '.join(named)}")
     left_out = [r["id"] for r in snap["requirements"] if r.get("status") == "not_applicable"]
     out_text = next((s["text"] for s in sections if s["name"] == "빼기로 한 것"), "")
     if unnamed := [i for i in left_out if not re.search(rf"\b{i}\b", out_text)]:
@@ -126,19 +129,25 @@ def checked(value, snap: dict, mandatory: dict[str, list[str]], attempt: int) ->
 
 def write(store: oneshot.Store, spec_of, save) -> None:
     """R1's brief, written once after a design or redesign turn under `working: brief`, and the review's
-    `working` cleared. Nothing here stops the run: a refused or failed turn leaves `failed` with why, and the
-    review falls back to its full sheet. A result for a gate that has since changed is dropped."""
+    `working` cleared. Nothing here stops the run: a refused or failed turn, or any failure reading or saving,
+    leaves `failed` with why, and the review falls back to its full sheet. A result for a gate that has since
+    changed is dropped."""
 
+    try:
+        written(store, spec_of, save)
+    except Exception as exc:   # the brief is the owner's convenience: no failure in it may stop the run
+        with oneshot._lock:   # a save that fails here too reaches the worker's guard, which stops with why
+            o = spec_of()["oneshot"]
+            if o.get("working") == "brief":
+                failed = {"source": None, "failed": f"예상하지 못한 실패 — {type(exc).__name__}: {exc}"}
+                save(brief={**(o.get("brief") or {}), "r1": failed}, working=None)
+
+
+def written(store: oneshot.Store, spec_of, save) -> None:
     snap = snapshot(spec_of())
     src, mandatory = source(snap), lines(snap)
     entry: dict = {"source": src, "lines": mandatory, "written": time.time()}
-    try:
-        if why := lacking(snap):
-            entry["failed"] = why
-        else:
-            entry.update(asked(store, snap, mandatory))
-    except Exception as exc:   # the brief is the owner's convenience: no failure in it may stop the run
-        entry["failed"] = f"예상하지 못한 실패 — {type(exc).__name__}: {exc}"
+    entry.update({"failed": why} if (why := lacking(snap)) else asked(store, snap, mandatory))
     with oneshot._lock:
         o = spec_of()["oneshot"]
         if source(snapshot(spec_of())) != src or o.get("stage") != "r1":   # written for a gate that is gone
@@ -163,8 +172,10 @@ def asked(store: oneshot.Store, snap: dict, mandatory: dict[str, list[str]]) -> 
             store.put(inflight={"role": "brief", "codex": codex, "sent": time.time()})
         started = time.monotonic()
         try:
+            # No tools: every fact comes from the snapshot, never from the folder or the repository.
             final, meta, codex = oneshot.ask(store, "brief", system, text if not reason else
-                                             f"{text}\n\nYour last answer was refused: {reason}. Return it again.")
+                                             f"{text}\n\nYour last answer was refused: {reason}. Return it again.",
+                                             None, (), "")
         except Exception as exc:
             with oneshot._lock:
                 cost = (getattr(exc, "meta", None) or {}).get("cost_usd")

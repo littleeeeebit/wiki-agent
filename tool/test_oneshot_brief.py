@@ -137,6 +137,9 @@ def snap():
     (good(sections=[{**s, "text": s["text"] + " (Z9, P7)"} if s["name"] == "한 줄" else s for s in good()["sections"]]),
      "없는 번호를 댔다: P7"),
     (good(confirm=[{"key": "R3", "text": "`POST /spendings` 를 부릅니다."}, good()["confirm"][1]]), "엔드포인트 경로"),
+    (good(confirm=[{"key": "R3", "text": "지출을 /spendings 경로로 보냅니다."}, good()["confirm"][1]]), "엔드포인트 경로 /spendings"),
+    (good(sections=[{**s, "text": "요약입니다. (S999)"} if s["name"] == "한 줄" else s for s in good()["sections"]]),
+     "없는 번호를 댔다: S999"),
     (good(confirm=[{"key": "R3", "text": "test_spending_adds 로 봅니다."}, good()["confirm"][1]]), "테스트 이름"),
     (good(sections=[{**s, "text": "가" * 1_600} if s["name"] == "쓰는 장면" else s for s in good()["sections"]]), "너무 길다"),
     ({"sections": "한 줄", "confirm": []}, "객체다"),
@@ -154,6 +157,48 @@ def test_a_whole_brief_past_the_ceiling_is_refused_and_a_phone_name_in_parenthes
     phone = good(sections=[{**s, "text": "갤럭시에서 씁니다. (갤럭시 S21)"} if s["name"] == "한 줄" else s
                            for s in good()["sections"]])
     assert brief.checked(phone, snap(), {"R3": ["R3"], "A1": ["A1"]}, 1)["sections"][0]["text"].endswith("S21)")
+    paper = good(sections=[{**s, "text": "용지에 맞춰 출력합니다. (A4 용지)"} if s["name"] == "한 줄" else s
+                           for s in good()["sections"]])
+    assert brief.checked(paper, snap(), {"R3": ["R3"], "A1": ["A1"]}, 1)   # a paper size in words, not item A4
+
+
+def test_the_writer_runs_with_no_tools_on_either_provider(world):  # noqa: F811 — the imported fixture, by its name
+    opened = []
+
+    class Chat:
+        def __init__(self, where, **kwargs):
+            opened.append(kwargs)
+            self.is_codex = kwargs["model"].startswith("codex:")
+
+        def say(self, *a):
+            yield type("E", (), {"kind": "done", "text": fenced("oneshot-brief", good()), "meta": {"cost_usd": 0.1}})()
+
+        def close(self):
+            opened.append("closed")
+
+    store = oneshot_spec.store("budget")
+    for model in ("codex:gpt-x", "opus"):
+        with patch.object(oneshot, "ChatSession", Chat), \
+             patch.object(oneshot, "role_config", lambda role="", store=None, m=model: {"model": m, "effort": "high"}):
+            assert "failed" not in brief.asked(store, snap(), {"R3": ["R3"], "A1": ["A1"]})
+    assert [(k["tools"], k["isolated"]) for k in opened if k != "closed"] == [("", True), ("", True)]
+    assert opened.count("closed") == 2
+
+
+def test_a_failure_reading_the_spec_for_the_brief_leaves_it_failed_and_never_stops_the_run(world):  # noqa: F811
+    at_design()
+    oneshot_spec.saved("budget", oneshot={"stage": "r1", "design": sheet.parsed(DESIGN), "working": "brief",
+                                          "r1": {"round": 1, "decisions": {}, "marks": {}}})
+    reads = []
+
+    def flaky():
+        reads.append(1)
+        if len(reads) == 1:
+            raise OSError("잠깐 읽지 못했다")
+        return oneshot_spec.spec_of("budget")
+
+    brief.write(oneshot_spec.store("budget"), flaky, lambda **f: oneshot_spec.saved("budget", oneshot=f))
+    assert "잠깐 읽지 못했다" in o()["brief"]["r1"]["failed"] and not o()["working"] and not o().get("stopped")
 
 
 def test_translationese_sends_the_first_answer_back_and_is_only_noted_on_the_second():

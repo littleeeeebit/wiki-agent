@@ -207,17 +207,18 @@ def heartbeat(store: Store, ended: threading.Event) -> None:
                 store.put(inflight={**inflight, "seen": time.time()})
 
 
-def ask(store: Store, role: str, system: str, text: str, where: Path | None = None, images: tuple = ()) -> tuple[str, dict, bool]:
+def ask(store: Store, role: str, system: str, text: str, where: Path | None = None, images: tuple = (),
+        tools: str = TOOLS) -> tuple[str, dict, bool]:
     """One turn, read-only, in `where` (the store's own folder by default), `images` beside the text:
-    `(final, meta, codex)`. Patched in tests."""
+    `(final, meta, codex)`. `tools=""` is a turn with no tools at all, on either provider. Patched in tests."""
 
     cfg = role_config(role, store)
     where = where or store.folder
     where.mkdir(parents=True, exist_ok=True)
     # Claude isolated: no hooks, settings or app instructions. Codex stays on `app-server`, whose read-only
     # session already drops shell and connectors and carries `pr_diff`/`repo_*`; isolated it is tool-less `exec`.
-    chat = ChatSession(where, tools=TOOLS, system=system, model=cfg["model"], effort=cfg["effort"],
-                       isolated=not str(cfg["model"] or "").startswith("codex:"))
+    chat = ChatSession(where, tools=tools, system=system, model=cfg["model"], effort=cfg["effort"],
+                       isolated=not tools or not str(cfg["model"] or "").startswith("codex:"))
     final, meta, failed = "", {}, ""
     ended = threading.Event()
     threading.Thread(target=heartbeat, args=(store, ended), daemon=True, name=f"oneshot-beat-{store.key}").start()
