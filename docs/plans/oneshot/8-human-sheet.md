@@ -304,6 +304,10 @@ Every case runs offline on mocked model output; none needs a real run.
   with `tools=""`, isolated), in the run's own folder.
 - Any failure reading or saving around the turn records a failed brief and
   clears `working`; only a save that fails again reaches the worker's guard.
+  A charge that could not be saved is settled once in the save that clears
+  `working`. A brief turn still in flight with no brief being written is
+  charged as cut and cleared on resume, when no worker is alive, or at
+  start-up.
 - Translationese refuses the first answer and is kept as a warning on the
   second, as the design turn does.
 - At start-up, a run left under `working: brief` gets its brief marked

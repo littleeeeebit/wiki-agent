@@ -383,8 +383,8 @@ def recover() -> None:
         for repair in RECOVERS if o else ():
             repair(folder.name, o)
             o = specs.load(folder.name, oneshot.BRANCH)["oneshot"]
-        if o and (cut := brief.recovered(o)) is not None:   # a brief the server went down writing
-            o = saved(folder.name, oneshot={"brief": cut})["oneshot"]
+        if o and (repair := brief.recovered(o)):   # a brief the server went down writing, or its orphaned turn
+            o = saved(folder.name, oneshot=repair)["oneshot"]
         stop = o.get("stopped") or {}
         if stop.get("reason") == "kind" and o.get("stage") != KIND_STOPS.get(kind_of(o)):
             saved(folder.name, oneshot={"stopped": {**stop, "reason": "restart",
@@ -544,6 +544,9 @@ def resume(repo: str) -> dict:
             raise HTTPException(409, "멈춘 단계가 아니다")
         if o["stopped"]["reason"] == "kind":   # the kind's next stage is not in this version: no route starts it
             raise HTTPException(409, o["stopped"]["detail"])
+        thread = oneshot._workers.get(store(repo).key)
+        if (settle := brief.orphaned(o)) and not (thread and thread.is_alive()):   # no turn left to charge it
+            o = saved(repo, oneshot=settle)["oneshot"]
         if o.get("inflight"):   # its `Turn.finish` has not run: the next turn would lose that turn's charge
             raise HTTPException(409, "앞 턴의 비용을 아직 매기는 중이다 — 잠시 뒤 다시 하라")
         if o["stage"] not in (*RUNNING, *TURNS, *SHEETS, "review"):

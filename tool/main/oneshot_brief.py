@@ -143,13 +143,24 @@ def write(store: oneshot.Store, spec_of, save) -> None:
             failed = {"source": None, "failed": f"예상하지 못한 실패 — {type(exc).__name__}: {exc}"}
             fields = {"brief": {**(o.get("brief") or {}), "r1": failed}, "working": None}
             # The run goes idle here, so a turn whose charge was not saved is settled in this same save, once.
+            # Should this save fail too, `orphaned` settles the flight it leaves on resume or at start-up.
             if isinstance(exc, Unsettled):
                 fields.update(inflight=None, spend=exc.spend)
-            elif (flight := o.get("inflight") or {}).get("role") == "brief":
-                sent = float(flight.get("sent") or time.time())
-                fields.update(inflight=None, spend=cut(o.get("spend"), "brief", flight.get("codex", False),
-                                                       max(0.0, time.time() - sent), 0.0))
+            else:
+                fields.update(orphaned({**o, "working": None}) or {})
             save(**fields)
+
+
+def orphaned(o: dict) -> dict | None:
+    """A brief turn still recorded in flight with no brief being written: its charge, as a cut turn
+    (cost unreported), with `inflight` cleared in the same save. `None` when there is none."""
+
+    flight = o.get("inflight") or {}
+    if flight.get("role") != "brief" or o.get("working") == "brief":
+        return None
+    sent = float(flight.get("sent") or time.time())
+    elapsed, lived = max(0.0, time.time() - sent), max(0.0, float(flight.get("seen") or sent) - sent)
+    return {"inflight": None, "spend": cut(o.get("spend"), "brief", flight.get("codex", False), elapsed, lived)}
 
 
 class Unsettled(RuntimeError):
@@ -216,10 +227,11 @@ def asked(store: oneshot.Store, snap: dict, mandatory: dict[str, list[str]]) -> 
 
 
 def recovered(o: dict) -> dict | None:
-    """At start-up, a brief the server went down writing: recorded as failed, so the review shows its sheet.
-    `oneshot.restarted` then charges the cut turn and stops the stage with `restart`."""
+    """At start-up, the `oneshot` fields that repair a brief: one the server went down writing is recorded
+    as failed, so the review shows its sheet, and `oneshot.restarted` then charges the cut turn and stops the
+    stage with `restart`; a brief turn left in flight on a run no longer writing it is settled (`orphaned`)."""
 
     if o.get("working") != "brief":
-        return None
+        return orphaned(o)
     r1 = {**((o.get("brief") or {}).get("r1") or {}), "failed": "서버가 다시 켜져 요약을 쓰지 못했다"}
-    return {**(o.get("brief") or {}), "r1": r1}
+    return {"brief": {**(o.get("brief") or {}), "r1": r1}}

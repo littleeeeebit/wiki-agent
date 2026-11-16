@@ -122,25 +122,31 @@ def test_a_server_that_died_writing_the_brief_leaves_it_failed_and_the_sheet_res
     assert not o().get("stopped") and o()["stage"] == "r1"
 
 
+class Flaky:
+    """The run's store, whose next `failures` saves of a charge with `inflight` cleared fail before writing."""
+
+    def __init__(self, failures: list[int]):
+        self.real, self.failures = oneshot_spec.store("budget"), failures
+        self.key, self.folder = self.real.key, self.real.folder
+
+    def get(self):
+        return self.real.get()
+
+    def put(self, **fields):
+        if self.failures[0] and "spend" in fields and fields.get("inflight", "absent") is None:
+            self.failures[0] -= 1
+            raise OSError("비용을 저장하지 못했다")
+        return self.real.put(**fields)
+
+    def stop(self, reason, detail):   # the worker's guard; this save succeeds
+        return self.real.stop(reason, detail)
+
+
 @pytest.mark.parametrize("answered", [True, False])   # a finished turn, and a broken one
 def test_a_charge_that_could_not_be_saved_is_settled_once_before_the_run_goes_idle(world, answered):  # noqa: F811
     at_design()
     oneshot_spec.saved("budget", oneshot={"stage": "r1", "design": sheet.parsed(DESIGN), "working": "brief",
                                           "r1": {"round": 1, "decisions": {}, "marks": {}}})
-    real = oneshot_spec.store("budget")
-    failing = [True]
-
-    class Flaky:
-        key, folder = real.key, real.folder
-
-        def get(self):
-            return real.get()
-
-        def put(self, **fields):
-            if failing[0] and "spend" in fields and fields.get("inflight", "absent") is None:
-                failing[0] = False
-                raise OSError("비용을 한 번 저장하지 못했다")
-            return real.put(**fields)
 
     def ask(*a):
         if not answered:
@@ -148,8 +154,8 @@ def test_a_charge_that_could_not_be_saved_is_settled_once_before_the_run_goes_id
         return fenced("oneshot-brief", good()), {"cost_usd": 0.1}, False
 
     with patch.object(oneshot, "ask", ask):
-        brief.write(Flaky(), lambda: oneshot_spec.spec_of("budget"), lambda **f: oneshot_spec.saved("budget", oneshot=f))
-    assert "비용을 한 번 저장하지 못했다" in o()["brief"]["r1"]["failed"]
+        brief.write(Flaky([1]), lambda: oneshot_spec.spec_of("budget"), lambda **f: oneshot_spec.saved("budget", oneshot=f))
+    assert "비용을 저장하지 못했다" in o()["brief"]["r1"]["failed"]
     assert o()["spend"]["calls"] == 1 and o()["spend"]["usd"] == (0.1 if answered else 0.2)
     assert o().get("inflight") is None and not o()["working"] and not o().get("stopped")
     oneshot_spec.recover()   # nothing left in flight to charge again
@@ -157,6 +163,31 @@ def test_a_charge_that_could_not_be_saved_is_settled_once_before_the_run_goes_id
     items = sheet.decidable(o()["design"], ASSUMED)
     oneshot_spec.decide("budget", oneshot_spec.Decisions(decisions={i: {"approve": True} for i in items}))
     assert o()["stage"] == "tests" and o()["spend"]["calls"] == 1
+
+
+@pytest.mark.parametrize("repair", ["resume", "restart"])
+def test_a_run_stopped_after_both_charge_saves_failed_settles_its_turn_once_and_resumes(world, repair):  # noqa: F811
+    at_design()
+    store = Flaky([2])
+
+    def run():
+        oneshot_spec.saved("budget", oneshot={"stage": "r1", "design": sheet.parsed(DESIGN),
+                                              "r1": {"round": 1, "decisions": {}, "marks": {}}})
+        brief.write(store, lambda: oneshot_spec.spec_of("budget"), store.put)
+
+    with replies(fenced("oneshot-brief", good())):
+        oneshot.start_worker(store, "brief", run, (), {})
+        oneshot._workers[store.key].join(10)
+    assert o()["stopped"]["reason"] == "block" and o()["inflight"]["role"] == "brief" and o()["spend"]["calls"] == 0
+    if repair == "resume":
+        oneshot_spec.resume("budget")
+    else:
+        oneshot_spec.recover()
+        assert o()["inflight"] is None and o()["stopped"]["reason"] == "block"
+        oneshot_spec.resume("budget")
+    assert o().get("inflight") is None and o()["spend"]["calls"] == 1 and not o().get("stopped") and o()["stage"] == "r1"
+    oneshot_spec.recover()   # nothing charged twice
+    assert o()["spend"]["calls"] == 1
 
 
 def snap():
