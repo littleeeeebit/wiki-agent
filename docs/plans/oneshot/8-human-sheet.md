@@ -282,6 +282,38 @@ Every case runs offline on mocked model output; none needs a real run.
 - Android. The R1 brief of a `core_sheet` design names every permission and
   outside call, and bulk approval covers its `M` and `X` items.
 
+## How 8a builds it
+
+- `tool/main/oneshot_brief.py` holds R1's snapshot, its `source`, the
+  mandatory lines and the block check. The writer's prompt is
+  `tool/prompts/oneshot-brief.md`, one file for every kind.
+- `design` and `redesign` save their result under `working: brief`, then
+  write the brief in the same worker, so R1 is not decided while it is
+  written. `working` is cleared whatever happens.
+- The writer's turn has its own two-try loop instead of `oneshot.turned`,
+  because `turned` stops the run on a second refusal or a broken turn. It
+  is charged and recorded in flight like any turn.
+- The block is `{"sections": [{name, text}], "confirm": [{key, text}]}`.
+  `물어보신 것`, `돌아가는 순서` and `빼기로 한 것` may be left out, the last
+  only when no requirement is `not_applicable`.
+- A citation is parentheses holding ids and nothing else, `(R3, A2)`, and
+  every id in it must exist. `(갤럭시 S21)` and `(A4 용지)` are words, not
+  citations. The design's endpoint paths are refused even without their
+  method.
+- The writer's turn runs with no tools on either provider (`oneshot.ask`
+  with `tools=""`, isolated), in the run's own folder.
+- Any failure reading or saving around the turn records a failed brief and
+  clears `working`; only a save that fails again reaches the worker's guard.
+  A charge that could not be saved is settled once in the save that clears
+  `working`. A brief turn still in flight with no brief being written is
+  charged as cut and cleared on resume, when no worker is alive, or at
+  start-up.
+- Translationese refuses the first answer and is kept as a warning on the
+  second, as the design turn does.
+- At start-up, a run left under `working: brief` gets its brief marked
+  failed before `oneshot.restarted` charges the cut turn and stops the stage
+  with `restart`; `[재개]` returns to the sheet.
+
 ## Decided
 
 The owner decided these on 2026-11-16, by options.
@@ -296,6 +328,6 @@ The owner decided these on 2026-11-16, by options.
 
 | # | Stage | Deliverable | Status |
 | --- | --- | --- | --- |
-| 8a | The brief | The `oneshot-brief` turn on the review model, the snapshot and its `source`, the mandatory lines and the checks, `oneshot.brief` kept out of every agent input; written after `design` and `redesign`; the isolation, stale, snapshot and fallback cases | Planned |
+| 8a | The brief | The `oneshot-brief` turn on the review model, the snapshot and its `source`, the mandatory lines and the checks, `oneshot.brief` kept out of every agent input; written after `design` and `redesign`; the isolation, stale, snapshot and fallback cases | Done — `oneshot_brief`, stored but not yet shown (8b) |
 | 8b | R1 on the brief | The brief first with every line's decision checked, then reduced to items, one approval for the rest, `source` required on every R1 submission, today's sheet folded below; the Android case | Planned |
 | 8c | R2 and R3 on the brief | Their briefs after S6 and `refront`, and after the critique loop and phone round; R3's finding references, their screens and the reduction; the R2 coverage, R3 mapping, R3 reduction and missing-line cases | Planned |
