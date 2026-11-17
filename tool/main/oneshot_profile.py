@@ -65,10 +65,15 @@ def kinds_of(o: dict) -> list[str]:
 
 
 def waits_at(o: dict) -> str | None:
-    """The stage the run waits at in this version, stopped with reason `kind`: several kinds have no core
-    contract tests yet."""
+    """The stage the run waits at in this version, stopped with reason `kind`: several kinds have no split yet."""
 
-    return "tests" if len(kinds_of(o)) > 1 else KIND_STOPS.get(kind_of(o))
+    return "split" if len(kinds_of(o)) > 1 else KIND_STOPS.get(kind_of(o))
+
+
+def shape(o: dict) -> str:
+    """Which stage instructions and checks a run takes: its one kind, or `kinds` for several sharing one core."""
+
+    return "kinds" if len(kinds_of(o)) > 1 else kind_of(o)
 
 
 def _kinds(kind: str | list[str]) -> list[str]:

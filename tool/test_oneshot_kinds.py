@@ -12,7 +12,8 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from main import oneshot, oneshot_brief as brief, oneshot_build, oneshot_sheet as sheet, oneshot_spec, specs
+from main import (oneshot, oneshot_brief as brief, oneshot_build, oneshot_review, oneshot_sheet as sheet, oneshot_spec,
+                  specs)
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_core import DESIGN, GLOSSARY, REQS, answer
 from test_oneshot_spec import fenced, o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
@@ -132,29 +133,62 @@ def test_several_kinds_without_a_web_app_have_no_endpoints():
     sheet.checked(sheet.parsed(DESIGN, ["android", "desktop"]), REQS, GLOSSARY, {"auth": "password"})
 
 
-def test_approving_several_kinds_core_commits_it_and_waits_before_its_tests(several):
+def test_approving_several_kinds_core_commits_it_and_starts_its_tests(several):
     oneshot_spec.saved("budget", oneshot={"stage": "r1", "design": sheet.parsed(KINDS_DESIGN, KINDS),
                                           "r1": {"round": 1, "decisions": {}, "marks": {}, "warnings": []}})
     items = sheet.decidable(o()["design"], KINDS_REQS)
-    with patch.object(oneshot_build, "begin", lambda repo: pytest.fail("the tests turn is the next step's")):
+    begun = []
+    with patch.object(oneshot_build, "begin", begun.append):
         oneshot_spec.decide("budget", on_sheet(decisions={i: {"approve": True} for i in items}))
-    assert o()["stage"] == "tests" and o()["stopped"]["reason"] == "kind" and not o().get("working")
+    assert begun == ["budget"] and o()["stage"] == "tests" and not o().get("stopped")
     assert json.loads((several / "docs/design/core.json").read_text(encoding="utf-8"))["api"][0]["id"] == "P1"
     assert "/history" in json.loads((several / "docs/design/api.yaml").read_text(encoding="utf-8"))["paths"]
     shown = subprocess.run(["git", "show", "--stat", "HEAD"], cwd=several, capture_output=True, text=True).stdout
     assert "core.md" in shown and "api.yaml" in shown and "core design" in shown
-    with pytest.raises(HTTPException):   # neither `[재개]` nor a restart takes the tests on
+
+
+def test_several_kinds_test_and_build_the_core_alone_with_its_tests_as_the_gate(several):
+    oneshot_spec.saved("budget", oneshot={"design": sheet.parsed(KINDS_DESIGN, KINDS), "tests_head": "abc",
+                                          "gate": "cargo test", "contract": ["core/tests/seen.rs"]})
+    spec = specs.load("budget", oneshot.BRANCH)
+    with patch.object(oneshot_build.oneshot_android, "build_env", lambda: pytest.fail("no Android toolchain")):
+        assert oneshot_build.toolchain(spec) is None
+        tests, build = oneshot_build.tests_text(spec), oneshot_build.build_text(spec)
+    assert "core a new product's kinds share" in tests and "{toolchain}" not in tests and "debug APK" not in tests
+    assert "every kind they\npicked shares" in build and "`cargo test`" in build
+    (several / "core/tests").mkdir(parents=True)
+    (several / "core/tests/seen.rs").write_text("fn test_a_box_already_translated_is_skipped() {}")
+    runner = {"command": "cargo test -- -Z unstable-options --format junit > {report}", "contract": ["core/tests/seen.rs"]}
+    assert oneshot_build.declared(several, fenced("oneshot-runner", runner), "kinds")["after"] == []   # no lint, no APK
+
+
+def test_an_approved_review_of_several_kinds_waits_before_the_split(several):
+    oneshot_spec.saved("budget", oneshot={"stage": "review", "working": "review", "built_head": "abc",
+                                          "design": sheet.parsed(KINDS_DESIGN, KINDS), "tests_head": "t",
+                                          "contract": ["core/tests/seen.rs"]})
+    store, spec = oneshot_spec.store("budget"), specs.load("budget", oneshot.BRANCH)
+    assert "reviewer of the core a new product's kinds" in oneshot.prompt("review", "kinds")
+    assert "this repository's core build" in oneshot_review.review_text(
+        {**spec, "start_head": "base"}, "abc", "read it")
+    with patch.object(oneshot_spec, "handoff", lambda *a, **k: pytest.fail("the split is the next step's")):
+        following = oneshot_review.decided("budget", store, spec, {"verdict": "approve", "head": "abc", "findings": []})
+    assert following is None and o()["stage"] == "split" and o()["stopped"]["reason"] == "kind"
+    assert not o().get("working") and o()["reviews"][-1]["verdict"] == "approve"
+    with pytest.raises(HTTPException):   # neither `[재개]` nor a restart takes the split on
         oneshot_spec.resume("budget")
     with patch.object(oneshot, "restarted", lambda store: pytest.fail("a waiting stage is not restarted")):
         oneshot_spec.recover()
-    assert o()["stopped"]["reason"] == "kind"
+    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "split"
 
 
-def test_a_run_of_several_kinds_an_earlier_version_stopped_at_the_design_is_taken_on(several):
-    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "kind", "detail": "다음 버전", "state": "design"}})
+@pytest.mark.parametrize("stage", ["design", "tests"])
+def test_a_run_of_several_kinds_an_earlier_version_stopped_is_taken_on(several, stage):
+    oneshot_spec.saved("budget", oneshot={"stage": stage, "stopped": {"reason": "kind", "detail": "다음 버전",
+                                                                      "state": stage}})
     oneshot_spec.recover()
     assert o()["stopped"]["reason"] == "restart"
     started = []
-    with patch.object(oneshot_spec, "start", lambda repo, *a, **k: started.append(a)):
+    with patch.object(oneshot_spec, "start", lambda repo, *a, **k: started.append(a)), \
+            patch.object(oneshot_build, "resume", lambda repo: started.append(("tests",))):
         oneshot_spec.resume("budget")
-    assert started == [(oneshot_spec.RUNNING["design"],)]
+    assert started == [(oneshot_spec.RUNNING["design"],)] if stage == "design" else started == [("tests",)]

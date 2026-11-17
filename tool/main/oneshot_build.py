@@ -24,7 +24,7 @@ from xml.etree import ElementTree
 from fastapi import HTTPException
 
 from . import connect, oneshot, oneshot_android, oneshot_spec, refactor_run, runtime, specs, work
-from .oneshot_profile import charged, environment, kind_of
+from .oneshot_profile import charged, environment, shape
 from .query import _lock as work_lock, hold
 
 MAX_ATTEMPTS = 3
@@ -151,7 +151,7 @@ TOOLCHAIN = ("JAVA_HOME", "ANDROID_HOME", "ANDROID_USER_HOME", "GRADLE_USER_HOME
 def toolchain(spec: dict) -> dict | None:
     """The environment an Android run's tests and gate run in, or `None` for the server's own."""
 
-    return oneshot_android.build_env() if kind_of(spec["oneshot"]) == "android" else None
+    return oneshot_android.build_env() if shape(spec["oneshot"]) == "android" else None
 
 
 def toolchain_text(spec: dict) -> str:
@@ -165,7 +165,7 @@ def toolchain_text(spec: dict) -> str:
 
 
 def tests_text(spec: dict) -> str:
-    kind = kind_of(spec["oneshot"])
+    kind = shape(spec["oneshot"])
     text = oneshot.prompt("tests", kind).replace("{tests}", json.dumps(planned(spec), ensure_ascii=False, indent=2)) \
         .replace("{profile}", environment(spec["oneshot"]))
     return text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text
@@ -173,7 +173,7 @@ def tests_text(spec: dict) -> str:
 
 def build_text(spec: dict) -> str:
     o = spec["oneshot"]
-    kind = kind_of(o)
+    kind = shape(o)
     text = oneshot.prompt("build", kind).replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
         .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"]))
     return text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text
@@ -457,7 +457,7 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
     o = spec["oneshot"]
     if specs.sh(["git", "merge-base", "--is-ancestor", o["design_head"], "HEAD"], path).returncode:
         return f"HEAD 가 승인된 설계 커밋 {o['design_head'][:12]} 위에 있지 않다"
-    runner = declared(path, final, kind_of(o))
+    runner = declared(path, final, shape(o))   # several kinds: the core's tests alone, each kind's build is 9c's
     names = changed(path, o["design_head"])
     # A case is pinned by its class and name, its file only when named: a planned test outside the named files
     # could be weakened later with nothing to show for it.
