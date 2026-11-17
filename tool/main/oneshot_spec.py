@@ -99,6 +99,9 @@ def kept(spec: dict, value, where: str) -> tuple[list[dict], list[dict]]:
                                                       {"kind": "decision", "locator": where})} for r in reqs]
     if found := sheet.cycle({r["id"]: r for r in reqs}):   # refused here, where the requirements can still change
         raise ValueError(f"요구의 `depends_on` 이 돌고 돈다 — {' → '.join(found)}")
+    picked = kinds_of(o)   # an S2 turn and an R1 edit alike: a requirement names only the owner's kinds
+    if beyond := [r["id"] for r in reqs if "kinds" in r and not (r["kinds"] and set(r["kinds"]) <= set(picked))]:
+        raise ValueError(f"요구의 `kinds` 는 주인이 고른 종류({', '.join(picked)}) 가운데 하나 이상이다: {', '.join(beyond)}")
     words = owner_words(o)
     if renamed := [g["term"] for g in o.get("glossary") or []
                    if g["term"] in words and g["term"] not in {x["term"] for x in glossary}]:
@@ -125,10 +128,7 @@ def spec_turn(final: str, spec: dict):
         raise ValueError("`oneshot-spec` 블록이 하나 있어야 한다")
     value = json.loads(found["oneshot-spec"])
     reqs, glossary = kept(spec, value, "S2")   # refuses anything but an object first
-    picked = kinds_of(spec["oneshot"])
-    if beyond := [r["id"] for r in reqs if "kinds" in r and not (r["kinds"] and set(r["kinds"]) <= set(picked))]:
-        raise ValueError(f"요구의 `kinds` 는 주인이 고른 종류({', '.join(picked)}) 가운데 하나 이상이다: {', '.join(beyond)}")
-    stack = stacked(value.get("stack") or [], picked)
+    stack = stacked(value.get("stack") or [], kinds_of(spec["oneshot"]))
     if early := unanswered(spec["oneshot"], stack):
         raise ValueError("주인이 답하기 전에 `confirmed` 로 둔 스택 부분이 있다 — 묶음을 묻고, 주인의 답을 받은 다음 턴에 "
                          f"확정한다: {', '.join(early)}")

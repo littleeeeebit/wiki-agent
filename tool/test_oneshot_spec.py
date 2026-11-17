@@ -507,6 +507,12 @@ def test_a_redesign_may_not_move_items_outside_its_reach_or_rename_the_owners_te
     with replies(renamed, renamed):
         oneshot_spec.redesign("budget", {"R1": "고쳐라"}, sorted(sheet.dependents(sheet.parsed(DESIGN), REQS, {"R1"})))
     assert "지출" in o()["stopped"]["detail"]
+    for kinds in (["desktop"], []):   # an R1 edit names only the kinds the owner picked, as S2 does
+        scoped = answer(DESIGN, fenced("oneshot-spec", {"requirements": [{**REQS[0], "kinds": kinds}, *REQS[1:]],
+                                                        "glossary": GLOSSARY}))
+        with replies(scoped, scoped):
+            oneshot_spec.redesign("budget", {"R1": "고쳐라"}, sorted(sheet.dependents(sheet.parsed(DESIGN), REQS, {"R1"})))
+        assert "`kinds`" in o()["stopped"]["detail"] and "kinds" not in specs.load("budget", oneshot.BRANCH)["requirements"][0]
 
 
 def test_a_model_answer_of_the_wrong_type_is_refused_and_an_unforeseen_failure_stops(world):

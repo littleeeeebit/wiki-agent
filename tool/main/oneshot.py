@@ -162,15 +162,18 @@ def saved_profile(kind: str) -> dict:
         return {}
 
 
-def prefilled(kinds: list[str]) -> dict:
+def prefilled(kinds: list[str]) -> tuple[dict, set[str]]:
     """Each kind's saved profile over the schema's defaults; `asked` fields stay empty on a first run. A field
-    several kinds share is prefilled only where every one of them holds the same value, and is empty otherwise."""
+    several kinds share is prefilled only where every one of them holds the same value; otherwise it is empty
+    and contested, the owner's alone to fill."""
 
-    out = {}
+    out, contested = {}, set()
     for k, f in schema(kinds).items():
         held = {json.dumps(saved_profile(one).get(k, f["default"])) for one in kinds if k in schema(one)}
         out[k] = json.loads(held.pop()) if len(held) == 1 else ""
-    return out
+        if not out[k] and len(held) > 1:
+            contested.add(k)
+    return out, contested
 
 
 # -- Model turns -----------------------------------------------------------------------
@@ -386,8 +389,8 @@ def empty(path: Path) -> bool:
 def environment(rid: str) -> None:
     run = load(rid)
     kind = kinds_of(run)
-    base = prefilled(kind)
-    if not base.get("github_owner"):
+    base, contested = prefilled(kind)
+    if not base.get("github_owner") and "github_owner" not in contested:
         base["github_owner"] = gh_user()
     shown = {k: {**{x: f[x] for x in ("options", "enabled", "text") if x in f}} for k, f in schema(kind).items()}
     text = (f"The owner's sentence:\n\n{run['sentence']}\n\nThe confirmed restatement:\n\n"
@@ -396,6 +399,7 @@ def environment(rid: str) -> None:
             + f"The prefilled profile:\n\n{json.dumps(base, ensure_ascii=False)}\n")
     found = turned(rid, "profile", PROFILE_PROMPT, text, "oneshot-profile", lambda v: proposal(v, kind))
     if found is not None:
+        found = {k: v for k, v in found.items() if k not in contested}   # the kinds' saved answers disagree there
         values = {**base, **{k: v["value"] for k, v in found.items()}}
         changed(rid, profile=values, proposed=found, working=None)
 

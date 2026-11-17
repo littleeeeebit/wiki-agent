@@ -246,8 +246,10 @@ def test_a_restatement_an_earlier_intake_marked_unsupported_cannot_be_confirmed(
 
 def test_several_kinds_share_one_card_prefilled_only_where_their_profiles_agree(world):
     oneshot.PROFILES.mkdir(parents=True)
-    for kind, saved in (("webapp", {"ui_language": "en", "license": "mit", "responsive": "desktop"}),
-                        ("android", {"ui_language": "ko", "license": "mit", "device": "galaxy-s21"})):
+    for kind, saved in (("webapp", {"ui_language": "en", "license": "mit", "responsive": "desktop",
+                                    "github_owner": "web-owner", "llm": "openai"}),
+                        ("android", {"ui_language": "ko", "license": "mit", "device": "galaxy-s21",
+                                     "github_owner": "android-owner", "llm": "anthropic"})):
         (oneshot.PROFILES / f"{kind}.json").write_text(json.dumps(saved), "utf-8")
     with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-intent", INTENT), {}, False)):
         rid = oneshot.start(oneshot.Start(kinds=["android", "webapp"], sentence="번역기"))["id"]
@@ -255,9 +257,12 @@ def test_several_kinds_share_one_card_prefilled_only_where_their_profiles_agree(
     shown = oneshot.intent(rid, oneshot.Intent(confirm=True))
     assert shown["state"] == "environment" and not shown["stopped"]
     told = []
+    # The model may not fill a field the kinds' saved answers disagree on, and neither does the signed-in account.
+    proposal = {"llm": {"value": "anthropic", "why": "번역에 쓴다"}}
     with patch.object(oneshot, "ask", lambda store, role, system, text, *a: told.append(text) or (
-            fenced("oneshot-profile", {}), {}, False)):
+            fenced("oneshot-profile", proposal), {}, False)), patch.object(oneshot, "gh_user", lambda: "signed-in-user"):
         oneshot.environment(rid)
+    assert (oneshot.load(rid)["profile"]["github_owner"], oneshot.load(rid)["profile"]["llm"]) == ("", "")
     assert "responsive" in told[0] and "galaxy-s21" in told[0]   # both kinds' own fields, and the phones to pick from
     with patch.object(oneshot.oneshot_android, "status", lambda: {"missing": []}):
         shown = oneshot.view(oneshot.load(rid))
@@ -267,7 +272,8 @@ def test_several_kinds_share_one_card_prefilled_only_where_their_profiles_agree(
         assert (p["device"], p["responsive"], p["license"], p["ui_language"]) == ("galaxy-s21", "desktop", "mit", "")
         assert any("ui_language" in e for e in shown["errors"])
         shown = oneshot.profile(rid, oneshot.Profile(values={"ui_language": "both", "docs_language": "ko",
-                                                             "visibility": "private"}, confirm=True))
+                                                             "visibility": "private", "llm": "anthropic",
+                                                             "github_owner": "someone"}, confirm=True))
     assert shown["state"] == "bootstrap"
     with patch.object(oneshot.oneshot_android, "status", lambda: {"missing": []}):
         run = finished(world, rid)
