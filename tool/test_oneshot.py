@@ -24,7 +24,7 @@ from test_main import no_machine_settings  # noqa: F401 — the fixture is autou
 LAUNCH = oneshot.launch   # the real one; `world` replaces it with a synchronous state change
 EXAMINE = connect.examine   # the real one; `world` replaces it with a recorder
 
-INTENT = {"restated": "가계부를 만든다.", "kind": "webapp", "name": "Budget Tracker", "users": "나 혼자 쓴다.",
+INTENT = {"restated": "가계부를 만든다.", "name": "Budget Tracker", "users": "나 혼자 쓴다.",
           "first_screen": "이번 달 지출을 본다."}
 PROFILE = {**{k: f["default"] for k, f in oneshot_profile.SCHEMA.items()}, "visibility": "private", "docs_language": "ko",
            "github_owner": "someone"}
@@ -91,7 +91,7 @@ def world(tmp_path):
 def made(world, **extra) -> str:
     rid = "0123456789abcdef"
     oneshot.save({"id": rid, "version": oneshot.VERSION, "created": 0, "state": "bootstrap", "working": "bootstrap", "stopped": None,
-                  "sentence": "가계부 만들어줘", "picked": "", "intent": {**INTENT, "name": "budget-tracker"},
+                  "sentence": "가계부 만들어줘", "picked": "", "intent": {**INTENT, "name": "budget-tracker", "kind": "webapp"},
                   "confirmed": True, "profile": dict(PROFILE), "proposed": {},
                   "identity": {"path": str(world["workspace"] / "budget-tracker"), "name": "budget-tracker",
                                "owner": "someone", "spec_id": oneshot.BRANCH, "branch": oneshot.BRANCH},
@@ -103,10 +103,13 @@ def made(world, **extra) -> str:
 # -- Blocks and the schema ------------------------------------------------------------
 
 def test_intent_block_is_checked_and_the_name_becomes_a_task_name():
-    assert oneshot.intent_of(INTENT)["name"] == "budget-tracker"
-    for broken in ({**INTENT, "kind": "game"}, {**INTENT, "restated": " "}, {**INTENT, "name": "!!!"}, []):
+    intent = oneshot.intent_of(INTENT, ["android", "webapp"])
+    assert intent["name"] == "budget-tracker" and intent["kind"] == "android" and intent["kinds"] == ["android", "webapp"]
+    # The kind is the owner's: a block naming one is refused, whichever it names.
+    for broken in ({**INTENT, "kind": "android"}, {**INTENT, "kinds": ["webapp"]}, {**INTENT, "restated": " "},
+                   {**INTENT, "name": "!!!"}, []):
         with pytest.raises(ValueError):
-            oneshot.intent_of(broken)
+            oneshot.intent_of(broken, ["webapp"])
 
 
 def test_profile_block_refuses_fields_options_and_choices_outside_the_schema():
@@ -158,7 +161,7 @@ def test_ledger_charges_estimates_and_meters_codex_by_hours():
 # -- Intake and the card ------------------------------------------------------------------
 
 def test_intake_restates_and_a_refused_block_is_asked_again_once(world):
-    replies = [fenced("oneshot-intent", {**INTENT, "kind": "game"}), fenced("oneshot-intent", INTENT)]
+    replies = [fenced("oneshot-intent", {**INTENT, "kind": "android"}), fenced("oneshot-intent", INTENT)]
     heard = []
 
     def ask(store, role, system, text, where=None, images=()):
@@ -166,16 +169,17 @@ def test_intake_restates_and_a_refused_block_is_asked_again_once(world):
         return replies.pop(0), {"cost_usd": 0.1}, False
 
     with patch.object(oneshot, "ask", ask):
-        started = oneshot.start(oneshot.Start(sentence="가계부 만들어줘"))
+        started = oneshot.start(oneshot.Start(kinds=["webapp"], sentence="가계부 만들어줘"))
         oneshot.intake(started["id"])
     run = oneshot.load(started["id"])
     assert run["intent"]["name"] == "budget-tracker" and run["sentence"] == "가계부 만들어줘"
     assert "was refused" in heard[1] and run["spend"]["calls"] == 2
+    assert "The kinds the owner picked: webapp" in heard[0] and run["intent"]["kind"] == "webapp"
 
 
 def test_two_refused_blocks_stop_with_block(world):
     with patch.object(oneshot, "ask", lambda *a: ("블록 없음", {}, False)):
-        rid = oneshot.start(oneshot.Start(sentence="가계부"))["id"]
+        rid = oneshot.start(oneshot.Start(kinds=["webapp"], sentence="가계부"))["id"]
         oneshot.intake(rid)
     assert oneshot.load(rid)["stopped"]["reason"] == "block"
 
@@ -185,13 +189,13 @@ def test_a_picked_folder_must_be_empty(world):
     full.mkdir()
     (full / ".hidden").write_text("x")
     with pytest.raises(HTTPException) as refused:
-        oneshot.start(oneshot.Start(sentence="가계부", path=str(full)))
+        oneshot.start(oneshot.Start(kinds=["webapp"], sentence="가계부", path=str(full)))
     assert refused.value.status_code == 400
 
 
 def test_confirming_the_intent_reserves_the_name_and_refuses_conflicts(world):
     with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-intent", INTENT), {}, False)):
-        rid = oneshot.start(oneshot.Start(sentence="가계부"))["id"]
+        rid = oneshot.start(oneshot.Start(kinds=["webapp"], sentence="가계부"))["id"]
         oneshot.intake(rid)
     connect.RECORDS.mkdir(parents=True)
     record = connect.RECORDS / "budget-tracker.json"
@@ -208,25 +212,60 @@ def test_confirming_the_intent_reserves_the_name_and_refuses_conflicts(world):
     del world["github"].repos["someone/budget-tracker"]
     shown = oneshot.intent(rid, oneshot.Intent(confirm=True))
     assert shown["identity"]["name"] == "budget-tracker" and shown["state"] == "environment"
-    other = oneshot.start(oneshot.Start(sentence="가계부 둘"))["id"]
+    other = oneshot.start(oneshot.Start(kinds=["webapp"], sentence="가계부 둘"))["id"]
     assert "다른 원샷 실행" in "; ".join(oneshot.conflicts(other, world["workspace"] / "budget-tracker",
                                                           "budget-tracker", "someone"))
 
 
-def test_unsupported_kind_ends_the_intake(world):
-    with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-intent", {**INTENT, "kind": "cli"}), {}, False)):
-        rid = oneshot.start(oneshot.Start(sentence="CLI 도구"))["id"]
-        oneshot.intake(rid)
+def test_the_owner_picks_the_kinds_at_the_start(world):
+    for kinds in ([], ["cli"], ["desktop"], ["webapp", "webapp"]):
+        with pytest.raises(HTTPException) as refused:
+            oneshot.start(oneshot.Start(kinds=kinds, sentence="도구"))
+        assert refused.value.status_code == 400
+    assert not oneshot.runs()
+    assert oneshot.start(oneshot.Start(kinds=["android", "webapp"], sentence="번역기"))["kinds"] == ["android", "webapp"]
+
+
+def test_a_restatement_an_earlier_intake_marked_unsupported_cannot_be_confirmed(world):
+    rid = made(world, state="intake", working=None, confirmed=False, identity=None, profile=None,
+               intent={**INTENT, "name": "budget-tracker", "kind": "cli", "unsupported": True})
     with pytest.raises(HTTPException) as refused:
         oneshot.intent(rid, oneshot.Intent(confirm=True))
     assert "webapp" in refused.value.detail
+    # A correction does not wash the kind through a new block: the intake stops before any turn.
+    oneshot.intent(rid, oneshot.Intent(confirm=False, edit="더 짧게"))
+    with patch.object(oneshot, "ask", lambda *a: pytest.fail("no intake turn for a kind this version lacks")):
+        oneshot.intake(rid, "더 짧게")
+    run = oneshot.load(rid)
+    assert run["stopped"]["reason"] == "kinds" and run["intent"]["kind"] == "cli" and run["state"] == "intake"
+    oneshot.changed(rid, stopped=None, intent={**run["intent"], "unsupported": False})   # no marker: the kind decides
+    with pytest.raises(HTTPException):
+        oneshot.intent(rid, oneshot.Intent(confirm=True))
+    assert oneshot.load(rid)["state"] == "intake"
+
+
+def test_several_kinds_stop_at_the_card_and_no_resume_takes_them_on(world):
+    with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-intent", INTENT), {}, False)):
+        rid = oneshot.start(oneshot.Start(kinds=["android", "webapp"], sentence="번역기"))["id"]
+        oneshot.intake(rid)
+    shown = oneshot.intent(rid, oneshot.Intent(confirm=True))
+    assert shown["stopped"]["reason"] == "kinds" and shown["state"] == "intake" and not shown["identity"]
+    with pytest.raises(HTTPException) as refused:
+        oneshot.resume(rid, oneshot.Resume())
+    assert refused.value.status_code == 409 and oneshot.load(rid)["stopped"]["reason"] == "kinds"
+
+
+def test_an_intake_started_before_the_owner_picked_kinds_stops(world):
+    rid = made(world, state="intake", working=None, confirmed=False, identity=None, profile=None, intent=None)
+    oneshot.intake(rid)
+    assert oneshot.load(rid)["stopped"]["reason"] == "kinds"
 
 
 def test_an_android_app_confirms_its_card_into_the_bootstrap_with_its_own_ignores(world):
     """A manga screen translator for a Galaxy S21 was refused as `desktop`; `android` now runs past S1."""
 
-    with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-intent", {**INTENT, "kind": "android"}), {}, False)):
-        rid = oneshot.start(oneshot.Start(sentence="갤럭시 S21 에서 만화를 번역하는 앱"))["id"]
+    with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-intent", INTENT), {}, False)):
+        rid = oneshot.start(oneshot.Start(kinds=["android"], sentence="갤럭시 S21 에서 만화를 번역하는 앱"))["id"]
         oneshot.intake(rid)
     oneshot.intent(rid, oneshot.Intent(confirm=True))
     told = []
@@ -265,7 +304,7 @@ def test_the_card_is_prefilled_from_the_kind_and_confirmed_only_without_errors(w
     (oneshot.PROFILES / "webapp.json").write_text(json.dumps({"styling": "css", "ui_language": "en",
                                                               "visibility": "public"}), "utf-8")
     with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-intent", INTENT), {}, False)):
-        rid = oneshot.start(oneshot.Start(sentence="가계부"))["id"]
+        rid = oneshot.start(oneshot.Start(kinds=["webapp"], sentence="가계부"))["id"]
         oneshot.intake(rid)
     oneshot.intent(rid, oneshot.Intent(confirm=True))
     with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-profile", {"llm": {"value": "anthropic",
@@ -535,7 +574,7 @@ def test_a_turn_cut_by_the_server_dying_is_charged_once_as_unknown(world):
         raise SystemExit("the server went down inside the turn")
 
     with patch.object(oneshot, "ask", dies):
-        rid = oneshot.start(oneshot.Start(sentence="가계부"))["id"]
+        rid = oneshot.start(oneshot.Start(kinds=["webapp"], sentence="가계부"))["id"]
         with pytest.raises(SystemExit):
             oneshot.intake(rid)
     with patch.object(oneshot_profile, "estimate", lambda role: 2.0):
@@ -568,14 +607,14 @@ def test_a_running_turn_writes_heartbeats(world):
 
 def test_a_launch_refused_at_shutdown_leaves_the_run_where_it_was(world):
     with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-intent", INTENT), {}, False)):
-        rid = oneshot.start(oneshot.Start(sentence="가계부"))["id"]
+        rid = oneshot.start(oneshot.Start(kinds=["webapp"], sentence="가계부"))["id"]
         oneshot.intake(rid)
     with patch.object(oneshot, "launch", LAUNCH), patch.object(oneshot, "environment", lambda rid: None), \
          patch.object(oneshot, "intake", lambda rid, *a: None):
         runtime.stopping.set()
         try:
             for refused_call in (lambda: oneshot.intent(rid, oneshot.Intent(confirm=True)),
-                                 lambda: oneshot.start(oneshot.Start(sentence="가계부 둘"))):
+                                 lambda: oneshot.start(oneshot.Start(kinds=["webapp"], sentence="가계부 둘"))):
                 with pytest.raises(HTTPException) as refused:
                     refused_call()
                 assert refused.value.status_code == 503
@@ -595,7 +634,7 @@ def test_a_failed_turn_keeps_the_cost_it_reported(world):
         raise oneshot.Failed("provider error", {"cost_usd": 30.0})
 
     with patch.object(oneshot, "ask", fails), patch.object(oneshot_profile, "estimate", lambda role: 2.0):
-        rid = oneshot.start(oneshot.Start(sentence="가계부"))["id"]
+        rid = oneshot.start(oneshot.Start(kinds=["webapp"], sentence="가계부"))["id"]
         oneshot.intake(rid)
     run = oneshot.load(rid)
     assert run["stopped"]["reason"] == "block" and run["spend"]["usd"] == 30.0 and run["spend"]["unknown"] == 0
@@ -629,7 +668,7 @@ def window(*a):
 
 def test_the_start_fixes_three_models_and_every_role_reads_its_own(world):
     with patch.object(oneshot, "launch", lambda *a, **f: None):
-        rid = oneshot.start(oneshot.Start(sentence="가계부", models=MODELS))["id"]
+        rid = oneshot.start(oneshot.Start(kinds=["webapp"], sentence="가계부", models=MODELS))["id"]
     assert oneshot.load(rid)["models"] == MODELS
     store = oneshot.run_store(rid)
     with patch.dict(oneshot.ROLES, REGISTERED), patch("main.query.config", window):
@@ -661,7 +700,7 @@ def test_an_empty_model_is_the_roles_own_default_and_an_older_run_keeps_the_wind
     empty = {"spec": {"model": "", "effort": ""}, "build": {"model": "", "effort": "max"},
              "review": {"model": "", "effort": ""}}
     with patch.object(oneshot, "launch", lambda *a, **f: None):
-        rid = oneshot.start(oneshot.Start(sentence="가계부", models=empty))["id"]
+        rid = oneshot.start(oneshot.Start(kinds=["webapp"], sentence="가계부", models=empty))["id"]
     # "The Review Loop's model" is named at the start, from the settings then: Codex's default, `high`.
     assert oneshot.load(rid)["models"]["review"] == {"model": "codex:gpt-6.1-sol", "effort": "high"}
     store = oneshot.run_store(rid)
@@ -681,7 +720,7 @@ def test_an_empty_model_is_the_roles_own_default_and_an_older_run_keeps_the_wind
                                   {"model": "codex:gpt-other", "effort": "high"}])
 def test_a_model_or_effort_the_cli_would_not_take_is_refused_before_the_run_exists(world, role):
     with pytest.raises(HTTPException) as refused:
-        oneshot.start(oneshot.Start(sentence="가계부", models={**MODELS, "build": role}))
+        oneshot.start(oneshot.Start(kinds=["webapp"], sentence="가계부", models={**MODELS, "build": role}))
     assert refused.value.status_code == 400 and not list(oneshot.RUNS.glob("*.json"))
 
 
@@ -689,7 +728,7 @@ def test_a_model_or_effort_the_cli_would_not_take_is_refused_before_the_run_exis
                                   {"model": "", "effort": "max"}])
 def test_a_listed_or_typed_model_and_its_own_effort_are_taken(world, role):
     with patch.object(oneshot, "launch", lambda *a, **f: None):
-        rid = oneshot.start(oneshot.Start(sentence="가계부", models={**MODELS, "build": role}))["id"]
+        rid = oneshot.start(oneshot.Start(kinds=["webapp"], sentence="가계부", models={**MODELS, "build": role}))["id"]
     assert oneshot.load(rid)["models"]["build"] == role
 
 

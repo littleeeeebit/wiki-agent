@@ -64,10 +64,10 @@ translator is two kinds at once, and the owner knew which.
 ### The kinds on the record
 
 The run record holds `kinds`, the owner's list in the order they picked, one
-or more of `SUPPORTED_KINDS`. The intent keeps everything else. A record or
-spec from before this step has `intent.kind` and reads as `[kind]`.
-`kind_of(o)` stays for the code that runs once per kind and is handed that
-kind; `kinds_of(o)` gives the list.
+or more of `SUPPORTED_KINDS`. The server writes them into the intent as
+`kinds`, and the intent's `kind` is the first of them, so every stage of one
+kind reads it through `kind_of(o)` unchanged. A record or spec from before
+this step has only `intent.kind` and reads as `[kind]`.
 
 ### S0 — the start screen and the intake
 
@@ -221,7 +221,7 @@ step 7's did.
 
 | # | Stage | Deliverable | Status |
 | --- | --- | --- | --- |
-| 9a | The owner picks | The start screen's kinds, the intake restating them and returning none, `kinds` on the record with old records read as one, the card showing them, S2's `rekind` stop; a run of one kind runs end to end as today | Planned |
+| 9a | The owner picks | The start screen's kinds, the intake restating them and returning none, `kinds` on the record with old records read as one, the card showing them, S2's `rekind` stop; a run of one kind runs end to end as today | Done — several kinds stop with `kinds` at the restatement until 9b |
 | 9b | One core for several kinds | The union card with its prefill and write-back, S2's shared and per-kind parts and per-kind requirements, the core design and R1 across kinds, S4 and the backend review once; the `device` deferral and `owed` list, closed in Android's S7 loop | Planned |
 | 9c | Screens for each kind | Each feature's kinds, the split and the board once, S6 and R2 across kinds, the build's per-kind gate, each kind's S7 loop in turn with its owed checks, R3 across kinds, S8 with every kind's artifacts | Planned |
 | 9d | Desktop session | The run-owned Windows session for S7: the research note, starting the app apart from the owner's windows, reading its UI tree, refusals and cleanup proof | Planned |

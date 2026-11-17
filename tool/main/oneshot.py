@@ -35,7 +35,7 @@ from workspace import TASK, create
 
 from . import channels, connect, oneshot_android, prerequisite_review, runtime, specs
 from .oneshot_files import as_planned, git, planned, tracked  # noqa: F401 — `tracked` is read by tests
-from .oneshot_profile import (DEVICES, KINDS, SUPPORTED_KINDS, charged, cut, ledger, problems, proposal, schema,
+from .oneshot_profile import (DEVICES, SUPPORTED_KINDS, charged, cut, ledger, problems, proposal, schema,
                               current)
 from .query import ROOT
 
@@ -296,29 +296,35 @@ def turned(rid: str | Store, role: str, system: str, text: str, name: str, check
 
 # -- S0 intake ---------------------------------------------------------------------------
 
-def intent_of(value) -> dict:
+def intent_of(value, kinds: list[str]) -> dict:
+    """The intake's block, with the owner's kinds: `kind` is the first one, which every single-kind stage reads."""
+
     if not isinstance(value, dict):
         raise ValueError("`oneshot-intent` 는 객체여야 한다")
-    for key in ("restated", "kind", "name", "users", "first_screen"):
+    if "kind" in value or "kinds" in value:
+        raise ValueError("종류는 주인이 정한다 — 블록에 `kind` 를 넣지 마라")
+    for key in ("restated", "name", "users", "first_screen"):
         if not isinstance(value.get(key), str) or not value[key].strip():
             raise ValueError(f"`{key}` 가 비었다")
-    if value["kind"] not in KINDS:
-        raise ValueError(f"`kind` 는 {', '.join(KINDS)} 중 하나다")
     name = specs.slugged(value["name"])
     if not name:
         raise ValueError("`name` 을 저장소 이름으로 쓸 수 없다")
-    return {k: value[k].strip() for k in ("restated", "kind", "users", "first_screen")} | {"name": name}
+    return ({k: value[k].strip() for k in ("restated", "users", "first_screen")}
+            | {"name": name, "kind": kinds[0], "kinds": list(kinds)})
 
 
 def intake(rid: str, edit: str = "") -> None:
     run = load(rid)
-    text = (f"The owner's sentence, verbatim:\n\n{run['sentence']}\n" +
+    kinds = run.get("kinds") or ([run["intent"]["kind"]] if run.get("intent") else [])
+    # An intake an earlier version started, before the owner picked kinds, or whose model picked one this version lacks.
+    if not kinds or not set(kinds) <= set(SUPPORTED_KINDS):
+        stop(rid, "kinds", "종류를 고르기 전에 시작한 실행이다 — 새 실행을 시작하라")
+        return
+    text = (f"The owner's sentence, verbatim:\n\n{run['sentence']}\n\nThe kinds the owner picked: {', '.join(kinds)}\n" +
             (f"\nYour previous restatement:\n\n{json.dumps(run['intent'], ensure_ascii=False)}\n"
              f"\nThe owner's correction:\n\n{edit}\n" if edit else ""))
-    found = turned(rid, "intake", INTENT_PROMPT, text, "oneshot-intent", intent_of)
+    found = turned(rid, "intake", INTENT_PROMPT, text, "oneshot-intent", lambda v: intent_of(v, kinds))
     if found is not None:
-        if found["kind"] not in SUPPORTED_KINDS:
-            found["unsupported"] = True
         changed(rid, intent=found, working=None)
 
 
@@ -730,6 +736,7 @@ class Start(BaseModel):
     sentence: str
     path: str = ""   # a picked empty folder; empty means a new folder in the workspace
     models: Models = Models()
+    kinds: list[str] = []   # the owner's, in the order picked; no agent sets or changes one
 
 
 class Intent(BaseModel):
@@ -752,6 +759,10 @@ def start(body: Start) -> dict:
     sentence = body.sentence.strip()
     if not sentence or len(sentence) > MAX_SENTENCE:
         raise HTTPException(400, f"만들고 싶은 것을 1–{MAX_SENTENCE}자로 적어라")
+    if not body.kinds:
+        raise HTTPException(400, "무엇을 만드는지 종류를 하나 이상 골라라")
+    if len(set(body.kinds)) != len(body.kinds) or not set(body.kinds) <= set(SUPPORTED_KINDS):
+        raise HTTPException(400, f"고를 수 있는 종류는 {', '.join(SUPPORTED_KINDS)} 이고, 한 번씩이다")
     picked = ""
     if body.path.strip():
         path = Path(body.path.strip()).expanduser()
@@ -778,7 +789,7 @@ def start(body: Start) -> dict:
         save({"id": rid, "version": VERSION, "created": time.time(), "state": "intake", "working": None,
               "stopped": None, "sentence": sentence, "picked": picked, "intent": None, "confirmed": False,
               "profile": None, "proposed": {}, "identity": None, "steps": {}, "github": {}, "base": None,
-              "adopt": False, "spend": ledger(None), "spec": None, "models": models})
+              "adopt": False, "spend": ledger(None), "spec": None, "models": models, "kinds": list(body.kinds)})
         try:
             launch(rid, "intake")
         except HTTPException:   # the record exists already: left stopped, so `[재개]` takes it on
@@ -816,8 +827,12 @@ def intent(rid: str, body: Intent) -> dict:
                 raise HTTPException(400, "고칠 내용을 적어라")
             launch(rid, "intake", body.edit.strip())
             return view(load(rid))
-        if run["intent"].get("unsupported"):
+        # A restatement an earlier version's intake picked the kind of: its actual kinds, not a marker, decide.
+        if not set(run["intent"].get("kinds") or [run["intent"]["kind"]]) <= set(SUPPORTED_KINDS):
             raise HTTPException(409, f"`{run['intent']['kind']}` 는 이 버전에서 만들 수 없다 — 지금은 {', '.join(SUPPORTED_KINDS)} 만")
+        if len(run["intent"].get("kinds") or []) > 1:   # the union card is step 9b's (`docs/plans/oneshot/9-kinds.md`)
+            return view(stop(rid, "kinds", "여러 종류를 한 실행에서 만드는 것은 아직 이 버전에 없다 — 이 실행은 여기서 멈춘다. "
+                                          "지금은 종류를 하나만 골라 새 실행을 시작하라"))
         name = specs.slugged(body.name or run["intent"]["name"])
         if run["picked"]:
             path = Path(run["picked"])
@@ -877,6 +892,8 @@ def resume(rid: str, body: Resume) -> dict:
         run = load(rid)
         if run.get("committed") or not run.get("stopped") or run.get("working"):
             raise HTTPException(409, "멈춘 실행이 아니다")
+        if run["stopped"]["reason"] == "kinds":   # the owner's kinds cannot go on in this run: no `[재개]` takes it on
+            raise HTTPException(409, run["stopped"]["detail"])
         if run["stopped"]["reason"] == "kind":   # a card an earlier version kept: the kind goes on now, so the
             return view(changed(rid, stopped=None))   # card waits for the owner's confirm again
         if run.get("version", 1) < 3 and run.get("identity") and any(   # its files, even some, carry the old card's stack

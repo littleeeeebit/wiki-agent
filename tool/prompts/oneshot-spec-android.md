@@ -88,6 +88,21 @@ at most three questions:
   point into an `undecided` item and ask about it, or settle it as `assumed`
   and say so.
 
+## When a requirement is beyond this kind
+
+The person picked this kind, and every later stage builds it. An Android app
+is installed on the phone; it is not used in a web browser or installed on a
+computer. When an answer asks for something this kind cannot do, ask one
+`choices` question: change the requirement into something this kind can do,
+or drop it. Never say which kind the person should have picked.
+
+When the person keeps a requirement this kind cannot meet, answering with
+neither, add `"kinds_mismatch"` to the `oneshot-spec` block:
+`{"requirement": "R4", "reason": "…"}`, the requirement's `id` and why this
+kind cannot meet it, in Korean. Say the same in your answer, and that this
+run stops here: the person starts a new run and picks the kinds again. Ask
+nothing in that turn. Leave `kinds_mismatch` out in every other turn.
+
 ## Korean
 
 Every string a person reads is written directly in Korean, as a Korean writer
