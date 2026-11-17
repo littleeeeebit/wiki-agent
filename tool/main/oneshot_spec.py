@@ -169,9 +169,11 @@ def talk(repo: str) -> None:
     # The stack now lives in this spec, in version 3's shape, whatever version the run started at.
     fields = {"glossary": glossary, "stack": stack, "talk": turns, "version": max(o.get("version", 1), 3)}
     if mismatch:   # the owner kept a requirement the run's kind cannot meet: every later stage builds that kind
-        saved(repo, requirements=reqs, oneshot={**fields, "open": "", "working": None, "mismatch": mismatch})
-        store(repo).stop("rekind", f"`{mismatch['requirement']}` 는 이 실행의 종류로 만들 수 없다 — {mismatch['reason']}. "
-                                   "새 실행을 시작해 종류를 다시 골라라")
+        # One save: a server that dies after it never leaves the conversation open again.
+        detail = f"`{mismatch['requirement']}` 는 이 실행의 종류로 만들 수 없다 — {mismatch['reason']}. 새 실행을 시작해 종류를 다시 골라라"
+        with oneshot._lock:
+            saved(repo, requirements=reqs, oneshot={**fields, "open": "", "working": None, "mismatch": mismatch,
+                                                    "stopped": {"reason": "rekind", "detail": detail, "state": o["stage"]}})
         return
     if not why:
         saved(repo, requirements=reqs, oneshot={**fields, "open": ""})

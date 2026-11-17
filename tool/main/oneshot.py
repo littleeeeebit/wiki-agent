@@ -316,7 +316,8 @@ def intent_of(value, kinds: list[str]) -> dict:
 def intake(rid: str, edit: str = "") -> None:
     run = load(rid)
     kinds = run.get("kinds") or ([run["intent"]["kind"]] if run.get("intent") else [])
-    if not kinds:   # an intake an earlier version started, before the owner picked kinds
+    # An intake an earlier version started, before the owner picked kinds, or whose model picked one this version lacks.
+    if not kinds or not set(kinds) <= set(SUPPORTED_KINDS):
         stop(rid, "kinds", "종류를 고르기 전에 시작한 실행이다 — 새 실행을 시작하라")
         return
     text = (f"The owner's sentence, verbatim:\n\n{run['sentence']}\n\nThe kinds the owner picked: {', '.join(kinds)}\n" +
@@ -826,7 +827,8 @@ def intent(rid: str, body: Intent) -> dict:
                 raise HTTPException(400, "고칠 내용을 적어라")
             launch(rid, "intake", body.edit.strip())
             return view(load(rid))
-        if run["intent"].get("unsupported"):   # a restatement an earlier version's intake picked the kind of
+        # A restatement an earlier version's intake picked the kind of: its actual kinds, not a marker, decide.
+        if not set(run["intent"].get("kinds") or [run["intent"]["kind"]]) <= set(SUPPORTED_KINDS):
             raise HTTPException(409, f"`{run['intent']['kind']}` 는 이 버전에서 만들 수 없다 — 지금은 {', '.join(SUPPORTED_KINDS)} 만")
         if len(run["intent"].get("kinds") or []) > 1:   # the union card is step 9b's (`docs/plans/oneshot/9-kinds.md`)
             return view(stop(rid, "kinds", "여러 종류를 한 실행에서 만드는 것은 아직 이 버전에 없다 — 이 실행은 여기서 멈춘다. "

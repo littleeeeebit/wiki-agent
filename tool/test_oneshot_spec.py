@@ -171,8 +171,13 @@ def test_a_requirement_the_owner_keeps_beyond_the_kind_stops_the_run_for_good(wo
     with pytest.raises(ValueError, match="묻지 않는다"):   # the stopping turn asks nothing
         oneshot_spec.spec_turn(fenced("oneshot-spec", {"requirements": REQS, "glossary": GLOSSARY, "kinds_mismatch": beyond})
                                + fenced("choices", BUNDLES), specs.load("budget", oneshot.BRANCH))
-    with replies(fenced("oneshot-spec", {"requirements": REQS, "glossary": GLOSSARY, "kinds_mismatch": beyond})):
+    writes = []
+    real = oneshot_spec.saved
+    with replies(fenced("oneshot-spec", {"requirements": REQS, "glossary": GLOSSARY, "kinds_mismatch": beyond})), \
+         patch.object(oneshot_spec, "saved", lambda repo, **f: writes.append(f) or real(repo, **f)):
         oneshot_spec.talk("budget")
+    # The stop lands with the conversation in one write: no record in between leaves S2 open.
+    assert [w["oneshot"].get("stopped", {}).get("reason") for w in writes if "mismatch" in w.get("oneshot", {})] == ["rekind"]
     assert o()["stopped"]["reason"] == "rekind" and "R1" in o()["stopped"]["detail"] and o()["stage"] == "spec"
     assert o()["mismatch"] == beyond and not o().get("working")
     with pytest.raises(HTTPException) as refused:

@@ -232,6 +232,16 @@ def test_a_restatement_an_earlier_intake_marked_unsupported_cannot_be_confirmed(
     with pytest.raises(HTTPException) as refused:
         oneshot.intent(rid, oneshot.Intent(confirm=True))
     assert "webapp" in refused.value.detail
+    # A correction does not wash the kind through a new block: the intake stops before any turn.
+    oneshot.intent(rid, oneshot.Intent(confirm=False, edit="더 짧게"))
+    with patch.object(oneshot, "ask", lambda *a: pytest.fail("no intake turn for a kind this version lacks")):
+        oneshot.intake(rid, "더 짧게")
+    run = oneshot.load(rid)
+    assert run["stopped"]["reason"] == "kinds" and run["intent"]["kind"] == "cli" and run["state"] == "intake"
+    oneshot.changed(rid, stopped=None, intent={**run["intent"], "unsupported": False})   # no marker: the kind decides
+    with pytest.raises(HTTPException):
+        oneshot.intent(rid, oneshot.Intent(confirm=True))
+    assert oneshot.load(rid)["state"] == "intake"
 
 
 def test_several_kinds_stop_at_the_card_and_no_resume_takes_them_on(world):
