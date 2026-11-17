@@ -229,6 +229,13 @@ def test_r3_opens_on_its_brief_one_line_per_finding_and_an_edited_line_reaches_t
     oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None})
     critique.decide("budget", on_r3(lines={k: {"approve": True} for k in r3["lines"]}, rest=True))
     assert o()["stage"] == "pr"
+    assert "기기에서 확인한 지적" not in critique.r3_sheet(oneshot_spec.spec_of("budget"), lambda n, name: name)
+    oneshot_spec.saved("budget", oneshot={"owed": [{"id": "O1", "kind": "android", "requirement": "R1", "severity": "P1",
+                                                    "location": "a.kt:3", "reason": "상태바를 가린다", "check": "바 아래"}]})
+    shown = critique.r3_sheet(oneshot_spec.spec_of("budget"), lambda n, name: name)
+    last = [x for x in o()["looks"] if not any(f["severity"] == "high" for f in x["findings"])][-1]
+    assert f"모두 에뮬레이터 {last['round']}회차 `{last['head'][:12]}`" in shown
+    assert "- O1 [P1] R1 `a.kt:3`: 상태바를 가린다 — 확인: 바 아래" in shown
 
 
 def test_two_findings_the_harness_words_alike_reach_the_builder_apart_by_where_they_were_seen():

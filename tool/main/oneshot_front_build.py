@@ -44,6 +44,8 @@ def build_front_text(spec: dict) -> str:
     return text.replace("{toolchain}", oneshot_build.toolchain_text(spec)) \
         .replace("{device}", f"{size['width']}×{size['height']} px at {size['dpi']} dpi") \
         .replace("{scenarios}", "\n".join(f"- `{r}`" for r in oneshot_device.scenarios(spec)) or "- (none)") \
+        .replace("{owed}", "\n".join(f"- `{x['id']}` ({x['requirement']}, `{x['location']}`): {x['check']} — {x['reason']}"
+                                     for x in oneshot_device.owed(spec)) or "- (none)") \
         .replace("{permissions}", ", ".join(f"`{p}`" for p in oneshot_device.grants(spec)) or "none") \
         .replace("{suffix}", oneshot_device.suffix(o)) \
         .replace("{fixture}", "yes" if oneshot_device.reads_screen(spec) else "no")

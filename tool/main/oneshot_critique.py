@@ -17,8 +17,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import oneshot, oneshot_brief as brief, oneshot_build, oneshot_front_build as front_build, oneshot_pr, \
-    oneshot_review as review, oneshot_screens as screens, oneshot_spec
+from . import oneshot, oneshot_brief as brief, oneshot_build, oneshot_device as device, \
+    oneshot_front_build as front_build, oneshot_pr, oneshot_review as review, oneshot_screens as screens, oneshot_spec
 from .oneshot_profile import kind_of, waits_at
 from .query import ROOT
 
@@ -212,6 +212,11 @@ def r3_sheet(spec: dict, shot, phone_shot=None) -> str:
     lines += [f"- [{f['severity']}] {f.get('route') or f.get('screen')} {f['viewport']} {f['state']}: {f['what']}"
               + (f" → {f['fix']}" if f.get("fix") else "") for f in left]
     lines += [f"- [{f['severity']}] 휴대폰 {f['screen']} {f['state']}: {f['what']}" for f in on_phone]
+    if owed := device.owed(spec):   # every look that passed ran each of them: the last one closed them
+        lines += ["", "## 기기에서 확인한 지적", "", "백엔드 리뷰가 휴대폰에서만 보인다며 미룬 지적이다. "
+                  f"모두 에뮬레이터 {last['round']}회차 `{last['head'][:12]}` 의 계측 테스트에서 통과했다.", "",
+                  *[f"- {x['id']} [{x['severity']}] {x['requirement']} `{x['location']}`: {x['reason']} — 확인: {x['check']}"
+                    for x in owed]]
     if phone:
         lines += ["", *measured(phone), "", *walkthroughs(spec)]
     lines += ["", "<details><summary>다른 화면, 상태, 회차마다의 전후, 기계 검사 기록</summary>", ""]

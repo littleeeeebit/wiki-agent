@@ -195,6 +195,24 @@ def test_a_crash_and_a_failed_or_missing_scenario_test_are_refused(phone, tmp_pa
     assert "시나리오 R3 의 계측 테스트" in found
 
 
+def test_each_check_the_review_left_for_the_phone_must_run_on_it(phone, tmp_path):
+    owed = [{"id": "O1", "kind": "android", "requirement": "R2", "reason": "알림이 상태바를 가린다", "check": "x"},
+            {"id": "O2", "kind": "desktop", "requirement": "R2", "reason": "창 크기", "check": "y"}]
+    s = android_spec()
+    s["oneshot"]["owed"] = owed
+    assert device.owed(s) == owed[:1]   # a Windows check waits for the Windows session
+    found = whats(looked(phone, tmp_path, s))
+    assert "기기에서 확인할 O1(R2) 의 계측 테스트(`owed_O1_…`)가 돌지 않았다 — 알림이 상태바를 가린다" in found
+    assert "O2" not in found
+    phone.instrument = PASSED.replace("test=scenario_R1_addsToTheTotal", "test=owed_O1_clearsTheBar") \
+        .replace("(1 test)", "(2 tests)").replace("INSTRUMENTATION_RESULT", PASSED.split("INSTRUMENTATION_RESULT")[0]
+                                                  + "INSTRUMENTATION_RESULT")
+    assert looked(phone, tmp_path, s) == []
+    phone.instrument = phone.instrument.replace("STATUS_CODE: 0", "STATUS_CODE: -2", 1)
+    assert "owed_O1_clearsTheBar` 가 실패했다" in whats(looked(phone, tmp_path, s))
+    assert not device.covers("owed_O10_x", "O1") and not device.covers("scenario_O1_x", "O1", "owed")
+
+
 def test_another_scenarios_test_never_stands_in_for_a_missing_one(phone, tmp_path):
     phone.instrument = PASSED.replace("scenario_R1_", "scenario_R10_")
     found = whats(looked(phone, tmp_path, android_spec(reqs=[*REQS, {"id": "R10", "text": "x", "postconditions": ["y"]}])))

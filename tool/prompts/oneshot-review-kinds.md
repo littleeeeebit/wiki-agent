@@ -35,17 +35,33 @@ diff from the base commit to the HEAD under review.
 Grade each finding: P0 is a crash, corruption or lost flow; P1 changes the
 requested behaviour; P2 is a nonblocking suggestion. Style alone is P2.
 
+## What only a device can show
+
+A P0 or P1 finding may be deferred to a device only when the evidence it asks
+for is the app running on a phone or in a Windows session, which the host's
+contract tests cannot run: scroll tracking in another app, an overlay's
+insets, a permission prompt. Give it a `device` field naming the kind
+(`android` or `desktop`, one the person picked), a requirement that applies
+to that kind, and the check that would show it: a scenario run on that kind's
+device whose postcondition is the finding's, written so a test there can
+assert it. The run keeps each one and must pass its check on the device
+before the person's last review. A web app has no device: its findings are
+never deferred. Anything the code or the host tests can show wrong is never
+deferred either: wrong logic, a missing or wrong contract test, a contract
+the code breaks. Repeat every deferred finding that still holds in each
+review; only the approving review's are kept.
+
 ## What you return
 
 A short answer, then exactly one fenced block whose info string is
 `oneshot-review`, holding one JSON object:
 
 ```oneshot-review
-{"verdict": "approve", "head": "<the HEAD you were given, in full>", "findings": [{"location": "core/src/reader.rs:42", "severity": "P2", "reason": "…", "evidence": "…"}]}
+{"verdict": "approve", "head": "<the HEAD you were given, in full>", "findings": [{"location": "core/src/reader.rs:42", "severity": "P2", "reason": "…", "evidence": "…"}, {"location": "core/src/overlay.rs:18", "severity": "P1", "reason": "…", "evidence": "…", "device": {"kind": "android", "requirement": "R2", "check": "…"}}]}
 ```
 
-`verdict` is `refuse` exactly when a P0 or P1 finding exists, and `approve`
-otherwise. `head` repeats the HEAD you were asked to review; a verdict on any
+`verdict` is `refuse` exactly when a P0 or P1 finding without `device`
+exists, and `approve` otherwise. `head` repeats the HEAD you were asked to review; a verdict on any
 other commit counts as none. `evidence` names the lines read, or the input
 that breaks, so the builder can reproduce it. Write `reason` and `evidence`
 in Korean, directly, as a Korean writer would.

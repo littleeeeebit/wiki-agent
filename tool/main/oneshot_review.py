@@ -19,10 +19,11 @@ from fastapi import HTTPException
 from agent import read_tools
 
 from . import oneshot, oneshot_build, oneshot_front, oneshot_spec, runtime, specs, work  # noqa: F401 — `oneshot_front` registers `split`
-from .oneshot_profile import environment, shape, waits_at
+from .oneshot_profile import environment, kinds_of, shape, waits_at
 from .query import _lock as work_lock, hold
 
 SEVERITIES = ("P0", "P1", "P2")
+DEVICE_KINDS = ("android", "desktop")   # the kinds whose S7 runs the app on a device the host's tests cannot
 
 
 def cap() -> int:
@@ -80,8 +81,27 @@ def review_text(spec: dict, head: str, how: str) -> str:
             f"`{spec['start_head']}` to HEAD: {how}.\n")
 
 
-def verdict_of(value, head: str) -> dict:
-    """An `oneshot-review` block, checked: a verdict on the HEAD read, findings that justify it."""
+def deferrable(spec: dict) -> dict[str, set[str]]:
+    """Each kind of the run that runs on a device, with the requirements that apply to it: where a finding
+    only that device can show may wait (`docs/plans/oneshot/9-kinds.md`, "The backend review and what only a
+    device can show"). A web app has none."""
+
+    kinds = kinds_of(spec["oneshot"])
+    return {k: {r["id"] for r in spec.get("requirements") or [] if k in (r.get("kinds") or kinds)}
+            for k in kinds if k in DEVICE_KINDS}
+
+
+def deferred(f: dict, devices: dict[str, set[str]]) -> bool:
+    """`f`'s `device` names a P0 or P1 finding's kind with a device, a requirement of that kind, and a check."""
+
+    d = f["device"]
+    return f["severity"] != "P2" and isinstance(d, dict) and d.get("kind") in devices \
+        and d.get("requirement") in devices[d["kind"]] and isinstance(d.get("check"), str) and bool(d["check"].strip())
+
+
+def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None) -> dict:
+    """An `oneshot-review` block, checked: a verdict on the HEAD read, findings that justify it. A P0 or P1
+    finding marked `device` waits for that kind's device (`devices`, from `deferrable`) and blocks nothing."""
 
     if not isinstance(value, dict) or value.get("verdict") not in ("approve", "refuse"):
         raise ValueError("`oneshot-review` 는 `verdict` 가 approve 나 refuse 인 객체다")
@@ -93,13 +113,26 @@ def verdict_of(value, head: str) -> dict:
             and all(isinstance(f.get(k), str) and f[k].strip() for k in ("location", "reason", "evidence"))
             for f in findings):
         raise ValueError("`findings` 마다 `location`, `severity`(P0·P1·P2), `reason`, `evidence` 가 있어야 한다")
-    serious = [f for f in findings if f["severity"] != "P2"]
+    if any("device" in f and not deferred(f, devices or {}) for f in findings):
+        raise ValueError("`device` 는 P0·P1 발견에만 붙고, 기기가 있는 종류(" + (", ".join(devices or {}) or "이 실행엔 없다")
+                         + "), 그 종류에 걸린 요구, 기기에서 볼 `check` 를 적는다")
+    serious = [f for f in findings if f["severity"] != "P2" and "device" not in f]
     if value["verdict"] == "approve" and serious:
         raise ValueError("P0·P1 발견이 있는데 승인했다")
     if value["verdict"] == "refuse" and not serious:
         raise ValueError("거부에는 P0·P1 발견이 하나 이상 있어야 한다")
     return {"verdict": value["verdict"], "head": head,
-            "findings": [{k: f[k] for k in ("location", "severity", "reason", "evidence")} for f in findings]}
+            "findings": [{**{k: f[k] for k in ("location", "severity", "reason", "evidence")},
+                          **({"device": {k: f["device"][k] for k in ("kind", "requirement", "check")}}
+                             if "device" in f else {})} for f in findings]}
+
+
+def owing(found: dict) -> list[dict]:
+    """The approving review's deferred findings, numbered `O<n>`: the spec's `owed` list, each a check its
+    kind's S7 loop must pass on the device."""
+
+    return [{"id": f"O{n}", **f["device"], **{k: f[k] for k in ("location", "severity", "reason", "evidence")},
+             "head": found["head"]} for n, f in enumerate((f for f in found["findings"] if "device" in f), 1)]
 
 
 def review(repo: str) -> None:
@@ -194,13 +227,15 @@ def decided(repo: str, store, spec: dict, found: dict):
     reviews = [*(o.get("reviews") or []), {**found, "ts": time.time()}]
     if found["verdict"] == "approve" and waits_at(o) == "split":   # several kinds: the split is the next step's (9c)
         with oneshot._lock:
-            oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "working": None, "stopped": {
+            oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "owed": owing(found),
+                                              "working": None, "stopped": {
                 "reason": "kind", "detail": "여러 종류의 기능 나누기는 다음 버전에서 이어진다 — 백엔드 리뷰가 승인했다",
                 "state": "split"}})
         return None
     if found["verdict"] == "approve":
         # `working` names the split before its worker starts: a server that dies in between leaves it for `recover`.
-        oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "working": "split"})
+        oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "owed": owing(found),
+                                          "working": "split"})
         return lambda: oneshot_spec.handoff(repo, "split") or True   # the split holds the tree itself
     refused = int(o.get("refused") or 0) + 1
     if refused >= cap():
@@ -227,7 +262,7 @@ def verdict(store, spec: dict, tree: Path) -> dict | None:
         return None
     return oneshot.turned(store, "review", oneshot.prompt("review", shape(spec["oneshot"])), review_text(spec, head, how),
                           "oneshot-review",
-                          lambda value: verdict_of(value, head), tree)
+                          lambda value: verdict_of(value, head, deferrable(spec)), tree)
 
 
 def rebuild(repo: str, store, why: str, build: str = "build") -> None:
@@ -238,7 +273,7 @@ def rebuild(repo: str, store, why: str, build: str = "build") -> None:
 
 
 def fixing(spec: dict, found: dict) -> str:
-    serious = [f for f in found["findings"] if f["severity"] != "P2"]
+    serious = [f for f in found["findings"] if f["severity"] != "P2" and "device" not in f]   # those wait for the device
     return (f"An independent read-only review refused HEAD `{found['head']}`. Fix every finding below "
             "where it points, without changing the pinned contract tests; a finding you disagree with gets "
             "evidence in your answer instead of a change.\n\n```json\n"

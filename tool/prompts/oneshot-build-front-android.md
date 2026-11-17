@@ -53,6 +53,13 @@ these permissions, the ones the approved requirements state: {permissions}.
 
 {scenarios}
 
+- Each check the backend review left for the phone has an instrumented test
+  named `owed_<id>_…` (for `O1`, `owed_O1_overlayClearsTheStatusBar`) that
+  drives the app on the device and asserts that check's postcondition. A
+  missing or failing one sends the build back, as a scenario's does.
+
+{owed}
+
 - The debug build's application id ends with `{suffix}`: in Gradle,
   `applicationIdSuffix = "{suffix}"` on the debug build type, the fixture
   viewer's too, and the instrumented tests' package follows the app's. Before
