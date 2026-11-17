@@ -94,6 +94,19 @@ def test_another_kinds_permission_reached_through_a_requirement_or_an_assumption
         assert ("M1", "R2") in sheet.asked_by(parsed, reqs, "android")   # the sheet's list reads the same chain
 
 
+def test_a_kind_reaches_what_its_endpoints_are_built_on():
+    via_p1 = [*KINDS_DESIGN["oneshot-modules"][:2], {**KINDS_DESIGN["oneshot-modules"][2], "calls": ["P1"]}]
+    bridge = [{**KINDS_DESIGN["oneshot-api"][0], "depends_on": ["R3", "M1"]}]   # the server calls Android's capture
+    design = {**KINDS_DESIGN, "oneshot-modules": via_p1, "oneshot-api": bridge}
+    with pytest.raises(ValueError, match="M1 → R2"):
+        sheet.checked(sheet.parsed(design, KINDS), KINDS_REQS, GLOSSARY, {"auth": "none"}, KINDS)
+    # An endpoint built on the shared core only is fine, and its modules are the web app's.
+    shared = {**design, "oneshot-api": [{**bridge[0], "depends_on": ["R3", "M2"]}]}
+    sheet.checked(parsed := sheet.parsed(shared, KINDS), KINDS_REQS, GLOSSARY, {"auth": "none"}, KINDS)
+    assert sheet.used_by(parsed, KINDS_REQS, "webapp") == ["M2", "M3"]
+    assert sheet.reach(parsed, KINDS_REQS, "android") == {"M1", "M2"}   # Android carries no endpoint of its own
+
+
 def test_an_r1_edit_keeps_each_requirements_kinds_as_the_owner_settled_them(several):
     spec = {**specs.load("budget", oneshot.BRANCH)}
     spec["oneshot"] = {**spec["oneshot"], "r1": {"round": 1}, "design": sheet.parsed(KINDS_DESIGN, KINDS)}

@@ -579,7 +579,7 @@ def asked_by(design: dict, reqs: list[dict], kind: str) -> list[tuple[str, str]]
     through the requirements and design items its `depends_on` reaches."""
 
     known, out = every(design, reqs), []
-    for m in used_by(design, reqs, kind):
+    for m in sorted(reach(design, reqs, kind)):
         reached, edge = set(), list(known[m]["depends_on"])
         while edge:
             if (i := edge.pop()) in known and i not in reached:
@@ -589,15 +589,28 @@ def asked_by(design: dict, reqs: list[dict], kind: str) -> list[tuple[str, str]]
     return out
 
 
-def used_by(design: dict, reqs: list[dict], kind: str) -> list[str]:
-    """The modules one kind uses: those carrying a requirement that applies to it, and every module they call."""
+def reach(design: dict, reqs: list[dict], kind: str) -> set[str]:
+    """The modules and endpoints one kind uses: those carrying a requirement that applies to it, then everything
+    they call or are built on (`depends_on`), module or endpoint, transitively. Only a web app carries endpoints;
+    another kind reaches one by calling it."""
 
     mine = {r["id"] for r in reqs if kind in (r.get("kinds") or [kind])}
-    modules = {m["id"]: m for m in design["modules"]}
-    reached = {m for m, item in modules.items() if mine & set(item["depends_on"])}
-    while more := {c for m in reached for c in modules[m]["calls"] if c in modules} - reached:
-        reached |= more
-    return [m for m in modules if m in reached]
+    items = {i["id"]: i for i in design["modules"]} | ({p["id"]: p for p in design.get("api", [])} if kind == "webapp"
+                                                       else {})
+    parts = {i["id"]: i for i in [*design["modules"], *design.get("api", [])]}
+    reached, edge = set(), [i for i, item in items.items() if mine & set(item["depends_on"])]
+    while edge:
+        if (i := edge.pop()) in parts and i not in reached:
+            reached.add(i)
+            edge += [*parts[i].get("calls", []), *parts[i]["depends_on"]]
+    return reached
+
+
+def used_by(design: dict, reqs: list[dict], kind: str) -> list[str]:
+    """The modules one kind uses, in the design's order (`reach`)."""
+
+    reached = reach(design, reqs, kind)
+    return [m["id"] for m in design["modules"] if m["id"] in reached]
 
 
 def core(spec: dict) -> str:
