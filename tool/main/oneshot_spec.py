@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from common import is_junction
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, specs, work
-from .oneshot_profile import KIND_STOPS, current, environment, kind_of, stacked, unsettled
+from .oneshot_profile import current, environment, kind_of, kinds_of, stacked, unsettled, waits_at
 
 RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}   # a later stage's module adds its own
 SHEETS = {"r1"}   # a stage whose sheet stands when its edit turn stopped
@@ -99,6 +99,9 @@ def kept(spec: dict, value, where: str) -> tuple[list[dict], list[dict]]:
                                                       {"kind": "decision", "locator": where})} for r in reqs]
     if found := sheet.cycle({r["id"]: r for r in reqs}):   # refused here, where the requirements can still change
         raise ValueError(f"요구의 `depends_on` 이 돌고 돈다 — {' → '.join(found)}")
+    picked = kinds_of(o)   # an S2 turn and an R1 edit alike: a requirement names only the owner's kinds
+    if beyond := [r["id"] for r in reqs if "kinds" in r and not (r["kinds"] and set(r["kinds"]) <= set(picked))]:
+        raise ValueError(f"요구의 `kinds` 는 주인이 고른 종류({', '.join(picked)}) 가운데 하나 이상이다: {', '.join(beyond)}")
     words = owner_words(o)
     if renamed := [g["term"] for g in o.get("glossary") or []
                    if g["term"] in words and g["term"] not in {x["term"] for x in glossary}]:
@@ -125,7 +128,7 @@ def spec_turn(final: str, spec: dict):
         raise ValueError("`oneshot-spec` 블록이 하나 있어야 한다")
     value = json.loads(found["oneshot-spec"])
     reqs, glossary = kept(spec, value, "S2")   # refuses anything but an object first
-    stack = stacked(value.get("stack") or [], kind_of(spec["oneshot"]))
+    stack = stacked(value.get("stack") or [], kinds_of(spec["oneshot"]))
     if early := unanswered(spec["oneshot"], stack):
         raise ValueError("주인이 답하기 전에 `confirmed` 로 둔 스택 부분이 있다 — 묶음을 묻고, 주인의 답을 받은 다음 턴에 "
                          f"확정한다: {', '.join(early)}")
@@ -158,13 +161,14 @@ def talk(repo: str) -> None:
             f"{json.dumps(spec.get('requirements') or [], ensure_ascii=False)}\n\nThe glossary so far:\n\n"
             f"{json.dumps(o.get('glossary') or [], ensure_ascii=False)}\n\nThe conversation so far:\n\n"
             + ("\n\n".join(f"[{t['role']}] {t['text']}" for t in o.get("talk") or []) or "(none yet: this is the first turn)"))
-    found = oneshot.turned(store(repo), "spec", oneshot.prompt("spec", kind_of(o)), text, "oneshot-spec,choices",
-                           lambda final, _: spec_turn(final, spec))
+    kinds = kinds_of(o)
+    system = oneshot.prompt("spec-kinds") if len(kinds) > 1 else oneshot.prompt("spec", kinds[0])
+    found = oneshot.turned(store(repo), "spec", system, text, "oneshot-spec,choices", lambda final, _: spec_turn(final, spec))
     if found is None:
         return
     reqs, glossary, stack, choices, said, mismatch = found
     # A question asked in this turn waits for its answer, whatever else is settled.
-    why = ended(reqs, stack, kind_of(o)) or ("주인의 답을 기다리는 질문이 있다" if choices else "")
+    why = ended(reqs, stack, kinds) or ("주인의 답을 기다리는 질문이 있다" if choices else "")
     turns = [*(o.get("talk") or []), {"role": "agent", "text": said, "choices": choices, "ts": time.time()}]
     # The stack now lives in this spec, in version 3's shape, whatever version the run started at.
     fields = {"glossary": glossary, "stack": stack, "talk": turns, "version": max(o.get("version", 1), 3)}
@@ -175,7 +179,12 @@ def talk(repo: str) -> None:
             saved(repo, requirements=reqs, oneshot={**fields, "open": "", "working": None, "mismatch": mismatch,
                                                     "stopped": {"reason": "rekind", "detail": detail, "state": o["stage"]}})
         return
-    if not why:
+    if not why and waits_at(o) == "design":   # several kinds: their core design is the next step's (plan 9b2)
+        with oneshot._lock:
+            saved(repo, requirements=reqs, oneshot={**fields, "open": "", "stage": "design", "working": None, "stopped": {
+                "reason": "kind", "detail": "여러 종류의 핵심 설계는 다음 버전에서 이어진다 — 요구와 스택은 저장됐다",
+                "state": "design"}})
+    elif not why:
         saved(repo, requirements=reqs, oneshot={**fields, "open": ""})
         handoff(repo, "design", stage="design")
     else:
@@ -408,7 +417,7 @@ def recover() -> None:
         if o and (repair := brief.recovered(o)):   # a brief the server went down writing, or its orphaned turn
             o = saved(folder.name, oneshot=repair)["oneshot"]
         stop = o.get("stopped") or {}
-        if stop.get("reason") == "kind" and o.get("stage") != KIND_STOPS.get(kind_of(o)):
+        if stop.get("reason") == "kind" and o.get("stage") != waits_at(o):
             saved(folder.name, oneshot={"stopped": {**stop, "reason": "restart",
                                                     "detail": "이 버전은 이 단계를 이어 간다 — [재개]를 누르면 시작한다"}})
         if o.get("working") or (o and o.get("stage") == "spec" and not o.get("talk") and not o.get("stopped")

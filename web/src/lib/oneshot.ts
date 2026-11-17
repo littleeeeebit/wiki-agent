@@ -67,7 +67,7 @@ export type SpecView = SpecSummary & {
   limits?: { attempts: number; refusals: number; critiques: number }
   oneshot: {
     sentence: string; models?: Models; talk?: Talk[]; attempts?: number; critiques?: Critique[]
-    intent?: { kind?: string }
+    intent?: { kind?: string; kinds?: string[] }
     /** How many `critiques` came before the count against the cap restarted (a resume, an R3 fix). */
     critique_base?: number
     inflight?: Inflight | null; reviews?: Review[]; refused?: number; cases?: string[][]
@@ -76,7 +76,7 @@ export type SpecView = SpecSummary & {
     r1?: Gate; r2?: Gate; r3?: Gate; front?: { tokens: { palettes: Palette[] } }; phone?: PhoneRound
     reading?: Record<string, { round: number; seconds: number | null; opened: string[]; edited: string[] }[]>
   }
-  requirements?: { id: string; text: string; status: string }[]
+  requirements?: { id: string; text: string; status: string; kinds?: string[] }[]
   sheet?: string; items?: string[]; brief?: Brief
   board?: { features: Feature[]; first_screen: string | null; frequency: Record<string, Freq> }
   front_sheet?: string; front_items?: string[]; front_brief?: Brief

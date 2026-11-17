@@ -15,7 +15,7 @@ SOURCES = ("original", "policy", "repository", "decision")
 STATUSES = ("confirmed", "assumed", "undecided", "not_applicable")
 CONDITIONS = ("preconditions", "postconditions", "invariants", "failures")
 REQUIREMENT_KEYS = frozenset({"id", "text", "source", "status", *CONDITIONS, "depends_on", "context", "verify", "global",
-                              "capability"})
+                              "capability", "kinds"})
 # A platform capability an Android requirement needs: the permission, the prompt the user sees, the distribution risk.
 CAPABILITY_KEYS = ("permission", "prompt", "risk")
 RID = re.compile(r"R[1-9]\d*")
@@ -602,7 +602,7 @@ def requirements(value) -> list[dict]:
             raise ValueError(f"{where}: `verify` 항목마다 `item` 과 `expected` 가 있어야 한다")
         made = {"id": rid, "text": " ".join(text.split()), "source": {"kind": source["kind"],
                 "locator": " ".join(source["locator"].split())}, "status": item["status"]}
-        for key in (*CONDITIONS, "depends_on", "context"):
+        for key in (*CONDITIONS, "depends_on", "context", "kinds"):   # `kinds`: the run's kinds it applies to (plan 9b)
             if key in item:
                 made[key] = _texts(item[key], f"{where}: `{key}`")
         if verify:
