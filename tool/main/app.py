@@ -17,6 +17,7 @@ import re
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -405,6 +406,30 @@ def peek(repo: str, path: str, line: int = 1, around: int = 25) -> dict:
     end = min(len(rows), line + around)
     return {"path": path, "start": start, "line": line, "total": len(rows),
             "lines": rows[start - 1:end]}
+
+
+IMAGES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+
+@app.get("/api/image")
+def picture(repo: str, path: str) -> FileResponse:
+    """An image an agent's answer or question names, such as a before and after of a design it asks to approve.
+
+    Only an image file, inside that checkout or the temporary folder agents capture screens into."""
+
+    base = channels.repo_for(repo) or (work.known(repo) if Path(repo).is_absolute() else None)
+    if base is None:
+        raise HTTPException(400, "그런 저장소가 없다")
+    path = unquote(path).replace("\\", "/").removeprefix("file://")
+    if re.match(r"^/[A-Za-z]:/", path):
+        path = path[1:]
+    target = inside(base, path) or inside(Path(tempfile.gettempdir()), path)
+    if target is None or target.suffix.lower() not in IMAGES:
+        raise HTTPException(404, f"보여 줄 수 있는 그림이 아니다 — {path}")
+    if target.stat().st_size > 20_000_000:
+        raise HTTPException(413, "너무 크다")
+    return FileResponse(target, media_type=mimetypes.guess_type(target.name)[0],
+                        headers={"Cache-Control": "no-store"})   # a capture taken again keeps its name
 
 
 # -- The screen -------------------------------------------------------------

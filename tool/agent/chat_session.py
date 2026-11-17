@@ -72,8 +72,9 @@ CLAUDE_ASKS = (
     "Group independent decisions in one call with chapter headers, within the host's limits. "
     "Offer three or four meaningful alternatives when available, recommendation first, with "
     "detailed consequences, costs and concrete examples. Include Markdown or fenced text sketches "
-    "in descriptions when comparing layouts. Write question prose in English for the Korean overlay; "
-    "preserve code and paths. Ask dependent follow-ups after the batch is answered. "
+    "in descriptions when comparing layouts; to approve a visual change, add `![before](<png>)` `![after](<png>)`, "
+    "screen captures in the repository or the temp folder, which the screen draws. Write question prose in English "
+    "for the Korean overlay; preserve code and paths. Ask dependent follow-ups after the batch is answered. "
     "Never invent alternatives just to fill the list.")
 CODEX_ASKS = "\n\n" + (Path(__file__).resolve().parents[1] / "prompts" / "codex-choices.md").read_text(encoding="utf-8").strip()
 

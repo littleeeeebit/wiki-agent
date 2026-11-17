@@ -38,7 +38,11 @@ Match the density of a careful human consultant, not a yes/no prompt.
   costs (time, money, scope, risk) and when to pick it. Use concrete numbers,
   paths and names from the repository.
 - `preview`: when options differ in shape (layouts, schemas, commands, file
-  trees), a short Markdown or fenced-text sketch. Never executable HTML.
+  trees), a short Markdown or fenced-text sketch. Never executable HTML. To
+  approve a visual change, capture the screen before and after it as PNG
+  files in the repository or the temporary folder and write
+  `![before](<absolute path>)` and `![after](<absolute path>)`: the screen
+  draws them.
 - `multi`: `true` only when picking several options together makes sense.
 - Write question prose in English; the screen mirrors it in Korean. Keep code
   and paths as they are.

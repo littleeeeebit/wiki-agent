@@ -7,6 +7,7 @@ import type { Asked } from '@/components/Questions'
 import { TokenUsage } from '@/components/ProviderUsage'
 import { Composer } from '@/components/Composer'
 import { DiffLines } from '@/components/LiveChanges'
+import { PictureRoot } from '@/lib/picture'
 import { Btn, ClearAsk } from '@/components/Modal'
 import { Toolbar } from '@/components/Toolbar'
 import type { Choice } from '@/components/Toolbar'
@@ -68,6 +69,7 @@ export function Agent({
   }, [grown, busy])
 
   return (
+    <PictureRoot.Provider value={row?.path ?? ''}>
     <section aria-label="에이전트 세션" className="flex h-full min-h-0 flex-col">
       <header className="agent-header shrink-0 border-b border-border px-5">
         {/* The model and effort stand here before there is a worktree too:
@@ -188,6 +190,7 @@ export function Agent({
         setNote(said)
       }} />}
     </section>
+    </PictureRoot.Provider>
   )
 }
 

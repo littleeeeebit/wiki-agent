@@ -1,6 +1,7 @@
 """Task diff visibility and answer links, using only synthetic fixture data."""
 
 import asyncio
+import base64
 import json
 import socket
 import sys
@@ -11,7 +12,7 @@ from unittest.mock import patch
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from playwright.sync_api import expect, sync_playwright
 import uvicorn
 from browser_fixture import start
@@ -20,12 +21,17 @@ from mobile_browser import ROOT, app, fixture, mobile
 from main import architecture, loop, work
 
 
+# A 2×1 PNG: the before an agent's answer shows must decode in the chat pane, not only be linked.
+PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAADUlEQVR4nGP4zwAE/wEHAAH/4iOeWQAAAABJRU5ErkJggg==")
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     fake = FastAPI()
     fake.middleware("http")(app.only_this_screen)
     fake.include_router(mobile.router)
     citations = []
+    pictures = []
     translations = []
     say_requests = []
     conversation_records = {}
@@ -208,6 +214,7 @@ def main():
             reply += "\n\n[Windows source](C:/fixture/src/app.ts:12) "
             reply += "[Encoded file](file:///C:/fixture/My%20Project/app.ts#L20) "
             reply += "[Relative source](src/app.ts:3) [PR](https://example.com/pull/7)"
+            reply += "\n\n![Synthetic before](C:/fixture/shots/before.png) ![Synthetic outside](https://example.com/x.png)"
             return {"rows": [{"role": "assistant", "text": reply,
                     "steps": [{"kind": "progress", "text": f"Synthetic translation progress {translation_mode}"},
                               {"kind": "tool", "text": f"Synthetic translation tool {translation_mode}"},
@@ -239,6 +246,9 @@ def main():
                                "diagram": 'graph TD\nrouter["Router\\nweb/src/App.tsx"]\nrouter -->|Request handling| router'},
                               {"path": "overall-architecture/web/router", "description": "Leaf details", "diagram": ""},
                               *[{**node, "path": "actual/" + node["path"]} for node in architecture_nodes]]}
+        if path == "image":
+            pictures.append(parse_qs(urlparse(str(request.url)).query))
+            return Response(PNG, media_type="image/png")
         if path == "file":
             params = parse_qs(urlparse(str(request.url)).query)
             citations.append(params)
@@ -689,6 +699,11 @@ def main():
                 page.locator(".file-peek").filter(has_text="Synthetic cited source line").wait_for()
                 assert citations[-1]["path"] == [path] and citations[-1]["line"] == [line], citations
                 page.locator(".file-peek").get_by_role("button", name="닫기", exact=True).click()
+            before = page.get_by_role("img", name="Synthetic before", exact=True)
+            before.wait_for()
+            page.wait_for_function("e => e.complete && e.naturalWidth === 2", arg=before.element_handle())
+            assert pictures[-1]["path"] == ["C:/fixture/shots/before.png"] and pictures[-1]["repo"][0], pictures
+            assert page.get_by_role("img", name="Synthetic outside").count() == 0   # a web address stays its alt text
             page.route("https://example.com/**", lambda route: route.fulfill(body="Synthetic PR"))
             with page.expect_popup() as popup:
                 page.get_by_role("link", name="PR", exact=True).click()

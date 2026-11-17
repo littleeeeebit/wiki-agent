@@ -1,7 +1,9 @@
 import { memo } from 'react'
-import Markdown, { defaultUrlTransform } from 'react-markdown'
+import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Candidates } from '@/components/Candidates'
+import { Picture } from '@/components/Picture'
+import { keepSources } from '@/lib/picture'
 import { fileLink } from '@/lib/links'
 
 // Inline code that looks like a citation: `tool/main/app.py:118`, `docs/x.md`, a
@@ -58,8 +60,9 @@ export const Answer = memo(function Answer({ text, korean, remote, onPeek, onDec
     <div className="prose-answer">
       <Markdown
         remarkPlugins={[remarkGfm, remarkCitations]}
-        urlTransform={(href) => fileLink(href) ? href : defaultUrlTransform(href)}
+        urlTransform={(href, key) => fileLink(href) ? href : keepSources(href, key)}
         components={{
+          img: ({ src, alt }) => <Picture src={typeof src === 'string' ? src : undefined} alt={alt} />,
           a: ({ href, children }) => {
             const file = fileLink(href ?? '')
             return file ? <button type="button" className="cite" onClick={() => onPeek(file.path, file.line)}>
