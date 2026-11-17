@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from . import oneshot, oneshot_brief as brief, oneshot_build, oneshot_device as device, \
     oneshot_front_build as front_build, oneshot_pr, oneshot_review as review, oneshot_screens as screens, oneshot_spec
-from .oneshot_profile import kind_of, kinds_of, shape, waits_at
+from .oneshot_profile import kinds_of, shape, waits_at
 from .oneshot_sheet import KIND_NAMES
 from .query import ROOT
 
@@ -227,9 +227,15 @@ def r3_sheet(spec: dict, shot, phone_shot=None) -> str:
     one of the phone round's, for an Android app (`docs/plans/oneshot/7-android.md`, "R3 and S8")."""
 
     o = spec["oneshot"]
+    if shape(o) == "kinds":   # one section for each kind, in the owner's order, each read off that kind alone
+        out = [f"# 완성된 화면 — {spec['repo']}", ""]
+        for k in kinds_of(o):
+            body = r3_sheet(brief.of_kind(spec, k), shot, phone_shot if k == "android" else None).split("\n")[2:]
+            out += [f"## {KIND_NAMES[k]}", "", *(f"#{line}" if line.startswith("#") else line for line in body)]
+        return "\n".join(out)
     front, views = o["front"], front_build.views(o["profile"])
     phone = (o.get("phone") or {}) if phone_shot and (o.get("phone") or {}).get("round") else {}
-    passed = [x for x in o["looks"] if not any(f["severity"] == "high" for f in x["findings"])]
+    passed = [x for x in o["looks"] if not brief.failed(x)]
     first_look, last = passed[0], passed[-1]
     marks = (o.get("r3") or {}).get("marks") or {}
     mark = lambda i: " (고친 화면)" if marks.get(i) else ""   # noqa: E731
@@ -312,7 +318,7 @@ def extra(spec: dict) -> dict:
     if o.get("stage") != "r3" or waits_at(o) == "r3":   # a kind stopped before R3 has no sheet yet
         return {"critiques": o.get("critiques") or []} if o.get("critiques") else {}
     phone_shot = (lambda n, name: f"/api/oneshot/spec/{spec['repo']}/phone/shot/{n}/{name}") \
-        if kind_of(o) == "android" else None
+        if "android" in kinds_of(o) else None
     shot = lambda n, name: f"/api/oneshot/spec/{spec['repo']}/look/{n}/{name}"   # noqa: E731
     return {"critiques": o.get("critiques") or [], "r3_items": [s["id"] for s in o["front"]["screens"]],
             "r3_sheet": r3_sheet(spec, shot, phone_shot),
@@ -324,16 +330,18 @@ def brief_pictures(spec: dict, shot, phone_shot) -> dict[str, list[str]]:
     finding's line the shot it was found on."""
 
     snap = brief.snapshot(spec, "r3")
-    looks, phone, views = snap["looks"], snap["phone"], front_build.views(spec["oneshot"]["profile"])
+    looks, phone, profile = snap["looks"], snap["phone"], spec["oneshot"]["profile"]
     if not looks:
         return {}
-    first = next(s["id"] for s in snap["screens"] if s["primary"])
-    out = {"화면": [shot(looks["before"], f"{first}-{views[0]}-full.png"), shot(looks["after"], f"{first}-{views[0]}-full.png"),
-                  *([phone_shot(phone["round"], f"{first}-phone-full.png")] if phone else [])]}
+    view = lambda s: front_build.views(profile, s.get("kind", ""))[0]   # noqa: E731 — several kinds: each screen's own
+    firsts = [s for s in snap["screens"] if s["primary"]]   # several kinds: each kind's first screen
+    droid = next((s["id"] for s in firsts if s.get("kind", "android") == "android"), firsts[0]["id"])
+    out = {"화면": [*(shot(looks[when], f"{s['id']}-{view(s)}-full.png") for s in firsts for when in ("before", "after")),
+                  *([phone_shot(phone["round"], f"{droid}-phone-full.png")] if phone else [])]}
     for f in snap["findings"]:
         state = f.get("state") if f.get("state") in STATES else "full"
         out[f["key"]] = ([phone_shot(phone["round"], f"{f['screen']}-phone-{state}.png")] if f["from"] == "phone"
-                         else [shot(looks["after"], f"{f['screen']}-{f.get('viewport') or views[0]}-{state}.png")])
+                         else [shot(looks["after"], f"{f['screen']}-{f.get('viewport') or view(f)}-{state}.png")])
     return out
 
 
@@ -342,14 +350,15 @@ def asked_fixes(spec: dict, body: Decisions, briefed: bool, comments: dict[str, 
     finding with where it was seen (the builder never sees the brief's `L<n>` or its pictures, and the
     harness says the same words of different states), and one per item edited on the folded sheet."""
 
+    kinds = {s["id"]: {"kind": s["kind"]} for s in spec["oneshot"]["front"]["screens"] if s.get("kind")}   # several kinds
     if not briefed:
-        return [{"severity": "high", "screen": k, "what": v} for k, v in comments.items()]
+        return [{"severity": "high", "screen": k, **kinds.get(k, {}), "what": v} for k, v in comments.items()]
     left = {f["key"]: f for f in brief.snapshot(spec, "r3")["findings"]}
-    return [*({"severity": "high", "screen": left[k]["screen"],
+    return [*({"severity": "high", "screen": left[k]["screen"], **kinds.get(left[k]["screen"], {}),
                **{at: left[k][at] for at in ("viewport", "state") if left[k].get(at)},
                "finding": left[k]["what"], "what": d["edit"].strip()}
               for k, d in body.lines.items() if d.get("edit")),
-            *({"severity": "high", "screen": i, "what": d["edit"].strip()}
+            *({"severity": "high", "screen": i, **kinds.get(i, {}), "what": d["edit"].strip()}
               for i, d in body.decisions.items() if i in comments and brief.valid(d) and d.get("edit"))]
 
 
@@ -382,7 +391,8 @@ def decide(repo: str, body: Decisions) -> dict:
                         "findings": asked_fixes(spec, body, briefed, comments)},
                 "r3": {**o["r3"], "decisions": decisions, "next_marks": {k: "edited" for k in comments}}})
     if not comments:
-        if oneshot_spec.spec_of(repo)["oneshot"]["stage"] == oneshot_pr.STAGE:   # outside the lock: the turn takes the worktree's hold
+        after = oneshot_spec.spec_of(repo)["oneshot"]
+        if after["stage"] == oneshot_pr.STAGE and not after.get("stopped"):   # outside the lock: the turn takes the worktree's hold
             oneshot_pr.begin(repo)
         return oneshot_spec.view(oneshot_spec.spec_of(repo))
     oneshot_build.send(repo, front_build.STAGE, front_turn(spec))
@@ -395,6 +405,11 @@ def approved(repo: str) -> None:
     and a tree that moved since goes back to the build's checks."""
 
     def moving(store, spec, tree) -> bool:
+        if waits_at(spec["oneshot"]) == oneshot_pr.STAGE:   # several kinds: S8 is the next step's (9c4b)
+            oneshot_spec.saved(repo, oneshot={"stage": oneshot_pr.STAGE, "working": None, "stopped": {
+                "reason": "kind", "state": oneshot_pr.STAGE,
+                "detail": "여러 종류의 풀 리퀘스트는 다음 버전에서 이어진다 — R3 는 승인됐다"}})
+            return False
         # `working` names the README turn before it is sent: a server that dies in between leaves it for
         # `recover`, and the turn that follows sends the queued instruction when it ends.
         oneshot_spec.saved(repo, oneshot={"stage": oneshot_pr.STAGE, "working": oneshot_pr.STAGE})
