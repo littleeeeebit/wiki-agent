@@ -101,7 +101,10 @@ def finished(o: dict) -> dict:
         per = [(k, finished(of_kind({"oneshot": o}, k)["oneshot"])) for k in kinds_of(o)]
         said = [(k, f) for k, one in per for f in one["findings"]]
         return {"findings": [{**f, "key": f"L{n}", "kind": k} for n, (k, f) in enumerate(said, 1)],
-                "fixed": [{**f, "kind": k} for k, one in per for f in one["fixed"]][-FIXED:],
+                # The latest across every kind, in the order they were sent back, not each kind's in turn.
+                "fixed": [f for _, _, f in sorted(((n, at, {**f, "kind": k}) for k in kinds_of(o) for n, at, f
+                                                   in sent_back(of_kind({"oneshot": o}, k)["oneshot"])),
+                                                  key=lambda s: s[:2])][-FIXED:],
                 "looks": per[0][1]["looks"], "phone": next((one["phone"] for _, one in per if one["phone"]), None)}
     screens = (o.get("front") or {}).get("screens") or []
     looks = [x for x in o.get("looks") or [] if not failed(x)]
@@ -117,14 +120,19 @@ def finished(o: dict) -> dict:
         left.append({"key": f"L{n}", "screen": sid or next((s["id"] for s in screens if s.get("primary")), ""),
                      "named": bool(sid), "from": who,
                      **{k: f[k] for k in ("severity", "viewport", "state", "what", "fix") if f.get(k)}})
-    # What was sent back since R2, in the order it was: a look's high findings go to the build's retry before
-    # any critic sees that look, and an earlier critique's findings to the fix turn after it.
-    sent = [(x["round"], 0, f) for x in o.get("looks") or [] for f in x["findings"] if f["severity"] == "high"]
-    sent += [(c.get("look", 0), 1, f) for c in critiques[:-1] for f in c.get("findings") or []]
-    fixed = [{"screen": on_screen(f, screens), "what": f["what"]} for _, _, f in sorted(sent, key=lambda s: s[:2])]
-    return {"findings": left, "fixed": fixed[-FIXED:],
+    return {"findings": left, "fixed": [f for _, _, f in sent_back(o)][-FIXED:],
             "looks": {"before": looks[0]["round"], "after": looks[-1]["round"]} if looks else {},
             "phone": {k: phone.get(k) for k in ("model", "size", "timing", "memory_kb", "round")} if phone else None}
+
+
+def sent_back(o: dict) -> list[tuple[int, int, dict]]:
+    """What was sent back since R2, each with when, in the order it was: a look's high findings go to the build's
+    retry before any critic sees that look, and an earlier critique's findings to the fix turn after it."""
+
+    screens, critiques = (o.get("front") or {}).get("screens") or [], o.get("critiques") or []
+    sent = [(x["round"], 0, f) for x in o.get("looks") or [] for f in x["findings"] if f["severity"] == "high"]
+    sent += [(c.get("look", 0), 1, f) for c in critiques[:-1] for f in c.get("findings") or []]
+    return [(n, at, {"screen": on_screen(f, screens), "what": f["what"]}) for n, at, f in sorted(sent, key=lambda s: s[:2])]
 
 
 def on_screen(f: dict, screens: list[dict]) -> str:

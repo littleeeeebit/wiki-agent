@@ -81,6 +81,15 @@ def test_the_briefs_lines_name_each_findings_kind_and_its_pictures_its_kinds_sho
     assert pictures["L3"] == ["/look/2/S2-desktop-full.png"] and pictures["L2"] == ["/look/2/S1-phone-full.png"]
 
 
+def test_the_briefs_latest_fixes_are_the_latest_across_every_kind(at_r3):
+    head = o()["looks"][-1]["head"]
+    older = [{**WEB_HIGH, "what": f"오래된 웹 수정 {n}"} for n in range(brief.FIXED)]
+    oneshot_spec.saved("budget", oneshot={"looks": [look(head, 1, older), look(head, 2, [{**ON_PHONE, "severity": "high"}]),
+                                                    look(head, 3)]})
+    fixed = brief.snapshot(oneshot_spec.spec_of("budget"), "r3")["fixed"]
+    assert len(fixed) == brief.FIXED and fixed[-1] == {"screen": "S1", "what": "단추가 작다", "kind": "android"}
+
+
 def test_an_edit_reaches_the_builder_with_its_kind_and_the_approval_waits_before_the_pull_request(at_r3):
     _, sent = at_r3
     critique.decide("budget", on_r3(decisions={"S1": {"approve": True}, "S2": {"edit": "표를 접어라"}}))
