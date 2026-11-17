@@ -11,7 +11,6 @@ import json
 from unittest.mock import patch
 
 import pytest
-from fastapi import HTTPException
 
 from main import (oneshot, oneshot_brief as brief, oneshot_front as front, oneshot_screens as screens,
                   oneshot_sheet as sheet, oneshot_spec, specs)
@@ -133,7 +132,7 @@ def test_an_edit_keeps_the_web_pages_and_the_previews_shared_files(kinds):
     assert current["mocks"] == {"webapp": {"S3": PAGE}} and o()["r2"]["round"] == 2
 
 
-def test_the_approved_screens_of_every_kind_are_committed_and_the_run_waits_before_the_build(kinds):
+def test_the_approved_screens_of_every_kind_are_committed_and_their_build_starts(kinds):
     playwright_or_skip()
     # An Android preview file named as a web page would be: each kind's mocks keep their own folder.
     preview = mocks(**{"S3.html": 'Box(Modifier.testTag("feature:start-translation"))'})
@@ -141,10 +140,12 @@ def test_the_approved_screens_of_every_kind_are_committed_and_the_run_waits_befo
     _, asking = replies(answer(blocks(**{"oneshot-mocks": {"android": preview, "webapp": {"S3": PAGE}}})))
     with asking:
         front.frontend("budget")
-    with patch.object(front.oneshot_front_build, "begin", lambda repo: pytest.fail("the build is the next step's")):
+    begun = []
+    with patch.object(front.oneshot_front_build, "begin", begun.append):
         front.decide("budget", front.R2(decisions={i: {"approve": True} for i in screens.decidable(o()["front"])},
                                         palette="C1", source=brief.source(brief.snapshot(oneshot_spec.spec_of("budget"), "r2"))))
-    assert o()["stage"] == "build-front" and o()["stopped"]["reason"] == "kind" and not o().get("working")
+    assert begun == ["budget"] and o()["stage"] == "build-front" and o()["working"] == "build-front"
+    assert not o().get("stopped")
     for name in ("docs/design/screens.md", "docs/design/mock/android/mock/S1.kt", "docs/design/shots/S1-phone.png",
                  "docs/design/shots/S3-desktop.png"):
         assert (kinds / name).is_file(), name
@@ -152,8 +153,3 @@ def test_the_approved_screens_of_every_kind_are_committed_and_the_run_waits_befo
     assert (mock / "webapp/S3.html").read_text(encoding="utf-8") == PAGE
     assert (mock / "android/S3.html").read_text(encoding="utf-8") == preview["files"]["S3.html"]
     assert o()["front_head"] == head(kinds)
-    with pytest.raises(HTTPException):   # `[재개]` does not take the build on either
-        oneshot_spec.resume("budget")
-    with patch.object(oneshot, "restarted", lambda store: pytest.fail("a waiting stage is not restarted")):
-        oneshot_spec.recover()
-    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "build-front"

@@ -42,8 +42,11 @@ oneshot.ROLES["critic"] = critic
 
 
 def begin(repo: str) -> None:
-    """After a build passed the harness: one critique worker; a start a shutdown refused stays resumable."""
+    """After a build passed the harness: one critique worker; a start a shutdown refused stays resumable. A run
+    whose critique this version cannot do yet was left stopped by the build's check."""
 
+    if waits_at(oneshot_spec.spec_of(repo)["oneshot"]) == "critique":
+        return
     try:
         oneshot_spec.start(repo, "critique", stage="critique")
     except HTTPException:

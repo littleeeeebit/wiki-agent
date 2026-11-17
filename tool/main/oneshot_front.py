@@ -419,14 +419,7 @@ def record(repo: str, store, spec: dict, tree: Path) -> bool:
         return False
     # `working` names the build before its turn is sent: a server that dies in between leaves it for `recover`,
     # and the screens are already the spec's `done` that the resumed turn reports against.
-    done = [f"{s['id']} {screens.place(s)}: {s['purpose']}" for s in front["screens"]]
-    if waits_at(o) == "build-front":   # several kinds: each kind's build and loop are the next step's (9c3)
-        oneshot_spec.saved(repo, done=done, oneshot={
-            "stage": "build-front", "front_head": head, "working": None, "attempts": 0, "stopped": {
-                "reason": "kind", "state": "build-front",
-                "detail": "여러 종류의 화면 빌드는 다음 버전에서 이어진다 — 승인한 화면 설계는 커밋됐다"}})
-        return False
-    oneshot_spec.saved(repo, done=done,
+    oneshot_spec.saved(repo, done=[f"{s['id']} {screens.place(s)}: {s['purpose']}" for s in front["screens"]],
                        oneshot={"stage": "build-front", "front_head": head, "working": "build-front", "attempts": 0})
     return True
 
