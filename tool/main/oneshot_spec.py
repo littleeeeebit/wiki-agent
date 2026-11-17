@@ -351,11 +351,7 @@ def approved(repo: str) -> None:
         (docs / name).write_text(render(spec), encoding="utf-8", newline="\n")
     head = commit(repo, tree, files, f"Record the approved {'core' if cored else 'backend'} design "
                                      f"(R1 round {o['r1']['round']})")
-    if head and waits_at(o) == "tests":   # several kinds: their core's contract tests are the next step's (plan 9b3)
-        saved(repo, oneshot={"stage": "tests", "design_head": head, "working": None, "stopped": {
-            "reason": "kind", "detail": "여러 종류의 핵심 테스트는 다음 버전에서 이어진다 — 승인한 설계는 커밋됐다",
-            "state": "tests"}})
-    elif head:
+    if head:
         saved(repo, oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
 
 

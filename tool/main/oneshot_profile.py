@@ -65,9 +65,9 @@ def kinds_of(o: dict) -> list[str]:
 
 
 def waits_at(o: dict) -> str | None:
-    """The stage the run waits at in this version, stopped with reason `kind`: several kinds have no split yet."""
+    """The stage the run waits at in this version, stopped with reason `kind`: several kinds have no screens yet."""
 
-    return "split" if len(kinds_of(o)) > 1 else KIND_STOPS.get(kind_of(o))
+    return "frontend" if len(kinds_of(o)) > 1 else KIND_STOPS.get(kind_of(o))
 
 
 def shape(o: dict) -> str:

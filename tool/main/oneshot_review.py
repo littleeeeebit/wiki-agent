@@ -19,7 +19,7 @@ from fastapi import HTTPException
 from agent import read_tools
 
 from . import oneshot, oneshot_build, oneshot_front, oneshot_spec, runtime, specs, work  # noqa: F401 — `oneshot_front` registers `split`
-from .oneshot_profile import environment, kinds_of, shape, waits_at
+from .oneshot_profile import environment, kinds_of, shape
 from .query import _lock as work_lock, hold
 
 SEVERITIES = ("P0", "P1", "P2")
@@ -255,13 +255,6 @@ def decided(repo: str, store, spec: dict, found: dict):
 
     o = spec["oneshot"]
     reviews = [*(o.get("reviews") or []), {**found, "ts": time.time()}]
-    if found["verdict"] == "approve" and waits_at(o) == "split":   # several kinds: the split is the next step's (9c)
-        with oneshot._lock:
-            oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "owed": owing(found),
-                                              "working": None, "stopped": {
-                "reason": "kind", "detail": "여러 종류의 기능 나누기는 다음 버전에서 이어진다 — 백엔드 리뷰가 승인했다",
-                "state": "split"}})
-        return None
     if found["verdict"] == "approve":
         # `working` names the split before its worker starts: a server that dies in between leaves it for `recover`.
         oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "owed": owing(found),

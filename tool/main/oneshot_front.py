@@ -26,7 +26,7 @@ from common import is_junction
 
 from . import oneshot, oneshot_android, oneshot_brief as brief, oneshot_build, oneshot_front_build, \
     oneshot_screens as screens, oneshot_sheet as sheet, oneshot_spec, runtime, specs
-from .oneshot_profile import DEVICES, kind_of
+from .oneshot_profile import DEVICES, kind_of, kinds_of, shape, waits_at
 
 SHOT_SECONDS = 15_000   # Playwright's milliseconds per page
 PREVIEW_SECONDS = 1800   # an Android preview's first run downloads its Gradle dependencies
@@ -45,24 +45,55 @@ def served(spec: dict) -> list[str]:
 
 
 def inventory(spec: dict) -> list[str]:
-    """What the features are read from: the served API, or an Android app's approved core — every module in
-    the server's own copy of the design and every requirement with a platform capability."""
+    """What the features are read from: the served API, or an approved core — every module in the server's own
+    copy of the design, a web app's endpoints when several kinds share it, and every requirement with a
+    platform capability."""
 
-    if kind_of(spec["oneshot"]) != "android":
+    if shape(spec["oneshot"]) == "webapp":
         return served(spec)
-    return [m["id"] for m in spec["oneshot"]["design"]["modules"]] + \
+    design = spec["oneshot"]["design"]
+    return [m["id"] for m in design["modules"]] + [p["id"] for p in design.get("api", [])] + \
         [r["id"] for r in spec.get("requirements") or [] if r.get("capability")]
 
 
+def part_kinds(spec: dict) -> dict[str, list[str]]:
+    """Each core part with the kinds that use it, in the order the owner picked them: a module or endpoint
+    by `sheet.reach`, a capability by its requirement's kinds."""
+
+    o, reqs = spec["oneshot"], spec.get("requirements") or []
+    kinds = kinds_of(o)
+    reached = {k: sheet.reach(o["design"], reqs, k) for k in kinds}
+    out = {i: [k for k in kinds if i in reached[k]] for i in inventory(spec)}
+    return out | {r["id"]: [k for k in kinds if k in (r.get("kinds") or kinds)] for r in reqs if r.get("capability")}
+
+
+def with_kinds(found: list[dict], parts: dict[str, list[str]]) -> list[dict]:
+    """Each feature's `kinds`: those every one of its parts applies to. A feature whose parts share none is
+    refused, so the split turn groups again."""
+
+    out = []
+    for f in found:
+        kinds = [k for k in parts[f["parts"][0]] if all(k in parts[p] for p in f["parts"])]
+        if not kinds:
+            raise ValueError(f"기능 `{f['id']}` 의 부분이 함께 걸린 종류가 없다 — " + ", ".join(
+                f"{p}({'·'.join(sheet.KIND_NAMES[k] for k in parts[p]) or '없음'})" for p in f["parts"]))
+        out.append({**f, "kinds": kinds})
+    return out
+
+
 def listed(spec: dict, ops: list[str]) -> str:
-    if kind_of(spec["oneshot"]) != "android":
+    if shape(spec["oneshot"]) == "webapp":
         return "Every operation of the approved API, which the built backend serves:\n\n" + \
             "\n".join(f"- `{op}`" for op in ops) + "\n"
-    said = {m["id"]: f"{m['name']} — {m['contract']}" for m in spec["oneshot"]["design"]["modules"]}
+    design = spec["oneshot"]["design"]
+    said = {m["id"]: f"{m['name']} — {m['contract']}" for m in design["modules"]}
+    said |= {p["id"]: f"`{p['method']} {p['path']}` — {p['does']}" for p in design.get("api", [])}
     said |= {r["id"]: f"`{r['capability']['permission']}` — {r['text']}" for r in spec.get("requirements") or []
              if r.get("capability")}
+    used = part_kinds(spec) if shape(spec["oneshot"]) == "kinds" else {}
     return "Every part of the approved core, its modules and its platform capabilities:\n\n" + \
-        "\n".join(f"- `{i}` {said[i]}" for i in ops) + "\n"
+        "\n".join(f"- `{i}` {said[i]}" + (f" (used by: {', '.join(used[i]) or 'none'})" if used else "")
+                  for i in ops) + "\n"
 
 
 def split(repo: str) -> None:
@@ -79,21 +110,25 @@ def split_turn(repo: str, store, spec: dict):
     except (RuntimeError, ValueError, OSError) as exc:
         store.stop("block", str(exc))
         return None
-    kind = kind_of(o)
+    kind = shape(o)
     text = (f"The owner's sentence:\n\n{o['sentence']}\n\nThe confirmed restatement:\n\n"
             f"{json.dumps(o['intent'], ensure_ascii=False)}\n\nThe requirements:\n\n"
             f"{json.dumps(spec.get('requirements') or [], ensure_ascii=False)}\n\nThe glossary:\n\n"
             f"{json.dumps(o.get('glossary') or [], ensure_ascii=False)}\n\n" + listed(spec, ops))
-    key = "parts" if kind == "android" else "endpoints"
+    key = "endpoints" if kind == "webapp" else "parts"
+    parts = part_kinds(spec) if kind == "kinds" else None
     found = oneshot.turned(store, "split", oneshot.prompt("split", kind), text, "oneshot-features",
-                           lambda value: screens.features(value, ops, key), Path(spec["worktree"]))
+                           lambda value: (lambda f: with_kinds(f, parts) if parts else f)(screens.features(value, ops, key)),
+                           Path(spec["worktree"]))
     if found is None:
         return None
+    first = o.get("first_screen") or o["intent"]["first_screen"]
+    if kind == "kinds" and isinstance(first, str):   # one line for each kind, each the restatement's to start
+        first = {k: first for k in kinds_of(o)}
     return lambda: oneshot_spec.saved(repo, oneshot={
         # a design and R2 decisions left from an earlier split were placed on features that are gone
         "stage": "board", "working": None, "inventory": ops, "features": found, "frequency": None,
-        "front": None, "r2": None,
-        "first_screen": o.get("first_screen") or o["intent"]["first_screen"]})
+        "front": None, "r2": None, "first_screen": first})
 
 
 def review():
@@ -376,7 +411,7 @@ oneshot_spec.SHEETS.add("r2")
 
 class Board(BaseModel):
     frequency: dict[str, str]
-    first_screen: str
+    first_screen: str | dict[str, str]   # one line for each kind when several share the run
 
 
 class R2(BaseModel):
@@ -393,7 +428,9 @@ def extra(spec: dict) -> dict:
     o, out = spec["oneshot"], {}
     if o.get("features"):
         out["board"] = {"features": o["features"], "first_screen": o.get("first_screen"),
-                        "frequency": o.get("frequency") or {f["id"]: f["class"] for f in o["features"]}}
+                        "frequency": o.get("frequency") or {f["id"]: f["class"] for f in o["features"]},
+                        **({"kinds": [{"id": k, "name": sheet.KIND_NAMES[k]} for k in kinds_of(o)]}
+                           if shape(o) == "kinds" else {})}
     if o.get("front"):
         n = o["front"]["shots"]
         shot = lambda sid, v: f"/api/oneshot/spec/{spec['repo']}/shot/{n}/{sid}-{v}.png"   # noqa: E731
@@ -416,11 +453,18 @@ def submit_board(repo: str, body: Board) -> dict:
         o = oneshot_spec.spec_of(repo)["oneshot"]
         oneshot_spec.idle(o, "board")
         try:
-            frequency, first = screens.board(o["features"], body.frequency, body.first_screen)
+            frequency, first = screens.board(o["features"], body.frequency, body.first_screen,
+                                             kinds_of(o) if shape(o) == "kinds" else ())
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        oneshot_spec.start(repo, "frontend", stage="frontend", frequency=frequency, first_screen=first,
-                           front=None, r2=None)
+        if waits_at(o) == "frontend":   # several kinds: each kind's screens are the next step's (9c2)
+            oneshot_spec.saved(repo, oneshot={"stage": "frontend", "frequency": frequency, "first_screen": first,
+                                              "front": None, "r2": None, "working": None, "stopped": {
+                                                  "reason": "kind", "state": "frontend",
+                                                  "detail": "여러 종류의 화면 설계는 다음 버전에서 이어진다 — 기능 보드를 받았다"}})
+        else:
+            oneshot_spec.start(repo, "frontend", stage="frontend", frequency=frequency, first_screen=first,
+                               front=None, r2=None)
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
 
