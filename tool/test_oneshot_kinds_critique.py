@@ -11,9 +11,8 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
-from fastapi import HTTPException
 
-from main import oneshot, oneshot_build, oneshot_critique as critique, oneshot_device as device, \
+from main import oneshot_build, oneshot_critique as critique, oneshot_device as device, \
     oneshot_phone as phone, oneshot_spec
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_critique import HIGH, critic, o, said
@@ -97,10 +96,10 @@ def test_a_fix_for_one_kind_judges_every_kind_again_on_the_new_head(kinds):
     assert seen(heard[0][2]) == ["S1"]
 
 
-def test_the_phone_round_runs_on_the_android_app_alone_and_its_pass_waits_before_r3(kinds, tmp_path):
+def test_the_phone_round_runs_on_the_android_app_alone_and_its_pass_opens_r3(kinds, tmp_path):
     oneshot_spec.saved("budget", oneshot={"stage": phone.STAGE, "working": phone.STAGE,
                                           "phone": {"serial": "R5CT", "status": "running"}})
-    given = []
+    given, briefed = [], []
 
     @contextmanager
     def server(repo):
@@ -113,25 +112,13 @@ def test_the_phone_round_runs_on_the_android_app_alone_and_its_pass_waits_before
     with patch.object(device, "built", lambda tree, d: ""), \
             patch.object(device, "frozen", lambda tree, d, into: {DEVICE["apk"]: "digest"}), \
             patch.object(phone, "phone_server", server), patch.object(phone, "drive", drive), \
-            patch.object(oneshot_spec, "briefing", lambda *a, **k: pytest.fail("R3 is the next step's")):
+            patch.object(oneshot_spec, "briefing", lambda repo, gate, fields: briefed.append((gate, fields))):
         phone.phone_round("budget")
     one = given[0]
     assert [s["id"] for s in one["oneshot"]["front"]["screens"]] == ["S1"]
     assert [r["id"] for r in one["requirements"]] == ["R1", "R2"]
-    assert o()["stage"] == "r3" and o()["stopped"]["reason"] == "kind" and o()["phone"]["status"] == "passed"
-    with patch.object(oneshot, "restarted", lambda store: pytest.fail("a waiting stage is not restarted")):
-        oneshot_spec.recover()   # an earlier version's Android stop at R3 is not this one
-    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "r3"
-    with pytest.raises(HTTPException):
-        oneshot_spec.resume("budget")
-    # A stop that replaced the wait (a restart, an owner's stop) gives the wait back, and nothing resumes R3.
-    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "detail": "서버를 다시 켰다", "state": "r3"}})
-    oneshot_spec.recover()
-    assert o()["stopped"]["reason"] == "kind"
-    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "block", "detail": "멈췄다", "state": "r3"}})
-    with pytest.raises(HTTPException):
-        oneshot_spec.resume("budget")
-    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "r3"
+    (gate, fields), = briefed
+    assert gate == "r3" and fields["stage"] == "r3" and fields["phone"]["status"] == "passed"
 
 
 def test_one_kinds_cap_restarts_only_its_own_count(kinds):

@@ -65,11 +65,11 @@ def kinds_of(o: dict) -> list[str]:
 
 
 def waits_at(o: dict) -> str | None:
-    """The stage the run waits at in this version, stopped with reason `kind`: several kinds have no R3 sheet
-    yet, and with `desktop` among them no screens either."""
+    """The stage the run waits at in this version, stopped with reason `kind`: several kinds have no pull
+    request yet, and with `desktop` among them no screens either."""
 
     if len(kinds := kinds_of(o)) > 1:
-        return "frontend" if "desktop" in kinds else "r3"
+        return "frontend" if "desktop" in kinds else "pr"
     return KIND_STOPS.get(kind_of(o))
 
 

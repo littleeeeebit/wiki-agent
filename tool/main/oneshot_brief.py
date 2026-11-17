@@ -16,7 +16,7 @@ import re
 import time
 
 from . import oneshot, oneshot_sheet as sheet
-from .oneshot_profile import charged, cut, kind_of, kinds_of
+from .oneshot_profile import charged, cut, kind_of, kinds_of, shape
 
 PROMPT = oneshot.ROOT / "tool/prompts/oneshot-brief.md"
 MAX_BRIEF = 4_000      # characters, the whole brief
@@ -73,13 +73,38 @@ def snapshot(spec: dict, gate: str = "r1") -> dict:
             "round": at.get("round", 1), "marks": at.get("marks") or {}}
 
 
+def failed(look: dict) -> bool:
+    """A look with a high finding, or, seen through `of_kind`, one another kind's high finding failed."""
+
+    return bool(look.get("failed")) or any(f["severity"] == "high" for f in look["findings"])
+
+
+def of_kind(spec: dict, kind: str) -> dict:
+    """R3 of one kind among several: the run as that kind alone (`as_kind`), with only its critiques and the
+    looks' findings on it; a look another kind failed stays failed, so every kind reads the same passed looks."""
+
+    from .oneshot_front_build import as_kind   # it imports this module, through `oneshot_spec`
+
+    o, one = spec["oneshot"], as_kind(spec, kind)
+    return {**one, "oneshot": {**one["oneshot"], "critiques": [c for c in o.get("critiques") or [] if c.get("kind") == kind],
+                               "owed": [x for x in o.get("owed") or [] if x["kind"] == kind],
+                               "looks": [{**x, "findings": [f for f in x["findings"] if f.get("kind") == kind],
+                                          "failed": failed(x)} for x in o.get("looks") or []]}}
+
+
 def finished(o: dict) -> dict:
     """R3's own fields: the findings left, numbered `L<n>` in the order `r3_sheet` lists them, each on its
     screen; the looks a before and after compare; the fixes since R2; and on Android the phone round's
-    device and measurements."""
+    device and measurements. Several kinds: each kind's, in the owner's order, each finding naming its kind."""
 
+    if shape(o) == "kinds":
+        per = [(k, finished(of_kind({"oneshot": o}, k)["oneshot"])) for k in kinds_of(o)]
+        said = [(k, f) for k, one in per for f in one["findings"]]
+        return {"findings": [{**f, "key": f"L{n}", "kind": k} for n, (k, f) in enumerate(said, 1)],
+                "fixed": [{**f, "kind": k} for k, one in per for f in one["fixed"]][-FIXED:],
+                "looks": per[0][1]["looks"], "phone": next((one["phone"] for _, one in per if one["phone"]), None)}
     screens = (o.get("front") or {}).get("screens") or []
-    looks = [x for x in o.get("looks") or [] if not any(f["severity"] == "high" for f in x["findings"])]
+    looks = [x for x in o.get("looks") or [] if not failed(x)]
     phone = o.get("phone") or {}
     phone = phone if kind_of(o) == "android" and phone.get("round") else {}
     critiques = o.get("critiques") or []
@@ -143,6 +168,7 @@ def about(snap: dict, key: str) -> str:
     if gate_of(snap) == "r3":
         f = next(f for f in snap["findings"] if f["key"] == key)
         where = f["screen"] if f["named"] else f"{f['screen']} (the finding named no screen: say so)"
+        where += f" of the {sheet.KIND_NAMES[f['kind']]}" if f.get("kind") else ""   # several kinds: name it
         seen = ", ".join(f[k] for k in ("severity", "viewport", "state") if f.get(k))
         return (f"{key} on {where}, found by the {f['from']} ({seen}): {f['what']}"
                 + (f"; the suggested fix: {f['fix']}" if f.get("fix") else ""))
