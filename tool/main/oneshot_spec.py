@@ -424,6 +424,7 @@ def recover() -> None:
             o = specs.load(folder.name, oneshot.BRANCH)["oneshot"]
         if o and (repair := brief.recovered(o)):   # a brief the server went down writing, or its orphaned turn
             o = saved(folder.name, oneshot=repair)["oneshot"]
+        o = waiting(folder.name, o) if o else o
         stop = o.get("stopped") or {}
         if stop.get("reason") == "kind" and o.get("stage") != waits_at(o):
             saved(folder.name, oneshot={"stopped": {**stop, "reason": "restart",
@@ -431,6 +432,16 @@ def recover() -> None:
         if o.get("working") or (o and o.get("stage") == "spec" and not o.get("talk") and not o.get("stopped")
                                 and handed(o)):
             oneshot.restarted(store(folder.name))
+
+
+def waiting(repo: str, o: dict) -> dict:
+    """A run at the stage this version waits at keeps its `kind` stop: a stop or a shutdown that landed between
+    that stage's save and its hand-off replaced it, and must not make the stage resumable."""
+
+    if o.get("stage") == waits_at(o) and not o.get("working") and (o.get("stopped") or {}).get("reason") != "kind":
+        return saved(repo, oneshot={"stopped": {"reason": "kind", "state": o["stage"],
+                                                "detail": "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다"}})["oneshot"]
+    return o
 
 
 def handed(o: dict) -> bool:
@@ -612,6 +623,7 @@ def resume(repo: str) -> dict:
         supported(o)
         if not o.get("stopped") or o.get("working"):
             raise HTTPException(409, "멈춘 단계가 아니다")
+        o = waiting(repo, o)
         # The kind's next stage is not in this version, or the owner kept a requirement the kind cannot meet.
         if o["stopped"]["reason"] in ("kind", "rekind"):
             raise HTTPException(409, o["stopped"]["detail"])

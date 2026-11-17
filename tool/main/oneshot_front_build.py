@@ -16,9 +16,10 @@ from pathlib import Path
 
 from wiki import slots_for
 
-from . import oneshot, oneshot_build, oneshot_device, oneshot_look, oneshot_screens as screens, oneshot_spec, runtime, \
-    specs
-from .oneshot_profile import DEVICES, environment, kind_of
+from . import oneshot, oneshot_android, oneshot_build, oneshot_device, oneshot_look, oneshot_screens as screens, \
+    oneshot_spec, runtime, specs
+from .oneshot_profile import DEVICES, environment, kinds_of, schema, shape, waits_at
+from .oneshot_sheet import KIND_NAMES
 
 STAGE = "build-front"
 
@@ -26,20 +27,49 @@ STAGE = "build-front"
 views = screens.views
 
 
+def as_kind(spec: dict, kind: str) -> dict:
+    """The run as a run of `kind` alone would hold it: that kind's screens, the features and requirements that
+    apply to it, its card's fields and its first screen. Each kind's S7 checks read only this (plan 9c)."""
+
+    o, front = spec["oneshot"], spec["oneshot"]["front"]
+    mine = [{k: v for k, v in s.items() if k != "kind"} for s in front["screens"] if s.get("kind") == kind]
+    ids, feats = {s["id"] for s in mine}, [f for f in o["features"] if kind in f["kinds"]]
+    one = {"screens": mine, "states": {i: st for i, st in front["states"].items() if i in ids},
+           "mocks": {i: m for i, m in front["mocks"].items() if i in ids}, "tokens": front["tokens"],
+           "shots": front.get("shots"), **({"preview": front["preview"]} if kind == "android" and "preview" in front else {})}
+    ops = [f"{p['method'].upper()} {p['path']}" for p in o["design"].get("api", [])]   # the web app's served API
+    return {**spec, "requirements": [r for r in spec.get("requirements") or [] if kind in r.get("kinds", [kind])],
+            "oneshot": {**o, "intent": {**o["intent"], "kind": kind, "kinds": [kind]}, "front": one, "features": feats,
+                        "frequency": {f["id"]: o["frequency"][f["id"]] for f in feats},
+                        "profile": {k: v for k, v in o["profile"].items() if k in schema(kind)},
+                        "first_screen": o["first_screen"][kind], **({"inventory": ops} if kind == "webapp" else {})}}
+
+
+def designed(o: dict, palette: dict) -> dict:
+    """What the build turn builds: the shared tokens, then each kind's screens, states, features and map."""
+
+    front = o["front"]
+    shared = {"type": front["tokens"]["type"], "spacing": front["tokens"]["spacing"], "palette": palette}
+    if shape(o) != "kinds":
+        return {"screens": front["screens"], "states": front["states"], **shared, "features": o["features"],
+                "frequency": o["frequency"]}
+    return {**shared, **{k: {"screens": one["front"]["screens"], "states": one["front"]["states"],
+                             "features": one["features"], "frequency": one["frequency"]}
+                         for k in kinds_of(o) for one in [as_kind({"oneshot": o}, k)["oneshot"]]}}
+
+
 def build_front_text(spec: dict) -> str:
     o = spec["oneshot"]
-    android = kind_of(o) == "android"
-    front = {k: v for k, v in o["front"].items() if k not in ("mocks", "shots", "preview")}
     palette = next(p for p in o["front"]["tokens"]["palettes"] if p["id"] == o["r2"]["palette"])
-    text = oneshot.prompt(STAGE, kind_of(o)).replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
+    text = oneshot.prompt(STAGE, shape(o)).replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
         .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"])) \
-        .replace("{design}", json.dumps({"screens": front["screens"], "states": front["states"],
-                                         "type": front["tokens"]["type"], "spacing": front["tokens"]["spacing"],
-                                         "palette": palette, "features": o["features"],
-                                         "frequency": o["frequency"]}, ensure_ascii=False, indent=2)) \
-        .replace("{viewports}", ", ".join(views(o["profile"]))).replace("{profile}", environment(o))
-    if not android:
+        .replace("{design}", json.dumps(designed(o, palette), ensure_ascii=False, indent=2)) \
+        .replace("{viewports}", ", ".join(views(o["profile"], "webapp" if shape(o) == "kinds" else "")))
+    text = text.replace("{profile}", environment(o))
+    if "android" not in kinds_of(o):
         return text
+    if shape(o) == "kinds":   # the Android parts read only what applies to the Android app
+        spec, o = (one := as_kind(spec, "android")), one["oneshot"]
     size = DEVICES[o["profile"]["device"]]
     return text.replace("{toolchain}", oneshot_build.toolchain_text(spec)) \
         .replace("{device}", f"{size['width']}×{size['height']} px at {size['dpi']} dpi") \
@@ -68,14 +98,22 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     gate, live, backend = slots.get("gate_cmd", "").strip(), slots.get("live_cmd", "").strip(), o["gate"]
     if why := oneshot_build.published(gate, backend):
         return why
-    android = kind_of(o) == "android"
+    kinds = kinds_of(o)
+    android, several = "android" in kinds, shape(o) == "kinds"
+    # Several kinds' gate adds each kind's tests and build to the core's: at least one command for each kind.
+    if several and len([c for c in gate[len(backend):].split("&&") if c.strip()]) < len(kinds):
+        return (f"여러 종류의 `gate_cmd` 는 핵심 테스트 `{backend}` 뒤에 종류마다의 테스트와 빌드 명령을 ` && ` 로 "
+                f"더한다 ({', '.join(KIND_NAMES[k] for k in kinds)}) — `{gate}`")
     if android:   # an app on a phone has no `live_cmd`: its block names the APKs the emulator installs
-        device = oneshot_device.declared(path, final, oneshot_device.reads_screen(spec), oneshot_device.suffix(o))
-    elif not live:
+        phone = as_kind(spec, "android") if several else spec
+        device = oneshot_device.declared(path, final, oneshot_device.reads_screen(phone), oneshot_device.suffix(o))
+    if "webapp" in kinds and not live:
         return "어댑터의 `live_cmd` 가 비었다 — 백엔드와 화면을 함께 띄우는 명령을 적는다"
-    # The backend's own gate runs as the server knows it: the adapter's naming it proves nothing it runs.
+    # The backend's own gate runs as the server knows it: the adapter's naming it proves nothing it runs. Several
+    # kinds' gate builds the Android app on the core, so it runs on the Android toolchain.
+    env = (oneshot_android.build_env() if android else None) if several else oneshot_build.toolchain(spec)
     verdict = specs.judge(path, [backend, gate] if gate != backend else [gate], run.halt,
-                          lambda text: specs.note(run, text), env=oneshot_build.toolchain(spec))
+                          lambda text: specs.note(run, text), env=env)
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := oneshot_build.held(path, run, spec, verdict):
@@ -84,22 +122,29 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
         return why
     store = oneshot_spec.store(spec["repo"])
     n = len(o.get("looks") or []) + 1
-    specs.note(run, f"{'에뮬레이터에 앱을 설치해' if android else '앱을 띄워'} 화면을 찍는다 · {n}회차")
     stopped = lambda: run.halt.is_set() or runtime.stopping.is_set()   # noqa: E731
     shots = store.folder / "build" / f"r{n}"
-    if android:
-        # The emulator installs copies, and their digests are what the phone round must install again.
-        copies = store.folder / "apks" / f"look-{time.time_ns()}"
+    shutil.rmtree(shots, ignore_errors=True)
+    findings, apks = [], {}
+    for k in kinds:   # in the owner's order; a kind that fails sends the build back before the next is looked at
+        one = as_kind(spec, k) if several else spec
+        specs.note(run, f"{'에뮬레이터에 앱을 설치해' if k == 'android' else '앱을 띄워'} 화면을 찍는다 · {n}회차"
+                   + (f" · {KIND_NAMES[k]}" if several else ""))
         try:
-            apks = oneshot_device.frozen(path, device, copies)
-            findings = oneshot_device.look(copies, device, spec, store.folder / "device", shots, stopped)
+            found = looked(path, k, one, live, device if k == "android" else None, shots / k if several else shots,
+                           stopped, apks)
         except OSError as exc:
+            if k != "android":
+                raise
             return f"게이트 뒤의 APK 를 복사하지 못했다 — {exc}"
-        finally:
-            shutil.rmtree(copies, ignore_errors=True)
-    else:
-        findings = oneshot_look.look(path, live, o["front"], o["frequency"], o["inventory"], views(o["profile"]),
-                                     shots, stopped)
+        if several:   # each kind shot apart, then side by side: screen ids are unique across kinds
+            for picture in (shots / k).glob("*.png"):
+                picture.replace(shots / picture.name)
+            shutil.rmtree(shots / k, ignore_errors=True)
+            found = [{**f, "kind": k} for f in found]
+        findings += found
+        if stopped() or any(f["severity"] == "high" for f in found):
+            break
     if stopped():   # a look cut short passes nothing: the stage stays `build-front`, resumable
         return "화면 검사 중에 멈췄다 — [재개] 로 빌드부터 다시 검사한다"
     # The app ran the tree's code, `live_cmd` may build: what was shot must still be the HEAD the gate passed.
@@ -110,14 +155,38 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     if high := [f for f in findings if f["severity"] == "high"]:
         oneshot_spec.saved(spec["repo"], oneshot={"looks": looks})
         return "화면 검사에서 고칠 것이 나왔다 — " + " / ".join(
-            f"{f['screen']} {f['viewport']} {f['state']}: {f['what']}" for f in high[:12])
+            (f"{KIND_NAMES[f['kind']]} " if "kind" in f else "") + f"{f['screen']} {f['viewport']} {f['state']}: {f['what']}"
+            for f in high[:12])
     # `working` names the critique before its worker starts: a server that dies in between leaves it for `recover`.
-    # The fixes this turn was sent with are built now: a resumed build no longer carries them.
-    oneshot_spec.saved(spec["repo"], oneshot={"stage": "critique", "front_built_head": verdict["head"], "looks": looks,
-                                              "attempts": 0, "working": "critique", "fix": None,
-                                              **({"device": device, "apks": apks} if android else {})})
+    # The fixes this turn was sent with are built now: a resumed build no longer carries them. Several kinds wait
+    # here: each kind's critique and the phone are the next step's (9c3b).
+    waits = waits_at(o) == "critique"
+    oneshot_spec.saved(spec["repo"], oneshot={
+        "stage": "critique", "front_built_head": verdict["head"], "looks": looks, "attempts": 0, "fix": None,
+        "working": None if waits else "critique", **({"device": device, "apks": apks} if android else {}),
+        **({"stopped": {"reason": "kind", "state": "critique",
+                        "detail": "여러 종류의 화면 비평은 다음 버전에서 이어진다 — 종류마다의 화면 검사는 통과했다"}}
+           if waits else {})})
     specs.note(run, f"화면 빌드 통과 · {verdict['head'][:12]}")
     return ""
+
+
+def looked(path: Path, kind: str, spec: dict, live: str, device: dict | None, shots: Path, stopped,
+           apks: dict) -> list[dict]:
+    """One kind's look at the HEAD the gate passed, shot into `shots`: the web app served and shot in a browser,
+    or the Android app's APKs copied and installed on the run's emulator. `apks` gets the copies' digests."""
+
+    o, store = spec["oneshot"], oneshot_spec.store(spec["repo"])
+    if kind != "android":
+        return oneshot_look.look(path, live, o["front"], o["frequency"], o["inventory"], views(o["profile"]), shots,
+                                 stopped)
+    # The emulator installs copies, and their digests are what the phone round must install again.
+    copies = store.folder / "apks" / f"look-{time.time_ns()}"
+    try:
+        apks.update(oneshot_device.frozen(path, device, copies))
+        return oneshot_device.look(copies, device, spec, store.folder / "device", shots, stopped)
+    finally:
+        shutil.rmtree(copies, ignore_errors=True)
 
 
 oneshot_build.STAGES[STAGE] = (built_front, "gate", build_front_text, lambda repo: None)   # the critic follows (4c)

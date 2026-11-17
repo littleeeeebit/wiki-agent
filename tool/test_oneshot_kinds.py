@@ -265,11 +265,11 @@ def test_several_kinds_board_takes_a_first_screen_for_each_kind_then_designs_the
 
 
 def test_several_kinds_with_desktop_still_wait_before_the_screens(several):
-    assert oneshot_profile.waits_at({"intent": {"kinds": ["webapp", "android"]}}) == "build-front"
+    assert oneshot_profile.waits_at({"intent": {"kinds": ["webapp", "android"]}}) == "critique"
     assert oneshot_profile.waits_at({"intent": {"kinds": ["android", "desktop"]}}) == "frontend"
 
 
-@pytest.mark.parametrize("stage", ["design", "tests", "split"])
+@pytest.mark.parametrize("stage", ["design", "tests", "split", "build-front"])
 def test_a_run_of_several_kinds_an_earlier_version_stopped_is_taken_on(several, stage):
     oneshot_spec.saved("budget", oneshot={"stage": stage, "stopped": {"reason": "kind", "detail": "다음 버전",
                                                                       "state": stage}})
@@ -279,4 +279,4 @@ def test_a_run_of_several_kinds_an_earlier_version_stopped_is_taken_on(several, 
     with patch.object(oneshot_spec, "start", lambda repo, *a, **k: started.append(a)), \
             patch.object(oneshot_build, "resume", lambda repo: started.append(("tests",))):
         oneshot_spec.resume("budget")
-    assert started == ([("tests",)] if stage == "tests" else [(oneshot_spec.RUNNING[stage],)])
+    assert started == ([("tests",)] if stage in ("tests", "build-front") else [(oneshot_spec.RUNNING[stage],)])

@@ -475,7 +475,7 @@ def main():
         expect(form.get_by_role("checkbox", name="PC 앱")).to_be_disabled()
         form.get_by_role("checkbox", name="Android 앱").check()
         form.get_by_role("checkbox", name="웹앱").check()
-        expect(form.get_by_text("화면 빌드 앞에서 멈춘다")).to_be_visible()
+        expect(form.get_by_text("화면 비평 앞에서 멈춘다")).to_be_visible()
         form.get_by_role("checkbox", name="Android 앱").uncheck()
         # A start answer that lands after another run was picked only joins the list; the picked run stays.
         slow["start"] = 1.5
