@@ -12,8 +12,8 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from main import (oneshot, oneshot_brief as brief, oneshot_build, oneshot_review, oneshot_sheet as sheet, oneshot_spec,
-                  specs)
+from main import (oneshot, oneshot_brief as brief, oneshot_build, oneshot_front, oneshot_review, oneshot_sheet as sheet,
+                  oneshot_spec, specs)
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_core import DESIGN, GLOSSARY, REQS, answer
 from test_oneshot_spec import fenced, o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
@@ -198,10 +198,10 @@ def test_the_approving_reviews_deferrals_are_kept_owed_and_never_sent_to_the_bui
     oneshot_review.decided("budget", store, spec, {"verdict": "approve", "head": "abc", "findings": [DEFER]})
     assert o()["owed"] == [{"id": "O1", **DEFER["device"], **{k: DEFER[k] for k in ("location", "severity", "reason",
                                                                                       "evidence")}, "head": "abc"}]
-    assert o()["stage"] == "split" and o()["stopped"]["reason"] == "kind"
+    assert o()["stage"] == "split" and o()["working"] == "split" and not o().get("stopped")
 
 
-def test_an_approved_review_of_several_kinds_waits_before_the_split(several):
+def test_an_approved_review_of_several_kinds_goes_on_to_the_split(several):
     oneshot_spec.saved("budget", oneshot={"stage": "review", "working": "review", "built_head": "abc",
                                           "design": sheet.parsed(KINDS_DESIGN, KINDS), "tests_head": "t",
                                           "contract": ["core/tests/seen.rs"]})
@@ -209,18 +209,65 @@ def test_an_approved_review_of_several_kinds_waits_before_the_split(several):
     assert "reviewer of the core a new product's kinds" in oneshot.prompt("review", "kinds")
     assert "this repository's core build" in oneshot_review.review_text(
         {**spec, "start_head": "base"}, "abc", "read it")
-    with patch.object(oneshot_spec, "handoff", lambda *a, **k: pytest.fail("the split is the next step's")):
+    started = []
+    with patch.object(oneshot_spec, "handoff", lambda *a, **k: started.append(a)):
         following = oneshot_review.decided("budget", store, spec, {"verdict": "approve", "head": "abc", "findings": []})
-    assert following is None and o()["stage"] == "split" and o()["stopped"]["reason"] == "kind"
-    assert not o().get("working") and o()["reviews"][-1]["verdict"] == "approve"
-    with pytest.raises(HTTPException):   # neither `[재개]` nor a restart takes the split on
+        assert following() and started == [("budget", "split")]
+    assert o()["stage"] == "split" and o()["working"] == "split" and o()["reviews"][-1]["verdict"] == "approve"
+
+
+def test_several_kinds_split_gives_each_feature_the_kinds_all_its_parts_share(several):
+    oneshot_spec.saved("budget", oneshot={"design": sheet.parsed(KINDS_DESIGN, KINDS)})
+    spec = specs.load("budget", oneshot.BRANCH)
+    parts = oneshot_front.part_kinds(spec)
+    assert parts["R2"] == ["android"] and parts["P1"] == ["webapp"] and "M3" in parts
+    assert set(oneshot_front.inventory(spec)) == set(parts) and "P1" in oneshot_front.inventory(spec)
+    shown = oneshot_front.listed(spec, oneshot_front.inventory(spec))
+    assert "`P1` `GET /history`" in shown and "(used by: android)" in shown
+    found = [{"id": "a", "parts": ["R2"]}, {"id": "b", "parts": ["P1"]}]
+    assert [f["kinds"] for f in oneshot_front.with_kinds(found, parts)] == [["android"], ["webapp"]]
+    with pytest.raises(ValueError, match="함께 걸린 종류가 없다 — R2\\(Android 앱\\), P1\\(웹앱\\)"):
+        oneshot_front.with_kinds([{"id": "c", "parts": ["R2", "P1"]}], parts)
+    assert "Never group parts that share no kind" in oneshot.prompt("split", "kinds")
+    oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "first_screen": "번역을 켠다"}})
+    spec, ops = specs.load("budget", oneshot.BRANCH), oneshot_front.inventory(spec)
+    value = [{"id": f"f{n}", "name": "기능", "parts": [p], "class": "every", "why": "늘"} for n, p in enumerate(ops)]
+    asked = []
+
+    def turned(store, role, system, text, block, check, tree):
+        asked.append(system)
+        return check(value)
+
+    with patch.object(oneshot, "turned", turned):
+        oneshot_front.split_turn("budget", oneshot_spec.store("budget"), spec)()
+    assert asked == [oneshot.prompt("split", "kinds")] and o()["stage"] == "board"
+    assert {f["parts"][0]: f["kinds"] for f in o()["features"]} == parts
+    assert o()["first_screen"] == {k: "번역을 켠다" for k in KINDS}
+
+
+def test_several_kinds_board_takes_a_first_screen_for_each_kind_then_waits_before_the_screens(several):
+    features = [{"id": "read", "name": "읽기", "parts": ["R2", "M1"], "class": "every", "why": "늘", "kinds": ["android"]},
+                {"id": "history", "name": "기록", "parts": ["P1"], "class": "sometimes", "why": "가끔", "kinds": ["webapp"]}]
+    oneshot_spec.saved("budget", oneshot={"stage": "board", "features": features, "working": None,
+                                          "first_screen": {k: "번역을 켠다" for k in KINDS}})
+    board = oneshot_spec.view(oneshot_spec.spec_of("budget"))["board"]
+    assert board["kinds"] == [{"id": "android", "name": "Android 앱"}, {"id": "webapp", "name": "웹앱"}]
+    frequency = {"read": "every", "history": "rarely"}
+    with pytest.raises(HTTPException, match="종류마다"):
+        oneshot_front.submit_board("budget", oneshot_front.Board(frequency=frequency, first_screen="한 줄"))
+    with patch.object(oneshot_spec, "start", lambda *a, **k: pytest.fail("each kind's screens are the next step's")):
+        oneshot_front.submit_board("budget", oneshot_front.Board(frequency=frequency, first_screen={
+            "android": "  번역을   켠다 ", "webapp": "기록을 본다"}))
+    assert o()["stage"] == "frontend" and o()["stopped"]["reason"] == "kind" and not o().get("working")
+    assert o()["first_screen"] == {"android": "번역을 켠다", "webapp": "기록을 본다"} and o()["frequency"] == frequency
+    with pytest.raises(HTTPException):   # neither `[재개]` nor a restart takes the screens on
         oneshot_spec.resume("budget")
     with patch.object(oneshot, "restarted", lambda store: pytest.fail("a waiting stage is not restarted")):
         oneshot_spec.recover()
-    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "split"
+    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "frontend"
 
 
-@pytest.mark.parametrize("stage", ["design", "tests"])
+@pytest.mark.parametrize("stage", ["design", "tests", "split"])
 def test_a_run_of_several_kinds_an_earlier_version_stopped_is_taken_on(several, stage):
     oneshot_spec.saved("budget", oneshot={"stage": stage, "stopped": {"reason": "kind", "detail": "다음 버전",
                                                                       "state": stage}})
@@ -230,4 +277,4 @@ def test_a_run_of_several_kinds_an_earlier_version_stopped_is_taken_on(several, 
     with patch.object(oneshot_spec, "start", lambda repo, *a, **k: started.append(a)), \
             patch.object(oneshot_build, "resume", lambda repo: started.append(("tests",))):
         oneshot_spec.resume("budget")
-    assert started == [(oneshot_spec.RUNNING["design"],)] if stage == "design" else started == [("tests",)]
+    assert started == ([("tests",)] if stage == "tests" else [(oneshot_spec.RUNNING[stage],)])

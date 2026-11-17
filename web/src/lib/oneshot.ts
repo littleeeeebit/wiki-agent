@@ -4,7 +4,7 @@ import { get, json, post, type ChoiceQuestion } from '@/lib/api'
 
 export type Decision = { approve?: boolean; edit?: string }
 // A web app's feature names its served endpoints; an Android app's names its core parts.
-export type Feature = { id: string; name: string; class: Freq; why: string; endpoints?: string[]; parts?: string[] }
+export type Feature = { id: string; name: string; class: Freq; why: string; endpoints?: string[]; parts?: string[]; kinds?: string[] }
 export type Freq = 'every' | 'sometimes' | 'rarely' | 'never'
 export type Palette = { id: string; name: string; colors: Record<string, string> }
 export type Gate = { round: number; decisions: Record<string, Decision>; marks?: Record<string, string>; palette?: string }
@@ -78,7 +78,9 @@ export type SpecView = SpecSummary & {
   }
   requirements?: { id: string; text: string; status: string; kinds?: string[] }[]
   sheet?: string; items?: string[]; brief?: Brief
-  board?: { features: Feature[]; first_screen: string | null; frequency: Record<string, Freq> }
+  // Several kinds: `kinds` is set, and `first_screen` holds one line for each kind.
+  board?: { features: Feature[]; first_screen: string | Record<string, string> | null; frequency: Record<string, Freq>
+            kinds?: { id: string; name: string }[] }
   front_sheet?: string; front_items?: string[]; front_brief?: Brief
   r3_sheet?: string; r3_items?: string[]; r3_brief?: Brief
   summary?: RunSummary
@@ -93,7 +95,7 @@ export const api = {
   view: (repo: string) => get(base(repo)).then(answer),
   say: (repo: string, text: string) => post(`${base(repo)}/say`, { text }).then(answer),
   resume: (repo: string) => post(`${base(repo)}/resume`, {}).then(answer),
-  board: (repo: string, frequency: Record<string, Freq>, first_screen: string) =>
+  board: (repo: string, frequency: Record<string, Freq>, first_screen: string | Record<string, string>) =>
     post(`${base(repo)}/board`, { frequency, first_screen }).then(answer),
   decide: (repo: string, gate: string, body: object) => post(`${base(repo)}/${gate}`, body).then(answer),
   phones: (repo: string) => get(`${base(repo)}/phone/devices`)

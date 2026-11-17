@@ -330,6 +330,30 @@ def main():
         assert posted[-1] == ("board-demo", "board", {"frequency": {"record": "sometimes", "export": "rarely", "month": "every"},
                                                        "first_screen": "오늘 쓴 돈"}), posted[-1]
 
+        # Several kinds: a first-screen line for each, the preview one kind's features at a time, a card its kind.
+        views["board-demo"]["board"] = {**views["board-demo"]["board"],
+                                        "kinds": [{"id": "android", "name": "Android 앱"}, {"id": "webapp", "name": "웹앱"}],
+                                        "first_screen": {"android": "오늘 쓴 돈", "webapp": "달마다 본다"},
+                                        "features": [{**FEATURES[0], "kinds": ["android"]}, *FEATURES[1:]]}
+        page.get_by_role("navigation", name="원샷 실행").get_by_role("button").filter(has_text="stopped-demo").click()
+        page.get_by_role("navigation", name="원샷 실행").get_by_role("button").filter(has_text="board-demo").click()
+        board = page.get_by_role("region", name="기능 보드")
+        expect(board.get_by_role("button", name="지출 적기 — 늘 쓴다")).to_contain_text("Android 앱 만")
+        expect(board.get_by_role("button", name="내보내기 — 늘 쓴다")).not_to_contain_text("만")
+        preview = board.get_by_role("img", name="보드로 정해지는 첫 화면")
+        expect(preview).to_contain_text("지출 적기")
+        board.get_by_role("group", name="미리 볼 종류").get_by_role("button", name="웹앱").click()
+        expect(preview).not_to_contain_text("지출 적기")
+        expect(preview).to_contain_text("달마다 본다")
+        line = board.get_by_label("첫 화면에서 바로 하는 일 — 웹앱")
+        line.fill("")
+        expect(board.get_by_role("button", name="보드 제출")).to_be_disabled()
+        line.fill("기록을 본다")
+        with posting(page):
+            board.get_by_role("button", name="보드 제출").click()
+        assert posted[-1] == ("board-demo", "board", {"frequency": {f["id"]: "every" for f in FEATURES}, "first_screen": {
+            "android": "오늘 쓴 돈", "webapp": "기록을 본다"}}), posted[-1]
+
         # A stopped run: its reason and `[재개]` over what happened — the record beside, the worktree's turns below.
         page.get_by_role("navigation", name="원샷 실행").get_by_role("button").filter(has_text="stopped-demo").click()
         expect(page.get_by_role("alert").filter(has_text="화면 비평이 멈췄다")).to_contain_text("6회차에도")
@@ -451,7 +475,7 @@ def main():
         expect(form.get_by_role("checkbox", name="PC 앱")).to_be_disabled()
         form.get_by_role("checkbox", name="Android 앱").check()
         form.get_by_role("checkbox", name="웹앱").check()
-        expect(form.get_by_text("기능 나누기 앞에서 멈춘다")).to_be_visible()
+        expect(form.get_by_text("화면 설계 앞에서 멈춘다")).to_be_visible()
         form.get_by_role("checkbox", name="Android 앱").uncheck()
         # A start answer that lands after another run was picked only joins the list; the picked run stays.
         slow["start"] = 1.5

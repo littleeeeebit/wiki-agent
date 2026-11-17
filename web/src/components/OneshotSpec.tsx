@@ -1,10 +1,11 @@
-import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Choices } from '@/components/Blocks'
 import { Btn } from '@/components/Modal'
+import { Board } from '@/components/OneshotBoard'
 import { Track } from '@/components/OneshotTrack'
-import { api, COLUMNS, STOP, type Brief, type Decision, type Feature, type Freq, type Gate, type Handset, type Palette,
+import { api, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
   type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, kindLabel, ROLE, modelName } from '@/lib/oneshot'
 import { cn } from '@/lib/utils'
 
@@ -57,7 +58,7 @@ export function Title({ children }: { children: ReactNode }) {
 export const GO = 'h-9 justify-center px-4 text-[13px] font-medium'
 
 /** The decision, held at the bottom of the side while what it decides on scrolls. */
-function Decide({ children }: { children: ReactNode }) {
+export function Decide({ children }: { children: ReactNode }) {
   return <div className="sticky bottom-0 -mx-7 mt-auto flex flex-col gap-2 border-t border-border bg-card px-7 py-4 max-[560px]:-mx-4 max-[560px]:px-4">{children}</div>
 }
 
@@ -654,85 +655,6 @@ function Item({ id, d, mark, set, text, line }: {
         <textarea aria-label={`${name} 고칠 내용`} value={d?.edit ?? ''} rows={2} onChange={(e) => set(id, { edit: e.target.value })}
           className="rounded-md border border-input bg-background px-2 py-1 text-foreground" />
       )}
-    </div>
-  )
-}
-
-// -- The feature board ------------------------------------------------------------------
-
-function Board({ name, board, busy, submit }: {
-  name: string; board: NonNullable<SpecView['board']>; busy: boolean; submit: (f: Record<string, Freq>, line: string) => Promise<unknown>
-}) {
-  const [map, setMap] = useState<Record<string, Freq>>(board.frequency)
-  const [line, setLine] = useState(board.first_screen ?? '')
-  const [dragged, setDragged] = useState('')
-  const [moved, setMoved] = useState('')
-  const move = (id: string, to: Freq) => setMap((m) => ({ ...m, [id]: to }))
-  // A card moved by keys is a new element in its new column: the focus follows it there.
-  useLayoutEffect(() => { if (moved) document.querySelector<HTMLElement>(`[data-card="${moved}"]`)?.focus() }, [map, moved])
-  const step = (e: KeyboardEvent, f: Feature) => {
-    const at = COLUMNS.findIndex((c) => c.id === map[f.id])
-    const to = e.key === 'ArrowRight' ? at + 1 : e.key === 'ArrowLeft' ? at - 1 : -1
-    if (to < 0 || to >= COLUMNS.length) return
-    e.preventDefault()
-    move(f.id, COLUMNS[to].id)
-    setMoved(f.id)
-  }
-  const at = (freq: Freq) => board.features.filter((f) => map[f.id] === freq)
-  // The columns on the left; beside them the first screen they make, drawn as the frequencies place it.
-  return (
-    <Split label="기능 보드" sideLabel="첫 화면" side={<>
-      <Title><span>첫 화면</span></Title>
-      <div role="img" aria-label="보드로 정해지는 첫 화면"
-        className="aspect-[9/17] w-full max-w-[18rem] shrink-0 self-center rounded-[26px] bg-[#0b0c0f] p-[9px] shadow-[0_0_0_1px_var(--border)] max-[1500px]:max-w-[15rem]">
-        <div className="flex h-full flex-col gap-2.5 overflow-hidden rounded-[18px] bg-background px-4 py-[18px] text-[13px]">
-          <div className="flex justify-between text-[11px] text-muted-foreground"><span>9:41</span><span className="font-mono">{name}</span></div>
-          <p className="font-heading text-[17px] font-semibold">{line || '첫 화면에서 하는 일'}</p>
-          {at('every').map((f) => <div key={f.id} className="rounded-[10px] bg-primary px-3.5 py-3 text-center font-semibold text-primary-foreground">{f.name}</div>)}
-          {at('sometimes').map((f) => <div key={f.id} className="rounded-lg bg-secondary px-3 py-2.5">{f.name}</div>)}
-          {at('rarely').length > 0 && <p className="mt-auto text-[12px] text-muted-foreground">더 보기 — {at('rarely').map((f) => f.name).join(', ')}</p>}
-        </div>
-      </div>
-      <label className="flex flex-col gap-1.5">
-        <span className="font-semibold">첫 화면에서 바로 하는 일</span>
-        <input value={line} onChange={(e) => setLine(e.target.value)}
-          className="h-9 rounded-md border border-input bg-background px-3 text-foreground max-[560px]:text-base" />
-      </label>
-      <Decide>
-        <Btn tone="wait" className={GO} disabled={busy || !line.trim()} onClick={() => void submit(map, line)}>보드 제출</Btn>
-      </Decide>
-    </>}>
-      <div className="flex flex-col gap-4 px-10 py-6 max-[1500px]:px-7 max-[560px]:px-4">
-        <div className="grid grid-cols-4 gap-3 max-[1500px]:grid-cols-2 max-[560px]:grid-cols-1">
-          {COLUMNS.map((c) => (
-            <Column key={c.id} label={c.label} count={at(c.id).length} empty={c.id === 'never'} drop={() => dragged && move(dragged, c.id)}>
-              {at(c.id).map((f) => (
-                <div key={f.id} data-card={f.id} tabIndex={0} draggable role="button"
-                  aria-label={`${f.name} — ${c.label}`} onDragStart={() => setDragged(f.id)} onDragEnd={() => setDragged('')}
-                  onKeyDown={(e) => step(e, f)}
-                  className="cursor-grab rounded-lg bg-secondary px-3 py-2.5 focus-visible:outline-2 focus-visible:outline-primary">
-                  <p className="font-semibold">{f.name}</p>
-                  <p className="text-[12px] text-muted-foreground">{f.why}</p>
-                </div>
-              ))}
-            </Column>
-          ))}
-        </div>
-        <p className="text-[12.5px] text-muted-foreground">끌어서 옮기거나, 기능에 초점을 두고 ← → 로 옮긴다.</p>
-      </div>
-    </Split>
-  )
-}
-
-function Column({ label, count, empty, drop, children }: { label: string; count: number; empty: boolean; drop: () => void; children: ReactNode }) {
-  return (
-    <div aria-label={label} role="group" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); drop() }}
-      className={cn('flex min-h-[28rem] flex-col gap-2 rounded-xl p-3 max-[1500px]:min-h-[14rem] max-[560px]:min-h-[7rem]',
-        empty ? 'border border-dashed border-border' : 'border border-border bg-card')}>
-      <h3 className="flex justify-between px-1 pb-1 font-heading text-[12px] font-semibold tracking-wide text-faint">
-        <span>{label}</span><span className="font-mono">{count}</span></h3>
-      {children}
-      {!count && <p className="mt-auto px-1 text-[12px] text-faint">여기로 끌어 온다</p>}
     </div>
   )
 }

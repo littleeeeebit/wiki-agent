@@ -100,15 +100,21 @@ def features(value, ops: list[str], key: str = "endpoints") -> list[dict]:
     return out
 
 
-def board(found: list[dict], frequency, first_screen) -> tuple[dict, str]:
-    """The owner's board: a class for every feature, and the first-screen line."""
+def board(found: list[dict], frequency, first_screen, kinds: list[str] = ()) -> tuple[dict, str | dict]:
+    """The owner's board: a class for every feature, and the first-screen line; for several kinds (`kinds`)
+    one line for each, keyed by kind."""
 
     ids = [f["id"] for f in found]
     if not isinstance(frequency, dict) or set(frequency) != set(ids):
         raise ValueError("모든 기능을 한 칸에 하나씩 놓아야 한다")
     if bad := [k for k, v in frequency.items() if v not in CLASSES]:
         raise ValueError(f"없는 칸이다: {', '.join(bad)}")
-    if not isinstance(first_screen, str) or not 1 <= len(first_screen.strip()) <= 200:
+    line = lambda s: isinstance(s, str) and 1 <= len(s.strip()) <= 200   # noqa: E731
+    if kinds:
+        if not isinstance(first_screen, dict) or set(first_screen) != set(kinds) or not all(map(line, first_screen.values())):
+            raise ValueError("종류마다 첫 화면이 무엇을 위한지 한 줄(200자 이내)씩 적어라")
+        return {i: frequency[i] for i in ids}, {k: " ".join(first_screen[k].split()) for k in kinds}
+    if not line(first_screen):
         raise ValueError("첫 화면이 무엇을 위한지 한 줄(200자 이내)로 적어라")
     return {i: frequency[i] for i in ids}, " ".join(first_screen.split())
 
