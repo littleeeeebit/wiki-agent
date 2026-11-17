@@ -162,7 +162,7 @@ def test_a_stack_confirmed_before_the_owner_answered_is_sent_back(world):
     assert o()["stage"] == "design"
 
 
-def test_several_kinds_talk_on_one_stack_and_wait_before_the_core_design(world):
+def test_several_kinds_talk_on_one_stack_and_go_on_to_the_core_design(world):
     oneshot_spec.saved("budget", oneshot={"intent": {"restated": "번역기", "kind": "android", "kinds": ["android", "webapp"]}})
     shared = [{"part": p, "choice": c, "why": "주인이 골랐다", "status": "confirmed"} for p, c in (
         ("core", "Rust"), ("data_store", "SQLite"), ("tests", "cargo test"), ("android.ui", "Tauri 2"),
@@ -181,18 +181,15 @@ def test_several_kinds_talk_on_one_stack_and_wait_before_the_core_design(world):
     heard = []
     asked_stack()
     oneshot_spec.saved("budget", oneshot={"stack": [{**s, "status": "assumed"} for s in shared]})
+    handed = []
     with patch.object(oneshot, "ask", lambda store, role, system, *a: heard.append(system) or (
-            fenced("oneshot-spec", {"stack": shared, "requirements": scoped, "glossary": GLOSSARY}), {}, False)):
+            fenced("oneshot-spec", {"stack": shared, "requirements": scoped, "glossary": GLOSSARY}), {}, False)), \
+            patch.object(oneshot_spec, "handoff", lambda *a, **k: handed.append((a, k))):
         oneshot_spec.talk("budget")
     assert "several kinds at once" in heard[0]
     assert specs.load("budget", oneshot.BRANCH)["requirements"][0]["kinds"] == ["android"]
-    # Settled, it waits at the core design: no worker, and neither `[재개]` nor a restart starts one.
-    assert o()["stage"] == "design" and o()["stopped"]["reason"] == "kind" and not o().get("working")
-    with pytest.raises(HTTPException):
-        oneshot_spec.resume("budget")
-    with patch.object(oneshot, "restarted", lambda store: pytest.fail("a waiting stage is not restarted")):
-        oneshot_spec.recover()
-    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "design"
+    # Settled, it goes on to the one core design, as a run of one kind does.
+    assert handed == [(("budget", "design"), {"stage": "design"})] and not o().get("stopped")
 
 
 def test_a_requirement_the_owner_keeps_beyond_the_kind_stops_the_run_for_good(world):

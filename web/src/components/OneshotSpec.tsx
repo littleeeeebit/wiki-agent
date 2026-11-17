@@ -328,7 +328,7 @@ function Conversation({ talk, requirements, stack, android, kinds, halt, busy, s
           ]
         })}
       </dl>
-      <p className="pb-6 text-[12.5px] text-muted-foreground">스택이 다 정해지고 물을 것이 없으면 대화가 끝나고 {android ? '핵심 설계' : '백엔드 설계'}로 넘어간다.</p>
+      <p className="pb-6 text-[12.5px] text-muted-foreground">스택이 다 정해지고 물을 것이 없으면 대화가 끝나고 {android || kinds.length > 1 ? '핵심 설계' : '백엔드 설계'}로 넘어간다.</p>
     </>}>
       <div className="flex min-h-0 flex-1 flex-col max-[1100px]:min-h-[34rem]">
         <div ref={thread} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-10 py-5 max-[1500px]:px-7 max-[560px]:px-4">

@@ -44,6 +44,14 @@ MAX_ASSUMPTIONS, MAX_ROWS = 7, 12
 # `oneshot_profile.PARTS`, as the sheet names them
 PART_NAMES = {"backend": "백엔드", "frontend": "프런트엔드", "styling": "스타일", "data_store": "데이터 저장",
               "tests": "테스트", "deploy": "배포", "language": "언어", "ui": "화면", "core": "핵심 로직", "build": "빌드"}
+KIND_NAMES = {"webapp": "웹앱", "android": "Android 앱", "desktop": "PC 앱"}   # `web/src/lib/oneshot.ts` KINDS
+
+
+def part_name(part: str) -> str:
+    """A stack part as the sheet names it; several kinds' own parts are `<kind>.<part>`."""
+
+    kind, _, own = part.rpartition(".")
+    return f"{KIND_NAMES.get(kind, kind)} {PART_NAMES.get(own, own)}" if kind else PART_NAMES.get(part, part)
 PATH = re.compile(r"/[A-Za-z0-9_.{}/-]*")
 # A path segment that is a sign-in role, whole: `/authors` is not one.
 AUTH_SEGMENT = re.compile(r"log-?(in|out)|sign-?(in|up|out)|auth|oauth2?|sessions?|tokens?|passwords?|register", re.I)
@@ -96,13 +104,17 @@ def _strings(item: dict, key: str, where: str) -> list[str]:
     return [str(v) for v in value]
 
 
-def table(kind: str = "webapp") -> dict:
-    """The design's item kinds for a run's kind: an Android app's core, or a web app's backend."""
+def table(kind: str | list[str] = "webapp") -> dict:
+    """The design's item kinds for a run's kind: an Android app's core, or a web app's backend. Several kinds
+    share one core, and a web app among them adds its server's endpoints, which the others may call."""
 
-    return CORE if kind == "android" else KINDS
+    kinds = [kind] if isinstance(kind, str) else list(kind)
+    if len(kinds) > 1:
+        return {**CORE, "api": KINDS["api"]} if "webapp" in kinds else CORE
+    return CORE if kinds[0] == "android" else KINDS
 
 
-def blocks(kind: str = "webapp") -> str:
+def blocks(kind: str | list[str] = "webapp") -> str:
     return ",".join(block for block, _, _ in table(kind).values())
 
 
@@ -186,7 +198,7 @@ def _kind(name: str, item: dict, where: str) -> dict:
     return item
 
 
-def parsed(found: dict, kind: str = "webapp") -> dict:
+def parsed(found: dict, kind: str | list[str] = "webapp") -> dict:
     """The kind's design blocks, each shape-checked: `{item kind: [items]}`."""
 
     design, kinds = {}, table(kind)
@@ -222,18 +234,12 @@ def linked(design: dict, reqs: list[dict]) -> dict[str, dict]:
 def checked(design: dict, reqs: list[dict], glossary: list[dict], profile: dict, kind: str = "webapp") -> None:
     """The S3 checks; each refusal names what to fix."""
 
-    if kind == "android":
-        return core_checked(design, reqs, glossary)
+    if "modules" in design:   # an Android app's core, or the core several kinds share
+        return core_checked(design, reqs, glossary, profile)
     linked(design, reqs)
     req_ids = {r["id"] for r in reqs}
     api_ids = {p["id"] for p in design["api"]}
-    routes: dict[tuple[str, str], str] = {}
-    for p in design["api"]:
-        if (twin := routes.setdefault((p["method"], p["path"]), p["id"])) != p["id"]:
-            raise ValueError(f"{twin}, {p['id']}: 같은 `{p['method']} {p['path']}` 다 — 하나로 합쳐라")
-    for p in design["api"]:
-        if not req_ids & set(p["depends_on"]):
-            raise ValueError(f"{p['id']} {p['method']} {p['path']}: 어떤 요구에도 쓰이지 않는다 — 범위 밖이다")
+    endpoints_checked(design, reqs, profile)
     for t in design["tests"]:
         if not req_ids & set(t["depends_on"]) or not api_ids & set(t["depends_on"]):
             raise ValueError(f"{t['id']}: 시험하는 요구와 부르는 엔드포인트를 `depends_on` 에 적어야 한다")
@@ -251,6 +257,19 @@ def checked(design: dict, reqs: list[dict], glossary: list[dict], profile: dict,
             [(e["id"], f["name"]) for e in design["entities"] for f in e["fields"]] + \
             [(p["id"], f"{p['path']} {p['does']}") for p in design["api"]]
     avoided(words, glossary)
+
+
+def endpoints_checked(design: dict, reqs: list[dict], profile: dict) -> None:
+    """A web app's endpoints: one per route, each used by a requirement, and sign-in as the card says."""
+
+    req_ids = {r["id"] for r in reqs}
+    routes: dict[tuple[str, str], str] = {}
+    for p in design["api"]:
+        if (twin := routes.setdefault((p["method"], p["path"]), p["id"])) != p["id"]:
+            raise ValueError(f"{twin}, {p['id']}: 같은 `{p['method']} {p['path']}` 다 — 하나로 합쳐라")
+    for p in design["api"]:
+        if not req_ids & set(p["depends_on"]):
+            raise ValueError(f"{p['id']} {p['method']} {p['path']}: 어떤 요구에도 쓰이지 않는다 — 범위 밖이다")
     auth = [p for p in design["api"] if any(AUTH_SEGMENT.fullmatch(s) for s in p["path"].split("/"))]
     if profile.get("auth") == "none" and auth:
         raise ValueError(f"{auth[0]['id']}: 환경 카드는 로그인 없음인데 인증 엔드포인트가 있다")
@@ -258,17 +277,22 @@ def checked(design: dict, reqs: list[dict], glossary: list[dict], profile: dict,
         raise ValueError(f"환경 카드는 로그인 `{profile['auth']}` 인데 인증 엔드포인트가 없다")
 
 
-def core_checked(design: dict, reqs: list[dict], glossary: list[dict]) -> None:
-    """An Android core's S3 checks: every module reached from a requirement, every call that leaves the phone
-    made by a module, and every scenario carried by a module and checked by a test."""
+def core_checked(design: dict, reqs: list[dict], glossary: list[dict], profile: dict | None = None) -> None:
+    """A core's S3 checks: every module reached from a requirement, every call that leaves the app made by a
+    module, and every scenario carried by a module and checked by a test. A web app among several kinds adds
+    its endpoints, which a module may call."""
 
     linked(design, reqs)
     req_ids = {r["id"] for r in reqs}
     modules = {m["id"]: m for m in design["modules"]}
     outside = {x["id"] for x in design["outside"]}
+    api = {p["id"] for p in design.get("api", [])}
+    if "api" in design:
+        endpoints_checked(design, reqs, profile or {})
     for m in modules.values():
-        if bad := [c for c in m["calls"] if c not in modules and c not in outside or c == m["id"]]:
-            raise ValueError(f"{m['id']}: `calls` 는 다른 모듈(M)이나 바깥 호출(X)을 가리킨다 — {', '.join(bad)}")
+        if bad := [c for c in m["calls"] if c not in modules and c not in outside and c not in api or c == m["id"]]:
+            raise ValueError(f"{m['id']}: `calls` 는 다른 모듈(M)이나 바깥 호출(X){'이나 엔드포인트(P)' if api else ''}"
+                             f"를 가리킨다 — {', '.join(bad)}")
     reached = {m for m, item in modules.items() if req_ids & set(item["depends_on"])}
     while more := {c for m in reached for c in modules[m]["calls"] if c in modules} - reached:
         reached |= more
@@ -285,7 +309,8 @@ def core_checked(design: dict, reqs: list[dict], glossary: list[dict]) -> None:
         if not any(r["id"] in t["depends_on"] for t in design["tests"]):
             raise ValueError(f"{r['id']}: 이 시나리오를 확인할 테스트가 없다")
     avoided([(m["id"], f"{m['name']} {m['contract']}") for m in modules.values()] +
-            [(x["id"], f"{x['target']} {x['does']}") for x in design["outside"]], glossary)
+            [(x["id"], f"{x['target']} {x['does']}") for x in design["outside"]] +
+            [(p["id"], f"{p['path']} {p['does']}") for p in design.get("api", [])], glossary)
 
 
 def avoided(words: list[tuple[str, str]], glossary: list[dict]) -> None:
@@ -343,9 +368,9 @@ def soft(design: dict, reqs: list[dict], glossary: list[dict]) -> list[str]:
     found = []
     if len(design["assumptions"]) > MAX_ASSUMPTIONS:
         found.append(f"가정이 {len(design['assumptions'])}개다 — {MAX_ASSUMPTIONS}개 이하로 합치거나 미뤄라")
-    rows, what = (design["modules"], "모듈이") if "modules" in design else (design["api"], "엔드포인트가")
-    if len(rows) > MAX_ROWS:
-        found.append(f"{what} {len(rows)}개다 — {MAX_ROWS}개 이하로 합치거나 미뤄라")
+    for name, what in (("modules", "모듈이"), ("api", "엔드포인트가")):   # several kinds' core may have both
+        if len(rows := design.get(name, [])) > MAX_ROWS:
+            found.append(f"{what} {len(rows)}개다 — {MAX_ROWS}개 이하로 합치거나 미뤄라")
     for where, text in strings(design, reqs, glossary):
         hits = translationese(text)
         if len(hits) >= THRESHOLD:
@@ -417,7 +442,7 @@ def opening(spec: dict, title: str, mark) -> list[str]:
     if stack:   # read-only here: S2 settled it, and another stack means a new run
         lines += ["## 스택", "", "요구 대화에서 고른 것이다. 바꾸려면 새 실행을 시작한다.", "",
                   "| 부분 | 고른 것 | 이유 |", "| --- | --- | --- |"]
-        lines += [f"| {PART_NAMES[p]} | {_cell(s['choice'])} | {_cell(s['why'])} |" for p, s in stack.items()]
+        lines += [f"| {part_name(p)} | {_cell(s['choice'])} | {_cell(s['why'])} |" for p, s in stack.items()]
         lines.append("")
     lines += ["## 에이전트가 정한 가정", ""]
     shown = design["assumptions"][:MAX_ASSUMPTIONS]
@@ -490,11 +515,24 @@ def core_sheet(spec: dict) -> str:
     lines = opening(spec, "핵심 설계", mark)
     stored = [f"{m['name']}: {m['stores']}" for m in design["modules"] if m["stores"]]
     abilities = [r for r in reqs if r.get("capability")]
+    kinds = (o.get("intent") or {}).get("kinds") or []
+    several = len(kinds) > 1
     lines += ["", "## 나중에 되돌리기 어려운 것", "",
-              f"- 폰에 저장하는 것: {'; '.join(_cell(s) for s in stored) or '없음'}",
+              f"- {'기기' if several else '폰'}에 저장하는 것: {'; '.join(_cell(s) for s in stored) or '없음'}",
               f"- 플랫폼 권한: {', '.join(f'`{r['capability']['permission']}`' for r in abilities) or '없음'}"]
+    if "api" in design:
+        lines.append(f"- 로그인: `{o['profile'].get('auth')}`")
     if o["profile"].get("visibility") == "public":
         lines.append("- 공개 저장소다: 코드와 설계 문서가 모두에게 보인다")
+    if several:   # what each kind the owner picked uses of the one core
+        lines += ["", "## 종류마다 쓰는 것", ""]
+        for kind in kinds:
+            uses = used_by(design, reqs, kind)
+            asks = [r["capability"]["permission"] for r in abilities if kind in (r.get("kinds") or kinds)]
+            lines.append(f"- {KIND_NAMES.get(kind, kind)}: 모듈 {', '.join(uses) or '없음'} / 권한 "
+                         f"{', '.join(f'`{_cell(p)}`' for p in asks) or '없음'}"
+                         + (f" / 엔드포인트 {', '.join(p['id'] for p in design['api']) or '없음'}"
+                            if kind == "webapp" and "api" in design else ""))
     if abilities:
         lines += ["", "## 플랫폼 권한", "", "| id | 권한 | 사용자에게 뜨는 안내 | 배포 위험 |", "| --- | --- | --- | --- |"]
         lines += [f"| {r['id']}{mark(r['id'])} | `{_cell(r['capability']['permission'])}` | "
@@ -504,8 +542,13 @@ def core_sheet(spec: dict) -> str:
               for m in design["modules"][:MAX_ROWS]]
     if len(design["modules"]) > MAX_ROWS:
         lines.append(f"\n그 밖의 모듈 {len(design['modules']) - MAX_ROWS}개는 아래 접힌 부분에 있다")
+    if design.get("api"):   # a web app's server among several kinds
+        lines += ["", "## 서버 API", "", "| id | 메서드 | 경로 | 하는 일 |", "| --- | --- | --- | --- |"]
+        lines += [f"| {p['id']}{mark(p['id'])} | {p['method']} | `{_cell(p['path'])}` | {_cell(p['does'])} |"
+                  for p in design["api"]]
     if design["outside"]:
-        lines += ["", "## 폰 밖으로 나가는 호출", "", "| id | 대상 | 하는 일 | 실패할 때 |", "| --- | --- | --- | --- |"]
+        lines += ["", f"## {'앱' if several else '폰'} 밖으로 나가는 호출", "", "| id | 대상 | 하는 일 | 실패할 때 |",
+                  "| --- | --- | --- | --- |"]
         lines += [f"| {x['id']}{mark(x['id'])} | {_cell(x['target'])} | {_cell(x['does'])} | {_cell(x['failure'])} |"
                   for x in design["outside"]]
     lines += tested_scenarios(design, reqs, mark)
@@ -514,14 +557,29 @@ def core_sheet(spec: dict) -> str:
         tabled = "" if n < MAX_ROWS else f"계약 {m['contract']} / 부르는 것 {', '.join(m['calls']) or '없음'} / "
         lines.append(f"- **{m['id']}**{mark(m['id'])} {m['name']}: {tabled}입력 {_shape(m['inputs'])} / 출력 {_shape(m['outputs'])} / "
                      f"오류 {', '.join(m['errors']) or '없음'} / 상태 {m['state'] or '없음'}")
+    lines += [f"- **{p['id']}**{mark(p['id'])} `{p['method']} {p['path']}` 요청 {_shape(p['request'])} / "
+              f"응답 {_shape(p['response'])} / 오류 {', '.join(p['errors']) or '없음'}" for p in design.get("api", [])]
     return "\n".join(lines + folded_tail(design, glossary, mark))
 
 
+def used_by(design: dict, reqs: list[dict], kind: str) -> list[str]:
+    """The modules one kind uses: those carrying a requirement that applies to it, and every module they call."""
+
+    mine = {r["id"] for r in reqs if kind in (r.get("kinds") or [kind])}
+    modules = {m["id"]: m for m in design["modules"]}
+    reached = {m for m, item in modules.items() if mine & set(item["depends_on"])}
+    while more := {c for m in reached for c in modules[m]["calls"] if c in modules} - reached:
+        reached |= more
+    return [m for m in modules if m in reached]
+
+
 def core(spec: dict) -> str:
-    """`docs/design/core.json`: the modules and the calls leaving the phone, which the contract tests are written from."""
+    """`docs/design/core.json`: the modules and the calls leaving the app, which the contract tests are written
+    from, and a web app's endpoints when several kinds share the core."""
 
     design = spec["oneshot"]["design"]
-    return json.dumps({"modules": design["modules"], "outside": design["outside"]}, ensure_ascii=False, indent=2) + "\n"
+    return json.dumps({k: design[k] for k in ("modules", "outside", "api") if k in design},
+                      ensure_ascii=False, indent=2) + "\n"
 
 
 def mermaid_er(design: dict) -> list[str]:

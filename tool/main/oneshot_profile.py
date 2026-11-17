@@ -65,9 +65,10 @@ def kinds_of(o: dict) -> list[str]:
 
 
 def waits_at(o: dict) -> str | None:
-    """The stage the run waits at in this version, stopped with reason `kind`: several kinds have no core design yet."""
+    """The stage the run waits at in this version, stopped with reason `kind`: several kinds have no core
+    contract tests yet."""
 
-    return "design" if len(kinds_of(o)) > 1 else KIND_STOPS.get(kind_of(o))
+    return "tests" if len(kinds_of(o)) > 1 else KIND_STOPS.get(kind_of(o))
 
 
 def _kinds(kind: str | list[str]) -> list[str]:
