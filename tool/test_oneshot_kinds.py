@@ -265,7 +265,7 @@ def test_several_kinds_board_takes_a_first_screen_for_each_kind_then_designs_the
 
 
 def test_several_kinds_with_desktop_still_wait_before_the_screens(several):
-    assert oneshot_profile.waits_at({"intent": {"kinds": ["webapp", "android"]}}) == "critique"
+    assert oneshot_profile.waits_at({"intent": {"kinds": ["webapp", "android"]}}) == "r3"
     assert oneshot_profile.waits_at({"intent": {"kinds": ["android", "desktop"]}}) == "frontend"
 
 

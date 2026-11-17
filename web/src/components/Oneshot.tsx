@@ -150,7 +150,7 @@ export function Intake({ busy, act }: { busy: boolean; act: Act }) {
             ))}
           </div>
           {kinds.length > 1 && (
-            <p className="text-[12px] text-wait">여러 형태를 한 실행에서 만드는 것은 아직 화면 빌드와 종류마다의 화면 검사까지다 — 화면 비평 앞에서 멈춘다 (계획 9c3b).</p>
+            <p className="text-[12px] text-wait">여러 형태를 한 실행에서 만드는 것은 아직 종류마다의 화면 비평과 휴대폰 회차까지다 — R3 앞에서 멈춘다 (계획 9c4).</p>
           )}
         </fieldset>
         <div className="flex flex-col gap-1.5">

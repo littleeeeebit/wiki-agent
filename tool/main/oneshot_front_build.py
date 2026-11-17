@@ -18,7 +18,7 @@ from wiki import slots_for
 
 from . import oneshot, oneshot_android, oneshot_build, oneshot_device, oneshot_look, oneshot_screens as screens, \
     oneshot_spec, runtime, specs
-from .oneshot_profile import DEVICES, environment, kinds_of, schema, shape, waits_at
+from .oneshot_profile import DEVICES, environment, kinds_of, schema, shape
 from .oneshot_sheet import KIND_NAMES
 
 STAGE = "build-front"
@@ -158,15 +158,10 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
             (f"{KIND_NAMES[f['kind']]} " if "kind" in f else "") + f"{f['screen']} {f['viewport']} {f['state']}: {f['what']}"
             for f in high[:12])
     # `working` names the critique before its worker starts: a server that dies in between leaves it for `recover`.
-    # The fixes this turn was sent with are built now: a resumed build no longer carries them. Several kinds wait
-    # here: each kind's critique and the phone are the next step's (9c3b).
-    waits = waits_at(o) == "critique"
-    oneshot_spec.saved(spec["repo"], oneshot={
-        "stage": "critique", "front_built_head": verdict["head"], "looks": looks, "attempts": 0, "fix": None,
-        "working": None if waits else "critique", **({"device": device, "apks": apks} if android else {}),
-        **({"stopped": {"reason": "kind", "state": "critique",
-                        "detail": "여러 종류의 화면 비평은 다음 버전에서 이어진다 — 종류마다의 화면 검사는 통과했다"}}
-           if waits else {})})
+    # The fixes this turn was sent with are built now: a resumed build no longer carries them.
+    oneshot_spec.saved(spec["repo"], oneshot={"stage": "critique", "front_built_head": verdict["head"], "looks": looks,
+                                              "attempts": 0, "working": "critique", "fix": None,
+                                              **({"device": device, "apks": apks} if android else {})})
     specs.note(run, f"화면 빌드 통과 · {verdict['head'][:12]}")
     return ""
 

@@ -147,8 +147,11 @@ function Record({ view }: { view: SpecView }) {
     ? ['시도', of((o.attempts ?? 0) + 1, lim?.attempts)] : ['검사 실패', of(o.attempts ?? 0, lim?.attempts)]
   // Only the critiques since the count restarted go against the cap; a cap stop restarts it at once, and keeps
   // the count it reached (`counted`) — a failed critique call stops for the same reason with none.
+  // Several kinds count each kind's own, the kind of the last critique (`oneshot_critique.counted`).
   const looks = o.critiques?.length ?? 0
-  const since = looks - (o.critique_base ?? 0)
+  const last = o.critiques?.at(-1)?.kind
+  const base = Math.max(o.critique_base ?? 0, last ? o.critique_bases?.[last] ?? 0 : 0)
+  const since = (o.critiques ?? []).slice(base).filter((c) => c.kind === last).length
   // A cap stop saved before `counted` says the count only in its detail, which the server words the same way.
   const before = view.stopped?.reason === 'critique' && /^(\d+)회차에도 높은 발견/.exec(view.stopped.detail)
   const reached = view.stopped?.counted ?? (before ? Number(before[1]) : 0)

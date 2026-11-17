@@ -29,7 +29,7 @@ import android_phone
 
 from . import oneshot, oneshot_android, oneshot_build, oneshot_device as device, oneshot_front_build as front_build, \
     oneshot_review as review, oneshot_spec, runtime
-from .oneshot_profile import kind_of
+from .oneshot_profile import shape, waits_at
 
 STAGE = "phone"
 SERIAL = re.compile(r"[A-Za-z0-9._:-]{1,64}")
@@ -319,6 +319,8 @@ def phone_round(repo: str) -> None:
 
     def body(store, spec, tree):
         o = spec["oneshot"]
+        if shape(o) == "kinds":   # the phone sees only the Android app's screens, features and scenarios
+            spec = front_build.as_kind(spec, "android")
         # The round installs copies, checked here against the digests of the copies the emulator installed.
         frozen = base(repo) / "apks" / f"r{time.time_ns()}"
         try:
@@ -356,6 +358,11 @@ def settled(repo: str, outcome: dict):
     with oneshot._lock:
         o = oneshot_spec.spec_of(repo)["oneshot"]
         result = {**(o.get("phone") or {}), **outcome}
+        if outcome["status"] == "passed" and waits_at(o) == "r3":   # several kinds: R3 is the next step's (9c4)
+            oneshot_spec.saved(repo, oneshot={"phone": result, "stage": "r3", "working": None, "stopped": {
+                "reason": "kind", "state": "r3",
+                "detail": "여러 종류의 R3 시트는 다음 버전에서 이어진다 — 종류마다의 비평과 휴대폰 회차는 통과했다"}})
+            return None
         if outcome["status"] == "passed":
             return oneshot_spec.briefing(repo, "r3", {"phone": result, "stage": "r3", "r3": oneshot_critique.opening(o)})
         if outcome["status"] != "failed":
@@ -386,7 +393,7 @@ def earlier(repo: str, o: dict) -> None:
 
     from . import oneshot_critique   # it imports this module
     stop = o.get("stopped") or {}
-    if kind_of(o) != "android" or o.get("stage") != "r3" or stop.get("reason") != "kind":
+    if shape(o) != "android" or o.get("stage") != "r3" or stop.get("reason") != "kind":
         return
     if (o.get("phone") or {}).get("status") == "passed":
         oneshot_spec.saved(repo, oneshot={"stopped": None, "working": None, "r3": oneshot_critique.opening(o)})

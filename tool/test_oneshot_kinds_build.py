@@ -11,10 +11,8 @@ import sys
 from unittest.mock import patch
 
 import pytest
-from fastapi import HTTPException
 
-from main import oneshot, oneshot_build, oneshot_device as device, oneshot_front_build as front_build, oneshot_spec, \
-    runtime
+from main import oneshot_build, oneshot_device as device, oneshot_front_build as front_build, oneshot_spec
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_front_build import GATE, Run, adapter, git, o, report, spec, staged, write  # noqa: F401 — `staged`
 from test_oneshot_device import SUFFIX
@@ -94,18 +92,19 @@ def test_the_build_text_names_every_kind_and_only_the_android_apps_scenarios(kin
     assert "The web screens are shot at\ndesktop" in text
 
 
-def test_each_kind_is_looked_at_in_the_owners_order_with_only_its_own_and_the_run_waits_before_the_critique(kinds_build):
+def test_each_kind_is_looked_at_in_the_owners_order_with_only_its_own_and_the_critique_follows(kinds_build):
     seen, looking = looks({})
-    sent = []
-    with looking, patch.object(oneshot_spec, "start", lambda *a, **k: pytest.fail("the critique is the next step's")):
+    sent, started = [], []
+    with looking, patch.object(oneshot_spec, "start", lambda repo, worker, *a, **k: started.append(worker)):
         assert checked(kinds_build, sent) is not None
     assert [s["kind"] for s in seen] == KINDS, sent
+    assert started == ["critique"]
     android, web = seen
     assert android == {**android, "screens": ["S1"], "features": ["read"], "requirements": ["R1", "R2"], "views": ["phone"],
                        "device": DEVICE}
     assert web == {**web, "screens": ["S2"], "features": ["history"], "requirements": ["R3"], "views": ["desktop"],
                    "inventory": ["GET /history"], "device": None}
-    assert o()["stage"] == "critique" and o()["stopped"]["reason"] == "kind" and not o().get("working")
+    assert o()["stage"] == "critique" and o()["working"] == "critique" and not o().get("stopped")
     assert o()["device"] == DEVICE and o()["apks"] == {"android/app-debug.apk": "digest"}
     shots = oneshot_spec.store("budget").folder / "build" / "r1"
     assert sorted(p.name for p in shots.iterdir()) == ["S1-phone-full.png", "S2-desktop-full.png"]   # side by side
@@ -150,27 +149,3 @@ def test_a_gate_without_a_command_for_each_kind_is_sent_back(kinds_build, gate):
     with looking:
         checked(kinds_build, sent)
     assert not seen and "종류마다의 테스트와 빌드 명령" in sent[-1][2] and o()["stage"] == "build-front"
-
-
-@pytest.mark.parametrize("ending", ["owner", "shutdown"])
-def test_a_stop_landing_after_the_pass_still_waits_before_the_critique(kinds_build, ending):
-    """The pass saves the wait, then hands off; a stop in between replaces the wait's reason, but neither `[재개]`
-    nor a restart takes the critique on."""
-
-    run, started = Run(), []
-    _, looking = looks({})
-    with looking, patch.object(oneshot_spec, "start", lambda repo, worker, *a, **k: started.append(worker)):
-        then = oneshot_build.checked(kinds_build, run, spec(), report() + fenced("oneshot-device", DEVICE))
-        (run.halt if ending == "owner" else runtime.stopping).set()
-        try:
-            then()
-        finally:
-            runtime.stopping.clear()
-        assert o()["stopped"]["reason"] in ("block", "restart")
-        if ending == "shutdown":
-            with patch.object(oneshot, "restarted", lambda store: pytest.fail("a waiting stage is not restarted")):
-                oneshot_spec.recover()
-            assert o()["stopped"]["reason"] == "kind"
-        with pytest.raises(HTTPException):
-            oneshot_spec.resume("budget")
-    assert not started and o()["stopped"]["reason"] == "kind" and o()["stage"] == "critique"

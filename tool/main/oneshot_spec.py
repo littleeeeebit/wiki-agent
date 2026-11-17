@@ -515,7 +515,7 @@ def summary(spec: dict) -> dict:
     o = spec["oneshot"]
     asked = o["stage"] == "spec" and (o.get("talk") or [{}])[-1].get("role") == "agent"
     return {"repo": spec["repo"], "stage": o["stage"], "working": o.get("working"), "stopped": o.get("stopped"),
-            "kind": kind_of(o), "waits": not o.get("working") and not o.get("stopped") and (o["stage"] in WAITS or asked)}
+            "kind": kind_of(o), "kinds": kinds_of(o), "waits": not o.get("working") and not o.get("stopped") and (o["stage"] in WAITS or asked)}
 
 
 @router.get("/api/oneshot-specs")

@@ -475,7 +475,7 @@ def main():
         expect(form.get_by_role("checkbox", name="PC 앱")).to_be_disabled()
         form.get_by_role("checkbox", name="Android 앱").check()
         form.get_by_role("checkbox", name="웹앱").check()
-        expect(form.get_by_text("화면 비평 앞에서 멈춘다")).to_be_visible()
+        expect(form.get_by_text("R3 앞에서 멈춘다")).to_be_visible()
         form.get_by_role("checkbox", name="Android 앱").uncheck()
         # A start answer that lands after another run was picked only joins the list; the picked run stays.
         slow["start"] = 1.5
@@ -736,8 +736,9 @@ def phone_round():
     unauthorized one cannot be picked, the pick sends its serial and whether to keep the app, a running round
     can be stopped, an empty list says another ADB server may hold the phone, and an unfinished cleanup is
     shown on the run."""
-    android = run("phone-demo", "phone", waits=True, kind="android")
-    android["oneshot"] |= {"intent": {"kind": "android"}, "phone": {
+    # A run of several kinds whose first is the web app: an Android app among its kinds still owes the phone round.
+    android = run("phone-demo", "phone", waits=True, kind="webapp") | {"kinds": ["webapp", "android"]}
+    android["oneshot"] |= {"intent": {"kind": "webapp", "kinds": ["webapp", "android"]}, "phone": {
         "status": "waiting", "detail": "휴대폰이 잠겨 있다 — 잠금을 풀고 화면을 켠 채로 다시 시작한다", "findings": [
             {"screen": "S1", "state": "full", "what": "앱이 죽거나 응답하지 않았다", "severity": "high"}]}}
     android["phone_owned"] = [{"serial": "OLD1", "model": "", "packages": ["com.example.app.oneshot01"], "state": "pending",
@@ -754,7 +755,8 @@ def phone_round():
     @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
     async def api(path: str, request: Request):
         if path == "oneshot-specs":
-            return {"specs": [{k: v[k] for k in ("repo", "stage", "working", "stopped", "waits", "kind")} for v in views.values()]}
+            return {"specs": [{k: v[k] for k in ("repo", "stage", "working", "stopped", "waits", "kind", "kinds")}
+                              for v in views.values()]}
         if path == "oneshot/spec/phone-demo/phone/devices":
             listed.append(views["phone-demo"]["stage"])
             return phones
