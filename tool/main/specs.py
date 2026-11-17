@@ -963,7 +963,9 @@ def revise(repo: Path, spec: dict, change: dict) -> None:
     if not gate:
         raise ValueError("저장소의 gate_cmd 를 먼저 연결해라")
     # Every revision's first item was its gate; one a changed `gate_cmd` replaced is still no item of its own (#310).
-    retired = frozenset(r["done"][0] for r in [spec, *(spec.get("revisions") or [])] if r.get("done"))
+    # Not a oneshot's own revision 1: its first item is its first screen (`oneshot_front`), which stays.
+    retired = frozenset(r["done"][0] for r in [spec, *(spec.get("revisions") or [])]
+                        if r.get("done") and not (spec.get("oneshot") and r["rev"] == 1))
     made = fields(repo, {**spec, **{k: change[k] for k in (
         "goal", "out", "done", "review", "prerequisite_review") if k in change}}, gate, retired=retired)
     spec.setdefault("revisions", []).append({"rev": spec["rev"], "ts": time.time(), "reason": reason.strip(),
