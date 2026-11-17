@@ -46,6 +46,9 @@ OWNER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
 # The stack is the owner's, picked in S2 (`docs/plans/oneshot/6-free-stack.md`); the card holds none of it.
 PARTS = ("backend", "frontend", "styling", "data_store", "tests", "deploy")
 ANDROID_PARTS = ("language", "ui", "core", "data_store", "tests", "build")
+# A run of several kinds: the parts every kind shares once, then each kind's own as `<kind>.<part>` (plan 9b).
+SHARED_PARTS = ("core", "data_store", "tests")
+OWN_PARTS = {"webapp": ("backend", "frontend", "styling", "deploy"), "android": ("ui", "build"), "desktop": ("ui", "build")}
 STATUSES = ("confirmed", "assumed", "undecided")
 
 
@@ -55,14 +58,38 @@ def kind_of(o: dict) -> str:
     return (o.get("intent") or {}).get("kind", "webapp")
 
 
-def parts(kind: str = "webapp") -> tuple[str, ...]:
-    return ANDROID_PARTS if kind == "android" else PARTS
+def kinds_of(o: dict) -> list[str]:
+    """The owner's kinds, in the order picked: a record from before the owner picked them has its one `kind`."""
+
+    return list((o.get("intent") or {}).get("kinds") or [kind_of(o)])
 
 
-def schema(kind: str = "webapp") -> dict[str, dict]:
-    """The card's fields for `kind`: an `android` card names its reference phone instead of web viewports."""
+def waits_at(o: dict) -> str | None:
+    """The stage the run waits at in this version, stopped with reason `kind`: several kinds have no core design yet."""
 
-    if kind != "android":
+    return "design" if len(kinds_of(o)) > 1 else KIND_STOPS.get(kind_of(o))
+
+
+def _kinds(kind: str | list[str]) -> list[str]:
+    return [kind] if isinstance(kind, str) else list(kind)
+
+
+def parts(kind: str | list[str] = "webapp") -> tuple[str, ...]:
+    """The stack's parts for one kind, or for several: the shared parts, then each kind's own."""
+
+    kinds = _kinds(kind)
+    if len(kinds) > 1:
+        return (*SHARED_PARTS, *(f"{k}.{p}" for k in kinds for p in OWN_PARTS[k]))
+    return ANDROID_PARTS if kinds[0] == "android" else PARTS
+
+
+def schema(kind: str | list[str] = "webapp") -> dict[str, dict]:
+    """The card's fields for `kind`: an `android` card names its reference phone instead of web viewports.
+    Several kinds' card holds every field any of them has, each once."""
+
+    if len(kinds := _kinds(kind)) > 1:
+        return {k: f for one in kinds for k, f in schema(one).items()}
+    if (kind := kinds[0]) != "android":
         return SCHEMA
     return {("device" if k == "responsive" else k): ({"options": list(DEVICES), "default": "medium-phone"}
                                                       if k == "responsive" else f) for k, f in SCHEMA.items()}

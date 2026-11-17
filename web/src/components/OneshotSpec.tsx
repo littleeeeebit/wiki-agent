@@ -5,7 +5,7 @@ import { Choices } from '@/components/Blocks'
 import { Btn } from '@/components/Modal'
 import { Track } from '@/components/OneshotTrack'
 import { api, COLUMNS, STOP, type Brief, type Decision, type Feature, type Freq, type Gate, type Handset, type Palette,
-  type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, ROLE, modelName } from '@/lib/oneshot'
+  type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, kindLabel, ROLE, modelName } from '@/lib/oneshot'
 import { cn } from '@/lib/utils'
 
 /** Which model each part of the run uses, fixed at its start. */
@@ -143,7 +143,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   )
   if (view.stage === 'spec') {
     return <>{faulted}<Conversation talk={o.talk ?? []} requirements={view.requirements ?? []} stack={o.stack ?? []}
-      android={android}
+      android={android} kinds={o.intent?.kinds ?? [o.intent?.kind ?? 'webapp']}
       halt={view.stopped && <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>
         {resume}</Halt>}
       busy={busy || !idle} send={(text) => act(() => api.say(repo, text))} /></>
@@ -279,14 +279,23 @@ const PART: Record<string, string> = {
 const ANDROID_PART: Record<string, string> = {
   language: '언어', ui: '화면', core: '핵심 로직', data_store: '저장소', tests: '테스트', build: '빌드',
 }
+/** Several kinds' parts (`oneshot_profile.SHARED_PARTS`, `OWN_PARTS`): the shared ones, then `<kind>.<part>`. */
+const OWN_PARTS: Record<string, string[]> = {
+  webapp: ['backend', 'frontend', 'styling', 'deploy'], android: ['ui', 'build'], desktop: ['ui', 'build'],
+}
+const partsOf = (kinds: string[], android: boolean): [string, string][] => kinds.length > 1
+  ? [...['core', 'data_store', 'tests'].map((p): [string, string] => [p, ANDROID_PART[p]]),
+     ...kinds.flatMap((k) => (OWN_PARTS[k] ?? []).map((p): [string, string] =>
+       [`${k}.${p}`, `${kindLabel(k)} ${PART[p] ?? ANDROID_PART[p] ?? p}`]))]
+  : Object.entries(android ? ANDROID_PART : PART)
 
 /** The S2 conversation filling the height with its answer box held at the bottom, beside the requirements and
  *  the stack it has gathered so far. */
-function Conversation({ talk, requirements, stack, android, halt, busy, send }: {
+function Conversation({ talk, requirements, stack, android, kinds, halt, busy, send }: {
   talk: Talk[]; requirements: NonNullable<SpecView['requirements']>; stack: NonNullable<SpecView['oneshot']['stack']>
-  android: boolean; halt: ReactNode; busy: boolean; send: (text: string) => Promise<boolean>
+  android: boolean; kinds: string[]; halt: ReactNode; busy: boolean; send: (text: string) => Promise<boolean>
 }) {
-  const names = android ? ANDROID_PART : PART
+  const parts = partsOf(kinds, android)
   const [text, setText] = useState('')
   const thread = useRef<HTMLDivElement>(null)
   useEffect(() => { thread.current?.scrollTo({ top: thread.current.scrollHeight }) }, [talk.length])
@@ -300,17 +309,19 @@ function Conversation({ talk, requirements, stack, android, halt, busy, send }: 
         <ol className="flex flex-col">
           {requirements.map((r) => (
             <li key={r.id} className="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-2 border-b border-border py-2.5 last:border-b-0">
-              <span className="font-mono text-[12px] text-faint">{r.id}</span><span>{r.text}</span>
+              <span className="font-mono text-[12px] text-faint">{r.id}</span>
+              <span>{r.text}{r.kinds && kinds.length > 1 && (
+                <span className="ml-1.5 text-[12px] text-muted-foreground">— {r.kinds.map(kindLabel).join(' · ')}만</span>)}</span>
             </li>
           ))}
         </ol>
       ) : <p className="text-muted-foreground">아직 없다. 질문에 답하면 여기에 쌓인다.</p>}
       <Title><span>스택</span><span className="font-mono">{open ? `${open}개 남음` : ''}</span></Title>
-      <dl className="grid grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-2 pb-6">
-        {Object.keys(names).map((p) => {
+      <dl className="grid grid-cols-[minmax(5rem,max-content)_minmax(0,1fr)] gap-x-3 gap-y-2 pb-6">
+        {parts.map(([p, label]) => {
           const s = stack.find((x) => x.part === p)
           return [
-            <dt key={`${p}-t`} className="text-muted-foreground">{names[p]}</dt>,
+            <dt key={`${p}-t`} className="text-muted-foreground">{label}</dt>,
             <dd key={`${p}-d`} title={s?.why} className={cn(!s || s.status !== 'confirmed' ? 'text-faint' : '')}>
               {s ? `${s.choice}${s.status === 'confirmed' ? '' : ' (아직 묻는 중)'}` : '아직 안 정함'}
             </dd>,

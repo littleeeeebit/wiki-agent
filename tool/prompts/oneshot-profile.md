@@ -8,8 +8,9 @@ profile.
 - The person's sentence and the confirmed restatement.
 - The schema: every field, its options, and `enabled` where only some options
   can run in this version. A field marked `text` takes a string.
-- The prefilled profile: the person's saved choices for this kind of project
-  over the defaults. Empty fields are the person's to fill.
+- The prefilled profile: the person's saved choices for the kinds the person
+  picked, over the defaults. Empty fields are the person's to fill: with
+  several kinds, a field their saved choices disagree on is left empty too.
 
 ## What you return
 
@@ -24,7 +25,8 @@ A short answer for the person, then exactly one fenced block named
   names an AI feature (`llm`), several users with accounts (`auth`), use on
   a phone (`responsive`), and the like. Otherwise leave it out.
 - An `android` card has `device` instead of `responsive`: the reference
-  phone whose screen is checked. When the sentence names a phone model in
+  phone whose screen is checked. A card for a web app and an Android app
+  has both. When the sentence names a phone model in
   the `device` options, propose it; otherwise leave the default. The stack is
   not on the card: the person picks it later, in the requirements
   conversation.

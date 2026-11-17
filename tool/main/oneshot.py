@@ -35,7 +35,7 @@ from workspace import TASK, create
 
 from . import channels, connect, oneshot_android, prerequisite_review, runtime, specs
 from .oneshot_files import as_planned, git, planned, tracked  # noqa: F401 — `tracked` is read by tests
-from .oneshot_profile import (DEVICES, SUPPORTED_KINDS, charged, cut, ledger, problems, proposal, schema,
+from .oneshot_profile import (DEVICES, SUPPORTED_KINDS, charged, cut, kinds_of, ledger, problems, proposal, schema,
                               current)
 from .query import ROOT
 
@@ -162,12 +162,15 @@ def saved_profile(kind: str) -> dict:
         return {}
 
 
-def prefilled(kind: str) -> dict:
-    """The kind's saved profile over the schema's defaults; `asked` fields stay empty on a first run."""
+def prefilled(kinds: list[str]) -> dict:
+    """Each kind's saved profile over the schema's defaults; `asked` fields stay empty on a first run. A field
+    several kinds share is prefilled only where every one of them holds the same value, and is empty otherwise."""
 
-    fields = schema(kind)
-    base = {k: f["default"] for k, f in fields.items()}
-    return {**base, **{k: v for k, v in saved_profile(kind).items() if k in fields}}
+    out = {}
+    for k, f in schema(kinds).items():
+        held = {json.dumps(saved_profile(one).get(k, f["default"])) for one in kinds if k in schema(one)}
+        out[k] = json.loads(held.pop()) if len(held) == 1 else ""
+    return out
 
 
 # -- Model turns -----------------------------------------------------------------------
@@ -382,7 +385,7 @@ def empty(path: Path) -> bool:
 
 def environment(rid: str) -> None:
     run = load(rid)
-    kind = run["intent"]["kind"]
+    kind = kinds_of(run)
     base = prefilled(kind)
     if not base.get("github_owner"):
         base["github_owner"] = gh_user()
@@ -620,10 +623,11 @@ def bootstrap(rid: str) -> None:
         return
     with _lock:
         run = load(rid)
-        kind = run["intent"]["kind"]
         PROFILES.mkdir(parents=True, exist_ok=True)
-        (PROFILES / f"{kind}.json").write_text(json.dumps(run["profile"], ensure_ascii=False, indent=2) + "\n",
-                                               encoding="utf-8", newline="\n")
+        for kind in kinds_of(run):   # each kind keeps the shared answers and its own
+            mine = {k: v for k, v in run["profile"].items() if k in schema(kind)}
+            (PROFILES / f"{kind}.json").write_text(json.dumps(mine, ensure_ascii=False, indent=2) + "\n",
+                                                   encoding="utf-8", newline="\n")
         # The commit point, one write: from here the spec owns the run and this record is never written again.
         run.update(state="spec", working=None, committed=True, spec={"repo": run["identity"]["name"], "id": BRANCH})
         file = file_of(rid)
@@ -704,19 +708,19 @@ def restarted(store: Store) -> None:
 
 
 def card_errors(run: dict, profile: dict) -> tuple[list[str], list[str]]:
-    """The card's problems for the run's kind; an `android` card also needs the toolchain."""
+    """The card's problems for the run's kinds; a card with `android` also needs the toolchain."""
 
-    kind = (run.get("intent") or {}).get("kind", "webapp")
-    errors, warnings = problems(profile, kind)
-    return errors + (oneshot_android.missing() if kind == "android" else []), warnings
+    kinds = kinds_of(run)
+    errors, warnings = problems(profile, kinds)
+    return errors + (oneshot_android.missing() if "android" in kinds else []), warnings
 
 
 def view(run: dict) -> dict:
-    kind = (run.get("intent") or {}).get("kind", "webapp")
+    kinds = kinds_of(run)
     errors, warnings = card_errors(run, run["profile"]) if run.get("profile") else ([], [])
     return {**{k: v for k, v in run.items() if k != "license_text"}, "profile": current(run.get("profile")),
-            "errors": errors, "warnings": warnings, "schema": schema(kind), "steps_order": list(STEPS),
-            **({"devices": DEVICES, "toolchain": oneshot_android.status()} if kind == "android" else {})}
+            "errors": errors, "warnings": warnings, "schema": schema(kinds), "steps_order": list(STEPS),
+            **({"devices": DEVICES, "toolchain": oneshot_android.status()} if "android" in kinds else {})}
 
 
 # -- HTTP ------------------------------------------------------------------------------------------
@@ -830,9 +834,6 @@ def intent(rid: str, body: Intent) -> dict:
         # A restatement an earlier version's intake picked the kind of: its actual kinds, not a marker, decide.
         if not set(run["intent"].get("kinds") or [run["intent"]["kind"]]) <= set(SUPPORTED_KINDS):
             raise HTTPException(409, f"`{run['intent']['kind']}` 는 이 버전에서 만들 수 없다 — 지금은 {', '.join(SUPPORTED_KINDS)} 만")
-        if len(run["intent"].get("kinds") or []) > 1:   # the union card is step 9b's (`docs/plans/oneshot/9-kinds.md`)
-            return view(stop(rid, "kinds", "여러 종류를 한 실행에서 만드는 것은 아직 이 버전에 없다 — 이 실행은 여기서 멈춘다. "
-                                          "지금은 종류를 하나만 골라 새 실행을 시작하라"))
         name = specs.slugged(body.name or run["intent"]["name"])
         if run["picked"]:
             path = Path(run["picked"])
@@ -865,8 +866,7 @@ def profile(rid: str, body: Profile) -> dict:
         idle(run, "environment")
         if run.get("profile") is None:
             raise HTTPException(409, "카드가 아직 없다")
-        kind = run["intent"]["kind"]
-        if unknown := set(body.values) - set(schema(kind)):
+        if unknown := set(body.values) - set(schema(kinds_of(run))):
             raise HTTPException(400, f"스키마에 없는 필드: {', '.join(sorted(unknown))}")
         values = {**current(run["profile"]), **body.values}
         if body.confirm:

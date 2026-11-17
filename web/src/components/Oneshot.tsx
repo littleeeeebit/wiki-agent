@@ -150,7 +150,7 @@ export function Intake({ busy, act }: { busy: boolean; act: Act }) {
             ))}
           </div>
           {kinds.length > 1 && (
-            <p className="text-[12px] text-wait">여러 형태를 한 실행에서 만드는 것은 아직 확인 단계에서 멈춘다 (계획 9b).</p>
+            <p className="text-[12px] text-wait">여러 형태를 한 실행에서 만드는 것은 아직 요구 대화까지다 — 핵심 설계 앞에서 멈춘다 (계획 9b2).</p>
           )}
         </fieldset>
         <div className="flex flex-col gap-1.5">

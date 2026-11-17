@@ -24,7 +24,7 @@ def planned(run: dict) -> dict[str, str]:
 
     p, intent, name = run["profile"], run["intent"], run["identity"]["name"]
     readme = f"# {name}\n\n{intent['restated']}\n\n> {run['sentence']}\n"
-    ignore = IGNORE + (ANDROID_IGNORE if intent.get("kind") == "android" else [])
+    ignore = IGNORE + (ANDROID_IGNORE if "android" in (intent.get("kinds") or [intent.get("kind")]) else [])
     files = {".gitignore": "\n".join(ignore) + "\n", "README.md": readme,
              ".wiki/adapter.toml": connect.adapter_text({"gate_cmd": "", "review_dir": "artifacts/review",
                                                          "scratch_dirs": "artifacts/", "live_cmd": "", "server_stop": ""})}

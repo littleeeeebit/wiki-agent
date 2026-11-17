@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from . import oneshot, oneshot_brief as brief, oneshot_build, oneshot_front_build as front_build, oneshot_pr, \
     oneshot_review as review, oneshot_screens as screens, oneshot_spec
-from .oneshot_profile import KIND_STOPS, kind_of
+from .oneshot_profile import kind_of, waits_at
 from .query import ROOT
 
 CRITIC_PROMPT = (ROOT / "tool/prompts/oneshot-critic.md").read_text(encoding="utf-8")
@@ -267,7 +267,7 @@ class Decisions(BaseModel):
 
 def extra(spec: dict) -> dict:
     o = spec["oneshot"]
-    if o.get("stage") != "r3" or KIND_STOPS.get(kind_of(o)) == "r3":   # a kind stopped before R3 has no sheet yet
+    if o.get("stage") != "r3" or waits_at(o) == "r3":   # a kind stopped before R3 has no sheet yet
         return {"critiques": o.get("critiques") or []} if o.get("critiques") else {}
     phone_shot = (lambda n, name: f"/api/oneshot/spec/{spec['repo']}/phone/shot/{n}/{name}") \
         if kind_of(o) == "android" else None
