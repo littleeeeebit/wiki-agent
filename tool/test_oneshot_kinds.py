@@ -105,6 +105,13 @@ def test_a_kind_reaches_what_its_endpoints_are_built_on():
     sheet.checked(parsed := sheet.parsed(shared, KINDS), KINDS_REQS, GLOSSARY, {"auth": "none"}, KINDS)
     assert sheet.used_by(parsed, KINDS_REQS, "webapp") == ["M2", "M3"]
     assert sheet.reach(parsed, KINDS_REQS, "android") == {"M1", "M2"}   # Android carries no endpoint of its own
+    # The web server runs every endpoint, even one only Android's requirement names.
+    for_android = {**KINDS_DESIGN, "oneshot-api": [{**bridge[0], "depends_on": ["R1", "M1"]}]}
+    with pytest.raises(ValueError, match="M1 → R2"):
+        sheet.checked(sheet.parsed(for_android, KINDS), KINDS_REQS, GLOSSARY, {"auth": "none"}, KINDS)
+    fine = {**KINDS_DESIGN, "oneshot-api": [{**bridge[0], "depends_on": ["R1", "M2"]}]}
+    sheet.checked(parsed := sheet.parsed(fine, KINDS), KINDS_REQS, GLOSSARY, {"auth": "none"}, KINDS)
+    assert "P1" in sheet.reach(parsed, KINDS_REQS, "webapp")
 
 
 def test_an_r1_edit_keeps_each_requirements_kinds_as_the_owner_settled_them(several):

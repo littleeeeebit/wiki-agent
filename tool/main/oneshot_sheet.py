@@ -590,15 +590,14 @@ def asked_by(design: dict, reqs: list[dict], kind: str) -> list[tuple[str, str]]
 
 
 def reach(design: dict, reqs: list[dict], kind: str) -> set[str]:
-    """The modules and endpoints one kind uses: those carrying a requirement that applies to it, then everything
-    they call or are built on (`depends_on`), module or endpoint, transitively. Only a web app carries endpoints;
-    another kind reaches one by calling it."""
+    """The modules and endpoints one kind uses: the modules carrying a requirement that applies to it, and for a web
+    app every endpoint, since its server runs them whoever calls; then everything they call or are built on
+    (`depends_on`), module or endpoint, transitively. Another kind reaches an endpoint only by calling it."""
 
     mine = {r["id"] for r in reqs if kind in (r.get("kinds") or [kind])}
-    items = {i["id"]: i for i in design["modules"]} | ({p["id"]: p for p in design.get("api", [])} if kind == "webapp"
-                                                       else {})
     parts = {i["id"]: i for i in [*design["modules"], *design.get("api", [])]}
-    reached, edge = set(), [i for i, item in items.items() if mine & set(item["depends_on"])]
+    edge = [m["id"] for m in design["modules"] if mine & set(m["depends_on"])]
+    reached, edge = set(), edge + ([p["id"] for p in design.get("api", [])] if kind == "webapp" else [])
     while edge:
         if (i := edge.pop()) in parts and i not in reached:
             reached.add(i)
