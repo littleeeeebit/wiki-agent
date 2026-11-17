@@ -8,9 +8,8 @@ See `docs/plans/oneshot/9-kinds.md` ("S7 to R3 — each kind's loop, one R3").
 from unittest.mock import patch
 
 import pytest
-from fastapi import HTTPException
 
-from main import oneshot, oneshot_brief as brief, oneshot_critique as critique, oneshot_pr, oneshot_spec
+from main import oneshot_brief as brief, oneshot_build, oneshot_critique as critique, oneshot_pr, oneshot_spec
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_critique import LOW, o
 from test_oneshot_kinds_critique import kinds, look  # noqa: F401 — `kinds` is a fixture
@@ -41,7 +40,8 @@ def at_r3(kinds):  # noqa: F811 — the imported fixture, requested by name
               for k, found in [("android", []), ("android", [DROID_LEFT]), ("webapp", []), ("webapp", [WEB_LEFT])]]
     oneshot_spec.saved("budget", oneshot={
         "stage": "r3", "working": None, "looks": [look(head, 1, [WEB_HIGH]), look(head, 2, [ON_PHONE])],
-        "critiques": rounds, "phone": PHONE, "r3": critique.opening(o())})
+        "critiques": rounds, "phone": PHONE, "r3": critique.opening(o()),
+        "profile": {**o()["profile"], "os_now": "windows", "os_later": "none"}})   # S8's README turn reads them
     # The view's R1 sheet and brief read a whole core design, which this fixture leaves out.
     real = brief.shown
     with patch.object(oneshot_spec.sheet, "sheet", lambda spec: ""), \
@@ -90,29 +90,42 @@ def test_the_briefs_latest_fixes_are_the_latest_across_every_kind(at_r3):
     assert len(fixed) == brief.FIXED and fixed[-1] == {"screen": "S1", "what": "단추가 작다", "kind": "android"}
 
 
-def test_an_edit_reaches_the_builder_with_its_kind_and_the_approval_waits_before_the_pull_request(at_r3):
+def test_an_edit_reaches_the_builder_with_its_kind_and_the_approval_sends_the_readme_turn(at_r3):
     _, sent = at_r3
     critique.decide("budget", on_r3(decisions={"S1": {"approve": True}, "S2": {"edit": "표를 접어라"}}))
     assert o()["stage"] == "build-front" and o()["fix"]["findings"] == [
         {"severity": "high", "screen": "S2", "kind": "webapp", "what": "표를 접어라"}]
     assert "표를 접어라" in sent[-1][2]
     oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None, "fix": None})
-    with patch.object(oneshot_pr, "begin", lambda repo: pytest.fail("the pull request is the next step's")):
-        critique.decide("budget", on_r3(decisions={"S2": {"approve": True}}))
-    assert o()["stage"] == "pr" and o()["stopped"]["reason"] == "kind" and not o()["working"]
-    with patch.object(oneshot, "restarted", lambda store: pytest.fail("a waiting stage is not restarted")):
-        oneshot_spec.recover()
-    assert o()["stopped"]["reason"] == "kind"
-    with pytest.raises(HTTPException):
-        oneshot_spec.resume("budget")
-    # A stop that replaced the wait (a restart, an owner's stop) gives the wait back, and nothing resumes S8.
-    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "detail": "서버를 다시 켰다", "state": "pr"}})
+    critique.decide("budget", on_r3(decisions={"S2": {"approve": True}}))
+    assert o()["stage"] == "pr" and o()["working"] == "pr" and not o().get("stopped")
+    assert sent[-1][1] == "pr" and "an Android app, a web app" in sent[-1][2] and "adb's install command" in sent[-1][2]
+
+
+def test_an_earlier_versions_wait_before_the_pull_request_is_resumed_from_the_readme_turn(at_r3):
+    _, sent = at_r3
+    oneshot_spec.saved("budget", oneshot={"stage": "pr", "stopped": {
+        "reason": "kind", "state": "pr", "detail": "여러 종류의 풀 리퀘스트는 다음 버전에서 이어진다 — R3 는 승인됐다"}})
     oneshot_spec.recover()
-    assert o()["stopped"]["reason"] == "kind"
-    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "block", "detail": "멈췄다", "state": "pr"}})
-    with pytest.raises(HTTPException):
-        oneshot_spec.resume("budget")
-    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "pr"
+    assert o()["stopped"]["reason"] == "restart"
+    oneshot_spec.resume("budget")
+    assert sent[-1][1] == "pr" and "README.md" in sent[-1][2] and not o().get("stopped")
+
+
+def test_s8_of_several_kinds_builds_on_the_android_toolchain_and_releases_the_android_apps_apk(at_r3):
+    oneshot_spec.saved("budget", oneshot={"profile": {**o()["profile"], "visibility": "public", "ci": "github-actions"}})
+    text = oneshot_pr.readme_text(oneshot_spec.spec_of("budget"))
+    assert "`android-actions/setup-android`" in text and "In the Android app's section" in text
+    assert "Give each its own section" in text and "For the web app, Run is" in text
+    with patch.object(oneshot_build.oneshot_android, "build_env", lambda: {"JAVA_HOME": "jdk"}):
+        assert oneshot_build.built_env(oneshot_spec.spec_of("budget")) == {"JAVA_HOME": "jdk"}
+        assert oneshot_build.toolchain(oneshot_spec.spec_of("budget")) is None   # S4: the core in the host runner
+    released = []
+    with patch.object(oneshot_pr, "released", lambda spec: released.append(spec) or {"head": "h", "error": "없음"}), \
+            patch.object(oneshot_pr.pr_text, "writing", lambda *a: "Write the pull request's text."):
+        oneshot_spec.saved("budget", oneshot={"stage": "pr", "final_head": "h"})
+        oneshot_pr.asked("budget")
+    assert released and o()["apk"] == {"head": "h", "error": "없음"}
 
 
 def test_a_run_an_earlier_version_stopped_before_r3_opens_its_sheet(at_r3):

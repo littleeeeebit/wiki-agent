@@ -45,7 +45,7 @@ def kinds_build(staged, monkeypatch):  # noqa: F811 — the imported fixture, re
         "design": {**o()["design"], "api": [{"id": "P1", "method": "GET", "path": "/history", "does": "기록"}]},
         "front": {**o()["front"], "screens": SCREENS, "states": STATES, "mocks": {"S2": "<p>기록</p>"},
                   "preview": {"files": {}, "screens": {"S1": "mock/S1.kt"}, "command": "x", "shots": "out"}}})
-    monkeypatch.setattr(front_build.oneshot_android, "build_env", lambda: None)   # the gate runs as the test's Python
+    monkeypatch.setattr(oneshot_build.oneshot_android, "build_env", lambda: None)   # the gate runs as the test's Python
     monkeypatch.setattr(device, "built", lambda tree, d: "")
     write(staged, ".wiki/adapter.toml", adapter(gate=KINDS_GATE))
     git(staged, "add", "-A")

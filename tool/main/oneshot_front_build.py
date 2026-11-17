@@ -16,7 +16,7 @@ from pathlib import Path
 
 from wiki import slots_for
 
-from . import oneshot, oneshot_android, oneshot_build, oneshot_device, oneshot_look, oneshot_screens as screens, \
+from . import oneshot, oneshot_build, oneshot_device, oneshot_look, oneshot_screens as screens, \
     oneshot_spec, runtime, specs
 from .oneshot_profile import DEVICES, environment, kinds_of, schema, shape
 from .oneshot_sheet import KIND_NAMES
@@ -111,9 +111,8 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
         return "어댑터의 `live_cmd` 가 비었다 — 백엔드와 화면을 함께 띄우는 명령을 적는다"
     # The backend's own gate runs as the server knows it: the adapter's naming it proves nothing it runs. Several
     # kinds' gate builds the Android app on the core, so it runs on the Android toolchain.
-    env = (oneshot_android.build_env() if android else None) if several else oneshot_build.toolchain(spec)
     verdict = specs.judge(path, [backend, gate] if gate != backend else [gate], run.halt,
-                          lambda text: specs.note(run, text), env=env)
+                          lambda text: specs.note(run, text), env=oneshot_build.built_env(spec))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := oneshot_build.held(path, run, spec, verdict):

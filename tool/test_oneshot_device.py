@@ -387,6 +387,7 @@ def android_build(staged, phone, monkeypatch):  # noqa: F811 — the imported fi
         "intent": {"kind": "android"}, "profile": {"device": "medium-phone"}, "frequency": FREQUENCY,
         "front": {"screens": SCREENS, "states": {}, "tokens": {"palettes": []}, "shots": 1}})
     monkeypatch.setattr(oneshot_build, "toolchain", lambda spec: None)   # the gate runs as the test's own Python
+    monkeypatch.setattr(oneshot_build, "built_env", lambda spec: None)
     phone.tree = staged
     for apk in (DEVICE["apk"], DEVICE["tests"]["apk"]):
         write(staged, apk, "apk")

@@ -19,7 +19,8 @@ TURN_SECONDS = 600.0  # a cut turn's time before the role has a longest turn on 
 KINDS = ("webapp", "android", "api", "cli", "desktop", "data")
 SUPPORTED_KINDS = ("webapp", "android")
 # The stage a kind waits at in this version, stopped with reason `kind` until its plan step lands. A kind not
-# here runs to the end: `android` does since its R3 sheet and S8 (`docs/plans/oneshot/7-android.md`, 7f2).
+# here runs to the end: `android` does since its R3 sheet and S8 (`docs/plans/oneshot/7-android.md`, 7f2), and
+# several kinds without `desktop` since 9c4b (`waits_at`).
 KIND_STOPS: dict[str, str] = {}
 # The reference phone S7 shoots (`device` replaces `responsive` for `android`): emulator hardware profiles.
 DEVICES = {"medium-phone": {"label": "보통 폰", "width": 1080, "height": 2400, "dpi": 420},
@@ -65,11 +66,11 @@ def kinds_of(o: dict) -> list[str]:
 
 
 def waits_at(o: dict) -> str | None:
-    """The stage the run waits at in this version, stopped with reason `kind`: several kinds have no pull
-    request yet, and with `desktop` among them no screens either."""
+    """The stage the run waits at in this version, stopped with reason `kind`: several kinds run to their pull
+    request, unless `desktop` is among them, which has no screens yet."""
 
     if len(kinds := kinds_of(o)) > 1:
-        return "frontend" if "desktop" in kinds else "pr"
+        return "frontend" if "desktop" in kinds else None
     return KIND_STOPS.get(kind_of(o))
 
 
