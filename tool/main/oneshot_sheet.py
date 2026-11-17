@@ -235,7 +235,13 @@ def checked(design: dict, reqs: list[dict], glossary: list[dict], profile: dict,
     """The S3 checks; each refusal names what to fix."""
 
     if "modules" in design:   # an Android app's core, or the core several kinds share
-        return core_checked(design, reqs, glossary, profile)
+        core_checked(design, reqs, glossary, profile)
+        if not isinstance(kind, str) and len(kind) > 1:
+            for k in kind:
+                if foreign := [f"{m} → {r}" for m, r in asked_by(design, reqs, k) if k not in (by_id(reqs)[r].get("kinds") or kind)]:
+                    raise ValueError(f"{KIND_NAMES.get(k, k)} 가 쓰는 모듈이 다른 종류의 권한에 기댄다 — {', '.join(foreign)}: "
+                                     "그 종류의 얇은 플랫폼 모듈은 그 종류만 부른다")
+        return
     linked(design, reqs)
     req_ids = {r["id"] for r in reqs}
     api_ids = {p["id"] for p in design["api"]}
@@ -528,7 +534,9 @@ def core_sheet(spec: dict) -> str:
         lines += ["", "## 종류마다 쓰는 것", ""]
         for kind in kinds:
             uses = used_by(design, reqs, kind)
-            asks = [r["capability"]["permission"] for r in abilities if kind in (r.get("kinds") or kinds)]
+            # A capability the kind declares, and one a module it uses depends on: the check makes them the same.
+            mine = {r for _, r in asked_by(design, reqs, kind)} | {r["id"] for r in abilities if kind in (r.get("kinds") or kinds)}
+            asks = [r["capability"]["permission"] for r in abilities if r["id"] in mine]
             lines.append(f"- {KIND_NAMES.get(kind, kind)}: 모듈 {', '.join(uses) or '없음'} / 권한 "
                          f"{', '.join(f'`{_cell(p)}`' for p in asks) or '없음'}"
                          + (f" / 엔드포인트 {', '.join(p['id'] for p in design['api']) or '없음'}"
@@ -560,6 +568,18 @@ def core_sheet(spec: dict) -> str:
     lines += [f"- **{p['id']}**{mark(p['id'])} `{p['method']} {p['path']}` 요청 {_shape(p['request'])} / "
               f"응답 {_shape(p['response'])} / 오류 {', '.join(p['errors']) or '없음'}" for p in design.get("api", [])]
     return "\n".join(lines + folded_tail(design, glossary, mark))
+
+
+def by_id(reqs: list[dict]) -> dict[str, dict]:
+    return {r["id"]: r for r in reqs}
+
+
+def asked_by(design: dict, reqs: list[dict], kind: str) -> list[tuple[str, str]]:
+    """`(module, requirement)` for every platform capability a module this kind uses depends on."""
+
+    modules, known = {m["id"]: m for m in design["modules"]}, by_id(reqs)
+    return [(m, r) for m in used_by(design, reqs, kind) for r in modules[m]["depends_on"]
+            if (known.get(r) or {}).get("capability")]
 
 
 def used_by(design: dict, reqs: list[dict], kind: str) -> list[str]:

@@ -15,14 +15,14 @@ from fastapi import HTTPException
 from main import oneshot, oneshot_brief as brief, oneshot_build, oneshot_sheet as sheet, oneshot_spec, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_core import DESIGN, GLOSSARY, REQS, answer
-from test_oneshot_spec import o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
+from test_oneshot_spec import fenced, o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
 
 KINDS = ["android", "webapp"]
 STACK = [{"part": p, "choice": c, "why": "주인이 골랐다", "status": "confirmed"} for p, c in (
     ("core", "Rust"), ("data_store", "SQLite"), ("tests", "cargo test"), ("android.ui", "Tauri 2"),
     ("android.build", "Gradle"), ("webapp.backend", "Axum"), ("webapp.frontend", "Svelte"),
     ("webapp.styling", "CSS"), ("webapp.deploy", "로컬만"))]
-KINDS_REQS = [REQS[0], {**REQS[1], "kinds": ["android"]},
+KINDS_REQS = [{**REQS[0], "kinds": ["android"]}, {**REQS[1], "kinds": ["android"]},
               {"id": "R3", "text": "웹에서 번역한 기록을 본다", "source": {"kind": "original", "locator": "주인의 문장"},
                "status": "confirmed", "kinds": ["webapp"], "postconditions": ["번역한 말풍선이 시간 순서로 보인다"]}]
 KINDS_DESIGN = {
@@ -58,7 +58,7 @@ def test_several_kinds_design_one_core_with_the_web_apps_endpoints(several):
     assert "| Android 앱 화면 | Tauri 2 |" in text and "| 웹앱 백엔드 | Axum |" in text   # the stack's own parts
     # What each kind uses: an Android-only capability is Android's, and only the web app has the server.
     assert "- Android 앱: 모듈 M1, M2 / 권한 `MediaProjection`" in text
-    assert "- 웹앱: 모듈 M1, M2, M3 / 권한 없음 / 엔드포인트 P1" in text   # R1 applies to both kinds
+    assert "- 웹앱: 모듈 M2, M3 / 권한 없음 / 엔드포인트 P1" in text
     assert "| P1 | GET | `/history` | 번역 기록을 돌려준다 |" in text and "## 앱 밖으로 나가는 호출" in text
     assert brief.snapshot(specs.load("budget", oneshot.BRANCH))["profile"]["kinds"] == KINDS
 
@@ -69,11 +69,27 @@ def test_several_kinds_design_one_core_with_the_web_apps_endpoints(several):
     ({"oneshot-api": [{**KINDS_DESIGN["oneshot-api"][0], "path": "/login"}]}, "로그인 없음"),
     ({"oneshot-modules": [{**KINDS_DESIGN["oneshot-modules"][0], "calls": ["P9"]},
                           *KINDS_DESIGN["oneshot-modules"][1:]]}, r"엔드포인트\(P\)"),
+    # The web app's history calls the Android capture adapter: it would lean on Android's permission.
+    ({"oneshot-modules": [*KINDS_DESIGN["oneshot-modules"][:2],
+                          {**KINDS_DESIGN["oneshot-modules"][2], "calls": ["M1"]}]}, "M1 → R2"),
 ])
 def test_each_check_on_several_kinds_core_refuses(change, said):
     design = {k: v for k, v in {**KINDS_DESIGN, **change}.items() if v is not None}
     with pytest.raises(ValueError, match=said):
-        sheet.checked(sheet.parsed(design, KINDS), KINDS_REQS, GLOSSARY, {"auth": "none"})
+        sheet.checked(sheet.parsed(design, KINDS), KINDS_REQS, GLOSSARY, {"auth": "none"}, KINDS)
+
+
+def test_an_r1_edit_keeps_each_requirements_kinds_as_the_owner_settled_them(several):
+    spec = {**specs.load("budget", oneshot.BRANCH)}
+    spec["oneshot"] = {**spec["oneshot"], "r1": {"round": 1}, "design": sheet.parsed(KINDS_DESIGN, KINDS)}
+    for scope in ({"kinds": ["webapp"]}, {}):   # moved to another kind, or widened to every kind
+        moved = [{k: v for k, v in r.items() if k != "kinds"} | (scope if r["id"] == "R2" else
+                                                                 {"kinds": r["kinds"]}) for r in KINDS_REQS]
+        found = {block: value for block, value in KINDS_DESIGN.items()}
+        final = answer(found) + fenced("oneshot-spec", {"requirements": moved, "glossary": GLOSSARY})
+        _, reqs, _, _ = oneshot_spec.design_turn(final, 1, spec, set(sheet.every(sheet.parsed(KINDS_DESIGN, KINDS),
+                                                                                  KINDS_REQS)))
+        assert [r.get("kinds") for r in reqs] == [["android"], ["android"], ["webapp"]]
 
 
 def test_several_kinds_without_a_web_app_have_no_endpoints():

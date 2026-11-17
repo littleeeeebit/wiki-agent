@@ -71,6 +71,10 @@ A requirement's `kinds` is the person's: keep it as you received it.
 - Every endpoint serves at least one requirement, and no two share a method
   and path. Sign-in endpoints follow the profile's `auth`: none when it is
   `none`, at least one when it is `password` or `oauth`.
+- A kind uses every module that names one of its requirements, and every
+  module those call. No module a kind uses depends on a platform capability
+  that applies only to another kind: a kind's platform module is called only
+  from that kind's side.
 - Every scenario (a requirement with `postconditions`) has a module that
   names it and a test that names it. A test names its requirement and every
   module whose contract it checks.

@@ -504,12 +504,20 @@ def test_a_redesign_may_not_move_items_outside_its_reach_or_rename_the_owners_te
     with replies(renamed, renamed):
         oneshot_spec.redesign("budget", {"R1": "고쳐라"}, sorted(sheet.dependents(sheet.parsed(DESIGN), REQS, {"R1"})))
     assert "지출" in o()["stopped"]["detail"]
-    for kinds in (["desktop"], []):   # an R1 edit names only the kinds the owner picked, as S2 does
-        scoped = answer(DESIGN, fenced("oneshot-spec", {"requirements": [{**REQS[0], "kinds": kinds}, *REQS[1:]],
-                                                        "glossary": GLOSSARY}))
+    for kinds in (["desktop"], []):   # a requirement an R1 edit adds names only the owner's kinds, as S2's do
+        added = {**REQS[0], "id": "R9", "kinds": kinds}
+        scoped = answer(DESIGN, fenced("oneshot-spec", {"requirements": [*REQS, added], "glossary": GLOSSARY}))
         with replies(scoped, scoped):
             oneshot_spec.redesign("budget", {"R1": "고쳐라"}, sorted(sheet.dependents(sheet.parsed(DESIGN), REQS, {"R1"})))
-        assert "`kinds`" in o()["stopped"]["detail"] and "kinds" not in specs.load("budget", oneshot.BRANCH)["requirements"][0]
+        assert "`kinds`" in o()["stopped"]["detail"] and "R9" not in {r["id"] for r in specs.load(
+            "budget", oneshot.BRANCH)["requirements"]}
+    # An existing requirement's kinds are the owner's, settled in S2: an edit that changes them is set back.
+    spec = specs.load("budget", oneshot.BRANCH)
+    spec["oneshot"]["r1"] = {"round": 1}
+    final = answer(DESIGN, fenced("oneshot-spec", {"requirements": [{**REQS[0], "kinds": ["desktop"]}, *REQS[1:]],
+                                                   "glossary": spec["oneshot"].get("glossary") or GLOSSARY}))
+    _, reqs, _, _ = oneshot_spec.design_turn(final, 1, spec, set(sheet.every(spec["oneshot"]["design"], REQS)))
+    assert "kinds" not in reqs[0]
 
 
 def test_a_model_answer_of_the_wrong_type_is_refused_and_an_unforeseen_failure_stops(world):

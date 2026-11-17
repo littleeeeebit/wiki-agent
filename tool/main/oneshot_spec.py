@@ -97,6 +97,10 @@ def kept(spec: dict, value, where: str) -> tuple[list[dict], list[dict]]:
         raise ValueError(f"주인의 말에서 온 요구를 지웠다: {', '.join(gone)}")
     reqs = [{**r, "source": sources.get(r["id"]) or (r["source"] if where == "S2" else
                                                       {"kind": "decision", "locator": where})} for r in reqs]
+    if where != "S2":   # which kinds a requirement applies to is the owner's, settled in S2: an edit keeps it
+        scopes = {r["id"]: r.get("kinds") for r in previous}
+        reqs = [{**{k: v for k, v in r.items() if k != "kinds"},
+                 **({"kinds": scopes[r["id"]]} if scopes[r["id"]] else {})} if r["id"] in scopes else r for r in reqs]
     if found := sheet.cycle({r["id"]: r for r in reqs}):   # refused here, where the requirements can still change
         raise ValueError(f"요구의 `depends_on` 이 돌고 돈다 — {' → '.join(found)}")
     picked = kinds_of(o)   # an S2 turn and an R1 edit alike: a requirement names only the owner's kinds
