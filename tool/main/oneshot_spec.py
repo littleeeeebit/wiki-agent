@@ -97,6 +97,10 @@ def kept(spec: dict, value, where: str) -> tuple[list[dict], list[dict]]:
         raise ValueError(f"주인의 말에서 온 요구를 지웠다: {', '.join(gone)}")
     reqs = [{**r, "source": sources.get(r["id"]) or (r["source"] if where == "S2" else
                                                       {"kind": "decision", "locator": where})} for r in reqs]
+    if where != "S2":   # which kinds a requirement applies to is the owner's, settled in S2: an edit keeps it
+        scopes = {r["id"]: r.get("kinds") for r in previous}
+        reqs = [{**{k: v for k, v in r.items() if k != "kinds"},
+                 **({"kinds": scopes[r["id"]]} if scopes[r["id"]] else {})} if r["id"] in scopes else r for r in reqs]
     if found := sheet.cycle({r["id"]: r for r in reqs}):   # refused here, where the requirements can still change
         raise ValueError(f"요구의 `depends_on` 이 돌고 돈다 — {' → '.join(found)}")
     picked = kinds_of(o)   # an S2 turn and an R1 edit alike: a requirement names only the owner's kinds
@@ -179,12 +183,7 @@ def talk(repo: str) -> None:
             saved(repo, requirements=reqs, oneshot={**fields, "open": "", "working": None, "mismatch": mismatch,
                                                     "stopped": {"reason": "rekind", "detail": detail, "state": o["stage"]}})
         return
-    if not why and waits_at(o) == "design":   # several kinds: their core design is the next step's (plan 9b2)
-        with oneshot._lock:
-            saved(repo, requirements=reqs, oneshot={**fields, "open": "", "stage": "design", "working": None, "stopped": {
-                "reason": "kind", "detail": "여러 종류의 핵심 설계는 다음 버전에서 이어진다 — 요구와 스택은 저장됐다",
-                "state": "design"}})
-    elif not why:
+    if not why:
         saved(repo, requirements=reqs, oneshot={**fields, "open": ""})
         handoff(repo, "design", stage="design")
     else:
@@ -245,7 +244,7 @@ def design_turn(final: str, attempt: int, spec: dict, partial: set[str] | None =
         reqs, glossary = kept(spec, found["oneshot-spec"], f"R1 {spec['oneshot']['r1']['round']}회차 고침")
         if why := ended(reqs):
             raise ValueError(why)
-    kind = kind_of(spec["oneshot"])
+    kind = kinds_of(spec["oneshot"])
     design = sheet.parsed(found, kind)
     if partial is not None:   # an approval outside the reach survives, so nothing outside it may move
         old, new = sheet.every(spec["oneshot"]["design"], spec.get("requirements") or []), sheet.every(design, reqs)
@@ -256,6 +255,12 @@ def design_turn(final: str, attempt: int, spec: dict, partial: set[str] | None =
     if warnings and attempt == 0:
         raise ValueError("다음을 고쳐 다시 내라 — " + " / ".join(warnings[:12]))
     return design, reqs, glossary, warnings
+
+
+def design_prompt(kinds: list[str]) -> str:
+    """S3's instructions: one kind's, or the core several kinds share."""
+
+    return oneshot.prompt("design-kinds") if len(kinds) > 1 else oneshot.prompt("design", kinds[0])
 
 
 def design_text(spec: dict) -> str:
@@ -271,8 +276,8 @@ def design(repo: str) -> None:
     """One S3 turn in the worktree, read-only; the server checks the blocks and shows the sheet."""
 
     spec = spec_of(repo)
-    kind = kind_of(spec["oneshot"])
-    found = oneshot.turned(store(repo), "design", oneshot.prompt("design", kind), design_text(spec), sheet.blocks(kind),
+    kind = kinds_of(spec["oneshot"])
+    found = oneshot.turned(store(repo), "design", design_prompt(kind), design_text(spec), sheet.blocks(kind),
                            lambda final, attempt: design_turn(final, attempt, spec), Path(spec["worktree"]))
     if found is None:
         return
@@ -306,8 +311,8 @@ def redesign(repo: str, comments: dict[str, str], reach: list[str]) -> None:
             f"\n\nThe owner edited these items, with these comments:\n\n{json.dumps(comments, ensure_ascii=False)}"
             f"\n\nReplace every item in this set and keep the rest as it is: {', '.join(reach)}. Return every "
             "design block in full, and an `oneshot-spec` block in full when a requirement changes.\n")
-    kind = kind_of(spec["oneshot"])
-    found = oneshot.turned(store(repo), "design", oneshot.prompt("design", kind), text, sheet.blocks(kind) + ",oneshot-spec",
+    kind = kinds_of(spec["oneshot"])
+    found = oneshot.turned(store(repo), "design", design_prompt(kind), text, sheet.blocks(kind) + ",oneshot-spec",
                            lambda final, attempt: design_turn(final, attempt, spec, set(reach)), Path(spec["worktree"]))
     if found is None:
         return
@@ -331,8 +336,11 @@ def approved(repo: str) -> None:
     if not tree or not docs.is_relative_to(tree):
         store(repo).stop("folder", f"작업트리가 `{oneshot.BRANCH}` 브랜치의 그 작업트리가 아니다: {spec['worktree']}")
         return
-    # An Android app's core: the sheet and the module contracts the tests are written from.
-    written = ({"core.md": sheet.sheet, "core.json": sheet.core} if kind_of(o) == "android" else
+    # A core (an Android app's, or the one several kinds share): the sheet and the module contracts the tests are
+    # written from, and a web app's endpoints among several kinds as its API.
+    cored = "modules" in o["design"]
+    written = ({"core.md": sheet.sheet, "core.json": sheet.core, **({"api.yaml": sheet.openapi} if "api" in o["design"]
+                                                                   else {})} if cored else
                {"backend.md": sheet.sheet, "api.yaml": sheet.openapi})
     files = [f"docs/design/{name}" for name in written]
     if linked := [f for f in files if (tree / f).is_symlink() or not (tree / f).resolve().is_relative_to(tree)]:
@@ -341,9 +349,13 @@ def approved(repo: str) -> None:
     docs.mkdir(parents=True, exist_ok=True)
     for name, render in written.items():
         (docs / name).write_text(render(spec), encoding="utf-8", newline="\n")
-    head = commit(repo, tree, files, f"Record the approved {'core' if kind_of(o) == 'android' else 'backend'} design "
+    head = commit(repo, tree, files, f"Record the approved {'core' if cored else 'backend'} design "
                                      f"(R1 round {o['r1']['round']})")
-    if head:
+    if head and waits_at(o) == "tests":   # several kinds: their core's contract tests are the next step's (plan 9b3)
+        saved(repo, oneshot={"stage": "tests", "design_head": head, "working": None, "stopped": {
+            "reason": "kind", "detail": "여러 종류의 핵심 테스트는 다음 버전에서 이어진다 — 승인한 설계는 커밋됐다",
+            "state": "tests"}})
+    elif head:
         saved(repo, oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
 
 
@@ -591,7 +603,8 @@ def decide(repo: str, body: Decisions) -> dict:
                              "reading": read(o, "r1", body.reading, (), briefed)})
         approved(repo)
     from . import oneshot_build   # it imports this module
-    if spec_of(repo)["oneshot"]["stage"] == "tests":   # outside the lock: the turn takes the worktree's hold
+    after = spec_of(repo)["oneshot"]
+    if after["stage"] == "tests" and not after.get("stopped"):   # outside the lock: the turn takes the worktree's hold
         oneshot_build.begin(repo)
     return view(spec_of(repo))
 

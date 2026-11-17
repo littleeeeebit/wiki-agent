@@ -162,7 +162,7 @@ def test_a_stack_confirmed_before_the_owner_answered_is_sent_back(world):
     assert o()["stage"] == "design"
 
 
-def test_several_kinds_talk_on_one_stack_and_wait_before_the_core_design(world):
+def test_several_kinds_talk_on_one_stack_and_go_on_to_the_core_design(world):
     oneshot_spec.saved("budget", oneshot={"intent": {"restated": "번역기", "kind": "android", "kinds": ["android", "webapp"]}})
     shared = [{"part": p, "choice": c, "why": "주인이 골랐다", "status": "confirmed"} for p, c in (
         ("core", "Rust"), ("data_store", "SQLite"), ("tests", "cargo test"), ("android.ui", "Tauri 2"),
@@ -181,18 +181,15 @@ def test_several_kinds_talk_on_one_stack_and_wait_before_the_core_design(world):
     heard = []
     asked_stack()
     oneshot_spec.saved("budget", oneshot={"stack": [{**s, "status": "assumed"} for s in shared]})
+    handed = []
     with patch.object(oneshot, "ask", lambda store, role, system, *a: heard.append(system) or (
-            fenced("oneshot-spec", {"stack": shared, "requirements": scoped, "glossary": GLOSSARY}), {}, False)):
+            fenced("oneshot-spec", {"stack": shared, "requirements": scoped, "glossary": GLOSSARY}), {}, False)), \
+            patch.object(oneshot_spec, "handoff", lambda *a, **k: handed.append((a, k))):
         oneshot_spec.talk("budget")
     assert "several kinds at once" in heard[0]
     assert specs.load("budget", oneshot.BRANCH)["requirements"][0]["kinds"] == ["android"]
-    # Settled, it waits at the core design: no worker, and neither `[재개]` nor a restart starts one.
-    assert o()["stage"] == "design" and o()["stopped"]["reason"] == "kind" and not o().get("working")
-    with pytest.raises(HTTPException):
-        oneshot_spec.resume("budget")
-    with patch.object(oneshot, "restarted", lambda store: pytest.fail("a waiting stage is not restarted")):
-        oneshot_spec.recover()
-    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "design"
+    # Settled, it goes on to the one core design, as a run of one kind does.
+    assert handed == [(("budget", "design"), {"stage": "design"})] and not o().get("stopped")
 
 
 def test_a_requirement_the_owner_keeps_beyond_the_kind_stops_the_run_for_good(world):
@@ -507,12 +504,20 @@ def test_a_redesign_may_not_move_items_outside_its_reach_or_rename_the_owners_te
     with replies(renamed, renamed):
         oneshot_spec.redesign("budget", {"R1": "고쳐라"}, sorted(sheet.dependents(sheet.parsed(DESIGN), REQS, {"R1"})))
     assert "지출" in o()["stopped"]["detail"]
-    for kinds in (["desktop"], []):   # an R1 edit names only the kinds the owner picked, as S2 does
-        scoped = answer(DESIGN, fenced("oneshot-spec", {"requirements": [{**REQS[0], "kinds": kinds}, *REQS[1:]],
-                                                        "glossary": GLOSSARY}))
+    for kinds in (["desktop"], []):   # a requirement an R1 edit adds names only the owner's kinds, as S2's do
+        added = {**REQS[0], "id": "R9", "kinds": kinds}
+        scoped = answer(DESIGN, fenced("oneshot-spec", {"requirements": [*REQS, added], "glossary": GLOSSARY}))
         with replies(scoped, scoped):
             oneshot_spec.redesign("budget", {"R1": "고쳐라"}, sorted(sheet.dependents(sheet.parsed(DESIGN), REQS, {"R1"})))
-        assert "`kinds`" in o()["stopped"]["detail"] and "kinds" not in specs.load("budget", oneshot.BRANCH)["requirements"][0]
+        assert "`kinds`" in o()["stopped"]["detail"] and "R9" not in {r["id"] for r in specs.load(
+            "budget", oneshot.BRANCH)["requirements"]}
+    # An existing requirement's kinds are the owner's, settled in S2: an edit that changes them is set back.
+    spec = specs.load("budget", oneshot.BRANCH)
+    spec["oneshot"]["r1"] = {"round": 1}
+    final = answer(DESIGN, fenced("oneshot-spec", {"requirements": [{**REQS[0], "kinds": ["desktop"]}, *REQS[1:]],
+                                                   "glossary": spec["oneshot"].get("glossary") or GLOSSARY}))
+    _, reqs, _, _ = oneshot_spec.design_turn(final, 1, spec, set(sheet.every(spec["oneshot"]["design"], REQS)))
+    assert "kinds" not in reqs[0]
 
 
 def test_a_model_answer_of_the_wrong_type_is_refused_and_an_unforeseen_failure_stops(world):

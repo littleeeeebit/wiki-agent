@@ -11,7 +11,9 @@ the owner sees it.
 
 - The snapshot. It holds the owner's sentence, the restatement, the
   requirements with their status, the glossary, the stack, the design and
-  the profile (kind, visibility, login). It also holds the round and the
+  the profile (kind, visibility, login; `kinds` when the owner picked
+  several, and a requirement's `kinds` names the ones it applies to). It
+  also holds the round and the
   items marked since the last round. Every fact you state comes from it.
   Never invent one.
 - The confirmation lines, by key. Each is something the owner did not decide
@@ -39,8 +41,9 @@ The sections, in this order. Names marked optional may be left out:
 6. `알아 두실 것`: costs, risks, a public repository, permissions and calls
    leaving the device, what only a real device can check, and any
    contradiction between the restatement and the requirements. For an
-   Android app it cites every requirement with a `capability` and every
-   outside call (`X`), each by its id.
+   Android app, or several kinds, it cites every requirement with a
+   `capability` and every outside call (`X`), each by its id. With several
+   kinds it says which kind asks for each permission.
 7. `다 됐다고 보는 기준`: five to ten outcomes a person can observe,
    rewritten from the tests without numbers or names.
 

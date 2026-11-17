@@ -16,7 +16,7 @@ import re
 import time
 
 from . import oneshot, oneshot_sheet as sheet
-from .oneshot_profile import charged, cut, kind_of
+from .oneshot_profile import charged, cut, kind_of, kinds_of
 
 PROMPT = oneshot.ROOT / "tool/prompts/oneshot-brief.md"
 MAX_BRIEF = 4_000      # characters, the whole brief
@@ -54,6 +54,8 @@ def snapshot(spec: dict, gate: str = "r1") -> dict:
     o = spec["oneshot"]
     profile = o.get("profile") or {}
     shown = {"kind": kind_of(o), "visibility": profile.get("visibility"), "auth": profile.get("auth")}
+    if len(kinds := kinds_of(o)) > 1:   # a run of one kind keeps its snapshot, and so its brief, as before
+        shown["kinds"] = kinds
     at = o.get(gate) or {}
     if gate in ("r2", "r3"):
         front = o.get("front") or {}
