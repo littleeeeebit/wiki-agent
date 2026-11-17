@@ -78,7 +78,34 @@ def review_text(spec: dict, head: str, how: str) -> str:
             f"{json.dumps(spec.get('requirements') or [], ensure_ascii=False)}\n\nThe environment profile and the stack:\n\n"
             f"{environment(o)}\n\nThe pinned contract tests, unchanged since "
             f"`{o['tests_head']}`: {', '.join(o['contract'])}.\n\nThe whole diff from the base commit "
-            f"`{spec['start_head']}` to HEAD: {how}.\n")
+            f"`{spec['start_head']}` to HEAD: {how}.\n" + earlier_text(o.get("reviews") or []))
+
+
+STUCK = 3   # refusals of one area after which the build replaces its mechanism instead of patching the next case
+
+
+def area_of(f: dict) -> str:
+    return " ".join(str(f.get("area") or "").split()).casefold()
+
+
+def refusals(reviews: list[dict]) -> list[dict]:
+    """Every blocking finding of the refusals, oldest first, numbered by round."""
+
+    return [{"round": n, **({"area": f["area"]} if area_of(f) else {}),   # a record from before areas has none
+             **{k: f[k] for k in ("severity", "location", "reason")}}
+            for n, r in enumerate(reviews, 1) if r["verdict"] == "refuse"
+            for f in r["findings"] if f["severity"] != "P2" and "device" not in f]
+
+
+def earlier_text(reviews: list[dict]) -> str:
+    """The reviewer's memory: each earlier refusal, so a fixed one is checked, not found again in new words."""
+
+    past = refusals(reviews)
+    return (f"\nEarlier refusals of this build, oldest first; the builder has tried to fix each since:\n\n```json\n"
+            f"{json.dumps(past, ensure_ascii=False)}\n```\n\nCheck each against this HEAD first. Leave out one the "
+            "code now fixes; one that still holds, or that a fix moved elsewhere in the same mechanism, keeps that "
+            "earlier finding's `area`, word for word; one listed without an `area` gets one of yours, the same "
+            "for every finding of its mechanism.\n") if past else ""
 
 
 def deferrable(spec: dict) -> dict[str, set[str]]:
@@ -117,12 +144,15 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None) -> 
         raise ValueError("`device` 는 P0·P1 발견에만 붙고, 기기가 있는 종류(" + (", ".join(devices or {}) or "이 실행엔 없다")
                          + "), 그 종류에 걸린 요구, 기기에서 볼 `check` 를 적는다")
     serious = [f for f in findings if f["severity"] != "P2" and "device" not in f]
+    if not all(area_of(f) for f in serious):
+        raise ValueError("P0·P1 발견마다 그것이 걸린 동작 방식의 이름 `area` 를 적는다")
     if value["verdict"] == "approve" and serious:
         raise ValueError("P0·P1 발견이 있는데 승인했다")
     if value["verdict"] == "refuse" and not serious:
         raise ValueError("거부에는 P0·P1 발견이 하나 이상 있어야 한다")
     return {"verdict": value["verdict"], "head": head,
             "findings": [{**{k: f[k] for k in ("location", "severity", "reason", "evidence")},
+                          **({"area": " ".join(str(f["area"]).split())} if area_of(f) else {}),
                           **({"device": {k: f["device"][k] for k in ("kind", "requirement", "check")}}
                              if "device" in f else {})} for f in findings]}
 
@@ -277,7 +307,30 @@ def fixing(spec: dict, found: dict) -> str:
     return (f"An independent read-only review refused HEAD `{found['head']}`. Fix every finding below "
             "where it points, without changing the pinned contract tests; a finding you disagree with gets "
             "evidence in your answer instead of a change.\n\n```json\n"
-            f"{json.dumps(serious, ensure_ascii=False, indent=2)}\n```\n\n" + oneshot_build.build_text(spec))
+            f"{json.dumps(serious, ensure_ascii=False, indent=2)}\n```\n\n"
+            + recurring(spec["oneshot"].get("reviews") or [], found, serious) + oneshot_build.build_text(spec))
+
+
+def recurring(reviews: list[dict], found: dict, serious: list[dict]) -> str:
+    """The earlier refusals in the areas this one names; an area refused `STUCK` times or more gets its mechanism
+    replaced, by the same build turn: the run never stops for it."""
+
+    areas = {area_of(f) for f in serious} - {""}
+    past = [f for f in refusals(reviews[:-1]) if area_of(f) in areas]   # the last review is `found` itself
+    if not past:
+        return ""
+    rounds = {a: 1 + len({f["round"] for f in past if area_of(f) == a}) for a in areas}
+    stuck = sorted(a for a, n in rounds.items() if n >= STUCK)
+    said = (f"Earlier refusals in the same areas, which earlier fixes did not end:\n\n```json\n"
+            f"{json.dumps(past, ensure_ascii=False, indent=2)}\n```\n\n")
+    if stuck:
+        said += ("The review has refused " + ", ".join(f"`{a}` {rounds[a]} times" for a in stuck) + ": each fix of one "
+                 "case has led to the next. Do not add one more special case. Read that area's findings together, "
+                 "name the assumption they share, and replace the mechanism with one that meets the requirements "
+                 "without it, removing the special cases the old one gathered; then check every finding of the "
+                 "area, earlier ones included, against the new mechanism. Say in your answer what you replaced "
+                 "and why.\n\n")
+    return said
 
 
 def build_turn(spec: dict) -> str:

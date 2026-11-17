@@ -46,7 +46,8 @@ def verdict(head, kind="approve", *findings):
     return "읽었다.\n" + fenced("oneshot-review", {"verdict": kind, "head": head, "findings": list(findings)})
 
 
-P1 = {"location": "budget_app.py:2", "severity": "P1", "reason": "음수 금액을 받는다", "evidence": "add(-1) 이 -1"}
+P1 = {"location": "budget_app.py:2", "severity": "P1", "reason": "음수 금액을 받는다", "evidence": "add(-1) 이 -1",
+      "area": "amount validation"}
 P2 = {"location": "budget_app.py:1", "severity": "P2", "reason": "이름이 짧다", "evidence": "1행"}
 
 
@@ -88,6 +89,7 @@ def test_a_verdict_on_another_head_counts_as_none(reviewed):
     ("approve", [P1], "승인했다"),
     ("refuse", [P2], "하나 이상"),
     ("refuse", [{**P1, "severity": "P4"}], "severity"),
+    ("refuse", [{**P1, "area": " "}], "area"),
 ])
 def test_a_verdict_its_findings_do_not_justify_is_refused(reviewed, kind, findings, said):
     _, head, _ = reviewed
@@ -115,6 +117,37 @@ def test_a_refusal_goes_to_the_build_each_time_until_the_round_cap_stops_the_run
             oneshot_spec.resume("budget")
     assert resumed == ["budget"] and o()["stage"] == "build" and o()["working"] == "build" and o()["refused"] == 0
     assert "음수 금액을 받는다" in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
+
+
+def test_an_area_refused_again_and_again_is_remembered_and_its_mechanism_replaced_without_stopping(reviewed):
+    _, head, sent = reviewed
+    moved = {**P1, "location": "budget_app.py:9", "reason": "0 원을 받는다", "area": "Amount  Validation"}
+    other = {**P1, "location": "budget_app.py:4", "reason": "합계가 넘친다", "area": "total sum"}
+    heard = []
+    with patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
+        for n, found in enumerate(([P1], [moved, other], [moved]), 1):
+            said, asking = answers(verdict(head, "refuse", *found))
+            with asking:
+                oneshot_review.review("budget")
+            heard.append(said[0][1])
+            oneshot_spec.saved("budget", oneshot={"stage": "review", "working": "review"})
+    assert "Earlier refusals" not in heard[0] and "음수 금액을 받는다" in heard[1] and "합계가 넘친다" in heard[2]
+    assert "replace the mechanism" not in sent[1][2] and "음수 금액을 받는다" in sent[1][2]   # the same area, twice
+    assert "`amount validation` 3 times" in sent[2][2] and "replace the mechanism" in sent[2][2]
+    assert "합계가 넘친다" not in sent[2][2].split("Earlier refusals")[1]   # another area's history is not this one's
+    assert not o().get("stopped") and o()["refused"] == 3   # an agent turn, never a stop for the person
+
+
+def test_a_refusal_from_before_areas_is_listed_without_one_and_counts_towards_nothing(reviewed):
+    _, head, sent = reviewed
+    legacy = {k: P1[k] for k in ("location", "severity", "reason", "evidence")}
+    oneshot_spec.saved("budget", oneshot={"reviews": [{"verdict": "refuse", "head": "old", "findings": [legacy]}] * 2})
+    said, asking = answers(verdict(head, "refuse", P1))
+    with asking:
+        oneshot_review.review("budget")
+    assert '"area"' not in said[0][1].split("Earlier refusals")[1].split("```")[1]   # nothing empty to copy
+    assert "without an `area` gets one of yours" in said[0][1]
+    assert "replace the mechanism" not in sent[0][2] and not o().get("stopped")
 
 
 def test_the_screen_reads_the_caps_and_the_worktree_it_follows_from_the_server(reviewed):
