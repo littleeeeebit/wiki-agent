@@ -25,7 +25,7 @@ export const ROLE = { spec: '명세', build: '구현', review: '리뷰' } as con
 export const modelName = (role: keyof Models, m: { model: string; effort: string }) =>
   `${m.model || (role === 'review' ? '리뷰 설정 따름' : 'Claude 기본')}${m.effort ? ` · ${m.effort}` : ''}`
 export type SpecSummary = {
-  repo: string; stage: string; working: string | null; waits: boolean; kind?: string
+  repo: string; stage: string; working: string | null; waits: boolean; kind?: string; kinds?: string[]
   /** `counted`: the critiques a cap stop reached (`oneshot_critique`). */
   stopped: { reason: string; detail: string; counted?: number } | null
 }
@@ -117,9 +117,9 @@ export const STAGES: { id: string; label: string; kind: 'talk' | 'gate' | 'auto'
   { id: 'done', label: '끝', kind: 'auto' },
 ]
 export const stageLabel = (id: string) => STAGES.find((s) => s.id === id)?.label ?? id
-/** The stages a run of `kind` passes through: the phone round is an Android app's alone. */
-export const stagesOf = <T extends { id: string }>(stages: readonly T[], kind?: string) =>
-  stages.filter((s) => s.id !== 'phone' || kind === 'android')
+/** The stages a run of these kinds passes through: the phone round is a run's with an Android app among them. */
+export const stagesOf = <T extends { id: string }>(stages: readonly T[], kinds: readonly string[] = []) =>
+  stages.filter((s) => s.id !== 'phone' || kinds.includes('android'))
 export const STOP: Record<string, string> = {
   block: '모델 답을 쓸 수 없었다', restart: '서버가 다시 켜져 멈췄다', tests: '계약 테스트를 쓰지 못했다',
   gate: '빌드가 검사를 통과하지 못했다', review: '백엔드 리뷰가 라운드 상한까지 거절했다', critique: '화면 비평이 멈췄다',

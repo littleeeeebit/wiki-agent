@@ -49,19 +49,21 @@ const label = (stage: string) => (ALL.find((s) => s.id === stage) ?? ALL[0]).lab
 
 /** Where a run is, read the same way from a run before S2, a spec past it, or the start form. */
 type Now = {
-  stage: string; name: string; sentence: string; models?: Models; kind?: string
+  stage: string; name: string; sentence: string; models?: Models; kinds?: string[]
   working: boolean; stopped: boolean; waits: boolean; line?: string
 }
 /** The run's own stages, and where it is among them. */
-const steps = (now: Now) => stagesOf(ALL, now.kind)
+const steps = (now: Now) => stagesOf(ALL, now.kinds)
+/** The owner's kinds: a record from before several kinds has its one `kind`. */
+const kindsOf = (kinds?: string[], kind?: string) => kinds ?? (kind ? [kind] : undefined)
 const at = (now: Now, stage = now.stage) => steps(now).findIndex((s) => s.id === stage)
 const fromRun = (r: OneshotRun): Now => ({
   stage: r.state, name: r.identity?.name ?? r.intent?.name ?? '새 실행', sentence: r.sentence, models: r.models,
-  kind: r.intent?.kind,
+  kinds: kindsOf(r.intent?.kinds, r.intent?.kind),
   working: !!r.working, stopped: !!r.stopped, waits: !r.working && !r.stopped && (r.state === 'environment' || (r.state === 'intake' && !!r.intent)),
 })
 const fromSpec = (s: SpecSummary): Now => ({
-  stage: s.stage, name: s.repo, sentence: '', kind: s.kind, working: !!s.working, stopped: !!s.stopped, waits: s.waits,
+  stage: s.stage, name: s.repo, sentence: '', kinds: kindsOf(s.kinds, s.kind), working: !!s.working, stopped: !!s.stopped, waits: s.waits,
 })
 const fromView = (v: SpecView): Now => ({
   ...fromSpec(v), sentence: v.oneshot.sentence, models: v.oneshot.models,
