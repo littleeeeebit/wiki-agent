@@ -390,9 +390,12 @@ def record(repo: str, store, spec: dict, tree: Path) -> bool:
     o = spec["oneshot"]
     front, source = o["front"], shots(repo, o["front"]["shots"])
     # An Android app's mocks are its preview's source files, written as they were shot; a web screen's is its page.
-    mocks = {f"docs/design/mock/{p}": text for p, text in front["preview"]["files"].items()} if "preview" in front \
-        else {}
-    mocks |= {f"docs/design/mock/{s['id']}.html": source / f"{s['id']}.html" for s in front["screens"]
+    # Several kinds keep each kind's under its own folder, so a preview file never lands on a web page's place.
+    several = any("kind" in s for s in front["screens"])
+    android, web = ("android/", "webapp/") if several else ("", "")
+    mocks = {f"docs/design/mock/{android}{p}": text for p, text in front["preview"]["files"].items()} \
+        if "preview" in front else {}
+    mocks |= {f"docs/design/mock/{web}{s['id']}.html": source / f"{s['id']}.html" for s in front["screens"]
               if s.get("kind", "webapp") == "webapp" and "route" in s}
     copies = {f"docs/design/{'screens' if 'preview' in front else 'frontend'}.md": None, **mocks,
               **{f"docs/design/shots/{s['id']}-{v}.png": source / f"{s['id']}-{v}.png"

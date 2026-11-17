@@ -90,6 +90,14 @@ def test_a_kinds_screen_outside_its_kinds_rules_is_refused(change, said):
         checked(blocks(**change))
 
 
+def test_a_web_route_the_api_answers_is_refused_with_no_web_feature_left():
+    only = [{**f, "kinds": ["android"]} for f in FEATURES if f["id"] != "history"]
+    found = blocks(**{"oneshot-screens": screen("S3", route="/history", features=[]),
+                      "oneshot-mocks": {"android": mocks(), "webapp": {"S3": "<p>기록</p>"}}})
+    with pytest.raises(ValueError, match="webapp: 화면 경로가 API 경로와 겹친다 — /history"):
+        screens.design_kinds(found, only, {f["id"]: FREQUENCY[f["id"]] for f in only}, KINDS, ["GET /history"])
+
+
 def test_each_kind_is_designed_and_shot_its_own_way_and_r2_groups_them(kinds):
     playwright_or_skip()
     heard, asking = replies(answer(blocks()))
@@ -127,16 +135,22 @@ def test_an_edit_keeps_the_web_pages_and_the_previews_shared_files(kinds):
 
 def test_the_approved_screens_of_every_kind_are_committed_and_the_run_waits_before_the_build(kinds):
     playwright_or_skip()
-    _, asking = replies(answer(blocks()))
+    # An Android preview file named as a web page would be: each kind's mocks keep their own folder.
+    preview = mocks(**{"S3.html": 'Box(Modifier.testTag("feature:start-translation"))'})
+    preview["screens"]["S1"] = "S3.html"
+    _, asking = replies(answer(blocks(**{"oneshot-mocks": {"android": preview, "webapp": {"S3": PAGE}}})))
     with asking:
         front.frontend("budget")
     with patch.object(front.oneshot_front_build, "begin", lambda repo: pytest.fail("the build is the next step's")):
         front.decide("budget", front.R2(decisions={i: {"approve": True} for i in screens.decidable(o()["front"])},
                                         palette="C1", source=brief.source(brief.snapshot(oneshot_spec.spec_of("budget"), "r2"))))
     assert o()["stage"] == "build-front" and o()["stopped"]["reason"] == "kind" and not o().get("working")
-    for name in ("docs/design/screens.md", "docs/design/mock/mock/S1.kt", "docs/design/mock/S3.html",
-                 "docs/design/shots/S1-phone.png", "docs/design/shots/S3-desktop.png"):
+    for name in ("docs/design/screens.md", "docs/design/mock/android/mock/S1.kt", "docs/design/shots/S1-phone.png",
+                 "docs/design/shots/S3-desktop.png"):
         assert (kinds / name).is_file(), name
+    mock = kinds / "docs/design/mock"
+    assert (mock / "webapp/S3.html").read_text(encoding="utf-8") == PAGE
+    assert (mock / "android/S3.html").read_text(encoding="utf-8") == preview["files"]["S3.html"]
     assert o()["front_head"] == head(kinds)
     with pytest.raises(HTTPException):   # `[재개]` does not take the build on either
         oneshot_spec.resume("budget")

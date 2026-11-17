@@ -383,7 +383,11 @@ def design_kinds(found: dict, feats: list[dict], frequency: dict[str, str], kind
         if not mine:
             raise ValueError(f"{k} 의 화면이 없다")
         own = {s["id"] for s in mine}
-        kept = [{**f, "endpoints": list(api)} if k == "webapp" else f for f in feats if k in f["kinds"]]
+        kept = [f for f in feats if k in f["kinds"]]
+        # The API is the server's whole, whichever features are the web app's: none left must not drop the check.
+        if k == "webapp" and (clash := [s["route"] for s in mine if isinstance(s.get("route"), str)
+                                        and api_paths(list(api)).fullmatch(s["route"])]):
+            raise ValueError(f"webapp: 화면 경로가 API 경로와 겹친다 — {', '.join(clash)}. 화면은 자기 경로에서 열린다")
         try:
             made = design({"oneshot-screens": mine, "oneshot-states": [s for s in states if s["screen"] in own],
                            "oneshot-tokens": found["oneshot-tokens"], "oneshot-mocks": mocks[k]},
