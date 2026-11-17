@@ -12,8 +12,8 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from main import (oneshot, oneshot_brief as brief, oneshot_build, oneshot_front, oneshot_review, oneshot_sheet as sheet,
-                  oneshot_spec, specs)
+from main import (oneshot, oneshot_brief as brief, oneshot_build, oneshot_front, oneshot_profile, oneshot_review,
+                  oneshot_sheet as sheet, oneshot_spec, specs)
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_core import DESIGN, GLOSSARY, REQS, answer
 from test_oneshot_spec import fenced, o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
@@ -245,7 +245,7 @@ def test_several_kinds_split_gives_each_feature_the_kinds_all_its_parts_share(se
     assert o()["first_screen"] == {k: "번역을 켠다" for k in KINDS}
 
 
-def test_several_kinds_board_takes_a_first_screen_for_each_kind_then_waits_before_the_screens(several):
+def test_several_kinds_board_takes_a_first_screen_for_each_kind_then_designs_the_screens(several):
     features = [{"id": "read", "name": "읽기", "parts": ["R2", "M1"], "class": "every", "why": "늘", "kinds": ["android"]},
                 {"id": "history", "name": "기록", "parts": ["P1"], "class": "sometimes", "why": "가끔", "kinds": ["webapp"]}]
     oneshot_spec.saved("budget", oneshot={"stage": "board", "features": features, "working": None,
@@ -255,16 +255,18 @@ def test_several_kinds_board_takes_a_first_screen_for_each_kind_then_waits_befor
     frequency = {"read": "every", "history": "rarely"}
     with pytest.raises(HTTPException, match="종류마다"):
         oneshot_front.submit_board("budget", oneshot_front.Board(frequency=frequency, first_screen="한 줄"))
-    with patch.object(oneshot_spec, "start", lambda *a, **k: pytest.fail("each kind's screens are the next step's")):
+    started = []
+    with patch.object(oneshot_spec, "start", lambda repo, worker, *a, **k: started.append((worker, k))):
         oneshot_front.submit_board("budget", oneshot_front.Board(frequency=frequency, first_screen={
             "android": "  번역을   켠다 ", "webapp": "기록을 본다"}))
-    assert o()["stage"] == "frontend" and o()["stopped"]["reason"] == "kind" and not o().get("working")
-    assert o()["first_screen"] == {"android": "번역을 켠다", "webapp": "기록을 본다"} and o()["frequency"] == frequency
-    with pytest.raises(HTTPException):   # neither `[재개]` nor a restart takes the screens on
-        oneshot_spec.resume("budget")
-    with patch.object(oneshot, "restarted", lambda store: pytest.fail("a waiting stage is not restarted")):
-        oneshot_spec.recover()
-    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "frontend"
+    assert [w for w, _ in started] == ["frontend"] and not o().get("stopped")
+    assert started[0][1]["first_screen"] == {"android": "번역을 켠다", "webapp": "기록을 본다"}
+    assert started[0][1]["frequency"] == frequency
+
+
+def test_several_kinds_with_desktop_still_wait_before_the_screens(several):
+    assert oneshot_profile.waits_at({"intent": {"kinds": ["webapp", "android"]}}) == "build-front"
+    assert oneshot_profile.waits_at({"intent": {"kinds": ["android", "desktop"]}}) == "frontend"
 
 
 @pytest.mark.parametrize("stage", ["design", "tests", "split"])

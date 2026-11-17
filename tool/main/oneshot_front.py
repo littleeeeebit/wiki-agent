@@ -26,7 +26,7 @@ from common import is_junction
 
 from . import oneshot, oneshot_android, oneshot_brief as brief, oneshot_build, oneshot_front_build, \
     oneshot_screens as screens, oneshot_sheet as sheet, oneshot_spec, runtime, specs
-from .oneshot_profile import DEVICES, kind_of, kinds_of, shape, waits_at
+from .oneshot_profile import DEVICES, kinds_of, shape, waits_at
 
 SHOT_SECONDS = 15_000   # Playwright's milliseconds per page
 PREVIEW_SECONDS = 1800   # an Android preview's first run downloads its Gradle dependencies
@@ -142,17 +142,19 @@ def review():
 views = screens.views
 
 
-def shoot(mocks: dict[str, str], folder: Path, viewports: list[str]) -> dict[str, list[str]]:
+def shoot(mocks: dict[str, str], folder: Path, viewports: list[str], clear: bool = True) -> dict[str, list[str]]:
     """Each mock written into `folder` and shot at each viewport, offline: a request leaving the page is
-    aborted and counted. `{screen: [console errors, page errors, outside requests]}`, empty when clean."""
+    aborted and counted. `{screen: [console errors, page errors, outside requests]}`, empty when clean.
+    `clear` empties the folder first; several kinds keep the Android pictures already in it."""
 
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
         raise RuntimeError("Playwright 가 없어 목업을 찍지 못했다 — `pip install playwright` 와 "
                            "`playwright install chromium` 이 필요하다") from exc
-    shutil.rmtree(folder, ignore_errors=True)
-    folder.mkdir(parents=True)
+    if clear:
+        shutil.rmtree(folder, ignore_errors=True)
+    folder.mkdir(parents=True, exist_ok=True)
     errors: dict[str, list[str]] = {}
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -269,8 +271,13 @@ def front_turn(final: str, attempt: int, spec: dict, reach: set[str] | None = No
     """The four S6 blocks checked against the owner's map, outside an edit's reach unchanged, then shot."""
 
     o = spec["oneshot"]
-    android = kind_of(o) == "android"
-    front = screens.design(oneshot_spec.blocks(final), o["features"], o["frequency"], android)
+    kinds = kinds_of(o) if shape(o) == "kinds" else []
+    if kinds:
+        front = screens.design_kinds(oneshot_spec.blocks(final), o["features"], o["frequency"], kinds, [
+            f"{p['method'].upper()} {p['path']}" for p in o["design"].get("api", [])])
+    else:
+        front = screens.design(oneshot_spec.blocks(final), o["features"], o["frequency"], shape(o) == "android")
+    android = "preview" in front
     if reach is not None:   # an approval outside the reach survives, so nothing outside it may move
         old, new = screens.every(o["front"]), screens.every(front)
         if moved := sorted(i for i in old if i not in reach and old[i] != new.get(i)):
@@ -283,9 +290,12 @@ def front_turn(final: str, attempt: int, spec: dict, reach: set[str] | None = No
     if warnings and attempt == 0:
         raise ValueError("다음을 고쳐 다시 내라 — " + " / ".join(warnings[:12]))
     n = int(o.get("shots") or 0) + 1
-    if android:
+    if android:   # first: it empties the folder the web mocks are then shot into
         photographed(spec, front["preview"], shots(spec["repo"], n))
-    elif broken := shoot(front["mocks"], shots(spec["repo"], n), views(o["profile"])):
+    web = {s["id"]: front["mocks"][s["id"]] for s in front["screens"] if s.get("kind", "webapp") == "webapp"} \
+        if not android or kinds else {}
+    if web and (broken := shoot(web, shots(spec["repo"], n), views(o["profile"], "webapp" if kinds else ""),
+                                clear=not android)):
         raise ValueError("목업이 깨끗하게 열리지 않는다 (외부 자원 없이 한 파일로 써라) — " +
                          " / ".join(f"{sid}: {'; '.join(found[:3])}" for sid, found in broken.items()))
     return {**front, "shots": n}, warnings
@@ -297,25 +307,28 @@ def shots(repo: str, n: int) -> Path:
 
 def front_text(spec: dict) -> str:
     o = spec["oneshot"]
-    if kind_of(o) == "android":
+    if shape(o) in ("android", "kinds"):
         device = DEVICES[o["profile"]["device"]]
-        designed, parts = "core", "core parts"
+        designed, parts = "core", "core parts" + (" and the kinds it applies to" if shape(o) == "kinds" else "")
         shot = (f"The reference phone each screen is shot at: {device['label']}, {device['width']}×{device['height']} px "
                 f"at {device['dpi']} dpi.\n\nThe toolchain the preview command runs on:\n\n"
                 f"{oneshot_build.toolchain_text(spec)}\n")
+        if shape(o) == "kinds":
+            shot = f"The web viewports shot: {', '.join(views(o['profile'], 'webapp'))}\n\n" + shot
     else:
         designed, parts, shot = "backend", "served endpoints", f"Viewports shot: {', '.join(views(o['profile']))}\n"
     return (oneshot_spec.design_text(spec) + f"\nThe {designed} design:\n\n{json.dumps(o['design'], ensure_ascii=False)}"
             f"\n\nThe features, each with its {parts}:\n\n{json.dumps(o['features'], ensure_ascii=False)}"
             f"\n\nThe owner's frequency map:\n\n{json.dumps(o['frequency'], ensure_ascii=False)}"
-            f"\n\nThe first screen is for: {o['first_screen']}\n\n" + shot)
+            f"\n\nThe first screen is for: " + (json.dumps(o["first_screen"], ensure_ascii=False)   # one line per kind
+                                                if isinstance(o["first_screen"], dict) else o["first_screen"]) + "\n\n" + shot)
 
 
 def frontend(repo: str) -> None:
     """One S6 turn in the worktree, read-only; the server checks the blocks, shoots the mocks and shows R2."""
 
     def body(store, spec, tree):
-        found = oneshot.turned(store, "frontend", oneshot.prompt("frontend", kind_of(spec["oneshot"])), front_text(spec),
+        found = oneshot.turned(store, "frontend", oneshot.prompt("frontend", shape(spec["oneshot"])), front_text(spec),
                                screens.BLOCKS, lambda final, attempt: front_turn(final, attempt, spec), tree)
         if found is None:
             return None
@@ -335,14 +348,18 @@ def refront(repo: str, comments: dict[str, str], reach: list[str]) -> None:
 
 def refront_turn(repo: str, store, spec: dict, tree: Path, comments: dict[str, str], reach: list[str]):
     o = spec["oneshot"]
-    # An Android design's per-screen sources are its preview's files, so they are sent once.
-    left = {"shots", "mocks"} if "preview" in o["front"] else {"shots"}
+    # An Android design's per-screen sources are its preview's files, so they are sent once; several kinds keep
+    # the web screens' pages, which nothing else holds.
+    current = {k: v for k, v in o["front"].items() if k != "shots"}
+    if "preview" in current:
+        web = {s["id"]: current["mocks"][s["id"]] for s in current["screens"] if s.get("kind") == "webapp"}
+        current = {**current, "mocks": {"webapp": web}} if web else {k: v for k, v in current.items() if k != "mocks"}
     text = (front_text(spec) + f"\nThe current frontend design:\n\n"
-            f"{json.dumps({k: v for k, v in o['front'].items() if k not in left}, ensure_ascii=False)}"
+            f"{json.dumps(current, ensure_ascii=False)}"
             f"\n\nThe owner edited these items, with these comments:\n\n{json.dumps(comments, ensure_ascii=False)}"
             f"\n\nReplace every item in this set and keep the rest as it is: {', '.join(reach)}. "
             "Return all four blocks in full.\n")
-    found = oneshot.turned(store, "frontend", oneshot.prompt("frontend", kind_of(o)), text, screens.BLOCKS,
+    found = oneshot.turned(store, "frontend", oneshot.prompt("frontend", shape(o)), text, screens.BLOCKS,
                            lambda final, attempt: front_turn(final, attempt, spec, set(reach)), tree)
     if found is None:
         return None
@@ -372,12 +389,17 @@ def approved(repo: str) -> None:
 def record(repo: str, store, spec: dict, tree: Path) -> bool:
     o = spec["oneshot"]
     front, source = o["front"], shots(repo, o["front"]["shots"])
-    # An Android app's mocks are its preview's source files, written as they were shot.
-    mocks = {f"docs/design/mock/{p}": text for p, text in front["preview"]["files"].items()} if "preview" in front \
-        else {f"docs/design/mock/{s['id']}.html": source / f"{s['id']}.html" for s in front["screens"]}
+    # An Android app's mocks are its preview's source files, written as they were shot; a web screen's is its page.
+    # Several kinds keep each kind's under its own folder, so a preview file never lands on a web page's place.
+    several = any("kind" in s for s in front["screens"])
+    android, web = ("android/", "webapp/") if several else ("", "")
+    mocks = {f"docs/design/mock/{android}{p}": text for p, text in front["preview"]["files"].items()} \
+        if "preview" in front else {}
+    mocks |= {f"docs/design/mock/{web}{s['id']}.html": source / f"{s['id']}.html" for s in front["screens"]
+              if s.get("kind", "webapp") == "webapp" and "route" in s}
     copies = {f"docs/design/{'screens' if 'preview' in front else 'frontend'}.md": None, **mocks,
               **{f"docs/design/shots/{s['id']}-{v}.png": source / f"{s['id']}-{v}.png"
-                 for s in front["screens"] for v in views(o["profile"])}}
+                 for s in front["screens"] for v in views(o["profile"], s.get("kind", ""))}}
     root = tree.resolve()
     for name in copies:   # a link or a junction on the way, or a place that resolves outside the tree
         parts = Path(name).parts
@@ -397,7 +419,14 @@ def record(repo: str, store, spec: dict, tree: Path) -> bool:
         return False
     # `working` names the build before its turn is sent: a server that dies in between leaves it for `recover`,
     # and the screens are already the spec's `done` that the resumed turn reports against.
-    oneshot_spec.saved(repo, done=[f"{s['id']} {screens.place(s)}: {s['purpose']}" for s in front["screens"]],
+    done = [f"{s['id']} {screens.place(s)}: {s['purpose']}" for s in front["screens"]]
+    if waits_at(o) == "build-front":   # several kinds: each kind's build and loop are the next step's (9c3)
+        oneshot_spec.saved(repo, done=done, oneshot={
+            "stage": "build-front", "front_head": head, "working": None, "attempts": 0, "stopped": {
+                "reason": "kind", "state": "build-front",
+                "detail": "여러 종류의 화면 빌드는 다음 버전에서 이어진다 — 승인한 화면 설계는 커밋됐다"}})
+        return False
+    oneshot_spec.saved(repo, done=done,
                        oneshot={"stage": "build-front", "front_head": head, "working": "build-front", "attempts": 0})
     return True
 
@@ -438,7 +467,8 @@ def extra(spec: dict) -> dict:
         out["front_items"] = screens.decidable(o["front"])
         # The brief's pictures sit with each screen's confirmation line.
         out["front_brief"] = {**brief.shown(spec, "r2"),
-                              "pictures": {s["id"]: [shot(s["id"], v) for v in views(o["profile"])] for s in o["front"]["screens"]}}
+                              "pictures": {s["id"]: [shot(s["id"], v) for v in views(o["profile"], s.get("kind", ""))]
+                                           for s in o["front"]["screens"]}}
     return out
 
 
@@ -457,7 +487,7 @@ def submit_board(repo: str, body: Board) -> dict:
                                              kinds_of(o) if shape(o) == "kinds" else ())
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        if waits_at(o) == "frontend":   # several kinds: each kind's screens are the next step's (9c2)
+        if waits_at(o) == "frontend":   # a kind S6 cannot design yet (`desktop`, plan 9e)
             oneshot_spec.saved(repo, oneshot={"stage": "frontend", "frequency": frequency, "first_screen": first,
                                               "front": None, "r2": None, "working": None, "stopped": {
                                                   "reason": "kind", "state": "frontend",

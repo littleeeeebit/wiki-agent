@@ -63,7 +63,7 @@ def snapshot(spec: dict, gate: str = "r1") -> dict:
         snap = {"gate": gate, "sentence": o.get("sentence") or "", "screens": front.get("screens") or [],
                 "states": front.get("states") or {}, "palettes": (front.get("tokens") or {}).get("palettes") or [],
                 "shots": front.get("shots"), "first_screen": o.get("first_screen") or "",
-                "features": [{k: f[k] for k in ("id", "name", "why")} for f in o.get("features") or []],
+                "features": [{k: f[k] for k in ("id", "name", "why", "kinds") if k in f} for f in o.get("features") or []],
                 "frequency": o.get("frequency") or {}, "profile": shown,
                 "round": at.get("round", 1), "marks": at.get("marks") or {}}
         return snap | (finished(o) if gate == "r3" else {})
