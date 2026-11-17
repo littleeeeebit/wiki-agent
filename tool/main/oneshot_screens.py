@@ -10,7 +10,8 @@ import re
 import struct
 import zlib
 
-from .oneshot_sheet import translationese
+from .oneshot_profile import kinds_of
+from .oneshot_sheet import KIND_NAMES, translationese
 
 CLASSES = ("every", "sometimes", "rarely", "never")
 CLASS_NAMES = {"every": "늘 쓴다", "sometimes": "가끔 쓴다", "rarely": "드물게 쓴다", "never": "화면에 없다"}
@@ -59,10 +60,11 @@ def operations(document) -> list[str]:
                   for m in ops if m in METHODS)
 
 
-def views(profile: dict) -> list[str]:
-    """The viewports each mock is shot at: an Android app's reference phone, or a web app's."""
+def views(profile: dict, kind: str = "") -> list[str]:
+    """The viewports each mock is shot at: an Android app's reference phone, or a web app's. Several kinds' card
+    holds both fields, so there a screen's `kind` picks."""
 
-    if "device" in profile:
+    if kind == "android" or not kind and "device" in profile:
         return ["phone"]
     return list(VIEWPORTS) if profile.get("responsive") == "desktop-mobile" else ["desktop"]
 
@@ -355,6 +357,49 @@ def design(found: dict, feats: list[dict], frequency: dict[str, str], android: b
     return {**made, "mocks": mocks, "preview": shown}
 
 
+def design_kinds(found: dict, feats: list[dict], frequency: dict[str, str], kinds: list[str],
+                 api: list[str] = ()) -> dict:
+    """Several kinds' four S6 blocks: each screen names its `kind`, the tokens are shared, and `oneshot-mocks`
+    holds each kind's mocks under its name. Each kind is checked on its own by `design`, with only the
+    features that apply to it (`api`: the server's `METHOD /path`, which a web screen's route may not be)."""
+
+    if missing := [b for b in BLOCKS.split(",") if b not in found]:
+        raise ValueError(f"블록이 빠졌다: {', '.join(missing)}")
+    shown, mocks = found["oneshot-screens"], found["oneshot-mocks"]
+    if not isinstance(shown, list) or not shown or not all(isinstance(s, dict) for s in shown):
+        raise ValueError("`oneshot-screens` 는 비지 않은 목록이어야 한다")
+    if bad := sorted({str(s.get("kind")) for s in shown} - set(kinds)):
+        raise ValueError(f"화면마다 `kind` 가 고른 종류({', '.join(kinds)}) 중 하나여야 한다 — {', '.join(bad)}")
+    if len(ids := [s.get("id") for s in shown]) != len(set(map(str, ids))):
+        raise ValueError("화면 id 는 모든 종류를 통틀어 겹치지 않는다")
+    if not isinstance(mocks, dict) or set(mocks) != set(kinds):
+        raise ValueError(f"`oneshot-mocks` 는 종류마다({', '.join(kinds)}) 그 종류의 목업을 담은 객체다")
+    states = found["oneshot-states"] if isinstance(found["oneshot-states"], list) else []
+    if stray := [s.get("screen") for s in states if not isinstance(s, dict) or s.get("screen") not in ids]:
+        raise ValueError(f"`oneshot-states` 의 `screen` 은 화면 id 다 — {', '.join(map(str, stray))}")
+    out = {"screens": [], "states": {}, "mocks": {}}
+    for k in kinds:
+        mine = [{x: v for x, v in s.items() if x != "kind"} for s in shown if s["kind"] == k]
+        if not mine:
+            raise ValueError(f"{k} 의 화면이 없다")
+        own = {s["id"] for s in mine}
+        kept = [{**f, "endpoints": list(api)} if k == "webapp" else f for f in feats if k in f["kinds"]]
+        try:
+            made = design({"oneshot-screens": mine, "oneshot-states": [s for s in states if s["screen"] in own],
+                           "oneshot-tokens": found["oneshot-tokens"], "oneshot-mocks": mocks[k]},
+                          kept, {f["id"]: frequency[f["id"]] for f in kept}, k == "android")
+        except ValueError as exc:
+            raise ValueError(f"{k}: {exc}") from exc
+        out["screens"] += [{**s, "kind": k} for s in made["screens"]]
+        out["states"] |= made["states"]
+        out["mocks"] |= made["mocks"]
+        out["tokens"] = made["tokens"]
+        if "preview" in made:
+            out["preview"] = made["preview"]
+    order = {sid: n for n, sid in enumerate(ids)}   # the screens in the order the turn gave them
+    return {**out, "screens": sorted(out["screens"], key=lambda s: order[s["id"]])}
+
+
 def soft(front: dict) -> list[str]:
     """Translationese in what the owner reads: sent back once, never a stop."""
 
@@ -398,28 +443,46 @@ def place(s: dict) -> str:
     return f"`{s['route']}`" if "route" in s else SURFACES[s["surface"]]
 
 
+def placed(group: list[dict], feats: list[dict], frequency: dict, shown: list[str], first_line: str, mark, shot,
+           h: str = "") -> list[str]:
+    """One kind's part of the R2 sheet (or the whole run's for one kind): its first screen, where each feature
+    sits, its other screens. `h` deepens the headings under a kind's own."""
+
+    first = next(s for s in group if s["primary"])
+    lines = [f"> 첫 화면은 {first_line}", "",
+             f"{h}## 첫 화면 {first['id']}{mark(first['id'])} {place(first)}", "", first["purpose"], "",
+             *[f"![{first['id']} {v}]({shot(first['id'], v)})" for v in shown], "",
+             f"{h}## 기능을 둔 자리", "", "| 기능 | 주인이 고른 칸 | 놓인 화면 |", "| --- | --- | --- |"]
+    where = {f["id"]: [s["id"] for s in group if f["id"] in s["features"]] for f in feats}
+    lines += [f"| {_cell(f['name'])} (`{f['id']}`) | {CLASS_NAMES[frequency[f['id']]]} | "
+              f"{', '.join(where[f['id']]) or '없음'} |" for f in feats]
+    lines += ["", f"{h}## 다른 화면", ""]
+    for s in group:
+        if s is not first:
+            lines += [f"{h}### {s['id']}{mark(s['id'])} {place(s)} — {s['purpose']}", "",
+                      *[f"![{s['id']} {v}]({shot(s['id'], v)})" for v in shown], ""]
+    return lines
+
+
 def sheet(spec: dict, shot) -> str:
-    """The R2 sheet in Markdown; `shot(screen_id, viewport)` gives a screenshot's URL."""
+    """The R2 sheet in Markdown; `shot(screen_id, viewport)` gives a screenshot's URL. Several kinds' screens
+    are grouped by kind."""
 
     o = spec["oneshot"]
     front, feats, frequency = o["front"], o["features"], o["frequency"]
     marks = (o.get("r2") or {}).get("marks") or {}
     tag = {"edited": " (고친 항목)", "consequence": " (따라 바뀜)", "again": " (다시 승인)"}
     mark = lambda i: tag.get(marks.get(i), "")   # noqa: E731
-    shown = views(o["profile"])
-    first = next(s for s in front["screens"] if s["primary"])
-    lines = [f"# 화면 설계 — {spec['repo']}", "", f"> 첫 화면은 {o['first_screen']}", "",
-             f"## 첫 화면 {first['id']}{mark(first['id'])} {place(first)}", "", first["purpose"], "",
-             *[f"![{first['id']} {v}]({shot(first['id'], v)})" for v in shown], "",
-             "## 기능을 둔 자리", "", "| 기능 | 주인이 고른 칸 | 놓인 화면 |", "| --- | --- | --- |"]
-    where = {f["id"]: [s["id"] for s in front["screens"] if f["id"] in s["features"]] for f in feats}
-    lines += [f"| {_cell(f['name'])} (`{f['id']}`) | {CLASS_NAMES[frequency[f['id']]]} | "
-              f"{', '.join(where[f['id']]) or '없음'} |" for f in feats]
-    lines += ["", "## 다른 화면", ""]
-    for s in front["screens"]:
-        if s is not first:
-            lines += [f"### {s['id']}{mark(s['id'])} {place(s)} — {s['purpose']}", "",
-                      *[f"![{s['id']} {v}]({shot(s['id'], v)})" for v in shown], ""]
+    lines = [f"# 화면 설계 — {spec['repo']}", ""]
+    kinds = [k for k in kinds_of(o) if any(s.get("kind") == k for s in front["screens"])]
+    for k in kinds or [""]:   # several kinds: one section each in the owner's order, the same shape one level down
+        group = [s for s in front["screens"] if s.get("kind", "") == k]
+        own = [f for f in feats if not k or k in f["kinds"]]
+        h = "#" if k else ""
+        if k:
+            lines += [f"## {KIND_NAMES[k]}", ""]
+        lines += placed(group, own, frequency, views(o["profile"], k), o["first_screen"][k] if k else o["first_screen"],
+                        mark, shot, h)
     lines += ["## 색 배합 (하나를 고른다)", "", "| id | 이름 | " + " | ".join(COLORS) + " |",
               "| --- | --- | " + " | ".join("---" for _ in COLORS) + " |"]
     chosen = (o.get("r2") or {}).get("palette")
