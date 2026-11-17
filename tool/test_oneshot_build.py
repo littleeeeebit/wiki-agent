@@ -589,19 +589,23 @@ def test_every_oneshot_turn_is_handed_over_and_a_persons_changes_nothing(built_w
 
 def test_after_the_oneshot_publishes_a_repair_turns_spec_update_revises_the_spec_and_keeps_its_screens(built_world):
     """realtime-screen-translator PR #1: the person moved browser capture to `out` three times, and each
-    repair turn's `spec-update` was dropped, so the reviewer refused the same finding against revision 1."""
+    repair turn's `spec-update` was dropped, so the reviewer refused the same finding against revision 1. The
+    screens replace `done` outside a revision, so an edit before R2 must not make the first screen read as a gate
+    (#378 round 1); the gate that edit put in still retires."""
 
     tree, sent = built_world
     screens = ["S1 `/`: first screen", "S2 `/library`: library"]
+    with patch.object(specs, "gate_of", lambda *_: "old gate"):   # an edit while the run waits at R2
+        specs.revise(tree, spec(), {"rev": 1, "reason": "edit", "goal": "y", "out": [], "done": ["backend"]})
     oneshot_spec.saved("budget", done=screens, state="고치는 중 R1", worktree=str(tree), oneshot={"stage": "done"},
                        rounds=[{"n": 1, "verdict": "deny"}])
-    update = fenced("spec-update", {"rev": 1, "reason": "the person chose app-only", "goal": "y",
-                                    "out": ["browser capture"], "done": screens})
+    update = fenced("spec-update", {"rev": 2, "reason": "the person chose app-only", "goal": "y",
+                                    "out": ["browser capture"], "done": ["old gate", *screens]})
     with patch.object(specs, "owner", lambda path: spec()), patch.object(specs.channels, "repo_for", lambda r: tree), \
          patch.object(specs, "gate_of", lambda *_: "pytest"):
         specs._check(tree, Turn(), update)
     after = spec()
-    assert after["rev"] == 2 and after["out"] == ["browser capture"] and after["done"] == ["pytest", *screens]
+    assert after["rev"] == 3 and after["out"] == ["browser capture"] and after["done"] == ["pytest", *screens]
     assert after["rounds"][0]["stale"] and not sent
 
 

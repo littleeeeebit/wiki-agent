@@ -244,8 +244,9 @@ or a turn in a stage S4 does not own, changes nothing. The branch stays
 local until S8. Once S8 publishes (stage `done`), the hand-over ends and the
 pull request's review loop is the ordinary one: a repair turn's `spec-update`
 revises the spec, so a scope decision the person makes during review reaches
-the reviewer. The revision keeps revision 1's first item, a screen rather than
-a gate.
+the reviewer. The screens replace `done` outside a revision, so its first item
+is a screen, not a gate: a revision retires only the gates earlier revisions
+put in (`revision_gates`).
 
 The turns are the ordinary work session's (`work.session` on the run's
 `build` model, `2-bootstrap.md` S0), sent as an `oneshot_build.Turn`. Each is checked against the run's
