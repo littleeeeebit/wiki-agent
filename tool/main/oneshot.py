@@ -245,9 +245,9 @@ def ask(store: Store, role: str, system: str, text: str, where: Path | None = No
 
 
 def prompt(name: str, kind: str = "webapp") -> str:
-    """`tool/prompts/oneshot-{name}.md`, or its `-android` version for an Android run."""
+    """`tool/prompts/oneshot-{name}.md`, or its `-android` or `-kinds` (several kinds, `oneshot_profile.shape`) one."""
 
-    return (ROOT / f"tool/prompts/oneshot-{name}{'-android' if kind == 'android' else ''}.md").read_text(encoding="utf-8")
+    return (ROOT / f"tool/prompts/oneshot-{name}{'-' + kind if kind in ('android', 'kinds') else ''}.md").read_text(encoding="utf-8")
 
 
 def block(final: str, name: str):

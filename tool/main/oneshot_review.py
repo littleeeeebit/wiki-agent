@@ -19,7 +19,7 @@ from fastapi import HTTPException
 from agent import read_tools
 
 from . import oneshot, oneshot_build, oneshot_front, oneshot_spec, runtime, specs, work  # noqa: F401 — `oneshot_front` registers `split`
-from .oneshot_profile import environment, kind_of
+from .oneshot_profile import environment, shape, waits_at
 from .query import _lock as work_lock, hold
 
 SEVERITIES = ("P0", "P1", "P2")
@@ -71,7 +71,7 @@ def frozen(spec: dict) -> tuple[str, str]:
 
 def review_text(spec: dict, head: str, how: str) -> str:
     o = spec["oneshot"]
-    built = "core" if kind_of(o) == "android" else "backend"
+    built = "core" if "modules" in o["design"] else "backend"
     return (f"Review HEAD `{head}` of this repository's {built} build.\n\nThe approved design:\n\n"
             f"{json.dumps(o['design'], ensure_ascii=False)}\n\nThe requirements:\n\n"
             f"{json.dumps(spec.get('requirements') or [], ensure_ascii=False)}\n\nThe environment profile and the stack:\n\n"
@@ -192,6 +192,12 @@ def decided(repo: str, store, spec: dict, found: dict):
 
     o = spec["oneshot"]
     reviews = [*(o.get("reviews") or []), {**found, "ts": time.time()}]
+    if found["verdict"] == "approve" and waits_at(o) == "split":   # several kinds: the split is the next step's (9c)
+        with oneshot._lock:
+            oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "working": None, "stopped": {
+                "reason": "kind", "detail": "여러 종류의 기능 나누기는 다음 버전에서 이어진다 — 백엔드 리뷰가 승인했다",
+                "state": "split"}})
+        return None
     if found["verdict"] == "approve":
         # `working` names the split before its worker starts: a server that dies in between leaves it for `recover`.
         oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "working": "split"})
@@ -219,7 +225,7 @@ def verdict(store, spec: dict, tree: Path) -> dict | None:
     except (ValueError, OSError, RuntimeError) as exc:
         store.stop("review", str(exc))
         return None
-    return oneshot.turned(store, "review", oneshot.prompt("review", kind_of(spec["oneshot"])), review_text(spec, head, how),
+    return oneshot.turned(store, "review", oneshot.prompt("review", shape(spec["oneshot"])), review_text(spec, head, how),
                           "oneshot-review",
                           lambda value: verdict_of(value, head), tree)
 
