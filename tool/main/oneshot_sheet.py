@@ -575,11 +575,18 @@ def by_id(reqs: list[dict]) -> dict[str, dict]:
 
 
 def asked_by(design: dict, reqs: list[dict], kind: str) -> list[tuple[str, str]]:
-    """`(module, requirement)` for every platform capability a module this kind uses depends on."""
+    """`(module, requirement)` for every platform capability a module this kind uses depends on, directly or
+    through the requirements and design items its `depends_on` reaches."""
 
-    modules, known = {m["id"]: m for m in design["modules"]}, by_id(reqs)
-    return [(m, r) for m in used_by(design, reqs, kind) for r in modules[m]["depends_on"]
-            if (known.get(r) or {}).get("capability")]
+    known, out = every(design, reqs), []
+    for m in used_by(design, reqs, kind):
+        reached, edge = set(), list(known[m]["depends_on"])
+        while edge:
+            if (i := edge.pop()) in known and i not in reached:
+                reached.add(i)
+                edge += known[i].get("depends_on") or []
+        out += [(m, r) for r in sorted(reached) if known[r].get("capability")]
+    return out
 
 
 def used_by(design: dict, reqs: list[dict], kind: str) -> list[str]:

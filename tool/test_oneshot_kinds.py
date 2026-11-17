@@ -79,6 +79,21 @@ def test_each_check_on_several_kinds_core_refuses(change, said):
         sheet.checked(sheet.parsed(design, KINDS), KINDS_REQS, GLOSSARY, {"auth": "none"}, KINDS)
 
 
+def test_another_kinds_permission_reached_through_a_requirement_or_an_assumption_is_refused():
+    calls_m1 = [*KINDS_DESIGN["oneshot-modules"][:2], {**KINDS_DESIGN["oneshot-modules"][2], "calls": ["M1"]}]
+    m1_only_r1 = [{**calls_m1[0], "depends_on": ["R1"]}, *calls_m1[1:]]
+    chained = [{**KINDS_REQS[0], "depends_on": ["R2"]}, {**KINDS_REQS[1], "depends_on": []}, KINDS_REQS[2]]
+    via_a1 = [{**calls_m1[0], "depends_on": ["R1", "A1"]}, *calls_m1[1:]]
+    a1_r2 = [{**KINDS_DESIGN["oneshot-assumptions"][0], "depends_on": ["R2"]}]
+    for modules, reqs, assumptions in ((m1_only_r1, chained, KINDS_DESIGN["oneshot-assumptions"]),
+                                       (via_a1, KINDS_REQS, a1_r2)):
+        design = {**KINDS_DESIGN, "oneshot-modules": modules, "oneshot-assumptions": assumptions}
+        with pytest.raises(ValueError, match="M1 → R2"):
+            sheet.checked(sheet.parsed(design, KINDS), reqs, GLOSSARY, {"auth": "none"}, KINDS)
+        parsed = sheet.parsed(design, KINDS)
+        assert ("M1", "R2") in sheet.asked_by(parsed, reqs, "android")   # the sheet's list reads the same chain
+
+
 def test_an_r1_edit_keeps_each_requirements_kinds_as_the_owner_settled_them(several):
     spec = {**specs.load("budget", oneshot.BRANCH)}
     spec["oneshot"] = {**spec["oneshot"], "r1": {"round": 1}, "design": sheet.parsed(KINDS_DESIGN, KINDS)}
