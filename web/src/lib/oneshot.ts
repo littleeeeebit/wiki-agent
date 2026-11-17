@@ -44,7 +44,7 @@ export type Review = {
 }
 /** One look at the built screens (`oneshot_critique.judged`); `clean` has no high finding. */
 export type Critique = {
-  look: number; head: string; clean: boolean; ts?: number
+  look: number; head: string; clean: boolean; ts?: number; kind?: string
   findings: { route: string; viewport: string; state: string; what: string; severity: string }[]
 }
 /** One phone the run's own ADB server lists (`android_phone.listed`). */
@@ -70,6 +70,8 @@ export type SpecView = SpecSummary & {
     intent?: { kind?: string; kinds?: string[] }
     /** How many `critiques` came before the count against the cap restarted (a resume, an R3 fix). */
     critique_base?: number
+    /** Several kinds: where a kind's own count restarted after its cap stop. */
+    critique_bases?: Record<string, number>
     inflight?: Inflight | null; reviews?: Review[]; refused?: number; cases?: string[][]
     spend?: { usd?: number; seconds?: number; calls?: number }
     stack?: { part: string; choice: string; why: string; status: string }[]

@@ -132,3 +132,18 @@ def test_the_phone_round_runs_on_the_android_app_alone_and_its_pass_waits_before
     with pytest.raises(HTTPException):
         oneshot_spec.resume("budget")
     assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "r3"
+
+
+def test_one_kinds_cap_restarts_only_its_own_count(kinds):
+    """A kind's cap restarts its own count; a kind that passed on this HEAD is not judged again on `[재개]`."""
+
+    head = o()["looks"][-1]["head"]
+    oneshot_spec.saved("budget", oneshot={"critiques": [
+        *[{"look": 1, "head": head, "kind": "android", "clean": True, "findings": []}] * 2,
+        *[{"look": 1, "head": head, "kind": "webapp", "clean": False, "findings": []}] * (critique.MAX_ROUNDS - 1)]})
+    _, asking = critic(said(HIGH))
+    with asking:
+        critique.critique("budget")
+    assert o()["stopped"]["reason"] == "critique" and o()["stopped"]["counted"] == critique.MAX_ROUNDS
+    assert o()["stopped"]["detail"].startswith("웹앱") and not o().get("critique_base")
+    assert critique.critic_kind(o()) == "webapp" and critique.counted(o(), o()["critiques"], "webapp") == []

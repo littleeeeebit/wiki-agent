@@ -136,12 +136,20 @@ def passed(rounds: list[dict], head: str | None = None) -> bool:
     return len(on) >= 2 and on[-1]["clean"] and on[-2]["clean"]
 
 
+def counted(o: dict, rounds: list[dict], kind: str | None = None) -> list[dict]:
+    """The rounds since the count restarted: `critique_base` restarts every kind's (a fix from the phone or R3),
+    and a kind's cap stop restarts only that kind's (`critique_bases`), so the others keep their passes."""
+
+    base = max(int(o.get("critique_base") or 0), int((o.get("critique_bases") or {}).get(kind or "", 0)))
+    return [r for r in rounds[base:] if r.get("kind") == kind] if kind else rounds[base:]
+
+
 def critic_kind(o: dict) -> str | None:
     """Several kinds: the first kind, in the owner's order, without two clean critiques on the HEAD the last look
     passed. A new HEAD has none, so every kind that passed before is judged again."""
 
-    ours, head = (o.get("critiques") or [])[int(o.get("critique_base") or 0):], o["looks"][-1]["head"]
-    return next((k for k in kinds_of(o) if not passed([r for r in ours if r.get("kind") == k], head)), None)
+    rounds, head = o.get("critiques") or [], o["looks"][-1]["head"]
+    return next((k for k in kinds_of(o) if not passed(counted(o, rounds, k), head)), None)
 
 
 def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: str | None = None):
@@ -152,8 +160,7 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: st
     rounds = [*(o.get("critiques") or []), {"look": look["round"], "head": look["head"], "findings": found,
                                             "clean": not any(f["severity"] == "high" for f in found + look["findings"]),
                                             "ts": time.time(), **({"kind": kind} if kind else {})}]
-    ours = rounds[int(o.get("critique_base") or 0):]
-    mine = [r for r in ours if r.get("kind") == kind] if kind else ours   # the cap counts each kind's own
+    mine = counted(o, rounds, kind)   # the cap counts each kind's own
     done = passed(mine, look["head"] if kind else None)
     if done and kind and critic_kind({**o, "critiques": rounds}):   # the next kind's turn, on the same shots
         oneshot_spec.saved(repo, oneshot={"critiques": rounds})
@@ -168,10 +175,12 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: st
             f"{f['route']} {f['viewport']} {f['state']}: {f['what']}" for f in found if f["severity"] == "high")
         with oneshot._lock:   # one write; `[재개]` starts a fresh count, and the stop keeps the count it reached
             # (`counted`), so the screen tells a cap stop from a failed critique, which leaves no critique behind
-            store.put(critiques=rounds, critique_base=len(rounds), working=None, stopped={
+            restart = {"critique_bases": {**(o.get("critique_bases") or {}), kind: len(rounds)}} if kind \
+                else {"critique_base": len(rounds)}
+            store.put(critiques=rounds, **restart, working=None, stopped={
                 "reason": "critique", "detail": detail, "state": store.get()[store.state], "counted": len(mine)})
         return None
-    if ours[-1]["clean"] and not found:   # nothing to fix: a second look at the same shots, `working` still set
+    if rounds[-1]["clean"] and not found:   # nothing to fix: a second look at the same shots, `working` still set
         oneshot_spec.saved(repo, oneshot={"critiques": rounds})
         return lambda: oneshot_spec.handoff(repo, "critique") or True   # the next look holds the tree itself
     todo = found + [f for f in look["findings"] if f["severity"] == "high"]   # a mechanical high outranks a clean critique
