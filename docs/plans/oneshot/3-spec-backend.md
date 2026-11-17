@@ -355,15 +355,27 @@ any turn (`work.dispatch`); after a refusal it waits behind the build turn:
    empty one is what the Review Loop settings name, through
    `oneshot.ROLES["review"]`) returns an
    `oneshot-review` block (`oneshot-review.md`): `{verdict, head,
-   findings: [{location, severity, reason, evidence}]}`. The server refuses
-   the block, and asks again once, when `head` is not the HEAD it was given
-   (a verdict on another commit counts as none), when an approval carries a
-   P0 or P1 finding, or when a refusal carries none. The turn is metered as
+   findings: [{location, severity, reason, evidence, area}]}`. `area` names
+   the mechanism a P0 or P1 finding is about, in a few English words. The
+   server refuses the block, and asks again once, when `head` is not the
+   HEAD it was given (a verdict on another commit counts as none), when an
+   approval carries a P0 or P1 finding, when a refusal carries none, or when
+   a P0 or P1 finding has no `area`. Each review after the first also gets
+   every earlier refusal's blocking findings, numbered by round with their
+   areas: the reviewer checks those first, leaves out the fixed ones, and
+   gives one that still holds, or that a fix moved to another case of the
+   same mechanism, the earlier `area` word for word. The turn is metered as
    the role `review`.
 4. On a refusal, the P0 and P1 findings go to the work session as one build
    turn with fresh attempts, saved with `working: "build"` and the worktree
    released before that turn is sent; a resumed build sends the same
-   findings again while the refusal of the built HEAD stands. The
+   findings again while the refusal of the built HEAD stands. The turn also
+   carries the earlier refusals in the same areas. An area refused in three
+   rounds or more (`STUCK`) has its mechanism replaced, not patched: the
+   same build turn is told that each fix of one case led to the next, to name
+   the assumption the area's findings share, and to replace the mechanism and
+   drop the special cases the old one gathered. Nothing stops for the person
+   there; the loop keeps running with that turn. The
    contract-test check and the gate run again; the review runs again on
    the new HEAD with a new frozen input, and so on until an approval.
    The refusal that reaches the Review Loop's round cap (`rounds` in its
