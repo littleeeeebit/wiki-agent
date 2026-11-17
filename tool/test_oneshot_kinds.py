@@ -162,6 +162,45 @@ def test_several_kinds_test_and_build_the_core_alone_with_its_tests_as_the_gate(
     assert oneshot_build.declared(several, fenced("oneshot-runner", runner), "kinds")["after"] == []   # no lint, no APK
 
 
+DEFER = {"location": "core/src/overlay.rs:18", "severity": "P1", "reason": "상태바를 가린다", "evidence": "insets 0",
+         "device": {"kind": "android", "requirement": "R1", "check": "오버레이가 상태바 아래에서 시작한다"}}
+
+
+def test_a_finding_only_a_device_can_show_waits_for_it_and_blocks_nothing():
+    devices = oneshot_review.deferrable({"oneshot": {"intent": {"kind": "android", "kinds": KINDS}},
+                                         "requirements": KINDS_REQS})
+    assert devices == {"android": {"R1", "R2"}}   # a web app has no device, and R3 is the web app's alone
+    approve = lambda *fs: {"verdict": "approve", "head": "h", "findings": list(fs)}   # noqa: E731
+    assert oneshot_review.verdict_of(approve(DEFER), "h", devices)["findings"] == [DEFER]
+    with pytest.raises(ValueError, match="하나 이상"):
+        oneshot_review.verdict_of({**approve(DEFER), "verdict": "refuse"}, "h", devices)
+    for bad in ({"kind": "webapp"}, {"requirement": "R3"}, {"check": " "}, {"kind": None}):
+        with pytest.raises(ValueError, match="`device`"):
+            oneshot_review.verdict_of(approve({**DEFER, "device": {**DEFER["device"], **bad}}), "h", devices)
+    with pytest.raises(ValueError, match="`device`"):
+        oneshot_review.verdict_of(approve({**DEFER, "severity": "P2"}), "h", devices)
+    alone = oneshot_review.deferrable({"oneshot": {"intent": {"kind": "webapp"}}, "requirements": REQS})
+    with pytest.raises(ValueError, match="이 실행엔 없다"):
+        oneshot_review.verdict_of(approve(DEFER), "h", alone)
+    android = oneshot_review.deferrable({"oneshot": {"intent": {"kind": "android"}}, "requirements": REQS})
+    assert android == {"android": {r["id"] for r in REQS}}
+
+
+def test_the_approving_reviews_deferrals_are_kept_owed_and_never_sent_to_the_builder(several):
+    oneshot_spec.saved("budget", oneshot={"stage": "review", "working": "review", "built_head": "abc",
+                                          "design": sheet.parsed(KINDS_DESIGN, KINDS), "tests_head": "t",
+                                          "contract": ["core/tests/seen.rs"], "gate": "cargo test"})
+    store, spec = oneshot_spec.store("budget"), specs.load("budget", oneshot.BRANCH)
+    blocking = {**DEFER, "location": "core/src/seen.rs:3", "reason": "같은 상자를 두 번 번역한다"}
+    blocking.pop("device")
+    sent = oneshot_review.fixing(spec, {"head": "abc", "findings": [blocking, DEFER]})
+    assert "같은 상자를 두 번" in sent and "상태바를 가린다" not in sent
+    oneshot_review.decided("budget", store, spec, {"verdict": "approve", "head": "abc", "findings": [DEFER]})
+    assert o()["owed"] == [{"id": "O1", **DEFER["device"], **{k: DEFER[k] for k in ("location", "severity", "reason",
+                                                                                      "evidence")}, "head": "abc"}]
+    assert o()["stage"] == "split" and o()["stopped"]["reason"] == "kind"
+
+
 def test_an_approved_review_of_several_kinds_waits_before_the_split(several):
     oneshot_spec.saved("budget", oneshot={"stage": "review", "working": "review", "built_head": "abc",
                                           "design": sheet.parsed(KINDS_DESIGN, KINDS), "tests_head": "t",

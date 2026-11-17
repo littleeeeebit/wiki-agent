@@ -74,6 +74,13 @@ def scenarios(spec: dict) -> list[str]:
     return [r["id"] for r in spec.get("requirements") or [] if r.get("postconditions")]
 
 
+def owed(spec: dict) -> list[dict]:
+    """The checks the backend review left for the phone (`oneshot_review.owing`): each has an instrumented
+    test `owed_<id>_…`, and a look passes only with every one of them run and passing on its HEAD."""
+
+    return [x for x in spec["oneshot"].get("owed") or [] if x["kind"] == "android"]
+
+
 # -- The build turn's block ----------------------------------------------------------------------------
 
 def _apk(tree: Path, value, where: str) -> str:
@@ -382,14 +389,15 @@ def completed(output: str) -> bool:
                                                         "INSTRUMENTATION_RESULT: shortMsg=")) for line in lines)
 
 
-def covers(test: str, rid: str) -> bool:
-    """`test` is `rid`'s scenario test: `scenario_<id>` itself or followed by `_`, so R10's never stands in for R1's."""
+def covers(test: str, rid: str, kind: str = "scenario") -> bool:
+    """`test` is `rid`'s scenario test (or owed check's, `kind` `owed`): `scenario_<id>` itself or followed by
+    `_`, so R10's never stands in for R1's."""
 
-    name, stem = test.lower(), f"scenario_{rid.lower()}"
+    name, stem = test.lower(), f"{kind}_{rid.lower()}"
     return name == stem or name.startswith(stem + "_")
 
 
-def scenario_findings(output: str, wanted: list[str], first: str) -> list[dict]:
+def scenario_findings(output: str, wanted: list[str], first: str, owing: list[dict] = ()) -> list[dict]:
     results, out = instrumented(output), []
     if not completed(output):
         out.append(finding(first, "full", f"시나리오 테스트가 끝까지 돌지 못했다 — {output.strip()[-300:]}"))
@@ -400,6 +408,10 @@ def scenario_findings(output: str, wanted: list[str], first: str) -> list[dict]:
     for rid in wanted:
         if not any(covers(test, rid) for _, test, _, _ in results):
             out.append(finding(first, "full", f"시나리오 {rid} 의 계측 테스트(`scenario_{rid}_…`)가 돌지 않았다"))
+    for x in owing:
+        if not any(covers(test, x["id"], "owed") for _, test, _, _ in results):
+            out.append(finding(first, "full", f"기기에서 확인할 {x['id']}({x['requirement']}) 의 계측 테스트"
+                                              f"(`owed_{x['id']}_…`)가 돌지 않았다 — {x['reason']}"))
     return out
 
 
@@ -469,7 +481,7 @@ def inspect(d: Device, spec: dict, folder: Path, stopped=never) -> list[dict]:
         output = d.adb("shell", "am", "instrument", "-w", "-r", d.d["tests"]["runner"], timeout=TESTS_SECONDS)
     except ValueError as exc:   # a runner the test APK does not hold exits non-zero
         output = f"INSTRUMENTATION_FAILED: {exc}"
-    findings += scenario_findings(output, scenarios(spec), first["id"])
+    findings += scenario_findings(output, scenarios(spec), first["id"], owed(spec))
     if why := d.died():
         findings.append(finding(first["id"], "full", f"시나리오 테스트 중에 {why}"))
     for f, cls in frequency.items():
