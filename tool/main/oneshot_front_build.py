@@ -100,6 +100,10 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
         return why
     kinds = kinds_of(o)
     android, several = "android" in kinds, shape(o) == "kinds"
+    # Several kinds' gate adds each kind's tests and build to the core's: at least one command for each kind.
+    if several and len([c for c in gate[len(backend):].split("&&") if c.strip()]) < len(kinds):
+        return (f"여러 종류의 `gate_cmd` 는 핵심 테스트 `{backend}` 뒤에 종류마다의 테스트와 빌드 명령을 ` && ` 로 "
+                f"더한다 ({', '.join(KIND_NAMES[k] for k in kinds)}) — `{gate}`")
     if android:   # an app on a phone has no `live_cmd`: its block names the APKs the emulator installs
         phone = as_kind(spec, "android") if several else spec
         device = oneshot_device.declared(path, final, oneshot_device.reads_screen(phone), oneshot_device.suffix(o))

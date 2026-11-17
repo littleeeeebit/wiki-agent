@@ -127,8 +127,8 @@ The server checks, in order:
    of every kind), each passing.
 2. Every pinned file is unchanged since `{tests_head}`.
 3. The adapter's `gate_cmd` starts with `{gate}` and adds only ` && `
-   commands, `live_cmd` is filled, and the `oneshot-device` block names each
-   APK.
+   commands, at least one for each kind, `live_cmd` is filled, and the
+   `oneshot-device` block names each APK.
 4. The adapter's gate passes on a clean, committed HEAD, every planned core
    test passes, and each APK the block names is there.
 5. Each kind's screens are then checked in the order the owner picked the

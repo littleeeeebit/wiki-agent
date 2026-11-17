@@ -103,6 +103,9 @@ def critique(repo: str) -> None:
     """One critique round, holding the worktree on the HEAD the build and its shots passed, as the backend
     review does: a tree that moved goes back to the build's checks, and so does a round with shots missing."""
 
+    if waits_at(oneshot_spec.spec_of(repo)["oneshot"]) == "critique":   # however it was reached, it is not run
+        oneshot_spec.store(repo).stop("kind", "여러 종류의 화면 비평은 다음 버전에서 이어진다")
+        return
     if oneshot.codex_role("critic"):
         oneshot_spec.store(repo).stop("critique", "비평가는 그림을 받는 Claude 세션이어야 한다")
         return
