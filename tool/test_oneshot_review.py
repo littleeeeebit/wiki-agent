@@ -138,6 +138,18 @@ def test_an_area_refused_again_and_again_is_remembered_and_its_mechanism_replace
     assert not o().get("stopped") and o()["refused"] == 3   # an agent turn, never a stop for the person
 
 
+def test_a_refusal_from_before_areas_is_listed_without_one_and_counts_towards_nothing(reviewed):
+    _, head, sent = reviewed
+    legacy = {k: P1[k] for k in ("location", "severity", "reason", "evidence")}
+    oneshot_spec.saved("budget", oneshot={"reviews": [{"verdict": "refuse", "head": "old", "findings": [legacy]}] * 2})
+    said, asking = answers(verdict(head, "refuse", P1))
+    with asking:
+        oneshot_review.review("budget")
+    assert '"area"' not in said[0][1].split("Earlier refusals")[1].split("```")[1]   # nothing empty to copy
+    assert "without an `area` gets one of yours" in said[0][1]
+    assert "replace the mechanism" not in sent[0][2] and not o().get("stopped")
+
+
 def test_the_screen_reads_the_caps_and_the_worktree_it_follows_from_the_server(reviewed):
     tree, _, _ = reviewed
     with patch.object(loop, "settings", lambda: {"rounds": 5, "review_effort": "high"}):

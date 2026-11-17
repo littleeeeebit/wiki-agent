@@ -91,7 +91,8 @@ def area_of(f: dict) -> str:
 def refusals(reviews: list[dict]) -> list[dict]:
     """Every blocking finding of the refusals, oldest first, numbered by round."""
 
-    return [{"round": n, "area": f.get("area") or "", **{k: f[k] for k in ("severity", "location", "reason")}}
+    return [{"round": n, **({"area": f["area"]} if area_of(f) else {}),   # a record from before areas has none
+             **{k: f[k] for k in ("severity", "location", "reason")}}
             for n, r in enumerate(reviews, 1) if r["verdict"] == "refuse"
             for f in r["findings"] if f["severity"] != "P2" and "device" not in f]
 
@@ -103,7 +104,8 @@ def earlier_text(reviews: list[dict]) -> str:
     return (f"\nEarlier refusals of this build, oldest first; the builder has tried to fix each since:\n\n```json\n"
             f"{json.dumps(past, ensure_ascii=False)}\n```\n\nCheck each against this HEAD first. Leave out one the "
             "code now fixes; one that still holds, or that a fix moved elsewhere in the same mechanism, keeps that "
-            "earlier finding's `area`, word for word.\n") if past else ""
+            "earlier finding's `area`, word for word; one listed without an `area` gets one of yours, the same "
+            "for every finding of its mechanism.\n") if past else ""
 
 
 def deferrable(spec: dict) -> dict[str, set[str]]:

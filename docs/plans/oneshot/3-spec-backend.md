@@ -364,7 +364,9 @@ any turn (`work.dispatch`); after a refusal it waits behind the build turn:
    every earlier refusal's blocking findings, numbered by round with their
    areas: the reviewer checks those first, leaves out the fixed ones, and
    gives one that still holds, or that a fix moved to another case of the
-   same mechanism, the earlier `area` word for word. The turn is metered as
+   same mechanism, the earlier `area` word for word. A finding recorded
+   before areas is listed without one, and the reviewer gives it a new one;
+   such records never count towards `STUCK`. The turn is metered as
    the role `review`.
 4. On a refusal, the P0 and P1 findings go to the work session as one build
    turn with fresh attempts, saved with `working: "build"` and the worktree

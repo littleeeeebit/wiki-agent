@@ -49,9 +49,10 @@ mechanism it is about (`scroll tracking`, `overlay in the capture`), not the
 file or the case. When the input lists earlier refusals, the builder has tried
 to fix each since: check those first, leave out one the code now fixes, and
 give one that still holds, or that a fix moved to another case of the same
-mechanism, that earlier finding's `area` word for word. A mechanism refused
-round after round is then seen as one, and the build replaces it instead of
-patching the next case.
+mechanism, that earlier finding's `area` word for word; one listed without
+an `area` gets a new one, the same for every finding of its mechanism. A
+mechanism refused round after round is then seen as one, and the build
+replaces it instead of patching the next case.
 
 ## What you return
 
