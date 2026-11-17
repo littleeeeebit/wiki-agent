@@ -1,6 +1,8 @@
 import { useId, useState } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { Picture } from '@/components/Picture'
+import { keepSources } from '@/lib/picture'
 import { useOverlay } from '@/lib/overlay'
 import { cn } from '@/lib/utils'
 
@@ -63,13 +65,13 @@ export function Questions({ questions, korean, disabled, onSubmit, onDecline, al
                 <span className="block text-[16px] font-semibold leading-relaxed">{j + 1}. {o.label}</span>
                 <div id={`${id}-${i}-${j}-detail`} className="space-y-2">
                 {o.description && <div className="question-preview text-[14px] leading-relaxed text-muted-foreground">
-                  <Markdown remarkPlugins={[remarkGfm]} components={{ a: ({ children }) => <span>{children}</span>,
-                    img: ({ alt }) => <span>{alt}</span>, pre: ({ children }) => <pre className="overflow-x-auto whitespace-pre font-mono text-[12px]">{children}</pre> }}>{o.description}</Markdown>
+                  <Markdown remarkPlugins={[remarkGfm]} urlTransform={keepSources} components={{ a: ({ children }) => <span>{children}</span>,
+                    img: ({ src, alt }) => <Picture src={typeof src === 'string' ? src : undefined} alt={alt} />, pre: ({ children }) => <pre className="overflow-x-auto whitespace-pre font-mono text-[12px]">{children}</pre> }}>{o.description}</Markdown>
                 </div>}
                 {o.preview && <div className="question-preview rounded-md bg-secondary p-3 text-[14px] leading-relaxed">
-                  <Markdown remarkPlugins={[remarkGfm]} components={{
+                  <Markdown remarkPlugins={[remarkGfm]} urlTransform={keepSources} components={{
                     a: ({ children }) => <span>{children}</span>,
-                    img: ({ alt }) => <span>{alt}</span>,
+                    img: ({ src, alt }) => <Picture src={typeof src === 'string' ? src : undefined} alt={alt} />,
                     pre: ({ children }) => <pre className="overflow-x-auto whitespace-pre font-mono text-[12px]">{children}</pre>,
                   }}>{o.preview}</Markdown>
                 </div>}

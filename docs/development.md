@@ -412,10 +412,16 @@ review approval; the next agent turn receives the current spec.
 Markdown file links, including absolute paths and line numbers, open the
 source drawer. HTTP/HTTPS links use the system browser in the Tauri window;
 normal browser tabs keep their native link behavior.
+A Markdown image with a local path in an agent's answer or question option is
+drawn in the chat pane through `/api/image`, which serves only an image file
+inside that worktree or the temporary folder. This is how an agent asking to
+approve a visual change shows its before and after (`chat_session.CLAUDE_ASKS`,
+`codex-choices.md`); a web address stays its alt text.
 `python web/tests/task_browser.py` checks fixed diff visibility across scrolling
 and tabs, translated specification reading and original editing, all CLI quota
 windows, task tokens, native notification dispatch, compaction progress and
-deletion across reload, plus file citations and link dispatch using synthetic data.
+deletion across reload, plus file citations, an agent's local image decoding in
+the chat pane and link dispatch using synthetic data.
 `python web/tests/window_project_browser.py` checks that two pages on one server
 keep their own projects, that the rail names another project's running turn by
 the server's answer and shows its waiting approval, and that the close question
