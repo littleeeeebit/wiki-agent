@@ -125,14 +125,14 @@ any job and outside the record. 9d2 changes it:
   and `JOB_OBJECT_MSG_EXIT_PROCESS` or `JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS`
   for every one that leaves. On each join the look opens the pid at once and
   keeps the handle only if `IsProcessInJob` confirms it on that same handle,
-  so a reused pid is never held. `JobObjectBasicProcessIdList` is read too, as
-  a cross-check.
-- Ending is `TerminateJobObject`, then a wait of up to 30 seconds for two
-  things: every held process handle signalled, and an exit message for every
-  join message. `ActiveProcesses` reaching zero is recorded as an accounting
-  observation, never as the proof: Windows can report zero before a terminated
-  process has finished exiting. A join the look could not open in time, or a
-  join without its exit message, leaves the proof inconclusive.
+  so a reused pid is never held.
+- Ending is `TerminateJobObject`, then a wait of up to 30 seconds until every
+  member that joined has a proven exit: its held handle signalled, or its exit
+  message arrived. A member that exits before the look can open it is proven
+  by its exit message alone. `ActiveProcesses` reaching zero is recorded as an
+  accounting observation, never as the proof: Windows can report zero before a
+  terminated process has finished exiting. A member with neither proof leaves
+  the proof inconclusive.
 - Windows does not guarantee those messages, so a member whose join and exit
   were both lost would be missing from every rule above. Once the job has
   ended and can admit no new member, its cumulative `TotalProcesses` count,
