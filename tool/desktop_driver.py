@@ -27,8 +27,8 @@ def arguments(script: Path, request: Path) -> list[str]:
 def _read(file: Path) -> dict | None:
     try:
         return json.loads(file.read_text(encoding="utf-8-sig"))
-    except (FileNotFoundError, json.JSONDecodeError):
-        return None   # not written yet, or caught between its two writes
+    except (OSError, ValueError):
+        return None   # not written yet, caught between its two writes, or held by the writer's replace
 
 
 def _allowed(op: str | None, wait: float, settle_ms: int) -> float:
@@ -57,27 +57,49 @@ def drive(look, app: str, window: tuple[int, int], steps: list[dict], *, wait: f
                "wait_seconds": wait, "settle_ms": settle_ms}
     (folder / "request.json").write_text(json.dumps(request, indent=1), encoding="utf-8")
     look.start(key, [str(POWERSHELL), *arguments(SCRIPT, folder / "request.json")], folder)
-    job, seq, op, since, ended, end = look.jobs[key], None, None, time.monotonic(), None, None
-    while not job.finished():
-        progress = _read(folder / "progress.json") or {}
-        if progress.get("seq") != seq:
-            seq, op, since = progress.get("seq"), progress.get("op"), time.monotonic()
-        if time.monotonic() - since > _allowed(op, wait, settle_ms):
-            ended = op or "launch"
-            end = job.end(ENDED_SECONDS)
-            break
-        time.sleep(0.1)
+    ended, end = _watch(look.jobs[key], folder / "progress.json", wait, settle_ms)
     report = _read(folder / "driver.json") or {"phase": None}
     report.update(last=(_read(folder / "progress.json") or {}).get("op"), ended=ended, end=end)
+    _postconditions(report)
     return report
+
+
+def _watch(job, progress: Path, wait: float, settle_ms: int) -> tuple[str | None, dict | None]:
+    """Hold the driver's operations to their deadlines until its job finished. The clock restarts only for a
+    valid, strictly newer sequence: a missed or torn read keeps the operation and the clock it had. The operation
+    whose deadline passed and the proof of the job's end, or two Nones."""
+
+    seq, op, since = 0, None, time.monotonic()
+    while not job.finished():
+        marker = _read(progress) or {}
+        if isinstance(marker.get("seq"), int) and marker["seq"] > seq:
+            seq, op, since = marker["seq"], marker.get("op"), time.monotonic()
+        if time.monotonic() - since > _allowed(op, wait, settle_ms):
+            return op or "launch", job.end(ENDED_SECONDS)
+        time.sleep(0.1)
+    return None, None
+
+
+def _postconditions(report: dict) -> None:
+    """Each performed step's postcondition, read off the state it left: an element of the app with the expected
+    id or name. A node of another process, an embedded fragment, never satisfies one."""
+
+    states = {state.get("id"): state for state in report.get("states", [])}
+    for step in report.get("steps", []):
+        state, expect = states.get(step.get("state")), step.get("expect")
+        if state and expect:
+            key = "id" if expect.get("id") else "name"
+            step["postcondition"] = any(not node.get("foreign") and node.get(key) == expect[key]
+                                        for node in state["nodes"])
 
 
 def findings(report: dict) -> list[str]:
     """The mechanical findings in a driver's report: an interactive control without a name, a control outside its
     window, a target smaller than 24×24 physical pixels, a refused start, a wrong size, a step that failed. What
     the look could not prove is a finding too: a driver that left no report, stopped or failed before `done`, or
-    whose end was not proven; a size not read back; a state with no app window; a window not drawn. An empty
-    list therefore means a finished run whose every observation was made."""
+    whose end was not proven; a size not read back; no start state; a state with no app window; a window not
+    drawn or not read; a step not performed, without its state, or without a postcondition read. An empty list
+    therefore means a finished run whose every observation was made."""
 
     found = []
     if report.get("ended"):
@@ -99,14 +121,22 @@ def findings(report: dict) -> list[str]:
         found.append("the main window could not be sized")
     if size.get("frame") and size["frame"][2:] != size["asked"]:
         found.append(f"the main window is {size['frame'][2]}x{size['frame'][3]}, not {size['asked'][0]}x{size['asked'][1]}")
+    if report["phase"] == "done" and not any(state["name"] == "start" for state in report.get("states", [])):
+        found.append("no start state was read")
     for state in report.get("states", []):
         if not state["windows"]:
             found.append(f"{state['name']}: no app window to shoot")
+        reads = {read["hwnd"]: read for read in state.get("reads", [])}
         for shot in state["shots"]:
             if not shot["drawn"]:
                 found.append(f"{state['name']}: window {shot['hwnd']} was not drawn: {shot.get('error')}")
+            elif not reads.get(shot["hwnd"], {}).get("read"):
+                why = reads.get(shot["hwnd"], {}).get("error", "no read was recorded")
+                found.append(f"{state['name']}: window {shot['hwnd']}'s tree was not read: {why}")
         frames = {window["hwnd"]: window["frame"] for window in state["windows"]}
         for node in state["nodes"]:
+            if node.get("foreign"):   # another process's fragment: not the app's evidence
+                continue
             rect, frame = node["rect"], frames.get(node["window"])
             if not rect:   # not laid out at all, such as Edge's hidden edit: nothing a person can reach
                 continue
@@ -124,6 +154,12 @@ def findings(report: dict) -> list[str]:
     for step in report.get("steps", []):
         if step.get("error"):
             found.append(f"step {step['name']}: {step['error']}")
-        elif step.get("postcondition") is False:
+        elif not step.get("acted"):
+            found.append(f"step {step['name']}: it was not performed")
+        elif not step.get("state"):
+            found.append(f"step {step['name']}: its state was not read")
+        elif not step.get("expect"):
+            found.append(f"step {step['name']}: it names no postcondition")
+        elif not step.get("postcondition"):
             found.append(f"step {step['name']}: its postcondition was not read")
     return found

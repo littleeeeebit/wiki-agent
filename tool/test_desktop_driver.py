@@ -4,6 +4,7 @@ patterns only, a deadline per phase, and the mechanical findings (docs/research/
 import json
 import sys
 import time
+import types
 
 import pytest
 
@@ -37,13 +38,14 @@ def test_the_main_window_is_sized_to_the_card_shot_and_read(tmp_path):
     assert start["nodes"][0]["type"] == "Window" and start["nodes"][0]["name"] == "fixture"
 
 
-LATER = ("import subprocess, sys, time; time.sleep(3); "
+LATER = ("import pathlib, subprocess, sys, time; marker = pathlib.Path(sys.argv[1]) / 'evidence' / 'driver' / "
+         "'progress.json'\nwhile not marker.exists(): time.sleep(0.05)\n"   # the driver runs before the child starts
          f"subprocess.run([sys.executable, '-c', {WINDOW!r}])")
 
 
 def test_a_window_a_later_child_of_the_app_opens_is_the_apps(tmp_path):
     with desktop_session.look(tmp_path, "later") as look:
-        root = look.start("app", python(LATER), tmp_path)
+        root = look.start("app", [sys.executable, "-c", LATER, str(look.folder)], tmp_path)
         report = desktop_driver.drive(look, "app", (640, 480), [], settle_ms=500)
 
     assert report["phase"] == "done" and report["main"]["title"] == "fixture", report
@@ -134,7 +136,11 @@ def test_a_blocked_resize_is_held_to_its_own_deadline_not_the_startup_wait(tmp_p
     assert desktop_driver.findings(report) == ["the driver passed its deadline at resize", "the driver left no report"]
 
 
-DONE ={"phase": "done", "size": {"asked": [640, 480], "moved": True, "frame": [0, 0, 640, 480]}, "states": [],
+START = {"id": "s00-start", "name": "start", "windows": [{"hwnd": 1, "frame": [0, 0, 640, 480]}],
+         "shots": [{"hwnd": 1, "drawn": True}], "reads": [{"hwnd": 1, "read": True}],
+         "nodes": [{"window": 1, "depth": 0, "foreign": False, "type": "Window", "name": "fixture", "id": "",
+                    "enabled": True, "offscreen": False, "rect": [0, 0, 640, 480], "patterns": []}]}
+DONE = {"phase": "done", "size": {"asked": [640, 480], "moved": True, "frame": [0, 0, 640, 480]}, "states": [START],
         "steps": []}
 
 
@@ -184,8 +190,9 @@ def node(**fields):
 def test_the_mechanical_findings_read_off_a_report():
     report = {"phase": "done", "size": {"asked": [800, 600], "moved": True, "frame": [0, 0, 786, 593]},
               "states": [{"name": "start", "windows": [{"hwnd": 1, "frame": [0, 0, 800, 600]}],
-                          "shots": [{"hwnd": 1, "drawn": True}], "nodes": [
+                          "shots": [{"hwnd": 1, "drawn": True}], "reads": [{"hwnd": 1, "read": True}], "nodes": [
                   node(depth=0, type="Window", rect=[-7, 0, 814, 607], patterns=[]),   # the window itself
+                  {"window": 1, "depth": 2, "foreign": True, "pid": 9},   # another process's fragment: not checked
                   node(),
                   node(name="", id="blank"),
                   node(id="small", rect=[10, 10, 11, 11]),
@@ -193,8 +200,14 @@ def test_the_mechanical_findings_read_off_a_report():
                   node(id="hidden", rect=[900, 900, 1, 1], offscreen=True),
                   node(type="Text", name="", id="label", patterns=[], rect=[0, 0, 5, 5]),
                   node(type="Edit", name="", id="hidden-edit", rect=None, patterns=["Value"])]}],
-              "steps": [{"name": "go", "error": None, "postcondition": False},
-                        {"name": "set", "error": "2 elements match name"}]}
+              "steps": [{"name": "go", "error": None, "acted": True, "state": "s01-after-go",
+                         "expect": {"name": "x"}, "postcondition": False},
+                        {"name": "set", "error": "2 elements match name"},
+                        {"name": "late", "error": None, "acted": False},
+                        {"name": "lost", "error": None, "acted": True, "state": None},
+                        {"name": "blind", "error": None, "acted": True, "state": "s02-after-blind", "expect": None},
+                        {"name": "fine", "error": None, "acted": True, "state": "s03-after-fine",
+                         "expect": {"id": "go"}, "postcondition": True}]}
 
     assert desktop_driver.findings(report) == [
         "the main window is 786x593, not 800x600",
@@ -203,14 +216,52 @@ def test_the_mechanical_findings_read_off_a_report():
         "start: Button 'outside' lies outside its window",
         "step go: its postcondition was not read",
         "step set: 2 elements match name",
+        "step late: it was not performed",
+        "step lost: its state was not read",
+        "step blind: it names no postcondition",
     ]
+
+
+def test_a_postcondition_is_read_only_off_the_apps_own_nodes():
+    owned = {"window": 1, "depth": 1, "foreign": False, "name": "ready", "id": "line"}
+    foreign = {"window": 1, "depth": 1, "foreign": True, "pid": 9, "name": "clicked", "id": "line"}
+    report = {"states": [{"id": "s01-after-go", "nodes": [owned, foreign]}],
+              "steps": [{"name": "go", "acted": True, "state": "s01-after-go", "expect": {"name": "clicked"}},
+                        {"name": "again", "acted": True, "state": "s01-after-go", "expect": {"name": "ready"}}]}
+
+    desktop_driver._postconditions(report)
+
+    assert [step["postcondition"] for step in report["steps"]] == [False, True]
+
+
+def test_a_missed_progress_read_keeps_the_operation_and_its_clock(monkeypatch):
+    now = [0.0]
+    reads = iter([{"seq": 1, "op": "resize"}, None, {"seq": "torn"}] + [{"seq": 1, "op": "resize"}] * 20)
+    monkeypatch.setattr(desktop_driver, "_read", lambda file: next(reads))
+    monkeypatch.setattr(desktop_driver, "time", types.SimpleNamespace(
+        monotonic=lambda: now[0], sleep=lambda seconds: now.__setitem__(0, now[0] + 4)))
+
+    class Job:
+        def finished(self):
+            return False
+
+        def end(self, wait):
+            return {"clean": True, "reasons": []}
+
+    ended, end = desktop_driver._watch(Job(), None, 30, 0)
+
+    assert ended == "resize" and end["clean"] and now[0] == 12   # 10 s from the marker seen at 0, polled every 4 s
 
 
 def test_what_a_report_could_not_observe_is_a_finding():
     report = {"phase": "done", "size": {"asked": [800, 600], "moved": True, "frame": None},
               "states": [{"name": "start", "windows": [{"hwnd": 1, "frame": [0, 0, 800, 600]}],
                           "shots": [{"hwnd": 1, "drawn": False, "error": "PrintWindow drew nothing"}], "nodes": []},
-                         {"name": "after-go", "windows": [], "shots": [], "nodes": []}],
+                         {"name": "after-go", "windows": [], "shots": [], "nodes": []},
+                         {"name": "after-set", "windows": [{"hwnd": 2, "frame": [0, 0, 9, 9]}, {"hwnd": 3, "frame": [0, 0, 9, 9]}],
+                          "shots": [{"hwnd": 2, "drawn": True}, {"hwnd": 3, "drawn": True}],
+                          "reads": [{"hwnd": 2, "read": False, "error": "the window is gone or no longer the app's"}],
+                          "nodes": []}],
               "steps": [], "end": {"clean": False, "reasons": ["no exit proven for pid 7"]}}
 
     assert desktop_driver.findings(report) == [
@@ -218,7 +269,10 @@ def test_what_a_report_could_not_observe_is_a_finding():
         "the main window's size was not read back",
         "start: window 1 was not drawn: PrintWindow drew nothing",
         "after-go: no app window to shoot",
+        "after-set: window 2's tree was not read: the window is gone or no longer the app's",
+        "after-set: window 3's tree was not read: no read was recorded",
     ]
+    assert "no start state was read" in desktop_driver.findings({**report, "states": []})
     assert desktop_driver.findings({**report, "phase": "act go", "last": "act go", "error": "boom", "end": None,
                                     "size": {"asked": [800, 600], "moved": False, "frame": [0, 0, 800, 600]},
                                     "states": []}) == [
@@ -255,12 +309,16 @@ def test_the_edge_fixture_is_driven_through_a_pattern_and_its_cleanup_is_proven(
         profile = look.reserve("edge")
         look.start("app", [EDGE, f"--user-data-dir={profile}", "--no-first-run", "--lang=en-US", "--force-renderer-accessibility",
                            "--window-size=800,600", f"--app={FIXTURE.as_uri()}"], tmp_path)
-        report = desktop_driver.drive(look, "app", (800, 600),
-                                      [{"name": "go", "action": "invoke", "id": "go", "expect": {"name": "clicked"}}],
+        report = desktop_driver.drive(look, "app", (800, 600),   # one label twice: each state keeps its own shot
+                                      [{"name": "go", "action": "invoke", "id": "go", "expect": {"name": "clicked 1"}},
+                                       {"name": "go", "action": "invoke", "id": "go", "expect": {"name": "clicked 2"}}],
                                       settle_ms=1500)
+        shots = [look.folder / "evidence" / "driver" / state["shots"][0]["file"] for state in report["states"][1:]]
+        first, second = (shot.read_bytes() for shot in shots)
 
     record = desktop_session.load(tmp_path / "edge")
-    assert report["phase"] == "done" and report["steps"][0]["postcondition"] is True, report
+    assert report["phase"] == "done" and [step["postcondition"] for step in report["steps"]] == [True, True], report
+    assert shots[0] != shots[1] and first != second
     assert record["state"] == "proven" and record["proof"]["clean"], record["proof"]
     found = desktop_driver.findings(report)
     assert "start: Button 'tiny' is 11x11, under 24x24" in found and "start: Button 'tiny' has no name" in found

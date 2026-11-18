@@ -1,8 +1,8 @@
 {
  "phase": "done",
  "main": {
-  "hwnd": 22678234,
-  "pid": 40348,
+  "hwnd": 35129138,
+  "pid": 35828,
   "class": "Chrome_WidgetWin_1",
   "title": "fixture-edge",
   "frame": [
@@ -28,11 +28,12 @@
  },
  "states": [
   {
+   "id": "s00-start",
    "name": "start",
    "windows": [
     {
-     "hwnd": 22678234,
-     "pid": 40348,
+     "hwnd": 35129138,
+     "pid": 35828,
      "class": "Chrome_WidgetWin_1",
      "title": "fixture-edge",
      "frame": [
@@ -46,19 +47,26 @@
    ],
    "shots": [
     {
-     "hwnd": 22678234,
+     "hwnd": 35129138,
      "drawn": true,
-     "file": "start-22678234.png",
+     "file": "s00-start-35129138.png",
      "size": [
       800,
       600
      ]
     }
    ],
+   "reads": [
+    {
+     "hwnd": 35129138,
+     "read": true
+    }
+   ],
    "nodes": [
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 0,
+     "foreign": false,
      "type": "Window",
      "name": "fixture-edge",
      "id": "",
@@ -78,8 +86,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 1,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -94,8 +103,9 @@
      "patterns": []
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 1,
+     "foreign": false,
      "type": "Pane",
      "name": "fixture-edge",
      "id": "",
@@ -112,8 +122,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 2,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -130,8 +141,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 3,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -148,8 +160,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 4,
+     "foreign": false,
      "type": "Text",
      "name": "fixture-edge",
      "id": "view_9",
@@ -167,8 +180,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 4,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -185,8 +199,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 5,
+     "foreign": false,
      "type": "Button",
      "name": "Minimize",
      "id": "view_2",
@@ -204,8 +219,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 5,
+     "foreign": false,
      "type": "Button",
      "name": "Maximize",
      "id": "view_3",
@@ -223,8 +239,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 5,
+     "foreign": false,
      "type": "Button",
      "name": "Close",
      "id": "view_7",
@@ -242,8 +259,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 4,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -260,8 +278,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 5,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -273,8 +292,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 6,
+     "foreign": false,
      "type": "Edit",
      "name": "Address and search bar",
      "id": "view_1017",
@@ -289,8 +309,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 5,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -307,8 +328,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 6,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -325,8 +347,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 7,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -343,8 +366,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 8,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -361,8 +385,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 9,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -379,8 +404,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 10,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -392,8 +418,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 10,
+     "foreign": false,
      "type": "Document",
      "name": "fixture-edge",
      "id": "RootWebArea",
@@ -413,8 +440,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 11,
+     "foreign": false,
      "type": "Text",
      "name": "Fixture",
      "id": "",
@@ -431,8 +459,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 11,
+     "foreign": false,
      "type": "Text",
      "name": "ready",
      "id": "",
@@ -450,8 +479,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 11,
+     "foreign": false,
      "type": "Button",
      "name": "Go",
      "id": "go",
@@ -469,8 +499,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 11,
+     "foreign": false,
      "type": "Button",
      "name": "",
      "id": "tiny",
@@ -488,8 +519,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 8,
+     "foreign": false,
      "type": "Edit",
      "name": "",
      "id": "",
@@ -503,8 +535,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 3,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -523,11 +556,12 @@
    ]
   },
   {
+   "id": "s01-after-go",
    "name": "after-go",
    "windows": [
     {
-     "hwnd": 22678234,
-     "pid": 40348,
+     "hwnd": 35129138,
+     "pid": 35828,
      "class": "Chrome_WidgetWin_1",
      "title": "fixture-edge",
      "frame": [
@@ -541,19 +575,26 @@
    ],
    "shots": [
     {
-     "hwnd": 22678234,
+     "hwnd": 35129138,
      "drawn": true,
-     "file": "after-go-22678234.png",
+     "file": "s01-after-go-35129138.png",
      "size": [
       800,
       600
      ]
     }
    ],
+   "reads": [
+    {
+     "hwnd": 35129138,
+     "read": true
+    }
+   ],
    "nodes": [
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 0,
+     "foreign": false,
      "type": "Window",
      "name": "fixture-edge",
      "id": "",
@@ -573,8 +614,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 1,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -589,8 +631,9 @@
      "patterns": []
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 1,
+     "foreign": false,
      "type": "Pane",
      "name": "fixture-edge",
      "id": "",
@@ -607,8 +650,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 2,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -625,8 +669,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 3,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -643,8 +688,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 4,
+     "foreign": false,
      "type": "Text",
      "name": "fixture-edge",
      "id": "view_9",
@@ -662,8 +708,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 4,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -680,8 +727,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 5,
+     "foreign": false,
      "type": "Button",
      "name": "Minimize",
      "id": "view_2",
@@ -699,8 +747,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 5,
+     "foreign": false,
      "type": "Button",
      "name": "Maximize",
      "id": "view_3",
@@ -718,8 +767,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 5,
+     "foreign": false,
      "type": "Button",
      "name": "Close",
      "id": "view_7",
@@ -737,8 +787,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 4,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -755,8 +806,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 5,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -768,8 +820,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 6,
+     "foreign": false,
      "type": "Edit",
      "name": "Address and search bar",
      "id": "view_1017",
@@ -784,8 +837,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 5,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -802,8 +856,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 6,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -820,8 +875,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 7,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -838,8 +894,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 8,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -856,8 +913,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 9,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -874,8 +932,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 10,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -887,8 +946,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 10,
+     "foreign": false,
      "type": "Document",
      "name": "fixture-edge",
      "id": "RootWebArea",
@@ -908,8 +968,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 11,
+     "foreign": false,
      "type": "Text",
      "name": "Fixture",
      "id": "",
@@ -926,17 +987,18 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 11,
+     "foreign": false,
      "type": "Text",
-     "name": "clicked",
+     "name": "clicked 1",
      "id": "",
      "enabled": true,
      "offscreen": false,
      "rect": [
       16,
       110,
-      47,
+      59,
       18
      ],
      "patterns": [
@@ -945,8 +1007,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 11,
+     "foreign": false,
      "type": "Button",
      "name": "Go",
      "id": "go",
@@ -964,8 +1027,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 11,
+     "foreign": false,
      "type": "Button",
      "name": "",
      "id": "tiny",
@@ -983,8 +1047,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 8,
+     "foreign": false,
      "type": "Edit",
      "name": "",
      "id": "",
@@ -998,8 +1063,9 @@
      ]
     },
     {
-     "window": 22678234,
+     "window": 35129138,
      "depth": 3,
+     "foreign": false,
      "type": "Pane",
      "name": "",
      "id": "",
@@ -1024,6 +1090,10 @@
    "action": "invoke",
    "acted": true,
    "error": null,
+   "state": "s01-after-go",
+   "expect": {
+    "name": "clicked 1"
+   },
    "postcondition": true
   }
  ],

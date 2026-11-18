@@ -119,7 +119,11 @@ function Shoot($window, [string]$state) {   # the whole window, then cut to its 
 
 function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hwnd, [int]$depth = 0) {
   $c = $element.Current; $b = $c.BoundingRectangle
-  $script:nodes += [ordered]@{ window = $hwnd; depth = $depth; type = $c.ControlType.ProgrammaticName -replace "ControlType\.", "";
+  if (-not [Desk]::InApp([uint32]$c.ProcessId)) {   # an embedded fragment of another process: marked, never walked
+    $script:nodes += [ordered]@{ window = $hwnd; depth = $depth; foreign = $true; pid = $c.ProcessId }
+    return
+  }
+  $script:nodes += [ordered]@{ window = $hwnd; depth = $depth; foreign = $false; type = $c.ControlType.ProgrammaticName -replace "ControlType\.", "";
     name = $c.Name; id = $c.AutomationId; enabled = $c.IsEnabled; offscreen = $c.IsOffscreen;
     rect = if ($b.IsEmpty) { $null } else { @([int]$b.X, [int]$b.Y, [int]$b.Width, [int]$b.Height) };
     patterns = @($element.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName -replace "PatternIdentifiers\.Pattern", "" }) }
@@ -129,17 +133,23 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
 }
 
 function State([string]$name) {   # every window of the app in this state, shot and read
-  Enter "list $name"
+  $id = "s{0:D2}-{1}" -f $report.states.Count, $name   # unique, so a repeated label never overwrites a shot
+  Enter "list $id"
   $windows = @(Windows | Where-Object { -not $_.utility })
-  $state = [ordered]@{ name = $name; windows = $windows; shots = @(); nodes = @() }
+  $state = [ordered]@{ id = $id; name = $name; windows = $windows; shots = @(); reads = @(); nodes = @() }
   foreach ($w in $windows) {
-    Enter "shoot $name $($w.hwnd)"
-    $shot = Shoot $w $name
+    Enter "shoot $id $($w.hwnd)"
+    $shot = Shoot $w $id
     $state.shots += $shot
     if (-not $shot.drawn) { continue }
-    Enter "read $name $($w.hwnd)"
+    Enter "read $id $($w.hwnd)"
     $script:nodes = @()
-    if (Current $w) { Nodes ([System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$w.hwnd)) $w.hwnd }
+    if (Current $w) {
+      Nodes ([System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$w.hwnd)) $w.hwnd
+      $state.reads += [ordered]@{ hwnd = $w.hwnd; read = $true }
+    } else {
+      $state.reads += [ordered]@{ hwnd = $w.hwnd; read = $false; error = "the window is gone or no longer the app's" }
+    }
     $state.nodes += $script:nodes
   }
   $report.states += $state; Save
@@ -205,7 +215,7 @@ try {
 
   [void](State "start")
   foreach ($step in $ask.steps) {
-    $done = [ordered]@{ name = $step.name; action = $step.action; acted = $false; error = $null; postcondition = $null }
+    $done = [ordered]@{ name = $step.name; action = $step.action; acted = $false; error = $null; state = $null; expect = $step.expect }
     $report.steps += $done
     Enter "find $($step.name)"
     $found = Target $step
@@ -214,12 +224,7 @@ try {
     try { Act $found.element $step; $done.acted = $true } catch { $done.error = "$($_.Exception.Message)"; Save; continue }
     Save
     Settle
-    $state = State "after-$($step.name)"
-    if ($step.expect) {   # the step's postcondition, read from the tree: an element with this id or name exists
-      Enter "check $($step.name)"
-      $key = if ($step.expect.id) { "id" } else { "name" }
-      $done.postcondition = [bool]@($state.nodes | Where-Object { $_[$key] -eq $step.expect.$key }).Count
-    }
+    $done.state = (State "after-$($step.name)").id   # the server reads the postcondition off this state
     Save
   }
   Enter "done"; Save
