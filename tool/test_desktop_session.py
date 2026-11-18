@@ -49,44 +49,144 @@ def test_a_look_runs_its_app_on_its_desktop_and_proves_everything_gone(tmp_path)
 
     record = desktop_session.load(tmp_path / "first")
     assert record["state"] == "proven" and record["proof"]["clean"], record["proof"]
-    assert record["listeners"] and not (tmp_path / "first" / "data-app").exists()
+    assert record["listeners"] and not list((tmp_path / "first").glob("data-*"))
     assert all(desktop_session.exited(member) for entry in record["jobs"].values() for member in entry["members"])
 
 
 def test_the_app_keeps_its_data_inside_the_looks_disposable_folder(tmp_path):
     with desktop_session.look(tmp_path, "data") as look:
-        look.start("app", python(ENVIRONMENT), tmp_path, {"EXTRA": "kept"})
+        look.start("app", python(ENVIRONMENT), tmp_path, {"EXTRA": "kept", "temp": str(tmp_path), "TMP": "x"})
         log = tmp_path / "data" / "evidence" / "app.log"
         assert waited(lambda: log.stat().st_size > 0)
         seen = json.loads(log.read_text(encoding="utf-8"))
+        data = look.folder / look.record["folders"][0]["name"]
 
-    data = tmp_path / "data" / "data-app"
     assert seen == {"APPDATA": str(data / "Roaming"), "LOCALAPPDATA": str(data / "Local"),
                     "TEMP": str(data / "Temp"), "TMP": str(data / "Temp"), "EXTRA": "kept"}
 
 
-def test_the_record_names_the_desktop_and_each_job_before_anything_runs(tmp_path):
+def test_the_record_names_each_part_before_it_is_made(tmp_path, monkeypatch):
     seen = {}
-    real = desktop_session.owned_job.Job.start
+    early = tmp_path / "early"
+    look = desktop_session.Look(tmp_path, "early")
+    create, mkdir, start = look.u.CreateDesktopW, Path.mkdir, desktop_session.owned_job.Job.start
 
-    def spying(job, *args, before_resume=None, **options):
+    def creating(name, *args):
+        seen["desktop"] = desktop_session.load(early)["desktop"] == name
+        return create(name, *args)
+
+    def making(path, *args, **options):
+        if path.parent == early and path.name.startswith("data-"):
+            seen["folder"] = desktop_session.load(early)["folders"] == [{"name": path.name, "owned": False}]
+        return mkdir(path, *args, **options)
+
+    def starting(job, *args, before_resume=None, **options):
+        seen["job"] = desktop_session.load(early)["jobs"]["app"]["name"] == job.name
+
         def recorded(root):
             before_resume(root)
-            seen.update(desktop_session.load(tmp_path / "early"))
-        return real(job, *args, before_resume=recorded, **options)
+            seen["root"] = desktop_session.load(early)["jobs"]["app"]["root"] == root
+        return start(job, *args, before_resume=recorded, **options)
 
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(desktop_session.owned_job.Job, "start", spying)
-        with desktop_session.look(tmp_path, "early") as look:
-            root = look.start("app", python(SLEEP), tmp_path)
+    monkeypatch.setattr(look.u, "CreateDesktopW", creating)
+    monkeypatch.setattr(Path, "mkdir", making)
+    monkeypatch.setattr(desktop_session.owned_job.Job, "start", starting)
+    try:
+        look.open()
+        look.start("app", python(SLEEP), tmp_path)
+    finally:
+        assert look.close()["clean"]
 
-    assert seen["desktop"].startswith("wiki-look-") and seen["folders"] == ["data-app"]
-    assert seen["jobs"]["app"]["root"] == root and seen["jobs"]["app"]["name"].startswith("Local\\wiki-oneshot-")
+    assert seen == {"desktop": True, "folder": True, "job": True, "root": True}
+
+
+def test_a_live_look_of_this_same_server_is_never_recovered(tmp_path):
+    with desktop_session.look(tmp_path, "active") as look:
+        root = look.start("app", python(SLEEP), tmp_path)
+        before = desktop_session.load(look.folder)
+
+        assert desktop_session.recover(look.folder) == ["active: its server is still running"]
+        assert desktop_session.load(look.folder) == before and desktop_session.exited(root) is False
+
+
+def test_an_owner_that_cannot_be_shown_to_have_exited_holds_its_record(tmp_path, monkeypatch):
+    folder = crashed(tmp_path, monkeypatch)
+    record = desktop_session.load(folder)
+    record["owner"] = {"pid": 4, "created": 1, "exe": "x"}
+    desktop_session.save(folder, record)
+    monkeypatch.setattr(desktop_session, "exited", lambda recorded: None)
+
+    assert desktop_session.recover(folder) == ["crashed: its server cannot be shown to have exited"]
+    assert desktop_session.load(folder)["state"] == "owning"
+
+
+def test_a_folder_the_look_did_not_create_is_never_removed(tmp_path, monkeypatch):
+    with pytest.raises(desktop_session.Refused, match="not created by the look"):
+        with desktop_session.look(tmp_path, "collision") as look:
+            existing = look.folder / "data-app-000000000000"
+            (existing / "Roaming").mkdir(parents=True)
+            (existing / "Roaming" / "marker").write_text("keep", encoding="utf-8")
+            monkeypatch.setattr(desktop_session.uuid, "uuid4", lambda: type("Fixed", (), {"hex": "0" * 32})())
+            with pytest.raises(FileExistsError):
+                look.start("app", python(SLEEP), tmp_path)
+
+    assert (tmp_path / "collision" / "data-app-000000000000" / "Roaming" / "marker").read_text(encoding="utf-8") == "keep"
+
+
+def test_a_job_that_fails_to_end_does_not_skip_the_rest_of_cleanup(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    look = desktop_session.Look(tmp_path, "failure")
+    calls = []
+
+    def failing(_seconds):
+        raise OSError("first job failed")
+
+    def ending(_seconds):
+        calls.append("second.end")
+        return {"clean": True, "reasons": []}
+
+    look.jobs = {"first": SimpleNamespace(end=failing, close=lambda: calls.append("first.close")),
+                 "second": SimpleNamespace(end=ending, close=lambda: calls.append("second.close"))}
+    look.record["jobs"] = {key: {"members": []} for key in look.jobs}
+    monkeypatch.setattr(look, "observe", lambda: None)
+    monkeypatch.setattr(native_process, "_sockets", lambda _kind: [])
+    monkeypatch.setattr(look, "_desktop_closed", lambda: calls.append("desktop") or [])
+
+    proof = look.close(0)
+
+    assert calls == ["first.close", "second.end", "second.close", "desktop"]
+    assert not proof["clean"] and any("first job failed" in reason for reason in proof["reasons"])
+    assert desktop_session.load(look.folder)["state"] == "held" and look.close() == proof
+
+
+def test_an_interrupted_cleanup_is_never_proven(tmp_path, monkeypatch):
+    look = desktop_session.Look(tmp_path, "interrupted")
+
+    def interrupted():
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(look, "_desktop_closed", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        look.close()
+
+    assert desktop_session.load(look.folder)["proof"]["reasons"] == ["cleanup was interrupted"]
+
+
+def test_a_linked_look_folder_is_never_recovered(tmp_path):
+    target, root = tmp_path / "elsewhere", tmp_path / "looks"
+    target.mkdir()
+    root.mkdir()
+    (target / desktop_session.RECORD).write_text("{}", encoding="utf-8")
+    made = subprocess.run(["cmd", "/c", "mklink", "/J", str(root / "linked"), str(target)], capture_output=True)
+    assert made.returncode == 0, made.stderr
+
+    assert desktop_session.recover_all(root) == [f"linked: not a plain folder inside {root}; left in place"]
 
 
 def test_a_folder_that_cannot_be_removed_holds_the_look_and_the_next_one(tmp_path, monkeypatch):
-    monkeypatch.setattr(desktop_session, "_removed", lambda folder, names, seconds=30: [
-        f"folder {name} could not be removed: in use" for name in names])
+    monkeypatch.setattr(desktop_session, "_removed", lambda folder, entries, seconds=30: [
+        f"folder {entry['name']} could not be removed: in use" for entry in entries])
     with pytest.raises(desktop_session.Refused, match="could not be removed"):
         with desktop_session.look(tmp_path, "stuck") as look:
             look.start("app", python(SLEEP), tmp_path)
@@ -102,7 +202,7 @@ def crashed(tmp_path, monkeypatch, name="crashed"):
 
     look = desktop_session.Look(tmp_path, name)
     (look.folder / "data-app" / "Local").mkdir(parents=True)
-    look.record.update(folders=["data-app"], owner=None)
+    look.record.update(folders=[{"name": "data-app", "owned": True}], owner=None)
     desktop_session.save(look.folder, look.record)
     return look.folder
 

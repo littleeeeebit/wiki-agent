@@ -150,14 +150,26 @@ def save(folder: Path, record: dict) -> None:
     write_record(Path(folder) / RECORD, record)
 
 
-def _removed(folder: Path, names: list[str], seconds: float = 30) -> list[str]:
-    """Remove each disposable folder the record lists; what is left, by name. A name that is not a plain folder
-    directly inside `folder` is left in place and named."""
+def _plain(parent: Path, path: Path) -> bool:
+    """`path` is a plain folder entry directly inside `parent`: no link or junction leads it elsewhere."""
+
+    return not (path.is_symlink() or is_junction(path)) and path.resolve().parent == parent.resolve()
+
+
+def _removed(folder: Path, entries: list[dict], seconds: float = 30) -> list[str]:
+    """Remove each disposable folder the record lists as the look's own; what is left, by name. A folder only
+    reserved, never shown to be created by the look, is never removed, and one that exists is named. So is a
+    name that is not a plain folder directly inside `folder`."""
 
     deadline, left = time.monotonic() + seconds, []
-    for name in names:
+    for entry in entries:
+        name = entry["name"]
         path = folder / name
-        if path.is_symlink() or is_junction(path) or path.resolve().parent != folder.resolve():
+        if not entry["owned"]:
+            if path.exists():
+                left.append(f"folder {name} was reserved but not created by the look; left in place")
+            continue
+        if not _plain(folder, path):
             left.append(f"folder {name} is not plainly owned; left in place")
             continue
         while path.exists():
@@ -184,9 +196,12 @@ class Look:
         if held:
             raise Refused("an earlier look is held: " + "; ".join(held))
         self.k, self.u, _, _ = _native()
+        owner = native_process.identity(os.getpid())
+        if owner is None:   # recovery could not tell a live look of this server from a dead one
+            raise Refused("cannot record this server's own identity")
         self.record = {"state": "owning", "desktop": "wiki-look-" + uuid.uuid4().hex, "session": session(),
-                       "logon": logon(), "uptime": uptime(), "owner": native_process.identity(os.getpid()),
-                       "folders": [], "jobs": {}, "listeners": [], "proof": None}
+                       "logon": logon(), "uptime": uptime(), "owner": owner, "folders": [], "jobs": {},
+                       "listeners": [], "proof": None}
         self.folder.mkdir()
         (self.folder / "evidence").mkdir()
         save(self.folder, self.record)
@@ -201,21 +216,28 @@ class Look:
         """Start `argv` in a job of its own on the look's desktop, its data folders inside a disposable folder
         the record names first, its output in `evidence/<key>.log`. The root's identity."""
 
-        if key in self.jobs or not key.isidentifier():
+        if not key.isidentifier() or key.lower() in {known.lower() for known in self.jobs}:
             raise ValueError(f"not a fresh job key: {key!r}")
-        data = f"data-{key}"
-        self.record["folders"].append(data)
+        data = f"data-{key}-{uuid.uuid4().hex[:12]}"
+        reserved = {"name": data, "owned": False}
+        self.record["folders"].append(reserved)
+        save(self.folder, self.record)
+        (self.folder / data).mkdir()   # never an existing folder: only one the look created is ever removed
+        reserved["owned"] = True
         save(self.folder, self.record)
         folders = {name: self.folder / data / name for name in ("Roaming", "Local", "Temp")}
         for path in folders.values():
-            path.mkdir(parents=True)
+            path.mkdir()
         job = owned_job.Job()
         self.jobs[key] = job
         self.record["jobs"][key] = {"name": job.name, "uptime": job.uptime, "root": None, "members": [],
                                     "proof": None}
         save(self.folder, self.record)
-        env = {**os.environ, "APPDATA": str(folders["Roaming"]), "LOCALAPPDATA": str(folders["Local"]),
-               "TEMP": str(folders["Temp"]), "TMP": str(folders["Temp"]), **(extra or {})}
+        owned = {"APPDATA": str(folders["Roaming"]), "LOCALAPPDATA": str(folders["Local"]),
+                 "TEMP": str(folders["Temp"]), "TMP": str(folders["Temp"])}
+        # Windows reads names without case: no spelling of an owned name from the server or `extra` survives.
+        env = {name: value for name, value in {**os.environ, **(extra or {})}.items()
+               if name.upper() not in owned} | owned
 
         def recorded(root: dict) -> None:
             self.record["jobs"][key].update(root=root, members=[root])
@@ -244,7 +266,7 @@ class Look:
         while True:
             windows = []
             ctypes.set_last_error(0)   # an empty desktop sets no error; an earlier call's must not stand in
-            ok =self.u.EnumDesktopWindows(self.desktop, _Each(lambda hwnd, _: windows.append(hwnd) or True), 0)
+            ok = self.u.EnumDesktopWindows(self.desktop, _Each(lambda hwnd, _: windows.append(hwnd) or True), 0)
             error = 0 if ok else ctypes.get_last_error()
             found = None if error else windows   # an empty desktop answers 0 with no error
             if found == [] or time.monotonic() >= deadline:
@@ -272,43 +294,60 @@ class Look:
         if self.closed:
             return self.record["proof"]
         self.closed = True
-        reasons = []
+        reasons, ports, finished = [], [], False
+
+        def attempt(label, step) -> None:   # each part is tried whatever an earlier one did
+            try:
+                reasons.extend(step() or [])
+            except Exception as error:
+                reasons.append(f"{label}: {error}")
+
         try:
-            self.observe()
-        except Exception as error:   # a failed read leaves the proof to the jobs' own count
-            reasons.append(f"cannot record the members: {error}")
-        recorded = self._recorded()
+            attempt("cannot record the members", self.observe)
+            recorded = self._recorded()
+            attempt("cannot read the listeners", lambda: ports.extend(sorted(
+                {port for state, port, _, pid in native_process._sockets(3)
+                 if state == 2 and any(member["pid"] == pid for member in recorded)})))
+            self.record["listeners"] = ports
+            for key, job in self.jobs.items():
+                attempt(f"{key}: cannot end the job", lambda key=key, job=job: self._ended(key, job, seconds))
+            attempt("cannot close the desktop", self._desktop_closed)
+            attempt("cannot check the recorded processes", lambda: self._exits(recorded))
+            attempt("cannot check the listeners", lambda: self._listening(ports, recorded))
+            attempt("cannot remove the folders", lambda: _removed(self.folder, self.record["folders"]))
+            finished = True
+        finally:
+            if not finished:
+                reasons.append("cleanup was interrupted")
+            # The look's own cleanup is over: recovery may now settle the record without its server's exit.
+            self.record.update(state="held" if reasons else "proven", owner=None,
+                               proof={"clean": not reasons, "reasons": reasons, "uptime": uptime()})
+            save(self.folder, self.record)
+        return self.record["proof"]
+
+    def _ended(self, key: str, job, seconds: float) -> list[str]:
         try:
-            ports = sorted({port for state, port, _, pid in native_process._sockets(3)
-                            if state == 2 and any(member["pid"] == pid for member in recorded)})
-        except ValueError as error:
-            ports = []
-            reasons.append(f"cannot read the listeners: {error}")
-        self.record["listeners"] = ports
-        for key, job in self.jobs.items():
             proof = job.end(seconds)
+        finally:
             job.close()
-            self.record["jobs"][key]["proof"] = proof
-            reasons += [f"{key}: {reason}" for reason in proof["reasons"]]
-        reasons += self._desktop_closed()
+        self.record["jobs"][key]["proof"] = proof
+        return [f"{key}: {reason}" for reason in proof["reasons"]]
+
+    @staticmethod
+    def _exits(recorded: list[dict]) -> list[str]:
+        reasons = []
         for member in recorded:
             gone = exited(member)
             if gone is not True:
                 reasons.append(f"pid {member['pid']} " + ("is still running" if gone is False
                                                           else "cannot be shown to have exited"))
-        for port in ports:
-            try:
-                owners = native_process.listeners(port)
-            except ValueError as error:
-                reasons.append(f"cannot read the listeners of port {port}: {error}")
-                continue
-            if any(native_process.same(member, native_process.identity(pid)) for pid in owners for member in recorded):
-                reasons.append(f"port {port} is still held by a recorded process")
-        reasons += _removed(self.folder, self.record["folders"])
-        self.record.update(state="held" if reasons else "proven",
-                           proof={"clean": not reasons, "reasons": reasons, "uptime": uptime()})
-        save(self.folder, self.record)
-        return self.record["proof"]
+        return reasons
+
+    @staticmethod
+    def _listening(ports: list[int], recorded: list[dict]) -> list[str]:
+        return [f"port {port} is still held by a recorded process" for port in ports
+                if any(native_process.same(member, native_process.identity(pid))
+                       for pid in native_process.listeners(port) for member in recorded)]
 
 
 @contextmanager
@@ -341,9 +380,12 @@ def recover(folder: Path) -> list[str]:
     record = load(folder)
     if record is None or record["state"] in FINAL:
         return []
-    owner = record.get("owner")
-    if owner and owner["pid"] != os.getpid() and native_process.same(owner, native_process.identity(owner["pid"])):
-        return [f"{folder.name}: its server is still running"]
+    owner = record.get("owner")   # `None` once the look's own cleanup finished
+    if owner is not None:
+        gone = exited(owner)
+        if gone is not True:   # this server's own live look included: never touched
+            return [f"{folder.name}: its server is still running" if gone is False
+                    else f"{folder.name}: its server cannot be shown to have exited"]
     if uptime() < record["uptime"]:
         proof = "the PC restarted after the record was written"
     elif logon_ended(record["logon"]):
@@ -376,4 +418,12 @@ def recover_all(root: Path) -> list[str]:
     root = Path(root)
     if not root.is_dir():
         return []
-    return [reason for child in sorted(root.iterdir()) if (child / RECORD).is_file() for reason in recover(child)]
+    held = []
+    for child in sorted(root.iterdir()):
+        if not (child / RECORD).is_file():
+            continue
+        if not _plain(root, child):   # a link would move every removal to wherever it leads
+            held.append(f"{child.name}: not a plain folder inside {root}; left in place")
+            continue
+        held += recover(child)
+    return held
