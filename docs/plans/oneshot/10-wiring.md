@@ -95,11 +95,12 @@ The next plan lists a kept link with nothing at its place, as a crash leaves
 it. It moves here when this hub has the skill, and goes back where it pointed
 otherwise. Recovery reads only that recovery folder, never a link the owner
 keeps elsewhere. It never follows a link that stands in for the folder or for
-an attempt in it.
+an attempt in it, and nothing is parked through such a link.
 
 A link is moved only while it still points where the confirmed plan saw it
 point. That is checked before it is moved aside, and again on the link
-actually moved. One pointing elsewhere is put back untouched and refused.
+actually moved. One pointing elsewhere, or no longer a link at all, is put
+back untouched and refused.
 
 Putting a kept link back never lands on a file or link that appeared at its
 place meanwhile. Windows `rename` refuses an existing name; elsewhere a hard

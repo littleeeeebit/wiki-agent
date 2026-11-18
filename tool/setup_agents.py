@@ -430,9 +430,15 @@ def relink(link, target, source=None):
     if current == link:
         base = link.parent.parent / ".wiki-relink"
         base.mkdir(exist_ok=True)
+        if _is_link(base):   # parked through it, the link would land where recovery never looks
+            raise OSError(f"{base} 가 다른 곳을 가리키는 링크다 — 치운 뒤 다시 확인한다")
         aside = Path(tempfile.mkdtemp(dir=base, prefix=link.name + ".")) / link.name
         os.rename(link, aside)   # into this attempt's own empty folder: nothing there to clobber
-        if not same(aside):   # retargeted between the check and the move: not the approved link, so it goes back
+        try:
+            moved = same(aside)
+        except OSError as exc:   # no link any more (a file of the owner's, say): it goes back as it is
+            _restore(aside, link, exc)
+        if not moved:   # retargeted between the check and the move: not the approved link, so it goes back
             _restore(aside, link, ValueError(f"{link} 이 옮기는 사이 다른 곳을 가리키게 됐다 — 다시 확인한다"))
     else:
         aside = current

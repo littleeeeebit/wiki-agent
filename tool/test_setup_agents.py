@@ -204,6 +204,30 @@ def test_relink_never_overwrites_follows_or_moves_what_it_was_not_shown(tmp_path
     setup_agents.relink(link, new, old)
     assert _points(link) == new.resolve() and not attempt.exists()
 
+    # 5. The recovery folder as a link: nothing is parked through it, and the link stays.
+    recovery = skills.parent / ".wiki-relink"
+    for left in recovery.iterdir():
+        left.rmdir()
+    recovery.rmdir()
+    _dir_link(elsewhere.parent, recovery)
+    with pytest.raises(OSError, match="링크"):
+        setup_agents.relink(link, old, new)
+    assert _points(link) == new.resolve() and list(elsewhere.parent.iterdir()) == [elsewhere]
+    os.rmdir(recovery) if os.name == "nt" else os.unlink(recovery)
+
+    # 6. Replaced by a file of the owner's between the check and the move: the file goes back, not hidden.
+    def to_file(*args, **kwargs):
+        made = real_mkdtemp(*args, **kwargs)
+        os.rmdir(link) if os.name == "nt" else os.unlink(link)
+        link.write_text("the owner's", encoding="utf-8")
+        return made
+
+    monkeypatch.setattr(setup_agents.tempfile, "mkdtemp", to_file)
+    with pytest.raises(OSError):
+        setup_agents.relink(link, old, new)
+    monkeypatch.undo()
+    assert link.read_text(encoding="utf-8") == "the owner's", "옮겨진 파일은 제자리로 돌아온다"
+
 
 def test_a_server_going_down_while_a_file_is_staged_installs_nothing(tmp_path):
     import pytest
