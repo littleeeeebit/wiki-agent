@@ -79,7 +79,8 @@ These are proposals that each step's document settles:
   -> check: an attempt already running for this remote refuses the press
   -> pin: fetch, take origin/main's SHA once; the selector recomputes the version
   -> validate: a version other than the shown one refuses the press; nothing is written
-  -> reserve: the attempt for this remote, recorded pending in the ledger before any remote write
+  -> reserve: atomically take this remote's one attempt (a press that loses the race is
+             refused), recorded pending in the ledger before any remote write
   -> checkout: fresh detached checkout of the SHA
   -> build: each declared kind, version injected; Android gives an unsigned release APK
   -> sign: Android only, the repository's release key, outside the build command
