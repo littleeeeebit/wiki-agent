@@ -363,8 +363,8 @@ def test_a_remote_that_is_not_a_github_repository_names_no_key(monkeypatch, url)
         release.remote(Path("x"))
 
 
-def test_keys_never_live_under_the_data_root_a_checkout_can_be():
-    assert not release.KEYS.resolve().is_relative_to(release.paths.DATA.resolve())
+def test_keys_never_live_under_wiki_agents_own_checkout():
+    assert not release.KEYS.resolve().is_relative_to(release.paths.RESOURCES.resolve())
 
 
 @pytest.mark.skipif(release.os.name != "nt", reason="Credential Manager is Windows only")
@@ -543,10 +543,49 @@ def test_a_key_tools_diagnostic_and_a_refused_origin_never_carry_a_secret(monkey
         release.run(["keytool"], {release.SECRET: "hunter2-hunter2"})
     assert "hunter2" not in str(caught.value) and "***" in str(caught.value)
 
-    monkeypatch.setattr(release, "git", lambda *a, **k: "https://user:tok3n@gitlab.com/o/r.git\n")
-    with pytest.raises(ValueError) as caught:
-        release.remote(Path("x"))
-    assert "tok3n" not in str(caught.value) and "gitlab.com/o/r.git" in str(caught.value)
+    for url in ("https://user:tok3n@gitlab.com/o/r.git", "https://github.com/o/r.git?access_token=tok3n"):
+        monkeypatch.setattr(release, "git", lambda *a, url=url, **k: url + "\n")
+        with pytest.raises(ValueError, match="GitHub") as caught:
+            release.remote(Path("x"))
+        assert "tok3n" not in str(caught.value)
+
+
+def test_the_packaged_apps_own_data_folder_holds_its_keys(keys, tmp_path, monkeypatch):
+    vault, _ = keys
+    monkeypatch.setattr(release.paths, "DATA", tmp_path / "wiki-agent-data")
+    monkeypatch.setattr(release.paths, "RESOURCES", tmp_path / "Program Files" / "wiki-agent")
+    monkeypatch.setattr(release, "KEYS", release.paths.DATA / "release-keys")
+
+    assert release.release_key(tmp_path / "checkout", {}, create=True)["password"] == vault["github.com/o/r"]
+
+    monkeypatch.setattr(release, "KEYS", release.paths.RESOURCES / "release-keys")
+    with pytest.raises(ValueError, match="체크아웃 안"):
+        release.release_key(tmp_path / "checkout", {}, create=True)
+
+
+def test_a_staged_keystore_with_no_password_is_left_untouched(keys):
+    vault, folder = keys
+    folder.mkdir(parents=True)
+    staged = release.generated(folder / "release.jks.new", "release", release.KEY_DAYS, "CN=github.com/o/r", {})
+    before = staged["keystore"].read_bytes()
+
+    with pytest.raises(ValueError, match="비밀번호가 자격 증명 관리자에 없다"):
+        release.release_key(Path("repo"), {}, create=True)
+    assert staged["keystore"].read_bytes() == before and vault == {} and not (folder / "release.jks").exists()
+
+
+def test_writing_the_record_never_writes_through_a_name_that_already_exists(keys, monkeypatch):
+    vault, folder = keys
+    release.release_key(Path("repo"), {}, create=True)
+    store = folder / "release.jks"
+    before = store.read_bytes()
+    (folder / "certificate.sha256").unlink()
+    monkeypatch.setattr(release.secrets, "token_hex", lambda n: "aaaa")   # the staging name is known in advance
+    release.os.link(store, folder / "certificate.sha256.aaaa.new")   # and already aliases the keystore
+
+    with pytest.raises(FileExistsError):
+        release.release_key(Path("repo"), {}, create=True)
+    assert store.read_bytes() == before and not (folder / "certificate.sha256").exists()
 
 
 def test_the_first_release_note_tells_debug_installs_to_reinstall():

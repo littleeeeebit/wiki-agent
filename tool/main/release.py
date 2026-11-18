@@ -389,7 +389,8 @@ def refused(seen: dict, release: str, android: dict, cert: str, previous: dict |
 # written last and marks the key as established. After that, a missing or changed half is refused and never
 # replaced, because a new key would strand every installed copy.
 
-# Never under `paths.DATA`: unpackaged, that is the checkout, and a key removed with a worktree is lost for good.
+# Never under a checkout: unpackaged, `paths.DATA` is the checkout, and a key removed with a worktree is lost for
+# good. Packaged, `KEYS` sits inside `paths.DATA`, which is then this same LocalAppData folder.
 KEYS = Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".local/share") / "wiki-agent-data" / "release-keys"
 KEY_DAYS = 10000   # about 27 years; Google Play wants a key valid past 2033
 FIRST_RELEASE_NOTE = ("첫 정식 릴리스입니다. 디버그 APK 를 설치했던 기기는 서명이 달라 이 버전으로 업데이트되지 "
@@ -403,8 +404,7 @@ def remote(repo: Path) -> str:
     found = re.fullmatch(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
                          r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?", url)
     if not found or {found.group(1), found.group(2)} & {".", ".."}:
-        shown = re.sub(r"(?<=//)[^@/]*@", "", url)   # never echo credentials embedded in the URL
-        raise ValueError(f"origin `{shown}` 은 GitHub 저장소가 아니다")
+        raise ValueError("origin 이 GitHub 저장소 주소가 아니다")   # never echoed: a URL can carry a token
     return f"github.com/{found.group(1)}/{found.group(2)}".lower()
 
 
@@ -507,8 +507,8 @@ def release_key(repo: Path, kit: dict, create: bool = False) -> dict:
     and a surviving password with no keystore are each refused for a person to settle."""
 
     name = remote(repo)
-    keys = Path(os.path.realpath(KEYS))
-    if keys.is_relative_to(Path(os.path.realpath(repo))) or keys.is_relative_to(Path(os.path.realpath(paths.DATA))):
+    keys = Path(os.path.realpath(KEYS))   # the target's checkout, or wiki-agent's own (unpackaged, that is the data)
+    if any(keys.is_relative_to(Path(os.path.realpath(root))) for root in (repo, paths.RESOURCES)):
         raise ValueError(f"{KEYS} 가 체크아웃 안이다 — 서명 키는 모든 체크아웃 밖에만 둔다")
     folder = plain(owned(KEYS / name, KEYS))
     folder.mkdir(parents=True, exist_ok=True)
@@ -534,20 +534,23 @@ def release_key(repo: Path, kit: dict, create: bool = False) -> dict:
             if (cert := opens(pending, password, kit)) is None:
                 raise ValueError(f"자격 증명 관리자에 '{target(name)}' 가 남아 있는데 키 파일이 없다 — 백업한 "
                                  f"{store.name} 을 되살리거나, 그 키를 버릴 거라면 그 자격 증명을 직접 지운 뒤 다시 만든다")
+        elif pending.exists():   # a key that stopped before its password was stored, or a copy put back by hand
+            raise ValueError(f"{pending} 가 있는데 그 키를 여는 비밀번호가 자격 증명 관리자에 없다 — 되살리는 중이면 "
+                             "비밀번호를 되살리고, 아니면 이 파일을 지운 뒤 다시 만든다. 키는 그대로 두었다")
         else:
             cert = None
         if not create:
             raise ValueError(f"{name} 의 정식 서명 키가 {'만들다 멈췄다' if cert else '아직 없다'} — --create 로 "
                              f"{'마저 만든다' if cert else '한 번 만든다'}")
-        if cert is None:   # nothing stored anywhere: a leftover `pending` has no password and signed nothing
-            pending.unlink(missing_ok=True)
+        if cert is None:   # nothing stored anywhere, not even a staged keystore
             password = generated(pending, "release", KEY_DAYS, f"CN={name}", kit)["password"]
             secret_write(name, password)
             cert = certificate(pending, "release", password, kit)
         if not store.exists():   # a keystore already there is the one `cert` came from; never overwrite it
             pending.replace(store)
-        written = plain(folder / "certificate.sha256.new")
-        written.write_text(cert + "\n", encoding="utf-8")
+        written = folder / f"certificate.sha256.{secrets.token_hex(4)}.new"
+        with open(written, "x", encoding="utf-8") as staged:   # a fresh file, never an existing name or its links
+            staged.write(cert + "\n")
         written.replace(marker)   # last, and whole: from here on the key is the repository's
         return {"keystore": store, "alias": "release", "password": password, "cert": cert, "name": name}
 
