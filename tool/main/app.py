@@ -117,6 +117,7 @@ def close_turns() -> None:
     # are dead: closing stdin waits on a prompt write a stalled provider blocks.
     threads = [*loop.close_all(wait=False), *planning.close_all(wait=False), *oneshot.close_all(wait=False)]
     refactor.close_all()
+    release_api.close_all()   # a test build's checkout and keys go before the server lets go of its data
     threads += work.close_all(wait=False)
     agent.end_all()
     query.close_all()

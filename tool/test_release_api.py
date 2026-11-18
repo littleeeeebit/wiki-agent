@@ -39,7 +39,7 @@ def project(monkeypatch, tmp_path):
     monkeypatch.setattr(rp, "LEDGER", tmp_path / "ledger")
     monkeypatch.setattr(release_api.channels, "repo_for", lambda name: repo if name == "app" else None)
     monkeypatch.setattr(release, "remote", lambda repo: "github.com/o/r")
-    monkeypatch.setattr(release, "pin", lambda repo, ref="origin/main": head)
+    monkeypatch.setattr(release, "pin", lambda repo, ref: head if ref == "origin/main" else pytest.fail(ref))
     monkeypatch.setattr(release, "settings", lambda repo, sha: {"version_source": "v.json", "android": {}})
     monkeypatch.setattr(release, "seed", lambda repo, sha, source: "0.1.0")
     monkeypatch.setattr(release_api, "_runs", {})
@@ -66,7 +66,17 @@ def test_the_card_shows_each_choice_from_the_last_production_release_and_the_com
     card = client.get("/api/release/app").json()
 
     assert card["last"] == "v0.1.1" and card["ahead"] == 2
-    assert card["versions"] == {"patch": "0.1.3", "minor": "0.2.0", "major": "1.0.0"}
+    assert card["versions"] == {"patch": "0.1.3", "minor": "0.2.0", "major": "1.0.0"} and card["refused"] == {}
+
+
+def test_a_choice_android_cannot_carry_leaves_the_others_and_a_lost_tag_counts_nothing(project):
+    client, fake, first = project
+    fake.add("v1.999.0", target=first)
+    del fake.refs["v1.999.0"]   # listed, but its tag is gone
+    card = client.get("/api/release/app").json()
+
+    assert card["versions"] == {"patch": "1.999.1", "major": "2.0.0"} and "versionCode" in card["refused"]["minor"]
+    assert card["last"] == "v1.999.0" and card["ahead"] is None   # unknown, never the whole history
 
 
 def test_a_repository_without_a_release_table_shows_why(project, monkeypatch):
@@ -81,33 +91,76 @@ def test_a_repository_without_a_release_table_shows_why(project, monkeypatch):
     assert client.get("/api/release/elsewhere").status_code == 404
 
 
-def test_the_button_runs_one_unpublished_rehearsal_that_a_stop_ends(project, monkeypatch):
+def ended(client):
+    for _ in range(200):
+        run = client.get("/api/release/app/rehearsal").json()["rehearsal"]   # the state alone, no GitHub read
+        if run["state"] != "running":
+            return run
+        threading.Event().wait(0.05)
+    raise AssertionError("the test build never ended")
+
+
+def test_the_button_runs_one_unpublished_rehearsal_of_the_cards_commit_that_a_stop_ends(project, monkeypatch):
     client, fake, _ = project
     entered, asked = threading.Event(), []
 
     def rehearse(repo, ref, halt, repair=None):
-        asked.append((ref, repair))
+        asked.append(ref)
         entered.set()
         halt.wait(10)
         return {"ok": False, "rounds": [{"version": "0.1.0", "failed": "cannot find symbol", "facts": {"x": 1}}],
                 "refusals": {}, "repair": {"needed": "cannot find symbol", "error": "멈춤"}}
 
-    monkeypatch.setattr(release, "rehearse", rehearse)
+    monkeypatch.setattr(release_api.release_rehearsal, "rehearse", rehearse)
     assert client.post("/api/release/app/rehearse").json()["rehearsal"]["state"] == "running"
     assert entered.wait(5)
     assert client.post("/api/release/app/rehearse").status_code == 409   # one at a time
     assert client.post("/api/release/app/stop").status_code == 200
-    for _ in range(100):
-        run = client.get("/api/release/app").json()["rehearsal"]
-        if run["state"] != "running":
-            break
-        threading.Event().wait(0.05)
+    run = ended(client)
 
-    assert run["state"] == "done" and run["stopped"] and "halt" not in run
+    assert run["state"] == "done" and run["stopped"] and "halt" not in run and "thread" not in run
     assert run["rounds"] == [{"version": "0.1.0", "failed": "cannot find symbol", "refused": []}]   # no facts
-    assert asked == [("main", release_api.release_repair.start)]   # a source failure goes to a repair task
+    assert asked == ["origin/main"]   # the commit the card pinned, never a stale local `main`
     assert not fake.rels and not [c for c in fake.calls if c[0] != "GET"]   # nothing written to GitHub
     assert client.post("/api/release/app/stop").status_code == 409
+
+
+@pytest.mark.parametrize("first", ["stop", "repair"])
+def test_a_stop_and_the_start_of_a_repair_never_both_happen(project, monkeypatch, first):
+    client, *_ = project
+    building, go, starting, release_it, started = (threading.Event() for _ in range(5))
+
+    def rehearse(repo, ref, halt, repair=None):
+        building.set()
+        assert go.wait(5)
+        try:   # past `release.handed`'s own check: the decision under the run's lock is what remains
+            task = repair(repo, {"repair": {"needed": "boom"}})
+        except RuntimeError as exc:
+            return {"ok": False, "rounds": [], "refusals": {}, "repair": {"needed": "boom", "error": str(exc)}}
+        return {"ok": False, "rounds": [], "refusals": {}, "repair": {"needed": "boom", "task": task}}
+
+    def start(repo, record):
+        starting.set()
+        assert release_it.wait(5)
+        return started.set() or "release-fix-0-1-0"
+
+    monkeypatch.setattr(release_api.release_rehearsal, "rehearse", rehearse)
+    monkeypatch.setattr(release_api.release_repair, "start", start)
+    client.post("/api/release/app/rehearse")
+    assert building.wait(5)
+    if first == "stop":
+        assert client.post("/api/release/app/stop").status_code == 200
+        go.set()
+        run = ended(client)
+        assert not started.is_set() and "멈춤" in run["repair"]["error"] and run["stopped"]
+    else:
+        go.set()
+        assert starting.wait(5)
+        assert client.get("/api/release/app/rehearsal").json()["rehearsal"]["repairing"]
+        assert client.post("/api/release/app/stop").status_code == 409   # too late to stop
+        release_it.set()
+        run = ended(client)
+        assert run["repair"]["task"] == "release-fix-0-1-0" and not run["stopped"] and "repairing" not in run
 
 
 def test_a_rehearsal_that_raises_is_shown_and_the_next_press_runs_again(project, monkeypatch):
@@ -116,15 +169,29 @@ def test_a_rehearsal_that_raises_is_shown_and_the_next_press_runs_again(project,
     def broken(repo, ref, halt, repair=None):
         raise ValueError("`main` 는 origin 의 브랜치가 아니다")
 
-    monkeypatch.setattr(release, "rehearse", broken)
+    monkeypatch.setattr(release_api.release_rehearsal, "rehearse", broken)
     client.post("/api/release/app/rehearse")
-    for _ in range(100):
-        run = client.get("/api/release/app").json()["rehearsal"]
-        if run["state"] != "running":
-            break
-        threading.Event().wait(0.05)
+    run = ended(client)
     assert run["state"] == "failed" and "origin" in run["error"]
     assert client.post("/api/release/app/rehearse").status_code == 200
+
+
+def test_server_shutdown_stops_a_running_test_build_and_waits_for_its_cleanup(project, monkeypatch):
+    client, *_ = project
+    building, cleaned = threading.Event(), threading.Event()
+
+    def rehearse(repo, ref, halt, repair=None):
+        building.set()
+        halt.wait(10)
+        threading.Event().wait(0.2)   # removing the checkout and the keys takes a moment
+        cleaned.set()
+        raise ValueError("빌드 실패 — 사람이 멈춤")
+
+    monkeypatch.setattr(release_api.release_rehearsal, "rehearse", rehearse)
+    client.post("/api/release/app/rehearse")
+    assert building.wait(5)
+    release_api.close_all()
+    assert cleaned.is_set() and release_api.shown("app")["stopped"]
 
 
 def test_server_start_carries_pending_attempts_on_without_waiting_for_them(monkeypatch):

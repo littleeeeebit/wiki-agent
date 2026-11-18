@@ -1,5 +1,5 @@
 """Release steps 1 and 2: the `[release]` reader, the seed, the version selector, the APK checks and the release key
-(`docs/plans/release/0-overview.md`). The real build and signing run in `release.rehearse`."""
+(`docs/plans/release/0-overview.md`). The real build and signing run in `release_rehearsal.rehearse`."""
 
 import json
 import subprocess
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from main import release
+from main import release, release_rehearsal
 
 ANDROID = {"build": "build", "artifact": "app.apk", "application_id": "ai.x.app", "abi": "arm64-v8a"}
 TABLE = """agents = ["claude"]
@@ -282,7 +282,7 @@ def test_every_test_keystore_goes_even_when_a_step_after_its_creation_fails(tmp_
     monkeypatch.setattr(release, "certificate", broken)
 
     with pytest.raises(ValueError, match="keytool failed"):
-        release.rehearse(tmp_path / "repo")
+        release_rehearsal.rehearse(tmp_path / "repo")
     assert list((tmp_path / "work").rglob("*.jks")) == []
 
     tried, unlink = [], Path.unlink
@@ -300,7 +300,7 @@ def test_every_test_keystore_goes_even_when_a_step_after_its_creation_fails(tmp_
     monkeypatch.setattr(release, "test_key", both)
     monkeypatch.setattr(Path, "unlink", locked)
     with pytest.raises(OSError, match="시험 키를 지우지 못했다"):
-        release.rehearse(tmp_path / "repo")
+        release_rehearsal.rehearse(tmp_path / "repo")
     assert tried == ["rehearsal.jks", "other.jks"]   # the locked first key never spares the second
 
 
@@ -322,11 +322,11 @@ def test_a_stopped_rehearsal_build_leaves_no_checkout_and_starts_no_repair(tmp_p
     monkeypatch.setattr(release, "checkout", checkout)
     monkeypatch.setattr(release, "build", build)
     with pytest.raises(ValueError, match="사람이 멈춤"):   # raised, so no repair is handed anything
-        release.rehearse(tmp_path / "repo")
+        release_rehearsal.rehearse(tmp_path / "repo")
     assert made and not made[0].exists()
 
 
-@pytest.mark.parametrize("failure", ["build", "debuggable"])
+@pytest.mark.parametrize("failure", ["build", "debuggable", "second build"])
 def test_the_rehearsal_hands_a_failed_build_to_repair_and_nothing_else(tmp_path, monkeypatch, failure):
     _rehearsable(tmp_path, monkeypatch)
     monkeypatch.setattr(release, "test_key", lambda store, kit: {"keystore": store, "alias": "a", "password": "p"})
@@ -335,14 +335,18 @@ def test_the_rehearsal_hands_a_failed_build_to_repair_and_nothing_else(tmp_path,
                         or release.place(repo, at))
 
     def build(src, android, version, kit, halt):
-        if failure == "build":
+        if failure == "build" or (failure == "second build" and version == "0.1.1"):
             raise release.BuildFailed("빌드 실패 — 1 로 끝났다\nerror: boom")
         return src / "out.apk"
 
+    def facts(apk, kit):   # the version is the signed APK's name: `<round>-<version>.apk`
+        name = apk.stem.split("-", 1)[1]
+        return seen(name=name, code=release.code(name), debuggable=failure == "debuggable", certs=["c" * 64],
+                    package=ANDROID["application_id"])
+
     monkeypatch.setattr(release, "build", build)
     monkeypatch.setattr(release, "sign", lambda apk, out, key, kit: out)
-    monkeypatch.setattr(release, "facts", lambda apk, kit: seen(name="0.1.0", code=1000, debuggable=True, certs=["c" * 64],
-                                                                package=ANDROID["application_id"]))
+    monkeypatch.setattr(release, "facts", facts)
     repo, _ = committed(tmp_path, {"a.txt": "a"})
     subprocess.run(["git", "init", "-q", "--bare", str(tmp_path / "origin.git")], check=True)
     for args in (["branch", "-qM", "main"], ["remote", "add", "origin", str(tmp_path / "origin.git")],
@@ -356,11 +360,43 @@ def test_the_rehearsal_hands_a_failed_build_to_repair_and_nothing_else(tmp_path,
     # A repair's pull request needs a branch GitHub has: not a tag, a commit, or a branch only the clone has.
     for ref in ("v0.0.9", "0" * 40, "experiment"):
         with pytest.raises(ValueError, match="브랜치가 아니다"):
-            release.rehearse(repo, ref, repair=repair)
-    done = release.rehearse(repo, repair=repair)
+            release_rehearsal.rehearse(repo, ref, repair=repair)
+    done = release_rehearsal.rehearse(repo, repair=repair)
     assert done["repair"]["task"] == "release-fix-0-1-0" and not done["ok"] and len(asked) == 1
-    assert asked[0]["tag"] == "v0.1.0" and asked[0]["sha"] == "0" * 40 and asked[0]["base"] == "main"
-    assert ("boom" if failure == "build" else "디버그") in asked[0]["repair"]["needed"]
+    tag = "v0.1.1" if failure == "second build" else "v0.1.0"   # a later round's failure is the one handed on
+    assert asked[0]["tag"] == tag and asked[0]["sha"] == "0" * 40 and asked[0]["base"] == "main"
+    assert ("디버그" if failure == "debuggable" else "boom") in asked[0]["repair"]["needed"]
+    assert [p for p in Path(done["folder"]).iterdir() if p.is_dir()] == []   # every round's checkout went
+
+
+def test_a_round_that_fails_after_its_build_still_removes_its_checkout_and_keeps_its_own_error(tmp_path, monkeypatch):
+    _rehearsable(tmp_path, monkeypatch)
+    monkeypatch.setattr(release, "test_key", lambda store, kit: {"keystore": store, "alias": "a", "password": "p"})
+    monkeypatch.setattr(release, "certificate", lambda *a: "c" * 64)
+    made, logged = [], []
+
+    def checkout(repo, sha, at):
+        (src := release.place(repo, at)).mkdir(parents=True)
+        return made.append(src) or src
+
+    def broken(*_):
+        raise RuntimeError("apksigner failed")
+
+    monkeypatch.setattr(release, "checkout", checkout)
+    monkeypatch.setattr(release, "build", lambda src, *a: src / "out.apk")
+    monkeypatch.setattr(release, "sign", broken)
+    with pytest.raises(RuntimeError, match="apksigner failed"):
+        release_rehearsal.rehearse(tmp_path / "repo")
+    assert made and not made[0].exists()
+
+    def stuck(repo, at):
+        raise OSError("in use")
+
+    monkeypatch.setattr(release, "discard", stuck)
+    monkeypatch.setattr(release_rehearsal.errorlog, "record", lambda *a, **k: logged.append(a[0]))
+    with pytest.raises(RuntimeError, match="apksigner failed"):   # a failed cleanup never hides why the round ended
+        release_rehearsal.rehearse(tmp_path / "repo")
+    assert logged == ["release-rehearsal-cleanup"]
 
 
 def test_a_fetch_that_times_out_after_writing_its_ref_leaves_no_ref(monkeypatch):

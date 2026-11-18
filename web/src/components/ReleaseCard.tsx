@@ -8,16 +8,19 @@ type Rehearsal = {
   state: 'running' | 'done' | 'failed'; started: number; ended?: number; stopped?: boolean; error?: string
   ok?: boolean; rounds?: { version: string; failed?: string; refused: string[] }[]
   refusals?: Record<string, number>; repair?: { needed: string; task?: string; error?: string } | null
+  repairing?: boolean; left?: string[]
 }
 type Attempt = { tag: string; state: 'pending' | 'published' | 'failed'; reason?: string; repair?: { task?: string; error?: string } }
+type Choice = Bump | 'first'
 /** `tool/main/release_api.py`: what a press would publish, read from origin's main and GitHub. */
 type Card = {
-  remote?: string; last?: string | null; ahead?: number | null; versions?: Partial<Record<Bump | 'first', string>>
-  attempt?: Attempt | null; error?: string; locked: string; rehearsal: Rehearsal | null
+  remote?: string; last?: string | null; ahead?: number | null; versions?: Partial<Record<Choice, string>>
+  refused?: Partial<Record<Choice, string>>; attempt?: Attempt | null; error?: string; locked: string; rehearsal: Rehearsal | null
 }
 
 const at = (name: string) => `/api/release/${encodeURIComponent(name)}`
 const getCard = (name: string) => get(at(name)).then((r) => json<Card>(r, '배포 카드'))
+const getRehearsal = (name: string) => get(`${at(name)}/rehearsal`).then((r) => json<{ rehearsal: Rehearsal | null }>(r, '시험 빌드'))
 const startRehearsal = (name: string) => post(`${at(name)}/rehearse`).then((r) => json<{ rehearsal: Rehearsal }>(r, '시험 빌드'))
 const stopRehearsal = (name: string) => post(`${at(name)}/stop`).then((r) => json<{ rehearsal: Rehearsal }>(r, '시험 빌드 멈춤'))
 
@@ -44,41 +47,47 @@ export function ReleaseButton({ name, disabled }: { name: string; disabled: bool
  *  key; the button runs the unpublished rehearsal, which builds twice with a disposable test key. */
 export function ReleaseCard({ name, onClose }: { name: string; onClose: () => void }) {
   const [card, setCard] = useState<Card | null>(null)
+  // The test build's state, apart from the card: a start or a stop answers with it, and the poll reads only it.
+  const [run, setRun] = useState<Rehearsal | null>(null)
   const [fault, setFault] = useState('')
   const [busy, setBusy] = useState(false)
-  const [bump, setBump] = useState<Bump>('patch')
+  const [picked, setPicked] = useState<Bump | null>(null)
 
-  const read = useCallback(() => getCard(name).then(setCard).catch((err) => setFault(String(err instanceof Error ? err.message : err))), [name])
+  const read = useCallback(() => getCard(name)
+    .then((c) => { setCard(c); setRun(c.rehearsal) })
+    .catch((err) => setFault(String(err instanceof Error ? err.message : err))), [name])
   useEffect(() => { void read() }, [read])
-  // While the rehearsal runs, its state is read again; it takes minutes, so every five seconds is enough.
-  const running = card?.rehearsal?.state === 'running'
+  // While it runs, its state is read every five seconds; a read that fails is tried again at the next tick.
+  const running = run?.state === 'running'
   useEffect(() => {
     if (!running) return
-    const timer = setInterval(() => void read(), 5000)
+    const timer = setInterval(() => void getRehearsal(name).then((r) => setRun(r.rehearsal)).catch(() => {}), 5000)
     return () => clearInterval(timer)
-  }, [running, read])
+  }, [running, name])
 
-  async function act(fn: () => Promise<unknown>) {
+  async function act(fn: () => Promise<{ rehearsal: Rehearsal }>) {
     setFault('')
     setBusy(true)
     try {
-      await fn()
-      await read()
+      setRun((await fn()).rehearsal)
     } catch (err) {
       setFault(String(err instanceof Error ? err.message : err))
+      void getRehearsal(name).then((r) => setRun(r.rehearsal)).catch(() => {})
     } finally {
       setBusy(false)
     }
   }
 
   const first = card?.versions?.first
+  const bump = picked ?? BUMPS.find((b) => card?.versions?.[b.bump])?.bump ?? 'patch'
   const next = first ?? card?.versions?.[bump]
   return (
     <Modal wide title={`${name} 배포`} onClose={onClose} foot={(
       <>
         <Btn onClick={onClose}>닫기</Btn>
         {running
-          ? <Btn tone="danger" disabled={busy} onClick={() => void act(() => stopRehearsal(name))}>시험 빌드 멈춤</Btn>
+          ? <Btn tone="danger" disabled={busy || run?.repairing} onClick={() => void act(() => stopRehearsal(name))}
+              title={run?.repairing ? '수정 작업을 이미 만들기 시작해서 멈출 수 없다' : undefined}>시험 빌드 멈춤</Btn>
           : <Btn disabled={busy || !card || !!card.error} onClick={() => void act(() => startRehearsal(name))}
               title="main 을 두 번 빌드하고 일회용 시험 키로 서명해 검사한다. 아무것도 올리지 않는다">시험 빌드</Btn>}
         <Btn tone="primary" disabled title={card?.locked}>{next ? `v${next} 게시` : '게시'}</Btn>
@@ -95,15 +104,18 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
           <dd className="font-mono">{card.ahead ?? '모름'}</dd>
           <dt className="text-faint">다음 버전</dt>
           <dd>
-            {first ? (
-              <span><span className="font-mono">v{first}</span> <span className="text-muted-foreground">— 첫 정식 릴리스라 고를 것이 없다</span></span>
+            {card.last === null ? (
+              first
+                ? <span><span className="font-mono">v{first}</span> <span className="text-muted-foreground">— 첫 정식 릴리스라 고를 것이 없다</span></span>
+                : <span className="text-destructive">{card.refused?.first}</span>
             ) : (
               <span role="radiogroup" aria-label="올릴 버전" className="flex flex-wrap gap-1.5">
                 {BUMPS.map(({ bump: b, label }) => (
-                  <button key={b} type="button" role="radio" aria-checked={bump === b} onClick={() => setBump(b)}
-                    className={cn('h-7 rounded-md border px-2.5 text-[12.5px]',
+                  <button key={b} type="button" role="radio" aria-checked={bump === b} disabled={!card.versions?.[b]}
+                    onClick={() => setPicked(b)} title={card.refused?.[b]}
+                    className={cn('h-7 rounded-md border px-2.5 text-[12.5px] disabled:opacity-40',
                       bump === b ? 'border-primary bg-primary/10' : 'border-border hover:bg-secondary')}>
-                    {label} <span className="font-mono">v{card.versions?.[b]}</span>
+                    {label} <span className="font-mono">{card.versions?.[b] ? `v${card.versions[b]}` : '올릴 수 없음'}</span>
                   </button>
                 ))}
               </span>
@@ -119,7 +131,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
           {card.attempt.repair?.task ? ` · 수정 작업 ${card.attempt.repair.task}` : ''}
         </p>
       )}
-      {card?.rehearsal && <RehearsalLine run={card.rehearsal} />}
+      {run && <RehearsalLine run={run} />}
     </Modal>
   )
 }
@@ -127,7 +139,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
 function RehearsalLine({ run }: { run: Rehearsal }) {
   if (run.state === 'running') {
     const since = new Date(run.started * 1000).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
-    return <p className="animate-pulse text-[12.5px]">시험 빌드 중… {since} 에 시작 · 수십 분 걸릴 수 있다</p>
+    return <p className="animate-pulse text-[12.5px]">{run.repairing ? '빌드가 실패해 수정 작업을 만드는 중…' : `시험 빌드 중… ${since} 에 시작 · 수십 분 걸릴 수 있다`}</p>
   }
   if (run.state === 'failed') {
     // A stop ends the build with the machine's error; the person pressed it, so that is all the line says.
@@ -156,6 +168,7 @@ function RehearsalLine({ run }: { run: Rehearsal }) {
       {failed && <p className="mt-1 whitespace-pre-wrap font-mono text-[11.5px] text-muted-foreground">v{failed.version}: {failed.failed ?? failed.refused.join('; ')}</p>}
       {run.repair?.task && <p className="mt-1">수정 작업 <span className="font-mono">{run.repair.task}</span> 을 시작했다 — 작업 목록에서 본다</p>}
       {run.repair?.error && <p className="mt-1 text-muted-foreground">수정 작업을 시작하지 않았다 — {run.repair.error}</p>}
+      {!!run.left?.length && <p className="mt-1 whitespace-pre-wrap text-wait">지우지 못한 빌드 폴더 — 직접 지워라: {run.left.join('; ')}</p>}
     </div>
   )
 }

@@ -2,10 +2,9 @@
 APK with the version injected, signs it and checks it. Step 2 adds each repository's one release key. Nothing
 here publishes: `release_publish` does, with step 3's transfer and ledger. Steps 4 and 5 bring failure
 handling and the button.
-`rehearse` signs only with disposable test keys, and a test key never signs a production artifact.
-
-A rehearsal runs from `tool/` as this module's `rehearse` command, given a disposable clone and an optional
-`--ref`."""
+The rehearsal (`release_rehearsal.rehearse`) signs only with disposable test keys, and a test key never signs
+a production artifact. It runs from `tool/` as this module's `rehearse` command, given a disposable clone and an
+optional `--ref`."""
 
 from __future__ import annotations
 
@@ -680,88 +679,6 @@ def replaced(target: Path, text: str) -> None:
         raise
 
 
-# -- The unpublished rehearsal --------------------------------------------------------------------
-
-def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None, repair=None) -> dict:
-    """Two consecutive versions of `ref` built, signed with one test key and checked, the second against the
-    first as its previous production APK. Each build gets its own fresh checkout. Nothing is published. The
-    taken tags are the local ones, since a disposable target has no GitHub releases to read.
-
-    Then the two refusals that keep an installed app updatable, on the second APK's real bytes: re-signed with
-    a second test key, and checked against an application ID other than the one it was built with.
-
-    A build that fails, or builds something wrong, goes to `repair(repo, record)` as a press's would
-    (`release_publish.repaired`), so step 4's hand-off runs on this unpublished path."""
-
-    halt = halt or threading.Event()
-    # A repair's pull request goes to a branch GitHub has, never a commit, a tag or a branch only this clone has.
-    branch = ref.removeprefix("origin/")
-    if repair is not None and subprocess.run(["git", "-C", str(repo), "ls-remote", "--exit-code", "--heads", "origin",
-                                              f"refs/heads/{branch}"], capture_output=True, timeout=60).returncode:
-        raise ValueError(f"`{ref}` 는 origin 의 브랜치가 아니다 — 수정 작업의 PR 이 갈 곳이 없으니 리허설할 브랜치를 골라라")
-    kit, attempt = tools(), f"rehearsal-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"   # two in one second
-    sha = pin(repo, ref)
-    cfg = settings(repo, sha)
-    first = seed(repo, sha, cfg["version_source"])
-    taken = git(repo, "tag", "--list").split()
-    folder = owned(place(repo, attempt))
-    folder.mkdir(parents=True)
-    stores = (folder / "rehearsal.jks", folder / "other.jks")
-    published, previous, rounds, refusals, needed = [], None, [], {}, None
-    try:   # from before the first key exists: every test keystore goes, whatever fails
-        key = test_key(stores[0], kit)
-        cert = certificate(key["keystore"], key["alias"], key["password"], kit)
-        for n in (1, 2):
-            release = version(published, taken, None if not published else "patch", first)
-            src = checkout(repo, sha, f"{attempt}/{n}")
-            try:
-                apk = build(src, cfg["android"], release, kit, halt)
-            except Exception as exc:   # a stop or a machine failure, too, leaves no large checkout behind
-                discard(repo, f"{attempt}/{n}")
-                if not isinstance(exc, BuildFailed):
-                    raise
-                rounds.append({"version": release, "failed": str(exc)})
-                needed = str(exc)
-                break
-            signed = sign(apk, folder / f"{n}-{release}.apk", key, kit)
-            seen = facts(signed, kit)
-            why = refused(seen, release, cfg["android"], cert, previous)
-            rounds.append({"version": release, "facts": seen, "refused": why})
-            discard(repo, f"{attempt}/{n}")   # the checkout and its build outputs are large; the signed APK stays
-            if why:
-                needed = "; ".join(built_wrong(seen, release, cfg["android"], previous)) or None
-                break
-            published.append({"tagName": f"v{release}"})
-            previous = seen
-        built = len(rounds) == 2 and not any(r["refused"] for r in rounds)
-        if built:
-            first_apk, release = rounds[0]["facts"], rounds[1]["version"]
-            second = folder / f"2-{release}.apk"
-            stranger = facts(sign(second, folder / "2-other-key.apk", test_key(stores[1], kit), kit), kit)
-            moved = {**cfg["android"], "application_id": cfg["android"]["application_id"] + ".moved"}
-            refusals = {"certificate": refused(stranger, release, cfg["android"], cert, first_apk),
-                        "application_id": refused(facts(second, kit), release, moved, cert,
-                                                  {**first_apk, "package": moved["application_id"]})}
-    finally:
-        left = []
-        for store in stores:   # a test key never outlives the rehearsal; one locked file never spares the other
-            try:
-                store.unlink(missing_ok=True)
-            except OSError as exc:
-                left.append(f"{store}: {exc}")
-        if left:
-            raise OSError(f"시험 키를 지우지 못했다 — 직접 지워라: {'; '.join(left)}")
-    caught = bool(refusals) and all(len([w for w in why if marker in w]) == want for why, marker, want in (
-        (refusals.get("certificate", []), "서명 인증서", 2), (refusals.get("application_id", []), "앱 ID", 2)))
-    out = {"sha": sha, "seed": first, "cert": cert, "folder": str(folder), "rounds": rounds,
-           "refusals": refusals, "ok": built and caught}
-    if needed:
-        record = {"id": attempt, "remote": None, "tag": f"v{rounds[-1]['version']}", "version": rounds[-1]["version"],
-                  "sha": sha, "base": branch, "repair": {"needed": needed}}
-        out["repair"] = handed(repo, record, repair, halt)
-    return out
-
-
 def handed(repo: Path, record: dict, repair, halt: threading.Event) -> dict:
     """`record["repair"]` with what `repair(repo, record)` did: the task it started, or why none runs. The
     attempt has ended either way, so a refusal is recorded, never raised. A task whose spec was saved but whose
@@ -791,6 +708,7 @@ def main(argv: list[str]) -> int:
                          ensure_ascii=False, indent=2))
         return 0
     ref = argv[argv.index("--ref") + 1] if "--ref" in argv else "main"
+    from .release_rehearsal import rehearse   # it builds on this module
     result = rehearse(Path(argv[1]).resolve(), ref)
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     return 0 if result["ok"] else 1
