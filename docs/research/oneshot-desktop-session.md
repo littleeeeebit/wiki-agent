@@ -252,7 +252,10 @@ does not try to prove from names that the processes ended. It accepts one of
 three proofs:
 
 - the look's record shows its proof completed before the crash;
-- the PC restarted after the record was written, read from the boot time;
+- the PC restarted after the record was written. The record holds the uptime,
+  `GetTickCount64`, read just before the launch. An uptime now lower than that
+  proves a new boot. Wall-clock times prove nothing here, since the clock can
+  be set back and corrected within one boot; 9d2 tests that case;
 - the original logon session ended. The record holds that session's logon id
   (its LUID) and logon time. The proof is that no logon session with that id
   and time exists any more. A newer logon, which can run beside the old one
