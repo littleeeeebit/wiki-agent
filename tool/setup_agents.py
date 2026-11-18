@@ -346,8 +346,18 @@ def skill_links(home=None):
     from apply import _HOME
 
     folder = Path(home or _HOME or Path.home()) / ".claude/skills"
+    for _ in range(3):
+        try:
+            return _skill_links(folder)
+        except FileNotFoundError:   # a move or its rollback changed the folder while it was read: read it again
+            continue
+    return _skill_links(folder)   # still changing: the error makes the plan a refusal, and Register checks again
+
+
+def _skill_links(folder):
     found = []
-    for link in sorted(folder.iterdir()) if folder.is_dir() else []:
+    entries = sorted(folder.iterdir()) if folder.is_dir() else []
+    for link in entries:
         if link.name == ".wiki-relink" or not (link.is_symlink() or is_junction(link)):
             continue
         target = _pointed(link)
@@ -360,11 +370,10 @@ def skill_links(home=None):
         found.append((link, target, mine if mine.is_dir() else None))
     for link, keeps in sorted(kept_links(folder).items()):
         if os.path.lexists(link):
+            if link not in entries:   # put back after the scan above: read again, so it is judged as live
+                raise FileNotFoundError(link)
             continue
-        try:
-            target = _pointed(keeps[-1])
-        except FileNotFoundError:   # a move finished meanwhile and cleared it: its link stands at its place
-            continue
+        target = _pointed(keeps[-1])   # gone meanwhile: the caller reads the folder again
         hub = target.parent.parent
         ours = target.parent.name == "skills" and (hub / "tool/hook.py").is_file() \
             and os.path.normcase(hub.resolve()) != os.path.normcase(WIKI.resolve())

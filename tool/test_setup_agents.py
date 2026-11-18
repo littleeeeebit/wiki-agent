@@ -273,6 +273,42 @@ def test_a_skills_folder_that_is_a_link_keeps_its_own_recovery(tmp_path, monkeyp
     assert setup_agents.kept_links(claude / "skills") == {}, "방금 치운 시도 폴더는 건너뛴다"
 
 
+def test_a_kept_link_put_back_while_the_plan_reads_is_read_again(tmp_path, monkeypatch):
+    """A rollback that puts the kept link back mid-read never makes the plan say nothing moves; a folder that
+    keeps changing makes the plan fail, so Register checks again."""
+
+    import pytest
+
+    import setup_agents
+
+    home, old_hub = tmp_path / "home", tmp_path / "old-hub"
+    (old_hub / "tool").mkdir(parents=True)
+    (old_hub / "tool/hook.py").write_text("", encoding="utf-8")
+    skill = old_hub / "skills/no-such-skill-here"
+    skill.mkdir(parents=True)
+    skills = home / ".claude/skills"
+    attempt = skills / ".wiki-relink" / "cut"
+    attempt.mkdir(parents=True)
+    kept, link = attempt / skill.name, skills / skill.name
+    _dir_link(skill, kept)
+    real = setup_agents._pointed
+
+    def rolled_back(path):
+        if Path(path) == kept and os.path.lexists(kept):
+            os.rename(kept, link)   # a concurrent rollback puts it back between the scan and this read
+            raise FileNotFoundError(path)
+        return real(path)
+
+    monkeypatch.setattr(setup_agents, "_pointed", rolled_back)
+    found = setup_agents.skill_links(home)
+    assert [(f[0], f[1].resolve()) for f in found] == [(link, skill.resolve())], "다시 읽어 살아 있는 링크로 본다"
+
+    os.rename(link, kept)
+    monkeypatch.setattr(setup_agents, "_pointed", lambda path: (_ for _ in ()).throw(FileNotFoundError(path)))
+    with pytest.raises(FileNotFoundError):
+        setup_agents.skill_links(home)
+
+
 def test_a_server_going_down_while_a_file_is_staged_installs_nothing(tmp_path):
     import pytest
 
