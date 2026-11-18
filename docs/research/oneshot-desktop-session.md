@@ -150,11 +150,12 @@ any job and outside the record. 9d2 changes it:
   dropped.
 
 `owned_desktop()` binds the calling thread with `SetThreadDesktop`, which fails
-on a thread that already has windows or hooks, and it restores and closes on
-exit. It yields only the name. 9d2 has it yield the handle too, so cleanup can
-enumerate the desktop's windows before the handle closes. 9d2 enters it on a
-dedicated thread that creates no windows, and it treats a failed bind, restore
-or close as a held look.
+on a thread that already has windows or hooks, and it yields only the name.
+The look does not use it. It creates the desktop and keeps its handle without
+binding any server thread, because its processes reach the desktop through
+`STARTUPINFO`'s desktop name and the driver runs on it as a process of its
+own. Cleanup enumerates the desktop's windows through that handle before it
+closes, and a failed enumeration or close holds the look.
 
 ### Starting the app
 

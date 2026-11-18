@@ -285,17 +285,23 @@ class Job:
 
         return sum(1 for handle in self.stray if self.k.WaitForSingleObject(handle, 0) != 0)
 
-    def close(self) -> None:
-        """Close every handle the job holds. Closing the job's last handle kills what is still in it."""
+    def outstanding(self) -> int:
+        """How many handles the job still holds."""
 
-        for handle in getattr(self, "stray", []):
-            self.k.CloseHandle(handle)
-        self.stray = []
+        return (len(getattr(self, "stray", [])) + sum(1 for entry in getattr(self, "joined", []) if entry["handle"])
+                + sum(1 for name in ("port", "job") if getattr(self, name, None)))
+
+    def close(self) -> None:
+        """Close every handle the job holds. A handle Windows will not close stays held, so a later call retries
+        it and `outstanding()` counts it. Closing the job's last handle kills what is still in it."""
+
+        for handle in list(getattr(self, "stray", [])):
+            if self.k.CloseHandle(handle):
+                self.stray.remove(handle)
         for entry in getattr(self, "joined", []):
-            if entry["handle"]:
-                self.k.CloseHandle(entry["handle"])
+            if entry["handle"] and self.k.CloseHandle(entry["handle"]):
                 entry["handle"] = None
         for name in ("port", "job"):
-            if getattr(self, name, None):
-                self.k.CloseHandle(getattr(self, name))
+            handle = getattr(self, name, None)
+            if handle and self.k.CloseHandle(handle):
                 setattr(self, name, None)

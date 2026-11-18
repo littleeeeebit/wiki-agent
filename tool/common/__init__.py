@@ -23,6 +23,25 @@ def is_junction(path) -> bool:
         return False
 
 
+def read_record(file: Path) -> dict | None:
+    """A JSON record, or `None` when its file does not exist."""
+    import json
+
+    try:
+        return json.loads(Path(file).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+
+
+def write_record(file: Path, record: dict) -> None:
+    """Write a JSON record through a sibling partial file and a replace, so a crash never leaves half of it."""
+    import json
+
+    partial = Path(file).with_suffix(".part")
+    partial.write_text(json.dumps(record, indent=1), encoding="utf-8")
+    os.replace(partial, file)
+
+
 def layout(cwd: Path) -> tuple | None:
     """`(checkout, git dir, common dir, main clone)` read off git's own files, without running git.
 
