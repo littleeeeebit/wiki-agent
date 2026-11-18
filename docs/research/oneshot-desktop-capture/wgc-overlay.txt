@@ -1,0 +1,5 @@
+desktop=wiki-look-c813dd799f4249e4b19ad4e0229370be
+receiving_input=False
+supported=True
+hwnd=12587626
+capture=item '' 0x0; empty item

@@ -1,0 +1,28 @@
+{
+ "state": "proven",
+ "proof": {
+  "clean": true,
+  "reasons": [],
+  "uptime": 124848984
+ },
+ "jobs": {
+  "viewer": {
+   "clean": true,
+   "joined": 2,
+   "total": 2,
+   "active": 0
+  },
+  "overlay": {
+   "clean": true,
+   "joined": 2,
+   "total": 2,
+   "active": 0
+  },
+  "layers": {
+   "clean": true,
+   "joined": 2,
+   "total": 2,
+   "active": 0
+  }
+ }
+}

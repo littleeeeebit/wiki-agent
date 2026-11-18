@@ -351,16 +351,57 @@ window on the owner's desktop. The experiment's one sample agreed: the owner's
 desktop listed no fixture window. Measured: in the later Edge attempt, the
 one GDI copy of the screen from the owned desktop failed.
 
-Not measured, and separate questions:
+9d2b3 measured the two separate questions on an owned desktop, each with a
+tkinter viewer and a tkinter overlay started through the look's session. The
+probes, the runner, their output and each run's cleanup receipt
+(`cleanup-wgc.json`, `cleanup-layers.json`: the look proven, every job's count
+matching the members followed) are in `oneshot-desktop-capture/`. Each probe
+is told the look's desktop and its fixtures' jobs. Before it enumerates any
+window, it refuses unless its own desktop has that `wiki-look-` name and is
+not receiving input; it reads a window's title only once the window's process
+is in a fixture's job. Started directly on the owner's desktop, which reads as
+receiving input, both probes refused before looking for a window. Each probe's
+`--check` runs the guard on modeled desktops, a custom-named input desktop
+among them. Before starting anything, the runner reserves the destination for
+its mode with a lock file created exclusively, and refuses a destination that
+another run holds or that already holds that mode's outputs, so one run's
+picture cannot sit beside another's refusal (`run.py --check` models two
+runs).
 
-- capture: Windows Graphics Capture's window API on a fixture viewer window on
-  the same owned desktop;
-- overlay: an overlay window over that viewer on the same desktop. Both
-  windows' frame bounds and their z-order are geometry evidence only: a
-  layered window at zero opacity can sit exactly over the viewer and show
-  nothing. A check that the overlay shows its content needs a composed picture
-  of the overlay over the viewer. If 9d2 finds no way to take one on the owned
-  desktop, that check stays open for the round below.
+- Capture. For the viewer and the overlay on the owned desktop, Windows
+  Graphics Capture's window API returned an empty item. The probe (`wgc.cs`)
+  ran as a process on that desktop. `GraphicsCaptureSession.IsSupported()`
+  returned true, and `IGraphicsCaptureItemInterop.CreateForWindow` returned an
+  item for each window. Each item had an empty display name and a size of
+  0×0, and the probe stopped at that check, before making a frame pool. The
+  same probe on a window on the owner's desktop was not run: it would put a
+  window on the owner's screen. So the measurement records the result for
+  these two windows on the owned desktop, not its cause.
+- Overlay. Everything except a picture from Windows' own composition could be
+  read on the owned desktop (`layers.py`):
+  - `PrintWindow` with `PW_RENDERFULLCONTENT` drew both windows.
+  - The overlay's `GetLayeredWindowAttributes` read a constant alpha of 179
+    with `LWA_ALPHA`. Its extended style read layered, topmost and tool
+    window.
+  - Walking the z-order up from the viewer found the overlay above it.
+  - Both frames came from `DWMWA_EXTENDED_FRAME_BOUNDS`.
+
+  The probe saves a composed picture only when every input was proven: both
+  shots read back in full, both frames, the overlay above the viewer, and a
+  constant alpha with no color key. Otherwise it records a refusal. Here all
+  held. `composed.png` blends the overlay's shot over the viewer's at the
+  frames' offset with that alpha. It shows the overlay's text over the viewer's, which
+  is the composed picture the check needs. The picture is a reconstruction,
+  not Windows' composition. It is only as true as the window's reported alpha,
+  so a window at zero alpha correctly shows nothing. An overlay drawn with
+  per-pixel alpha (`UpdateLayeredWindow`) has no constant alpha to read and
+  was not measured. A capture of the whole monitor was not tried: from any
+  desktop it would read the owner's screen.
+
+So on the owned desktop, a check that the overlay shows its content can use the
+reconstruction, for a constant-alpha overlay, with its alpha, frames and
+z-order as its inputs. A check that needs Windows' own composed picture, or an
+overlay with per-pixel alpha, stays open for the round below.
 
 The screen translator's combined scenario needs both. Each one the owned
 desktop cannot show needs its evidence from elsewhere. Plan 9 requires each
@@ -417,14 +458,18 @@ Two findings came from earlier attempts and shaped the driver:
   DPI-unaware window at any scale.
 - The data-folder variables listed above, and an owner's instance running
   beside the look.
-- Windows Graphics Capture, and an overlay, on the owned desktop.
+- Why Windows Graphics Capture gives an empty item on the owned desktop, and
+  whether it captures the same window on the owner's desktop.
+- An overlay with per-pixel alpha, and a picture from Windows' own composition
+  on the owned desktop.
 
 The saved files do not record the runtime versions. Edge 157 and Tk 8.6 were
 read from this PC in the session.
 
 ## Next
 
-9d2a built the launcher and 9d2b1 the session. 9d2b2 adds the driver and the
-Edge run above. 9d2b3 measures two things on the owned desktop: window capture
-and an overlay over a fixture viewer, so 9e starts from answers. The other
-items under "Not measured" stay open for 9e, which runs the stack S2 picks.
+9d2a built the launcher and 9d2b1 the session. 9d2b2 added the driver and the
+Edge run above. 9d2b3 measured window capture and an overlay over a fixture
+viewer, as recorded under "What the owned desktop can and cannot show". The
+other items under "Not measured" stay open for 9e, which runs the stack S2
+picks.

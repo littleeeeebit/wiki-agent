@@ -1,0 +1,35 @@
+{
+ "refusals": [],
+ "desktop": "wiki-look-5b573b8374b44f0dbe1007a1c039aee0",
+ "receiving_input": false,
+ "hwnds": [
+  24581586,
+  36705782
+ ],
+ "overlay_layered": {
+  "read": true,
+  "alpha": 179,
+  "flags": 2,
+  "exstyle": "0x80088"
+ },
+ "overlay_above_viewer": true,
+ "frames": {
+  "viewer": [
+   57,
+   50,
+   402,
+   332
+  ],
+  "overlay": [
+   100,
+   150,
+   200,
+   80
+  ]
+ },
+ "drawn": {
+  "viewer": true,
+  "overlay": true
+ },
+ "composed": "composed.png, from the two PrintWindow shots and the overlay's constant alpha"
+}
