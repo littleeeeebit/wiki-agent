@@ -963,7 +963,10 @@ def revise(repo: Path, spec: dict, change: dict) -> None:
     if not gate:
         raise ValueError("저장소의 gate_cmd 를 먼저 연결해라")
     # Every revision's first item was its gate; one a changed `gate_cmd` replaced is still no item of its own (#310).
-    retired = frozenset(r["done"][0] for r in [spec, *(spec.get("revisions") or [])] if r.get("done"))
+    # A oneshot rewrites `done` outside a revision (its screens, `oneshot_front`), so there only the gates a
+    # revision put in (`revision_gates`) retire: read off position, its first screen went with them (#378).
+    retired = frozenset([*spec.get("revision_gates", []), *([] if spec.get("oneshot") else (
+        r["done"][0] for r in [spec, *(spec.get("revisions") or [])] if r.get("done")))])
     made = fields(repo, {**spec, **{k: change[k] for k in (
         "goal", "out", "done", "review", "prerequisite_review") if k in change}}, gate, retired=retired)
     spec.setdefault("revisions", []).append({"rev": spec["rev"], "ts": time.time(), "reason": reason.strip(),
@@ -971,7 +974,7 @@ def revise(repo: Path, spec: dict, change: dict) -> None:
     for round_ in spec.get("rounds") or []:
         round_["stale"] = True
         round_["stale_reason"] = "Specification revised"
-    spec.update(made, rev=spec["rev"] + 1, report=None, summary=None, writing=None, gate=None, validation=None, checks=[], fault=None,
+    spec.update(made, revision_gates=[*dict.fromkeys([*spec.get("revision_gates", []), gate])], rev=spec["rev"] + 1, report=None, summary=None, writing=None, gate=None, validation=None, checks=[], fault=None,
                 merge_request=None, maintenance=None, merge_progress=None)
     if spec.get("worktree") and not re.fullmatch(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+", spec["state"]):
         moved(spec, "작업 중", stopped=None)

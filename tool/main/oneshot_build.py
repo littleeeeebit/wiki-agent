@@ -396,10 +396,12 @@ def snapshot(path: Path, names: list[str]) -> dict[str, bytes | None]:
 # -- The two checks --------------------------------------------------------------------
 
 def owns(spec: dict) -> bool:
-    """Every turn in a oneshot spec's worktree: none of them may reach the general path, which
-    publishes a pull request, before the oneshot itself publishes."""
+    """Every turn in a oneshot spec's worktree until the oneshot publishes: none of them may reach the
+    general path, which publishes a pull request, before that. After it the task is an ordinary one under
+    review, and a repair turn's `spec-update` must reach `specs.revise`: dropped here, the person's scope
+    decision never reached the reviewer, which refused the same finding against revision 1 every round."""
 
-    return bool(spec.get("oneshot"))
+    return bool(spec.get("oneshot")) and spec["oneshot"].get("stage") != "done"
 
 
 def checked(path: Path, run, spec: dict, final: str):
