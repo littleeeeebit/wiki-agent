@@ -26,7 +26,7 @@ from common import is_junction, paths
 from . import oneshot_android, specs
 
 WORK = paths.RAW / "release-work"   # release-owned checkouts: server state, outside every task worktree home
-SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")   # SemVer's core: no leading zeros
+SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", re.ASCII)   # SemVer's core: ASCII, no leading zeros
 BUMPS = ("patch", "minor", "major")
 BUILD_SECONDS, QUIET_SECONDS = 3600, 1800   # a Rust and Gradle build is long and can be silent for minutes
 ANDROID = ("build", "artifact", "application_id", "abi")
@@ -87,7 +87,7 @@ def seed(repo: Path, sha: str, source: str) -> str:
 # -- Which version a press publishes --------------------------------------------------------------
 
 def parsed(tag: str) -> tuple[int, int, int] | None:
-    found = re.fullmatch(r"v" + SEMVER.pattern, tag)
+    found = re.fullmatch(r"v" + SEMVER.pattern, tag, re.ASCII)
     return tuple(map(int, found.groups())) if found else None
 
 
@@ -145,11 +145,14 @@ def pin(repo: Path, ref: str = "origin/main") -> str:
     if not ref.startswith("origin/"):
         return git(repo, "rev-parse", "--verify", f"{ref}^{{commit}}").strip()
     own = f"refs/release-pin/{secrets.token_hex(8)}"
-    git(repo, "fetch", "--no-tags", "origin", f"+refs/heads/{ref.removeprefix('origin/')}:{own}", timeout=300)
-    try:
+    try:   # from before the fetch: one that wrote the ref and then timed out leaves nothing either
+        git(repo, "fetch", "--no-tags", "origin", f"+refs/heads/{ref.removeprefix('origin/')}:{own}", timeout=300)
         return git(repo, "rev-parse", "--verify", f"{own}^{{commit}}").strip()
     finally:
-        git(repo, "update-ref", "-d", own)
+        try:
+            git(repo, "update-ref", "-d", own)
+        except (ValueError, subprocess.SubprocessError):
+            pass   # the fetch's own error, if any, is the one that matters; the name is never reused
 
 
 def place(repo: Path, attempt: str) -> Path:
@@ -293,7 +296,7 @@ def sign(apk: Path, out: Path, key: dict, kit: dict) -> Path:
     their command line and never the build."""
 
     aligned = out.with_suffix(".aligned.apk")
-    run([kit["zipalign"], "-p", "-f", "4", apk, aligned])
+    run([kit["zipalign"], "-p", "-f", "4", apk, aligned], environment(kit))
     run([kit["apksigner"], "sign", "--ks", key["keystore"], "--ks-key-alias", key["alias"],
          "--ks-pass", f"env:{SECRET}", "--out", out, aligned],
         keyed(kit, key["password"]))
@@ -373,7 +376,7 @@ def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None)
     a second test key, and checked against an application ID other than the one it was built with."""
 
     halt = halt or threading.Event()
-    kit, attempt = tools(), f"rehearsal-{time.strftime('%Y%m%d-%H%M%S')}"
+    kit, attempt = tools(), f"rehearsal-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"   # two in one second
     sha = pin(repo, ref)
     cfg = settings(repo, sha)
     first = seed(repo, sha, cfg["version_source"])
@@ -407,8 +410,14 @@ def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None)
                         "application_id": refused(facts(second, kit), release, moved, cert,
                                                   {**first_apk, "package": moved["application_id"]})}
     finally:
-        for store in stores:   # a test key never outlives the rehearsal
-            store.unlink(missing_ok=True)
+        left = []
+        for store in stores:   # a test key never outlives the rehearsal; one locked file never spares the other
+            try:
+                store.unlink(missing_ok=True)
+            except OSError as exc:
+                left.append(f"{store}: {exc}")
+        if left:
+            raise OSError(f"시험 키를 지우지 못했다 — 직접 지워라: {'; '.join(left)}")
     caught = bool(refusals) and all(len([w for w in why if marker in w]) == want for why, marker, want in (
         (refusals.get("certificate", []), "서명 인증서", 2), (refusals.get("application_id", []), "앱 ID", 2)))
     return {"sha": sha, "seed": first, "cert": cert, "folder": str(folder), "rounds": rounds,

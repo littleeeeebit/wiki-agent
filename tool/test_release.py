@@ -109,6 +109,8 @@ def test_the_selector_never_offers_a_version_android_cannot_carry_nor_reads_a_no
     with pytest.raises(ValueError, match="versionCode"):   # the taken seed pushes the patch past 999
         release.version([], ["v0.1.999"], None, "0.1.999")
     assert release.parsed("v01.0.0") is None
+    assert release.parsed("v9٠.0.0") is None   # a Unicode digit is not SemVer
+    assert release.version([{"tagName": "v0.1.0"}, {"tagName": "v9٠.0.0"}], [], "patch", "0.1.0") == "0.1.1"
     assert release.version([{"tagName": "v0.1.0"}, {"tagName": "v09.0.0"}], [], "patch", "0.1.0") == "0.1.1"
 
 
@@ -273,3 +275,52 @@ def test_every_test_keystore_goes_even_when_a_step_after_its_creation_fails(tmp_
     with pytest.raises(ValueError, match="keytool failed"):
         release.rehearse(tmp_path / "repo")
     assert list((tmp_path / "work").rglob("*.jks")) == []
+
+    tried, unlink = [], Path.unlink
+
+    def locked(self, missing_ok=False):
+        tried.append(self.name)
+        if self.name == "rehearsal.jks":
+            raise PermissionError("locked")
+        unlink(self, missing_ok=missing_ok)
+
+    def both(store, kit):   # both keys exist when cleanup runs
+        (store.parent / "other.jks").write_bytes(b"key")
+        return key(store, kit)
+
+    monkeypatch.setattr(release, "test_key", both)
+    monkeypatch.setattr(Path, "unlink", locked)
+    with pytest.raises(OSError, match="시험 키를 지우지 못했다"):
+        release.rehearse(tmp_path / "repo")
+    assert tried == ["rehearsal.jks", "other.jks"]   # the locked first key never spares the second
+
+
+def test_a_fetch_that_times_out_after_writing_its_ref_leaves_no_ref(monkeypatch):
+    refs = set()
+
+    def git(repo, *args, timeout=120):
+        if args[0] == "fetch":
+            refs.add(args[-1].split(":")[1])
+            raise subprocess.TimeoutExpired("git fetch", timeout)
+        if args[:2] == ("update-ref", "-d"):
+            refs.discard(args[2])
+        return ""
+
+    monkeypatch.setattr(release, "git", git)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        release.pin(Path("repo"))
+    assert refs == set()
+
+
+def test_only_the_key_tool_gets_the_password_when_signing(tmp_path, monkeypatch):
+    monkeypatch.setenv(release.SECRET, "inherited")
+    calls = []
+    monkeypatch.setattr(release, "run", lambda argv, env=None, timeout=300: calls.append((argv, env)) or "")
+    kit = {"java": tmp_path, "sdk": tmp_path, "ndk": tmp_path, "zipalign": "zipalign", "apksigner": "apksigner"}
+
+    release.sign(tmp_path / "in.apk", tmp_path / "out.apk", {"keystore": "k", "alias": "a", "password": "p"}, kit)
+
+    (align, align_env), (signer, signer_env) = calls
+    assert align[0] == "zipalign" and align_env is not None and release.SECRET not in align_env
+    assert signer[0] == "apksigner" and signer_env[release.SECRET] == "p"
