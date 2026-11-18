@@ -163,8 +163,10 @@ tag name, the tag's commit and the asset set must all equal the attempt's.
 GitHub has no conditional publish, though. A maintainer who changes the draft
 or moves the tag between that read and the publish request still wins. The
 read after publishing then records the attempt as failed and leaves the release
-as it is. A repository that needs this closed protects its `v*` tags with a
-tag ruleset.
+as it is. A tag ruleset on `v*` closes the tag side of this when it is
+configured correctly. The draft side stays open to anyone who can edit the
+repository's releases. Closing it means limiting who can edit them. Immutable
+releases protect a release only once it is published.
 
 The server never deletes a remote tag or release. An attempt that ends without
 publishing leaves its draft and its tag where they are, and the ledger records

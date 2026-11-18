@@ -214,10 +214,11 @@ def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, 
 # -- The restart table ----------------------------------------------------------------------------
 
 def _found(repo: str, record: dict) -> dict | None:
-    """This attempt's own draft, by its tag and the attempt ID in its body."""
+    """This attempt's own draft, by the attempt ID in its body, whatever tag it carries now: a retagged one is
+    found, and then refused, rather than a second draft made beside it."""
 
     marker = f"<!-- {MARK} {record['id']} -->"
-    return next((r for r in gh.releases(repo) if r.get("tag_name") == record["tag"] and marker in (r.get("body") or "")), None)
+    return next((r for r in gh.releases(repo) if marker in (r.get("body") or "")), None)
 
 
 def _complete(held: dict, manifest: list[dict]) -> bool:
@@ -228,15 +229,20 @@ def _complete(held: dict, manifest: list[dict]) -> bool:
         assets[m["name"]].get("state") == "uploaded" and gh.digest(assets[m["name"]]) == m["sha256"] for m in manifest)
 
 
-def _uploaded(repo: str, held: dict, item: dict) -> bool:
+def _uploaded(repo: str, held: dict, item: dict, tag: str) -> bool:
     """True once this draft holds `item` whole, with the manifest's digest. False when the release went public
-    meanwhile: nothing more is written to it. A `starter` asset, an upload GitHub cut off, is the only one
-    deleted. The read after the last permitted upload decides, so a last upload that landed counts."""
+    meanwhile: nothing more is written to it. Every write follows a fresh read showing a draft still named
+    `tag`. A `starter` asset, an upload GitHub cut off, is the only one deleted. The read after the last
+    permitted upload decides, so a last upload that landed counts. When none did and the last failure was
+    transient, that failure is raised, which leaves the attempt pending."""
 
+    failed = None
     for n in range(UPLOAD_TRIES + 1):
         now = gh.release(repo, held["id"])
         if not now.get("draft"):
             return False
+        if now.get("tag_name") != tag:
+            raise Stopped(f"초안의 태그가 {now.get('tag_name')!r} 로 바뀌었다 — {tag} 가 아니어서 건드리지 않는다")
         asset = next((a for a in now.get("assets") or [] if a["name"] == item["name"]), None)
         if asset is not None:
             if asset.get("state") == "uploaded":
@@ -247,6 +253,7 @@ def _uploaded(repo: str, held: dict, item: dict) -> bool:
                 raise Stopped(f"{item['name']} 이 알 수 없는 상태 {asset.get('state')!r} 다 — 건드리지 않는다")
         if n == UPLOAD_TRIES:
             break
+        _present(item)   # the local copy is needed only now, to upload
         if asset is not None:
             gh.delete_asset(repo, asset["id"])
         try:
@@ -254,19 +261,21 @@ def _uploaded(repo: str, held: dict, item: dict) -> bool:
         except gh.Failed as exc:
             if not exc.transient and exc.status != 422:   # 422: it is there after all; the next read decides
                 raise
+            failed = exc if exc.transient else None
+    if failed is not None:
+        raise failed
     raise Stopped(f"{item['name']} 을 {UPLOAD_TRIES} 번 올렸는데 끝나지 않았다")
 
 
-def _present(manifest: list[dict]) -> None:
-    """The exact files the manifest names, still in the attempt's folder: needed only to upload."""
+def _present(item: dict) -> None:
+    """The exact file the manifest names, still in the attempt's folder."""
 
-    for item in manifest:
-        try:
-            same = android_owned.sha256(Path(item["path"])) == item["sha256"]
-        except OSError:
-            same = False
-        if not same:
-            raise Stopped(f"{item['name']} 의 고정한 사본이 없거나 바뀌었다")
+    try:
+        same = android_owned.sha256(Path(item["path"])) == item["sha256"]
+    except OSError:
+        same = False
+    if not same:
+        raise Stopped(f"{item['name']} 의 고정한 사본이 없거나 바뀌었다")
 
 
 def _mismatch(repo: str, record: dict, held: dict) -> str | None:
@@ -310,9 +319,12 @@ def _finish(name: str, attempt: str) -> dict:
             raise Stopped("빌드가 끝나기 전에 멈췄다 — 다시 누르면 새로 빌드한다")
         # What GitHub already holds decides first: a public release is only read, never written or retagged.
         held = gh.release(repo, record["release_id"]) if record.get("release_id") else _found(repo, record)
-        if held is not None and not held.get("draft"):
-            return _settled(record, repo, held)
-        _present(manifest)
+        if held is not None:   # known: its ID is recorded before anything else is decided about it
+            record = update(name, attempt, release_id=held["id"], release_url=held.get("html_url"))
+            if not held.get("draft"):
+                return _settled(record, repo, held)
+            if held.get("tag_name") != record["tag"]:
+                raise Stopped(f"초안의 태그가 {held.get('tag_name')!r} 로 바뀌었다 — {record['tag']} 가 아니어서 건드리지 않는다")
         if (at := gh.tag(repo, record["tag"])) is None:
             gh.push_tag(repo, record["tag"], record["sha"])
             at = gh.tag(repo, record["tag"])
@@ -328,7 +340,7 @@ def _finish(name: str, attempt: str) -> dict:
                     raise
         record = update(name, attempt, release_id=held["id"], release_url=held.get("html_url"))
         for item in manifest:
-            if not _uploaded(repo, held, item):   # someone made it public meanwhile
+            if not _uploaded(repo, held, item, record["tag"]):   # someone made it public meanwhile
                 return _settled(record, repo, gh.release(repo, held["id"]))
         # The last read before publishing. GitHub has no conditional publish, so a writer racing this read and
         # the PATCH can still change the draft or move the tag; `_settled` then records it failed and leaves it.

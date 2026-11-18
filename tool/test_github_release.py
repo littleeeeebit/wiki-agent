@@ -168,6 +168,19 @@ def test_api_names_the_repository_parses_the_answer_and_carries_the_status(monke
     assert all(a[2:4] == ["--hostname", "github.com"] for a in seen)   # never the CLI's default or `GH_HOST`
 
 
+def test_a_download_names_its_host_with_its_repository(monkeypatch, tmp_path):
+    seen = []
+
+    def sh(args, cwd, timeout=60):
+        seen.append(args)
+        (tmp_path / "a.apk").write_text("x")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(gh.specs, "sh", sh)
+    gh.download("o/r", "v1.0.0", "a.apk", tmp_path)
+    assert seen[0][seen[0].index("--repo") + 1] == "github.com/o/r"
+
+
 def test_a_timed_out_call_is_a_transient_failure(monkeypatch, tmp_path):
     def slow(args, cwd, timeout=60):
         raise subprocess.TimeoutExpired(args, timeout)

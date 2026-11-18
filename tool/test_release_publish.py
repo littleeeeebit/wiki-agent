@@ -237,7 +237,8 @@ def test_a_draft_retagged_or_a_tag_moved_during_the_upload_is_never_published(pr
 
     monkeypatch.setattr(gh, "upload", meddled)
     done = rp.publish(repo, "0.1.0", None)
-    assert done["state"] == "failed" and "공개하지 않는다" in done["reason"] and fake.rels[-1]["draft"]
+    refusal = "바뀌었다" if change == "retagged" else "공개하지 않는다"   # a retag is caught on the read after upload
+    assert done["state"] == "failed" and refusal in done["reason"] and fake.rels[-1]["draft"]
 
 
 def test_a_draft_someone_published_during_the_upload_gets_no_more_writes(press, monkeypatch):
@@ -300,6 +301,91 @@ def test_one_remote_that_fails_never_stops_the_sweep(press, monkeypatch):
                         if name.endswith("/a") else real(name, attempt))
     done = {d["remote"]: d for d in rp.recover()}
     assert "boom" in done["github.com/o/a"]["last_error"] and done["github.com/o/b"]["state"] == "failed"
+
+
+def _draft_left(fake, monkeypatch, repo, assets=()):
+    """An attempt whose server stopped right after its draft was made, before the ledger had its ID."""
+
+    create = gh.create
+
+    def made_then_stopped(*args, **kwargs):
+        create(*args, **kwargs)
+        for name, data, state in assets:
+            fake._store(fake.rels[-1], name, data, state)
+        raise SystemExit("server stopped")
+
+    monkeypatch.setattr(gh, "create", made_then_stopped)
+    with pytest.raises(SystemExit):
+        rp.publish(repo, "0.1.0", None)
+    monkeypatch.setattr(gh, "create", create)
+    return fake.rels[-1]
+
+
+@pytest.mark.parametrize("state", ["public", "draft without its local copy"])
+def test_a_draft_found_by_its_marker_has_its_id_recorded_first(press, monkeypatch, state):
+    fake, repo, _ = press
+    draft = _draft_left(fake, monkeypatch, repo)
+    if state == "public":
+        draft["draft"] = False
+    else:
+        Path(rp.pending("github.com/o/r")["manifest"][0]["path"]).unlink()
+    done = rp.recover()[0]
+    assert done["release_id"] == draft["id"] and done["state"] == "failed"
+
+
+def test_a_draft_already_holding_its_files_publishes_without_the_local_copy(press, monkeypatch):
+    fake, repo, _ = press
+    signed, sign = [], release.sign   # the APK the press signed, which the draft already holds
+    monkeypatch.setattr(release, "sign", lambda *a: signed.append(sign(*a)) or signed[-1])
+    draft = _draft_left(fake, monkeypatch, repo)
+    fake._store(draft, "r-0.1.0-arm64-v8a.apk", Path(signed[0]).read_bytes(), "uploaded")
+    Path(signed[0]).unlink()
+
+    assert [d["state"] for d in rp.recover()] == ["published"]
+    assert not [c for c in fake.calls if c[1].endswith("/assets") and c[0] == "POST"]
+
+
+def test_a_recorded_draft_retagged_before_recovery_is_never_written(press, monkeypatch):
+    fake, repo, _ = press
+    draft = _draft_left(fake, monkeypatch, repo, [("r-0.1.0-arm64-v8a.apk", b"half", "starter")])
+    draft["tag_name"] = "v9.0.0"
+    before = len(fake.calls)
+    done = rp.recover()[0]
+    assert done["state"] == "failed" and "바뀌었다" in done["reason"]
+    assert [c for c in fake.calls[before:] if c[0] != "GET"] == [] and draft["assets"][0]["state"] == "starter"
+
+
+def test_an_asset_in_a_state_it_does_not_know_is_left_alone(press, monkeypatch):
+    fake, repo, _ = press
+    draft = _draft_left(fake, monkeypatch, repo, [("r-0.1.0-arm64-v8a.apk", b"?", "quarantined")])
+    done = rp.recover()[0]
+    assert done["state"] == "failed" and "알 수 없는 상태" in done["reason"] and len(draft["assets"]) == 1
+
+
+def test_uploads_that_all_fail_transiently_leave_the_attempt_pending(press):
+    fake, repo, _ = press
+    fake.fail["POST releases/{id}/assets"] = [502] * rp.UPLOAD_TRIES
+    with pytest.raises(gh.Failed):
+        rp.publish(repo, "0.1.0", None)
+    still = rp.pending("github.com/o/r")
+    assert still and Path(still["manifest"][0]["path"]).is_file()
+    assert [d["state"] for d in rp.recover()] == ["published"]
+
+
+def test_a_ledger_that_cannot_be_written_on_disk_raises_unrecorded(press, monkeypatch):
+    fake, repo, _ = press
+    replaced, failed = release.replaced, []
+
+    def full(target, text):
+        if '"release_id"' in text and not failed:
+            failed.append(True)
+            raise OSError("No space left on device")
+        return replaced(target, text)
+
+    monkeypatch.setattr(release, "replaced", full)
+    with pytest.raises(rp.Unrecorded, match="No space"):
+        rp.publish(repo, "0.1.0", None)
+    assert rp.pending("github.com/o/r") and [d["state"] for d in rp.recover()] == ["published"]
 
 
 def test_the_last_permitted_upload_that_lands_counts(press):

@@ -419,20 +419,23 @@ def test_a_release_whose_reply_was_lost_gets_the_apk_again_and_a_failed_one_is_s
     assert "HTTP 422" in o()["apk"]["error"] and not Path(tree_copy["path"]).exists() and not github.rels
 
 
-@pytest.mark.parametrize("trouble", ["502", "lost"])
+@pytest.mark.parametrize("trouble", ["502", "lost", "last lost"])
 def test_a_transient_upload_failure_is_tried_again_and_a_landed_one_is_not_sent_twice(android, github, trouble):
     tree, _ = android
     readme(tree)
     if trouble == "502":
         github.fail["POST releases/{id}/assets"] = [502]
-    else:
+    elif trouble == "lost":
+        github.lose.add("POST releases/{id}/assets")
+    else:   # two 502s, then the last permitted upload lands and only its answer is lost
+        github.fail["POST releases/{id}/assets"] = [502] * (oneshot_pr.TRIES - 1)
         github.lose.add("POST releases/{id}/assets")
     with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         check(tree, answer(report()))()
     rel, digests = held(github, o()["final_head"])
     uploads = [c for c in github.calls if c[0] == "POST" and c[1].endswith("/assets")]
     assert digests == [o()["apk"]["sha256"]] and "error" not in o()["apk"]
-    assert len(uploads) == (2 if trouble == "502" else 1)
+    assert len(uploads) == {"502": 2, "lost": 1, "last lost": oneshot_pr.TRIES}[trouble]
 
 
 def test_an_android_app_without_its_apk_after_the_final_gate_is_sent_back(android):

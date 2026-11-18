@@ -236,19 +236,23 @@ def released(spec: dict) -> dict:
                     if held := found():   # it was made; only the answer was lost
                         break
                     raise
-        for n in range(TRIES):
+        failed = None
+        for n in range(TRIES + 1):   # the read after the last try decides: a last upload that landed counts
             mine = next((a for a in github_release.release(repo, held["id"]).get("assets") or []
                          if a["name"] == frozen["name"]), None)
             if n and mine and mine.get("state") == "uploaded" and github_release.digest(mine) == frozen["sha256"]:
                 break   # the try before landed and only its answer was lost
+            if n == TRIES:
+                raise failed
             if mine:   # S8's own policy: the asset of that name is replaced
                 github_release.delete_asset(repo, mine["id"])
             try:
                 github_release.upload(repo, held["id"], file, frozen["name"])
                 break
             except github_release.Failed as exc:
-                if not exc.transient or n == TRIES - 1:
+                if not exc.transient:
                     raise
+                failed = exc
         return {"head": head, "name": frozen["name"], "sha256": frozen["sha256"], "url": held["html_url"], "tag": tag}
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         return {"head": head, "error": str(exc) or type(exc).__name__}
