@@ -17,6 +17,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import tomllib
@@ -26,7 +27,7 @@ from pathlib import Path
 
 import android_owned
 import verify
-from common import errorlog, is_junction, paths
+from common import errorlog, host, is_junction, paths
 
 from . import oneshot_android, specs
 
@@ -233,14 +234,91 @@ def tools() -> dict:
 
 
 SECRET = "RELEASE_KEY_PASSWORD"   # reaches the key tools only, set by `keyed`; never inherited
+UNSHARED = {SECRET, *host.TOKENS}
+# The English not-found messages of PowerShell, cmd and sh, each naming the program as `n`. The machine's own,
+# in whatever language it speaks, are learned from its shells (`learned_shapes`).
+ENGLISH_SHAPES = tuple(re.compile(shape, re.IGNORECASE | re.MULTILINE) for shape in (
+    r"The term '(?P<n>[^']+)' is not recognized as (?:the|a) name of a cmdlet",
+    r"'(?P<n>[^']+)' is not recognized as an internal or external command",
+    r"(?:^|:\s)(?P<n>[^\s:/\\]+): (?:command )?not found"))
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+LAST_LINES = 12   # where a failed command's own diagnostic sits in its log
+NAME = r"(?P<n>[^\s'\"/\\:]+)"
+AFTER_NAME = 16   # of a message's text past the name: enough to tell it from a source error, short of any wrap
+# What the gate's shell runs to ask: the program itself (in the PowerShell the resolver chose, 5.1 or 7), then the
+# shells a build script may start in turn.
+# ponytail: a second PowerShell a build script starts itself words its message apart from the gate's and is not
+# learned; probe it through a catalogued `shell` entry if a build turns out to do that
+PROBES = ("{name}", "cmd /c {name}", "sh -c {name}")
+
+
+def shapes_from(name: str, out: str) -> list[re.Pattern]:
+    """The not-found message in `out`, a shell's answer for `name` (which exists nowhere), as a pattern naming the
+    program as `n`: from the name's first mention, with the quote before it, to `AFTER_NAME` characters past its
+    last, since PowerShell wraps the rest at the console's width. The name starts after a quote, a space, a colon
+    or the line's start, so the last part of a path (`'./tool/x.cmd'`) is never taken for a bare name. A line that
+    only echoes the command is not a message."""
+
+    shapes = []
+    for line in ANSI.sub("", out).splitlines():
+        start = line.find(name)
+        start -= start > 0 and line[start - 1] in "'\""
+        said = line[start:line.rfind(name) + len(name) + AFTER_NAME].rstrip() if name in line else ""
+        if len(said.replace(name, "").strip(" '\"")) >= 8 and "{" not in said:
+            escaped = re.escape(said).replace(re.escape(name), NAME, 1).replace(re.escape(name), "(?P=n)")
+            shapes.append(re.compile(("" if said[0] in "'\"" else r"(?<![^\s:])") + escaped, re.MULTILINE))
+    return shapes[:1]
+
+
+_learned: tuple[re.Pattern, ...] | None = None   # kept only once every shell has answered
+
+
+def learned_shapes(halt: threading.Event, env: dict) -> tuple[re.Pattern, ...]:
+    """What this machine's shells print for a program they cannot find, asked through the gate itself, so the shell,
+    its language and the decoding are a build's own. They run in the build's own environment, without its secrets,
+    and stop with it. Best effort: a failure teaches nothing, and only a message from every shell is kept."""
+
+    # ponytail: a machine without a shell (no `sh`) asks again each failed build; remember an absent shell if slow
+    global _learned
+    if _learned is not None:
+        return _learned
+    name, shapes, whole = f"wikiagentmissing{secrets.token_hex(4)}", [], True
+    try:
+        with tempfile.TemporaryDirectory() as cwd:
+            for probe in PROBES:
+                if halt.is_set():
+                    return tuple(shapes)
+                _, out, cut = specs.gate(probe.format(name=name), Path(cwd), halt, env=env, timeout=60, idle=30)
+                said = shapes_from(name, out)
+                whole = whole and not cut and bool(said)
+                shapes += said
+    except Exception:  # noqa: BLE001 — a shell that cannot be asked teaches nothing; the build's own error stands
+        return tuple(shapes)
+    if whole and not halt.is_set():
+        _learned = tuple(shapes)
+    return tuple(shapes)
 
 
 def environment(kit: dict) -> dict:
-    """The tools' environment, without any key password the server itself was started with."""
+    """The tools' environment, without any key password or GitHub token the server itself was started with: the
+    adapter's build runs here, and what it prints can reach the repair agent."""
 
-    return {**{k: v for k, v in os.environ.items() if k.upper() != SECRET}, "JAVA_HOME": str(kit["java"]),
+    return {**{k: v for k, v in os.environ.items() if k.upper() not in UNSHARED}, "JAVA_HOME": str(kit["java"]),
             "ANDROID_HOME": str(kit["sdk"]), "NDK_HOME": str(kit["ndk"]),
             "PATH": os.pathsep.join([str(kit["java"] / "bin"), os.environ.get("PATH", "")])}
+
+
+def lacks_tool(out: str, env: dict, halt: threading.Event) -> bool:
+    """The build failed because this machine lacks a program: its shell's not-found message, English or the
+    machine's own, for a bare name that is not on the build's `PATH`, among the log's last lines. A path is the
+    repository's own script, which a source change can restore. An earlier optional probe is not why the build
+    failed, and a source error that merely quotes a name is not a shell's message."""
+
+    # ponytail: a not-found message in the last lines beside an unrelated error still reads as the machine's
+    tail = "\n".join([line for line in ANSI.sub("", out).splitlines() if line.strip()][-LAST_LINES:])
+    names = (m["n"] for shape in (*ENGLISH_SHAPES, *learned_shapes(halt, env)) for m in shape.finditer(tail))
+    return any(not re.search(r"[/\\]|^\.", name) and shutil.which(name, path=env.get("PATH")) is None
+               for name in names)
 
 
 def keyed(kit: dict, password: str) -> dict:
@@ -270,12 +348,24 @@ def build(path: Path, android: dict, release: str, kit: dict, halt: threading.Ev
            "RELEASE_TAURI_CONFIG": str(overlay)}
     exited, out, cut = specs.gate(android["build"], path, halt, env=env, timeout=BUILD_SECONDS, idle=QUIET_SECONDS)
     if exited != 0:
-        tail = "\n".join(out.splitlines()[-40:])
-        raise ValueError(f"빌드 실패 — {cut or f'{exited} 로 끝났다'}\n{tail}")
+        tail = errorlog.redact("\n".join(out.splitlines()[-40:]))
+        said = f"빌드 실패 — {cut or f'{exited} 로 끝났다'}\n{tail}"
+        # A person's stop, a deadline or silence, and a missing tool say nothing about the source.
+        # The halt again after the shells were asked: a stop while they answered is still a stop.
+        machine = halt.is_set() or cut or lacks_tool(out, env, halt) or halt.is_set()
+        raise ValueError(said) if machine else BuildFailed(said)
     apk = output()
     if not apk.is_file():
-        raise ValueError(f"빌드가 `{android['artifact']}` 를 만들지 않았다")
+        raise BuildFailed(f"빌드가 `{android['artifact']}` 를 만들지 않았다")
+    try:   # read before signing, so a broken product is the build's failure and not the signing's
+        badging(run([kit["aapt2"], "dump", "badging", apk], environment(kit)))
+    except ValueError as exc:
+        raise BuildFailed(f"빌드가 만든 `{android['artifact']}` 를 APK 로 읽지 못했다 — {exc}") from exc
     return apk
+
+
+class BuildFailed(ValueError):
+    """The adapter's build command failed, or made no artifact: something in the repository needs changing."""
 
 
 def run(argv: list, env: dict | None = None, timeout: float = 300) -> str:
@@ -360,6 +450,12 @@ def refused(seen: dict, release: str, android: dict, cert: str, previous: dict |
     """Why this APK cannot be published, empty when it can. `previous` is the last production APK of the
     kind. Without one, the configured identity and the expected certificate are the baseline."""
 
+    return built_wrong(seen, release, android, previous) + signed_wrong(seen, cert, previous)
+
+
+def built_wrong(seen: dict, release: str, android: dict, previous: dict | None = None) -> list[str]:
+    """What the build itself got wrong: a source change can fix each of these."""
+
     out = []
     if seen["name"] != release:
         out.append(f"versionName {seen['name']!r} 가 버전 {release!r} 와 다르다")
@@ -375,6 +471,13 @@ def refused(seen: dict, release: str, android: dict, cert: str, previous: dict |
             out.append(f"ABI {seen['abis']} 가 {name}의 {want} 와 다르다 — 기존 기기가 업데이트를 받지 못한다")
     if seen["debuggable"]:
         out.append("디버그 빌드다 — 정식 릴리스는 debuggable 이 아니다")
+    return out
+
+
+def signed_wrong(seen: dict, cert: str, previous: dict | None = None) -> list[str]:
+    """A certificate other than the key's: the release key's problem, never the source's."""
+
+    out = []
     for name, want in (("기대한 인증서", [cert]), *((("이전 정식 APK 의 인증서", previous["certs"]),) if previous else ())):
         if seen["certs"] != want:
             out.append(f"서명 인증서 {seen['certs']} 가 {name} {want} 와 다르다 — 설치된 앱이 업데이트되지 않는다")
@@ -581,15 +684,23 @@ def replaced(target: Path, text: str) -> None:
 
 # -- The unpublished rehearsal --------------------------------------------------------------------
 
-def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None) -> dict:
+def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None, repair=None) -> dict:
     """Two consecutive versions of `ref` built, signed with one test key and checked, the second against the
     first as its previous production APK. Each build gets its own fresh checkout. Nothing is published. The
     taken tags are the local ones, since a disposable target has no GitHub releases to read.
 
     Then the two refusals that keep an installed app updatable, on the second APK's real bytes: re-signed with
-    a second test key, and checked against an application ID other than the one it was built with."""
+    a second test key, and checked against an application ID other than the one it was built with.
+
+    A build that fails, or builds something wrong, goes to `repair(repo, record)` as a press's would
+    (`release_publish.repaired`), so step 4's hand-off runs on this unpublished path."""
 
     halt = halt or threading.Event()
+    # A repair's pull request goes to a branch GitHub has, never a commit, a tag or a branch only this clone has.
+    branch = ref.removeprefix("origin/")
+    if repair is not None and subprocess.run(["git", "-C", str(repo), "ls-remote", "--exit-code", "--heads", "origin",
+                                              f"refs/heads/{branch}"], capture_output=True, timeout=60).returncode:
+        raise ValueError(f"`{ref}` 는 origin 의 브랜치가 아니다 — 수정 작업의 PR 이 갈 곳이 없으니 리허설할 브랜치를 골라라")
     kit, attempt = tools(), f"rehearsal-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"   # two in one second
     sha = pin(repo, ref)
     cfg = settings(repo, sha)
@@ -598,19 +709,27 @@ def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None)
     folder = owned(place(repo, attempt))
     folder.mkdir(parents=True)
     stores = (folder / "rehearsal.jks", folder / "other.jks")
-    published, previous, rounds, refusals = [], None, [], {}
+    published, previous, rounds, refusals, needed = [], None, [], {}, None
     try:   # from before the first key exists: every test keystore goes, whatever fails
         key = test_key(stores[0], kit)
         cert = certificate(key["keystore"], key["alias"], key["password"], kit)
         for n in (1, 2):
             release = version(published, taken, None if not published else "patch", first)
             src = checkout(repo, sha, f"{attempt}/{n}")
-            signed = sign(build(src, cfg["android"], release, kit, halt), folder / f"{n}-{release}.apk", key, kit)
+            try:
+                apk = build(src, cfg["android"], release, kit, halt)
+            except BuildFailed as exc:
+                rounds.append({"version": release, "failed": str(exc)})
+                discard(repo, f"{attempt}/{n}")
+                needed = str(exc)
+                break
+            signed = sign(apk, folder / f"{n}-{release}.apk", key, kit)
             seen = facts(signed, kit)
             why = refused(seen, release, cfg["android"], cert, previous)
             rounds.append({"version": release, "facts": seen, "refused": why})
             discard(repo, f"{attempt}/{n}")   # the checkout and its build outputs are large; the signed APK stays
             if why:
+                needed = "; ".join(built_wrong(seen, release, cfg["android"], previous)) or None
                 break
             published.append({"tagName": f"v{release}"})
             previous = seen
@@ -634,8 +753,29 @@ def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None)
             raise OSError(f"시험 키를 지우지 못했다 — 직접 지워라: {'; '.join(left)}")
     caught = bool(refusals) and all(len([w for w in why if marker in w]) == want for why, marker, want in (
         (refusals.get("certificate", []), "서명 인증서", 2), (refusals.get("application_id", []), "앱 ID", 2)))
-    return {"sha": sha, "seed": first, "cert": cert, "folder": str(folder), "rounds": rounds,
-            "refusals": refusals, "ok": built and caught}
+    out = {"sha": sha, "seed": first, "cert": cert, "folder": str(folder), "rounds": rounds,
+           "refusals": refusals, "ok": built and caught}
+    if needed:
+        record = {"id": attempt, "remote": None, "tag": f"v{rounds[-1]['version']}", "version": rounds[-1]["version"],
+                  "sha": sha, "base": branch, "repair": {"needed": needed}}
+        out["repair"] = handed(repo, record, repair, halt)
+    return out
+
+
+def handed(repo: Path, record: dict, repair, halt: threading.Event) -> dict:
+    """`record["repair"]` with what `repair(repo, record)` did: the task it started, or why none runs. The
+    attempt has ended either way, so a refusal is recorded, never raised. A task whose spec was saved but whose
+    start was refused (`release_repair.Started`) is still named. A release stopped before this starts none."""
+
+    if halt.is_set():
+        return {**record["repair"], "error": "멈춤 — 사람이 배포를 멈춰서 수정 작업을 시작하지 않았다"}
+    if repair is None:
+        return record["repair"]
+    try:
+        return {**record["repair"], "task": repair(repo, record)}
+    except Exception as exc:   # noqa: BLE001 — the attempt is over; the card shows why no repair runs
+        return {**record["repair"], **({"task": exc.task} if getattr(exc, "task", None) else {}),
+                "error": f"{type(exc).__name__}: {exc}"}
 
 
 def main(argv: list[str]) -> int:

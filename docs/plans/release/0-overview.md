@@ -180,13 +180,85 @@ version that is taken (see "One attempt").
 ### When an attempt fails
 
 - A transient failure, such as a network error or a GitHub 5xx, retries the
-  same pinned attempt, a bounded number of times.
+  same pinned attempt, a bounded number of times. The press tries each
+  GitHub read before the manifest and the whole restart table three times,
+  waiting 15 and then 60 seconds (`release_publish.WAITS`). The reads are the
+  release and tag lists, the previous APK's download and the previous tag.
+  A person's stop ends the waiting. After the last try of the restart table,
+  the attempt stays pending for `recover`. Before the manifest nothing remote
+  has been written and no version is taken, so a failure that outlasts its
+  tries ends the attempt as failed. The next press builds the same version
+  again.
 - A build or check failure that needs a source change goes to a bounded agent
   turn. The agent works on its own branch and opens an ordinary pull request
   under the ordinary review loop. The attempt then ends as failed, and the card
   links that pull request. The fix's merge needs its own authorization, as
   every merge does. Publishing the merged fix is a new release press, because
   one press authorizes only the commit it pinned.
+
+What needs a source change is narrow:
+
+- The build command exits with an error, makes no artifact, or makes one
+  `aapt2` cannot read as an APK (`release.BuildFailed`). The check happens
+  before signing, so a broken product is the build's failure.
+- The built APK's versionName, versionCode, application ID or ABI is wrong,
+  or the APK is debuggable (`release.built_wrong`).
+
+A wrong certificate is the release key's problem (`release.signed_wrong`).
+So are a missing release tool, a key the server refuses, and a git or GitHub
+failure. A build that a person stopped, or that hit its deadline or went
+silent, is the machine's. So is one whose shell reports, in the log's last
+lines, that it cannot find a program by bare name that is not on the build's
+`PATH` (`release.lacks_tool`). The message is the shell's own: the English
+ones, and what this machine's shells answer, in their language, when the
+server asks them once through the gate for a program that exists nowhere
+(`release.learned_shapes`). They are asked in the build's own environment,
+without its secrets, and a stop ends the asking and still counts as a stop.
+The asking is best effort: a failure in it leaves the build's own error to
+decide, and only a complete answer, a message from every shell, is kept for
+later builds; otherwise the next failed build asks again. A source error
+that merely quotes a name, such
+as `'theme' is not exported` or its Korean counterpart, is not one. A missing
+script given by path is the
+repository's, and a source change can restore it. None of the machine's
+failures goes to an agent. Nor does a release the person stopped at any moment
+before the hand-off, its cleanup included (`release.handed`); its failure stays
+recorded with why no repair runs.
+
+`release_repair.start` makes the turn an ordinary task. Its spec,
+`release-fix-<version>`, carries the attempt, the tag, the pinned commit and
+the failure with the build log's last 40 lines. Secrets are redacted from
+the log (`errorlog.redact`). The build ran without GitHub tokens or the key
+password in its environment (`release.UNSHARED`). No agent session inherits
+the key password (`host.environment`). The repair's session, whenever it is
+made, also starts without the server's GitHub token variables
+(`host.TOKENS`); the server publishes its pull request. The spec names
+version files, signing and publishing as out of bounds.
+
+The task gets a linked worktree on a new branch at the pinned commit. The
+person's checkout is never switched, and nothing in it is carried over.
+The gate read from that worktree is the done condition, so the person's
+branch never supplies it. Its path is held before the worktree is made, so
+a path another request holds is neither made nor removed. If the spec
+cannot be saved, the worktree and its branch are removed while still held,
+and the hold is released even if that removal fails. The branch is kept if
+another checkout stands on it. Anything left, including a folder a process
+still holds open, is named in the recorded failure. A
+project chosen as a linked checkout gets no task, since task worktrees are
+made beside the original checkout only. Its pull request goes to the branch
+the attempt pinned (`main`). Its first turn starts as `[시작]` starts one.
+
+The agent never sees the key or its password. A GitHub login the account
+holds stays readable to that account, which is why "Signing (Android)"
+requires another account before step 5 enables publishing. A repository the
+server does not know as a project gets no task: the turn's end finds the
+task's project by name, so such a task would never leave `작업 중`. The
+ledger records the task's ID under the attempt's `repair`. When its first
+turn cannot start, the task waits in its worktree, and the ledger records
+both its ID and the refusal. `release.rehearse` hands its failures over the
+same way, so the unpublished path exercises the hand-off. With a repair,
+it rehearses only a branch that `origin` has, since that branch is where
+the repair's pull request goes.
 
 ## Existing debug installations
 
@@ -204,7 +276,7 @@ step 3 puts that note in the Release.
 | 1 | Android build and verify, unpublished | The typed `[release]` reader, the seed and the one version selector for card and attempt (skipping a taken version, including a failed first release's seed; refusing a press whose version changed by pin time), pinning, the release-owned detached checkout, the release build with the injected version. A disposable test key and its certificate sign the step's APKs, so every Android check runs over two consecutive versions on a disposable target, including the refusal of a changed application ID and of a changed certificate. Nothing is published, and the test key never signs a production artifact. | Done: `tool/main/release.py`. The rehearsal on a disposable clone of the translator built 0.1.0 (versionCode 1000) and 0.1.1 (1001) from one SHA. It refused a second key and a moved application ID on the real bytes. |
 | 2 | Signing | The per-repository release keystore and expected certificate, set up once; signing outside the build command; the debug-installation note. Required before anything is published. | Done: `release.release_key` and the `key` command in `tool/main/release.py`. A throwaway remote's key was made in Credential Manager. An APK signed with it verified against the recorded certificate, and the key and credential were then removed. No real repository has a key yet; the first is made once, on request. |
 | 3 | Transfer and ledger | The shared GitHub transfer helper, which S8 moves onto with its own policy unchanged; the `raw/releases/` ledger, the reservation, the manifest, the tag read-back, the draft ID, every row of the restart table including a lost publish answer, and a failed attempt's draft and tag left in place and recorded | Done: `tool/main/github_release.py` and `tool/main/release_publish.py`. A clone of the translator, pushed as `main` of the private repository `LittleBitAI/wiki-agent-release-rehearsal`, was published twice from one SHA. The first press made v0.1.0 (versionCode 1000) with the first-release note and created that remote's key. The patch press made v0.1.1 (1001). It was checked against v0.1.0's APK downloaded from the Release. Each tag reads back at the pinned SHA, and each asset's GitHub digest equals its manifest entry. The rehearsal key and credential were removed afterwards, so that repository takes no further releases. The restart rows run over a fake GitHub in `tool/test_release_publish.py`. |
-| 4 | Failure to agent | Bounded retries and the agent turn whose fix goes through the ordinary review loop, exercised on the unpublished path | Not started |
+| 4 | Failure to agent | Bounded retries and the agent turn whose fix goes through the ordinary review loop, exercised on the unpublished path | Done: `release_publish.WAITS` and `_tried`, `release.BuildFailed` with `built_wrong` and `signed_wrong`, and `tool/main/release_repair.py`. The live check committed an import of a missing module to `main` of `LittleBitAI/wiki-agent-release-rehearsal`. The rehearsal's build failed on it and made the task `release-fix-0-1-2`. Its agent turn removed the import, passed the repository's gate (165 Rust and 30 frontend tests), and the round check opened that repository's PR #1. The PR was closed unmerged. Two earlier runs found that a repository the server does not know never finishes its task, now refused, and that the translator tracks `.wiki/.sync`, which the wiki hook rewrites every turn. |
 | 5 | Button and card | The repository card and its button, the one entry point that publishes; the seed or the bump choice. Its publishing action is enabled only with steps 2, 3 and 4 in place. | Not started |
 | 6 | Windows installer | The `desktop` kind's NSIS build and its checks | Not started |
 | 7 | Oneshot writes `[release]` | The oneshot fills the table for the kinds it builds, keeping every other adapter table | Not started |

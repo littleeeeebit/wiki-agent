@@ -173,7 +173,7 @@ def test_an_attempt_checkout_is_a_fresh_clean_detached_copy_and_never_a_second_o
     src = release.checkout(repo, sha, "a1")
 
     assert release.git(src, "rev-parse", "HEAD").strip() == sha and (src / "a.txt").read_text() == "a"
-    assert "a1" not in release.git(repo, "worktree", "list")
+    assert release.place(repo, "a1").as_posix() not in release.git(repo, "worktree", "list")   # not a hash's "a1"
     with pytest.raises(ValueError, match="이미 있다"):
         release.checkout(repo, sha, "a1")
     release.discard(repo, "a1")
@@ -205,10 +205,13 @@ def test_the_build_gets_the_version_through_its_environment_and_an_overlay_besid
         return 0, "", ""
 
     monkeypatch.setattr(release.specs, "gate", gate)
+    monkeypatch.setattr(release, "run", lambda argv, env=None, timeout=300: BADGING)   # the APK reads back
     monkeypatch.setenv(release.SECRET, "inherited")
-    kit = {"java": tmp_path, "sdk": tmp_path, "ndk": tmp_path}
+    monkeypatch.setenv("GH_TOKEN", "inherited-token")
+    kit = {"java": tmp_path, "sdk": tmp_path, "ndk": tmp_path, "aapt2": "aapt2"}
 
     apk = release.build(src, {**ANDROID, "artifact": "out/app.apk"}, "0.1.1", kit, None)
+    assert "GH_TOKEN" not in seen["env"]   # nor a GitHub token: what the build prints can reach the repair agent
 
     assert apk == (src / "out/app.apk").resolve() and seen["cmd"] == "build" and seen["path"] == src
     assert (seen["env"]["RELEASE_VERSION"], seen["env"]["RELEASE_VERSION_CODE"]) == ("0.1.1", "1001")
@@ -254,13 +257,19 @@ def test_a_linked_release_root_or_folder_above_it_is_never_written_or_removed(tm
     assert removed == []
 
 
-def test_every_test_keystore_goes_even_when_a_step_after_its_creation_fails(tmp_path, monkeypatch):
+def _rehearsable(tmp_path, monkeypatch):
+    """A rehearsal of one pinned commit with its tools, settings and seed faked."""
+
     monkeypatch.setattr(release, "WORK", tmp_path / "work")
     monkeypatch.setattr(release, "tools", lambda: {})
     monkeypatch.setattr(release, "pin", lambda repo, ref: "0" * 40)
     monkeypatch.setattr(release, "settings", lambda repo, sha: {"version_source": "v", "android": ANDROID})
     monkeypatch.setattr(release, "seed", lambda repo, sha, source: "0.1.0")
     monkeypatch.setattr(release, "git", lambda *a, **k: "")
+
+
+def test_every_test_keystore_goes_even_when_a_step_after_its_creation_fails(tmp_path, monkeypatch):
+    _rehearsable(tmp_path, monkeypatch)
 
     def key(store, kit):
         store.write_bytes(b"key")   # written, then the tool reports failure
@@ -293,6 +302,43 @@ def test_every_test_keystore_goes_even_when_a_step_after_its_creation_fails(tmp_
     with pytest.raises(OSError, match="시험 키를 지우지 못했다"):
         release.rehearse(tmp_path / "repo")
     assert tried == ["rehearsal.jks", "other.jks"]   # the locked first key never spares the second
+
+
+@pytest.mark.parametrize("failure", ["build", "debuggable"])
+def test_the_rehearsal_hands_a_failed_build_to_repair_and_nothing_else(tmp_path, monkeypatch, failure):
+    _rehearsable(tmp_path, monkeypatch)
+    monkeypatch.setattr(release, "test_key", lambda store, kit: {"keystore": store, "alias": "a", "password": "p"})
+    monkeypatch.setattr(release, "certificate", lambda *a: "c" * 64)
+    monkeypatch.setattr(release, "checkout", lambda repo, sha, at: release.place(repo, at).mkdir(parents=True)
+                        or release.place(repo, at))
+
+    def build(src, android, version, kit, halt):
+        if failure == "build":
+            raise release.BuildFailed("빌드 실패 — 1 로 끝났다\nerror: boom")
+        return src / "out.apk"
+
+    monkeypatch.setattr(release, "build", build)
+    monkeypatch.setattr(release, "sign", lambda apk, out, key, kit: out)
+    monkeypatch.setattr(release, "facts", lambda apk, kit: seen(name="0.1.0", code=1000, debuggable=True, certs=["c" * 64],
+                                                                package=ANDROID["application_id"]))
+    repo, _ = committed(tmp_path, {"a.txt": "a"})
+    subprocess.run(["git", "init", "-q", "--bare", str(tmp_path / "origin.git")], check=True)
+    for args in (["branch", "-qM", "main"], ["remote", "add", "origin", str(tmp_path / "origin.git")],
+                 ["push", "-q", "origin", "main"], ["tag", "v0.0.9"], ["branch", "experiment"]):
+        subprocess.run(["git", *args], cwd=repo, check=True)
+    asked = []
+
+    def repair(repo, record):
+        return asked.append(record) or "release-fix-0-1-0"
+
+    # A repair's pull request needs a branch GitHub has: not a tag, a commit, or a branch only the clone has.
+    for ref in ("v0.0.9", "0" * 40, "experiment"):
+        with pytest.raises(ValueError, match="브랜치가 아니다"):
+            release.rehearse(repo, ref, repair=repair)
+    done = release.rehearse(repo, repair=repair)
+    assert done["repair"]["task"] == "release-fix-0-1-0" and not done["ok"] and len(asked) == 1
+    assert asked[0]["tag"] == "v0.1.0" and asked[0]["sha"] == "0" * 40 and asked[0]["base"] == "main"
+    assert ("boom" if failure == "build" else "디버그") in asked[0]["repair"]["needed"]
 
 
 def test_a_fetch_that_times_out_after_writing_its_ref_leaves_no_ref(monkeypatch):

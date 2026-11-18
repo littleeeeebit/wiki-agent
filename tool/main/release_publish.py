@@ -6,8 +6,10 @@ Nothing here deletes a remote tag or release. A failed attempt's tag and draft s
 recorded as that attempt's. The one remote delete is an incomplete asset (`starter`) in this attempt's own
 draft.
 
-Steps 4 and 5 bring bounded retries, the repair turn and the button. Until then a press comes from this
-module's `publish` command."""
+Step 4 ("When an attempt fails"): a transient GitHub failure is tried again within the press, a bounded number
+of times (`WAITS`). A build or check failure that a source change can fix ends the attempt as failed and goes to
+`repair`, which `release_repair.start` fills in the server. Step 5 brings the button. Until then a press comes
+from this module's `publish` command, which records the failure and leaves the repair to the server."""
 
 from __future__ import annotations
 
@@ -30,10 +32,15 @@ LEDGER = paths.RAW / "releases"   # keyed by the canonical remote: every checkou
 UPLOAD_TRIES = 3
 MARK = "wiki-agent-release-attempt"   # written in a draft's body, so a draft whose answer was lost is found
 NOTE_LINES = 50
+WAITS = (15, 60)   # seconds before each further try of a transient GitHub failure within one press
 
 
 class Stopped(Exception):
     """An attempt that cannot go on. It ends as failed, and what it left on GitHub stays recorded."""
+
+
+class Repairable(Stopped):
+    """A build or check failure that a change to the repository can fix: the attempt goes to a repair task."""
 
 
 class Unrecorded(Exception):
@@ -164,9 +171,11 @@ def previous_facts(repo: str, prior: dict | None, abi: str, into: Path, kit: dic
     return release.facts(file, kit)
 
 
-def publish(repo: Path, shown: str, bump: str | None, halt: threading.Event | None = None) -> dict:
+def publish(repo: Path, shown: str, bump: str | None, halt: threading.Event | None = None,
+            repair=None) -> dict:
     """One press: pin, check the shown version, reserve, build, sign, verify, record the manifest, then
-    `finish`. A refusal before the reservation writes nothing."""
+    `finish`. A refusal before the reservation writes nothing. `repair(repo, record)` starts the repair task of
+    an attempt that ended `Repairable` and returns its ID. Without it, the attempt records only that it needs one."""
 
     halt, kit = halt or threading.Event(), release.tools()
     name = release.remote(repo)
@@ -175,7 +184,28 @@ def publish(repo: Path, shown: str, bump: str | None, halt: threading.Event | No
         raise ValueError(f"{name} 의 배포 {running['tag']} 가 아직 진행 중이다 — 끝난 뒤 다시 누른다")
     attempt = f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
     with working(name, attempt):   # from before the reservation, so no `recover` can take it from this worker
-        return _pressed(repo, name, attempt, shown, bump, len(book["attempts"]), kit, halt)
+        done = _pressed(repo, name, attempt, shown, bump, len(book["attempts"]), kit, halt)
+    return repaired(done, repair, halt) if done.get("repair") else done
+
+
+def _tried(call, halt: threading.Event):
+    """`call()`, tried again after each wait in `WAITS` while it fails transiently. The last failure is raised,
+    and so is one a person's stop cuts short."""
+
+    for wait in (*WAITS, None):
+        try:
+            return call()
+        except gh.Failed as exc:
+            if not exc.transient or wait is None or halt.wait(wait):
+                raise
+
+
+def repaired(record: dict, repair, halt: threading.Event) -> dict:
+    """The repair task of an attempt that ended `Repairable`, recorded in the ledger (`release.handed`)."""
+
+    if repair is None and not halt.is_set():   # a stop is recorded even with no repair to start
+        return record
+    return update(record["remote"], record["id"], repair=release.handed(Path(record["repo"]), record, repair, halt))
 
 
 def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, seen: int, kit: dict,
@@ -184,31 +214,41 @@ def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, 
     sha = release.pin(repo)
     cfg = release.settings(repo, sha)
     first = release.seed(repo, sha, cfg["version_source"])
-    listed = gh.releases(repo_slug)
-    chosen = release.accepted(shown, [_shape(r) for r in listed], gh.tags(repo_slug), bump, first)
+    listed = _tried(lambda: gh.releases(repo_slug), halt)
+    chosen = release.accepted(shown, [_shape(r) for r in listed], _tried(lambda: gh.tags(repo_slug), halt), bump, first)
     prior = latest(listed)
-    record = reserve(name, {"id": attempt, "remote": name, "repo": str(repo), "sha": sha, "version": chosen,
+    record = reserve(name, {"id": attempt, "remote": name, "repo": str(repo), "sha": sha, "base": "main", "version": chosen,
                             "tag": f"v{chosen}", "state": "pending", "started": time.time(),
                             "first": prior is None, "previous": prior and prior["tag_name"]}, seen)
     try:
         work = release.owned(release.place(repo, attempt))
         work.mkdir(parents=True)
         key = release.release_key(repo, kit, create=prior is None)
-        before = previous_facts(repo_slug, prior, cfg["android"]["abi"], work / "previous", kit)
+        before = _tried(lambda: previous_facts(repo_slug, prior, cfg["android"]["abi"], work / "previous", kit), halt)
         src = release.checkout(repo, sha, f"{attempt}/src")
         asset = f"{repo_slug.split('/')[1]}-{chosen}-{cfg['android']['abi']}.apk"
-        signed = release.sign(release.build(src, cfg["android"], chosen, kit, halt), work / asset, key, kit)
+        try:
+            built = release.build(src, cfg["android"], chosen, kit, halt)
+        except release.BuildFailed as exc:
+            raise Repairable(str(exc)) from exc
+        signed = release.sign(built, work / asset, key, kit)
         seen = release.facts(signed, kit)
-        if why := release.refused(seen, chosen, cfg["android"], key["cert"], before):
+        if why := release.signed_wrong(seen, key["cert"], before):
             raise Stopped("; ".join(why))
+        if why := release.built_wrong(seen, chosen, cfg["android"], before):
+            raise Repairable("; ".join(why))
         release.discard(repo, f"{attempt}/src")   # large; the signed APK beside it is what goes up
-        since = gh.tag(repo_slug, prior["tag_name"]) if prior else None
+        since = _tried(lambda: gh.tag(repo_slug, prior["tag_name"]), halt) if prior else None
         record = update(name, attempt, facts=seen, title=f"v{chosen}", notes=notes(repo, sha, since, prior is None),
                         manifest=[{"name": asset, "size": signed.stat().st_size,
                                    "sha256": android_owned.sha256(signed), "path": str(signed)}])
-    except (Stopped, ValueError, OSError, gh.Failed) as exc:   # nothing remote was written yet
+    except Repairable as exc:
+        return _ended(record, "failed", reason=str(exc), repair={"needed": str(exc)})
+    except (Stopped, ValueError, OSError, gh.Failed) as exc:
+        # Nothing remote was written yet and the version is not taken, so ending here is safe even for a
+        # transient failure that outlasted its tries: the next press builds the same version again.
         return _ended(record, "failed", reason=str(exc) or type(exc).__name__)
-    return _finish(name, attempt)
+    return _tried(lambda: _finish(name, attempt), halt)
 
 
 # -- The restart table ----------------------------------------------------------------------------

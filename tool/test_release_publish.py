@@ -15,6 +15,22 @@ from test_github_release import FakeGitHub
 
 SHA, OTHER, CERT = "a" * 40, "b" * 40, "c" * 64
 ANDROID = {"build": "build", "artifact": "out.apk", "application_id": "dev.o.r", "abi": "arm64-v8a"}
+BUILD = release.build   # the real one, before `press` fakes it
+# What this machine's shells answered for a program that exists nowhere, as `release.learned_shapes` asks them:
+# Windows PowerShell 5 and pwsh 7 in Korean, and cmd under the gate's UTF-8 code page.
+ASKED = {"probe : 'probe' 용어가 cmdlet, 함수, 스크립트 파일 또는 실행할 수 있는 프로그램 이름으로 인식되지 않습니다.",
+         "\x1b[31;1mprobe: \x1b[31;1m'probe' 용어가 cmdlet, 함수, 스크립트 파일 또는 실행할 수 있는 프로그램 이름으로",
+         "'probe'은(는) 내부 또는 외부 명령, 실행할 수 있는 프로그램, 또는"}
+
+
+LEARN = release.learned_shapes   # the real one, before `asked` replaces it
+
+
+@pytest.fixture(autouse=True)
+def asked(monkeypatch):
+    """The shells' answers above in place of asking this machine's, which the faked gate would answer instead."""
+    monkeypatch.setattr(release, "learned_shapes",
+                        lambda halt, env: tuple(s for out in ASKED for s in release.shapes_from("probe", out)))
 
 
 @pytest.fixture
@@ -25,6 +41,7 @@ def press(tmp_path, monkeypatch):
     fake = FakeGitHub("o/r").install(monkeypatch)
     keys = []
     monkeypatch.setattr(rp, "LEDGER", tmp_path / "ledger")
+    monkeypatch.setattr(rp, "WAITS", (0, 0))   # transient tries without the waits
     monkeypatch.setattr(release, "WORK", tmp_path / "work")
     monkeypatch.setattr(release, "tools", lambda: {})
     monkeypatch.setattr(release, "remote", lambda repo: "github.com/o/r")
@@ -92,8 +109,8 @@ def test_the_next_press_is_checked_against_the_previous_production_apk_on_github
     with pytest.raises(ValueError, match="patch, minor, major"):
         rp.publish(repo, "0.1.1", None)   # after a release there is something to bump: a choice is needed
     seen = []
-    real = release.refused
-    monkeypatch.setattr(release, "refused", lambda *a: seen.append(a[4]) or real(*a))
+    real = release.built_wrong
+    monkeypatch.setattr(release, "built_wrong", lambda *a: seen.append(a[3]) or real(*a))
     done = rp.publish(repo, "0.1.1", "patch")
 
     assert done["state"] == "published" and keys == [True, False] and seen[0]["code"] == 1000
@@ -116,9 +133,273 @@ def test_a_press_whose_version_moved_or_whose_remote_is_busy_writes_nothing(pres
 
 def test_a_refused_build_ends_failed_with_nothing_on_github(press, monkeypatch):
     fake, repo, _ = press
-    monkeypatch.setattr(release, "refused", lambda *a: ["디버그 빌드다"])
+    monkeypatch.setattr(release, "built_wrong", lambda *a: ["디버그 빌드다"])
     done = rp.publish(repo, "0.1.0", None)
     assert done["state"] == "failed" and "디버그" in done["reason"] and not fake.rels and not fake.refs
+    assert done["repair"] == {"needed": "디버그 빌드다"}   # no server here to start the repair task
+
+
+# -- Step 4: failures ---------------------------------------------------------------------------------
+
+def _broken(monkeypatch, said="빌드 실패 — 1 로 끝났다\nerror: cannot find symbol"):
+    def build(*args):
+        raise release.BuildFailed(said)
+
+    monkeypatch.setattr(release, "build", build)
+
+
+def test_a_build_failure_ends_the_attempt_and_goes_to_a_repair_task(press, monkeypatch):
+    fake, repo, _ = press
+    _broken(monkeypatch)
+    asked = []
+    done = rp.publish(repo, "0.1.0", None, repair=lambda r, record: asked.append((r, record)) or "release-fix-0-1-0")
+
+    assert done["state"] == "failed" and not fake.rels and not fake.refs   # its version is not taken
+    assert done["repair"] == {"needed": done["reason"], "task": "release-fix-0-1-0"} and attempts()[0] == done
+    assert asked[0][0] == repo and "cannot find symbol" in asked[0][1]["repair"]["needed"]
+    assert not release.place(repo, done["id"]).exists() and rp.pending("github.com/o/r") is None
+
+
+@pytest.mark.parametrize("configured", [True, False], ids=["repair configured", "no repair configured"])
+def test_a_stop_while_the_failed_attempt_is_cleaned_up_starts_no_repair(press, monkeypatch, configured):
+    fake, repo, _ = press
+    _broken(monkeypatch)
+    halt, discard = release.threading.Event(), release.discard
+    monkeypatch.setattr(release, "discard", lambda *a: (halt.set(), discard(*a)))   # stopped during cleanup
+    repair = (lambda *a: pytest.fail("the person stopped the release")) if configured else None
+    done = rp.publish(repo, "0.1.0", None, halt, repair=repair)
+
+    assert done["state"] == "failed" and "cannot find symbol" in done["repair"]["needed"]   # the failure stays
+    assert "task" not in done["repair"] and "멈춤" in done["repair"]["error"] and attempts()[0] == done
+
+
+def test_a_wrong_certificate_never_goes_to_a_repair_task(press, monkeypatch):
+    fake, repo, _ = press
+    monkeypatch.setattr(release, "signed_wrong", lambda *a: ["서명 인증서가 다르다"])
+    done = rp.publish(repo, "0.1.0", None, repair=lambda *a: pytest.fail("a key problem is no source change"))
+    assert done["state"] == "failed" and "repair" not in done
+
+
+def test_a_repair_that_cannot_start_is_recorded_and_the_attempt_still_ends(press, monkeypatch):
+    from main import release_repair
+
+    _, repo, _ = press
+    _broken(monkeypatch)
+
+    def refused(r, record):
+        raise release_repair.Started("release-fix-0-1-0", RuntimeError("이 저장소에서 다른 작업이 돌고 있다"))
+
+    done = rp.publish(repo, "0.1.0", None, repair=refused)
+    assert done["state"] == "failed" and done["repair"]["task"] == "release-fix-0-1-0"
+    assert "다른 작업" in done["repair"]["error"]
+
+
+SOURCE_ERROR = "error TS2307: Cannot find module './theme.js' ghp_" + "x" * 36
+
+
+@pytest.mark.parametrize("ending, repairable", [
+    ("stopped", False), ("deadline", False), ("missing cmdlet", False), ("missing command", False),
+    ("missing cmdlet, Korean PowerShell 7", False), ("missing command, Korean cmd", False),
+    ("installed tool's own error", True), ("quoted source error", True), ("missing command, English cmd", False),
+    ("quoted Korean source error", True), ("echoed name, other words", True),
+    ("missing repository script", True), ("early optional probe", True), ("source", True)])
+def test_only_a_build_the_source_broke_needs_a_repair(monkeypatch, tmp_path, ending, repairable):
+    halt = release.threading.Event()
+    if ending == "stopped":
+        halt.set()   # a person's stop, without a cut reason of its own
+    (tools := tmp_path / "bin").mkdir()
+    for name in ("node.exe", "node"):   # on the build's PATH
+        (tools / name).write_text("", encoding="utf-8")
+        (tools / name).chmod(0o755)
+    said = {"missing cmdlet": "cargo : The term 'cargo' is not recognized as the name of a cmdlet",
+            # What this machine's pwsh 7 prints, colours and all, and its cmd.
+            "missing cmdlet, Korean PowerShell 7": "\x1b[31;1mcargo: \x1b[31;1m'cargo' 용어가 cmdlet, 함수, 스크립트 "
+                                                   "파일 또는 실행할 수 있는 프로그램 이름으로 인식되지 않습니다.\x1b[0m",
+            "missing command, Korean cmd": "'cargo'은(는) 내부 또는 외부 명령, 실행할 수 있는 프로그램, 또는\n"
+                                           "배치 파일이 아닙니다.",
+            "installed tool's own error": "node: 'node' could not load ./build.mjs\n" + SOURCE_ERROR,
+            "quoted source error": "'theme' is not exported by ./src/theme.ts",
+            "quoted Korean source error": "'theme'는 이 모듈에서 내보내지 않습니다.",
+            "echoed name, other words": "cargo: 'cargo' could not compile the package",
+            "missing command, English cmd": "'vite' is not recognized as an internal or external command,\n"
+                                            "operable program or batch file.",
+            "missing command": "> tauri android build\nbash: rustup: command not found\nnpm ERR! code 127",
+            "missing repository script": "The term './scripts/package-android.ps1' is not recognized as the "
+                                         "name of a cmdlet",
+            "early optional probe": "\n".join(["bash: rustup: command not found", *(["compiling"] * 15),
+                                               SOURCE_ERROR]),
+            "source": SOURCE_ERROR}.get(ending, "")
+    monkeypatch.setattr(release, "environment", lambda kit: {"PATH": str(tools)})   # holds `node` only
+    monkeypatch.setattr(release.specs, "gate", lambda *a, **k: (
+        None if ending == "deadline" else 1, said, {"deadline": "시간 초과"}.get(ending, "")))
+    (src := tmp_path / "src").mkdir()
+    with pytest.raises(ValueError) as failed:
+        BUILD(src, ANDROID, "0.1.0", {}, halt)
+    assert isinstance(failed.value, release.BuildFailed) is repairable
+    assert "ghp_" not in str(failed.value)   # a token a build prints is redacted before anything keeps it
+
+
+def test_a_learned_message_ignores_the_echoed_command_and_where_the_console_wraps():
+    echoed = "    1 |  & { probe }\n" + "probe : 'probe' 용어가 cmdlet, 함수, 스크립트 파일"
+    (shape,) = release.shapes_from("probe", echoed)
+    assert shape.search("cargo : 'cargo' 용어가 cmdlet, 함수, 스\n크립트")["n"] == "cargo"   # wrapped elsewhere
+    assert not release.shapes_from("probe", "probe")   # a bare echo teaches nothing
+
+
+def test_a_learned_message_never_takes_the_end_of_a_repository_path_for_a_program():
+    halt = release.threading.Event()
+    for said in ("'probe' is not recognized as an internal or external command",
+                 "probe : 'probe' 용어가 cmdlet, 함수, 스크립트 파일"):
+        (shape,) = release.shapes_from("probe", said)
+        for path in (r".\tool\package.cmd", r"C:\tools\package"):
+            text = said.replace("probe", path)
+            assert not shape.search(text) or not shape.search(text)["n"].startswith("package")
+            assert not release.lacks_tool(text, {"PATH": ""}, halt)   # the repository's, so repairable
+
+
+def asking(monkeypatch, gate):
+    """The real `learned_shapes`, asking a faked gate, with nothing learned yet."""
+    monkeypatch.setattr(release, "learned_shapes", LEARN)
+    monkeypatch.setattr(release, "_learned", None)
+    monkeypatch.setattr(release.specs, "gate", gate)
+
+
+def test_a_stop_while_the_shells_are_asked_is_still_a_stop_and_teaches_nothing(monkeypatch, tmp_path):
+    halt, asked = release.threading.Event(), []
+
+    def gate(cmd, path, event, env=None, **_):
+        if cmd == "build":
+            return 1, "error TS2307: Cannot find module './theme.js'", ""
+        asked.append((event, env))
+        halt.set()   # the person presses stop while the first shell answers
+        return None, "", "사람이 멈춤"
+
+    asking(monkeypatch, gate)
+    monkeypatch.setattr(release, "environment", lambda kit: {"PATH": "", "SAFE": "1"})
+    (src := tmp_path / "src").mkdir()
+    with pytest.raises(ValueError) as failed:
+        BUILD(src, ANDROID, "0.1.0", {}, halt)
+    assert not isinstance(failed.value, release.BuildFailed)   # no repair for a stopped release
+    # The release's own halt, and the build's environment, made without its secrets (`release.environment`).
+    assert len(asked) == 1 and asked[0][0] is halt and asked[0][1]["SAFE"] == "1"
+    assert release._learned is None
+
+
+@pytest.mark.parametrize("trouble", ["no temporary folder", "a shell times out", "a shell gives no message"])
+def test_shells_that_cannot_answer_leave_the_source_error_and_are_asked_again(monkeypatch, tmp_path, trouble):
+    asked = []
+
+    def gate(cmd, path, event, env=None, **_):
+        if cmd == "build":
+            return 1, "error TS2307: Cannot find module './theme.js'", ""
+        asked.append(cmd)
+        name = cmd.split()[-1]
+        if cmd.startswith("cmd"):   # the shell in trouble; the others answer as a real one does
+            return (None, "", "시간 초과") if trouble == "a shell times out" else (1, "shell failed to start", "")
+        return 1, f"'{name}' is not recognized as an internal or external command", ""
+
+    def no_folder():
+        raise PermissionError("temporary folder unavailable")
+
+    asking(monkeypatch, gate)
+    if trouble == "no temporary folder":
+        monkeypatch.setattr(release.tempfile, "TemporaryDirectory", no_folder)
+    monkeypatch.setattr(release, "environment", lambda kit: {"PATH": ""})
+    (src := tmp_path / "src").mkdir()
+    with pytest.raises(release.BuildFailed, match="TS2307"):   # the build's own error, still repairable
+        BUILD(src, ANDROID, "0.1.0", {}, release.threading.Event())
+    assert release._learned is None   # asked again next time
+
+
+@pytest.mark.skipif(release.os.name != "nt", reason="asks this Windows machine's own shells")
+def test_this_machines_own_shells_teach_their_not_found_messages(monkeypatch, tmp_path):
+    monkeypatch.setattr(release, "learned_shapes", LEARN)   # the real one, asking the real gate
+    monkeypatch.setattr(release, "_learned", None)
+    halt, env = release.threading.Event(), dict(release.os.environ)   # a build's whole environment
+    name = "wikiagentmissingtest"
+    for probe in ("{name}", "cmd /c {name}"):
+        _, out, _ = release.specs.gate(probe.format(name=name), tmp_path, halt, timeout=60)
+        assert release.lacks_tool(out, env, halt), out
+    assert not release.lacks_tool("'theme'는 이 모듈에서 내보내지 않습니다.", env, halt)
+    # `sh` is optional: without it on PATH the answer is incomplete and is asked again, by design
+    assert bool(release._learned) == bool(release.shutil.which("sh")), release._learned
+
+
+def test_a_message_from_every_shell_is_kept_and_not_asked_again(monkeypatch):
+    asked = []
+
+    def gate(cmd, path, event, env=None, **_):
+        asked.append(cmd)
+        return 1, f"'{cmd.split()[-1]}' is not recognized as an internal or external command", ""
+
+    asking(monkeypatch, gate)
+    halt = release.threading.Event()
+    first = release.learned_shapes(halt, {})
+    assert len(first) == len(release.PROBES) and release._learned == first
+    assert release.learned_shapes(halt, {}) == first and len(asked) == len(release.PROBES)   # kept, not asked
+
+
+def test_a_build_whose_apk_cannot_be_read_needs_a_repair(monkeypatch, tmp_path):
+    def made(cmd, path, halt, env, **_):
+        (path / "out.apk").write_bytes(b"not an apk")
+        return 0, "", ""
+
+    def badging(argv, env=None, timeout=300):
+        raise ValueError("aapt2 실패 — ERROR: dump failed because no AndroidManifest.xml found")
+
+    monkeypatch.setattr(release, "environment", lambda kit: {})
+    monkeypatch.setattr(release.specs, "gate", made)
+    monkeypatch.setattr(release, "run", badging)
+    (src := tmp_path / "src").mkdir()
+    with pytest.raises(release.BuildFailed, match="APK 로 읽지 못했다"):
+        BUILD(src, ANDROID, "0.1.0", {"aapt2": "aapt2"}, release.threading.Event())
+
+
+def test_a_build_that_makes_no_artifact_needs_a_repair(monkeypatch, tmp_path):
+    monkeypatch.setattr(release, "environment", lambda kit: {})
+    monkeypatch.setattr(release.specs, "gate", lambda *a, **k: (0, "", ""))
+    (src := tmp_path / "src").mkdir()
+    with pytest.raises(release.BuildFailed, match="out.apk"):
+        BUILD(src, ANDROID, "0.1.0", {}, release.threading.Event())
+
+
+def test_a_transient_failure_before_the_manifest_ends_the_attempt_and_takes_no_version(press):
+    fake, repo, _ = press
+    rp.publish(repo, "0.1.0", None)
+    fake.fail["GET git/ref/tags/v0.1.0"] = [502] * (len(rp.WAITS) + 1)   # the previous tag, read for the notes
+    done = rp.publish(repo, "0.1.1", "patch")
+    assert done["state"] == "failed" and "502" in done["reason"] and "repair" not in done
+    assert "v0.1.1" not in fake.refs and rp.pending("github.com/o/r") is None
+    assert rp.publish(repo, "0.1.1", "patch")["state"] == "published"   # the same version, pressed again
+
+
+@pytest.mark.parametrize("where", ["GET releases", "GET git/matching-refs/tags", "POST releases", "POST git/refs", "previous"])
+def test_a_transient_failure_is_tried_again_within_the_press(press, monkeypatch, where):
+    fake, repo, _ = press
+    if where == "previous":
+        rp.publish(repo, "0.1.0", None)
+        download, cut = gh.download, [503] * len(rp.WAITS)
+
+        def flaky(*args):
+            if cut:
+                raise gh.Failed("download", cut.pop())
+            return download(*args)
+
+        monkeypatch.setattr(gh, "download", flaky)
+        assert rp.publish(repo, "0.1.1", "patch")["state"] == "published" and not cut
+        return
+    fake.fail[where] = [502] * len(rp.WAITS)   # every try but the last
+    assert rp.publish(repo, "0.1.0", None)["state"] == "published"
+
+
+def test_a_stop_during_a_wait_ends_the_tries(press, monkeypatch):
+    fake, repo, _ = press
+    halt = release.threading.Event()
+    halt.set()
+    fake.fail["POST releases"] = [502]
+    with pytest.raises(gh.Failed):
+        rp.publish(repo, "0.1.0", None, halt)
+    assert rp.pending("github.com/o/r") and fake.fail["POST releases"] == []
 
 
 def test_a_tag_at_another_commit_ends_the_attempt_and_is_left_as_it_is(press, monkeypatch):
@@ -176,7 +457,7 @@ def test_a_publish_whose_answer_was_lost_is_read_back_and_recorded(press):
 
 def test_a_transient_failure_leaves_the_attempt_pending_and_recover_finishes_it(press):
     fake, repo, _ = press
-    fake.fail["POST releases"] = [502]
+    fake.fail["POST releases"] = [502] * (len(rp.WAITS) + 1)   # every try of the press
     with pytest.raises(gh.Failed):
         rp.publish(repo, "0.1.0", None)
     assert rp.pending("github.com/o/r")["tagged"] and not fake.rels
@@ -395,7 +676,7 @@ def test_an_asset_in_a_state_it_does_not_know_is_left_alone(press, monkeypatch):
 
 def test_uploads_that_all_fail_transiently_leave_the_attempt_pending(press):
     fake, repo, _ = press
-    fake.fail["POST releases/{id}/assets"] = [502] * rp.UPLOAD_TRIES
+    fake.fail["POST releases/{id}/assets"] = [502] * rp.UPLOAD_TRIES * (len(rp.WAITS) + 1)
     with pytest.raises(gh.Failed):
         rp.publish(repo, "0.1.0", None)
     still = rp.pending("github.com/o/r")
