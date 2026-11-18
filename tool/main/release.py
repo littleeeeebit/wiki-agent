@@ -1,13 +1,14 @@
-"""Release step 1 (`docs/plans/release/0-overview.md`). It builds one pinned commit into an Android APK with the
-version injected, signs it and checks it. Nothing here publishes. Steps 2 to 5 bring the release key, the GitHub
-transfer and ledger, failure handling and the button. Until they land, `rehearse` signs with a disposable test
-key, and that key never signs a production artifact.
+"""Release steps 1 and 2 (`docs/plans/release/0-overview.md`). Step 1 builds one pinned commit into an Android
+APK with the version injected, signs it and checks it. Step 2 adds each repository's one release key. Nothing
+here publishes yet. Steps 3 to 5 bring the GitHub transfer and ledger, failure handling and the button.
+`rehearse` signs only with disposable test keys, and a test key never signs a production artifact.
 
 A rehearsal runs from `tool/` as this module's `rehearse` command, given a disposable clone and an optional
 `--ref`."""
 
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import re
@@ -18,9 +19,12 @@ import sys
 import threading
 import time
 import tomllib
+from contextlib import contextmanager
+from ctypes import wintypes
 from pathlib import Path
 
 import android_owned
+import verify
 from common import errorlog, is_junction, paths
 
 from . import oneshot_android, specs
@@ -176,11 +180,11 @@ def checkout(repo: Path, sha: str, attempt: str) -> Path:
     return into
 
 
-def owned(path: Path) -> Path:
-    """`path` when it lies strictly under `WORK` and no folder from the data root down to it is a link or a
-    junction. Checked before a checkout is written and before one is removed."""
+def owned(path: Path, under: Path | None = None) -> Path:
+    """`path` when it lies strictly under `under` (`WORK` unless named) and no folder from the data root down
+    to it is a link or a junction. Checked before a checkout or a key is written and before one is removed."""
 
-    root, target = Path(os.path.abspath(WORK)), Path(os.path.abspath(path))
+    root, target = Path(os.path.abspath(WORK if under is None else under)), Path(os.path.abspath(path))
     if target == root or not target.is_relative_to(root):
         raise ValueError(f"{target} 는 {root} 안이 아니다")
     data = Path(os.path.abspath(paths.DATA))
@@ -277,7 +281,10 @@ def run(argv: list, env: dict | None = None, timeout: float = 300) -> str:
     done = subprocess.run([str(a) for a in argv], capture_output=True, text=True, encoding="utf-8", errors="replace",
                           env=env, timeout=timeout)
     if done.returncode:
-        raise ValueError(f"{Path(str(argv[0])).name} 실패 — {(done.stderr or done.stdout).strip()[-400:]}")
+        said = (done.stderr or done.stdout).strip()
+        if env and env.get(SECRET):   # a key tool's diagnostic never carries its password onward
+            said = said.replace(env[SECRET], "***")
+        raise ValueError(f"{Path(str(argv[0])).name} 실패 — {said[-400:]}")
     return done.stdout
 
 
@@ -285,12 +292,18 @@ def test_key(store: Path, kit: dict) -> dict:
     """A disposable key for a rehearsal at `store`, valid for one day. The caller removes `store` whatever
     happens, because `keytool` can write it and still fail."""
 
+    return generated(store, "rehearsal", 1, "CN=wiki-agent release rehearsal", kit)
+
+
+def generated(store: Path, alias: str, days: int, name: str, kit: dict) -> dict:
+    """A new RSA key at `store` with a random password, which reaches `keytool` only through its environment."""
+
     password = secrets.token_urlsafe(24)
-    run([kit["keytool"], "-genkeypair", "-keystore", store, "-alias", "rehearsal", "-keyalg", "RSA",
-         "-keysize", "2048", "-validity", "1", "-dname", "CN=wiki-agent release rehearsal",
+    run([kit["keytool"], "-genkeypair", "-keystore", store, "-alias", alias, "-keyalg", "RSA",
+         "-keysize", "2048", "-validity", str(days), "-dname", name,
          "-storepass:env", SECRET, "-keypass:env", SECRET],
         keyed(kit, password))
-    return {"keystore": store, "alias": "rehearsal", "password": password}
+    return {"keystore": store, "alias": alias, "password": password}
 
 
 def sign(apk: Path, out: Path, key: dict, kit: dict) -> Path:
@@ -367,6 +380,190 @@ def refused(seen: dict, release: str, android: dict, cert: str, previous: dict |
     return out
 
 
+# -- The release key (step 2) ---------------------------------------------------------------------
+# One key per repository signs every production APK it ever ships, so Android installs each one as an update of
+# the last. The keystore lives under `KEYS`, outside every checkout. Its password lives only in this Windows
+# account's Credential Manager. Neither is handed to the build command or the repair agent. They run as the same
+# Windows account, though, which can read that account's vault and profile, so the boundary is the account. Code
+# that is not trusted must run under another account before step 5 enables publishing. The certificate file is
+# written last and marks the key as established. After that, a missing or changed half is refused and never
+# replaced, because a new key would strand every installed copy.
+
+# Never under a checkout: unpackaged, `paths.DATA` is the checkout, and a key removed with a worktree is lost for
+# good. Packaged, `KEYS` sits inside `paths.DATA`, which is then this same LocalAppData folder.
+KEYS = Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".local/share") / "wiki-agent-data" / "release-keys"
+KEY_DAYS = 10000   # about 27 years; Google Play wants a key valid past 2033
+FIRST_RELEASE_NOTE = ("첫 정식 릴리스입니다. 디버그 APK 를 설치했던 기기는 서명이 달라 이 버전으로 업데이트되지 "
+                      "않습니다. 디버그 앱을 한 번 지우고 이 APK 를 설치하세요. 디버그 앱에 저장된 데이터는 함께 지워집니다.")
+
+
+def remote(repo: Path) -> str:
+    """The canonical remote, `github.com/<owner>/<repo>`, that names the repository's key and ledger."""
+
+    url = git(repo, "remote", "get-url", "origin").strip()
+    found = re.fullmatch(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
+                         r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?", url)
+    if not found or {found.group(1), found.group(2)} & {".", ".."}:
+        raise ValueError("origin 이 GitHub 저장소 주소가 아니다")   # never echoed: a URL can carry a token
+    return f"github.com/{found.group(1)}/{found.group(2)}".lower()
+
+
+def target(name: str) -> str:
+    return f"wiki-agent release key {name}"
+
+
+class _Credential(ctypes.Structure):   # CREDENTIALW
+    _fields_ = [("Flags", wintypes.DWORD), ("Type", wintypes.DWORD), ("TargetName", wintypes.LPWSTR),
+                ("Comment", wintypes.LPWSTR), ("LastWritten", wintypes.FILETIME),
+                ("CredentialBlobSize", wintypes.DWORD), ("CredentialBlob", ctypes.c_void_p),
+                ("Persist", wintypes.DWORD), ("AttributeCount", wintypes.DWORD), ("Attributes", ctypes.c_void_p),
+                ("TargetAlias", wintypes.LPWSTR), ("UserName", wintypes.LPWSTR)]
+
+
+def _advapi():
+    if os.name != "nt":
+        raise ValueError("정식 서명 키의 비밀번호는 Windows 자격 증명 관리자에만 둔다")
+    return ctypes, ctypes.WinDLL("advapi32", use_last_error=True)
+
+
+GENERIC, LOCAL_MACHINE, NOT_FOUND = 1, 2, 1168
+
+
+def secret_read(name: str) -> str | None:
+    ctypes, a = _advapi()
+    found = ctypes.POINTER(_Credential)()
+    if not a.CredReadW(target(name), GENERIC, 0, ctypes.byref(found)):
+        if ctypes.get_last_error() == NOT_FOUND:
+            return None
+        raise OSError(f"자격 증명을 읽지 못했다: {ctypes.get_last_error()}")
+    try:
+        blob = found.contents
+        return ctypes.string_at(blob.CredentialBlob, blob.CredentialBlobSize).decode("utf-16-le")
+    finally:
+        a.CredFree(found)
+
+
+def secret_write(name: str, value: str) -> None:
+    ctypes, a = _advapi()
+    data = value.encode("utf-16-le")
+    blob = ctypes.create_string_buffer(data, len(data))
+    cred = _Credential(Type=GENERIC, TargetName=target(name), CredentialBlobSize=len(data),
+                       CredentialBlob=ctypes.cast(blob, ctypes.c_void_p), Persist=LOCAL_MACHINE,
+                       UserName="wiki-agent")
+    if not a.CredWriteW(ctypes.byref(cred), 0):
+        raise OSError(f"자격 증명을 쓰지 못했다: {ctypes.get_last_error()}")
+
+
+def secret_delete(name: str) -> None:
+    ctypes, a = _advapi()
+    if not a.CredDeleteW(target(name), GENERIC, 0) and ctypes.get_last_error() != NOT_FOUND:
+        raise OSError(f"자격 증명을 지우지 못했다: {ctypes.get_last_error()}")
+
+
+LOCK_SECONDS = 60
+
+
+def plain(path: Path) -> Path:
+    """`path` when nothing on the way to it, the leaf included and even a dangling one, is a link or junction."""
+
+    if os.path.normcase(os.path.realpath(path)) != os.path.normcase(os.path.abspath(path)) or \
+            Path(path).is_symlink() or is_junction(Path(path)):
+        raise ValueError(f"{path} 는 링크를 거친다 — 서명 키는 링크를 따라가지 않는다")
+    return Path(os.path.abspath(path))
+
+
+@contextmanager
+def held(folder: Path):
+    """One process at a time per repository's key, released when the holder dies. Two creations at once
+    would otherwise leave two passwords and two keystores, and only one survives."""
+
+    lock, deadline = plain(folder / "lock"), time.monotonic() + LOCK_SECONDS
+    while True:
+        try:
+            with verify.locked(lock):   # the final gate's lock: fails at once, so the wait is here
+                yield
+            return
+        except verify.Pending:
+            if time.monotonic() > deadline:
+                raise ValueError(f"{folder} 의 서명 키를 다른 요청이 쓰고 있다 — 끝난 뒤 다시 하라") from None
+            time.sleep(0.2)
+
+
+def opens(store: Path, password: str | None, kit: dict) -> str | None:
+    """`store`'s certificate SHA-256 when `password` opens it, else None."""
+
+    if password is None or not store.is_file():
+        return None
+    try:
+        return certificate(store, "release", password, kit)
+    except ValueError:
+        return None
+
+
+def release_key(repo: Path, kit: dict, create: bool = False) -> dict:
+    """The repository's one production key with its certificate's SHA-256. `create` makes it when it was never
+    established, or finishes a creation that stopped. Nothing here deletes or overwrites a keystore or a password
+    that might be the repository's: an established key that lost a half or changed, a keystore no password opens,
+    and a surviving password with no keystore are each refused for a person to settle."""
+
+    name = remote(repo)
+    keys = Path(os.path.realpath(KEYS))   # the target's checkout, or wiki-agent's own (unpackaged, that is the data)
+    if any(keys.is_relative_to(Path(os.path.realpath(root))) for root in (repo, paths.RESOURCES)):
+        raise ValueError(f"{KEYS} 가 체크아웃 안이다 — 서명 키는 모든 체크아웃 밖에만 둔다")
+    folder = plain(owned(KEYS / name, KEYS))
+    folder.mkdir(parents=True, exist_ok=True)
+    store, marker, pending = (plain(folder / n) for n in ("release.jks", "certificate.sha256", "release.jks.new"))
+    with held(folder):   # every check below is made again under the lock, never trusted from before it
+        password = secret_read(name)
+        if marker.exists():
+            cert = marker.read_text(encoding="utf-8").strip()
+            if not re.fullmatch(r"[0-9a-f]{64}", cert):
+                raise ValueError(f"{marker} 가 깨졌다 — 인증서 기록을 백업에서 되살려라. 키는 그대로 두었다")
+            if not store.is_file() or password is None:
+                gone = "키 파일" if not store.is_file() else "자격 증명 관리자의 비밀번호"
+                raise ValueError(f"{name} 의 정식 서명 키가 있었는데 {gone}이 없다 — 새 키로 서명하면 설치된 앱이 "
+                                 f"업데이트되지 않는다. 백업에서 되살려라: {store}")
+            if opens(store, password, kit) != cert:
+                raise ValueError(f"{store} 의 인증서가 기록한 {cert[:16]}… 와 다르다 — 바뀐 키로는 서명하지 않는다")
+            return {"keystore": store, "alias": "release", "password": password, "cert": cert, "name": name}
+        if store.exists():   # stopped between its rename and its record, or a record someone removed
+            if (cert := opens(store, password, kit)) is None:
+                raise ValueError(f"{store} 가 있는데 인증서 기록도, 그 키를 여는 비밀번호도 없다 — 이 키로 서명한 적이 "
+                                 "있는지 사람이 확인해야 한다. 키는 그대로 두었다")
+        elif password is not None:   # stopped after its password was stored, or its keystore was lost
+            if (cert := opens(pending, password, kit)) is None:
+                raise ValueError(f"자격 증명 관리자에 '{target(name)}' 가 남아 있는데 키 파일이 없다 — 백업한 "
+                                 f"{store.name} 을 되살리거나, 그 키를 버릴 거라면 그 자격 증명을 직접 지운 뒤 다시 만든다")
+        elif pending.exists():   # a key that stopped before its password was stored, or a copy put back by hand
+            raise ValueError(f"{pending} 가 있는데 그 키를 여는 비밀번호가 자격 증명 관리자에 없다 — 되살리는 중이면 "
+                             "비밀번호를 되살리고, 아니면 이 파일을 지운 뒤 다시 만든다. 키는 그대로 두었다")
+        else:
+            cert = None
+        if not create:
+            raise ValueError(f"{name} 의 정식 서명 키가 {'만들다 멈췄다' if cert else '아직 없다'} — --create 로 "
+                             f"{'마저 만든다' if cert else '한 번 만든다'}")
+        if cert is None:   # nothing stored anywhere, not even a staged keystore
+            password = generated(pending, "release", KEY_DAYS, f"CN={name}", kit)["password"]
+            secret_write(name, password)
+            cert = certificate(pending, "release", password, kit)
+        if not store.exists():   # a keystore already there is the one `cert` came from; never overwrite it
+            pending.replace(store)
+        written = folder / f"certificate.sha256.{secrets.token_hex(4)}.new"
+        with open(written, "x", encoding="utf-8") as staged:   # a fresh file, never an existing name or its links
+            try:
+                staged.write(cert + "\n")
+            except BaseException:
+                staged.close()
+                written.unlink(missing_ok=True)   # ours alone: the exclusive open made it
+                raise
+        try:
+            written.replace(marker)   # last, and whole: from here on the key is the repository's
+        except BaseException:
+            written.unlink(missing_ok=True)
+            raise
+        return {"keystore": store, "alias": "release", "password": password, "cert": cert, "name": name}
+
+
 # -- The unpublished rehearsal --------------------------------------------------------------------
 
 def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None) -> dict:
@@ -428,9 +625,16 @@ def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None)
 
 def main(argv: list[str]) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
-    if len(argv) < 2 or argv[0] != "rehearse":
-        print("usage: rehearse <repo> [--ref <ref>]", file=sys.stderr)
+    if len(argv) < 2 or argv[0] not in ("rehearse", "key"):
+        print("usage: rehearse <repo> [--ref <ref>] | key <repo> [--create]", file=sys.stderr)
         return 2
+    if argv[0] == "key":   # the password is never printed; it stays in Credential Manager
+        key = release_key(Path(argv[1]).resolve(), tools(), create="--create" in argv)
+        print(json.dumps({"remote": key["name"], "keystore": str(key["keystore"]), "cert": key["cert"],
+                          "backup": f"{key['keystore']} 와 자격 증명 관리자의 '{target(key['name'])}' 를 함께 "
+                                    "백업하라. 둘 중 하나라도 잃으면 설치된 앱을 업데이트할 수 없다."},
+                         ensure_ascii=False, indent=2))
+        return 0
     ref = argv[argv.index("--ref") + 1] if "--ref" in argv else "main"
     result = rehearse(Path(argv[1]).resolve(), ref)
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
