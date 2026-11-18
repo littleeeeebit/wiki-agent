@@ -70,9 +70,12 @@ server, never installs this attempt's bytes. A Codex home counts as written
 once its trust write is sent (`config/batchWrite`), since Codex may take it
 and be stopped before it answers. A home cut while its hooks were still
 being read, or whose write never reached Codex's pipe, does not. Trust counts
-as done only when Codex lists every wiki hook back as trusted. A home where
-Codex lists none, for example with hooks switched off, is a refusal with its
-reason, never a finished move.
+as done only when Codex lists back every hook this install wrote, each one
+trusted (`setup_agents.codex_trusted`). The routine trust check holds the
+same bar. A home where Codex lists fewer is a refusal with its reason, never
+a finished move. Examples are hooks switched off, or `SessionStart` loaded
+without `PreToolUse`. Such a home also spends the approval, since a write may
+have landed before that answer.
 `connect.move` writes nothing once
 shutdown has begun. A move cut partway still drops the routine read's last
 check and every repository's probe record, as a finished move does. Each

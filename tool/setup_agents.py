@@ -192,14 +192,9 @@ def codex_hooks(home, trust, python=None):
     it, only for commands that run this checkout's `hook.py`, and through
     Codex's own config writer rather than by editing its file.
     """
-    from apply import installed
     from agent import CodexServer
 
-    # Exactly what this install wrote, event and command both. Anything that
-    # merely names or resembles the dispatcher is somebody else's code, and
-    # trusting it would vouch for that code.
-    mine = {(event[0].lower() + event[1:], command)
-            for event, command in installed("codex", python or sys.executable)}
+    mine = codex_mine(python)
     with CodexServer(env={"CODEX_HOME": str(home)}, cwd=WIKI) as server:
         listed = lambda: [h for d in server.request("hooks/list", {"cwds": [str(WIKI)]})["data"]  # noqa: E731
                           for h in d["hooks"] if (h["eventName"], h["command"]) in mine]
@@ -218,6 +213,21 @@ def codex_hooks(home, trust, python=None):
                 exc.trust_sent = True
                 raise
     return hooks
+
+
+def codex_mine(python=None):
+    """Exactly what this install wrote for Codex, event and command both, as `hooks/list` names them. Anything
+    that merely names or resembles the dispatcher is somebody else's code, and trusting it would vouch for it."""
+    from apply import installed
+
+    return {(event[0].lower() + event[1:], command) for event, command in installed("codex", python or sys.executable)}
+
+
+def codex_trusted(hooks, python=None):
+    """Codex lists every hook this install wrote, each one trusted. A subset, say `SessionStart` loaded and
+    `PreToolUse` not, is not: the wiring it was confirmed for is not all running."""
+
+    return {(h["eventName"], h["command"]) for h in hooks if h["trustStatus"] == "trusted"} >= codex_mine(python)
 
 
 def probe(project):

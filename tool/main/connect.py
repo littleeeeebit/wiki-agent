@@ -336,8 +336,7 @@ def trusted(python: str) -> bool:
 
     try:
         for file in apply.user_files("codex"):
-            hooks = setup_agents.codex_hooks(file.parent, False, python)
-            if not hooks or any(h["trustStatus"] != "trusted" for h in hooks):
+            if not setup_agents.codex_trusted(setup_agents.codex_hooks(file.parent, False, python), python):
                 return False
         return True
     except Exception as exc:  # noqa: BLE001 — whatever stopped Codex from answering is the reason shown
@@ -489,13 +488,14 @@ def move(confirmed: str, data: dict | None = None, done: list[str] | None = None
                     if getattr(exc, "trust_sent", False):
                         done.append(f"{home}: Codex 신뢰 기록 (응답 전에 끊겨 적용됐을 수 있다)")
                     raise
-                # Trust is confirmed only by Codex listing every wiki hook as trusted. None listed (hooks switched
-                # off, a home Codex does not read) is a refusal, never a move that is done.
-                if not hooks or any(hook["trustStatus"] != "trusted" for hook in hooks):
-                    if hooks:
-                        done.append(f"{home}: Codex 신뢰 기록 (보냈지만 신뢰로 바뀌지 않았다)")
-                    raise ValueError(f"{home}: Codex 가 이 허브의 위키 훅을 "
-                                     + ("찾지 못해 신뢰를 기록하지 못했다" if not hooks else "신뢰로 바꾸지 않았다"))
+                # Trust is confirmed only by Codex listing every wiki hook as trusted. Fewer (hooks switched off, a
+                # home Codex does not read) is a refusal, never a move that is done. A write may have been sent and
+                # taken before that answer, so the home counts as possibly changed: the card's approval is spent.
+                if not setup_agents.codex_trusted(hooks, python):
+                    done.append(f"{home}: Codex 신뢰 기록 (확인되지 않았다 — 적용됐을 수 있다)")
+                    raise ValueError(f"{home}: Codex 가 이 허브의 위키 훅을 모두 신뢰로 보여 주지 않았다 "
+                                     f"(신뢰 {sum(h['trustStatus'] == 'trusted' for h in hooks)}개 / "
+                                     f"필요 {len(setup_agents.codex_mine(python))}개)")
                 done.append(f"{home}: Codex 신뢰 기록")
         except BaseException as exc:   # a move cut partway changed the wiring too: its error stays the one raised
             for note in _forget_old_wiring():
