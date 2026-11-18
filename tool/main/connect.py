@@ -40,7 +40,7 @@ from pydantic import BaseModel
 
 import apply
 import setup_agents
-from agent import cli_command, pin_servers, server_epoch
+from agent import cli_command, pin_servers, server_epoch, servers_retired
 from common import indexes, process, shell, swap
 from common.paths import PACKAGED, RAW
 from common.host import conda_exe, environment, skill_config
@@ -308,6 +308,10 @@ def probe(path: Path, host: str) -> dict:
             skills = skill_config(path, env)
             if skills:
                 args = [*args[:-1], "-c", skills, args[-1]]
+        # Preparing the command may take long (the model list, the skills): a shutdown meanwhile, or a lifespan
+        # ended under a background test, starts no CLI, which no shutdown would end.
+        if runtime.stopping.is_set() or servers_retired():
+            raise RuntimeError("서버가 꺼지는 중이라 시험을 시작하지 않는다")
         done = spawn(args, path, env, PROBE_SECONDS)
         if done.returncode:
             detail = specs.said(done)

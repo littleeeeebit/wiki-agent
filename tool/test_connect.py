@@ -336,6 +336,37 @@ def test_a_host_passes_only_when_its_own_session_start_injected(tmp_path):
     assert after == before, "시험의 흔적은 읽은 뒤 지운다"
 
 
+def test_a_probe_whose_preparation_outlasted_its_lifespan_starts_no_cli(tmp_path):
+    """The model list or the skills may take long; a shutdown meanwhile leaves the CLI unstarted, whether the stop
+    flag is still set or the next lifespan already opened."""
+
+    from agent import chat_local
+    from main import runtime
+
+    repo, started = _repo(tmp_path), []
+    connected(repo)
+    stopping = threading.Event()
+
+    def preparing(host):
+        stopping.set()
+        return ["cli"]
+
+    with patch.object(connect, "spawn", lambda *a: started.append(a)), patch.object(runtime, "stopping", stopping):
+        with patch.object(connect, "command", preparing):
+            assert not connect.probe(repo, "claude")["ok"] and started == [], "종료 표시가 서 있으면 띄우지 않는다"
+        stopping.clear()
+        epoch = chat_local.server_epoch()
+
+        def restarted(host):
+            chat_local.end_servers()
+            chat_local.reopen_servers()
+            return ["cli"]
+
+        with patch.object(connect, "command", restarted), chat_local.pin_servers(epoch):
+            failed = connect.probe(repo, "claude")
+        assert not failed["ok"] and "꺼지는 중" in failed["detail"] and started == [], "끝난 회차는 띄우지 않는다"
+
+
 def test_the_hook_writes_nothing_without_the_variable_and_passes_when_it_cannot_write(tmp_path):
     repo = _repo(tmp_path)
     connected(repo)
