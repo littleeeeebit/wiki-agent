@@ -305,7 +305,9 @@ def plan_global(choice, projects, python=None):
     return plan
 
 
-def write_plan(plan):
+def write_plan(plan, stopped=None):
+    """Write each changed settings file. `stopped`, the server's own check, is read right before each file
+    replaces the owner's: a server going down installs nothing more. The CLI passes none."""
     for path, settings, changes in plan:
         if changes:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -318,6 +320,8 @@ def write_plan(plan):
             try:
                 with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out:
                     out.write(json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+                if stopped and stopped():
+                    raise RuntimeError(f"서버가 꺼지는 중이라 {path} 를 바꾸지 않았다")
                 os.replace(partial, target)
             except BaseException:
                 Path(partial).unlink(missing_ok=True)
@@ -355,26 +359,31 @@ def skill_links(home=None):
 
 def relink(link, target):
     """Point `link` at `target`, as the same kind of link it was: a junction
-    stays a junction — it needs no developer mode — and a symlink a symlink."""
-    junction = is_junction(link)
-    old = os.readlink(link).removeprefix("\\\\?\\")   # as `skill_links` reads it: a junction names `\\?\C:\…`
+    stays a junction — it needs no developer mode — and a symlink a symlink.
 
-    def make(to):
+    The working link is never removed before the new one stands: it is moved
+    aside (out of the skills folder, so nothing loads or lists it there), and
+    moved back when the new one cannot be made. Only once the new one is in
+    place does the old one go."""
+    junction = is_junction(link)
+    aside = link.parent.parent / f".{link.name}.before-relink"
+    os.rename(link, aside)
+    try:
         if junction:
             import _winapi
 
-            _winapi.CreateJunction(str(to), str(link))
+            _winapi.CreateJunction(str(target), str(link))
         else:
-            os.symlink(to, link, target_is_directory=True)
-
+            os.symlink(target, link, target_is_directory=True)
+    except BaseException as exc:
+        try:
+            os.rename(aside, link)   # the untouched old link, back where it was
+        except OSError as back:   # still kept aside, and named: nothing is lost unseen
+            exc.add_note(f"{link} 의 원래 링크를 되돌리지 못해 {aside} 에 남겼다 — {back}")
+        raise
     # On Windows both kinds of directory link go with `rmdir`, which removes
     # the link and never what it points at.
-    (os.rmdir if os.name == "nt" else os.unlink)(link)
-    try:
-        make(target)
-    except BaseException:   # the new link did not come: the old one goes back, so the next plan still lists it
-        make(old)
-        raise
+    (os.rmdir if os.name == "nt" else os.unlink)(aside)
 
 
 def install_global(choice, check, projects, trust):

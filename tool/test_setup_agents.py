@@ -54,9 +54,10 @@ def test_a_link_whose_replacement_fails_points_where_it_did(tmp_path, monkeypatc
 
     import setup_agents
 
-    old, new, link = tmp_path / "old-hub", tmp_path / "new-hub", tmp_path / "skill"
+    old, new, link = tmp_path / "old-hub", tmp_path / "new-hub", tmp_path / "skills" / "skill"   # as `~/.claude/skills/<name>`
     old.mkdir()
     new.mkdir()
+    link.parent.mkdir()
     if os.name == "nt":
         import _winapi
 
@@ -79,6 +80,36 @@ def test_a_link_whose_replacement_fails_points_where_it_did(tmp_path, monkeypatc
     monkeypatch.undo()
     restored = Path(os.readlink(link).removeprefix("\\\\?\\"))   # a junction names `\\?\C:\…`
     assert restored.resolve() == old.resolve(), "실패하면 원래 링크가 그대로 돌아온다"
+    # The new link fails and so does moving the old one back: it stays aside, whole, and the error names it.
+    real_rename, renames = os.rename, []
+
+    def second_fails(src, dst):
+        renames.append(dst)
+        if len(renames) == 2:
+            raise OSError("in use")
+        return real_rename(src, dst)
+
+    monkeypatch.setattr(owner, name, lambda *a, **k: (_ for _ in ()).throw(OSError("access denied")))
+    monkeypatch.setattr(os, "rename", second_fails)
+    with pytest.raises(OSError) as failed:
+        setup_agents.relink(link, new)
+    monkeypatch.undo()
+    aside = Path(renames[0])
+    assert aside.parent == tmp_path and Path(os.readlink(aside).removeprefix("\\\\?\\")).resolve() == old.resolve()
+    assert any(str(aside) in note for note in failed.value.__notes__), "남겨 둔 자리를 알려 준다"
+
+
+def test_a_server_going_down_while_a_file_is_staged_installs_nothing(tmp_path):
+    import pytest
+
+    import setup_agents
+
+    settings = tmp_path / "settings.json"
+    settings.write_text('{"model": "opus"}', encoding="utf-8")
+    with pytest.raises(RuntimeError, match="꺼지는 중"):
+        setup_agents.write_plan([(settings, {"model": "opus", "hooks": {}}, ["훅 추가"])], lambda: True)
+    assert json.loads(settings.read_text(encoding="utf-8")) == {"model": "opus"}
+    assert list(tmp_path.iterdir()) == [settings]
 
 
 def test_the_threshold_goes_into_both_hosts_and_an_existing_value_is_left_alone():

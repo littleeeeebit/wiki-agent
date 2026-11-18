@@ -84,13 +84,17 @@ routine trust check holds the same bar. Anything less is a refusal with its
 reason, never a finished move. Examples are hooks switched off, `SessionStart`
 loaded without `PreToolUse`, or a trusted twin beside an untrusted entry.
 
-A skill link whose replacement fails points where it did, so the next plan
-still lists it.
+A skill link is never removed before its replacement stands. The working
+link is moved aside, out of the skills folder, and moved back when the new
+one cannot be made. If even that fails it stays aside, whole, and the error
+names where.
 
-Shutdown is checked in three places:
+Shutdown is checked in four places:
 
 - `connect.move` writes nothing once shutdown has begun.
 - It starts no further settings file, link or Codex home.
+- `write_plan` installs no staged file once shutdown began while it was
+  staged.
 - `codex_hooks` sends no trust write once a read Codex answered lands after
   shutdown began.
 

@@ -483,7 +483,7 @@ def move(confirmed: str, data: dict | None = None, done: list[str] | None = None
         try:
             for step in plan:
                 halt()
-                setup_agents.write_plan([step])
+                setup_agents.write_plan([step], stopped)
                 done += [str(step[0])] if step[2] else []
             for link, _old, new in (found_link for found_link in found if found_link[2]):
                 halt()

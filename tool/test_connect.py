@@ -467,7 +467,7 @@ def test_a_move_the_server_going_down_overtook_writes_nothing(tmp_path, home, mo
     stopping.set()
     monkeypatch.setattr(runtime, "stopping", stopping)
     shown, written = connect.hub(), []
-    with patch.object(setup_agents, "write_plan", side_effect=written.append), \
+    with patch.object(setup_agents, "write_plan", side_effect=lambda plan, stopped=None: written.append(plan)), \
          pytest.raises(HTTPException, match="꺼지는 중"):
         connect.move(shown["digest"])
     assert written == []
@@ -481,7 +481,7 @@ def test_a_server_going_down_mid_move_writes_no_further_file(tmp_path, home, mon
     shown = connect.hub()
     assert len([line for line in shown["lines"]]) > 1 or shown["links"], "쓸 것이 둘 이상이어야 시험이 된다"
 
-    def first_then_down(plan):
+    def first_then_down(plan, stopped=None):
         written.append(plan[0][0])
         stopping.set()   # shutdown begins once the first file landed
 
@@ -531,9 +531,9 @@ def test_trust_goes_only_to_the_codex_homes_the_confirmation_listed(tmp_path, ho
     shown, recorded = connect.hub(), []
     assert shown["trust"] and shown["homes"] == [str(file.parent) for file in codex]
 
-    def write_plan(plan):   # a `CODEX_HOME` that comes to exist while the files are written, after the check
+    def write_plan(plan, stopped=None):   # a `CODEX_HOME` that comes to exist while the files are written, after the check
         codex.append(tmp_path / "later-codex" / "hooks.json")
-        return real_write(plan)
+        return real_write(plan, stopped)
 
     with patch.object(apply, "user_files", lambda agent: list(codex) if agent == "codex" else real_files(agent)), \
          patch.object(setup_agents, "write_plan", write_plan), \
