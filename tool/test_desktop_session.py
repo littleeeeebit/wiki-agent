@@ -170,7 +170,81 @@ def test_an_interrupted_cleanup_is_never_proven(tmp_path, monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         look.close()
 
-    assert desktop_session.load(look.folder)["proof"]["reasons"] == ["cleanup was interrupted"]
+    proof = desktop_session.load(look.folder)["proof"]
+    assert not proof["clean"] and "cleanup was interrupted" in proof["reasons"]
+
+
+def test_an_interruption_waits_until_every_handle_is_released(tmp_path, monkeypatch):
+    look = desktop_session.Look(tmp_path, "released")
+    look.jobs.update(first=object(), second=object())
+    look.record["jobs"] = {key: {"members": []} for key in look.jobs}
+    released = []
+    monkeypatch.setattr(look, "observe", lambda: None)
+    monkeypatch.setattr(native_process, "_sockets", lambda _: [])
+
+    def ending(key, job, seconds):
+        if key == "first":
+            raise KeyboardInterrupt
+        released.append(key)
+        return []
+
+    monkeypatch.setattr(look, "_ended", ending)
+    monkeypatch.setattr(look, "_desktop_closed", lambda: released.append("desktop"))
+    with pytest.raises(KeyboardInterrupt):
+        look.close()
+
+    assert released == ["second", "desktop"] and desktop_session.load(look.folder)["state"] == "held"
+
+
+def test_a_proof_that_could_not_be_saved_is_saved_on_retry_and_only_then_returned(tmp_path, monkeypatch):
+    look = desktop_session.Look(tmp_path, "receipt")
+    save, failed = desktop_session.save, []
+
+    def flaky(folder, record):
+        if record["proof"] is not None and not failed:
+            failed.append(True)
+            raise PermissionError("receipt busy")
+        return save(folder, record)
+
+    monkeypatch.setattr(desktop_session, "save", flaky)
+    with pytest.raises(PermissionError, match="receipt busy"):
+        look.close()
+    assert desktop_session.load(look.folder)["state"] == "owning"
+
+    assert look.close()["clean"]
+    assert desktop_session.load(look.folder)["state"] == "proven"
+
+
+def test_a_relative_root_still_gives_the_app_absolute_data_paths(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "looks").mkdir()
+    (tmp_path / "project").mkdir()
+    look = desktop_session.Look(Path("looks"), "relative")
+    seen = {}
+
+    def capture(job, argv, cwd, env, desktop, log, before_resume):
+        seen.update(env)
+        return {}
+
+    monkeypatch.setattr(desktop_session.owned_job.Job, "start", capture)
+    try:
+        look.start("app", python(SLEEP), tmp_path / "project")
+        profile = (tmp_path / "looks" / "relative" / look.record["folders"][0]["name"])
+        assert Path(seen["APPDATA"]) == profile / "Roaming" and Path(seen["LOCALAPPDATA"]) == profile / "Local"
+        assert Path(seen["TEMP"]) == Path(seen["TMP"]) == profile / "Temp"
+    finally:
+        look.close()
+
+
+def test_direct_recovery_holds_a_linked_look(tmp_path, monkeypatch):
+    folder = crashed(tmp_path, monkeypatch)
+    before, attempted = desktop_session.load(folder), []
+    monkeypatch.setattr(desktop_session, "is_junction", lambda path: path == folder)
+    monkeypatch.setattr(desktop_session, "uptime", lambda: 1)
+    monkeypatch.setattr(desktop_session, "_removed", lambda path, entries: attempted.append(path) or [])
+
+    assert desktop_session.recover(folder)
+    assert attempted == [] and desktop_session.load(folder) == before
 
 
 def test_a_linked_look_folder_is_never_recovered(tmp_path):

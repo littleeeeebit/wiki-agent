@@ -188,7 +188,9 @@ class Look:
     Use it through `look()`, which runs `close()` on every outcome."""
 
     def __init__(self, root: Path, name: str):
-        self.root, self.folder = Path(root), Path(root) / name
+        self.root = Path(root).absolute()   # a child starts elsewhere: its data paths must not be relative
+        self.folder = self.root / name
+        self.result = None   # the teardown's reasons, kept until its proof is saved
         self.jobs: dict[str, owned_job.Job] = {}
         self.desktop = None
         self.closed = False
@@ -293,37 +295,48 @@ class Look:
 
         if self.closed:
             return self.record["proof"]
-        self.closed = True
-        reasons, ports, finished = [], [], False
+        if self.result is None:   # a retry after a failed save keeps the teardown it already ran
+            self.result = self._teardown(seconds)
+        reasons, interrupted = self.result
+        # Every part was tried: recovery may now settle the record without its server's exit.
+        record = {**self.record, "state": "held" if reasons else "proven", "owner": None,
+                  "proof": {"clean": not reasons, "reasons": reasons, "uptime": uptime()}}
+        save(self.folder, record)
+        self.record, self.closed = record, True
+        if interrupted:
+            raise interrupted
+        return record["proof"]
 
-        def attempt(label, step) -> None:   # each part is tried whatever an earlier one did
+    def _teardown(self, seconds: float) -> tuple[list[str], BaseException | None]:
+        """Try every part of the cleanup, each whatever an earlier one did. An interruption is held back until
+        every handle was released: (reasons, the interruption to raise)."""
+
+        reasons, ports, interrupted = [], [], None
+
+        def attempt(label, step) -> None:
+            nonlocal interrupted
             try:
                 reasons.extend(step() or [])
-            except Exception as error:
-                reasons.append(f"{label}: {error}")
+            except BaseException as error:
+                reasons.append(f"{label}: {error!r}")
+                if not isinstance(error, Exception):
+                    interrupted = interrupted or error
 
-        try:
-            attempt("cannot record the members", self.observe)
-            recorded = self._recorded()
-            attempt("cannot read the listeners", lambda: ports.extend(sorted(
-                {port for state, port, _, pid in native_process._sockets(3)
-                 if state == 2 and any(member["pid"] == pid for member in recorded)})))
-            self.record["listeners"] = ports
-            for key, job in self.jobs.items():
-                attempt(f"{key}: cannot end the job", lambda key=key, job=job: self._ended(key, job, seconds))
-            attempt("cannot close the desktop", self._desktop_closed)
-            attempt("cannot check the recorded processes", lambda: self._exits(recorded))
-            attempt("cannot check the listeners", lambda: self._listening(ports, recorded))
-            attempt("cannot remove the folders", lambda: _removed(self.folder, self.record["folders"]))
-            finished = True
-        finally:
-            if not finished:
-                reasons.append("cleanup was interrupted")
-            # The look's own cleanup is over: recovery may now settle the record without its server's exit.
-            self.record.update(state="held" if reasons else "proven", owner=None,
-                               proof={"clean": not reasons, "reasons": reasons, "uptime": uptime()})
-            save(self.folder, self.record)
-        return self.record["proof"]
+        attempt("cannot record the members", self.observe)
+        recorded = self._recorded()
+        attempt("cannot read the listeners", lambda: ports.extend(sorted(
+            {port for state, port, _, pid in native_process._sockets(3)
+             if state == 2 and any(member["pid"] == pid for member in recorded)})))
+        self.record["listeners"] = ports
+        for key, job in self.jobs.items():
+            attempt(f"{key}: cannot end the job", lambda key=key, job=job: self._ended(key, job, seconds))
+        attempt("cannot close the desktop", self._desktop_closed)
+        attempt("cannot check the recorded processes", lambda: self._exits(recorded))
+        attempt("cannot check the listeners", lambda: self._listening(ports, recorded))
+        attempt("cannot remove the folders", lambda: _removed(self.folder, self.record["folders"]))
+        if interrupted:
+            reasons.append("cleanup was interrupted")
+        return reasons, interrupted
 
     def _ended(self, key: str, job, seconds: float) -> list[str]:
         try:
@@ -376,7 +389,9 @@ def recover(folder: Path) -> list[str]:
     """Settle an earlier look's record. `[]` once its proof completed, or once a new boot or the end of its
     logon session proved its processes ended and its disposable folders are gone; otherwise why it is held."""
 
-    folder = Path(folder)
+    folder = Path(folder).absolute()
+    if not _plain(folder.parent, folder):   # a link would move every removal to wherever it leads
+        return [f"{folder.name}: not a plain folder inside {folder.parent}; left in place"]
     record = load(folder)
     if record is None or record["state"] in FINAL:
         return []
@@ -418,12 +433,4 @@ def recover_all(root: Path) -> list[str]:
     root = Path(root)
     if not root.is_dir():
         return []
-    held = []
-    for child in sorted(root.iterdir()):
-        if not (child / RECORD).is_file():
-            continue
-        if not _plain(root, child):   # a link would move every removal to wherever it leads
-            held.append(f"{child.name}: not a plain folder inside {root}; left in place")
-            continue
-        held += recover(child)
-    return held
+    return [reason for child in sorted(root.iterdir()) if (child / RECORD).is_file() for reason in recover(child)]
