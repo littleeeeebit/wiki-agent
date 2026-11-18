@@ -146,8 +146,9 @@ def test_a_job_that_fails_to_end_does_not_skip_the_rest_of_cleanup(tmp_path, mon
         calls.append("second.end")
         return {"clean": True, "reasons": []}
 
-    look.jobs = {"first": SimpleNamespace(end=failing, close=lambda: calls.append("first.close")),
-                 "second": SimpleNamespace(end=ending, close=lambda: calls.append("second.close"))}
+    look.jobs = {"first": SimpleNamespace(end=failing, close=lambda: calls.append("first.close"), outstanding=lambda: 0),
+                 "second": SimpleNamespace(end=ending, close=lambda: calls.append("second.close"),
+                                           outstanding=lambda: 0)}
     look.record["jobs"] = {key: {"members": []} for key in look.jobs}
     monkeypatch.setattr(look, "observe", lambda: None)
     monkeypatch.setattr(native_process, "_sockets", lambda _kind: [])
@@ -175,8 +176,10 @@ def test_an_interrupted_cleanup_is_never_proven(tmp_path, monkeypatch):
 
 
 def test_an_interruption_waits_until_every_handle_is_released(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
     look = desktop_session.Look(tmp_path, "released")
-    look.jobs.update(first=object(), second=object())
+    look.jobs.update(first=SimpleNamespace(outstanding=lambda: 0), second=SimpleNamespace(outstanding=lambda: 0))
     look.record["jobs"] = {key: {"members": []} for key in look.jobs}
     released = []
     monkeypatch.setattr(look, "observe", lambda: None)
@@ -263,6 +266,75 @@ def test_a_desktop_that_will_not_close_keeps_its_server_the_owner(tmp_path, monk
     assert not proof["clean"] and any("cannot close the desktop" in reason for reason in proof["reasons"])
     assert look.desktop == 123 and record["owner"] is not None
     assert desktop_session.recover(look.folder) == ["desktop-kept: its server is still running"]
+
+
+def test_a_probe_handle_that_will_not_close_is_held_and_keeps_the_owner(tmp_path, monkeypatch):
+    from itertools import count
+    from types import SimpleNamespace
+
+    class Probe(Desktops):
+        def OpenDesktopW(self, *args):
+            self.created.append(args)
+            return 124
+
+        def CloseDesktop(self, handle):
+            self.released.append(handle)
+            return handle == 123
+
+    tick = count()
+    monkeypatch.setattr(native_process, "_sockets", lambda _: [])
+    look = desktop_session.Look(tmp_path, "probe-kept")
+    look.u, look.desktop = Probe(), 123
+    monkeypatch.setattr(desktop_session, "time", SimpleNamespace(monotonic=lambda: next(tick), sleep=lambda _: None))
+
+    assert not look.close()["clean"]
+    assert len(look.u.created) == 1 and look.probes == [124]
+    assert desktop_session.load(look.folder)["owner"] is not None and not look.closed
+
+
+def test_a_held_desktop_handle_is_released_on_retry_and_only_then_the_owner_retires(tmp_path, monkeypatch):
+    look = desktop_session.Look(tmp_path, "retry-release")
+    look.u, look.desktop = Desktops(closes=False), 123
+    monkeypatch.setattr(native_process, "_sockets", lambda _: [])
+
+    assert not look.close()["clean"]
+    assert desktop_session.load(look.folder)["owner"] is not None
+
+    look.u.closes = True
+    look.close()
+
+    assert look.u.released == [123, 123] and look.desktop is None and look.closed
+    assert desktop_session.load(look.folder)["owner"] is None
+
+
+def test_an_interrupted_job_close_keeps_the_owner_while_a_handle_remains(tmp_path, monkeypatch):
+    class Kernel:
+        def __init__(self):
+            self.interrupt = True
+
+        def CloseHandle(self, handle):
+            if handle == 123 and self.interrupt:
+                raise KeyboardInterrupt
+            return True
+
+    look = desktop_session.Look(tmp_path, "job-kept")
+    job = object.__new__(desktop_session.owned_job.Job)
+    job.k, job.port, job.job = Kernel(), 123, 456
+    look.jobs["app"] = job
+    look.record["jobs"]["app"] = {"members": []}
+    monkeypatch.setattr(job, "end", lambda _: {"reasons": []})
+    monkeypatch.setattr(look, "observe", lambda: None)
+    monkeypatch.setattr(native_process, "_sockets", lambda _: [])
+
+    with pytest.raises(KeyboardInterrupt):
+        look.close()
+    record = desktop_session.load(look.folder)
+    assert record["state"] == "held" and record["owner"] is not None and job.port == 123
+
+    job.k.interrupt = False
+    look.close()
+
+    assert job.port is None and job.job is None and desktop_session.load(look.folder)["owner"] is None
 
 
 def test_nothing_joins_a_look_whose_proof_is_still_unsaved(tmp_path, monkeypatch):

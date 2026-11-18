@@ -192,6 +192,7 @@ class Look:
         self.folder = self.root / name
         self.result = None   # the teardown's reasons, kept until its proof is saved
         self.closing = False
+        self.probes: list = []   # name-probe handles Windows would not close, still held
         self.jobs: dict[str, owned_job.Job] = {}
         self.desktop = None
         self.closed = False
@@ -300,8 +301,9 @@ class Look:
         while True:
             again = self.u.OpenDesktopW(self.record["desktop"], 0, False, DESKTOP_READ)
             error = 0 if again else ctypes.get_last_error()
-            if again:
-                self.u.CloseDesktop(again)
+            if again and not self.u.CloseDesktop(again):
+                self.probes.append(again)   # held, and no further probe opens another
+                break
             if error == NOT_FOUND or time.monotonic() >= probe_until:
                 break
             time.sleep(0.1)
@@ -318,19 +320,58 @@ class Look:
         if self.closed:
             return self.record["proof"]
         self.closing = True
-        if self.result is None:   # a retry after a failed save keeps the teardown it already ran
+        if self.result is None:
             self.result = self._teardown(seconds)
-        reasons, interrupted = self.result
-        # Every part was tried. Recovery may settle the record without its server's exit only once this server
-        # holds nothing of the look: a desktop handle it could not close keeps it the owner until it exits.
+            interrupted = self.result[1]
+        else:   # a retry keeps the teardown it already ran and only releases what is still held
+            interrupted = self._release()
+        reasons = list(self.result[0])
+        left = self._outstanding()
+        if left:
+            reasons.append(f"{left} handle(s) of the look are still held; close() retries them")
+        # Recovery may settle the record without its server's exit only once this server holds nothing of the
+        # look; until then its owner stays recorded and the look stays open to a retry.
         record = {**self.record, "state": "held" if reasons else "proven",
-                  "owner": self.record["owner"] if self.desktop else None,
+                  "owner": self.record["owner"] if left else None,
                   "proof": {"clean": not reasons, "reasons": reasons, "uptime": uptime()}}
         save(self.folder, record)
-        self.record, self.closed = record, True
+        self.record, self.closed = record, not left
         if interrupted:
             raise interrupted
         return record["proof"]
+
+    def _outstanding(self) -> int:
+        return (bool(self.desktop) + len(self.probes)
+                + sum(job.outstanding() for job in self.jobs.values()))
+
+    def _release(self) -> BaseException | None:
+        """Close again every handle an earlier close could not; the interruption to raise, if one came."""
+
+        interrupted = None
+
+        def attempt(step) -> None:
+            nonlocal interrupted
+            try:
+                step()
+            except BaseException as error:   # what stays held is counted by `_outstanding`
+                if not isinstance(error, Exception):
+                    interrupted = interrupted or error
+
+        def desktop() -> None:
+            if self.u.CloseDesktop(self.desktop):
+                self.desktop = None
+
+        def probe(handle) -> None:
+            if self.u.CloseDesktop(handle):
+                self.probes.remove(handle)
+
+        if self.desktop:
+            attempt(desktop)
+        for handle in list(self.probes):
+            attempt(lambda handle=handle: probe(handle))
+        for job in self.jobs.values():
+            attempt(job.close)
+        return interrupted
 
     def _teardown(self, seconds: float) -> tuple[list[str], BaseException | None]:
         """Try every part of the cleanup, each whatever an earlier one did. An interruption is held back until
