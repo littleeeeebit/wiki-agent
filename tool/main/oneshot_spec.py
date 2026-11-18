@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from common import is_junction
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, specs, work
-from .oneshot_profile import current, environment, kind_of, kinds_of, stacked, unsettled, waits_at
+from .oneshot_profile import current, environment, held, kind_of, kinds_of, stacked, unsettled, waits_at
 
 RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}   # a later stage's module adds its own
 SHEETS = {"r1"}   # a stage whose sheet stands when its edit turn stopped
@@ -122,7 +122,8 @@ def unanswered(o: dict, stack: list[dict]) -> list[str]:
     talk, before = o.get("talk") or [], {s["part"]: s for s in o.get("stack") or []}
     answered = len(talk) >= 2 and talk[-1]["role"] == "owner" and bool(talk[-2].get("choices"))
     return [s["part"] for s in stack if s["status"] == "confirmed"
-            and not (before.get(s["part"], {}).get("status") == "confirmed" and before[s["part"]]["choice"] == s["choice"])
+            and not (before.get(s["part"], {}).get("status") == "confirmed" and before[s["part"]]["choice"] == s["choice"]
+                     and before[s["part"]].get("tools") == s.get("tools"))   # a PC app's tools are confirmed with it
             and not (answered and s["part"] in before)]
 
 
@@ -132,7 +133,8 @@ def spec_turn(final: str, spec: dict):
         raise ValueError("`oneshot-spec` 블록이 하나 있어야 한다")
     value = json.loads(found["oneshot-spec"])
     reqs, glossary = kept(spec, value, "S2")   # refuses anything but an object first
-    stack = stacked(value.get("stack") or [], kinds_of(spec["oneshot"]))
+    stack = stacked(value.get("stack") or [], kinds_of(spec["oneshot"]),
+                    (current(spec["oneshot"].get("profile")) or {}).get("ci") == "github-actions")
     if early := unanswered(spec["oneshot"], stack):
         raise ValueError("주인이 답하기 전에 `confirmed` 로 둔 스택 부분이 있다 — 묶음을 묻고, 주인의 답을 받은 다음 턴에 "
                          f"확정한다: {', '.join(early)}")
@@ -183,7 +185,10 @@ def talk(repo: str) -> None:
             saved(repo, requirements=reqs, oneshot={**fields, "open": "", "working": None, "mismatch": mismatch,
                                                     "stopped": {"reason": "rekind", "detail": detail, "state": o["stage"]}})
         return
-    if not why:
+    if not why and waits_at(o) == "design":   # the kind waits here in this version: one write, nothing starts
+        saved(repo, requirements=reqs, oneshot={**fields, "open": "", "stage": "design", "working": None, "stopped": {
+            "reason": "kind", "state": "design", "detail": "PC 앱의 핵심 설계는 다음 버전에서 이어진다 — 요구와 스택을 받았다"}})
+    elif not why:
         saved(repo, requirements=reqs, oneshot={**fields, "open": ""})
         handoff(repo, "design", stage="design")
     else:
@@ -426,7 +431,7 @@ def recover() -> None:
             o = saved(folder.name, oneshot=repair)["oneshot"]
         o = waiting(folder.name, o) if o else o
         stop = o.get("stopped") or {}
-        if stop.get("reason") == "kind" and o.get("stage") != waits_at(o):
+        if stop.get("reason") == "kind" and not held(o):
             saved(folder.name, oneshot={"stopped": {**stop, "reason": "restart",
                                                     "detail": "이 버전은 이 단계를 이어 간다 — [재개]를 누르면 시작한다"}})
         if o.get("working") or (o and o.get("stage") == "spec" and not o.get("talk") and not o.get("stopped")
@@ -438,7 +443,7 @@ def waiting(repo: str, o: dict) -> dict:
     """A run at the stage this version waits at keeps its `kind` stop: a stop or a shutdown that landed between
     that stage's save and its hand-off replaced it, and must not make the stage resumable."""
 
-    if o.get("stage") == waits_at(o) and not o.get("working") and (o.get("stopped") or {}).get("reason") != "kind":
+    if held(o) and not o.get("working") and (o.get("stopped") or {}).get("reason") != "kind":
         return saved(repo, oneshot={"stopped": {"reason": "kind", "state": o["stage"],
                                                 "detail": "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다"}})["oneshot"]
     return o

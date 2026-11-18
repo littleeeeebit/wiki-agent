@@ -42,7 +42,7 @@ type Toolchain = {
 const answer = (r: Response) => json<OneshotRun>(r, '원샷')
 export const api = {
   browseFolder,
-  oneshotRuns: () => get('/api/oneshot').then((r) => json<{ runs: OneshotRun[] }>(r, '원샷 목록')),
+  oneshotRuns: () => get('/api/oneshot').then((r) => json<{ runs: OneshotRun[]; unavailable?: Record<string, string> }>(r, '원샷 목록')),
   oneshotRun: (id: string) => get(`/api/oneshot/${id}`).then(answer),
   startOneshot: (sentence: string, path: string, models: Models, kinds: string[]) =>
     post('/api/oneshot', { sentence, path, models, kinds }).then(answer),
@@ -63,7 +63,7 @@ export const api = {
 const LABEL: Record<string, string> = {
   os_now: '지금 쓰는 OS', os_later: '다른 OS 에서도', auth: '로그인',
   visibility: 'GitHub 공개 범위', license: '라이선스', ci: 'CI',
-  ui_language: '화면 언어', docs_language: '문서 언어', responsive: '화면 크기', device: '기준 기기', llm: 'LLM 사용',
+  ui_language: '화면 언어', docs_language: '문서 언어', responsive: '화면 크기', device: '기준 기기', window: 'PC 앱 창 크기', llm: 'LLM 사용',
   github_owner: 'GitHub 소유자',
 }
 const STEP: Record<string, string> = {
@@ -106,6 +106,9 @@ export function Intake({ busy, act }: { busy: boolean; act: Act }) {
   const [kinds, setKinds] = useState<string[]>([])   // nothing preselected: the owner picks every kind
   const [typing, setTyping] = useState(remote)
   const [options, setOptions] = useState<Options | null>(null)
+  // The kinds this host cannot build, with why (`oneshot_profile.unavailable`): a PC app off Windows.
+  const [off, setOff] = useState<Record<string, string>>({})
+  useEffect(() => { api.oneshotRuns().then((d) => setOff(d?.unavailable ?? {})).catch(() => {}) }, [])
   const none = { model: '', effort: '' }
   const [models, setModels] = useState<Models>({ spec: none, build: none, review: none })
   // The review starts on the Review Loop's own choice, so the run fixes a named model, not "whatever it is then".
@@ -140,14 +143,17 @@ export function Intake({ busy, act }: { busy: boolean; act: Act }) {
         <fieldset className="flex flex-col gap-1.5">
           <legend className="font-semibold">어떤 형태로 만드나 — 여러 개를 골라도 된다</legend>
           <div className="flex flex-wrap gap-x-5 gap-y-2">
-            {KINDS.map((k) => (
-              <label key={k.id} className={cn('flex items-center gap-2', k.soon && 'text-muted-foreground')}>
-                <input type="checkbox" checked={kinds.includes(k.id)} disabled={busy || !!k.soon}
-                  onChange={(e) => setKinds((ks) => e.target.checked ? [...ks, k.id] : ks.filter((x) => x !== k.id))} />
-                <span className="font-medium">{k.label}</span>
-                <span className="text-[12px] text-muted-foreground">{k.soon ?? k.note}</span>
-              </label>
-            ))}
+            {KINDS.map((k) => {
+              const shut = k.soon ?? off[k.id]
+              return (
+                <label key={k.id} className={cn('flex items-center gap-2', shut && 'text-muted-foreground')}>
+                  <input type="checkbox" checked={kinds.includes(k.id)} disabled={busy || !!shut}
+                    onChange={(e) => setKinds((ks) => e.target.checked ? [...ks, k.id] : ks.filter((x) => x !== k.id))} />
+                  <span className="font-medium">{k.label}</span>
+                  <span className="text-[12px] text-muted-foreground">{shut ?? k.note}</span>
+                </label>
+              )
+            })}
           </div>
           {kinds.length > 1 && (
             <p className="text-[12px] text-muted-foreground">여러 형태는 핵심을 함께 쓰는 저장소 하나로 만들고, 풀 리퀘스트 하나에 형태마다의 README 와 배포 파일을 담는다.</p>

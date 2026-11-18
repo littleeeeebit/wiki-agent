@@ -131,7 +131,7 @@ export const STOP: Record<string, string> = {
 export const KINDS: { id: string; label: string; note: string; soon?: string }[] = [
   { id: 'webapp', label: '웹앱', note: '브라우저에서 쓴다' },
   { id: 'android', label: 'Android 앱', note: '휴대폰에 설치한다' },
-  { id: 'desktop', label: 'PC 앱', note: 'Windows 에 설치한다', soon: '계획 9e 에서 열린다' },
+  { id: 'desktop', label: 'PC 앱', note: 'Windows 에 설치한다' },
 ]
 export const kindLabel = (id: string) => KINDS.find((k) => k.id === id)?.label ?? id
 export const COLUMNS: { id: Freq; label: string }[] = [

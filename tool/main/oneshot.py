@@ -35,8 +35,8 @@ from workspace import TASK, create
 
 from . import channels, connect, oneshot_android, prerequisite_review, runtime, specs
 from .oneshot_files import as_planned, git, planned, tracked  # noqa: F401 — `tracked` is read by tests
-from .oneshot_profile import (DEVICES, SUPPORTED_KINDS, charged, cut, kinds_of, ledger, problems, proposal, schema,
-                              current)
+from .oneshot_profile import (DEVICES, SUPPORTED_KINDS, charged, cut, kinds_of, ledger, problems, proposal,
+                              schema, current, unavailable)
 from .query import ROOT
 
 RUNS = RAW / "oneshot"
@@ -245,9 +245,10 @@ def ask(store: Store, role: str, system: str, text: str, where: Path | None = No
 
 
 def prompt(name: str, kind: str = "webapp") -> str:
-    """`tool/prompts/oneshot-{name}.md`, or its `-android` or `-kinds` (several kinds, `oneshot_profile.shape`) one."""
+    """`tool/prompts/oneshot-{name}.md`, or its `-android`, `-desktop` or `-kinds` (several kinds) one: a `desktop`
+    stage without its file is one a run waits before (`KIND_STOPS`), never one the web app's instructions run."""
 
-    return (ROOT / f"tool/prompts/oneshot-{name}{'-' + kind if kind in ('android', 'kinds') else ''}.md").read_text(encoding="utf-8")
+    return (ROOT / f"tool/prompts/oneshot-{name}{'-' + kind if kind in ('android', 'desktop', 'kinds') else ''}.md").read_text(encoding="utf-8")
 
 
 def block(final: str, name: str):
@@ -769,8 +770,9 @@ def start(body: Start) -> dict:
         raise HTTPException(400, f"만들고 싶은 것을 1–{MAX_SENTENCE}자로 적어라")
     if not body.kinds:
         raise HTTPException(400, "무엇을 만드는지 종류를 하나 이상 골라라")
-    if len(set(body.kinds)) != len(body.kinds) or not set(body.kinds) <= set(SUPPORTED_KINDS):
-        raise HTTPException(400, f"고를 수 있는 종류는 {', '.join(SUPPORTED_KINDS)} 이고, 한 번씩이다")
+    off = unavailable()   # a kind this host cannot build, such as a PC app off Windows, refused with why
+    if len(set(body.kinds)) != len(body.kinds) or not set(body.kinds) <= set(SUPPORTED_KINDS) - set(off):
+        raise HTTPException(400, next((off[k] for k in body.kinds if k in off), f"고를 수 있는 종류는 {', '.join(SUPPORTED_KINDS)} 이고, 한 번씩이다"))
     picked = ""
     if body.path.strip():
         path = Path(body.path.strip()).expanduser()
@@ -807,8 +809,8 @@ def start(body: Start) -> dict:
 
 
 @router.get("/api/oneshot")
-def listing() -> dict:
-    return {"runs": [view(r) for r in runs() if not r.get("committed")]}
+def listing() -> dict:   # with the kinds this host cannot build, which the start screen shows disabled
+    return {"runs": [view(r) for r in runs() if not r.get("committed")], "unavailable": unavailable()}
 
 
 @router.get("/api/oneshot/{rid}")

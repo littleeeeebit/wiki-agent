@@ -8,6 +8,7 @@ and `origin` is a local bare repository.
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -218,12 +219,23 @@ def test_confirming_the_intent_reserves_the_name_and_refuses_conflicts(world):
 
 
 def test_the_owner_picks_the_kinds_at_the_start(world):
-    for kinds in ([], ["cli"], ["desktop"], ["webapp", "webapp"]):
+    for kinds in ([], ["cli"], ["webapp", "webapp"]):
         with pytest.raises(HTTPException) as refused:
             oneshot.start(oneshot.Start(kinds=kinds, sentence="도구"))
         assert refused.value.status_code == 400
     assert not oneshot.runs()
     assert oneshot.start(oneshot.Start(kinds=["android", "webapp"], sentence="번역기"))["kinds"] == ["android", "webapp"]
+
+
+def test_a_pc_app_is_picked_on_windows_and_shown_off_elsewhere(world):
+    with patch.object(sys, "platform", "linux"):
+        assert oneshot.listing()["unavailable"] == {"desktop": "PC 앱은 Windows 에서만 만든다"}
+        with pytest.raises(HTTPException, match="Windows 에서만"):
+            oneshot.start(oneshot.Start(kinds=["webapp", "desktop"], sentence="번역기"))
+        assert not oneshot.runs()
+    with patch.object(sys, "platform", "win32"):
+        assert oneshot.listing()["unavailable"] == {}
+        assert oneshot.start(oneshot.Start(kinds=["desktop"], sentence="번역기"))["kinds"] == ["desktop"]
 
 
 def test_a_restatement_an_earlier_intake_marked_unsupported_cannot_be_confirmed(world):
@@ -282,6 +294,36 @@ def test_several_kinds_share_one_card_prefilled_only_where_their_profiles_agree(
     assert webapp["ui_language"] == android["ui_language"] == "both"   # the shared answer, in each kind's profile
     assert "device" not in webapp and "responsive" not in android
     assert "local.properties" in (world["workspace"] / "budget-tracker" / ".gitignore").read_text("utf-8")
+
+
+def test_a_pc_app_card_names_its_window_and_keeps_it_in_its_own_profile(world):
+    with patch.object(sys, "platform", "win32"), \
+            patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-intent", INTENT), {}, False)):
+        rid = oneshot.start(oneshot.Start(kinds=["desktop"], sentence="화면 번역기"))["id"]
+        oneshot.intake(rid)
+    oneshot.intent(rid, oneshot.Intent(confirm=True))
+    proposal = {"window": {"value": "800x600", "why": "작은 창"}}
+    with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-profile", proposal), {}, False)), \
+            patch.object(oneshot, "gh_user", lambda: "someone"):
+        oneshot.environment(rid)   # an option outside the schema refuses the block
+    assert oneshot.load(rid)["stopped"]["reason"] == "block"
+    oneshot.changed(rid, stopped=None)
+    with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-profile", {}), {}, False)), \
+            patch.object(oneshot, "gh_user", lambda: "someone"):
+        oneshot.environment(rid)
+    shown = oneshot.view(oneshot.load(rid))
+    assert shown["schema"]["window"]["options"] == list(oneshot_profile.WINDOWS)
+    assert "responsive" not in shown["schema"] and "device" not in shown["schema"] and "toolchain" not in shown
+    assert shown["profile"]["window"] == "1280x800"   # the default, before any saved answer
+    assert "`window` 에 없는 선택지다: 800x600" in oneshot.profile(rid, oneshot.Profile(values={"window": "800x600"}))["errors"]
+    with pytest.raises(HTTPException):
+        oneshot.profile(rid, oneshot.Profile(values={"window": "800x600"}, confirm=True))
+    values = {"window": "1440x900", "docs_language": "ko", "visibility": "private", "github_owner": "someone"}
+    assert "window" not in "; ".join(oneshot.profile(rid, oneshot.Profile(values=values))["errors"])
+    assert oneshot.profile(rid, oneshot.Profile(values=values, confirm=True))["state"] == "bootstrap"
+    assert finished(world, rid)["committed"]
+    saved = json.loads((oneshot.PROFILES / "desktop.json").read_text("utf-8"))
+    assert saved["window"] == "1440x900" and "responsive" not in saved and "device" not in saved
 
 
 def test_an_intake_started_before_the_owner_picked_kinds_stops(world):
