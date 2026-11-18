@@ -649,8 +649,10 @@ def bootstrap(rid: str) -> None:
 def launch(rid: str, work: str, *args, **fields) -> None:
     """One worker per run. Callers hold `_lock` from their state check through this call, and hand
     the stage's new state in `fields`: it is written with `working` only once the worker may start,
-    so a refusal leaves the run as it was."""
+    so a refusal leaves the run as it was. No step of a run this host cannot build starts (`off_host`)."""
 
+    if why := off_host(load(rid)):
+        raise HTTPException(409, why)
     fn = {"intake": intake, "profile": environment, "bootstrap": bootstrap}[work]
     start_worker(run_store(rid), work, fn, (rid, *args), fields)
 
@@ -904,8 +906,6 @@ def resume(rid: str, body: Resume) -> dict:
             raise HTTPException(409, "멈춘 실행이 아니다")
         if run["stopped"]["reason"] == "kinds":   # the owner's kinds cannot go on in this run: no `[재개]` takes it on
             raise HTTPException(409, run["stopped"]["detail"])
-        if why := off_host(run):   # a saved PC app run, now on another host: no step of it runs here
-            raise HTTPException(409, why)
         if run["stopped"]["reason"] == "kind":   # a card an earlier version kept: the kind goes on now, so the
             return view(changed(rid, stopped=None))   # card waits for the owner's confirm again
         if run.get("version", 1) < 3 and run.get("identity") and any(   # its files, even some, carry the old card's stack

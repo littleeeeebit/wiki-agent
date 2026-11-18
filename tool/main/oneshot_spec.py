@@ -114,6 +114,12 @@ def kept(spec: dict, value, where: str) -> tuple[list[dict], list[dict]]:
     return reqs, glossary
 
 
+def same(a, b) -> bool:
+    """Equal values, types kept: `True` is not `1`, nor `"1"` (Python's `==` takes the first pair as one)."""
+
+    return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
 def unanswered(o: dict, stack: list[dict]) -> list[str]:
     """The parts `stack` marks `confirmed` that no owner's answer stands behind: confirmed already with the same
     choice, or offered in the stack before the question the owner has just answered, and nothing else. A PC app's
@@ -126,7 +132,7 @@ def unanswered(o: dict, stack: list[dict]) -> list[str]:
     answered = len(talk) >= 2 and talk[-1]["role"] == "owner" and bool(talk[-2].get("choices"))
     build = o.get("confirmed_build")
     return [s["part"] for s in stack if s["status"] == "confirmed" and (
-        (build != {"choice": s["choice"], "tools": s.get("tools")}) if tooled(s["part"], kinds_of(o)) else
+        not same(build, {"choice": s["choice"], "tools": s.get("tools")}) if tooled(s["part"], kinds_of(o)) else
         not (before.get(s["part"], {}).get("status") == "confirmed" and before[s["part"]]["choice"] == s["choice"])
         and not (answered and s["part"] in before))]
 
@@ -622,15 +628,18 @@ def confirm_build(repo: str, body: Build) -> dict:
     with oneshot._lock:
         o = spec_of(repo)["oneshot"]
         idle(o, "spec")
+        talk = o.get("talk") or []
+        if talk and talk[-1]["role"] == "agent" and talk[-1].get("choices"):   # never taken as that question's answer
+            raise HTTPException(409, "아직 답하지 않은 질문이 있다 — 그 질문에 먼저 답하라")
         offered = next((s for s in o.get("stack") or [] if s["part"] == body.part and tooled(s["part"], kinds_of(o))),
                        None)
-        if not offered or offered["status"] == "confirmed" or (offered["choice"], offered.get("tools")) != (
-                body.choice, body.tools):
+        if not offered or offered["status"] == "confirmed" or not same(
+                {"choice": offered["choice"], "tools": offered.get("tools")}, {"choice": body.choice, "tools": body.tools}):
             raise HTTPException(409, "확정하려는 빌드와 도구가 지금 제시된 것과 다르다 — 화면을 새로 고쳐라")
-        names = ", ".join(t["name"] for t in body.tools)
-        start(repo, "talk", confirmed_build={"choice": body.choice, "tools": body.tools}, talk=[
-            *(o.get("talk") or []), {"role": "owner", "text": f"빌드를 이대로 확정한다: {body.choice} — 도구 {names}",
-                                     "ts": time.time()}])
+        names = ", ".join(t["name"] for t in offered["tools"])   # the saved offer, never the request's copy
+        start(repo, "talk", confirmed_build={"choice": offered["choice"], "tools": offered["tools"]}, talk=[
+            *talk, {"role": "owner", "text": f"빌드를 이대로 확정한다: {offered['choice']} — 도구 {names}",
+                    "ts": time.time()}])
     return view(spec_of(repo))
 
 

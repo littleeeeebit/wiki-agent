@@ -98,9 +98,11 @@ def unavailable() -> dict[str, str]:
 
 
 def off_host(o: dict) -> str | None:
-    """Why this host cannot go on with the run `o` (a run, or a spec's `oneshot`), or None."""
+    """Why this host cannot go on with the run `o` (a run, or a spec's `oneshot`), or None: the owner's kinds as
+    picked at the start (a run's own `kinds`, before any restatement) and as restated (`intent`)."""
 
-    return next((why for k, why in unavailable().items() if k in kinds_of(o)), None)
+    picked = {*(o.get("kinds") or []), *kinds_of(o)}
+    return next((why for k, why in unavailable().items() if k in picked), None)
 
 
 def shape(o: dict) -> str:
@@ -200,7 +202,8 @@ def tooled(part: str, kind: str | list[str]) -> bool:
 def tools_of(value, ci: bool) -> list[dict]:
     """A PC app's `tools`, checked: `[{name, setup}]`, each `name` a program to find on `PATH` and each once.
     `setup` is how a clean CI runner gets it: `preinstalled` on the `windows-latest` image, a `run` command, or an
-    action pinned to a version (`uses: owner/action@ref`). It is required when the card's CI is on."""
+    action pinned to a version (`uses: owner/action@ref`) with string `with` inputs. It is required when the
+    card's CI is on."""
 
     if not isinstance(value, list) or not value:
         raise ValueError("PC 앱의 `build` 에는 `tools` 목록이 있어야 한다 — 스택이 쓰는 프로그램마다 하나씩")
@@ -220,7 +223,8 @@ def tools_of(value, ci: bool) -> list[dict]:
         if setup == "preinstalled" or isinstance(setup, dict) and (
                 set(setup) == {"run"} and isinstance(setup["run"], str) and setup["run"].strip()
                 or set(setup) <= {"uses", "with"} and isinstance(setup.get("uses"), str) and PINNED.fullmatch(setup["uses"])
-                and isinstance(setup.get("with", {}), dict)):
+                and isinstance(inputs := setup.get("with", {}), dict)   # inputs as Actions reads them: text only,
+                and all(isinstance(k, str) and isinstance(v, str) for k, v in inputs.items())):   # shown as stored
             out.append({"name": name, "setup": setup})
             continue
         raise ValueError(f"`{name}` 의 `setup` 은 `preinstalled`, `{{\"run\": …}}`, 또는 버전을 고정한 "

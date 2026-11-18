@@ -306,6 +306,8 @@ function Conversation({ talk, requirements, stack, android, kinds, halt, busy, s
   // Cleared only once the server took it, and only if nothing new was typed meanwhile.
   const submit = async (sent: string) => { if (await send(sent)) setText((now) => (now === sent ? '' : now)) }
   const open = stack.filter((s) => s.status !== 'confirmed').length
+  // A question still waits for its answer: the build's own button is never taken as that answer.
+  const asking = talk.at(-1)?.role === 'agent' && !!talk.at(-1)?.choices
   return (
     <Split label="요구 대화" sideLabel="모인 요구" side={<>
       <Title><span>모인 요구</span><span className="font-mono">{requirements.length}</span></Title>
@@ -331,8 +333,9 @@ function Conversation({ talk, requirements, stack, android, kinds, halt, busy, s
               {/* A PC app's build names the tools the owner confirms with it, each with how CI gets it. Only its own
                   button confirms it, exactly as shown (`oneshot_spec.confirm_build`). */}
               {s?.tools && <span className="block text-[12px] text-muted-foreground">도구: {s.tools.map(toolText).join(', ')}</span>}
-              {s?.tools && s.status !== 'confirmed' && (
-                <Btn className="mt-1.5" disabled={busy} onClick={() => void confirm(s.part, s.choice, s.tools!)}>이 빌드와 도구로 확정</Btn>
+              {s?.tools && s.status !== 'confirmed' && (asking
+                ? <span className="mt-1.5 block text-[12px] text-muted-foreground">질문에 먼저 답하면 확정할 수 있다</span>
+                : <Btn className="mt-1.5" disabled={busy} onClick={() => void confirm(s.part, s.choice, s.tools!)}>이 빌드와 도구로 확정</Btn>
               )}
             </dd>,
           ]

@@ -76,6 +76,8 @@ def test_each_tools_setup_is_required_when_ci_is_on_and_must_be_pinned():
         oneshot_profile.stacked(bare, "desktop", ci=True)
     for setup in ({"uses": "actions/setup-node"}, {"uses": "setup-node@v4"}, {"run": " "}, "latest",
                   {"uses": "owner//@v1"}, {"uses": "owner/repo//sub@v1"}, {"uses": "owner/repo/@v1"},
+                  {"uses": "a/b@v1", "with": {"flag": True}}, {"uses": "a/b@v1", "with": {"node-version": 22}},
+                  {"uses": "a/b@v1", "with": {"matrix": {"os": "windows"}}},   # inputs are text, shown as stored
                   {"run": "x", "uses": "a/b@v1"}, {"uses": "a/b@v1", "with": "x"}):
         with pytest.raises(ValueError, match="`setup`"):
             oneshot_profile.stacked([{**STACK[-1], "tools": [{"name": "cargo", "setup": setup}]}], "desktop", ci=True)
@@ -141,8 +143,9 @@ def test_only_the_owners_button_confirms_the_build_exactly_as_offered(desktop):
         with pytest.raises(ValueError, match="build"):
             oneshot_spec.spec_turn(turn(STACK), specs.load("budget", oneshot.BRANCH))
     node22 = [TOOLS[0], {**TOOLS[1], "setup": {**TOOLS[1]["setup"], "with": {"node-version": "20"}}}]
-    for part, choice, tools in (("build", STACK[-1]["choice"], node22), ("build", "dotnet publish", TOOLS),
-                                ("ui", STACK[1]["choice"], TOOLS)):
+    typed = [TOOLS[0], {**TOOLS[1], "setup": {**TOOLS[1]["setup"], "with": {"node-version": 22}}}]   # 22, not "22"
+    for part, choice, tools in (("build", STACK[-1]["choice"], node22), ("build", STACK[-1]["choice"], typed),
+                                ("build", "dotnet publish", TOOLS), ("ui", STACK[1]["choice"], TOOLS)):
         with pytest.raises(HTTPException, match="지금 제시된 것과 다르다"):   # not what the stack shows
             oneshot_spec.confirm_build("budget", oneshot_spec.Build(part=part, choice=choice, tools=tools))
     assert not o().get("confirmed_build")
@@ -157,6 +160,22 @@ def test_only_the_owners_button_confirms_the_build_exactly_as_offered(desktop):
     oneshot_spec.spec_turn(turn(STACK), spec)
     with pytest.raises(ValueError, match="build"):   # an action's inputs are part of what was confirmed
         oneshot_spec.spec_turn(turn([*STACK[:-1], {**STACK[-1], "tools": node22}]), spec)
+    with pytest.raises(ValueError, match="`setup`"):   # and keep their type: a number is no input at all
+        oneshot_spec.spec_turn(turn([*STACK[:-1], {**STACK[-1], "tools": typed}]), spec)
+    assert not oneshot_spec.same(True, 1) and oneshot_spec.same({"a": "1", "b": ["x"]}, {"b": ["x"], "a": "1"})
+
+
+def test_the_build_button_is_never_an_answer_to_a_waiting_question(desktop):
+    confirmed(STACK, build=False)
+    oneshot_spec.saved("budget", oneshot={"talk": [*o()["talk"], {"role": "agent", "text": "묶음을 고르세요.", "ts": 3,
+                                                                   "choices": {"questions": [{"question": "어느 묶음?", "options": [
+                                                                       {"label": "Tauri 2"}, {"label": ".NET WinUI 3"}]}]}}]})
+    before = o()
+    with pytest.raises(HTTPException, match="아직 답하지 않은 질문"):
+        oneshot_spec.confirm_build("budget", oneshot_spec.Build(part="build", choice=STACK[-1]["choice"], tools=TOOLS))
+    assert o()["talk"] == before["talk"] and not o().get("confirmed_build") and not o().get("working")
+    # Had the press counted as the answer, the other offered parts would now pass as confirmed: they stay unasked.
+    assert oneshot_spec.unanswered(o(), STACK) == [p for p in oneshot_profile.ANDROID_PARTS]
 
 
 def test_a_saved_pc_app_spec_takes_no_turn_on_another_host(desktop):

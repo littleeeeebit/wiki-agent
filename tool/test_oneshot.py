@@ -300,10 +300,26 @@ def test_a_saved_pc_app_bootstrap_resumes_on_no_other_host(world):
     rid = made(world, working=None, stopped={"reason": "github", "detail": "GitHub 문제", "state": "bootstrap"},
                intent={**INTENT, "name": "budget-tracker", "kind": "desktop", "kinds": ["desktop"]})
     with patch.object(sys, "platform", "linux"), \
-            patch.object(oneshot, "launch", lambda *a, **k: pytest.fail("no step runs off Windows")), \
+            patch.object(oneshot, "launch", LAUNCH), \
+            patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("no step runs off Windows")), \
             pytest.raises(HTTPException, match="Windows 에서만"):
         oneshot.resume(rid, oneshot.Resume())
     assert oneshot.load(rid)["stopped"]["reason"] == "github"
+
+
+def test_a_pc_app_intake_takes_no_turn_on_another_host(world):
+    # Stopped before its first restatement: the owner's pick is the run's own `kinds`, with no `intent` yet.
+    rid = made(world, state="intake", working=None, confirmed=False, identity=None, profile=None, intent=None,
+               kinds=["desktop"], stopped={"reason": "restart", "detail": "서버가 다시 켜졌다", "state": "intake"})
+    with patch.object(sys, "platform", "linux"), patch.object(oneshot, "launch", LAUNCH), \
+            patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("no intake turn off Windows")):
+        with pytest.raises(HTTPException, match="Windows 에서만"):
+            oneshot.resume(rid, oneshot.Resume())
+        # A restatement saved on Windows: an edit would call the intake model again.
+        oneshot.changed(rid, stopped=None, intent={**INTENT, "name": "budget-tracker", "kind": "desktop", "kinds": ["desktop"]})
+        with pytest.raises(HTTPException, match="Windows 에서만"):
+            oneshot.intent(rid, oneshot.Intent(confirm=False, edit="더 짧게"))
+    assert oneshot.load(rid)["state"] == "intake" and not oneshot.load(rid)["working"]
 
 
 def test_a_pc_app_card_names_its_window_and_keeps_it_in_its_own_profile(world):

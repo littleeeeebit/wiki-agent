@@ -7,10 +7,11 @@ export type Decision = { approve?: boolean; edit?: string }
 export type Feature = { id: string; name: string; class: Freq; why: string; endpoints?: string[]; parts?: string[]; kinds?: string[] }
 export type Freq = 'every' | 'sometimes' | 'rarely' | 'never'
 /** A program a PC app's stack runs on this PC, and how a CI runner gets it (`oneshot_profile.tools_of`). */
-export type Tool = { name: string; setup?: string | { run: string } | { uses: string; with?: Record<string, unknown> } }
-/** A tool with its whole setup, as the owner confirms it: an action's inputs included. */
+export type Tool = { name: string; setup?: string | { run: string } | { uses: string; with?: Record<string, string> } }
+/** A tool with its whole setup, as the owner confirms it: an action's inputs included, each a string the server
+ *  checked (`oneshot_profile.tools_of`), quoted so an empty or spaced value shows as it is. */
 export const toolText = (t: Tool) => t.setup === undefined ? t.name : `${t.name} (${typeof t.setup === 'string' ? t.setup
-  : 'run' in t.setup ? t.setup.run : [t.setup.uses, ...Object.entries(t.setup.with ?? {}).map(([k, v]) => `${k}=${String(v)}`)].join(', ')})`
+  : 'run' in t.setup ? t.setup.run : [t.setup.uses, ...Object.entries(t.setup.with ?? {}).map(([k, v]) => `${k}=${JSON.stringify(v)}`)].join(', ')})`
 export type Palette = { id: string; name: string; colors: Record<string, string> }
 export type Gate = { round: number; decisions: Record<string, Decision>; marks?: Record<string, string>; palette?: string }
 /** A review's brief for the owner (`oneshot_brief.shown`): always the gate's `source`, which every submission carries;

@@ -97,7 +97,9 @@ at most three questions:
   their turn. Write `build` `confirmed` only after that turn, with exactly
   the choice and tools it confirmed; when either changes later, offer it as
   `assumed` again. Never ask about it in `choices`, and do not end the
-  conversation for it. You only record the tools: this conversation
+  conversation for it. The button works only while no question waits for
+  an answer, so offer it in a turn that asks nothing else, or after the
+  person answered. You only record the tools: this conversation
   checks nothing on this PC and installs nothing, and a later stage stops the
   run if one is missing.
 - Ask about the stack once the scenarios are clear, as one question whose
