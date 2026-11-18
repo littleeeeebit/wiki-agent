@@ -191,17 +191,22 @@ the UI Automation control view and acts only through patterns: `Invoke`,
 `SetCursorPos`, window messages for keys or clicks) and uses no clipboard.
 A step names its control by `AutomationId`, scoped to its screen. A name is
 used only when no id exists, and it must match exactly one element, of a
-process in the app's job. Each step ends with its postcondition, which the
-server reads from the state the step left. Only the app's own nodes count. The
-tree walk marks a node of another process, such as an embedded fragment, and
-does not descend into it, so it is never the app's evidence.
+process in the app's job. Each step ends with its postcondition. The findings
+read it from the state the step names, which must exist in the report, never
+from a flag, so the saved report and the returned one give the same findings.
+Only the app's own nodes count. The tree walk reads an element's process
+before any other property. It marks an element of another process, such as an
+embedded fragment, by its process id alone, and does not descend into it, so
+such an element is never the app's evidence. A window whose tree root is not
+the app's, or whose walk fails, has not been read.
 
 Every call into the app has a deadline: a resize, one window's shot, one
 window's tree read, an action and a postcondition each get 10 seconds, and the
 look as a whole has S7's limit. The driver names each operation, with a fresh
 sequence number, before it starts it, so each is held to its own deadline and
-a slow one is named. Only a valid, strictly newer number restarts the clock. A
-missed or torn read of the marker keeps the operation and its clock. The
+a slow one is named. Only a valid marker restarts the clock: an object with a
+strictly newer positive integer and a named operation. A missed, torn or
+malformed read keeps the operation and its clock. The
 launch, the wait for a first window and each settle have their own
 allowances.
 `PrintWindow` asks the app to render synchronously, and a provider can block
@@ -229,9 +234,10 @@ empty list of findings means every observation was made:
   postcondition read.
 
 Each screen and state is shot with `PrintWindow` and `PW_RENDERFULLCONTENT`,
-per visible top-level window of the app's job. Each state gets a unique id,
-such as `s01-after-go`, which names its shots, so a repeated step label never
-overwrites an earlier shot.
+per visible top-level window of the app's job. Each state gets a unique, plain
+id, such as `s01`, which names its shots. A step's label stays in the report
+and never enters a path, so a repeated or unusual label never overwrites or
+misplaces a shot.
 
 The checks read the tree as the Android loop reads its hierarchy:
 
@@ -377,7 +383,7 @@ the two shots. User-profile paths in them read `%USERPROFILE%`.
   `clicked 1` from the tree as the step's postcondition. Both shots show the
   page. The fixture counts its clicks, so a test that invokes `Go` twice under
   one label can tell the two shots apart.
-- The cleanup proof is clean. The app's job counted 37 processes, and all 37
+- The cleanup proof is clean. The app's job counted 36 processes, and all 36
   were followed to a proven exit. The driver's job counted 4. No window was
   left on the desktop, the desktop no longer opened by its name, and the
   profile folder was removed. Edge's process count varies between runs.

@@ -30,10 +30,13 @@ def test_the_main_window_is_sized_to_the_card_shot_and_read(tmp_path):
         look.start("app", python(WINDOW), tmp_path)
         report = desktop_driver.drive(look, "app", (640, 480), [], settle_ms=500)
 
+    saved = json.loads((tmp_path / "tk" / "evidence" / "driver" / "driver.json").read_text(encoding="utf-8"))
     assert report["phase"] == "done" and report["main"]["title"] == "fixture", report
-    assert report["size"]["frame"][2:] == [640, 480] and desktop_driver.findings(report) == []
+    assert report["size"]["frame"][2:] == [640, 480]
+    assert desktop_driver.findings(report) == desktop_driver.findings(saved) == []   # the saved evidence agrees
     start = report["states"][0]
-    assert start["name"] == "start" and start["shots"][0]["drawn"]
+    assert start["name"] == "start" and start["shots"][0]["drawn"] and start["reads"][0]["read"]
+    assert start["shots"][0]["file"] == f"s00-{start['shots'][0]['hwnd']}.png"   # the id names it, not the label
     assert (tmp_path / "tk" / "evidence" / "driver" / start["shots"][0]["file"]).stat().st_size > 0
     assert start["nodes"][0]["type"] == "Window" and start["nodes"][0]["name"] == "fixture"
 
@@ -136,7 +139,7 @@ def test_a_blocked_resize_is_held_to_its_own_deadline_not_the_startup_wait(tmp_p
     assert desktop_driver.findings(report) == ["the driver passed its deadline at resize", "the driver left no report"]
 
 
-START = {"id": "s00-start", "name": "start", "windows": [{"hwnd": 1, "frame": [0, 0, 640, 480]}],
+START = {"id": "s00", "name": "start", "windows": [{"hwnd": 1, "frame": [0, 0, 640, 480]}],
          "shots": [{"hwnd": 1, "drawn": True}], "reads": [{"hwnd": 1, "read": True}],
          "nodes": [{"window": 1, "depth": 0, "foreign": False, "type": "Window", "name": "fixture", "id": "",
                     "enabled": True, "offscreen": False, "rect": [0, 0, 640, 480], "patterns": []}]}
@@ -200,14 +203,15 @@ def test_the_mechanical_findings_read_off_a_report():
                   node(id="hidden", rect=[900, 900, 1, 1], offscreen=True),
                   node(type="Text", name="", id="label", patterns=[], rect=[0, 0, 5, 5]),
                   node(type="Edit", name="", id="hidden-edit", rect=None, patterns=["Value"])]}],
-              "steps": [{"name": "go", "error": None, "acted": True, "state": "s01-after-go",
-                         "expect": {"name": "x"}, "postcondition": False},
+              "steps": [{"name": "go", "error": None, "acted": True, "state": "s01", "expect": {"name": "x"}},
                         {"name": "set", "error": "2 elements match name"},
                         {"name": "late", "error": None, "acted": False},
                         {"name": "lost", "error": None, "acted": True, "state": None},
-                        {"name": "blind", "error": None, "acted": True, "state": "s02-after-blind", "expect": None},
-                        {"name": "fine", "error": None, "acted": True, "state": "s03-after-fine",
-                         "expect": {"id": "go"}, "postcondition": True}]}
+                        {"name": "dangling", "error": None, "acted": True, "state": "s09", "expect": {"id": "go"},
+                         "postcondition": True},   # a flag the report claims, with no state behind it
+                        {"name": "blind", "error": None, "acted": True, "state": "s02", "expect": None},
+                        {"name": "fine", "error": None, "acted": True, "state": "s03", "expect": {"id": "go"}}]}
+    report["states"] += [step_state(state) for state in ("s01", "s02", "s03")]
 
     assert desktop_driver.findings(report) == [
         "the main window is 786x593, not 800x600",
@@ -218,28 +222,34 @@ def test_the_mechanical_findings_read_off_a_report():
         "step set: 2 elements match name",
         "step late: it was not performed",
         "step lost: its state was not read",
+        "step dangling: its state was not read",
         "step blind: it names no postcondition",
     ]
+
+
+def step_state(state):
+    """A state a step left, fully observed: one window, drawn and read, holding the `go` button."""
+
+    return {"id": state, "name": f"after-{state}", "windows": [{"hwnd": 1, "frame": [0, 0, 800, 600]}],
+            "shots": [{"hwnd": 1, "drawn": True}], "reads": [{"hwnd": 1, "read": True}], "nodes": [node()]}
 
 
 def test_a_postcondition_is_read_only_off_the_apps_own_nodes():
     owned = {"window": 1, "depth": 1, "foreign": False, "name": "ready", "id": "line"}
     foreign = {"window": 1, "depth": 1, "foreign": True, "pid": 9, "name": "clicked", "id": "line"}
-    report = {"states": [{"id": "s01-after-go", "nodes": [owned, foreign]}],
-              "steps": [{"name": "go", "acted": True, "state": "s01-after-go", "expect": {"name": "clicked"}},
-                        {"name": "again", "acted": True, "state": "s01-after-go", "expect": {"name": "ready"}}]}
+    state = {"id": "s01", "nodes": [owned, foreign]}
 
-    desktop_driver._postconditions(report)
-
-    assert [step["postcondition"] for step in report["steps"]] == [False, True]
+    assert not desktop_driver.holds(state, {"name": "clicked"}) and desktop_driver.holds(state, {"name": "ready"})
 
 
-def test_a_missed_progress_read_keeps_the_operation_and_its_clock(monkeypatch):
+def test_a_missed_or_malformed_progress_marker_keeps_the_operation_and_its_clock(monkeypatch):
     now = [0.0]
-    reads = iter([{"seq": 1, "op": "resize"}, None, {"seq": "torn"}] + [{"seq": 1, "op": "resize"}] * 20)
+    malformed = [None, {"seq": "torn"}, {"seq": 2}, {"seq": 3, "op": None}, {"seq": 4, "op": " "}, [1], 5,
+                 {"seq": True, "op": "x"}, {"seq": -1, "op": "x"}, "resize"]
+    reads = iter([{"seq": 1, "op": "resize"}, *malformed] + [{"seq": 1, "op": "resize"}] * 20)
     monkeypatch.setattr(desktop_driver, "_read", lambda file: next(reads))
     monkeypatch.setattr(desktop_driver, "time", types.SimpleNamespace(
-        monotonic=lambda: now[0], sleep=lambda seconds: now.__setitem__(0, now[0] + 4)))
+        monotonic=lambda: now[0], sleep=lambda seconds: now.__setitem__(0, now[0] + 1)))
 
     class Job:
         def finished(self):
@@ -250,7 +260,7 @@ def test_a_missed_progress_read_keeps_the_operation_and_its_clock(monkeypatch):
 
     ended, end = desktop_driver._watch(Job(), None, 30, 0)
 
-    assert ended == "resize" and end["clean"] and now[0] == 12   # 10 s from the marker seen at 0, polled every 4 s
+    assert ended == "resize" and end["clean"] and now[0] == 11   # past 10 s from the marker seen at 0
 
 
 def test_what_a_report_could_not_observe_is_a_finding():
@@ -317,7 +327,10 @@ def test_the_edge_fixture_is_driven_through_a_pattern_and_its_cleanup_is_proven(
         first, second = (shot.read_bytes() for shot in shots)
 
     record = desktop_session.load(tmp_path / "edge")
-    assert report["phase"] == "done" and [step["postcondition"] for step in report["steps"]] == [True, True], report
+    saved = json.loads((tmp_path / "edge" / "evidence" / "driver" / "driver.json").read_text(encoding="utf-8"))
+    found = desktop_driver.findings(report)
+    assert report["phase"] == "done" and not [line for line in found if line.startswith("step")], found
+    assert desktop_driver.findings(saved) == found
     assert shots[0] != shots[1] and first != second
     assert record["state"] == "proven" and record["proof"]["clean"], record["proof"]
     found = desktop_driver.findings(report)

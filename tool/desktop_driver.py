@@ -59,8 +59,8 @@ def drive(look, app: str, window: tuple[int, int], steps: list[dict], *, wait: f
     look.start(key, [str(POWERSHELL), *arguments(SCRIPT, folder / "request.json")], folder)
     ended, end = _watch(look.jobs[key], folder / "progress.json", wait, settle_ms)
     report = _read(folder / "driver.json") or {"phase": None}
-    report.update(last=(_read(folder / "progress.json") or {}).get("op"), ended=ended, end=end)
-    _postconditions(report)
+    marker = _read(folder / "progress.json")
+    report.update(last=marker["op"] if _valid(marker) else None, ended=ended, end=end)
     return report
 
 
@@ -71,26 +71,28 @@ def _watch(job, progress: Path, wait: float, settle_ms: int) -> tuple[str | None
 
     seq, op, since = 0, None, time.monotonic()
     while not job.finished():
-        marker = _read(progress) or {}
-        if isinstance(marker.get("seq"), int) and marker["seq"] > seq:
-            seq, op, since = marker["seq"], marker.get("op"), time.monotonic()
+        marker = _read(progress)
+        if _valid(marker) and marker["seq"] > seq:
+            seq, op, since = marker["seq"], marker["op"], time.monotonic()
         if time.monotonic() - since > _allowed(op, wait, settle_ms):
             return op or "launch", job.end(ENDED_SECONDS)
         time.sleep(0.1)
     return None, None
 
 
-def _postconditions(report: dict) -> None:
-    """Each performed step's postcondition, read off the state it left: an element of the app with the expected
-    id or name. A node of another process, an embedded fragment, never satisfies one."""
+def _valid(marker) -> bool:
+    """A progress marker the watchdog may act on: an object with a positive integer sequence and an operation."""
 
-    states = {state.get("id"): state for state in report.get("states", [])}
-    for step in report.get("steps", []):
-        state, expect = states.get(step.get("state")), step.get("expect")
-        if state and expect:
-            key = "id" if expect.get("id") else "name"
-            step["postcondition"] = any(not node.get("foreign") and node.get(key) == expect[key]
-                                        for node in state["nodes"])
+    return (isinstance(marker, dict) and type(marker.get("seq")) is int and marker["seq"] > 0
+            and isinstance(marker.get("op"), str) and bool(marker["op"].strip()))
+
+
+def holds(state: dict, expect: dict) -> bool:
+    """A step's postcondition, read off the state it left: an element of the app with the expected id or name. A
+    node of another process, an embedded fragment, never satisfies one."""
+
+    key = "id" if expect.get("id") else "name"
+    return any(not node.get("foreign") and node.get(key) == expect[key] for node in state["nodes"])
 
 
 def findings(report: dict) -> list[str]:
@@ -151,15 +153,17 @@ def findings(report: dict) -> list[str]:
                 found.append(f"{where} lies outside its window")
             if acting and (rect[2] < SMALLEST or rect[3] < SMALLEST):
                 found.append(f"{where} is {rect[2]}x{rect[3]}, under {SMALLEST}x{SMALLEST}")
-    for step in report.get("steps", []):
+    states = {state["id"]: state for state in report.get("states", []) if state.get("id")}
+    for step in report.get("steps", []):   # each read here, off the state the step names, never off a flag
+        state = states.get(step.get("state"))
         if step.get("error"):
             found.append(f"step {step['name']}: {step['error']}")
         elif not step.get("acted"):
             found.append(f"step {step['name']}: it was not performed")
-        elif not step.get("state"):
+        elif not state:
             found.append(f"step {step['name']}: its state was not read")
         elif not step.get("expect"):
             found.append(f"step {step['name']}: it names no postcondition")
-        elif not step.get("postcondition"):
+        elif not holds(state, step["expect"]):
             found.append(f"step {step['name']}: its postcondition was not read")
     return found

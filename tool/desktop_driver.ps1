@@ -118,11 +118,14 @@ function Shoot($window, [string]$state) {   # the whole window, then cut to its 
 }
 
 function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hwnd, [int]$depth = 0) {
-  $c = $element.Current; $b = $c.BoundingRectangle
-  if (-not [Desk]::InApp([uint32]$c.ProcessId)) {   # an embedded fragment of another process: marked, never walked
-    $script:nodes += [ordered]@{ window = $hwnd; depth = $depth; foreign = $true; pid = $c.ProcessId }
+  # The process first, and nothing else of an element outside the app's job: an embedded fragment of another
+  # process is marked by its pid alone and never walked. `Current` reads each property when it is asked for.
+  $c = $element.Current; $owner = $c.ProcessId
+  if (-not [Desk]::InApp([uint32]$owner)) {
+    $script:nodes += [ordered]@{ window = $hwnd; depth = $depth; foreign = $true; pid = $owner }
     return
   }
+  $b = $c.BoundingRectangle
   $script:nodes += [ordered]@{ window = $hwnd; depth = $depth; foreign = $false; type = $c.ControlType.ProgrammaticName -replace "ControlType\.", "";
     name = $c.Name; id = $c.AutomationId; enabled = $c.IsEnabled; offscreen = $c.IsOffscreen;
     rect = if ($b.IsEmpty) { $null } else { @([int]$b.X, [int]$b.Y, [int]$b.Width, [int]$b.Height) };
@@ -133,7 +136,7 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
 }
 
 function State([string]$name) {   # every window of the app in this state, shot and read
-  $id = "s{0:D2}-{1}" -f $report.states.Count, $name   # unique, so a repeated label never overwrites a shot
+  $id = "s{0:D2}" -f $report.states.Count   # unique and plain: it names the shots; the label stays in the report
   Enter "list $id"
   $windows = @(Windows | Where-Object { -not $_.utility })
   $state = [ordered]@{ id = $id; name = $name; windows = $windows; shots = @(); reads = @(); nodes = @() }
@@ -144,12 +147,15 @@ function State([string]$name) {   # every window of the app in this state, shot 
     if (-not $shot.drawn) { continue }
     Enter "read $id $($w.hwnd)"
     $script:nodes = @()
+    $read = [ordered]@{ hwnd = $w.hwnd; read = $false; error = "the window is gone or no longer the app's" }
     if (Current $w) {
-      Nodes ([System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$w.hwnd)) $w.hwnd
-      $state.reads += [ordered]@{ hwnd = $w.hwnd; read = $true }
-    } else {
-      $state.reads += [ordered]@{ hwnd = $w.hwnd; read = $false; error = "the window is gone or no longer the app's" }
+      try {
+        Nodes ([System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$w.hwnd)) $w.hwnd
+        if (-not $script:nodes.Count -or $script:nodes[0].foreign) { $read.error = "the tree's root is not the app's" }
+        else { $read = [ordered]@{ hwnd = $w.hwnd; read = $true } }
+      } catch { $read.error = "the tree could not be read: $($_.Exception.Message)" }
     }
+    $state.reads += $read
     $state.nodes += $script:nodes
   }
   $report.states += $state; Save
