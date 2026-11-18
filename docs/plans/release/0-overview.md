@@ -123,7 +123,7 @@ SemVer value without its `v`: tag `v0.1.1` means `0.1.1`.
 | Check | Android | Windows (step 6) |
 | --- | --- | --- |
 | Version | `versionName` equals the version (`aapt dump badging`) | EXE resource and installer `FileVersion` equal the version, with `0.1.1.0` normalized to `0.1.1` |
-| Monotonic | `versionCode` strictly greater than the previous production APK's (Tauri's default maps `0.1.1` to `1001`; step 1 fixes the mapping and its bounds) | Version greater than the previous production installer's |
+| Monotonic | `versionCode` strictly greater than the previous production APK's and equal to the version's code: Tauri's mapping, major × 1000000 + minor × 1000 + patch (`0.1.1` is `1001`), with minor and patch at most 999 and major at most 2099, so the code stays under Google Play's 2100000000. The step injects it with the version. | Version greater than the previous production installer's |
 | Identity | Application ID and ABI equal the adapter's and the previous production APK's of this kind; a release build, not debuggable | Product name and publisher equal the adapter's and the previous production installer's |
 | Signature | `apksigner verify --print-certs` matches the repository's expected certificate and the previous production APK's | none until code signing is planned |
 | Digest | `sha256` of the final bytes, the same bytes uploaded | the same |
