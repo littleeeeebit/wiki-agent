@@ -7,11 +7,14 @@ import os
 import time
 from pathlib import Path
 
+from common import write_record
+
 POWERSHELL = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
 SCRIPT = Path(__file__).with_name("desktop_driver.ps1")
 PHASE_SECONDS = 10   # each operation: a resize, one window's shot, one window's tree read, an action, a check
 LAUNCH_SECONDS = 30   # Windows PowerShell's start and its compile of the driver's types, before the first operation
 ENDED_SECONDS = 5   # the driver's job proving its end, once a deadline passed
+RESULT = "result.json"   # the server's final report: the driver's report, its last operation, deadline and end
 INTERACTIVE = {"Button", "CheckBox", "ComboBox", "Edit", "Hyperlink", "ListItem", "MenuItem", "RadioButton",
                "Slider", "Spinner", "SplitButton", "TabItem", "TreeItem"}
 ACTING = {"Invoke", "Toggle", "SelectionItem", "ExpandCollapse", "Value"}
@@ -48,7 +51,9 @@ def drive(look, app: str, window: tuple[int, int], steps: list[dict], *, wait: f
     """Drive the app `look` started under `app`: choose its main window, size it to `window`, then shoot and read
     each state, before and after every step. The driver names each operation before it starts, and each is held
     to its own deadline. The driver's report, with `last` naming the last operation it entered and `ended`
-    naming one whose deadline passed; the driver's job is then ended, and `end` holds the proof of that end."""
+    naming one whose deadline passed; the driver's job is then ended, and `end` holds the proof of that end.
+    That report is also saved as `result.json` beside the driver's own files, so the evidence a reader opens
+    later carries the deadline and the end proof, which the driver's `driver.json` cannot."""
 
     look.check_key(key)   # before any path is made from it
     folder = look.folder / "evidence" / key
@@ -61,6 +66,7 @@ def drive(look, app: str, window: tuple[int, int], steps: list[dict], *, wait: f
     report = _read(folder / "driver.json") or {"phase": None}
     marker = _read(folder / "progress.json")
     report.update(last=marker["op"] if _valid(marker) else None, ended=ended, end=end)
+    write_record(folder / RESULT, report)   # a name the driver never writes: the evidence holds the server's verdict
     return report
 
 
@@ -87,12 +93,23 @@ def _valid(marker) -> bool:
             and isinstance(marker.get("op"), str) and bool(marker["op"].strip()))
 
 
+def expectation(expect) -> tuple[str, str] | None:
+    """The one property a postcondition looks for: a non-blank `id`, else a non-blank `name`; None when it names
+    neither."""
+
+    for key in ("id", "name"):
+        value = expect.get(key) if isinstance(expect, dict) else None
+        if isinstance(value, str) and value.strip():
+            return key, value
+    return None
+
+
 def holds(state: dict, expect: dict) -> bool:
     """A step's postcondition, read off the state it left: an element of the app with the expected id or name. A
     node of another process, an embedded fragment, never satisfies one."""
 
-    key = "id" if expect.get("id") else "name"
-    return any(not node.get("foreign") and node.get(key) == expect[key] for node in state["nodes"])
+    key, value = expectation(expect)
+    return any(not node.get("foreign") and node.get(key) == value for node in state["nodes"])
 
 
 def findings(report: dict) -> list[str]:
@@ -162,7 +179,7 @@ def findings(report: dict) -> list[str]:
             found.append(f"step {step['name']}: it was not performed")
         elif not state:
             found.append(f"step {step['name']}: its state was not read")
-        elif not step.get("expect"):
+        elif not expectation(step.get("expect")):
             found.append(f"step {step['name']}: it names no postcondition")
         elif not holds(state, step["expect"]):
             found.append(f"step {step['name']}: its postcondition was not read")

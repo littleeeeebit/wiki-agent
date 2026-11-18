@@ -193,7 +193,11 @@ A step names its control by `AutomationId`, scoped to its screen. A name is
 used only when no id exists, and it must match exactly one element, of a
 process in the app's job. Each step ends with its postcondition. The findings
 read it from the state the step names, which must exist in the report, never
-from a flag, so the saved report and the returned one give the same findings.
+from a flag. An expectation with neither a non-blank id nor a non-blank name is
+a finding of its step. The server saves its final report as `result.json`, a
+name the driver never writes. That report holds the driver's report, the last
+operation, any deadline that passed and the proof of the driver's end, so the
+evidence a reader opens later gives the same findings as the run.
 Only the app's own nodes count. The tree walk reads an element's process
 before any other property. It marks an element of another process, such as an
 embedded fragment, by its process id alone, and does not descend into it, so
@@ -371,7 +375,7 @@ records their evidence in the run. The other way is an explicit change to plan
 9d2b2 ran the Edge fixture once through the session (`tool/desktop_session.py`)
 and its driver (`tool/desktop_driver.py`, `tool/desktop_driver.ps1`). The saved
 files are in `oneshot-desktop-edge-run/`: the fixture page, the session's record
-with its cleanup proof (`record.json`), the driver's report (`driver.json`) and
+with its cleanup proof (`record.json`), the server's final report (`result.json`) and
 the two shots. User-profile paths in them read `%USERPROFILE%`.
 
 - Edge started in its own job, with `--user-data-dir` in a folder the look
@@ -383,7 +387,7 @@ the two shots. User-profile paths in them read `%USERPROFILE%`.
   `clicked 1` from the tree as the step's postcondition. Both shots show the
   page. The fixture counts its clicks, so a test that invokes `Go` twice under
   one label can tell the two shots apart.
-- The cleanup proof is clean. The app's job counted 36 processes, and all 36
+- The cleanup proof is clean. The app's job counted 27 processes, and all 27
   were followed to a proven exit. The driver's job counted 4. No window was
   left on the desktop, the desktop no longer opened by its name, and the
   profile folder was removed. Edge's process count varies between runs.

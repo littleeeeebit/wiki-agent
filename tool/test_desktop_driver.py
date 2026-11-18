@@ -13,6 +13,7 @@ pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows desktop
 if sys.platform == "win32":
     import desktop_driver
     import desktop_session
+    import owned_job
 
 WINDOW = ("import tkinter; root = tkinter.Tk(); root.title('fixture'); tkinter.Label(root, text='ready').pack(); "
           "root.after(60000, root.destroy); root.mainloop()")
@@ -30,7 +31,7 @@ def test_the_main_window_is_sized_to_the_card_shot_and_read(tmp_path):
         look.start("app", python(WINDOW), tmp_path)
         report = desktop_driver.drive(look, "app", (640, 480), [], settle_ms=500)
 
-    saved = json.loads((tmp_path / "tk" / "evidence" / "driver" / "driver.json").read_text(encoding="utf-8"))
+    saved = json.loads((tmp_path / "tk" / "evidence" / "driver" / "result.json").read_text(encoding="utf-8"))
     assert report["phase"] == "done" and report["main"]["title"] == "fixture", report
     assert report["size"]["frame"][2:] == [640, 480]
     assert desktop_driver.findings(report) == desktop_driver.findings(saved) == []   # the saved evidence agrees
@@ -128,7 +129,10 @@ def stand_in(tmp_path, monkeypatch, script):
         look.start("app", python(NONE), tmp_path)
         began = time.monotonic()
         report = desktop_driver.drive(look, "app", (640, 480), [], wait=30, settle_ms=0)
-        return report, time.monotonic() - began
+        took = time.monotonic() - began
+        saved = json.loads((look.folder / "evidence" / "driver" / "result.json").read_text(encoding="utf-8"))
+    assert saved == report   # what a reader opens later is what the server concluded
+    return report, took
 
 
 def test_a_blocked_resize_is_held_to_its_own_deadline_not_the_startup_wait(tmp_path, monkeypatch):
@@ -159,6 +163,36 @@ def test_a_driver_that_exits_before_any_report_leaves_a_finding(tmp_path, monkey
     report, _ = stand_in(tmp_path, monkeypatch, [])
 
     assert desktop_driver.findings(report) == ["the driver left no report"]
+
+
+def test_a_driver_that_saved_done_but_lingers_past_its_deadline_is_a_finding_in_the_saved_result(tmp_path, monkeypatch):
+    report, _ = stand_in(tmp_path, monkeypatch, [["report", DONE], ["op", ["done", 120]]])
+
+    assert report["phase"] == "done" and report["ended"] == "done" and report["end"]["clean"]
+    assert desktop_driver.findings(report) == ["the driver passed its deadline at done"]
+
+
+def test_an_unproven_end_of_the_driver_is_a_finding_in_the_saved_result(tmp_path, monkeypatch):
+    real = owned_job.Job.end
+
+    def unproven(job, wait=30.0):   # the driver's end only: the look's own cleanup asks with another wait
+        proof = real(job, wait)
+        return {**proof, "clean": False, "reasons": ["no exit proven for pid 1"]} if wait == 4 else proof
+
+    monkeypatch.setattr(desktop_driver, "ENDED_SECONDS", 4)
+    monkeypatch.setattr(owned_job.Job, "end", unproven)
+    report, _ = stand_in(tmp_path, monkeypatch, [["report", DONE], ["op", ["done", 120]]])
+
+    assert desktop_driver.findings(report) == ["the driver passed its deadline at done",
+                                               "the driver's end was not proven: no exit proven for pid 1"]
+
+
+def test_an_expectation_naming_neither_an_id_nor_a_name_is_a_finding_of_its_step():
+    report = {**DONE, "states": [START, {**START, "id": "s01", "name": "after-go"}],
+              "steps": [{"name": "go", "acted": True, "state": "s01", "expect": {"id": ""}},
+                        {"name": "set", "acted": True, "state": "s01", "expect": {"id": "", "name": "fixture"}}]}
+
+    assert desktop_driver.findings(report) == ["step go: it names no postcondition"]
 
 
 def test_a_driver_that_exits_after_an_intermediate_report_leaves_a_finding(tmp_path, monkeypatch):
@@ -327,7 +361,7 @@ def test_the_edge_fixture_is_driven_through_a_pattern_and_its_cleanup_is_proven(
         first, second = (shot.read_bytes() for shot in shots)
 
     record = desktop_session.load(tmp_path / "edge")
-    saved = json.loads((tmp_path / "edge" / "evidence" / "driver" / "driver.json").read_text(encoding="utf-8"))
+    saved = json.loads((tmp_path / "edge" / "evidence" / "driver" / "result.json").read_text(encoding="utf-8"))
     found = desktop_driver.findings(report)
     assert report["phase"] == "done" and not [line for line in found if line.startswith("step")], found
     assert desktop_driver.findings(saved) == found
