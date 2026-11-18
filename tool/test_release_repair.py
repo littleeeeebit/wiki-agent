@@ -15,6 +15,7 @@ def repo(tmp_path, monkeypatch):
     monkeypatch.setattr(specs, "SPECS", tmp_path / "specs")
     monkeypatch.setattr(specs, "gate_of", lambda repo, path=None: "python -m pytest -q")
     (repo := tmp_path / "budget").mkdir()
+    monkeypatch.setattr(release_repair.channels, "repo_for", lambda name: repo if name == "budget" else None)
     return repo
 
 
@@ -43,6 +44,15 @@ def test_a_refused_start_keeps_the_task_for_the_person_and_names_it(repo, monkey
         release_repair.start(repo, RECORD)
     assert refused.value.task == "release-fix-0-1-1" and "다른 작업" in str(refused.value)
     assert specs.load("budget", "release-fix-0-1-1")["state"] == "정리됨"
+
+
+@pytest.mark.parametrize("known", ["nothing", "another folder"])
+def test_a_repository_the_server_does_not_know_gets_no_task(repo, monkeypatch, tmp_path, known):
+    # The turn's end finds the task's project by name; unknown, the task would sit in `작업 중` forever.
+    monkeypatch.setattr(release_repair.channels, "repo_for", lambda name: None if known == "nothing" else tmp_path)
+    with pytest.raises(ValueError, match="아는 프로젝트가 아니다"):
+        release_repair.start(repo, RECORD)
+    assert not (specs.SPECS / "budget").exists()
 
 
 def test_a_repository_without_a_gate_gets_no_task(repo, monkeypatch):

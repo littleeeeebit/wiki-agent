@@ -12,7 +12,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from . import specs
+from . import channels, specs
 
 EVIDENCE = 6000   # characters of the failure the spec carries; the build log's tail is already cut to 40 lines
 
@@ -44,6 +44,9 @@ def start(repo: Path, record: dict) -> str:
     start is refused (another turn holds the repository, a review owns its checkout), the spec stays organized
     for `[시작]` and the refusal is raised for the ledger to record."""
 
+    known = channels.repo_for(repo.name)   # the turn's end looks the task's project up by name
+    if known is None or known.resolve() != repo.resolve():
+        raise ValueError(f"`{repo.name}` 은 이 서버가 아는 프로젝트가 아니다 — 수정 작업이 끝날 곳이 없다")
     gate = specs.gate_of(repo)
     if not gate:
         raise ValueError("연결 먼저 — 이 저장소의 `.wiki/adapter.toml` 에 `gate_cmd` 가 없다")

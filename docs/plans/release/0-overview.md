@@ -207,7 +207,9 @@ the failure with the build log's last 40 lines. It names version files,
 signing and publishing as out of bounds, and the repository's gate is its
 done condition. It is started the way `[시작]` starts a task
 (`specs.started`), in a task worktree forked from the repository's branch.
-The agent never sees the key or its password. The ledger records the
+The agent never sees the key or its password. A repository the server does
+not know as a project gets no task: the turn's end finds the task's project
+by name, so such a task would never leave `작업 중`. The ledger records the
 task's ID under the attempt's `repair`. When the start is refused, for
 example because another turn holds the repository, the spec stays organized
 for `[시작]`, and the ledger records both its ID and the refusal.
