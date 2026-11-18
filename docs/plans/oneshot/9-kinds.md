@@ -199,10 +199,15 @@ installer).
   scenario and shoots each screen and state, then closes everything it
   started.
 
-The first deliverable of 9d is that session's design: how the app is
-started apart from the owner's own windows, and how its UI tree is read for
-the mechanical and placement checks. It is written as a research note, with
-its refusals and its cleanup proof, as 7d's emulator was.
+The session is a Win32 desktop the run owns inside the owner's session: the
+app starts on it in a kill-on-close job, a driver on the same desktop reads
+its UI Automation tree and acts only through automation patterns, and
+`PrintWindow` shoots it. The design, what was measured on this PC, the
+refusals and the cleanup proof are in the research note
+[oneshot-desktop-session](../../research/oneshot-desktop-session.md). The
+owned desktop cannot capture or draw over another app, so the screen
+translator's capture and overlay checks need either a round on the owner's
+own desktop or the `device` deferral; 9e decides which with the owner.
 
 ## What does not change
 
@@ -224,6 +229,6 @@ step 7's did.
 | 9a | The owner picks | The start screen's kinds, the intake restating them and returning none, `kinds` on the record with old records read as one, the card showing them, S2's `rekind` stop; a run of one kind runs end to end as today | Done — several kinds stop with `kinds` at the restatement until 9b |
 | 9b | One core for several kinds | The union card with its prefill and write-back, S2's shared and per-kind parts and per-kind requirements, the core design and R1 across kinds, S4 and the backend review once; the `device` deferral and `owed` list, closed in Android's S7 loop | Done — 9b1 (#367): the union card and S2 across kinds. 9b2 (#368): the core design and R1 across kinds. 9b3 (#369): S4 and the backend review once, with the core's tests as the gate; several kinds wait at the split (9c). 9b4: the `device` deferral and `owed` list, each an `owed_<id>_…` instrumented test in Android's S7 look, listed in R3 |
 | 9c | Screens for each kind | Each feature's kinds, the split and the board once, S6 and R2 across kinds, the build's per-kind gate, each kind's S7 loop in turn with its owed checks, R3 across kinds, S8 with every kind's artifacts | Done — 9c1 (#371): each feature's kinds at the split, the board once with a first screen for each kind. 9c2 (#373): S6 designs and shoots each kind's screens its own way, each kind checked on its own features, and R2 groups them by kind. 9c3a (#374): one build turn for every kind, one gate with the core's tests and each kind's build, then each kind's look in the owner's order, each reading only what applies to it; a kind that fails sends the build back and the next HEAD looks at every kind again. 9c3b (#376): the critic judges one kind a round in the owner's order, on that kind's shots alone, each kind needing two clean rounds on the HEAD its look passed, so a fix judges every kind again; the phone round then runs on the Android app alone. 9c4a (#377): R3 as one sheet with a section for each kind in the owner's order, each read off that kind alone; the brief's lines name each finding's kind and screen, and an edit reaches the builder with its kind. 9c4b: S8's README turn asks for a section for each kind, the final gate runs on the Android toolchain, and an Android app among the kinds gets its CI job's SDK and its APK on a draft prerelease; several kinds without `desktop` run to their first pull request |
-| 9d | Desktop session | The run-owned Windows session for S7: the research note, starting the app apart from the owner's windows, reading its UI tree, refusals and cleanup proof | Planned |
+| 9d | Desktop session | The run-owned Windows session for S7: the research note, starting the app apart from the owner's windows, reading its UI tree, refusals and cleanup proof | In progress — 9d1: the research note, with a measured run of a tkinter and an Edge fixture on an owned desktop; 9d2: the session module, its refusal tests and one real run with its cleanup proof |
 | 9e | Desktop | `desktop` alone and with other kinds: its card, S2 parts and prompts, the core path (S3, R1, S4, the backend review, the split off modules), S6, S7 with its owed checks, R3 and S8 | Planned |
 | 9f | Real run | The screen translator as `android` and `desktop`, from the start screen to the first pull request | Planned |
