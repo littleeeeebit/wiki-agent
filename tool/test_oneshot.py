@@ -513,6 +513,77 @@ def test_wiring_to_confirm_stops_the_register_and_tests_cut_before_their_results
     assert world["examined"] == [(world["workspace"] / "budget-tracker", True)]
 
 
+def test_wiring_that_cannot_be_checked_is_asked_again_and_never_read_as_a_move(world):
+    rid = made(world)
+    looks = []
+    answers = iter([{"needed": True, "refused": "Codex 신뢰를 확인하지 못했다 — 시간 초과"}, {"needed": False}])
+    with patch.object(oneshot, "RECHECK", (0, 0, 0)), \
+         patch.object(connect, "hub", lambda data=None: looks.append(1) or next(answers)):
+        oneshot.bootstrap(rid)
+    assert len(looks) == 2 and "register" in oneshot.load(rid)["steps"], "한 번 못 물은 것은 다시 묻고 지나간다"
+
+
+def test_wiring_that_stays_unchecked_stops_with_the_reason_not_a_move(world):
+    rid = made(world)
+    world["wiring"].update(needed=True, refused="Codex 신뢰를 확인하지 못했다 — 시간 초과")
+    with patch.object(oneshot, "RECHECK", (0, 0, 0)):
+        oneshot.bootstrap(rid)
+    stopped = oneshot.load(rid)["stopped"]
+    assert stopped["reason"] == "connect" and "register" not in oneshot.load(rid)["steps"]
+    assert "확인하지 못했다 — Codex 신뢰를 확인하지 못했다 — 시간 초과" in stopped["detail"]
+    assert "바꿔야 한다" not in stopped["detail"], "확인 못 한 것을 옮길 것이라 하지 않는다"
+    assert world["examined"] == []
+    world["wiring"].update(needed=False, refused="")   # Codex answers again: `[재개]` alone carries on
+    oneshot.changed(rid, stopped=None)
+    assert finished(world, rid)["committed"]
+
+
+def test_a_shutdown_during_an_unchecked_wiring_starts_no_further_check(world):
+    rid = made(world)
+    stopping, looks = threading.Event(), []
+
+    def refused(data=None):
+        looks.append(stopping.is_set())
+        stopping.set()   # the server starts going down during the first check
+        return {"needed": True, "refused": "Codex 신뢰를 확인하지 못했다 — 시간 초과"}
+
+    with patch.object(runtime, "stopping", stopping), patch.object(oneshot, "RECHECK", (0, 5, 20)), \
+         patch.object(connect, "hub", refused):
+        started = time.monotonic()
+        oneshot.bootstrap(rid)
+    assert looks == [False] and time.monotonic() - started < 5, "꺼지는 서버는 더 묻지도 기다리지도 않는다"
+    assert oneshot.load(rid)["stopped"]["reason"] == "restart" and "register" not in oneshot.load(rid)["steps"]
+
+
+def test_a_shutdown_during_a_healthy_wiring_check_starts_no_tests(world):
+    rid = made(world)
+    stopping = threading.Event()
+
+    def healthy(data=None):
+        stopping.set()   # the server starts going down during the check, which then answers
+        return {"needed": False, "refused": ""}
+
+    with patch.object(runtime, "stopping", stopping), patch.object(connect, "hub", healthy):
+        oneshot.bootstrap(rid)
+    assert world["examined"] == [], "꺼지는 서버에서는 시험을 시작하지 않는다"
+    assert oneshot.load(rid)["stopped"]["reason"] == "restart" and "register" not in oneshot.load(rid)["steps"]
+
+
+def test_tests_a_shutdown_cut_leave_register_undone(world):
+    """Shutdown kills the tests' Codex, and they keep `trust=False`: Register is not done, `[재개]` runs them again."""
+
+    rid = made(world)
+    stopping = threading.Event()
+
+    def cut(path, then=None, wait=False):
+        stopping.set()
+        return True
+
+    with patch.object(runtime, "stopping", stopping), patch.object(connect, "examine", cut):
+        oneshot.bootstrap(rid)
+    assert oneshot.load(rid)["stopped"]["reason"] == "restart" and "register" not in oneshot.load(rid)["steps"]
+
+
 def test_an_unrecorded_same_name_remote_stops_and_is_adopted_only_on_request(world):
     rid = made(world, steps={s: 1 for s in ("recheck", "folder", "files", "commit", "register")})
     for s in ("folder", "files", "commit", "register"):

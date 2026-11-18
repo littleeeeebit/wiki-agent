@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -25,7 +26,7 @@ import apply
 import setup_agents
 from agent.chat_session import Event
 from main import channels as chat_channels
-from main import connect, loop, specs, survey, work
+from main import connect, loop, specs, survey, wiring, work
 from main import query as chat
 from test_main import _repo, client, no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_sync import refused_once
@@ -335,6 +336,37 @@ def test_a_host_passes_only_when_its_own_session_start_injected(tmp_path):
     assert after == before, "시험의 흔적은 읽은 뒤 지운다"
 
 
+def test_a_probe_whose_preparation_outlasted_its_lifespan_starts_no_cli(tmp_path):
+    """The model list or the skills may take long; a shutdown meanwhile leaves the CLI unstarted, whether the stop
+    flag is still set or the next lifespan already opened."""
+
+    from agent import chat_local
+    from main import runtime
+
+    repo, started = _repo(tmp_path), []
+    connected(repo)
+    stopping = threading.Event()
+
+    def preparing(host):
+        stopping.set()
+        return ["cli"]
+
+    with patch.object(connect, "spawn", lambda *a: started.append(a)), patch.object(runtime, "stopping", stopping):
+        with patch.object(connect, "command", preparing):
+            assert not connect.probe(repo, "claude")["ok"] and started == [], "종료 표시가 서 있으면 띄우지 않는다"
+        stopping.clear()
+        epoch = chat_local.server_epoch()
+
+        def restarted(host):
+            chat_local.end_servers()
+            chat_local.reopen_servers()
+            return ["cli"]
+
+        with patch.object(connect, "command", restarted), chat_local.pin_servers(epoch):
+            failed = connect.probe(repo, "claude")
+        assert not failed["ok"] and "꺼지는 중" in failed["detail"] and started == [], "끝난 회차는 띄우지 않는다"
+
+
 def test_the_hook_writes_nothing_without_the_variable_and_passes_when_it_cannot_write(tmp_path):
     repo = _repo(tmp_path)
     connected(repo)
@@ -406,6 +438,184 @@ def test_the_move_writes_the_plan_it_checked_not_one_read_again(tmp_path, home):
     with patch.object(setup_agents, "plan_global", side_effect=drifting):
         connect.move(shown["digest"])
     assert not (tmp_path / "unshown.json").exists(), "확인한 뒤에 다시 읽은 계획은 쓰지 않는다"
+
+
+def test_a_codex_home_that_does_not_answer_is_a_refusal_not_a_move(tmp_path, monkeypatch):
+    """vtuber-ko-tts: the wiring already pointed here and trust was in place, a slow `app-server` read as
+    untrusted, and the oneshot stopped asking the owner to move what needed nothing."""
+
+    monkeypatch.setattr(apply, "_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(connect, "hosts", lambda data=None: ["codex"])
+    monkeypatch.setattr(connect, "interpreter", lambda data=None: sys.executable)
+    monkeypatch.setattr(setup_agents, "plan_global", lambda *args, **kw: [])
+    monkeypatch.setattr(setup_agents, "codex_hooks", lambda *args, **kw: (_ for _ in ()).throw(
+        RuntimeError("Codex 응답 시간 초과: initialize")))
+    with pytest.raises(ValueError):
+        connect.trusted(sys.executable)
+    shown = connect.hub()
+    assert shown["refused"] == "Codex 신뢰를 확인하지 못했다 — Codex 응답 시간 초과: initialize"
+    assert not shown["lines"] and not shown["trust"], "확인 못 한 것은 옮길 줄이 아니다"
+    with pytest.raises(HTTPException):
+        connect.move(shown["digest"])
+    monkeypatch.setattr(setup_agents, "codex_hooks", lambda *args, **kw: [{"trustStatus": "trusted"}])
+    assert connect.hub() == {**shown, "needed": False, "refused": "", "digest": connect.hub()["digest"]}
+
+
+def test_a_probe_whose_codex_does_not_answer_records_trust_missing(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / ".wiki").mkdir()
+    (repo / connect.ADAPTER).write_text('agents = ["codex"]\n[slots]\ngate_cmd = "make test"\n', encoding="utf-8")
+    monkeypatch.setattr(shutil, "which", lambda name: name)
+    with patch.object(connect, "probe", return_value={"ok": True}), \
+         patch.object(connect, "interpreter", return_value=sys.executable), \
+         patch.object(connect, "trusted", side_effect=ValueError("Codex 신뢰를 확인하지 못했다 — 연결 종료")):
+        assert connect.examine(repo, wait=True)
+    assert connect.record(repo.name)["trust"] is False
+
+
+def test_connect_with_an_unanswered_codex_names_the_reason_and_writes_nothing(tmp_path):
+    repo = _repo(tmp_path)
+    shown = {"needed": True, "refused": "Codex 신뢰를 확인하지 못했다 — 시간 초과", "digest": ""}
+    with patch.object(connect, "repo_of", return_value=repo), patch.object(connect, "hosts", return_value=["codex"]), \
+         patch.object(connect, "hub", return_value=shown), patch.object(connect, "move") as move, \
+         patch.object(connect, "write_adapter") as write:
+        with pytest.raises(HTTPException) as refused:
+            connect.connect(repo.name, connect.Connect())
+    assert refused.value.status_code == 409 and "시간 초과" in refused.value.detail
+    assert "허브 이전" not in refused.value.detail, "확인 못 한 것은 옮길 것이라 하지 않는다"
+    move.assert_not_called()
+    write.assert_not_called()
+
+
+def test_one_handover_at_a_time_whoever_walks_it(tmp_path, monkeypatch):
+    """A listing's retry and merge cleanup walk it together; the second would move an adapter the first moved."""
+
+    entered, release, calls = threading.Event(), threading.Event(), []
+    monkeypatch.setattr(connect, "record", lambda name: {"handover": {"state": "대기", "pr": 7, "ts": 0}})
+    monkeypatch.setattr(connect, "_handover", lambda path, n: calls.append(n) or entered.set() or release.wait(10)
+                        and {"ok": True, "reason": ""})
+    listing = threading.Thread(target=connect.retried, args=(tmp_path,))
+    listing.start()
+    try:
+        assert entered.wait(5)
+        busy = connect.handover(tmp_path, 7)   # merge cleanup's direct call
+        assert not busy["ok"] and "넘기는 중" in busy["reason"], "넘기는 중이면 대기로 돌려준다"
+    finally:
+        release.set()
+        listing.join(5)
+    assert calls == [7]
+    assert connect.handover(tmp_path, 7)["ok"] and calls == [7, 7], "끝난 뒤에는 다시 넘길 수 있다"
+
+
+def test_a_retry_whose_handover_finished_meanwhile_walks_nothing(tmp_path, monkeypatch):
+    """A listing read the waiting record, then merge cleanup finished it: rewalked, a failure would put it back to
+    waiting."""
+
+    records = iter([{"handover": {"state": "대기", "pr": 7, "ts": 0}},
+                    {"handover": {"state": "완료", "pr": 7, "ts": 0}}])
+    walked = []
+    monkeypatch.setattr(connect, "record", lambda name: next(records))
+    monkeypatch.setattr(connect, "_handover", lambda path, n: walked.append(n) or {"ok": True, "reason": ""})
+    assert connect.retried(tmp_path) is False and walked == []
+
+
+def test_tests_stop_at_the_stop_flag_before_the_lifespan_moves(tmp_path, monkeypatch):
+    """Shutdown sets the stop flag, then waits on installers before it ends Codex: nothing more starts meanwhile."""
+
+    from main import runtime
+
+    stopping, probed, then, kept = threading.Event(), [], [], []
+    monkeypatch.setattr(runtime, "stopping", stopping)
+    monkeypatch.setattr(connect, "adapter_of", lambda path: ({}, ""))
+    monkeypatch.setattr(connect, "hosts", lambda data: ["claude", "codex"])
+    monkeypatch.setattr(connect, "probe", lambda path, host: probed.append(host) or stopping.set() or {"ok": True})
+    monkeypatch.setattr(connect, "keep", lambda name, **fields: kept.append(fields))
+    monkeypatch.setattr(connect.work.feed, "put", lambda event: None)
+    assert connect.examine(tmp_path, then=lambda: then.append(1), wait=True)
+    assert probed == ["claude"] and kept == [] and then == [] and tmp_path.name not in connect._probing
+
+
+def test_a_verification_worker_that_never_started_frees_the_repository(tmp_path, monkeypatch):
+    class Unstartable(threading.Thread):
+        def start(self):
+            raise RuntimeError("can't start new thread")
+
+    # `connect`'s own name only: other code caches what it found while every thread start failed
+    monkeypatch.setattr(connect, "threading", SimpleNamespace(Thread=Unstartable))
+    with pytest.raises(RuntimeError):
+        connect.examine(tmp_path)
+    assert tmp_path.name not in connect._probing
+
+
+def test_tests_a_shutdown_cut_keep_nothing_and_start_no_codex_after_it(tmp_path, monkeypatch):
+    """`[연결]`'s background tests are outside every shutdown join: the lifespan that began them owns them."""
+
+    from agent import chat_local
+
+    probing, release, kept, spawned, probed, then = threading.Event(), threading.Event(), [], [], [], []
+    monkeypatch.setattr(connect, "adapter_of", lambda path: ({}, ""))
+    monkeypatch.setattr(connect, "hosts", lambda data: ["claude", "codex"])
+    monkeypatch.setattr(connect, "interpreter", lambda data=None: sys.executable)
+    monkeypatch.setattr(connect, "probe", lambda path, host: probed.append(host) or probing.set() or release.wait(10)
+                        and {"ok": True})
+    monkeypatch.setattr(connect, "keep", lambda name, **fields: kept.append(fields))
+    monkeypatch.setattr(connect.work.feed, "put", lambda event: None)
+    popen = subprocess.Popen
+
+    def launched(command, *args, **kwargs):
+        if "app-server" in command:
+            spawned.append(command)
+            raise OSError("no Codex in this test")
+        return popen(command, *args, **kwargs)
+
+    monkeypatch.setattr(chat_local.subprocess, "Popen", launched)
+    monkeypatch.setattr(chat_local, "cli_command", lambda name: ["codex"])
+    assert connect.examine(tmp_path, then=lambda: then.append(1))   # `then` may prepare a survey
+    try:
+        assert probing.wait(5)
+        chat_local.end_servers()
+        chat_local.reopen_servers()   # the next lifespan opened the gate again
+    finally:
+        release.set()
+    for _ in range(100):
+        if tmp_path.name not in connect._probing:
+            break
+        time.sleep(0.05)
+    assert kept == [] and spawned == [], "끊긴 시험은 결과를 남기지 않고 Codex 도 띄우지 않는다"
+    assert probed == ["claude"] and then == [], "다음 호스트도, 뒤에 이어질 일도 시작하지 않는다"
+
+
+def test_the_routine_hub_read_never_waits_on_codex_and_checks_once_per_ttl(monkeypatch):
+    """A Codex `app-server` may take minutes: the project list and the settings line read the last check."""
+
+    release, calls, fed = threading.Event(), [], []
+    monkeypatch.setattr(connect, "hub", lambda data=None: calls.append(1) or release.wait(10) and {
+        "needed": False, "refused": ""})
+    monkeypatch.setattr(work.feed, "put", fed.append)
+
+    def settled(count: int) -> None:
+        for _ in range(200):
+            if len(fed) >= count:
+                return
+            time.sleep(0.05)
+        raise AssertionError("검사가 끝나지 않았다")
+
+    wiring.forget_hub()
+    try:
+        started = time.monotonic()
+        assert wiring.hub_seen() == {"needed": False, "refused": "", "checking": True}
+        assert wiring.hub_seen()["checking"] and time.monotonic() - started < 1, "검사를 기다리지 않는다"
+        release.set()
+        settled(1)
+        assert fed == [{"kind": "connect", "repo": ""}], "끝나면 화면이 다시 읽는다"
+        assert wiring.hub_seen() == {"needed": False, "refused": "", "checking": False} and calls == [1], \
+            "새 결과로는 다시 검사하지 않는다"
+        wiring.forget_hub()
+        assert wiring.hub_seen()["checking"], "배선이 바뀌면 다시 검사한다"
+        settled(2)
+    finally:
+        release.set()
+        wiring.forget_hub()
 
 
 def test_off_windows_nothing_is_a_junction(tmp_path, monkeypatch):

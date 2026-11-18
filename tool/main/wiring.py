@@ -30,6 +30,7 @@ from common.paths import PACKAGED
 
 from . import channels, connect, work
 from .query import ROOT
+from .refresh import Refresh
 
 router = APIRouter()
 EVERY = 3.0     # seconds between two looks; a stat and one small read each
@@ -68,7 +69,28 @@ def watch(halt: threading.Event, every: float = EVERY) -> None:
         now = mark()
         if now != seen:
             seen = now
+            forget_hub()   # the routine reads' last check was of the wiring before this change
             work.feed.put({"kind": "connect", "repo": ""})
+
+
+# The routine reads' answer (`hub_seen`): the last check that finished, so the project list and the settings line
+# never wait on a Codex `app-server`; its end announces `connect`, and the screens read again.
+HUB_TTL = 60.0
+_hub = Refresh("hub-check", lambda: connect.hub(), HUB_TTL, HUB_TTL,
+               done=lambda: work.feed.put({"kind": "connect", "repo": ""}))
+
+
+def hub_seen() -> dict:
+    """`connect.hub()` without waiting, `checking` while a check runs; before the first one ends, nothing needed."""
+
+    shown, error, checking = _hub.read()
+    return {**(shown or {"needed": bool(error), "refused": error}), "checking": checking}
+
+
+def forget_hub() -> None:
+    """The machine's wiring changed: the next routine read checks again, and a check begun before is not kept."""
+
+    _hub.forget()
 
 
 def refused() -> str:
