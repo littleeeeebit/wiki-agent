@@ -413,6 +413,51 @@ def test_a_cut_after_each_effect_resumes_without_repeating_it(world, cut):
     assert len(list((specs.SPECS / "budget-tracker").glob("*.json"))) == 1
 
 
+def test_the_card_shows_the_hub_move_and_its_confirm_carries_the_list_it_showed(world):
+    """The machine's wiring is confirmed with the card, not on a later `[연결]` stop (owner, 2026-11-18)."""
+
+    from main import wiring
+
+    rid = made(world, state="environment", working=None, confirmed=False)
+    move = {"needed": True, "refused": "", "lines": [{"file": "~/.codex/hooks.json", "change": "위키 훅을 이 허브로"}],
+            "links": [], "trust": True, "digest": "shown", "checking": False}
+    with patch.object(wiring, "hub_seen", lambda: dict(move)):
+        assert oneshot.view(oneshot.load(rid))["hub"] == move, "카드에 바뀔 배선이 보인다"
+        shown = oneshot.profile(rid, oneshot.Profile(values={}, confirm=True, wiring="shown"))
+    assert shown["state"] == "bootstrap" and shown["wiring"] == "shown" and "hub" not in shown
+
+
+def test_register_moves_exactly_the_wiring_the_card_confirmed(world):
+    moved = []
+    world["wiring"].update(needed=True, refused="", digest="shown")
+
+    def move(confirmed, data=None):
+        moved.append(confirmed)
+        world["wiring"]["needed"] = False
+        return {}
+
+    rid = made(world, wiring="seen-before")   # the card showed another list: the machine changed since
+    with patch.object(connect, "move", move):
+        oneshot.bootstrap(rid)
+        run = oneshot.load(rid)
+        assert "다르다" in run["stopped"]["detail"] and "register" not in run["steps"] and moved == []
+        oneshot.changed(rid, stopped=None, wiring="shown")
+        oneshot.bootstrap(rid)
+    assert moved == ["shown"] and "register" in oneshot.load(rid)["steps"]
+    assert world["examined"] == [(world["workspace"] / "budget-tracker", True)], "옮긴 배선으로 시험한다"
+
+
+def test_a_confirmed_move_that_cannot_be_written_stops_with_its_reason(world):
+    world["wiring"].update(needed=True, refused="", digest="shown")
+    rid = made(world, wiring="shown")
+    refused = HTTPException(409, "확인한 뒤에 바뀔 줄이 달라졌다. 다시 확인한다")
+    with patch.object(connect, "move", side_effect=refused):
+        oneshot.bootstrap(rid)
+    run = oneshot.load(rid)
+    assert run["stopped"]["reason"] == "connect" and "달라졌다" in run["stopped"]["detail"]
+    assert "register" not in run["steps"] and world["examined"] == []
+
+
 def test_wiring_to_confirm_stops_the_register_and_tests_cut_before_their_results_run_again(world):
     rid = made(world)
     world["wiring"]["needed"] = True

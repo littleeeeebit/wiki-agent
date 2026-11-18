@@ -369,7 +369,7 @@ function RunPane({ id, onRun }: { id: string; onRun: (run: OneshotRun) => void }
   const [run, setRun] = useState<OneshotRun | null>(null)
   const { fault, setFault, busy, act } = useAct(setRun)
   useEffect(() => { api.oneshotRun(id).then(setRun).catch((err) => setFault(String(err instanceof Error ? err.message : err))) }, [id, setFault])
-  const working = !!run?.working
+  const working = !!run?.working || !!run?.hub?.checking   // the card's hub move, read in the background
   useEffect(() => {
     if (!working) return
     const timer = window.setInterval(() => { api.oneshotRun(id).then(setRun).catch(() => {}) }, 1500)
