@@ -118,9 +118,10 @@ any job and outside the record. 9d2 changes it:
   its creation, and every process it starts is too. A process that cannot be
   created in its job is a refusal before anything is driven. So is
   `ERROR_ELEVATION_REQUIRED`, with no retry through the shell. The process
-  inherits only its own input and log, named through
-  `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, never another inheritable handle of the
-  server.
+  inherits only its own input and log, as inheritable duplicates the launcher
+  owns and closes, named through `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`. It never
+  gets another inheritable handle of the server, and the caller's own handles
+  keep their flags.
 - The caller gets the job handle, records the root's identity (pid, creation
   time, image) while it is still suspended, and resumes it. A root whose
   identity cannot be read, or whose record fails, is ended before it runs.

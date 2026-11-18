@@ -165,46 +165,25 @@ def test_a_root_still_alive_after_the_proof_wait_is_named(job, monkeypatch):
     job.stray.clear()
 
 
-def test_a_flag_that_cannot_be_restored_after_creation_rolls_the_root_back(job, tmp_path, monkeypatch):
-    stopped, closed, real = [], [], os.set_handle_inheritable
-
-    def failing(handle, inheritable):
-        if not inheritable:
-            raise OSError("restore failed")
-        real(handle, inheritable)
-
-    with monkeypatch.context() as patch:
-        patch.setattr(os, "set_handle_inheritable", failing)
-        patch.setattr(job, "_create", lambda *_: (101, 102, 103))
-        patch.setattr(job.k, "TerminateProcess", lambda handle, _: stopped.append(handle) or 1)
-        patch.setattr(job.k, "WaitForSingleObject", lambda *_: 0)
-        patch.setattr(job.k, "CloseHandle", lambda handle: closed.append(handle) or 1)
-        with pytest.raises(OSError, match="restore failed"):
-            started(job, tmp_path, SLEEP)
-
-    assert stopped == [101] and {101, 102} <= set(closed)
-
-
-def test_a_failed_stdin_restore_still_restores_the_log(job, tmp_path, monkeypatch):
+@pytest.mark.parametrize("inheritable", [True, False])
+@pytest.mark.parametrize("outcome", ["started", "refused"])
+def test_the_callers_log_keeps_its_own_inheritance_flag(job, tmp_path, monkeypatch, inheritable, outcome):
     import msvcrt
 
-    real = os.set_handle_inheritable
-    with (tmp_path / "long-lived.log").open("wb") as log:
-        kept = msvcrt.get_osfhandle(log.fileno())
-
-        def failing(handle, inheritable):
-            if not inheritable and handle != kept:
-                raise OSError("stdin restore failed")
-            real(handle, inheritable)
-
-        with monkeypatch.context() as patch:
-            patch.setattr(os, "set_handle_inheritable", failing)
-            patch.setattr(job, "_create", lambda *_: (101, 102, 103))
-            patch.setattr(job, "_rollback", lambda *_: None)
-            with pytest.raises(OSError, match="stdin restore failed"):
-                job.start([sys.executable], tmp_path, dict(os.environ), None, log)
-
-        assert not os.get_handle_inheritable(kept)
+    if outcome == "refused":
+        monkeypatch.setattr(job, "_create", lambda *_: 2)
+    with (tmp_path / "caller.log").open("wb") as log:
+        handle = msvcrt.get_osfhandle(log.fileno())
+        os.set_handle_inheritable(handle, inheritable)
+        try:
+            if outcome == "refused":
+                with pytest.raises(owned_job.Refused, match="cannot start"):
+                    job.start([sys.executable], tmp_path, dict(os.environ), None, log)
+            else:
+                job.start([sys.executable, "-c", SLEEP], tmp_path, dict(os.environ), None, log)
+            assert os.get_handle_inheritable(handle) is inheritable
+        finally:
+            os.set_handle_inheritable(handle, False)
 
 
 def test_a_root_that_ends_between_two_reads_is_never_reported_as_zero_left(job, monkeypatch):

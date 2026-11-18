@@ -67,6 +67,8 @@ def _kernel():
                                  ctypes.POINTER(_Startup), ctypes.POINTER(_Info))
     k.ResumeThread.argtypes, k.ResumeThread.restype = (w.HANDLE,), w.DWORD
     k.TerminateProcess.argtypes = (w.HANDLE, w.UINT)
+    k.GetCurrentProcess.restype = w.HANDLE
+    k.DuplicateHandle.argtypes = (w.HANDLE, w.HANDLE, w.HANDLE, ctypes.POINTER(w.HANDLE), w.DWORD, w.BOOL, w.DWORD)
     k.OpenProcess.argtypes, k.OpenProcess.restype = (w.DWORD, w.BOOL, w.DWORD), w.HANDLE
     k.WaitForSingleObject.argtypes = (w.HANDLE, w.DWORD)
     k.CloseHandle.argtypes = (w.HANDLE,)
@@ -133,27 +135,20 @@ class Job:
 
         import msvcrt
 
-        created = None
+        # The child inherits launcher-owned duplicates; the caller's handles and their flags are never touched.
+        here, copies = self.k.GetCurrentProcess(), []
         try:
             with open(os.devnull, "rb") as null:
-                handles = [msvcrt.get_osfhandle(file.fileno()) for file in (null, log)]
-                try:
-                    for handle in handles:
-                        os.set_handle_inheritable(handle, True)
-                    created = self._create(argv, cwd, env, desktop, handles)
-                finally:
-                    failed = None
-                    for handle in handles:   # each one restored, whatever another one did
-                        try:
-                            os.set_handle_inheritable(handle, False)
-                        except OSError as error:
-                            failed = failed or error
-                    if failed:
-                        raise failed
-        except BaseException:
-            if isinstance(created, tuple):   # created, then restoring a flag failed: owned and rolled back
-                self._rollback(created[0], created[1])
-            raise
+                for file in (null, log):
+                    copy = w.HANDLE()
+                    if not self.k.DuplicateHandle(here, msvcrt.get_osfhandle(file.fileno()), here,
+                                                  ctypes.byref(copy), 0, True, 2):   # inheritable, same access
+                        raise Refused(f"cannot hand {argv[0]} its input and log: {ctypes.get_last_error()}")
+                    copies.append(copy.value)
+                created = self._create(argv, cwd, env, desktop, copies)
+        finally:
+            for copy in copies:
+                self.k.CloseHandle(copy)
         if not isinstance(created, tuple):
             if created == ELEVATION_REQUIRED:
                 raise Refused("the app asks for elevation; it is not retried through the shell")
