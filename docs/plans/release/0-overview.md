@@ -105,11 +105,12 @@ production tag and the pinned SHA, bounded by that SHA and not by whatever
 
 ### Checks before publishing
 
-Each artifact is refused unless all of these hold:
+Each artifact is refused unless all of these hold. "The version" is the tag's
+SemVer value without its `v`: tag `v0.1.1` means `0.1.1`.
 
 | Check | Android | Windows (step 6) |
 | --- | --- | --- |
-| Version | `versionName` equals the tag (`aapt dump badging`) | EXE resource and installer `FileVersion` equal the tag, with `0.1.1.0` normalized to `0.1.1` |
+| Version | `versionName` equals the version (`aapt dump badging`) | EXE resource and installer `FileVersion` equal the version, with `0.1.1.0` normalized to `0.1.1` |
 | Monotonic | `versionCode` strictly greater than the previous production APK's (Tauri's default maps `0.1.1` to `1001`; step 1 fixes the mapping and its bounds) | Version greater than the previous production installer's |
 | Identity | Application ID and ABI equal the adapter's and the previous production APK's of this kind; a release build, not debuggable | Product name and publisher equal the adapter's and the previous production installer's |
 | Signature | `apksigner verify --print-certs` matches the repository's expected certificate and the previous production APK's | none until code signing is planned |
@@ -143,6 +144,17 @@ reads the ledger and finishes or ends the attempt it was in:
 | A complete asset whose digest equals the manifest's | Keeps it |
 | A complete asset whose digest differs | Ends the attempt as failed. A complete asset is never replaced. |
 | Everything matches | Makes the draft public and records the attempt published |
+| The recorded release is already public (`draft` false, `published_at` set): the publish was accepted but its answer or the ledger write was lost | Read-only. If the tag is at the SHA and the asset set and digests equal the manifest exactly, it records the attempt published. Otherwise it ends the attempt as failed and leaves the published release as it is. |
+
+An attempt that ends without publishing gives its version back. The server
+deletes the draft and then the tag, only after proving both are the attempt's.
+The draft's ID must be the ledger's, its body must carry the attempt ID and it
+must still be a draft. The remote tag must still point at the recorded SHA. A
+tag or release that fails any of these, or that is published, is never
+touched. Version choice also skips a version whose tag exists on the remote
+for any reason, and takes the next free one. So a version an earlier attempt
+could not give back never blocks the next press. A first release whose seed is
+taken this way moves to the seed's next patch.
 
 ### When an attempt fails
 
@@ -168,9 +180,9 @@ choice is left to step 2's document.
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Android build and verify, unpublished | The typed `[release]` reader, the seed and the version choice, pinning, the release-owned detached checkout, the release build with the injected version. A disposable test key and its certificate sign the step's APKs, so every Android check runs over two consecutive versions on a disposable target, including the refusal of a changed application ID and of a changed certificate. Nothing is published, and the test key never signs a production artifact. | Not started |
+| 1 | Android build and verify, unpublished | The typed `[release]` reader, the seed and the version choice (skipping a version whose tag is taken, including a failed first release's seed), pinning, the release-owned detached checkout, the release build with the injected version. A disposable test key and its certificate sign the step's APKs, so every Android check runs over two consecutive versions on a disposable target, including the refusal of a changed application ID and of a changed certificate. Nothing is published, and the test key never signs a production artifact. | Not started |
 | 2 | Signing | The per-repository release keystore and expected certificate, set up once; signing outside the build command; the debug-installation note. Required before anything is published. | Not started |
-| 3 | Transfer and ledger | The shared GitHub transfer helper, which S8 moves onto with its own policy unchanged; the `raw/releases/` ledger, the reservation, the manifest, the tag read-back, the draft ID and every row of the restart table | Not started |
+| 3 | Transfer and ledger | The shared GitHub transfer helper, which S8 moves onto with its own policy unchanged; the `raw/releases/` ledger, the reservation, the manifest, the tag read-back, the draft ID, every row of the restart table including a lost publish answer, and giving back a failed attempt's own draft and tag | Not started |
 | 4 | Failure to agent | Bounded retries and the agent turn whose fix goes through the ordinary review loop, exercised on the unpublished path | Not started |
 | 5 | Button and card | The repository card and its button, the one entry point that publishes; the seed or the bump choice. Its publishing action is enabled only with steps 2, 3 and 4 in place. | Not started |
 | 6 | Windows installer | The `desktop` kind's NSIS build and its checks | Not started |
