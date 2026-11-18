@@ -455,19 +455,60 @@ def test_connect_with_an_unanswered_codex_names_the_reason_and_writes_nothing(tm
     write.assert_not_called()
 
 
-def test_two_listings_at_once_enter_one_waiting_handover_once(tmp_path, monkeypatch):
-    """The settings poll and the project list read together; the second would move an adapter the first moved."""
+def test_one_handover_at_a_time_whoever_walks_it(tmp_path, monkeypatch):
+    """A listing's retry and merge cleanup walk it together; the second would move an adapter the first moved."""
 
     entered, release, calls = threading.Event(), threading.Event(), []
     monkeypatch.setattr(connect, "record", lambda name: {"handover": {"state": "대기", "pr": 7, "ts": 0}})
-    monkeypatch.setattr(connect, "handover", lambda path, n: calls.append(n) or entered.set() or release.wait(10))
-    first = threading.Thread(target=connect.retried, args=(tmp_path,))
-    first.start()
-    assert entered.wait(5)
-    assert connect.retried(tmp_path) is False, "다른 읽기가 넘기는 중이면 건너뛴다"
-    release.set()
-    first.join(5)
+    monkeypatch.setattr(connect, "_handover", lambda path, n: calls.append(n) or entered.set() or release.wait(10)
+                        and {"ok": True, "reason": ""})
+    listing = threading.Thread(target=connect.retried, args=(tmp_path,))
+    listing.start()
+    try:
+        assert entered.wait(5)
+        busy = connect.handover(tmp_path, 7)   # merge cleanup's direct call
+        assert not busy["ok"] and "넘기는 중" in busy["reason"], "넘기는 중이면 대기로 돌려준다"
+    finally:
+        release.set()
+        listing.join(5)
     assert calls == [7]
+    assert connect.handover(tmp_path, 7)["ok"] and calls == [7, 7], "끝난 뒤에는 다시 넘길 수 있다"
+
+
+def test_tests_a_shutdown_cut_keep_nothing_and_start_no_codex_after_it(tmp_path, monkeypatch):
+    """`[연결]`'s background tests are outside every shutdown join: the lifespan that began them owns them."""
+
+    from agent import chat_local
+
+    probing, release, kept, spawned = threading.Event(), threading.Event(), [], []
+    monkeypatch.setattr(connect, "adapter_of", lambda path: ({}, ""))
+    monkeypatch.setattr(connect, "hosts", lambda data: ["codex"])
+    monkeypatch.setattr(connect, "interpreter", lambda data=None: sys.executable)
+    monkeypatch.setattr(connect, "probe", lambda path, host: probing.set() or release.wait(10) and {"ok": True})
+    monkeypatch.setattr(connect, "keep", lambda name, **fields: kept.append(fields))
+    monkeypatch.setattr(connect.work.feed, "put", lambda event: None)
+    popen = subprocess.Popen
+
+    def launched(command, *args, **kwargs):
+        if "app-server" in command:
+            spawned.append(command)
+            raise OSError("no Codex in this test")
+        return popen(command, *args, **kwargs)
+
+    monkeypatch.setattr(chat_local.subprocess, "Popen", launched)
+    monkeypatch.setattr(chat_local, "cli_command", lambda name: ["codex"])
+    assert connect.examine(tmp_path)
+    try:
+        assert probing.wait(5)
+        chat_local.end_servers()
+        chat_local.reopen_servers()   # the next lifespan opened the gate again
+    finally:
+        release.set()
+    for _ in range(100):
+        if tmp_path.name not in connect._probing:
+            break
+        time.sleep(0.05)
+    assert kept == [] and spawned == [], "끊긴 시험은 결과를 남기지 않고 Codex 도 띄우지 않는다"
 
 
 def test_the_routine_hub_read_never_waits_on_codex_and_checks_once_per_ttl(monkeypatch):

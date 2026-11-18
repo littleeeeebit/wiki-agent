@@ -40,7 +40,7 @@ from pydantic import BaseModel
 
 import apply
 import setup_agents
-from agent import cli_command
+from agent import cli_command, pin_servers, server_epoch
 from common import indexes, process, shell, swap
 from common.paths import PACKAGED, RAW
 from common.host import conda_exe, environment, skill_config
@@ -350,6 +350,8 @@ def examine(path: Path, then=None, wait: bool = False) -> bool:
             return False
         _probing.add(name)
 
+    epoch = server_epoch()
+
     def run() -> None:
         try:
             data, _ = adapter_of(path)
@@ -359,7 +361,8 @@ def examine(path: Path, then=None, wait: bool = False) -> bool:
                 trust = trusted(interpreter(data)) if "codex" in agents else None
             except ValueError:   # unanswered trust shows as missing; the next probe asks again
                 trust = False
-            keep(name, probe=results, trust=trust)
+            if server_epoch() == epoch:   # a shutdown meanwhile cut these tests: what they found is not kept
+                keep(name, probe=results, trust=trust)
         finally:
             with _records:
                 _probing.discard(name)
@@ -367,7 +370,11 @@ def examine(path: Path, then=None, wait: bool = False) -> bool:
         if then:
             then()
 
-    run() if wait else threading.Thread(target=run, daemon=True).start()
+    def kept() -> None:   # outside every shutdown join: kept to this lifespan, it starts no Codex after it
+        with pin_servers(epoch):
+            run()
+
+    run() if wait else threading.Thread(target=kept, daemon=True).start()
     return True
 
 
@@ -571,6 +578,25 @@ def same_repository(remote: str, pr_url: str) -> bool:
 
 
 def handover(repo: Path, n: int) -> dict:
+    """`_handover`, one at a time per repository: a listing's retry and merge cleanup may walk it together, and
+    the second would move an adapter the first already moved. The busy one stops as one waiting, without a record."""
+
+    with _handing_lock:
+        if repo.name in _handing:
+            return {"ok": False, "reason": "다른 요청이 이 저장소의 adapter 를 넘기는 중이다"}
+        _handing.add(repo.name)
+    try:
+        return _handover(repo, n)
+    finally:
+        with _handing_lock:
+            _handing.discard(repo.name)
+
+
+_handing: set[str] = set()
+_handing_lock = threading.Lock()
+
+
+def _handover(repo: Path, n: int) -> dict:
     """The original's uncommitted adapter, handed over to the merged one.
 
     The six steps of the plan. The copy checked is the copy moved — moved,
@@ -655,23 +681,11 @@ def retried(path: Path) -> bool:
     """A handover left waiting is walked again from its first step when the
     list is read, once a minute at most. Whether it was."""
 
-    with _handing_lock:   # two listings at once (the settings poll, the project list) enter one handover once
-        if path.name in _handing:
-            return False
-        _handing.add(path.name)
-    try:
-        handed = record(path.name).get("handover") or {}
-        if handed.get("state") != "대기" or time.time() - handed.get("ts", 0) < RETRY:
-            return False
-        handover(path, handed["pr"])
-        return True
-    finally:
-        with _handing_lock:
-            _handing.discard(path.name)
-
-
-_handing: set[str] = set()
-_handing_lock = threading.Lock()
+    handed = record(path.name).get("handover") or {}
+    if handed.get("state") != "대기" or time.time() - handed.get("ts", 0) < RETRY:
+        return False
+    handover(path, handed["pr"])
+    return True
 
 
 # -- The screen ---------------------------------------------------------------------

@@ -91,6 +91,23 @@ def test_a_thread_that_cannot_start_leaves_the_next_read_free():
     until(lambda: value.read() == ("value", "", False), "계산이 끝나지 않았다")
 
 
+def test_a_computation_a_shutdown_cut_is_no_answer_for_the_next_lifespan():
+    """Its Codex refused by the gate, the old check would hand the next server a shutdown's refusal."""
+
+    from agent import chat_local
+
+    work, done = Held(RuntimeError("서버가 꺼지는 중이라 Codex 를 띄우지 않는다"), "fresh"), threading.Event()
+    value = refresh.Refresh("t", work, ttl=60, retry=60, done=done.set)
+    value.read()
+    until(lambda: work.starts == 1, "계산이 시작하지 않았다")
+    chat_local.end_servers()
+    chat_local.reopen_servers()
+    work.go.set()
+    until(done.is_set, "계산이 끝나지 않았다")
+    assert value.read()[1:] == ("", True), "옛 회차의 거절은 버리고 다시 계산한다"
+    until(lambda: value.read() == ("fresh", "", False), "새 회차에서 다시 계산하지 않았다")
+
+
 def test_nothing_starts_once_the_server_is_going_down(monkeypatch):
     stopping = threading.Event()
     stopping.set()

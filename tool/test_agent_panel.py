@@ -217,11 +217,12 @@ def test_a_thread_pinned_to_an_ended_lifespan_starts_no_codex(tmp_path, monkeypa
     refused = []
 
     def old_check(epoch):
-        chat_local.pin_servers(epoch)
         try:
-            chat_local.CodexServer(cwd=tmp_path)
+            with chat_local.pin_servers(epoch):
+                chat_local.CodexServer(cwd=tmp_path)
         except RuntimeError as exc:
             refused.append(str(exc))
+        assert not hasattr(chat_local._pinned, "epoch"), "끝나면 고정을 푼다"
 
     epoch = chat_local.server_epoch()
     chat_local.end_servers()

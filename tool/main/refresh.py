@@ -38,6 +38,7 @@ class Refresh:
         while no value is held, and whether a computation runs now. One starts here when the value is missing
         or stale, unless a recent failure stands, one runs already, or the server is going down."""
 
+        epoch = server_epoch()   # before the stop check: a shutdown after it retires this epoch, never skips it
         with self._lock:
             now = time.monotonic()
             stale = self._value is None or now - self._value[0] >= self.ttl
@@ -45,7 +46,7 @@ class Refresh:
             if stale and not waiting and not self._running and not runtime.stopping.is_set():
                 self._running = True
                 try:
-                    threading.Thread(target=self._run, args=(self._revision, server_epoch()), daemon=True,
+                    threading.Thread(target=self._run, args=(self._revision, epoch), daemon=True,
                                      name=self.name).start()
                 except BaseException:   # a thread that never started must not hold the next read off for good
                     self._running = False
@@ -62,16 +63,18 @@ class Refresh:
             self._value = self._failed = None
 
     def _run(self, revision: int, epoch: int) -> None:
-        pin_servers(epoch)   # outlives no lifespan: a shutdown meanwhile leaves it no Codex to start
         value, error = None, None
         try:
-            value = self._compute()
+            with pin_servers(epoch):   # outlives no lifespan: a shutdown meanwhile leaves it no Codex to start
+                value = self._compute()
         except Exception as exc:  # noqa: BLE001 — the reason is the answer until the next try
             error = str(exc) or type(exc).__name__
         finally:
             with self._lock:
                 self._running = False
-                if revision == self._revision:   # a `forget` meanwhile: this was computed from what changed
+                # A `forget` meanwhile: computed from what changed. A shutdown meanwhile: the refusal it cut
+                # is no answer for the next lifespan.
+                if revision == self._revision and epoch == server_epoch():
                     if error is not None:
                         self._failed = (time.monotonic(), error)
                     elif value is not None:

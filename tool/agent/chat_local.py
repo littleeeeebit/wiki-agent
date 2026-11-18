@@ -5,6 +5,7 @@ Account quota reads the existing CLI credential file without changing it.
 
 import json
 import hashlib
+from contextlib import contextmanager
 from datetime import datetime
 import os
 from pathlib import Path
@@ -158,10 +159,20 @@ def server_epoch():
     return _epoch
 
 
+@contextmanager
 def pin_servers(epoch):
-    """This thread starts `app-server`s only while the lifespan `epoch` names is the current one."""
+    """Within it, this thread starts `app-server`s only while the lifespan `epoch` names is the current one.
+    Undone after: a thread run again later, or a test's inline one, is not kept to a lifespan gone."""
 
+    before = getattr(_pinned, "epoch", None)
     _pinned.epoch = epoch
+    try:
+        yield
+    finally:
+        if before is None:
+            del _pinned.epoch
+        else:
+            _pinned.epoch = before
 
 
 def end_servers():
