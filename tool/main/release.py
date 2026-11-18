@@ -276,8 +276,9 @@ _learned: tuple[re.Pattern, ...] | None = None   # kept only once every shell ha
 def learned_shapes(halt: threading.Event, env: dict) -> tuple[re.Pattern, ...]:
     """What this machine's shells print for a program they cannot find, asked through the gate itself, so the shell,
     its language and the decoding are a build's own. They run in the build's own environment, without its secrets,
-    and stop with it. Best effort: whatever goes wrong teaches nothing, and only a complete answer is kept."""
+    and stop with it. Best effort: a failure teaches nothing, and only a message from every shell is kept."""
 
+    # ponytail: a machine without a shell (no `sh`) asks again each failed build; remember an absent shell if slow
     global _learned
     if _learned is not None:
         return _learned
@@ -288,8 +289,9 @@ def learned_shapes(halt: threading.Event, env: dict) -> tuple[re.Pattern, ...]:
                 if halt.is_set():
                     return tuple(shapes)
                 _, out, cut = specs.gate(probe.format(name=name), Path(cwd), halt, env=env, timeout=60, idle=30)
-                whole = whole and not cut
-                shapes += shapes_from(name, out)
+                said = shapes_from(name, out)
+                whole = whole and not cut and bool(said)
+                shapes += said
     except Exception:  # noqa: BLE001 — a shell that cannot be asked teaches nothing; the build's own error stands
         return tuple(shapes)
     if whole and not halt.is_set():
@@ -756,17 +758,19 @@ def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None,
     if needed:
         record = {"id": attempt, "remote": None, "tag": f"v{rounds[-1]['version']}", "version": rounds[-1]["version"],
                   "sha": sha, "base": branch, "repair": {"needed": needed}}
-        out["repair"] = handed(repo, record, repair)
+        out["repair"] = handed(repo, record, repair, halt)
     return out
 
 
-def handed(repo: Path, record: dict, repair) -> dict:
+def handed(repo: Path, record: dict, repair, halt: threading.Event) -> dict:
     """`record["repair"]` with what `repair(repo, record)` did: the task it started, or why none runs. The
     attempt has ended either way, so a refusal is recorded, never raised. A task whose spec was saved but whose
-    start was refused (`release_repair.Started`) is still named, so the person can start it."""
+    start was refused (`release_repair.Started`) is still named. A release stopped before this starts none."""
 
     if repair is None:
         return record["repair"]
+    if halt.is_set():
+        return {**record["repair"], "error": "멈춤 — 사람이 배포를 멈춰서 수정 작업을 시작하지 않았다"}
     try:
         return {**record["repair"], "task": repair(repo, record)}
     except Exception as exc:   # noqa: BLE001 — the attempt is over; the card shows why no repair runs

@@ -160,6 +160,17 @@ def test_a_build_failure_ends_the_attempt_and_goes_to_a_repair_task(press, monke
     assert not release.place(repo, done["id"]).exists() and rp.pending("github.com/o/r") is None
 
 
+def test_a_stop_while_the_failed_attempt_is_cleaned_up_starts_no_repair(press, monkeypatch):
+    fake, repo, _ = press
+    _broken(monkeypatch)
+    halt, discard = release.threading.Event(), release.discard
+    monkeypatch.setattr(release, "discard", lambda *a: (halt.set(), discard(*a)))   # stopped during cleanup
+    done = rp.publish(repo, "0.1.0", None, halt, repair=lambda *a: pytest.fail("the person stopped the release"))
+
+    assert done["state"] == "failed" and "cannot find symbol" in done["repair"]["needed"]   # the failure stays
+    assert "task" not in done["repair"] and "멈춤" in done["repair"]["error"] and attempts()[0] == done
+
+
 def test_a_wrong_certificate_never_goes_to_a_repair_task(press, monkeypatch):
     fake, repo, _ = press
     monkeypatch.setattr(release, "signed_wrong", lambda *a: ["서명 인증서가 다르다"])
@@ -272,7 +283,7 @@ def test_a_stop_while_the_shells_are_asked_is_still_a_stop_and_teaches_nothing(m
     assert release._learned is None
 
 
-@pytest.mark.parametrize("trouble", ["no temporary folder", "a shell times out"])
+@pytest.mark.parametrize("trouble", ["no temporary folder", "a shell times out", "a shell gives no message"])
 def test_shells_that_cannot_answer_leave_the_source_error_and_are_asked_again(monkeypatch, tmp_path, trouble):
     asked = []
 
@@ -280,7 +291,10 @@ def test_shells_that_cannot_answer_leave_the_source_error_and_are_asked_again(mo
         if cmd == "build":
             return 1, "error TS2307: Cannot find module './theme.js'", ""
         asked.append(cmd)
-        return (None, "", "시간 초과") if cmd.startswith("cmd") else (1, "", "")
+        name = cmd.split()[-1]
+        if cmd.startswith("cmd"):   # the shell in trouble; the others answer as a real one does
+            return (None, "", "시간 초과") if trouble == "a shell times out" else (1, "shell failed to start", "")
+        return 1, f"'{name}' is not recognized as an internal or external command", ""
 
     def no_folder():
         raise PermissionError("temporary folder unavailable")

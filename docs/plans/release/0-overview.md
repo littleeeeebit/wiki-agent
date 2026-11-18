@@ -215,12 +215,15 @@ server asks them once through the gate for a program that exists nowhere
 (`release.learned_shapes`). They are asked in the build's own environment,
 without its secrets, and a stop ends the asking and still counts as a stop.
 The asking is best effort: a failure in it leaves the build's own error to
-decide, and only a complete answer is kept for later builds. A source error
+decide, and only a complete answer, a message from every shell, is kept for
+later builds; otherwise the next failed build asks again. A source error
 that merely quotes a name, such
 as `'theme' is not exported` or its Korean counterpart, is not one. A missing
 script given by path is the
 repository's, and a source change can restore it. None of the machine's
-failures goes to an agent.
+failures goes to an agent. Nor does a release the person stopped at any moment
+before the hand-off, its cleanup included (`release.handed`); its failure stays
+recorded with why no repair runs.
 
 `release_repair.start` makes the turn an ordinary task. Its spec,
 `release-fix-<version>`, carries the attempt, the tag, the pinned commit and

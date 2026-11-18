@@ -185,7 +185,7 @@ def publish(repo: Path, shown: str, bump: str | None, halt: threading.Event | No
     attempt = f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
     with working(name, attempt):   # from before the reservation, so no `recover` can take it from this worker
         done = _pressed(repo, name, attempt, shown, bump, len(book["attempts"]), kit, halt)
-    return repaired(done, repair) if done.get("repair") else done
+    return repaired(done, repair, halt) if done.get("repair") else done
 
 
 def _tried(call, halt: threading.Event):
@@ -200,12 +200,12 @@ def _tried(call, halt: threading.Event):
                 raise
 
 
-def repaired(record: dict, repair) -> dict:
+def repaired(record: dict, repair, halt: threading.Event) -> dict:
     """The repair task of an attempt that ended `Repairable`, recorded in the ledger (`release.handed`)."""
 
     if repair is None:
         return record
-    return update(record["remote"], record["id"], repair=release.handed(Path(record["repo"]), record, repair))
+    return update(record["remote"], record["id"], repair=release.handed(Path(record["repo"]), record, repair, halt))
 
 
 def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, seen: int, kit: dict,
