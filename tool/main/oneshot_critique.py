@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from . import oneshot, oneshot_brief as brief, oneshot_build, oneshot_device as device, \
     oneshot_front_build as front_build, oneshot_pr, oneshot_review as review, oneshot_screens as screens, oneshot_spec
-from .oneshot_profile import kinds_of, shape, waits_at
+from .oneshot_profile import kinds_of, shape
 from .oneshot_sheet import KIND_NAMES
 from .query import ROOT
 
@@ -315,7 +315,7 @@ class Decisions(BaseModel):
 
 def extra(spec: dict) -> dict:
     o = spec["oneshot"]
-    if o.get("stage") != "r3" or waits_at(o) == "r3":   # a kind stopped before R3 has no sheet yet
+    if o.get("stage") != "r3":
         return {"critiques": o.get("critiques") or []} if o.get("critiques") else {}
     phone_shot = (lambda n, name: f"/api/oneshot/spec/{spec['repo']}/phone/shot/{n}/{name}") \
         if "android" in kinds_of(o) else None
@@ -391,8 +391,7 @@ def decide(repo: str, body: Decisions) -> dict:
                         "findings": asked_fixes(spec, body, briefed, comments)},
                 "r3": {**o["r3"], "decisions": decisions, "next_marks": {k: "edited" for k in comments}}})
     if not comments:
-        after = oneshot_spec.spec_of(repo)["oneshot"]
-        if after["stage"] == oneshot_pr.STAGE and not after.get("stopped"):   # outside the lock: the turn takes the worktree's hold
+        if oneshot_spec.spec_of(repo)["oneshot"]["stage"] == oneshot_pr.STAGE:   # outside the lock: the turn takes the worktree's hold
             oneshot_pr.begin(repo)
         return oneshot_spec.view(oneshot_spec.spec_of(repo))
     oneshot_build.send(repo, front_build.STAGE, front_turn(spec))
@@ -405,11 +404,6 @@ def approved(repo: str) -> None:
     and a tree that moved since goes back to the build's checks."""
 
     def moving(store, spec, tree) -> bool:
-        if waits_at(spec["oneshot"]) == oneshot_pr.STAGE:   # several kinds: S8 is the next step's (9c4b)
-            oneshot_spec.saved(repo, oneshot={"stage": oneshot_pr.STAGE, "working": None, "stopped": {
-                "reason": "kind", "state": oneshot_pr.STAGE,
-                "detail": "여러 종류의 풀 리퀘스트는 다음 버전에서 이어진다 — R3 는 승인됐다"}})
-            return False
         # `working` names the README turn before it is sent: a server that dies in between leaves it for
         # `recover`, and the turn that follows sends the queued instruction when it ends.
         oneshot_spec.saved(repo, oneshot={"stage": oneshot_pr.STAGE, "working": oneshot_pr.STAGE})

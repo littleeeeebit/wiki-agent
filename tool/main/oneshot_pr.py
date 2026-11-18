@@ -23,7 +23,7 @@ import android_owned
 from wiki import slots_for
 
 from . import oneshot_build, oneshot_device, oneshot_spec, pr_text, specs
-from .oneshot_profile import kind_of
+from .oneshot_profile import kinds_of
 from .query import ROOT
 
 README_PROMPT = (ROOT / "tool/prompts/oneshot-readme.md").read_text(encoding="utf-8")
@@ -34,6 +34,7 @@ CI = f"{WORKFLOWS}ci.yml"
 # The workflow's events. Written unquoted: `test_prerequisite_review` reads a quoted push as a git push.
 TRIGGERS = set("push pull_request".split())
 RELEASE_SECONDS = 600   # the upload of a debug APK of tens of megabytes
+KIND_PROMPT_NAMES = {"webapp": "a web app", "android": "an Android app", "desktop": "a Windows app"}
 
 
 def readme_text(spec: dict) -> str:
@@ -42,18 +43,26 @@ def readme_text(spec: dict) -> str:
     both = [OS_NAMES[now]] + ([OS_NAMES["macos" if now == "windows" else "windows"]]
                               if profile.get("os_later") == "other" else [])
     public = profile.get("visibility") == "public" and profile.get("ci") == "github-actions"
-    android = kind_of(spec["oneshot"]) == "android"
+    kinds = kinds_of(spec["oneshot"])
+    android = "android" in kinds   # alone, or among several kinds, whose gate builds it on the core
     job = ("a job on `ubuntu-latest` that sets up a JDK (`actions/setup-java`) and the Android SDK "
            "(`android-actions/setup-android`), then a step that `run`s the gate command above, as written"
            if android else "a job whose step `run`s the gate command above, as written")
+    several = f"""
+This repository holds {len(kinds)} kinds of the application, sharing one core:
+{', '.join(KIND_PROMPT_NAMES[k] for k in kinds)}. Give each its own section, in that
+order, with its own Setup and Run; Test is one, since the gate runs the core's
+tests and every kind's build. For the web app, Run is the command that starts
+it and where it is then served.
+""" if len(kinds) > 1 else ""
     return (README_PROMPT.replace("{os}", " and ".join(both))
             .replace("{gate}", slots_for(None, Path(spec["worktree"])).get("gate_cmd", "").strip())
-            .replace("{android}", f"""
-This is an Android app. Setup names the JDK and the Android SDK the build
+            .replace("{android}", several + (f"""
+{"In the Android app's section," if several else 'This is an Android app.'} Setup names the JDK and the Android SDK the build
 needs. Run is instead the command that builds the debug APK,
 `{spec['oneshot']['device']['apk']}`, and the one that installs it on a phone
 connected with USB debugging on: adb's install command with that APK's path.
-""" if android else "")
+""" if android else ""))
             .replace("{workflow}", f"Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and {job}."
                      if public else "Write no CI workflow: this repository gets none, and the server refuses one."))
 
@@ -137,13 +146,13 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
         return why
     # As at S7: the contract's command as the server stored it, then the adapter's gate, then each pinned case.
     ran = [backend, gate] if gate != backend else [gate]
-    verdict = specs.judge(path, ran, run.halt, lambda text: specs.note(run, text), env=oneshot_build.toolchain(spec))
+    verdict = specs.judge(path, ran, run.halt, lambda text: specs.note(run, text), env=oneshot_build.built_env(spec))
     if not verdict["ok"]:
         return f"최종 게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := oneshot_build.held(path, run, spec, verdict):
         return why
     frozen = None
-    if kind_of(o) == "android":   # the APK S8 attaches, frozen while the check still holds the tree
+    if "android" in kinds_of(o):   # the APK S8 attaches, frozen while the check still holds the tree
         if why := oneshot_device.built(path, o["device"]):
             return why
         try:
@@ -239,7 +248,7 @@ def asked(repo: str) -> None:
     worker for the pull request's text, as every spec's does."""
 
     spec = oneshot_spec.spec_of(repo)
-    if kind_of(spec["oneshot"]) == "android":
+    if "android" in kinds_of(spec["oneshot"]):   # alone or among several kinds
         spec = oneshot_spec.saved(repo, oneshot={"apk": released(spec)})
     path, head = Path(spec["worktree"]), oneshot_spec.spec_of(repo)["oneshot"]["final_head"]
     spec = specs.update(repo, spec["id"], writing={"head": head, "asked": 1})

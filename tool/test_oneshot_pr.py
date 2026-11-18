@@ -267,6 +267,7 @@ def android(finished, monkeypatch):
     tree, sent = finished
     oneshot_spec.saved("budget", oneshot={"intent": {"kind": "android"}, "device": DEVICE})
     monkeypatch.setattr(oneshot_build, "toolchain", lambda spec: None)   # the gate runs as the test's own Python
+    monkeypatch.setattr(oneshot_build, "built_env", lambda spec: None)
     for apk in (DEVICE["apk"], DEVICE["tests"]["apk"]):
         write(tree, apk, "apk")
     git(tree, "add", "-A")

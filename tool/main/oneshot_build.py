@@ -24,7 +24,7 @@ from xml.etree import ElementTree
 from fastapi import HTTPException
 
 from . import connect, oneshot, oneshot_android, oneshot_spec, refactor_run, runtime, specs, work
-from .oneshot_profile import charged, environment, shape
+from .oneshot_profile import charged, environment, kinds_of, shape
 from .query import _lock as work_lock, hold
 
 MAX_ATTEMPTS = 3
@@ -152,6 +152,13 @@ def toolchain(spec: dict) -> dict | None:
     """The environment an Android run's tests and gate run in, or `None` for the server's own."""
 
     return oneshot_android.build_env() if shape(spec["oneshot"]) == "android" else None
+
+
+def built_env(spec: dict) -> dict | None:
+    """The environment a gate that builds the app runs in (S7, S8): an Android app's, alone or among several
+    kinds, since several kinds' gate builds the Android app on the core; else the server's own."""
+
+    return oneshot_android.build_env() if "android" in kinds_of(spec["oneshot"]) else None
 
 
 def toolchain_text(spec: dict) -> str:
