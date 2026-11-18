@@ -379,6 +379,8 @@ def _skill_links(folder):
             and os.path.normcase(hub.resolve()) != os.path.normcase(WIKI.resolve())
         mine = WIKI / "skills" / target.name
         found.append((link, target, mine if ours and mine.is_dir() else target))
+    if (sorted(folder.iterdir()) if folder.is_dir() else []) != entries:   # put back before the recovery scan
+        raise FileNotFoundError(folder)
     return found
 
 

@@ -99,7 +99,9 @@ otherwise. Recovery reads only that recovery folder, never a link the owner
 keeps elsewhere. It never follows a link that stands in for the folder or for
 an attempt in it, and nothing is parked through such a link. A folder that a
 move or its rollback changes while the plan reads it is read again, up to
-three times. One that keeps changing makes the plan a refusal, so Register
+three times: a kept link gone before its target is read, a place filled that
+the first look saw empty, or a folder whose entries differ by the end of the
+read. One that keeps changing makes the plan a refusal, so Register
 checks again rather than taking a move as unneeded.
 
 A link is moved only while it still points where the confirmed plan saw it

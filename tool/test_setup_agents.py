@@ -303,6 +303,21 @@ def test_a_kept_link_put_back_while_the_plan_reads_is_read_again(tmp_path, monke
     found = setup_agents.skill_links(home)
     assert [(f[0], f[1].resolve()) for f in found] == [(link, skill.resolve())], "다시 읽어 살아 있는 링크로 본다"
 
+    # Put back after the live scan but before the recovery scan: nothing kept is left to notice, the live view is.
+    os.rename(link, kept)
+    monkeypatch.setattr(setup_agents, "_pointed", real)
+    real_kept = setup_agents.kept_links
+
+    def back_first(folder):
+        if os.path.lexists(kept):
+            os.rename(kept, link)
+        return real_kept(folder)
+
+    monkeypatch.setattr(setup_agents, "kept_links", back_first)
+    found = setup_agents.skill_links(home)
+    assert [(f[0], f[1].resolve()) for f in found] == [(link, skill.resolve())], "목록이 바뀌면 다시 읽는다"
+    monkeypatch.setattr(setup_agents, "kept_links", real_kept)
+
     os.rename(link, kept)
     monkeypatch.setattr(setup_agents, "_pointed", lambda path: (_ for _ in ()).throw(FileNotFoundError(path)))
     with pytest.raises(FileNotFoundError):
