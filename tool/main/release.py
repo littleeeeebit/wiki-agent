@@ -19,10 +19,12 @@ import sys
 import threading
 import time
 import tomllib
+from contextlib import contextmanager
 from ctypes import wintypes
 from pathlib import Path
 
 import android_owned
+import verify
 from common import errorlog, is_junction, paths
 
 from . import oneshot_android, specs
@@ -279,7 +281,10 @@ def run(argv: list, env: dict | None = None, timeout: float = 300) -> str:
     done = subprocess.run([str(a) for a in argv], capture_output=True, text=True, encoding="utf-8", errors="replace",
                           env=env, timeout=timeout)
     if done.returncode:
-        raise ValueError(f"{Path(str(argv[0])).name} 실패 — {(done.stderr or done.stdout).strip()[-400:]}")
+        said = (done.stderr or done.stdout).strip()
+        if env and env.get(SECRET):   # a key tool's diagnostic never carries its password onward
+            said = said.replace(env[SECRET], "***")
+        raise ValueError(f"{Path(str(argv[0])).name} 실패 — {said[-400:]}")
     return done.stdout
 
 
@@ -378,9 +383,11 @@ def refused(seen: dict, release: str, android: dict, cert: str, previous: dict |
 # -- The release key (step 2) ---------------------------------------------------------------------
 # One key per repository signs every production APK it ever ships, so Android installs each one as an update of
 # the last. The keystore lives under `KEYS`, outside every checkout. Its password lives only in this Windows
-# account's Credential Manager. The build command and the repair agent never see either. The certificate file is
-# written last and marks the key as established. Without it, any partial key is discarded and made again. With
-# it, a missing or changed half is refused and never replaced, because a new key would strand every installed copy.
+# account's Credential Manager. Neither is handed to the build command or the repair agent. They run as the same
+# Windows account, though, which can read that account's vault and profile, so the boundary is the account. Code
+# that is not trusted must run under another account before step 5 enables publishing. The certificate file is
+# written last and marks the key as established. After that, a missing or changed half is refused and never
+# replaced, because a new key would strand every installed copy.
 
 # Never under `paths.DATA`: unpackaged, that is the checkout, and a key removed with a worktree is lost for good.
 KEYS = Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".local/share") / "wiki-agent-data" / "release-keys"
@@ -396,7 +403,8 @@ def remote(repo: Path) -> str:
     found = re.fullmatch(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
                          r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?", url)
     if not found or {found.group(1), found.group(2)} & {".", ".."}:
-        raise ValueError(f"origin `{url}` 은 GitHub 저장소가 아니다")
+        shown = re.sub(r"(?<=//)[^@/]*@", "", url)   # never echo credentials embedded in the URL
+        raise ValueError(f"origin `{shown}` 은 GitHub 저장소가 아니다")
     return f"github.com/{found.group(1)}/{found.group(2)}".lower()
 
 
@@ -452,36 +460,96 @@ def secret_delete(name: str) -> None:
         raise OSError(f"자격 증명을 지우지 못했다: {ctypes.get_last_error()}")
 
 
+LOCK_SECONDS = 60
+
+
+def plain(path: Path) -> Path:
+    """`path` when nothing on the way to it, the leaf included and even a dangling one, is a link or junction."""
+
+    if os.path.normcase(os.path.realpath(path)) != os.path.normcase(os.path.abspath(path)) or \
+            Path(path).is_symlink() or is_junction(Path(path)):
+        raise ValueError(f"{path} 는 링크를 거친다 — 서명 키는 링크를 따라가지 않는다")
+    return Path(os.path.abspath(path))
+
+
+@contextmanager
+def held(folder: Path):
+    """One process at a time per repository's key, released when the holder dies. Two creations at once
+    would otherwise leave two passwords and two keystores, and only one survives."""
+
+    lock, deadline = plain(folder / "lock"), time.monotonic() + LOCK_SECONDS
+    while True:
+        try:
+            with verify.locked(lock):   # the final gate's lock: fails at once, so the wait is here
+                yield
+            return
+        except verify.Pending:
+            if time.monotonic() > deadline:
+                raise ValueError(f"{folder} 의 서명 키를 다른 요청이 쓰고 있다 — 끝난 뒤 다시 하라") from None
+            time.sleep(0.2)
+
+
+def opens(store: Path, password: str | None, kit: dict) -> str | None:
+    """`store`'s certificate SHA-256 when `password` opens it, else None."""
+
+    if password is None or not store.is_file():
+        return None
+    try:
+        return certificate(store, "release", password, kit)
+    except ValueError:
+        return None
+
+
 def release_key(repo: Path, kit: dict, create: bool = False) -> dict:
     """The repository's one production key with its certificate's SHA-256. `create` makes it when it was never
-    established. An established key that lost its keystore or its password, or whose certificate changed, is
-    refused and never replaced."""
+    established, or finishes a creation that stopped. Nothing here deletes or overwrites a keystore or a password
+    that might be the repository's: an established key that lost a half or changed, a keystore no password opens,
+    and a surviving password with no keystore are each refused for a person to settle."""
 
     name = remote(repo)
-    folder = owned(KEYS / name, KEYS)
-    store, cert_file = folder / "release.jks", folder / "certificate.sha256"
-    if cert_file.exists():
-        password, cert = secret_read(name), cert_file.read_text(encoding="utf-8").strip()
-        if not store.is_file() or password is None:
-            gone = "키 파일" if not store.is_file() else "자격 증명 관리자의 비밀번호"
-            raise ValueError(f"{name} 의 정식 서명 키가 있었는데 {gone}이 없다 — 새 키로 서명하면 설치된 앱이 "
-                             f"업데이트되지 않는다. 백업에서 되살려라: {store}")
-        if certificate(store, "release", password, kit) != cert:
-            raise ValueError(f"{store} 의 인증서가 기록한 {cert[:16]}… 와 다르다 — 바뀐 키로는 서명하지 않는다")
-        return {"keystore": store, "alias": "release", "password": password, "cert": cert, "name": name}
-    if store.exists():   # a keystore without its certificate may still be a real key: a person decides
-        raise ValueError(f"{store} 가 있는데 인증서 기록이 없다 — 이 키로 서명한 적이 있는지 확인하고, 아니면 지운 뒤 다시 만든다")
-    if not create:
-        raise ValueError(f"{name} 의 정식 서명 키가 아직 없다 — 한 번 만든다")
+    keys = Path(os.path.realpath(KEYS))
+    if keys.is_relative_to(Path(os.path.realpath(repo))) or keys.is_relative_to(Path(os.path.realpath(paths.DATA))):
+        raise ValueError(f"{KEYS} 가 체크아웃 안이다 — 서명 키는 모든 체크아웃 밖에만 둔다")
+    folder = plain(owned(KEYS / name, KEYS))
     folder.mkdir(parents=True, exist_ok=True)
-    pending = folder / "release.jks.new"
-    pending.unlink(missing_ok=True)   # an earlier creation that stopped before its rename signed nothing
-    made = generated(pending, "release", KEY_DAYS, f"CN={name}", kit)
-    secret_write(name, made["password"])
-    cert = certificate(pending, "release", made["password"], kit)
-    pending.replace(store)
-    cert_file.write_text(cert + "\n", encoding="utf-8")   # last: from here on the key is the repository's
-    return {**made, "keystore": store, "cert": cert, "name": name}
+    store, marker, pending = (plain(folder / n) for n in ("release.jks", "certificate.sha256", "release.jks.new"))
+    with held(folder):   # every check below is made again under the lock, never trusted from before it
+        password = secret_read(name)
+        if marker.exists():
+            cert = marker.read_text(encoding="utf-8").strip()
+            if not re.fullmatch(r"[0-9a-f]{64}", cert):
+                raise ValueError(f"{marker} 가 깨졌다 — 인증서 기록을 백업에서 되살려라. 키는 그대로 두었다")
+            if not store.is_file() or password is None:
+                gone = "키 파일" if not store.is_file() else "자격 증명 관리자의 비밀번호"
+                raise ValueError(f"{name} 의 정식 서명 키가 있었는데 {gone}이 없다 — 새 키로 서명하면 설치된 앱이 "
+                                 f"업데이트되지 않는다. 백업에서 되살려라: {store}")
+            if opens(store, password, kit) != cert:
+                raise ValueError(f"{store} 의 인증서가 기록한 {cert[:16]}… 와 다르다 — 바뀐 키로는 서명하지 않는다")
+            return {"keystore": store, "alias": "release", "password": password, "cert": cert, "name": name}
+        if store.exists():   # stopped between its rename and its record, or a record someone removed
+            if (cert := opens(store, password, kit)) is None:
+                raise ValueError(f"{store} 가 있는데 인증서 기록도, 그 키를 여는 비밀번호도 없다 — 이 키로 서명한 적이 "
+                                 "있는지 사람이 확인해야 한다. 키는 그대로 두었다")
+        elif password is not None:   # stopped after its password was stored, or its keystore was lost
+            if (cert := opens(pending, password, kit)) is None:
+                raise ValueError(f"자격 증명 관리자에 '{target(name)}' 가 남아 있는데 키 파일이 없다 — 백업한 "
+                                 f"{store.name} 을 되살리거나, 그 키를 버릴 거라면 그 자격 증명을 직접 지운 뒤 다시 만든다")
+        else:
+            cert = None
+        if not create:
+            raise ValueError(f"{name} 의 정식 서명 키가 {'만들다 멈췄다' if cert else '아직 없다'} — --create 로 "
+                             f"{'마저 만든다' if cert else '한 번 만든다'}")
+        if cert is None:   # nothing stored anywhere: a leftover `pending` has no password and signed nothing
+            pending.unlink(missing_ok=True)
+            password = generated(pending, "release", KEY_DAYS, f"CN={name}", kit)["password"]
+            secret_write(name, password)
+            cert = certificate(pending, "release", password, kit)
+        if not store.exists():   # a keystore already there is the one `cert` came from; never overwrite it
+            pending.replace(store)
+        written = plain(folder / "certificate.sha256.new")
+        written.write_text(cert + "\n", encoding="utf-8")
+        written.replace(marker)   # last, and whole: from here on the key is the repository's
+        return {"keystore": store, "alias": "release", "password": password, "cert": cert, "name": name}
 
 
 # -- The unpublished rehearsal --------------------------------------------------------------------

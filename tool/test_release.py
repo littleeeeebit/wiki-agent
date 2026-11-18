@@ -381,7 +381,8 @@ def test_a_password_round_trips_through_credential_manager():
 
 @pytest.fixture
 def keys(tmp_path, monkeypatch):
-    """`release_key` over a fake vault and a fake keytool whose certificate is the keystore's bytes."""
+    """`release_key` over a fake vault and a fake keytool. A keystore holds `<certificate>|<password>`, and only
+    its password opens it."""
 
     vault = {}
     monkeypatch.setattr(release, "KEYS", tmp_path / "keys")
@@ -391,11 +392,18 @@ def keys(tmp_path, monkeypatch):
 
     def generated(store, alias, days, name, kit):
         assert (alias, days, name) == ("release", release.KEY_DAYS, "CN=github.com/o/r")
-        store.write_text(release.secrets.token_hex(4), encoding="utf-8")
-        return {"keystore": store, "alias": alias, "password": release.secrets.token_hex(4)}
+        password = release.secrets.token_hex(4)
+        store.write_text(f"{release.secrets.token_hex(32)}|{password}", encoding="utf-8")
+        return {"keystore": store, "alias": alias, "password": password}
+
+    def certificate(store, alias, password, kit):
+        cert, opener = store.read_text(encoding="utf-8").split("|")
+        if password != opener:
+            raise ValueError("keytool: wrong password")
+        return cert
 
     monkeypatch.setattr(release, "generated", generated)
-    monkeypatch.setattr(release, "certificate", lambda store, alias, password, kit: store.read_text(encoding="utf-8"))
+    monkeypatch.setattr(release, "certificate", certificate)
     return vault, tmp_path / "keys" / "github.com" / "o" / "r"
 
 
@@ -429,25 +437,116 @@ def test_an_established_key_that_lost_a_half_or_changed_is_refused_never_replace
     assert (folder / "certificate.sha256").exists() and not (folder / "release.jks.new").exists()
 
 
-def test_a_creation_that_stopped_before_its_certificate_is_made_again_but_a_bare_keystore_is_left_to_a_person(keys, monkeypatch):
+def test_a_creation_that_stopped_after_storing_its_password_is_finished_with_that_same_key(keys, monkeypatch):
     vault, folder = keys
-    real = release.certificate
+    real, calls = release.certificate, []
 
-    def broken(*_):
+    def broken(*args):
+        calls.append(args)
         raise ValueError("keytool failed")
 
     monkeypatch.setattr(release, "certificate", broken)
     with pytest.raises(ValueError, match="keytool failed"):
         release.release_key(Path("repo"), {}, create=True)
+    stored, staged = vault["github.com/o/r"], (folder / "release.jks.new").read_text()
     monkeypatch.setattr(release, "certificate", real)
 
-    made = release.release_key(Path("repo"), {}, create=True)   # the stopped one signed nothing: made again
-    assert vault["github.com/o/r"] == made["password"] and not (folder / "release.jks.new").exists()
+    with pytest.raises(ValueError, match="만들다 멈췄다"):
+        release.release_key(Path("repo"), {})
+    made = release.release_key(Path("repo"), {}, create=True)
 
-    (folder / "certificate.sha256").unlink()   # a keystore with no record of being established
-    with pytest.raises(ValueError, match="인증서 기록이 없다"):
+    assert made["password"] == stored == vault["github.com/o/r"]   # the stored password is never replaced
+    assert (folder / "release.jks").read_text() == staged and not (folder / "release.jks.new").exists()
+
+
+def test_a_keystore_whose_record_was_lost_gets_it_back_from_its_own_password_and_one_no_password_opens_stays(keys):
+    vault, folder = keys
+    made = release.release_key(Path("repo"), {}, create=True)
+    (folder / "certificate.sha256").unlink()
+
+    assert release.release_key(Path("repo"), {}, create=True)["cert"] == made["cert"]
+
+    (folder / "certificate.sha256").unlink()
+    vault.clear()
+    with pytest.raises(ValueError, match="사람이 확인해야 한다"):
         release.release_key(Path("repo"), {}, create=True)
-    assert (folder / "release.jks").is_file()   # never deleted
+    assert (folder / "release.jks").read_text().startswith(made["cert"])   # never deleted or replaced
+    assert vault == {}
+
+
+def test_a_surviving_password_with_no_keystore_is_never_overwritten(keys):
+    vault, folder = keys
+    vault["github.com/o/r"] = "existing"
+
+    with pytest.raises(ValueError, match="남아 있는데 키 파일이 없다"):
+        release.release_key(Path("repo"), {}, create=True)
+    assert vault == {"github.com/o/r": "existing"} and not (folder / "release.jks").exists()
+
+
+def test_two_creations_at_once_make_one_key(keys, monkeypatch):
+    vault, folder = keys
+    monkeypatch.setattr(release, "LOCK_SECONDS", 0.3)
+    original, nested = release.generated, []
+
+    def racing(store, *args):
+        if not nested:   # a second request arrives while the first is making its key
+            with pytest.raises(ValueError, match="다른 요청이 쓰고 있다"):
+                release.release_key(Path("repo"), {}, create=True)
+            nested.append(True)
+        return original(store, *args)
+
+    monkeypatch.setattr(release, "generated", racing)
+    made = release.release_key(Path("repo"), {}, create=True)
+
+    assert nested and vault == {"github.com/o/r": made["password"]}
+    assert release.release_key(Path("repo"), {})["cert"] == made["cert"]
+
+
+def test_the_record_is_written_whole_or_not_at_all(keys, monkeypatch):
+    vault, folder = keys
+    replace = Path.replace
+
+    def stopped(self, target):
+        if Path(target).name == "certificate.sha256":
+            raise OSError("stopped")
+        return replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", stopped)
+    with pytest.raises(OSError, match="stopped"):
+        release.release_key(Path("repo"), {}, create=True)
+    monkeypatch.setattr(Path, "replace", replace)
+
+    assert not (folder / "certificate.sha256").exists()
+    made = release.release_key(Path("repo"), {}, create=True)   # finished from the keystore and its password
+    assert vault["github.com/o/r"] == made["password"]
+    (folder / "certificate.sha256").write_text("trunc", encoding="utf-8")
+    with pytest.raises(ValueError, match="깨졌다"):
+        release.release_key(Path("repo"), {})
+
+
+def test_keys_inside_the_checkout_or_through_a_link_are_refused(keys, tmp_path, monkeypatch):
+    repo = tmp_path / "checkout"
+    monkeypatch.setattr(release, "KEYS", repo / "appdata" / "wiki-agent-data" / "release-keys")
+    with pytest.raises(ValueError, match="체크아웃 안"):
+        release.release_key(repo, {}, create=True)
+
+    monkeypatch.setattr(release, "KEYS", tmp_path / "keys")
+    monkeypatch.setattr(release, "is_junction", lambda p: Path(p).name == "certificate.sha256")
+    with pytest.raises(ValueError, match="링크를 거친다"):
+        release.release_key(repo, {}, create=True)
+
+
+def test_a_key_tools_diagnostic_and_a_refused_origin_never_carry_a_secret(monkeypatch):
+    monkeypatch.setattr(release.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
+        a[0], 1, "", "keystore password was 'hunter2-hunter2' and it failed"))
+    with pytest.raises(ValueError) as caught:
+        release.run(["keytool"], {release.SECRET: "hunter2-hunter2"})
+    assert "hunter2" not in str(caught.value) and "***" in str(caught.value)
+
+    monkeypatch.setattr(release, "git", lambda *a, **k: "https://user:tok3n@gitlab.com/o/r.git\n")
+    with pytest.raises(ValueError) as caught:
+        release.remote(Path("x"))
+    assert "tok3n" not in str(caught.value) and "gitlab.com/o/r.git" in str(caught.value)
 
 
 def test_the_first_release_note_tells_debug_installs_to_reinstall():
