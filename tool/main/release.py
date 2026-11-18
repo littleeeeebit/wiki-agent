@@ -21,7 +21,7 @@ import tomllib
 from pathlib import Path
 
 import android_owned
-from common import is_junction, paths
+from common import errorlog, is_junction, paths
 
 from . import oneshot_android, specs
 
@@ -151,8 +151,10 @@ def pin(repo: Path, ref: str = "origin/main") -> str:
     finally:
         try:
             git(repo, "update-ref", "-d", own)
-        except (ValueError, subprocess.SubprocessError):
-            pass   # the fetch's own error, if any, is the one that matters; the name is never reused
+        except (ValueError, subprocess.SubprocessError) as exc:
+            # Recorded, never raised: the fetch's own error, if any, is the one that matters, and the name is
+            # never reused, so the leftover cannot change a later pin.
+            errorlog.record("release-pin", exc, repo=str(repo), ref=own)
 
 
 def place(repo: Path, attempt: str) -> Path:

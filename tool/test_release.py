@@ -313,6 +313,24 @@ def test_a_fetch_that_times_out_after_writing_its_ref_leaves_no_ref(monkeypatch)
     assert refs == set()
 
 
+def test_a_pin_ref_git_cannot_delete_is_recorded_with_its_name(monkeypatch):
+    refs, recorded = set(), []
+
+    def git(repo, *args, timeout=120):
+        if args[0] == "fetch":
+            refs.add(args[-1].split(":")[1])
+        if args[:2] == ("update-ref", "-d"):
+            raise ValueError("ref is locked")
+        return "a" * 40
+
+    monkeypatch.setattr(release, "git", git)
+    monkeypatch.setattr(release.errorlog, "record", lambda source, error, **context: recorded.append((source, context)))
+
+    assert release.pin(Path("repo")) == "a" * 40
+    (left,) = refs
+    assert recorded == [("release-pin", {"repo": "repo", "ref": left})]
+
+
 def test_only_the_key_tool_gets_the_password_when_signing(tmp_path, monkeypatch):
     monkeypatch.setenv(release.SECRET, "inherited")
     calls = []
