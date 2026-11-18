@@ -525,6 +525,56 @@ def test_the_record_is_written_whole_or_not_at_all(keys, monkeypatch):
         release.release_key(Path("repo"), {})
 
 
+class _Flushless:
+    """A staging handle whose `write` succeeds and whose close fails, as a full disk's final flush does."""
+
+    def __init__(self, real):
+        self.real = real
+
+    def __enter__(self):
+        return self
+
+    def fileno(self):
+        return self.real.fileno()
+
+    def write(self, text):
+        return self.real.write(text)
+
+    def __exit__(self, *exc):
+        self.real.close()
+        raise OSError("flush failed")
+
+
+def test_a_failed_flush_or_cleanup_keeps_the_original_error_and_never_removes_a_file_swapped_in(tmp_path, monkeypatch):
+    target, opened = tmp_path / "ledger.json", open
+    monkeypatch.setattr("builtins.open", lambda *a, **k: _Flushless(opened(*a, **k)) if a[1:2] == ("x",) else opened(*a, **k))
+    with pytest.raises(OSError, match="flush failed"):   # the close is inside the cleanup's reach
+        release.replaced(target, "{}")
+    monkeypatch.setattr("builtins.open", opened)
+    assert list(tmp_path.iterdir()) == []
+
+    recorded, replace, unlink = [], Path.replace, Path.unlink
+    monkeypatch.setattr(release.errorlog, "record", lambda kind, exc, **k: recorded.append((kind, str(exc))))
+    monkeypatch.setattr(Path, "replace", lambda self, t: (_ for _ in ()).throw(OSError("stopped")))
+    monkeypatch.setattr(Path, "unlink", lambda self, missing_ok=False: (_ for _ in ()).throw(PermissionError("staging locked")))
+    with pytest.raises(OSError, match="stopped"):   # never "staging locked"
+        release.replaced(target, "{}")
+    assert recorded and recorded[0][0] == "release-staging" and "staging locked" in recorded[0][1]
+    monkeypatch.setattr(Path, "unlink", unlink)
+
+    def swapped(self, t):   # someone moves ours aside and puts another file at its name
+        replace(self, self.with_name("moved"))
+        self.write_text("not ours", encoding="utf-8")
+        raise OSError("stopped")
+
+    for stray in tmp_path.glob("*.new"):
+        stray.unlink()
+    monkeypatch.setattr(Path, "replace", swapped)
+    with pytest.raises(OSError, match="stopped"):
+        release.replaced(target, "{}")
+    assert [p.read_text(encoding="utf-8") for p in tmp_path.glob("*.new")] == ["not ours"]
+
+
 def test_keys_inside_the_checkout_or_through_a_link_are_refused(keys, tmp_path, monkeypatch):
     repo = tmp_path / "checkout"
     monkeypatch.setattr(release, "KEYS", repo / "appdata" / "wiki-agent-data" / "release-keys")
