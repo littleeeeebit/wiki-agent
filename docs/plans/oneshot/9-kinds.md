@@ -43,6 +43,8 @@ translator is two kinds at once, and the owner knew which.
 | Several kinds | In this plan |
 | How a run of several kinds is built | One repository: S2 and the core (S3, S4, R1) once for every kind, then the screens and their checks for each kind |
 | `desktop` | In this plan, so the translator's Windows side can be built |
+| A PC app's stack (2026-11-18) | Free, picked in S2 like a web app's: Tauri 2, .NET with WinUI, Electron or another. The run checks the tools the picked stack names and installs none |
+| What the owned desktop cannot show (2026-11-18) | A round on the owner's own desktop before R3, approved by the owner at that time, as the Android phone round is. Plan 9's gate is unchanged |
 
 ## What exists now
 
@@ -193,7 +195,7 @@ installer).
 `desktop` is built on Windows only in this plan; macOS is a later plan.
 
 - S1's `window` field is the size S7 shoots at.
-- S2's bundles are, for example, Tauri 2, .NET with WinUI, or Electron.
+- S2's stack is the owner's: for example Tauri 2, .NET with WinUI, or Electron.
 - S6 previews the screens the way the stack's own preview tool renders them.
 - S7 needs a session the run owns: it starts the built app, drives each core
   scenario and shoots each screen and state, then closes everything it
@@ -204,12 +206,66 @@ app starts on it in a kill-on-close job, a driver on the same desktop reads
 its UI Automation tree and acts only through automation patterns, and
 `PrintWindow` shoots it. The design, what was measured on this PC, the
 refusals and the cleanup proof are in the research note
-[oneshot-desktop-session](../../research/oneshot-desktop-session.md). A GDI
-copy of the screen fails on the owned desktop; 9d2 measures window capture and
-an overlay against a fixture on that same desktop. If the screen translator's
-capture and overlay checks cannot run there, 9e chooses with the owner between
-a round on the owner's own desktop before R3, which records their evidence as
-the Android phone round does, and an explicit change to this plan's gate.
+[oneshot-desktop-session](../../research/oneshot-desktop-session.md). On the
+owned desktop, a GDI copy of the screen fails, and Windows Graphics Capture
+gave an empty item for a fixture window. An overlay's constant-alpha
+composition can be reconstructed from `PrintWindow` shots. A check that needs
+more, such as a screen capture or a per-pixel-alpha overlay, runs in the
+owner's desktop round below.
+
+### How 9e builds `desktop`
+
+The stack is free, so the server knows a PC app's tools only from what S2
+confirmed. The `build` part names each command the stack needs:
+
+- its toolchain, as programs to find on `PATH`, such as `cargo`, `dotnet` or
+  `npm`;
+- the commands that build the app and its installer;
+- the built program S7 starts;
+- the installer S8 attaches.
+
+Before S4, the server looks for each named program. When one is missing, the
+run stops with reason `toolchain` and names it in the owner's words. The
+agent installs nothing. A `[재개]` after the owner has installed it looks
+again.
+
+- S3 and R1. The core design is step 7's shape: modules, outside calls,
+  assumptions and the app's Windows permissions or capabilities, such as
+  screen capture or an always-on-top window. S4 builds the core
+  contract-test first, in the stack's own host-side runner.
+- The backend review. A `device` finding for `desktop` names a check that the
+  run's look can run: a driver scenario whose postcondition is the finding's.
+- S6. As for an Android app, the mocks come with the stack's preview command.
+  The command writes `<screen id>.png` at the `window` size, and the server
+  checks each picture's size.
+- S7. The frontend build's gate runs the core tests and builds the program.
+  S7 starts the program through the look's session (`tool/desktop_session.py`)
+  on the run's owned desktop. It then drives each screen's scenarios with the
+  driver (`tool/desktop_driver.py`), shoots each state and reads the
+  mechanical findings off the driver's report. The critic judges those shots
+  as it does each kind's. The look's cleanup proof gates every round. A round
+  whose session did not prove its cleanup counts as failed.
+- The owner's desktop round. After two clean rounds, a `desktop` run whose
+  owed checks include one the owned desktop cannot show waits for the owner,
+  as the phone round does. Approved at that time, the round starts the exact
+  program R3 will show on the owner's desktop, in an owned job. It runs only
+  those checks and records their evidence. It closes what it started and
+  proves it. A run with no such check skips the round.
+- R3 and S8. The sheet has a `PC 앱` section read off `desktop` alone, with
+  the owner's desktop round when one ran. S8's README has a section for it.
+  The installer is attached to the draft prerelease beside an APK, on the
+  head and digest the final gate froze. The CI job runs on `windows-latest`.
+
+The sub-steps, each its own PR:
+
+| Step | What |
+| --- | --- |
+| 9e1 | `PC 앱` on the start screen. The intake's definition, the `window` card field and the `desktop.json` profile. S2's parts, prompts and the `build` part's named commands. A `desktop` run waits after R1 |
+| 9e2 | The core path. The toolchain check, the S3 module design and the R1 table for `desktop`, S4's contract tests and gate, the backend review's `desktop` deferral, and the split off modules. It waits at the frontend |
+| 9e3 | Screens. S6's mocks with the stack's preview at the `window` size, R2, the frontend build and its gate building the program |
+| 9e4 | The look loop. S7 on the owned desktop, with launch, driver scenarios, shots, mechanical findings, the critic, owed checks and the cleanup proof |
+| 9e5 | The owner's desktop round. The resumable wait, the owned job on the owner's desktop, the owed checks only, and their evidence and cleanup |
+| 9e6 | R3 and S8. The `PC 앱` sheet section, the README section, the installer on the draft prerelease and the Windows CI job. `desktop` alone and among other kinds runs to its first pull request |
 
 ## What does not change
 
