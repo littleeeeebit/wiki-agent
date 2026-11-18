@@ -125,14 +125,17 @@ def test_a_task_that_cannot_be_saved_leaves_no_worktree_or_branch(repo, monkeypa
     assert left_nothing(repo) and begun == []
 
 
-def test_a_path_another_request_holds_is_never_made_or_removed(repo):
+def test_a_path_another_request_holds_is_never_made_or_removed(repo, monkeypatch):
     repo, record, begun = repo
     planned = str(worktree_home(repo) / "release-fix-0-1-1")
+    touched = []
+    monkeypatch.setattr(specs, "create", lambda *a, **k: touched.append("create"))
+    monkeypatch.setattr(release_repair, "remove", lambda *a, **k: touched.append("remove"))
     other = specs.hold(work._busy, specs._lock, planned, "busy")   # e.g. an ordinary work request on that path
     try:
         with pytest.raises(specs.HTTPException):
             release_repair.start(repo, record)
-        assert planned in work._busy and begun == []   # still the other request's
+        assert planned in work._busy and begun == [] and touched == []   # still the other request's
         assert not (worktree_home(repo) / "release-fix-0-1-1").exists()
         assert not git(repo, "branch", "--list", "release-fix-0-1-1") and not (specs.SPECS / "budget").exists()
     finally:
@@ -161,6 +164,30 @@ def test_what_a_rollback_cannot_remove_is_reported_with_the_failure(repo, monkey
         release_repair.start(repo, record)
     assert not (worktree_home(repo) / "release-fix-0-1-1").exists()
     assert git(repo, "branch", "--list", "release-fix-0-1-1")   # kept, and said so
+
+
+@pytest.mark.parametrize("cleanup", ["git times out", "the folder stays on disk"])
+def test_a_rollback_that_fails_itself_releases_the_hold_and_keeps_the_failure(repo, monkeypatch, cleanup):
+    repo, record, _ = repo
+    tree = worktree_home(repo) / "release-fix-0-1-1"
+
+    def unsaved(spec):
+        raise OSError("disk full")
+
+    def timed_out(*args, **kwargs):
+        raise subprocess.TimeoutExpired("git", 30)
+
+    def unregistered(repo, path, **flags):   # Windows: Git forgot it, a process keeps the folder
+        git(repo, "worktree", "remove", "--force", str(path))
+        path.mkdir()
+        return f"작업트리를 지웠다. 폴더는 다른 프로세스가 쥐고 있어 남았다: {path}"
+
+    monkeypatch.setattr(specs, "save", unsaved)
+    monkeypatch.setattr(release_repair, "remove", timed_out if cleanup == "git times out" else unregistered)
+    with pytest.raises(RuntimeError, match="disk full — 정리하지 못한 것: 작업트리") as failed:
+        release_repair.start(repo, record)
+    assert ("TimeoutExpired" if cleanup == "git times out" else "다른 프로세스") in str(failed.value)
+    assert str(tree) not in work._busy   # the person can open or remove it
 
 
 def test_a_linked_checkout_chosen_as_the_project_is_refused_before_anything_is_made(repo, monkeypatch, tmp_path):

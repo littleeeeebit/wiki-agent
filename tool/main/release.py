@@ -235,10 +235,13 @@ def tools() -> dict:
 SECRET = "RELEASE_KEY_PASSWORD"   # reaches the key tools only, set by `keyed`; never inherited
 UNSHARED = {SECRET, *host.TOKENS}
 # The name a shell's not-found message gives, by the message's shape so that a localized one matches too. PowerShell
-# echoes the name before its message (`cargo: 'cargo' 용어가 …`, Windows PowerShell `cargo : …`), English or not;
-# cmd starts the line with it (`'cargo'은(는) 내부 또는 외부 명령…`); sh says `cargo: command not found`.
+# echoes the name before its message (`cargo: 'cargo' 용어가 …`, Windows PowerShell `cargo : …`), English or not.
+# cmd starts the line with it, followed by its English message or straight away by a localized one
+# (`'cargo'은(는) 내부 또는 외부 명령…`); a source error such as `'theme' is not exported` is neither.
+# sh says `cargo: command not found`.
+# ponytail: a localized cmd message in a Latin-script language is not recognized; add its phrase if one turns up
 MISSING_TOOL = re.compile(r"^(?P<ps>[^\s:'/\\]+) ?: (?:'(?P=ps)'|The term '(?P=ps)')|"
-                          r"^'(?P<cmd>[^']+)'|"
+                          r"^'(?P<cmd>[^']+)'(?= is not recognized as an internal or external command|[^\x00-\x7f])|"
                           r"(?:^|:\s)(?P<sh>[^\s:/\\]+): (?:command )?not found", re.IGNORECASE | re.MULTILINE)
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 LAST_LINES = 12   # where a failed command's own diagnostic sits in its log

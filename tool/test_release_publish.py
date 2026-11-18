@@ -172,7 +172,7 @@ SOURCE_ERROR = "error TS2307: Cannot find module './theme.js' ghp_" + "x" * 36
 @pytest.mark.parametrize("ending, repairable", [
     ("stopped", False), ("deadline", False), ("missing cmdlet", False), ("missing command", False),
     ("missing cmdlet, Korean PowerShell 7", False), ("missing command, Korean cmd", False),
-    ("installed tool's own error", True),
+    ("installed tool's own error", True), ("quoted source error", True), ("missing command, English cmd", False),
     ("missing repository script", True), ("early optional probe", True), ("source", True)])
 def test_only_a_build_the_source_broke_needs_a_repair(monkeypatch, tmp_path, ending, repairable):
     halt = release.threading.Event()
@@ -189,6 +189,9 @@ def test_only_a_build_the_source_broke_needs_a_repair(monkeypatch, tmp_path, end
             "missing command, Korean cmd": "'cargo'은(는) 내부 또는 외부 명령, 실행할 수 있는 프로그램, 또는\n"
                                            "배치 파일이 아닙니다.",
             "installed tool's own error": "node: 'node' could not load ./build.mjs\n" + SOURCE_ERROR,
+            "quoted source error": "'theme' is not exported by ./src/theme.ts",
+            "missing command, English cmd": "'vite' is not recognized as an internal or external command,\n"
+                                            "operable program or batch file.",
             "missing command": "> tauri android build\nbash: rustup: command not found\nnpm ERR! code 127",
             "missing repository script": "The term './scripts/package-android.ps1' is not recognized as the "
                                          "name of a cmdlet",

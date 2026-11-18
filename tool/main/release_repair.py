@@ -82,8 +82,10 @@ def start(repo: Path, record: dict) -> str:
                         "cell": {"model": "", "effort": "", "fast": False},
                         "history": [{"ts": now, "state": "정리됨"}, {"ts": now, "state": "작업 중"}]})
         except BaseException as exc:
-            left = undo(repo, path, sid, record["sha"])   # while still held
-            release()
+            try:
+                left = undo(repo, path, sid, record["sha"])   # while still held
+            finally:
+                release()
             if left and isinstance(exc, Exception):
                 raise RuntimeError(f"{exc} — 정리하지 못한 것: {left}") from exc
             raise
@@ -110,22 +112,28 @@ def unshared(spec: dict | None) -> dict:
 def undo(repo: Path, path: Path, branch: str, sha: str) -> str:
     """The worktree and branch of a task whose spec was never saved, since nothing would own them; what is left
     is returned, empty when nothing is. The branch goes only while it still points at the commit it was made at
-    and no other checkout stands on it."""
+    and no other checkout stands on it. It never raises: what it could not do is part of what is left."""
 
     try:
         remove(repo, path, force=True, keep_branch=True)
-    except (OSError, ValueError, RuntimeError) as exc:
-        return f"작업트리 {path} ({exc}), 브랜치 {branch}"
+    except Exception as exc:  # noqa: BLE001 — a timeout too; the caller's failure stays the one reported
+        return f"작업트리 {path} ({type(exc).__name__}: {exc}), 브랜치 {branch}"
+    folder = f"작업트리 폴더 {path} (다른 프로세스가 쥐고 있다)" if path.exists() else ""
 
     def git(*args):
         return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=30)
 
-    trees = git("worktree", "list", "--porcelain")
-    if trees.returncode or f"branch refs/heads/{branch}" in trees.stdout.splitlines():
-        return f"브랜치 {branch} (다른 체크아웃이 쓰고 있거나 확인하지 못했다)"
-    done = git("update-ref", "-d", f"refs/heads/{branch}", sha)
-    return f"브랜치 {branch} ({done.stderr.strip() or done.returncode})" if done.returncode else ""
+    try:
+        trees = git("worktree", "list", "--porcelain")
+        if trees.returncode or f"branch refs/heads/{branch}" in trees.stdout.splitlines():
+            ref = f"브랜치 {branch} (다른 체크아웃이 쓰고 있거나 확인하지 못했다)"
+        else:
+            done = git("update-ref", "-d", f"refs/heads/{branch}", sha)
+            ref = f"브랜치 {branch} ({done.stderr.strip() or done.returncode})" if done.returncode else ""
+    except Exception as exc:  # noqa: BLE001
+        ref = f"브랜치 {branch} ({type(exc).__name__}: {exc})"
+    return ", ".join(part for part in (folder, ref) if part)
 
 
 class Started(Exception):
