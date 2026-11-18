@@ -10,7 +10,6 @@ A rehearsal runs from `tool/` as this module's `rehearse` command, given a dispo
 from __future__ import annotations
 
 import ctypes
-import functools
 import json
 import os
 import re
@@ -255,32 +254,46 @@ PROBES = ("{name}", "cmd /c {name}", "sh -c {name}")
 
 def shapes_from(name: str, out: str) -> list[re.Pattern]:
     """The not-found message in `out`, a shell's answer for `name` (which exists nowhere), as a pattern naming the
-    program as `n`: from the name's first mention to `AFTER_NAME` characters past its last, since PowerShell wraps
-    the rest at the console's width. A line that only echoes the command is not a message."""
+    program as `n`: from the name's first mention, with the quote before it, to `AFTER_NAME` characters past its
+    last, since PowerShell wraps the rest at the console's width. The name starts after a quote, a space, a colon
+    or the line's start, so the last part of a path (`'./tool/x.cmd'`) is never taken for a bare name. A line that
+    only echoes the command is not a message."""
 
     shapes = []
     for line in ANSI.sub("", out).splitlines():
-        said = line[line.find(name):line.rfind(name) + len(name) + AFTER_NAME].rstrip() if name in line else ""
+        start = line.find(name)
+        start -= start > 0 and line[start - 1] in "'\""
+        said = line[start:line.rfind(name) + len(name) + AFTER_NAME].rstrip() if name in line else ""
         if len(said.replace(name, "").strip(" '\"")) >= 8 and "{" not in said:
             escaped = re.escape(said).replace(re.escape(name), NAME, 1).replace(re.escape(name), "(?P=n)")
-            shapes.append(re.compile(escaped, re.MULTILINE))
+            shapes.append(re.compile(("" if said[0] in "'\"" else r"(?<![^\s:])") + escaped, re.MULTILINE))
     return shapes[:1]
 
 
-@functools.cache
-def learned_shapes() -> tuple[re.Pattern, ...]:
-    """What this machine's shells print for a program they cannot find, asked once through the gate itself, so
-    the shell, its language and the decoding are a build's own."""
+_learned: tuple[re.Pattern, ...] | None = None   # kept only once every shell has answered
 
-    name = f"wikiagentmissing{secrets.token_hex(4)}"
-    shapes = []
-    with tempfile.TemporaryDirectory() as cwd:
-        for probe in PROBES:
-            try:
-                _, out, _ = specs.gate(probe.format(name=name), Path(cwd), threading.Event(), timeout=60, idle=30)
-            except Exception:  # noqa: BLE001 — a shell that cannot be asked teaches nothing
-                continue
-            shapes += shapes_from(name, out)
+
+def learned_shapes(halt: threading.Event, env: dict) -> tuple[re.Pattern, ...]:
+    """What this machine's shells print for a program they cannot find, asked through the gate itself, so the shell,
+    its language and the decoding are a build's own. They run in the build's own environment, without its secrets,
+    and stop with it. Best effort: whatever goes wrong teaches nothing, and only a complete answer is kept."""
+
+    global _learned
+    if _learned is not None:
+        return _learned
+    name, shapes, whole = f"wikiagentmissing{secrets.token_hex(4)}", [], True
+    try:
+        with tempfile.TemporaryDirectory() as cwd:
+            for probe in PROBES:
+                if halt.is_set():
+                    return tuple(shapes)
+                _, out, cut = specs.gate(probe.format(name=name), Path(cwd), halt, env=env, timeout=60, idle=30)
+                whole = whole and not cut
+                shapes += shapes_from(name, out)
+    except Exception:  # noqa: BLE001 — a shell that cannot be asked teaches nothing; the build's own error stands
+        return tuple(shapes)
+    if whole and not halt.is_set():
+        _learned = tuple(shapes)
     return tuple(shapes)
 
 
@@ -293,7 +306,7 @@ def environment(kit: dict) -> dict:
             "PATH": os.pathsep.join([str(kit["java"] / "bin"), os.environ.get("PATH", "")])}
 
 
-def lacks_tool(out: str, env: dict) -> bool:
+def lacks_tool(out: str, env: dict, halt: threading.Event) -> bool:
     """The build failed because this machine lacks a program: its shell's not-found message, English or the
     machine's own, for a bare name that is not on the build's `PATH`, among the log's last lines. A path is the
     repository's own script, which a source change can restore. An earlier optional probe is not why the build
@@ -301,7 +314,7 @@ def lacks_tool(out: str, env: dict) -> bool:
 
     # ponytail: a not-found message in the last lines beside an unrelated error still reads as the machine's
     tail = "\n".join([line for line in ANSI.sub("", out).splitlines() if line.strip()][-LAST_LINES:])
-    names = (m["n"] for shape in (*ENGLISH_SHAPES, *learned_shapes()) for m in shape.finditer(tail))
+    names = (m["n"] for shape in (*ENGLISH_SHAPES, *learned_shapes(halt, env)) for m in shape.finditer(tail))
     return any(not re.search(r"[/\\]|^\.", name) and shutil.which(name, path=env.get("PATH")) is None
                for name in names)
 
@@ -336,7 +349,8 @@ def build(path: Path, android: dict, release: str, kit: dict, halt: threading.Ev
         tail = errorlog.redact("\n".join(out.splitlines()[-40:]))
         said = f"빌드 실패 — {cut or f'{exited} 로 끝났다'}\n{tail}"
         # A person's stop, a deadline or silence, and a missing tool say nothing about the source.
-        machine = halt.is_set() or cut or lacks_tool(out, env)
+        # The halt again after the shells were asked: a stop while they answered is still a stop.
+        machine = halt.is_set() or cut or lacks_tool(out, env, halt) or halt.is_set()
         raise ValueError(said) if machine else BuildFailed(said)
     apk = output()
     if not apk.is_file():

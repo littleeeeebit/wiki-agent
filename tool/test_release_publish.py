@@ -23,10 +23,14 @@ ASKED = {"probe : 'probe' 용어가 cmdlet, 함수, 스크립트 파일 또는 �
          "'probe'은(는) 내부 또는 외부 명령, 실행할 수 있는 프로그램, 또는"}
 
 
+LEARN = release.learned_shapes   # the real one, before `asked` replaces it
+
+
 @pytest.fixture(autouse=True)
 def asked(monkeypatch):
     """The shells' answers above in place of asking this machine's, which the faked gate would answer instead."""
-    monkeypatch.setattr(release, "learned_shapes", lambda: tuple(s for out in ASKED for s in release.shapes_from("probe", out)))
+    monkeypatch.setattr(release, "learned_shapes",
+                        lambda halt, env: tuple(s for out in ASKED for s in release.shapes_from("probe", out)))
 
 
 @pytest.fixture
@@ -229,18 +233,79 @@ def test_a_learned_message_ignores_the_echoed_command_and_where_the_console_wrap
     assert not release.shapes_from("probe", "probe")   # a bare echo teaches nothing
 
 
+def test_a_learned_message_never_takes_the_end_of_a_repository_path_for_a_program():
+    halt = release.threading.Event()
+    for said in ("'probe' is not recognized as an internal or external command",
+                 "probe : 'probe' 용어가 cmdlet, 함수, 스크립트 파일"):
+        (shape,) = release.shapes_from("probe", said)
+        for path in (r".\tool\package.cmd", r"C:\tools\package"):
+            text = said.replace("probe", path)
+            assert not shape.search(text) or not shape.search(text)["n"].startswith("package")
+            assert not release.lacks_tool(text, {"PATH": ""}, halt)   # the repository's, so repairable
+
+
+def asking(monkeypatch, gate):
+    """The real `learned_shapes`, asking a faked gate, with nothing learned yet."""
+    monkeypatch.setattr(release, "learned_shapes", LEARN)
+    monkeypatch.setattr(release, "_learned", None)
+    monkeypatch.setattr(release.specs, "gate", gate)
+
+
+def test_a_stop_while_the_shells_are_asked_is_still_a_stop_and_teaches_nothing(monkeypatch, tmp_path):
+    halt, asked = release.threading.Event(), []
+
+    def gate(cmd, path, event, env=None, **_):
+        if cmd == "build":
+            return 1, "error TS2307: Cannot find module './theme.js'", ""
+        asked.append((event, env))
+        halt.set()   # the person presses stop while the first shell answers
+        return None, "", "사람이 멈춤"
+
+    asking(monkeypatch, gate)
+    monkeypatch.setattr(release, "environment", lambda kit: {"PATH": "", "SAFE": "1"})
+    (src := tmp_path / "src").mkdir()
+    with pytest.raises(ValueError) as failed:
+        BUILD(src, ANDROID, "0.1.0", {}, halt)
+    assert not isinstance(failed.value, release.BuildFailed)   # no repair for a stopped release
+    # The release's own halt, and the build's environment, made without its secrets (`release.environment`).
+    assert len(asked) == 1 and asked[0][0] is halt and asked[0][1]["SAFE"] == "1"
+    assert release._learned is None
+
+
+@pytest.mark.parametrize("trouble", ["no temporary folder", "a shell times out"])
+def test_shells_that_cannot_answer_leave_the_source_error_and_are_asked_again(monkeypatch, tmp_path, trouble):
+    asked = []
+
+    def gate(cmd, path, event, env=None, **_):
+        if cmd == "build":
+            return 1, "error TS2307: Cannot find module './theme.js'", ""
+        asked.append(cmd)
+        return (None, "", "시간 초과") if cmd.startswith("cmd") else (1, "", "")
+
+    def no_folder():
+        raise PermissionError("temporary folder unavailable")
+
+    asking(monkeypatch, gate)
+    if trouble == "no temporary folder":
+        monkeypatch.setattr(release.tempfile, "TemporaryDirectory", no_folder)
+    monkeypatch.setattr(release, "environment", lambda kit: {"PATH": ""})
+    (src := tmp_path / "src").mkdir()
+    with pytest.raises(release.BuildFailed, match="TS2307"):   # the build's own error, still repairable
+        BUILD(src, ANDROID, "0.1.0", {}, release.threading.Event())
+    assert release._learned is None   # asked again next time
+
+
 @pytest.mark.skipif(release.os.name != "nt", reason="asks this Windows machine's own shells")
 def test_this_machines_own_shells_teach_their_not_found_messages(monkeypatch, tmp_path):
-    monkeypatch.undo()   # the real `learned_shapes`, asking the real gate
-    release.learned_shapes.cache_clear()
-    try:
-        name = "wikiagentmissingtest"
-        for probe in ("{name}", "cmd /c {name}"):
-            _, out, _ = release.specs.gate(probe.format(name=name), tmp_path, release.threading.Event(), timeout=60)
-            assert release.lacks_tool(out, {"PATH": str(tmp_path)}), out
-        assert not release.lacks_tool("'theme'는 이 모듈에서 내보내지 않습니다.", {"PATH": str(tmp_path)})
-    finally:
-        release.learned_shapes.cache_clear()
+    monkeypatch.setattr(release, "learned_shapes", LEARN)   # the real one, asking the real gate
+    monkeypatch.setattr(release, "_learned", None)
+    halt, env = release.threading.Event(), dict(release.os.environ)   # a build's whole environment
+    name = "wikiagentmissingtest"
+    for probe in ("{name}", "cmd /c {name}"):
+        _, out, _ = release.specs.gate(probe.format(name=name), tmp_path, halt, timeout=60)
+        assert release.lacks_tool(out, env, halt), out
+    assert not release.lacks_tool("'theme'는 이 모듈에서 내보내지 않습니다.", env, halt)
+    assert release._learned   # a complete answer is kept
 
 
 def test_a_build_whose_apk_cannot_be_read_needs_a_repair(monkeypatch, tmp_path):

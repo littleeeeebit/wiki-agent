@@ -212,7 +212,11 @@ lines, that it cannot find a program by bare name that is not on the build's
 `PATH` (`release.lacks_tool`). The message is the shell's own: the English
 ones, and what this machine's shells answer, in their language, when the
 server asks them once through the gate for a program that exists nowhere
-(`release.learned_shapes`). A source error that merely quotes a name, such
+(`release.learned_shapes`). They are asked in the build's own environment,
+without its secrets, and a stop ends the asking and still counts as a stop.
+The asking is best effort: a failure in it leaves the build's own error to
+decide, and only a complete answer is kept for later builds. A source error
+that merely quotes a name, such
 as `'theme' is not exported` or its Korean counterpart, is not one. A missing
 script given by path is the
 repository's, and a source change can restore it. None of the machine's
