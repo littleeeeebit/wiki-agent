@@ -18,6 +18,11 @@ OVERLAY = ("import tkinter; r = tkinter.Tk(); r.title('overlay'); r.overrideredi
            "r.attributes('-topmost', True); r.attributes('-alpha', 0.7); "
            "tkinter.Label(r, text='OVERLAY', bg='yellow', font=('Arial', 20)).pack(fill='both', expand=True); r.after(60000, r.destroy); r.mainloop()")
 mode, saved = sys.argv[1], Path(sys.argv[2])   # run.py wgc|layers <folder for the outputs and the cleanup receipt>
+files = (["layers.json", "pw-viewer.png", "pw-overlay.png", "composed.png"] if mode == "layers"
+         else ["wgc-viewer.txt", "wgc-overlay.txt"])
+stale = [name for name in [*files, f"cleanup-{mode}.json"] if (saved / name).exists()]
+if stale:   # an earlier run's output would sit beside this run's as if it were this run's evidence
+    sys.exit(f"refused before starting anything: {saved} already holds {', '.join(stale)}")
 root = Path(tempfile.mkdtemp(prefix="oneshot-capture-"))
 def wait(job, seconds=60):
     end = time.monotonic() + seconds
@@ -33,12 +38,10 @@ with desktop_session.look(root, mode) as look:
     if mode == "layers":
         look.start("layers", [sys.executable, str(here / "layers.py"), str(out), desktop, jobs["viewer"], jobs["overlay"]], here)
         print("layers finished", wait(look.jobs["layers"]))
-        files = ["layers.json", "pw-viewer.png", "pw-overlay.png", "composed.png"]
     else:
         for title in ("viewer", "overlay"):
             look.start(f"probe_{title}", [str(WGC), str(out), desktop, jobs[title], title], here)
             print(title, "finished", wait(look.jobs[f"probe_{title}"]))
-        files = ["wgc-viewer.txt", "wgc-overlay.txt"]
 for name in files:
     if (root / mode / "evidence" / name).exists():
         (saved / name).write_bytes((root / mode / "evidence" / name).read_bytes())

@@ -1,9 +1,10 @@
 {
  "refusals": [],
- "desktop": "wiki-look-063d3b7933c74edbb7b5b928eef43536",
+ "desktop": "wiki-look-5b573b8374b44f0dbe1007a1c039aee0",
+ "receiving_input": false,
  "hwnds": [
-  54726742,
-  50008846
+  24581586,
+  36705782
  ],
  "overlay_layered": {
   "read": true,

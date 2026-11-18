@@ -356,9 +356,14 @@ tkinter viewer and a tkinter overlay started through the look's session. The
 probes, the runner, their output and each run's cleanup receipt
 (`cleanup-wgc.json`, `cleanup-layers.json`: the look proven, every job's count
 matching the members followed) are in `oneshot-desktop-capture/`. Each probe
-is told the look's desktop and its fixtures' jobs, and refuses to run on any
-other desktop or to take a window outside those jobs. Started directly on the
-owner's desktop, both probes refused before looking for a window.
+is told the look's desktop and its fixtures' jobs. Before it enumerates any
+window, it refuses unless its own desktop has that `wiki-look-` name and is
+not receiving input; it reads a window's title only once the window's process
+is in a fixture's job. Started directly on the owner's desktop, which reads as
+receiving input, both probes refused before looking for a window. Each probe's
+`--check` runs the guard on modeled desktops, a custom-named input desktop
+among them. The runner refuses a destination that already holds that run's
+outputs, so an earlier run's picture cannot sit beside a later refusal.
 
 - Capture. For the viewer and the overlay on the owned desktop, Windows
   Graphics Capture's window API returned an empty item. The probe (`wgc.cs`)

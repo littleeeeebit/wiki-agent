@@ -23,24 +23,39 @@ public static class Wgc {
   [DllImport("kernel32")] static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool inside);
   [DllImport("kernel32")] static extern bool CloseHandle(IntPtr h);
   public static string Supported() { return GraphicsCaptureSession.IsSupported().ToString(); }
+  [DllImport("user32", EntryPoint="GetUserObjectInformationW")] static extern bool GetUserObjectFlag(IntPtr o, int index, out int value, int n, out int needed);
   public static string Desktop() {   // the name of the desktop this thread runs on
     var s = new System.Text.StringBuilder(256); int needed;
     return GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()), 2, s, 256, out needed) ? s.ToString() : null;
   }
-  // The one visible top-level window on this thread's desktop titled `title` whose process is in the fixture's
-  // job `job`; zero when there is none or more than one. A window of any other process is never chosen.
+  // Whether this thread's desktop is receiving input (UOI_IO); null when it cannot be read.
+  public static bool? Receiving() {
+    int value, needed;
+    return GetUserObjectFlag(GetThreadDesktop(GetCurrentThreadId()), 6, out value, 4, out needed) ? (bool?)(value != 0) : null;
+  }
+  // Why a desktop is not one the probe may look at, or null: it must be the look's (a `wiki-look-` name equal to
+  // the one the runner gave) and must not be receiving input, which the owner's screen always is.
+  public static string Guard(string name, bool? receiving, string expected) {
+    if (name == null || name != expected || !name.StartsWith("wiki-look-", StringComparison.Ordinal)) return "not on the look's owned desktop";
+    if (receiving != false) return "the desktop is, or may be, receiving input";
+    return null;
+  }
+  // The one visible top-level window on this thread's desktop whose process is in the fixture's job `job` and
+  // whose title is `title`; zero when there is none or more than one. Membership is checked first, so no other
+  // process's window has its title read.
   public static IntPtr Find(string title, string job) {
     IntPtr jobHandle = OpenJobObjectW(0x4, false, job);   // JOB_OBJECT_QUERY
     if (jobHandle == IntPtr.Zero) return IntPtr.Zero;
     var found = new System.Collections.Generic.List<IntPtr>();
     try {
       EnumWindows((h, l) => {
-        var s = new System.Text.StringBuilder(512); GetWindowTextW(h, s, 512);
-        if (!IsWindowVisible(h) || s.ToString() != title) return true;
+        if (!IsWindowVisible(h)) return true;
         uint pid; GetWindowThreadProcessId(h, out pid);
         IntPtr p = OpenProcess(0x1000, false, pid); bool inside = false;
         if (p != IntPtr.Zero) { IsProcessInJob(p, jobHandle, out inside); CloseHandle(p); }
-        if (inside) found.Add(h);
+        if (!inside) return true;
+        var s = new System.Text.StringBuilder(512); GetWindowTextW(h, s, 512);
+        if (s.ToString() == title) found.Add(h);
         return true;
       }, IntPtr.Zero);
     } finally { CloseHandle(jobHandle); }
@@ -82,13 +97,24 @@ public static class Wgc {
 public static class Program {
   public static int Main(string[] args) {
     // wgc.exe <out> <expected desktop> <fixture job> <title>: refuses unless it runs on the look's owned desktop.
+    // wgc.exe --check: checks the desktop guard on modeled desktops and opens nothing.
+    if (args.Length == 1 && args[0] == "--check") {
+      string input = "the desktop is, or may be, receiving input", other = "not on the look's owned desktop";
+      bool passed = Wgc.Guard("wiki-look-ab", false, "wiki-look-ab") == null
+        && Wgc.Guard("wiki-look-ab", true, "wiki-look-ab") == input && Wgc.Guard("wiki-look-ab", null, "wiki-look-ab") == input
+        && Wgc.Guard("Default", false, "Default") == other && Wgc.Guard("Custom", false, "Custom") == other
+        && Wgc.Guard("wiki-look-ab", false, "wiki-look-cd") == other && Wgc.Guard(null, false, "") == other;
+      Console.WriteLine(passed ? "guard check passed" : "guard check FAILED");
+      return passed ? 0 : 1;
+    }
     string outDir = args[0], desktop = args[1], job = args[2], title = args[3];
     var result = new System.Text.StringBuilder();
     try {
-      string here = Wgc.Desktop();
-      result.Append("desktop=" + here + "\n");
-      if (here == null || here != desktop || string.Equals(here, "Default", StringComparison.OrdinalIgnoreCase)) {
-        result.Append("refused=not on the look's owned desktop\n");
+      string here = Wgc.Desktop(); bool? receiving = Wgc.Receiving();
+      result.Append("desktop=" + here + "\nreceiving_input=" + receiving + "\n");
+      string refusal = Wgc.Guard(here, receiving, desktop);
+      if (refusal != null) {   // before any window is enumerated
+        result.Append("refused=" + refusal + "\n");
         File.WriteAllText(Path.Combine(outDir, "wgc-" + title + ".txt"), result.ToString());
         return 3;
       }
