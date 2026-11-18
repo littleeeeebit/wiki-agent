@@ -31,7 +31,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from common import is_junction, process
+from common import is_junction, process, read_record, write_record
 from native_process import identity, listeners, parents, peer, same, terminate
 
 RECORD = "android-ownership.json"
@@ -103,17 +103,11 @@ def checked(tools: dict) -> dict:
 # -- The record ----------------------------------------------------------------------------------------
 
 def load(folder: Path) -> dict | None:
-    try:
-        return json.loads((Path(folder) / RECORD).read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return None
+    return read_record(Path(folder) / RECORD)
 
 
 def save(folder: Path, record: dict) -> None:
-    file = Path(folder) / RECORD
-    partial = file.with_suffix(".part")
-    partial.write_text(json.dumps(record, indent=1), encoding="utf-8")
-    os.replace(partial, file)
+    write_record(Path(folder) / RECORD, record)
 
 
 def free_port() -> int:
