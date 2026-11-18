@@ -68,8 +68,11 @@ then replaces the original. A write cut partway leaves the owner's file as it
 was, and another writer, such as `setup_agents.py --global` beside the
 server, never installs this attempt's bytes. A Codex home counts as written
 once its trust write is sent (`config/batchWrite`), since Codex may take it
-and be stopped before it answers; a home cut while its hooks were still
-being read does not.
+and be stopped before it answers. A home cut while its hooks were still
+being read, or whose write never reached Codex's pipe, does not. Trust counts
+as done only when Codex lists every wiki hook back as trusted. A home where
+Codex lists none, for example with hooks switched off, is a refusal with its
+reason, never a finished move.
 `connect.move` writes nothing once
 shutdown has begun. A move cut partway still drops the routine read's last
 check and every repository's probe record, as a finished move does. Each

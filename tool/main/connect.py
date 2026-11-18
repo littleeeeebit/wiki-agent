@@ -484,11 +484,18 @@ def move(confirmed: str, data: dict | None = None, done: list[str] | None = None
                 done.append(f"{link} → {new}")
             for home in now["homes"]:
                 try:
-                    setup_agents.codex_hooks(Path(home), True, python)
+                    hooks = setup_agents.codex_hooks(Path(home), True, python)
                 except BaseException as exc:   # cut after the write was sent: Codex may have taken it
                     if getattr(exc, "trust_sent", False):
                         done.append(f"{home}: Codex 신뢰 기록 (응답 전에 끊겨 적용됐을 수 있다)")
                     raise
+                # Trust is confirmed only by Codex listing every wiki hook as trusted. None listed (hooks switched
+                # off, a home Codex does not read) is a refusal, never a move that is done.
+                if not hooks or any(hook["trustStatus"] != "trusted" for hook in hooks):
+                    if hooks:
+                        done.append(f"{home}: Codex 신뢰 기록 (보냈지만 신뢰로 바뀌지 않았다)")
+                    raise ValueError(f"{home}: Codex 가 이 허브의 위키 훅을 "
+                                     + ("찾지 못해 신뢰를 기록하지 못했다" if not hooks else "신뢰로 바꾸지 않았다"))
                 done.append(f"{home}: Codex 신뢰 기록")
         except BaseException as exc:   # a move cut partway changed the wiring too: its error stays the one raised
             for note in _forget_old_wiring():

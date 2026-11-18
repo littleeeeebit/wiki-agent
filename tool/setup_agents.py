@@ -209,8 +209,12 @@ def codex_hooks(home, trust, python=None):
             try:
                 server.request("config/batchWrite", {"edits": [
                     {"keyPath": "hooks.state", "value": pending, "mergeStrategy": "upsert"}]})
+            except BaseException as exc:   # once sent, Codex may have taken it before being cut
+                exc.trust_sent = not getattr(exc, "unsent", False)
+                raise
+            try:
                 hooks = listed()
-            except BaseException as exc:   # the write was sent: Codex may have taken it before being cut
+            except BaseException as exc:   # the write was answered: it landed
                 exc.trust_sent = True
                 raise
     return hooks

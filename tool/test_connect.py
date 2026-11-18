@@ -392,6 +392,9 @@ def test_the_hook_writes_nothing_without_the_variable_and_passes_when_it_cannot_
 # -- the hub move ------------------------------------------------------------------------
 
 
+TRUSTED = [{"key": "wiki", "trustStatus": "trusted"}]   # what Codex lists back once the trust landed
+
+
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     """The user level, empty, and an old hub whose skill links point into it.
@@ -420,7 +423,7 @@ def home(tmp_path, monkeypatch):
     with patch.object(setup_agents, "run", return_value=""), patch.object(apply, "unusable", return_value=[]), \
          patch.object(setup_agents, "hook_shell", return_value=["sh"]), \
          patch.object(setup_agents.shutil, "which", side_effect=lambda name: name), \
-         patch.object(setup_agents, "codex_hooks", side_effect=lambda home, trust, python=None: trusted.append(trust)), \
+         patch.object(setup_agents, "codex_hooks", side_effect=lambda home, trust, python=None: trusted.append(trust) or TRUSTED), \
          patch.object(connect, "trusted", return_value=False), \
          patch.object(connect, "examine", return_value=True):
         yield home, old, trusted
@@ -511,7 +514,7 @@ def test_trust_goes_only_to_the_codex_homes_the_confirmation_listed(tmp_path, ho
 
     with patch.object(apply, "user_files", lambda agent: list(codex) if agent == "codex" else real_files(agent)), \
          patch.object(setup_agents, "write_plan", write_plan), \
-         patch.object(setup_agents, "codex_hooks", side_effect=lambda h, trust, python=None: recorded.append(str(h))):
+         patch.object(setup_agents, "codex_hooks", side_effect=lambda h, trust, python=None: recorded.append(str(h)) or TRUSTED):
         connect.move(shown["digest"])
     assert recorded == shown["homes"], "확인한 목록의 홈에만 신뢰를 쓴다"
 
@@ -532,6 +535,47 @@ def test_a_trust_write_cut_while_codex_lists_the_hooks_counts_as_written(tmp_pat
          pytest.raises(RuntimeError):
         connect.move(connect.hub()["digest"], None, done)
     assert not any("Codex" in line for line in done[len(before):])
+
+
+def test_a_trust_codex_never_confirmed_is_a_refusal_not_a_finished_move(tmp_path, home):
+    """Codex listing no wiki hook (hooks switched off), or one still untrusted, leaves the confirmed trust missing."""
+
+    for listed, written in (([], False), ([{"key": "wiki", "trustStatus": "untrusted"}], True)):
+        shown, done = connect.hub(), []
+        with patch.object(setup_agents, "codex_hooks", return_value=listed), pytest.raises(ValueError, match="Codex"):
+            connect.move(shown["digest"], None, done)
+        assert any("Codex" in line for line in done) == written
+
+
+def test_a_trust_write_that_never_reached_codex_is_not_sent(monkeypatch):
+    """The pipe closed before the request was written: nothing it asked for can have landed."""
+
+    class Server:
+        def __init__(self, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def request(self, method, params):
+            if method == "hooks/list":
+                hooks = [{"eventName": event, "command": command, "key": "k", "currentHash": "h",
+                          "trustStatus": "untrusted"} for event, command in mine]
+                return {"data": [{"hooks": hooks}]}
+            ended = RuntimeError(f"Codex 연결 종료: {method}")
+            ended.unsent = True
+            raise ended
+
+    import agent
+
+    mine = {(event[0].lower() + event[1:], command) for event, command in apply.installed("codex", sys.executable)}
+    monkeypatch.setattr(agent, "CodexServer", Server)
+    with pytest.raises(RuntimeError) as cut:
+        setup_agents.codex_hooks(Path("home"), True, sys.executable)
+    assert cut.value.trust_sent is False
 
 
 def test_a_codex_home_that_does_not_answer_is_a_refusal_not_a_move(tmp_path, monkeypatch):

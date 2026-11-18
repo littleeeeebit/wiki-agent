@@ -125,7 +125,9 @@ class CodexServer:
             self.proc.stdin.write(line)
             self.proc.stdin.flush()
         except OSError as exc:   # a process `end_servers` killed before the write: the same end as one read
-            raise RuntimeError(f"Codex 연결 종료: {method}") from exc
+            ended = RuntimeError(f"Codex 연결 종료: {method}")
+            ended.unsent = True   # this request never reached Codex: nothing it asks for can have landed
+            raise ended from exc
 
     def __exit__(self, *_exc):
         try:
