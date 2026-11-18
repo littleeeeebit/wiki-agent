@@ -17,12 +17,39 @@ VIEWER = ("import tkinter; r = tkinter.Tk(); r.title('viewer'); r.geometry('400x
 OVERLAY = ("import tkinter; r = tkinter.Tk(); r.title('overlay'); r.overrideredirect(True); r.geometry('200x80+100+150'); "
            "r.attributes('-topmost', True); r.attributes('-alpha', 0.7); "
            "tkinter.Label(r, text='OVERLAY', bg='yellow', font=('Arial', 20)).pack(fill='both', expand=True); r.after(60000, r.destroy); r.mainloop()")
+def outputs(mode):
+    return ([f"wgc-{title}.{kind}" for title in ("viewer", "overlay") for kind in ("txt", "png")] if mode == "wgc"
+            else ["layers.json", "pw-viewer.png", "pw-overlay.png", "composed.png"]) + [f"cleanup-{mode}.json"]
+def reserve(saved, mode):
+    """Why `saved` cannot take this mode's run, or None once it is reserved for it. The reservation is a lock file
+    created exclusively, so of two runs started together only one gets it; the other refuses. Holding it, the run
+    then refuses a folder that already holds any of this mode's outputs, so a run's evidence never sits beside
+    another's."""
+    try:
+        os.close(os.open(saved / f"run-{mode}.lock", os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except FileExistsError:
+        return f"{saved} is reserved by another {mode} run"
+    stale = [name for name in outputs(mode) if (saved / name).exists()]
+    if stale:
+        (saved / f"run-{mode}.lock").unlink()
+        return f"{saved} already holds {', '.join(stale)}"
+    return None
+if sys.argv[1:] == ["--check"]:   # two publishers, modeled with files only
+    with tempfile.TemporaryDirectory() as folder:
+        folder = Path(folder)
+        assert reserve(folder, "layers") is None
+        assert reserve(folder, "layers") == f"{folder} is reserved by another layers run"
+        assert reserve(folder, "wgc") is None   # another mode's names never collide
+        (folder / "layers.json").write_text("{}")
+        (folder / "run-layers.lock").unlink()
+        assert reserve(folder, "layers") == f"{folder} already holds layers.json"
+        assert not (folder / "run-layers.lock").exists()
+    print("reservation check passed")
+    sys.exit(0)
 mode, saved = sys.argv[1], Path(sys.argv[2])   # run.py wgc|layers <folder for the outputs and the cleanup receipt>
-files = (["layers.json", "pw-viewer.png", "pw-overlay.png", "composed.png"] if mode == "layers"
-         else ["wgc-viewer.txt", "wgc-overlay.txt"])
-stale = [name for name in [*files, f"cleanup-{mode}.json"] if (saved / name).exists()]
-if stale:   # an earlier run's output would sit beside this run's as if it were this run's evidence
-    sys.exit(f"refused before starting anything: {saved} already holds {', '.join(stale)}")
+refusal = reserve(saved, mode)
+if refusal:
+    sys.exit(f"refused before starting anything: {refusal}")
 root = Path(tempfile.mkdtemp(prefix="oneshot-capture-"))
 def wait(job, seconds=60):
     end = time.monotonic() + seconds
@@ -42,7 +69,7 @@ with desktop_session.look(root, mode) as look:
         for title in ("viewer", "overlay"):
             look.start(f"probe_{title}", [str(WGC), str(out), desktop, jobs[title], title], here)
             print(title, "finished", wait(look.jobs[f"probe_{title}"]))
-for name in files:
+for name in outputs(mode)[:-1]:
     if (root / mode / "evidence" / name).exists():
         (saved / name).write_bytes((root / mode / "evidence" / name).read_bytes())
 record = desktop_session.load(root / mode)
@@ -50,4 +77,5 @@ receipt = {"state": record["state"], "proof": record["proof"],
            "jobs": {key: {field: job["proof"][field] for field in ("clean", "joined", "total", "active")}
                     for key, job in record["jobs"].items()}}
 (saved / f"cleanup-{mode}.json").write_text(json.dumps(receipt, indent=1), encoding="utf-8")
+(saved / f"run-{mode}.lock").unlink()   # the bundle is whole; its outputs now refuse any later run
 print(json.dumps(receipt))
