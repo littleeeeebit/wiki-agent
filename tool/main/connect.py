@@ -485,9 +485,9 @@ def move(confirmed: str, data: dict | None = None, done: list[str] | None = None
                 halt()
                 setup_agents.write_plan([step], stopped)
                 done += [str(step[0])] if step[2] else []
-            for link, _old, new in (found_link for found_link in found if found_link[2]):
+            for link, old, new in (found_link for found_link in found if found_link[2]):
                 halt()
-                setup_agents.relink(link, new)
+                setup_agents.relink(link, new, old)   # only the link the owner saw: one pointing elsewhere is refused
                 done.append(f"{link} → {new}")
             for home in now["homes"]:
                 halt()

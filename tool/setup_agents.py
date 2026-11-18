@@ -338,21 +338,19 @@ def skill_links(home=None):
 
     Another hub is a folder holding `tool/hook.py` beside its `skills/`: a
     link into anybody else's skill collection is not ours to move.
+
+    A link a cut `relink` kept in its own recovery folder, with nothing at
+    its place, is listed too, and never as `None`: it moves here when this
+    hub has the skill, and goes back where it pointed otherwise.
     """
     from apply import _HOME
 
     folder = Path(home or _HOME or Path.home()) / ".claude/skills"
     found = []
-    # A link `relink` kept aside, with nothing at its own place: a move cut before the new link stood. It is
-    # listed under the place it belongs, so the next plan points that place anew.
-    kept = [(folder / name[1:-len(".before-relink")], folder.parent / name)
-            for name in (os.listdir(folder.parent) if folder.parent.is_dir() else [])
-            if name.startswith(".") and name.endswith(".before-relink")]
-    lost = [(link, aside) for link, aside in kept if not os.path.lexists(link)]
-    for link, read in sorted([(link, link) for link in (folder.iterdir() if folder.is_dir() else [])] + lost):
-        if not (read.is_symlink() or is_junction(read)):
+    for link in sorted(folder.iterdir()) if folder.is_dir() else []:
+        if not (link.is_symlink() or is_junction(link)):
             continue
-        target = Path(os.readlink(read).removeprefix("\\\\?\\"))
+        target = _pointed(link)
         hub = target.parent.parent
         if target.parent.name != "skills" or not (hub / "tool/hook.py").is_file():
             continue
@@ -360,30 +358,62 @@ def skill_links(home=None):
             continue
         mine = WIKI / "skills" / target.name
         found.append((link, target, mine if mine.is_dir() else None))
+    for link, keeps in sorted(kept_links(folder).items()):
+        if os.path.lexists(link):
+            continue
+        target = _pointed(keeps[-1])
+        hub = target.parent.parent
+        ours = target.parent.name == "skills" and (hub / "tool/hook.py").is_file() \
+            and os.path.normcase(hub.resolve()) != os.path.normcase(WIKI.resolve())
+        mine = WIKI / "skills" / target.name
+        found.append((link, target, mine if ours and mine.is_dir() else target))
     return found
 
 
-def parked(link):
-    """Where `relink` keeps a skill link while its replacement is made: beside the skills folder, so no host
-    loads it as a skill, and `skill_links` finds it when a crash left it there."""
-    return Path(link).parent.parent / f".{Path(link).name}.before-relink"
+def _pointed(link):
+    """Where a directory link points, as `os.readlink` names it without the long-path prefix a junction carries."""
+    return Path(os.readlink(link).removeprefix("\\\\?\\"))
 
 
-def relink(link, target):
+def kept_links(folder):
+    """The links a cut `relink` left in its own recovery folder (`.wiki-relink` beside the skills folder, one
+    private folder per attempt), by the place each belongs: `{place: [kept, oldest first]}`. Nothing else
+    there is ours, so nothing else is read."""
+    base = Path(folder).parent / ".wiki-relink"
+    kept = {}
+    for attempt in sorted(base.iterdir(), key=lambda p: p.stat().st_mtime) if base.is_dir() else []:
+        for link in attempt.iterdir() if attempt.is_dir() else []:
+            if link.is_symlink() or is_junction(link):
+                kept.setdefault(Path(folder) / link.name, []).append(link)
+    return kept
+
+
+def relink(link, target, source=None):
     """Point `link` at `target`, as the same kind of link it was: a junction
     stays a junction — it needs no developer mode — and a symlink a symlink.
 
-    The working link is never removed before the new one stands: it is moved
-    aside (out of the skills folder, so nothing loads or lists it there), and
-    moved back when the new one cannot be made. Only once the new one is in
-    place does the old one go."""
-    aside = parked(link)
-    if os.path.lexists(link):
-        if os.path.lexists(aside):   # never clobber an earlier move's kept link (Linux `rename` would)
-            raise FileExistsError(f"{aside} 에 앞서 옮기다 남긴 링크가 있다 — 확인한 뒤 지운다")
-        os.rename(link, aside)
-    elif not os.path.lexists(aside):   # neither the link nor a kept one: nothing to point anew
+    `source` is where the confirmed plan saw it point: a link pointing
+    elsewhere by now is not the one the owner approved, and is left alone.
+
+    The working link is never removed before the new one stands. It moves
+    into a fresh private folder of this attempt (nothing there to clobber,
+    and outside the skills folder, so no host loads it), and moves back when
+    the new one cannot be made. A link a cut attempt kept, with nothing at
+    its place, is taken from there instead."""
+    link = Path(link)
+    keeps = kept_links(link.parent).get(link, [])
+    current = link if os.path.lexists(link) else (keeps[-1] if keeps else None)
+    if current is None:   # neither the link nor a kept one: nothing to point anew
         raise FileNotFoundError(str(link))
+    if source is not None and os.path.normcase(str(_pointed(current))) != os.path.normcase(str(source)):
+        raise ValueError(f"{link} 이 확인한 뒤 다른 곳을 가리킨다 ({_pointed(current)}) — 다시 확인한다")
+    if current == link:
+        base = link.parent.parent / ".wiki-relink"
+        base.mkdir(exist_ok=True)
+        aside = Path(tempfile.mkdtemp(dir=base, prefix=link.name + ".")) / link.name
+        os.rename(link, aside)
+    else:
+        aside = current
     junction = is_junction(aside)
     try:
         if junction:
@@ -394,13 +424,18 @@ def relink(link, target):
             os.symlink(target, link, target_is_directory=True)
     except BaseException as exc:
         try:
-            os.rename(aside, link)   # the untouched old link, back where it was
-        except OSError as back:   # still kept aside, and named: `skill_links` lists it again
+            if not os.path.lexists(link):
+                os.rename(aside, link)   # the untouched old link, back where it was
+        except OSError as back:   # still kept, and named: `skill_links` lists it again
             exc.add_note(f"{link} 의 원래 링크를 되돌리지 못해 {aside} 에 남겼다 — {back}")
         raise
     # On Windows both kinds of directory link go with `rmdir`, which removes
     # the link and never what it points at.
     (os.rmdir if os.name == "nt" else os.unlink)(aside)
+    try:
+        aside.parent.rmdir()   # this attempt's own folder, empty now
+    except OSError:
+        pass
 
 
 def install_global(choice, check, projects, trust):

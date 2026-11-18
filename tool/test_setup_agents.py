@@ -47,6 +47,20 @@ def test_a_settings_write_cut_partway_leaves_the_owners_file_as_it_was(tmp_path,
     assert json.loads(settings.read_text(encoding="utf-8")) == {"model": "opus", "hooks": {}}
 
 
+def _dir_link(to, at):
+    """A directory link the way the installer makes one: a junction on Windows, a symlink elsewhere."""
+    if os.name == "nt":
+        import _winapi
+
+        _winapi.CreateJunction(str(to), str(at))
+    else:
+        os.symlink(to, at, target_is_directory=True)
+
+
+def _points(link):
+    return Path(os.readlink(link).removeprefix("\\\\?\\")).resolve()   # a junction names `\\?\C:\…`
+
+
 def test_a_link_whose_replacement_fails_points_where_it_did(tmp_path, monkeypatch):
     """The old link went first; a new one that did not come left none, and the next plan could not list it."""
 
@@ -58,29 +72,13 @@ def test_a_link_whose_replacement_fails_points_where_it_did(tmp_path, monkeypatc
     old.mkdir()
     new.mkdir()
     link.parent.mkdir()
-    if os.name == "nt":
-        import _winapi
-
-        _winapi.CreateJunction(str(old), str(link))
-        real, name, owner = _winapi.CreateJunction, "CreateJunction", _winapi
-    else:
-        os.symlink(old, link, target_is_directory=True)
-        real, name, owner = os.symlink, "symlink", os
-    calls = []
-
-    def once_fails(*args, **kwargs):
-        calls.append(args)
-        if len(calls) == 1:
-            raise OSError("access denied")
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(owner, name, once_fails)
+    _dir_link(old, link)
+    owner, name = (__import__("_winapi"), "CreateJunction") if os.name == "nt" else (os, "symlink")
+    monkeypatch.setattr(owner, name, lambda *a, **k: (_ for _ in ()).throw(OSError("access denied")))
     with pytest.raises(OSError):
         setup_agents.relink(link, new)
-    monkeypatch.undo()
-    restored = Path(os.readlink(link).removeprefix("\\\\?\\"))   # a junction names `\\?\C:\…`
-    assert restored.resolve() == old.resolve(), "실패하면 원래 링크가 그대로 돌아온다"
-    # The new link fails and so does moving the old one back: it stays aside, whole, and the error names it.
+    assert _points(link) == old.resolve(), "실패하면 원래 링크가 그대로 돌아온다"
+    # The new link fails and so does moving the old one back: it stays kept, whole, and the error names it.
     real_rename, renames = os.rename, []
 
     def second_fails(src, dst):
@@ -89,18 +87,18 @@ def test_a_link_whose_replacement_fails_points_where_it_did(tmp_path, monkeypatc
             raise OSError("in use")
         return real_rename(src, dst)
 
-    monkeypatch.setattr(owner, name, lambda *a, **k: (_ for _ in ()).throw(OSError("access denied")))
     monkeypatch.setattr(os, "rename", second_fails)
     with pytest.raises(OSError) as failed:
         setup_agents.relink(link, new)
     monkeypatch.undo()
-    aside = Path(renames[0])
-    assert aside.parent == tmp_path and Path(os.readlink(aside).removeprefix("\\\\?\\")).resolve() == old.resolve()
-    assert any(str(aside) in note for note in failed.value.__notes__), "남겨 둔 자리를 알려 준다"
+    kept = Path(renames[0])
+    assert kept.parent.parent == tmp_path / ".wiki-relink" and _points(kept) == old.resolve()
+    assert any(str(kept) in note for note in failed.value.__notes__), "남겨 둔 자리를 알려 준다"
 
 
-def test_a_link_kept_aside_by_a_cut_move_is_listed_and_never_clobbered(tmp_path, monkeypatch):
-    """A crash after the old link moved aside, before the new one stood: the next plan still points that place."""
+def test_a_kept_link_is_listed_restored_and_only_the_confirmed_one_moves(tmp_path):
+    """Recovery reads only `relink`'s own folder; a kept link goes back when this hub lacks the skill; a link
+    pointing elsewhere than the confirmed plan saw is left alone."""
 
     import pytest
 
@@ -109,31 +107,26 @@ def test_a_link_kept_aside_by_a_cut_move_is_listed_and_never_clobbered(tmp_path,
     home, old_hub = tmp_path / "home", tmp_path / "old-hub"
     (old_hub / "tool").mkdir(parents=True)
     (old_hub / "tool/hook.py").write_text("", encoding="utf-8")
-    (old_hub / "skills/after-merge").mkdir(parents=True)
-    (home / ".claude/skills").mkdir(parents=True)
-    link = home / ".claude/skills/after-merge"
-
-    def make(at):
-        if os.name == "nt":
-            import _winapi
-
-            _winapi.CreateJunction(str(old_hub / "skills/after-merge"), str(at))
-        else:
-            os.symlink(old_hub / "skills/after-merge", at, target_is_directory=True)
-
-    make(setup_agents.parked(link))   # kept aside, nothing at its own place
+    skill = old_hub / "skills/no-such-skill-here"   # a name this hub does not have
+    skill.mkdir(parents=True)
+    skills = home / ".claude/skills"
+    skills.mkdir(parents=True)
+    link = skills / skill.name
+    # The owner's own link outside the skills folder, shaped like ours: never read.
+    _dir_link(skill, home / ".claude" / f".{skill.name}.before-relink")
+    assert setup_agents.skill_links(home) == []
+    # One `relink` kept in its own folder, with nothing at its place: listed, and sent back where it pointed.
+    attempt = home / ".claude/.wiki-relink" / f"{skill.name}.cut"
+    attempt.mkdir(parents=True)
+    _dir_link(skill, attempt / skill.name)
     found = setup_agents.skill_links(home)
-    assert [(f[0], f[1].name) for f in found] == [(link, "after-merge")], "남겨 둔 링크도 계획에 든다"
-    if found[0][2]:   # this hub has the skill: pointing it anew takes the kept link's place
-        setup_agents.relink(link, found[0][2])
-        assert os.path.lexists(link) and not os.path.lexists(setup_agents.parked(link))
-        os.rmdir(link) if os.name == "nt" else os.unlink(link)
-    # A live link beside an earlier kept one: moving it aside would clobber that one, so nothing moves.
-    make(link)
-    make(setup_agents.parked(link))
-    with pytest.raises(FileExistsError):
-        setup_agents.relink(link, tmp_path)
-    assert os.path.lexists(link) and os.path.lexists(setup_agents.parked(link))
+    assert [(f[0], f[1].resolve(), f[2].resolve()) for f in found] == [(link, skill.resolve(), skill.resolve())]
+    setup_agents.relink(*found[0])
+    assert _points(link) == skill.resolve() and not attempt.exists(), "원래 자리로 돌아오고 보관 폴더는 비운다"
+    # Pointing elsewhere than the plan saw by the time the move reaches it: not the approved link, so it stays.
+    with pytest.raises(ValueError, match="다른 곳"):
+        setup_agents.relink(link, tmp_path, tmp_path / "somewhere-else")
+    assert _points(link) == skill.resolve()
 
 
 def test_a_server_going_down_while_a_file_is_staged_installs_nothing(tmp_path):
