@@ -117,22 +117,29 @@ any job and outside the record. 9d2 changes it:
   through `PROC_THREAD_ATTRIBUTE_JOB_LIST`, so the process is in the job from
   its creation, and every process it starts is too. A process that cannot be
   created in its job is a refusal before anything is driven. So is
-  `ERROR_ELEVATION_REQUIRED`, with no retry through the shell.
+  `ERROR_ELEVATION_REQUIRED`, with no retry through the shell. The process
+  inherits only its own input and log, as inheritable duplicates the launcher
+  owns and closes, named through `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`. It never
+  gets another inheritable handle of the server, and the caller's own handles
+  keep their flags.
 - The caller gets the job handle, records the root's identity (pid, creation
-  time, image) while it is still suspended, and resumes it.
+  time, image) while it is still suspended, and resumes it. A root whose
+  identity cannot be read, or whose record fails, is ended before it runs.
 - Membership is followed as it happens. The job is tied to an I/O completion
   port before its first process is created, and the port posts `JOB_OBJECT_MSG_NEW_PROCESS` for every process that joins
   and `JOB_OBJECT_MSG_EXIT_PROCESS` or `JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS`
   for every one that leaves. On each join the look opens the pid at once and
   keeps the handle only if `IsProcessInJob` confirms it on that same handle,
-  so a reused pid is never held. `JobObjectBasicProcessIdList` is read too, as
-  a cross-check.
-- Ending is `TerminateJobObject`, then a wait of up to 30 seconds for two
-  things: every held process handle signalled, and an exit message for every
-  join message. `ActiveProcesses` reaching zero is recorded as an accounting
-  observation, never as the proof: Windows can report zero before a terminated
-  process has finished exiting. A join the look could not open in time, or a
-  join without its exit message, leaves the proof inconclusive.
+  so a reused pid is never held.
+- Ending is `TerminateJobObject`, then a wait of up to 30 seconds until every
+  member that joined has a proven exit. A held member is proven only by its
+  signalled handle, which is bound to that process; an exit message names a
+  pid, which a later member may carry. A member that exits before the look can
+  open it is proven by its exit message. A failed `TerminateJobObject` is no
+  proof, and late messages are waited for until the 30 seconds run out. `ActiveProcesses` reaching zero is recorded as an
+  accounting observation, never as the proof: Windows can report zero before a
+  terminated process has finished exiting. A member with neither proof leaves
+  the proof inconclusive.
 - Windows does not guarantee those messages, so a member whose join and exit
   were both lost would be missing from every rule above. Once the job has
   ended and can admit no new member, its cumulative `TotalProcesses` count,
@@ -225,7 +232,8 @@ ends every job the look owns, then closes the desktop. The proof holds only
 when every check reads a definite answer:
 
 - every process that joined a job has exited, by the launcher's rule above:
-  each held handle signalled, and an exit message for every join message;
+  each held member's handle signalled, and an exit message for each member
+  never held;
 - no window remains on the desktop, enumerated through the desktop handle the
   look holds. `CloseDesktop` then succeeds on that handle, and afterwards
   `OpenDesktopW` by the recorded name fails with not-found;
