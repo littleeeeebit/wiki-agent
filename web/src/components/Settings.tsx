@@ -57,6 +57,21 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
       .catch((err) => { if (mine === generation.current) setFault(String(err)) })
     return () => { generation.current = mine + 1 }
   }, [])
+  // The server checks the wiring in the background (`wiring.hub_seen`): while it does, the hub line reads again
+  // 3 s after the last read settled, a failed one included, until a read says the check is over. One read at a
+  // time: the listing also walks a waiting adapter handover, and an older answer never replaces a newer one.
+  const checking = !!hub?.checking
+  useEffect(() => {
+    if (!checking) return
+    const mine = generation.current
+    let live = true, timer = 0
+    const next = () => { timer = window.setTimeout(() => {
+      void api.getConnect().then(({ hub: read }) => { if (live && mine === generation.current) setHub(read) })
+        .catch(() => {}).finally(() => { if (live) next() })
+    }, 3000) }
+    next()
+    return () => { live = false; window.clearTimeout(timer) }
+  }, [checking])
 
   useEffect(() => {
     if (!loop) return
@@ -144,6 +159,7 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
         <div hidden={section !== 'connection'}>
         <Part title="연결">
           <Row label="허브" note={hub ? (hub.refused ? `옮길 수 없다 — ${hub.refused}`
+            : hub.checking && !hub.needed ? '배선 확인 중…'
             : hub.needed ? '옛 허브를 가리킨다 · 첫 [연결] 때 옮긴다' : undefined) : '읽는 중…'}>
             <span className="font-mono text-[12px]">{hub?.name ?? ''}</span>
           </Row>

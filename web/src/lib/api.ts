@@ -100,6 +100,8 @@ export type Options = {
   models: (Choice & { efforts?: Choice[]; is_default?: boolean; supports_fast?: boolean })[]
   efforts: Choice[]
   codex_error: string
+  /** The Codex model list is being fetched in the background (the list here may be an older one); read again. */
+  codex_pending: boolean
 }
 
 export type Turn = {
@@ -245,8 +247,27 @@ export const getChannels = () =>
 export const getGraph = (repo: string) =>
   get(`/api/graph?${new URLSearchParams({ repo })}`).then((r) => json<MapData>(r, '지도'))
 
-export const getOptions = () =>
-  get('/api/options').then((r) => json<Options>(r, '고를 것'))
+export const getOptions = (signal?: AbortSignal) =>
+  get('/api/options', undefined, signal).then((r) => json<Options>(r, '고를 것'))
+
+/** `getOptions`, read again every 3 s while the server fetches the Codex model list in the background
+ *  (`codex_pending`); `onEach` takes every answer, so the pickers show what there is meanwhile. Once `signal`
+ *  aborts, nothing more is read, reported or thrown. */
+export async function watchOptions(onEach: (options: Options) => void, signal: AbortSignal): Promise<void> {
+  while (!signal.aborted) {
+    let options: Options
+    try {
+      options = await getOptions(signal)
+    } catch (err) {
+      if (signal.aborted) return
+      throw err
+    }
+    if (signal.aborted) return
+    onEach(options)
+    if (!options.codex_pending) return
+    await new Promise((done) => window.setTimeout(done, 3000))
+  }
+}
 
 export const getLog = (id: string, legacy = false) =>
   get(`/api/log/${id}?legacy=${legacy}`).then((r) => json<Turn[]>(r, '기록'))
@@ -809,7 +830,7 @@ export type Estimate = {
 export type ConnectPlan = { hub: HubPlan; agents: string[]; adapter: Record<string, string> | null; unwire: string[]; survey: Estimate | null }
 
 /** Whether this machine's hooks and skill links point at this hub yet. */
-export type Hub = { name: string; needed: boolean; refused: string; branch: string }
+export type Hub = { name: string; needed: boolean; refused: string; checking: boolean; branch: string }
 /** What [모두 다시 연결] writes: the hub move, then each connected repository's old hooks out, under one digest (`wiring.py`). */
 export type RewirePlan = { refused: string; hub: HubPlan; digest: string; repos: { name: string; path: string; unwire: string[]; refused: string }[] }
 export const rewirePlan = () => get('/api/rewire/plan').then((r) => json<RewirePlan>(r, '다시 연결 계획'))

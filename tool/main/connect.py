@@ -40,13 +40,13 @@ from pydantic import BaseModel
 
 import apply
 import setup_agents
-from agent import cli_command
+from agent import cli_command, pin_servers, server_epoch, servers_retired
 from common import indexes, process, shell, swap
 from common.paths import PACKAGED, RAW
 from common.host import conda_exe, environment, skill_config
 from workspace import base_branch
 
-from . import channels, powershell, specs, work
+from . import channels, powershell, runtime, specs, work
 
 RECORDS = RAW / "connect"
 PROBES = RECORDS / "probe"
@@ -308,6 +308,10 @@ def probe(path: Path, host: str) -> dict:
             skills = skill_config(path, env)
             if skills:
                 args = [*args[:-1], "-c", skills, args[-1]]
+        # Preparing the command may take long (the model list, the skills): a shutdown meanwhile, or a lifespan
+        # ended under a background test, starts no CLI, which no shutdown would end.
+        if runtime.stopping.is_set() or servers_retired():
+            raise RuntimeError("서버가 꺼지는 중이라 시험을 시작하지 않는다")
         done = spawn(args, path, env, PROBE_SECONDS)
         if done.returncode:
             detail = specs.said(done)
@@ -327,7 +331,8 @@ def probe(path: Path, host: str) -> dict:
 
 
 def trusted(python: str) -> bool:
-    """Does every Codex home trust every hook this install writes?"""
+    """Does every Codex home trust every hook this install writes? `ValueError` when one did not answer:
+    unanswered is not untrusted, and read so it asked the owner to move wiring that needed nothing."""
 
     try:
         for file in apply.user_files("codex"):
@@ -335,8 +340,8 @@ def trusted(python: str) -> bool:
             if not hooks or any(h["trustStatus"] != "trusted" for h in hooks):
                 return False
         return True
-    except Exception:  # noqa: BLE001 — an `app-server` that did not answer is not trust
-        return False
+    except Exception as exc:  # noqa: BLE001 — whatever stopped Codex from answering is the reason shown
+        raise ValueError(f"Codex 신뢰를 확인하지 못했다 — {exc}") from exc
 
 
 def examine(path: Path, then=None, wait: bool = False) -> bool:
@@ -349,20 +354,49 @@ def examine(path: Path, then=None, wait: bool = False) -> bool:
             return False
         _probing.add(name)
 
+    epoch = server_epoch()
+    # A shutdown meanwhile retires these tests, from the moment it sets the stop flag (it waits on installers
+    # before the epoch moves): nothing further starts — no next host, no trust check, no `then`, which may
+    # prepare a survey — and what they found is not kept.
+    gone = lambda: runtime.stopping.is_set() or server_epoch() != epoch  # noqa: E731
+
     def run() -> None:
         try:
             data, _ = adapter_of(path)
-            agents = hosts(data)
-            results = {host: probe(path, host) for host in agents}
-            keep(name, probe=results, trust=trusted(interpreter(data)) if "codex" in agents else None)
+            agents, results = hosts(data), {}
+            for host in agents:
+                if gone():
+                    return
+                results[host] = probe(path, host)
+            if gone():
+                return
+            try:
+                trust = trusted(interpreter(data)) if "codex" in agents else None
+            except ValueError:   # unanswered trust shows as missing; the next probe asks again
+                trust = False
+            if gone():
+                return
+            keep(name, probe=results, trust=trust)
         finally:
             with _records:
                 _probing.discard(name)
             work.feed.put({"kind": "connect", "repo": name})
-        if then:
+        if then and not gone():
             then()
 
-    run() if wait else threading.Thread(target=run, daemon=True).start()
+    def kept() -> None:   # outside every shutdown join: kept to this lifespan, it starts no Codex after it
+        with pin_servers(epoch):
+            run()
+
+    if wait:
+        run()
+        return True
+    try:
+        threading.Thread(target=kept, daemon=True).start()
+    except BaseException:   # a worker that never started must not hold the repository's slot for good
+        with _records:
+            _probing.discard(name)
+        raise
     return True
 
 
@@ -400,15 +434,15 @@ def _snapshot(data: dict | None = None) -> tuple[dict, list, list, str]:
         if not agents:
             raise ValueError("Claude Code 또는 Codex CLI를 설치하고 새 터미널에서 앱을 실행하세요.")
         plan = setup_agents.plan_global("both" if len(agents) == 2 else agents[0], [], python)
+        found = setup_agents.skill_links() if "claude" in agents else []
+        lines = [{"file": str(path), "change": change} for path, _s, changes in plan for change in changes]
+        codex = any(Path(line["file"]).name == "hooks.json" for line in lines)
+        trust = "codex" in agents and (codex or not trusted(python))
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         return ({"needed": True, "refused": str(exc), "agents": agents,
                  "lines": [], "links": [], "trust": False, "digest": ""},
                 [], [], python)
-    found = setup_agents.skill_links() if "claude" in agents else []
-    lines = [{"file": str(path), "change": change} for path, _s, changes in plan for change in changes]
     links = [{"link": str(link), "from": str(old), "to": str(new) if new else None} for link, old, new in found]
-    codex = any(Path(line["file"]).name == "hooks.json" for line in lines)
-    trust = "codex" in agents and (codex or not trusted(python))
     shown = {"agents": agents, "lines": lines, "links": links, "trust": trust}
     return ({"needed": bool(lines or any(link["to"] for link in links) or trust), "refused": "", **shown,
              "digest": digest(json.dumps(shown, sort_keys=True, ensure_ascii=False).encode())}, plan, found, python)
@@ -444,6 +478,8 @@ def move(confirmed: str, data: dict | None = None, done: list[str] | None = None
             done.append(f"{file.parent}: Codex 신뢰 기록")
         for file in RECORDS.glob("*.json"):
             keep(file.stem, probe={}, trust=None)
+        from . import wiring   # the routine reads' last check was of the wiring before this move
+        wiring.forget_hub()
         return now
 
 
@@ -563,7 +599,29 @@ def same_repository(remote: str, pr_url: str) -> bool:
     return bool(name(remote)) and name(remote) == name(pr_url)
 
 
-def handover(repo: Path, n: int) -> dict:
+def handover(repo: Path, n: int, due=None) -> dict:
+    """`_handover`, one at a time per repository: a listing's retry and merge cleanup may walk it together, and
+    the second would move an adapter the first already moved. The busy one stops as one waiting, without a record
+    (`skipped`). `due`, read under the claim, gives the PR to hand over, or `None` when there is none any more."""
+
+    with _handing_lock:
+        if repo.name in _handing:
+            return {"ok": False, "reason": "다른 요청이 이 저장소의 adapter 를 넘기는 중이다", "skipped": True}
+        _handing.add(repo.name)
+    try:
+        if due is not None and (n := due()) is None:
+            return {"ok": False, "reason": "넘길 것이 남지 않았다", "skipped": True}
+        return _handover(repo, n)
+    finally:
+        with _handing_lock:
+            _handing.discard(repo.name)
+
+
+_handing: set[str] = set()
+_handing_lock = threading.Lock()
+
+
+def _handover(repo: Path, n: int) -> dict:
     """The original's uncommitted adapter, handed over to the merged one.
 
     The six steps of the plan. The copy checked is the copy moved — moved,
@@ -648,11 +706,11 @@ def retried(path: Path) -> bool:
     """A handover left waiting is walked again from its first step when the
     list is read, once a minute at most. Whether it was."""
 
-    handed = record(path.name).get("handover") or {}
-    if handed.get("state") != "대기" or time.time() - handed.get("ts", 0) < RETRY:
-        return False
-    handover(path, handed["pr"])
-    return True
+    def due() -> int | None:   # the waiting record's PR, read again under the claim: cleanup may have finished it
+        handed = record(path.name).get("handover") or {}
+        return handed["pr"] if handed.get("state") == "대기" and time.time() - handed.get("ts", 0) >= RETRY else None
+
+    return due() is not None and not handover(path, 0, due).get("skipped")
 
 
 # -- The screen ---------------------------------------------------------------------
@@ -680,11 +738,11 @@ class SurveySettings(BaseModel):
 def listing() -> dict:
     from . import survey, wiring
 
-    now = hub()
+    now = wiring.hub_seen()   # never a wait on Codex
     # The settings modal's hub line: whether this machine's wiring points here yet.
     return {"rows": rows(), "settings": survey.settings(), "powershell": powershell.status(),
             "hub": {"name": channels.WIKI.name, "needed": now["needed"], "refused": now["refused"],
-                    "branch": wiring.hub_branch()}}
+                    "checking": bool(now.get("checking")), "branch": wiring.hub_branch()}}
 
 
 class Folder(BaseModel):
@@ -780,7 +838,9 @@ def connect(name: str, body: Connect) -> dict:
     data, _ = adapter_of(path)
     if not hosts(data):
         raise HTTPException(409, "이 프로젝트에 사용할 Claude Code 또는 Codex CLI를 PATH에서 찾지 못했다")
-    if hub(data)["needed"]:
+    if (now := hub(data))["refused"]:   # a check that could not be made is not a move to confirm
+        raise HTTPException(409, f"이 기계의 배선을 확인하지 못했다 — {now['refused']}")
+    if now["needed"]:
         if not body.hub:
             raise HTTPException(409, "허브 이전을 먼저 확인받아야 한다")
         move(body.hub, data)

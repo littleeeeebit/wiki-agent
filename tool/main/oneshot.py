@@ -54,6 +54,7 @@ TOOLS = "Read,Glob,Grep"     # the run folder holds nothing to read; no tool wri
 BLOCK = re.compile(r"^```(oneshot-[a-z]+|choices)[ \t]*\r?\n(.*?)^```[ \t]*$", re.M | re.S)
 MAX_SENTENCE = 2_000
 HEARTBEAT = 30.0   # seconds between a running turn's `inflight.seen` writes
+RECHECK = (0, 5, 20)   # seconds before each look at the machine's wiring while it cannot be checked
 
 STEPS = ("recheck", "folder", "files", "commit", "register", "remote", "origin", "publish", "spec")
 RUNNING = {"intake": "intake", "environment": "profile", "bootstrap": "bootstrap"}
@@ -497,10 +498,21 @@ def s_register(run: dict) -> None:
         raise Stop("folder", "이 이름으로 이 폴더를 찾지 못했다")
     text = planned(run)[".wiki/adapter.toml"]
     connect.keep(name, hash=connect.digest(text.encode("utf-8")), adapter=text, written=time.time(), handover=None)
-    if connect.hub(connect.adapter_of(path)[0])["needed"]:   # the machine's wiring moves only on `[연결]`'s confirmation
+    for pause in RECHECK:   # a check that could not be made (a slow Codex `app-server`) is asked again, never read as a move
+        if runtime.stopping.wait(pause):   # a server going down starts no further check
+            raise Stop("restart", "서버가 꺼지는 중이라 멈췄다")
+        if not (shown := connect.hub(connect.adapter_of(path)[0])).get("refused"):
+            break
+    else:
+        raise Stop("connect", f"이 기계의 배선을 확인하지 못했다 — {shown['refused']} — 잠시 뒤 [재개]")
+    if runtime.stopping.is_set():   # it went down during the check: no tests start after it
+        raise Stop("restart", "서버가 꺼지는 중이라 멈췄다")
+    if shown["needed"]:   # the machine's wiring moves only on `[연결]`'s confirmation
         raise Stop("connect", "이 기계의 hook 배선이나 Codex 신뢰를 바꿔야 한다 — 프로젝트 목록에서 이 저장소의 [연결]로 확인한 뒤 [재개]")
     if not connect.examine(path, wait=True):   # `[연결]`'s tests, in the step: a cut before their results are kept runs them again
         raise Stop("connect", "이 저장소의 시험이 아직 돌고 있다 — 끝난 뒤 [재개]")
+    if runtime.stopping.is_set():   # shutdown cut the tests (it kills their Codex): Register is not done, `[재개]` runs them again
+        raise Stop("restart", "서버가 꺼지는 중이라 멈췄다")
 
 
 def s_remote(run: dict) -> None:

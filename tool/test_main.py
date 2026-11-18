@@ -626,9 +626,29 @@ for line in sys.stdin:
             assert models[0]["supports_fast"] and not models[1]["supports_fast"]
     finally:
         chat_channels.codex_models.cache_clear()
-    with patch.object(chat_channels, "codex_models", side_effect=RuntimeError("offline")):
-        response = client().get("/api/options").json()
-        assert response["models"] == chat_channels.MODELS and "offline" in response["codex_error"]
+
+    # The options never wait on Codex: the first read says pending, the background fetch's failure comes next.
+    gate, fetches = threading.Event(), []
+
+    def offline():
+        fetches.append(1)
+        gate.wait(10)
+        raise RuntimeError("offline")
+
+    chat_channels.codex_models.cache_clear()
+    try:
+        with patch.object(chat_channels, "codex_models", side_effect=offline):
+            web = client()
+            first = web.get("/api/options").json()
+            assert first["models"] == chat_channels.MODELS and first["codex_pending"] and not first["codex_error"]
+            gate.set()
+            for _ in range(100):
+                if not (now := web.get("/api/options").json())["codex_pending"]:
+                    break
+                time.sleep(0.05)
+            assert "offline" in now["codex_error"] and fetches == [1], "실패는 바로 다시 받지 않는다"
+    finally:
+        chat_channels.codex_models.cache_clear()
 
 
 # -- translation -------------------------------------------------------------

@@ -32,7 +32,8 @@ export function Review(props: Props) {
   const named = spec?.reviewer
   const model = named?.model ?? settings?.review_model ?? ''
   const effort = named?.effort ?? settings?.review_effort ?? ''
-  const missing = model.startsWith('codex:') && options && !options.codex_error && !options.models.some((m) => m.id === model)
+  const missing = model.startsWith('codex:') && options && !options.codex_error && !options.codex_pending &&
+    !options.models.some((m) => m.id === model)
   return <section aria-label="리뷰 세션" className="flex h-full min-h-0 flex-col">
     <header className="flex min-h-11 flex-wrap items-center justify-end gap-1.5 border-b border-border px-5 py-1">
       <span className="mr-auto font-heading text-[11px] font-semibold text-faint">리뷰 모델{named && (spec?.refactor?.roles ? ' · 리팩터링에서 지정' : spec?.oneshot?.models ? ' · 원샷에서 지정' : ' · 계획에서 지정')}</span>

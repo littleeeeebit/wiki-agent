@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Btn } from '@/components/Modal'
 import { Fault, GO, Halt, Split, Title, Top } from '@/components/OneshotSpec'
 import { Toolbar } from '@/components/Toolbar'
-import { browseFolder, get, getLoopSettings, getOptions, json, post, type Options } from '@/lib/api'
+import { browseFolder, get, getLoopSettings, json, post, watchOptions, type Options } from '@/lib/api'
 import { remote } from '@/lib/mobile'
 import { KINDS, kindLabel, ROLE, type Models } from '@/lib/oneshot'
 import { cn } from '@/lib/utils'
@@ -110,10 +110,12 @@ export function Intake({ busy, act }: { busy: boolean; act: Act }) {
   const [models, setModels] = useState<Models>({ spec: none, build: none, review: none })
   // The review starts on the Review Loop's own choice, so the run fixes a named model, not "whatever it is then".
   useEffect(() => {
-    getOptions().then(setOptions).catch(() => setOptions(null))
+    const stop = new AbortController()
+    watchOptions(setOptions, stop.signal).catch(() => setOptions(null))
     getLoopSettings().then((s) => setModels((m) => m.review.model || m.review.effort ? m
       : { ...m, review: { model: s.review_model ?? '', effort: s.review_effort ?? '' } }))
       .catch(() => {})
+    return () => stop.abort()
   }, [])
   const codex = options?.models.find((m) => m.id.startsWith('codex:') && m.is_default)
   const reviewOptions = options && { ...options, models: [
