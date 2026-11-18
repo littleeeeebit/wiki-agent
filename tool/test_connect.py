@@ -440,6 +440,48 @@ def test_the_move_writes_the_plan_it_checked_not_one_read_again(tmp_path, home):
     assert not (tmp_path / "unshown.json").exists(), "확인한 뒤에 다시 읽은 계획은 쓰지 않는다"
 
 
+def test_the_digest_binds_the_commands_written_not_only_their_labels(tmp_path, home):
+    """The same lines under another interpreter write other hook commands: a confirmed digest must not cover them."""
+
+    with patch.object(connect, "interpreter", return_value="C:/first/python.exe"):
+        first = connect.hub()
+    with patch.object(connect, "interpreter", return_value="C:/second/python.exe"):
+        second = connect.hub()
+        assert first["lines"] == second["lines"] and first["digest"] != second["digest"]
+        with pytest.raises(HTTPException, match="달라졌다"):
+            connect.move(first["digest"])
+    assert second["python"] == "C:/second/python.exe", "화면에 훅을 실행할 Python 이 보인다"
+
+
+def test_a_move_the_server_going_down_overtook_writes_nothing(tmp_path, home, monkeypatch):
+    from main import runtime
+
+    stopping = threading.Event()
+    stopping.set()
+    monkeypatch.setattr(runtime, "stopping", stopping)
+    shown, written = connect.hub(), []
+    with patch.object(setup_agents, "write_plan", side_effect=written.append), \
+         pytest.raises(HTTPException, match="꺼지는 중"):
+        connect.move(shown["digest"])
+    assert written == []
+
+
+def test_a_move_cut_partway_drops_every_test_of_the_old_wiring(tmp_path, home, monkeypatch):
+    """Some files changed: no repository's probe of the wiring before them, nor the routine read's last check, stands."""
+
+    from main import wiring
+
+    monkeypatch.setattr(connect, "RECORDS", tmp_path / "records")
+    connect.keep("other-project", probe={"claude": {"ok": True}}, trust=True)
+    forgot = []
+    monkeypatch.setattr(wiring, "forget_hub", lambda: forgot.append(1))
+    shown = connect.hub()
+    with patch.object(setup_agents, "write_plan", side_effect=OSError("disk full")), pytest.raises(OSError):
+        connect.move(shown["digest"])
+    assert connect.record("other-project")["probe"] == {} and connect.record("other-project")["trust"] is None
+    assert forgot == [1]
+
+
 def test_a_codex_home_that_does_not_answer_is_a_refusal_not_a_move(tmp_path, monkeypatch):
     """vtuber-ko-tts: the wiring already pointed here and trust was in place, a slow `app-server` read as
     untrusted, and the oneshot stopped asking the owner to move what needed nothing."""

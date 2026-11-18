@@ -48,7 +48,21 @@ case stops with `connect` as before:
 - A confirmed list that differs from the move needed now. The stop says so.
 - A move that cannot be written, with its reason.
 
-The owner then confirms on `[연결]` and presses `[재개]`.
+The owner then confirms on `[연결]` and presses `[재개]`. A move that a server
+going down refused or cut stops with `restart` instead, and `[재개]` checks
+and moves again.
+
+The digest binds what is written, not only the lines shown. A line names a
+hook but not its command, and the same lines under another interpreter write
+other commands. So the digest also covers each file's whole new content, the
+interpreter, which the list now shows, and the Codex homes the trust is
+recorded in. `connect.move` writes nothing once shutdown has begun. A move cut
+partway still clears every repository's probe record and the routine read's
+last check, as a finished move does.
+
+The screen applies a read of the run only when no other answer landed after
+the read was asked. A poll asked before the confirm can then never put the
+confirmed card back.
 
 Writing at Register rather than in the confirm request keeps the slow part out
 of the request. The move re-reads Codex trust, and an `app-server` may take

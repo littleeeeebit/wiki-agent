@@ -76,6 +76,7 @@ export function HubMove({ hub }: { hub: HubPlan }) {
           </li>
         ))}
         {hub.trust && <li>Codex: 이 허브의 hook.py 를 부르는 위키 훅을 신뢰로 기록한다 (--trust-codex)</li>}
+        {hub.python && <li><span className="text-faint">훅을 실행하는 Python</span> {hub.python}</li>}
       </ul>
     </section>
   )

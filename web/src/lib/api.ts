@@ -812,6 +812,8 @@ export type HubPlan = {
   lines: { file: string; change: string }[]
   links: { link: string; from: string; to: string | null }[]
   trust: boolean
+  /** The interpreter every hook command names; the digest covers it with each file's whole new content. */
+  python?: string
   digest: string
 }
 export type Estimate = {

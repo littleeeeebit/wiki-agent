@@ -458,6 +458,23 @@ def test_a_confirmed_move_that_cannot_be_written_stops_with_its_reason(world):
     assert "register" not in run["steps"] and world["examined"] == []
 
 
+def test_a_move_shutdown_refused_or_cut_stops_as_a_restart(world):
+    """`[재개]` after the restart checks and moves again: the owner has nothing to confirm on `[연결]`."""
+
+    world["wiring"].update(needed=True, refused="", digest="shown")
+    rid = made(world, wiring="shown")
+    stopping = threading.Event()
+
+    def cut(confirmed, data=None):
+        stopping.set()
+        raise RuntimeError("Codex 연결 종료: hooks/trust")
+
+    with patch.object(runtime, "stopping", stopping), patch.object(connect, "move", cut):
+        oneshot.bootstrap(rid)
+    run = oneshot.load(rid)
+    assert run["stopped"]["reason"] == "restart" and "register" not in run["steps"] and world["examined"] == []
+
+
 def test_wiring_to_confirm_stops_the_register_and_tests_cut_before_their_results_run_again(world):
     rid = made(world)
     world["wiring"]["needed"] = True

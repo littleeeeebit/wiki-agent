@@ -443,9 +443,15 @@ def _snapshot(data: dict | None = None) -> tuple[dict, list, list, str]:
                  "lines": [], "links": [], "trust": False, "digest": ""},
                 [], [], python)
     links = [{"link": str(link), "from": str(old), "to": str(new) if new else None} for link, old, new in found]
-    shown = {"agents": agents, "lines": lines, "links": links, "trust": trust}
+    shown = {"agents": agents, "lines": lines, "links": links, "trust": trust, "python": python}
+    # The digest binds what is written, not only its labels: a line names a hook, never its command, and the same
+    # labels under another interpreter write other commands. So it covers each file's whole new content, the
+    # interpreter, and the Codex homes the trust is recorded in.
+    writes = {"files": [[str(path), settings] for path, settings, changes in plan if changes],
+              "homes": [str(file.parent) for file in apply.user_files("codex")] if trust else []}
+    sealed = json.dumps({**shown, **writes}, sort_keys=True, ensure_ascii=False, default=str).encode()
     return ({"needed": bool(lines or any(link["to"] for link in links) or trust), "refused": "", **shown,
-             "digest": digest(json.dumps(shown, sort_keys=True, ensure_ascii=False).encode())}, plan, found, python)
+             "digest": digest(sealed)}, plan, found, python)
 
 
 def hub(data: dict | None = None) -> dict:
@@ -467,19 +473,23 @@ def move(confirmed: str, data: dict | None = None, done: list[str] | None = None
             raise HTTPException(409, f"허브를 옮길 수 없다 — {now['refused']}")
         if now["digest"] != confirmed:
             raise HTTPException(409, "확인한 뒤에 바뀔 줄이 달라졌다. 다시 확인한다")
-        for step in plan:
-            setup_agents.write_plan([step])
-            done += [str(step[0])] if step[2] else []
-        for link, _old, new in (found_link for found_link in found if found_link[2]):
-            setup_agents.relink(link, new)
-            done.append(f"{link} → {new}")
-        for file in apply.user_files("codex") if now["trust"] else []:
-            setup_agents.codex_hooks(file.parent, True, python)
-            done.append(f"{file.parent}: Codex 신뢰 기록")
-        for file in RECORDS.glob("*.json"):
-            keep(file.stem, probe={}, trust=None)
-        from . import wiring   # the routine reads' last check was of the wiring before this move
-        wiring.forget_hub()
+        if runtime.stopping.is_set():   # the snapshot may have taken minutes: a server going down writes nothing
+            raise HTTPException(409, "서버가 꺼지는 중이라 배선을 쓰지 않는다")
+        try:
+            for step in plan:
+                setup_agents.write_plan([step])
+                done += [str(step[0])] if step[2] else []
+            for link, _old, new in (found_link for found_link in found if found_link[2]):
+                setup_agents.relink(link, new)
+                done.append(f"{link} → {new}")
+            for file in apply.user_files("codex") if now["trust"] else []:
+                setup_agents.codex_hooks(file.parent, True, python)
+                done.append(f"{file.parent}: Codex 신뢰 기록")
+        finally:   # a move cut partway changed the wiring too: no test of the old one, nor its last check, stands
+            for file in RECORDS.glob("*.json"):
+                keep(file.stem, probe={}, trust=None)
+            from . import wiring
+            wiring.forget_hub()
         return now
 
 
