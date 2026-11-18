@@ -203,7 +203,7 @@ def _tried(call, halt: threading.Event):
 def repaired(record: dict, repair, halt: threading.Event) -> dict:
     """The repair task of an attempt that ended `Repairable`, recorded in the ledger (`release.handed`)."""
 
-    if repair is None:
+    if repair is None and not halt.is_set():   # a stop is recorded even with no repair to start
         return record
     return update(record["remote"], record["id"], repair=release.handed(Path(record["repo"]), record, repair, halt))
 

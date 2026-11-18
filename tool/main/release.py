@@ -767,10 +767,10 @@ def handed(repo: Path, record: dict, repair, halt: threading.Event) -> dict:
     attempt has ended either way, so a refusal is recorded, never raised. A task whose spec was saved but whose
     start was refused (`release_repair.Started`) is still named. A release stopped before this starts none."""
 
-    if repair is None:
-        return record["repair"]
     if halt.is_set():
         return {**record["repair"], "error": "멈춤 — 사람이 배포를 멈춰서 수정 작업을 시작하지 않았다"}
+    if repair is None:
+        return record["repair"]
     try:
         return {**record["repair"], "task": repair(repo, record)}
     except Exception as exc:   # noqa: BLE001 — the attempt is over; the card shows why no repair runs

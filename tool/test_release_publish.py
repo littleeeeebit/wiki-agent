@@ -160,12 +160,14 @@ def test_a_build_failure_ends_the_attempt_and_goes_to_a_repair_task(press, monke
     assert not release.place(repo, done["id"]).exists() and rp.pending("github.com/o/r") is None
 
 
-def test_a_stop_while_the_failed_attempt_is_cleaned_up_starts_no_repair(press, monkeypatch):
+@pytest.mark.parametrize("configured", [True, False], ids=["repair configured", "no repair configured"])
+def test_a_stop_while_the_failed_attempt_is_cleaned_up_starts_no_repair(press, monkeypatch, configured):
     fake, repo, _ = press
     _broken(monkeypatch)
     halt, discard = release.threading.Event(), release.discard
     monkeypatch.setattr(release, "discard", lambda *a: (halt.set(), discard(*a)))   # stopped during cleanup
-    done = rp.publish(repo, "0.1.0", None, halt, repair=lambda *a: pytest.fail("the person stopped the release"))
+    repair = (lambda *a: pytest.fail("the person stopped the release")) if configured else None
+    done = rp.publish(repo, "0.1.0", None, halt, repair=repair)
 
     assert done["state"] == "failed" and "cannot find symbol" in done["repair"]["needed"]   # the failure stays
     assert "task" not in done["repair"] and "멈춤" in done["repair"]["error"] and attempts()[0] == done
@@ -319,7 +321,22 @@ def test_this_machines_own_shells_teach_their_not_found_messages(monkeypatch, tm
         _, out, _ = release.specs.gate(probe.format(name=name), tmp_path, halt, timeout=60)
         assert release.lacks_tool(out, env, halt), out
     assert not release.lacks_tool("'theme'는 이 모듈에서 내보내지 않습니다.", env, halt)
-    assert release._learned   # a complete answer is kept
+    # `sh` is optional: without it on PATH the answer is incomplete and is asked again, by design
+    assert bool(release._learned) == bool(release.shutil.which("sh")), release._learned
+
+
+def test_a_message_from_every_shell_is_kept_and_not_asked_again(monkeypatch):
+    asked = []
+
+    def gate(cmd, path, event, env=None, **_):
+        asked.append(cmd)
+        return 1, f"'{cmd.split()[-1]}' is not recognized as an internal or external command", ""
+
+    asking(monkeypatch, gate)
+    halt = release.threading.Event()
+    first = release.learned_shapes(halt, {})
+    assert len(first) == len(release.PROBES) and release._learned == first
+    assert release.learned_shapes(halt, {}) == first and len(asked) == len(release.PROBES)   # kept, not asked
 
 
 def test_a_build_whose_apk_cannot_be_read_needs_a_repair(monkeypatch, tmp_path):
