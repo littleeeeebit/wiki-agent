@@ -190,18 +190,58 @@ the UI Automation control view and acts only through patterns: `Invoke`,
 `Scroll` and `ScrollItem`. It sends no synthetic input (`SendInput`,
 `SetCursorPos`, window messages for keys or clicks) and uses no clipboard.
 A step names its control by `AutomationId`, scoped to its screen. A name is
-used only when no id exists, and it must match exactly one element. Each step
-ends with its postcondition read from the tree.
+used only when no id exists, and it must match exactly one element, of a
+process in the app's job. Each step ends with its postcondition. The findings
+read it from the state the step names, which must exist in the report, never
+from a flag. An expectation with neither a non-blank id nor a non-blank name is
+a finding of its step. The server saves its final report as `result.json`, a
+name the driver never writes. That report holds the driver's report, the last
+operation, any deadline that passed and the proof of the driver's end, so the
+evidence a reader opens later gives the same findings as the run.
+Only the app's own nodes count. The tree walk reads an element's process
+before any other property. It marks an element of another process, such as an
+embedded fragment, by its process id alone, and does not descend into it, so
+such an element is never the app's evidence. A window whose tree root is not
+the app's, or whose walk fails, has not been read.
 
-Every call into the app has a deadline: a resize, a shot, a tree read, an
-action and a postcondition each get 10 seconds, and the look as a whole has
-S7's limit.
+Every call into the app has a deadline: a resize, one window's shot, one
+window's tree read, an action and a postcondition each get 10 seconds, and the
+look as a whole has S7's limit. The driver names each operation, with a fresh
+sequence number, before it starts it, so each is held to its own deadline and
+a slow one is named. Only a valid marker restarts the clock: an object with a
+strictly newer positive integer and a named operation. A missed, torn or
+malformed read keeps the operation and its clock. The
+launch, the wait for a first window and each settle have their own
+allowances.
 `PrintWindow` asks the app to render synchronously, and a provider can block
 while a modal dialog opens. So the driver runs those calls in its own process,
-and the server ends that process's job when a deadline passes.
+and the server ends that process's job when a deadline passes. The end of the
+driver's job is proven like any other, and an unproven end is a finding.
+
+The app is its job, not a list of process ids. A window belongs to the app
+when its process is in the app's job at that moment, so a child the app starts
+later counts and a recycled id does not. Every use of a window first proves it
+is still the same window: alive on the owned desktop, owned by the same
+process of the app's job, with the same class. A main window that fails this
+is a refusal before any action. A window that fails it during a shot is a
+finding of that state.
+
+A run proves only what it observed. Each of these produces a finding, so an
+empty list of findings means every observation was made:
+
+- a driver that leaves no report, or stops or fails before it finishes;
+- a size it cannot read back;
+- no start state;
+- a state with no app window;
+- a window that `PrintWindow` does not draw, or whose tree is not read;
+- a step not performed, a step without its state, or a step with no
+  postcondition read.
 
 Each screen and state is shot with `PrintWindow` and `PW_RENDERFULLCONTENT`,
-per visible top-level window of the app's job.
+per visible top-level window of the app's job. Each state gets a unique, plain
+id, such as `s01`, which names its shots. A step's label stays in the report
+and never enters a path, so a repeated or unusual label never overwrites or
+misplaces a shot.
 
 The checks read the tree as the Android loop reads its hierarchy:
 
@@ -330,6 +370,41 @@ that time, as the Android phone round is, it runs the missing checks and
 records their evidence in the run. The other way is an explicit change to plan
 9's gate. 9e chooses with the owner.
 
+## The session's own Edge run
+
+9d2b2 ran the Edge fixture once through the session (`tool/desktop_session.py`)
+and its driver (`tool/desktop_driver.py`, `tool/desktop_driver.ps1`). The saved
+files are in `oneshot-desktop-edge-run/`: the fixture page, the session's record
+with its cleanup proof (`record.json`), the server's final report (`result.json`) and
+the two shots. User-profile paths in them read `%USERPROFILE%`.
+
+- Edge started in its own job, with `--user-data-dir` in a folder the look
+  reserved, plus `--lang=en-US`, `--no-first-run`,
+  `--force-renderer-accessibility` and `--window-size=800,600`. The driver ran
+  as a Windows PowerShell 5.1 process in a second job on the same desktop.
+- The driver chose one main window, sized it to 800×600 and read that frame
+  back. It invoked `Go` by its `AutomationId` through `InvokePattern` and read
+  `clicked 1` from the tree as the step's postcondition. Both shots show the
+  page. The fixture counts its clicks, so a test that invokes `Go` twice under
+  one label can tell the two shots apart.
+- The cleanup proof is clean. The app's job counted 27 processes, and all 27
+  were followed to a proven exit. The driver's job counted 4. No window was
+  left on the desktop, the desktop no longer opened by its name, and the
+  profile folder was removed. Edge's process count varies between runs.
+- The mechanical checks named the fixture's unnamed button twice: as unnamed,
+  and as 11×11 physical pixels, under 24×24. Its CSS asks for 10×10. They also
+  named Edge's default `Go` button, 34×22, as under 24×24.
+
+Two findings came from earlier attempts and shaped the driver:
+
+- Started without `--lang=en-US`, Edge in a Korean UI opened its translation
+  prompt beside the page. The driver saw two candidate main windows at startup
+  and refused, as designed. An app that opens a prompt at startup is a finding
+  for 9e, not something the driver dismisses.
+- Edge's tree holds an unnamed `Edit` with no bounding rectangle, never laid
+  out. The checks skip a control with no rectangle; a control that is laid out
+  but off screen is still checked for its name.
+
 ## Not measured
 
 - WinUI 3, WPF, WinForms, Electron and a Tauri build. No build of theirs ran
@@ -349,10 +424,7 @@ read from this PC in the session.
 
 ## Next
 
-9d2 builds the session as one module on the launcher above: the record,
-start, window choice, pattern-only driver with its deadlines, shots, cleanup,
-recovery and proof. It carries a test for each refusal and finding above, and
-one real run of the Edge fixture whose cleanup proof is saved with its
-evidence. It measures two things on the owned desktop: window capture and an
-overlay over a fixture viewer, so 9e starts from answers. The other items
-under "Not measured" stay open for 9e, which runs the stack S2 picks.
+9d2a built the launcher and 9d2b1 the session. 9d2b2 adds the driver and the
+Edge run above. 9d2b3 measures two things on the owned desktop: window capture
+and an overlay over a fixture viewer, so 9e starts from answers. The other
+items under "Not measured" stay open for 9e, which runs the stack S2 picks.

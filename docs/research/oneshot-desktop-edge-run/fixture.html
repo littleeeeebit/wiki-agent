@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>fixture-edge</title></head>
+<body>
+<h1>Fixture</h1>
+<p id="line">ready</p>
+<script>window.clicks = 0;</script>
+<button id="go" onclick="document.getElementById('line').textContent = 'clicked ' + (++window.clicks)">Go</button>
+<button id="tiny" style="width: 10px; height: 10px; padding: 0"></button>
+</body>
+</html>

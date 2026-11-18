@@ -220,6 +220,17 @@ class Job:
                     entry["exited"] = True
         return len(found)
 
+    def finished(self) -> bool:
+        """At least one member joined, every member that joined has a proven exit, no refused root is left, and
+        the job's accounting agrees: every process it counted was followed and none is active. The port's
+        messages are not guaranteed, so a quiet port alone never says the job finished."""
+
+        while self._pump() == 64:
+            pass
+        count = self._count()
+        return (bool(self.joined) and all(self._gone(entry) for entry in self.joined) and not self._strays()
+                and not isinstance(count, int) and count.total == len(self.joined) and count.active == 0)
+
     def members(self) -> list[dict]:
         """The identities of every member that joined and could be held, alive or not: every message ready
         now is handled first, batch after batch."""

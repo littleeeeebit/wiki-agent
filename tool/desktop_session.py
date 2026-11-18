@@ -224,21 +224,37 @@ class Look:
             raise Refused(f"cannot create the look's desktop: {ctypes.get_last_error()}")
         self.desktop = handle
 
+    def check_key(self, key: str) -> None:
+        """A job key is one identifier no job of this look carries yet, compared without case, since the key
+        also names the job's folders and log."""
+
+        if not key.isidentifier() or key.lower() in {known.lower() for known in self.jobs}:
+            raise ValueError(f"not a fresh job key: {key!r}")
+
+    def reserve(self, key: str) -> Path:
+        """A fresh disposable folder the record names before it exists and cleanup removes, such as a stack's own
+        profile folder (Edge's `--user-data-dir`)."""
+
+        self._open_for_more()
+        if not key.isidentifier():   # one plain path component: the folder stays a direct child of the look
+            raise ValueError(f"not a folder key: {key!r}")
+        name = f"data-{key}-{uuid.uuid4().hex[:12]}"
+        reserved = {"name": name, "owned": False}
+        self.record["folders"].append(reserved)
+        save(self.folder, self.record)
+        (self.folder / name).mkdir()   # never an existing folder: only one the look created is ever removed
+        reserved["owned"] = True
+        save(self.folder, self.record)
+        return self.folder / name
+
     def start(self, key: str, argv: list[str], cwd, extra: dict | None = None) -> dict:
         """Start `argv` in a job of its own on the look's desktop, its data folders inside a disposable folder
         the record names first, its output in `evidence/<key>.log`. The root's identity."""
 
         self._open_for_more()
-        if not key.isidentifier() or key.lower() in {known.lower() for known in self.jobs}:
-            raise ValueError(f"not a fresh job key: {key!r}")
-        data = f"data-{key}-{uuid.uuid4().hex[:12]}"
-        reserved = {"name": data, "owned": False}
-        self.record["folders"].append(reserved)
-        save(self.folder, self.record)
-        (self.folder / data).mkdir()   # never an existing folder: only one the look created is ever removed
-        reserved["owned"] = True
-        save(self.folder, self.record)
-        folders = {name: self.folder / data / name for name in ("Roaming", "Local", "Temp")}
+        self.check_key(key)
+        data = self.reserve(key)
+        folders = {name: data / name for name in ("Roaming", "Local", "Temp")}
         for path in folders.values():
             path.mkdir()
         job = owned_job.Job()

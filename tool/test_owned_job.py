@@ -56,6 +56,24 @@ def test_the_root_is_in_its_job_before_it_runs_and_every_member_is_proven_gone(j
                or not native_process.same(member, native_process.identity(member["pid"])) for member in members)
 
 
+def test_a_job_whose_accounting_counts_a_member_never_followed_is_not_finished(job, tmp_path, monkeypatch):
+    started(job, tmp_path, "pass")
+    deadline = time.monotonic() + 20
+    while not job.finished() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert job.finished()   # the one member followed and proven gone, and the accounting agrees
+
+    real = job._count
+
+    def one_more():
+        accounting = real()
+        accounting.total += 1   # a second member the port never reported
+        return accounting
+
+    monkeypatch.setattr(job, "_count", one_more)
+    assert not job.finished()
+
+
 def test_a_member_whose_join_and_exit_were_both_lost_leaves_the_proof_inconclusive(job, tmp_path, monkeypatch):
     root = started(job, tmp_path, TREE)
     real = job._messages

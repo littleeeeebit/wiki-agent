@@ -1,0 +1,1104 @@
+{
+ "phase": "done",
+ "main": {
+  "hwnd": 26415468,
+  "pid": 20808,
+  "class": "Chrome_WidgetWin_1",
+  "title": "fixture-edge",
+  "frame": [
+   17,
+   10,
+   786,
+   593
+  ],
+  "utility": false
+ },
+ "size": {
+  "asked": [
+   800,
+   600
+  ],
+  "moved": true,
+  "frame": [
+   7,
+   0,
+   800,
+   600
+  ]
+ },
+ "states": [
+  {
+   "id": "s00",
+   "name": "start",
+   "windows": [
+    {
+     "hwnd": 26415468,
+     "pid": 20808,
+     "class": "Chrome_WidgetWin_1",
+     "title": "fixture-edge",
+     "frame": [
+      7,
+      0,
+      800,
+      600
+     ],
+     "utility": false
+    }
+   ],
+   "shots": [
+    {
+     "hwnd": 26415468,
+     "drawn": true,
+     "file": "s00-26415468.png",
+     "size": [
+      800,
+      600
+     ]
+    }
+   ],
+   "reads": [
+    {
+     "hwnd": 26415468,
+     "read": true
+    }
+   ],
+   "nodes": [
+    {
+     "window": 26415468,
+     "depth": 0,
+     "foreign": false,
+     "type": "Window",
+     "name": "fixture-edge",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      0,
+      0,
+      814,
+      607
+     ],
+     "patterns": [
+      "Window",
+      "Transform",
+      "ScrollItem",
+      "ItemContainer"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 1,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": false,
+     "offscreen": false,
+     "rect": [
+      8,
+      0,
+      798,
+      599
+     ],
+     "patterns": []
+    },
+    {
+     "window": 26415468,
+     "depth": 1,
+     "foreign": false,
+     "type": "Pane",
+     "name": "fixture-edge",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      0,
+      798,
+      599
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 2,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      0,
+      798,
+      599
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 3,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      0,
+      798,
+      599
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 4,
+     "foreign": false,
+     "type": "Text",
+     "name": "fixture-edge",
+     "id": "view_9",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      33,
+      7,
+      635,
+      16
+     ],
+     "patterns": [
+      "Text",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 4,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      668,
+      1,
+      138,
+      31
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 5,
+     "foreign": false,
+     "type": "Button",
+     "name": "Minimize",
+     "id": "view_2",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      668,
+      1,
+      46,
+      31
+     ],
+     "patterns": [
+      "Invoke",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 5,
+     "foreign": false,
+     "type": "Button",
+     "name": "Maximize",
+     "id": "view_3",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      714,
+      1,
+      46,
+      31
+     ],
+     "patterns": [
+      "Invoke",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 5,
+     "foreign": false,
+     "type": "Button",
+     "name": "Close",
+     "id": "view_7",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      760,
+      1,
+      46,
+      31
+     ],
+     "patterns": [
+      "Invoke",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 4,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      31,
+      798,
+      568
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 5,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": null,
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 6,
+     "foreign": false,
+     "type": "Edit",
+     "name": "Address and search bar",
+     "id": "view_1017",
+     "enabled": true,
+     "offscreen": false,
+     "rect": null,
+     "patterns": [
+      "Value",
+      "ExpandCollapse",
+      "Text",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 5,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      31,
+      798,
+      568
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 6,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      31,
+      798,
+      568
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 7,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      31,
+      798,
+      568
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 8,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      31,
+      798,
+      568
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 9,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      31,
+      798,
+      568
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 10,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": null,
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 10,
+     "foreign": false,
+     "type": "Document",
+     "name": "fixture-edge",
+     "id": "RootWebArea",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      31,
+      798,
+      568
+     ],
+     "patterns": [
+      "Value",
+      "Scroll",
+      "Text",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 11,
+     "foreign": false,
+     "type": "Text",
+     "name": "Fixture",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      16,
+      52,
+      782,
+      38
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 11,
+     "foreign": false,
+     "type": "Text",
+     "name": "ready",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      16,
+      110,
+      36,
+      18
+     ],
+     "patterns": [
+      "Text",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 11,
+     "foreign": false,
+     "type": "Button",
+     "name": "Go",
+     "id": "go",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      16,
+      144,
+      34,
+      22
+     ],
+     "patterns": [
+      "Invoke",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 11,
+     "foreign": false,
+     "type": "Button",
+     "name": "",
+     "id": "tiny",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      53,
+      151,
+      11,
+      11
+     ],
+     "patterns": [
+      "Invoke",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 8,
+     "foreign": false,
+     "type": "Edit",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": null,
+     "patterns": [
+      "Value",
+      "Text",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 3,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      0,
+      798,
+      599
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "s01",
+   "name": "after-go",
+   "windows": [
+    {
+     "hwnd": 26415468,
+     "pid": 20808,
+     "class": "Chrome_WidgetWin_1",
+     "title": "fixture-edge",
+     "frame": [
+      7,
+      0,
+      800,
+      600
+     ],
+     "utility": false
+    }
+   ],
+   "shots": [
+    {
+     "hwnd": 26415468,
+     "drawn": true,
+     "file": "s01-26415468.png",
+     "size": [
+      800,
+      600
+     ]
+    }
+   ],
+   "reads": [
+    {
+     "hwnd": 26415468,
+     "read": true
+    }
+   ],
+   "nodes": [
+    {
+     "window": 26415468,
+     "depth": 0,
+     "foreign": false,
+     "type": "Window",
+     "name": "fixture-edge",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      0,
+      0,
+      814,
+      607
+     ],
+     "patterns": [
+      "Window",
+      "Transform",
+      "ScrollItem",
+      "ItemContainer"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 1,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": false,
+     "offscreen": false,
+     "rect": [
+      8,
+      0,
+      798,
+      599
+     ],
+     "patterns": []
+    },
+    {
+     "window": 26415468,
+     "depth": 1,
+     "foreign": false,
+     "type": "Pane",
+     "name": "fixture-edge",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      0,
+      798,
+      599
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 2,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      0,
+      798,
+      599
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 3,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      0,
+      798,
+      599
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 4,
+     "foreign": false,
+     "type": "Text",
+     "name": "fixture-edge",
+     "id": "view_9",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      33,
+      7,
+      635,
+      16
+     ],
+     "patterns": [
+      "Text",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 4,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      668,
+      1,
+      138,
+      31
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 5,
+     "foreign": false,
+     "type": "Button",
+     "name": "Minimize",
+     "id": "view_2",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      668,
+      1,
+      46,
+      31
+     ],
+     "patterns": [
+      "Invoke",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 5,
+     "foreign": false,
+     "type": "Button",
+     "name": "Maximize",
+     "id": "view_3",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      714,
+      1,
+      46,
+      31
+     ],
+     "patterns": [
+      "Invoke",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 5,
+     "foreign": false,
+     "type": "Button",
+     "name": "Close",
+     "id": "view_7",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      760,
+      1,
+      46,
+      31
+     ],
+     "patterns": [
+      "Invoke",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 4,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      31,
+      798,
+      568
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 5,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": null,
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 6,
+     "foreign": false,
+     "type": "Edit",
+     "name": "Address and search bar",
+     "id": "view_1017",
+     "enabled": true,
+     "offscreen": false,
+     "rect": null,
+     "patterns": [
+      "Value",
+      "ExpandCollapse",
+      "Text",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 5,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      31,
+      798,
+      568
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 6,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      31,
+      798,
+      568
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 7,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      31,
+      798,
+      568
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 8,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      31,
+      798,
+      568
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 9,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      31,
+      798,
+      568
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 10,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": null,
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 10,
+     "foreign": false,
+     "type": "Document",
+     "name": "fixture-edge",
+     "id": "RootWebArea",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      31,
+      798,
+      568
+     ],
+     "patterns": [
+      "Value",
+      "Scroll",
+      "Text",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 11,
+     "foreign": false,
+     "type": "Text",
+     "name": "Fixture",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      16,
+      52,
+      782,
+      38
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 11,
+     "foreign": false,
+     "type": "Text",
+     "name": "clicked 1",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      16,
+      110,
+      59,
+      18
+     ],
+     "patterns": [
+      "Text",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 11,
+     "foreign": false,
+     "type": "Button",
+     "name": "Go",
+     "id": "go",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      16,
+      144,
+      34,
+      22
+     ],
+     "patterns": [
+      "Invoke",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 11,
+     "foreign": false,
+     "type": "Button",
+     "name": "",
+     "id": "tiny",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      53,
+      151,
+      11,
+      11
+     ],
+     "patterns": [
+      "Invoke",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 8,
+     "foreign": false,
+     "type": "Edit",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": null,
+     "patterns": [
+      "Value",
+      "Text",
+      "ScrollItem"
+     ]
+    },
+    {
+     "window": 26415468,
+     "depth": 3,
+     "foreign": false,
+     "type": "Pane",
+     "name": "",
+     "id": "",
+     "enabled": true,
+     "offscreen": false,
+     "rect": [
+      8,
+      0,
+      798,
+      599
+     ],
+     "patterns": [
+      "ScrollItem"
+     ]
+    }
+   ]
+  }
+ ],
+ "steps": [
+  {
+   "name": "go",
+   "action": "invoke",
+   "acted": true,
+   "error": null,
+   "state": "s01",
+   "expect": {
+    "name": "clicked 1"
+   }
+  }
+ ],
+ "refusal": null,
+ "error": null,
+ "last": "done",
+ "ended": null,
+ "end": null
+}
