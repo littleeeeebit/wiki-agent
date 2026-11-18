@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -358,7 +359,7 @@ def _skill_links(folder):
     found = []
     entries = sorted(folder.iterdir()) if folder.is_dir() else []
     for link in entries:
-        if link.name == ".wiki-relink" or not (link.is_symlink() or is_junction(link)):
+        if link.name == ".wiki-relink" or not _is_link(link):
             continue
         target = _pointed(link)
         hub = target.parent.parent
@@ -390,7 +391,10 @@ def _pointed(link):
 
 
 def _is_link(path):
-    return Path(path).is_symlink() or is_junction(path)
+    """A symlink or a junction, from one `lstat`. A path gone meanwhile raises `FileNotFoundError` rather than
+    reading as no link, so a scan it was taken from is read again."""
+    st = os.lstat(path)
+    return stat.S_ISLNK(st.st_mode) or getattr(st, "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)
 
 
 def kept_links(folder):
@@ -400,7 +404,7 @@ def kept_links(folder):
     followed: what it points into is somebody else's."""
     base = _recovery(folder)
     kept = {}
-    if _is_link(base) or not base.is_dir():
+    if not base.is_dir() or _is_link(base):
         return kept
     stamped = []
     for attempt in base.iterdir():

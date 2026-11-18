@@ -318,6 +318,25 @@ def test_a_kept_link_put_back_while_the_plan_reads_is_read_again(tmp_path, monke
     assert [(f[0], f[1].resolve()) for f in found] == [(link, skill.resolve())], "목록이 바뀌면 다시 읽는다"
     monkeypatch.setattr(setup_agents, "kept_links", real_kept)
 
+    # Parked between the listing and its type check, then put back: never read as "no link" and skipped.
+    real_is_link = setup_agents._is_link
+
+    def parked_then(path):
+        if Path(path) == link and os.path.lexists(link) and not parked:
+            parked.append(path)
+            os.rename(link, kept)
+            try:
+                return real_is_link(path)
+            finally:
+                os.rename(kept, link)
+        return real_is_link(path)
+
+    parked = []
+    monkeypatch.setattr(setup_agents, "_is_link", parked_then)
+    found = setup_agents.skill_links(home)
+    assert parked and [(f[0], f[1].resolve()) for f in found] == [(link, skill.resolve())], "사라진 항목은 다시 읽는다"
+    monkeypatch.setattr(setup_agents, "_is_link", real_is_link)
+
     os.rename(link, kept)
     monkeypatch.setattr(setup_agents, "_pointed", lambda path: (_ for _ in ()).throw(FileNotFoundError(path)))
     with pytest.raises(FileNotFoundError):
