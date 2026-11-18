@@ -412,6 +412,53 @@ def test_leaving_a_look_retries_a_handle_that_did_not_release_at_once(tmp_path, 
     assert desktop.released == [123, 123] and record["state"] == "held" and record["owner"] is None
 
 
+def test_leaving_a_look_retries_after_an_interrupted_close_and_then_raises_it(tmp_path, monkeypatch):
+    class Probe(Desktops):
+        def OpenDesktopW(self, *args):
+            return 124
+
+        def CloseDesktop(self, handle):
+            self.released.append(handle)
+            if self.released == [123, 124]:
+                raise KeyboardInterrupt
+            return True
+
+    desktop = Probe()
+
+    def opened(look):
+        look.u, look.desktop = desktop, 123
+
+    monkeypatch.setattr(desktop_session.Look, "open", opened)
+    monkeypatch.setattr(native_process, "_sockets", lambda _: [])
+    monkeypatch.setattr(desktop_session.time, "sleep", lambda _: None)
+    with pytest.raises(KeyboardInterrupt):
+        with desktop_session.look(tmp_path, "managed-interruption"):
+            pass
+
+    record = desktop_session.load(tmp_path / "managed-interruption")
+    assert desktop.released == [123, 124, 124] and record["state"] == "held" and record["owner"] is None
+
+
+def test_leaving_a_look_retries_a_proof_that_could_not_be_saved(tmp_path, monkeypatch):
+    save, failures = desktop_session.save, []
+
+    def flaky(folder, record):
+        if record["proof"] is not None and len(failures) < 2:
+            failures.append(True)
+            raise PermissionError("receipt busy")
+        return save(folder, record)
+
+    monkeypatch.setattr(desktop_session, "save", flaky)
+    monkeypatch.setattr(desktop_session.Look, "open", lambda look: None)
+    monkeypatch.setattr(native_process, "_sockets", lambda _: [])
+    monkeypatch.setattr(desktop_session.time, "sleep", lambda _: None)
+    with pytest.raises(PermissionError, match="receipt busy"):
+        with desktop_session.look(tmp_path, "managed-receipt"):
+            pass
+
+    assert desktop_session.load(tmp_path / "managed-receipt")["state"] == "proven"
+
+
 def test_nothing_joins_a_look_whose_proof_is_still_unsaved(tmp_path, monkeypatch):
     look = desktop_session.Look(tmp_path, "pending-proof")
     save = desktop_session.save

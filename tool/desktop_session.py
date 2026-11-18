@@ -449,12 +449,20 @@ def look(root: Path, name: str):
         failure = error
         raise
     finally:
-        proof = session_.close()
-        for _ in range(RELEASE_RETRIES):   # the caller keeps no look to retry a held handle with: retry here
+        # The caller keeps no look to retry a held handle or an unsaved proof with, so leaving retries them here.
+        # An exception from a close attempt, an interruption included, is raised after the retries.
+        proof, raised = None, None
+        for attempt in range(RELEASE_RETRIES + 1):
+            if attempt:
+                time.sleep(0.5)
+            try:
+                proof = session_.close()
+            except BaseException as error:
+                raised = raised or error
             if session_.closed:
                 break
-            time.sleep(0.5)
-            proof = session_.close()
+        if raised is not None:
+            raise raised
         if not proof["clean"]:
             message = "the desktop look is held: " + "; ".join(proof["reasons"])
             if failure is None:
