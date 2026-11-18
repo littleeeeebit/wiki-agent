@@ -892,12 +892,14 @@ def host_kinds():
 
 def build_confirmation():
     """A PC app's S2: the build part's tools show each setup as stored, spaces and line breaks kept; its button
-    sends exactly that offer, and while a question waits it is replaced by a note to answer first."""
+    sends exactly that offer, and while a question waits it is replaced by a note to answer first. The choice
+    itself shows as stored too."""
+    CHOICE = 'cargo tauri build --out "dist/Team  Tools"\n  then NSIS'   # noqa: N806 — this scenario's constant
     tools = [{"name": "npm", "setup": {"uses": "actions/setup-node@v4", "with": {"region": "east  wing", "empty": ""}}},
              {"name": "cargo", "setup": {"run": "rustup default stable\n  cargo --version"}}]
     parts = [("language", "Rust"), ("ui", "Tauri 2"), ("core", "Rust 크레이트"), ("data_store", "SQLite"), ("tests", "cargo test")]
     stack = [*({"part": p, "choice": c, "why": "주인이 골랐다", "status": "confirmed"} for p, c in parts),
-             {"part": "build", "choice": "cargo tauri build", "why": "주인이 골랐다", "status": "assumed", "tools": tools}]
+             {"part": "build", "choice": CHOICE, "why": "주인이 골랐다", "status": "assumed", "tools": tools}]
     view = run("pc-demo", "spec", waits=True, kind="desktop", kinds=["desktop"])
     view["oneshot"] |= {"intent": {"kind": "desktop", "kinds": ["desktop"]}, "stack": stack,
                         "talk": [{"role": "agent", "text": "빌드와 도구는 옆의 버튼으로 확정한다.", "choices": None}]}
@@ -924,7 +926,9 @@ def build_confirmation():
         assert listed.nth(1).inner_text() == "cargo (rustup default stable\n  cargo --version)", listed.nth(1).inner_text()
         with posting(page):
             page.get_by_role("button", name="이 빌드와 도구로 확정").click()
-        assert posted == [("build", {"part": "build", "choice": "cargo tauri build", "tools": tools})], posted
+        shown = page.get_by_text("cargo tauri build", exact=False).first
+        assert shown.inner_text() == CHOICE, shown.inner_text()   # the quoted path's two spaces and the second line
+        assert posted == [("build", {"part": "build", "choice": CHOICE, "tools": tools})], posted
         view["oneshot"]["talk"] = [{"role": "agent", "text": "하나 더 묻는다.", "choices": {
             "question": "창을 늘 맨 위에 둘까?", "options": [{"label": "예"}, {"label": "아니오"}]}}]
         page.reload()

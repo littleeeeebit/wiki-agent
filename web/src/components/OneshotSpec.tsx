@@ -329,7 +329,9 @@ function Conversation({ talk, requirements, stack, android, kinds, halt, busy, s
           return [
             <dt key={`${p}-t`} className="text-muted-foreground">{label}</dt>,
             <dd key={`${p}-d`} title={s?.why} className={cn(!s || s.status !== 'confirmed' ? 'text-faint' : '')}>
-              {s ? `${s.choice}${s.status === 'confirmed' ? '' : ' (아직 묻는 중)'}` : '아직 안 정함'}
+              {/* The choice as stored, spaces and line breaks kept: a PC app's build is confirmed exactly as shown. */}
+              {s ? <><span className="whitespace-pre-wrap break-words">{s.choice}</span>{s.status === 'confirmed' ? '' : ' (아직 묻는 중)'}</>
+                : '아직 안 정함'}
               {/* A PC app's build names the tools the owner confirms with it, each with how CI gets it. Only its own
                   button confirms it, exactly as shown (`oneshot_spec.confirm_build`). */}
               {/* Each setup as stored: spaces and line breaks kept, so two setups never look alike. */}
