@@ -408,6 +408,38 @@ def test_the_move_writes_the_plan_it_checked_not_one_read_again(tmp_path, home):
     assert not (tmp_path / "unshown.json").exists(), "확인한 뒤에 다시 읽은 계획은 쓰지 않는다"
 
 
+def test_a_codex_home_that_does_not_answer_is_a_refusal_not_a_move(tmp_path, monkeypatch):
+    """vtuber-ko-tts: the wiring already pointed here and trust was in place, a slow `app-server` read as
+    untrusted, and the oneshot stopped asking the owner to move what needed nothing."""
+
+    monkeypatch.setattr(apply, "_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(connect, "hosts", lambda data=None: ["codex"])
+    monkeypatch.setattr(connect, "interpreter", lambda data=None: sys.executable)
+    monkeypatch.setattr(setup_agents, "plan_global", lambda *args, **kw: [])
+    monkeypatch.setattr(setup_agents, "codex_hooks", lambda *args, **kw: (_ for _ in ()).throw(
+        RuntimeError("Codex 응답 시간 초과: initialize")))
+    with pytest.raises(ValueError):
+        connect.trusted(sys.executable)
+    shown = connect.hub()
+    assert shown["refused"] == "Codex 신뢰를 확인하지 못했다 — Codex 응답 시간 초과: initialize"
+    assert not shown["lines"] and not shown["trust"], "확인 못 한 것은 옮길 줄이 아니다"
+    with pytest.raises(HTTPException):
+        connect.move(shown["digest"])
+    monkeypatch.setattr(setup_agents, "codex_hooks", lambda *args, **kw: [{"trustStatus": "trusted"}])
+    assert connect.hub() == {**shown, "needed": False, "refused": "", "digest": connect.hub()["digest"]}
+
+
+def test_a_probe_whose_codex_does_not_answer_records_trust_missing(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / ".wiki").mkdir()
+    (repo / connect.ADAPTER).write_text('agents = ["codex"]\n[slots]\ngate_cmd = "make test"\n', encoding="utf-8")
+    monkeypatch.setattr(shutil, "which", lambda name: name)
+    with patch.object(connect, "probe", return_value={"ok": True}), \
+         patch.object(connect, "trusted", side_effect=ValueError("Codex 신뢰를 확인하지 못했다 — 연결 종료")):
+        assert connect.examine(repo, wait=True)
+    assert connect.record(repo.name)["trust"] is False
+
+
 def test_off_windows_nothing_is_a_junction(tmp_path, monkeypatch):
     import stat
 

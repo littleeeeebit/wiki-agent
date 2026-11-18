@@ -436,6 +436,31 @@ def test_wiring_to_confirm_stops_the_register_and_tests_cut_before_their_results
     assert world["examined"] == [(world["workspace"] / "budget-tracker", True)]
 
 
+def test_wiring_that_cannot_be_checked_is_asked_again_and_never_read_as_a_move(world):
+    rid = made(world)
+    looks = []
+    answers = iter([{"needed": True, "refused": "Codex 신뢰를 확인하지 못했다 — 시간 초과"}, {"needed": False}])
+    with patch.object(oneshot, "RECHECK", (0, 0, 0)), \
+         patch.object(connect, "hub", lambda data=None: looks.append(1) or next(answers)):
+        oneshot.bootstrap(rid)
+    assert len(looks) == 2 and "register" in oneshot.load(rid)["steps"], "한 번 못 물은 것은 다시 묻고 지나간다"
+
+
+def test_wiring_that_stays_unchecked_stops_with_the_reason_not_a_move(world):
+    rid = made(world)
+    world["wiring"].update(needed=True, refused="Codex 신뢰를 확인하지 못했다 — 시간 초과")
+    with patch.object(oneshot, "RECHECK", (0, 0, 0)):
+        oneshot.bootstrap(rid)
+    stopped = oneshot.load(rid)["stopped"]
+    assert stopped["reason"] == "connect" and "register" not in oneshot.load(rid)["steps"]
+    assert "확인하지 못했다 — Codex 신뢰를 확인하지 못했다 — 시간 초과" in stopped["detail"]
+    assert "바꿔야 한다" not in stopped["detail"], "확인 못 한 것을 옮길 것이라 하지 않는다"
+    assert world["examined"] == []
+    world["wiring"].update(needed=False, refused="")   # Codex answers again: `[재개]` alone carries on
+    oneshot.changed(rid, stopped=None)
+    assert finished(world, rid)["committed"]
+
+
 def test_an_unrecorded_same_name_remote_stops_and_is_adopted_only_on_request(world):
     rid = made(world, steps={s: 1 for s in ("recheck", "folder", "files", "commit", "register")})
     for s in ("folder", "files", "commit", "register"):

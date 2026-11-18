@@ -327,7 +327,8 @@ def probe(path: Path, host: str) -> dict:
 
 
 def trusted(python: str) -> bool:
-    """Does every Codex home trust every hook this install writes?"""
+    """Does every Codex home trust every hook this install writes? `ValueError` when one did not answer:
+    unanswered is not untrusted, and read so it asked the owner to move wiring that needed nothing."""
 
     try:
         for file in apply.user_files("codex"):
@@ -335,8 +336,8 @@ def trusted(python: str) -> bool:
             if not hooks or any(h["trustStatus"] != "trusted" for h in hooks):
                 return False
         return True
-    except Exception:  # noqa: BLE001 — an `app-server` that did not answer is not trust
-        return False
+    except Exception as exc:  # noqa: BLE001 — whatever stopped Codex from answering is the reason shown
+        raise ValueError(f"Codex 신뢰를 확인하지 못했다 — {exc}") from exc
 
 
 def examine(path: Path, then=None, wait: bool = False) -> bool:
@@ -354,7 +355,11 @@ def examine(path: Path, then=None, wait: bool = False) -> bool:
             data, _ = adapter_of(path)
             agents = hosts(data)
             results = {host: probe(path, host) for host in agents}
-            keep(name, probe=results, trust=trusted(interpreter(data)) if "codex" in agents else None)
+            try:
+                trust = trusted(interpreter(data)) if "codex" in agents else None
+            except ValueError:   # unanswered trust shows as missing; the next probe asks again
+                trust = False
+            keep(name, probe=results, trust=trust)
         finally:
             with _records:
                 _probing.discard(name)
@@ -400,15 +405,15 @@ def _snapshot(data: dict | None = None) -> tuple[dict, list, list, str]:
         if not agents:
             raise ValueError("Claude Code 또는 Codex CLI를 설치하고 새 터미널에서 앱을 실행하세요.")
         plan = setup_agents.plan_global("both" if len(agents) == 2 else agents[0], [], python)
+        found = setup_agents.skill_links() if "claude" in agents else []
+        lines = [{"file": str(path), "change": change} for path, _s, changes in plan for change in changes]
+        codex = any(Path(line["file"]).name == "hooks.json" for line in lines)
+        trust = "codex" in agents and (codex or not trusted(python))
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         return ({"needed": True, "refused": str(exc), "agents": agents,
                  "lines": [], "links": [], "trust": False, "digest": ""},
                 [], [], python)
-    found = setup_agents.skill_links() if "claude" in agents else []
-    lines = [{"file": str(path), "change": change} for path, _s, changes in plan for change in changes]
     links = [{"link": str(link), "from": str(old), "to": str(new) if new else None} for link, old, new in found]
-    codex = any(Path(line["file"]).name == "hooks.json" for line in lines)
-    trust = "codex" in agents and (codex or not trusted(python))
     shown = {"agents": agents, "lines": lines, "links": links, "trust": trust}
     return ({"needed": bool(lines or any(link["to"] for link in links) or trust), "refused": "", **shown,
              "digest": digest(json.dumps(shown, sort_keys=True, ensure_ascii=False).encode())}, plan, found, python)
