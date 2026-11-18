@@ -45,15 +45,17 @@ _stop = threading.local()   # the calling thread's halt while `stoppable` holds 
 
 
 @contextmanager
-def stoppable(halt: threading.Event):
+def stoppable(halt: threading.Event | None):
     """Every `git` and `run` on this thread, while this holds, killed with its whole process tree within a
-    second of `halt`, so a stop or a shutdown never waits out a command's own timeout."""
+    second of `halt`, so a stop or a shutdown never waits out a command's own timeout. `None` lifts it for a
+    cleanup that must run even after the stop; the scope it was inside comes back after."""
 
+    outer = getattr(_stop, "halt", None)
     _stop.halt = halt
     try:
         yield
     finally:
-        _stop.halt = None
+        _stop.halt = outer
 
 
 def ran(argv: list, timeout: float, cwd: Path | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
@@ -61,30 +63,36 @@ def ran(argv: list, timeout: float, cwd: Path | None = None, env: dict | None = 
     if halt is None:
         return subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=timeout)
+    name = Path(str(argv[0])).name
+    if halt.is_set():   # stopped already: nothing new starts
+        raise Stopped(f"멈춤 — {name} 을 시작하지 않았다")
     # Started suspended, so a child it starts is in its job before it can leave (`process.contained`).
     proc = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                             encoding="utf-8", errors="replace", creationflags=process.SUSPENDED,
                             start_new_session=os.name != "nt")
     job = process.contained(proc)
     try:
+        if os.name == "nt" and not job:   # a tree it cannot own never runs (`runtime` refuses the same)
+            raise OSError(f"{name} 의 프로세스 트리를 맡지 못했다 — 실행하지 않았다")
         process.resumed(proc)
         deadline = time.monotonic() + timeout
         while not halt.is_set() and time.monotonic() < deadline:
             try:
-                out, err = proc.communicate(timeout=0.5)   # a retry after its timeout loses no output
+                out, err = proc.communicate(timeout=min(0.5, max(0.01, deadline - time.monotonic())))
                 return subprocess.CompletedProcess(argv, proc.returncode, out, err)
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired:   # a retry after its timeout loses no output
                 pass
-        if job:
-            process.killed(job)
-        proc.kill()
-        proc.communicate()
         if halt.is_set():
-            raise Stopped(f"멈춤 — {Path(str(argv[0])).name} 을 끝냈다")
+            raise Stopped(f"멈춤 — {name} 을 끝냈다")
         raise subprocess.TimeoutExpired(argv, timeout)
-    finally:
-        if proc.poll() is None:   # resuming failed, or anything else left it running
+    finally:   # the whole tree ended and waited for, whatever ended the command, before the caller cleans up
+        if proc.poll() is None:
+            process.killed(job)
             proc.kill()
+            try:
+                proc.communicate(timeout=10)   # bounded: a descendant holding the pipes cannot keep it
+            except subprocess.TimeoutExpired as exc:
+                errorlog.record("release-command", exc, command=name)
         process.terminated(job)
 
 
@@ -205,8 +213,9 @@ def pin(repo: Path, ref: str = "origin/main") -> str:
         return git(repo, "rev-parse", "--verify", f"{own}^{{commit}}").strip()
     finally:
         try:
-            git(repo, "update-ref", "-d", own)
-        except (ValueError, subprocess.SubprocessError) as exc:
+            with stoppable(None):   # a stop ended the fetch; the ref it may have written still goes
+                git(repo, "update-ref", "-d", own, timeout=30)
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:
             # Recorded, never raised: the fetch's own error, if any, is the one that matters, and the name is
             # never reused, so the leftover cannot change a later pin.
             errorlog.record("release-pin", exc, repo=str(repo), ref=own)

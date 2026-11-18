@@ -71,7 +71,7 @@ def _rounds(repo: Path, ref: str, halt: threading.Event, repair, expect: str | N
     folder = release.owned(release.place(repo, attempt))
     folder.mkdir(parents=True)
     stores = (folder / "rehearsal.jks", folder / "other.jks")
-    published, previous, rounds, refusals, needed, left, failed = [], None, [], {}, None, [], None
+    published, previous, rounds, refusals, needed, left = [], None, [], {}, None, []
     try:   # from before the first key exists: every test keystore goes, whatever fails
         key = release.test_key(stores[0], kit)
         cert = release.certificate(key["keystore"], key["alias"], key["password"], kit)
@@ -108,22 +108,18 @@ def _rounds(repo: Path, ref: str, halt: threading.Event, repair, expect: str | N
                         "application_id": release.refused(release.facts(second, kit), ver, moved, cert,
                                                           {**first_apk, "package": moved["application_id"]})}
     except BaseException as exc:
-        failed = exc
         exc.left = left   # the same list: the keys' removal below still reaches it
         raise
     finally:
-        keys = []
-        for store in stores:   # a test key never outlives the rehearsal; one locked file never spares the other
+        # A test key never outlives the rehearsal; one locked file never spares the other. One that cannot be
+        # removed is reported in `left`, never raised: it would hide the round's outcome and its repair. The
+        # key is disposable and signs nothing that ships, so a repair still starts.
+        for store in stores:
             try:
                 store.unlink(missing_ok=True)
             except OSError as exc:
                 errorlog.record("release-rehearsal-cleanup", exc, repo=str(repo), at=str(store))
-                keys.append(f"{store}: {exc}")
-        left.extend(keys)
-        if keys and failed is None:   # never over the error that ended the rehearsal: that one carries them
-            stuck = OSError(f"시험 키를 지우지 못했다 — 직접 지워라: {'; '.join(keys)}")
-            stuck.left = left
-            raise stuck
+                left.append(f"{store}: {exc}")
     caught = bool(refusals) and all(len([w for w in why if marker in w]) == want for why, marker, want in (
         (refusals.get("certificate", []), "서명 인증서", 2), (refusals.get("application_id", []), "앱 ID", 2)))
     out = {"sha": sha, "seed": first, "cert": cert, "folder": str(folder), "rounds": rounds,

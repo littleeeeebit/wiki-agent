@@ -311,11 +311,14 @@ def test_every_test_keystore_goes_even_when_a_step_after_its_creation_fails(tmp_
         release_rehearsal.rehearse(tmp_path / "repo")
     assert len(stopped.value.left) == 1 and "rehearsal.jks" in stopped.value.left[0]
 
+    # A source failure caught in its round keeps its outcome and its repair: the locked key is only reported.
     monkeypatch.setattr(release, "checkout", lambda *a: tmp_path / "src")
-    monkeypatch.setattr(release, "build", lambda *a: (_ for _ in ()).throw(release.BuildFailed("boom")))
-    with pytest.raises(OSError, match="시험 키를 지우지 못했다") as stuck:   # with nothing else wrong, it is the error
-        release_rehearsal.rehearse(tmp_path / "repo")
-    assert "rehearsal.jks" in stuck.value.left[0]
+    monkeypatch.setattr(release, "build", lambda *a: (_ for _ in ()).throw(release.BuildFailed("error: boom")))
+    asked = []
+    monkeypatch.setattr(release_rehearsal.release, "ran", lambda *a, **k: subprocess.CompletedProcess(a, 0, "", ""))
+    done = release_rehearsal.rehearse(tmp_path / "repo", repair=lambda repo, record: asked.append(record) or "fix-1")
+    assert done["rounds"][0]["failed"] == "error: boom" and done["repair"]["task"] == "fix-1"
+    assert asked[0]["repair"]["needed"] == "error: boom" and "rehearsal.jks: locked" in done["left"][0]
 
 
 def test_a_stopped_rehearsal_build_leaves_no_checkout_and_starts_no_repair(tmp_path, monkeypatch):
@@ -430,6 +433,46 @@ def test_a_stop_ends_a_running_command_at_once_and_without_it_nothing_changes(tm
     with pytest.raises(subprocess.TimeoutExpired), release.stoppable(threading.Event()):
         release.ran(sleeper, 0.5)
     assert release.run([sys.executable, "-c", "print('둘')"]).strip() == "둘"   # outside `stoppable`: as before
+
+
+def test_a_stopped_scope_starts_nothing_and_a_tree_it_cannot_own_never_runs(tmp_path, monkeypatch):
+    import sys
+    import threading
+
+    marker = tmp_path / "ran"
+    writes = [sys.executable, "-c", f"open(r'{marker}', 'w').close()"]
+    stopped = threading.Event()
+    stopped.set()
+    with release.stoppable(stopped), pytest.raises(release.Stopped, match="시작하지 않았다"):
+        release.ran(writes, 60)
+    assert not marker.exists()
+    if release.os.name == "nt":   # Windows: no job, no run; the suspended child is ended and waited for
+        made = []
+        popen = release.subprocess.Popen
+        monkeypatch.setattr(release.process, "contained", lambda proc: None)
+        monkeypatch.setattr(release.subprocess, "Popen", lambda *a, **k: made.append(popen(*a, **k)) or made[-1])
+        with release.stoppable(threading.Event()), pytest.raises(OSError, match="맡지 못했다"):
+            release.ran(writes, 60)
+        assert not marker.exists() and made[0].poll() is not None
+
+
+def test_a_stopped_fetch_still_removes_its_own_ref(monkeypatch):
+    import threading
+
+    calls, halt = [], threading.Event()
+
+    def ran(argv, timeout, cwd=None, env=None):
+        calls.append((argv[1], release._stop.halt))
+        if argv[1] == "fetch":
+            halt.set()   # the person stopped it after it wrote the ref
+            raise release.Stopped("멈춤")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(release, "ran", ran)
+    with release.stoppable(halt), pytest.raises(release.Stopped):
+        release.pin(Path("repo"), "origin/main")
+    assert [c[0] for c in calls] == ["fetch", "update-ref"] and calls[1][1] is None   # outside the stopped scope
+    assert release._stop.halt is None   # and the scope is gone with the rehearsal
 
 
 def test_a_branch_that_moved_after_the_card_was_read_is_never_built(tmp_path, monkeypatch):

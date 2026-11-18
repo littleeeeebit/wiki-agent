@@ -203,7 +203,13 @@ def close_all() -> None:
 
 def recover() -> None:
     """Every pending attempt carried on at server start (`release_publish.recover`), off the start path:
-    each one may wait on GitHub. A press already authorized it; nothing new is published."""
+    each one may wait on GitHub. A press already authorized it; nothing new is published.
+
+    Called once each time a server lifespan takes ownership, so that lifespan's shutdown gets its own whole
+    wait (`close_all`), never one an earlier lifespan in this process spent."""
+
+    with _lock:
+        _deadline.clear()
 
     def sweep() -> None:
         try:

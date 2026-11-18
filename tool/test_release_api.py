@@ -242,6 +242,27 @@ def test_shutdown_lets_a_started_repair_finish_and_records_a_build_it_could_not_
     assert run["repair"]["task"] == "release-fix-0-1-0" and not run["stopped"]
 
 
+def test_a_new_server_lifespan_gets_its_own_whole_shutdown_wait(project, monkeypatch):
+    client, *_ = project
+    monkeypatch.setattr(rp, "recover", lambda: [])
+    release_api._deadline.append(0.0)   # an earlier lifespan in this process spent its wait long ago
+    release_api.recover()   # the lifespan's start, once it owns the server
+    building, cleaned = threading.Event(), threading.Event()
+
+    def rehearse(repo, ref, halt, repair=None, expect=None):
+        building.set()
+        halt.wait(10)
+        threading.Event().wait(0.2)
+        cleaned.set()
+        raise release.Stopped("멈춤")
+
+    monkeypatch.setattr(release_api.release_rehearsal, "rehearse", rehearse)
+    client.post("/api/release/app/rehearse")
+    assert building.wait(5)
+    release_api.close_all()
+    assert cleaned.is_set()   # waited for, not cut off by the old deadline
+
+
 def test_the_start_carries_the_cards_commit_and_a_failure_carries_what_it_left(project, monkeypatch):
     client, *_ = project
     got = []

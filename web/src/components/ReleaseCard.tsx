@@ -59,33 +59,46 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   // Only the newest request's answer is applied: a slow poll never undoes a start or a stop sent after it.
   const latest = useRef(0)
   const acting = useRef(false)   // no poll is sent while a start or a stop is out: its answer is the newer one
+  const polling = useRef(false)   // one poll at a time: a slow one is waited for, never outrun by the next tick
+  // Set when a test build ends, until the card is read again: the next start must carry the commit shown now.
+  const [stale, setStale] = useState(false)
   const newest = useCallback(<T,>(call: () => Promise<T>, apply: (value: T) => void) => {
     const id = ++latest.current
     return call().then((value) => { if (id === latest.current) apply(value) })
   }, [])
 
-  const read = useCallback(() => newest(() => getCard(name), (c) => { setCard(c); setRun(c.rehearsal) })
+  const read = useCallback(() => newest(() => getCard(name), (c) => { setCard(c); setRun(c.rehearsal); setStale(false) })
     .catch((err) => setFault(String(err instanceof Error ? err.message : err))), [name, newest])
   useEffect(() => { void read() }, [read])
+  // Any answer, a poll's or a start's or a stop's, that shows the build ended reads the card again: what the
+  // build saw of `main` may no longer be what the card shows.
+  const settle = useCallback((r: Rehearsal | null) => {
+    setRun(r)
+    if (r?.state !== 'running') {
+      setStale(true)
+      void read()
+    }
+  }, [read])
   // While it runs, its state is read every five seconds; a read that fails is tried again at the next tick.
-  // When it ends, the card is read again: what the build saw of `main` may no longer be what the card shows.
   const following = run?.state === 'running' || unsure
   useEffect(() => {
     if (!following) return
-    const timer = setInterval(() => acting.current || void newest(() => getRehearsal(name), (r) => {
-      setRun(r.rehearsal)
-      setUnsure(false)
-      if (r.rehearsal?.state !== 'running') void read()
-    }).catch(() => {}), 5000)
+    const timer = setInterval(() => {
+      if (acting.current || polling.current) return
+      polling.current = true
+      void newest(() => getRehearsal(name), (r) => { setUnsure(false); settle(r.rehearsal) })
+        .catch(() => {})
+        .finally(() => { polling.current = false })
+    }, 5000)
     return () => clearInterval(timer)
-  }, [following, name, newest, read])
+  }, [following, name, newest, settle])
 
   async function act(fn: () => Promise<{ rehearsal: Rehearsal }>) {
     setFault('')
     setBusy(true)
     acting.current = true
     try {
-      await newest(fn, (r) => setRun(r.rehearsal))
+      await newest(fn, (r) => settle(r.rehearsal))
     } catch (err) {
       setFault(String(err instanceof Error ? err.message : err))
       setUnsure(true)
@@ -105,7 +118,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
         {run?.state === 'running'
           ? <Btn tone="danger" disabled={busy || run?.repairing} onClick={() => void act(() => stopRehearsal(name))}
               title={run?.repairing ? '수정 작업을 이미 만들기 시작해서 멈출 수 없다' : undefined}>시험 빌드 멈춤</Btn>
-          : <Btn disabled={busy || !card || !!card.error} onClick={() => void act(() => startRehearsal(name, card?.sha))}
+          : <Btn disabled={busy || stale || !card || !!card.error} onClick={() => void act(() => startRehearsal(name, card?.sha))}
               title="main 을 두 번 빌드하고 일회용 시험 키로 서명해 검사한다. 아무것도 올리지 않는다">시험 빌드</Btn>}
         <Btn tone="primary" disabled title={card?.locked}>{next ? `v${next} 게시` : '게시'}</Btn>
       </>
