@@ -13,7 +13,7 @@ import re
 import threading
 import time
 
-from agent import CodexServer, settings
+from agent import CodexServer, server_epoch, settings
 from .refresh import Refresh
 from common.paths import PACKAGED
 
@@ -55,7 +55,7 @@ CODEX_MODELS_TTL = 300
 CODEX_RETRY = 30   # seconds a failed fetch stands for the screen's options before one is tried again
 _codex_cache: dict = {}
 _codex_fetch = threading.Lock()   # one `model/list` at a time
-_codex_tries = [0, ""]            # fetches finished, and the last one's failure ("" when it succeeded)
+_codex_tries = [0, "", 0]         # fetches finished, the last one's failure ("" when it succeeded), its lifespan
 
 
 def codex_models() -> list[dict]:
@@ -69,14 +69,16 @@ def codex_models() -> list[dict]:
     with _codex_fetch:
         if _codex_cache and time.monotonic() - _codex_cache["at"] < CODEX_MODELS_TTL:
             return _codex_cache["models"]
-        if _codex_tries[0] != tries and _codex_tries[1]:
+        # Shared only within one lifespan: an old one's fetch failed on the shutdown gate, not on Codex.
+        if _codex_tries[0] != tries and _codex_tries[1] and _codex_tries[2] == server_epoch():
             raise RuntimeError(_codex_tries[1])
+        epoch = server_epoch()
         try:
             models = _fetch_codex_models()
         except Exception as exc:
-            _codex_tries[:] = [_codex_tries[0] + 1, str(exc) or type(exc).__name__]
+            _codex_tries[:] = [_codex_tries[0] + 1, str(exc) or type(exc).__name__, epoch]
             raise
-        _codex_tries[:] = [_codex_tries[0] + 1, ""]
+        _codex_tries[:] = [_codex_tries[0] + 1, "", epoch]
         _codex_cache.update(at=time.monotonic(), models=models)
         return models
 

@@ -353,28 +353,44 @@ def examine(path: Path, then=None, wait: bool = False) -> bool:
     epoch = server_epoch()
 
     def run() -> None:
+        # A shutdown meanwhile retires these tests: nothing further starts (no next host, no trust check, no
+        # `then`, which may prepare a survey), and what they found is not kept.
         try:
             data, _ = adapter_of(path)
-            agents = hosts(data)
-            results = {host: probe(path, host) for host in agents}
+            agents, results = hosts(data), {}
+            for host in agents:
+                if server_epoch() != epoch:
+                    return
+                results[host] = probe(path, host)
+            if server_epoch() != epoch:
+                return
             try:
                 trust = trusted(interpreter(data)) if "codex" in agents else None
             except ValueError:   # unanswered trust shows as missing; the next probe asks again
                 trust = False
-            if server_epoch() == epoch:   # a shutdown meanwhile cut these tests: what they found is not kept
-                keep(name, probe=results, trust=trust)
+            if server_epoch() != epoch:
+                return
+            keep(name, probe=results, trust=trust)
         finally:
             with _records:
                 _probing.discard(name)
             work.feed.put({"kind": "connect", "repo": name})
-        if then:
+        if then and server_epoch() == epoch:
             then()
 
     def kept() -> None:   # outside every shutdown join: kept to this lifespan, it starts no Codex after it
         with pin_servers(epoch):
             run()
 
-    run() if wait else threading.Thread(target=kept, daemon=True).start()
+    if wait:
+        run()
+        return True
+    try:
+        threading.Thread(target=kept, daemon=True).start()
+    except BaseException:   # a worker that never started must not hold the repository's slot for good
+        with _records:
+            _probing.discard(name)
+        raise
     return True
 
 
@@ -577,15 +593,18 @@ def same_repository(remote: str, pr_url: str) -> bool:
     return bool(name(remote)) and name(remote) == name(pr_url)
 
 
-def handover(repo: Path, n: int) -> dict:
+def handover(repo: Path, n: int, due=None) -> dict:
     """`_handover`, one at a time per repository: a listing's retry and merge cleanup may walk it together, and
-    the second would move an adapter the first already moved. The busy one stops as one waiting, without a record."""
+    the second would move an adapter the first already moved. The busy one stops as one waiting, without a record
+    (`skipped`). `due`, read under the claim, gives the PR to hand over, or `None` when there is none any more."""
 
     with _handing_lock:
         if repo.name in _handing:
-            return {"ok": False, "reason": "다른 요청이 이 저장소의 adapter 를 넘기는 중이다"}
+            return {"ok": False, "reason": "다른 요청이 이 저장소의 adapter 를 넘기는 중이다", "skipped": True}
         _handing.add(repo.name)
     try:
+        if due is not None and (n := due()) is None:
+            return {"ok": False, "reason": "넘길 것이 남지 않았다", "skipped": True}
         return _handover(repo, n)
     finally:
         with _handing_lock:
@@ -681,11 +700,11 @@ def retried(path: Path) -> bool:
     """A handover left waiting is walked again from its first step when the
     list is read, once a minute at most. Whether it was."""
 
-    handed = record(path.name).get("handover") or {}
-    if handed.get("state") != "대기" or time.time() - handed.get("ts", 0) < RETRY:
-        return False
-    handover(path, handed["pr"])
-    return True
+    def due() -> int | None:   # the waiting record's PR, read again under the claim: cleanup may have finished it
+        handed = record(path.name).get("handover") or {}
+        return handed["pr"] if handed.get("state") == "대기" and time.time() - handed.get("ts", 0) >= RETRY else None
+
+    return due() is not None and not handover(path, 0, due).get("skipped")
 
 
 # -- The screen ---------------------------------------------------------------------

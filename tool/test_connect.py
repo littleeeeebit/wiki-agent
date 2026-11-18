@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -475,16 +476,41 @@ def test_one_handover_at_a_time_whoever_walks_it(tmp_path, monkeypatch):
     assert connect.handover(tmp_path, 7)["ok"] and calls == [7, 7], "끝난 뒤에는 다시 넘길 수 있다"
 
 
+def test_a_retry_whose_handover_finished_meanwhile_walks_nothing(tmp_path, monkeypatch):
+    """A listing read the waiting record, then merge cleanup finished it: rewalked, a failure would put it back to
+    waiting."""
+
+    records = iter([{"handover": {"state": "대기", "pr": 7, "ts": 0}},
+                    {"handover": {"state": "완료", "pr": 7, "ts": 0}}])
+    walked = []
+    monkeypatch.setattr(connect, "record", lambda name: next(records))
+    monkeypatch.setattr(connect, "_handover", lambda path, n: walked.append(n) or {"ok": True, "reason": ""})
+    assert connect.retried(tmp_path) is False and walked == []
+
+
+def test_a_verification_worker_that_never_started_frees_the_repository(tmp_path, monkeypatch):
+    class Unstartable(threading.Thread):
+        def start(self):
+            raise RuntimeError("can't start new thread")
+
+    # `connect`'s own name only: other code caches what it found while every thread start failed
+    monkeypatch.setattr(connect, "threading", SimpleNamespace(Thread=Unstartable))
+    with pytest.raises(RuntimeError):
+        connect.examine(tmp_path)
+    assert tmp_path.name not in connect._probing
+
+
 def test_tests_a_shutdown_cut_keep_nothing_and_start_no_codex_after_it(tmp_path, monkeypatch):
     """`[연결]`'s background tests are outside every shutdown join: the lifespan that began them owns them."""
 
     from agent import chat_local
 
-    probing, release, kept, spawned = threading.Event(), threading.Event(), [], []
+    probing, release, kept, spawned, probed, then = threading.Event(), threading.Event(), [], [], [], []
     monkeypatch.setattr(connect, "adapter_of", lambda path: ({}, ""))
-    monkeypatch.setattr(connect, "hosts", lambda data: ["codex"])
+    monkeypatch.setattr(connect, "hosts", lambda data: ["claude", "codex"])
     monkeypatch.setattr(connect, "interpreter", lambda data=None: sys.executable)
-    monkeypatch.setattr(connect, "probe", lambda path, host: probing.set() or release.wait(10) and {"ok": True})
+    monkeypatch.setattr(connect, "probe", lambda path, host: probed.append(host) or probing.set() or release.wait(10)
+                        and {"ok": True})
     monkeypatch.setattr(connect, "keep", lambda name, **fields: kept.append(fields))
     monkeypatch.setattr(connect.work.feed, "put", lambda event: None)
     popen = subprocess.Popen
@@ -497,7 +523,7 @@ def test_tests_a_shutdown_cut_keep_nothing_and_start_no_codex_after_it(tmp_path,
 
     monkeypatch.setattr(chat_local.subprocess, "Popen", launched)
     monkeypatch.setattr(chat_local, "cli_command", lambda name: ["codex"])
-    assert connect.examine(tmp_path)
+    assert connect.examine(tmp_path, then=lambda: then.append(1))   # `then` may prepare a survey
     try:
         assert probing.wait(5)
         chat_local.end_servers()
@@ -509,6 +535,7 @@ def test_tests_a_shutdown_cut_keep_nothing_and_start_no_codex_after_it(tmp_path,
             break
         time.sleep(0.05)
     assert kept == [] and spawned == [], "끊긴 시험은 결과를 남기지 않고 Codex 도 띄우지 않는다"
+    assert probed == ["claude"] and then == [], "다음 호스트도, 뒤에 이어질 일도 시작하지 않는다"
 
 
 def test_the_routine_hub_read_never_waits_on_codex_and_checks_once_per_ttl(monkeypatch):

@@ -138,3 +138,29 @@ def test_a_caller_waiting_on_a_failed_model_fetch_takes_its_failure():
                 channels.codex_models()   # a later call is a fresh try
     finally:
         channels.codex_models.cache_clear()
+
+
+def test_a_waiting_caller_never_takes_a_retired_lifespan_s_failure():
+    """The old fetch failed on the shutdown gate; the next server's caller asks Codex itself."""
+
+    from agent import chat_local
+
+    channels.codex_models.cache_clear()
+    fetch = Held(RuntimeError("서버가 꺼지는 중이라 Codex 를 띄우지 않는다"), [{"id": "gpt"}])
+    try:
+        with patch.object(channels, "_fetch_codex_models", fetch):
+            old = threading.Thread(target=lambda: pytest.raises(RuntimeError, channels.codex_models))
+            old.start()
+            until(lambda: fetch.starts == 1, "옛 요청이 시작하지 않았다")
+            chat_local.end_servers()
+            chat_local.reopen_servers()
+            got = []
+            current = threading.Thread(target=lambda: got.append(channels.codex_models()))
+            current.start()
+            time.sleep(0.1)
+            fetch.go.set()
+            old.join(5)
+            current.join(5)
+            assert got == [[{"id": "gpt"}]] and fetch.starts == 2, "옛 회차의 실패를 넘겨받지 않는다"
+    finally:
+        channels.codex_models.cache_clear()
