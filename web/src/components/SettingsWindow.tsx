@@ -15,10 +15,15 @@ export function SettingsWindow({ onClose }: { onClose?: () => void }) {
   const generation = useRef(0)
   useEffect(() => {
     const mine = ++generation.current
-    Promise.all([api.getSwitch(), api.getOptions(), api.getLoopSettings()]).then(([s, o, l]) => {
-      if (mine === generation.current) { setSw(s); setOptions(o); setLoop(l) }
+    const watching = new AbortController()
+    // The options read again while the server fetches the first Codex model list (`watchOptions`).
+    const options = new Promise<api.Options>((first, failed) => {
+      api.watchOptions((o) => { first(o); if (mine === generation.current) setOptions(o) }, watching.signal).catch(failed)
+    })
+    Promise.all([api.getSwitch(), options, api.getLoopSettings()]).then(([s, , l]) => {   // the options set themselves
+      if (mine === generation.current) { setSw(s); setLoop(l) }
     }, (e) => { if (mine === generation.current) setFault(String(e)) })
-    return () => { generation.current = mine + 1 }
+    return () => { generation.current = mine + 1; watching.abort() }
   }, [])
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')

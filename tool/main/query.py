@@ -445,14 +445,10 @@ class Config(BaseModel):
 def options() -> dict:
     """Everything the screen can choose between."""
 
-    codex, error = [], ""
-    try:
-        codex = channels.codex_models()
-    except Exception as exc:
-        error = f"Codex 모델 목록을 불러오지 못했습니다: {exc}"
+    codex, error, pending = channels.codex_models_seen()   # never a wait on Codex (`CodexServer` waits minutes)
     return {"packaged": PACKAGED, "projects": channels.projects(),
-            "models": channels.MODELS + codex,
-            "efforts": channels.EFFORTS, "codex_error": error}
+            "models": channels.MODELS + codex, "efforts": channels.EFFORTS,
+            "codex_error": f"Codex 모델 목록을 불러오지 못했습니다: {error}" if error else "", "codex_pending": pending}
 
 
 @router.get("/api/jev")

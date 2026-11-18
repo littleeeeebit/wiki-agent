@@ -461,6 +461,23 @@ def test_wiring_that_stays_unchecked_stops_with_the_reason_not_a_move(world):
     assert finished(world, rid)["committed"]
 
 
+def test_a_shutdown_during_an_unchecked_wiring_starts_no_further_check(world):
+    rid = made(world)
+    stopping, looks = threading.Event(), []
+
+    def refused(data=None):
+        looks.append(stopping.is_set())
+        stopping.set()   # the server starts going down during the first check
+        return {"needed": True, "refused": "Codex 신뢰를 확인하지 못했다 — 시간 초과"}
+
+    with patch.object(runtime, "stopping", stopping), patch.object(oneshot, "RECHECK", (0, 5, 20)), \
+         patch.object(connect, "hub", refused):
+        started = time.monotonic()
+        oneshot.bootstrap(rid)
+    assert looks == [False] and time.monotonic() - started < 5, "꺼지는 서버는 더 묻지도 기다리지도 않는다"
+    assert oneshot.load(rid)["stopped"]["reason"] == "restart" and "register" not in oneshot.load(rid)["steps"]
+
+
 def test_an_unrecorded_same_name_remote_stops_and_is_adopted_only_on_request(world):
     rid = made(world, steps={s: 1 for s in ("recheck", "folder", "files", "commit", "register")})
     for s in ("folder", "files", "commit", "register"):

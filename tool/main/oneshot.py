@@ -499,7 +499,8 @@ def s_register(run: dict) -> None:
     text = planned(run)[".wiki/adapter.toml"]
     connect.keep(name, hash=connect.digest(text.encode("utf-8")), adapter=text, written=time.time(), handover=None)
     for pause in RECHECK:   # a check that could not be made (a slow Codex `app-server`) is asked again, never read as a move
-        time.sleep(pause)
+        if runtime.stopping.wait(pause):   # a server going down starts no further check
+            raise Stop("restart", "서버가 꺼지는 중이라 멈췄다")
         if not (shown := connect.hub(connect.adapter_of(path)[0])).get("refused"):
             break
     else:

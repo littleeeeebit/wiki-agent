@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import threading
 import time
 
 from agent import CodexServer, settings
@@ -50,7 +51,11 @@ ANSWER_PROMPT = (WIKI / "tool/prompts/chat-answer.md").read_text(encoding="utf-8
 # the life of the server, a Codex update that brought new models stayed
 # invisible until the chat was restarted.
 CODEX_MODELS_TTL = 300
+CODEX_RETRY = 30   # seconds a failed fetch stands for the screen's options before one is tried again
 _codex_cache: dict = {}
+_codex_failed: dict = {}
+_codex_fetch = threading.Lock()     # one `model/list` at a time; a caller meanwhile takes its answer
+_codex_refresh = threading.Lock()   # held while the options' background fetch runs
 
 
 def codex_models() -> list[dict]:
@@ -59,8 +64,43 @@ def codex_models() -> list[dict]:
     A failure is not cached — caching one would make a CLI that came back up
     look permanently broken.
     """
-    if _codex_cache and time.monotonic() - _codex_cache["at"] < CODEX_MODELS_TTL:
-        return _codex_cache["models"]
+    with _codex_fetch:
+        if _codex_cache and time.monotonic() - _codex_cache["at"] < CODEX_MODELS_TTL:
+            return _codex_cache["models"]
+        try:
+            models = _fetch_codex_models()
+        except Exception as exc:
+            _codex_failed.update(at=time.monotonic(), error=str(exc))
+            raise
+        _codex_failed.clear()
+        _codex_cache.update(at=time.monotonic(), models=models)
+        return models
+
+
+def codex_models_seen() -> tuple[list[dict], str, bool]:
+    """The screen's options without waiting on Codex, whose `app-server` may take minutes to answer:
+    `(models, error, pending)` from the last fetch, however old. A stale or missing list is fetched in the
+    background; `pending` holds until the first fetch ends, and the screen reads again until it clears."""
+
+    now, failed = time.monotonic(), dict(_codex_failed)
+    stale = not _codex_cache or now - _codex_cache["at"] >= CODEX_MODELS_TTL
+    if stale and not (failed and now - failed["at"] < CODEX_RETRY) and _codex_refresh.acquire(blocking=False):
+        threading.Thread(target=_refresh_codex_models, daemon=True, name="codex-models").start()
+    if _codex_cache:
+        return _codex_cache["models"], "", False
+    return [], failed.get("error", ""), not failed
+
+
+def _refresh_codex_models() -> None:
+    try:
+        codex_models()
+    except Exception:  # noqa: BLE001 — kept in `_codex_failed` for the screen
+        pass
+    finally:
+        _codex_refresh.release()
+
+
+def _fetch_codex_models() -> list[dict]:
     models, cursor = [], None
     with CodexServer() as server:
         while True:
@@ -83,11 +123,10 @@ def codex_models() -> list[dict]:
                 break
     if not models:
         raise RuntimeError("Codex가 사용 가능한 모델을 반환하지 않았습니다")
-    _codex_cache.update(at=time.monotonic(), models=models)
     return models
 
 
-codex_models.cache_clear = _codex_cache.clear
+codex_models.cache_clear = lambda: (_codex_cache.clear(), _codex_failed.clear())
 
 
 def efforts_of(model: str) -> set[str]:

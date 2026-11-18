@@ -25,7 +25,7 @@ import apply
 import setup_agents
 from agent.chat_session import Event
 from main import channels as chat_channels
-from main import connect, loop, specs, survey, work
+from main import connect, loop, specs, survey, wiring, work
 from main import query as chat
 from test_main import _repo, client, no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_sync import refused_once
@@ -435,9 +435,46 @@ def test_a_probe_whose_codex_does_not_answer_records_trust_missing(tmp_path, mon
     (repo / connect.ADAPTER).write_text('agents = ["codex"]\n[slots]\ngate_cmd = "make test"\n', encoding="utf-8")
     monkeypatch.setattr(shutil, "which", lambda name: name)
     with patch.object(connect, "probe", return_value={"ok": True}), \
+         patch.object(connect, "interpreter", return_value=sys.executable), \
          patch.object(connect, "trusted", side_effect=ValueError("Codex 신뢰를 확인하지 못했다 — 연결 종료")):
         assert connect.examine(repo, wait=True)
     assert connect.record(repo.name)["trust"] is False
+
+
+def test_connect_with_an_unanswered_codex_names_the_reason_and_writes_nothing(tmp_path):
+    repo = _repo(tmp_path)
+    shown = {"needed": True, "refused": "Codex 신뢰를 확인하지 못했다 — 시간 초과", "digest": ""}
+    with patch.object(connect, "repo_of", return_value=repo), patch.object(connect, "hosts", return_value=["codex"]), \
+         patch.object(connect, "hub", return_value=shown), patch.object(connect, "move") as move, \
+         patch.object(connect, "write_adapter") as write:
+        with pytest.raises(HTTPException) as refused:
+            connect.connect(repo.name, connect.Connect())
+    assert refused.value.status_code == 409 and "시간 초과" in refused.value.detail
+    assert "허브 이전" not in refused.value.detail, "확인 못 한 것은 옮길 것이라 하지 않는다"
+    move.assert_not_called()
+    write.assert_not_called()
+
+
+def test_the_routine_hub_read_never_waits_on_codex_and_checks_once_per_ttl(monkeypatch):
+    """A Codex `app-server` may take minutes: the project list and the settings line read the last check."""
+
+    release, calls, fed = threading.Event(), [], []
+    monkeypatch.setattr(wiring, "_hub_seen", {})
+    monkeypatch.setattr(connect, "hub", lambda data=None: calls.append(1) or release.wait(10) and {
+        "needed": False, "refused": ""})
+    monkeypatch.setattr(work.feed, "put", fed.append)
+    started = time.monotonic()
+    assert wiring.hub_seen() == {"needed": False, "refused": "", "checking": True}
+    assert wiring.hub_seen()["checking"] and time.monotonic() - started < 1, "검사를 기다리지 않는다"
+    release.set()
+    for _ in range(100):
+        if fed:
+            break
+        time.sleep(0.05)
+    assert fed == [{"kind": "connect", "repo": ""}], "끝나면 화면이 다시 읽는다"
+    assert wiring.hub_seen() == {"needed": False, "refused": ""} and calls == [1], "새 결과로는 다시 검사하지 않는다"
+    wiring.forget_hub()
+    assert wiring.hub_seen()["checking"], "배선이 바뀌면 다시 검사한다"
 
 
 def test_off_windows_nothing_is_a_junction(tmp_path, monkeypatch):

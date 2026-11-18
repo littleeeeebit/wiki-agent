@@ -449,6 +449,8 @@ def move(confirmed: str, data: dict | None = None, done: list[str] | None = None
             done.append(f"{file.parent}: Codex 신뢰 기록")
         for file in RECORDS.glob("*.json"):
             keep(file.stem, probe={}, trust=None)
+        from . import wiring   # the routine reads' last check was of the wiring before this move
+        wiring.forget_hub()
         return now
 
 
@@ -685,11 +687,11 @@ class SurveySettings(BaseModel):
 def listing() -> dict:
     from . import survey, wiring
 
-    now = hub()
+    now = wiring.hub_seen()   # never a wait on Codex
     # The settings modal's hub line: whether this machine's wiring points here yet.
     return {"rows": rows(), "settings": survey.settings(), "powershell": powershell.status(),
             "hub": {"name": channels.WIKI.name, "needed": now["needed"], "refused": now["refused"],
-                    "branch": wiring.hub_branch()}}
+                    "checking": bool(now.get("checking")), "branch": wiring.hub_branch()}}
 
 
 class Folder(BaseModel):
@@ -785,7 +787,9 @@ def connect(name: str, body: Connect) -> dict:
     data, _ = adapter_of(path)
     if not hosts(data):
         raise HTTPException(409, "이 프로젝트에 사용할 Claude Code 또는 Codex CLI를 PATH에서 찾지 못했다")
-    if hub(data)["needed"]:
+    if (now := hub(data))["refused"]:   # a check that could not be made is not a move to confirm
+        raise HTTPException(409, f"이 기계의 배선을 확인하지 못했다 — {now['refused']}")
+    if now["needed"]:
         if not body.hub:
             raise HTTPException(409, "허브 이전을 먼저 확인받아야 한다")
         move(body.hub, data)

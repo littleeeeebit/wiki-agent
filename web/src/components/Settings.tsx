@@ -57,6 +57,15 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
       .catch((err) => { if (mine === generation.current) setFault(String(err)) })
     return () => { generation.current = mine + 1 }
   }, [])
+  // The server checks the wiring in the background (`connect.hub_seen`): while it does, the hub line reads again.
+  useEffect(() => {
+    if (!hub?.checking) return
+    const mine = generation.current
+    const timer = window.setTimeout(() => {
+      void api.getConnect().then(({ hub: next }) => { if (mine === generation.current) setHub(next) }).catch(() => {})
+    }, 3000)
+    return () => window.clearTimeout(timer)
+  }, [hub])
 
   useEffect(() => {
     if (!loop) return
@@ -143,7 +152,7 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
         <div hidden={section !== 'mobile'}><MobileSettings /></div>
         <div hidden={section !== 'connection'}>
         <Part title="연결">
-          <Row label="허브" note={hub ? (hub.refused ? `옮길 수 없다 — ${hub.refused}`
+          <Row label="허브" note={hub ? (hub.checking ? '배선 확인 중…' : hub.refused ? `옮길 수 없다 — ${hub.refused}`
             : hub.needed ? '옛 허브를 가리킨다 · 첫 [연결] 때 옮긴다' : undefined) : '읽는 중…'}>
             <span className="font-mono text-[12px]">{hub?.name ?? ''}</span>
           </Row>

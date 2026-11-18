@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -68,7 +69,43 @@ def watch(halt: threading.Event, every: float = EVERY) -> None:
         now = mark()
         if now != seen:
             seen = now
+            forget_hub()   # the routine reads' last check was of the wiring before this change
             work.feed.put({"kind": "connect", "repo": ""})
+
+
+# The routine reads' answer (`hub_seen`): the last check that finished. A Codex `app-server` may take minutes to
+# answer (`CodexServer`), and the project list and the settings line waited on it on every read.
+HUB_TTL = 60.0
+_hub_seen: dict = {}
+_hub_check = threading.Lock()   # held while the background check runs
+
+
+def hub_seen() -> dict:
+    """`connect.hub()` without waiting: `checking` until the first check finishes. One older than `HUB_TTL` runs
+    again in the background, and its end announces `connect`, so the screens read again and find it fresh."""
+
+    seen = dict(_hub_seen)
+    if (not seen or time.monotonic() - seen["at"] >= HUB_TTL) and _hub_check.acquire(blocking=False):
+        threading.Thread(target=_check_hub, daemon=True, name="hub-check").start()
+    return seen.get("shown") or {"needed": False, "refused": "", "checking": True}
+
+
+def _check_hub() -> None:
+    try:
+        try:
+            shown = connect.hub()
+        except Exception as exc:  # noqa: BLE001 — the reason is the answer until the next check
+            shown = {"needed": True, "refused": f"{type(exc).__name__}: {exc}"}
+        _hub_seen.update(at=time.monotonic(), shown=shown)   # before the release: no second check starts on a stale one
+    finally:
+        _hub_check.release()
+    work.feed.put({"kind": "connect", "repo": ""})
+
+
+def forget_hub() -> None:
+    """The machine's wiring changed: the next routine read checks again."""
+
+    _hub_seen.clear()
 
 
 def refused() -> str:

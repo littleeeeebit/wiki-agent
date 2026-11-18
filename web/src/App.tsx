@@ -234,15 +234,22 @@ export default function App() {
       .catch(() => setFault('서버가 안 뜬 것 같다 — tool\\app.cmd, 또는 python tool/main'))
     // Apart, because listing Codex's models starts Codex. The screen does not
     // wait on that; only the pickers do.
-    api.getOptions().then(setOptions).catch((err) => setFault(String(err)))
+    // The server never waits on Codex for them: a first model list still coming is read again (`watchOptions`).
+    let watching = new AbortController()
+    api.watchOptions(setOptions, watching.signal).catch((err) => setFault(String(err)))
     // The projects' connection states ride on the options; the rail shows
     // the current one's, so a connection read again reads them again.
     const reread = () => {
-      void api.getOptions().then(setOptions).catch(() => {})
+      watching.abort()
+      watching = new AbortController()
+      void api.watchOptions(setOptions, watching.signal).catch(() => {})
       if (!expected.current) void api.getChannels().then(accept).catch(() => {})
     }
     window.addEventListener('connect-changed', reread)
-    return () => window.removeEventListener('connect-changed', reread)
+    return () => {
+      watching.abort()
+      window.removeEventListener('connect-changed', reread)
+    }
   }, [])
 
   // The project decides which worktrees exist. Whatever else changes them —
