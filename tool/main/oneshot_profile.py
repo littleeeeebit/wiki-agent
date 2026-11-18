@@ -17,11 +17,19 @@ ESTIMATE_USD = 2.0   # a USD-metered role's first turn, before any sample; `.env
 TURN_SECONDS = 600.0  # a cut turn's time before the role has a longest turn on record
 
 KINDS = ("webapp", "android", "api", "cli", "desktop", "data")
-SUPPORTED_KINDS = ("webapp", "android")
+SUPPORTED_KINDS = ("webapp", "android", "desktop")
+# A kind only some hosts build, with why the others cannot: a PC app is built on Windows only in plan 9.
+HOST_ONLY = {"desktop": ("win32", "PC 앱은 Windows 에서만 만든다")}
 # The stage a kind waits at in this version, stopped with reason `kind` until its plan step lands. A kind not
 # here runs to the end: `android` does since its R3 sheet and S8 (`docs/plans/oneshot/7-android.md`, 7f2), and
-# several kinds without `desktop` since 9c4b (`waits_at`).
-KIND_STOPS: dict[str, str] = {}
+# several kinds without `desktop` since 9c4b. `desktop`, alone or among other kinds, waits before its core design
+# until 9e2 (`docs/plans/oneshot/9-kinds.md`, "Steps and their stops").
+KIND_STOPS: dict[str, str] = {"desktop": "design"}
+# A run's stages in order after the bootstrap (`web/src/lib/oneshot.ts` STAGES).
+STAGE_ORDER = ("spec", "design", "r1", "tests", "build", "review", "split", "board", "frontend", "r2", "build-front",
+               "critique", "phone", "r3", "pr", "done")
+# The sizes S7 sets a PC app's main window to: its frame in physical pixels, as the driver reads it back.
+WINDOWS = ("1280x800", "1024x768", "1440x900", "1920x1080")
 # The reference phone S7 shoots (`device` replaces `responsive` for `android`): emulator hardware profiles.
 DEVICES = {"medium-phone": {"label": "보통 폰", "width": 1080, "height": 2400, "dpi": 420},
            "galaxy-s21": {"label": "Galaxy S21", "width": 1080, "height": 2400, "dpi": 421},
@@ -42,8 +50,10 @@ SCHEMA: dict[str, dict] = {
     "llm": {"options": ["none", "anthropic", "openai", "other"], "default": "none"},
     "github_owner": {"text": True, "default": "", "asked": True},
 }
-FIELDS = {*SCHEMA, "device"}   # every kind's card fields
+FIELDS = {*SCHEMA, "device", "window"}   # every kind's card fields
 OWNER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
+TOOL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,63}")   # a program's name on PATH, never a path
+PINNED = re.compile(r"[A-Za-z0-9-]+(?:/[A-Za-z0-9._-]+)+@[A-Za-z0-9._-]+")   # owner/repo[/path]@ref, no empty segment
 # The stack is the owner's, picked in S2 (`docs/plans/oneshot/6-free-stack.md`); the card holds none of it.
 PARTS = ("backend", "frontend", "styling", "data_store", "tests", "deploy")
 ANDROID_PARTS = ("language", "ui", "core", "data_store", "tests", "build")
@@ -66,12 +76,33 @@ def kinds_of(o: dict) -> list[str]:
 
 
 def waits_at(o: dict) -> str | None:
-    """The stage the run waits at in this version, stopped with reason `kind`: several kinds run to their pull
-    request, unless `desktop` is among them, which has no screens yet."""
+    """The stage the run waits at in this version, stopped with reason `kind`: the earliest any of its kinds
+    waits at, so several kinds wait where `desktop` does."""
 
-    if len(kinds := kinds_of(o)) > 1:
-        return "frontend" if "desktop" in kinds else None
-    return KIND_STOPS.get(kind_of(o))
+    stops = [KIND_STOPS[k] for k in kinds_of(o) if k in KIND_STOPS]
+    return stops[0] if stops else None
+
+
+def held(o: dict) -> bool:
+    """Whether the run stands at or past the stage it waits at in this version, so nothing may start it: a run an
+    earlier version carried past today's stop (several kinds with `desktop` at `frontend`) stays held as well."""
+
+    stop = waits_at(o)
+    return stop is not None and o.get("stage") in STAGE_ORDER and STAGE_ORDER.index(o["stage"]) >= STAGE_ORDER.index(stop)
+
+
+def unavailable() -> dict[str, str]:
+    """The supported kinds this host cannot build, each with why, in the owner's words."""
+
+    return {k: why for k, (host, why) in HOST_ONLY.items() if sys.platform != host}
+
+
+def off_host(o: dict) -> str | None:
+    """Why this host cannot go on with the run `o` (a run, or a spec's `oneshot`), or None: the owner's kinds as
+    picked at the start (a run's own `kinds`, before any restatement) and as restated (`intent`)."""
+
+    picked = {*(o.get("kinds") or []), *kinds_of(o)}
+    return next((why for k, why in unavailable().items() if k in picked), None)
 
 
 def shape(o: dict) -> str:
@@ -90,19 +121,22 @@ def parts(kind: str | list[str] = "webapp") -> tuple[str, ...]:
     kinds = _kinds(kind)
     if len(kinds) > 1:
         return (*SHARED_PARTS, *(f"{k}.{p}" for k in kinds for p in OWN_PARTS[k]))
-    return ANDROID_PARTS if kinds[0] == "android" else PARTS
+    return ANDROID_PARTS if kinds[0] in ("android", "desktop") else PARTS   # a PC app alone takes Android's six
 
 
 def schema(kind: str | list[str] = "webapp") -> dict[str, dict]:
-    """The card's fields for `kind`: an `android` card names its reference phone instead of web viewports.
-    Several kinds' card holds every field any of them has, each once."""
+    """The card's fields for `kind`: an `android` card names its reference phone, and a `desktop` card the size
+    of its main window, instead of web viewports. Several kinds' card holds every field any of them has, each once."""
 
     if len(kinds := _kinds(kind)) > 1:
-        return {k: f for one in kinds for k, f in schema(one).items()}
-    if (kind := kinds[0]) != "android":
+        fields = {k: f for one in kinds for k, f in schema(one).items()}
+    elif own := {"android": ("device", {"options": list(DEVICES), "default": "medium-phone"}),
+                 "desktop": ("window", {"options": list(WINDOWS), "default": WINDOWS[0]})}.get(kinds[0]):
+        fields = {(own[0] if k == "responsive" else k): (own[1] if k == "responsive" else f) for k, f in SCHEMA.items()}
+    else:
         return SCHEMA
-    return {("device" if k == "responsive" else k): ({"options": list(DEVICES), "default": "medium-phone"}
-                                                      if k == "responsive" else f) for k, f in SCHEMA.items()}
+    # A PC app is built and checked on this Windows PC (plan 9e): its card, alone or among kinds, names no other host.
+    return {**fields, "os_now": {"options": ["windows"], "default": "windows"}} if "desktop" in kinds else fields
 
 
 def current(profile: dict | None) -> dict | None:
@@ -157,9 +191,51 @@ def problems(profile: dict, kind: str = "webapp") -> tuple[list[str], list[str]]
     return errors, warnings
 
 
-def stacked(value, kind: str = "webapp") -> list[dict]:
+def tooled(part: str, kind: str | list[str]) -> bool:
+    """Whether `part` is a PC app's `build`, which names the host tools its stack runs (plan 9e, "The toolchain,
+    declared once"): `build` for `desktop` alone, `desktop.build` among several kinds."""
+
+    kinds = _kinds(kind)
+    return part == ("build" if kinds == ["desktop"] else "desktop.build" if "desktop" in kinds else None)
+
+
+def tools_of(value, ci: bool) -> list[dict]:
+    """A PC app's `tools`, checked: `[{name, setup}]`, each `name` a program to find on `PATH` and each once.
+    `setup` is how a clean CI runner gets it: `preinstalled` on the `windows-latest` image, a `run` command, or an
+    action pinned to a version (`uses: owner/action@ref`) with string `with` inputs. It is required when the
+    card's CI is on."""
+
+    if not isinstance(value, list) or not value:
+        raise ValueError("PC 앱의 `build` 에는 `tools` 목록이 있어야 한다 — 스택이 쓰는 프로그램마다 하나씩")
+    out, seen = [], set()
+    for tool in value:
+        name = tool.get("name") if isinstance(tool, dict) else None
+        if not isinstance(name, str) or not TOOL.fullmatch(name.strip()):
+            raise ValueError("`tools` 의 `name` 은 PATH 에서 찾을 프로그램 이름이다 — 경로가 아니다")
+        name = name.strip()
+        if name.lower() in seen:
+            raise ValueError(f"`tools` 에 `{name}` 이 둘 이상이다")
+        seen.add(name.lower())
+        setup = tool.get("setup")
+        if setup is None and not ci:
+            out.append({"name": name})
+            continue
+        if setup == "preinstalled" or isinstance(setup, dict) and (
+                set(setup) == {"run"} and isinstance(setup["run"], str) and setup["run"].strip()
+                or set(setup) <= {"uses", "with"} and isinstance(setup.get("uses"), str) and PINNED.fullmatch(setup["uses"])
+                and isinstance(inputs := setup.get("with", {}), dict)   # inputs as Actions reads them: text only,
+                and all(isinstance(k, str) and isinstance(v, str) for k, v in inputs.items())):   # shown as stored
+            out.append({"name": name, "setup": setup})
+            continue
+        raise ValueError(f"`{name}` 의 `setup` 은 `preinstalled`, `{{\"run\": …}}`, 또는 버전을 고정한 "
+                         f"`{{\"uses\": \"owner/action@ref\"}}` 다" + (" — CI 를 쓰는 카드는 도구마다 필요하다" if ci else ""))
+    return out
+
+
+def stacked(value, kind: str = "webapp", ci: bool = False) -> list[dict]:
     """The `stack` list of an `oneshot-spec` block, checked: `[{part, choice, why, status}]`, each of the kind's
-    parts at most once. A part may still be missing; the conversation ends only when every part is confirmed."""
+    parts at most once, and a PC app's `build` with its `tools`. A part may still be missing; the conversation
+    ends only when every part is confirmed."""
 
     if not isinstance(value, list):
         raise ValueError("`stack` 는 목록이어야 한다")
@@ -174,8 +250,11 @@ def stacked(value, kind: str = "webapp") -> list[dict]:
         if item.get("status") not in STATUSES:
             raise ValueError(f"`stack` 의 `status` 는 {', '.join(STATUSES)} 중 하나다")
         seen.add(item["part"])
+        tools = {"tools": tools_of(item.get("tools"), ci)} if tooled(item["part"], kind) else {}
+        if "tools" in item and not tools:
+            raise ValueError(f"`tools` 는 PC 앱의 `build` 에만 있다 — `{item['part']}` 에는 없다")
         out.append({"part": item["part"], "choice": item["choice"].strip(), "why": " ".join(item["why"].split()),
-                    "status": item["status"]})
+                    "status": item["status"], **tools})
     return sorted(out, key=lambda s: names.index(s["part"]))
 
 

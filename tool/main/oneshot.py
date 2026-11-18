@@ -35,8 +35,8 @@ from workspace import TASK, create
 
 from . import channels, connect, oneshot_android, prerequisite_review, runtime, specs
 from .oneshot_files import as_planned, git, planned, tracked  # noqa: F401 — `tracked` is read by tests
-from .oneshot_profile import (DEVICES, SUPPORTED_KINDS, charged, cut, kinds_of, ledger, problems, proposal, schema,
-                              current)
+from .oneshot_profile import (DEVICES, SUPPORTED_KINDS, charged, cut, kinds_of, ledger, problems, proposal,
+                              schema, current, off_host, unavailable)
 from .query import ROOT
 
 RUNS = RAW / "oneshot"
@@ -246,9 +246,10 @@ def ask(store: Store, role: str, system: str, text: str, where: Path | None = No
 
 
 def prompt(name: str, kind: str = "webapp") -> str:
-    """`tool/prompts/oneshot-{name}.md`, or its `-android` or `-kinds` (several kinds, `oneshot_profile.shape`) one."""
+    """`tool/prompts/oneshot-{name}.md`, or its `-android`, `-desktop` or `-kinds` (several kinds) one: a `desktop`
+    stage without its file is one a run waits before (`KIND_STOPS`), never one the web app's instructions run."""
 
-    return (ROOT / f"tool/prompts/oneshot-{name}{'-' + kind if kind in ('android', 'kinds') else ''}.md").read_text(encoding="utf-8")
+    return (ROOT / f"tool/prompts/oneshot-{name}{'-' + kind if kind in ('android', 'desktop', 'kinds') else ''}.md").read_text(encoding="utf-8")
 
 
 def block(final: str, name: str):
@@ -660,8 +661,10 @@ def bootstrap(rid: str) -> None:
 def launch(rid: str, work: str, *args, **fields) -> None:
     """One worker per run. Callers hold `_lock` from their state check through this call, and hand
     the stage's new state in `fields`: it is written with `working` only once the worker may start,
-    so a refusal leaves the run as it was."""
+    so a refusal leaves the run as it was. No step of a run this host cannot build starts (`off_host`)."""
 
+    if why := off_host(load(rid)):
+        raise HTTPException(409, why)
     fn = {"intake": intake, "profile": environment, "bootstrap": bootstrap}[work]
     start_worker(run_store(rid), work, fn, (rid, *args), fields)
 
@@ -724,11 +727,13 @@ def restarted(store: Store) -> None:
 
 
 def card_errors(run: dict, profile: dict) -> tuple[list[str], list[str]]:
-    """The card's problems for the run's kinds; a card with `android` also needs the toolchain."""
+    """The card's problems for the run's kinds; a card with `android` also needs the toolchain, and one with a kind
+    this host cannot build (`unavailable`) is never confirmed here."""
 
     kinds = kinds_of(run)
     errors, warnings = problems(profile, kinds)
-    return errors + (oneshot_android.missing() if "android" in kinds else []), warnings
+    off = [why] if (why := off_host(run)) else []
+    return errors + off + (oneshot_android.missing() if "android" in kinds else []), warnings
 
 
 def view(run: dict) -> dict:
@@ -781,8 +786,9 @@ def start(body: Start) -> dict:
         raise HTTPException(400, f"만들고 싶은 것을 1–{MAX_SENTENCE}자로 적어라")
     if not body.kinds:
         raise HTTPException(400, "무엇을 만드는지 종류를 하나 이상 골라라")
-    if len(set(body.kinds)) != len(body.kinds) or not set(body.kinds) <= set(SUPPORTED_KINDS):
-        raise HTTPException(400, f"고를 수 있는 종류는 {', '.join(SUPPORTED_KINDS)} 이고, 한 번씩이다")
+    off = unavailable()   # a kind this host cannot build, such as a PC app off Windows, refused with why
+    if len(set(body.kinds)) != len(body.kinds) or not set(body.kinds) <= set(SUPPORTED_KINDS) - set(off):
+        raise HTTPException(400, next((off[k] for k in body.kinds if k in off), f"고를 수 있는 종류는 {', '.join(SUPPORTED_KINDS)} 이고, 한 번씩이다"))
     picked = ""
     if body.path.strip():
         path = Path(body.path.strip()).expanduser()
@@ -819,8 +825,8 @@ def start(body: Start) -> dict:
 
 
 @router.get("/api/oneshot")
-def listing() -> dict:
-    return {"runs": [view(r) for r in runs() if not r.get("committed")]}
+def listing() -> dict:   # with the kinds this host cannot build, which the start screen shows disabled
+    return {"runs": [view(r) for r in runs() if not r.get("committed")], "unavailable": unavailable()}
 
 
 @router.get("/api/oneshot/{rid}")
@@ -850,6 +856,8 @@ def intent(rid: str, body: Intent) -> dict:
         # A restatement an earlier version's intake picked the kind of: its actual kinds, not a marker, decide.
         if not set(run["intent"].get("kinds") or [run["intent"]["kind"]]) <= set(SUPPORTED_KINDS):
             raise HTTPException(409, f"`{run['intent']['kind']}` 는 이 버전에서 만들 수 없다 — 지금은 {', '.join(SUPPORTED_KINDS)} 만")
+        if why := off_host(run):   # a saved PC app run, now off Windows
+            raise HTTPException(409, why)
         name = specs.slugged(body.name or run["intent"]["name"])
         if run["picked"]:
             path = Path(run["picked"])

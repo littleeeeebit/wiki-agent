@@ -27,9 +27,14 @@ A short answer for the person, then exactly one fenced block named
 - An `android` card has `device` instead of `responsive`: the reference
   phone whose screen is checked. A card for a web app and an Android app
   has both. When the sentence names a phone model in
-  the `device` options, propose it; otherwise leave the default. The stack is
-  not on the card: the person picks it later, in the requirements
-  conversation.
+  the `device` options, propose it; otherwise leave the default.
+- A `desktop` card has `window` instead of `responsive`: the size the
+  program's main window is set to when its screens are checked, as width by
+  height in physical pixels. Propose another option only when the sentence
+  gives a reason, such as a small helper window or a full-screen tool;
+  otherwise leave the default.
+- The stack is not on the card: the person picks it later, in the
+  requirements conversation.
 - Never propose an option outside the schema, or one outside `enabled`.
 - Never fill `visibility`, `docs_language` or `github_owner`: only the person
   decides those.

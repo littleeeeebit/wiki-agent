@@ -26,7 +26,7 @@ from common import is_junction
 
 from . import oneshot, oneshot_android, oneshot_brief as brief, oneshot_build, oneshot_front_build, \
     oneshot_screens as screens, oneshot_sheet as sheet, oneshot_spec, runtime, specs
-from .oneshot_profile import DEVICES, kinds_of, shape, waits_at
+from .oneshot_profile import DEVICES, kinds_of, shape
 
 SHOT_SECONDS = 15_000   # Playwright's milliseconds per page
 PREVIEW_SECONDS = 1800   # an Android preview's first run downloads its Gradle dependencies
@@ -480,14 +480,8 @@ def submit_board(repo: str, body: Board) -> dict:
                                              kinds_of(o) if shape(o) == "kinds" else ())
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        if waits_at(o) == "frontend":   # a kind S6 cannot design yet (`desktop`, plan 9e)
-            oneshot_spec.saved(repo, oneshot={"stage": "frontend", "frequency": frequency, "first_screen": first,
-                                              "front": None, "r2": None, "working": None, "stopped": {
-                                                  "reason": "kind", "state": "frontend",
-                                                  "detail": "여러 종류의 화면 설계는 다음 버전에서 이어진다 — 기능 보드를 받았다"}})
-        else:
-            oneshot_spec.start(repo, "frontend", stage="frontend", frequency=frequency, first_screen=first,
-                               front=None, r2=None)
+        oneshot_spec.start(repo, "frontend", stage="frontend", frequency=frequency, first_screen=first,
+                           front=None, r2=None)
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
 

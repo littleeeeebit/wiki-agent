@@ -21,7 +21,8 @@ from pydantic import BaseModel
 from common import is_junction
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, specs, work
-from .oneshot_profile import current, environment, kind_of, kinds_of, stacked, unsettled, waits_at
+from .oneshot_profile import (current, environment, held, kind_of, kinds_of, off_host, stacked, tooled, unsettled,
+                              waits_at)
 
 RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}   # a later stage's module adds its own
 SHEETS = {"r1"}   # a stage whose sheet stands when its edit turn stopped
@@ -113,17 +114,27 @@ def kept(spec: dict, value, where: str) -> tuple[list[dict], list[dict]]:
     return reqs, glossary
 
 
+def same(a, b) -> bool:
+    """Equal values, types kept: `True` is not `1`, nor `"1"` (Python's `==` takes the first pair as one)."""
+
+    return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
 def unanswered(o: dict, stack: list[dict]) -> list[str]:
     """The parts `stack` marks `confirmed` that no owner's answer stands behind: confirmed already with the same
-    choice, or offered in the stack before the question the owner has just answered, and nothing else.
+    choice, or offered in the stack before the question the owner has just answered, and nothing else. A PC app's
+    build part, whose `tools` run on this PC, is confirmed only as the owner confirmed it with its own button
+    (`confirm_build`): that exact choice and tool list, setups included, and no answer to any question.
     ponytail: that the answered question was about the stack is the prompt's to keep; the owner then sees the
     stack again on R1."""
 
     talk, before = o.get("talk") or [], {s["part"]: s for s in o.get("stack") or []}
     answered = len(talk) >= 2 and talk[-1]["role"] == "owner" and bool(talk[-2].get("choices"))
-    return [s["part"] for s in stack if s["status"] == "confirmed"
-            and not (before.get(s["part"], {}).get("status") == "confirmed" and before[s["part"]]["choice"] == s["choice"])
-            and not (answered and s["part"] in before)]
+    build = o.get("confirmed_build")
+    return [s["part"] for s in stack if s["status"] == "confirmed" and (
+        not same(build, {"choice": s["choice"], "tools": s.get("tools")}) if tooled(s["part"], kinds_of(o)) else
+        not (before.get(s["part"], {}).get("status") == "confirmed" and before[s["part"]]["choice"] == s["choice"])
+        and not (answered and s["part"] in before))]
 
 
 def spec_turn(final: str, spec: dict):
@@ -132,7 +143,8 @@ def spec_turn(final: str, spec: dict):
         raise ValueError("`oneshot-spec` 블록이 하나 있어야 한다")
     value = json.loads(found["oneshot-spec"])
     reqs, glossary = kept(spec, value, "S2")   # refuses anything but an object first
-    stack = stacked(value.get("stack") or [], kinds_of(spec["oneshot"]))
+    stack = stacked(value.get("stack") or [], kinds_of(spec["oneshot"]),
+                    (current(spec["oneshot"].get("profile")) or {}).get("ci") == "github-actions")
     if early := unanswered(spec["oneshot"], stack):
         raise ValueError("주인이 답하기 전에 `confirmed` 로 둔 스택 부분이 있다 — 묶음을 묻고, 주인의 답을 받은 다음 턴에 "
                          f"확정한다: {', '.join(early)}")
@@ -142,6 +154,11 @@ def spec_turn(final: str, spec: dict):
         specs._shape("choices", choices)
         if len(choices.get("questions", [choices])) > 3:
             raise ValueError("한 번에 묻는 `choices` 는 세 개까지다")
+        for q in choices.get("questions", [choices]):   # the answer is the picked labels, several joined with ", "
+            labels = [o["label"].strip() for o in q["options"]]
+            if len(set(labels)) != len(labels) or q.get("multi") and any("," in x for x in labels):
+                raise ValueError("한 질문의 선택지는 `label` 이 서로 달라야 하고, 여럿을 고르는 질문의 `label` 에는 "
+                                 "쉼표가 없어야 한다 — 답으로 고른 `label` 이 돌아온다")
     if (mismatch := value.get("kinds_mismatch")) is not None:
         if (not isinstance(mismatch, dict) or mismatch.get("requirement") not in {r["id"] for r in reqs}
                 or not isinstance(mismatch.get("reason"), str) or not mismatch["reason"].strip()):
@@ -176,6 +193,9 @@ def talk(repo: str) -> None:
     turns = [*(o.get("talk") or []), {"role": "agent", "text": said, "choices": choices, "ts": time.time()}]
     # The stack now lives in this spec, in version 3's shape, whatever version the run started at.
     fields = {"glossary": glossary, "stack": stack, "talk": turns, "version": max(o.get("version", 1), 3)}
+    # A PC app's pressed build holds only while the stack still offers that build: replaced or dropped, it is gone.
+    build = next(({"choice": s["choice"], "tools": s.get("tools")} for s in stack if tooled(s["part"], kinds)), None)
+    fields["confirmed_build"] = o.get("confirmed_build") if same(o.get("confirmed_build"), build) else None
     if mismatch:   # the owner kept a requirement the run's kind cannot meet: every later stage builds that kind
         # One save: a server that dies after it never leaves the conversation open again.
         detail = f"`{mismatch['requirement']}` 는 이 실행의 종류로 만들 수 없다 — {mismatch['reason']}. 새 실행을 시작해 종류를 다시 골라라"
@@ -183,7 +203,10 @@ def talk(repo: str) -> None:
             saved(repo, requirements=reqs, oneshot={**fields, "open": "", "working": None, "mismatch": mismatch,
                                                     "stopped": {"reason": "rekind", "detail": detail, "state": o["stage"]}})
         return
-    if not why:
+    if not why and waits_at(o) == "design":   # the kind waits here in this version: one write, nothing starts
+        saved(repo, requirements=reqs, oneshot={**fields, "open": "", "stage": "design", "working": None, "stopped": {
+            "reason": "kind", "state": "design", "detail": "PC 앱의 핵심 설계는 다음 버전에서 이어진다 — 요구와 스택을 받았다"}})
+    elif not why:
         saved(repo, requirements=reqs, oneshot={**fields, "open": ""})
         handoff(repo, "design", stage="design")
     else:
@@ -406,6 +429,13 @@ WORKERS = {"talk": talk, "design": design, "redesign": redesign}   # a later sta
 
 
 def start(repo: str, work: str, *args, **fields) -> None:
+    """Starts a stage's worker. A run held at its kind's stop (`held`), or moving into it with `fields`, starts
+    nothing past S2 whatever its saved stop says: the stop is put back and the start refused."""
+
+    o = specs.load(repo, oneshot.BRANCH)["oneshot"]
+    if work != "talk" and held({**o, "stage": fields.get("stage") or o.get("stage")}):
+        stop = waiting(repo, o).get("stopped") or {}
+        raise HTTPException(409, stop.get("detail") or "이 실행의 다음 단계는 다음 버전에서 이어진다")
     oneshot.start_worker(store(repo), work, WORKERS[work], (repo, *args), fields)
 
 
@@ -426,7 +456,7 @@ def recover() -> None:
             o = saved(folder.name, oneshot=repair)["oneshot"]
         o = waiting(folder.name, o) if o else o
         stop = o.get("stopped") or {}
-        if stop.get("reason") == "kind" and o.get("stage") != waits_at(o):
+        if stop.get("reason") == "kind" and not held(o):
             saved(folder.name, oneshot={"stopped": {**stop, "reason": "restart",
                                                     "detail": "이 버전은 이 단계를 이어 간다 — [재개]를 누르면 시작한다"}})
         if o.get("working") or (o and o.get("stage") == "spec" and not o.get("talk") and not o.get("stopped")
@@ -438,7 +468,7 @@ def waiting(repo: str, o: dict) -> dict:
     """A run at the stage this version waits at keeps its `kind` stop: a stop or a shutdown that landed between
     that stage's save and its hand-off replaced it, and must not make the stage resumable."""
 
-    if o.get("stage") == waits_at(o) and not o.get("working") and (o.get("stopped") or {}).get("reason") != "kind":
+    if held(o) and not o.get("working") and (o.get("stopped") or {}).get("reason") != "kind":
         return saved(repo, oneshot={"stopped": {"reason": "kind", "state": o["stage"],
                                                 "detail": "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다"}})["oneshot"]
     return o
@@ -563,10 +593,14 @@ def supported(o: dict) -> None:
         raise HTTPException(409, "예전 형식으로 계약 테스트를 고정한 실행이라 이어 갈 수 없다 — 새 실행을 시작하라")
     if o.get("version", 1) < 3 and o.get("stage") != "spec":
         raise HTTPException(409, "스택을 환경 카드에서 정한 예전 실행이라 이어 갈 수 없다 — 새 실행을 시작하라")
+    if why := off_host(o):   # a saved PC app run, opened on another host: no turn of it runs here
+        raise HTTPException(409, why)
 
 
 def idle(o: dict, stage: str) -> None:
     supported(o)
+    if held(o):   # at or past its kind's stop, with the stop saved or lost: nothing past S2 runs in this version
+        raise HTTPException(409, "이 실행의 다음 단계는 다음 버전에서 이어진다")
     if o.get("stage") != stage or o.get("working") or o.get("stopped"):
         raise HTTPException(409, f"지금 할 수 없다 — {o.get('stage')}{' 진행 중' if o.get('working') else ''}")
 
@@ -585,6 +619,35 @@ def say(repo: str, body: Say) -> dict:
         o = spec_of(repo)["oneshot"]
         idle(o, "spec")
         start(repo, "talk", talk=[*(o.get("talk") or []), {"role": "owner", "text": text, "ts": time.time()}])
+    return view(spec_of(repo))
+
+
+class Build(BaseModel):
+    part: str
+    choice: str
+    tools: list
+
+
+@router.post("/api/oneshot/spec/{repo}/build")
+def confirm_build(repo: str, body: Build) -> dict:
+    """The owner confirms a PC app's build part as the stack offers it: that choice and its tools, each setup
+    included. Only this confirms it (`unanswered`); the next S2 turn then writes it `confirmed`."""
+
+    with oneshot._lock:
+        o = spec_of(repo)["oneshot"]
+        idle(o, "spec")
+        talk = o.get("talk") or []
+        if talk and talk[-1]["role"] == "agent" and talk[-1].get("choices"):   # never taken as that question's answer
+            raise HTTPException(409, "아직 답하지 않은 질문이 있다 — 그 질문에 먼저 답하라")
+        offered = next((s for s in o.get("stack") or [] if s["part"] == body.part and tooled(s["part"], kinds_of(o))),
+                       None)
+        if not offered or offered["status"] == "confirmed" or not same(
+                {"choice": offered["choice"], "tools": offered.get("tools")}, {"choice": body.choice, "tools": body.tools}):
+            raise HTTPException(409, "확정하려는 빌드와 도구가 지금 제시된 것과 다르다 — 화면을 새로 고쳐라")
+        names = ", ".join(t["name"] for t in offered["tools"])   # the saved offer, never the request's copy
+        start(repo, "talk", confirmed_build={"choice": offered["choice"], "tools": offered["tools"]}, talk=[
+            *talk, {"role": "owner", "text": f"빌드를 이대로 확정한다: {offered['choice']} — 도구 {names}",
+                    "ts": time.time()}])
     return view(spec_of(repo))
 
 
