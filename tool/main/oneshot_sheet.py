@@ -105,13 +105,13 @@ def _strings(item: dict, key: str, where: str) -> list[str]:
 
 
 def table(kind: str | list[str] = "webapp") -> dict:
-    """The design's item kinds for a run's kind: an Android app's core, or a web app's backend. Several kinds
-    share one core, and a web app among them adds its server's endpoints, which the others may call."""
+    """The design's item kinds for a run's kind: an installed app's core (Android or PC), or a web app's backend.
+    Several kinds share one core, and a web app among them adds its server's endpoints, which the others may call."""
 
     kinds = [kind] if isinstance(kind, str) else list(kind)
     if len(kinds) > 1:
         return {**CORE, "api": KINDS["api"]} if "webapp" in kinds else CORE
-    return CORE if kinds[0] == "android" else KINDS
+    return CORE if kinds[0] in ("android", "desktop") else KINDS
 
 
 def blocks(kind: str | list[str] = "webapp") -> str:
@@ -512,8 +512,9 @@ def folded_tail(design: dict, glossary: list[dict], mark) -> list[str]:
 
 
 def core_sheet(spec: dict) -> str:
-    """An Android app's R1 sheet: the module table where a web app has its API table, the platform
-    capabilities with the prompt each causes and its distribution risk, and every call leaving the phone."""
+    """An installed app's R1 sheet (Android or PC, or several kinds): the module table where a web app has its
+    API table, the platform capabilities with the prompt each causes and its distribution risk, and every call
+    leaving the device."""
 
     o = spec["oneshot"]
     design, reqs, glossary = o["design"], spec.get("requirements") or [], o.get("glossary") or []
@@ -521,10 +522,12 @@ def core_sheet(spec: dict) -> str:
     lines = opening(spec, "핵심 설계", mark)
     stored = [f"{m['name']}: {m['stores']}" for m in design["modules"] if m["stores"]]
     abilities = [r for r in reqs if r.get("capability")]
-    kinds = (o.get("intent") or {}).get("kinds") or []
+    intent = o.get("intent") or {}
+    kinds = intent.get("kinds") or [intent.get("kind", "android")]   # a record from before kinds has its one `kind`
     several = len(kinds) > 1
+    device, leaving = ("기기", "앱") if several else ("PC", "PC") if kinds == ["desktop"] else ("폰", "폰")
     lines += ["", "## 나중에 되돌리기 어려운 것", "",
-              f"- {'기기' if several else '폰'}에 저장하는 것: {'; '.join(_cell(s) for s in stored) or '없음'}",
+              f"- {device}에 저장하는 것: {'; '.join(_cell(s) for s in stored) or '없음'}",
               f"- 플랫폼 권한: {', '.join(f'`{r['capability']['permission']}`' for r in abilities) or '없음'}"]
     if "api" in design:
         lines.append(f"- 로그인: `{o['profile'].get('auth')}`")
@@ -555,7 +558,7 @@ def core_sheet(spec: dict) -> str:
         lines += [f"| {p['id']}{mark(p['id'])} | {p['method']} | `{_cell(p['path'])}` | {_cell(p['does'])} |"
                   for p in design["api"]]
     if design["outside"]:
-        lines += ["", f"## {'앱' if several else '폰'} 밖으로 나가는 호출", "", "| id | 대상 | 하는 일 | 실패할 때 |",
+        lines += ["", f"## {leaving} 밖으로 나가는 호출", "", "| id | 대상 | 하는 일 | 실패할 때 |",
                   "| --- | --- | --- | --- |"]
         lines += [f"| {x['id']}{mark(x['id'])} | {_cell(x['target'])} | {_cell(x['does'])} | {_cell(x['failure'])} |"
                   for x in design["outside"]]

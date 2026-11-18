@@ -24,7 +24,7 @@ from xml.etree import ElementTree
 from fastapi import HTTPException
 
 from . import connect, oneshot, oneshot_android, oneshot_spec, refactor_run, runtime, specs, work
-from .oneshot_profile import charged, environment, kinds_of, shape
+from .oneshot_profile import charged, environment, held as kind_held, kinds_of, shape
 from .query import _lock as work_lock, hold
 
 MAX_ATTEMPTS = 3
@@ -94,12 +94,17 @@ class Turn(work.Run):
                 store.put(inflight=None)
 
 
-def send(repo: str, stage: str, text: str) -> None:
+def send(repo: str, stage: str, text) -> None:
     """One work turn for `stage` in the spec's worktree; a turn that cannot be sent stops the stage, and
-    the instruction the person queued for the worktree goes then, as after a turn."""
+    the instruction the person queued for the worktree goes then, as after a turn. `text` may be a function
+    of nothing, called only once the run is known not to be held: a held kind may have no prompt for it."""
 
     store = oneshot_spec.store(repo)
     spec = oneshot_spec.spec_of(repo)
+    if kind_held(spec["oneshot"]):   # at or past its kind's stop, however it was called: the stop is put back
+        oneshot_spec.waiting(repo, oneshot_spec.saved(repo, oneshot={"working": None})["oneshot"])
+        return
+    text = text() if callable(text) else text
     path, codex = Path(spec["worktree"]), oneshot.codex_role("build", store)
     try:
         held = hold(work._busy, work_lock, str(path), "작업트리를 다른 턴이 쓰고 있다", kind="turn")
@@ -189,13 +194,13 @@ def build_text(spec: dict) -> str:
 def begin(repo: str) -> None:
     """After R1's approval: the tests-first turn."""
 
-    send(repo, "tests", tests_text(oneshot_spec.spec_of(repo)))
+    send(repo, "tests", lambda: tests_text(oneshot_spec.spec_of(repo)))
 
 
 def resume(repo: str) -> None:
     spec = oneshot_spec.saved(repo, oneshot={"attempts": 0})   # the owner's resume starts the attempts afresh
     stage = spec["oneshot"]["stage"]
-    send(repo, stage, STAGES[stage][2](spec))
+    send(repo, stage, lambda: STAGES[stage][2](spec))
 
 
 # -- What the server checks ------------------------------------------------------------

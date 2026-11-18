@@ -41,7 +41,7 @@ The sections, in this order. Names marked optional may be left out:
 6. `알아 두실 것`: costs, risks, a public repository, permissions and calls
    leaving the device, what only a real device can check, and any
    contradiction between the restatement and the requirements. For an
-   Android app, or several kinds, it cites every requirement with a
+   Android app, a Windows app, or several kinds, it cites every requirement with a
    `capability` and every outside call (`X`), each by its id. With several
    kinds it says which kind asks for each permission.
 7. `다 됐다고 보는 기준`: five to ten outcomes a person can observe,
