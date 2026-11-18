@@ -1078,14 +1078,14 @@ def forsaken(path: Path) -> None:
 
 @router.post("/api/specs/{sid}/start")
 def start(sid: str, body: Start) -> dict:
-    """`[시작]`: the worktree first, then the spec moves, then the first turn.
+    return started(current_repo(), sid, body)
 
-    In that order, a worktree that could not be made leaves the spec exactly
-    as it was; the other way round, a failure had to be rolled back."""
 
+def started(repo: Path, sid: str, body: Start) -> dict:
+    """`[시작]`, also the server's (`release_repair`): worktree, then spec, then first turn, so a worktree that
+    could not be made leaves the spec as it was; the other way round, a failure had to be rolled back."""
     from . import refactor_run   # it imports this module
     with _lock:
-        repo = current_repo()
         checkout_idle(repo)
         release = hold(work._busy, _lock, str(repo), "이 저장소에서 다른 작업이 돌고 있다")
     try:

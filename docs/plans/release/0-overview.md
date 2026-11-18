@@ -180,13 +180,39 @@ version that is taken (see "One attempt").
 ### When an attempt fails
 
 - A transient failure, such as a network error or a GitHub 5xx, retries the
-  same pinned attempt, a bounded number of times.
+  same pinned attempt, a bounded number of times. The press tries the
+  previous APK's download and the whole restart table three times, waiting 15
+  and then 60 seconds (`release_publish.WAITS`). A person's stop ends the
+  waiting. After the last try the attempt stays pending for `recover`.
 - A build or check failure that needs a source change goes to a bounded agent
   turn. The agent works on its own branch and opens an ordinary pull request
   under the ordinary review loop. The attempt then ends as failed, and the card
   links that pull request. The fix's merge needs its own authorization, as
   every merge does. Publishing the merged fix is a new release press, because
   one press authorizes only the commit it pinned.
+
+What needs a source change is narrow:
+
+- The build command fails, or makes no artifact (`release.BuildFailed`).
+- The built APK's versionName, versionCode, application ID or ABI is wrong,
+  or the APK is debuggable (`release.built_wrong`).
+
+A wrong certificate is the release key's problem (`release.signed_wrong`).
+So are a missing tool, a key the server refuses, and a git or GitHub failure.
+None of them goes to an agent. Neither does a build a person stopped.
+
+`release_repair.start` makes the turn an ordinary task. Its spec,
+`release-fix-<version>`, carries the attempt, the tag, the pinned commit and
+the failure with the build log's last 40 lines. It names version files,
+signing and publishing as out of bounds, and the repository's gate is its
+done condition. It is started the way `[시작]` starts a task
+(`specs.started`), in a task worktree forked from the repository's branch.
+The agent never sees the key or its password. The ledger records the
+task's ID under the attempt's `repair`. When the start is refused, for
+example because another turn holds the repository, the spec stays organized
+for `[시작]`, and the ledger records both its ID and the refusal.
+`release.rehearse` hands its failures over the same way, so the unpublished
+path exercises the hand-off.
 
 ## Existing debug installations
 

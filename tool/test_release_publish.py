@@ -15,6 +15,7 @@ from test_github_release import FakeGitHub
 
 SHA, OTHER, CERT = "a" * 40, "b" * 40, "c" * 64
 ANDROID = {"build": "build", "artifact": "out.apk", "application_id": "dev.o.r", "abi": "arm64-v8a"}
+BUILD = release.build   # the real one, before `press` fakes it
 
 
 @pytest.fixture
@@ -25,6 +26,7 @@ def press(tmp_path, monkeypatch):
     fake = FakeGitHub("o/r").install(monkeypatch)
     keys = []
     monkeypatch.setattr(rp, "LEDGER", tmp_path / "ledger")
+    monkeypatch.setattr(rp, "WAITS", (0, 0))   # transient tries without the waits
     monkeypatch.setattr(release, "WORK", tmp_path / "work")
     monkeypatch.setattr(release, "tools", lambda: {})
     monkeypatch.setattr(release, "remote", lambda repo: "github.com/o/r")
@@ -92,8 +94,8 @@ def test_the_next_press_is_checked_against_the_previous_production_apk_on_github
     with pytest.raises(ValueError, match="patch, minor, major"):
         rp.publish(repo, "0.1.1", None)   # after a release there is something to bump: a choice is needed
     seen = []
-    real = release.refused
-    monkeypatch.setattr(release, "refused", lambda *a: seen.append(a[4]) or real(*a))
+    real = release.built_wrong
+    monkeypatch.setattr(release, "built_wrong", lambda *a: seen.append(a[3]) or real(*a))
     done = rp.publish(repo, "0.1.1", "patch")
 
     assert done["state"] == "published" and keys == [True, False] and seen[0]["code"] == 1000
@@ -116,9 +118,102 @@ def test_a_press_whose_version_moved_or_whose_remote_is_busy_writes_nothing(pres
 
 def test_a_refused_build_ends_failed_with_nothing_on_github(press, monkeypatch):
     fake, repo, _ = press
-    monkeypatch.setattr(release, "refused", lambda *a: ["디버그 빌드다"])
+    monkeypatch.setattr(release, "built_wrong", lambda *a: ["디버그 빌드다"])
     done = rp.publish(repo, "0.1.0", None)
     assert done["state"] == "failed" and "디버그" in done["reason"] and not fake.rels and not fake.refs
+    assert done["repair"] == {"needed": "디버그 빌드다"}   # no server here to start the repair task
+
+
+# -- Step 4: failures ---------------------------------------------------------------------------------
+
+def _broken(monkeypatch, said="빌드 실패 — 1 로 끝났다\nerror: cannot find symbol"):
+    def build(*args):
+        raise release.BuildFailed(said)
+
+    monkeypatch.setattr(release, "build", build)
+
+
+def test_a_build_failure_ends_the_attempt_and_goes_to_a_repair_task(press, monkeypatch):
+    fake, repo, _ = press
+    _broken(monkeypatch)
+    asked = []
+    done = rp.publish(repo, "0.1.0", None, repair=lambda r, record: asked.append((r, record)) or "release-fix-0-1-0")
+
+    assert done["state"] == "failed" and not fake.rels and not fake.refs   # its version is not taken
+    assert done["repair"] == {"needed": done["reason"], "task": "release-fix-0-1-0"} and attempts()[0] == done
+    assert asked[0][0] == repo and "cannot find symbol" in asked[0][1]["repair"]["needed"]
+    assert not release.place(repo, done["id"]).exists() and rp.pending("github.com/o/r") is None
+
+
+def test_a_wrong_certificate_never_goes_to_a_repair_task(press, monkeypatch):
+    fake, repo, _ = press
+    monkeypatch.setattr(release, "signed_wrong", lambda *a: ["서명 인증서가 다르다"])
+    done = rp.publish(repo, "0.1.0", None, repair=lambda *a: pytest.fail("a key problem is no source change"))
+    assert done["state"] == "failed" and "repair" not in done
+
+
+def test_a_repair_that_cannot_start_is_recorded_and_the_attempt_still_ends(press, monkeypatch):
+    from main import release_repair
+
+    _, repo, _ = press
+    _broken(monkeypatch)
+
+    def refused(r, record):
+        raise release_repair.Started("release-fix-0-1-0", RuntimeError("이 저장소에서 다른 작업이 돌고 있다"))
+
+    done = rp.publish(repo, "0.1.0", None, repair=refused)
+    assert done["state"] == "failed" and done["repair"]["task"] == "release-fix-0-1-0"
+    assert "다른 작업" in done["repair"]["error"]
+
+
+@pytest.mark.parametrize("stopped", [True, False])
+def test_a_build_the_person_stopped_needs_no_repair(monkeypatch, tmp_path, stopped):
+    halt = release.threading.Event()
+    if stopped:
+        halt.set()
+    monkeypatch.setattr(release, "environment", lambda kit: {})
+    monkeypatch.setattr(release.specs, "gate", lambda *a, **k: (1, "", "멈춤" if stopped else ""))
+    (src := tmp_path / "src").mkdir()
+    with pytest.raises(ValueError) as failed:
+        BUILD(src, ANDROID, "0.1.0", {}, halt)
+    assert isinstance(failed.value, release.BuildFailed) is not stopped
+
+
+def test_a_build_that_makes_no_artifact_needs_a_repair(monkeypatch, tmp_path):
+    monkeypatch.setattr(release, "environment", lambda kit: {})
+    monkeypatch.setattr(release.specs, "gate", lambda *a, **k: (0, "", ""))
+    (src := tmp_path / "src").mkdir()
+    with pytest.raises(release.BuildFailed, match="out.apk"):
+        BUILD(src, ANDROID, "0.1.0", {}, release.threading.Event())
+
+
+@pytest.mark.parametrize("where", ["POST releases", "POST git/refs", "previous"])
+def test_a_transient_failure_is_tried_again_within_the_press(press, monkeypatch, where):
+    fake, repo, _ = press
+    if where == "previous":
+        rp.publish(repo, "0.1.0", None)
+        download, cut = gh.download, [503] * len(rp.WAITS)
+
+        def flaky(*args):
+            if cut:
+                raise gh.Failed("download", cut.pop())
+            return download(*args)
+
+        monkeypatch.setattr(gh, "download", flaky)
+        assert rp.publish(repo, "0.1.1", "patch")["state"] == "published" and not cut
+        return
+    fake.fail[where] = [502] * len(rp.WAITS)   # every try but the last
+    assert rp.publish(repo, "0.1.0", None)["state"] == "published"
+
+
+def test_a_stop_during_a_wait_ends_the_tries(press, monkeypatch):
+    fake, repo, _ = press
+    halt = release.threading.Event()
+    halt.set()
+    fake.fail["POST releases"] = [502]
+    with pytest.raises(gh.Failed):
+        rp.publish(repo, "0.1.0", None, halt)
+    assert rp.pending("github.com/o/r") and fake.fail["POST releases"] == []
 
 
 def test_a_tag_at_another_commit_ends_the_attempt_and_is_left_as_it_is(press, monkeypatch):
@@ -176,7 +271,7 @@ def test_a_publish_whose_answer_was_lost_is_read_back_and_recorded(press):
 
 def test_a_transient_failure_leaves_the_attempt_pending_and_recover_finishes_it(press):
     fake, repo, _ = press
-    fake.fail["POST releases"] = [502]
+    fake.fail["POST releases"] = [502] * (len(rp.WAITS) + 1)   # every try of the press
     with pytest.raises(gh.Failed):
         rp.publish(repo, "0.1.0", None)
     assert rp.pending("github.com/o/r")["tagged"] and not fake.rels
@@ -395,7 +490,7 @@ def test_an_asset_in_a_state_it_does_not_know_is_left_alone(press, monkeypatch):
 
 def test_uploads_that_all_fail_transiently_leave_the_attempt_pending(press):
     fake, repo, _ = press
-    fake.fail["POST releases/{id}/assets"] = [502] * rp.UPLOAD_TRIES
+    fake.fail["POST releases/{id}/assets"] = [502] * rp.UPLOAD_TRIES * (len(rp.WAITS) + 1)
     with pytest.raises(gh.Failed):
         rp.publish(repo, "0.1.0", None)
     still = rp.pending("github.com/o/r")

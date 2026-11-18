@@ -271,11 +271,16 @@ def build(path: Path, android: dict, release: str, kit: dict, halt: threading.Ev
     exited, out, cut = specs.gate(android["build"], path, halt, env=env, timeout=BUILD_SECONDS, idle=QUIET_SECONDS)
     if exited != 0:
         tail = "\n".join(out.splitlines()[-40:])
-        raise ValueError(f"빌드 실패 — {cut or f'{exited} 로 끝났다'}\n{tail}")
+        said = f"빌드 실패 — {cut or f'{exited} 로 끝났다'}\n{tail}"
+        raise ValueError(said) if halt.is_set() else BuildFailed(said)   # a person's stop needs no repair
     apk = output()
     if not apk.is_file():
-        raise ValueError(f"빌드가 `{android['artifact']}` 를 만들지 않았다")
+        raise BuildFailed(f"빌드가 `{android['artifact']}` 를 만들지 않았다")
     return apk
+
+
+class BuildFailed(ValueError):
+    """The adapter's build command failed, or made no artifact: something in the repository needs changing."""
 
 
 def run(argv: list, env: dict | None = None, timeout: float = 300) -> str:
@@ -360,6 +365,12 @@ def refused(seen: dict, release: str, android: dict, cert: str, previous: dict |
     """Why this APK cannot be published, empty when it can. `previous` is the last production APK of the
     kind. Without one, the configured identity and the expected certificate are the baseline."""
 
+    return built_wrong(seen, release, android, previous) + signed_wrong(seen, cert, previous)
+
+
+def built_wrong(seen: dict, release: str, android: dict, previous: dict | None = None) -> list[str]:
+    """What the build itself got wrong: a source change can fix each of these."""
+
     out = []
     if seen["name"] != release:
         out.append(f"versionName {seen['name']!r} 가 버전 {release!r} 와 다르다")
@@ -375,6 +386,13 @@ def refused(seen: dict, release: str, android: dict, cert: str, previous: dict |
             out.append(f"ABI {seen['abis']} 가 {name}의 {want} 와 다르다 — 기존 기기가 업데이트를 받지 못한다")
     if seen["debuggable"]:
         out.append("디버그 빌드다 — 정식 릴리스는 debuggable 이 아니다")
+    return out
+
+
+def signed_wrong(seen: dict, cert: str, previous: dict | None = None) -> list[str]:
+    """A certificate other than the key's: the release key's problem, never the source's."""
+
+    out = []
     for name, want in (("기대한 인증서", [cert]), *((("이전 정식 APK 의 인증서", previous["certs"]),) if previous else ())):
         if seen["certs"] != want:
             out.append(f"서명 인증서 {seen['certs']} 가 {name} {want} 와 다르다 — 설치된 앱이 업데이트되지 않는다")
@@ -581,13 +599,16 @@ def replaced(target: Path, text: str) -> None:
 
 # -- The unpublished rehearsal --------------------------------------------------------------------
 
-def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None) -> dict:
+def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None, repair=None) -> dict:
     """Two consecutive versions of `ref` built, signed with one test key and checked, the second against the
     first as its previous production APK. Each build gets its own fresh checkout. Nothing is published. The
     taken tags are the local ones, since a disposable target has no GitHub releases to read.
 
     Then the two refusals that keep an installed app updatable, on the second APK's real bytes: re-signed with
-    a second test key, and checked against an application ID other than the one it was built with."""
+    a second test key, and checked against an application ID other than the one it was built with.
+
+    A build that fails, or builds something wrong, goes to `repair(repo, record)` as a press's would
+    (`release_publish.repaired`), so step 4's hand-off runs on this unpublished path."""
 
     halt = halt or threading.Event()
     kit, attempt = tools(), f"rehearsal-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"   # two in one second
@@ -598,19 +619,27 @@ def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None)
     folder = owned(place(repo, attempt))
     folder.mkdir(parents=True)
     stores = (folder / "rehearsal.jks", folder / "other.jks")
-    published, previous, rounds, refusals = [], None, [], {}
+    published, previous, rounds, refusals, needed = [], None, [], {}, None
     try:   # from before the first key exists: every test keystore goes, whatever fails
         key = test_key(stores[0], kit)
         cert = certificate(key["keystore"], key["alias"], key["password"], kit)
         for n in (1, 2):
             release = version(published, taken, None if not published else "patch", first)
             src = checkout(repo, sha, f"{attempt}/{n}")
-            signed = sign(build(src, cfg["android"], release, kit, halt), folder / f"{n}-{release}.apk", key, kit)
+            try:
+                apk = build(src, cfg["android"], release, kit, halt)
+            except BuildFailed as exc:
+                rounds.append({"version": release, "failed": str(exc)})
+                discard(repo, f"{attempt}/{n}")
+                needed = str(exc)
+                break
+            signed = sign(apk, folder / f"{n}-{release}.apk", key, kit)
             seen = facts(signed, kit)
             why = refused(seen, release, cfg["android"], cert, previous)
             rounds.append({"version": release, "facts": seen, "refused": why})
             discard(repo, f"{attempt}/{n}")   # the checkout and its build outputs are large; the signed APK stays
             if why:
+                needed = "; ".join(built_wrong(seen, release, cfg["android"], previous)) or None
                 break
             published.append({"tagName": f"v{release}"})
             previous = seen
@@ -634,8 +663,27 @@ def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None)
             raise OSError(f"시험 키를 지우지 못했다 — 직접 지워라: {'; '.join(left)}")
     caught = bool(refusals) and all(len([w for w in why if marker in w]) == want for why, marker, want in (
         (refusals.get("certificate", []), "서명 인증서", 2), (refusals.get("application_id", []), "앱 ID", 2)))
-    return {"sha": sha, "seed": first, "cert": cert, "folder": str(folder), "rounds": rounds,
-            "refusals": refusals, "ok": built and caught}
+    out = {"sha": sha, "seed": first, "cert": cert, "folder": str(folder), "rounds": rounds,
+           "refusals": refusals, "ok": built and caught}
+    if needed:
+        record = {"id": attempt, "remote": None, "tag": f"v{rounds[-1]['version']}", "version": rounds[-1]["version"],
+                  "sha": sha, "repair": {"needed": needed}}
+        out["repair"] = handed(repo, record, repair)
+    return out
+
+
+def handed(repo: Path, record: dict, repair) -> dict:
+    """`record["repair"]` with what `repair(repo, record)` did: the task it started, or why none runs. The
+    attempt has ended either way, so a refusal is recorded, never raised. A task whose spec was saved but whose
+    start was refused (`release_repair.Started`) is still named, so the person can start it."""
+
+    if repair is None:
+        return record["repair"]
+    try:
+        return {**record["repair"], "task": repair(repo, record)}
+    except Exception as exc:   # noqa: BLE001 — the attempt is over; the card shows why no repair runs
+        return {**record["repair"], **({"task": exc.task} if getattr(exc, "task", None) else {}),
+                "error": f"{type(exc).__name__}: {exc}"}
 
 
 def main(argv: list[str]) -> int:
