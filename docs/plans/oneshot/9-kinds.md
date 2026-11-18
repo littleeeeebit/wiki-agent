@@ -215,57 +215,182 @@ owner's desktop round below.
 
 ### How 9e builds `desktop`
 
+#### The card's window
+
+`window` is the size S7 sets the app's main window to. It is the window's
+frame in physical pixels, which the driver sets without activation and reads
+back as `DWMWA_EXTENDED_FRAME_BOUNDS`. The options are `1280x800` (the
+default), `1024x768`, `1440x900` and `1920x1080`, and nothing else is
+accepted. The start screen shows `PC 앱` disabled on a host that is not
+Windows, with that reason.
+
+#### The toolchain, declared once
+
 The stack is free, so the server knows a PC app's tools only from what S2
-confirmed. The `build` part names each command the stack needs:
+confirmed. The `build` part, or `desktop.build` in a run of several kinds,
+carries a `tools` list beside its choice. Each entry is a host program found
+on `PATH`, such as `cargo`, `dotnet` or `npm`. The validator refuses a `build`
+part with an empty or malformed `tools` list, and the list is saved in the
+spec with the part.
 
-- its toolchain, as programs to find on `PATH`, such as `cargo`, `dotnet` or
-  `npm`;
-- the commands that build the app and its installer;
-- the built program S7 starts;
-- the installer S8 attaches.
+A host tool is told apart from a project output. Every command a later turn
+gives for `desktop` names its program first. This covers S4's runner, S6's
+preview, the gates' builds and S8's packaging. That program is either a
+declared tool, or a path inside the worktree that the run built. A command
+whose program is neither is refused as undeclared, and the turn goes back to
+its author with that reason.
 
-Before S4, the server looks for each named program. When one is missing, the
-run stops with reason `toolchain` and names it in the owner's words. The
-agent installs nothing. A `[재개]` after the owner has installed it looks
-again.
+The server checks every declared tool on `PATH` before the first command that
+needs one, and again on every resume and recovery, before anything runs. When
+one is missing, the run stops with reason `toolchain`, naming it in the
+owner's words. The agent installs nothing. A `[재개]` after the owner has
+installed it checks again.
 
-- S3 and R1. The core design is step 7's shape: modules, outside calls,
-  assumptions and the app's Windows permissions or capabilities, such as
-  screen capture or an always-on-top window. S4 builds the core
-  contract-test first, in the stack's own host-side runner.
-- The backend review. A `device` finding for `desktop` names a check that the
-  run's look can run: a driver scenario whose postcondition is the finding's.
-- S6. As for an Android app, the mocks come with the stack's preview command.
-  The command writes `<screen id>.png` at the `window` size, and the server
-  checks each picture's size.
-- S7. The frontend build's gate runs the core tests and builds the program.
-  S7 starts the program through the look's session (`tool/desktop_session.py`)
-  on the run's owned desktop. It then drives each screen's scenarios with the
-  driver (`tool/desktop_driver.py`), shoots each state and reads the
-  mechanical findings off the driver's report. The critic judges those shots
-  as it does each kind's. The look's cleanup proof gates every round. A round
-  whose session did not prove its cleanup counts as failed.
-- The owner's desktop round. After two clean rounds, a `desktop` run whose
-  owed checks include one the owned desktop cannot show waits for the owner,
-  as the phone round does. Approved at that time, the round starts the exact
-  program R3 will show on the owner's desktop, in an owned job. It runs only
-  those checks and records their evidence. It closes what it started and
-  proves it. A run with no such check skips the round.
-- R3 and S8. The sheet has a `PC 앱` section read off `desktop` alone, with
-  the owner's desktop round when one ran. S8's README has a section for it.
-  The installer is attached to the draft prerelease beside an APK, on the
-  head and digest the final gate froze. The CI job runs on `windows-latest`.
+#### The runnable program
 
-The sub-steps, each its own PR:
+The frontend build's `desktop` block names two outputs, kept apart:
 
-| Step | What |
+- `run`: the program S7 starts. It is a worktree path to an unpackaged,
+  non-elevated debug build, with its arguments, its working directory and the
+  setting that points its data at the look's own data folder (`{data}`).
+- `installer`: the file S8 attaches.
+
+A `run` that is missing, outside the worktree, or packaged (MSIX or an
+installer) is refused at the gate. So is one whose manifest asks for
+elevation. At launch, the research note's refusals apply as written: a main
+window outside the app's job, or a handoff to another instance, ends the
+round as failed.
+
+#### Owed checks for `desktop`
+
+The backend review's `device` finding for `desktop` names its evidence
+source, and the server assigns it:
+
+- `look`, when the postcondition is a UI Automation state the driver reads: an
+  element with a stable `AutomationId` and its name, value or toggle state
+  after a scenario.
+- `owner`, when the postcondition needs what the owned desktop cannot show: a
+  capture of another program's window or the screen, or how a per-pixel-alpha
+  overlay composes. Its postcondition is still a driver expectation on the
+  app's own elements, read after the scenario on the owner's desktop. The
+  shots of the app's own windows go with it as evidence.
+
+A finding with neither is not deferrable and stays a blocker. A `desktop`
+clean round counts only when every `look` check passed on that round's HEAD.
+A failed or unread observation is a failure, never a skip. `owner` checks
+stay pending through the owned rounds. R3 opens only when every pending
+`owner` check has passing evidence on the current HEAD and the frozen
+program's digest. The sheet shows the round that closed each owed ID.
+
+#### Screens
+
+As for an Android app, S6's mocks come with the stack's preview command.
+Each native kind has its own preview contract. Its sources are staged in
+`previews/<kind>/` and approved into `docs/design/mock/<kind>/`, and its
+pictures are rendered into a folder of its own. So an Android app and a PC
+app in one run keep both previews, and R2's edits and approval carry each.
+
+A PC preview writes `<screen id>.png` no larger than the `window` and at least
+90% of each side. The title bar and borders are the stack's, so the exact
+frame is checked in S7, where the driver reads it back. A preview command
+that opens a window runs inside a look on an owned desktop, never on the
+owner's.
+
+S7's coverage reads the R2-approved screen map. The driver must reach every
+approved state, and find each placed feature's element by its
+`AutomationId`. A driver report that misses an approved state, or stops early,
+is not a clean round.
+
+#### The look loop
+
+The frontend build's gate runs the core tests and builds `run`. S7 starts it
+through the look's session (`tool/desktop_session.py`) on the run's owned
+desktop. It then:
+
+- drives each screen's scenarios with the driver (`tool/desktop_driver.py`);
+- shoots each state;
+- reads the mechanical and coverage findings off the driver's report;
+- runs the `look` owed checks.
+
+The critic judges those shots as it does each kind's. The look's cleanup proof
+gates every round. A round whose session did not prove its cleanup counts as
+failed.
+
+#### The owner's desktop round
+
+After two clean rounds, a run with a pending `owner` check waits for the owner,
+as the phone round does. The approval is one-time and is recorded with the
+run, the HEAD, the frozen `run` program's digest, the check IDs and the
+capture scope. The capture scope is the app's own windows, or a capture
+source the approval names. The server checks all of these again before
+anything starts on the owner's desktop.
+
+A restart, a cancellation, a new HEAD or a program whose digest changed sends
+the run back to waiting for approval. An earlier approval is never applied to
+a different launch.
+
+The round:
+
+1. Records its ownership before launch.
+2. Starts the program in an owned job.
+3. Acts only on windows of that job, through automation patterns. It does not
+   activate them or send input.
+4. Runs only the pending `owner` checks.
+5. Keeps only evidence within the approved scope.
+6. Closes what it started, and proves its cleanup on every outcome, failure
+   included.
+
+A failed check goes to the builder as a finding. A rebuild clears every
+earlier device pass: the phone round's, the owned rounds' and this one's.
+
+R3 has one guarded entry for every device round. When a run has both a phone
+round and an owner's desktop round due, R3 opens only when both passed on the
+current HEAD and build. Neither round's pass opens it alone. A run with no
+pending `owner` check skips the round.
+
+#### R3 and S8
+
+The sheet has a `PC 앱` section read off `desktop` alone, with the owner's
+desktop round when one ran. S8's README has a section for it.
+
+The final gate builds the installer and freezes it with its HEAD and digest,
+as it does an APK. The draft prerelease carries the run's assets: the
+installer, the APK, or both, each reused only for the same HEAD and digest.
+A failed copy or upload never blocks the pull request; its body says why.
+
+S1's `ci` choice is kept. When CI is chosen and `desktop` is among the kinds,
+the workflow job runs on `windows-latest`, with a setup step for each declared
+tool the image lacks. With `android` too, the same job also sets up the
+Android SDK and runs the one shared gate.
+
+#### Steps and their stops
+
+Each sub-step is its own PR, tested on fakes alone. Until the next one lands,
+the server stops a `desktop` run, alone or among other kinds, with reason
+`kind`, at the boundary that sub-step names. The stop holds at every automatic
+handoff, on `[재개]` and in recovery. A stopped run never calls the next stage,
+and resumes into it only once that stage has landed.
+
+| Step | What | A `desktop` run stops |
+| --- | --- | --- |
+| 9e1 | `PC 앱` on the start screen; the intake's definition; the `window` field and the `desktop.json` profile; S2's parts and prompts; the `build` part's `tools` | After S2, before the core design |
+| 9e2 | The toolchain check and undeclared-command refusal; the S3 module design and the R1 table; S4's contract tests and gate; the backend review's `desktop` deferral with its `look` and `owner` sources; the split off modules | After the split, before S6 |
+| 9e3 | S6's per-kind previews and R2; the frontend build's `run` and `installer`, and its gate building `run` | After the build gate, before the look |
+| 9e4 | The look loop: launch with the research note's refusals, driver scenarios and coverage, shots, the critic, the `look` owed checks, the cleanup proof | After two clean rounds, before the owner's round or R3 |
+| 9e5 | The owner's desktop round, and the one guarded R3 entry for every device round | Before R3 |
+| 9e6 | R3's `PC 앱` section; S8's README, the frozen installer on the prerelease, and the CI job | Runs to its first pull request |
+
+Each step's fakes include at least these:
+
+| Step | Fakes |
 | --- | --- |
-| 9e1 | `PC 앱` on the start screen. The intake's definition, the `window` card field and the `desktop.json` profile. S2's parts, prompts and the `build` part's named commands. A `desktop` run waits after R1 |
-| 9e2 | The core path. The toolchain check, the S3 module design and the R1 table for `desktop`, S4's contract tests and gate, the backend review's `desktop` deferral, and the split off modules. It waits at the frontend |
-| 9e3 | Screens. S6's mocks with the stack's preview at the `window` size, R2, the frontend build and its gate building the program |
-| 9e4 | The look loop. S7 on the owned desktop, with launch, driver scenarios, shots, mechanical findings, the critic, owed checks and the cleanup proof |
-| 9e5 | The owner's desktop round. The resumable wait, the owned job on the owner's desktop, the owed checks only, and their evidence and cleanup |
-| 9e6 | R3 and S8. The `PC 앱` sheet section, the README section, the installer on the draft prerelease and the Windows CI job. `desktop` alone and among other kinds runs to its first pull request |
+| Every step | A stopped run that tries to call the next stage, which must fail |
+| 9e1 | A `window` outside the options; a `build` part without `tools` |
+| 9e2 | A missing tool; an undeclared command; a resume after the tool disappeared. Each must stop with `toolchain` before a dependent command runs, and none may call an installer |
+| 9e3 | Two native previews with overlapping relative paths, and a web preview, through one R2 approval; a packaged-only `run` |
+| 9e4 | A driver report that misses an approved state; a failed cleanup proof; an `owner` check that is still pending after both owned rounds |
+| 9e5 | An absent, a stale and a duplicate approval; a cleanup failure; a mixed run in which the phone passes first |
+| 9e6 | A desktop-only asset; both assets on one prerelease; a resumed upload; a run with CI off |
 
 ## What does not change
 
