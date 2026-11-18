@@ -296,6 +296,16 @@ def test_several_kinds_share_one_card_prefilled_only_where_their_profiles_agree(
     assert "local.properties" in (world["workspace"] / "budget-tracker" / ".gitignore").read_text("utf-8")
 
 
+def test_a_saved_pc_app_bootstrap_resumes_on_no_other_host(world):
+    rid = made(world, working=None, stopped={"reason": "github", "detail": "GitHub 문제", "state": "bootstrap"},
+               intent={**INTENT, "name": "budget-tracker", "kind": "desktop", "kinds": ["desktop"]})
+    with patch.object(sys, "platform", "linux"), \
+            patch.object(oneshot, "launch", lambda *a, **k: pytest.fail("no step runs off Windows")), \
+            pytest.raises(HTTPException, match="Windows 에서만"):
+        oneshot.resume(rid, oneshot.Resume())
+    assert oneshot.load(rid)["stopped"]["reason"] == "github"
+
+
 def test_a_pc_app_card_names_its_window_and_keeps_it_in_its_own_profile(world):
     with patch.object(sys, "platform", "win32"), \
             patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-intent", INTENT), {}, False)):

@@ -36,7 +36,7 @@ from workspace import TASK, create
 from . import channels, connect, oneshot_android, prerequisite_review, runtime, specs
 from .oneshot_files import as_planned, git, planned, tracked  # noqa: F401 — `tracked` is read by tests
 from .oneshot_profile import (DEVICES, SUPPORTED_KINDS, charged, cut, kinds_of, ledger, problems, proposal,
-                              schema, current, unavailable)
+                              schema, current, off_host, unavailable)
 from .query import ROOT
 
 RUNS = RAW / "oneshot"
@@ -718,7 +718,7 @@ def card_errors(run: dict, profile: dict) -> tuple[list[str], list[str]]:
 
     kinds = kinds_of(run)
     errors, warnings = problems(profile, kinds)
-    off = [why for k, why in unavailable().items() if k in kinds]
+    off = [why] if (why := off_host(run)) else []
     return errors + off + (oneshot_android.missing() if "android" in kinds else []), warnings
 
 
@@ -840,10 +840,10 @@ def intent(rid: str, body: Intent) -> dict:
             launch(rid, "intake", body.edit.strip())
             return view(load(rid))
         # A restatement an earlier version's intake picked the kind of: its actual kinds, not a marker, decide.
-        if not set(kinds := run["intent"].get("kinds") or [run["intent"]["kind"]]) <= set(SUPPORTED_KINDS):
+        if not set(run["intent"].get("kinds") or [run["intent"]["kind"]]) <= set(SUPPORTED_KINDS):
             raise HTTPException(409, f"`{run['intent']['kind']}` 는 이 버전에서 만들 수 없다 — 지금은 {', '.join(SUPPORTED_KINDS)} 만")
-        if off := [why for k, why in unavailable().items() if k in kinds]:   # a saved PC app run, now off Windows
-            raise HTTPException(409, off[0])
+        if why := off_host(run):   # a saved PC app run, now off Windows
+            raise HTTPException(409, why)
         name = specs.slugged(body.name or run["intent"]["name"])
         if run["picked"]:
             path = Path(run["picked"])
@@ -904,6 +904,8 @@ def resume(rid: str, body: Resume) -> dict:
             raise HTTPException(409, "멈춘 실행이 아니다")
         if run["stopped"]["reason"] == "kinds":   # the owner's kinds cannot go on in this run: no `[재개]` takes it on
             raise HTTPException(409, run["stopped"]["detail"])
+        if why := off_host(run):   # a saved PC app run, now on another host: no step of it runs here
+            raise HTTPException(409, why)
         if run["stopped"]["reason"] == "kind":   # a card an earlier version kept: the kind goes on now, so the
             return view(changed(rid, stopped=None))   # card waits for the owner's confirm again
         if run.get("version", 1) < 3 and run.get("identity") and any(   # its files, even some, carry the old card's stack

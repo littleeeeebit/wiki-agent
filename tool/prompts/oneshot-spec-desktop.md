@@ -90,11 +90,14 @@ at most three questions:
   `with` for its inputs. `setup` is required when the profile's `ci` is
   `github-actions`; otherwise it may be left out. The tools are part of the
   bundle the person confirms: name them in the bundle question, and offer
-  them in `stack` with the `build` part. An answer confirms `build` only with
-  exactly the tools and setups it was offered with, so when the person picks
-  a bundle whose tools differ from the ones in `stack`, or a tool or setup
-  changes later, put the new list in `stack` with `build` as `assumed` and
-  ask the person to confirm it. You only record the tools: this conversation
+  them in `stack` with the `build` part. The `build` part alone is never
+  confirmed by an answer: once the bundle is picked, put that bundle's
+  `build` with its tools in `stack` as `assumed`, and the person confirms it
+  with its own button beside the stack, which the conversation then shows as
+  their turn. Write `build` `confirmed` only after that turn, with exactly
+  the choice and tools it confirmed; when either changes later, offer it as
+  `assumed` again. Never ask about it in `choices`, and do not end the
+  conversation for it. You only record the tools: this conversation
   checks nothing on this PC and installs nothing, and a later stage stops the
   run if one is missing.
 - Ask about the stack once the scenarios are clear, as one question whose

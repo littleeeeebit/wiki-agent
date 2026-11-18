@@ -97,6 +97,12 @@ def unavailable() -> dict[str, str]:
     return {k: why for k, (host, why) in HOST_ONLY.items() if sys.platform != host}
 
 
+def off_host(o: dict) -> str | None:
+    """Why this host cannot go on with the run `o` (a run, or a spec's `oneshot`), or None."""
+
+    return next((why for k, why in unavailable().items() if k in kinds_of(o)), None)
+
+
 def shape(o: dict) -> str:
     """Which stage instructions and checks a run takes: its one kind, or `kinds` for several sharing one core."""
 

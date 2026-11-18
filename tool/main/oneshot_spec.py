@@ -21,7 +21,8 @@ from pydantic import BaseModel
 from common import is_junction
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, specs, work
-from .oneshot_profile import current, environment, held, kind_of, kinds_of, stacked, unsettled, waits_at
+from .oneshot_profile import (current, environment, held, kind_of, kinds_of, off_host, stacked, tooled, unsettled,
+                              waits_at)
 
 RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}   # a later stage's module adds its own
 SHEETS = {"r1"}   # a stage whose sheet stands when its edit turn stopped
@@ -116,17 +117,18 @@ def kept(spec: dict, value, where: str) -> tuple[list[dict], list[dict]]:
 def unanswered(o: dict, stack: list[dict]) -> list[str]:
     """The parts `stack` marks `confirmed` that no owner's answer stands behind: confirmed already with the same
     choice, or offered in the stack before the question the owner has just answered, and nothing else. A PC app's
-    `tools` (names and setups) are confirmed only as the stack showed them: an answer confirms the list it was
-    offered with, so a list the model changes is offered again before it is confirmed.
+    build part, whose `tools` run on this PC, is confirmed only as the owner confirmed it with its own button
+    (`confirm_build`): that exact choice and tool list, setups included, and no answer to any question.
     ponytail: that the answered question was about the stack is the prompt's to keep; the owner then sees the
     stack again on R1."""
 
     talk, before = o.get("talk") or [], {s["part"]: s for s in o.get("stack") or []}
     answered = len(talk) >= 2 and talk[-1]["role"] == "owner" and bool(talk[-2].get("choices"))
-    shown = {p: s.get("tools") for p, s in before.items()}
+    build = o.get("confirmed_build")
     return [s["part"] for s in stack if s["status"] == "confirmed" and (
-            s["part"] not in before or shown[s["part"]] != s.get("tools") or not (
-                (before[s["part"]]["status"] == "confirmed" and before[s["part"]]["choice"] == s["choice"]) or answered))]
+        (build != {"choice": s["choice"], "tools": s.get("tools")}) if tooled(s["part"], kinds_of(o)) else
+        not (before.get(s["part"], {}).get("status") == "confirmed" and before[s["part"]]["choice"] == s["choice"])
+        and not (answered and s["part"] in before))]
 
 
 def spec_turn(final: str, spec: dict):
@@ -413,10 +415,11 @@ WORKERS = {"talk": talk, "design": design, "redesign": redesign}   # a later sta
 
 
 def start(repo: str, work: str, *args, **fields) -> None:
-    """Starts a stage's worker. A run held at its kind's stop (`held`) starts nothing past S2 whatever its saved
-    stop says: the stop is put back and the start refused."""
+    """Starts a stage's worker. A run held at its kind's stop (`held`), or moving into it with `fields`, starts
+    nothing past S2 whatever its saved stop says: the stop is put back and the start refused."""
 
-    if work != "talk" and held(o := specs.load(repo, oneshot.BRANCH)["oneshot"]):
+    o = specs.load(repo, oneshot.BRANCH)["oneshot"]
+    if work != "talk" and held({**o, "stage": fields.get("stage") or o.get("stage")}):
         stop = waiting(repo, o).get("stopped") or {}
         raise HTTPException(409, stop.get("detail") or "이 실행의 다음 단계는 다음 버전에서 이어진다")
     oneshot.start_worker(store(repo), work, WORKERS[work], (repo, *args), fields)
@@ -576,6 +579,8 @@ def supported(o: dict) -> None:
         raise HTTPException(409, "예전 형식으로 계약 테스트를 고정한 실행이라 이어 갈 수 없다 — 새 실행을 시작하라")
     if o.get("version", 1) < 3 and o.get("stage") != "spec":
         raise HTTPException(409, "스택을 환경 카드에서 정한 예전 실행이라 이어 갈 수 없다 — 새 실행을 시작하라")
+    if why := off_host(o):   # a saved PC app run, opened on another host: no turn of it runs here
+        raise HTTPException(409, why)
 
 
 def idle(o: dict, stage: str) -> None:
@@ -600,6 +605,32 @@ def say(repo: str, body: Say) -> dict:
         o = spec_of(repo)["oneshot"]
         idle(o, "spec")
         start(repo, "talk", talk=[*(o.get("talk") or []), {"role": "owner", "text": text, "ts": time.time()}])
+    return view(spec_of(repo))
+
+
+class Build(BaseModel):
+    part: str
+    choice: str
+    tools: list
+
+
+@router.post("/api/oneshot/spec/{repo}/build")
+def confirm_build(repo: str, body: Build) -> dict:
+    """The owner confirms a PC app's build part as the stack offers it: that choice and its tools, each setup
+    included. Only this confirms it (`unanswered`); the next S2 turn then writes it `confirmed`."""
+
+    with oneshot._lock:
+        o = spec_of(repo)["oneshot"]
+        idle(o, "spec")
+        offered = next((s for s in o.get("stack") or [] if s["part"] == body.part and tooled(s["part"], kinds_of(o))),
+                       None)
+        if not offered or offered["status"] == "confirmed" or (offered["choice"], offered.get("tools")) != (
+                body.choice, body.tools):
+            raise HTTPException(409, "확정하려는 빌드와 도구가 지금 제시된 것과 다르다 — 화면을 새로 고쳐라")
+        names = ", ".join(t["name"] for t in body.tools)
+        start(repo, "talk", confirmed_build={"choice": body.choice, "tools": body.tools}, talk=[
+            *(o.get("talk") or []), {"role": "owner", "text": f"빌드를 이대로 확정한다: {body.choice} — 도구 {names}",
+                                     "ts": time.time()}])
     return view(spec_of(repo))
 
 

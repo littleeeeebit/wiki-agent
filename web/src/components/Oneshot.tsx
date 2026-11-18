@@ -107,11 +107,11 @@ export function Intake({ busy, act }: { busy: boolean; act: Act }) {
   const [typing, setTyping] = useState(remote)
   const [options, setOptions] = useState<Options | null>(null)
   // The kinds this host cannot build, with why (`oneshot_profile.unavailable`): a PC app off Windows. A host-bound
-  // kind stays shut until the server answers, and a failed answer keeps it shut.
+  // kind stays shut until the server answers, and a failed answer, or one from a server that does not say, keeps it shut.
   const [off, setOff] = useState<Record<string, string> | null>(null)
   useEffect(() => {
-    api.oneshotRuns().then((d) => setOff(d?.unavailable ?? {}))
-      .catch(() => setOff(Object.fromEntries(KINDS.filter((k) => k.host).map((k) => [k.id, '이 PC 에서 만들 수 있는지 확인하지 못했다']))))
+    const unknown = Object.fromEntries(KINDS.filter((k) => k.host).map((k) => [k.id, '이 PC 에서 만들 수 있는지 확인하지 못했다']))
+    api.oneshotRuns().then((d) => setOff(d?.unavailable ?? unknown)).catch(() => setOff(unknown))
   }, [])
   const shutOf = (k: (typeof KINDS)[number]) => k.soon ?? (off ? off[k.id] : k.host ? '이 PC 에서 만들 수 있는지 확인하는 중…' : undefined)
   const picked = kinds.filter((id) => !shutOf(KINDS.find((k) => k.id === id)!))   // a shut kind is never sent

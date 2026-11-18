@@ -11,6 +11,7 @@ import copy
 import re
 import sys
 import time
+from contextlib import contextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -119,7 +120,7 @@ def main():
             if slow["fail"]:   # a read that fails once, as a dropped connection would
                 slow["fail"] -= 1
                 return JSONResponse({"detail": "synthetic-list-failure"}, status_code=500)
-            return {"runs": [None, *([started] if started else [])]}
+            return {"runs": [None, *([started] if started else [])], "unavailable": {"desktop": "PC 앱은 Windows 에서만 만든다"}}
         if path == f"oneshot/{started.get('id')}":
             return started
         if path == "options":
@@ -470,9 +471,10 @@ def main():
         page.get_by_role("option", name="high").click()
         expect(group["구현"].get_by_role("combobox", name="모델")).to_contain_text("Claude 기본")   # apart from 명세
         form.get_by_role("textbox").first.fill("가계부를 만들고 싶다")
-        # Nothing is preselected: the start waits for the owner's kind, and PC 앱 is not open yet.
+        # Nothing is preselected: the start waits for the owner's kind, and PC 앱 is shut on this (non-Windows) host.
         expect(form.get_by_role("button", name="시작", exact=True)).to_be_disabled()
         expect(form.get_by_role("checkbox", name="PC 앱")).to_be_disabled()
+        expect(form.get_by_text("PC 앱은 Windows 에서만 만든다")).to_be_visible()
         form.get_by_role("checkbox", name="Android 앱").check()
         form.get_by_role("checkbox", name="웹앱").check()
         expect(form.get_by_text("풀 리퀘스트 하나에 형태마다의 README")).to_be_visible()
@@ -731,6 +733,21 @@ def tracking():
           "failed record read says so and reads again; partial translation leaves progress, and the switch is followed")
 
 
+@contextmanager
+def oneshot_window(fake: FastAPI):
+    """`fake` serving the built app, and a page open on the oneshot window; no uncaught page error may be left."""
+
+    fake.mount("/", StaticFiles(directory=ROOT / "web/dist", html=True))
+    errors = []
+    with served(fake) as port, sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = page_of(browser, errors, viewport={"width": 1600, "height": 960})
+        page.goto(f"http://127.0.0.1:{port}/#oneshot")
+        yield page
+        browser.close()
+    assert not errors, errors
+
+
 def phone_round():
     """An Android run's phone round: its spine holds the round, the phones are looked up on request, an
     unauthorized one cannot be picked, the pick sends its serial and whether to keep the app, a running round
@@ -774,12 +791,7 @@ def phone_round():
             return {"rows": [], "session_id": "", "busy": False, "running": None, "rules": [], "queued": None}
         return fixture(path, request.method)
 
-    fake.mount("/", StaticFiles(directory=ROOT / "web/dist", html=True))
-    errors = []
-    with served(fake) as port, sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = page_of(browser, errors, viewport={"width": 1600, "height": 960})
-        page.goto(f"http://127.0.0.1:{port}/#oneshot")
+    with oneshot_window(fake) as page:
         strip = page.get_by_role("list", name="원샷 단계 16/19")
         expect(strip.locator("[aria-current=step]")).to_contain_text("휴대폰 회차")
         expect(page.get_by_role("status").filter(has_text="OLD1")).to_contain_text("com.example.app.oneshot01")
@@ -817,14 +829,69 @@ def phone_round():
         with page.expect_response(lambda r: r.url.endswith("/phone/devices")):
             page.get_by_role("button", name="휴대폰 찾기").click()
         assert listed[-1] == "r3", listed
-        browser.close()
-    assert not errors, errors
     print("PASS: an Android run's spine holds the phone round; phones are looked up on request, an unauthorized one "
           "cannot be picked, and an empty list names another ADB server; the pick sends the serial and the keep choice; "
           "a running round stops on request; an unfinished cleanup is shown on the run and finished from it at R3")
+
+
+def host_kinds():
+    """The start form's PC app on a host the server answers for: shut while the answer is held, then shut with
+    the reason off Windows, where a web-only start sends only `webapp`; shut when the answer fails or comes from a
+    server that does not say; open on Windows, where it is sent."""
+    host = {"mode": "held"}
+    posted: list = []
+    fake = FastAPI()
+
+    @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
+    async def api(path: str, request: Request):
+        if path == "oneshot" and request.method == "POST":
+            posted.append((await request.json())["kinds"])
+            return JSONResponse({"detail": "synthetic-start-refusal"}, status_code=409)
+        if path == "oneshot":
+            if host["mode"] == "fail":
+                return JSONResponse({"detail": "synthetic-list-failure"}, status_code=500)
+            if host["mode"] == "old":   # a server from before PC apps: no `unavailable`
+                return {"runs": []}
+            if host["mode"] == "held":
+                await asyncio.sleep(2)
+            return {"runs": [], "unavailable": {} if host["mode"] == "windows" else {"desktop": "PC 앱은 Windows 에서만 만든다"}}
+        if path == "oneshot-specs":
+            return {"specs": []}
+        if path == "mobile/status":
+            return {"local": True}
+        return fixture(path, request.method)
+
+    with oneshot_window(fake) as page:
+        form = page.locator(".oneshot-shell main")
+        pc = form.get_by_role("checkbox", name="PC 앱")
+        expect(form.get_by_text("확인하는 중")).to_be_visible()
+        expect(pc).to_be_disabled()
+        expect(form.get_by_text("PC 앱은 Windows 에서만 만든다")).to_be_visible(timeout=5000)
+        expect(pc).to_be_disabled()
+        form.get_by_role("textbox").first.fill("가계부를 만들고 싶다")
+        form.get_by_role("checkbox", name="웹앱").check()
+        form.get_by_role("button", name="시작", exact=True).click()
+        page.wait_for_timeout(500)
+        assert posted == [["webapp"]], posted
+        for mode in ("fail", "old"):
+            host["mode"] = mode
+            page.reload()
+            expect(form.get_by_text("확인하지 못했다")).to_be_visible()
+            expect(pc).to_be_disabled()
+        host["mode"] = "windows"
+        page.reload()
+        expect(pc).to_be_enabled()
+        pc.check()
+        form.get_by_role("textbox").first.fill("화면 번역기")
+        form.get_by_role("button", name="시작", exact=True).click()
+        page.wait_for_timeout(500)
+        assert posted[-1] == ["desktop"], posted
+    print("PASS: the start form's PC app stays shut until the host is known, and when the answer fails or does not "
+          "say; off Windows it shows why and a web-only start sends only webapp; on Windows it opens and is sent")
 
 
 if __name__ == "__main__":
     main()
     tracking()
     phone_round()
+    host_kinds()

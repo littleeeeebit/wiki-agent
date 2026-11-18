@@ -5,6 +5,7 @@ See `docs/plans/oneshot/9-kinds.md` ("How 9e builds `desktop`"). Model turns (`o
 runs in a temporary worktree.
 """
 
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -32,11 +33,13 @@ def desktop(world):  # noqa: F811 — the imported fixture, by its name
     return world
 
 
-def confirmed(stack, talk_stack=None) -> None:
-    """The owner answered the bundle question that offered `talk_stack` (the stack, assumed)."""
+def confirmed(stack, build=True) -> None:
+    """The owner answered the bundle question that offered `stack` (assumed), and with `build` pressed the build
+    part's own button on it (`confirm_build`)."""
 
-    offered = [{**s, "status": "assumed"} for s in (talk_stack or stack)]
-    oneshot_spec.saved("budget", oneshot={"stack": offered, "talk": [
+    offered = [{**s, "status": "assumed"} for s in stack]
+    pressed = {"choice": stack[-1]["choice"], "tools": stack[-1]["tools"]} if build else None
+    oneshot_spec.saved("budget", oneshot={"stack": offered, "confirmed_build": pressed, "talk": [
         {"role": "agent", "text": "묶음을 고르세요.", "choices": {"questions": [{"question": "어느 묶음?", "options": [
             {"label": "Tauri 2"}, {"label": ".NET WinUI 3"}]}]}, "ts": 1},
         {"role": "owner", "text": "Tauri 2", "ts": 2}]})
@@ -131,16 +134,50 @@ def test_an_unrelated_answer_cannot_confirm_a_changed_tools_list(desktop):
     oneshot_spec.spec_turn(turn(STACK), spec)   # the list the owner confirmed stands
 
 
-def test_a_picked_bundle_with_other_tools_is_offered_again_then_confirmed(desktop):
-    dotnet = [{"name": "dotnet", "setup": {"uses": "actions/setup-dotnet@v4"}}]
-    other = [*STACK[:-1], {**STACK[-1], "choice": "dotnet publish, MSIX", "tools": dotnet}]
-    confirmed(STACK)   # Tauri's tools were offered; the owner picked the .NET bundle
+def test_only_the_owners_button_confirms_the_build_exactly_as_offered(desktop):
+    confirmed(STACK, build=False)   # the bundle was answered; its build part is offered, assumed
+    for answer in ("아니오", "예"):   # no answer to any question confirms it, a refusal least of all
+        asked("빌드와 도구를 이대로 확정할까요?", answer)
+        with pytest.raises(ValueError, match="build"):
+            oneshot_spec.spec_turn(turn(STACK), specs.load("budget", oneshot.BRANCH))
+    node22 = [TOOLS[0], {**TOOLS[1], "setup": {**TOOLS[1]["setup"], "with": {"node-version": "20"}}}]
+    for part, choice, tools in (("build", STACK[-1]["choice"], node22), ("build", "dotnet publish", TOOLS),
+                                ("ui", STACK[1]["choice"], TOOLS)):
+        with pytest.raises(HTTPException, match="지금 제시된 것과 다르다"):   # not what the stack shows
+            oneshot_spec.confirm_build("budget", oneshot_spec.Build(part=part, choice=choice, tools=tools))
+    assert not o().get("confirmed_build")
+    # The turn after the bundle answer confirmed the other parts and left the build part for its button.
+    oneshot_spec.saved("budget", oneshot={"stack": [*STACK[:-1], {**STACK[-1], "status": "assumed"}], "talk": [
+        *o()["talk"], {"role": "agent", "text": "빌드와 도구는 옆의 버튼으로 확정한다.", "choices": None, "ts": 5}]})
+    oneshot_spec.confirm_build("budget", oneshot_spec.Build(part="build", choice=STACK[-1]["choice"], tools=TOOLS))
+    assert o()["confirmed_build"] == {"choice": STACK[-1]["choice"], "tools": TOOLS} and o()["working"] == "talk"
+    assert o()["talk"][-1] == {**o()["talk"][-1], "role": "owner"} and "cargo, npm" in o()["talk"][-1]["text"]
+    oneshot_spec.saved("budget", oneshot={"working": None})
     spec = specs.load("budget", oneshot.BRANCH)
-    with pytest.raises(ValueError, match="build"):
-        oneshot_spec.spec_turn(turn(other), spec)
-    oneshot_spec.saved("budget", oneshot={"stack": [*STACK[:-1], {**other[-1], "status": "assumed"}]})
-    asked("빌드 도구는 dotnet (actions/setup-dotnet@v4) 로 확정할까요?", "예")
-    oneshot_spec.spec_turn(turn(other), specs.load("budget", oneshot.BRANCH))
+    oneshot_spec.spec_turn(turn(STACK), spec)
+    with pytest.raises(ValueError, match="build"):   # an action's inputs are part of what was confirmed
+        oneshot_spec.spec_turn(turn([*STACK[:-1], {**STACK[-1], "tools": node22}]), spec)
+
+
+def test_a_saved_pc_app_spec_takes_no_turn_on_another_host(desktop):
+    confirmed(STACK, build=False)
+    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "detail": "서버가 다시 켜졌다", "state": "spec"}})
+    with patch.object(sys, "platform", "linux"), \
+            patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("no turn runs off Windows")), \
+            patch.object(oneshot_spec, "start", START):
+        for call in (lambda: oneshot_spec.resume("budget"), lambda: oneshot_spec.say("budget", oneshot_spec.Say(text="예")),
+                     lambda: oneshot_spec.confirm_build("budget", oneshot_spec.Build(
+                         part="build", choice=STACK[-1]["choice"], tools=TOOLS))):
+            with pytest.raises(HTTPException, match="Windows 에서만"):
+                call()
+
+
+def test_the_shared_start_refuses_a_move_into_the_held_stage(desktop):
+    assert o()["stage"] == "spec"   # the last stage a PC app has in this version
+    with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
+            pytest.raises(HTTPException, match="다음 버전"):
+        START("budget", "design", stage="design")
+    assert o()["stage"] == "spec" and not o().get("stopped")
 
 
 def test_a_resume_or_a_shutdown_between_the_save_and_the_stop_never_starts_the_design(desktop):

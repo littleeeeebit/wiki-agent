@@ -96,10 +96,13 @@ at most three questions:
     `{"run": "…"}`, or `{"uses": "owner/action@version", "with": {…}}` pinned
     to a version. `setup` is required when the profile's `ci` is
     `github-actions`. The tools are part of the bundle the person confirms:
-    name them in the bundle question and offer them in `stack`. An answer
-    confirms `desktop.build` only with exactly the tools and setups it was
-    offered with; a different list is offered again as `assumed` and asked
-    about. You only record the tools: nothing is checked or installed on
+    name them in the bundle question and offer them in `stack`. No answer
+    confirms `desktop.build`: once the bundle is picked, offer it with its
+    tools as `assumed`, and the person confirms it with its own button
+    beside the stack, shown as their turn. Write it `confirmed` only after
+    that turn, with exactly the choice and tools it confirmed; when either
+    changes, offer it as `assumed` again. Never ask about it in `choices`.
+    You only record the tools: nothing is checked or installed on
     this PC here, and a later stage stops the run if one is missing. No
     other part has `tools`.
 

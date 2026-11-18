@@ -6,6 +6,11 @@ export type Decision = { approve?: boolean; edit?: string }
 // A web app's feature names its served endpoints; an Android app's names its core parts.
 export type Feature = { id: string; name: string; class: Freq; why: string; endpoints?: string[]; parts?: string[]; kinds?: string[] }
 export type Freq = 'every' | 'sometimes' | 'rarely' | 'never'
+/** A program a PC app's stack runs on this PC, and how a CI runner gets it (`oneshot_profile.tools_of`). */
+export type Tool = { name: string; setup?: string | { run: string } | { uses: string; with?: Record<string, unknown> } }
+/** A tool with its whole setup, as the owner confirms it: an action's inputs included. */
+export const toolText = (t: Tool) => t.setup === undefined ? t.name : `${t.name} (${typeof t.setup === 'string' ? t.setup
+  : 'run' in t.setup ? t.setup.run : [t.setup.uses, ...Object.entries(t.setup.with ?? {}).map(([k, v]) => `${k}=${String(v)}`)].join(', ')})`
 export type Palette = { id: string; name: string; colors: Record<string, string> }
 export type Gate = { round: number; decisions: Record<string, Decision>; marks?: Record<string, string>; palette?: string }
 /** A review's brief for the owner (`oneshot_brief.shown`): always the gate's `source`, which every submission carries;
@@ -74,8 +79,7 @@ export type SpecView = SpecSummary & {
     critique_bases?: Record<string, number>
     inflight?: Inflight | null; reviews?: Review[]; refused?: number; cases?: string[][]
     spend?: { usd?: number; seconds?: number; calls?: number }
-    stack?: { part: string; choice: string; why: string; status: string
-      tools?: { name: string; setup?: string | { run: string } | { uses: string; with?: Record<string, string> } }[] }[]
+    stack?: { part: string; choice: string; why: string; status: string; tools?: Tool[] }[]
     r1?: Gate; r2?: Gate; r3?: Gate; front?: { tokens: { palettes: Palette[] } }; phone?: PhoneRound
     reading?: Record<string, { round: number; seconds: number | null; opened: string[]; edited: string[] }[]>
   }
@@ -97,6 +101,9 @@ export const oneshotSpecs = () => get('/api/oneshot-specs').then((r) => json<{ s
 export const api = {
   view: (repo: string) => get(base(repo)).then(answer),
   say: (repo: string, text: string) => post(`${base(repo)}/say`, { text }).then(answer),
+  // A PC app's build part, confirmed exactly as offered (`oneshot_spec.confirm_build`).
+  confirmBuild: (repo: string, part: string, choice: string, tools: Tool[]) =>
+    post(`${base(repo)}/build`, { part, choice, tools }).then(answer),
   resume: (repo: string) => post(`${base(repo)}/resume`, {}).then(answer),
   board: (repo: string, frequency: Record<string, Freq>, first_screen: string | Record<string, string>) =>
     post(`${base(repo)}/board`, { frequency, first_screen }).then(answer),

@@ -6,7 +6,8 @@ import { Btn } from '@/components/Modal'
 import { Board } from '@/components/OneshotBoard'
 import { Track } from '@/components/OneshotTrack'
 import { api, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
-  type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, kindLabel, ROLE, modelName } from '@/lib/oneshot'
+  type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, type Tool, kindLabel, ROLE, modelName, toolText,
+} from '@/lib/oneshot'
 import { cn } from '@/lib/utils'
 
 /** Which model each part of the run uses, fixed at its start. */
@@ -147,7 +148,8 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
       android={android} kinds={o.intent?.kinds ?? [o.intent?.kind ?? 'webapp']}
       halt={view.stopped && <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>
         {resume}</Halt>}
-      busy={busy || !idle} send={(text) => act(() => api.say(repo, text))} /></>
+      busy={busy || !idle} send={(text) => act(() => api.say(repo, text))}
+      confirm={(part, choice, tools) => act(() => api.confirmBuild(repo, part, choice, tools))} /></>
   }
   if (view.stopped) {
     return (
@@ -292,9 +294,10 @@ const partsOf = (kinds: string[], android: boolean): [string, string][] => kinds
 
 /** The S2 conversation filling the height with its answer box held at the bottom, beside the requirements and
  *  the stack it has gathered so far. */
-function Conversation({ talk, requirements, stack, android, kinds, halt, busy, send }: {
+function Conversation({ talk, requirements, stack, android, kinds, halt, busy, send, confirm }: {
   talk: Talk[]; requirements: NonNullable<SpecView['requirements']>; stack: NonNullable<SpecView['oneshot']['stack']>
   android: boolean; kinds: string[]; halt: ReactNode; busy: boolean; send: (text: string) => Promise<boolean>
+  confirm: (part: string, choice: string, tools: Tool[]) => Promise<boolean>
 }) {
   const parts = partsOf(kinds, android)
   const [text, setText] = useState('')
@@ -325,10 +328,12 @@ function Conversation({ talk, requirements, stack, android, kinds, halt, busy, s
             <dt key={`${p}-t`} className="text-muted-foreground">{label}</dt>,
             <dd key={`${p}-d`} title={s?.why} className={cn(!s || s.status !== 'confirmed' ? 'text-faint' : '')}>
               {s ? `${s.choice}${s.status === 'confirmed' ? '' : ' (아직 묻는 중)'}` : '아직 안 정함'}
-              {/* A PC app's build names the tools the owner confirms with it, each with how CI gets it. */}
-              {s?.tools && <span className="block text-[12px] text-muted-foreground">도구: {s.tools.map((t) =>
-                t.setup === undefined ? t.name : `${t.name} (${typeof t.setup === 'string' ? t.setup
-                  : 'uses' in t.setup ? t.setup.uses : t.setup.run})`).join(', ')}</span>}
+              {/* A PC app's build names the tools the owner confirms with it, each with how CI gets it. Only its own
+                  button confirms it, exactly as shown (`oneshot_spec.confirm_build`). */}
+              {s?.tools && <span className="block text-[12px] text-muted-foreground">도구: {s.tools.map(toolText).join(', ')}</span>}
+              {s?.tools && s.status !== 'confirmed' && (
+                <Btn className="mt-1.5" disabled={busy} onClick={() => void confirm(s.part, s.choice, s.tools!)}>이 빌드와 도구로 확정</Btn>
+              )}
             </dd>,
           ]
         })}
