@@ -8,6 +8,7 @@ and `origin` is a local bare repository.
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -218,12 +219,23 @@ def test_confirming_the_intent_reserves_the_name_and_refuses_conflicts(world):
 
 
 def test_the_owner_picks_the_kinds_at_the_start(world):
-    for kinds in ([], ["cli"], ["desktop"], ["webapp", "webapp"]):
+    for kinds in ([], ["cli"], ["webapp", "webapp"]):
         with pytest.raises(HTTPException) as refused:
             oneshot.start(oneshot.Start(kinds=kinds, sentence="도구"))
         assert refused.value.status_code == 400
     assert not oneshot.runs()
     assert oneshot.start(oneshot.Start(kinds=["android", "webapp"], sentence="번역기"))["kinds"] == ["android", "webapp"]
+
+
+def test_a_pc_app_is_picked_on_windows_and_shown_off_elsewhere(world):
+    with patch.object(sys, "platform", "linux"):
+        assert oneshot.listing()["unavailable"] == {"desktop": "PC 앱은 Windows 에서만 만든다"}
+        with pytest.raises(HTTPException, match="Windows 에서만"):
+            oneshot.start(oneshot.Start(kinds=["webapp", "desktop"], sentence="번역기"))
+        assert not oneshot.runs()
+    with patch.object(sys, "platform", "win32"):
+        assert oneshot.listing()["unavailable"] == {}
+        assert oneshot.start(oneshot.Start(kinds=["desktop"], sentence="번역기"))["kinds"] == ["desktop"]
 
 
 def test_a_restatement_an_earlier_intake_marked_unsupported_cannot_be_confirmed(world):
@@ -282,6 +294,71 @@ def test_several_kinds_share_one_card_prefilled_only_where_their_profiles_agree(
     assert webapp["ui_language"] == android["ui_language"] == "both"   # the shared answer, in each kind's profile
     assert "device" not in webapp and "responsive" not in android
     assert "local.properties" in (world["workspace"] / "budget-tracker" / ".gitignore").read_text("utf-8")
+
+
+def test_a_saved_pc_app_bootstrap_resumes_on_no_other_host(world):
+    rid = made(world, working=None, stopped={"reason": "github", "detail": "GitHub 문제", "state": "bootstrap"},
+               intent={**INTENT, "name": "budget-tracker", "kind": "desktop", "kinds": ["desktop"]})
+    with patch.object(sys, "platform", "linux"), \
+            patch.object(oneshot, "launch", LAUNCH), \
+            patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("no step runs off Windows")), \
+            pytest.raises(HTTPException, match="Windows 에서만"):
+        oneshot.resume(rid, oneshot.Resume())
+    assert oneshot.load(rid)["stopped"]["reason"] == "github"
+
+
+def test_a_pc_app_intake_takes_no_turn_on_another_host(world):
+    # Stopped before its first restatement: the owner's pick is the run's own `kinds`, with no `intent` yet.
+    rid = made(world, state="intake", working=None, confirmed=False, identity=None, profile=None, intent=None,
+               kinds=["desktop"], stopped={"reason": "restart", "detail": "서버가 다시 켜졌다", "state": "intake"})
+    with patch.object(sys, "platform", "linux"), patch.object(oneshot, "launch", LAUNCH), \
+            patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("no intake turn off Windows")):
+        with pytest.raises(HTTPException, match="Windows 에서만"):
+            oneshot.resume(rid, oneshot.Resume())
+        # A restatement saved on Windows: an edit would call the intake model again.
+        oneshot.changed(rid, stopped=None, intent={**INTENT, "name": "budget-tracker", "kind": "desktop", "kinds": ["desktop"]})
+        with pytest.raises(HTTPException, match="Windows 에서만"):
+            oneshot.intent(rid, oneshot.Intent(confirm=False, edit="더 짧게"))
+    assert oneshot.load(rid)["state"] == "intake" and not oneshot.load(rid)["working"]
+
+
+def test_a_pc_app_card_names_its_window_and_keeps_it_in_its_own_profile(world):
+    with patch.object(sys, "platform", "win32"), \
+            patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-intent", INTENT), {}, False)):
+        rid = oneshot.start(oneshot.Start(kinds=["desktop"], sentence="화면 번역기"))["id"]
+        oneshot.intake(rid)
+    with patch.object(sys, "platform", "linux"), pytest.raises(HTTPException, match="Windows 에서만"):
+        oneshot.intent(rid, oneshot.Intent(confirm=True))   # a saved PC app restatement, now on another host
+    assert oneshot.load(rid)["state"] == "intake"
+    oneshot.intent(rid, oneshot.Intent(confirm=True))
+    proposal = {"window": {"value": "800x600", "why": "작은 창"}}
+    with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-profile", proposal), {}, False)), \
+            patch.object(oneshot, "gh_user", lambda: "someone"):
+        oneshot.environment(rid)   # an option outside the schema refuses the block
+    assert oneshot.load(rid)["stopped"]["reason"] == "block"
+    oneshot.changed(rid, stopped=None)
+    with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-profile", {}), {}, False)), \
+            patch.object(oneshot, "gh_user", lambda: "someone"):
+        oneshot.environment(rid)
+    shown = oneshot.view(oneshot.load(rid))
+    assert shown["schema"]["window"]["options"] == list(oneshot_profile.WINDOWS)
+    assert "responsive" not in shown["schema"] and "device" not in shown["schema"] and "toolchain" not in shown
+    assert shown["profile"]["window"] == "1280x800"   # the default, before any saved answer
+    # Built on this Windows PC, alone or among kinds: no other build host, even where another kind's card allows one.
+    assert shown["schema"]["os_now"]["options"] == oneshot_profile.schema(["webapp", "desktop"])["os_now"]["options"] == ["windows"]
+    assert "`os_now` 에 없는 선택지다: macos" in oneshot.profile(rid, oneshot.Profile(values={"os_now": "macos"}))["errors"]
+    with patch.object(sys, "platform", "linux"):
+        assert "PC 앱은 Windows 에서만 만든다" in oneshot.view(oneshot.load(rid))["errors"]
+    assert "`window` 에 없는 선택지다: 800x600" in oneshot.profile(rid, oneshot.Profile(values={"window": "800x600",
+                                                                                            "os_now": "windows"}))["errors"]
+    with pytest.raises(HTTPException):
+        oneshot.profile(rid, oneshot.Profile(values={"window": "800x600"}, confirm=True))
+    values = {"window": "1440x900", "docs_language": "ko", "visibility": "private", "github_owner": "someone"}
+    assert "window" not in "; ".join(oneshot.profile(rid, oneshot.Profile(values=values))["errors"])
+    assert oneshot.profile(rid, oneshot.Profile(values=values, confirm=True))["state"] == "bootstrap"
+    assert finished(world, rid)["committed"]
+    saved = json.loads((oneshot.PROFILES / "desktop.json").read_text("utf-8"))
+    assert saved["window"] == "1440x900" and "responsive" not in saved and "device" not in saved
 
 
 def test_an_intake_started_before_the_owner_picked_kinds_stops(world):

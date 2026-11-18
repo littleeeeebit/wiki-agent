@@ -23,9 +23,16 @@ INSTRUCTIONS = (
 )
 
 
+TOKENS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
+
+
 def environment(extra: dict | None = None) -> dict:
-    return {**{k: v for k, v in python_environment({**os.environ, **(extra or {})}).items()
-               if not k.upper().startswith("ORCA_")}, "WIKI_AGENT_MANAGED": "1"}
+    """A child's environment: the server's with `extra` over it, where `None` drops a variable. `RELEASE_KEY_PASSWORD`
+    (`main.release.SECRET`) is handed only to the release key tools, never to an agent."""
+
+    merged = {k: v for k, v in {**os.environ, **(extra or {})}.items() if v is not None}
+    return {**{k: v for k, v in python_environment(merged).items()
+               if not k.upper().startswith("ORCA_") and k.upper() != "RELEASE_KEY_PASSWORD"}, "WIKI_AGENT_MANAGED": "1"}
 
 
 def skill_config(repo: Path, env: dict) -> str | None:

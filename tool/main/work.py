@@ -507,7 +507,7 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
     owns gets the spec as its system prompt, every time a session is made.
     """
 
-    from . import specs  # `specs` imports this module
+    from . import release_repair, specs  # both import this module
 
     spec = specs.owner(path)
     # A refactoring card's work cell was fixed at its survey's start, a oneshot's at its run's: nothing moves it.
@@ -530,7 +530,7 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
             chat = None
         if chat is None:
             chat = ChatSession(path, model=model, effort=effort, write=True, system=prompt,
-                               bypass=bypass)
+                               bypass=bypass, **release_repair.unshared(spec))
             chat._spec_system = prompt
             chat.settled = SETTLING.search
             chat.session_id = resumable(recall(path), chat.is_codex)

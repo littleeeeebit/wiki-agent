@@ -6,6 +6,15 @@ export type Decision = { approve?: boolean; edit?: string }
 // A web app's feature names its served endpoints; an Android app's names its core parts.
 export type Feature = { id: string; name: string; class: Freq; why: string; endpoints?: string[]; parts?: string[]; kinds?: string[] }
 export type Freq = 'every' | 'sometimes' | 'rarely' | 'never'
+/** A program a PC app's stack runs on this PC, and how a CI runner gets it (`oneshot_profile.tools_of`). */
+export type Tool = { name: string; setup?: string | { run: string } | { uses: string; with?: Record<string, string> } }
+/** A tool with its whole setup, as the owner confirms it: the setup's kind named, then its value, an action's
+ *  inputs included, each a string the server checked (`oneshot_profile.tools_of`), quoted so an empty or spaced
+ *  value shows as it is. A command reading `preinstalled` never looks like a preinstalled tool. */
+export const toolText = (t: Tool) => `${t.name} — ${t.setup === undefined ? 'CI 설치 방법 없음'
+  : typeof t.setup === 'string' ? 'CI 이미지에 있음'
+  : 'run' in t.setup ? `명령: ${t.setup.run}`
+  : `액션: ${[t.setup.uses, ...Object.entries(t.setup.with ?? {}).map(([k, v]) => `${k}=${JSON.stringify(v)}`)].join(', ')}`}`
 export type Palette = { id: string; name: string; colors: Record<string, string> }
 export type Gate = { round: number; decisions: Record<string, Decision>; marks?: Record<string, string>; palette?: string }
 /** A review's brief for the owner (`oneshot_brief.shown`): always the gate's `source`, which every submission carries;
@@ -74,7 +83,7 @@ export type SpecView = SpecSummary & {
     critique_bases?: Record<string, number>
     inflight?: Inflight | null; reviews?: Review[]; refused?: number; cases?: string[][]
     spend?: { usd?: number; seconds?: number; calls?: number }
-    stack?: { part: string; choice: string; why: string; status: string }[]
+    stack?: { part: string; choice: string; why: string; status: string; tools?: Tool[] }[]
     r1?: Gate; r2?: Gate; r3?: Gate; front?: { tokens: { palettes: Palette[] } }; phone?: PhoneRound
     reading?: Record<string, { round: number; seconds: number | null; opened: string[]; edited: string[] }[]>
   }
@@ -96,6 +105,9 @@ export const oneshotSpecs = () => get('/api/oneshot-specs').then((r) => json<{ s
 export const api = {
   view: (repo: string) => get(base(repo)).then(answer),
   say: (repo: string, text: string) => post(`${base(repo)}/say`, { text }).then(answer),
+  // A PC app's build part, confirmed exactly as offered (`oneshot_spec.confirm_build`).
+  confirmBuild: (repo: string, part: string, choice: string, tools: Tool[]) =>
+    post(`${base(repo)}/build`, { part, choice, tools }).then(answer),
   resume: (repo: string) => post(`${base(repo)}/resume`, {}).then(answer),
   board: (repo: string, frequency: Record<string, Freq>, first_screen: string | Record<string, string>) =>
     post(`${base(repo)}/board`, { frequency, first_screen }).then(answer),
@@ -127,11 +139,12 @@ export const STOP: Record<string, string> = {
   gate: '빌드가 검사를 통과하지 못했다', review: '백엔드 리뷰가 라운드 상한까지 거절했다', critique: '화면 비평이 멈췄다',
   kind: '이 종류는 여기까지', rekind: '고른 종류로는 만들 수 없는 요구',
 }
-/** The kinds the owner picks on the start screen (`tool/main/oneshot.py` `Start.kinds`); `soon` ones are shown off. */
-export const KINDS: { id: string; label: string; note: string; soon?: string }[] = [
+/** The kinds the owner picks on the start screen (`tool/main/oneshot.py` `Start.kinds`); `soon` ones are shown off,
+ *  and a `host` one only once the server says this host builds it (`oneshot_profile.HOST_ONLY`). */
+export const KINDS: { id: string; label: string; note: string; soon?: string; host?: boolean }[] = [
   { id: 'webapp', label: '웹앱', note: '브라우저에서 쓴다' },
   { id: 'android', label: 'Android 앱', note: '휴대폰에 설치한다' },
-  { id: 'desktop', label: 'PC 앱', note: 'Windows 에 설치한다', soon: '계획 9e 에서 열린다' },
+  { id: 'desktop', label: 'PC 앱', note: 'Windows 에 설치한다', host: true },
 ]
 export const kindLabel = (id: string) => KINDS.find((k) => k.id === id)?.label ?? id
 export const COLUMNS: { id: Freq; label: string }[] = [

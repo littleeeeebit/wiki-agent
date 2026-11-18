@@ -28,7 +28,9 @@ A short answer for the person, then exactly one fenced block named
   - `webapp`: used in a web browser, on a computer or a phone.
   - `android`: an app installed on an Android phone. Its logic runs on the
     phone, and it may call outside APIs.
-  - `desktop`: a program installed on a Windows computer.
+  - `desktop`: a program installed on a Windows computer. Its logic runs on
+    the computer, and it may call outside APIs. It may read other programs'
+    windows or the screen, and draw over them, with the user's permission.
 
   When the sentence asks for something none of the picked kinds can do, such
   as drawing over another app in a web app, say so plainly in your answer,

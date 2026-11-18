@@ -11,7 +11,8 @@ The kinds mean:
 - `webapp`: used in a web browser, on a computer or a phone.
 - `android`: an app installed on an Android phone. Its logic runs on the
   phone, and it may call outside APIs.
-- `desktop`: a program installed on a Windows computer.
+- `desktop`: a program installed on a Windows computer. Its logic runs on the
+  computer, and it may call outside APIs.
 
 ## What you receive
 
@@ -86,7 +87,24 @@ at most three questions:
   - `android.ui`, `android.build`: an Android app's UI toolkit, and its build
     tool and how a debug APK is made.
   - `desktop.ui`, `desktop.build`: a Windows program's UI toolkit, and its
-    build tool and installer.
+    build tool, how an unpackaged debug build is made to run, and its
+    installer. `desktop.build` also carries `tools`: every program the
+    Windows program's stack runs on this PC to test, build and package it,
+    each once, as `{"name": "cargo", "setup": "preinstalled"}`. `name` is the
+    program as found on `PATH`, never a path. `setup` says how a clean GitHub
+    Actions runner on `windows-latest` gets it: `preinstalled`,
+    `{"run": "…"}`, or `{"uses": "owner/action@version", "with": {…}}` pinned
+    to a version. `setup` is required when the profile's `ci` is
+    `github-actions`. The tools are part of the bundle the person confirms:
+    name them in the bundle question and offer them in `stack`. No answer
+    confirms `desktop.build`: once the bundle is picked, offer it with its
+    tools as `assumed`, and the person confirms it with its own button
+    beside the stack, shown as their turn. Write it `confirmed` only after
+    that turn, with exactly the choice and tools it confirmed; when either
+    changes, offer it as `assumed` again. Never ask about it in `choices`.
+    You only record the tools: nothing is checked or installed on
+    this PC here, and a later stage stops the run if one is missing. No
+    other part has `tools`.
 
   Prefer a core every kind can use as it is, such as Rust under Tauri 2 for
   Android and Windows, or Kotlin Multiplatform. Pick what suits this
