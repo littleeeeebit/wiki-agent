@@ -173,7 +173,7 @@ def test_an_attempt_checkout_is_a_fresh_clean_detached_copy_and_never_a_second_o
     src = release.checkout(repo, sha, "a1")
 
     assert release.git(src, "rev-parse", "HEAD").strip() == sha and (src / "a.txt").read_text() == "a"
-    assert "a1" not in release.git(repo, "worktree", "list")
+    assert release.place(repo, "a1").as_posix() not in release.git(repo, "worktree", "list")   # not a hash's "a1"
     with pytest.raises(ValueError, match="이미 있다"):
         release.checkout(repo, sha, "a1")
     release.discard(repo, "a1")
@@ -205,10 +205,13 @@ def test_the_build_gets_the_version_through_its_environment_and_an_overlay_besid
         return 0, "", ""
 
     monkeypatch.setattr(release.specs, "gate", gate)
+    monkeypatch.setattr(release, "run", lambda argv, env=None, timeout=300: BADGING)   # the APK reads back
     monkeypatch.setenv(release.SECRET, "inherited")
-    kit = {"java": tmp_path, "sdk": tmp_path, "ndk": tmp_path}
+    monkeypatch.setenv("GH_TOKEN", "inherited-token")
+    kit = {"java": tmp_path, "sdk": tmp_path, "ndk": tmp_path, "aapt2": "aapt2"}
 
     apk = release.build(src, {**ANDROID, "artifact": "out/app.apk"}, "0.1.1", kit, None)
+    assert "GH_TOKEN" not in seen["env"]   # nor a GitHub token: what the build prints can reach the repair agent
 
     assert apk == (src / "out/app.apk").resolve() and seen["cmd"] == "build" and seen["path"] == src
     assert (seen["env"]["RELEASE_VERSION"], seen["env"]["RELEASE_VERSION_CODE"]) == ("0.1.1", "1001")

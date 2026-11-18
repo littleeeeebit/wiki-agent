@@ -233,12 +233,18 @@ def tools() -> dict:
 
 
 SECRET = "RELEASE_KEY_PASSWORD"   # reaches the key tools only, set by `keyed`; never inherited
+UNSHARED = {SECRET, "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"}
+# What a shell prints when the adapter's command names a tool this machine lacks: the machine's problem, not the
+# repository's. PowerShell, cmd and sh in turn.
+MISSING_TOOL = re.compile(r"is not recognized as (?:the name of a cmdlet|an internal or external command)|"
+                          r"CommandNotFoundException|command not found", re.IGNORECASE)
 
 
 def environment(kit: dict) -> dict:
-    """The tools' environment, without any key password the server itself was started with."""
+    """The tools' environment, without any key password or GitHub token the server itself was started with: the
+    adapter's build runs here, and what it prints can reach the repair agent."""
 
-    return {**{k: v for k, v in os.environ.items() if k.upper() != SECRET}, "JAVA_HOME": str(kit["java"]),
+    return {**{k: v for k, v in os.environ.items() if k.upper() not in UNSHARED}, "JAVA_HOME": str(kit["java"]),
             "ANDROID_HOME": str(kit["sdk"]), "NDK_HOME": str(kit["ndk"]),
             "PATH": os.pathsep.join([str(kit["java"] / "bin"), os.environ.get("PATH", "")])}
 
@@ -270,12 +276,18 @@ def build(path: Path, android: dict, release: str, kit: dict, halt: threading.Ev
            "RELEASE_TAURI_CONFIG": str(overlay)}
     exited, out, cut = specs.gate(android["build"], path, halt, env=env, timeout=BUILD_SECONDS, idle=QUIET_SECONDS)
     if exited != 0:
-        tail = "\n".join(out.splitlines()[-40:])
+        tail = errorlog.redact("\n".join(out.splitlines()[-40:]))
         said = f"빌드 실패 — {cut or f'{exited} 로 끝났다'}\n{tail}"
-        raise ValueError(said) if halt.is_set() else BuildFailed(said)   # a person's stop needs no repair
+        # A person's stop, a deadline or silence, and a missing tool say nothing about the source.
+        machine = halt.is_set() or cut or MISSING_TOOL.search(out)
+        raise ValueError(said) if machine else BuildFailed(said)
     apk = output()
     if not apk.is_file():
         raise BuildFailed(f"빌드가 `{android['artifact']}` 를 만들지 않았다")
+    try:   # read before signing, so a broken product is the build's failure and not the signing's
+        badging(run([kit["aapt2"], "dump", "badging", apk], environment(kit)))
+    except ValueError as exc:
+        raise BuildFailed(f"빌드가 만든 `{android['artifact']}` 를 APK 로 읽지 못했다 — {exc}") from exc
     return apk
 
 
@@ -667,7 +679,7 @@ def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None,
            "refusals": refusals, "ok": built and caught}
     if needed:
         record = {"id": attempt, "remote": None, "tag": f"v{rounds[-1]['version']}", "version": rounds[-1]["version"],
-                  "sha": sha, "repair": {"needed": needed}}
+                  "sha": sha, "base": ref.removeprefix("origin/"), "repair": {"needed": needed}}
         out["repair"] = handed(repo, record, repair)
     return out
 

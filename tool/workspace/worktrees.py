@@ -62,7 +62,7 @@ def create(repo: Path, task: str, *, linked: bool = False, base: str = "") -> Pa
         return repo
     repo = _main(repo)
     path = worktree_home(repo) / task
-    done = _git(repo, "worktree", "add", "-b", task, str(path))
+    done = _git(repo, "worktree", "add", "-b", task, str(path), *([base] if base else []))
     if done.returncode:
         raise RuntimeError(done.stderr.strip() or f"git worktree add 실패: {task}")
     return path

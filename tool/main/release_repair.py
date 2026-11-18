@@ -1,18 +1,21 @@
 """Release step 4 (`docs/plans/release/0-overview.md`, "When an attempt fails"). A release attempt whose build or
-checks failed in a way a source change can fix becomes an ordinary task. Its spec is made here and started the
-way `[시작]` starts one, so the agent works on its own branch, and its pull request goes through the ordinary
-review loop. The release attempt has already ended as failed. Publishing the merged fix is a new press, because
-one press authorizes only the commit it pinned.
+checks failed in a way a source change can fix becomes an ordinary task. Its spec is made here, and its first
+turn is started as `[시작]` starts one. The agent works on its own branch in a linked worktree at the commit the
+attempt pinned, never in the person's checkout, and its pull request goes through the ordinary review loop. The
+release attempt has already ended as failed. Publishing the merged fix is a new press, because one press
+authorizes only the commit it pinned.
 
-The repair agent never gets the release key or its password: the spec carries only the failure. The press's
-release checkout is gone by then, and the agent works in a task worktree forked from the repository's branch."""
+The repair agent never gets the release key or its password. The spec carries only the failure, with secrets
+redacted, and the build that produced it ran without GitHub tokens or the key password in its environment."""
 
 from __future__ import annotations
 
 import time
 from pathlib import Path
 
-from . import channels, specs
+from common import errorlog
+
+from . import channels, specs, work
 
 EVIDENCE = 6000   # characters of the failure the spec carries; the build log's tail is already cut to 40 lines
 
@@ -20,7 +23,7 @@ EVIDENCE = 6000   # characters of the failure the spec carries; the build log's 
 def spec_for(repo: Path, record: dict, gate: str) -> dict:
     """The repair task's spec: the failed attempt's facts, what is out of bounds, and the repository's gate."""
 
-    failure = record["repair"]["needed"][-EVIDENCE:]
+    failure = errorlog.redact(record["repair"]["needed"])[-EVIDENCE:]   # a build log can echo a token
     block = {
         "goal": f"Fix what made the release build of {record['tag']} fail, so the next release press of "
                 f"`main` builds and passes its checks",
@@ -40,9 +43,10 @@ def spec_for(repo: Path, record: dict, gate: str) -> dict:
 
 
 def start(repo: Path, record: dict) -> str:
-    """The repair task for `record`, saved and started. Its ID is returned once the spec is saved: when the
-    start is refused (another turn holds the repository, a review owns its checkout), the spec stays organized
-    for `[시작]` and the refusal is raised for the ledger to record."""
+    """The repair task for `record`: a linked worktree on a new branch at the commit the attempt pinned, its
+    spec, and its first turn. The person's checkout is never switched, and nothing in it is carried over. The
+    pull request goes to the branch the attempt pinned. The ID is returned once the spec is saved: a turn that
+    cannot start raises `Started`, and the task waits in its worktree for the person."""
 
     known = channels.repo_for(repo.name)   # the turn's end looks the task's project up by name
     if known is None or known.resolve() != repo.resolve():
@@ -54,13 +58,24 @@ def start(repo: Path, record: dict) -> str:
     now = time.time()
     with specs._files:
         sid = specs.unique(repo, f"release-fix-{record['version'].replace('.', '-')}")
+        path = specs.create(repo, sid, linked=True, base=record["sha"])
         specs.save({"id": sid, "repo": repo.name, "rev": 1, **fields,
                     "source": {"focus": "release", "remote": record["remote"], "attempt": record["id"],
                                "turn": now, "plan": None},
-                    "state": "정리됨", "stopped": None, "worktree": None, "pr": None, "report": None, "gate": None,
-                    "fault": None, "history": [{"ts": now, "state": "정리됨"}]})
+                    "state": "작업 중", "stopped": None, "worktree": str(path), "branch": sid,
+                    "base": record.get("base") or "main", "return_branch": record.get("base") or "main",
+                    "start_head": record["sha"], "pr": None,
+                    "report": None, "gate": None, "fault": None, "cell": {"model": "", "effort": "", "fast": False},
+                    "history": [{"ts": now, "state": "정리됨"}, {"ts": now, "state": "작업 중"}]})
     try:
-        specs.started(repo, sid, specs.Start())
+        release = specs.hold(work._busy, specs._lock, str(path), "그 작업트리를 다른 요청이 쓰고 있다", kind="turn")
+        try:
+            work.forget(path)
+            chat = work.session(path, "", "", False)   # the screen's work model takes over from the next turn
+            work.begin(path, chat, "Start.", release, work.Run(chat, task=True), decide=True)
+        except BaseException:
+            release()
+            raise
     except Exception as exc:
         raise Started(sid, exc) from exc
     return sid

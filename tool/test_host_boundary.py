@@ -57,9 +57,10 @@ def test_environment_and_skill_overrides_do_not_modify_the_login_or_other_skills
             path = root / name / "SKILL.md"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
+    monkeypatch.setenv("RELEASE_KEY_PASSWORD", "inherited")   # the release key's: never an agent's
     env = host.environment({"CODEX_HOME": str(home), "ORCA_TERMINAL_HANDLE": "obsolete", "ORCA_CLI_COMMAND": "obsolete"})
     assert env["CODEX_HOME"] == str(home) and env["WIKI_AGENT_MANAGED"] == "1"
-    assert not any(k.startswith("ORCA_") for k in env)
+    assert not any(k.startswith("ORCA_") or k.upper() == "RELEASE_KEY_PASSWORD" for k in env)
     # Keep ancestor discovery inside the fixture rather than the machine's home.
     monkeypatch.chdir(tmp_path)
     config = host.skill_config(Path("."), env)

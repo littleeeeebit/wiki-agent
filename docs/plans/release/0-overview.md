@@ -180,10 +180,15 @@ version that is taken (see "One attempt").
 ### When an attempt fails
 
 - A transient failure, such as a network error or a GitHub 5xx, retries the
-  same pinned attempt, a bounded number of times. The press tries the
-  previous APK's download and the whole restart table three times, waiting 15
-  and then 60 seconds (`release_publish.WAITS`). A person's stop ends the
-  waiting. After the last try the attempt stays pending for `recover`.
+  same pinned attempt, a bounded number of times. The press tries each
+  GitHub read before the manifest and the whole restart table three times,
+  waiting 15 and then 60 seconds (`release_publish.WAITS`). The reads are the
+  release and tag lists, the previous APK's download and the previous tag.
+  A person's stop ends the waiting. After the last try of the restart table,
+  the attempt stays pending for `recover`. Before the manifest nothing remote
+  has been written and no version is taken, so a failure that outlasts its
+  tries ends the attempt as failed. The next press builds the same version
+  again.
 - A build or check failure that needs a source change goes to a bounded agent
   turn. The agent works on its own branch and opens an ordinary pull request
   under the ordinary review loop. The attempt then ends as failed, and the card
@@ -193,26 +198,36 @@ version that is taken (see "One attempt").
 
 What needs a source change is narrow:
 
-- The build command fails, or makes no artifact (`release.BuildFailed`).
+- The build command exits with an error, makes no artifact, or makes one
+  `aapt2` cannot read as an APK (`release.BuildFailed`). The check happens
+  before signing, so a broken product is the build's failure.
 - The built APK's versionName, versionCode, application ID or ABI is wrong,
   or the APK is debuggable (`release.built_wrong`).
 
 A wrong certificate is the release key's problem (`release.signed_wrong`).
-So are a missing tool, a key the server refuses, and a git or GitHub failure.
-None of them goes to an agent. Neither does a build a person stopped.
+So are a missing release tool, a key the server refuses, and a git or GitHub
+failure. A build that a person stopped, that hit its deadline or went
+silent, or whose shell reports a command it cannot find
+(`release.MISSING_TOOL`) is the machine's. None of these goes to an agent.
 
 `release_repair.start` makes the turn an ordinary task. Its spec,
 `release-fix-<version>`, carries the attempt, the tag, the pinned commit and
-the failure with the build log's last 40 lines. It names version files,
-signing and publishing as out of bounds, and the repository's gate is its
-done condition. It is started the way `[시작]` starts a task
-(`specs.started`), in a task worktree forked from the repository's branch.
-The agent never sees the key or its password. A repository the server does
-not know as a project gets no task: the turn's end finds the task's project
-by name, so such a task would never leave `작업 중`. The ledger records the
-task's ID under the attempt's `repair`. When the start is refused, for
-example because another turn holds the repository, the spec stays organized
-for `[시작]`, and the ledger records both its ID and the refusal.
+the failure with the build log's last 40 lines. Secrets are redacted from
+the log (`errorlog.redact`). The build ran without GitHub tokens or the key
+password in its environment (`release.UNSHARED`), and no agent session
+inherits the key password (`host.environment`). The spec names version
+files, signing and publishing as out of bounds, and the repository's gate is
+its done condition. The task gets a linked worktree on a new branch at the
+pinned commit. The person's checkout is never switched, and nothing in it is
+carried over. Its pull request goes to the branch the attempt pinned
+(`main`). Its first turn starts as `[시작]` starts one. The agent never sees
+the key or its password. A GitHub login the account holds stays readable to
+that account, which is why "Signing (Android)" requires another account
+before step 5 enables publishing. A repository the server does not know as
+a project gets no task: the turn's end finds the task's project by name, so
+such a task would never leave `작업 중`. The ledger records the task's ID
+under the attempt's `repair`. When its first turn cannot start, the task
+waits in its worktree, and the ledger records both its ID and the refusal.
 `release.rehearse` hands its failures over the same way, so the unpublished
 path exercises the hand-off.
 

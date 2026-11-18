@@ -24,8 +24,9 @@ INSTRUCTIONS = (
 
 
 def environment(extra: dict | None = None) -> dict:
+    # `RELEASE_KEY_PASSWORD` (`main.release.SECRET`) is handed only to the release key tools, never to an agent.
     return {**{k: v for k, v in python_environment({**os.environ, **(extra or {})}).items()
-               if not k.upper().startswith("ORCA_")}, "WIKI_AGENT_MANAGED": "1"}
+               if not k.upper().startswith("ORCA_") and k.upper() != "RELEASE_KEY_PASSWORD"}, "WIKI_AGENT_MANAGED": "1"}
 
 
 def skill_config(repo: Path, env: dict) -> str | None:

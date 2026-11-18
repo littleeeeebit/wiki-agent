@@ -214,10 +214,10 @@ def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, 
     sha = release.pin(repo)
     cfg = release.settings(repo, sha)
     first = release.seed(repo, sha, cfg["version_source"])
-    listed = gh.releases(repo_slug)
-    chosen = release.accepted(shown, [_shape(r) for r in listed], gh.tags(repo_slug), bump, first)
+    listed = _tried(lambda: gh.releases(repo_slug), halt)
+    chosen = release.accepted(shown, [_shape(r) for r in listed], _tried(lambda: gh.tags(repo_slug), halt), bump, first)
     prior = latest(listed)
-    record = reserve(name, {"id": attempt, "remote": name, "repo": str(repo), "sha": sha, "version": chosen,
+    record = reserve(name, {"id": attempt, "remote": name, "repo": str(repo), "sha": sha, "base": "main", "version": chosen,
                             "tag": f"v{chosen}", "state": "pending", "started": time.time(),
                             "first": prior is None, "previous": prior and prior["tag_name"]}, seen)
     try:
@@ -238,13 +238,15 @@ def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, 
         if why := release.built_wrong(seen, chosen, cfg["android"], before):
             raise Repairable("; ".join(why))
         release.discard(repo, f"{attempt}/src")   # large; the signed APK beside it is what goes up
-        since = gh.tag(repo_slug, prior["tag_name"]) if prior else None
+        since = _tried(lambda: gh.tag(repo_slug, prior["tag_name"]), halt) if prior else None
         record = update(name, attempt, facts=seen, title=f"v{chosen}", notes=notes(repo, sha, since, prior is None),
                         manifest=[{"name": asset, "size": signed.stat().st_size,
                                    "sha256": android_owned.sha256(signed), "path": str(signed)}])
     except Repairable as exc:
         return _ended(record, "failed", reason=str(exc), repair={"needed": str(exc)})
-    except (Stopped, ValueError, OSError, gh.Failed) as exc:   # nothing remote was written yet
+    except (Stopped, ValueError, OSError, gh.Failed) as exc:
+        # Nothing remote was written yet and the version is not taken, so ending here is safe even for a
+        # transient failure that outlasted its tries: the next press builds the same version again.
         return _ended(record, "failed", reason=str(exc) or type(exc).__name__)
     return _tried(lambda: _finish(name, attempt), halt)
 

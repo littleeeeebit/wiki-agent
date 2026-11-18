@@ -166,17 +166,38 @@ def test_a_repair_that_cannot_start_is_recorded_and_the_attempt_still_ends(press
     assert "다른 작업" in done["repair"]["error"]
 
 
-@pytest.mark.parametrize("stopped", [True, False])
-def test_a_build_the_person_stopped_needs_no_repair(monkeypatch, tmp_path, stopped):
+@pytest.mark.parametrize("ending, repairable", [
+    ("stopped", False), ("deadline", False), ("missing tool", False), ("source", True)])
+def test_only_a_build_the_source_broke_needs_a_repair(monkeypatch, tmp_path, ending, repairable):
     halt = release.threading.Event()
-    if stopped:
+    if ending == "stopped":
         halt.set()
+    said = {"missing tool": "cargo : The term 'cargo' is not recognized as the name of a cmdlet",
+            "source": "error TS2307: Cannot find module './theme.js' ghp_" + "x" * 36}.get(ending, "")
     monkeypatch.setattr(release, "environment", lambda kit: {})
-    monkeypatch.setattr(release.specs, "gate", lambda *a, **k: (1, "", "멈춤" if stopped else ""))
+    monkeypatch.setattr(release.specs, "gate", lambda *a, **k: (
+        None if ending == "deadline" else 1, said, {"stopped": "멈춤", "deadline": "시간 초과"}.get(ending, "")))
     (src := tmp_path / "src").mkdir()
     with pytest.raises(ValueError) as failed:
         BUILD(src, ANDROID, "0.1.0", {}, halt)
-    assert isinstance(failed.value, release.BuildFailed) is not stopped
+    assert isinstance(failed.value, release.BuildFailed) is repairable
+    assert "ghp_" not in str(failed.value)   # a token a build prints is redacted before anything keeps it
+
+
+def test_a_build_whose_apk_cannot_be_read_needs_a_repair(monkeypatch, tmp_path):
+    def made(cmd, path, halt, env, **_):
+        (path / "out.apk").write_bytes(b"not an apk")
+        return 0, "", ""
+
+    def badging(argv, env=None, timeout=300):
+        raise ValueError("aapt2 실패 — ERROR: dump failed because no AndroidManifest.xml found")
+
+    monkeypatch.setattr(release, "environment", lambda kit: {})
+    monkeypatch.setattr(release.specs, "gate", made)
+    monkeypatch.setattr(release, "run", badging)
+    (src := tmp_path / "src").mkdir()
+    with pytest.raises(release.BuildFailed, match="APK 로 읽지 못했다"):
+        BUILD(src, ANDROID, "0.1.0", {"aapt2": "aapt2"}, release.threading.Event())
 
 
 def test_a_build_that_makes_no_artifact_needs_a_repair(monkeypatch, tmp_path):
@@ -187,7 +208,17 @@ def test_a_build_that_makes_no_artifact_needs_a_repair(monkeypatch, tmp_path):
         BUILD(src, ANDROID, "0.1.0", {}, release.threading.Event())
 
 
-@pytest.mark.parametrize("where", ["POST releases", "POST git/refs", "previous"])
+def test_a_transient_failure_before_the_manifest_ends_the_attempt_and_takes_no_version(press):
+    fake, repo, _ = press
+    rp.publish(repo, "0.1.0", None)
+    fake.fail["GET git/ref/tags/v0.1.0"] = [502] * (len(rp.WAITS) + 1)   # the previous tag, read for the notes
+    done = rp.publish(repo, "0.1.1", "patch")
+    assert done["state"] == "failed" and "502" in done["reason"] and "repair" not in done
+    assert "v0.1.1" not in fake.refs and rp.pending("github.com/o/r") is None
+    assert rp.publish(repo, "0.1.1", "patch")["state"] == "published"   # the same version, pressed again
+
+
+@pytest.mark.parametrize("where", ["GET releases", "GET git/matching-refs/tags", "POST releases", "POST git/refs", "previous"])
 def test_a_transient_failure_is_tried_again_within_the_press(press, monkeypatch, where):
     fake, repo, _ = press
     if where == "previous":
