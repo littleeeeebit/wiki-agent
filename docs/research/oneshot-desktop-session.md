@@ -48,10 +48,10 @@ are kept outside the repository. Two fixtures:
 
 The driver created the desktop with `owned_desktop()` and started the fixture
 with `launched()`. It took the fixture's processes from a parent-pid snapshot
-six seconds after the start, and added a second snapshot after the reader
-finished. A reader then ran on the same desktop as
-a Windows PowerShell 5.1 process, also through `launched()`. It listed the
-visible windows of those processes, called `SetWindowPos` on the largest one
+six seconds after the start. A reader then ran on the same desktop as
+a Windows PowerShell 5.1 process, also through `launched()`, and after it
+finished the driver added a second snapshot. The reader listed the
+visible windows of the first snapshot's processes, called `SetWindowPos` on the largest one
 (800×600, no activation, no z-order change, its result not checked), shot it
 with `PrintWindow` and `PW_RENDERFULLCONTENT`, walked the UI Automation control
 view, invoked the first element named `Go` through its `InvokePattern`, then
@@ -120,13 +120,19 @@ any job and outside the record. 9d2 changes it:
   `ERROR_ELEVATION_REQUIRED`, with no retry through the shell.
 - The caller gets the job handle, records the root's identity (pid, creation
   time, image) while it is still suspended, and resumes it.
-- Membership is read from the held job. `JobObjectBasicProcessIdList` gives
-  pids. Each pid is opened, and the process counts only if `IsProcessInJob`
-  confirms it on that same handle, so a pid that exits and is reused between
-  the list and the open is never recorded.
-- Ending is `TerminateJobObject`, then a wait of up to 30 seconds until the
-  job's `ActiveProcesses` count, from `JobObjectBasicAccountingInformation`, is
-  zero.
+- Membership is followed as it happens. The job is tied to an I/O completion
+  port, which posts `JOB_OBJECT_MSG_NEW_PROCESS` for every process that joins
+  and `JOB_OBJECT_MSG_EXIT_PROCESS` or `JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS`
+  for every one that leaves. On each join the look opens the pid at once and
+  keeps the handle only if `IsProcessInJob` confirms it on that same handle,
+  so a reused pid is never held. `JobObjectBasicProcessIdList` is read too, as
+  a cross-check.
+- Ending is `TerminateJobObject`, then a wait of up to 30 seconds for two
+  things: every held process handle signalled, and an exit message for every
+  join message. `ActiveProcesses` reaching zero is recorded as an accounting
+  observation, never as the proof: Windows can report zero before a terminated
+  process has finished exiting. A join the look could not open in time, or a
+  join without its exit message, leaves the proof inconclusive.
 
 `owned_desktop()` binds the calling thread with `SetThreadDesktop`, which fails
 on a thread that already has windows or hooks, and it restores and closes on
@@ -193,9 +199,11 @@ The checks read the tree as the Android loop reads its hierarchy:
   visible on the first surface. A `sometimes` one is reached in one action. A
   `rarely` one is absent from the primary surface but present in some
   approved state. A `never` one has no control in any approved screen, state
-  or window. Absence counts only after every screen and state the approved
-  board lists was reached and read; one the look could not reach holds the
-  check rather than passing it.
+  or window. The features' frequencies come from the S5 board. The coverage
+  set is the desktop kind's screen map and state list that R2 approved from
+  S6's blocks. Absence counts only after every screen and state in that set
+  was reached and read; one the look could not reach holds the check rather
+  than passing it.
 - A virtualized container is read to its verified end before an absence in it
   counts: through `ItemContainer.FindItemByProperty` and
   `VirtualizedItem.Realize` where the container supports them, otherwise by its
@@ -208,9 +216,8 @@ Cleanup runs on every outcome, from the record, as the Android look's does. It
 ends every job the look owns, then closes the desktop. The proof holds only
 when every check reads a definite answer:
 
-- each job's `ActiveProcesses` count is zero, read on the job handle the look
-  holds. A job holds every process it ever contained, a windowless one
-  started after the last membership read included;
+- every process that joined a job has exited, by the launcher's rule above:
+  each held handle signalled, and an exit message for every join message;
 - no window remains on the desktop, enumerated through the desktop handle the
   look holds. `CloseDesktop` then succeeds on that handle, and afterwards
   `OpenDesktopW` by the recorded name fails with not-found;
@@ -228,15 +235,25 @@ Any other error from these calls, such as access denied, is not an answer.
 An inconclusive check holds the look, as a leftover does, and the look names
 it.
 
-The next look cleans every earlier record before it starts, so a look a server
-crash cut short is cleaned first. That server's handles died with it, so
-recovery reopens each job by its recorded name. A job object lives as long as
-a process it contains does. So when `OpenJobObjectW` fails with not-found, the
-job and every process it ever held are gone, including any started after the
-record's last membership read. When it opens, recovery ends the job and waits
-for `ActiveProcesses` to reach zero, as above. The desktop is proved by name:
-`OpenDesktopW` fails with not-found. A desktop that still opens is read for
-windows and held. Any other error holds the look.
+The next look checks every earlier record before it starts. A server crash
+takes the look's job handles and completion port with it. Kill-on-close then
+asks Windows to end the jobs' processes, but nothing left proves they finished.
+A job's name can vanish while a process still holds the job, and a process
+that joined after the last recorded join has no identity to test. So recovery
+does not try to prove a crashed look clean from names. It proves it in one of
+two ways:
+
+- the PC restarted after the record was written, read from the boot time.
+  Every process the look started has ended;
+- the look's record shows its proof completed before the crash.
+
+Otherwise recovery kills what it can still identify: a recorded identity that
+reads the same, by its handle, and the job, if it still opens by the recorded
+name in the record's own session namespace. It then holds the run and names the
+record. The owner clears the hold by restarting or signing out, which the boot
+time or the record's session logon time, read again, then proves. Name probes for jobs and the
+desktop run only in the record's session and window station; elsewhere they
+are not an answer.
 
 ## Refusals and findings
 
@@ -248,7 +265,7 @@ windows and held. Any other error holds the look.
 | No app window within 30 seconds, or the app exits, including a handoff to another instance | A finding, with the app's log |
 | More than one candidate window | Refused as ambiguous |
 | A shot, tree read, action or postcondition passes its deadline | The jobs are ended, the cleanup proof runs, and the step is a finding |
-| A shot fails, or its content area (the bounds of the screen's content element in the tree) is a single colour | A finding |
+| A shot fails, or, in a state whose approved block shows content, its content area (the bounds of the screen's content element in the tree) is a single colour | A finding |
 | A tree read fails, or lacks an id the screen's scenarios name | A finding when the app answered; held when the read itself failed |
 | An action's postcondition reads false | A finding |
 | The resize ends at another size | A finding |
@@ -263,17 +280,19 @@ windows and held. Any other error holds the look.
 By Windows' design, windows on a desktop that is not the input desktop are not
 shown on the owner's screen, and an overlay drawn there cannot sit over a
 window on the owner's desktop. The experiment's one sample agreed: the owner's
-desktop listed no fixture window. Measured: a GDI copy of the screen from the
-owned desktop fails.
+desktop listed no fixture window. Measured: in the later Edge attempt, the
+one GDI copy of the screen from the owned desktop failed.
 
 Not measured, and separate questions:
 
 - capture: Windows Graphics Capture's window API on a fixture viewer window on
   the same owned desktop;
-- overlay: an overlay window over that viewer on the same desktop. A shot of
-  each window alone cannot show stacking, so the evidence is both windows'
-  frame bounds and their z-order, plus a composed picture if 9d2 finds a way
-  to take one there.
+- overlay: an overlay window over that viewer on the same desktop. Both
+  windows' frame bounds and their z-order are geometry evidence only: a
+  layered window at zero opacity can sit exactly over the viewer and show
+  nothing. A check that the overlay shows its content needs a composed picture
+  of the overlay over the viewer. If 9d2 finds no way to take one on the owned
+  desktop, that check stays open for the round below.
 
 The screen translator's combined scenario needs both. Each one the owned
 desktop cannot show needs its evidence from elsewhere. Plan 9 requires each
@@ -287,8 +306,8 @@ records their evidence in the run. The other way is an explicit change to plan
 
 - WinUI 3, WPF, WinForms, Electron and a Tauri build. No build of theirs ran
   here, and Edge stands in only for Chromium's rendering and tree.
-- Edge without `--force-renderer-accessibility`, so the tree a WebView2 app
-  gives by default.
+- Edge without `--force-renderer-accessibility`.
+- The tree a WebView2 app gives by default, a separate question from Edge's.
 - Any pattern other than `Invoke`, and any app with more than one window.
 - Whether the shots were drawn with hardware acceleration.
 - Display scale. The windows reported 96 DPI, but Windows reports 96 for a
