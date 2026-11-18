@@ -140,6 +140,51 @@ def test_a_record_that_fails_before_the_root_runs_ends_the_suspended_root(job, t
     assert job.end(5)["clean"]
 
 
+def test_a_root_whose_rollback_windows_refused_stays_held_until_the_job_ends_it(job, tmp_path, monkeypatch):
+    def failing(identity):
+        raise OSError("the record could not be written")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(job.k, "TerminateProcess", lambda *_: 0)
+        with pytest.raises(OSError):
+            started(job, tmp_path, SLEEP, before_resume=failing)
+
+    assert len(job.stray) == 1 and job.k.WaitForSingleObject(job.stray[0], 0) != 0   # still suspended, held
+    proof = job.end(5)
+
+    assert proof["clean"], proof["reasons"]   # the job's end killed it, and its own handle shows that
+
+
+def test_a_root_still_alive_after_the_proof_wait_is_named(job, monkeypatch):
+    job.stray.append(owned_job.w.HANDLE(1))
+    monkeypatch.setattr(job.k, "WaitForSingleObject", lambda *_: 258)   # WAIT_TIMEOUT
+
+    proof = job.end(0.1)
+
+    assert not proof["clean"] and any("refused at start" in reason for reason in proof["reasons"])
+    job.stray.clear()
+
+
+def test_a_flag_that_cannot_be_restored_after_creation_rolls_the_root_back(job, tmp_path, monkeypatch):
+    stopped, closed, real = [], [], os.set_handle_inheritable
+
+    def failing(handle, inheritable):
+        if not inheritable:
+            raise OSError("restore failed")
+        real(handle, inheritable)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "set_handle_inheritable", failing)
+        patch.setattr(job, "_create", lambda *_: (101, 102, 103))
+        patch.setattr(job.k, "TerminateProcess", lambda handle, _: stopped.append(handle) or 1)
+        patch.setattr(job.k, "WaitForSingleObject", lambda *_: 0)
+        patch.setattr(job.k, "CloseHandle", lambda handle: closed.append(handle) or 1)
+        with pytest.raises(OSError, match="restore failed"):
+            started(job, tmp_path, SLEEP)
+
+    assert stopped == [101] and {101, 102} <= set(closed)
+
+
 def test_the_root_inherits_only_its_own_input_and_log(job, tmp_path):
     import msvcrt
 

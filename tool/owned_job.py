@@ -95,6 +95,7 @@ class Job:
             self.close()
             raise Refused(f"cannot prepare the job: {error}")
         self.joined: list[dict] = []   # {"pid", "handle", "identity", "exited"}
+        self.stray: list = []   # creation handles of roots whose rollback could not confirm their exit
         self.ended = False
 
     def _create(self, argv, cwd, env, desktop, handles):
@@ -132,15 +133,21 @@ class Job:
 
         import msvcrt
 
-        with open(os.devnull, "rb") as null:
-            handles = [msvcrt.get_osfhandle(file.fileno()) for file in (null, log)]
-            for handle in handles:
-                os.set_handle_inheritable(handle, True)
-            try:
-                created = self._create(argv, cwd, env, desktop, handles)
-            finally:
-                for handle in handles:
-                    os.set_handle_inheritable(handle, False)
+        created = None
+        try:
+            with open(os.devnull, "rb") as null:
+                handles = [msvcrt.get_osfhandle(file.fileno()) for file in (null, log)]
+                try:
+                    for handle in handles:
+                        os.set_handle_inheritable(handle, True)
+                    created = self._create(argv, cwd, env, desktop, handles)
+                finally:
+                    for handle in handles:
+                        os.set_handle_inheritable(handle, False)
+        except BaseException:
+            if isinstance(created, tuple):   # created, then restoring a flag failed: owned and rolled back
+                self._rollback(created[0], created[1])
+            raise
         if not isinstance(created, tuple):
             if created == ELEVATION_REQUIRED:
                 raise Refused("the app asks for elevation; it is not retried through the shell")
@@ -154,25 +161,38 @@ class Job:
                 before_resume(root)
             if self.k.ResumeThread(thread) == 0xFFFFFFFF:
                 raise Refused(f"cannot resume {argv[0]}: {ctypes.get_last_error()}")
-            return root
         except BaseException:
-            self.k.TerminateProcess(process, 1)   # never left suspended, never run unrecorded
+            self._rollback(process, thread)   # never left suspended, never run unrecorded
             raise
-        finally:
-            self.k.CloseHandle(thread)
-            self.k.CloseHandle(process)
+        self.k.CloseHandle(thread)
+        self.k.CloseHandle(process)
+        return root
 
-    def _messages(self, wait_ms: int):
-        """Every message the port holds now, waiting up to `wait_ms` for the first: (message, pid)."""
+    def _rollback(self, process, thread) -> None:
+        """End a root that must not run, through its creation handle. A root whose exit is confirmed within five
+        seconds releases its handles; one that is not keeps its process handle in `stray`, which `end` waits on
+        and reports, so the failure is never lost."""
+
+        self.k.TerminateProcess(process, 1)
+        self.k.CloseHandle(thread)
+        if self.k.WaitForSingleObject(process, 5000) == 0:
+            self.k.CloseHandle(process)
+        else:
+            self.stray.append(process)
+
+    def _messages(self, wait_ms: int, most: int = 64):
+        """Up to `most` messages the port holds now, waiting up to `wait_ms` for the first: (message, pid).
+        The bound keeps a backlog from holding `end` past its deadline."""
 
         found = []
-        while True:
+        while len(found) < most:
             message, key, pid = w.DWORD(), ctypes.c_size_t(), ctypes.c_void_p()
             if not self.k.GetQueuedCompletionStatus(self.port, ctypes.byref(message), ctypes.byref(key),
                                                     ctypes.byref(pid), wait_ms):
                 return found
             found.append((message.value, pid.value or 0))
             wait_ms = 0
+        return found
 
     def _pump(self, wait_ms: int = 0) -> None:
         for message, pid in self._messages(wait_ms):
@@ -224,8 +244,8 @@ class Job:
         deadline = time.monotonic() + wait
         while True:
             count = self._count()
-            if all(self._gone(entry) for entry in self.joined) and not isinstance(count, int) \
-                    and count.total == len(self.joined):
+            if all(self._gone(entry) for entry in self.joined) and not self._strays() \
+                    and not isinstance(count, int) and count.total == len(self.joined):
                 break
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -235,6 +255,8 @@ class Job:
         read = not isinstance(accounting, int)
         left = [entry["identity"] or {"pid": entry["pid"]} for entry in self.joined if not self._gone(entry)]
         reasons = [f"no exit proven for pid {member['pid']}" for member in left]
+        if self._strays():
+            reasons.append(f"{self._strays()} root(s) refused at start not proven ended")
         if not terminated:
             reasons.append(f"cannot terminate the job: Windows error {failure}")
         if not read:
@@ -245,9 +267,17 @@ class Job:
                 "total": accounting.total if read else None, "active": accounting.active if read else None,
                 "members": [entry["identity"] for entry in self.joined if entry["identity"]]}
 
+    def _strays(self) -> int:
+        """How many roots refused at start are still not proven ended."""
+
+        return sum(1 for handle in self.stray if self.k.WaitForSingleObject(handle, 0) != 0)
+
     def close(self) -> None:
         """Close every handle the job holds. Closing the job's last handle kills what is still in it."""
 
+        for handle in getattr(self, "stray", []):
+            self.k.CloseHandle(handle)
+        self.stray = []
         for entry in getattr(self, "joined", []):
             if entry["handle"]:
                 self.k.CloseHandle(entry["handle"])
