@@ -26,17 +26,23 @@ def test_a_settings_write_cut_partway_leaves_the_owners_file_as_it_was(tmp_path,
 
     settings = tmp_path / "settings.json"
     settings.write_text(json.dumps({"model": "opus", "theme": "dark"}), encoding="utf-8")
-    real = Path.write_text
+    real_fdopen, staged = os.fdopen, []
 
-    def half(self, text, *args, **kw):
-        real(self, text[: len(text) // 2], *args, **kw)
-        raise OSError(28, "No space left on device")
+    def half(fd, *args, **kw):   # the staging file fills halfway, then the disk is full
+        out = real_fdopen(fd, *args, **kw)
+        real_write = out.write
+        out.write = lambda text: (real_write(text[: len(text) // 2]), staged.append(1)) and (_ for _ in ()).throw(
+            OSError(28, "No space left on device"))
+        return out
 
-    monkeypatch.setattr(Path, "write_text", half)
+    monkeypatch.setattr(setup_agents.os, "fdopen", half)
     with pytest.raises(OSError):
         setup_agents.write_plan([(settings, {"model": "opus", "theme": "dark", "hooks": {}}, ["훅 추가"])])
     monkeypatch.undo()
-    assert json.loads(settings.read_text(encoding="utf-8")) == {"model": "opus", "theme": "dark"}
+    assert staged and json.loads(settings.read_text(encoding="utf-8")) == {"model": "opus", "theme": "dark"}
+    assert list(tmp_path.iterdir()) == [settings], "끊긴 시도의 임시 파일은 남지 않는다"
+    # Each attempt stages to its own file: one left by an earlier crash, or another writer's, is never installed.
+    (tmp_path / "settings.json.part").write_text('{"stale": true}', encoding="utf-8")
     setup_agents.write_plan([(settings, {"model": "opus", "hooks": {}}, ["훅 추가"])])
     assert json.loads(settings.read_text(encoding="utf-8")) == {"model": "opus", "hooks": {}}
 

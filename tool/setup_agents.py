@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 from common import is_junction  # tests and callers read it from here too
 from common import shell
@@ -205,9 +206,13 @@ def codex_hooks(home, trust, python=None):
         hooks = listed()
         pending = {h["key"]: {"trusted_hash": h["currentHash"]} for h in hooks if h["trustStatus"] != "trusted"}
         if trust and pending:
-            server.request("config/batchWrite", {"edits": [
-                {"keyPath": "hooks.state", "value": pending, "mergeStrategy": "upsert"}]})
-            hooks = listed()
+            try:
+                server.request("config/batchWrite", {"edits": [
+                    {"keyPath": "hooks.state", "value": pending, "mergeStrategy": "upsert"}]})
+                hooks = listed()
+            except BaseException as exc:   # the write was sent: Codex may have taken it before being cut
+                exc.trust_sent = True
+                raise
     return hooks
 
 
@@ -296,11 +301,17 @@ def write_plan(plan):
             path.parent.mkdir(parents=True, exist_ok=True)
             # The owner's own settings live in this file: a write cut partway (a full disk, a server going down)
             # must leave it as it was, so the whole content lands beside it first and replaces it in one step.
+            # The staging file is this attempt's own, created exclusively: another writer (the CLI beside the
+            # server) never installs these bytes, nor these its.
             target = path.resolve()
-            partial = target.with_name(target.name + ".part")
-            partial.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
-                               encoding="utf-8", newline="\n")
-            os.replace(partial, target)
+            fd, partial = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".", suffix=".part")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out:
+                    out.write(json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+                os.replace(partial, target)
+            except BaseException:
+                Path(partial).unlink(missing_ok=True)
+                raise
             print(f"썼다: {path} ({len(changes)}건)")
         else:
             print(f"그대로: {path}")

@@ -483,10 +483,13 @@ def move(confirmed: str, data: dict | None = None, done: list[str] | None = None
                 setup_agents.relink(link, new)
                 done.append(f"{link} → {new}")
             for home in now["homes"]:
-                # Counted before the call: Codex may take the trust write and be cut while it lists the hooks after,
-                # so a home the write was sent to is one the move may have changed.
+                try:
+                    setup_agents.codex_hooks(Path(home), True, python)
+                except BaseException as exc:   # cut after the write was sent: Codex may have taken it
+                    if getattr(exc, "trust_sent", False):
+                        done.append(f"{home}: Codex 신뢰 기록 (응답 전에 끊겨 적용됐을 수 있다)")
+                    raise
                 done.append(f"{home}: Codex 신뢰 기록")
-                setup_agents.codex_hooks(Path(home), True, python)
         except BaseException as exc:   # a move cut partway changed the wiring too: its error stays the one raised
             for note in _forget_old_wiring():
                 exc.add_note(note)

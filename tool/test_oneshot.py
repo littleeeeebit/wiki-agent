@@ -493,6 +493,15 @@ def test_a_move_cut_after_some_writes_asks_the_owner_to_confirm_the_rest(world):
         oneshot.bootstrap(rid)
     stop = oneshot.load(rid)["stopped"]
     assert stop["reason"] == "connect" and "일부만" in stop["detail"] and "~/.codex/hooks.json" in stop["detail"]
+    # The card's approval is spent: `[재개]` alone writes nothing of what is left, and goes on once `[연결]` did.
+    moved = []
+    oneshot.changed(rid, stopped=None)
+    with patch.object(connect, "move", lambda *a, **k: moved.append(a)):
+        oneshot.bootstrap(rid)
+    assert oneshot.load(rid)["stopped"]["reason"] == "connect" and moved == []
+    world["wiring"]["needed"] = False   # the owner confirmed the rest on `[연결]`
+    oneshot.changed(rid, stopped=None)
+    assert finished(world, rid)["committed"]
 
 
 def test_wiring_to_confirm_stops_the_register_and_tests_cut_before_their_results_run_again(world):

@@ -53,17 +53,23 @@ going down refused before any write stops with `restart` instead, and
 `[재개]` checks and moves again. A move cut after some writes, by shutdown or
 by a failure, stops with `connect` and names what it wrote. What is left is a
 different list from the one the card showed, so the owner confirms it on
-`[연결]`; `[재개]` alone never writes it.
+`[연결]`; `[재개]` alone never writes it. The stop clears the run's `wiring`,
+so the card's approval is spent, and `[재개]` goes on once `[연결]` left
+nothing to move.
 
 The digest binds what is written, not only the lines shown. A line names a
 hook but not its command, and the same lines under another interpreter write
 other commands. So the digest also covers each file's whole new content, the
 interpreter and the Codex homes the trust is recorded in. The list shows the
 interpreter and those homes, and the move writes trust to that captured list,
-never to a second read of the homes. Each settings file is written whole
-beside itself and then replaces the original, so a write cut partway leaves
-the owner's file as it was. A Codex home counts as written once the trust
-write is sent, since Codex may take it and be stopped before it answers.
+never to a second read of the homes. Each settings file is written whole to
+a staging file of that attempt's own, created exclusively beside it, which
+then replaces the original. A write cut partway leaves the owner's file as it
+was, and another writer, such as `setup_agents.py --global` beside the
+server, never installs this attempt's bytes. A Codex home counts as written
+once its trust write is sent (`config/batchWrite`), since Codex may take it
+and be stopped before it answers; a home cut while its hooks were still
+being read does not.
 `connect.move` writes nothing once
 shutdown has begun. A move cut partway still drops the routine read's last
 check and every repository's probe record, as a finished move does. Each

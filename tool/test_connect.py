@@ -520,10 +520,18 @@ def test_a_trust_write_cut_while_codex_lists_the_hooks_counts_as_written(tmp_pat
     """Codex may take the trust and be stopped before it answers the list after: the move did change that home."""
 
     shown, done = connect.hub(), []
+    sent = RuntimeError("Codex 연결 종료: hooks/list")
+    sent.trust_sent = True
+    with patch.object(setup_agents, "codex_hooks", side_effect=sent), pytest.raises(RuntimeError):
+        connect.move(shown["digest"], None, done)
+    assert any(line.startswith(f"{shown['homes'][0]}: Codex 신뢰 기록") for line in done)
+    # Cut while still reading the hooks, before any write was sent: that home is not one the move changed.
+    done = [line for line in done if "Codex" not in line]
+    before = list(done)
     with patch.object(setup_agents, "codex_hooks", side_effect=RuntimeError("Codex 연결 종료: hooks/list")), \
          pytest.raises(RuntimeError):
-        connect.move(shown["digest"], None, done)
-    assert f"{shown['homes'][0]}: Codex 신뢰 기록" in done
+        connect.move(connect.hub()["digest"], None, done)
+    assert not any("Codex" in line for line in done[len(before):])
 
 
 def test_a_codex_home_that_does_not_answer_is_a_refusal_not_a_move(tmp_path, monkeypatch):

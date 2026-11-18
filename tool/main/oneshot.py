@@ -519,6 +519,7 @@ def s_register(run: dict) -> None:
             reason = exc.detail if isinstance(exc, HTTPException) else f"{type(exc).__name__}: {exc}"
             reason = " — ".join([reason, *getattr(exc, "__notes__", [])])   # records the move could not clear
             if done:   # what is left is another list than the card's: the owner confirms it, never a resume alone
+                changed(run["id"], wiring="")   # the card's approval is spent; `[재개]` goes on once nothing is left
                 raise Stop("connect", f"이 기계의 배선을 일부만 바꿨다 — 쓴 것: {', '.join(done)} — {reason}"
                                       " — 남은 변경을 [연결]로 확인한 뒤 [재개]") from exc
             if runtime.stopping.is_set():   # shutdown refused it before any write: `[재개]` checks and moves again
