@@ -2,8 +2,8 @@
 
 Purpose. When the person presses the repository's release button, the server
 builds one pinned commit of `main` into the real app with a new version number,
-signs it with the repository's release key and publishes it as a GitHub
-Release. The installed app can then update to the code that review approved.
+signs an Android APK with the repository's release key and publishes the
+artifacts as a GitHub Release. The installed app can then update to the code that review approved.
 One server step owns this. It works the same for an app the oneshot made and
 for any later ordinary task.
 
@@ -19,10 +19,11 @@ realtime-screen-translator showed the gap on 2026-11-18:
   was ever published.
 - `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `package.json` all
   still say `0.1.0`, so nothing tells two builds apart.
-- The oneshot's S8 (`oneshot_pr.released`) freezes a debug APK from the head
-  its final gate passed, before review, and attaches it to a draft prerelease
-  that the first pull request links. Review repairs never reach that APK.
-  After the merge, nothing builds again.
+- The oneshot's S8 copies the debug APK its final gate built, before review,
+  with its digest (`oneshot_pr.froze`). It then verifies that copy and attaches
+  it to a draft prerelease that the first pull request links
+  (`oneshot_pr.released`). Review repairs never reach that APK, and no later
+  step publishes an installable release.
 
 No step owns the path from fixed code, to a new version number, to the
 installable app, to GitHub. The oneshot cannot own it: it ends when it
@@ -35,7 +36,9 @@ These are the person's, made on 2026-11-18:
 - Releasing is outward-facing, so it starts only from a button on the
   repository screen, never automatically after a merge. The button shows the
   last released version and how many commits `main` is ahead of it. The person
-  picks `patch`, `minor` or `major` there.
+  picks `patch`, `minor` or `major` there. Before the first production release
+  of a repository there is nothing to bump: the card shows the seed version
+  instead (see "One attempt") and offers no choice.
 - One press authorizes one attempt: publishing one commit, pinned when the
   attempt starts, under one version. Within that attempt nothing stops for the
   person. Progress is shown on the screen, a transient failure is retried, and
@@ -63,34 +66,38 @@ These are proposals that each step's document settles:
 | --- | --- |
 | The release step | New module `tool/main/release.py`, the only caller that publishes production Releases |
 | GitHub transfer | A low-level helper both callers share: create, view and upload with an explicit repository and target commit. Each caller keeps its own policy. S8 keeps its head-named draft prerelease, digest reuse and `--clobber`. A production release never replaces a published asset. |
-| Per-repository settings | An optional `[release]` table in `.wiki/adapter.toml`, read from the pinned commit through a typed reader. Per kind (`android`, `desktop`) it holds the build command, the artifact path, the application ID and the expected ABI. The current writer (`connect.adapter_text`) emits only `agents` and `[slots]`. Its writers must keep tables they do not own. |
+| Per-repository settings | An optional `[release]` table in `.wiki/adapter.toml`, read from the pinned commit through a typed reader. It names the one version-source file for the seed. Per kind (`android`, `desktop`) it holds the build command, the artifact path, the application ID and the expected ABI. The current writer (`connect.adapter_text`) emits only `agents` and `[slots]`. Its writers must keep tables they do not own. |
 | The checkout | A fresh detached checkout per attempt, in a release-owned directory outside the task worktree allocator, removed only by its own cleanup. The detached survey checkout (`refactor_survey`) is the precedent. |
 | The ledger | Server state under `raw/releases/`, keyed by the canonical remote (`github.com/<owner>/<repo>`). Two windows or two checkouts of one repository share one reservation and one recovery record. |
-| Signing | A release keystore per repository outside every checkout, with its credentials given only to the signing step. The adapter's build command and the repair agent never see them. |
+| Signing (Android) | A release keystore per repository outside every checkout, with its credentials given only to the signing step. The adapter's build command and the repair agent never see them. |
 | Screen | A release card on the repository screen: last production version, commits ahead, the button and the running attempt |
 
 ## One attempt
 
 ```text
-[release] pressed (patch | minor | major)
+[release] pressed (patch | minor | major, or the seed for a first release)
   -> reserve: one attempt per remote; a second press while one runs is refused
   -> pin: fetch, take origin/main's SHA once; the version is chosen against it
   -> record pending in the ledger before any remote write
   -> checkout: fresh detached checkout of the SHA
-  -> build: each declared kind, version injected; unsigned release artifact
-  -> sign: the repository's release key, outside the build command
-  -> verify: every check below on the final signed bytes
-  -> publish: draft Release, tag targeting the SHA, assets uploaded,
-              tag and asset digests reconciled, then made public
-  -> ledger: published, with SHA, tag, each asset's name, sha256 and URL
+  -> build: each declared kind, version injected; Android gives an unsigned release APK
+  -> sign: Android only, the repository's release key, outside the build command
+  -> verify: every check below on the final bytes
+  -> manifest: each asset's name, size and sha256 in the ledger; the exact files
+               kept in the attempt's directory until it ends
+  -> tag: push the tag at the SHA, then read it back from the remote
+  -> publish: draft Release on that existing tag, its ID recorded; assets uploaded,
+              reconciled against the manifest, then made public
+  -> ledger: published, with SHA, tag, release ID, each asset's name, sha256 and URL
 ```
 
 The version is the last eligible production version bumped by the person's
 choice. Eligible means a published, non-draft, non-prerelease Release whose tag
 is `v<major>.<minor>.<patch>`. Test tags such as `android-test-*` and S8's
 `oneshot-apk-*` never count. When there is none, the first release uses the
-version in the source (`0.1.0` for the translator), and its notes say it is the
-first.
+seed version, read from the one file the adapter's `[release]` table names as
+the version source (`src-tauri/tauri.conf.json` for the translator, `0.1.0`).
+Its notes say it is the first.
 
 The notes list the titles of the pull requests merged between the previous
 production tag and the pinned SHA, bounded by that SHA and not by whatever
@@ -104,9 +111,16 @@ Each artifact is refused unless all of these hold:
 | --- | --- | --- |
 | Version | `versionName` equals the tag (`aapt dump badging`) | EXE resource and installer `FileVersion` equal the tag, with `0.1.1.0` normalized to `0.1.1` |
 | Monotonic | `versionCode` strictly greater than the previous production APK's (Tauri's default maps `0.1.1` to `1001`; step 1 fixes the mapping and its bounds) | Version greater than the previous production installer's |
-| Identity | Application ID and ABI equal the adapter's; a release build, not debuggable | Product name and publisher equal the previous release's |
-| Signature | `apksigner verify --print-certs` matches the repository's expected certificate | none until code signing is planned |
-| Digest | `sha256` of the final signed bytes, the same bytes uploaded | the same |
+| Identity | Application ID and ABI equal the adapter's and the previous production APK's of this kind; a release build, not debuggable | Product name and publisher equal the adapter's and the previous production installer's |
+| Signature | `apksigner verify --print-certs` matches the repository's expected certificate and the previous production APK's | none until code signing is planned |
+| Digest | `sha256` of the final bytes, the same bytes uploaded | the same |
+
+Identity is checked against the previous production artifact of the same
+kind, not only against the adapter at the pinned commit. A merge that changes
+the Gradle application ID and the adapter together would otherwise pass, and
+Android would install the result as a separate app. The first production
+release of a kind has no previous artifact, so it is checked against the
+configured identity and expected certificate. Those become the baseline.
 
 Android rejects an update with a lower `versionCode`, or one signed by a
 different certificate. A strictly increasing code and one durable certificate
@@ -114,12 +128,21 @@ are what keep installed copies updatable.
 
 ### Restart and collisions
 
-The ledger's pending record lets a restarted server finish or end the attempt
-it was in. That covers a draft that exists, a partial upload and a publish
-whose answer was lost. The server reconciles before it marks anything
-published. The tag must point at the pinned SHA, and each asset's digest must
-equal the ledger's. A remote tag or asset that differs, by commit or by
-digest, ends the attempt as failed. It never replaces the existing one.
+Every remote write happens after the ledger already holds what it should
+produce: the manifest before the tag, and the tag and SHA before the draft.
+The release ID is recorded as soon as the draft exists. A restarted server
+reads the ledger and finishes or ends the attempt it was in:
+
+| State found | What the server does |
+| --- | --- |
+| Tag missing | Pushes it at the SHA |
+| Tag at the SHA | Goes on. GitHub ignores a draft's `target_commitish` when the tag already exists, so only this read proves the target |
+| Tag at another commit | Ends the attempt as failed |
+| No release ID, draft creation answered nothing | Finds the draft by tag name and the attempt ID written in its body. None found means it creates one |
+| An asset in `starter` state (an upload GitHub cut off, for example with a 502) | Owned by this draft and incomplete, so it deletes it and uploads again, a bounded number of times |
+| A complete asset whose digest equals the manifest's | Keeps it |
+| A complete asset whose digest differs | Ends the attempt as failed. A complete asset is never replaced. |
+| Everything matches | Makes the draft public and records the attempt published |
 
 ### When an attempt fails
 
@@ -145,11 +168,11 @@ choice is left to step 2's document.
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Android build and verify, unpublished | The typed `[release]` reader, version choice and pinning, the release-owned detached checkout, the release build with the injected version, every Android check on a disposable target over two consecutive versions; nothing is published | Not started |
-| 2 | Signing | The per-repository release keystore and expected certificate, set up once; signing outside the build command; the debug-installation note | Not started |
-| 3 | Transfer and ledger | The shared GitHub transfer helper, which S8 moves onto with its own policy unchanged; the `raw/releases/` ledger, the reservation, explicit targets, reconciliation and restart | Not started |
-| 4 | Button and card | The repository card and its button, the one entry point that publishes; requires steps 2 and 3 | Not started |
-| 5 | Failure to agent | Bounded retries and the agent turn whose fix goes through the ordinary review loop | Not started |
+| 1 | Android build and verify, unpublished | The typed `[release]` reader, the seed and the version choice, pinning, the release-owned detached checkout, the release build with the injected version. A disposable test key and its certificate sign the step's APKs, so every Android check runs over two consecutive versions on a disposable target, including the refusal of a changed application ID and of a changed certificate. Nothing is published, and the test key never signs a production artifact. | Not started |
+| 2 | Signing | The per-repository release keystore and expected certificate, set up once; signing outside the build command; the debug-installation note. Required before anything is published. | Not started |
+| 3 | Transfer and ledger | The shared GitHub transfer helper, which S8 moves onto with its own policy unchanged; the `raw/releases/` ledger, the reservation, the manifest, the tag read-back, the draft ID and every row of the restart table | Not started |
+| 4 | Failure to agent | Bounded retries and the agent turn whose fix goes through the ordinary review loop, exercised on the unpublished path | Not started |
+| 5 | Button and card | The repository card and its button, the one entry point that publishes; the seed or the bump choice. Its publishing action is enabled only with steps 2, 3 and 4 in place. | Not started |
 | 6 | Windows installer | The `desktop` kind's NSIS build and its checks | Not started |
 | 7 | Oneshot writes `[release]` | The oneshot fills the table for the kinds it builds, keeping every other adapter table | Not started |
 
