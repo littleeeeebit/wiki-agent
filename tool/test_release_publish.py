@@ -166,17 +166,26 @@ def test_a_repair_that_cannot_start_is_recorded_and_the_attempt_still_ends(press
     assert "다른 작업" in done["repair"]["error"]
 
 
+SOURCE_ERROR = "error TS2307: Cannot find module './theme.js' ghp_" + "x" * 36
+
+
 @pytest.mark.parametrize("ending, repairable", [
-    ("stopped", False), ("deadline", False), ("missing tool", False), ("source", True)])
+    ("stopped", False), ("deadline", False), ("missing cmdlet", False), ("missing command", False),
+    ("missing repository script", True), ("early optional probe", True), ("source", True)])
 def test_only_a_build_the_source_broke_needs_a_repair(monkeypatch, tmp_path, ending, repairable):
     halt = release.threading.Event()
     if ending == "stopped":
-        halt.set()
-    said = {"missing tool": "cargo : The term 'cargo' is not recognized as the name of a cmdlet",
-            "source": "error TS2307: Cannot find module './theme.js' ghp_" + "x" * 36}.get(ending, "")
-    monkeypatch.setattr(release, "environment", lambda kit: {})
+        halt.set()   # a person's stop, without a cut reason of its own
+    said = {"missing cmdlet": "cargo : The term 'cargo' is not recognized as the name of a cmdlet",
+            "missing command": "> tauri android build\nbash: rustup: command not found\nnpm ERR! code 127",
+            "missing repository script": "The term './scripts/package-android.ps1' is not recognized as the "
+                                         "name of a cmdlet",
+            "early optional probe": "\n".join(["bash: rustup: command not found", *(["compiling"] * 15),
+                                               SOURCE_ERROR]),
+            "source": SOURCE_ERROR}.get(ending, "")
+    monkeypatch.setattr(release, "environment", lambda kit: {"PATH": str(tmp_path / "bin")})   # holds no tools
     monkeypatch.setattr(release.specs, "gate", lambda *a, **k: (
-        None if ending == "deadline" else 1, said, {"stopped": "멈춤", "deadline": "시간 초과"}.get(ending, "")))
+        None if ending == "deadline" else 1, said, {"deadline": "시간 초과"}.get(ending, "")))
     (src := tmp_path / "src").mkdir()
     with pytest.raises(ValueError) as failed:
         BUILD(src, ANDROID, "0.1.0", {}, halt)

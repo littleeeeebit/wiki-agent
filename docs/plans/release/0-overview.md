@@ -206,30 +206,43 @@ What needs a source change is narrow:
 
 A wrong certificate is the release key's problem (`release.signed_wrong`).
 So are a missing release tool, a key the server refuses, and a git or GitHub
-failure. A build that a person stopped, that hit its deadline or went
-silent, or whose shell reports a command it cannot find
-(`release.MISSING_TOOL`) is the machine's. None of these goes to an agent.
+failure. A build that a person stopped, or that hit its deadline or went
+silent, is the machine's. So is one whose shell reports, in the log's last
+lines, that it cannot find a program by bare name that is not on the build's
+`PATH` (`release.lacks_tool`). A missing script given by path is the
+repository's, and a source change can restore it. None of the machine's
+failures goes to an agent.
 
 `release_repair.start` makes the turn an ordinary task. Its spec,
 `release-fix-<version>`, carries the attempt, the tag, the pinned commit and
 the failure with the build log's last 40 lines. Secrets are redacted from
 the log (`errorlog.redact`). The build ran without GitHub tokens or the key
-password in its environment (`release.UNSHARED`), and no agent session
-inherits the key password (`host.environment`). The spec names version
-files, signing and publishing as out of bounds, and the repository's gate is
-its done condition. The task gets a linked worktree on a new branch at the
-pinned commit. The person's checkout is never switched, and nothing in it is
-carried over. Its pull request goes to the branch the attempt pinned
-(`main`). Its first turn starts as `[시작]` starts one. The agent never sees
-the key or its password. A GitHub login the account holds stays readable to
-that account, which is why "Signing (Android)" requires another account
-before step 5 enables publishing. A repository the server does not know as
-a project gets no task: the turn's end finds the task's project by name, so
-such a task would never leave `작업 중`. The ledger records the task's ID
-under the attempt's `repair`. When its first turn cannot start, the task
-waits in its worktree, and the ledger records both its ID and the refusal.
-`release.rehearse` hands its failures over the same way, so the unpublished
-path exercises the hand-off.
+password in its environment (`release.UNSHARED`). No agent session inherits
+the key password (`host.environment`). The repair's session, whenever it is
+made, also starts without the server's GitHub token variables
+(`host.TOKENS`); the server publishes its pull request. The spec names
+version files, signing and publishing as out of bounds.
+
+The task gets a linked worktree on a new branch at the pinned commit. The
+person's checkout is never switched, and nothing in it is carried over.
+The gate read from that worktree is the done condition, so the person's
+branch never supplies it. The worktree is held from its creation, and if
+the spec cannot be saved, the worktree and its branch are removed. A
+project chosen as a linked checkout gets no task, since task worktrees are
+made beside the original checkout only. Its pull request goes to the branch
+the attempt pinned (`main`). Its first turn starts as `[시작]` starts one.
+
+The agent never sees the key or its password. A GitHub login the account
+holds stays readable to that account, which is why "Signing (Android)"
+requires another account before step 5 enables publishing. A repository the
+server does not know as a project gets no task: the turn's end finds the
+task's project by name, so such a task would never leave `작업 중`. The
+ledger records the task's ID under the attempt's `repair`. When its first
+turn cannot start, the task waits in its worktree, and the ledger records
+both its ID and the refusal. `release.rehearse` hands its failures over the
+same way, so the unpublished path exercises the hand-off. With a repair,
+it rehearses a branch only, since that branch is where the repair's pull
+request goes.
 
 ## Existing debug installations
 

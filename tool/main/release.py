@@ -26,7 +26,7 @@ from pathlib import Path
 
 import android_owned
 import verify
-from common import errorlog, is_junction, paths
+from common import errorlog, host, is_junction, paths
 
 from . import oneshot_android, specs
 
@@ -233,11 +233,12 @@ def tools() -> dict:
 
 
 SECRET = "RELEASE_KEY_PASSWORD"   # reaches the key tools only, set by `keyed`; never inherited
-UNSHARED = {SECRET, "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"}
-# What a shell prints when the adapter's command names a tool this machine lacks: the machine's problem, not the
-# repository's. PowerShell, cmd and sh in turn.
-MISSING_TOOL = re.compile(r"is not recognized as (?:the name of a cmdlet|an internal or external command)|"
-                          r"CommandNotFoundException|command not found", re.IGNORECASE)
+UNSHARED = {SECRET, *host.TOKENS}
+# What PowerShell, cmd and sh print for a command they cannot find, naming it.
+MISSING_TOOL = re.compile(r"The term '(?P<ps>[^']+)' is not recognized as the name of a cmdlet|"
+                          r"'(?P<cmd>[^']+)' is not recognized as an internal or external command|"
+                          r"(?:^|:\s)(?P<sh>[^\s:/\\]+): (?:command )?not found", re.IGNORECASE | re.MULTILINE)
+LAST_LINES = 12   # where a failed command's own diagnostic sits in its log
 
 
 def environment(kit: dict) -> dict:
@@ -247,6 +248,18 @@ def environment(kit: dict) -> dict:
     return {**{k: v for k, v in os.environ.items() if k.upper() not in UNSHARED}, "JAVA_HOME": str(kit["java"]),
             "ANDROID_HOME": str(kit["sdk"]), "NDK_HOME": str(kit["ndk"]),
             "PATH": os.pathsep.join([str(kit["java"] / "bin"), os.environ.get("PATH", "")])}
+
+
+def lacks_tool(out: str, env: dict) -> bool:
+    """The build failed because this machine lacks a program: its shell's not-found message for a bare name that
+    is not on the build's `PATH`, among the log's last lines. A path is the repository's own script, which a
+    source change can restore. An earlier optional probe is not why the build failed."""
+
+    # ponytail: a not-found message in the last lines beside an unrelated error still reads as the machine's
+    tail = "\n".join([line for line in out.splitlines() if line.strip()][-LAST_LINES:])
+    names = (m["ps"] or m["cmd"] or m["sh"] for m in MISSING_TOOL.finditer(tail))
+    return any(not re.search(r"[/\\]|^\.", name) and shutil.which(name, path=env.get("PATH")) is None
+               for name in names)
 
 
 def keyed(kit: dict, password: str) -> dict:
@@ -279,7 +292,7 @@ def build(path: Path, android: dict, release: str, kit: dict, halt: threading.Ev
         tail = errorlog.redact("\n".join(out.splitlines()[-40:]))
         said = f"빌드 실패 — {cut or f'{exited} 로 끝났다'}\n{tail}"
         # A person's stop, a deadline or silence, and a missing tool say nothing about the source.
-        machine = halt.is_set() or cut or MISSING_TOOL.search(out)
+        machine = halt.is_set() or cut or lacks_tool(out, env)
         raise ValueError(said) if machine else BuildFailed(said)
     apk = output()
     if not apk.is_file():
@@ -623,6 +636,11 @@ def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None,
     (`release_publish.repaired`), so step 4's hand-off runs on this unpublished path."""
 
     halt = halt or threading.Event()
+    branch = ref.removeprefix("origin/")   # a repair's pull request goes to a branch, never a commit or a tag
+    if repair is not None and not any(subprocess.run(["git", "-C", str(repo), "show-ref", "--verify", "--quiet", r],
+                                                     capture_output=True, timeout=30).returncode == 0
+                                      for r in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}")):
+        raise ValueError(f"`{ref}` 는 브랜치가 아니다 — 수정 작업의 PR 이 갈 곳이 없으니 리허설할 브랜치를 골라라")
     kit, attempt = tools(), f"rehearsal-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"   # two in one second
     sha = pin(repo, ref)
     cfg = settings(repo, sha)
@@ -679,7 +697,7 @@ def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None,
            "refusals": refusals, "ok": built and caught}
     if needed:
         record = {"id": attempt, "remote": None, "tag": f"v{rounds[-1]['version']}", "version": rounds[-1]["version"],
-                  "sha": sha, "base": ref.removeprefix("origin/"), "repair": {"needed": needed}}
+                  "sha": sha, "base": branch, "repair": {"needed": needed}}
         out["repair"] = handed(repo, record, repair)
     return out
 

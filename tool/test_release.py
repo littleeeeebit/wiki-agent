@@ -321,10 +321,20 @@ def test_the_rehearsal_hands_a_failed_build_to_repair_and_nothing_else(tmp_path,
     monkeypatch.setattr(release, "sign", lambda apk, out, key, kit: out)
     monkeypatch.setattr(release, "facts", lambda apk, kit: seen(name="0.1.0", code=1000, debuggable=True, certs=["c" * 64],
                                                                 package=ANDROID["application_id"]))
+    repo, _ = committed(tmp_path, {"a.txt": "a"})
+    subprocess.run(["git", "branch", "-qM", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "tag", "v0.0.9"], cwd=repo, check=True)
     asked = []
-    done = release.rehearse(tmp_path / "repo", repair=lambda repo, record: asked.append(record) or "release-fix-0-1-0")
+
+    def repair(repo, record):
+        return asked.append(record) or "release-fix-0-1-0"
+
+    for ref in ("v0.0.9", "0" * 40):   # a repair's pull request needs a branch to go to
+        with pytest.raises(ValueError, match="브랜치가 아니다"):
+            release.rehearse(repo, ref, repair=repair)
+    done = release.rehearse(repo, repair=repair)
     assert done["repair"]["task"] == "release-fix-0-1-0" and not done["ok"] and len(asked) == 1
-    assert asked[0]["tag"] == "v0.1.0" and asked[0]["sha"] == "0" * 40
+    assert asked[0]["tag"] == "v0.1.0" and asked[0]["sha"] == "0" * 40 and asked[0]["base"] == "main"
     assert ("boom" if failure == "build" else "디버그") in asked[0]["repair"]["needed"]
 
 
