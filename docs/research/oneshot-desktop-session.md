@@ -330,6 +330,39 @@ that time, as the Android phone round is, it runs the missing checks and
 records their evidence in the run. The other way is an explicit change to plan
 9's gate. 9e chooses with the owner.
 
+## The session's own Edge run
+
+9d2b2 ran the Edge fixture once through the session (`tool/desktop_session.py`)
+and its driver (`tool/desktop_driver.py`, `tool/desktop_driver.ps1`). The saved
+files are in `oneshot-desktop-edge-run/`: the fixture page, the session's record
+with its cleanup proof (`record.json`), the driver's report (`driver.json`) and
+the two shots. User-profile paths in them read `%USERPROFILE%`.
+
+- Edge started in its own job, with `--user-data-dir` in a folder the look
+  reserved, plus `--lang=en-US`, `--no-first-run`,
+  `--force-renderer-accessibility` and `--window-size=800,600`. The driver ran
+  as a Windows PowerShell 5.1 process in a second job on the same desktop.
+- The driver chose one main window, sized it to 800×600 and read that frame
+  back. It invoked `Go` by its `AutomationId` through `InvokePattern` and read
+  `clicked` from the tree as the step's postcondition. Both shots show the page.
+- The cleanup proof is clean. The app's job counted 26 processes, and all 26
+  were followed to a proven exit. The driver's job counted 4. No window was
+  left on the desktop, the desktop no longer opened by its name, and the
+  profile folder was removed.
+- The mechanical checks named the fixture's 10×10 unnamed button twice, as
+  unnamed and as under 24×24. They also named Edge's default `Go` button,
+  34×22, as under 24×24.
+
+Two findings came from earlier attempts and shaped the driver:
+
+- Started without `--lang=en-US`, Edge in a Korean UI opened its translation
+  prompt beside the page. The driver saw two candidate main windows at startup
+  and refused, as designed. An app that opens a prompt at startup is a finding
+  for 9e, not something the driver dismisses.
+- Edge's tree holds an unnamed `Edit` with no bounding rectangle, never laid
+  out. The checks skip a control with no rectangle; a control that is laid out
+  but off screen is still checked for its name.
+
 ## Not measured
 
 - WinUI 3, WPF, WinForms, Electron and a Tauri build. No build of theirs ran
@@ -349,10 +382,7 @@ read from this PC in the session.
 
 ## Next
 
-9d2 builds the session as one module on the launcher above: the record,
-start, window choice, pattern-only driver with its deadlines, shots, cleanup,
-recovery and proof. It carries a test for each refusal and finding above, and
-one real run of the Edge fixture whose cleanup proof is saved with its
-evidence. It measures two things on the owned desktop: window capture and an
-overlay over a fixture viewer, so 9e starts from answers. The other items
-under "Not measured" stay open for 9e, which runs the stack S2 picks.
+9d2a built the launcher and 9d2b1 the session. 9d2b2 adds the driver and the
+Edge run above. 9d2b3 measures two things on the owned desktop: window capture
+and an overlay over a fixture viewer, so 9e starts from answers. The other
+items under "Not measured" stay open for 9e, which runs the stack S2 picks.

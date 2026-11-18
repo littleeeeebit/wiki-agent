@@ -220,6 +220,13 @@ class Job:
                     entry["exited"] = True
         return len(found)
 
+    def finished(self) -> bool:
+        """At least one member joined, and every member that joined has a proven exit."""
+
+        while self._pump() == 64:
+            pass
+        return bool(self.joined) and all(self._gone(entry) for entry in self.joined)
+
     def members(self) -> list[dict]:
         """The identities of every member that joined and could be held, alive or not: every message ready
         now is handled first, batch after batch."""
