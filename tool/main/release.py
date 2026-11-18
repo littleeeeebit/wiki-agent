@@ -392,8 +392,7 @@ def generated(store: Path, alias: str, days: int, name: str, kit: dict) -> dict:
     password = secrets.token_urlsafe(24)
     run([kit["keytool"], "-genkeypair", "-keystore", store, "-alias", alias, "-keyalg", "RSA",
          "-keysize", "2048", "-validity", str(days), "-dname", name,
-         "-storepass:env", SECRET, "-keypass:env", SECRET],
-        keyed(kit, password))
+         "-storepass:env", SECRET, "-keypass:env", SECRET], keyed(kit, password))
     return {"keystore": store, "alias": alias, "password": password}
 
 
@@ -404,8 +403,7 @@ def sign(apk: Path, out: Path, key: dict, kit: dict) -> Path:
     aligned = out.with_suffix(".aligned.apk")
     run([kit["zipalign"], "-p", "-f", "4", apk, aligned], environment(kit))
     run([kit["apksigner"], "sign", "--ks", key["keystore"], "--ks-key-alias", key["alias"],
-         "--ks-pass", f"env:{SECRET}", "--out", out, aligned],
-        keyed(kit, key["password"]))
+         "--ks-pass", f"env:{SECRET}", "--out", out, aligned], keyed(kit, key["password"]))
     aligned.unlink(missing_ok=True)
     return out
 
@@ -718,9 +716,11 @@ def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None,
             src = checkout(repo, sha, f"{attempt}/{n}")
             try:
                 apk = build(src, cfg["android"], release, kit, halt)
-            except BuildFailed as exc:
-                rounds.append({"version": release, "failed": str(exc)})
+            except Exception as exc:   # a stop or a machine failure, too, leaves no large checkout behind
                 discard(repo, f"{attempt}/{n}")
+                if not isinstance(exc, BuildFailed):
+                    raise
+                rounds.append({"version": release, "failed": str(exc)})
                 needed = str(exc)
                 break
             signed = sign(apk, folder / f"{n}-{release}.apk", key, kit)

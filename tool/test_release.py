@@ -304,6 +304,28 @@ def test_every_test_keystore_goes_even_when_a_step_after_its_creation_fails(tmp_
     assert tried == ["rehearsal.jks", "other.jks"]   # the locked first key never spares the second
 
 
+def test_a_stopped_rehearsal_build_leaves_no_checkout_and_starts_no_repair(tmp_path, monkeypatch):
+    _rehearsable(tmp_path, monkeypatch)
+    monkeypatch.setattr(release, "test_key", lambda store, kit: {"keystore": store, "alias": "a", "password": "p"})
+    monkeypatch.setattr(release, "certificate", lambda *a: "c" * 64)
+    made = []
+
+    def checkout(repo, sha, at):
+        (src := release.place(repo, at)).mkdir(parents=True)
+        (src / "node_modules").mkdir()   # what a build had written by the time the person stopped it
+        return made.append(src) or src
+
+    def build(src, android, version, kit, halt):
+        halt.set()
+        raise ValueError("빌드 실패 — 사람이 멈춤")   # the machine's: not repairable
+
+    monkeypatch.setattr(release, "checkout", checkout)
+    monkeypatch.setattr(release, "build", build)
+    with pytest.raises(ValueError, match="사람이 멈춤"):   # raised, so no repair is handed anything
+        release.rehearse(tmp_path / "repo")
+    assert made and not made[0].exists()
+
+
 @pytest.mark.parametrize("failure", ["build", "debuggable"])
 def test_the_rehearsal_hands_a_failed_build_to_repair_and_nothing_else(tmp_path, monkeypatch, failure):
     _rehearsable(tmp_path, monkeypatch)

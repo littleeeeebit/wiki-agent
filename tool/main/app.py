@@ -38,7 +38,7 @@ import agent
 from common import errorlog
 from common import settings as settings_file
 
-from . import architecture, channels, connect, improvements, loop, mobile, oneshot, oneshot_android, oneshot_critique, oneshot_front, oneshot_phone, oneshot_spec, planning, powershell, query, recovery, refactor, refactor_api, runtime, specs, suite, survey, update, verification, wiring, work
+from . import architecture, channels, connect, improvements, loop, mobile, oneshot, oneshot_android, oneshot_critique, oneshot_front, oneshot_phone, oneshot_spec, planning, powershell, query, recovery, refactor, refactor_api, release_api, runtime, specs, suite, survey, update, verification, wiring, work
 from .runtime import server_owner
 from . import onboarding
 
@@ -81,6 +81,7 @@ async def lifespan(application: FastAPI):
         oneshot_spec.recover()
         refactor.recover()
         survey.recover()
+        release_api.recover()
         for repo, sid in resume:
             try:
                 loop.kick(repo, sid, automatic=True)
@@ -157,6 +158,7 @@ app.include_router(oneshot_front.router)
 app.include_router(oneshot_critique.router)
 app.include_router(oneshot_phone.router)
 app.include_router(refactor_api.router)
+app.include_router(release_api.router)
 app.include_router(improvements.router)
 app.include_router(connect.router)
 app.include_router(wiring.router)
