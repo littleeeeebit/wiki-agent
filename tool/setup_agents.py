@@ -384,16 +384,28 @@ def kept_links(folder):
     private folder per attempt), by the place each belongs: `{place: [kept, oldest first]}`. Nothing else
     there is ours, so nothing else is read, and a link standing in for the folder or an attempt is never
     followed: what it points into is somebody else's."""
-    base = Path(folder).parent / ".wiki-relink"
+    base = _recovery(folder)
     kept = {}
     if _is_link(base) or not base.is_dir():
         return kept
-    attempts = [a for a in base.iterdir() if not _is_link(a) and a.is_dir()]
-    for attempt in sorted(attempts, key=lambda p: p.stat().st_mtime):
-        for link in attempt.iterdir():
-            if _is_link(link):
-                kept.setdefault(Path(folder) / link.name, []).append(link)
+    stamped = []
+    for attempt in base.iterdir():
+        try:
+            if not _is_link(attempt) and attempt.is_dir():
+                stamped.append((attempt.stat().st_mtime, attempt, [e for e in attempt.iterdir() if _is_link(e)]))
+        except FileNotFoundError:   # an attempt a finished move just cleared: nothing kept there
+            continue
+    for _, _, links in sorted(stamped):
+        for link in links:
+            kept.setdefault(Path(folder) / link.name, []).append(link)
     return kept
+
+
+def _recovery(folder):
+    """`relink`'s recovery folder: beside the skills folder's real place, so a skills folder that is a link onto
+    another drive keeps its parked links on that drive, where `rename` can reach them."""
+    # ponytail: assumes the skills folder is not itself a mount point; a separate mount would need storage inside it
+    return Path(folder).resolve().parent / ".wiki-relink"
 
 
 def _place(src, dst):
@@ -401,6 +413,10 @@ def _place(src, dst):
     Windows `rename` refuses an existing name; elsewhere a hard link of the link itself does, then the
     old name goes."""
     if os.name == "nt":
+        os.rename(src, dst)
+    elif Path(src).is_dir() and not Path(src).is_symlink():
+        # A real directory cannot be hard-linked. `rename` refuses a file, a link and a directory with anything
+        # in it; an empty directory it replaces holds nothing to lose.
         os.rename(src, dst)
     else:
         os.link(src, dst, follow_symlinks=False)
@@ -428,8 +444,8 @@ def relink(link, target, source=None):
     if not same(current):
         raise ValueError(f"{link} 이 확인한 뒤 다른 곳을 가리킨다 ({_pointed(current)}) — 다시 확인한다")
     if current == link:
-        base = link.parent.parent / ".wiki-relink"
-        base.mkdir(exist_ok=True)
+        base = _recovery(link.parent)
+        base.mkdir(parents=True, exist_ok=True)
         if _is_link(base):   # parked through it, the link would land where recovery never looks
             raise OSError(f"{base} 가 다른 곳을 가리키는 링크다 — 치운 뒤 다시 확인한다")
         aside = Path(tempfile.mkdtemp(dir=base, prefix=link.name + ".")) / link.name

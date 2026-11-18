@@ -228,6 +228,51 @@ def test_relink_never_overwrites_follows_or_moves_what_it_was_not_shown(tmp_path
     monkeypatch.undo()
     assert link.read_text(encoding="utf-8") == "the owner's", "옮겨진 파일은 제자리로 돌아온다"
 
+    # 7. Replaced by a real skill folder of the owner's: it goes back too.
+    link.unlink()
+    _dir_link(new, link)
+
+    def to_folder(*args, **kwargs):
+        made = real_mkdtemp(*args, **kwargs)
+        os.rmdir(link) if os.name == "nt" else os.unlink(link)
+        link.mkdir()
+        (link / "SKILL.md").write_text("mine", encoding="utf-8")
+        return made
+
+    monkeypatch.setattr(setup_agents.tempfile, "mkdtemp", to_folder)
+    with pytest.raises(OSError):
+        setup_agents.relink(link, old, new)
+    monkeypatch.undo()
+    assert (link / "SKILL.md").read_text(encoding="utf-8") == "mine", "옮겨진 스킬 폴더는 제자리로 돌아온다"
+
+
+def test_a_skills_folder_that_is_a_link_keeps_its_recovery_beside_its_real_place(tmp_path, monkeypatch):
+    """A skills folder linked onto another drive parks there, where `rename` reaches; a cleared attempt read
+    meanwhile is skipped, not an error."""
+
+    import setup_agents
+
+    real = tmp_path / "other-drive" / "skills"
+    real.mkdir(parents=True)
+    claude = tmp_path / "home" / ".claude"
+    claude.mkdir(parents=True)
+    _dir_link(real, claude / "skills")
+    attempt = real.parent / ".wiki-relink" / "skill.cut"
+    attempt.mkdir(parents=True)
+    _dir_link(tmp_path, attempt / "skill")
+    assert list(setup_agents.kept_links(claude / "skills")) == [claude / "skills" / "skill"]
+
+    real_stat, gone = Path.stat, []
+
+    def cleared(self, *args, **kwargs):
+        if self.name == "skill.cut" and not gone:
+            gone.append(self)
+            raise FileNotFoundError(self)
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", cleared)
+    assert setup_agents.kept_links(claude / "skills") == {}, "방금 치운 시도 폴더는 건너뛴다"
+
 
 def test_a_server_going_down_while_a_file_is_staged_installs_nothing(tmp_path):
     import pytest

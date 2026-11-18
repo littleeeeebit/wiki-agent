@@ -86,8 +86,9 @@ loaded without `PreToolUse`, or a trusted twin beside an untrusted entry.
 
 A skill link is never removed before its replacement stands. The working
 link moves into a fresh private folder of that attempt, under `relink`'s own
-recovery folder `~/.claude/.wiki-relink`. Nothing is there to clobber, and no
-host loads it as a skill. It moves back when the new link cannot be made. If
+recovery folder `.wiki-relink` beside the skills folder's real place. A skills
+folder linked onto another drive keeps it on that drive. Nothing is there to
+clobber, and no host loads it as a skill. It moves back when the new link cannot be made. If
 even that fails it stays kept, whole, and the error names where, also in
 `[모두 다시 연결]`'s report.
 
@@ -104,7 +105,8 @@ back untouched and refused.
 
 Putting a kept link back never lands on a file or link that appeared at its
 place meanwhile. Windows `rename` refuses an existing name; elsewhere a hard
-link of the link does. A skills folder that is gone comes back with the link.
+link of the link does, and a real directory moves with `rename`, which
+replaces at most an empty directory. A skills folder that is gone comes back with the link.
 
 Shutdown is checked in four places:
 
