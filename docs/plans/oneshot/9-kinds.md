@@ -428,7 +428,7 @@ the workflow job runs on `windows-latest`:
 1. It takes each declared tool's confirmed `setup` step, as written.
 2. With `android` among the kinds, it also takes step 7's JDK and Android SDK
    setup.
-3. A step then checks each declared tool with `Get-Command` before the one
+3. A step then checks that each declared tool is on `PATH` before the one
    shared gate runs.
 
 S8 refuses a workflow that lacks any of these steps.
@@ -460,7 +460,7 @@ Each step's fakes include at least these:
 | 9e3 | Two native previews with overlapping relative paths, and a web preview, through one R2 approval; a preview whose descriptor says nothing of a window, whose process must still start on the owned desktop; a packaged-only `run`; a companion file changed under the same HEAD, which is a new build |
 | 9e4 | A driver report that misses an approved state; a complete report with a `never` feature; a failed cleanup proof; an `owner` check still pending after both owned rounds |
 | 9e5 | An absent, a stale and a duplicate approval; valid app controls with a blank or wrong capture; a capture source that was replaced, or a region an outside window overlaps, for which the capture call is never made; a cleanup failure; a mixed run in which the phone passes first |
-| 9e6 | A desktop-only asset; both assets on one prerelease; a resumed upload; a run with CI off; a CI-enabled mixed run with a PC tool the image lacks, whose workflow must carry its `setup` and `Get-Command` steps |
+| 9e6 | A desktop-only asset; both assets on one prerelease; a resumed upload; a run with CI off; a CI-enabled mixed run with a PC tool the image lacks, whose workflow must carry its `setup` step and the check that it is on `PATH` |
 
 ## What does not change
 
