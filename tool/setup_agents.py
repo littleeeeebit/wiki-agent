@@ -407,7 +407,7 @@ def kept_links(folder):
     try:
         if _is_link(base) or not base.is_dir():   # a link is never followed, not even to ask what it is
             return kept
-    except FileNotFoundError:
+    except OSError:   # missing, or a skills path that holds no entries (a file, a looping link): nothing kept
         return kept
     stamped = []
     for attempt in base.iterdir():

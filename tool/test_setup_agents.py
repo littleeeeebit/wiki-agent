@@ -349,6 +349,21 @@ def test_a_kept_link_put_back_while_the_plan_reads_is_read_again(tmp_path, monke
         setup_agents.skill_links(home)
 
 
+def test_a_skills_path_that_holds_no_entries_has_nothing_kept(tmp_path):
+    """A skills path that is a file, or a link to itself, lists no move: it is not a refusal of the plan."""
+
+    import setup_agents
+
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude/skills").write_text("", encoding="utf-8")
+    assert setup_agents.skill_links(home) == []
+    if os.name != "nt":
+        (home / ".claude/skills").unlink()
+        os.symlink(home / ".claude/skills", home / ".claude/skills")
+        assert setup_agents.skill_links(home) == []
+
+
 def test_a_server_going_down_while_a_file_is_staged_installs_nothing(tmp_path):
     import pytest
 
