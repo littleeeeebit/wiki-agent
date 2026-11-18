@@ -34,6 +34,22 @@ SHUTDOWN_WAIT = 120   # seconds a closing server gives a stopped test build to r
 _runs: dict[str, dict] = {}   # project name -> its rehearsal: the running one, or the last one's summary
 _lock = threading.Lock()
 _deadline: list[float] = []   # when shutdown stops waiting: set by its first `close_all`, kept by any later one
+def _now() -> int:
+    """Microseconds since the epoch: later after a restart than any `rev` before it, and under 2**53, so the
+    card's JavaScript numbers hold it exactly."""
+
+    return time.time_ns() // 1000
+
+
+_revs = [_now()]   # the last `rev` handed out
+
+
+def _rev() -> int:
+    """A number larger than any earlier one, stamped on every change of a run, so the card keeps the newest
+    state whatever order answers arrive in. Called under `_lock`."""
+
+    _revs[0] = max(_revs[0] + 1, _now())
+    return _revs[0]
 
 
 def _repo(name: str) -> Path:
@@ -101,7 +117,7 @@ def _repairing(name: str, halt: threading.Event):
         with _lock:
             if halt.is_set():
                 raise RuntimeError("멈춤 — 사람이 시험 빌드를 멈춰서 수정 작업을 시작하지 않았다")
-            _runs[name]["repairing"] = True
+            _runs[name].update(repairing=True, rev=_rev())
         return release_repair.start(repo, record)
 
     return start
@@ -115,15 +131,17 @@ def _rehearsing(name: str, repo: Path, halt: threading.Event, sha: str | None = 
         errorlog.record("release-rehearse", exc, repo=str(repo))
         done = {"state": "failed", "error": f"{type(exc).__name__}: {exc}", "left": getattr(exc, "left", [])}
     with _lock:
-        _runs[name] = {**_runs[name], **done, "ended": time.time(), "stopped": halt.is_set()}
-        for key in ("halt", "thread", "repairing"):
+        _runs[name] = {**_runs[name], **done, "ended": time.time(), "stopped": halt.is_set(), "rev": _rev()}
+        for key in ("halt", "thread", "repairing", "stopping"):
             _runs[name].pop(key, None)
 
 
-def shown(name: str) -> dict | None:
+def shown(name: str) -> dict:
+    """The run as the card sees it, or `idle` before this server ran one, always with its `rev`."""
+
     with _lock:
-        run = _runs.get(name)
-        return run and {k: v for k, v in run.items() if k not in ("halt", "thread")}
+        run = _runs.get(name) or {"state": "idle", "rev": _revs[0]}
+        return {k: v for k, v in run.items() if k not in ("halt", "thread")}
 
 
 @router.get("/api/release/{name}")
@@ -157,7 +175,7 @@ def rehearse(name: str, sha: str | None = None) -> dict:
             raise HTTPException(409, f"{name} 의 시험 빌드가 이미 돌고 있다")
         halt = threading.Event()
         worker = threading.Thread(target=_rehearsing, args=(name, repo, halt, sha), daemon=True)
-        _runs[name] = {"state": "running", "started": time.time(), "halt": halt, "thread": worker}
+        _runs[name] = {"state": "running", "started": time.time(), "halt": halt, "thread": worker, "rev": _rev()}
         try:
             worker.start()
         except RuntimeError as exc:   # the OS refused a thread: the project is not left looking busy
@@ -177,6 +195,7 @@ def stop(name: str) -> dict:
         if run.get("repairing"):
             raise HTTPException(409, "수정 작업을 이미 만들기 시작해서 시험 빌드를 멈출 수 없다 — 작업 목록에서 본다")
         run["halt"].set()
+        run.update(stopping=True, rev=_rev())
     return {"rehearsal": shown(name)}
 
 

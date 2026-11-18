@@ -20,7 +20,7 @@ import tempfile
 import threading
 import time
 import tomllib
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from ctypes import wintypes
 from pathlib import Path
 
@@ -70,8 +70,9 @@ def ran(argv: list, timeout: float, cwd: Path | None = None, env: dict | None = 
     proc = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                             encoding="utf-8", errors="replace", creationflags=process.SUSPENDED,
                             start_new_session=os.name != "nt")
-    job = process.contained(proc)
+    job = None
     try:
+        job = process.contained(proc)
         if os.name == "nt" and not job:   # a tree it cannot own never runs (`runtime` refuses the same)
             raise OSError(f"{name} 의 프로세스 트리를 맡지 못했다 — 실행하지 않았다")
         process.resumed(proc)
@@ -86,14 +87,15 @@ def ran(argv: list, timeout: float, cwd: Path | None = None, env: dict | None = 
             raise Stopped(f"멈춤 — {name} 을 끝냈다")
         raise subprocess.TimeoutExpired(argv, timeout)
     finally:   # the whole tree ended and waited for, whatever ended the command, before the caller cleans up
-        if proc.poll() is None:
-            process.killed(job)
-            proc.kill()
-            try:
+        try:
+            if proc.poll() is None:
+                process.killed(job)
+                proc.kill()
                 proc.communicate(timeout=10)   # bounded: a descendant holding the pipes cannot keep it
-            except subprocess.TimeoutExpired as exc:
-                errorlog.record("release-command", exc, command=name)
-        process.terminated(job)
+        except (OSError, subprocess.SubprocessError) as exc:   # recorded, never over what ended the command
+            errorlog.record("release-command", exc, command=name)
+        finally:
+            process.terminated(job)
 
 
 def git(path: Path, *args: str, timeout: float = 120) -> str:
@@ -213,7 +215,9 @@ def pin(repo: Path, ref: str = "origin/main") -> str:
         return git(repo, "rev-parse", "--verify", f"{own}^{{commit}}").strip()
     finally:
         try:
-            with stoppable(None):   # a stop ended the fetch; the ref it may have written still goes
+            # A stop ended the fetch; the ref it may have written still goes, on a halt of its own that is never
+            # set, so the owned and bounded runner still holds it.
+            with stoppable(threading.Event()) if getattr(_stop, "halt", None) else nullcontext():
                 git(repo, "update-ref", "-d", own, timeout=30)
         except (ValueError, OSError, subprocess.SubprocessError) as exc:
             # Recorded, never raised: the fetch's own error, if any, is the one that matters, and the name is

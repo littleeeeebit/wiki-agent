@@ -471,8 +471,40 @@ def test_a_stopped_fetch_still_removes_its_own_ref(monkeypatch):
     monkeypatch.setattr(release, "ran", ran)
     with release.stoppable(halt), pytest.raises(release.Stopped):
         release.pin(Path("repo"), "origin/main")
-    assert [c[0] for c in calls] == ["fetch", "update-ref"] and calls[1][1] is None   # outside the stopped scope
+    # Outside the stopped scope, yet still on the owned, bounded runner: a halt of its own that is never set.
+    assert [c[0] for c in calls] == ["fetch", "update-ref"] and calls[1][1] is not halt and not calls[1][1].is_set()
     assert release._stop.halt is None   # and the scope is gone with the rehearsal
+
+
+def test_a_command_is_torn_down_whatever_fails_on_the_way(monkeypatch):
+    import sys
+    import threading
+
+    made, popen = [], release.subprocess.Popen
+    monkeypatch.setattr(release.subprocess, "Popen", lambda *a, **k: made.append(popen(*a, **k)) or made[-1])
+    monkeypatch.setattr(release.process, "contained", lambda proc: (_ for _ in ()).throw(RuntimeError("assign")))
+    with release.stoppable(threading.Event()), pytest.raises(RuntimeError, match="assign"):
+        release.ran([sys.executable, "-c", "import time; time.sleep(60)"], 60)
+    assert made[0].poll() is not None   # the suspended child, ended and waited for
+
+    closed, logged = [], []
+
+    class Stuck:   # a child that will not die when asked
+        def poll(self):
+            return None
+
+        def kill(self):
+            raise PermissionError("denied")
+
+    monkeypatch.setattr(release.subprocess, "Popen", lambda *a, **k: Stuck())
+    monkeypatch.setattr(release.process, "contained", lambda proc: "job")
+    monkeypatch.setattr(release.process, "resumed", lambda proc: (_ for _ in ()).throw(OSError("resume")))
+    monkeypatch.setattr(release.process, "killed", lambda job: None)
+    monkeypatch.setattr(release.process, "terminated", closed.append)
+    monkeypatch.setattr(release.errorlog, "record", lambda source, exc, **k: logged.append(str(exc)))
+    with release.stoppable(threading.Event()), pytest.raises(OSError, match="resume"):   # never "denied"
+        release.ran(["anything"], 60)
+    assert closed == ["job"] and logged == ["denied"]
 
 
 def test_a_branch_that_moved_after_the_card_was_read_is_never_built(tmp_path, monkeypatch):

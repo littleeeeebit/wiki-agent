@@ -56,7 +56,7 @@ def test_before_a_first_release_the_card_shows_the_seed_and_offers_no_choice(pro
     card = client.get("/api/release/app").json()
 
     assert card["last"] is None and card["versions"] == {"first": "0.1.0"}
-    assert card["ahead"] == 3 and "잠겨 있다" in card["locked"] and card["rehearsal"] is None
+    assert card["ahead"] == 3 and "잠겨 있다" in card["locked"] and card["rehearsal"]["state"] == "idle"
 
 
 def test_the_card_shows_each_choice_from_the_last_production_release_and_the_commits_since(project):
@@ -201,7 +201,7 @@ def test_once_shutdown_begins_no_test_build_starts(project, monkeypatch):
     monkeypatch.setattr(release_api.release_rehearsal, "rehearse", lambda *a, **k: pytest.fail("started"))
     release_api.runtime.stopping.set()   # `app.close_turns` sets it before `close_all` takes its snapshot
     release_api.close_all()
-    assert client.post("/api/release/app/rehearse").status_code == 503 and release_api.shown("app") is None
+    assert client.post("/api/release/app/rehearse").status_code == 503 and release_api.shown("app")["state"] == "idle"
 
 
 def test_a_thread_the_os_refuses_leaves_the_project_free_and_shutdown_whole(project, monkeypatch):
@@ -212,7 +212,7 @@ def test_a_thread_the_os_refuses_leaves_the_project_free_and_shutdown_whole(proj
         m.setattr(threading.Thread, "start", refused)
         with pytest.raises(release_api.HTTPException) as answer:
             release_api.rehearse("app")
-    assert answer.value.status_code == 503 and release_api.shown("app") is None
+    assert answer.value.status_code == 503 and release_api.shown("app")["state"] == "idle"
     release_api.close_all()   # no unstarted thread to join
 
 
@@ -240,6 +240,25 @@ def test_shutdown_lets_a_started_repair_finish_and_records_a_build_it_could_not_
     release_it.set()
     run = ended(client)
     assert run["repair"]["task"] == "release-fix-0-1-0" and not run["stopped"]
+
+
+def test_every_change_of_a_run_carries_a_later_rev_so_an_older_answer_never_wins(project, monkeypatch):
+    client, *_ = project
+    entered = threading.Event()
+
+    def rehearse(repo, ref, halt, repair=None, expect=None):
+        entered.set()
+        halt.wait(10)
+        raise release.Stopped("멈춤")
+
+    monkeypatch.setattr(release_api.release_rehearsal, "rehearse", rehearse)
+    idle = client.get("/api/release/app/rehearsal").json()["rehearsal"]
+    started = client.post("/api/release/app/rehearse").json()["rehearsal"]
+    assert entered.wait(5)
+    stopping = client.post("/api/release/app/stop").json()["rehearsal"]
+    done = ended(client)
+    assert idle["state"] == "idle" and stopping["stopping"] and "stopping" not in done
+    assert idle["rev"] < started["rev"] < stopping["rev"] < done["rev"] < 2**53   # exact as a JavaScript number
 
 
 def test_a_new_server_lifespan_gets_its_own_whole_shutdown_wait(project, monkeypatch):
