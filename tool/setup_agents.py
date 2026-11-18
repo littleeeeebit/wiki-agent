@@ -404,7 +404,10 @@ def kept_links(folder):
     followed: what it points into is somebody else's."""
     base = _recovery(folder)
     kept = {}
-    if not base.is_dir() or _is_link(base):
+    try:
+        if _is_link(base) or not base.is_dir():   # a link is never followed, not even to ask what it is
+            return kept
+    except FileNotFoundError:
         return kept
     stamped = []
     for attempt in base.iterdir():

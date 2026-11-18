@@ -178,6 +178,12 @@ def test_relink_never_overwrites_follows_or_moves_what_it_was_not_shown(tmp_path
         recovery.rmdir()
     _dir_link(elsewhere.parent, recovery)
     assert setup_agents.kept_links(skills) == {}, "링크로 된 보관 폴더는 따라가지 않는다"
+    followed = []
+    real_is_dir = Path.is_dir
+    monkeypatch.setattr(Path, "is_dir", lambda self: followed.append(self) or real_is_dir(self))
+    setup_agents.kept_links(skills)
+    monkeypatch.undo()
+    assert recovery not in followed, "링크인지 먼저 본다 — 따라가서 묻지도 않는다"
     os.rmdir(recovery) if os.name == "nt" else os.unlink(recovery)
 
     # 3. Retargeted between the check and the move aside: the moved link is not the approved one, so it goes back.
