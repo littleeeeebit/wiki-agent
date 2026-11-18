@@ -214,11 +214,18 @@ def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, 
 # -- The restart table ----------------------------------------------------------------------------
 
 def _found(repo: str, record: dict) -> dict | None:
-    """This attempt's own draft, by the attempt ID in its body, whatever tag it carries now: a retagged one is
-    found, and then refused, rather than a second draft made beside it."""
+    """This attempt's own draft, by the attempt ID in its body. One carrying the attempt's tag wins. With none,
+    a single one under another tag is found, and then refused, rather than a second draft made beside it. A
+    marker copied into more releases than that is ambiguous and refused before any ID is recorded."""
 
     marker = f"<!-- {MARK} {record['id']} -->"
-    return next((r for r in gh.releases(repo) if marker in (r.get("body") or "")), None)
+    marked = [r for r in gh.releases(repo) if marker in (r.get("body") or "")]
+    exact = [r for r in marked if r.get("tag_name") == record["tag"]]
+    found = exact if exact else marked
+    if len(found) > 1:
+        raise Stopped(f"이 시도의 표시가 든 릴리스가 {len(found)} 개다 ({', '.join(str(r['id']) for r in found)}) "
+                      "— 어느 것이 이 시도의 것인지 정할 수 없다")
+    return found[0] if found else None
 
 
 def _complete(held: dict, manifest: list[dict]) -> bool:
@@ -325,6 +332,9 @@ def _finish(name: str, attempt: str) -> dict:
                 return _settled(record, repo, held)
             if held.get("tag_name") != record["tag"]:
                 raise Stopped(f"초안의 태그가 {held.get('tag_name')!r} 로 바뀌었다 — {record['tag']} 가 아니어서 건드리지 않는다")
+        else:   # nothing on GitHub holds the bytes yet: no tag or draft is made without them
+            for item in manifest:
+                _present(item)
         if (at := gh.tag(repo, record["tag"])) is None:
             gh.push_tag(repo, record["tag"], record["sha"])
             at = gh.tag(repo, record["tag"])

@@ -349,10 +349,41 @@ def test_a_recorded_draft_retagged_before_recovery_is_never_written(press, monke
     fake, repo, _ = press
     draft = _draft_left(fake, monkeypatch, repo, [("r-0.1.0-arm64-v8a.apk", b"half", "starter")])
     draft["tag_name"] = "v9.0.0"
+    del fake.refs["v0.1.0"]   # so only the check at discovery stands between recovery and a tag push
     before = len(fake.calls)
     done = rp.recover()[0]
     assert done["state"] == "failed" and "바뀌었다" in done["reason"]
     assert [c for c in fake.calls[before:] if c[0] != "GET"] == [] and draft["assets"][0]["state"] == "starter"
+
+
+def test_a_manifest_whose_bytes_are_gone_writes_nothing_to_github(press, monkeypatch):
+    fake, repo, _ = press
+    real = rp._finish
+    monkeypatch.setattr(rp, "_finish", lambda name, attempt: (_ for _ in ()).throw(SystemExit()))
+    with pytest.raises(SystemExit):   # stopped right after the manifest, before any remote write
+        rp.publish(repo, "0.1.0", None)
+    monkeypatch.setattr(rp, "_finish", real)
+    Path(rp.pending("github.com/o/r")["manifest"][0]["path"]).unlink()
+
+    done = rp.recover()[0]
+    assert done["state"] == "failed" and "사본" in done["reason"]
+    assert not fake.refs and not fake.rels   # the version is not consumed
+
+
+def test_a_copied_marker_never_takes_the_attempt_from_its_own_draft(press, monkeypatch):
+    fake, repo, _ = press
+    draft = _draft_left(fake, monkeypatch, repo)
+    fake.add("v0.0.9", draft=True, body=draft["body"])   # someone copied the notes into another draft
+    fake.rels.reverse()   # and GitHub lists the copy first
+    assert [d["state"] for d in rp.recover()] == ["published"] and not draft["draft"]
+
+    for _ in range(2):   # the same marker on two drafts of the attempt's own tag
+        fake.add("v0.2.0", draft=True, body=f"<!-- {rp.MARK} twin -->")
+    record = {**rp.ledger("github.com/o/r")["attempts"][0], "id": "twin", "state": "pending", "tag": "v0.2.0"}
+    record.pop("release_id")
+    rp.reserve("github.com/o/r", record)
+    done = rp.finish("github.com/o/r", "twin")
+    assert done["state"] == "failed" and "정할 수 없다" in done["reason"] and "release_id" not in done
 
 
 def test_an_asset_in_a_state_it_does_not_know_is_left_alone(press, monkeypatch):
