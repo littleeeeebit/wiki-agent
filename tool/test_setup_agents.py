@@ -362,6 +362,22 @@ def test_a_skills_path_that_holds_no_entries_has_nothing_kept(tmp_path):
         (home / ".claude/skills").unlink()
         os.symlink(home / ".claude/skills", home / ".claude/skills")
         assert setup_agents.skill_links(home) == []
+        os.unlink(home / ".claude/skills")
+    # Denied access is not "nothing kept": the plan is refused, so a parked link is never hidden behind it.
+    import pytest
+
+    (home / ".claude/skills").unlink(missing_ok=True)
+    (home / ".claude/skills").mkdir()
+
+    def denied(path):
+        raise PermissionError(13, "denied", str(path))
+
+    real_is_link, setup_agents._is_link = setup_agents._is_link, denied
+    try:
+        with pytest.raises(PermissionError):
+            setup_agents.kept_links(home / ".claude/skills")
+    finally:
+        setup_agents._is_link = real_is_link
 
 
 def test_a_server_going_down_while_a_file_is_staged_installs_nothing(tmp_path):

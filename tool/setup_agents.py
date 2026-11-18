@@ -6,6 +6,7 @@ whoever is running the install, so those strings are Korean.
 """
 
 import argparse
+import errno
 import json
 import os
 from pathlib import Path
@@ -407,7 +408,11 @@ def kept_links(folder):
     try:
         if _is_link(base) or not base.is_dir():   # a link is never followed, not even to ask what it is
             return kept
-    except OSError:   # missing, or a skills path that holds no entries (a file, a looping link): nothing kept
+    except OSError as exc:
+        # Missing, or a skills path that holds no entries (a file, a looping link): nothing kept. Denied access or
+        # an I/O error is not known to be empty, so it refuses the plan instead.
+        if exc.errno not in (errno.ENOENT, errno.ENOTDIR, errno.ELOOP):
+            raise
         return kept
     stamped = []
     for attempt in base.iterdir():
