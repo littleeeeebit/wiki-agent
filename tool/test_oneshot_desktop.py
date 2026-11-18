@@ -181,6 +181,19 @@ def test_a_replaced_build_offer_drops_its_earlier_approval(desktop):
     assert o()["confirmed_build"] == {"choice": other["choice"], "tools": other["tools"]}
 
 
+def test_an_s2_question_whose_answer_could_not_say_which_option_was_picked_is_sent_back(desktop):
+    spec = specs.load("budget", oneshot.BRANCH)
+    offered = turn([{**s, "status": "assumed"} for s in STACK])   # a bundle offered, nothing confirmed yet
+    twins = {"question": "어느 묶음?", "options": [{"label": "Tauri 2", "note": "기기 안 OCR"},
+                                                 {"label": "Tauri 2 ", "note": "외부 OCR 서비스"}]}
+    joined = {"question": "무엇을 내보낼까?", "multi": True, "options": [
+        {"label": "CSV, JSON", "note": "한 파일에 둘 다"}, {"label": "CSV"}, {"label": "JSON"}]}
+    for asked_ in (twins, {"questions": [joined]}):
+        with pytest.raises(ValueError, match="`label` 이 서로 달라야"):
+            oneshot_spec.spec_turn(offered + fenced("choices", asked_), spec)
+    oneshot_spec.spec_turn(offered + fenced("choices", {**joined, "multi": False}), spec)   # one pick: no join
+
+
 def test_the_build_button_is_never_an_answer_to_a_waiting_question(desktop):
     confirmed(STACK, build=False)
     oneshot_spec.saved("budget", oneshot={"talk": [*o()["talk"], {"role": "agent", "text": "묶음을 고르세요.", "ts": 3,

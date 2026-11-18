@@ -154,6 +154,11 @@ def spec_turn(final: str, spec: dict):
         specs._shape("choices", choices)
         if len(choices.get("questions", [choices])) > 3:
             raise ValueError("한 번에 묻는 `choices` 는 세 개까지다")
+        for q in choices.get("questions", [choices]):   # the answer is the picked labels, several joined with ", "
+            labels = [o["label"].strip() for o in q["options"]]
+            if len(set(labels)) != len(labels) or q.get("multi") and any("," in x for x in labels):
+                raise ValueError("한 질문의 선택지는 `label` 이 서로 달라야 하고, 여럿을 고르는 질문의 `label` 에는 "
+                                 "쉼표가 없어야 한다 — 답으로 고른 `label` 이 돌아온다")
     if (mismatch := value.get("kinds_mismatch")) is not None:
         if (not isinstance(mismatch, dict) or mismatch.get("requirement") not in {r["id"] for r in reqs}
                 or not isinstance(mismatch.get("reason"), str) or not mismatch["reason"].strip()):
