@@ -7,7 +7,7 @@ and placement checks, and closes everything it started. It must do all of that
 without touching the owner's windows, focus, mouse or keyboard. This note is
 step 9d's first deliverable: the options on this PC, what was measured here on
 2026-11-18, the design that follows, its refusals and its cleanup proof. 9d2
-builds the design and measures what this note marks as not measured.
+builds the design; "Next" names what it measures.
 
 ## Options on this PC
 
@@ -47,8 +47,9 @@ are kept outside the repository. Two fixtures:
   Electron.
 
 The driver created the desktop with `owned_desktop()` and started the fixture
-with `launched()`. It took the fixture's processes from one parent-pid
-snapshot six seconds after the start. A reader then ran on the same desktop as
+with `launched()`. It took the fixture's processes from a parent-pid snapshot
+six seconds after the start, and added a second snapshot after the reader
+finished. A reader then ran on the same desktop as
 a Windows PowerShell 5.1 process, also through `launched()`. It listed the
 visible windows of those processes, called `SetWindowPos` on the largest one
 (800×600, no activation, no z-order change, its result not checked), shot it
@@ -57,19 +58,19 @@ view, invoked the first element named `Go` through its `InvokePattern`, then
 looked for an element named `clicked` and shot again. The driver read the
 owner's foreground window at three points: before the desktop was created,
 after the snapshot and before the reader started, and after cleanup. At the
-middle point it also listed, from a thread on the owner's desktop, every
-window of the snapshot's processes.
+middle point, once, it also listed from a thread on the owner's desktop every
+window of the first snapshot's processes.
 
 | Check | tkinter (`tk.json`) | Edge (`edge.json`) |
 | --- | --- | --- |
-| Windows of the snapshot's processes on the owner's desktop, at the middle point | none | none |
+| Windows of the first snapshot's processes on the owner's desktop, in the one sample | none | none |
 | Owner's foreground window | same at all three points | same before and at the middle point; different after cleanup, cause not recorded |
 | Shot size | 800×600, resized from 656×519 | 800×600, already that size from `--window-size` |
 | `PrintWindow` with full content | rendered | rendered, page content included |
 | UI Automation tree | the window `fixture-tk` and three unnamed panes; `Go` not found | 26 nodes: the document, the text `ready`, the button `Go` with `Invoke` |
 | `Go` invoked, then read | — | `clicked` found in the tree and seen in the second shot |
 | Foreground window on the owned desktop | none | none |
-| Snapshot processes alive after cleanup | none | none |
+| Identities from the two snapshots read alive after cleanup | none | none |
 | Desktop opened again by name after cleanup | `OpenDesktopW` returned null | `OpenDesktopW` returned null |
 | The run's Edge profile folder | — | removed |
 
@@ -81,9 +82,11 @@ checks, so its files record no cleanup result. A process listing in the
 session afterwards found no Edge process started in the previous ten minutes,
 and the profile folder was removed by hand. Neither is in the saved files.
 
-These measurements prove less than a cleanup proof needs. A null from
-`OpenDesktopW` also means a failed probe, and the process check covered one
-snapshot of pids, not the job.
+These are observations, not a cleanup proof. A null from `OpenDesktopW` also
+means a failed probe. The process check read the union of two parent-pid
+snapshots, not the job; it skipped a pid whose identity could not be read at
+the snapshot, and it counted an unreadable identity after cleanup the same as
+a gone one.
 
 Three observations shaped the design:
 
@@ -109,10 +112,12 @@ five seconds on the root alone. And it assigns the job after creating the
 process, so a server that dies in between leaves a suspended process outside
 any job and outside the record. 9d2 changes it:
 
-- The job is created first and given to `CreateProcessW` through
-  `PROC_THREAD_ATTRIBUTE_JOB_LIST`, so the process is in the job from its
-  creation. A process that cannot be created in its job is a refusal before
-  anything is driven.
+- The job is created first, with a unique name the record holds before the
+  launch and a handle that is not inheritable. It is given to `CreateProcessW`
+  through `PROC_THREAD_ATTRIBUTE_JOB_LIST`, so the process is in the job from
+  its creation, and every process it starts is too. A process that cannot be
+  created in its job is a refusal before anything is driven. So is
+  `ERROR_ELEVATION_REQUIRED`, with no retry through the shell.
 - The caller gets the job handle, records the root's identity (pid, creation
   time, image) while it is still suspended, and resumes it.
 - Membership is read from the held job. `JobObjectBasicProcessIdList` gives
@@ -125,8 +130,10 @@ any job and outside the record. 9d2 changes it:
 
 `owned_desktop()` binds the calling thread with `SetThreadDesktop`, which fails
 on a thread that already has windows or hooks, and it restores and closes on
-exit. 9d2 enters it on a dedicated thread that creates no windows, and it
-treats a failed bind, restore or close as a held look.
+exit. It yields only the name. 9d2 has it yield the handle too, so cleanup can
+enumerate the desktop's windows before the handle closes. 9d2 enters it on a
+dedicated thread that creates no windows, and it treats a failed bind, restore
+or close as a held look.
 
 ### Starting the app
 
@@ -142,10 +149,16 @@ treats a failed bind, restore or close as a held look.
    bind an app that reads known folders through the shell API, or one that
    finds an owner's instance through a session-wide mutex. So an app that
    exits without a window on the owned desktop is a finding.
-3. The app's window is the visible top-level window of a job process that is
-   not an input indicator. More than one candidate is a refusal. The window is
-   resized to S1's `window` with `SetWindowPos` and no activation, and the
-   result is read back from the window.
+3. The app's main window is chosen once, at startup: the visible top-level
+   window of an app-job process that is not an input indicator. More than one
+   candidate then is a refusal. Top-level windows the app opens later, such
+   as a dialog or an overlay, belong to the state that opened them: they are
+   shot and read with it, and they are not candidates. The driver resizes the
+   main window to S1's `window` with `SetWindowPos` and no activation, under
+   the driver's deadline, and reads the size back. A wrong size is a finding.
+4. A look that needs another app, such as the screen translator's fixture
+   viewer, starts it in a third job the look owns, recorded and cleaned like
+   the others.
 
 ### Reading and driving it
 
@@ -158,8 +171,9 @@ A step names its control by `AutomationId`, scoped to its screen. A name is
 used only when no id exists, and it must match exactly one element. Each step
 ends with its postcondition read from the tree.
 
-Every call into the app has a deadline: a shot, a tree read, an action and a
-postcondition each get 10 seconds, and the look as a whole has S7's limit.
+Every call into the app has a deadline: a resize, a shot, a tree read, an
+action and a postcondition each get 10 seconds, and the look as a whole has
+S7's limit.
 `PrintWindow` asks the app to render synchronously, and a provider can block
 while a modal dialog opens. So the driver runs those calls in its own process,
 and the server ends that process's job when a deadline passes.
@@ -177,35 +191,52 @@ The checks read the tree as the Android loop reads its hierarchy:
   DPI-unaware caller sees scaled.
 - Placement, by each feature's id within its screen. An `every` feature is
   visible on the first surface. A `sometimes` one is reached in one action. A
-  `rarely` one is absent from the primary surface but present in some state
-  the scenarios reach. A `never` one has no control in any state or window
-  the scenarios reach, and the look counts that absence only after every one
-  of those states was reached and read. A virtualized list is scrolled through
-  `ScrollItem` before an absence in it counts.
+  `rarely` one is absent from the primary surface but present in some
+  approved state. A `never` one has no control in any approved screen, state
+  or window. Absence counts only after every screen and state the approved
+  board lists was reached and read; one the look could not reach holds the
+  check rather than passing it.
+- A virtualized container is read to its verified end before an absence in it
+  counts: through `ItemContainer.FindItemByProperty` and
+  `VirtualizedItem.Realize` where the container supports them, otherwise by its
+  `Scroll` pattern until the scroll position reports the end, reading each
+  viewport. A container whose end cannot be verified holds the check.
 
 ### Cleanup and its proof
 
 Cleanup runs on every outcome, from the record, as the Android look's does. It
-ends the driver's job and the app's job, then closes the desktop. The proof
-holds only when every check reads a definite answer:
+ends every job the look owns, then closes the desktop. The proof holds only
+when every check reads a definite answer:
 
 - each job's `ActiveProcesses` count is zero, read on the job handle the look
-  holds;
+  holds. A job holds every process it ever contained, a windowless one
+  started after the last membership read included;
 - no window remains on the desktop, enumerated through the desktop handle the
-  look holds, before `CloseDesktop` succeeds on it;
-- each recorded process identity is gone. `OpenProcess` fails because no such
-  process exists, or opens a process whose creation time differs. A failure
-  for any other reason, such as access denied, is not an answer;
-- no recorded process holds a listening TCP port, read from the TCP table
-  before the jobs end and again after;
+  look holds. `CloseDesktop` then succeeds on that handle, and afterwards
+  `OpenDesktopW` by the recorded name fails with not-found;
+- each recorded process has exited: its handle is signalled, or `OpenProcess`
+  fails with not-found, or it opens a process whose creation time differs. A
+  process object another holder keeps open after exit still reads as exited,
+  through its signalled handle;
+- before the jobs end, the look reads which listening TCP ports the recorded
+  processes hold. After, a listener counts against the look only if its
+  owner's current identity matches a recorded one, so a reused pid does not
+  hold the look;
 - the look's disposable folders, which the record lists, are gone.
 
+Any other error from these calls, such as access denied, is not an answer.
 An inconclusive check holds the look, as a leftover does, and the look names
-it. The next look cleans every earlier record before it starts, so a look a
-server crash cut short is cleaned first. For a record whose server died, the
-job handle died too. A kill-on-close job ends its processes when its last
-handle closes, so the next look checks that the recorded identities are gone
-and the desktop has no windows left.
+it.
+
+The next look cleans every earlier record before it starts, so a look a server
+crash cut short is cleaned first. That server's handles died with it, so
+recovery reopens each job by its recorded name. A job object lives as long as
+a process it contains does. So when `OpenJobObjectW` fails with not-found, the
+job and every process it ever held are gone, including any started after the
+record's last membership read. When it opens, recovery ends the job and waits
+for `ActiveProcesses` to reach zero, as above. The desktop is proved by name:
+`OpenDesktopW` fails with not-found. A desktop that still opens is read for
+windows and held. Any other error holds the look.
 
 ## Refusals and findings
 
@@ -217,34 +248,40 @@ and the desktop has no windows left.
 | No app window within 30 seconds, or the app exits, including a handoff to another instance | A finding, with the app's log |
 | More than one candidate window | Refused as ambiguous |
 | A shot, tree read, action or postcondition passes its deadline | The jobs are ended, the cleanup proof runs, and the step is a finding |
-| A shot fails or is a single colour | A finding |
+| A shot fails, or its content area (the bounds of the screen's content element in the tree) is a single colour | A finding |
+| A tree read fails, or lacks an id the screen's scenarios name | A finding when the app answered; held when the read itself failed |
+| An action's postcondition reads false | A finding |
+| The resize ends at another size | A finding |
 | Controls the scenarios name are missing from the tree (the tkinter case) | A finding: the app cannot be checked. S2 should prefer a stack that exposes UI Automation |
 | A step's control has no pattern for its action | A finding; the driver never falls back to input |
 | A name matches more than one element | A finding against the step's id; the driver never takes the first match |
-| A window on the owned desktop belongs to a process outside the jobs | Refused: something left the job and the run cannot prove it owns it. A broker that starts a process with no window there is not detected; the build turn's no-handoff, no-helper requirement covers it |
+| A window on the owned desktop belongs to a process outside the look's jobs | Refused: something left the job and the run cannot prove it owns it. A broker that starts a process with no window there is not detected; the build turn's no-handoff, no-helper requirement covers it |
 | Any cleanup check is left or inconclusive | The look is held and names what was left |
 
 ## What the owned desktop can and cannot show
 
-Measured: windows on the owned desktop do not appear on the owner's desktop,
-and a GDI copy of the screen from the owned desktop fails. An overlay drawn on
-the owned desktop cannot sit over a window on the owner's desktop.
+By Windows' design, windows on a desktop that is not the input desktop are not
+shown on the owner's screen, and an overlay drawn there cannot sit over a
+window on the owner's desktop. The experiment's one sample agreed: the owner's
+desktop listed no fixture window. Measured: a GDI copy of the screen from the
+owned desktop fails.
 
-Not measured: capturing a window on the same owned desktop with Windows
-Graphics Capture's window API, and an overlay window over a fixture window on
-the same owned desktop. Either would let the screen translator's capture and
-overlay checks run on the owned desktop against a fixture viewer, as Android's
-look installs one. 9d2 measures both.
+Not measured, and separate questions:
 
-Plan 9 requires each owed `device` check to pass in its kind's S7 loop on the
-current HEAD before R3. If the owned desktop cannot run the capture and
-overlay checks, 9e chooses with the owner between two ways, and either keeps
-that gate:
+- capture: Windows Graphics Capture's window API on a fixture viewer window on
+  the same owned desktop;
+- overlay: an overlay window over that viewer on the same desktop. A shot of
+  each window alone cannot show stacking, so the evidence is both windows'
+  frame bounds and their z-order, plus a composed picture if 9d2 finds a way
+  to take one there.
 
-- a round on the owner's own desktop before R3, approved at that time, as the
-  Android phone round is, which runs those checks and records their evidence
-  in the run;
-- an explicit change to plan 9's gate.
+The screen translator's combined scenario needs both. Each one the owned
+desktop cannot show needs its evidence from elsewhere. Plan 9 requires each
+owed `device` check to pass in its kind's S7 loop on the current HEAD before
+R3. A round on the owner's own desktop before R3 keeps that gate: approved at
+that time, as the Android phone round is, it runs the missing checks and
+records their evidence in the run. The other way is an explicit change to plan
+9's gate. 9e chooses with the owner.
 
 ## Not measured
 
@@ -266,8 +303,9 @@ read from this PC in the session.
 ## Next
 
 9d2 builds the session as one module on the launcher above: the record,
-start, window choice, pattern-only driver with its deadlines, shots, cleanup
-and proof. It carries a test for each refusal and finding above, and one real
-run of the Edge fixture whose cleanup proof is saved with its evidence. It
-also measures the capture and overlay questions above, so 9e starts from
-answers.
+start, window choice, pattern-only driver with its deadlines, shots, cleanup,
+recovery and proof. It carries a test for each refusal and finding above, and
+one real run of the Edge fixture whose cleanup proof is saved with its
+evidence. It measures two things on the owned desktop: window capture and an
+overlay over a fixture viewer, so 9e starts from answers. The other items
+under "Not measured" stay open for 9e, which runs the stack S2 picks.
