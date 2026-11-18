@@ -97,7 +97,8 @@ export function Toolbar({ value, options, busy, onChange, showFast = false }: Pr
         onPick={(v) => pick({ effort: out(v) })}
       />
       {options?.codex_error && <p role="status" className="w-full text-xs text-destructive">{options.codex_error}</p>}
-      {options?.codex_pending && <p role="status" className="w-full text-xs text-muted-foreground">Codex 모델 목록을 불러오는 중…</p>}
+      {options?.codex_pending && !options.models.some((m) => m.id.startsWith('codex:')) &&
+        <p role="status" className="w-full text-xs text-muted-foreground">Codex 모델 목록을 불러오는 중…</p>}
       {showFast && <button type="button" role="switch" aria-label="FAST 모드" aria-checked={!!value.fast}
         disabled={busy || !options || !fastSupported} onClick={() => pick({ fast: !value.fast })}
         title={fastSupported ? 'CLI의 빠른 처리 모드 · 다음 턴부터 적용 · 계정과 모델 지원 및 추가 요금은 제공자 정책에 따른다'

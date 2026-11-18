@@ -459,22 +459,33 @@ def test_the_routine_hub_read_never_waits_on_codex_and_checks_once_per_ttl(monke
     """A Codex `app-server` may take minutes: the project list and the settings line read the last check."""
 
     release, calls, fed = threading.Event(), [], []
-    monkeypatch.setattr(wiring, "_hub_seen", {})
     monkeypatch.setattr(connect, "hub", lambda data=None: calls.append(1) or release.wait(10) and {
         "needed": False, "refused": ""})
     monkeypatch.setattr(work.feed, "put", fed.append)
-    started = time.monotonic()
-    assert wiring.hub_seen() == {"needed": False, "refused": "", "checking": True}
-    assert wiring.hub_seen()["checking"] and time.monotonic() - started < 1, "검사를 기다리지 않는다"
-    release.set()
-    for _ in range(100):
-        if fed:
-            break
-        time.sleep(0.05)
-    assert fed == [{"kind": "connect", "repo": ""}], "끝나면 화면이 다시 읽는다"
-    assert wiring.hub_seen() == {"needed": False, "refused": ""} and calls == [1], "새 결과로는 다시 검사하지 않는다"
+
+    def settled(count: int) -> None:
+        for _ in range(200):
+            if len(fed) >= count:
+                return
+            time.sleep(0.05)
+        raise AssertionError("검사가 끝나지 않았다")
+
     wiring.forget_hub()
-    assert wiring.hub_seen()["checking"], "배선이 바뀌면 다시 검사한다"
+    try:
+        started = time.monotonic()
+        assert wiring.hub_seen() == {"needed": False, "refused": "", "checking": True}
+        assert wiring.hub_seen()["checking"] and time.monotonic() - started < 1, "검사를 기다리지 않는다"
+        release.set()
+        settled(1)
+        assert fed == [{"kind": "connect", "repo": ""}], "끝나면 화면이 다시 읽는다"
+        assert wiring.hub_seen() == {"needed": False, "refused": "", "checking": False} and calls == [1], \
+            "새 결과로는 다시 검사하지 않는다"
+        wiring.forget_hub()
+        assert wiring.hub_seen()["checking"], "배선이 바뀌면 다시 검사한다"
+        settled(2)
+    finally:
+        release.set()
+        wiring.forget_hub()
 
 
 def test_off_windows_nothing_is_a_junction(tmp_path, monkeypatch):

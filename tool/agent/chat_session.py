@@ -36,7 +36,7 @@ from common.host import INSTRUCTIONS, environment, skill_config
 from common.process import SUSPENDED, contained, killed, resumed, terminated
 
 from .chat_events import Event, _claude_hook, _hook, _patch_meta, _result_meta, _tool_brief, _tool_meta, _user, merged
-from .chat_local import claude_usage, cli_command, codex_usage, quota_windows
+from .chat_local import claude_usage, cli_command, codex_usage, end_servers, quota_windows, reopen_servers
 from . import chat_busy, read_tools
 
 # Something opened in a browser that edits files is not a chat, it is a remote
@@ -134,19 +134,21 @@ _ending = False
 def end_all() -> None:
     """The server is going down: every provider ends, its turn with an error,
     and none starts until `reopen`. Providers lead their own process group,
-    so Ctrl+C reaches none of them."""
+    so Ctrl+C reaches none of them. A one-off Codex `app-server` ends too."""
 
     global _ending
     with _live_lock:
         _ending, live = True, list(_live)
     for chat in live:
         chat.end()
+    end_servers()
 
 
 def reopen() -> None:
     global _ending
     with _live_lock:
         _ending = False
+    reopen_servers()
 
 
 class ChatSession:

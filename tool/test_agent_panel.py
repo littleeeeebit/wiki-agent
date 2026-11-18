@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+import threading
 import time
 from types import SimpleNamespace
 
@@ -171,6 +172,42 @@ def test_codex_failed_initialization_reaps_process(tmp_path, monkeypatch):
     finally:
         if server.proc.poll() is None:
             server.__exit__()
+
+
+def test_the_server_going_down_ends_a_hung_codex_app_server_and_starts_none(tmp_path, monkeypatch):
+    """A routine read's `app-server` may sit minutes before its deadline, and on Windows it outlives the server."""
+
+    from agent import chat_session
+
+    monkeypatch.setattr(chat_local, "cli_command", lambda _: [sys.executable, "-c", "import time; time.sleep(60)"])
+    failed, ready = [], threading.Event()
+
+    def ask():
+        try:
+            with chat_local.CodexServer(cwd=tmp_path):   # hangs at `initialize`, 180 s from its deadline
+                pass
+        except RuntimeError as exc:
+            failed.append(str(exc))
+
+    asking = threading.Thread(target=ask, daemon=True)
+    asking.start()
+    try:
+        for _ in range(100):
+            if chat_local._servers:
+                break
+            time.sleep(0.05)
+        (server,) = list(chat_local._servers)
+        chat_session.end_all()
+        asking.join(10)
+        assert server.proc.poll() is not None and not asking.is_alive(), "꺼지는 서버는 app-server 를 끝낸다"
+        assert failed and "Codex 연결 종료" in failed[0] and not chat_local._servers
+        with pytest.raises(RuntimeError, match="꺼지는 중"):
+            chat_local.CodexServer(cwd=tmp_path)
+    finally:
+        chat_session.reopen()
+        for left in list(chat_local._servers):
+            left.proc.kill()
+    assert not chat_local._servers_closed
 
 
 def test_provider_usage_uses_attached_session_not_toolbar(tmp_path, monkeypatch):

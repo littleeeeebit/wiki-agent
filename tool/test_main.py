@@ -633,9 +633,9 @@ for line in sys.stdin:
     def offline():
         fetches.append(1)
         gate.wait(10)
-        chat_channels._codex_failed.update(at=time.monotonic(), error="offline")
         raise RuntimeError("offline")
 
+    chat_channels.codex_models.cache_clear()
     try:
         with patch.object(chat_channels, "codex_models", side_effect=offline):
             web = client()

@@ -478,6 +478,20 @@ def test_a_shutdown_during_an_unchecked_wiring_starts_no_further_check(world):
     assert oneshot.load(rid)["stopped"]["reason"] == "restart" and "register" not in oneshot.load(rid)["steps"]
 
 
+def test_a_shutdown_during_a_healthy_wiring_check_starts_no_tests(world):
+    rid = made(world)
+    stopping = threading.Event()
+
+    def healthy(data=None):
+        stopping.set()   # the server starts going down during the check, which then answers
+        return {"needed": False, "refused": ""}
+
+    with patch.object(runtime, "stopping", stopping), patch.object(connect, "hub", healthy):
+        oneshot.bootstrap(rid)
+    assert world["examined"] == [], "꺼지는 서버에서는 시험을 시작하지 않는다"
+    assert oneshot.load(rid)["stopped"]["reason"] == "restart" and "register" not in oneshot.load(rid)["steps"]
+
+
 def test_an_unrecorded_same_name_remote_stops_and_is_adopted_only_on_request(world):
     rid = made(world, steps={s: 1 for s in ("recheck", "folder", "files", "commit", "register")})
     for s in ("folder", "files", "commit", "register"):

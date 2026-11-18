@@ -100,7 +100,7 @@ export type Options = {
   models: (Choice & { efforts?: Choice[]; is_default?: boolean; supports_fast?: boolean })[]
   efforts: Choice[]
   codex_error: string
-  /** The first Codex model list is still being fetched in the background; read the options again. */
+  /** The Codex model list is being fetched in the background (the list here may be an older one); read again. */
   codex_pending: boolean
 }
 
@@ -247,13 +247,22 @@ export const getChannels = () =>
 export const getGraph = (repo: string) =>
   get(`/api/graph?${new URLSearchParams({ repo })}`).then((r) => json<MapData>(r, '지도'))
 
-export const getOptions = () =>
-  get('/api/options').then((r) => json<Options>(r, '고를 것'))
+export const getOptions = (signal?: AbortSignal) =>
+  get('/api/options', undefined, signal).then((r) => json<Options>(r, '고를 것'))
 
-/** `getOptions`, read again every 3 s while the server fetches the first Codex model list in the background
- *  (`codex_pending`); `onEach` takes every answer, so the pickers show what there is meanwhile. */
+/** `getOptions`, read again every 3 s while the server fetches the Codex model list in the background
+ *  (`codex_pending`); `onEach` takes every answer, so the pickers show what there is meanwhile. Once `signal`
+ *  aborts, nothing more is read, reported or thrown. */
 export async function watchOptions(onEach: (options: Options) => void, signal: AbortSignal): Promise<void> {
-  for (let options = await getOptions(); !signal.aborted; options = await getOptions()) {
+  while (!signal.aborted) {
+    let options: Options
+    try {
+      options = await getOptions(signal)
+    } catch (err) {
+      if (signal.aborted) return
+      throw err
+    }
+    if (signal.aborted) return
     onEach(options)
     if (!options.codex_pending) return
     await new Promise((done) => window.setTimeout(done, 3000))

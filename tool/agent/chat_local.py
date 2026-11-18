@@ -70,11 +70,16 @@ class CodexServer:
     # 180, the owner's figure: an `app-server` refreshes its model list online before it answers `initialize`, and
     # on their PC that took 3 to 28 seconds (an Orca account home); 25 cut the model list and read hook trust as missing.
     def __init__(self, env=None, cwd=None, timeout=180):
-        self.proc = subprocess.Popen(
-            [*cli_command("codex"), "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
-            env={**os.environ, **(env or {})}, cwd=cwd, **background_options(),
-        )
+        command = [*cli_command("codex"), "app-server"]
+        with _servers_lock:   # registered as it starts: `end_servers` either lists it or was first and refuses it
+            if _servers_closed:
+                raise RuntimeError("서버가 꺼지는 중이라 Codex 를 띄우지 않는다")
+            self.proc = subprocess.Popen(
+                command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
+                env={**os.environ, **(env or {})}, cwd=cwd, **background_options(),
+            )
+            _servers.add(self)
         self.replies = queue.Queue()
         self.deadline = time.monotonic() + timeout
         self.ids = 0
@@ -129,6 +134,35 @@ class CodexServer:
             self.proc.wait(timeout=5)
         self.reader.join(timeout=1)
         self.proc.stdout.close()
+        with _servers_lock:
+            _servers.discard(self)
+
+
+# Every `CodexServer` alive, for the server going down (`end_servers`): one answering a routine read in the
+# background may be minutes from its deadline, and on Windows its process outlives ours.
+_servers: set = set()
+_servers_lock = threading.Lock()
+_servers_closed = False
+
+
+def end_servers():
+    """The server is going down: every `app-server` ends, its request with `Codex 연결 종료`, and none starts
+    until `reopen_servers`."""
+
+    global _servers_closed
+    with _servers_lock:
+        _servers_closed, live = True, list(_servers)
+    for server in live:
+        try:
+            server.proc.kill()
+        except OSError:
+            pass   # already gone
+
+
+def reopen_servers():
+    global _servers_closed
+    with _servers_lock:
+        _servers_closed = False
 
 
 def codex_usage(env=None, cwd=None) -> list[dict]:

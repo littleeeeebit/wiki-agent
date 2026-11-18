@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -31,6 +30,7 @@ from common.paths import PACKAGED
 
 from . import channels, connect, work
 from .query import ROOT
+from .refresh import Refresh
 
 router = APIRouter()
 EVERY = 3.0     # seconds between two looks; a stat and one small read each
@@ -73,39 +73,24 @@ def watch(halt: threading.Event, every: float = EVERY) -> None:
             work.feed.put({"kind": "connect", "repo": ""})
 
 
-# The routine reads' answer (`hub_seen`): the last check that finished. A Codex `app-server` may take minutes to
-# answer (`CodexServer`), and the project list and the settings line waited on it on every read.
+# The routine reads' answer (`hub_seen`): the last check that finished, so the project list and the settings line
+# never wait on a Codex `app-server`; its end announces `connect`, and the screens read again.
 HUB_TTL = 60.0
-_hub_seen: dict = {}
-_hub_check = threading.Lock()   # held while the background check runs
+_hub = Refresh("hub-check", lambda: connect.hub(), HUB_TTL, HUB_TTL,
+               done=lambda: work.feed.put({"kind": "connect", "repo": ""}))
 
 
 def hub_seen() -> dict:
-    """`connect.hub()` without waiting: `checking` until the first check finishes. One older than `HUB_TTL` runs
-    again in the background, and its end announces `connect`, so the screens read again and find it fresh."""
+    """`connect.hub()` without waiting, `checking` while a check runs; before the first one ends, nothing needed."""
 
-    seen = dict(_hub_seen)
-    if (not seen or time.monotonic() - seen["at"] >= HUB_TTL) and _hub_check.acquire(blocking=False):
-        threading.Thread(target=_check_hub, daemon=True, name="hub-check").start()
-    return seen.get("shown") or {"needed": False, "refused": "", "checking": True}
-
-
-def _check_hub() -> None:
-    try:
-        try:
-            shown = connect.hub()
-        except Exception as exc:  # noqa: BLE001 — the reason is the answer until the next check
-            shown = {"needed": True, "refused": f"{type(exc).__name__}: {exc}"}
-        _hub_seen.update(at=time.monotonic(), shown=shown)   # before the release: no second check starts on a stale one
-    finally:
-        _hub_check.release()
-    work.feed.put({"kind": "connect", "repo": ""})
+    shown, error, checking = _hub.read()
+    return {**(shown or {"needed": bool(error), "refused": error}), "checking": checking}
 
 
 def forget_hub() -> None:
-    """The machine's wiring changed: the next routine read checks again."""
+    """The machine's wiring changed: the next routine read checks again, and a check begun before is not kept."""
 
-    _hub_seen.clear()
+    _hub.forget()
 
 
 def refused() -> str:

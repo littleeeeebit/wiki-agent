@@ -505,6 +505,8 @@ def s_register(run: dict) -> None:
             break
     else:
         raise Stop("connect", f"이 기계의 배선을 확인하지 못했다 — {shown['refused']} — 잠시 뒤 [재개]")
+    if runtime.stopping.is_set():   # it went down during the check: no tests start after it
+        raise Stop("restart", "서버가 꺼지는 중이라 멈췄다")
     if shown["needed"]:   # the machine's wiring moves only on `[연결]`'s confirmation
         raise Stop("connect", "이 기계의 hook 배선이나 Codex 신뢰를 바꿔야 한다 — 프로젝트 목록에서 이 저장소의 [연결]로 확인한 뒤 [재개]")
     if not connect.examine(path, wait=True):   # `[연결]`'s tests, in the step: a cut before their results are kept runs them again
