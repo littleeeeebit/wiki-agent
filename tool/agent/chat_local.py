@@ -67,7 +67,9 @@ class CodexServer:
     model list and by `setup_agents` for hook trust.
     """
 
-    def __init__(self, env=None, cwd=None, timeout=25):
+    # 60: an `app-server` refreshes its model list online before it answers `initialize`, and on the owner's PC
+    # that took 3 to 28 seconds (an Orca account home); 25 cut the model list and read hook trust as missing.
+    def __init__(self, env=None, cwd=None, timeout=60):
         self.proc = subprocess.Popen(
             [*cli_command("codex"), "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
