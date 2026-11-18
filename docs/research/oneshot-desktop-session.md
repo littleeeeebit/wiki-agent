@@ -353,18 +353,22 @@ one GDI copy of the screen from the owned desktop failed.
 
 9d2b3 measured the two separate questions on an owned desktop, each with a
 tkinter viewer and a tkinter overlay started through the look's session. The
-probes, the runner and their output are in `oneshot-desktop-capture/`. Each
-cleanup proof was clean.
+probes, the runner, their output and each run's cleanup receipt
+(`cleanup-wgc.json`, `cleanup-layers.json`: the look proven, every job's count
+matching the members followed) are in `oneshot-desktop-capture/`. Each probe
+is told the look's desktop and its fixtures' jobs, and refuses to run on any
+other desktop or to take a window outside those jobs. Started directly on the
+owner's desktop, both probes refused before looking for a window.
 
-- Capture. Windows Graphics Capture's window API does not capture a window on
-  the owned desktop. The probe (`wgc.cs`) ran as a process on that desktop.
-  `GraphicsCaptureSession.IsSupported()` returned true, and
-  `IGraphicsCaptureItemInterop.CreateForWindow` returned an item for both the
-  viewer and the overlay. Each item had an empty display name and a size of
-  0×0, so no frame pool could be made and no frame arrived. The same probe on
-  a window on the owner's desktop was not run: it would put a window on the
-  owner's screen. So the measurement shows the result on the owned desktop,
-  not its cause.
+- Capture. For the viewer and the overlay on the owned desktop, Windows
+  Graphics Capture's window API returned an empty item. The probe (`wgc.cs`)
+  ran as a process on that desktop. `GraphicsCaptureSession.IsSupported()`
+  returned true, and `IGraphicsCaptureItemInterop.CreateForWindow` returned an
+  item for each window. Each item had an empty display name and a size of
+  0×0, and the probe stopped at that check, before making a frame pool. The
+  same probe on a window on the owner's desktop was not run: it would put a
+  window on the owner's screen. So the measurement records the result for
+  these two windows on the owned desktop, not its cause.
 - Overlay. Everything except a picture from Windows' own composition could be
   read on the owned desktop (`layers.py`):
   - `PrintWindow` with `PW_RENDERFULLCONTENT` drew both windows.
@@ -374,8 +378,11 @@ cleanup proof was clean.
   - Walking the z-order up from the viewer found the overlay above it.
   - Both frames came from `DWMWA_EXTENDED_FRAME_BOUNDS`.
 
-  `composed.png` blends the overlay's shot over the viewer's at the frames'
-  offset with that alpha. It shows the overlay's text over the viewer's, which
+  The probe saves a composed picture only when every input was proven: both
+  shots read back in full, both frames, the overlay above the viewer, and a
+  constant alpha with no color key. Otherwise it records a refusal. Here all
+  held. `composed.png` blends the overlay's shot over the viewer's at the
+  frames' offset with that alpha. It shows the overlay's text over the viewer's, which
   is the composed picture the check needs. The picture is a reconstruction,
   not Windows' composition. It is only as true as the window's reported alpha,
   so a window at zero alpha correctly shows nothing. An overlay drawn with

@@ -1,3 +1,4 @@
+desktop=wiki-look-2ca031c6f38648b4bd00601ecbcc6629
 supported=True
-hwnd=46928764
+hwnd=82445810
 capture=item '' 0x0; empty item

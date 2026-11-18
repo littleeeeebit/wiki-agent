@@ -1,4 +1,6 @@
-
+// Windows Graphics Capture's window API, measured on the look's owned desktop (9d2b3). It refuses to run on any
+// desktop but the one it is told, and captures only a window of the fixture's own job, so it can never read a
+// window of the owner's. It stops at the item's size check when the item is empty, before any frame pool.
 using System; using System.Runtime.InteropServices; using System.Threading; using System.IO;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Graphics.Capture; using Windows.Graphics.DirectX; using Windows.Graphics.DirectX.Direct3D11;
@@ -8,9 +10,42 @@ public interface IGraphicsCaptureItemInterop { IntPtr CreateForWindow(IntPtr win
 public static class Wgc {
   [DllImport("d3d11.dll")] static extern int D3D11CreateDevice(IntPtr a, int type, IntPtr sw, uint flags, IntPtr levels, uint n, uint sdk, out IntPtr dev, out int level, out IntPtr ctx);
   [DllImport("d3d11.dll")] static extern int CreateDirect3D11DeviceFromDXGIDevice(IntPtr dxgi, out IntPtr device);
-  [DllImport("user32", CharSet=CharSet.Unicode)] static extern IntPtr FindWindowW(string cls, string title);
+  delegate bool Visit(IntPtr h, IntPtr l);
+  [DllImport("user32")] static extern bool EnumWindows(Visit v, IntPtr l);
+  [DllImport("user32")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32", CharSet=CharSet.Unicode)] static extern int GetWindowTextW(IntPtr h, System.Text.StringBuilder s, int n);
+  [DllImport("user32")] static extern IntPtr GetThreadDesktop(uint thread);
+  [DllImport("kernel32")] static extern uint GetCurrentThreadId();
+  [DllImport("user32", CharSet=CharSet.Unicode)] static extern bool GetUserObjectInformationW(IntPtr o, int index, System.Text.StringBuilder s, int n, out int needed);
+  [DllImport("kernel32", CharSet=CharSet.Unicode)] static extern IntPtr OpenJobObjectW(uint access, bool inherit, string name);
+  [DllImport("kernel32")] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+  [DllImport("kernel32")] static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool inside);
+  [DllImport("kernel32")] static extern bool CloseHandle(IntPtr h);
   public static string Supported() { return GraphicsCaptureSession.IsSupported().ToString(); }
-  public static IntPtr Find(string title) { return FindWindowW(null, title); }
+  public static string Desktop() {   // the name of the desktop this thread runs on
+    var s = new System.Text.StringBuilder(256); int needed;
+    return GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()), 2, s, 256, out needed) ? s.ToString() : null;
+  }
+  // The one visible top-level window on this thread's desktop titled `title` whose process is in the fixture's
+  // job `job`; zero when there is none or more than one. A window of any other process is never chosen.
+  public static IntPtr Find(string title, string job) {
+    IntPtr jobHandle = OpenJobObjectW(0x4, false, job);   // JOB_OBJECT_QUERY
+    if (jobHandle == IntPtr.Zero) return IntPtr.Zero;
+    var found = new System.Collections.Generic.List<IntPtr>();
+    try {
+      EnumWindows((h, l) => {
+        var s = new System.Text.StringBuilder(512); GetWindowTextW(h, s, 512);
+        if (!IsWindowVisible(h) || s.ToString() != title) return true;
+        uint pid; GetWindowThreadProcessId(h, out pid);
+        IntPtr p = OpenProcess(0x1000, false, pid); bool inside = false;
+        if (p != IntPtr.Zero) { IsProcessInJob(p, jobHandle, out inside); CloseHandle(p); }
+        if (inside) found.Add(h);
+        return true;
+      }, IntPtr.Zero);
+    } finally { CloseHandle(jobHandle); }
+    return found.Count == 1 ? found[0] : IntPtr.Zero;
+  }
   public static string Capture(IntPtr hwnd, string file) {
     IntPtr dev, ctx; int level;
     int hr = D3D11CreateDevice(IntPtr.Zero, 1, IntPtr.Zero, 0x20, IntPtr.Zero, 0, 7, out dev, out level, out ctx);
@@ -46,12 +81,20 @@ public static class Wgc {
 
 public static class Program {
   public static int Main(string[] args) {
-    string outDir = args[0], title = args[1];
+    // wgc.exe <out> <expected desktop> <fixture job> <title>: refuses unless it runs on the look's owned desktop.
+    string outDir = args[0], desktop = args[1], job = args[2], title = args[3];
     var result = new System.Text.StringBuilder();
     try {
+      string here = Wgc.Desktop();
+      result.Append("desktop=" + here + "\n");
+      if (here == null || here != desktop || string.Equals(here, "Default", StringComparison.OrdinalIgnoreCase)) {
+        result.Append("refused=not on the look's owned desktop\n");
+        File.WriteAllText(Path.Combine(outDir, "wgc-" + title + ".txt"), result.ToString());
+        return 3;
+      }
       result.Append("supported=" + Wgc.Supported() + "\n");
       IntPtr h = IntPtr.Zero;
-      for (int i = 0; i < 50 && h == IntPtr.Zero; i++) { h = Wgc.Find(title); if (h == IntPtr.Zero) Thread.Sleep(200); }
+      for (int i = 0; i < 50 && h == IntPtr.Zero; i++) { h = Wgc.Find(title, job); if (h == IntPtr.Zero) Thread.Sleep(200); }
       result.Append("hwnd=" + h.ToInt64() + "\n");
       if (h != IntPtr.Zero) result.Append("capture=" + Wgc.Capture(h, Path.Combine(outDir, "wgc-" + title + ".png")) + "\n");
     } catch (Exception e) { result.Append("error=" + e + "\n"); }

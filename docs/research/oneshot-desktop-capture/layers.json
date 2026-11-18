@@ -1,7 +1,9 @@
 {
+ "refusals": [],
+ "desktop": "wiki-look-063d3b7933c74edbb7b5b928eef43536",
  "hwnds": [
-  24318988,
-  47122048
+  54726742,
+  50008846
  ],
  "overlay_layered": {
   "read": true,
@@ -28,5 +30,5 @@
   "viewer": true,
   "overlay": true
  },
- "composed": "composed.png, from the two PrintWindow shots and the overlay's alpha"
+ "composed": "composed.png, from the two PrintWindow shots and the overlay's constant alpha"
 }
