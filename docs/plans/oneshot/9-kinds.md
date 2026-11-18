@@ -204,10 +204,12 @@ app starts on it in a kill-on-close job, a driver on the same desktop reads
 its UI Automation tree and acts only through automation patterns, and
 `PrintWindow` shoots it. The design, what was measured on this PC, the
 refusals and the cleanup proof are in the research note
-[oneshot-desktop-session](../../research/oneshot-desktop-session.md). The
-owned desktop cannot capture or draw over another app, so the screen
-translator's capture and overlay checks need either a round on the owner's
-own desktop or the `device` deferral; 9e decides which with the owner.
+[oneshot-desktop-session](../../research/oneshot-desktop-session.md). A GDI
+copy of the screen fails on the owned desktop; 9d2 measures window capture and
+an overlay against a fixture on that same desktop. If the screen translator's
+capture and overlay checks cannot run there, 9e chooses with the owner between
+a round on the owner's own desktop before R3, which records their evidence as
+the Android phone round does, and an explicit change to this plan's gate.
 
 ## What does not change
 
