@@ -375,17 +375,36 @@ def _pointed(link):
     return Path(os.readlink(link).removeprefix("\\\\?\\"))
 
 
+def _is_link(path):
+    return Path(path).is_symlink() or is_junction(path)
+
+
 def kept_links(folder):
     """The links a cut `relink` left in its own recovery folder (`.wiki-relink` beside the skills folder, one
     private folder per attempt), by the place each belongs: `{place: [kept, oldest first]}`. Nothing else
-    there is ours, so nothing else is read."""
+    there is ours, so nothing else is read, and a link standing in for the folder or an attempt is never
+    followed: what it points into is somebody else's."""
     base = Path(folder).parent / ".wiki-relink"
     kept = {}
-    for attempt in sorted(base.iterdir(), key=lambda p: p.stat().st_mtime) if base.is_dir() else []:
-        for link in attempt.iterdir() if attempt.is_dir() else []:
-            if link.is_symlink() or is_junction(link):
+    if _is_link(base) or not base.is_dir():
+        return kept
+    attempts = [a for a in base.iterdir() if not _is_link(a) and a.is_dir()]
+    for attempt in sorted(attempts, key=lambda p: p.stat().st_mtime):
+        for link in attempt.iterdir():
+            if _is_link(link):
                 kept.setdefault(Path(folder) / link.name, []).append(link)
     return kept
+
+
+def _place(src, dst):
+    """Move a link to `dst` only while nothing is there: never over a file or link that appeared meanwhile.
+    Windows `rename` refuses an existing name; elsewhere a hard link of the link itself does, then the
+    old name goes."""
+    if os.name == "nt":
+        os.rename(src, dst)
+    else:
+        os.link(src, dst, follow_symlinks=False)
+        os.unlink(src)
 
 
 def relink(link, target, source=None):
@@ -401,21 +420,25 @@ def relink(link, target, source=None):
     the new one cannot be made. A link a cut attempt kept, with nothing at
     its place, is taken from there instead."""
     link = Path(link)
+    same = lambda kept: source is None or os.path.normcase(str(_pointed(kept))) == os.path.normcase(str(source))  # noqa: E731
     keeps = kept_links(link.parent).get(link, [])
     current = link if os.path.lexists(link) else (keeps[-1] if keeps else None)
     if current is None:   # neither the link nor a kept one: nothing to point anew
         raise FileNotFoundError(str(link))
-    if source is not None and os.path.normcase(str(_pointed(current))) != os.path.normcase(str(source)):
+    if not same(current):
         raise ValueError(f"{link} 이 확인한 뒤 다른 곳을 가리킨다 ({_pointed(current)}) — 다시 확인한다")
     if current == link:
         base = link.parent.parent / ".wiki-relink"
         base.mkdir(exist_ok=True)
         aside = Path(tempfile.mkdtemp(dir=base, prefix=link.name + ".")) / link.name
-        os.rename(link, aside)
+        os.rename(link, aside)   # into this attempt's own empty folder: nothing there to clobber
+        if not same(aside):   # retargeted between the check and the move: not the approved link, so it goes back
+            _restore(aside, link, ValueError(f"{link} 이 옮기는 사이 다른 곳을 가리키게 됐다 — 다시 확인한다"))
     else:
         aside = current
     junction = is_junction(aside)
     try:
+        link.parent.mkdir(parents=True, exist_ok=True)   # a skills folder that is gone comes back with the link
         if junction:
             import _winapi
 
@@ -423,12 +446,7 @@ def relink(link, target, source=None):
         else:
             os.symlink(target, link, target_is_directory=True)
     except BaseException as exc:
-        try:
-            if not os.path.lexists(link):
-                os.rename(aside, link)   # the untouched old link, back where it was
-        except OSError as back:   # still kept, and named: `skill_links` lists it again
-            exc.add_note(f"{link} 의 원래 링크를 되돌리지 못해 {aside} 에 남겼다 — {back}")
-        raise
+        _restore(aside, link, exc)
     # On Windows both kinds of directory link go with `rmdir`, which removes
     # the link and never what it points at.
     (os.rmdir if os.name == "nt" else os.unlink)(aside)
@@ -436,6 +454,16 @@ def relink(link, target, source=None):
         aside.parent.rmdir()   # this attempt's own folder, empty now
     except OSError:
         pass
+
+
+def _restore(aside, link, exc):
+    """Put the kept link back at its place, never over what appeared there, and raise `exc`. A link that cannot
+    go back stays kept, whole, and `exc` names where: `skill_links` lists it again."""
+    try:
+        _place(aside, link)
+    except OSError as back:
+        exc.add_note(f"{link} 의 원래 링크를 되돌리지 못해 {aside} 에 남겼다 — {back}")
+    raise exc
 
 
 def install_global(choice, check, projects, trust):

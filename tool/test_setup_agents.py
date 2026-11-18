@@ -129,6 +129,82 @@ def test_a_kept_link_is_listed_restored_and_only_the_confirmed_one_moves(tmp_pat
     assert _points(link) == skill.resolve()
 
 
+def test_relink_never_overwrites_follows_or_moves_what_it_was_not_shown(tmp_path, monkeypatch):
+    """Rollback never lands on what appeared meanwhile; a link standing in for the recovery folder is not
+    followed; a link retargeted while it was being moved aside is put back untouched; a missing skills folder
+    comes back with the link."""
+
+    import tempfile
+
+    import pytest
+
+    import setup_agents
+
+    old, new = tmp_path / "old-hub", tmp_path / "new-hub"
+    old.mkdir()
+    new.mkdir()
+    skills = tmp_path / "claude" / "skills"
+    skills.mkdir(parents=True)
+    link = skills / "skill"
+    _dir_link(old, link)
+    owner, name = (__import__("_winapi"), "CreateJunction") if os.name == "nt" else (os, "symlink")
+    real = getattr(owner, name)
+
+    # 1. The new link fails after a file of the owner's appeared at its place: the file stays, the old link is kept.
+    def occupied(*args, **kwargs):
+        link.write_text("the owner's", encoding="utf-8")
+        raise OSError("access denied")
+
+    monkeypatch.setattr(owner, name, occupied)
+    with pytest.raises(OSError) as failed:
+        setup_agents.relink(link, new)
+    monkeypatch.undo()
+    assert link.read_text(encoding="utf-8") == "the owner's", "되돌리기가 새로 생긴 파일을 덮지 않는다"
+    kept = setup_agents.kept_links(skills)[link]
+    assert len(kept) == 1 and _points(kept[0]) == old.resolve()
+    assert any(str(kept[0]) in note for note in failed.value.__notes__)
+    link.unlink()
+    setup_agents.relink(link, old)   # the kept link takes its place again
+    assert _points(link) == old.resolve() and not setup_agents.kept_links(skills)
+
+    # 2. The recovery folder as a link into somebody else's folder: what is there is never read.
+    elsewhere = tmp_path / "elsewhere" / "attempt"
+    elsewhere.mkdir(parents=True)
+    _dir_link(old, elsewhere / "other-skill")
+    recovery = skills.parent / ".wiki-relink"
+    for attempt in recovery.iterdir() if recovery.exists() else []:
+        attempt.rmdir()
+    if recovery.exists():
+        recovery.rmdir()
+    _dir_link(elsewhere.parent, recovery)
+    assert setup_agents.kept_links(skills) == {}, "링크로 된 보관 폴더는 따라가지 않는다"
+    os.rmdir(recovery) if os.name == "nt" else os.unlink(recovery)
+
+    # 3. Retargeted between the check and the move aside: the moved link is not the approved one, so it goes back.
+    real_mkdtemp = tempfile.mkdtemp
+
+    def retarget(*args, **kwargs):
+        made = real_mkdtemp(*args, **kwargs)
+        os.rmdir(link) if os.name == "nt" else os.unlink(link)
+        real(str(new), str(link)) if os.name == "nt" else real(new, link, target_is_directory=True)
+        return made
+
+    monkeypatch.setattr(setup_agents.tempfile, "mkdtemp", retarget)
+    with pytest.raises(ValueError, match="사이"):
+        setup_agents.relink(link, tmp_path, old)
+    monkeypatch.undo()
+    assert _points(link) == new.resolve(), "옮기는 사이 바뀐 링크는 그대로 돌아온다"
+
+    # 4. A kept link whose skills folder is gone: the folder comes back with the link.
+    os.rmdir(link) if os.name == "nt" else os.unlink(link)
+    attempt = skills.parent / ".wiki-relink" / "skill.cut"
+    attempt.mkdir(parents=True, exist_ok=True)
+    _dir_link(old, attempt / "skill")
+    skills.rmdir()
+    setup_agents.relink(link, new, old)
+    assert _points(link) == new.resolve() and not attempt.exists()
+
+
 def test_a_server_going_down_while_a_file_is_staged_installs_nothing(tmp_path):
     import pytest
 
