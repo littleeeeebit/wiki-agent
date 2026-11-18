@@ -516,6 +516,16 @@ def test_trust_goes_only_to_the_codex_homes_the_confirmation_listed(tmp_path, ho
     assert recorded == shown["homes"], "확인한 목록의 홈에만 신뢰를 쓴다"
 
 
+def test_a_trust_write_cut_while_codex_lists_the_hooks_counts_as_written(tmp_path, home):
+    """Codex may take the trust and be stopped before it answers the list after: the move did change that home."""
+
+    shown, done = connect.hub(), []
+    with patch.object(setup_agents, "codex_hooks", side_effect=RuntimeError("Codex 연결 종료: hooks/list")), \
+         pytest.raises(RuntimeError):
+        connect.move(shown["digest"], None, done)
+    assert f"{shown['homes'][0]}: Codex 신뢰 기록" in done
+
+
 def test_a_codex_home_that_does_not_answer_is_a_refusal_not_a_move(tmp_path, monkeypatch):
     """vtuber-ko-tts: the wiring already pointed here and trust was in place, a slow `app-server` read as
     untrusted, and the oneshot stopped asking the owner to move what needed nothing."""

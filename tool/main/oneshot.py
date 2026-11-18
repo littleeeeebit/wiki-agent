@@ -517,6 +517,7 @@ def s_register(run: dict) -> None:
             connect.move(shown["digest"], connect.adapter_of(path)[0], done)
         except Exception as exc:  # noqa: BLE001 — a refusal (HTTP 409) or a write that failed: its reason is the stop's
             reason = exc.detail if isinstance(exc, HTTPException) else f"{type(exc).__name__}: {exc}"
+            reason = " — ".join([reason, *getattr(exc, "__notes__", [])])   # records the move could not clear
             if done:   # what is left is another list than the card's: the owner confirms it, never a resume alone
                 raise Stop("connect", f"이 기계의 배선을 일부만 바꿨다 — 쓴 것: {', '.join(done)} — {reason}"
                                       " — 남은 변경을 [연결]로 확인한 뒤 [재개]") from exc

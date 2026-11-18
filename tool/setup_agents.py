@@ -294,8 +294,13 @@ def write_plan(plan):
     for path, settings, changes in plan:
         if changes:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
-                            encoding="utf-8", newline="\n")
+            # The owner's own settings live in this file: a write cut partway (a full disk, a server going down)
+            # must leave it as it was, so the whole content lands beside it first and replaces it in one step.
+            target = path.resolve()
+            partial = target.with_name(target.name + ".part")
+            partial.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
+                               encoding="utf-8", newline="\n")
+            os.replace(partial, target)
             print(f"썼다: {path} ({len(changes)}건)")
         else:
             print(f"그대로: {path}")

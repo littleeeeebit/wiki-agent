@@ -17,6 +17,30 @@ def run(home: Path, *args: str) -> subprocess.CompletedProcess:
                           env=dict(os.environ) | {"WIKI_USER_HOME": str(home)})
 
 
+def test_a_settings_write_cut_partway_leaves_the_owners_file_as_it_was(tmp_path, monkeypatch):
+    """A full disk after the file was opened truncated the owner's settings and left invalid JSON behind."""
+
+    import pytest
+
+    import setup_agents
+
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"model": "opus", "theme": "dark"}), encoding="utf-8")
+    real = Path.write_text
+
+    def half(self, text, *args, **kw):
+        real(self, text[: len(text) // 2], *args, **kw)
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(Path, "write_text", half)
+    with pytest.raises(OSError):
+        setup_agents.write_plan([(settings, {"model": "opus", "theme": "dark", "hooks": {}}, ["훅 추가"])])
+    monkeypatch.undo()
+    assert json.loads(settings.read_text(encoding="utf-8")) == {"model": "opus", "theme": "dark"}
+    setup_agents.write_plan([(settings, {"model": "opus", "hooks": {}}, ["훅 추가"])])
+    assert json.loads(settings.read_text(encoding="utf-8")) == {"model": "opus", "hooks": {}}
+
+
 def test_the_threshold_goes_into_both_hosts_and_an_existing_value_is_left_alone():
     home = Path(tempfile.mkdtemp())
     (home / ".claude").mkdir()

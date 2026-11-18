@@ -451,10 +451,12 @@ def test_a_confirmed_move_that_cannot_be_written_stops_with_its_reason(world):
     world["wiring"].update(needed=True, refused="", digest="shown")
     rid = made(world, wiring="shown")
     refused = HTTPException(409, "확인한 뒤에 바뀔 줄이 달라졌다. 다시 확인한다")
+    refused.add_note("other-project 의 옛 배선 시험 결과를 지우지 못했다 — locked")
     with patch.object(connect, "move", side_effect=refused):
         oneshot.bootstrap(rid)
     run = oneshot.load(rid)
     assert run["stopped"]["reason"] == "connect" and "달라졌다" in run["stopped"]["detail"]
+    assert "other-project" in run["stopped"]["detail"], "지우지 못한 기록도 멈춘 이유에 보인다"
     assert "register" not in run["steps"] and world["examined"] == []
 
 

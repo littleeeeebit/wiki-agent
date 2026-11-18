@@ -60,7 +60,11 @@ hook but not its command, and the same lines under another interpreter write
 other commands. So the digest also covers each file's whole new content, the
 interpreter and the Codex homes the trust is recorded in. The list shows the
 interpreter and those homes, and the move writes trust to that captured list,
-never to a second read of the homes. `connect.move` writes nothing once
+never to a second read of the homes. Each settings file is written whole
+beside itself and then replaces the original, so a write cut partway leaves
+the owner's file as it was. A Codex home counts as written once the trust
+write is sent, since Codex may take it and be stopped before it answers.
+`connect.move` writes nothing once
 shutdown has begun. A move cut partway still drops the routine read's last
 check and every repository's probe record, as a finished move does. Each
 record is cleared on its own, and one that cannot be cleared hides neither
