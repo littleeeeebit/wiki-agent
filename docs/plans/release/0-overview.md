@@ -37,8 +37,8 @@ These are the person's, made on 2026-11-18:
   repository screen, never automatically after a merge. The button shows the
   last released version and how many commits `main` is ahead of it. The person
   picks `patch`, `minor` or `major` there. Before the first production release
-  of a repository there is nothing to bump: the card shows the seed version
-  instead (see "One attempt") and offers no choice.
+  of a repository there is nothing to bump: the card shows the first version
+  the press would publish instead (see "One attempt") and offers no choice.
 - One press authorizes one attempt: publishing one commit, pinned when the
   attempt starts, under one version. Within that attempt nothing stops for the
   person. Progress is shown on the screen, a transient failure is retried, and
@@ -99,6 +99,16 @@ seed version, read from the one file the adapter's `[release]` table names as
 the version source (`src-tauri/tauri.conf.json` for the translator, `0.1.0`).
 Its notes say it is the first.
 
+A version is taken when its tag exists on the remote for any reason, for
+example a failed attempt's tag or a tag someone else pushed. Version choice
+skips a taken version and moves to the next patch, both after a bump and from
+the seed. One selector computes the version, used both for the card and for
+the attempt. The card shows exactly the version a press would publish, and
+the press carries it. If the selector gives a different version when the
+attempt pins its SHA, because a tag appeared in between, the press is refused
+before anything starts. The card then shows the new version, and nothing has
+been reserved or written.
+
 The notes list the titles of the pull requests merged between the previous
 production tag and the pinned SHA, bounded by that SHA and not by whatever
 `main` has become since.
@@ -146,15 +156,14 @@ reads the ledger and finishes or ends the attempt it was in:
 | Everything matches | Makes the draft public and records the attempt published |
 | The recorded release is already public (`draft` false, `published_at` set): the publish was accepted but its answer or the ledger write was lost | Read-only. If the tag is at the SHA and the asset set and digests equal the manifest exactly, it records the attempt published. Otherwise it ends the attempt as failed and leaves the published release as it is. |
 
-An attempt that ends without publishing gives its version back. The server
-deletes the draft and then the tag, only after proving both are the attempt's.
-The draft's ID must be the ledger's, its body must carry the attempt ID and it
-must still be a draft. The remote tag must still point at the recorded SHA. A
-tag or release that fails any of these, or that is published, is never
-touched. Version choice also skips a version whose tag exists on the remote
-for any reason, and takes the next free one. So a version an earlier attempt
-could not give back never blocks the next press. A first release whose seed is
-taken this way moves to the seed's next patch.
+The server never deletes a remote tag or release. An attempt that ends without
+publishing leaves its draft and its tag where they are, and the ledger records
+them as that attempt's. Ownership cannot be proven safely enough to delete.
+Another maintainer can push the same tag at the same commit, which a push
+reports as up to date. Another writer can also publish the draft between the
+server's read and its delete, and GitHub's delete takes no draft-only
+condition. The next press is not blocked, because version choice skips any
+version that is taken (see "One attempt").
 
 ### When an attempt fails
 
@@ -180,9 +189,9 @@ choice is left to step 2's document.
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Android build and verify, unpublished | The typed `[release]` reader, the seed and the version choice (skipping a version whose tag is taken, including a failed first release's seed), pinning, the release-owned detached checkout, the release build with the injected version. A disposable test key and its certificate sign the step's APKs, so every Android check runs over two consecutive versions on a disposable target, including the refusal of a changed application ID and of a changed certificate. Nothing is published, and the test key never signs a production artifact. | Not started |
+| 1 | Android build and verify, unpublished | The typed `[release]` reader, the seed and the one version selector for card and attempt (skipping a taken version, including a failed first release's seed; refusing a press whose version changed by pin time), pinning, the release-owned detached checkout, the release build with the injected version. A disposable test key and its certificate sign the step's APKs, so every Android check runs over two consecutive versions on a disposable target, including the refusal of a changed application ID and of a changed certificate. Nothing is published, and the test key never signs a production artifact. | Not started |
 | 2 | Signing | The per-repository release keystore and expected certificate, set up once; signing outside the build command; the debug-installation note. Required before anything is published. | Not started |
-| 3 | Transfer and ledger | The shared GitHub transfer helper, which S8 moves onto with its own policy unchanged; the `raw/releases/` ledger, the reservation, the manifest, the tag read-back, the draft ID, every row of the restart table including a lost publish answer, and giving back a failed attempt's own draft and tag | Not started |
+| 3 | Transfer and ledger | The shared GitHub transfer helper, which S8 moves onto with its own policy unchanged; the `raw/releases/` ledger, the reservation, the manifest, the tag read-back, the draft ID, every row of the restart table including a lost publish answer, and a failed attempt's draft and tag left in place and recorded | Not started |
 | 4 | Failure to agent | Bounded retries and the agent turn whose fix goes through the ordinary review loop, exercised on the unpublished path | Not started |
 | 5 | Button and card | The repository card and its button, the one entry point that publishes; the seed or the bump choice. Its publishing action is enabled only with steps 2, 3 and 4 in place. | Not started |
 | 6 | Windows installer | The `desktop` kind's NSIS build and its checks | Not started |
