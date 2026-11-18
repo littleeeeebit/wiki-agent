@@ -3,6 +3,7 @@ patterns only, a deadline per phase, and the mechanical findings (docs/research/
 
 import json
 import sys
+import time
 
 import pytest
 
@@ -36,6 +37,47 @@ def test_the_main_window_is_sized_to_the_card_shot_and_read(tmp_path):
     assert start["nodes"][0]["type"] == "Window" and start["nodes"][0]["name"] == "fixture"
 
 
+LATER = ("import subprocess, sys, time; time.sleep(3); "
+         f"subprocess.run([sys.executable, '-c', {WINDOW!r}])")
+
+
+def test_a_window_a_later_child_of_the_app_opens_is_the_apps(tmp_path):
+    with desktop_session.look(tmp_path, "later") as look:
+        root = look.start("app", python(LATER), tmp_path)
+        report = desktop_driver.drive(look, "app", (640, 480), [], settle_ms=500)
+
+    assert report["phase"] == "done" and report["main"]["title"] == "fixture", report
+    assert report["main"]["pid"] != root["pid"] and desktop_driver.findings(report) == []
+
+
+SWAPPED = """
+import json, sys, time, tkinter
+from pathlib import Path
+report = Path(sys.argv[1]) / "evidence" / "driver" / "driver.json"
+first = tkinter.Tk(); first.title("one")
+def chosen():
+    try:
+        if json.loads(report.read_text(encoding="utf-8-sig")).get("main"):
+            first.destroy(); return
+    except (OSError, ValueError):
+        pass
+    first.after(20, chosen)
+first.after(20, chosen); first.mainloop()
+second = tkinter.Tk(); second.title("two"); second.after(60000, second.destroy); second.mainloop()
+"""
+
+
+def test_a_main_window_replaced_after_its_choice_is_a_refusal_before_any_action(tmp_path):
+    with desktop_session.look(tmp_path, "swapped") as look:
+        look.start("app", [sys.executable, "-c", SWAPPED, str(look.folder)], tmp_path)
+        report = desktop_driver.drive(look, "app", (640, 480), [{"name": "go", "action": "invoke", "id": "go"}],
+                                      settle_ms=3000)
+
+    assert report["main"]["title"] == "one", report
+    assert report["refusal"] == "the main window is gone or no longer the app's", report
+    assert not any(step["acted"] for step in report["steps"])
+
+
 def test_two_candidate_windows_at_startup_are_a_refusal(tmp_path):
     with desktop_session.look(tmp_path, "two") as look:
         look.start("app", python(TWO), tmp_path)
@@ -53,30 +95,85 @@ def test_an_app_that_shows_no_window_is_a_refusal(tmp_path):
     assert report["refusal"] == "the app showed no window on the owned desktop"
 
 
-STUCK = """
+STAND_IN = """
 import json, sys, time
 from pathlib import Path
-request = json.loads(Path(sys.argv[-1]).read_text(encoding="utf-8"))
-(Path(request["out"]) / "driver.json").write_text(json.dumps({"phase": "sized"}), encoding="utf-8")
-time.sleep(120)
+out = Path(json.loads(Path(sys.argv[-1]).read_text(encoding="utf-8"))["out"])
+def put(name, value):
+    (out / (name + ".part")).write_text(json.dumps(value), encoding="utf-8")
+    (out / (name + ".part")).replace(out / name)
+for seq, (kind, value) in enumerate(json.loads(sys.argv[-2]), 1):
+    if kind == "op":
+        put("progress.json", {"seq": seq, "op": value[0]}); time.sleep(value[1])
+    else:
+        put("driver.json", value)
 """
 
 
-def test_a_phase_past_its_deadline_ends_the_driver_and_is_named(tmp_path, monkeypatch):
-    stuck = tmp_path / "stuck.py"
-    stuck.write_text(STUCK, encoding="utf-8")
+def stand_in(tmp_path, monkeypatch, script):
+    """The driver replaced by a Python process that enters operations and saves reports as `script` says."""
+
+    path = tmp_path / "stand_in.py"
+    path.write_text(STAND_IN, encoding="utf-8")
     monkeypatch.setattr(desktop_driver, "POWERSHELL", sys.executable)
-    monkeypatch.setattr(desktop_driver, "SCRIPT", stuck)
+    monkeypatch.setattr(desktop_driver, "SCRIPT", path)
     monkeypatch.setattr(desktop_driver, "PHASE_SECONDS", 1)
-    monkeypatch.setattr(desktop_driver, "arguments", lambda script, request: [str(script), str(request)])
-
-    with desktop_session.look(tmp_path, "stuck") as look:
+    monkeypatch.setattr(desktop_driver, "arguments", lambda script_, request: [str(script_), json.dumps(script), str(request)])
+    with desktop_session.look(tmp_path, "stand_in") as look:
         look.start("app", python(NONE), tmp_path)
-        report = desktop_driver.drive(look, "app", (640, 480), [], wait=1, settle_ms=0)
-        assert look.jobs["driver"].finished()
+        began = time.monotonic()
+        report = desktop_driver.drive(look, "app", (640, 480), [], wait=30, settle_ms=0)
+        return report, time.monotonic() - began
 
-    assert report["ended"] == "sized"
-    assert desktop_driver.findings(report) == ["the driver passed its deadline at sized"]
+
+def test_a_blocked_resize_is_held_to_its_own_deadline_not_the_startup_wait(tmp_path, monkeypatch):
+    report, took = stand_in(tmp_path, monkeypatch, [["op", ["wait for a window", 0.2]], ["op", ["resize", 120]]])
+
+    assert report["ended"] == "resize" and report["end"]["clean"], report
+    assert took < 15   # the startup wait is 30 s; the resize's own deadline is 1 s
+    assert desktop_driver.findings(report) == ["the driver passed its deadline at resize", "the driver left no report"]
+
+
+DONE ={"phase": "done", "size": {"asked": [640, 480], "moved": True, "frame": [0, 0, 640, 480]}, "states": [],
+        "steps": []}
+
+
+def test_operations_each_within_their_own_deadline_are_never_summed(tmp_path, monkeypatch):
+    report, _ = stand_in(tmp_path, monkeypatch, [["op", ["choose", 0.7]], ["op", ["resize", 0.7]],
+                                                 ["op", ["read size", 0.7]], ["op", ["done", 0]], ["report", DONE]])
+
+    assert report["ended"] is None and report["last"] == "done", report
+    assert desktop_driver.findings(report) == []
+
+
+def test_a_driver_that_exits_before_any_report_leaves_a_finding(tmp_path, monkeypatch):
+    report, _ = stand_in(tmp_path, monkeypatch, [])
+
+    assert desktop_driver.findings(report) == ["the driver left no report"]
+
+
+def test_a_driver_that_exits_after_an_intermediate_report_leaves_a_finding(tmp_path, monkeypatch):
+    report, _ = stand_in(tmp_path, monkeypatch, [["op", ["read size", 0]], ["report", {**DONE, "phase": "read size"}]])
+
+    assert report["ended"] is None
+    assert desktop_driver.findings(report) == ["the driver stopped before finishing, at read size"]
+
+
+def test_a_key_that_is_not_one_plain_component_is_refused_before_any_path(tmp_path):
+    with desktop_session.look(tmp_path, "keys") as look:
+        look.start("app", python(NONE), tmp_path)
+        evidence = sorted(path.name for path in (look.folder / "evidence").iterdir())
+        folders = list(look.record["folders"])
+        for key in ("..", r"..\outside", str(tmp_path / "rooted"), "app", "APP"):
+            with pytest.raises(ValueError):
+                desktop_driver.drive(look, "app", (640, 480), [], key=key)
+        for key in ("..", r"..\outside", str(tmp_path / "rooted")):
+            with pytest.raises(ValueError):
+                look.reserve(key)
+
+        assert sorted(path.name for path in (look.folder / "evidence").iterdir()) == evidence
+        assert look.record["folders"] == folders
+    assert not (tmp_path / "rooted").exists() and not (tmp_path / "outside").exists()
 
 
 def node(**fields):
@@ -85,8 +182,9 @@ def node(**fields):
 
 
 def test_the_mechanical_findings_read_off_a_report():
-    report = {"size": {"asked": [800, 600], "frame": [0, 0, 786, 593]},
-              "states": [{"name": "start", "windows": [{"hwnd": 1, "frame": [0, 0, 800, 600]}], "nodes": [
+    report = {"phase": "done", "size": {"asked": [800, 600], "moved": True, "frame": [0, 0, 786, 593]},
+              "states": [{"name": "start", "windows": [{"hwnd": 1, "frame": [0, 0, 800, 600]}],
+                          "shots": [{"hwnd": 1, "drawn": True}], "nodes": [
                   node(depth=0, type="Window", rect=[-7, 0, 814, 607], patterns=[]),   # the window itself
                   node(),
                   node(name="", id="blank"),
@@ -108,7 +206,26 @@ def test_the_mechanical_findings_read_off_a_report():
     ]
 
 
-def test_the_request_names_only_the_apps_own_processes(tmp_path, monkeypatch):
+def test_what_a_report_could_not_observe_is_a_finding():
+    report = {"phase": "done", "size": {"asked": [800, 600], "moved": True, "frame": None},
+              "states": [{"name": "start", "windows": [{"hwnd": 1, "frame": [0, 0, 800, 600]}],
+                          "shots": [{"hwnd": 1, "drawn": False, "error": "PrintWindow drew nothing"}], "nodes": []},
+                         {"name": "after-go", "windows": [], "shots": [], "nodes": []}],
+              "steps": [], "end": {"clean": False, "reasons": ["no exit proven for pid 7"]}}
+
+    assert desktop_driver.findings(report) == [
+        "the driver's end was not proven: no exit proven for pid 7",
+        "the main window's size was not read back",
+        "start: window 1 was not drawn: PrintWindow drew nothing",
+        "after-go: no app window to shoot",
+    ]
+    assert desktop_driver.findings({**report, "phase": "act go", "last": "act go", "error": "boom", "end": None,
+                                    "size": {"asked": [800, 600], "moved": False, "frame": [0, 0, 800, 600]},
+                                    "states": []}) == [
+        "the driver failed at act go: boom", "the main window could not be sized"]
+
+
+def test_the_request_names_the_apps_job_not_its_pids(tmp_path, monkeypatch):
     seen = {}
 
     def starting(look, key, argv, cwd, extra=None):
@@ -116,12 +233,14 @@ def test_the_request_names_only_the_apps_own_processes(tmp_path, monkeypatch):
         raise desktop_session.Refused("stop here")
 
     with desktop_session.look(tmp_path, "request") as look:
-        root = look.start("app", python(NONE), tmp_path)
+        look.start("app", python(NONE), tmp_path)
+        name = look.jobs["app"].name
         monkeypatch.setattr(desktop_session.Look, "start", starting)
         with pytest.raises(desktop_session.Refused, match="stop here"):
             desktop_driver.drive(look, "app", (640, 480), [{"name": "go", "action": "invoke", "id": "go"}])
 
-    assert seen["pids"] == [root["pid"]] and seen["window"] == [640, 480] and seen["steps"][0]["id"] == "go"
+    assert seen["job"] == name and "pids" not in seen
+    assert seen["window"] == [640, 480] and seen["steps"][0]["id"] == "go"
 
 
 EDGE = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"

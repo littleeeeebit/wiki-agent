@@ -193,12 +193,29 @@ A step names its control by `AutomationId`, scoped to its screen. A name is
 used only when no id exists, and it must match exactly one element. Each step
 ends with its postcondition read from the tree.
 
-Every call into the app has a deadline: a resize, a shot, a tree read, an
-action and a postcondition each get 10 seconds, and the look as a whole has
-S7's limit.
+Every call into the app has a deadline: a resize, one window's shot, one
+window's tree read, an action and a postcondition each get 10 seconds, and the
+look as a whole has S7's limit. The driver names each operation, with a fresh
+sequence number, before it starts it, so each is held to its own deadline and
+a slow one is named. The launch, the wait for a first window and each settle
+have their own allowances.
 `PrintWindow` asks the app to render synchronously, and a provider can block
 while a modal dialog opens. So the driver runs those calls in its own process,
-and the server ends that process's job when a deadline passes.
+and the server ends that process's job when a deadline passes. The end of the
+driver's job is proven like any other, and an unproven end is a finding.
+
+The app is its job, not a list of process ids. A window belongs to the app
+when its process is in the app's job at that moment, so a child the app starts
+later counts and a recycled id does not. Every use of a window first proves it
+is still the same window: alive on the owned desktop, owned by the same
+process of the app's job, with the same class. A main window that fails this
+is a refusal before any action. A window that fails it during a shot is a
+finding of that state.
+
+A run proves only what it observed. A driver that leaves no report, stops or
+fails before it finishes, cannot read the size back, finds no app window in a
+state or gets nothing drawn by `PrintWindow` produces a finding, so an empty
+list of findings means every observation was made.
 
 Each screen and state is shot with `PrintWindow` and `PW_RENDERFULLCONTENT`,
 per visible top-level window of the app's job.
@@ -345,13 +362,13 @@ the two shots. User-profile paths in them read `%USERPROFILE%`.
 - The driver chose one main window, sized it to 800×600 and read that frame
   back. It invoked `Go` by its `AutomationId` through `InvokePattern` and read
   `clicked` from the tree as the step's postcondition. Both shots show the page.
-- The cleanup proof is clean. The app's job counted 26 processes, and all 26
+- The cleanup proof is clean. The app's job counted 35 processes, and all 35
   were followed to a proven exit. The driver's job counted 4. No window was
   left on the desktop, the desktop no longer opened by its name, and the
-  profile folder was removed.
-- The mechanical checks named the fixture's 10×10 unnamed button twice, as
-  unnamed and as under 24×24. They also named Edge's default `Go` button,
-  34×22, as under 24×24.
+  profile folder was removed. Edge's process count varies between runs.
+- The mechanical checks named the fixture's unnamed button twice: as unnamed,
+  and as 11×11 physical pixels, under 24×24. Its CSS asks for 10×10. They also
+  named Edge's default `Go` button, 34×22, as under 24×24.
 
 Two findings came from earlier attempts and shaped the driver:
 

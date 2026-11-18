@@ -1,262 +1,262 @@
 {
  "state": "proven",
- "desktop": "wiki-look-d15b5df5f6d041cb8dc05df84e1cd0b2",
+ "desktop": "wiki-look-1f37c61598a240bfaf77de4a28096892",
  "session": 1,
  "logon": {
   "luid": 955471,
   "time": 134393413081825563
  },
- "uptime": 118113296,
+ "uptime": 119055828,
  "owner": null,
  "folders": [
   {
-   "name": "data-edge-67611317a8c7",
+   "name": "data-edge-f61820a27198",
    "owned": true
   },
   {
-   "name": "data-app-12cf6e8fd3e0",
+   "name": "data-app-b956b398abf8",
    "owned": true
   },
   {
-   "name": "data-driver-4389479329e9",
+   "name": "data-driver-ee9ec531ea9c",
    "owned": true
   }
  ],
  "jobs": {
   "app": {
-   "name": "Local\\wiki-oneshot-e64eeb4ba7d84ca3a0f2c97533ebc34b",
-   "uptime": 118113328,
+   "name": "Local\\wiki-oneshot-723c291f223f4b449af3c7ef7aee7493",
+   "uptime": 119055843,
    "root": {
-    "pid": 14940,
-    "created": 134394593765383231,
+    "pid": 40348,
+    "created": 134394603190637663,
     "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-    "parent": 27664
+    "parent": 31692
    },
    "members": [
     {
-     "pid": 14940,
-     "created": 134394593765383231,
+     "pid": 40348,
+     "created": 134394603190637663,
      "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-     "parent": 27664
+     "parent": 31692
     },
     {
-     "pid": 29084,
-     "created": 134394593766232915,
+     "pid": 23508,
+     "created": 134394603191521939,
      "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-     "parent": 14940
+     "parent": 40348
     },
     {
-     "pid": 33144,
-     "created": 134394593767882502,
+     "pid": 37776,
+     "created": 134394603192468240,
      "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-     "parent": 14940
+     "parent": 40348
     },
     {
-     "pid": 18664,
-     "created": 134394593767888700,
+     "pid": 20824,
+     "created": 134394603192476536,
      "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-     "parent": 14940
+     "parent": 40348
     },
     {
-     "pid": 15744,
-     "created": 134394593768259561,
+     "pid": 2584,
+     "created": 134394603192980357,
      "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-     "parent": 14940
+     "parent": 40348
     },
     {
-     "pid": 42912,
-     "created": 134394593769532482,
+     "pid": 7316,
+     "created": 134394603196688474,
      "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-     "parent": 14940
+     "parent": 40348
     },
     {
-     "pid": 18500,
-     "created": 134394593771600092,
+     "pid": 2476,
+     "created": 134394603196787321,
      "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-     "parent": 14940
+     "parent": 40348
     },
     {
-     "pid": 12972,
-     "created": 134394593771692084,
+     "pid": 6968,
+     "created": 134394603196929347,
      "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-     "parent": 14940
+     "parent": 40348
     },
     {
-     "pid": 22372,
-     "created": 134394593771743904,
+     "pid": 33236,
+     "created": 134394603197452272,
      "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-     "parent": 14940
+     "parent": 40348
     },
     {
-     "pid": 2252,
-     "created": 134394593771749661,
+     "pid": 25964,
+     "created": 134394603197479210,
      "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-     "parent": 14940
+     "parent": 40348
     },
     {
-     "pid": 43860,
-     "created": 134394593771768331,
+     "pid": 1976,
+     "created": 134394603197499502,
      "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-     "parent": 14940
+     "parent": 40348
     },
     {
-     "pid": 9900,
-     "created": 134394593777535468,
+     "pid": 35812,
+     "created": 134394603206859392,
      "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-     "parent": 14940
+     "parent": 40348
     },
     {
-     "pid": 14076,
-     "created": 134394593779651147,
+     "pid": 18688,
+     "created": 134394603208615903,
      "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-     "parent": 14940
+     "parent": 40348
     },
     {
-     "pid": 324,
-     "created": 134394593780417169,
+     "pid": 31264,
+     "created": 134394603210367899,
      "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-     "parent": 14940
+     "parent": 40348
     },
     {
-     "pid": 14452,
-     "created": 134394593791482125,
+     "pid": 29592,
+     "created": 134394603217542603,
      "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-     "parent": 14940
+     "parent": 40348
     }
    ],
    "proof": {
     "clean": true,
     "reasons": [],
-    "joined": 26,
-    "total": 26,
+    "joined": 35,
+    "total": 35,
     "active": 0,
     "members": [
      {
-      "pid": 14940,
-      "created": 134394593765383231,
+      "pid": 40348,
+      "created": 134394603190637663,
       "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-      "parent": 27664
+      "parent": 31692
      },
      {
-      "pid": 29084,
-      "created": 134394593766232915,
+      "pid": 23508,
+      "created": 134394603191521939,
       "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-      "parent": 14940
+      "parent": 40348
      },
      {
-      "pid": 33144,
-      "created": 134394593767882502,
+      "pid": 37776,
+      "created": 134394603192468240,
       "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-      "parent": 14940
+      "parent": 40348
      },
      {
-      "pid": 18664,
-      "created": 134394593767888700,
+      "pid": 20824,
+      "created": 134394603192476536,
       "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-      "parent": 14940
+      "parent": 40348
      },
      {
-      "pid": 15744,
-      "created": 134394593768259561,
+      "pid": 2584,
+      "created": 134394603192980357,
       "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-      "parent": 14940
+      "parent": 40348
      },
      {
-      "pid": 42912,
-      "created": 134394593769532482,
+      "pid": 7316,
+      "created": 134394603196688474,
       "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-      "parent": 14940
+      "parent": 40348
      },
      {
-      "pid": 18500,
-      "created": 134394593771600092,
+      "pid": 2476,
+      "created": 134394603196787321,
       "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-      "parent": 14940
+      "parent": 40348
      },
      {
-      "pid": 12972,
-      "created": 134394593771692084,
+      "pid": 6968,
+      "created": 134394603196929347,
       "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-      "parent": 14940
+      "parent": 40348
      },
      {
-      "pid": 22372,
-      "created": 134394593771743904,
+      "pid": 33236,
+      "created": 134394603197452272,
       "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-      "parent": 14940
+      "parent": 40348
      },
      {
-      "pid": 2252,
-      "created": 134394593771749661,
+      "pid": 25964,
+      "created": 134394603197479210,
       "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-      "parent": 14940
+      "parent": 40348
      },
      {
-      "pid": 43860,
-      "created": 134394593771768331,
+      "pid": 1976,
+      "created": 134394603197499502,
       "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-      "parent": 14940
+      "parent": 40348
      },
      {
-      "pid": 9900,
-      "created": 134394593777535468,
+      "pid": 35812,
+      "created": 134394603206859392,
       "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-      "parent": 14940
+      "parent": 40348
      },
      {
-      "pid": 14076,
-      "created": 134394593779651147,
+      "pid": 18688,
+      "created": 134394603208615903,
       "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-      "parent": 14940
+      "parent": 40348
      },
      {
-      "pid": 324,
-      "created": 134394593780417169,
+      "pid": 31264,
+      "created": 134394603210367899,
       "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-      "parent": 14940
+      "parent": 40348
      },
      {
-      "pid": 14452,
-      "created": 134394593791482125,
+      "pid": 29592,
+      "created": 134394603217542603,
       "exe": "c:\\program files (x86)\\microsoft\\edge\\application\\msedge.exe",
-      "parent": 14940
+      "parent": 40348
      }
     ]
    }
   },
   "driver": {
-   "name": "Local\\wiki-oneshot-3206f9019c7c4ad6a854dd406230675a",
-   "uptime": 118113359,
+   "name": "Local\\wiki-oneshot-fa7fae0c29754bfe8690417e5c430c6a",
+   "uptime": 119055875,
    "root": {
-    "pid": 34596,
-    "created": 134394593765746477,
+    "pid": 42496,
+    "created": 134394603190878381,
     "exe": "c:\\windows\\system32\\windowspowershell\\v1.0\\powershell.exe",
-    "parent": 27664
+    "parent": 31692
    },
    "members": [
     {
-     "pid": 34596,
-     "created": 134394593765746477,
+     "pid": 42496,
+     "created": 134394603190878381,
      "exe": "c:\\windows\\system32\\windowspowershell\\v1.0\\powershell.exe",
-     "parent": 27664
+     "parent": 31692
     },
     {
-     "pid": 21688,
-     "created": 134394593765998221,
+     "pid": 28252,
+     "created": 134394603191167718,
      "exe": "c:\\windows\\system32\\conhost.exe",
-     "parent": 34596
+     "parent": 42496
     },
     {
-     "pid": 43648,
-     "created": 134394593773911186,
+     "pid": 32636,
+     "created": 134394603196495168,
      "exe": "c:\\windows\\microsoft.net\\framework64\\v4.0.30319\\csc.exe",
-     "parent": 34596
+     "parent": 42496
     },
     {
-     "pid": 25708,
-     "created": 134394593774623948,
+     "pid": 15284,
+     "created": 134394603197710962,
      "exe": "c:\\windows\\microsoft.net\\framework64\\v4.0.30319\\cvtres.exe",
-     "parent": 43648
+     "parent": 32636
     }
    ],
    "proof": {
@@ -267,28 +267,28 @@
     "active": 0,
     "members": [
      {
-      "pid": 34596,
-      "created": 134394593765746477,
+      "pid": 42496,
+      "created": 134394603190878381,
       "exe": "c:\\windows\\system32\\windowspowershell\\v1.0\\powershell.exe",
-      "parent": 27664
+      "parent": 31692
      },
      {
-      "pid": 21688,
-      "created": 134394593765998221,
+      "pid": 28252,
+      "created": 134394603191167718,
       "exe": "c:\\windows\\system32\\conhost.exe",
-      "parent": 34596
+      "parent": 42496
      },
      {
-      "pid": 43648,
-      "created": 134394593773911186,
+      "pid": 32636,
+      "created": 134394603196495168,
       "exe": "c:\\windows\\microsoft.net\\framework64\\v4.0.30319\\csc.exe",
-      "parent": 34596
+      "parent": 42496
      },
      {
-      "pid": 25708,
-      "created": 134394593774623948,
+      "pid": 15284,
+      "created": 134394603197710962,
       "exe": "c:\\windows\\microsoft.net\\framework64\\v4.0.30319\\cvtres.exe",
-      "parent": 43648
+      "parent": 32636
      }
     ]
    }
@@ -298,6 +298,6 @@
  "proof": {
   "clean": true,
   "reasons": [],
-  "uptime": 118142187
+  "uptime": 119065093
  }
 }

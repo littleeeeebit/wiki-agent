@@ -9,7 +9,9 @@ from pathlib import Path
 
 POWERSHELL = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
 SCRIPT = Path(__file__).with_name("desktop_driver.ps1")
-PHASE_SECONDS = 10   # a resize, a shot, a tree read, an action and its postcondition each
+PHASE_SECONDS = 10   # each operation: a resize, one window's shot, one window's tree read, an action, a check
+LAUNCH_SECONDS = 30   # Windows PowerShell's start and its compile of the driver's types, before the first operation
+ENDED_SECONDS = 5   # the driver's job proving its end, once a deadline passed
 INTERACTIVE = {"Button", "CheckBox", "ComboBox", "Edit", "Hyperlink", "ListItem", "MenuItem", "RadioButton",
                "Slider", "Spinner", "SplitButton", "TabItem", "TreeItem"}
 ACTING = {"Invoke", "Toggle", "SelectionItem", "ExpandCollapse", "Value"}
@@ -29,48 +31,80 @@ def _read(file: Path) -> dict | None:
         return None   # not written yet, or caught between its two writes
 
 
+def _allowed(op: str | None, wait: float, settle_ms: int) -> float:
+    """One operation's deadline: the launch, the wait for a first window and a settle each get their own."""
+
+    if op is None:
+        return LAUNCH_SECONDS
+    if op == "wait for a window":
+        return wait + PHASE_SECONDS
+    if op == "settle":
+        return settle_ms / 1000 + PHASE_SECONDS
+    return PHASE_SECONDS
+
+
 def drive(look, app: str, window: tuple[int, int], steps: list[dict], *, wait: float = 30, settle_ms: int = 1000,
           key: str = "driver") -> dict:
     """Drive the app `look` started under `app`: choose its main window, size it to `window`, then shoot and read
-    each state, before and after every step. The driver's report, with `ended` naming a phase whose deadline
-    passed; the driver is then ended with its job."""
+    each state, before and after every step. The driver names each operation before it starts, and each is held
+    to its own deadline. The driver's report, with `last` naming the last operation it entered and `ended`
+    naming one whose deadline passed; the driver's job is then ended, and `end` holds the proof of that end."""
 
-    look.observe()
+    look.check_key(key)   # before any path is made from it
     folder = look.folder / "evidence" / key
     folder.mkdir()
-    request = {"out": str(folder), "pids": [member["pid"] for member in look.record["jobs"][app]["members"]],
-               "window": list(window), "steps": steps, "wait_seconds": wait, "settle_ms": settle_ms}
+    request = {"out": str(folder), "job": look.jobs[app].name, "window": list(window), "steps": steps,
+               "wait_seconds": wait, "settle_ms": settle_ms}
     (folder / "request.json").write_text(json.dumps(request, indent=1), encoding="utf-8")
     look.start(key, [str(POWERSHELL), *arguments(SCRIPT, folder / "request.json")], folder)
-    job, phase, since, ended = look.jobs[key], None, time.monotonic(), None
+    job, seq, op, since, ended, end = look.jobs[key], None, None, time.monotonic(), None, None
     while not job.finished():
-        report = _read(folder / "driver.json") or {}
-        if report.get("phase") != phase:
-            phase, since = report.get("phase"), time.monotonic()
-        allowed = wait + PHASE_SECONDS + settle_ms / 1000 if phase is None else PHASE_SECONDS + settle_ms / 1000
-        if time.monotonic() - since > allowed:
-            ended = phase or "starting"
-            job.end(5)
+        progress = _read(folder / "progress.json") or {}
+        if progress.get("seq") != seq:
+            seq, op, since = progress.get("seq"), progress.get("op"), time.monotonic()
+        if time.monotonic() - since > _allowed(op, wait, settle_ms):
+            ended = op or "launch"
+            end = job.end(ENDED_SECONDS)
             break
         time.sleep(0.1)
     report = _read(folder / "driver.json") or {"phase": None}
-    report["ended"] = ended
+    report.update(last=(_read(folder / "progress.json") or {}).get("op"), ended=ended, end=end)
     return report
 
 
 def findings(report: dict) -> list[str]:
     """The mechanical findings in a driver's report: an interactive control without a name, a control outside its
-    window, a target smaller than 24×24 physical pixels, a refused start, a wrong size, a step that failed."""
+    window, a target smaller than 24×24 physical pixels, a refused start, a wrong size, a step that failed. What
+    the look could not prove is a finding too: a driver that left no report, stopped or failed before `done`, or
+    whose end was not proven; a size not read back; a state with no app window; a window not drawn. An empty
+    list therefore means a finished run whose every observation was made."""
 
     found = []
-    if report.get("refusal"):
-        found.append(f"refused: {report['refusal']}")
     if report.get("ended"):
         found.append(f"the driver passed its deadline at {report['ended']}")
+    if report.get("end") and not report["end"]["clean"]:
+        found.append(f"the driver's end was not proven: {'; '.join(report['end']['reasons'])}")
+    if report.get("phase") is None:
+        return [*found, "the driver left no report"]
+    if report.get("refusal"):
+        found.append(f"refused: {report['refusal']}")
+    if report.get("error"):
+        found.append(f"the driver failed at {report.get('last')}: {report['error']}")
+    elif report["phase"] not in ("done", "refused") and not report.get("ended"):
+        found.append(f"the driver stopped before finishing, at {report.get('last')}")
     size = report.get("size") or {}
-    if size and size.get("frame") and size["frame"][2:] != size["asked"]:
+    if report["phase"] == "done" and not size.get("frame"):
+        found.append("the main window's size was not read back")
+    elif size and not size.get("moved"):
+        found.append("the main window could not be sized")
+    if size.get("frame") and size["frame"][2:] != size["asked"]:
         found.append(f"the main window is {size['frame'][2]}x{size['frame'][3]}, not {size['asked'][0]}x{size['asked'][1]}")
     for state in report.get("states", []):
+        if not state["windows"]:
+            found.append(f"{state['name']}: no app window to shoot")
+        for shot in state["shots"]:
+            if not shot["drawn"]:
+                found.append(f"{state['name']}: window {shot['hwnd']} was not drawn: {shot.get('error')}")
         frames = {window["hwnd"]: window["frame"] for window in state["windows"]}
         for node in state["nodes"]:
             rect, frame = node["rect"], frames.get(node["window"])
