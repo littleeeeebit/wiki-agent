@@ -209,14 +209,17 @@ def environment(kit: dict) -> dict:
 
 
 def build(path: Path, android: dict, release: str, kit: dict, halt: threading.Event) -> Path:
-    """The adapter's build command in the attempt's checkout. The version and its `versionCode` reach Tauri
-    through its config overlay (`TAURI_CONFIG`), which writes `tauri.properties` for Gradle, and a build that is
-    not Tauri's reads them from `RELEASE_VERSION` and `RELEASE_VERSION_CODE`. No source file is edited. The
-    checks read what it produced."""
+    """The adapter's build command in the attempt's checkout, given the version as `RELEASE_VERSION` and
+    `RELEASE_VERSION_CODE`. A Tauri build passes `RELEASE_TAURI_CONFIG`, an overlay file beside the checkout, as
+    one more `-c`. Tauri then writes `tauri.properties` for Gradle. `TAURI_CONFIG` cannot carry it, because the
+    CLI replaces that variable with its own `-c` values. No source file is edited. The checks read what the
+    build produced, so a command that drops the version is refused there."""
 
-    overlay = {"version": release, "bundle": {"android": {"versionCode": code(release)}}}
-    env = {**environment(kit), "TAURI_CONFIG": json.dumps(overlay), "RELEASE_VERSION": release,
-           "RELEASE_VERSION_CODE": str(code(release))}
+    overlay = path.parent / "tauri.release.json"
+    overlay.write_text(json.dumps({"version": release, "bundle": {"android": {"versionCode": code(release)}}}),
+                       encoding="utf-8")
+    env = {**environment(kit), "RELEASE_VERSION": release, "RELEASE_VERSION_CODE": str(code(release)),
+           "RELEASE_TAURI_CONFIG": str(overlay)}
     exited, out, cut = specs.gate(android["build"], path, halt, env=env, timeout=BUILD_SECONDS, idle=QUIET_SECONDS)
     if exited != 0:
         tail = "\n".join(out.splitlines()[-40:])

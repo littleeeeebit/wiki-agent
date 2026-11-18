@@ -160,3 +160,26 @@ def test_an_attempt_checkout_is_a_fresh_clean_detached_copy_and_never_a_second_o
         release.checkout(repo, sha, "a1")
     release.discard(repo, "a1")
     assert not release.place(repo, "a1").exists()
+
+
+def test_the_build_gets_the_version_through_its_environment_and_an_overlay_beside_the_checkout(tmp_path, monkeypatch):
+    src = tmp_path / "attempt" / "src"
+    (src / "out").mkdir(parents=True)
+    (src / "out/app.apk").write_bytes(b"apk")
+    seen = {}
+
+    def gate(cmd, path, halt, env, **_):
+        seen.update(cmd=cmd, path=path, env=env, overlay=json.loads(Path(env["RELEASE_TAURI_CONFIG"]).read_text()))
+        return 0, "", ""
+
+    monkeypatch.setattr(release.specs, "gate", gate)
+    kit = {"java": tmp_path, "sdk": tmp_path, "ndk": tmp_path}
+
+    apk = release.build(src, {**ANDROID, "artifact": "out/app.apk"}, "0.1.1", kit, None)
+
+    assert apk == (src / "out/app.apk").resolve() and seen["cmd"] == "build" and seen["path"] == src
+    assert (seen["env"]["RELEASE_VERSION"], seen["env"]["RELEASE_VERSION_CODE"]) == ("0.1.1", "1001")
+    assert seen["overlay"] == {"version": "0.1.1", "bundle": {"android": {"versionCode": 1001}}}
+    assert Path(seen["env"]["RELEASE_TAURI_CONFIG"]).parent == src.parent   # never inside the checkout
+    with pytest.raises(ValueError, match="체크아웃 밖"):
+        release.build(src, {**ANDROID, "artifact": "../x.apk"}, "0.1.1", kit, None)
