@@ -24,7 +24,7 @@ from xml.etree import ElementTree
 from fastapi import HTTPException
 
 from . import connect, oneshot, oneshot_android, oneshot_spec, refactor_run, runtime, specs, work
-from .oneshot_profile import charged, environment, kinds_of, shape
+from .oneshot_profile import charged, environment, held as kind_held, kinds_of, shape
 from .query import _lock as work_lock, hold
 
 MAX_ATTEMPTS = 3
@@ -94,10 +94,22 @@ class Turn(work.Run):
                 store.put(inflight=None)
 
 
+def stopped_for_kind(repo: str) -> bool:
+    """A run at or past its kind's stop, however it got here (an older version's `working` included): its stop
+    is put back and nothing is sent. Checked before any stage text is built: a held kind may have no prompt."""
+
+    o = oneshot_spec.spec_of(repo)["oneshot"]
+    if kind_held(o):
+        oneshot_spec.waiting(repo, oneshot_spec.saved(repo, oneshot={"working": None})["oneshot"])
+    return kind_held(o)
+
+
 def send(repo: str, stage: str, text: str) -> None:
     """One work turn for `stage` in the spec's worktree; a turn that cannot be sent stops the stage, and
     the instruction the person queued for the worktree goes then, as after a turn."""
 
+    if stopped_for_kind(repo):
+        return
     store = oneshot_spec.store(repo)
     spec = oneshot_spec.spec_of(repo)
     path, codex = Path(spec["worktree"]), oneshot.codex_role("build", store)
@@ -189,10 +201,13 @@ def build_text(spec: dict) -> str:
 def begin(repo: str) -> None:
     """After R1's approval: the tests-first turn."""
 
-    send(repo, "tests", tests_text(oneshot_spec.spec_of(repo)))
+    if not stopped_for_kind(repo):
+        send(repo, "tests", tests_text(oneshot_spec.spec_of(repo)))
 
 
 def resume(repo: str) -> None:
+    if stopped_for_kind(repo):
+        return
     spec = oneshot_spec.saved(repo, oneshot={"attempts": 0})   # the owner's resume starts the attempts afresh
     stage = spec["oneshot"]["stage"]
     send(repo, stage, STAGES[stage][2](spec))

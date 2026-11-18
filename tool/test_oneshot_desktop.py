@@ -1,5 +1,6 @@
-"""oneshot step 9e1: a PC app (`desktop`) through S2 — its six stack parts, the `build` part's declared `tools`
-confirmed with it, and the stop before its core design, held at every hand-off, on `[재개]` and in recovery.
+"""oneshot steps 9e1 and 9e2a: a PC app (`desktop`) through S2 — its six stack parts, the `build` part's declared
+`tools` confirmed with it — then its core design and R1, and the stop before S4, held at every hand-off, on
+`[재개]` and in recovery.
 
 See `docs/plans/oneshot/9-kinds.md` ("How 9e builds `desktop`"). Model turns (`oneshot.ask`) are stand-ins; Git
 runs in a temporary worktree.
@@ -11,10 +12,10 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from main import oneshot, oneshot_front, oneshot_profile, oneshot_spec, specs
+from main import oneshot, oneshot_build, oneshot_front, oneshot_profile, oneshot_sheet as sheet, oneshot_spec, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
-from test_oneshot_core import GLOSSARY, REQS
-from test_oneshot_spec import fenced, o, world  # noqa: F401 — `world` is the temporary worktree's fixture
+from test_oneshot_core import DESIGN, GLOSSARY, REQS, answer as designed
+from test_oneshot_spec import fenced, o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
 
 TOOLS = [{"name": "cargo", "setup": "preinstalled"},
          {"name": "npm", "setup": {"uses": "actions/setup-node@v4", "with": {"node-version": "22"}}}]
@@ -23,6 +24,7 @@ STACK = [{"part": p, "choice": c, "why": "주인이 골랐다", "status": "confi
     ("tests", "cargo test, JUnit 보고서"), ("build", "cargo tauri build, NSIS 설치 파일"))]
 STACK[-1]["tools"] = TOOLS
 START = oneshot_spec.start   # the real one: the `world` fixture replaces it with a stand-in
+BEGIN = oneshot_build.begin   # likewise
 
 
 @pytest.fixture
@@ -99,21 +101,70 @@ def test_among_several_kinds_the_tools_ride_on_desktop_build_alone():
 
 # -- S2 and its stop ----------------------------------------------------------------------
 
-def test_the_pc_app_conversation_is_told_its_tools_and_stops_before_the_core_design(desktop):
+def test_the_pc_app_conversation_is_told_its_tools_and_hands_off_to_its_core_design(desktop):
     confirmed(STACK)
-    told = []
+    told, started = [], []
     with patch.object(oneshot, "ask", lambda store, role, system, text, *a, **k: told.append(system) or (
             turn(STACK), {"cost_usd": 0.1}, False)), \
-            patch.object(oneshot_spec, "start", lambda *a, **k: pytest.fail("a held run starts nothing")):
+            patch.object(oneshot_spec, "start", lambda *a, **k: started.append((a, k))):
         oneshot_spec.talk("budget")
     assert "Windows program" in told[0] and "`tools`" in told[0] and "`capability`" in told[0]
-    run = o()
-    assert (run["stage"], run["stopped"]["reason"], run["stopped"]["state"]) == ("design", "kind", "design")
-    assert run["stack"][-1]["tools"] == TOOLS and not run.get("working")
-    with pytest.raises(HTTPException, match="다음 버전"):
+    assert started == [(("budget", "design"), {"stage": "design"})]
+    assert o()["stack"][-1]["tools"] == TOOLS and not o().get("stopped")
+
+
+# -- S3 and R1: the core, then the stop before S4 ----------------------------------------------
+
+def test_a_pc_apps_core_design_is_a_module_sheet_that_speaks_of_the_pc(desktop):
+    oneshot_spec.saved("budget", requirements=REQS, oneshot={"glossary": GLOSSARY, "stack": STACK, "stage": "design"})
+    told = []
+    with patch.object(oneshot, "ask", lambda store, role, system, text, *a, **k: told.append(system) or (
+            designed(), {"cost_usd": 0.1}, False)):
+        oneshot_spec.design("budget")
+    assert "core of a new Windows program" in told[0] and "Android" not in told[0] and o()["stage"] == "r1"
+    assert set(o()["design"]) == {"modules", "outside", "assumptions", "tests"}   # a core, never a web backend
+    text = sheet.sheet(specs.load("budget", oneshot.BRANCH))
+    assert text.startswith("# 핵심 설계 — budget") and "| M2 | SeenBoxes |" in text
+    assert "- PC에 저장하는 것: SeenBoxes: 번역한 상자 해시와 번역문" in text and "## PC 밖으로 나가는 호출" in text
+    assert "폰" not in text
+    with pytest.raises(ValueError, match="`oneshot-modules` 블록"):   # a web app's blocks are not a PC app's core
+        oneshot_spec.design_turn(fenced("oneshot-api", []), 1, specs.load("budget", oneshot.BRANCH))
+
+
+def test_a_pc_app_the_last_version_stopped_before_its_design_is_taken_on(desktop):
+    oneshot_spec.saved("budget", requirements=REQS, oneshot={"glossary": GLOSSARY, "stack": STACK, "stage": "design",
+                                                             "stopped": {"reason": "kind", "state": "design",
+                                                                         "detail": "다음 버전에서 이어진다"}})
+    oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "restart"
+    started = []
+    with patch.object(oneshot_spec, "start", lambda repo, *a, **k: started.append(a)):
         oneshot_spec.resume("budget")
-    oneshot_spec.recover()   # recovery keeps the stop: nothing starts the design
-    assert o()["stopped"]["reason"] == "kind"
+    assert started == [("design",)]
+
+
+@pytest.mark.parametrize("kinds", [["desktop"], ["android", "desktop"]])
+def test_an_approved_pc_app_core_is_written_and_waits_before_s4(desktop, kinds):
+    oneshot_spec.saved("budget", requirements=REQS, oneshot={
+        "intent": {**o()["intent"], "kind": kinds[0], "kinds": kinds}, "glossary": GLOSSARY, "stack": STACK,
+        "stage": "r1", "design": sheet.parsed(DESIGN, kinds), "r1": {"round": 1, "decisions": {}, "marks": {}, "warnings": []}})
+    items = sheet.decidable(o()["design"], REQS)
+    with patch.object(oneshot_build.work, "session", lambda *a, **k: pytest.fail("a held run sends no S4 turn")):
+        oneshot_spec.decide("budget", on_sheet(decisions={i: {"approve": True} for i in items}))
+        run = o()
+        assert (run["stage"], run["stopped"]["reason"], run["stopped"]["state"]) == ("tests", "kind", "tests")
+        assert run["design_head"] and not run.get("working")
+        assert (desktop / "docs/design/core.md").read_text(encoding="utf-8").startswith("# 핵심 설계")
+        with pytest.raises(HTTPException, match="다음 버전"):
+            oneshot_spec.resume("budget")
+        oneshot_spec.recover()   # recovery keeps the stop: nothing starts S4
+        assert o()["stopped"]["reason"] == "kind"
+        # S4's own entries, called whatever led there (an older version's `working: tests` included), send nothing
+        # and never build the prompt a PC app does not have yet.
+        for entry in (BEGIN, oneshot_build.resume):
+            oneshot_spec.saved("budget", oneshot={"working": "tests", "stopped": None})
+            entry("budget")
+            assert o()["stopped"]["reason"] == "kind" and not o().get("working")
 
 
 def asked(question: str, answer: str) -> None:
@@ -221,17 +272,17 @@ def test_a_saved_pc_app_spec_takes_no_turn_on_another_host(desktop):
 
 
 def test_the_shared_start_refuses_a_move_into_the_held_stage(desktop):
-    assert o()["stage"] == "spec"   # the last stage a PC app has in this version
+    oneshot_spec.saved("budget", oneshot={"stage": "r1"})   # the last stage a PC app has in this version
     with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             pytest.raises(HTTPException, match="다음 버전"):
-        START("budget", "design", stage="design")
-    assert o()["stage"] == "spec" and not o().get("stopped")
+        START("budget", "design", stage="tests")
+    assert o()["stage"] == "r1"
 
 
-def test_a_resume_or_a_shutdown_between_the_save_and_the_stop_never_starts_the_design(desktop):
-    # The stop was lost (a restart that replaced it): the run is still held, never resumable into the design.
-    oneshot_spec.saved("budget", oneshot={"stage": "design", "working": None,
-                                          "stopped": {"reason": "restart", "detail": "서버가 다시 켜졌다", "state": "design"}})
+def test_a_resume_or_a_shutdown_between_the_save_and_the_stop_never_starts_s4(desktop):
+    # The stop was lost (a restart that replaced it): the run is still held, never resumable into S4.
+    oneshot_spec.saved("budget", oneshot={"stage": "tests", "working": None,
+                                          "stopped": {"reason": "restart", "detail": "서버가 다시 켜졌다", "state": "tests"}})
     with patch.object(oneshot_spec, "start", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             pytest.raises(HTTPException, match="다음 버전"):
         oneshot_spec.resume("budget")
@@ -242,7 +293,7 @@ def test_several_kinds_an_earlier_version_held_at_the_screens_stay_held(desktop)
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": "frontend", "stopped": {"reason": "kind", "detail": "다음 버전",
                                                                            "state": "frontend"}})
-    assert oneshot_profile.waits_at(o()) == "design" and oneshot_profile.held(o())
+    assert oneshot_profile.waits_at(o()) == "tests" and oneshot_profile.held(o())
     oneshot_spec.recover()
     assert o()["stopped"]["reason"] == "kind"
     with pytest.raises(HTTPException, match="다음 버전"):
@@ -262,10 +313,13 @@ def test_a_held_mixed_run_whose_stop_was_lost_starts_no_later_stage(desktop, sta
     assert o()["stopped"]["reason"] == "kind" and o()["stage"] == stage
 
 
-def test_a_pc_app_has_its_own_s2_prompt_and_no_web_fallback_for_later_stages():
+def test_a_pc_app_has_its_own_s2_and_s3_prompts_and_no_web_fallback_for_later_stages():
     text = oneshot.prompt("spec", "desktop")
     assert "Windows program" in text and "`tools`" in text and "`window`" in text and "web app" not in text
     assert "`desktop.build` also carries `tools`" in oneshot.prompt("spec-kinds")
     assert "`window`" in (oneshot.ROOT / "tool/prompts/oneshot-profile.md").read_text("utf-8")
+    design = oneshot.prompt("design", "desktop")
+    assert "Windows program" in design and "oneshot-modules" in design and "Android" not in design
+    assert "a Windows app" in (oneshot.ROOT / "tool/prompts/oneshot-brief.md").read_text("utf-8")
     with pytest.raises(FileNotFoundError):
-        oneshot.prompt("design", "desktop")
+        oneshot.prompt("tests", "desktop")

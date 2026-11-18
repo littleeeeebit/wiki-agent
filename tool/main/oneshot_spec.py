@@ -203,10 +203,7 @@ def talk(repo: str) -> None:
             saved(repo, requirements=reqs, oneshot={**fields, "open": "", "working": None, "mismatch": mismatch,
                                                     "stopped": {"reason": "rekind", "detail": detail, "state": o["stage"]}})
         return
-    if not why and waits_at(o) == "design":   # the kind waits here in this version: one write, nothing starts
-        saved(repo, requirements=reqs, oneshot={**fields, "open": "", "stage": "design", "working": None, "stopped": {
-            "reason": "kind", "state": "design", "detail": "PC 앱의 핵심 설계는 다음 버전에서 이어진다 — 요구와 스택을 받았다"}})
-    elif not why:
+    if not why:
         saved(repo, requirements=reqs, oneshot={**fields, "open": ""})
         handoff(repo, "design", stage="design")
     else:
@@ -374,7 +371,10 @@ def approved(repo: str) -> None:
         (docs / name).write_text(render(spec), encoding="utf-8", newline="\n")
     head = commit(repo, tree, files, f"Record the approved {'core' if cored else 'backend'} design "
                                      f"(R1 round {o['r1']['round']})")
-    if head:
+    if head and waits_at(o) == "tests":   # the kind waits here in this version: the design is kept, nothing starts
+        saved(repo, oneshot={"stage": "tests", "design_head": head, "working": None, "stopped": {
+            "reason": "kind", "state": "tests", "detail": "PC 앱의 테스트와 빌드는 다음 버전에서 이어진다 — 핵심 설계를 승인받았다"}})
+    elif head:
         saved(repo, oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
 
 
