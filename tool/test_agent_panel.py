@@ -70,6 +70,11 @@ def test_question_batches_keep_chapters_and_previews_on_record():
     for broken in ({"questions": []}, {"questions": [None]}, {"question": "?", "options": [{"label": "x", "preview": {}}]}):
         with pytest.raises(ValueError):
             specs._shape("choices", broken)
+    # The answer is the picked label: two options under one label, told apart only by their notes, are refused.
+    twins = {"question": "어느 묶음?", "options": [{"label": "Tauri 2", "note": "기기 안 OCR"},
+                                                   {"label": "Tauri 2 ", "note": "외부 OCR 서비스"}]}
+    with pytest.raises(ValueError, match="`label` 이 서로 달라야"):
+        specs._shape("choices", twins)
     ev = {"kind": "approval", "text": "questions", "meta": {
         "id": "q1", "tool": "AskUserQuestion", "input": {"questions": questions}}}
     answered = {"kind": "answered", "text": "", "meta": {

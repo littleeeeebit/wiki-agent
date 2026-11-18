@@ -8,10 +8,13 @@ export type Feature = { id: string; name: string; class: Freq; why: string; endp
 export type Freq = 'every' | 'sometimes' | 'rarely' | 'never'
 /** A program a PC app's stack runs on this PC, and how a CI runner gets it (`oneshot_profile.tools_of`). */
 export type Tool = { name: string; setup?: string | { run: string } | { uses: string; with?: Record<string, string> } }
-/** A tool with its whole setup, as the owner confirms it: an action's inputs included, each a string the server
- *  checked (`oneshot_profile.tools_of`), quoted so an empty or spaced value shows as it is. */
-export const toolText = (t: Tool) => t.setup === undefined ? t.name : `${t.name} (${typeof t.setup === 'string' ? t.setup
-  : 'run' in t.setup ? t.setup.run : [t.setup.uses, ...Object.entries(t.setup.with ?? {}).map(([k, v]) => `${k}=${JSON.stringify(v)}`)].join(', ')})`
+/** A tool with its whole setup, as the owner confirms it: the setup's kind named, then its value, an action's
+ *  inputs included, each a string the server checked (`oneshot_profile.tools_of`), quoted so an empty or spaced
+ *  value shows as it is. A command reading `preinstalled` never looks like a preinstalled tool. */
+export const toolText = (t: Tool) => `${t.name} — ${t.setup === undefined ? 'CI 설치 방법 없음'
+  : typeof t.setup === 'string' ? 'CI 이미지에 있음'
+  : 'run' in t.setup ? `명령: ${t.setup.run}`
+  : `액션: ${[t.setup.uses, ...Object.entries(t.setup.with ?? {}).map(([k, v]) => `${k}=${JSON.stringify(v)}`)].join(', ')}`}`
 export type Palette = { id: string; name: string; colors: Record<string, string> }
 export type Gate = { round: number; decisions: Record<string, Decision>; marks?: Record<string, string>; palette?: string }
 /** A review's brief for the owner (`oneshot_brief.shown`): always the gate's `source`, which every submission carries;

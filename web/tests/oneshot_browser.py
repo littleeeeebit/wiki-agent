@@ -896,7 +896,10 @@ def build_confirmation():
     itself shows as stored too."""
     CHOICE = 'cargo tauri build --out "dist/Team  Tools"\n  then NSIS'   # noqa: N806 — this scenario's constant
     tools = [{"name": "npm", "setup": {"uses": "actions/setup-node@v4", "with": {"region": "east  wing", "empty": ""}}},
-             {"name": "cargo", "setup": {"run": "rustup default stable\n  cargo --version"}}]
+             {"name": "cargo", "setup": {"run": "rustup default stable\n  cargo --version"}},
+             # A preinstalled tool and a command that reads `preinstalled` must not look alike.
+             {"name": "node", "setup": "preinstalled"}, {"name": "rustup", "setup": {"run": "preinstalled"}},
+             {"name": "git"}]
     parts = [("language", "Rust"), ("ui", "Tauri 2"), ("core", "Rust 크레이트"), ("data_store", "SQLite"), ("tests", "cargo test")]
     stack = [*({"part": p, "choice": c, "why": "주인이 골랐다", "status": "confirmed"} for p, c in parts),
              {"part": "build", "choice": CHOICE, "why": "주인이 골랐다", "status": "assumed", "tools": tools}]
@@ -921,9 +924,11 @@ def build_confirmation():
     with oneshot_window(fake) as page:
         page.goto(page.url.split("#")[0] + "#oneshot/spec%3Apc-demo")
         listed = page.get_by_role("list", name="도구").get_by_role("listitem")
-        expect(listed).to_have_count(2)
-        assert listed.nth(0).inner_text() == 'npm (actions/setup-node@v4, region="east  wing", empty="")', listed.nth(0).inner_text()
-        assert listed.nth(1).inner_text() == "cargo (rustup default stable\n  cargo --version)", listed.nth(1).inner_text()
+        expect(listed).to_have_count(5)
+        assert listed.all_inner_texts() == [
+            'npm — 액션: actions/setup-node@v4, region="east  wing", empty=""',
+            "cargo — 명령: rustup default stable\n  cargo --version",
+            "node — CI 이미지에 있음", "rustup — 명령: preinstalled", "git — CI 설치 방법 없음"], listed.all_inner_texts()
         with posting(page):
             page.get_by_role("button", name="이 빌드와 도구로 확정").click()
         shown = page.get_by_text("cargo tauri build", exact=False).first

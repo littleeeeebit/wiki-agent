@@ -592,6 +592,8 @@ def _shape(name: str, value) -> None:
         if not isinstance(options, list) or not options or not all(
                 isinstance(o, dict) and isinstance(o.get("label"), str) and o["label"].strip() for o in options):
             raise ValueError("`choices` 의 `options` 마다 `label` 이 있어야 한다")
+        if len({o["label"].strip() for o in options}) != len(options):   # the answer is the label: one per option
+            raise ValueError("한 질문의 `options` 는 `label` 이 서로 달라야 한다 — 답으로 그 `label` 이 돌아온다")
         for option in options:
             for key in ("note", "preview"):
                 if key in option and not isinstance(option[key], str):
