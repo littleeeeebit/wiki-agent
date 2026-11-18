@@ -299,9 +299,23 @@ def test_every_test_keystore_goes_even_when_a_step_after_its_creation_fails(tmp_
 
     monkeypatch.setattr(release, "test_key", both)
     monkeypatch.setattr(Path, "unlink", locked)
-    with pytest.raises(OSError, match="시험 키를 지우지 못했다"):
+    monkeypatch.setattr(release_rehearsal.errorlog, "record", lambda *a, **k: None)
+    with pytest.raises(ValueError, match="keytool failed") as failed:   # the error that ended it stays on top
         release_rehearsal.rehearse(tmp_path / "repo")
     assert tried == ["rehearsal.jks", "other.jks"]   # the locked first key never spares the second
+    assert len(failed.value.left) == 1 and "rehearsal.jks: locked" in failed.value.left[0]   # and is reported
+
+    monkeypatch.setattr(release, "certificate", lambda *a: "c" * 64)
+    monkeypatch.setattr(release, "checkout", lambda *a: (_ for _ in ()).throw(release.Stopped("멈춤")))
+    with pytest.raises(release.Stopped) as stopped:   # a stop, too, carries what it could not remove
+        release_rehearsal.rehearse(tmp_path / "repo")
+    assert len(stopped.value.left) == 1 and "rehearsal.jks" in stopped.value.left[0]
+
+    monkeypatch.setattr(release, "checkout", lambda *a: tmp_path / "src")
+    monkeypatch.setattr(release, "build", lambda *a: (_ for _ in ()).throw(release.BuildFailed("boom")))
+    with pytest.raises(OSError, match="시험 키를 지우지 못했다") as stuck:   # with nothing else wrong, it is the error
+        release_rehearsal.rehearse(tmp_path / "repo")
+    assert "rehearsal.jks" in stuck.value.left[0]
 
 
 def test_a_stopped_rehearsal_build_leaves_no_checkout_and_starts_no_repair(tmp_path, monkeypatch):
@@ -397,6 +411,32 @@ def test_a_round_that_fails_after_its_build_still_removes_its_checkout_and_keeps
     with pytest.raises(RuntimeError, match="apksigner failed"):   # a failed cleanup never hides why the round ended
         release_rehearsal.rehearse(tmp_path / "repo")
     assert logged == ["release-rehearsal-cleanup"]
+
+
+def test_a_stop_ends_a_running_command_at_once_and_without_it_nothing_changes(tmp_path):
+    import sys
+    import threading
+    import time
+
+    sleeper = [sys.executable, "-c", "import time; time.sleep(60)"]
+    halt = threading.Event()
+    threading.Timer(0.3, halt.set).start()
+    began = time.monotonic()
+    with release.stoppable(halt), pytest.raises(release.Stopped):   # never its own 60 seconds, nor `ran`'s 600
+        release.ran(sleeper, 600)
+    assert time.monotonic() - began < 10
+    with release.stoppable(threading.Event()):
+        assert release.ran([sys.executable, "-c", "print('하나')"], 60).stdout.strip() == "하나"
+    with pytest.raises(subprocess.TimeoutExpired), release.stoppable(threading.Event()):
+        release.ran(sleeper, 0.5)
+    assert release.run([sys.executable, "-c", "print('둘')"]).strip() == "둘"   # outside `stoppable`: as before
+
+
+def test_a_branch_that_moved_after_the_card_was_read_is_never_built(tmp_path, monkeypatch):
+    _rehearsable(tmp_path, monkeypatch)
+    monkeypatch.setattr(release, "settings", lambda *a: pytest.fail("built"))
+    with pytest.raises(ValueError, match="움직였다"):
+        release_rehearsal.rehearse(tmp_path / "repo", expect="1" * 40)
 
 
 def test_a_fetch_that_times_out_after_writing_its_ref_leaves_no_ref(monkeypatch):

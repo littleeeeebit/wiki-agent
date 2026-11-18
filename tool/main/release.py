@@ -26,7 +26,7 @@ from pathlib import Path
 
 import android_owned
 import verify
-from common import errorlog, host, is_junction, paths
+from common import errorlog, host, is_junction, paths, process
 
 from . import oneshot_android, specs
 
@@ -37,9 +37,59 @@ BUILD_SECONDS, QUIET_SECONDS = 3600, 1800   # a Rust and Gradle build is long an
 ANDROID = ("build", "artifact", "application_id", "abi")
 
 
+class Stopped(RuntimeError):
+    """A command ended because the run it belongs to was stopped: by the person, or by the server's shutdown."""
+
+
+_stop = threading.local()   # the calling thread's halt while `stoppable` holds it
+
+
+@contextmanager
+def stoppable(halt: threading.Event):
+    """Every `git` and `run` on this thread, while this holds, killed with its whole process tree within a
+    second of `halt`, so a stop or a shutdown never waits out a command's own timeout."""
+
+    _stop.halt = halt
+    try:
+        yield
+    finally:
+        _stop.halt = None
+
+
+def ran(argv: list, timeout: float, cwd: Path | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
+    halt = getattr(_stop, "halt", None)
+    if halt is None:
+        return subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=timeout)
+    # Started suspended, so a child it starts is in its job before it can leave (`process.contained`).
+    proc = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            encoding="utf-8", errors="replace", creationflags=process.SUSPENDED,
+                            start_new_session=os.name != "nt")
+    job = process.contained(proc)
+    try:
+        process.resumed(proc)
+        deadline = time.monotonic() + timeout
+        while not halt.is_set() and time.monotonic() < deadline:
+            try:
+                out, err = proc.communicate(timeout=0.5)   # a retry after its timeout loses no output
+                return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+            except subprocess.TimeoutExpired:
+                pass
+        if job:
+            process.killed(job)
+        proc.kill()
+        proc.communicate()
+        if halt.is_set():
+            raise Stopped(f"멈춤 — {Path(str(argv[0])).name} 을 끝냈다")
+        raise subprocess.TimeoutExpired(argv, timeout)
+    finally:
+        if proc.poll() is None:   # resuming failed, or anything else left it running
+            proc.kill()
+        process.terminated(job)
+
+
 def git(path: Path, *args: str, timeout: float = 120) -> str:
-    done = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=timeout)
+    done = ran(["git", *args], timeout, cwd=path)
     if done.returncode:
         raise ValueError(f"git {' '.join(args[:2])} 실패 — {(done.stderr or done.stdout).strip()[-300:]}")
     return done.stdout
@@ -368,8 +418,7 @@ class BuildFailed(ValueError):
 
 
 def run(argv: list, env: dict | None = None, timeout: float = 300) -> str:
-    done = subprocess.run([str(a) for a in argv], capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          env=env, timeout=timeout)
+    done = ran([str(a) for a in argv], timeout, env=env)
     if done.returncode:
         said = (done.stderr or done.stdout).strip()
         if env and env.get(SECRET):   # a key tool's diagnostic never carries its password onward

@@ -43,6 +43,8 @@ def project(monkeypatch, tmp_path):
     monkeypatch.setattr(release, "settings", lambda repo, sha: {"version_source": "v.json", "android": {}})
     monkeypatch.setattr(release, "seed", lambda repo, sha, source: "0.1.0")
     monkeypatch.setattr(release_api, "_runs", {})
+    monkeypatch.setattr(release_api, "_deadline", [])
+    monkeypatch.setattr(release_api.runtime, "stopping", threading.Event())
     app = FastAPI()
     app.include_router(release_api.router)
     return TestClient(app), fake, first
@@ -104,7 +106,7 @@ def test_the_button_runs_one_unpublished_rehearsal_of_the_cards_commit_that_a_st
     client, fake, _ = project
     entered, asked = threading.Event(), []
 
-    def rehearse(repo, ref, halt, repair=None):
+    def rehearse(repo, ref, halt, repair=None, expect=None):
         asked.append(ref)
         entered.set()
         halt.wait(10)
@@ -130,7 +132,7 @@ def test_a_stop_and_the_start_of_a_repair_never_both_happen(project, monkeypatch
     client, *_ = project
     building, go, starting, release_it, started = (threading.Event() for _ in range(5))
 
-    def rehearse(repo, ref, halt, repair=None):
+    def rehearse(repo, ref, halt, repair=None, expect=None):
         building.set()
         assert go.wait(5)
         try:   # past `release.handed`'s own check: the decision under the run's lock is what remains
@@ -166,7 +168,7 @@ def test_a_stop_and_the_start_of_a_repair_never_both_happen(project, monkeypatch
 def test_a_rehearsal_that_raises_is_shown_and_the_next_press_runs_again(project, monkeypatch):
     client, *_ = project
 
-    def broken(repo, ref, halt, repair=None):
+    def broken(repo, ref, halt, repair=None, expect=None):
         raise ValueError("`main` 는 origin 의 브랜치가 아니다")
 
     monkeypatch.setattr(release_api.release_rehearsal, "rehearse", broken)
@@ -180,7 +182,7 @@ def test_server_shutdown_stops_a_running_test_build_and_waits_for_its_cleanup(pr
     client, *_ = project
     building, cleaned = threading.Event(), threading.Event()
 
-    def rehearse(repo, ref, halt, repair=None):
+    def rehearse(repo, ref, halt, repair=None, expect=None):
         building.set()
         halt.wait(10)
         threading.Event().wait(0.2)   # removing the checkout and the keys takes a moment
@@ -192,6 +194,68 @@ def test_server_shutdown_stops_a_running_test_build_and_waits_for_its_cleanup(pr
     assert building.wait(5)
     release_api.close_all()
     assert cleaned.is_set() and release_api.shown("app")["stopped"]
+
+
+def test_once_shutdown_begins_no_test_build_starts(project, monkeypatch):
+    client, *_ = project
+    monkeypatch.setattr(release_api.release_rehearsal, "rehearse", lambda *a, **k: pytest.fail("started"))
+    release_api.runtime.stopping.set()   # `app.close_turns` sets it before `close_all` takes its snapshot
+    release_api.close_all()
+    assert client.post("/api/release/app/rehearse").status_code == 503 and release_api.shown("app") is None
+
+
+def test_a_thread_the_os_refuses_leaves_the_project_free_and_shutdown_whole(project, monkeypatch):
+    def refused(self):
+        raise RuntimeError("can't start new thread")
+
+    with monkeypatch.context() as m:   # the route alone: a test client starts threads of its own
+        m.setattr(threading.Thread, "start", refused)
+        with pytest.raises(release_api.HTTPException) as answer:
+            release_api.rehearse("app")
+    assert answer.value.status_code == 503 and release_api.shown("app") is None
+    release_api.close_all()   # no unstarted thread to join
+
+
+def test_shutdown_lets_a_started_repair_finish_and_records_a_build_it_could_not_wait_for(project, monkeypatch):
+    client, *_ = project
+    starting, release_it, recorded = threading.Event(), threading.Event(), []
+
+    def rehearse(repo, ref, halt, repair=None, expect=None):
+        task = repair(repo, {"repair": {"needed": "boom"}})
+        return {"ok": False, "rounds": [], "refusals": {}, "repair": {"needed": "boom", "task": task}}
+
+    def start(repo, record):
+        starting.set()
+        assert release_it.wait(5)
+        return "release-fix-0-1-0"
+
+    monkeypatch.setattr(release_api.release_rehearsal, "rehearse", rehearse)
+    monkeypatch.setattr(release_api.release_repair, "start", start)
+    monkeypatch.setattr(release_api, "SHUTDOWN_WAIT", 0.2)
+    monkeypatch.setattr(release_api.errorlog, "record", lambda source, exc, **k: recorded.append(source))
+    client.post("/api/release/app/rehearse")
+    assert starting.wait(5)
+    release_api.close_all()   # the repair is past the point of stopping: it is waited for, never stopped
+    assert recorded == ["release-rehearse-shutdown"] and release_api.shown("app")["state"] == "running"
+    release_it.set()
+    run = ended(client)
+    assert run["repair"]["task"] == "release-fix-0-1-0" and not run["stopped"]
+
+
+def test_the_start_carries_the_cards_commit_and_a_failure_carries_what_it_left(project, monkeypatch):
+    client, *_ = project
+    got = []
+
+    def rehearse(repo, ref, halt, repair=None, expect=None):
+        got.append(expect)
+        exc = ValueError("`origin/main` 가 카드를 읽은 뒤 움직였다")
+        exc.left = ["C:/work/x/rehearsal.jks: locked"]
+        raise exc
+
+    monkeypatch.setattr(release_api.release_rehearsal, "rehearse", rehearse)
+    client.post("/api/release/app/rehearse", params={"sha": "a" * 40})
+    run = ended(client)
+    assert got == ["a" * 40] and run["state"] == "failed" and run["left"] == ["C:/work/x/rehearsal.jks: locked"]
 
 
 def test_server_start_carries_pending_attempts_on_without_waiting_for_them(monkeypatch):

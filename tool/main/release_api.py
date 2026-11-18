@@ -21,7 +21,7 @@ from pathlib import Path
 from common import errorlog
 from fastapi import APIRouter, HTTPException
 
-from . import channels, release, release_publish, release_rehearsal, release_repair
+from . import channels, release, release_publish, release_rehearsal, release_repair, runtime
 from . import github_release as gh
 
 router = APIRouter()
@@ -33,6 +33,7 @@ SHUTDOWN_WAIT = 120   # seconds a closing server gives a stopped test build to r
 
 _runs: dict[str, dict] = {}   # project name -> its rehearsal: the running one, or the last one's summary
 _lock = threading.Lock()
+_deadline: list[float] = []   # when shutdown stops waiting: set by its first `close_all`, kept by any later one
 
 
 def _repo(name: str) -> Path:
@@ -88,8 +89,8 @@ def summary(result: dict) -> dict:
     rounds = [{"version": r["version"], **({"failed": r["failed"]} if "failed" in r else {}),
                "refused": r.get("refused") or []} for r in result["rounds"]]
     refusals = {k: len(v) for k, v in result["refusals"].items()}
-    return {"ok": result["ok"], "rounds": rounds, "refusals": refusals, "repair": result.get("repair"),
-            "left": result.get("left") or []}
+    return {"ok": result["ok"], "sha": result.get("sha"), "rounds": rounds, "refusals": refusals,
+            "repair": result.get("repair"), "left": result.get("left") or []}
 
 
 def _repairing(name: str, halt: threading.Event):
@@ -106,13 +107,13 @@ def _repairing(name: str, halt: threading.Event):
     return start
 
 
-def _rehearsing(name: str, repo: Path, halt: threading.Event) -> None:
+def _rehearsing(name: str, repo: Path, halt: threading.Event, sha: str | None = None) -> None:
     try:
-        result = release_rehearsal.rehearse(repo, REF, halt, repair=_repairing(name, halt))
+        result = release_rehearsal.rehearse(repo, REF, halt, repair=_repairing(name, halt), expect=sha)
         done = {"state": "done", **summary(result)}
     except Exception as exc:   # noqa: BLE001 — the card shows why; the server goes on
         errorlog.record("release-rehearse", exc, repo=str(repo))
-        done = {"state": "failed", "error": f"{type(exc).__name__}: {exc}"}
+        done = {"state": "failed", "error": f"{type(exc).__name__}: {exc}", "left": getattr(exc, "left", [])}
     with _lock:
         _runs[name] = {**_runs[name], **done, "ended": time.time(), "stopped": halt.is_set()}
         for key in ("halt", "thread", "repairing"):
@@ -144,15 +145,26 @@ def get_rehearsal(name: str) -> dict:
 
 
 @router.post("/api/release/{name}/rehearse")
-def rehearse(name: str) -> dict:
+def rehearse(name: str, sha: str | None = None) -> dict:
+    """One test build of `REF`. `sha` is the commit the card showed; a `REF` that has moved since is refused."""
+
     repo = _repo(name)
-    with _lock:
-        if (_runs.get(name) or {}).get("state") == "running":
+    with _lock:   # the same lock `close_all` snapshots under, so no start slips in after it
+        if runtime.stopping.is_set():
+            raise HTTPException(503, "서버가 꺼지는 중이라 시험 빌드를 시작하지 않는다")
+        prior = _runs.get(name)
+        if (prior or {}).get("state") == "running":
             raise HTTPException(409, f"{name} 의 시험 빌드가 이미 돌고 있다")
         halt = threading.Event()
-        worker = threading.Thread(target=_rehearsing, args=(name, repo, halt), daemon=True)
+        worker = threading.Thread(target=_rehearsing, args=(name, repo, halt, sha), daemon=True)
         _runs[name] = {"state": "running", "started": time.time(), "halt": halt, "thread": worker}
-        worker.start()
+        try:
+            worker.start()
+        except RuntimeError as exc:   # the OS refused a thread: the project is not left looking busy
+            _runs.pop(name)
+            if prior:
+                _runs[name] = prior
+            raise HTTPException(503, f"시험 빌드를 시작하지 못했다 — {exc}") from exc
     return {"rehearsal": shown(name)}
 
 
@@ -170,15 +182,23 @@ def stop(name: str) -> dict:
 
 def close_all() -> None:
     """At server shutdown: every running test build stopped, and waited for while it removes its checkout and
-    its test keys, so a restart leaves neither behind."""
+    its test keys, so a restart leaves neither behind. Its commands end within a second of the stop
+    (`release.stoppable`). A build whose repair has begun is not stopped: the repair is let finish starting.
+    One wait for every call, and a build still running when it ends is recorded."""
 
-    with _lock:
-        running = [run for run in _runs.values() if run.get("state") == "running"]
-        for run in running:
-            run["halt"].set()
-    deadline = time.monotonic() + SHUTDOWN_WAIT
-    for run in running:
-        run["thread"].join(max(0.0, deadline - time.monotonic()))
+    with _lock:   # after `runtime.stopping`, so no start is admitted past this snapshot
+        running = [(name, run) for name, run in _runs.items() if run.get("state") == "running"]
+        for _, run in running:
+            if not run.get("repairing"):
+                run["halt"].set()
+        if not _deadline:
+            _deadline.append(time.monotonic() + SHUTDOWN_WAIT)
+    for name, run in running:
+        run["thread"].join(max(0.0, _deadline[0] - time.monotonic()))
+        if run["thread"].is_alive():
+            errorlog.record("release-rehearse-shutdown", TimeoutError(
+                f"{name} 의 시험 빌드가 서버 종료 대기 {SHUTDOWN_WAIT}초 안에 끝나지 않았다 — "
+                f"{release.WORK} 아래에 빌드 폴더나 시험 키가 남았을 수 있다"), project=name)
 
 
 def recover() -> None:
