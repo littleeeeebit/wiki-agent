@@ -514,6 +514,7 @@ def test_the_record_is_written_whole_or_not_at_all(keys, monkeypatch):
     monkeypatch.setattr(Path, "replace", stopped)
     with pytest.raises(OSError, match="stopped"):
         release.release_key(Path("repo"), {}, create=True)
+    assert list(folder.glob("certificate.sha256.*.new")) == []   # the failed call leaves no staging file
     monkeypatch.setattr(Path, "replace", replace)
 
     assert not (folder / "certificate.sha256").exists()

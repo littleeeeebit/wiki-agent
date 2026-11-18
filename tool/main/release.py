@@ -550,8 +550,17 @@ def release_key(repo: Path, kit: dict, create: bool = False) -> dict:
             pending.replace(store)
         written = folder / f"certificate.sha256.{secrets.token_hex(4)}.new"
         with open(written, "x", encoding="utf-8") as staged:   # a fresh file, never an existing name or its links
-            staged.write(cert + "\n")
-        written.replace(marker)   # last, and whole: from here on the key is the repository's
+            try:
+                staged.write(cert + "\n")
+            except BaseException:
+                staged.close()
+                written.unlink(missing_ok=True)   # ours alone: the exclusive open made it
+                raise
+        try:
+            written.replace(marker)   # last, and whole: from here on the key is the repository's
+        except BaseException:
+            written.unlink(missing_ok=True)
+            raise
         return {"keystore": store, "alias": "release", "password": password, "cert": cert, "name": name}
 
 
