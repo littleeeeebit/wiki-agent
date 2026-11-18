@@ -474,17 +474,23 @@ def move(confirmed: str, data: dict | None = None, done: list[str] | None = None
             raise HTTPException(409, "확인한 뒤에 바뀔 줄이 달라졌다. 다시 확인한다")
         if runtime.stopping.is_set():   # the snapshot may have taken minutes: a server going down writes nothing
             raise HTTPException(409, "서버가 꺼지는 중이라 배선을 쓰지 않는다")
+        stopped = runtime.stopping.is_set
+
+        def halt():   # a server going down starts no further write
+            if stopped():
+                raise RuntimeError("서버가 꺼지는 중이라 남은 배선 쓰기를 멈췄다")
+
         try:
             for step in plan:
+                halt()
                 setup_agents.write_plan([step])
                 done += [str(step[0])] if step[2] else []
             for link, _old, new in (found_link for found_link in found if found_link[2]):
+                halt()
                 setup_agents.relink(link, new)
                 done.append(f"{link} → {new}")
-            stopped = runtime.stopping.is_set
             for home in now["homes"]:
-                if stopped():   # a server going down starts no further home
-                    raise RuntimeError("서버가 꺼지는 중이라 남은 Codex 신뢰 기록을 멈췄다")
+                halt()
                 hooks = setup_agents.codex_hooks(Path(home), True, python, stopped)
                 # Trust is confirmed only by Codex listing every wiki hook trusted. Anything less (hooks switched
                 # off, a home Codex does not read) is a refusal, never a move that is done.

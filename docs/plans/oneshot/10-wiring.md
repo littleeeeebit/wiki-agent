@@ -52,12 +52,14 @@ The owner then confirms on `[연결]` and presses `[재개]`. A move that a serv
 going down refused before its first write stops with `restart` instead. The
 run keeps its approval, and `[재개]` checks and moves again.
 
-A move cut once it may have written stops with `connect`, whatever cut it: a
-failure, shutdown, or a Codex that took a trust write and died before
-answering. What landed is not knowable in every such case. So the stop
-clears the run's `wiring` and spends the card's approval. It names what the
-move confirmed. `[재개]` alone never writes what is left: `[연결]` shows the
-list, and `[재개]` goes on once nothing is left to move.
+The card's approval is single use. Register clears the run's `wiring` on
+disk before the move may write anything, and puts it back only when the move
+refuses before its first write. A move cut once it may have written stops
+with `connect`, whatever cut it: a failure, shutdown, a Codex that took a
+trust write and died before answering, or the process itself dying. What
+landed is not knowable in every such case, so the approval stays spent. The
+stop names what the move confirmed. `[재개]` alone never writes what is left:
+`[연결]` shows the list, and `[재개]` goes on once nothing is left to move.
 
 The digest binds what is written, not only the lines shown. A line names a
 hook but not its command, and the same lines under another interpreter write
@@ -82,10 +84,13 @@ routine trust check holds the same bar. Anything less is a refusal with its
 reason, never a finished move. Examples are hooks switched off, `SessionStart`
 loaded without `PreToolUse`, or a trusted twin beside an untrusted entry.
 
+A skill link whose replacement fails points where it did, so the next plan
+still lists it.
+
 Shutdown is checked in three places:
 
 - `connect.move` writes nothing once shutdown has begun.
-- It starts no further Codex home.
+- It starts no further settings file, link or Codex home.
 - `codex_hooks` sends no trust write once a read Codex answered lands after
   shutdown began.
 

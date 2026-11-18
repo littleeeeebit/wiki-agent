@@ -357,15 +357,24 @@ def relink(link, target):
     """Point `link` at `target`, as the same kind of link it was: a junction
     stays a junction — it needs no developer mode — and a symlink a symlink."""
     junction = is_junction(link)
+    old = os.readlink(link).removeprefix("\\\\?\\")   # as `skill_links` reads it: a junction names `\\?\C:\…`
+
+    def make(to):
+        if junction:
+            import _winapi
+
+            _winapi.CreateJunction(str(to), str(link))
+        else:
+            os.symlink(to, link, target_is_directory=True)
+
     # On Windows both kinds of directory link go with `rmdir`, which removes
     # the link and never what it points at.
     (os.rmdir if os.name == "nt" else os.unlink)(link)
-    if junction:
-        import _winapi
-
-        _winapi.CreateJunction(str(target), str(link))
-    else:
-        os.symlink(target, link, target_is_directory=True)
+    try:
+        make(target)
+    except BaseException:   # the new link did not come: the old one goes back, so the next plan still lists it
+        make(old)
+        raise
 
 
 def install_global(choice, check, projects, trust):

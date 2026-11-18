@@ -473,6 +473,25 @@ def test_a_move_the_server_going_down_overtook_writes_nothing(tmp_path, home, mo
     assert written == []
 
 
+def test_a_server_going_down_mid_move_writes_no_further_file(tmp_path, home, monkeypatch):
+    from main import runtime
+
+    stopping, written = threading.Event(), []
+    monkeypatch.setattr(runtime, "stopping", stopping)
+    shown = connect.hub()
+    assert len([line for line in shown["lines"]]) > 1 or shown["links"], "쓸 것이 둘 이상이어야 시험이 된다"
+
+    def first_then_down(plan):
+        written.append(plan[0][0])
+        stopping.set()   # shutdown begins once the first file landed
+
+    with patch.object(setup_agents, "write_plan", side_effect=first_then_down), \
+         patch.object(setup_agents, "relink", side_effect=lambda *a: written.append(a[0])), \
+         pytest.raises(RuntimeError, match="꺼지는 중"):
+        connect.move(shown["digest"])
+    assert len(written) == 1, "꺼지기 시작한 뒤에는 다음 파일도 링크도 쓰지 않는다"
+
+
 def test_a_move_cut_partway_drops_every_test_of_the_old_wiring(tmp_path, home, monkeypatch):
     """Some files changed: no repository's probe of the wiring before them, nor the routine read's last check, stands."""
 

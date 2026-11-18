@@ -432,6 +432,8 @@ def test_register_moves_exactly_the_wiring_the_card_confirmed(world):
     world["wiring"].update(needed=True, refused="", digest="shown")
 
     def move(confirmed, data=None, done=None):
+        # Spent on disk before anything may be written: a process dying here resumes under no approval.
+        assert oneshot.load(rid)["wiring"] == "", "승인은 쓰기 전에 이미 쓴 것으로 남는다"
         moved.append(confirmed)
         world["wiring"]["needed"] = False
         return {}

@@ -47,6 +47,40 @@ def test_a_settings_write_cut_partway_leaves_the_owners_file_as_it_was(tmp_path,
     assert json.loads(settings.read_text(encoding="utf-8")) == {"model": "opus", "hooks": {}}
 
 
+def test_a_link_whose_replacement_fails_points_where_it_did(tmp_path, monkeypatch):
+    """The old link went first; a new one that did not come left none, and the next plan could not list it."""
+
+    import pytest
+
+    import setup_agents
+
+    old, new, link = tmp_path / "old-hub", tmp_path / "new-hub", tmp_path / "skill"
+    old.mkdir()
+    new.mkdir()
+    if os.name == "nt":
+        import _winapi
+
+        _winapi.CreateJunction(str(old), str(link))
+        real, name, owner = _winapi.CreateJunction, "CreateJunction", _winapi
+    else:
+        os.symlink(old, link, target_is_directory=True)
+        real, name, owner = os.symlink, "symlink", os
+    calls = []
+
+    def once_fails(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == 1:
+            raise OSError("access denied")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(owner, name, once_fails)
+    with pytest.raises(OSError):
+        setup_agents.relink(link, new)
+    monkeypatch.undo()
+    restored = Path(os.readlink(link).removeprefix("\\\\?\\"))   # a junction names `\\?\C:\…`
+    assert restored.resolve() == old.resolve(), "실패하면 원래 링크가 그대로 돌아온다"
+
+
 def test_the_threshold_goes_into_both_hosts_and_an_existing_value_is_left_alone():
     home = Path(tempfile.mkdtemp())
     (home / ".claude").mkdir()

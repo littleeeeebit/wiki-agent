@@ -513,16 +513,19 @@ def s_register(run: dict) -> None:
                        + (" — 확정 때 본 변경과 지금 필요한 변경이 다르다" if run.get("wiring") else "")
                        + " — 프로젝트 목록에서 이 저장소의 [연결]로 확인한 뒤 [재개]")
         done: list[str] = []
+        # The card's approval is single use, and spent on disk before anything may be written: a move cut by a
+        # failure, a shutdown or the process dying can then never be resumed under it. What a cut move wrote is
+        # not knowable in every case (Codex may take a trust write and die before answering), so `[재개]` alone
+        # never writes what is left; `[연결]` shows it.
+        changed(run["id"], wiring="")
         try:
             connect.move(shown["digest"], connect.adapter_of(path)[0], done)
         except HTTPException as exc:   # refused before its first write: the machine is as the card saw it
+            changed(run["id"], wiring=shown["digest"])   # so the approval stands
             if runtime.stopping.is_set():   # `[재개]` after the restart checks and moves again
                 raise Stop("restart", "서버가 꺼지는 중이라 멈췄다") from exc
             raise Stop("connect", f"이 기계의 배선을 바꾸지 못했다 — {exc.detail} — [연결]로 확인한 뒤 [재개]") from exc
         except Exception as exc:  # noqa: BLE001 — a move cut once it may have written, whatever cut it
-            # What it wrote is not knowable in every case (Codex may take a trust write and die before answering),
-            # so the card's approval is spent: `[재개]` alone never writes what is left, `[연결]` shows it.
-            changed(run["id"], wiring="")
             reason = " — ".join([f"{type(exc).__name__}: {exc}", *getattr(exc, "__notes__", [])])
             wrote = f" — 확인된 것: {', '.join(done)}" if done else ""
             raise Stop("connect", f"이 기계의 배선을 바꾸다 멈췄다{wrote} — {reason}"
