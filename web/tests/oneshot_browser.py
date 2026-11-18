@@ -890,8 +890,53 @@ def host_kinds():
           "say; off Windows it shows why and a web-only start sends only webapp; on Windows it opens and is sent")
 
 
+def build_confirmation():
+    """A PC app's S2: the build part's tools show each setup as stored, spaces and line breaks kept; its button
+    sends exactly that offer, and while a question waits it is replaced by a note to answer first."""
+    tools = [{"name": "npm", "setup": {"uses": "actions/setup-node@v4", "with": {"region": "east  wing", "empty": ""}}},
+             {"name": "cargo", "setup": {"run": "rustup default stable\n  cargo --version"}}]
+    parts = [("language", "Rust"), ("ui", "Tauri 2"), ("core", "Rust 크레이트"), ("data_store", "SQLite"), ("tests", "cargo test")]
+    stack = [*({"part": p, "choice": c, "why": "주인이 골랐다", "status": "confirmed"} for p, c in parts),
+             {"part": "build", "choice": "cargo tauri build", "why": "주인이 골랐다", "status": "assumed", "tools": tools}]
+    view = run("pc-demo", "spec", waits=True, kind="desktop", kinds=["desktop"])
+    view["oneshot"] |= {"intent": {"kind": "desktop", "kinds": ["desktop"]}, "stack": stack,
+                        "talk": [{"role": "agent", "text": "빌드와 도구는 옆의 버튼으로 확정한다.", "choices": None}]}
+    posted: list = []
+    fake = FastAPI()
+
+    @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
+    async def api(path: str, request: Request):
+        if path == "oneshot-specs":
+            return {"specs": [{k: view[k] for k in ("repo", "stage", "working", "stopped", "waits", "kind", "kinds")}]}
+        if path.startswith("oneshot/spec/pc-demo"):
+            if request.method == "POST":
+                posted.append((path.removeprefix("oneshot/spec/pc-demo/"), await request.json()))
+            return view
+        if path == "mobile/status":
+            return {"local": True}
+        return fixture(path, request.method)
+
+    with oneshot_window(fake) as page:
+        page.goto(page.url.split("#")[0] + "#oneshot/spec%3Apc-demo")
+        listed = page.get_by_role("list", name="도구").get_by_role("listitem")
+        expect(listed).to_have_count(2)
+        assert listed.nth(0).inner_text() == 'npm (actions/setup-node@v4, region="east  wing", empty="")', listed.nth(0).inner_text()
+        assert listed.nth(1).inner_text() == "cargo (rustup default stable\n  cargo --version)", listed.nth(1).inner_text()
+        with posting(page):
+            page.get_by_role("button", name="이 빌드와 도구로 확정").click()
+        assert posted == [("build", {"part": "build", "choice": "cargo tauri build", "tools": tools})], posted
+        view["oneshot"]["talk"] = [{"role": "agent", "text": "하나 더 묻는다.", "choices": {
+            "question": "창을 늘 맨 위에 둘까?", "options": [{"label": "예"}, {"label": "아니오"}]}}]
+        page.reload()
+        expect(page.get_by_text("질문에 먼저 답하면 확정할 수 있다")).to_be_visible()
+        expect(page.get_by_role("button", name="이 빌드와 도구로 확정")).to_have_count(0)
+    print("PASS: a PC app's build shows each tool's setup as stored, spaces and line breaks kept; its button sends "
+          "exactly that offer, and while a question waits the button gives way to a note to answer first")
+
+
 if __name__ == "__main__":
     main()
     tracking()
     phone_round()
     host_kinds()
+    build_confirmation()

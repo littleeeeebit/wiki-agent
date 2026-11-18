@@ -332,7 +332,10 @@ function Conversation({ talk, requirements, stack, android, kinds, halt, busy, s
               {s ? `${s.choice}${s.status === 'confirmed' ? '' : ' (아직 묻는 중)'}` : '아직 안 정함'}
               {/* A PC app's build names the tools the owner confirms with it, each with how CI gets it. Only its own
                   button confirms it, exactly as shown (`oneshot_spec.confirm_build`). */}
-              {s?.tools && <span className="block text-[12px] text-muted-foreground">도구: {s.tools.map(toolText).join(', ')}</span>}
+              {/* Each setup as stored: spaces and line breaks kept, so two setups never look alike. */}
+              {s?.tools && <ul aria-label="도구" className="mt-1 flex flex-col gap-0.5 text-[12px] text-muted-foreground">
+                {s.tools.map((t) => <li key={t.name} className="whitespace-pre-wrap break-all font-mono">{toolText(t)}</li>)}
+              </ul>}
               {s?.tools && s.status !== 'confirmed' && (asking
                 ? <span className="mt-1.5 block text-[12px] text-muted-foreground">질문에 먼저 답하면 확정할 수 있다</span>
                 : <Btn className="mt-1.5" disabled={busy} onClick={() => void confirm(s.part, s.choice, s.tools!)}>이 빌드와 도구로 확정</Btn>

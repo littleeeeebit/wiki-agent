@@ -188,6 +188,9 @@ def talk(repo: str) -> None:
     turns = [*(o.get("talk") or []), {"role": "agent", "text": said, "choices": choices, "ts": time.time()}]
     # The stack now lives in this spec, in version 3's shape, whatever version the run started at.
     fields = {"glossary": glossary, "stack": stack, "talk": turns, "version": max(o.get("version", 1), 3)}
+    # A PC app's pressed build holds only while the stack still offers that build: replaced or dropped, it is gone.
+    build = next(({"choice": s["choice"], "tools": s.get("tools")} for s in stack if tooled(s["part"], kinds)), None)
+    fields["confirmed_build"] = o.get("confirmed_build") if same(o.get("confirmed_build"), build) else None
     if mismatch:   # the owner kept a requirement the run's kind cannot meet: every later stage builds that kind
         # One save: a server that dies after it never leaves the conversation open again.
         detail = f"`{mismatch['requirement']}` 는 이 실행의 종류로 만들 수 없다 — {mismatch['reason']}. 새 실행을 시작해 종류를 다시 골라라"

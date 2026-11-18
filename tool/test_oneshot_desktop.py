@@ -165,6 +165,22 @@ def test_only_the_owners_button_confirms_the_build_exactly_as_offered(desktop):
     assert not oneshot_spec.same(True, 1) and oneshot_spec.same({"a": "1", "b": ["x"]}, {"b": ["x"], "a": "1"})
 
 
+def test_a_replaced_build_offer_drops_its_earlier_approval(desktop):
+    confirmed(STACK)   # the owner pressed the button on list A
+    other = {**STACK[-1], "tools": [TOOLS[0], {"name": "npm", "setup": {"run": "winget install  OpenJS.NodeJS"}}]}
+    with patch.object(oneshot, "ask", lambda *a, **k: (turn([*STACK[:-1], {**other, "status": "assumed"}]), {}, False)):
+        oneshot_spec.talk("budget")   # the owner asked for another setup: list B is offered
+    assert o()["stack"][-1]["tools"] == other["tools"] and o()["confirmed_build"] is None
+    with pytest.raises(ValueError, match="build"):   # going back to A needs A offered and pressed again
+        oneshot_spec.spec_turn(turn(STACK), specs.load("budget", oneshot.BRANCH))
+    with patch.object(oneshot, "ask", lambda *a, **k: (turn([*STACK[:-1], {**other, "status": "assumed"}]), {}, False)):
+        oneshot_spec.talk("budget")   # the same offer again keeps whatever was pressed on it
+    oneshot_spec.saved("budget", oneshot={"confirmed_build": {"choice": other["choice"], "tools": other["tools"]}})
+    with patch.object(oneshot, "ask", lambda *a, **k: (turn([*STACK[:-1], {**other, "status": "assumed"}]), {}, False)):
+        oneshot_spec.talk("budget")
+    assert o()["confirmed_build"] == {"choice": other["choice"], "tools": other["tools"]}
+
+
 def test_the_build_button_is_never_an_answer_to_a_waiting_question(desktop):
     confirmed(STACK, build=False)
     oneshot_spec.saved("budget", oneshot={"talk": [*o()["talk"], {"role": "agent", "text": "묶음을 고르세요.", "ts": 3,
