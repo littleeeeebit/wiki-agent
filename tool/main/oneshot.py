@@ -713,11 +713,13 @@ def restarted(store: Store) -> None:
 
 
 def card_errors(run: dict, profile: dict) -> tuple[list[str], list[str]]:
-    """The card's problems for the run's kinds; a card with `android` also needs the toolchain."""
+    """The card's problems for the run's kinds; a card with `android` also needs the toolchain, and one with a kind
+    this host cannot build (`unavailable`) is never confirmed here."""
 
     kinds = kinds_of(run)
     errors, warnings = problems(profile, kinds)
-    return errors + (oneshot_android.missing() if "android" in kinds else []), warnings
+    off = [why for k, why in unavailable().items() if k in kinds]
+    return errors + off + (oneshot_android.missing() if "android" in kinds else []), warnings
 
 
 def view(run: dict) -> dict:
@@ -838,8 +840,10 @@ def intent(rid: str, body: Intent) -> dict:
             launch(rid, "intake", body.edit.strip())
             return view(load(rid))
         # A restatement an earlier version's intake picked the kind of: its actual kinds, not a marker, decide.
-        if not set(run["intent"].get("kinds") or [run["intent"]["kind"]]) <= set(SUPPORTED_KINDS):
+        if not set(kinds := run["intent"].get("kinds") or [run["intent"]["kind"]]) <= set(SUPPORTED_KINDS):
             raise HTTPException(409, f"`{run['intent']['kind']}` 는 이 버전에서 만들 수 없다 — 지금은 {', '.join(SUPPORTED_KINDS)} 만")
+        if off := [why for k, why in unavailable().items() if k in kinds]:   # a saved PC app run, now off Windows
+            raise HTTPException(409, off[0])
         name = specs.slugged(body.name or run["intent"]["name"])
         if run["picked"]:
             path = Path(run["picked"])

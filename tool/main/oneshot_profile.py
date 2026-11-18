@@ -53,7 +53,7 @@ SCHEMA: dict[str, dict] = {
 FIELDS = {*SCHEMA, "device", "window"}   # every kind's card fields
 OWNER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
 TOOL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,63}")   # a program's name on PATH, never a path
-PINNED = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._/-]+@[A-Za-z0-9._-]+")   # owner/action@ref
+PINNED = re.compile(r"[A-Za-z0-9-]+(?:/[A-Za-z0-9._-]+)+@[A-Za-z0-9._-]+")   # owner/repo[/path]@ref, no empty segment
 # The stack is the owner's, picked in S2 (`docs/plans/oneshot/6-free-stack.md`); the card holds none of it.
 PARTS = ("backend", "frontend", "styling", "data_store", "tests", "deploy")
 ANDROID_PARTS = ("language", "ui", "core", "data_store", "tests", "build")
@@ -121,12 +121,14 @@ def schema(kind: str | list[str] = "webapp") -> dict[str, dict]:
     of its main window, instead of web viewports. Several kinds' card holds every field any of them has, each once."""
 
     if len(kinds := _kinds(kind)) > 1:
-        return {k: f for one in kinds for k, f in schema(one).items()}
-    own = {"android": ("device", {"options": list(DEVICES), "default": "medium-phone"}),
-           "desktop": ("window", {"options": list(WINDOWS), "default": WINDOWS[0]})}.get(kinds[0])
-    if own is None:
+        fields = {k: f for one in kinds for k, f in schema(one).items()}
+    elif own := {"android": ("device", {"options": list(DEVICES), "default": "medium-phone"}),
+                 "desktop": ("window", {"options": list(WINDOWS), "default": WINDOWS[0]})}.get(kinds[0]):
+        fields = {(own[0] if k == "responsive" else k): (own[1] if k == "responsive" else f) for k, f in SCHEMA.items()}
+    else:
         return SCHEMA
-    return {(own[0] if k == "responsive" else k): (own[1] if k == "responsive" else f) for k, f in SCHEMA.items()}
+    # A PC app is built and checked on this Windows PC (plan 9e): its card, alone or among kinds, names no other host.
+    return {**fields, "os_now": {"options": ["windows"], "default": "windows"}} if "desktop" in kinds else fields
 
 
 def current(profile: dict | None) -> dict | None:

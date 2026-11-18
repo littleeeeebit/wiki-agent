@@ -74,7 +74,8 @@ export type SpecView = SpecSummary & {
     critique_bases?: Record<string, number>
     inflight?: Inflight | null; reviews?: Review[]; refused?: number; cases?: string[][]
     spend?: { usd?: number; seconds?: number; calls?: number }
-    stack?: { part: string; choice: string; why: string; status: string }[]
+    stack?: { part: string; choice: string; why: string; status: string
+      tools?: { name: string; setup?: string | { run: string } | { uses: string; with?: Record<string, string> } }[] }[]
     r1?: Gate; r2?: Gate; r3?: Gate; front?: { tokens: { palettes: Palette[] } }; phone?: PhoneRound
     reading?: Record<string, { round: number; seconds: number | null; opened: string[]; edited: string[] }[]>
   }
@@ -127,11 +128,12 @@ export const STOP: Record<string, string> = {
   gate: '빌드가 검사를 통과하지 못했다', review: '백엔드 리뷰가 라운드 상한까지 거절했다', critique: '화면 비평이 멈췄다',
   kind: '이 종류는 여기까지', rekind: '고른 종류로는 만들 수 없는 요구',
 }
-/** The kinds the owner picks on the start screen (`tool/main/oneshot.py` `Start.kinds`); `soon` ones are shown off. */
-export const KINDS: { id: string; label: string; note: string; soon?: string }[] = [
+/** The kinds the owner picks on the start screen (`tool/main/oneshot.py` `Start.kinds`); `soon` ones are shown off,
+ *  and a `host` one only once the server says this host builds it (`oneshot_profile.HOST_ONLY`). */
+export const KINDS: { id: string; label: string; note: string; soon?: string; host?: boolean }[] = [
   { id: 'webapp', label: '웹앱', note: '브라우저에서 쓴다' },
   { id: 'android', label: 'Android 앱', note: '휴대폰에 설치한다' },
-  { id: 'desktop', label: 'PC 앱', note: 'Windows 에 설치한다' },
+  { id: 'desktop', label: 'PC 앱', note: 'Windows 에 설치한다', host: true },
 ]
 export const kindLabel = (id: string) => KINDS.find((k) => k.id === id)?.label ?? id
 export const COLUMNS: { id: Freq; label: string }[] = [

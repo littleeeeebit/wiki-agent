@@ -301,6 +301,9 @@ def test_a_pc_app_card_names_its_window_and_keeps_it_in_its_own_profile(world):
             patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-intent", INTENT), {}, False)):
         rid = oneshot.start(oneshot.Start(kinds=["desktop"], sentence="화면 번역기"))["id"]
         oneshot.intake(rid)
+    with patch.object(sys, "platform", "linux"), pytest.raises(HTTPException, match="Windows 에서만"):
+        oneshot.intent(rid, oneshot.Intent(confirm=True))   # a saved PC app restatement, now on another host
+    assert oneshot.load(rid)["state"] == "intake"
     oneshot.intent(rid, oneshot.Intent(confirm=True))
     proposal = {"window": {"value": "800x600", "why": "작은 창"}}
     with patch.object(oneshot, "ask", lambda *a: (fenced("oneshot-profile", proposal), {}, False)), \
@@ -315,7 +318,13 @@ def test_a_pc_app_card_names_its_window_and_keeps_it_in_its_own_profile(world):
     assert shown["schema"]["window"]["options"] == list(oneshot_profile.WINDOWS)
     assert "responsive" not in shown["schema"] and "device" not in shown["schema"] and "toolchain" not in shown
     assert shown["profile"]["window"] == "1280x800"   # the default, before any saved answer
-    assert "`window` 에 없는 선택지다: 800x600" in oneshot.profile(rid, oneshot.Profile(values={"window": "800x600"}))["errors"]
+    # Built on this Windows PC, alone or among kinds: no other build host, even where another kind's card allows one.
+    assert shown["schema"]["os_now"]["options"] == oneshot_profile.schema(["webapp", "desktop"])["os_now"]["options"] == ["windows"]
+    assert "`os_now` 에 없는 선택지다: macos" in oneshot.profile(rid, oneshot.Profile(values={"os_now": "macos"}))["errors"]
+    with patch.object(sys, "platform", "linux"):
+        assert "PC 앱은 Windows 에서만 만든다" in oneshot.view(oneshot.load(rid))["errors"]
+    assert "`window` 에 없는 선택지다: 800x600" in oneshot.profile(rid, oneshot.Profile(values={"window": "800x600",
+                                                                                            "os_now": "windows"}))["errors"]
     with pytest.raises(HTTPException):
         oneshot.profile(rid, oneshot.Profile(values={"window": "800x600"}, confirm=True))
     values = {"window": "1440x900", "docs_language": "ko", "visibility": "private", "github_owner": "someone"}

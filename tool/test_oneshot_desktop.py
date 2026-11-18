@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from main import oneshot, oneshot_profile, oneshot_spec
+from main import oneshot, oneshot_front, oneshot_profile, oneshot_spec, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_core import GLOSSARY, REQS
 from test_oneshot_spec import fenced, o, world  # noqa: F401 — `world` is the temporary worktree's fixture
@@ -21,6 +21,7 @@ STACK = [{"part": p, "choice": c, "why": "주인이 골랐다", "status": "confi
     ("language", "Rust 1.98, TypeScript 5"), ("ui", "Tauri 2 웹뷰"), ("core", "Rust 크레이트"), ("data_store", "SQLite"),
     ("tests", "cargo test, JUnit 보고서"), ("build", "cargo tauri build, NSIS 설치 파일"))]
 STACK[-1]["tools"] = TOOLS
+START = oneshot_spec.start   # the real one: the `world` fixture replaces it with a stand-in
 
 
 @pytest.fixture
@@ -71,10 +72,12 @@ def test_each_tools_setup_is_required_when_ci_is_on_and_must_be_pinned():
     with pytest.raises(ValueError, match="CI 를 쓰는 카드"):
         oneshot_profile.stacked(bare, "desktop", ci=True)
     for setup in ({"uses": "actions/setup-node"}, {"uses": "setup-node@v4"}, {"run": " "}, "latest",
+                  {"uses": "owner//@v1"}, {"uses": "owner/repo//sub@v1"}, {"uses": "owner/repo/@v1"},
                   {"run": "x", "uses": "a/b@v1"}, {"uses": "a/b@v1", "with": "x"}):
         with pytest.raises(ValueError, match="`setup`"):
             oneshot_profile.stacked([{**STACK[-1], "tools": [{"name": "cargo", "setup": setup}]}], "desktop", ci=True)
-    for setup in ("preinstalled", {"run": "winget install Rustlang.Rustup"}, {"uses": "dtolnay/rust-toolchain@stable"}):
+    for setup in ("preinstalled", {"run": "winget install Rustlang.Rustup"}, {"uses": "dtolnay/rust-toolchain@stable"},
+                  {"uses": "github/codeql-action/init@v3"}):
         assert oneshot_profile.stacked([{**STACK[-1], "tools": [{"name": "cargo", "setup": setup}]}], "desktop",
                                        ci=True)[0]["tools"][0]["setup"] == setup
 
@@ -108,15 +111,36 @@ def test_the_pc_app_conversation_is_told_its_tools_and_stops_before_the_core_des
     assert o()["stopped"]["reason"] == "kind"
 
 
-def test_a_changed_tools_list_under_the_same_choice_is_confirmed_again(desktop):
+def asked(question: str, answer: str) -> None:
+    """The last two talk turns: a real `choices` question and the owner's answer to it."""
+
+    oneshot_spec.saved("budget", oneshot={"talk": [*o()["talk"], {"role": "agent", "text": question, "ts": 3, "choices": {
+        "questions": [{"question": question, "options": [{"label": "예"}, {"label": "아니오"}]}]}},
+        {"role": "owner", "text": answer, "ts": 4}]})
+
+
+def test_an_unrelated_answer_cannot_confirm_a_changed_tools_list(desktop):
     confirmed(STACK)
     oneshot_spec.saved("budget", oneshot={"stack": STACK})   # the owner confirmed this stack before
-    changed = [*STACK[:-1], {**STACK[-1], "tools": [*TOOLS, {"name": "dotnet", "setup": "preinstalled"}]}]
-    oneshot_spec.saved("budget", oneshot={"talk": [*o()["talk"], {"role": "agent", "text": "도구를 더했다.",
-                                                                   "choices": None, "ts": 3},
-                                                    {"role": "owner", "text": "좋다", "ts": 4}]})
-    assert oneshot_spec.unanswered(o(), oneshot_profile.stacked(changed, "desktop")) == ["build"]
-    assert oneshot_spec.unanswered(o(), oneshot_profile.stacked(STACK, "desktop")) == []
+    asked("번역 창을 늘 맨 위에 둘까요?", "예")
+    spec = specs.load("budget", oneshot.BRANCH)
+    for tools in ([*TOOLS, {"name": "dotnet", "setup": "preinstalled"}],   # a tool added, a setup changed
+                  [TOOLS[0], {"name": "npm", "setup": {"run": "winget install OpenJS.NodeJS"}}]):
+        with pytest.raises(ValueError, match="build"):
+            oneshot_spec.spec_turn(turn([*STACK[:-1], {**STACK[-1], "tools": tools}]), spec)
+    oneshot_spec.spec_turn(turn(STACK), spec)   # the list the owner confirmed stands
+
+
+def test_a_picked_bundle_with_other_tools_is_offered_again_then_confirmed(desktop):
+    dotnet = [{"name": "dotnet", "setup": {"uses": "actions/setup-dotnet@v4"}}]
+    other = [*STACK[:-1], {**STACK[-1], "choice": "dotnet publish, MSIX", "tools": dotnet}]
+    confirmed(STACK)   # Tauri's tools were offered; the owner picked the .NET bundle
+    spec = specs.load("budget", oneshot.BRANCH)
+    with pytest.raises(ValueError, match="build"):
+        oneshot_spec.spec_turn(turn(other), spec)
+    oneshot_spec.saved("budget", oneshot={"stack": [*STACK[:-1], {**other[-1], "status": "assumed"}]})
+    asked("빌드 도구는 dotnet (actions/setup-dotnet@v4) 로 확정할까요?", "예")
+    oneshot_spec.spec_turn(turn(other), specs.load("budget", oneshot.BRANCH))
 
 
 def test_a_resume_or_a_shutdown_between_the_save_and_the_stop_never_starts_the_design(desktop):
@@ -138,6 +162,19 @@ def test_several_kinds_an_earlier_version_held_at_the_screens_stay_held(desktop)
     assert o()["stopped"]["reason"] == "kind"
     with pytest.raises(HTTPException, match="다음 버전"):
         oneshot_spec.resume("budget")
+
+
+@pytest.mark.parametrize("stage", ["board", "frontend", "tests"])
+def test_a_held_mixed_run_whose_stop_was_lost_starts_no_later_stage(desktop, stage):
+    oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
+                                          "stage": stage, "working": None, "stopped": None, "features": []})
+    with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
+            patch.object(oneshot_spec, "start", START):
+        with pytest.raises(HTTPException, match="다음 버전"):   # the board's endpoint, past `idle`
+            oneshot_front.submit_board("budget", oneshot_front.Board(frequency={}, first_screen="한 줄"))
+        with pytest.raises(HTTPException, match="다음 버전"):   # the shared start every stage goes through
+            START("budget", "frontend", stage="frontend")
+    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == stage
 
 
 def test_a_pc_app_has_its_own_s2_prompt_and_no_web_fallback_for_later_stages():

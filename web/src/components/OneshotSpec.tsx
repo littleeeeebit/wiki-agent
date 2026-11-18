@@ -115,7 +115,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
 
   if (!view) return <Top><p role="status" className="text-muted-foreground">{fault || '읽는 중…'}</p></Top>
   const o = view.oneshot
-  const android = o.intent?.kind === 'android'
+  const android = ['android', 'desktop'].includes(o.intent?.kind ?? '')   // the six parts (`oneshot_profile.parts`)
   const idle = !view.working && !view.stopped
   // A `kind` stop waits for this kind's next stage to ship: no resume reaches it.
   const resume = !['kind', 'rekind'].includes(view.stopped?.reason ?? '') && (
@@ -325,6 +325,10 @@ function Conversation({ talk, requirements, stack, android, kinds, halt, busy, s
             <dt key={`${p}-t`} className="text-muted-foreground">{label}</dt>,
             <dd key={`${p}-d`} title={s?.why} className={cn(!s || s.status !== 'confirmed' ? 'text-faint' : '')}>
               {s ? `${s.choice}${s.status === 'confirmed' ? '' : ' (아직 묻는 중)'}` : '아직 안 정함'}
+              {/* A PC app's build names the tools the owner confirms with it, each with how CI gets it. */}
+              {s?.tools && <span className="block text-[12px] text-muted-foreground">도구: {s.tools.map((t) =>
+                t.setup === undefined ? t.name : `${t.name} (${typeof t.setup === 'string' ? t.setup
+                  : 'uses' in t.setup ? t.setup.uses : t.setup.run})`).join(', ')}</span>}
             </dd>,
           ]
         })}

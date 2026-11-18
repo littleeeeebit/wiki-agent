@@ -106,9 +106,15 @@ export function Intake({ busy, act }: { busy: boolean; act: Act }) {
   const [kinds, setKinds] = useState<string[]>([])   // nothing preselected: the owner picks every kind
   const [typing, setTyping] = useState(remote)
   const [options, setOptions] = useState<Options | null>(null)
-  // The kinds this host cannot build, with why (`oneshot_profile.unavailable`): a PC app off Windows.
-  const [off, setOff] = useState<Record<string, string>>({})
-  useEffect(() => { api.oneshotRuns().then((d) => setOff(d?.unavailable ?? {})).catch(() => {}) }, [])
+  // The kinds this host cannot build, with why (`oneshot_profile.unavailable`): a PC app off Windows. A host-bound
+  // kind stays shut until the server answers, and a failed answer keeps it shut.
+  const [off, setOff] = useState<Record<string, string> | null>(null)
+  useEffect(() => {
+    api.oneshotRuns().then((d) => setOff(d?.unavailable ?? {}))
+      .catch(() => setOff(Object.fromEntries(KINDS.filter((k) => k.host).map((k) => [k.id, '이 PC 에서 만들 수 있는지 확인하지 못했다']))))
+  }, [])
+  const shutOf = (k: (typeof KINDS)[number]) => k.soon ?? (off ? off[k.id] : k.host ? '이 PC 에서 만들 수 있는지 확인하는 중…' : undefined)
+  const picked = kinds.filter((id) => !shutOf(KINDS.find((k) => k.id === id)!))   // a shut kind is never sent
   const none = { model: '', effort: '' }
   const [models, setModels] = useState<Models>({ spec: none, build: none, review: none })
   // The review starts on the Review Loop's own choice, so the run fixes a named model, not "whatever it is then".
@@ -133,7 +139,7 @@ export function Intake({ busy, act }: { busy: boolean; act: Act }) {
 
   return (
     <>
-      <form className="flex flex-col gap-5" onSubmit={(e) => { e.preventDefault(); void act(() => api.startOneshot(sentence, path, models, kinds)) }}>
+      <form className="flex flex-col gap-5" onSubmit={(e) => { e.preventDefault(); void act(() => api.startOneshot(sentence, path, models, picked)) }}>
         <label className="flex flex-col gap-1.5">
           <span className="font-semibold">무엇을 만들고 싶은가</span>
           <textarea value={sentence} onChange={(e) => setSentence(e.target.value)} rows={4} maxLength={2000}
@@ -144,10 +150,10 @@ export function Intake({ busy, act }: { busy: boolean; act: Act }) {
           <legend className="font-semibold">어떤 형태로 만드나 — 여러 개를 골라도 된다</legend>
           <div className="flex flex-wrap gap-x-5 gap-y-2">
             {KINDS.map((k) => {
-              const shut = k.soon ?? off[k.id]
+              const shut = shutOf(k)
               return (
                 <label key={k.id} className={cn('flex items-center gap-2', shut && 'text-muted-foreground')}>
-                  <input type="checkbox" checked={kinds.includes(k.id)} disabled={busy || !!shut}
+                  <input type="checkbox" checked={picked.includes(k.id)} disabled={busy || !!shut}
                     onChange={(e) => setKinds((ks) => e.target.checked ? [...ks, k.id] : ks.filter((x) => x !== k.id))} />
                   <span className="font-medium">{k.label}</span>
                   <span className="text-[12px] text-muted-foreground">{shut ?? k.note}</span>
@@ -155,7 +161,7 @@ export function Intake({ busy, act }: { busy: boolean; act: Act }) {
               )
             })}
           </div>
-          {kinds.length > 1 && (
+          {picked.length > 1 && (
             <p className="text-[12px] text-muted-foreground">여러 형태는 핵심을 함께 쓰는 저장소 하나로 만들고, 풀 리퀘스트 하나에 형태마다의 README 와 배포 파일을 담는다.</p>
           )}
         </fieldset>
@@ -186,7 +192,7 @@ export function Intake({ busy, act }: { busy: boolean; act: Act }) {
           <p className="text-[12px] text-muted-foreground">화면 비평은 이미지를 읽어야 해서 opus · high 로 고정이다.</p>
         </fieldset>
         <div className="flex justify-end">
-          <Btn type="submit" tone="primary" disabled={busy || !sentence.trim() || !kinds.length}>{busy ? '시작하는 중…' : '시작'}</Btn>
+          <Btn type="submit" tone="primary" disabled={busy || !sentence.trim() || !picked.length}>{busy ? '시작하는 중…' : '시작'}</Btn>
         </div>
       </form>
     </>

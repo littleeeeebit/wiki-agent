@@ -115,16 +115,18 @@ def kept(spec: dict, value, where: str) -> tuple[list[dict], list[dict]]:
 
 def unanswered(o: dict, stack: list[dict]) -> list[str]:
     """The parts `stack` marks `confirmed` that no owner's answer stands behind: confirmed already with the same
-    choice, or offered in the stack before the question the owner has just answered, and nothing else.
+    choice, or offered in the stack before the question the owner has just answered, and nothing else. A PC app's
+    `tools` (names and setups) are confirmed only as the stack showed them: an answer confirms the list it was
+    offered with, so a list the model changes is offered again before it is confirmed.
     ponytail: that the answered question was about the stack is the prompt's to keep; the owner then sees the
     stack again on R1."""
 
     talk, before = o.get("talk") or [], {s["part"]: s for s in o.get("stack") or []}
     answered = len(talk) >= 2 and talk[-1]["role"] == "owner" and bool(talk[-2].get("choices"))
-    return [s["part"] for s in stack if s["status"] == "confirmed"
-            and not (before.get(s["part"], {}).get("status") == "confirmed" and before[s["part"]]["choice"] == s["choice"]
-                     and before[s["part"]].get("tools") == s.get("tools"))   # a PC app's tools are confirmed with it
-            and not (answered and s["part"] in before)]
+    shown = {p: s.get("tools") for p, s in before.items()}
+    return [s["part"] for s in stack if s["status"] == "confirmed" and (
+            s["part"] not in before or shown[s["part"]] != s.get("tools") or not (
+                (before[s["part"]]["status"] == "confirmed" and before[s["part"]]["choice"] == s["choice"]) or answered))]
 
 
 def spec_turn(final: str, spec: dict):
@@ -411,6 +413,12 @@ WORKERS = {"talk": talk, "design": design, "redesign": redesign}   # a later sta
 
 
 def start(repo: str, work: str, *args, **fields) -> None:
+    """Starts a stage's worker. A run held at its kind's stop (`held`) starts nothing past S2 whatever its saved
+    stop says: the stop is put back and the start refused."""
+
+    if work != "talk" and held(o := specs.load(repo, oneshot.BRANCH)["oneshot"]):
+        stop = waiting(repo, o).get("stopped") or {}
+        raise HTTPException(409, stop.get("detail") or "이 실행의 다음 단계는 다음 버전에서 이어진다")
     oneshot.start_worker(store(repo), work, WORKERS[work], (repo, *args), fields)
 
 
@@ -572,6 +580,8 @@ def supported(o: dict) -> None:
 
 def idle(o: dict, stage: str) -> None:
     supported(o)
+    if held(o):   # at or past its kind's stop, with the stop saved or lost: nothing past S2 runs in this version
+        raise HTTPException(409, "이 실행의 다음 단계는 다음 버전에서 이어진다")
     if o.get("stage") != stage or o.get("working") or o.get("stopped"):
         raise HTTPException(409, f"지금 할 수 없다 — {o.get('stage')}{' 진행 중' if o.get('working') else ''}")
 

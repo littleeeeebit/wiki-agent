@@ -89,9 +89,14 @@ at most three questions:
   `{"uses": "owner/action@version"}` for an action pinned to a version, with
   `with` for its inputs. `setup` is required when the profile's `ci` is
   `github-actions`; otherwise it may be left out. The tools are part of the
-  bundle the person confirms: name them in the bundle question, and when
-  they change, the person confirms the part again. Nothing is installed for
-  the person: a tool missing on this PC stops the run and names it.
+  bundle the person confirms: name them in the bundle question, and offer
+  them in `stack` with the `build` part. An answer confirms `build` only with
+  exactly the tools and setups it was offered with, so when the person picks
+  a bundle whose tools differ from the ones in `stack`, or a tool or setup
+  changes later, put the new list in `stack` with `build` as `assumed` and
+  ask the person to confirm it. You only record the tools: this conversation
+  checks nothing on this PC and installs nothing, and a later stage stops the
+  run if one is missing.
 - Ask about the stack once the scenarios are clear, as one question whose
   two or three options are whole bundles: each option's `label` names every
   part, and its `note` gives one reason. One answer then settles the stack.
