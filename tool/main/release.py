@@ -548,20 +548,34 @@ def release_key(repo: Path, kit: dict, create: bool = False) -> dict:
             cert = certificate(pending, "release", password, kit)
         if not store.exists():   # a keystore already there is the one `cert` came from; never overwrite it
             pending.replace(store)
-        written = folder / f"certificate.sha256.{secrets.token_hex(4)}.new"
-        with open(written, "x", encoding="utf-8") as staged:   # a fresh file, never an existing name or its links
-            try:
-                staged.write(cert + "\n")
-            except BaseException:
-                staged.close()
-                written.unlink(missing_ok=True)   # ours alone: the exclusive open made it
-                raise
-        try:
-            written.replace(marker)   # last, and whole: from here on the key is the repository's
-        except BaseException:
-            written.unlink(missing_ok=True)
-            raise
+        replaced(marker, cert + "\n")   # last, and whole: from here on the key is the repository's
         return {"keystore": store, "alias": "release", "password": password, "cert": cert, "name": name}
+
+
+def replaced(target: Path, text: str) -> None:
+    """`target` replaced whole by `text`, through a fresh staging file beside it. The exclusive open never writes
+    through an existing name or its links. A failure removes only the staging file this call made, and only
+    while that name still holds the same file. The original error is the one raised. A cleanup that fails is
+    recorded."""
+
+    staged = target.with_name(f"{target.name}.{secrets.token_hex(4)}.new")
+    made = None
+    try:
+        with open(staged, "x", encoding="utf-8") as out:
+            made = os.fstat(out.fileno())
+            out.write(text)
+        staged.replace(target)
+    except BaseException:
+        if made is not None:
+            try:
+                now = os.stat(staged)
+                if (now.st_dev, now.st_ino) == (made.st_dev, made.st_ino):   # still ours: never one swapped in
+                    staged.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                errorlog.record("release-staging", exc, path=str(staged))
+        raise
 
 
 # -- The unpublished rehearsal --------------------------------------------------------------------

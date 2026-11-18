@@ -10,7 +10,6 @@ From `PR #n` on the spec follows the ordinary cycle, and the run keeps its summa
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import subprocess
 import threading
@@ -22,7 +21,7 @@ import yaml
 import android_owned
 from wiki import slots_for
 
-from . import oneshot_build, oneshot_device, oneshot_spec, pr_text, specs
+from . import github_release, oneshot_build, oneshot_device, oneshot_spec, pr_text, release, specs
 from .oneshot_profile import kinds_of
 from .query import ROOT
 
@@ -33,7 +32,6 @@ WORKFLOWS = ".github/workflows/"
 CI = f"{WORKFLOWS}ci.yml"
 # The workflow's events. Written unquoted: `test_prerequisite_review` reads a quoted push as a git push.
 TRIGGERS = set("push pull_request".split())
-RELEASE_SECONDS = 600   # the upload of a debug APK of tens of megabytes
 KIND_PROMPT_NAMES = {"webapp": "a web app", "android": "an Android app", "desktop": "a Windows app"}
 
 
@@ -199,11 +197,6 @@ def froze(spec: dict, head: str) -> dict:
         raise
 
 
-def _url(done: subprocess.CompletedProcess) -> str | None:
-    found = re.findall(r"https://\S+/releases/\S+", done.stdout or "") if not done.returncode else []
-    return found[-1] if found else None
-
-
 def released(spec: dict) -> dict:
     """The APK the final gate froze, attached to a draft prerelease of the repository, which the pull request's
     body links: the URL, the asset's name and digest and the head, or why it could not. The owner decided on
@@ -218,25 +211,29 @@ def released(spec: dict) -> dict:
         shutil.rmtree(Path(frozen["path"]).parent, ignore_errors=True)
         return old
     file, tag = Path(frozen["path"]), f"oneshot-apk-{head[:12]}"
-    view = ["gh", "release", "view", tag, "--json", "url", "--jq", ".url"]
-    upload = ["gh", "release", "upload", tag, str(file), "--clobber"]
     try:
         if not file.is_file() or android_owned.sha256(file) != frozen["sha256"]:
             raise ValueError("최종 게이트가 고정한 APK 사본이 없거나 바뀌었다")
+        repo = github_release.slug(release.remote(path))
+
+        def found() -> dict | None:
+            return next((r for r in github_release.releases(repo) if r.get("tag_name") == tag), None)
+
         # This head's release already there (an earlier upload, or a create whose reply was lost) gets this
         # APK as its asset: a second draft of the same tag would leave the first behind.
-        if url := _url(specs.sh(view, path, 60)):
-            done = specs.sh(upload, path, RELEASE_SECONDS)
-        else:
-            done = specs.sh(["gh", "release", "create", tag, str(file), "--draft", "--prerelease",
-                             "--title", f"{spec['repo']} 디버그 APK · {head[:12]}",
-                             "--notes", f"원샷 실행의 첫 PR 이 링크하는 디버그 APK 다. 빌드 커밋 `{head}`."],
-                            path, RELEASE_SECONDS)
-            if not (url := _url(done)) and (url := _url(specs.sh(view, path, 60))):
-                done = specs.sh(upload, path, RELEASE_SECONDS)
-        if done.returncode or not url:
-            raise ValueError(f"gh release 실패 — {((done.stderr or done.stdout or '').strip())[-300:]}")
-        return {"head": head, "name": frozen["name"], "sha256": frozen["sha256"], "url": url, "tag": tag}
+        if not (held := found()):
+            try:
+                held = github_release.create(repo, tag, None, f"{spec['repo']} 디버그 APK · {head[:12]}",
+                                             f"원샷 실행의 첫 PR 이 링크하는 디버그 APK 다. 빌드 커밋 `{head}`.",
+                                             draft=True, prerelease=True)
+            except github_release.Failed:
+                if not (held := found()):
+                    raise
+        for asset in held.get("assets") or []:   # S8's own policy: the asset of that name is replaced
+            if asset["name"] == frozen["name"]:
+                github_release.delete_asset(repo, asset["id"])
+        github_release.upload(repo, held["id"], file, frozen["name"])
+        return {"head": head, "name": frozen["name"], "sha256": frozen["sha256"], "url": held["html_url"], "tag": tag}
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         return {"head": head, "error": str(exc) or type(exc).__name__}
     finally:
