@@ -185,6 +185,45 @@ def test_a_flag_that_cannot_be_restored_after_creation_rolls_the_root_back(job, 
     assert stopped == [101] and {101, 102} <= set(closed)
 
 
+def test_a_failed_stdin_restore_still_restores_the_log(job, tmp_path, monkeypatch):
+    import msvcrt
+
+    real = os.set_handle_inheritable
+    with (tmp_path / "long-lived.log").open("wb") as log:
+        kept = msvcrt.get_osfhandle(log.fileno())
+
+        def failing(handle, inheritable):
+            if not inheritable and handle != kept:
+                raise OSError("stdin restore failed")
+            real(handle, inheritable)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "set_handle_inheritable", failing)
+            patch.setattr(job, "_create", lambda *_: (101, 102, 103))
+            patch.setattr(job, "_rollback", lambda *_: None)
+            with pytest.raises(OSError, match="stdin restore failed"):
+                job.start([sys.executable], tmp_path, dict(os.environ), None, log)
+
+        assert not os.get_handle_inheritable(kept)
+
+
+def test_a_root_that_ends_between_two_reads_is_never_reported_as_zero_left(job, monkeypatch):
+    reads = iter([1, 1, 0])
+    monkeypatch.setattr(job, "_strays", lambda: next(reads, 0))
+
+    proof = job.end(0)
+
+    assert not any(reason.startswith("0 root(s)") for reason in proof["reasons"])
+
+
+def test_reading_members_handles_every_ready_batch(job, monkeypatch):
+    fed(job, monkeypatch, [(owned_job.NEW, pid) for pid in range(100, 164)], [(owned_job.NEW, 164)])
+
+    job.members()
+
+    assert len(job.joined) == 65
+
+
 def test_the_root_inherits_only_its_own_input_and_log(job, tmp_path):
     import msvcrt
 

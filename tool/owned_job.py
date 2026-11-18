@@ -142,8 +142,14 @@ class Job:
                         os.set_handle_inheritable(handle, True)
                     created = self._create(argv, cwd, env, desktop, handles)
                 finally:
-                    for handle in handles:
-                        os.set_handle_inheritable(handle, False)
+                    failed = None
+                    for handle in handles:   # each one restored, whatever another one did
+                        try:
+                            os.set_handle_inheritable(handle, False)
+                        except OSError as error:
+                            failed = failed or error
+                    if failed:
+                        raise failed
         except BaseException:
             if isinstance(created, tuple):   # created, then restoring a flag failed: owned and rolled back
                 self._rollback(created[0], created[1])
@@ -194,8 +200,11 @@ class Job:
             wait_ms = 0
         return found
 
-    def _pump(self, wait_ms: int = 0) -> None:
-        for message, pid in self._messages(wait_ms):
+    def _pump(self, wait_ms: int = 0) -> int:
+        """Handle one bounded batch of messages; how many there were."""
+
+        found = self._messages(wait_ms)
+        for message, pid in found:
             if message == NEW:
                 entry = {"pid": pid, "handle": None, "identity": None, "exited": False}
                 handle = self.k.OpenProcess(OPEN, False, pid)
@@ -209,11 +218,14 @@ class Job:
                 entry = next((e for e in self.joined if e["pid"] == pid and not e["exited"]), None)
                 if entry:
                     entry["exited"] = True
+        return len(found)
 
     def members(self) -> list[dict]:
-        """The identities of every member that joined and could be held, alive or not."""
+        """The identities of every member that joined and could be held, alive or not: every message ready
+        now is handled first, batch after batch."""
 
-        self._pump()
+        while self._pump() == 64:
+            pass
         return [entry["identity"] for entry in self.joined if entry["identity"]]
 
     def _gone(self, entry: dict) -> bool:
@@ -255,8 +267,9 @@ class Job:
         read = not isinstance(accounting, int)
         left = [entry["identity"] or {"pid": entry["pid"]} for entry in self.joined if not self._gone(entry)]
         reasons = [f"no exit proven for pid {member['pid']}" for member in left]
-        if self._strays():
-            reasons.append(f"{self._strays()} root(s) refused at start not proven ended")
+        strays = self._strays()
+        if strays:
+            reasons.append(f"{strays} root(s) refused at start not proven ended")
         if not terminated:
             reasons.append(f"cannot terminate the job: Windows error {failure}")
         if not read:
