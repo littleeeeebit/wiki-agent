@@ -75,10 +75,11 @@ These are proposals that each step's document settles:
 ## One attempt
 
 ```text
-[release] pressed (patch | minor | major, or the seed for a first release)
-  -> reserve: one attempt per remote; a second press while one runs is refused
-  -> pin: fetch, take origin/main's SHA once; the version is chosen against it
-  -> record pending in the ledger before any remote write
+[release] pressed (patch | minor | major, or the seed for a first release), carrying the shown version
+  -> check: an attempt already running for this remote refuses the press
+  -> pin: fetch, take origin/main's SHA once; the selector recomputes the version
+  -> validate: a version other than the shown one refuses the press; nothing is written
+  -> reserve: the attempt for this remote, recorded pending in the ledger before any remote write
   -> checkout: fresh detached checkout of the SHA
   -> build: each declared kind, version injected; Android gives an unsigned release APK
   -> sign: Android only, the repository's release key, outside the build command
