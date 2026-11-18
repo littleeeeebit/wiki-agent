@@ -121,7 +121,7 @@ any job and outside the record. 9d2 changes it:
 - The caller gets the job handle, records the root's identity (pid, creation
   time, image) while it is still suspended, and resumes it.
 - Membership is followed as it happens. The job is tied to an I/O completion
-  port, which posts `JOB_OBJECT_MSG_NEW_PROCESS` for every process that joins
+  port before its first process is created, and the port posts `JOB_OBJECT_MSG_NEW_PROCESS` for every process that joins
   and `JOB_OBJECT_MSG_EXIT_PROCESS` or `JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS`
   for every one that leaves. On each join the look opens the pid at once and
   keeps the handle only if `IsProcessInJob` confirms it on that same handle,
@@ -133,6 +133,14 @@ any job and outside the record. 9d2 changes it:
   observation, never as the proof: Windows can report zero before a terminated
   process has finished exiting. A join the look could not open in time, or a
   join without its exit message, leaves the proof inconclusive.
+- Windows does not guarantee those messages, so a member whose join and exit
+  were both lost would be missing from every rule above. Once the job has
+  ended and can admit no new member, its cumulative `TotalProcesses` count,
+  from `JobObjectBasicAccountingInformation`, must equal the number of
+  distinct members the look verified and held. Any difference leaves the proof
+  inconclusive. The count proves coverage; the signalled handles prove exit.
+  9d2 tests a windowless child, with no listener, whose two messages are both
+  dropped.
 
 `owned_desktop()` binds the calling thread with `SetThreadDesktop`, which fails
 on a thread that already has windows or hooks, and it restores and closes on
@@ -240,20 +248,28 @@ takes the look's job handles and completion port with it. Kill-on-close then
 asks Windows to end the jobs' processes, but nothing left proves they finished.
 A job's name can vanish while a process still holds the job, and a process
 that joined after the last recorded join has no identity to test. So recovery
-does not try to prove a crashed look clean from names. It proves it in one of
-two ways:
+does not try to prove from names that the processes ended. It accepts one of
+three proofs:
 
-- the PC restarted after the record was written, read from the boot time.
-  Every process the look started has ended;
-- the look's record shows its proof completed before the crash.
+- the look's record shows its proof completed before the crash;
+- the PC restarted after the record was written, read from the boot time;
+- the original logon session ended. The record holds that session's logon id
+  (its LUID) and logon time. The proof is that no logon session with that id
+  and time exists any more. A newer logon, which can run beside the old one
+  under fast user switching, proves nothing by itself.
 
-Otherwise recovery kills what it can still identify: a recorded identity that
-reads the same, by its handle, and the job, if it still opens by the recorded
-name in the record's own session namespace. It then holds the run and names the
-record. The owner clears the hold by restarting or signing out, which the boot
-time or the record's session logon time, read again, then proves. Name probes for jobs and the
-desktop run only in the record's session and window station; elsewhere they
-are not an answer.
+The last two prove only that the processes ended. Recovery then removes the
+record's disposable folders and checks they are gone; a run-owned profile or
+temp folder survives a restart. The record is cleared only after both. Without
+a process proof, recovery kills what it can still identify: a recorded identity
+that reads the same, by its handle, and the job, if it still opens by the
+recorded name in the record's own session namespace. It then holds the run and
+names the record. The owner releases the hold by restarting or signing out,
+and the next look applies the proofs above. A folder that cannot be removed
+keeps the hold. 9d2 tests a crashed look that leaves its profile behind and
+stays held while removing it fails. Name probes for jobs and the desktop run
+only in the record's session and window station; elsewhere they are not an
+answer.
 
 ## Refusals and findings
 
