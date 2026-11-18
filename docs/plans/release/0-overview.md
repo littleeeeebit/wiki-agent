@@ -209,7 +209,9 @@ So are a missing release tool, a key the server refuses, and a git or GitHub
 failure. A build that a person stopped, or that hit its deadline or went
 silent, is the machine's. So is one whose shell reports, in the log's last
 lines, that it cannot find a program by bare name that is not on the build's
-`PATH` (`release.lacks_tool`). A missing script given by path is the
+`PATH` (`release.lacks_tool`). The message is read by its shape, not its
+words, so a localized PowerShell or cmd message counts as well. A missing
+script given by path is the
 repository's, and a source change can restore it. None of the machine's
 failures goes to an agent.
 
@@ -226,8 +228,11 @@ version files, signing and publishing as out of bounds.
 The task gets a linked worktree on a new branch at the pinned commit. The
 person's checkout is never switched, and nothing in it is carried over.
 The gate read from that worktree is the done condition, so the person's
-branch never supplies it. The worktree is held from its creation, and if
-the spec cannot be saved, the worktree and its branch are removed. A
+branch never supplies it. Its path is held before the worktree is made, so
+a path another request holds is neither made nor removed. If the spec
+cannot be saved, the worktree and its branch are removed while still held.
+The branch is kept if another checkout stands on it, and anything left is
+named in the recorded failure. A
 project chosen as a linked checkout gets no task, since task worktrees are
 made beside the original checkout only. Its pull request goes to the branch
 the attempt pinned (`main`). Its first turn starts as `[시작]` starts one.
@@ -241,8 +246,8 @@ ledger records the task's ID under the attempt's `repair`. When its first
 turn cannot start, the task waits in its worktree, and the ledger records
 both its ID and the refusal. `release.rehearse` hands its failures over the
 same way, so the unpublished path exercises the hand-off. With a repair,
-it rehearses a branch only, since that branch is where the repair's pull
-request goes.
+it rehearses only a branch that `origin` has, since that branch is where
+the repair's pull request goes.
 
 ## Existing debug installations
 

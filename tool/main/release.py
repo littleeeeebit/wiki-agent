@@ -234,10 +234,13 @@ def tools() -> dict:
 
 SECRET = "RELEASE_KEY_PASSWORD"   # reaches the key tools only, set by `keyed`; never inherited
 UNSHARED = {SECRET, *host.TOKENS}
-# What PowerShell, cmd and sh print for a command they cannot find, naming it.
-MISSING_TOOL = re.compile(r"The term '(?P<ps>[^']+)' is not recognized as the name of a cmdlet|"
-                          r"'(?P<cmd>[^']+)' is not recognized as an internal or external command|"
+# The name a shell's not-found message gives, by the message's shape so that a localized one matches too. PowerShell
+# echoes the name before its message (`cargo: 'cargo' 용어가 …`, Windows PowerShell `cargo : …`), English or not;
+# cmd starts the line with it (`'cargo'은(는) 내부 또는 외부 명령…`); sh says `cargo: command not found`.
+MISSING_TOOL = re.compile(r"^(?P<ps>[^\s:'/\\]+) ?: (?:'(?P=ps)'|The term '(?P=ps)')|"
+                          r"^'(?P<cmd>[^']+)'|"
                           r"(?:^|:\s)(?P<sh>[^\s:/\\]+): (?:command )?not found", re.IGNORECASE | re.MULTILINE)
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
 LAST_LINES = 12   # where a failed command's own diagnostic sits in its log
 
 
@@ -256,7 +259,7 @@ def lacks_tool(out: str, env: dict) -> bool:
     source change can restore. An earlier optional probe is not why the build failed."""
 
     # ponytail: a not-found message in the last lines beside an unrelated error still reads as the machine's
-    tail = "\n".join([line for line in out.splitlines() if line.strip()][-LAST_LINES:])
+    tail = "\n".join([line for line in ANSI.sub("", out).splitlines() if line.strip()][-LAST_LINES:])
     names = (m["ps"] or m["cmd"] or m["sh"] for m in MISSING_TOOL.finditer(tail))
     return any(not re.search(r"[/\\]|^\.", name) and shutil.which(name, path=env.get("PATH")) is None
                for name in names)
@@ -636,11 +639,11 @@ def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None,
     (`release_publish.repaired`), so step 4's hand-off runs on this unpublished path."""
 
     halt = halt or threading.Event()
-    branch = ref.removeprefix("origin/")   # a repair's pull request goes to a branch, never a commit or a tag
-    if repair is not None and not any(subprocess.run(["git", "-C", str(repo), "show-ref", "--verify", "--quiet", r],
-                                                     capture_output=True, timeout=30).returncode == 0
-                                      for r in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}")):
-        raise ValueError(f"`{ref}` 는 브랜치가 아니다 — 수정 작업의 PR 이 갈 곳이 없으니 리허설할 브랜치를 골라라")
+    # A repair's pull request goes to a branch GitHub has, never a commit, a tag or a branch only this clone has.
+    branch = ref.removeprefix("origin/")
+    if repair is not None and subprocess.run(["git", "-C", str(repo), "ls-remote", "--exit-code", "--heads", "origin",
+                                              f"refs/heads/{branch}"], capture_output=True, timeout=60).returncode:
+        raise ValueError(f"`{ref}` 는 origin 의 브랜치가 아니다 — 수정 작업의 PR 이 갈 곳이 없으니 리허설할 브랜치를 골라라")
     kit, attempt = tools(), f"rehearsal-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"   # two in one second
     sha = pin(repo, ref)
     cfg = settings(repo, sha)

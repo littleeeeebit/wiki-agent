@@ -14,7 +14,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from common import errorlog, host
+from common import errorlog, host, worktree_home
 from workspace import checkout, remove
 
 from . import channels, specs, work
@@ -61,10 +61,15 @@ def start(repo: Path, record: dict) -> str:
     # saved, so no other request can take the new worktree before its first turn does.
     with specs._lock, specs._files:
         sid = specs.unique(repo, f"release-fix-{record['version'].replace('.', '-')}")
-        path = specs.create(repo, sid, linked=True, base=record["sha"])
-        release = lambda: None   # noqa: E731 — until the hold below is taken
+        path = worktree_home(Path(top)) / sid   # where `create` puts it, spelled as it will
+        # Held before it exists: a refused hold has made nothing, and rollback removes only what this made.
+        release = specs.hold(work._busy, specs._lock, str(path), "그 작업트리를 다른 요청이 쓰고 있다", kind="turn")
         try:
-            release = specs.hold(work._busy, specs._lock, str(path), "그 작업트리를 다른 요청이 쓰고 있다", kind="turn")
+            path = specs.create(repo, sid, linked=True, base=record["sha"])
+        except BaseException:
+            release()
+            raise
+        try:
             gate = specs.gate_of(repo, path)   # the pinned commit's gate, not the person's branch's
             if not gate:
                 raise ValueError("연결 먼저 — 고정한 커밋의 `.wiki/adapter.toml` 에 `gate_cmd` 가 없다")
@@ -76,9 +81,11 @@ def start(repo: Path, record: dict) -> str:
                         "start_head": record["sha"], "pr": None, "report": None, "gate": None, "fault": None,
                         "cell": {"model": "", "effort": "", "fast": False},
                         "history": [{"ts": now, "state": "정리됨"}, {"ts": now, "state": "작업 중"}]})
-        except BaseException:
+        except BaseException as exc:
+            left = undo(repo, path, sid, record["sha"])   # while still held
             release()
-            undo(repo, path, sid, record["sha"])
+            if left and isinstance(exc, Exception):
+                raise RuntimeError(f"{exc} — 정리하지 못한 것: {left}") from exc
             raise
     try:
         try:
@@ -100,13 +107,25 @@ def unshared(spec: dict | None) -> dict:
     return {"env": dict.fromkeys(host.TOKENS)} if ((spec or {}).get("source") or {}).get("focus") == "release" else {}
 
 
-def undo(repo: Path, path: Path, branch: str, sha: str) -> None:
-    """The worktree and branch of a task whose spec was never saved: nothing would own them. The branch goes only
-    while it still points at the commit it was made at."""
+def undo(repo: Path, path: Path, branch: str, sha: str) -> str:
+    """The worktree and branch of a task whose spec was never saved, since nothing would own them; what is left
+    is returned, empty when nothing is. The branch goes only while it still points at the commit it was made at
+    and no other checkout stands on it."""
 
-    remove(repo, path, force=True, keep_branch=True)
-    subprocess.run(["git", "-C", str(repo), "update-ref", "-d", f"refs/heads/{branch}", sha],
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+    try:
+        remove(repo, path, force=True, keep_branch=True)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return f"작업트리 {path} ({exc}), 브랜치 {branch}"
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=30)
+
+    trees = git("worktree", "list", "--porcelain")
+    if trees.returncode or f"branch refs/heads/{branch}" in trees.stdout.splitlines():
+        return f"브랜치 {branch} (다른 체크아웃이 쓰고 있거나 확인하지 못했다)"
+    done = git("update-ref", "-d", f"refs/heads/{branch}", sha)
+    return f"브랜치 {branch} ({done.stderr.strip() or done.returncode})" if done.returncode else ""
 
 
 class Started(Exception):

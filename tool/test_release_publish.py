@@ -171,19 +171,31 @@ SOURCE_ERROR = "error TS2307: Cannot find module './theme.js' ghp_" + "x" * 36
 
 @pytest.mark.parametrize("ending, repairable", [
     ("stopped", False), ("deadline", False), ("missing cmdlet", False), ("missing command", False),
+    ("missing cmdlet, Korean PowerShell 7", False), ("missing command, Korean cmd", False),
+    ("installed tool's own error", True),
     ("missing repository script", True), ("early optional probe", True), ("source", True)])
 def test_only_a_build_the_source_broke_needs_a_repair(monkeypatch, tmp_path, ending, repairable):
     halt = release.threading.Event()
     if ending == "stopped":
         halt.set()   # a person's stop, without a cut reason of its own
+    (tools := tmp_path / "bin").mkdir()
+    for name in ("node.exe", "node"):   # on the build's PATH
+        (tools / name).write_text("", encoding="utf-8")
+        (tools / name).chmod(0o755)
     said = {"missing cmdlet": "cargo : The term 'cargo' is not recognized as the name of a cmdlet",
+            # What this machine's pwsh 7 prints, colours and all, and its cmd.
+            "missing cmdlet, Korean PowerShell 7": "\x1b[31;1mcargo: \x1b[31;1m'cargo' 용어가 cmdlet, 함수, 스크립트 "
+                                                   "파일 또는 실행할 수 있는 프로그램 이름으로 인식되지 않습니다.\x1b[0m",
+            "missing command, Korean cmd": "'cargo'은(는) 내부 또는 외부 명령, 실행할 수 있는 프로그램, 또는\n"
+                                           "배치 파일이 아닙니다.",
+            "installed tool's own error": "node: 'node' could not load ./build.mjs\n" + SOURCE_ERROR,
             "missing command": "> tauri android build\nbash: rustup: command not found\nnpm ERR! code 127",
             "missing repository script": "The term './scripts/package-android.ps1' is not recognized as the "
                                          "name of a cmdlet",
             "early optional probe": "\n".join(["bash: rustup: command not found", *(["compiling"] * 15),
                                                SOURCE_ERROR]),
             "source": SOURCE_ERROR}.get(ending, "")
-    monkeypatch.setattr(release, "environment", lambda kit: {"PATH": str(tmp_path / "bin")})   # holds no tools
+    monkeypatch.setattr(release, "environment", lambda kit: {"PATH": str(tools)})   # holds `node` only
     monkeypatch.setattr(release.specs, "gate", lambda *a, **k: (
         None if ending == "deadline" else 1, said, {"deadline": "시간 초과"}.get(ending, "")))
     (src := tmp_path / "src").mkdir()

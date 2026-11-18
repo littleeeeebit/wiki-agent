@@ -125,6 +125,44 @@ def test_a_task_that_cannot_be_saved_leaves_no_worktree_or_branch(repo, monkeypa
     assert left_nothing(repo) and begun == []
 
 
+def test_a_path_another_request_holds_is_never_made_or_removed(repo):
+    repo, record, begun = repo
+    planned = str(worktree_home(repo) / "release-fix-0-1-1")
+    other = specs.hold(work._busy, specs._lock, planned, "busy")   # e.g. an ordinary work request on that path
+    try:
+        with pytest.raises(specs.HTTPException):
+            release_repair.start(repo, record)
+        assert planned in work._busy and begun == []   # still the other request's
+        assert not (worktree_home(repo) / "release-fix-0-1-1").exists()
+        assert not git(repo, "branch", "--list", "release-fix-0-1-1") and not (specs.SPECS / "budget").exists()
+    finally:
+        other()
+
+
+@pytest.mark.parametrize("left", ["the branch is checked out elsewhere", "the ref cannot be deleted"])
+def test_what_a_rollback_cannot_remove_is_reported_with_the_failure(repo, monkeypatch, tmp_path, left):
+    repo, record, _ = repo
+    run = release_repair.subprocess.run
+
+    def unsaved(spec):
+        raise OSError("disk full")
+
+    def refusing(argv, **kwargs):
+        if left == "the ref cannot be deleted" and "update-ref" in argv:
+            return SimpleNamespace(returncode=1, stdout="", stderr="cannot lock ref")
+        if left == "the branch is checked out elsewhere" and "list" in argv:   # another checkout stands on it
+            return SimpleNamespace(returncode=0, stdout=f"worktree {tmp_path}/elsewhere\nHEAD {record['sha']}\n"
+                                                        "branch refs/heads/release-fix-0-1-1\n", stderr="")
+        return run(argv, **kwargs)
+
+    monkeypatch.setattr(specs, "save", unsaved)
+    monkeypatch.setattr(release_repair, "subprocess", SimpleNamespace(run=refusing))   # its own calls only
+    with pytest.raises(RuntimeError, match="disk full — 정리하지 못한 것: 브랜치 release-fix-0-1-1"):
+        release_repair.start(repo, record)
+    assert not (worktree_home(repo) / "release-fix-0-1-1").exists()
+    assert git(repo, "branch", "--list", "release-fix-0-1-1")   # kept, and said so
+
+
 def test_a_linked_checkout_chosen_as_the_project_is_refused_before_anything_is_made(repo, monkeypatch, tmp_path):
     repo, record, _ = repo
     linked = tmp_path / "budget-linked"

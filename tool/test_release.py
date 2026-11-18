@@ -322,14 +322,17 @@ def test_the_rehearsal_hands_a_failed_build_to_repair_and_nothing_else(tmp_path,
     monkeypatch.setattr(release, "facts", lambda apk, kit: seen(name="0.1.0", code=1000, debuggable=True, certs=["c" * 64],
                                                                 package=ANDROID["application_id"]))
     repo, _ = committed(tmp_path, {"a.txt": "a"})
-    subprocess.run(["git", "branch", "-qM", "main"], cwd=repo, check=True)
-    subprocess.run(["git", "tag", "v0.0.9"], cwd=repo, check=True)
+    subprocess.run(["git", "init", "-q", "--bare", str(tmp_path / "origin.git")], check=True)
+    for args in (["branch", "-qM", "main"], ["remote", "add", "origin", str(tmp_path / "origin.git")],
+                 ["push", "-q", "origin", "main"], ["tag", "v0.0.9"], ["branch", "experiment"]):
+        subprocess.run(["git", *args], cwd=repo, check=True)
     asked = []
 
     def repair(repo, record):
         return asked.append(record) or "release-fix-0-1-0"
 
-    for ref in ("v0.0.9", "0" * 40):   # a repair's pull request needs a branch to go to
+    # A repair's pull request needs a branch GitHub has: not a tag, a commit, or a branch only the clone has.
+    for ref in ("v0.0.9", "0" * 40, "experiment"):
         with pytest.raises(ValueError, match="브랜치가 아니다"):
             release.rehearse(repo, ref, repair=repair)
     done = release.rehearse(repo, repair=repair)
