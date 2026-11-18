@@ -203,6 +203,26 @@ def test_reading_members_handles_every_ready_batch(job, monkeypatch):
     assert len(job.joined) == 65
 
 
+def test_a_failure_closing_the_input_after_creation_rolls_the_root_back(job, tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    real, rolled_back = open, []
+
+    @contextmanager
+    def failing_close(*args, **kwargs):
+        with real(*args, **kwargs) as stream:
+            yield stream
+        raise OSError("input close failed")
+
+    monkeypatch.setattr(owned_job, "open", failing_close, raising=False)
+    monkeypatch.setattr(job, "_create", lambda *_: (101, 102, 103))
+    monkeypatch.setattr(job, "_rollback", lambda *handles: rolled_back.append(handles))
+    with real(tmp_path / "caller.log", "wb") as log, pytest.raises(OSError, match="input close failed"):
+        job.start([sys.executable], tmp_path, dict(os.environ), None, log)
+
+    assert rolled_back == [(101, 102)]
+
+
 def test_the_root_inherits_only_its_own_input_and_log(job, tmp_path):
     import msvcrt
 

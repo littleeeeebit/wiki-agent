@@ -136,19 +136,24 @@ class Job:
         import msvcrt
 
         # The child inherits launcher-owned duplicates; the caller's handles and their flags are never touched.
-        here, copies = self.k.GetCurrentProcess(), []
+        here, copies, created = self.k.GetCurrentProcess(), [], None
         try:
-            with open(os.devnull, "rb") as null:
-                for file in (null, log):
-                    copy = w.HANDLE()
-                    if not self.k.DuplicateHandle(here, msvcrt.get_osfhandle(file.fileno()), here,
-                                                  ctypes.byref(copy), 0, True, 2):   # inheritable, same access
-                        raise Refused(f"cannot hand {argv[0]} its input and log: {ctypes.get_last_error()}")
-                    copies.append(copy.value)
-                created = self._create(argv, cwd, env, desktop, copies)
-        finally:
-            for copy in copies:
-                self.k.CloseHandle(copy)
+            try:
+                with open(os.devnull, "rb") as null:
+                    for file in (null, log):
+                        copy = w.HANDLE()
+                        if not self.k.DuplicateHandle(here, msvcrt.get_osfhandle(file.fileno()), here,
+                                                      ctypes.byref(copy), 0, True, 2):   # inheritable, same access
+                            raise Refused(f"cannot hand {argv[0]} its input and log: {ctypes.get_last_error()}")
+                        copies.append(copy.value)
+                    created = self._create(argv, cwd, env, desktop, copies)
+            finally:
+                for copy in copies:
+                    self.k.CloseHandle(copy)
+        except BaseException:
+            if isinstance(created, tuple):   # created, then the cleanup around it failed: owned and rolled back
+                self._rollback(created[0], created[1])
+            raise
         if not isinstance(created, tuple):
             if created == ELEVATION_REQUIRED:
                 raise Refused("the app asks for elevation; it is not retried through the shell")
