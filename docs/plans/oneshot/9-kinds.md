@@ -330,8 +330,8 @@ A finding with neither is not deferrable and stays a blocker. A `desktop`
 clean round counts only when every `look` check passed on that round's HEAD.
 A failed or unread observation is a failure, never a skip. `owner` checks
 stay pending through the owned rounds. R3 opens only when every pending
-`owner` check has passing evidence on the current HEAD and the frozen build's
-manifest digest. The sheet shows the round that closed each owed ID.
+`owner` check has passing evidence on the current HEAD and the build's
+identity: its files and its launch settings, above. The sheet shows the round that closed each owed ID.
 
 #### Screens
 
@@ -398,9 +398,22 @@ not made.
 What is read is limited where the frame is sampled, not afterwards. A capture
 operation is one of two kinds:
 
-- Window-bound: it reads one bound window's own content through an API that
-  samples only that window, such as `PrintWindow`. Nothing outside the window
-  can enter the read, whatever moves over it.
+- Window-bound: it reads one bound window's own content through a source bound
+  to that window instance, never through a bare handle. Nothing outside the
+  window can enter the read, whatever moves over it. Windows can recycle a
+  destroyed window's handle, so a handle proven a moment ago may name another
+  app's window by the time a call like `PrintWindow` uses it. The round
+  therefore does not use `PrintWindow` on the owner's desktop. It works in
+  this order:
+  1. It creates a Windows Graphics Capture item for the handle. The item is
+     tied to one window instance and closes when that window is destroyed.
+  2. It proves the binding again. When the proof fails, it closes the item
+     before any frame is read.
+  3. Only then does it start the frame pool. An item that closed delivers no
+     frame, and the check fails without reading anything.
+
+  Where no such item can be made, the check stays pending, unless an approved
+  surface can supply its evidence.
 - Surface: it reads a region of the screen, which is the only way to observe
   how an overlay composes, or what the app itself captures from the screen.
   Whatever is on that region at the moment of sampling is read, including a
@@ -483,7 +496,7 @@ Each step's fakes include at least these:
 | 9e2 | A missing tool at the first stage; a tool removed between two normal stages, so the second stops with `toolchain` before it runs; a resume after a tool disappeared; an undeclared command, which goes back to its author and runs nothing. None may call an installer |
 | 9e3 | Two native previews with overlapping relative paths, and a web preview, through one R2 approval; a preview whose descriptor says nothing of a window, whose process must still start on the owned desktop; a packaged-only `run`; a companion file changed under the same HEAD, and a launch flag changed alone, each a new build that clears the earlier passes and approval; a working directory that points into the live worktree |
 | 9e4 | A driver report that misses an approved state; a complete report with a `never` feature; a failed cleanup proof; an `owner` check still pending after both owned rounds |
-| 9e5 | An absent, a stale and a duplicate approval; valid app controls with a blank or wrong capture; a first binding after approval that succeeds, then the same window replaced, which is never read; a window that moves over a window-bound capture between the check and the sampling, which does not enter the read; a surface check without its surface in the approval, which stays pending with R3 closed; a cleanup failure; a mixed run in which the phone passes first |
+| 9e5 | An absent, a stale and a duplicate approval; valid app controls with a blank or wrong capture; a first binding after approval that succeeds, then the same window replaced, which is never read; a handle recycled to another app's window after the proof but before the capture, which is never read; a window that moves over a window-bound capture between the check and the sampling, which does not enter the read; a surface check without its surface in the approval, which stays pending with R3 closed; a cleanup failure; a mixed run in which the phone passes first |
 | 9e6 | A desktop-only asset; both assets on one prerelease; a resumed upload; a run with CI off; a CI-enabled mixed run with a PC tool the image lacks, whose workflow must carry its `setup` step and the check that it is on `PATH`; a `preinstalled` tool, whose workflow carries only that check |
 
 ## What does not change
