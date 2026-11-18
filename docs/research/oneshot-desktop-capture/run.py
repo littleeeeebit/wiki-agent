@@ -47,6 +47,8 @@ if sys.argv[1:] == ["--check"]:   # two publishers, modeled with files only
     print("reservation check passed")
     sys.exit(0)
 mode, saved = sys.argv[1], Path(sys.argv[2])   # run.py wgc|layers <folder for the outputs and the cleanup receipt>
+if mode not in ("wgc", "layers"):
+    sys.exit(f"refused before starting anything: unknown mode {mode!r}, expected wgc or layers")
 refusal = reserve(saved, mode)
 if refusal:
     sys.exit(f"refused before starting anything: {refusal}")
