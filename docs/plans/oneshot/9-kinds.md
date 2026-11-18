@@ -278,12 +278,23 @@ is refused at the gate when:
 - it is packaged, as MSIX or as an installer;
 - its manifest asks for elevation.
 
-The gate freezes that folder into run-owned staging, with a manifest of every
-file's digest. Every look round launches from the frozen copy and records the
-manifest's digest. The owner's desktop round launches the same frozen copy,
-and R3 requires the same digest. A change to any file in it, even under the
-same HEAD, is a new build. It clears the clean rounds and any pending
-approval.
+The gate freezes that folder into run-owned staging. It records a manifest of
+every file's digest, and the launch settings:
+
+- the program, as a path inside the frozen folder;
+- its arguments;
+- its working directory, also inside the frozen folder;
+- the settings that point its data at `{data}`.
+
+The build's identity is one digest over the manifest and the launch settings.
+Each attempt gets a fresh, run-owned data folder for `{data}`. No setting may
+point into the live worktree.
+
+Every look round launches the frozen copy with those settings and records the
+identity. The owner's desktop round launches the same identity, and R3
+requires it. A change to any file, argument, working directory or data
+setting, even under the same HEAD, is a new build. It clears the clean rounds
+and any pending approval.
 
 At launch, the research note's refusals apply as written. A main window
 outside the app's job ends the round as failed, and so does a handoff to
@@ -367,30 +378,42 @@ failed.
 #### The owner's desktop round
 
 After two clean rounds, a run with a pending `owner` check waits for the owner,
-as the phone round does. The approval is one-time. It is recorded with the
-run, the HEAD, the frozen build's manifest digest, the check IDs and the
-capture scope. The server checks all of these again before anything starts on
-the owner's desktop.
+as the phone round does. The approval is one-time. It is recorded with:
 
-The capture scope limits what is read, not only what is kept. It allows only
-these sources:
+- the run and the HEAD;
+- the build's identity;
+- the check IDs;
+- what the round will start: the app and each check's fixture, by name;
+- each capture operation and the surface it reads.
 
-- a window of the round's own jobs (the app's or the fixture's), proven again
-  immediately before each capture: the same handle, process, class and job
-  membership as approved;
-- the screen region of such windows' frames, read only when no window outside
-  the round's jobs lies above any part of it in z-order.
+The server checks all of these again before anything starts on the owner's
+desktop.
 
-A capture of a window that closed or was replaced is refused, and so is a
-capture of a region an outside window overlaps or that cannot be proven. The
-capture call is never made.
+The windows do not exist yet when the owner approves. Once the round has
+started them, it binds each approved source to the concrete job, process and
+window handle and class it created. Before every read, it proves that binding
+again. A window that closed or was replaced is never read: the capture call is
+not made.
 
-A check whose app captures more by itself, such as the whole monitor, names
-that surface in the approval, and the owner approves it before the round
-starts. Without that, the check is not run.
+What is read is limited where the frame is sampled, not afterwards. A capture
+operation is one of two kinds:
 
-A restart, a cancellation, a new HEAD or a program whose digest changed sends
-the run back to waiting for approval. An earlier approval is never applied to
+- Window-bound: it reads one bound window's own content through an API that
+  samples only that window, such as `PrintWindow`. Nothing outside the window
+  can enter the read, whatever moves over it.
+- Surface: it reads a region of the screen, which is the only way to observe
+  how an overlay composes, or what the app itself captures from the screen.
+  Whatever is on that region at the moment of sampling is read, including a
+  notification that arrives meanwhile. A surface operation runs only when the
+  approval names that region or monitor as the surface the owner allows to be
+  read. Before sampling, the round places its opaque fixture over the whole
+  region, so that what lies beneath is the round's own.
+
+A check whose evidence needs a surface the approval does not name is not run.
+It stays pending, and R3 stays closed.
+
+A restart, a cancellation, a new HEAD or a new build identity sends the run
+back to waiting for approval. An earlier approval is never applied to
 a different launch.
 
 The round:
@@ -425,7 +448,8 @@ A failed copy or upload never blocks the pull request; its body says why.
 S1's `ci` choice is kept. When CI is chosen and `desktop` is among the kinds,
 the workflow job runs on `windows-latest`:
 
-1. It takes each declared tool's confirmed `setup` step, as written.
+1. It takes each declared tool's confirmed `setup` step, as written. A
+   `preinstalled` tool has no step and goes straight to the check below.
 2. With `android` among the kinds, it also takes step 7's JDK and Android SDK
    setup.
 3. A step then checks that each declared tool is on `PATH` before the one
@@ -457,10 +481,10 @@ Each step's fakes include at least these:
 | Every step | A stopped run that tries to call the next stage, which must fail |
 | 9e1 | A `window` outside the options; a `build` part without `tools`; a tool without `setup` while CI is on; a changed `tools` list under the same choice, which needs a new confirmation |
 | 9e2 | A missing tool at the first stage; a tool removed between two normal stages, so the second stops with `toolchain` before it runs; a resume after a tool disappeared; an undeclared command, which goes back to its author and runs nothing. None may call an installer |
-| 9e3 | Two native previews with overlapping relative paths, and a web preview, through one R2 approval; a preview whose descriptor says nothing of a window, whose process must still start on the owned desktop; a packaged-only `run`; a companion file changed under the same HEAD, which is a new build |
+| 9e3 | Two native previews with overlapping relative paths, and a web preview, through one R2 approval; a preview whose descriptor says nothing of a window, whose process must still start on the owned desktop; a packaged-only `run`; a companion file changed under the same HEAD, and a launch flag changed alone, each a new build that clears the earlier passes and approval; a working directory that points into the live worktree |
 | 9e4 | A driver report that misses an approved state; a complete report with a `never` feature; a failed cleanup proof; an `owner` check still pending after both owned rounds |
-| 9e5 | An absent, a stale and a duplicate approval; valid app controls with a blank or wrong capture; a capture source that was replaced, or a region an outside window overlaps, for which the capture call is never made; a cleanup failure; a mixed run in which the phone passes first |
-| 9e6 | A desktop-only asset; both assets on one prerelease; a resumed upload; a run with CI off; a CI-enabled mixed run with a PC tool the image lacks, whose workflow must carry its `setup` step and the check that it is on `PATH` |
+| 9e5 | An absent, a stale and a duplicate approval; valid app controls with a blank or wrong capture; a first binding after approval that succeeds, then the same window replaced, which is never read; a window that moves over a window-bound capture between the check and the sampling, which does not enter the read; a surface check without its surface in the approval, which stays pending with R3 closed; a cleanup failure; a mixed run in which the phone passes first |
+| 9e6 | A desktop-only asset; both assets on one prerelease; a resumed upload; a run with CI off; a CI-enabled mixed run with a PC tool the image lacks, whose workflow must carry its `setup` step and the check that it is on `PATH`; a `preinstalled` tool, whose workflow carries only that check |
 
 ## What does not change
 
