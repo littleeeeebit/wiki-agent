@@ -215,6 +215,78 @@ def test_a_proof_that_could_not_be_saved_is_saved_on_retry_and_only_then_returne
     assert desktop_session.load(look.folder)["state"] == "proven"
 
 
+class Desktops:
+    """The desktop calls of user32, answered without a desktop."""
+
+    def __init__(self, closes=True, enumerate=None):
+        self.closes, self.enumerate, self.released, self.created = closes, enumerate, [], []
+
+    def EnumDesktopWindows(self, *args):
+        if self.enumerate:
+            raise self.enumerate
+        return 0
+
+    def CloseDesktop(self, handle):
+        self.released.append(handle)
+        return self.closes
+
+    def OpenDesktopW(self, *args):
+        desktop_session.ctypes.set_last_error(desktop_session.NOT_FOUND)
+        return None
+
+    def CreateDesktopW(self, *args):
+        self.created.append(args)
+        return 123
+
+
+def test_an_interrupted_window_wait_still_releases_the_desktop(tmp_path, monkeypatch):
+    look = desktop_session.Look(tmp_path, "desktop-interrupted")
+    look.u, look.desktop = Desktops(enumerate=KeyboardInterrupt()), 123
+    monkeypatch.setattr(native_process, "_sockets", lambda _: [])
+
+    with pytest.raises(KeyboardInterrupt):
+        look.close()
+
+    record = desktop_session.load(look.folder)
+    assert look.u.released == [123] and look.desktop is None
+    assert record["state"] == "held" and record["owner"] is None
+
+
+def test_a_desktop_that_will_not_close_keeps_its_server_the_owner(tmp_path, monkeypatch):
+    look = desktop_session.Look(tmp_path, "desktop-kept")
+    look.u, look.desktop = Desktops(closes=False), 123
+    monkeypatch.setattr(native_process, "_sockets", lambda _: [])
+
+    proof = look.close()
+
+    record = desktop_session.load(look.folder)
+    assert not proof["clean"] and any("cannot close the desktop" in reason for reason in proof["reasons"])
+    assert look.desktop == 123 and record["owner"] is not None
+    assert desktop_session.recover(look.folder) == ["desktop-kept: its server is still running"]
+
+
+def test_nothing_joins_a_look_whose_proof_is_still_unsaved(tmp_path, monkeypatch):
+    look = desktop_session.Look(tmp_path, "pending-proof")
+    save = desktop_session.save
+
+    def failing(folder, record):
+        if record["proof"] is not None:
+            raise PermissionError("receipt busy")
+        return save(folder, record)
+
+    monkeypatch.setattr(desktop_session, "save", failing)
+    monkeypatch.setattr(native_process, "_sockets", lambda _: [])
+    look.u = Desktops()
+    with pytest.raises(PermissionError, match="receipt busy"):
+        look.close()
+
+    with pytest.raises(desktop_session.Refused, match="cleanup has begun"):
+        look.open()
+    with pytest.raises(desktop_session.Refused, match="cleanup has begun"):
+        look.start("app", python(SLEEP), tmp_path)
+    assert look.u.created == []
+
+
 def test_a_relative_root_still_gives_the_app_absolute_data_paths(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "looks").mkdir()

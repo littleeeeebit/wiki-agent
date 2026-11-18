@@ -191,6 +191,7 @@ class Look:
         self.root = Path(root).absolute()   # a child starts elsewhere: its data paths must not be relative
         self.folder = self.root / name
         self.result = None   # the teardown's reasons, kept until its proof is saved
+        self.closing = False
         self.jobs: dict[str, owned_job.Job] = {}
         self.desktop = None
         self.closed = False
@@ -208,7 +209,14 @@ class Look:
         (self.folder / "evidence").mkdir()
         save(self.folder, self.record)
 
+    def _open_for_more(self) -> None:
+        if self.closing:   # nothing may join a look whose cleanup began, saved or not
+            raise Refused("the look's cleanup has begun")
+
     def open(self) -> None:
+        self._open_for_more()
+        if self.desktop:
+            raise Refused("the look's desktop is already open")
         handle = self.u.CreateDesktopW(self.record["desktop"], None, None, 0, DESKTOP_ALL, None)
         if not handle:
             raise Refused(f"cannot create the look's desktop: {ctypes.get_last_error()}")
@@ -218,6 +226,7 @@ class Look:
         """Start `argv` in a job of its own on the look's desktop, its data folders inside a disposable folder
         the record names first, its output in `evidence/<key>.log`. The root's identity."""
 
+        self._open_for_more()
         if not key.isidentifier() or key.lower() in {known.lower() for known in self.jobs}:
             raise ValueError(f"not a fresh job key: {key!r}")
         data = f"data-{key}-{uuid.uuid4().hex[:12]}"
@@ -265,28 +274,41 @@ class Look:
         if not self.desktop:
             return []
         reasons, deadline, found, error = [], time.monotonic() + seconds, None, 0
-        while True:
-            windows = []
-            ctypes.set_last_error(0)   # an empty desktop sets no error; an earlier call's must not stand in
-            ok = self.u.EnumDesktopWindows(self.desktop, _Each(lambda hwnd, _: windows.append(hwnd) or True), 0)
-            error = 0 if ok else ctypes.get_last_error()
-            found = None if error else windows   # an empty desktop answers 0 with no error
-            if found == [] or time.monotonic() >= deadline:
-                break
-            time.sleep(0.1)
+        try:
+            while True:
+                windows = []
+                ctypes.set_last_error(0)   # an empty desktop sets no error; an earlier call's must not stand in
+                ok = self.u.EnumDesktopWindows(self.desktop, _Each(lambda hwnd, _: windows.append(hwnd) or True), 0)
+                error = 0 if ok else ctypes.get_last_error()
+                found = None if error else windows   # an empty desktop answers 0 with no error
+                if found == [] or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.1)
+        finally:   # released even when the wait is interrupted; a handle that will not close is kept
+            if self.u.CloseDesktop(self.desktop):
+                self.desktop = None
+            else:
+                reasons.append(f"cannot close the desktop: Windows error {ctypes.get_last_error()}")
         if found is None:
             reasons.append(f"cannot list the desktop's windows: Windows error {error}")
         elif found:
             reasons.append(f"{len(found)} window(s) remain on the desktop")
-        if not self.u.CloseDesktop(self.desktop):
-            reasons.append(f"cannot close the desktop: Windows error {ctypes.get_last_error()}")
-        self.desktop = None
-        again = self.u.OpenDesktopW(self.record["desktop"], 0, False, DESKTOP_READ)
+        if self.desktop:
+            return reasons
+        # A reference Windows has not dropped yet can keep the name a moment: the probe is retried, bounded.
+        probe_until = time.monotonic() + 5
+        while True:
+            again = self.u.OpenDesktopW(self.record["desktop"], 0, False, DESKTOP_READ)
+            error = 0 if again else ctypes.get_last_error()
+            if again:
+                self.u.CloseDesktop(again)
+            if error == NOT_FOUND or time.monotonic() >= probe_until:
+                break
+            time.sleep(0.1)
         if again:
-            self.u.CloseDesktop(again)
             reasons.append("the desktop still opens by its name")
-        elif ctypes.get_last_error() != NOT_FOUND:
-            reasons.append(f"cannot tell whether the desktop is gone: Windows error {ctypes.get_last_error()}")
+        elif error != NOT_FOUND:
+            reasons.append(f"cannot tell whether the desktop is gone: Windows error {error}")
         return reasons
 
     def close(self, seconds: float = 30) -> dict:
@@ -295,11 +317,14 @@ class Look:
 
         if self.closed:
             return self.record["proof"]
+        self.closing = True
         if self.result is None:   # a retry after a failed save keeps the teardown it already ran
             self.result = self._teardown(seconds)
         reasons, interrupted = self.result
-        # Every part was tried: recovery may now settle the record without its server's exit.
-        record = {**self.record, "state": "held" if reasons else "proven", "owner": None,
+        # Every part was tried. Recovery may settle the record without its server's exit only once this server
+        # holds nothing of the look: a desktop handle it could not close keeps it the owner until it exits.
+        record = {**self.record, "state": "held" if reasons else "proven",
+                  "owner": self.record["owner"] if self.desktop else None,
                   "proof": {"clean": not reasons, "reasons": reasons, "uptime": uptime()}}
         save(self.folder, record)
         self.record, self.closed = record, True
