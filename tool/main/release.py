@@ -26,7 +26,7 @@ from common import is_junction, paths
 from . import oneshot_android, specs
 
 WORK = paths.RAW / "release-work"   # release-owned checkouts: server state, outside every task worktree home
-SEMVER = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")   # SemVer's core: no leading zeros
 BUMPS = ("patch", "minor", "major")
 BUILD_SECONDS, QUIET_SECONDS = 3600, 1800   # a Rust and Gradle build is long and can be silent for minutes
 ANDROID = ("build", "artifact", "application_id", "abi")
@@ -109,7 +109,9 @@ def version(releases: list[dict], taken: list[str], bump: str | None, first: str
     used = {v for t in taken if (v := parsed(t))}
     while chosen in used:
         chosen = (chosen[0], chosen[1], chosen[2] + 1)
-    return "%d.%d.%d" % chosen
+    release = "%d.%d.%d" % chosen
+    code(release)   # a version Android cannot carry is refused here, before the card shows it
+    return release
 
 
 def accepted(shown: str, releases: list[dict], taken: list[str], bump: str | None, first: str) -> str:
@@ -128,19 +130,26 @@ def code(release: str) -> int:
     every version and never collides."""
 
     major, minor, patch = map(int, SEMVER.fullmatch(release).groups())
-    if minor > 999 or patch > 999 or major > 2099:
-        raise ValueError(f"버전 {release} 는 versionCode 로 옮길 수 없다 — minor·patch 는 999, major 는 2099 까지다")
+    if minor > 999 or patch > 999 or major > 2099 or (major, minor, patch) == (0, 0, 0):
+        raise ValueError(f"버전 {release} 는 versionCode 로 옮길 수 없다 — 0.0.0 은 안 되고, "
+                         "minor·patch 는 999, major 는 2099 까지다")
     return major * 1_000_000 + minor * 1000 + patch
 
 
 # -- One attempt's checkout -----------------------------------------------------------------------
 
 def pin(repo: Path, ref: str = "origin/main") -> str:
-    """The commit an attempt builds, read once. A remote ref is fetched first."""
+    """The commit an attempt builds, read once. A remote branch is fetched into a ref of this attempt's own,
+    so neither the remote's fetch mapping nor another fetch running at the same time can change what it reads."""
 
-    if ref.startswith("origin/"):
-        git(repo, "fetch", "origin", ref.removeprefix("origin/"), timeout=300)
-    return git(repo, "rev-parse", "--verify", f"{ref}^{{commit}}").strip()
+    if not ref.startswith("origin/"):
+        return git(repo, "rev-parse", "--verify", f"{ref}^{{commit}}").strip()
+    own = f"refs/release-pin/{secrets.token_hex(8)}"
+    git(repo, "fetch", "--no-tags", "origin", f"+refs/heads/{ref.removeprefix('origin/')}:{own}", timeout=300)
+    try:
+        return git(repo, "rev-parse", "--verify", f"{own}^{{commit}}").strip()
+    finally:
+        git(repo, "update-ref", "-d", own)
 
 
 def place(repo: Path, attempt: str) -> Path:
@@ -151,7 +160,7 @@ def checkout(repo: Path, sha: str, attempt: str) -> Path:
     """A fresh detached copy of `sha`, cloned rather than linked. The repository's worktree list never holds
     it, and nothing that cleans task worktrees reaches it."""
 
-    into = place(repo, attempt) / "src"
+    into = owned(place(repo, attempt) / "src")
     if into.exists():
         raise ValueError(f"`{into}` 가 이미 있다 — 시도마다 새로 받는다")
     into.parent.mkdir(parents=True, exist_ok=True)
@@ -162,18 +171,28 @@ def checkout(repo: Path, sha: str, attempt: str) -> Path:
     return into
 
 
-def discard(repo: Path, attempt: str) -> None:
-    """The attempt's folder, removed only when it is `WORK`'s own and no folder on the way is a link."""
+def owned(path: Path) -> Path:
+    """`path` when it lies strictly under `WORK` and no folder from the data root down to it is a link or a
+    junction. Checked before a checkout is written and before one is removed."""
 
-    folder = place(repo, attempt)
-    node = Path(os.path.abspath(WORK))
-    if not Path(os.path.abspath(folder)).is_relative_to(node):
-        raise ValueError(f"{folder} 는 {WORK} 밖이다")
-    for part in Path(os.path.abspath(folder)).relative_to(node).parts:
-        node = node / part
+    root, target = Path(os.path.abspath(WORK)), Path(os.path.abspath(path))
+    if target == root or not target.is_relative_to(root):
+        raise ValueError(f"{target} 는 {root} 안이 아니다")
+    data = Path(os.path.abspath(paths.DATA))
+    node = data if root.is_relative_to(data) else root.parent
+    for part in ("", *target.relative_to(node).parts):
+        node = node / part if part else node
         if node.is_symlink() or is_junction(node):
-            raise ValueError(f"{node} 는 링크다 — 지우지 않는다")
-    shutil.rmtree(folder, onexc=_writable)
+            raise ValueError(f"{node} 는 링크다 — 배포 작업 폴더는 링크를 따라가지 않는다")
+    return target
+
+
+def discard(repo: Path, attempt: str) -> None:
+    """The attempt's folder, removed only when `owned` holds for it."""
+
+    folder = owned(place(repo, attempt))
+    # `onexc` arrived in Python 3.12; the repository still runs on 3.11.
+    shutil.rmtree(folder, **({"onexc": _writable} if sys.version_info >= (3, 12) else {"onerror": _writable}))
 
 
 def _writable(func, path, exc) -> None:
@@ -203,9 +222,19 @@ def tools() -> dict:
             "apksigner": bin_ / names[2], "keytool": java / "bin" / f"keytool{oneshot_android.EXE}"}
 
 
+SECRET = "RELEASE_KEY_PASSWORD"   # reaches the key tools only, set by `keyed`; never inherited
+
+
 def environment(kit: dict) -> dict:
-    return {**os.environ, "JAVA_HOME": str(kit["java"]), "ANDROID_HOME": str(kit["sdk"]),
-            "NDK_HOME": str(kit["ndk"]), "PATH": os.pathsep.join([str(kit["java"] / "bin"), os.environ.get("PATH", "")])}
+    """The tools' environment, without any key password the server itself was started with."""
+
+    return {**{k: v for k, v in os.environ.items() if k.upper() != SECRET}, "JAVA_HOME": str(kit["java"]),
+            "ANDROID_HOME": str(kit["sdk"]), "NDK_HOME": str(kit["ndk"]),
+            "PATH": os.pathsep.join([str(kit["java"] / "bin"), os.environ.get("PATH", "")])}
+
+
+def keyed(kit: dict, password: str) -> dict:
+    return {**environment(kit), SECRET: password}
 
 
 def build(path: Path, android: dict, release: str, kit: dict, halt: threading.Event) -> Path:
@@ -215,18 +244,25 @@ def build(path: Path, android: dict, release: str, kit: dict, halt: threading.Ev
     CLI replaces that variable with its own `-c` values. No source file is edited. The checks read what the
     build produced, so a command that drops the version is refused there."""
 
+    def output() -> Path:
+        apk = (path / android["artifact"]).resolve()
+        if not apk.is_relative_to(path.resolve()):
+            raise ValueError(f"`{android['artifact']}` 가 시도의 체크아웃 밖을 가리킨다")
+        return apk
+
+    if output().exists():   # a file the commit carries is not this build's output
+        raise ValueError(f"`{android['artifact']}` 가 빌드 전부터 체크아웃에 있다 — 빌드가 만든 파일만 검사한다")
     overlay = path.parent / "tauri.release.json"
-    overlay.write_text(json.dumps({"version": release, "bundle": {"android": {"versionCode": code(release)}}}),
-                       encoding="utf-8")
+    # Off, or a target's `autoIncrementVersionCode` would replace the code the version maps to.
+    android_overlay = {"versionCode": code(release), "autoIncrementVersionCode": False}
+    overlay.write_text(json.dumps({"version": release, "bundle": {"android": android_overlay}}), encoding="utf-8")
     env = {**environment(kit), "RELEASE_VERSION": release, "RELEASE_VERSION_CODE": str(code(release)),
            "RELEASE_TAURI_CONFIG": str(overlay)}
     exited, out, cut = specs.gate(android["build"], path, halt, env=env, timeout=BUILD_SECONDS, idle=QUIET_SECONDS)
     if exited != 0:
         tail = "\n".join(out.splitlines()[-40:])
         raise ValueError(f"빌드 실패 — {cut or f'{exited} 로 끝났다'}\n{tail}")
-    apk = (path / android["artifact"]).resolve()
-    if not apk.is_relative_to(path.resolve()):
-        raise ValueError(f"`{android['artifact']}` 가 시도의 체크아웃 밖을 가리킨다")
+    apk = output()
     if not apk.is_file():
         raise ValueError(f"빌드가 `{android['artifact']}` 를 만들지 않았다")
     return apk
@@ -240,15 +276,15 @@ def run(argv: list, env: dict | None = None, timeout: float = 300) -> str:
     return done.stdout
 
 
-def test_key(folder: Path, kit: dict) -> dict:
-    """A disposable key for a rehearsal, valid for one day and kept only in the attempt's folder."""
+def test_key(store: Path, kit: dict) -> dict:
+    """A disposable key for a rehearsal at `store`, valid for one day. The caller removes `store` whatever
+    happens, because `keytool` can write it and still fail."""
 
     password = secrets.token_urlsafe(24)
-    store = folder / "rehearsal.jks"
     run([kit["keytool"], "-genkeypair", "-keystore", store, "-alias", "rehearsal", "-keyalg", "RSA",
          "-keysize", "2048", "-validity", "1", "-dname", "CN=wiki-agent release rehearsal",
-         "-storepass:env", "RELEASE_KEY_PASSWORD", "-keypass:env", "RELEASE_KEY_PASSWORD"],
-        {**environment(kit), "RELEASE_KEY_PASSWORD": password})
+         "-storepass:env", SECRET, "-keypass:env", SECRET],
+        keyed(kit, password))
     return {"keystore": store, "alias": "rehearsal", "password": password}
 
 
@@ -259,8 +295,8 @@ def sign(apk: Path, out: Path, key: dict, kit: dict) -> Path:
     aligned = out.with_suffix(".aligned.apk")
     run([kit["zipalign"], "-p", "-f", "4", apk, aligned])
     run([kit["apksigner"], "sign", "--ks", key["keystore"], "--ks-key-alias", key["alias"],
-         "--ks-pass", "env:RELEASE_KEY_PASSWORD", "--out", out, aligned],
-        {**environment(kit), "RELEASE_KEY_PASSWORD": key["password"]})
+         "--ks-pass", f"env:{SECRET}", "--out", out, aligned],
+        keyed(kit, key["password"]))
     aligned.unlink(missing_ok=True)
     return out
 
@@ -294,7 +330,7 @@ def certificate(store: Path, alias: str, password: str, kit: dict) -> str:
     """The SHA-256 of `alias`'s certificate in `store`, as `apksigner` prints signer digests."""
 
     text = run([kit["keytool"], "-list", "-v", "-keystore", store, "-alias", alias,
-                "-storepass:env", "RELEASE_KEY_PASSWORD"], {**environment(kit), "RELEASE_KEY_PASSWORD": password})
+                "-storepass:env", SECRET], keyed(kit, password))
     found = re.search(r"SHA256:\s*([0-9A-F:]+)", text)
     if not found:
         raise ValueError("keytool 이 인증서 SHA-256 을 주지 않았다")
@@ -315,8 +351,9 @@ def refused(seen: dict, release: str, android: dict, cert: str, previous: dict |
     for name, want in (("설정", android["application_id"]), *((("이전 정식 APK", previous["package"]),) if previous else ())):
         if seen["package"] != want:
             out.append(f"앱 ID {seen['package']!r} 가 {name}의 {want!r} 와 다르다 — Android 는 다른 앱으로 설치한다")
-    if seen["abis"] != [android["abi"]]:
-        out.append(f"ABI {seen['abis']} 가 설정의 [{android['abi']!r}] 와 다르다")
+    for name, want in (("설정", [android["abi"]]), *((("이전 정식 APK", previous["abis"]),) if previous else ())):
+        if seen["abis"] != want:
+            out.append(f"ABI {seen['abis']} 가 {name}의 {want} 와 다르다 — 기존 기기가 업데이트를 받지 못한다")
     if seen["debuggable"]:
         out.append("디버그 빌드다 — 정식 릴리스는 debuggable 이 아니다")
     for name, want in (("기대한 인증서", [cert]), *((("이전 정식 APK 의 인증서", previous["certs"]),) if previous else ())):
@@ -341,12 +378,13 @@ def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None)
     cfg = settings(repo, sha)
     first = seed(repo, sha, cfg["version_source"])
     taken = git(repo, "tag", "--list").split()
-    folder = place(repo, attempt)
+    folder = owned(place(repo, attempt))
     folder.mkdir(parents=True)
-    key = test_key(folder, kit)
-    cert = certificate(key["keystore"], key["alias"], key["password"], kit)
-    published, previous, rounds = [], None, []
-    try:
+    stores = (folder / "rehearsal.jks", folder / "other.jks")
+    published, previous, rounds, refusals = [], None, [], {}
+    try:   # from before the first key exists: every test keystore goes, whatever fails
+        key = test_key(stores[0], kit)
+        cert = certificate(key["keystore"], key["alias"], key["password"], kit)
         for n in (1, 2):
             release = version(published, taken, None if not published else "patch", first)
             src = checkout(repo, sha, f"{attempt}/{n}")
@@ -360,22 +398,17 @@ def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None)
             published.append({"tagName": f"v{release}"})
             previous = seen
         built = len(rounds) == 2 and not any(r["refused"] for r in rounds)
-        refusals = {}
         if built:
             first_apk, release = rounds[0]["facts"], rounds[1]["version"]
             second = folder / f"2-{release}.apk"
-            (folder / "other").mkdir()
-            other = test_key(folder / "other", kit)
-            try:
-                stranger = facts(sign(second, folder / "2-other-key.apk", other, kit), kit)
-            finally:
-                Path(other["keystore"]).unlink(missing_ok=True)
+            stranger = facts(sign(second, folder / "2-other-key.apk", test_key(stores[1], kit), kit), kit)
             moved = {**cfg["android"], "application_id": cfg["android"]["application_id"] + ".moved"}
             refusals = {"certificate": refused(stranger, release, cfg["android"], cert, first_apk),
                         "application_id": refused(facts(second, kit), release, moved, cert,
                                                   {**first_apk, "package": moved["application_id"]})}
     finally:
-        Path(key["keystore"]).unlink(missing_ok=True)   # the test key never outlives the rehearsal
+        for store in stores:   # a test key never outlives the rehearsal
+            store.unlink(missing_ok=True)
     caught = bool(refusals) and all(len([w for w in why if marker in w]) == want for why, marker, want in (
         (refusals.get("certificate", []), "서명 인증서", 2), (refusals.get("application_id", []), "앱 ID", 2)))
     return {"sha": sha, "seed": first, "cert": cert, "folder": str(folder), "rounds": rounds,
