@@ -92,7 +92,7 @@ def test_a_link_whose_replacement_fails_points_where_it_did(tmp_path, monkeypatc
         setup_agents.relink(link, new)
     monkeypatch.undo()
     kept = Path(renames[0])
-    assert kept.parent.parent == tmp_path / ".wiki-relink" and _points(kept) == old.resolve()
+    assert kept.parent.parent == link.parent / ".wiki-relink" and _points(kept) == old.resolve()
     assert any(str(kept) in note for note in failed.value.__notes__), "남겨 둔 자리를 알려 준다"
 
 
@@ -116,7 +116,7 @@ def test_a_kept_link_is_listed_restored_and_only_the_confirmed_one_moves(tmp_pat
     _dir_link(skill, home / ".claude" / f".{skill.name}.before-relink")
     assert setup_agents.skill_links(home) == []
     # One `relink` kept in its own folder, with nothing at its place: listed, and sent back where it pointed.
-    attempt = home / ".claude/.wiki-relink" / f"{skill.name}.cut"
+    attempt = skills / ".wiki-relink" / f"{skill.name}.cut"
     attempt.mkdir(parents=True)
     _dir_link(skill, attempt / skill.name)
     found = setup_agents.skill_links(home)
@@ -171,7 +171,7 @@ def test_relink_never_overwrites_follows_or_moves_what_it_was_not_shown(tmp_path
     elsewhere = tmp_path / "elsewhere" / "attempt"
     elsewhere.mkdir(parents=True)
     _dir_link(old, elsewhere / "other-skill")
-    recovery = skills.parent / ".wiki-relink"
+    recovery = skills / ".wiki-relink"
     for attempt in recovery.iterdir() if recovery.exists() else []:
         attempt.rmdir()
     if recovery.exists():
@@ -195,17 +195,8 @@ def test_relink_never_overwrites_follows_or_moves_what_it_was_not_shown(tmp_path
     monkeypatch.undo()
     assert _points(link) == new.resolve(), "옮기는 사이 바뀐 링크는 그대로 돌아온다"
 
-    # 4. A kept link whose skills folder is gone: the folder comes back with the link.
-    os.rmdir(link) if os.name == "nt" else os.unlink(link)
-    attempt = skills.parent / ".wiki-relink" / "skill.cut"
-    attempt.mkdir(parents=True, exist_ok=True)
-    _dir_link(old, attempt / "skill")
-    skills.rmdir()
-    setup_agents.relink(link, new, old)
-    assert _points(link) == new.resolve() and not attempt.exists()
-
     # 5. The recovery folder as a link: nothing is parked through it, and the link stays.
-    recovery = skills.parent / ".wiki-relink"
+    recovery = skills / ".wiki-relink"
     for left in recovery.iterdir():
         left.rmdir()
     recovery.rmdir()
@@ -246,9 +237,9 @@ def test_relink_never_overwrites_follows_or_moves_what_it_was_not_shown(tmp_path
     assert (link / "SKILL.md").read_text(encoding="utf-8") == "mine", "옮겨진 스킬 폴더는 제자리로 돌아온다"
 
 
-def test_a_skills_folder_that_is_a_link_keeps_its_recovery_beside_its_real_place(tmp_path, monkeypatch):
-    """A skills folder linked onto another drive parks there, where `rename` reaches; a cleared attempt read
-    meanwhile is skipped, not an error."""
+def test_a_skills_folder_that_is_a_link_keeps_its_own_recovery(tmp_path, monkeypatch):
+    """A skills folder linked onto another drive parks there, where `rename` reaches, and never shares what it
+    kept with a sibling skills folder; a cleared attempt read meanwhile is skipped, not an error."""
 
     import setup_agents
 
@@ -257,10 +248,18 @@ def test_a_skills_folder_that_is_a_link_keeps_its_recovery_beside_its_real_place
     claude = tmp_path / "home" / ".claude"
     claude.mkdir(parents=True)
     _dir_link(real, claude / "skills")
-    attempt = real.parent / ".wiki-relink" / "skill.cut"
+    attempt = real / ".wiki-relink" / "skill.cut"
     attempt.mkdir(parents=True)
     _dir_link(tmp_path, attempt / "skill")
     assert list(setup_agents.kept_links(claude / "skills")) == [claude / "skills" / "skill"]
+    # Switched to a sibling skills folder: what the first one kept is not offered here.
+    sibling = real.parent / "personal-skills"
+    sibling.mkdir()
+    os.rmdir(claude / "skills") if os.name == "nt" else os.unlink(claude / "skills")
+    _dir_link(sibling, claude / "skills")
+    assert setup_agents.kept_links(claude / "skills") == {} and setup_agents.skill_links(tmp_path / "home") == []
+    os.rmdir(claude / "skills") if os.name == "nt" else os.unlink(claude / "skills")
+    _dir_link(real, claude / "skills")
 
     real_stat, gone = Path.stat, []
 

@@ -348,7 +348,7 @@ def skill_links(home=None):
     folder = Path(home or _HOME or Path.home()) / ".claude/skills"
     found = []
     for link in sorted(folder.iterdir()) if folder.is_dir() else []:
-        if not (link.is_symlink() or is_junction(link)):
+        if link.name == ".wiki-relink" or not (link.is_symlink() or is_junction(link)):
             continue
         target = _pointed(link)
         hub = target.parent.parent
@@ -361,7 +361,10 @@ def skill_links(home=None):
     for link, keeps in sorted(kept_links(folder).items()):
         if os.path.lexists(link):
             continue
-        target = _pointed(keeps[-1])
+        try:
+            target = _pointed(keeps[-1])
+        except FileNotFoundError:   # a move finished meanwhile and cleared it: its link stands at its place
+            continue
         hub = target.parent.parent
         ours = target.parent.name == "skills" and (hub / "tool/hook.py").is_file() \
             and os.path.normcase(hub.resolve()) != os.path.normcase(WIKI.resolve())
@@ -380,7 +383,7 @@ def _is_link(path):
 
 
 def kept_links(folder):
-    """The links a cut `relink` left in its own recovery folder (`.wiki-relink` beside the skills folder, one
+    """The links a cut `relink` left in its own recovery folder (`.wiki-relink` inside the skills folder, one
     private folder per attempt), by the place each belongs: `{place: [kept, oldest first]}`. Nothing else
     there is ours, so nothing else is read, and a link standing in for the folder or an attempt is never
     followed: what it points into is somebody else's."""
@@ -402,10 +405,10 @@ def kept_links(folder):
 
 
 def _recovery(folder):
-    """`relink`'s recovery folder: beside the skills folder's real place, so a skills folder that is a link onto
-    another drive keeps its parked links on that drive, where `rename` can reach them."""
-    # ponytail: assumes the skills folder is not itself a mount point; a separate mount would need storage inside it
-    return Path(folder).resolve().parent / ".wiki-relink"
+    """`relink`'s recovery folder: inside the skills folder itself, so it is on the same drive as the links it
+    keeps, and every skills folder has its own even when `~/.claude/skills` is a link to one of several. It holds
+    no `SKILL.md`, so no host loads it as a skill."""
+    return Path(folder) / ".wiki-relink"
 
 
 def _place(src, dst):
@@ -432,7 +435,7 @@ def relink(link, target, source=None):
 
     The working link is never removed before the new one stands. It moves
     into a fresh private folder of this attempt (nothing there to clobber,
-    and outside the skills folder, so no host loads it), and moves back when
+    and no `SKILL.md` beside it, so no host loads it), and moves back when
     the new one cannot be made. A link a cut attempt kept, with nothing at
     its place, is taken from there instead."""
     link = Path(link)
