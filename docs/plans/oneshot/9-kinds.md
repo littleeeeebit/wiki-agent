@@ -157,7 +157,9 @@ deferral is saved in the spec's `owed` list with its kind, requirement,
 finding and check, and survives a restart. The kind's S7 loop runs each owed
 check on the device. A clean round counts only when every owed check for
 that kind passed on that round's HEAD; a failing one goes to the builder as a
-finding. R3 shows each owed item with the round that closed it. A run never
+finding. For `desktop`, that means every `look` check. Its `owner` checks
+close in the owner's desktop round, as "Owed checks for `desktop`" below
+describes. R3 shows each owed item with the round that closed it. A run never
 reaches R3 with an owed check unrun.
 
 ### S5 to R2 — screens for each kind
@@ -228,23 +230,36 @@ Windows, with that reason.
 
 The stack is free, so the server knows a PC app's tools only from what S2
 confirmed. The `build` part, or `desktop.build` in a run of several kinds,
-carries a `tools` list beside its choice. Each entry is a host program found
-on `PATH`, such as `cargo`, `dotnet` or `npm`. The validator refuses a `build`
-part with an empty or malformed `tools` list, and the list is saved in the
-spec with the part.
+carries a `tools` list beside its choice. Each entry has two fields:
+
+- `name`: a host program found on `PATH`, such as `cargo`, `dotnet` or `npm`;
+- `setup`: how a clean CI runner gets it, which is either a GitHub Actions
+  step (an action pinned to a version, or a `run` command) or `preinstalled`,
+  naming the `windows-latest` image.
+
+`setup` is required when S1's `ci` is `github-actions`. The validator refuses
+a `build` part with an empty or malformed `tools` list. The list is part of
+what the owner confirms: a confirmation compares the choice and its tools, so
+a changed list is a change the owner confirms again. It is saved in the spec
+with the part.
 
 A host tool is told apart from a project output. Every command a later turn
 gives for `desktop` names its program first. This covers S4's runner, S6's
 preview, the gates' builds and S8's packaging. That program is either a
-declared tool, or a path inside the worktree that the run built. A command
-whose program is neither is refused as undeclared, and the turn goes back to
-its author with that reason.
+declared tool, or a path inside the worktree that the run built.
 
-The server checks every declared tool on `PATH` before the first command that
-needs one, and again on every resume and recovery, before anything runs. When
-one is missing, the run stops with reason `toolchain`, naming it in the
-owner's words. The agent installs nothing. A `[재개]` after the owner has
-installed it checks again.
+There are two outcomes:
+
+- A command whose program is neither is undeclared. It is refused, and the
+  turn goes back to its author with that reason. Nothing runs.
+- A declared tool that is not on `PATH` is missing. The run stops with reason
+  `toolchain`, naming it in the owner's words. The agent installs nothing. A
+  `[재개]` after the owner has installed it checks again.
+
+The server resolves each declared tool once per stage. It does this at every
+handoff, on every resume and in recovery, before that stage's first command
+runs. It then executes the resolved path, so the program checked is the
+program run.
 
 #### The runnable program
 
@@ -255,11 +270,24 @@ The frontend build's `desktop` block names two outputs, kept apart:
   setting that points its data at the look's own data folder (`{data}`).
 - `installer`: the file S8 attaches.
 
-A `run` that is missing, outside the worktree, or packaged (MSIX or an
-installer) is refused at the gate. So is one whose manifest asks for
-elevation. At launch, the research note's refusals apply as written: a main
-window outside the app's job, or a handoff to another instance, ends the
-round as failed.
+`run` names its program and the build folder that holds everything the launch
+loads from the build: the program, its libraries and its resources. A `run`
+is refused at the gate when:
+
+- it is missing, or outside the worktree;
+- it is packaged, as MSIX or as an installer;
+- its manifest asks for elevation.
+
+The gate freezes that folder into run-owned staging, with a manifest of every
+file's digest. Every look round launches from the frozen copy and records the
+manifest's digest. The owner's desktop round launches the same frozen copy,
+and R3 requires the same digest. A change to any file in it, even under the
+same HEAD, is a new build. It clears the clean rounds and any pending
+approval.
+
+At launch, the research note's refusals apply as written. A main window
+outside the app's job ends the round as failed, and so does a handoff to
+another instance.
 
 #### Owed checks for `desktop`
 
@@ -271,16 +299,28 @@ source, and the server assigns it:
   after a scenario.
 - `owner`, when the postcondition needs what the owned desktop cannot show: a
   capture of another program's window or the screen, or how a per-pixel-alpha
-  overlay composes. Its postcondition is still a driver expectation on the
-  app's own elements, read after the scenario on the owner's desktop. The
-  shots of the app's own windows go with it as evidence.
+  overlay composes. Its postcondition is observed, never inferred from the
+  app's own controls:
+  - Every `owner` check runs against a fixture the round starts in its own
+    job, whose content is known: for example a window showing a known page of
+    text.
+  - A capture check passes only when what the app reports it captured contains
+    the fixture's expected content. That report is an element's value or a
+    file in the app's `{data}` folder that the check names.
+  - A composition check passes only when the round's own capture of the
+    fixture's region shows the overlay's expected content over the fixture.
+
+  The driver's UI Automation steps run the scenario. A "capture active"
+  element or a drawn window of the app's own is not evidence. A run with valid
+  controls whose capture is blank or wrong fails the check, and R3 stays
+  closed.
 
 A finding with neither is not deferrable and stays a blocker. A `desktop`
 clean round counts only when every `look` check passed on that round's HEAD.
 A failed or unread observation is a failure, never a skip. `owner` checks
 stay pending through the owned rounds. R3 opens only when every pending
-`owner` check has passing evidence on the current HEAD and the frozen
-program's digest. The sheet shows the round that closed each owed ID.
+`owner` check has passing evidence on the current HEAD and the frozen build's
+manifest digest. The sheet shows the round that closed each owed ID.
 
 #### Screens
 
@@ -292,14 +332,22 @@ app in one run keep both previews, and R2's edits and approval carry each.
 
 A PC preview writes `<screen id>.png` no larger than the `window` and at least
 90% of each side. The title bar and borders are the stack's, so the exact
-frame is checked in S7, where the driver reads it back. A preview command
-that opens a window runs inside a look on an owned desktop, never on the
-owner's.
+frame is checked in S7, where the driver reads it back. Every `desktop`
+preview command runs inside a look on an owned desktop, whatever its
+descriptor says, so one that opens a window never opens it on the owner's.
 
-S7's coverage reads the R2-approved screen map. The driver must reach every
-approved state, and find each placed feature's element by its
-`AutomationId`. A driver report that misses an approved state, or stops early,
-is not a clean round.
+S7's coverage reads the R2-approved screen map. It applies the research
+note's placement rules by each feature's `AutomationId`:
+
+- an `every` feature is on the first surface;
+- a `sometimes` feature is one action away;
+- a `rarely` feature is absent from the primary surface but present in some
+  approved state;
+- a `never` feature has no control in any approved screen, state or window.
+
+Absence counts only once every approved state has been reached and read. A
+driver report that misses an approved state, or stops early, is not a clean
+round. A `never` feature found anywhere is a placement finding.
 
 #### The look loop
 
@@ -319,11 +367,27 @@ failed.
 #### The owner's desktop round
 
 After two clean rounds, a run with a pending `owner` check waits for the owner,
-as the phone round does. The approval is one-time and is recorded with the
-run, the HEAD, the frozen `run` program's digest, the check IDs and the
-capture scope. The capture scope is the app's own windows, or a capture
-source the approval names. The server checks all of these again before
-anything starts on the owner's desktop.
+as the phone round does. The approval is one-time. It is recorded with the
+run, the HEAD, the frozen build's manifest digest, the check IDs and the
+capture scope. The server checks all of these again before anything starts on
+the owner's desktop.
+
+The capture scope limits what is read, not only what is kept. It allows only
+these sources:
+
+- a window of the round's own jobs (the app's or the fixture's), proven again
+  immediately before each capture: the same handle, process, class and job
+  membership as approved;
+- the screen region of such windows' frames, read only when no window outside
+  the round's jobs lies above any part of it in z-order.
+
+A capture of a window that closed or was replaced is refused, and so is a
+capture of a region an outside window overlaps or that cannot be proven. The
+capture call is never made.
+
+A check whose app captures more by itself, such as the whole monitor, names
+that surface in the approval, and the owner approves it before the round
+starts. Without that, the check is not run.
 
 A restart, a cancellation, a new HEAD or a program whose digest changed sends
 the run back to waiting for approval. An earlier approval is never applied to
@@ -359,9 +423,15 @@ installer, the APK, or both, each reused only for the same HEAD and digest.
 A failed copy or upload never blocks the pull request; its body says why.
 
 S1's `ci` choice is kept. When CI is chosen and `desktop` is among the kinds,
-the workflow job runs on `windows-latest`, with a setup step for each declared
-tool the image lacks. With `android` too, the same job also sets up the
-Android SDK and runs the one shared gate.
+the workflow job runs on `windows-latest`:
+
+1. It takes each declared tool's confirmed `setup` step, as written.
+2. With `android` among the kinds, it also takes step 7's JDK and Android SDK
+   setup.
+3. A step then checks each declared tool with `Get-Command` before the one
+   shared gate runs.
+
+S8 refuses a workflow that lacks any of these steps.
 
 #### Steps and their stops
 
@@ -385,12 +455,12 @@ Each step's fakes include at least these:
 | Step | Fakes |
 | --- | --- |
 | Every step | A stopped run that tries to call the next stage, which must fail |
-| 9e1 | A `window` outside the options; a `build` part without `tools` |
-| 9e2 | A missing tool; an undeclared command; a resume after the tool disappeared. Each must stop with `toolchain` before a dependent command runs, and none may call an installer |
-| 9e3 | Two native previews with overlapping relative paths, and a web preview, through one R2 approval; a packaged-only `run` |
-| 9e4 | A driver report that misses an approved state; a failed cleanup proof; an `owner` check that is still pending after both owned rounds |
-| 9e5 | An absent, a stale and a duplicate approval; a cleanup failure; a mixed run in which the phone passes first |
-| 9e6 | A desktop-only asset; both assets on one prerelease; a resumed upload; a run with CI off |
+| 9e1 | A `window` outside the options; a `build` part without `tools`; a tool without `setup` while CI is on; a changed `tools` list under the same choice, which needs a new confirmation |
+| 9e2 | A missing tool at the first stage; a tool removed between two normal stages, so the second stops with `toolchain` before it runs; a resume after a tool disappeared; an undeclared command, which goes back to its author and runs nothing. None may call an installer |
+| 9e3 | Two native previews with overlapping relative paths, and a web preview, through one R2 approval; a preview whose descriptor says nothing of a window, whose process must still start on the owned desktop; a packaged-only `run`; a companion file changed under the same HEAD, which is a new build |
+| 9e4 | A driver report that misses an approved state; a complete report with a `never` feature; a failed cleanup proof; an `owner` check still pending after both owned rounds |
+| 9e5 | An absent, a stale and a duplicate approval; valid app controls with a blank or wrong capture; a capture source that was replaced, or a region an outside window overlaps, for which the capture call is never made; a cleanup failure; a mixed run in which the phone passes first |
+| 9e6 | A desktop-only asset; both assets on one prerelease; a resumed upload; a run with CI off; a CI-enabled mixed run with a PC tool the image lacks, whose workflow must carry its `setup` and `Get-Command` steps |
 
 ## What does not change
 
