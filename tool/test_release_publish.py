@@ -199,11 +199,130 @@ def test_a_release_published_before_its_ledger_write_is_only_read_and_recorded(p
     with pytest.raises(SystemExit):
         rp.publish(repo, "0.1.0", None)
     monkeypatch.setattr(rp, "_ended", real)
+    Path(rp.pending("github.com/o/r")["manifest"][0]["path"]).unlink()   # the local copy is no longer needed
     before = len(fake.calls)
 
     assert [d["state"] for d in rp.recover()] == ["published"] and len(fake.rels) == 1
     writes = [c for c in fake.calls[before:] if c[0] != "GET"]
     assert writes == []   # read-only from the moment it is public
+
+
+def test_a_public_release_whose_tag_was_removed_is_never_retagged(press, monkeypatch):
+    fake, repo, _ = press
+    real = rp._ended
+    monkeypatch.setattr(rp, "_ended", lambda record, state, **f: (_ for _ in ()).throw(SystemExit()) if state == "published"
+                        else real(record, state, **f))
+    with pytest.raises(SystemExit):
+        rp.publish(repo, "0.1.0", None)
+    monkeypatch.setattr(rp, "_ended", real)
+    del fake.refs["v0.1.0"]
+    before = len(fake.calls)
+
+    assert [d["state"] for d in rp.recover()] == ["failed"] and "v0.1.0" not in fake.refs
+    assert [c for c in fake.calls[before:] if c[0] != "GET"] == []
+
+
+@pytest.mark.parametrize("change", ["retagged", "moved"])
+def test_a_draft_retagged_or_a_tag_moved_during_the_upload_is_never_published(press, monkeypatch, change):
+    fake, repo, _ = press
+    upload = gh.upload
+
+    def meddled(*args):
+        done = upload(*args)
+        if change == "retagged":
+            fake.rels[-1]["tag_name"] = "v9.0.0"
+        else:
+            fake.refs["v0.1.0"] = OTHER
+        return done
+
+    monkeypatch.setattr(gh, "upload", meddled)
+    done = rp.publish(repo, "0.1.0", None)
+    assert done["state"] == "failed" and "공개하지 않는다" in done["reason"] and fake.rels[-1]["draft"]
+
+
+def test_a_draft_someone_published_during_the_upload_gets_no_more_writes(press, monkeypatch):
+    fake, repo, _ = press
+    create = gh.create
+
+    def published_at_once(*args, **kwargs):
+        held = create(*args, **kwargs)
+        fake.rels[-1]["draft"] = False
+        return held
+
+    monkeypatch.setattr(gh, "create", published_at_once)
+    fake.cut.add("r-0.1.0-arm64-v8a.apk")
+    done = rp.publish(repo, "0.1.0", None)
+    assert done["state"] == "failed" and "그대로 둔다" in done["reason"]
+    assert not [c for c in fake.calls if c[0] in ("DELETE", "PATCH") or c[1].endswith("/assets")]
+
+
+def test_a_live_worker_keeps_its_attempt_from_recover(press, monkeypatch):
+    fake, repo, _ = press
+    build, swept = release.build, []
+
+    def building(*args):
+        swept.append(rp.recover())   # another process's sweep while this one builds
+        return build(*args)
+
+    monkeypatch.setattr(release, "build", building)
+    done = rp.publish(repo, "0.1.0", None)
+    assert [s["state"] for s in swept[0]] == ["pending"] and "busy" in swept[0][0]
+    assert done["state"] == "published"
+
+
+@pytest.mark.parametrize("lost", ["release_id", "published"])
+def test_a_ledger_write_that_fails_after_a_remote_write_keeps_the_attempt_pending(press, monkeypatch, lost):
+    fake, repo, _ = press
+    real, failed = rp.update, []
+
+    def unwritable(name, attempt, **fields):
+        if (lost in fields or fields.get("state") == lost) and not failed:
+            failed.append(lost)
+            raise rp.Unrecorded("disk full")
+        return real(name, attempt, **fields)
+
+    monkeypatch.setattr(rp, "update", unwritable)
+    with pytest.raises(rp.Unrecorded):
+        rp.publish(repo, "0.1.0", None)
+    still = rp.pending("github.com/o/r")
+    assert still and Path(still["manifest"][0]["path"]).is_file()   # its files stay for the next finish
+
+    assert [d["state"] for d in rp.recover()] == ["published"] and len(fake.rels) == 1
+
+
+def test_one_remote_that_fails_never_stops_the_sweep(press, monkeypatch):
+    _, repo, _ = press
+    for name in ("github.com/o/a", "github.com/o/b"):
+        rp.reserve(name, {"id": name[-1], "remote": name, "repo": str(repo), "tag": "v1.0.0", "sha": SHA,
+                          "state": "pending"})
+    real = rp._finish
+    monkeypatch.setattr(rp, "_finish", lambda name, attempt: (_ for _ in ()).throw(RuntimeError("boom"))
+                        if name.endswith("/a") else real(name, attempt))
+    done = {d["remote"]: d for d in rp.recover()}
+    assert "boom" in done["github.com/o/a"]["last_error"] and done["github.com/o/b"]["state"] == "failed"
+
+
+def test_the_last_permitted_upload_that_lands_counts(press):
+    fake, repo, _ = press
+    fake.fail["POST releases/{id}/assets"] = [502] * (rp.UPLOAD_TRIES - 1)
+    assert rp.publish(repo, "0.1.0", None)["state"] == "published"
+
+
+def test_a_press_overtaken_by_another_while_choosing_its_version_is_refused(press, monkeypatch):
+    fake, repo, _ = press
+    rp.publish(repo, "0.1.0", None)
+    accepted, inner = release.accepted, []
+
+    def overtaken(shown, *args):
+        if not inner:   # a minor press starts and finishes in the gap
+            inner.append(None)
+            inner[0] = rp.publish(repo, "0.2.0", "minor")
+        return accepted(shown, *args)
+
+    monkeypatch.setattr(release, "accepted", overtaken)
+    with pytest.raises(ValueError, match="다른 배포가 있었다"):
+        rp.publish(repo, "0.1.1", "patch")
+    assert inner[0]["state"] == "published" and [r["tag_name"] for r in fake.rels] == ["v0.1.0", "v0.2.0"]
 
 
 def test_a_public_release_that_differs_from_the_attempt_is_left_and_the_attempt_fails(press):

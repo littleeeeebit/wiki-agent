@@ -164,7 +164,19 @@ def test_api_names_the_repository_parses_the_answer_and_carries_the_status(monke
     with pytest.raises(gh.Failed) as caught:
         gh.release("o/r", 9)
     assert caught.value.status == 404 and not caught.value.transient
-    assert all(a[4].startswith("repos/o/r/") for a in seen)
+    assert all(a[a.index("-X") + 2].startswith("repos/o/r/") for a in seen)
+    assert all(a[2:4] == ["--hostname", "github.com"] for a in seen)   # never the CLI's default or `GH_HOST`
+
+
+def test_a_timed_out_call_is_a_transient_failure(monkeypatch, tmp_path):
+    def slow(args, cwd, timeout=60):
+        raise subprocess.TimeoutExpired(args, timeout)
+
+    monkeypatch.setattr(gh.specs, "sh", slow)
+    for call in (lambda: gh.release("o/r", 1), lambda: gh.download("o/r", "v1.0.0", "a.apk", tmp_path)):
+        with pytest.raises(gh.Failed) as caught:
+            call()
+        assert caught.value.status is None and caught.value.transient
 
 
 @pytest.mark.parametrize("status, said, transient", [

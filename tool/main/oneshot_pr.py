@@ -27,6 +27,7 @@ from .query import ROOT
 
 README_PROMPT = (ROOT / "tool/prompts/oneshot-readme.md").read_text(encoding="utf-8")
 STAGE = "pr"
+TRIES = 3   # the debug APK's create and upload, each, as `gh release` retried them
 OS_NAMES = {"windows": "Windows", "macos": "macOS"}
 WORKFLOWS = ".github/workflows/"
 CI = f"{WORKFLOWS}ci.yml"
@@ -221,18 +222,33 @@ def released(spec: dict) -> dict:
 
         # This head's release already there (an earlier upload, or a create whose reply was lost) gets this
         # APK as its asset: a second draft of the same tag would leave the first behind.
-        if not (held := found()):
+        # A transient failure is tried again, a bounded number of times, as `gh release` itself did.
+        for n in range(TRIES):
+            if held := found():
+                break
             try:
                 held = github_release.create(repo, tag, None, f"{spec['repo']} 디버그 APK · {head[:12]}",
                                              f"원샷 실행의 첫 PR 이 링크하는 디버그 APK 다. 빌드 커밋 `{head}`.",
                                              draft=True, prerelease=True)
-            except github_release.Failed:
-                if not (held := found()):
+                break
+            except github_release.Failed as exc:   # a transient one is looked for again at the loop's top
+                if not exc.transient or n == TRIES - 1:
+                    if held := found():   # it was made; only the answer was lost
+                        break
                     raise
-        for asset in held.get("assets") or []:   # S8's own policy: the asset of that name is replaced
-            if asset["name"] == frozen["name"]:
-                github_release.delete_asset(repo, asset["id"])
-        github_release.upload(repo, held["id"], file, frozen["name"])
+        for n in range(TRIES):
+            mine = next((a for a in github_release.release(repo, held["id"]).get("assets") or []
+                         if a["name"] == frozen["name"]), None)
+            if n and mine and mine.get("state") == "uploaded" and github_release.digest(mine) == frozen["sha256"]:
+                break   # the try before landed and only its answer was lost
+            if mine:   # S8's own policy: the asset of that name is replaced
+                github_release.delete_asset(repo, mine["id"])
+            try:
+                github_release.upload(repo, held["id"], file, frozen["name"])
+                break
+            except github_release.Failed as exc:
+                if not exc.transient or n == TRIES - 1:
+                    raise
         return {"head": head, "name": frozen["name"], "sha256": frozen["sha256"], "url": held["html_url"], "tag": tag}
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         return {"head": head, "error": str(exc) or type(exc).__name__}

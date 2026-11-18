@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import tempfile
 from pathlib import Path
 from urllib.parse import quote
@@ -17,6 +18,7 @@ from common import paths
 from . import specs
 
 SECONDS, UPLOAD_SECONDS = 120, 1800
+HOST = "github.com"   # every remote `release.remote` accepts is on github.com
 
 
 class Failed(ValueError):
@@ -43,7 +45,8 @@ def api(method: str, endpoint: str, body: dict | None = None, upload: Path | Non
     """One `gh api` call: the parsed answer, or `Failed`. A JSON body and an uploaded file both go through
     `--input`, because the shared runner gives the child no stdin."""
 
-    args = ["gh", "api", "-X", method, endpoint, "-H", "Accept: application/vnd.github+json"]
+    # `--hostname`: the canonical remote is github.com, whatever host `GH_HOST` or the CLI's default names.
+    args = ["gh", "api", "--hostname", HOST, "-X", method, endpoint, "-H", "Accept: application/vnd.github+json"]
     if pages:
         args += ["--paginate", "--slurp"]
     staged = None
@@ -55,6 +58,8 @@ def api(method: str, endpoint: str, body: dict | None = None, upload: Path | Non
         elif upload is not None:
             args += ["--input", str(upload), "-H", "Content-Type: application/octet-stream"]
         done = specs.sh(args, paths.RESOURCES, timeout)
+    except subprocess.TimeoutExpired as exc:   # no answer in time: it may still have landed, so read back
+        raise Failed(f"GitHub {method} {endpoint.split('?')[0]} 이 {exc.timeout}초 안에 답하지 않았다", None) from exc
     finally:
         if staged is not None:
             os.unlink(staged.name)
@@ -142,8 +147,11 @@ def download(repo: str, tag_name: str, name: str, into: Path) -> Path:
     """One asset of a published release, into the folder `into`."""
 
     into.mkdir(parents=True, exist_ok=True)
-    done = specs.sh(["gh", "release", "download", tag_name, "--repo", repo, "--pattern", name, "--dir", str(into),
-                     "--clobber"], paths.RESOURCES, UPLOAD_SECONDS)
+    try:
+        done = specs.sh(["gh", "release", "download", tag_name, "--repo", f"{HOST}/{repo}", "--pattern", name,
+                         "--dir", str(into), "--clobber"], paths.RESOURCES, UPLOAD_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        raise Failed(f"{tag_name} 의 {name} 을 {exc.timeout}초 안에 받지 못했다", None) from exc
     if done.returncode or not (into / name).is_file():
         said = (done.stderr or done.stdout or "").strip()
         found = re.search(r"HTTP (\d{3})", said)
