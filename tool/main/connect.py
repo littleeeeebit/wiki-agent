@@ -655,11 +655,23 @@ def retried(path: Path) -> bool:
     """A handover left waiting is walked again from its first step when the
     list is read, once a minute at most. Whether it was."""
 
-    handed = record(path.name).get("handover") or {}
-    if handed.get("state") != "대기" or time.time() - handed.get("ts", 0) < RETRY:
-        return False
-    handover(path, handed["pr"])
-    return True
+    with _handing_lock:   # two listings at once (the settings poll, the project list) enter one handover once
+        if path.name in _handing:
+            return False
+        _handing.add(path.name)
+    try:
+        handed = record(path.name).get("handover") or {}
+        if handed.get("state") != "대기" or time.time() - handed.get("ts", 0) < RETRY:
+            return False
+        handover(path, handed["pr"])
+        return True
+    finally:
+        with _handing_lock:
+            _handing.discard(path.name)
+
+
+_handing: set[str] = set()
+_handing_lock = threading.Lock()
 
 
 # -- The screen ---------------------------------------------------------------------

@@ -180,7 +180,7 @@ def test_the_server_going_down_ends_a_hung_codex_app_server_and_starts_none(tmp_
     from agent import chat_session
 
     monkeypatch.setattr(chat_local, "cli_command", lambda _: [sys.executable, "-c", "import time; time.sleep(60)"])
-    failed, ready = [], threading.Event()
+    failed = []
 
     def ask():
         try:
@@ -208,6 +208,42 @@ def test_the_server_going_down_ends_a_hung_codex_app_server_and_starts_none(tmp_
         for left in list(chat_local._servers):
             left.proc.kill()
     assert not chat_local._servers_closed
+
+
+def test_a_thread_pinned_to_an_ended_lifespan_starts_no_codex(tmp_path, monkeypatch):
+    """A background check the old lifespan began finds the gate reopened for the next one, and still starts none."""
+
+    monkeypatch.setattr(chat_local, "cli_command", lambda _: [sys.executable, "-c", "import time; time.sleep(60)"])
+    refused = []
+
+    def old_check(epoch):
+        chat_local.pin_servers(epoch)
+        try:
+            chat_local.CodexServer(cwd=tmp_path)
+        except RuntimeError as exc:
+            refused.append(str(exc))
+
+    epoch = chat_local.server_epoch()
+    chat_local.end_servers()
+    chat_local.reopen_servers()
+    checking = threading.Thread(target=old_check, args=(epoch,))
+    checking.start()
+    checking.join(10)
+    assert refused and "꺼지는 중" in refused[0] and not chat_local._servers
+
+
+def test_a_codex_killed_before_its_first_write_ends_with_the_connection_reason(tmp_path, monkeypatch):
+    monkeypatch.setattr(chat_local, "cli_command", lambda _: [sys.executable, "-c", "import time; time.sleep(60)"])
+    server = chat_local.CodexServer(cwd=tmp_path)
+    try:
+        chat_local.end_servers()
+        server.proc.wait(timeout=5)
+        with pytest.raises(RuntimeError, match="Codex 연결 종료"):
+            with server:
+                pass
+    finally:
+        chat_local.reopen_servers()
+        server.proc.kill()
 
 
 def test_provider_usage_uses_attached_session_not_toolbar(tmp_path, monkeypatch):

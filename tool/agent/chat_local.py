@@ -72,7 +72,7 @@ class CodexServer:
     def __init__(self, env=None, cwd=None, timeout=180):
         command = [*cli_command("codex"), "app-server"]
         with _servers_lock:   # registered as it starts: `end_servers` either lists it or was first and refuses it
-            if _servers_closed:
+            if _servers_closed or getattr(_pinned, "epoch", _epoch) != _epoch:
                 raise RuntimeError("서버가 꺼지는 중이라 Codex 를 띄우지 않는다")
             self.proc = subprocess.Popen(
                 command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -98,8 +98,7 @@ class CodexServer:
     def __enter__(self):
         try:
             self.request("initialize", {"clientInfo": {"name": "wiki", "version": "0.1.0"}})
-            self.proc.stdin.write('{"method":"initialized"}\n')
-            self.proc.stdin.flush()
+            self._send('{"method":"initialized"}\n', "initialized")
         except BaseException:
             self.__exit__()
             raise
@@ -107,8 +106,7 @@ class CodexServer:
 
     def request(self, method, params):
         self.ids += 1
-        self.proc.stdin.write(json.dumps({"id": self.ids, "method": method, "params": params}) + "\n")
-        self.proc.stdin.flush()
+        self._send(json.dumps({"id": self.ids, "method": method, "params": params}) + "\n", method)
         while True:
             try:
                 message = self.replies.get(timeout=max(0, self.deadline - time.monotonic()))
@@ -120,6 +118,13 @@ class CodexServer:
                 if "error" in message:
                     raise RuntimeError(str(message["error"]))
                 return message["result"]
+
+    def _send(self, line, method):
+        try:
+            self.proc.stdin.write(line)
+            self.proc.stdin.flush()
+        except OSError as exc:   # a process `end_servers` killed before the write: the same end as one read
+            raise RuntimeError(f"Codex 연결 종료: {method}") from exc
 
     def __exit__(self, *_exc):
         try:
@@ -143,15 +148,29 @@ class CodexServer:
 _servers: set = set()
 _servers_lock = threading.Lock()
 _servers_closed = False
+# One per server lifespan, moved by `end_servers`. A thread pinned to one (`pin_servers`) starts no `app-server` in
+# a later one: a background check the old lifespan began must not start Codex for a server that never asked.
+_epoch = 0
+_pinned = threading.local()
+
+
+def server_epoch():
+    return _epoch
+
+
+def pin_servers(epoch):
+    """This thread starts `app-server`s only while the lifespan `epoch` names is the current one."""
+
+    _pinned.epoch = epoch
 
 
 def end_servers():
     """The server is going down: every `app-server` ends, its request with `Codex 연결 종료`, and none starts
-    until `reopen_servers`."""
+    until `reopen_servers`, nor ever from a thread pinned to this lifespan."""
 
-    global _servers_closed
+    global _servers_closed, _epoch
     with _servers_lock:
-        _servers_closed, live = True, list(_servers)
+        _servers_closed, _epoch, live = True, _epoch + 1, list(_servers)
     for server in live:
         try:
             server.proc.kill()

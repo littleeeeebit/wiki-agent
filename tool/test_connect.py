@@ -455,6 +455,21 @@ def test_connect_with_an_unanswered_codex_names_the_reason_and_writes_nothing(tm
     write.assert_not_called()
 
 
+def test_two_listings_at_once_enter_one_waiting_handover_once(tmp_path, monkeypatch):
+    """The settings poll and the project list read together; the second would move an adapter the first moved."""
+
+    entered, release, calls = threading.Event(), threading.Event(), []
+    monkeypatch.setattr(connect, "record", lambda name: {"handover": {"state": "대기", "pr": 7, "ts": 0}})
+    monkeypatch.setattr(connect, "handover", lambda path, n: calls.append(n) or entered.set() or release.wait(10))
+    first = threading.Thread(target=connect.retried, args=(tmp_path,))
+    first.start()
+    assert entered.wait(5)
+    assert connect.retried(tmp_path) is False, "다른 읽기가 넘기는 중이면 건너뛴다"
+    release.set()
+    first.join(5)
+    assert calls == [7]
+
+
 def test_the_routine_hub_read_never_waits_on_codex_and_checks_once_per_ttl(monkeypatch):
     """A Codex `app-server` may take minutes: the project list and the settings line read the last check."""
 

@@ -492,6 +492,21 @@ def test_a_shutdown_during_a_healthy_wiring_check_starts_no_tests(world):
     assert oneshot.load(rid)["stopped"]["reason"] == "restart" and "register" not in oneshot.load(rid)["steps"]
 
 
+def test_tests_a_shutdown_cut_leave_register_undone(world):
+    """Shutdown kills the tests' Codex, and they keep `trust=False`: Register is not done, `[재개]` runs them again."""
+
+    rid = made(world)
+    stopping = threading.Event()
+
+    def cut(path, then=None, wait=False):
+        stopping.set()
+        return True
+
+    with patch.object(runtime, "stopping", stopping), patch.object(connect, "examine", cut):
+        oneshot.bootstrap(rid)
+    assert oneshot.load(rid)["stopped"]["reason"] == "restart" and "register" not in oneshot.load(rid)["steps"]
+
+
 def test_an_unrecorded_same_name_remote_stops_and_is_adopted_only_on_request(world):
     rid = made(world, steps={s: 1 for s in ("recheck", "folder", "files", "commit", "register")})
     for s in ("folder", "files", "commit", "register"):

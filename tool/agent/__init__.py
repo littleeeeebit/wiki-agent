@@ -6,7 +6,8 @@ at the `tool/` root uses anything else. `ChatSession.say` streams `Event`s —
 own `session_id` and `parent_id`; `ChatSession.answer` answers an approval.
 """
 
-from .chat_local import ROOT, SETTINGS, CodexServer, claude_usage, cli_command, codex_usage, settings
+from .chat_local import (ROOT, SETTINGS, CodexServer, claude_usage, cli_command, codex_usage, pin_servers,
+                         server_epoch, settings)
 from .chat_events import OUTPUT_LIMIT, output_of
 from .chat_session import ChatSession, Event, end_all, explain, oneshot, reopen
 from . import read_tools
@@ -19,6 +20,8 @@ __all__ = (
     "read_tools",
     # every provider, at server shutdown and start
     "end_all", "reopen",
+    # a background thread kept to the server lifespan that started it
+    "server_epoch", "pin_servers",
     # finding the CLIs, and the chat's local settings
     "CodexServer", "cli_command", "codex_usage", "claude_usage", "settings", "ROOT", "SETTINGS",
 )

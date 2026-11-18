@@ -58,15 +58,19 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
     return () => { generation.current = mine + 1 }
   }, [])
   // The server checks the wiring in the background (`wiring.hub_seen`): while it does, the hub line reads again
-  // every 3 s, a failed read included, until a read says the check is over.
+  // 3 s after the last read settled, a failed one included, until a read says the check is over. One read at a
+  // time: the listing also walks a waiting adapter handover, and an older answer never replaces a newer one.
   const checking = !!hub?.checking
   useEffect(() => {
     if (!checking) return
     const mine = generation.current
-    const timer = window.setInterval(() => {
-      void api.getConnect().then(({ hub: next }) => { if (mine === generation.current) setHub(next) }).catch(() => {})
-    }, 3000)
-    return () => window.clearInterval(timer)
+    let live = true, timer = 0
+    const next = () => { timer = window.setTimeout(() => {
+      void api.getConnect().then(({ hub: read }) => { if (live && mine === generation.current) setHub(read) })
+        .catch(() => {}).finally(() => { if (live) next() })
+    }, 3000) }
+    next()
+    return () => { live = false; window.clearTimeout(timer) }
   }, [checking])
 
   useEffect(() => {

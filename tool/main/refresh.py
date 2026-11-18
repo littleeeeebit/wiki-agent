@@ -13,6 +13,7 @@ import threading
 import time
 from collections.abc import Callable
 
+from agent import pin_servers, server_epoch
 from . import runtime
 
 
@@ -44,7 +45,8 @@ class Refresh:
             if stale and not waiting and not self._running and not runtime.stopping.is_set():
                 self._running = True
                 try:
-                    threading.Thread(target=self._run, args=(self._revision,), daemon=True, name=self.name).start()
+                    threading.Thread(target=self._run, args=(self._revision, server_epoch()), daemon=True,
+                                     name=self.name).start()
                 except BaseException:   # a thread that never started must not hold the next read off for good
                     self._running = False
                     raise
@@ -59,7 +61,8 @@ class Refresh:
             self._revision += 1
             self._value = self._failed = None
 
-    def _run(self, revision: int) -> None:
+    def _run(self, revision: int, epoch: int) -> None:
+        pin_servers(epoch)   # outlives no lifespan: a shutdown meanwhile leaves it no Codex to start
         value, error = None, None
         try:
             value = self._compute()

@@ -511,6 +511,8 @@ def s_register(run: dict) -> None:
         raise Stop("connect", "이 기계의 hook 배선이나 Codex 신뢰를 바꿔야 한다 — 프로젝트 목록에서 이 저장소의 [연결]로 확인한 뒤 [재개]")
     if not connect.examine(path, wait=True):   # `[연결]`'s tests, in the step: a cut before their results are kept runs them again
         raise Stop("connect", "이 저장소의 시험이 아직 돌고 있다 — 끝난 뒤 [재개]")
+    if runtime.stopping.is_set():   # shutdown cut the tests (it kills their Codex): Register is not done, `[재개]` runs them again
+        raise Stop("restart", "서버가 꺼지는 중이라 멈췄다")
 
 
 def s_remote(run: dict) -> None:
