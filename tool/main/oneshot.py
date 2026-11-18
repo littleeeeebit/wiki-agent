@@ -512,12 +512,16 @@ def s_register(run: dict) -> None:
             raise Stop("connect", "이 기계의 hook 배선이나 Codex 신뢰를 바꿔야 한다"
                        + (" — 확정 때 본 변경과 지금 필요한 변경이 다르다" if run.get("wiring") else "")
                        + " — 프로젝트 목록에서 이 저장소의 [연결]로 확인한 뒤 [재개]")
+        done: list[str] = []
         try:
-            connect.move(shown["digest"], connect.adapter_of(path)[0])
+            connect.move(shown["digest"], connect.adapter_of(path)[0], done)
         except Exception as exc:  # noqa: BLE001 — a refusal (HTTP 409) or a write that failed: its reason is the stop's
-            if runtime.stopping.is_set():   # shutdown refused or cut it: `[재개]` checks and moves again
-                raise Stop("restart", "서버가 꺼지는 중이라 멈췄다") from exc
             reason = exc.detail if isinstance(exc, HTTPException) else f"{type(exc).__name__}: {exc}"
+            if done:   # what is left is another list than the card's: the owner confirms it, never a resume alone
+                raise Stop("connect", f"이 기계의 배선을 일부만 바꿨다 — 쓴 것: {', '.join(done)} — {reason}"
+                                      " — 남은 변경을 [연결]로 확인한 뒤 [재개]") from exc
+            if runtime.stopping.is_set():   # shutdown refused it before any write: `[재개]` checks and moves again
+                raise Stop("restart", "서버가 꺼지는 중이라 멈췄다") from exc
             raise Stop("connect", f"이 기계의 배선을 바꾸지 못했다 — {reason} — [연결]로 확인한 뒤 [재개]") from exc
     if not connect.examine(path, wait=True):   # `[연결]`'s tests, in the step: a cut before their results are kept runs them again
         raise Stop("connect", "이 저장소의 시험이 아직 돌고 있다 — 끝난 뒤 [재개]")

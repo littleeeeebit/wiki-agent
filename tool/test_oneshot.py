@@ -431,7 +431,7 @@ def test_register_moves_exactly_the_wiring_the_card_confirmed(world):
     moved = []
     world["wiring"].update(needed=True, refused="", digest="shown")
 
-    def move(confirmed, data=None):
+    def move(confirmed, data=None, done=None):
         moved.append(confirmed)
         world["wiring"]["needed"] = False
         return {}
@@ -465,7 +465,7 @@ def test_a_move_shutdown_refused_or_cut_stops_as_a_restart(world):
     rid = made(world, wiring="shown")
     stopping = threading.Event()
 
-    def cut(confirmed, data=None):
+    def cut(confirmed, data=None, done=None):
         stopping.set()
         raise RuntimeError("Codex 연결 종료: hooks/trust")
 
@@ -473,6 +473,24 @@ def test_a_move_shutdown_refused_or_cut_stops_as_a_restart(world):
         oneshot.bootstrap(rid)
     run = oneshot.load(rid)
     assert run["stopped"]["reason"] == "restart" and "register" not in run["steps"] and world["examined"] == []
+
+
+def test_a_move_cut_after_some_writes_asks_the_owner_to_confirm_the_rest(world):
+    """What is left is another list than the card's, so `[재개]` alone could never write it: the stop says so."""
+
+    world["wiring"].update(needed=True, refused="", digest="shown")
+    rid = made(world, wiring="shown")
+    stopping = threading.Event()
+
+    def cut(confirmed, data=None, done=None):
+        done.append("~/.codex/hooks.json")
+        stopping.set()
+        raise RuntimeError("Codex 연결 종료: hooks/trust")
+
+    with patch.object(runtime, "stopping", stopping), patch.object(connect, "move", cut):
+        oneshot.bootstrap(rid)
+    stop = oneshot.load(rid)["stopped"]
+    assert stop["reason"] == "connect" and "일부만" in stop["detail"] and "~/.codex/hooks.json" in stop["detail"]
 
 
 def test_wiring_to_confirm_stops_the_register_and_tests_cut_before_their_results_run_again(world):

@@ -49,16 +49,22 @@ case stops with `connect` as before:
 - A move that cannot be written, with its reason.
 
 The owner then confirms on `[연결]` and presses `[재개]`. A move that a server
-going down refused or cut stops with `restart` instead, and `[재개]` checks
-and moves again.
+going down refused before any write stops with `restart` instead, and
+`[재개]` checks and moves again. A move cut after some writes, by shutdown or
+by a failure, stops with `connect` and names what it wrote. What is left is a
+different list from the one the card showed, so the owner confirms it on
+`[연결]`; `[재개]` alone never writes it.
 
 The digest binds what is written, not only the lines shown. A line names a
 hook but not its command, and the same lines under another interpreter write
 other commands. So the digest also covers each file's whole new content, the
-interpreter, which the list now shows, and the Codex homes the trust is
-recorded in. `connect.move` writes nothing once shutdown has begun. A move cut
-partway still clears every repository's probe record and the routine read's
-last check, as a finished move does.
+interpreter and the Codex homes the trust is recorded in. The list shows the
+interpreter and those homes, and the move writes trust to that captured list,
+never to a second read of the homes. `connect.move` writes nothing once
+shutdown has begun. A move cut partway still drops the routine read's last
+check and every repository's probe record, as a finished move does. Each
+record is cleared on its own, and one that cannot be cleared hides neither
+the others nor the move's own error.
 
 The screen applies a read of the run only when no other answer landed after
 the read was asked. A poll asked before the confirm can then never put the

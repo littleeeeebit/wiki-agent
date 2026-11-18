@@ -440,16 +440,16 @@ def _snapshot(data: dict | None = None) -> tuple[dict, list, list, str]:
         trust = "codex" in agents and (codex or not trusted(python))
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         return ({"needed": True, "refused": str(exc), "agents": agents,
-                 "lines": [], "links": [], "trust": False, "digest": ""},
+                 "lines": [], "links": [], "trust": False, "homes": [], "python": python, "digest": ""},
                 [], [], python)
     links = [{"link": str(link), "from": str(old), "to": str(new) if new else None} for link, old, new in found]
-    shown = {"agents": agents, "lines": lines, "links": links, "trust": trust, "python": python}
+    # The Codex homes the trust is recorded in, read once: `move` writes to this list, never to a second read.
+    homes = [str(file.parent) for file in apply.user_files("codex")] if trust else []
+    shown = {"agents": agents, "lines": lines, "links": links, "trust": trust, "homes": homes, "python": python}
     # The digest binds what is written, not only its labels: a line names a hook, never its command, and the same
-    # labels under another interpreter write other commands. So it covers each file's whole new content, the
-    # interpreter, and the Codex homes the trust is recorded in.
-    writes = {"files": [[str(path), settings] for path, settings, changes in plan if changes],
-              "homes": [str(file.parent) for file in apply.user_files("codex")] if trust else []}
-    sealed = json.dumps({**shown, **writes}, sort_keys=True, ensure_ascii=False, default=str).encode()
+    # labels under another interpreter write other commands. So it also covers each file's whole new content.
+    files = [[str(path), settings] for path, settings, changes in plan if changes]
+    sealed = json.dumps({**shown, "files": files}, sort_keys=True, ensure_ascii=False, default=str).encode()
     return ({"needed": bool(lines or any(link["to"] for link in links) or trust), "refused": "", **shown,
              "digest": digest(sealed)}, plan, found, python)
 
@@ -482,15 +482,30 @@ def move(confirmed: str, data: dict | None = None, done: list[str] | None = None
             for link, _old, new in (found_link for found_link in found if found_link[2]):
                 setup_agents.relink(link, new)
                 done.append(f"{link} → {new}")
-            for file in apply.user_files("codex") if now["trust"] else []:
-                setup_agents.codex_hooks(file.parent, True, python)
-                done.append(f"{file.parent}: Codex 신뢰 기록")
-        finally:   # a move cut partway changed the wiring too: no test of the old one, nor its last check, stands
-            for file in RECORDS.glob("*.json"):
-                keep(file.stem, probe={}, trust=None)
-            from . import wiring
-            wiring.forget_hub()
+            for home in now["homes"]:
+                setup_agents.codex_hooks(Path(home), True, python)
+                done.append(f"{home}: Codex 신뢰 기록")
+        except BaseException as exc:   # a move cut partway changed the wiring too: its error stays the one raised
+            for note in _forget_old_wiring():
+                exc.add_note(note)
+            raise
+        _forget_old_wiring()   # ponytail: a record that will not clear after a whole move is skipped, not reported
         return now
+
+
+def _forget_old_wiring() -> list[str]:
+    """Drop the routine read's last check and every repository's test of the wiring. Each record is tried on its
+    own, so one that cannot be cleared stops none of the others; it comes back named instead of raising."""
+
+    from . import wiring
+    wiring.forget_hub()
+    kept = []
+    for file in RECORDS.glob("*.json"):
+        try:
+            keep(file.stem, probe={}, trust=None)
+        except (OSError, ValueError) as exc:   # a locked or broken record
+            kept.append(f"{file.stem} 의 옛 배선 시험 결과를 지우지 못했다 — {exc}")
+    return kept
 
 
 # -- Connecting ----------------------------------------------------------------------

@@ -480,6 +480,40 @@ def test_a_move_cut_partway_drops_every_test_of_the_old_wiring(tmp_path, home, m
         connect.move(shown["digest"])
     assert connect.record("other-project")["probe"] == {} and connect.record("other-project")["trust"] is None
     assert forgot == [1]
+    # A record that cannot be cleared hides neither the write's own error nor the other records' clearing.
+    connect.keep("locked-project", probe={"claude": {"ok": True}})
+    connect.keep("other-project", probe={"claude": {"ok": True}})
+    real_keep = connect.keep
+
+    def keep(name, **fields):
+        if name == "locked-project":
+            raise PermissionError("locked")
+        return real_keep(name, **fields)
+
+    with patch.object(connect, "keep", keep), \
+         patch.object(setup_agents, "write_plan", side_effect=OSError("disk full")), \
+         pytest.raises(OSError, match="disk full"):
+        connect.move(connect.hub()["digest"])
+    assert connect.record("other-project")["probe"] == {} and forgot == [1, 1]
+
+
+def test_trust_goes_only_to_the_codex_homes_the_confirmation_listed(tmp_path, home):
+    """A Codex home that appears after the check is not in the confirmed list, so it gets no trust."""
+
+    real_files, real_write = apply.user_files, setup_agents.write_plan
+    codex = list(real_files("codex"))
+    shown, recorded = connect.hub(), []
+    assert shown["trust"] and shown["homes"] == [str(file.parent) for file in codex]
+
+    def write_plan(plan):   # a `CODEX_HOME` that comes to exist while the files are written, after the check
+        codex.append(tmp_path / "later-codex" / "hooks.json")
+        return real_write(plan)
+
+    with patch.object(apply, "user_files", lambda agent: list(codex) if agent == "codex" else real_files(agent)), \
+         patch.object(setup_agents, "write_plan", write_plan), \
+         patch.object(setup_agents, "codex_hooks", side_effect=lambda h, trust, python=None: recorded.append(str(h))):
+        connect.move(shown["digest"])
+    assert recorded == shown["homes"], "확인한 목록의 홈에만 신뢰를 쓴다"
 
 
 def test_a_codex_home_that_does_not_answer_is_a_refusal_not_a_move(tmp_path, monkeypatch):
