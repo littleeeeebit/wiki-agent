@@ -99,6 +99,43 @@ def test_a_link_whose_replacement_fails_points_where_it_did(tmp_path, monkeypatc
     assert any(str(aside) in note for note in failed.value.__notes__), "남겨 둔 자리를 알려 준다"
 
 
+def test_a_link_kept_aside_by_a_cut_move_is_listed_and_never_clobbered(tmp_path, monkeypatch):
+    """A crash after the old link moved aside, before the new one stood: the next plan still points that place."""
+
+    import pytest
+
+    import setup_agents
+
+    home, old_hub = tmp_path / "home", tmp_path / "old-hub"
+    (old_hub / "tool").mkdir(parents=True)
+    (old_hub / "tool/hook.py").write_text("", encoding="utf-8")
+    (old_hub / "skills/after-merge").mkdir(parents=True)
+    (home / ".claude/skills").mkdir(parents=True)
+    link = home / ".claude/skills/after-merge"
+
+    def make(at):
+        if os.name == "nt":
+            import _winapi
+
+            _winapi.CreateJunction(str(old_hub / "skills/after-merge"), str(at))
+        else:
+            os.symlink(old_hub / "skills/after-merge", at, target_is_directory=True)
+
+    make(setup_agents.parked(link))   # kept aside, nothing at its own place
+    found = setup_agents.skill_links(home)
+    assert [(f[0], f[1].name) for f in found] == [(link, "after-merge")], "남겨 둔 링크도 계획에 든다"
+    if found[0][2]:   # this hub has the skill: pointing it anew takes the kept link's place
+        setup_agents.relink(link, found[0][2])
+        assert os.path.lexists(link) and not os.path.lexists(setup_agents.parked(link))
+        os.rmdir(link) if os.name == "nt" else os.unlink(link)
+    # A live link beside an earlier kept one: moving it aside would clobber that one, so nothing moves.
+    make(link)
+    make(setup_agents.parked(link))
+    with pytest.raises(FileExistsError):
+        setup_agents.relink(link, tmp_path)
+    assert os.path.lexists(link) and os.path.lexists(setup_agents.parked(link))
+
+
 def test_a_server_going_down_while_a_file_is_staged_installs_nothing(tmp_path):
     import pytest
 

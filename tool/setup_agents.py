@@ -343,10 +343,16 @@ def skill_links(home=None):
 
     folder = Path(home or _HOME or Path.home()) / ".claude/skills"
     found = []
-    for link in sorted(folder.iterdir()) if folder.is_dir() else []:
-        if not (link.is_symlink() or is_junction(link)):
+    # A link `relink` kept aside, with nothing at its own place: a move cut before the new link stood. It is
+    # listed under the place it belongs, so the next plan points that place anew.
+    kept = [(folder / name[1:-len(".before-relink")], folder.parent / name)
+            for name in (os.listdir(folder.parent) if folder.parent.is_dir() else [])
+            if name.startswith(".") and name.endswith(".before-relink")]
+    lost = [(link, aside) for link, aside in kept if not os.path.lexists(link)]
+    for link, read in sorted([(link, link) for link in (folder.iterdir() if folder.is_dir() else [])] + lost):
+        if not (read.is_symlink() or is_junction(read)):
             continue
-        target = Path(os.readlink(link).removeprefix("\\\\?\\"))
+        target = Path(os.readlink(read).removeprefix("\\\\?\\"))
         hub = target.parent.parent
         if target.parent.name != "skills" or not (hub / "tool/hook.py").is_file():
             continue
@@ -357,6 +363,12 @@ def skill_links(home=None):
     return found
 
 
+def parked(link):
+    """Where `relink` keeps a skill link while its replacement is made: beside the skills folder, so no host
+    loads it as a skill, and `skill_links` finds it when a crash left it there."""
+    return Path(link).parent.parent / f".{Path(link).name}.before-relink"
+
+
 def relink(link, target):
     """Point `link` at `target`, as the same kind of link it was: a junction
     stays a junction — it needs no developer mode — and a symlink a symlink.
@@ -365,9 +377,14 @@ def relink(link, target):
     aside (out of the skills folder, so nothing loads or lists it there), and
     moved back when the new one cannot be made. Only once the new one is in
     place does the old one go."""
-    junction = is_junction(link)
-    aside = link.parent.parent / f".{link.name}.before-relink"
-    os.rename(link, aside)
+    aside = parked(link)
+    if os.path.lexists(link):
+        if os.path.lexists(aside):   # never clobber an earlier move's kept link (Linux `rename` would)
+            raise FileExistsError(f"{aside} 에 앞서 옮기다 남긴 링크가 있다 — 확인한 뒤 지운다")
+        os.rename(link, aside)
+    elif not os.path.lexists(aside):   # neither the link nor a kept one: nothing to point anew
+        raise FileNotFoundError(str(link))
+    junction = is_junction(aside)
     try:
         if junction:
             import _winapi
@@ -378,7 +395,7 @@ def relink(link, target):
     except BaseException as exc:
         try:
             os.rename(aside, link)   # the untouched old link, back where it was
-        except OSError as back:   # still kept aside, and named: nothing is lost unseen
+        except OSError as back:   # still kept aside, and named: `skill_links` lists it again
             exc.add_note(f"{link} 의 원래 링크를 되돌리지 못해 {aside} 에 남겼다 — {back}")
         raise
     # On Windows both kinds of directory link go with `rmdir`, which removes

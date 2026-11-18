@@ -87,7 +87,10 @@ loaded without `PreToolUse`, or a trusted twin beside an untrusted entry.
 A skill link is never removed before its replacement stands. The working
 link is moved aside, out of the skills folder, and moved back when the new
 one cannot be made. If even that fails it stays aside, whole, and the error
-names where.
+names where, also in `[모두 다시 연결]`'s report. A link kept aside with
+nothing at its own place, as a crash leaves it, is listed by the next plan
+under that place, so `[연결]` points it anew. Moving a link aside never
+replaces one kept there earlier: the move refuses instead.
 
 Shutdown is checked in four places:
 
