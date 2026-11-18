@@ -1,6 +1,7 @@
 """Release steps 1 and 2 (`docs/plans/release/0-overview.md`). Step 1 builds one pinned commit into an Android
 APK with the version injected, signs it and checks it. Step 2 adds each repository's one release key. Nothing
-here publishes yet. Steps 3 to 5 bring the GitHub transfer and ledger, failure handling and the button.
+here publishes: `release_publish` does, with step 3's transfer and ledger. Steps 4 and 5 bring failure
+handling and the button.
 `rehearse` signs only with disposable test keys, and a test key never signs a production artifact.
 
 A rehearsal runs from `tool/` as this module's `rehearse` command, given a disposable clone and an optional

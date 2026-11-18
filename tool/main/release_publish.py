@@ -113,11 +113,11 @@ def notes(repo: Path, sha: str, since: str | None, first: bool) -> str:
 
     span = [f"{since}..{sha}"] if since else [sha]
     try:
-        titles = release.git(repo, "log", "--first-parent", f"--max-count={NOTE_LINES}", "--format=%s", *span).splitlines()
+        log = release.git(repo, "log", "--first-parent", f"--max-count={NOTE_LINES}", "--format=%s", *span)
+        titles = [f"- {t}" for t in log.splitlines() if t.strip()] or ["이전 릴리스 뒤로 병합된 변경이 없다."]
     except ValueError:
-        titles = []
-    lines = ([release.FIRST_RELEASE_NOTE, ""] if first else []) + [f"- {t}" for t in titles if t.strip()]
-    return "\n".join(lines) or "변경 목록을 만들지 못했다."
+        titles = ["변경 목록을 만들지 못했다."]
+    return "\n".join(([release.FIRST_RELEASE_NOTE, ""] if first else []) + titles)
 
 
 def previous_facts(repo: str, prior: dict | None, abi: str, into: Path, kit: dict) -> dict | None:

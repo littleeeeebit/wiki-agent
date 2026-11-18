@@ -75,6 +75,17 @@ def test_the_first_press_publishes_the_seed_with_its_note_and_makes_the_key(pres
     assert done["release_id"] == rel["id"] and not release.place(repo, done["id"]).exists()
 
 
+def test_the_notes_tell_no_changes_apart_from_a_list_that_could_not_be_read(monkeypatch):
+    monkeypatch.setattr(release, "git", lambda repo, *args, **k: "")
+    assert rp.notes(Path("r"), SHA, OTHER, False) == "이전 릴리스 뒤로 병합된 변경이 없다."
+
+    def broken(repo, *args, **k):
+        raise ValueError("git log 실패")
+
+    monkeypatch.setattr(release, "git", broken)
+    assert rp.notes(Path("r"), SHA, OTHER, True).endswith("변경 목록을 만들지 못했다.")
+
+
 def test_the_next_press_is_checked_against_the_previous_production_apk_on_github(press, monkeypatch):
     fake, repo, keys = press
     rp.publish(repo, "0.1.0", None)
