@@ -10,6 +10,7 @@ A rehearsal runs from `tool/` as this module's `rehearse` command, given a dispo
 from __future__ import annotations
 
 import ctypes
+import functools
 import json
 import os
 import re
@@ -17,6 +18,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import tomllib
@@ -234,17 +236,52 @@ def tools() -> dict:
 
 SECRET = "RELEASE_KEY_PASSWORD"   # reaches the key tools only, set by `keyed`; never inherited
 UNSHARED = {SECRET, *host.TOKENS}
-# The name a shell's not-found message gives, by the message's shape so that a localized one matches too. PowerShell
-# echoes the name before its message (`cargo: 'cargo' 용어가 …`, Windows PowerShell `cargo : …`), English or not.
-# cmd starts the line with it, followed by its English message or straight away by a localized one
-# (`'cargo'은(는) 내부 또는 외부 명령…`); a source error such as `'theme' is not exported` is neither.
-# sh says `cargo: command not found`.
-# ponytail: a localized cmd message in a Latin-script language is not recognized; add its phrase if one turns up
-MISSING_TOOL = re.compile(r"^(?P<ps>[^\s:'/\\]+) ?: (?:'(?P=ps)'|The term '(?P=ps)')|"
-                          r"^'(?P<cmd>[^']+)'(?= is not recognized as an internal or external command|[^\x00-\x7f])|"
-                          r"(?:^|:\s)(?P<sh>[^\s:/\\]+): (?:command )?not found", re.IGNORECASE | re.MULTILINE)
+# The English not-found messages of PowerShell, cmd and sh, each naming the program as `n`. The machine's own,
+# in whatever language it speaks, are learned from its shells (`learned_shapes`).
+ENGLISH_SHAPES = tuple(re.compile(shape, re.IGNORECASE | re.MULTILINE) for shape in (
+    r"The term '(?P<n>[^']+)' is not recognized as (?:the|a) name of a cmdlet",
+    r"'(?P<n>[^']+)' is not recognized as an internal or external command",
+    r"(?:^|:\s)(?P<n>[^\s:/\\]+): (?:command )?not found"))
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 LAST_LINES = 12   # where a failed command's own diagnostic sits in its log
+NAME = r"(?P<n>[^\s'\"/\\:]+)"
+AFTER_NAME = 16   # of a message's text past the name: enough to tell it from a source error, short of any wrap
+# What the gate's shell runs to ask: the program itself (in the PowerShell the resolver chose, 5.1 or 7), then the
+# shells a build script may start in turn.
+# ponytail: a second PowerShell a build script starts itself words its message apart from the gate's and is not
+# learned; probe it through a catalogued `shell` entry if a build turns out to do that
+PROBES = ("{name}", "cmd /c {name}", "sh -c {name}")
+
+
+def shapes_from(name: str, out: str) -> list[re.Pattern]:
+    """The not-found message in `out`, a shell's answer for `name` (which exists nowhere), as a pattern naming the
+    program as `n`: from the name's first mention to `AFTER_NAME` characters past its last, since PowerShell wraps
+    the rest at the console's width. A line that only echoes the command is not a message."""
+
+    shapes = []
+    for line in ANSI.sub("", out).splitlines():
+        said = line[line.find(name):line.rfind(name) + len(name) + AFTER_NAME].rstrip() if name in line else ""
+        if len(said.replace(name, "").strip(" '\"")) >= 8 and "{" not in said:
+            escaped = re.escape(said).replace(re.escape(name), NAME, 1).replace(re.escape(name), "(?P=n)")
+            shapes.append(re.compile(escaped, re.MULTILINE))
+    return shapes[:1]
+
+
+@functools.cache
+def learned_shapes() -> tuple[re.Pattern, ...]:
+    """What this machine's shells print for a program they cannot find, asked once through the gate itself, so
+    the shell, its language and the decoding are a build's own."""
+
+    name = f"wikiagentmissing{secrets.token_hex(4)}"
+    shapes = []
+    with tempfile.TemporaryDirectory() as cwd:
+        for probe in PROBES:
+            try:
+                _, out, _ = specs.gate(probe.format(name=name), Path(cwd), threading.Event(), timeout=60, idle=30)
+            except Exception:  # noqa: BLE001 — a shell that cannot be asked teaches nothing
+                continue
+            shapes += shapes_from(name, out)
+    return tuple(shapes)
 
 
 def environment(kit: dict) -> dict:
@@ -257,13 +294,14 @@ def environment(kit: dict) -> dict:
 
 
 def lacks_tool(out: str, env: dict) -> bool:
-    """The build failed because this machine lacks a program: its shell's not-found message for a bare name that
-    is not on the build's `PATH`, among the log's last lines. A path is the repository's own script, which a
-    source change can restore. An earlier optional probe is not why the build failed."""
+    """The build failed because this machine lacks a program: its shell's not-found message, English or the
+    machine's own, for a bare name that is not on the build's `PATH`, among the log's last lines. A path is the
+    repository's own script, which a source change can restore. An earlier optional probe is not why the build
+    failed, and a source error that merely quotes a name is not a shell's message."""
 
     # ponytail: a not-found message in the last lines beside an unrelated error still reads as the machine's
     tail = "\n".join([line for line in ANSI.sub("", out).splitlines() if line.strip()][-LAST_LINES:])
-    names = (m["ps"] or m["cmd"] or m["sh"] for m in MISSING_TOOL.finditer(tail))
+    names = (m["n"] for shape in (*ENGLISH_SHAPES, *learned_shapes()) for m in shape.finditer(tail))
     return any(not re.search(r"[/\\]|^\.", name) and shutil.which(name, path=env.get("PATH")) is None
                for name in names)
 

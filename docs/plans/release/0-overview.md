@@ -209,10 +209,11 @@ So are a missing release tool, a key the server refuses, and a git or GitHub
 failure. A build that a person stopped, or that hit its deadline or went
 silent, is the machine's. So is one whose shell reports, in the log's last
 lines, that it cannot find a program by bare name that is not on the build's
-`PATH` (`release.lacks_tool`). The message is read by its shape, not its
-words, so a localized PowerShell or cmd message counts as well. A source
-error that merely starts with a quoted name, such as
-`'theme' is not exported`, does not. A missing
+`PATH` (`release.lacks_tool`). The message is the shell's own: the English
+ones, and what this machine's shells answer, in their language, when the
+server asks them once through the gate for a program that exists nowhere
+(`release.learned_shapes`). A source error that merely quotes a name, such
+as `'theme' is not exported` or its Korean counterpart, is not one. A missing
 script given by path is the
 repository's, and a source change can restore it. None of the machine's
 failures goes to an agent.

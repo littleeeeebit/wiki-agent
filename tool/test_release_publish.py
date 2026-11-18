@@ -16,6 +16,17 @@ from test_github_release import FakeGitHub
 SHA, OTHER, CERT = "a" * 40, "b" * 40, "c" * 64
 ANDROID = {"build": "build", "artifact": "out.apk", "application_id": "dev.o.r", "abi": "arm64-v8a"}
 BUILD = release.build   # the real one, before `press` fakes it
+# What this machine's shells answered for a program that exists nowhere, as `release.learned_shapes` asks them:
+# Windows PowerShell 5 and pwsh 7 in Korean, and cmd under the gate's UTF-8 code page.
+ASKED = {"probe : 'probe' 용어가 cmdlet, 함수, 스크립트 파일 또는 실행할 수 있는 프로그램 이름으로 인식되지 않습니다.",
+         "\x1b[31;1mprobe: \x1b[31;1m'probe' 용어가 cmdlet, 함수, 스크립트 파일 또는 실행할 수 있는 프로그램 이름으로",
+         "'probe'은(는) 내부 또는 외부 명령, 실행할 수 있는 프로그램, 또는"}
+
+
+@pytest.fixture(autouse=True)
+def asked(monkeypatch):
+    """The shells' answers above in place of asking this machine's, which the faked gate would answer instead."""
+    monkeypatch.setattr(release, "learned_shapes", lambda: tuple(s for out in ASKED for s in release.shapes_from("probe", out)))
 
 
 @pytest.fixture
@@ -173,6 +184,7 @@ SOURCE_ERROR = "error TS2307: Cannot find module './theme.js' ghp_" + "x" * 36
     ("stopped", False), ("deadline", False), ("missing cmdlet", False), ("missing command", False),
     ("missing cmdlet, Korean PowerShell 7", False), ("missing command, Korean cmd", False),
     ("installed tool's own error", True), ("quoted source error", True), ("missing command, English cmd", False),
+    ("quoted Korean source error", True), ("echoed name, other words", True),
     ("missing repository script", True), ("early optional probe", True), ("source", True)])
 def test_only_a_build_the_source_broke_needs_a_repair(monkeypatch, tmp_path, ending, repairable):
     halt = release.threading.Event()
@@ -190,6 +202,8 @@ def test_only_a_build_the_source_broke_needs_a_repair(monkeypatch, tmp_path, end
                                            "배치 파일이 아닙니다.",
             "installed tool's own error": "node: 'node' could not load ./build.mjs\n" + SOURCE_ERROR,
             "quoted source error": "'theme' is not exported by ./src/theme.ts",
+            "quoted Korean source error": "'theme'는 이 모듈에서 내보내지 않습니다.",
+            "echoed name, other words": "cargo: 'cargo' could not compile the package",
             "missing command, English cmd": "'vite' is not recognized as an internal or external command,\n"
                                             "operable program or batch file.",
             "missing command": "> tauri android build\nbash: rustup: command not found\nnpm ERR! code 127",
@@ -206,6 +220,27 @@ def test_only_a_build_the_source_broke_needs_a_repair(monkeypatch, tmp_path, end
         BUILD(src, ANDROID, "0.1.0", {}, halt)
     assert isinstance(failed.value, release.BuildFailed) is repairable
     assert "ghp_" not in str(failed.value)   # a token a build prints is redacted before anything keeps it
+
+
+def test_a_learned_message_ignores_the_echoed_command_and_where_the_console_wraps():
+    echoed = "    1 |  & { probe }\n" + "probe : 'probe' 용어가 cmdlet, 함수, 스크립트 파일"
+    (shape,) = release.shapes_from("probe", echoed)
+    assert shape.search("cargo : 'cargo' 용어가 cmdlet, 함수, 스\n크립트")["n"] == "cargo"   # wrapped elsewhere
+    assert not release.shapes_from("probe", "probe")   # a bare echo teaches nothing
+
+
+@pytest.mark.skipif(release.os.name != "nt", reason="asks this Windows machine's own shells")
+def test_this_machines_own_shells_teach_their_not_found_messages(monkeypatch, tmp_path):
+    monkeypatch.undo()   # the real `learned_shapes`, asking the real gate
+    release.learned_shapes.cache_clear()
+    try:
+        name = "wikiagentmissingtest"
+        for probe in ("{name}", "cmd /c {name}"):
+            _, out, _ = release.specs.gate(probe.format(name=name), tmp_path, release.threading.Event(), timeout=60)
+            assert release.lacks_tool(out, {"PATH": str(tmp_path)}), out
+        assert not release.lacks_tool("'theme'는 이 모듈에서 내보내지 않습니다.", {"PATH": str(tmp_path)})
+    finally:
+        release.learned_shapes.cache_clear()
 
 
 def test_a_build_whose_apk_cannot_be_read_needs_a_repair(monkeypatch, tmp_path):

@@ -166,12 +166,22 @@ def test_what_a_rollback_cannot_remove_is_reported_with_the_failure(repo, monkey
     assert git(repo, "branch", "--list", "release-fix-0-1-1")   # kept, and said so
 
 
-@pytest.mark.parametrize("cleanup", ["git times out", "the folder stays on disk"])
+@pytest.mark.parametrize("cleanup", ["git times out", "the folder stays on disk", "the folder cannot be read"])
 def test_a_rollback_that_fails_itself_releases_the_hold_and_keeps_the_failure(repo, monkeypatch, cleanup):
     repo, record, _ = repo
     tree = worktree_home(repo) / "release-fix-0-1-1"
+    exists, rolling_back = release_repair.Path.exists, []
+
+    def denied(self, *args, **kwargs):   # only for the folder, and only once rollback looks at it
+        if rolling_back and self == tree:
+            raise PermissionError("metadata access denied")
+        return exists(self, *args, **kwargs)
+
+    if cleanup == "the folder cannot be read":
+        monkeypatch.setattr(release_repair.Path, "exists", denied)
 
     def unsaved(spec):
+        rolling_back.append(True)
         raise OSError("disk full")
 
     def timed_out(*args, **kwargs):
@@ -186,8 +196,12 @@ def test_a_rollback_that_fails_itself_releases_the_hold_and_keeps_the_failure(re
     monkeypatch.setattr(release_repair, "remove", timed_out if cleanup == "git times out" else unregistered)
     with pytest.raises(RuntimeError, match="disk full — 정리하지 못한 것: 작업트리") as failed:
         release_repair.start(repo, record)
-    assert ("TimeoutExpired" if cleanup == "git times out" else "다른 프로세스") in str(failed.value)
+    told = {"git times out": "TimeoutExpired", "the folder stays on disk": "다른 프로세스",
+            "the folder cannot be read": "확인하지 못했다: metadata access denied"}[cleanup]
+    assert told in str(failed.value)
     assert str(tree) not in work._busy   # the person can open or remove it
+    if cleanup == "the folder cannot be read":   # the branch was still dealt with, and the original failure kept
+        assert not git(repo, "branch", "--list", "release-fix-0-1-1") and "disk full" in str(failed.value)
 
 
 def test_a_linked_checkout_chosen_as_the_project_is_refused_before_anything_is_made(repo, monkeypatch, tmp_path):

@@ -118,7 +118,10 @@ def undo(repo: Path, path: Path, branch: str, sha: str) -> str:
         remove(repo, path, force=True, keep_branch=True)
     except Exception as exc:  # noqa: BLE001 — a timeout too; the caller's failure stays the one reported
         return f"작업트리 {path} ({type(exc).__name__}: {exc}), 브랜치 {branch}"
-    folder = f"작업트리 폴더 {path} (다른 프로세스가 쥐고 있다)" if path.exists() else ""
+    try:
+        folder = f"작업트리 폴더 {path} (다른 프로세스가 쥐고 있다)" if path.exists() else ""
+    except OSError as exc:   # a folder whose metadata cannot be read may still be there
+        folder = f"작업트리 폴더 {path} (확인하지 못했다: {exc})"
 
     def git(*args):
         return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8",
