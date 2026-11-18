@@ -450,35 +450,42 @@ def test_register_moves_exactly_the_wiring_the_card_confirmed(world):
 def test_a_confirmed_move_that_cannot_be_written_stops_with_its_reason(world):
     world["wiring"].update(needed=True, refused="", digest="shown")
     rid = made(world, wiring="shown")
-    refused = HTTPException(409, "확인한 뒤에 바뀔 줄이 달라졌다. 다시 확인한다")
-    refused.add_note("other-project 의 옛 배선 시험 결과를 지우지 못했다 — locked")
-    with patch.object(connect, "move", side_effect=refused):
+    with patch.object(connect, "move", side_effect=HTTPException(409, "확인한 뒤에 바뀔 줄이 달라졌다. 다시 확인한다")):
         oneshot.bootstrap(rid)
     run = oneshot.load(rid)
     assert run["stopped"]["reason"] == "connect" and "달라졌다" in run["stopped"]["detail"]
-    assert "other-project" in run["stopped"]["detail"], "지우지 못한 기록도 멈춘 이유에 보인다"
     assert "register" not in run["steps"] and world["examined"] == []
+    # A write that failed partway names it, and the records its cleanup could not clear.
+    failed = OSError("디스크가 가득 찼다")
+    failed.add_note("other-project 의 옛 배선 시험 결과를 지우지 못했다 — locked")
+    oneshot.changed(rid, stopped=None)
+    with patch.object(connect, "move", side_effect=failed):
+        oneshot.bootstrap(rid)
+    detail = oneshot.load(rid)["stopped"]["detail"]
+    assert "가득 찼다" in detail and "other-project" in detail, "지우지 못한 기록도 멈춘 이유에 보인다"
 
 
-def test_a_move_shutdown_refused_or_cut_stops_as_a_restart(world):
+def test_a_move_shutdown_refused_before_writing_stops_as_a_restart(world):
     """`[재개]` after the restart checks and moves again: the owner has nothing to confirm on `[연결]`."""
 
     world["wiring"].update(needed=True, refused="", digest="shown")
     rid = made(world, wiring="shown")
     stopping = threading.Event()
 
-    def cut(confirmed, data=None, done=None):
+    def refused(confirmed, data=None, done=None):
         stopping.set()
-        raise RuntimeError("Codex 연결 종료: hooks/trust")
+        raise HTTPException(409, "서버가 꺼지는 중이라 배선을 쓰지 않는다")
 
-    with patch.object(runtime, "stopping", stopping), patch.object(connect, "move", cut):
+    with patch.object(runtime, "stopping", stopping), patch.object(connect, "move", refused):
         oneshot.bootstrap(rid)
     run = oneshot.load(rid)
-    assert run["stopped"]["reason"] == "restart" and "register" not in run["steps"] and world["examined"] == []
+    assert run["stopped"]["reason"] == "restart" and run["wiring"] == "shown", "승인은 그대로 남는다"
+    assert "register" not in run["steps"] and world["examined"] == []
 
 
-def test_a_move_cut_after_some_writes_asks_the_owner_to_confirm_the_rest(world):
-    """What is left is another list than the card's, so `[재개]` alone could never write it: the stop says so."""
+def test_a_move_cut_once_it_may_have_written_asks_the_owner_to_confirm_the_rest(world):
+    """What landed is not knowable in every case (Codex may take a trust write and die before answering), so a cut
+    move spends the card's approval whatever cut it: `[재개]` alone never writes what is left."""
 
     world["wiring"].update(needed=True, refused="", digest="shown")
     rid = made(world, wiring="shown")
@@ -487,13 +494,13 @@ def test_a_move_cut_after_some_writes_asks_the_owner_to_confirm_the_rest(world):
     def cut(confirmed, data=None, done=None):
         done.append("~/.codex/hooks.json")
         stopping.set()
-        raise RuntimeError("Codex 연결 종료: hooks/trust")
+        raise RuntimeError("Codex 연결 종료: config/batchWrite")
 
     with patch.object(runtime, "stopping", stopping), patch.object(connect, "move", cut):
         oneshot.bootstrap(rid)
-    stop = oneshot.load(rid)["stopped"]
-    assert stop["reason"] == "connect" and "일부만" in stop["detail"] and "~/.codex/hooks.json" in stop["detail"]
-    # The card's approval is spent: `[재개]` alone writes nothing of what is left, and goes on once `[연결]` did.
+    run = oneshot.load(rid)
+    assert run["stopped"]["reason"] == "connect" and run["wiring"] == ""
+    assert "멈췄다" in run["stopped"]["detail"] and "~/.codex/hooks.json" in run["stopped"]["detail"]
     moved = []
     oneshot.changed(rid, stopped=None)
     with patch.object(connect, "move", lambda *a, **k: moved.append(a)):

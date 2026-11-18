@@ -515,16 +515,18 @@ def s_register(run: dict) -> None:
         done: list[str] = []
         try:
             connect.move(shown["digest"], connect.adapter_of(path)[0], done)
-        except Exception as exc:  # noqa: BLE001 — a refusal (HTTP 409) or a write that failed: its reason is the stop's
-            reason = exc.detail if isinstance(exc, HTTPException) else f"{type(exc).__name__}: {exc}"
-            reason = " — ".join([reason, *getattr(exc, "__notes__", [])])   # records the move could not clear
-            if done:   # what is left is another list than the card's: the owner confirms it, never a resume alone
-                changed(run["id"], wiring="")   # the card's approval is spent; `[재개]` goes on once nothing is left
-                raise Stop("connect", f"이 기계의 배선을 일부만 바꿨다 — 쓴 것: {', '.join(done)} — {reason}"
-                                      " — 남은 변경을 [연결]로 확인한 뒤 [재개]") from exc
-            if runtime.stopping.is_set():   # shutdown refused it before any write: `[재개]` checks and moves again
+        except HTTPException as exc:   # refused before its first write: the machine is as the card saw it
+            if runtime.stopping.is_set():   # `[재개]` after the restart checks and moves again
                 raise Stop("restart", "서버가 꺼지는 중이라 멈췄다") from exc
-            raise Stop("connect", f"이 기계의 배선을 바꾸지 못했다 — {reason} — [연결]로 확인한 뒤 [재개]") from exc
+            raise Stop("connect", f"이 기계의 배선을 바꾸지 못했다 — {exc.detail} — [연결]로 확인한 뒤 [재개]") from exc
+        except Exception as exc:  # noqa: BLE001 — a move cut once it may have written, whatever cut it
+            # What it wrote is not knowable in every case (Codex may take a trust write and die before answering),
+            # so the card's approval is spent: `[재개]` alone never writes what is left, `[연결]` shows it.
+            changed(run["id"], wiring="")
+            reason = " — ".join([f"{type(exc).__name__}: {exc}", *getattr(exc, "__notes__", [])])
+            wrote = f" — 확인된 것: {', '.join(done)}" if done else ""
+            raise Stop("connect", f"이 기계의 배선을 바꾸다 멈췄다{wrote} — {reason}"
+                                  " — 남은 변경을 [연결]로 확인한 뒤 [재개]") from exc
     if not connect.examine(path, wait=True):   # `[연결]`'s tests, in the step: a cut before their results are kept runs them again
         raise Stop("connect", "이 저장소의 시험이 아직 돌고 있다 — 끝난 뒤 [재개]")
     if runtime.stopping.is_set():   # shutdown cut the tests (it kills their Codex): Register is not done, `[재개]` runs them again

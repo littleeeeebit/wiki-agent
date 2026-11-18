@@ -183,7 +183,7 @@ def install(project, choice, check, allow_dirty=False):
           "이 명령은 실제 자동 이벤트·선택형 질문 UI를 검증하지 않습니다. 새 세션에서 별도로 확인하세요.")
 
 
-def codex_hooks(home, trust, python=None):
+def codex_hooks(home, trust, python=None, stopped=None):
     """This wiki's hooks as one Codex home sees them, trusted first if asked.
 
     Codex runs a hook only while `hooks.state` holds the hash of exactly that
@@ -201,17 +201,11 @@ def codex_hooks(home, trust, python=None):
         hooks = listed()
         pending = {h["key"]: {"trusted_hash": h["currentHash"]} for h in hooks if h["trustStatus"] != "trusted"}
         if trust and pending:
-            try:
-                server.request("config/batchWrite", {"edits": [
-                    {"keyPath": "hooks.state", "value": pending, "mergeStrategy": "upsert"}]})
-            except BaseException as exc:   # once sent, Codex may have taken it before being cut
-                exc.trust_sent = not getattr(exc, "unsent", False)
-                raise
-            try:
-                hooks = listed()
-            except BaseException as exc:   # the write was answered: it landed
-                exc.trust_sent = True
-                raise
+            if stopped and stopped():   # the server went down while Codex answered the read: write nothing
+                raise RuntimeError("서버가 꺼지는 중이라 Codex 신뢰를 쓰지 않았다")
+            server.request("config/batchWrite", {"edits": [
+                {"keyPath": "hooks.state", "value": pending, "mergeStrategy": "upsert"}]})
+            hooks = listed()
     return hooks
 
 
@@ -227,7 +221,9 @@ def codex_trusted(hooks, python=None):
     """Codex lists every hook this install wrote, each one trusted. A subset, say `SessionStart` loaded and
     `PreToolUse` not, is not: the wiring it was confirmed for is not all running."""
 
-    return {(h["eventName"], h["command"]) for h in hooks if h["trustStatus"] == "trusted"} >= codex_mine(python)
+    # Every listed entry trusted, and together they cover the set: a trusted duplicate never hides an untrusted one.
+    return (all(h["trustStatus"] == "trusted" for h in hooks)
+            and {(h["eventName"], h["command"]) for h in hooks} >= codex_mine(python))
 
 
 def probe(project):

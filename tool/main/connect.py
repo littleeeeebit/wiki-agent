@@ -481,22 +481,18 @@ def move(confirmed: str, data: dict | None = None, done: list[str] | None = None
             for link, _old, new in (found_link for found_link in found if found_link[2]):
                 setup_agents.relink(link, new)
                 done.append(f"{link} → {new}")
+            stopped = runtime.stopping.is_set
             for home in now["homes"]:
-                try:
-                    hooks = setup_agents.codex_hooks(Path(home), True, python)
-                except BaseException as exc:   # cut after the write was sent: Codex may have taken it
-                    if getattr(exc, "trust_sent", False):
-                        done.append(f"{home}: Codex 신뢰 기록 (응답 전에 끊겨 적용됐을 수 있다)")
-                    raise
-                # Trust is confirmed only by Codex listing every wiki hook as trusted. Fewer (hooks switched off, a
-                # home Codex does not read) is a refusal, never a move that is done. A write may have been sent and
-                # taken before that answer, so the home counts as possibly changed: the card's approval is spent.
+                if stopped():   # a server going down starts no further home
+                    raise RuntimeError("서버가 꺼지는 중이라 남은 Codex 신뢰 기록을 멈췄다")
+                hooks = setup_agents.codex_hooks(Path(home), True, python, stopped)
+                # Trust is confirmed only by Codex listing every wiki hook trusted. Anything less (hooks switched
+                # off, a home Codex does not read) is a refusal, never a move that is done.
                 if not setup_agents.codex_trusted(hooks, python):
-                    done.append(f"{home}: Codex 신뢰 기록 (확인되지 않았다 — 적용됐을 수 있다)")
                     raise ValueError(f"{home}: Codex 가 이 허브의 위키 훅을 모두 신뢰로 보여 주지 않았다 "
                                      f"(신뢰 {sum(h['trustStatus'] == 'trusted' for h in hooks)}개 / "
                                      f"필요 {len(setup_agents.codex_mine(python))}개)")
-                done.append(f"{home}: Codex 신뢰 기록")
+                done.append(f"{home}: Codex 신뢰 확인")
         except BaseException as exc:   # a move cut partway changed the wiring too: its error stays the one raised
             for note in _forget_old_wiring():
                 exc.add_note(note)

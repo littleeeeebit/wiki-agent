@@ -49,38 +49,50 @@ case stops with `connect` as before:
 - A move that cannot be written, with its reason.
 
 The owner then confirms on `[연결]` and presses `[재개]`. A move that a server
-going down refused before any write stops with `restart` instead, and
-`[재개]` checks and moves again. A move cut after some writes, by shutdown or
-by a failure, stops with `connect` and names what it wrote. What is left is a
-different list from the one the card showed, so the owner confirms it on
-`[연결]`; `[재개]` alone never writes it. The stop clears the run's `wiring`,
-so the card's approval is spent, and `[재개]` goes on once `[연결]` left
-nothing to move.
+going down refused before its first write stops with `restart` instead. The
+run keeps its approval, and `[재개]` checks and moves again.
+
+A move cut once it may have written stops with `connect`, whatever cut it: a
+failure, shutdown, or a Codex that took a trust write and died before
+answering. What landed is not knowable in every such case. So the stop
+clears the run's `wiring` and spends the card's approval. It names what the
+move confirmed. `[재개]` alone never writes what is left: `[연결]` shows the
+list, and `[재개]` goes on once nothing is left to move.
 
 The digest binds what is written, not only the lines shown. A line names a
 hook but not its command, and the same lines under another interpreter write
-other commands. So the digest also covers each file's whole new content, the
-interpreter and the Codex homes the trust is recorded in. The list shows the
-interpreter and those homes, and the move writes trust to that captured list,
-never to a second read of the homes. Each settings file is written whole to
-a staging file of that attempt's own, created exclusively beside it, which
-then replaces the original. A write cut partway leaves the owner's file as it
-was, and another writer, such as `setup_agents.py --global` beside the
-server, never installs this attempt's bytes. A Codex home counts as written
-once its trust write is sent (`config/batchWrite`), since Codex may take it
-and be stopped before it answers. A home cut while its hooks were still
-being read, or whose write never reached Codex's pipe, does not. Trust counts
-as done only when Codex lists back every hook this install wrote, each one
-trusted (`setup_agents.codex_trusted`). The routine trust check holds the
-same bar. A home where Codex lists fewer is a refusal with its reason, never
-a finished move. Examples are hooks switched off, or `SessionStart` loaded
-without `PreToolUse`. Such a home also spends the approval, since a write may
-have landed before that answer.
-`connect.move` writes nothing once
-shutdown has begun. A move cut partway still drops the routine read's last
-check and every repository's probe record, as a finished move does. Each
-record is cleared on its own, and one that cannot be cleared hides neither
-the others nor the move's own error.
+other commands. So the digest also covers:
+
+- each file's whole new content;
+- the interpreter, which the list shows;
+- the Codex homes the trust is recorded in, which the list also shows.
+
+The move writes trust to that captured list of homes and never reads the
+homes again.
+
+Each settings file is written whole to a staging file of that attempt's own,
+created exclusively beside it, which then replaces the original. A write cut
+partway leaves the owner's file as it was. Another writer, such as
+`setup_agents.py --global` running beside the server, never installs this
+attempt's bytes.
+
+Trust counts as done only when Codex lists back every hook this install
+wrote, every listed entry trusted (`setup_agents.codex_trusted`). The
+routine trust check holds the same bar. Anything less is a refusal with its
+reason, never a finished move. Examples are hooks switched off, `SessionStart`
+loaded without `PreToolUse`, or a trusted twin beside an untrusted entry.
+
+Shutdown is checked in three places:
+
+- `connect.move` writes nothing once shutdown has begun.
+- It starts no further Codex home.
+- `codex_hooks` sends no trust write once a read Codex answered lands after
+  shutdown began.
+
+A move cut partway still drops the routine read's last check and every
+repository's probe record, as a finished move does. Each record is cleared on
+its own, and one that cannot be cleared hides neither the others nor the
+move's own error.
 
 The screen applies a read of the run only when no other answer landed after
 the read was asked. A poll asked before the confirm can then never put the
