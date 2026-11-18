@@ -11,7 +11,7 @@ from ctypes import wintypes as w
 
 import native_process
 
-JOB_LIST = 0x0002000D   # PROC_THREAD_ATTRIBUTE_JOB_LIST
+JOB_LIST, HANDLE_LIST = 0x0002000D, 0x00020002   # PROC_THREAD_ATTRIBUTE_JOB_LIST, _HANDLE_LIST
 NEW, EXIT, ABNORMAL = 6, 7, 8   # JOB_OBJECT_MSG_NEW_PROCESS, _EXIT_PROCESS, _ABNORMAL_EXIT_PROCESS
 OPEN = 0x1000 | 0x00100000 | 0x0001   # PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE | PROCESS_TERMINATE
 ELEVATION_REQUIRED = 740
@@ -66,6 +66,7 @@ def _kernel():
     k.CreateProcessW.argtypes = (w.LPCWSTR, w.LPWSTR, w.LPVOID, w.LPVOID, w.BOOL, w.DWORD, w.LPVOID, w.LPCWSTR,
                                  ctypes.POINTER(_Startup), ctypes.POINTER(_Info))
     k.ResumeThread.argtypes, k.ResumeThread.restype = (w.HANDLE,), w.DWORD
+    k.TerminateProcess.argtypes = (w.HANDLE, w.UINT)
     k.OpenProcess.argtypes, k.OpenProcess.restype = (w.DWORD, w.BOOL, w.DWORD), w.HANDLE
     k.WaitForSingleObject.argtypes = (w.HANDLE, w.DWORD)
     k.CloseHandle.argtypes = (w.HANDLE,)
@@ -97,16 +98,20 @@ class Job:
         self.ended = False
 
     def _create(self, argv, cwd, env, desktop, handles):
-        """`CreateProcessW` inside the job, suspended. (`process`, `thread`, `pid`) or the Windows error."""
+        """`CreateProcessW` inside the job, suspended, inheriting only `handles` (its stdin and log), never
+        another inheritable handle of this server. (`process`, `thread`, `pid`) or the Windows error."""
 
         size = ctypes.c_size_t()
-        self.k.InitializeProcThreadAttributeList(None, 1, 0, ctypes.byref(size))
+        self.k.InitializeProcThreadAttributeList(None, 2, 0, ctypes.byref(size))
         attributes = ctypes.create_string_buffer(size.value)
         jobs = (w.HANDLE * 1)(self.job)
-        if not self.k.InitializeProcThreadAttributeList(attributes, 1, 0, ctypes.byref(size)):
+        inherited = (w.HANDLE * len(set(handles)))(*sorted(set(handles)))
+        if not self.k.InitializeProcThreadAttributeList(attributes, 2, 0, ctypes.byref(size)):
             return ctypes.get_last_error()
         try:
-            if not self.k.UpdateProcThreadAttribute(attributes, 0, JOB_LIST, jobs, ctypes.sizeof(jobs), None, None):
+            if not self.k.UpdateProcThreadAttribute(attributes, 0, JOB_LIST, jobs, ctypes.sizeof(jobs), None, None) \
+                    or not self.k.UpdateProcThreadAttribute(attributes, 0, HANDLE_LIST, inherited,
+                                                            ctypes.sizeof(inherited), None, None):
                 return ctypes.get_last_error()
             startup = _Startup(size=ctypes.sizeof(_Startup), desktop=desktop, flags=0x100, stdin=handles[0],
                                stdout=handles[1], stderr=handles[1], attributes=ctypes.cast(attributes, w.LPVOID))
@@ -143,11 +148,16 @@ class Job:
         process, thread, pid = created
         try:
             root = native_process.identity(pid, process)
+            if root is None:
+                raise Refused(f"cannot read the identity of {argv[0]} before it runs")
             if before_resume:
                 before_resume(root)
             if self.k.ResumeThread(thread) == 0xFFFFFFFF:
                 raise Refused(f"cannot resume {argv[0]}: {ctypes.get_last_error()}")
             return root
+        except BaseException:
+            self.k.TerminateProcess(process, 1)   # never left suspended, never run unrecorded
+            raise
         finally:
             self.k.CloseHandle(thread)
             self.k.CloseHandle(process)
@@ -187,29 +197,48 @@ class Job:
         return [entry["identity"] for entry in self.joined if entry["identity"]]
 
     def _gone(self, entry: dict) -> bool:
-        """A member has exited: its exit message arrived, or its held handle is signalled."""
+        """A member has exited. A held member only by its signalled handle, which is bound to that process; an
+        exit message names a pid, which a later member may carry. A member never held, by its exit message."""
 
-        return entry["exited"] or bool(entry["handle"]) and self.k.WaitForSingleObject(entry["handle"], 0) == 0
+        if entry["handle"]:
+            return self.k.WaitForSingleObject(entry["handle"], 0) == 0
+        return entry["exited"]
+
+    def _count(self):
+        """The job's accounting, or the Windows error that kept it from being read."""
+
+        accounting = _Accounting()
+        if self.k.QueryInformationJobObject(self.job, 1, ctypes.byref(accounting), ctypes.sizeof(accounting), None):
+            return accounting
+        return ctypes.get_last_error()
 
     def end(self, wait: float = 30.0) -> dict:
-        """End every member and prove it: each member that joined exited, by its exit message or its signalled
-        handle, and the job's cumulative process count equals the members that joined, since Windows does not
-        guarantee the port's messages. `ActiveProcesses` is reported, never trusted."""
+        """End every member and prove it: termination succeeded, each member that joined exited, and the job's
+        cumulative process count equals the members that joined, since Windows does not guarantee the port's
+        messages. Messages that arrive late are waited for until `wait` runs out. `ActiveProcesses` is
+        reported, never trusted."""
 
-        self.k.TerminateJobObject(self.job, 1)
+        terminated = self.k.TerminateJobObject(self.job, 1)
+        failure = None if terminated else ctypes.get_last_error()
         self.ended = True
         deadline = time.monotonic() + wait
         while True:
-            self._pump(100)
-            if all(self._gone(entry) for entry in self.joined) or time.monotonic() > deadline:
+            count = self._count()
+            if all(self._gone(entry) for entry in self.joined) and not isinstance(count, int) \
+                    and count.total == len(self.joined):
                 break
-        self._pump()
-        accounting = _Accounting()
-        read = self.k.QueryInformationJobObject(self.job, 1, ctypes.byref(accounting), ctypes.sizeof(accounting), None)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            self._pump(max(1, min(100, int(remaining * 1000))))
+        accounting = self._count()
+        read = not isinstance(accounting, int)
         left = [entry["identity"] or {"pid": entry["pid"]} for entry in self.joined if not self._gone(entry)]
         reasons = [f"no exit proven for pid {member['pid']}" for member in left]
+        if not terminated:
+            reasons.append(f"cannot terminate the job: Windows error {failure}")
         if not read:
-            reasons.append(f"cannot read the job's count: {ctypes.get_last_error()}")
+            reasons.append(f"cannot read the job's count: Windows error {accounting}")
         elif accounting.total != len(self.joined):
             reasons.append(f"the job counted {accounting.total} processes; {len(self.joined)} were followed")
         return {"clean": not reasons, "reasons": reasons, "joined": len(self.joined),
