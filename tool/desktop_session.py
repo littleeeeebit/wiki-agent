@@ -453,8 +453,11 @@ def look(root: Path, name: str):
         # An exception from a close attempt, an interruption included, is raised after the retries.
         proof, raised = None, None
         for attempt in range(RELEASE_RETRIES + 1):
-            if attempt:
-                time.sleep(0.5)
+            try:   # the delay too: an interruption in it is kept, and the close still runs
+                if attempt:
+                    time.sleep(0.5)
+            except BaseException as error:
+                raised = raised or error
             try:
                 proof = session_.close()
             except BaseException as error:

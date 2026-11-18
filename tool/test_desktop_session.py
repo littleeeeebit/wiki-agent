@@ -439,6 +439,33 @@ def test_leaving_a_look_retries_after_an_interrupted_close_and_then_raises_it(tm
     assert desktop.released == [123, 124, 124] and record["state"] == "held" and record["owner"] is None
 
 
+def test_leaving_a_look_retries_when_the_delay_is_interrupted(tmp_path, monkeypatch):
+    class Flaky(Desktops):
+        def CloseDesktop(self, handle):
+            self.released.append(handle)
+            return len(self.released) > 1
+
+    desktop, waits = Flaky(), []
+
+    def opened(look):
+        look.u, look.desktop = desktop, 123
+
+    def interrupted_once(seconds):
+        waits.append(seconds)
+        if len(waits) == 1:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(desktop_session.Look, "open", opened)
+    monkeypatch.setattr(native_process, "_sockets", lambda _: [])
+    monkeypatch.setattr(desktop_session.time, "sleep", interrupted_once)
+    with pytest.raises(KeyboardInterrupt):
+        with desktop_session.look(tmp_path, "managed-delay"):
+            pass
+
+    record = desktop_session.load(tmp_path / "managed-delay")
+    assert desktop.released == [123, 123] and record["state"] == "held" and record["owner"] is None
+
+
 def test_leaving_a_look_retries_a_proof_that_could_not_be_saved(tmp_path, monkeypatch):
     save, failures = desktop_session.save, []
 
