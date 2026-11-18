@@ -7,7 +7,7 @@ own `session_id` and `parent_id`; `ChatSession.answer` answers an approval.
 """
 
 from .chat_local import (ROOT, SETTINGS, CodexServer, claude_usage, cli_command, codex_usage, pin_servers,
-                         server_epoch, settings)
+                         server_epoch, servers_retired, settings)
 from .chat_events import OUTPUT_LIMIT, output_of
 from .chat_session import ChatSession, Event, end_all, explain, oneshot, reopen
 from . import read_tools
@@ -21,7 +21,7 @@ __all__ = (
     # every provider, at server shutdown and start
     "end_all", "reopen",
     # a background thread kept to the server lifespan that started it
-    "server_epoch", "pin_servers",
+    "server_epoch", "pin_servers", "servers_retired",
     # finding the CLIs, and the chat's local settings
     "CodexServer", "cli_command", "codex_usage", "claude_usage", "settings", "ROOT", "SETTINGS",
 )

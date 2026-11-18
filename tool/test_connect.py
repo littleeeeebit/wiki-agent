@@ -488,6 +488,22 @@ def test_a_retry_whose_handover_finished_meanwhile_walks_nothing(tmp_path, monke
     assert connect.retried(tmp_path) is False and walked == []
 
 
+def test_tests_stop_at_the_stop_flag_before_the_lifespan_moves(tmp_path, monkeypatch):
+    """Shutdown sets the stop flag, then waits on installers before it ends Codex: nothing more starts meanwhile."""
+
+    from main import runtime
+
+    stopping, probed, then, kept = threading.Event(), [], [], []
+    monkeypatch.setattr(runtime, "stopping", stopping)
+    monkeypatch.setattr(connect, "adapter_of", lambda path: ({}, ""))
+    monkeypatch.setattr(connect, "hosts", lambda data: ["claude", "codex"])
+    monkeypatch.setattr(connect, "probe", lambda path, host: probed.append(host) or stopping.set() or {"ok": True})
+    monkeypatch.setattr(connect, "keep", lambda name, **fields: kept.append(fields))
+    monkeypatch.setattr(connect.work.feed, "put", lambda event: None)
+    assert connect.examine(tmp_path, then=lambda: then.append(1), wait=True)
+    assert probed == ["claude"] and kept == [] and then == [] and tmp_path.name not in connect._probing
+
+
 def test_a_verification_worker_that_never_started_frees_the_repository(tmp_path, monkeypatch):
     class Unstartable(threading.Thread):
         def start(self):

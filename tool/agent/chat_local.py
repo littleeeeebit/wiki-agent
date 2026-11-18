@@ -73,7 +73,7 @@ class CodexServer:
     def __init__(self, env=None, cwd=None, timeout=180):
         command = [*cli_command("codex"), "app-server"]
         with _servers_lock:   # registered as it starts: `end_servers` either lists it or was first and refuses it
-            if _servers_closed or getattr(_pinned, "epoch", _epoch) != _epoch:
+            if _servers_closed or servers_retired():
                 raise RuntimeError("서버가 꺼지는 중이라 Codex 를 띄우지 않는다")
             self.proc = subprocess.Popen(
                 command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -157,6 +157,12 @@ _pinned = threading.local()
 
 def server_epoch():
     return _epoch
+
+
+def servers_retired():
+    """This thread is pinned to a lifespan that has ended: what it finds is no answer for the current one."""
+
+    return getattr(_pinned, "epoch", _epoch) != _epoch
 
 
 @contextmanager

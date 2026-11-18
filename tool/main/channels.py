@@ -13,7 +13,7 @@ import re
 import threading
 import time
 
-from agent import CodexServer, server_epoch, settings
+from agent import CodexServer, server_epoch, servers_retired, settings
 from .refresh import Refresh
 from common.paths import PACKAGED
 
@@ -76,7 +76,8 @@ def codex_models() -> list[dict]:
         try:
             models = _fetch_codex_models()
         except Exception as exc:
-            _codex_tries[:] = [_codex_tries[0] + 1, str(exc) or type(exc).__name__, epoch]
+            if not servers_retired():   # a fetch from an ended lifespan failed on its gate: nobody else's answer
+                _codex_tries[:] = [_codex_tries[0] + 1, str(exc) or type(exc).__name__, epoch]
             raise
         _codex_tries[:] = [_codex_tries[0] + 1, "", epoch]
         _codex_cache.update(at=time.monotonic(), models=models)

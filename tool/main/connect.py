@@ -46,7 +46,7 @@ from common.paths import PACKAGED, RAW
 from common.host import conda_exe, environment, skill_config
 from workspace import base_branch
 
-from . import channels, powershell, specs, work
+from . import channels, powershell, runtime, specs, work
 
 RECORDS = RAW / "connect"
 PROBES = RECORDS / "probe"
@@ -351,31 +351,33 @@ def examine(path: Path, then=None, wait: bool = False) -> bool:
         _probing.add(name)
 
     epoch = server_epoch()
+    # A shutdown meanwhile retires these tests, from the moment it sets the stop flag (it waits on installers
+    # before the epoch moves): nothing further starts — no next host, no trust check, no `then`, which may
+    # prepare a survey — and what they found is not kept.
+    gone = lambda: runtime.stopping.is_set() or server_epoch() != epoch  # noqa: E731
 
     def run() -> None:
-        # A shutdown meanwhile retires these tests: nothing further starts (no next host, no trust check, no
-        # `then`, which may prepare a survey), and what they found is not kept.
         try:
             data, _ = adapter_of(path)
             agents, results = hosts(data), {}
             for host in agents:
-                if server_epoch() != epoch:
+                if gone():
                     return
                 results[host] = probe(path, host)
-            if server_epoch() != epoch:
+            if gone():
                 return
             try:
                 trust = trusted(interpreter(data)) if "codex" in agents else None
             except ValueError:   # unanswered trust shows as missing; the next probe asks again
                 trust = False
-            if server_epoch() != epoch:
+            if gone():
                 return
             keep(name, probe=results, trust=trust)
         finally:
             with _records:
                 _probing.discard(name)
             work.feed.put({"kind": "connect", "repo": name})
-        if then and server_epoch() == epoch:
+        if then and not gone():
             then()
 
     def kept() -> None:   # outside every shutdown join: kept to this lifespan, it starts no Codex after it
