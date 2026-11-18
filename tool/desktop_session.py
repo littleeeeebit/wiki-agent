@@ -21,6 +21,7 @@ NO_SUCH_LOGON_SESSION = 0xC000005F
 DESKTOP_ALL, DESKTOP_READ = 0x01FF, 0x0001
 NOT_FOUND, INVALID_PARAMETER = 2, 87
 FINAL = ("proven", "recovered")
+RELEASE_RETRIES = 10   # half a second apart: a handle still held after that keeps its server the owner
 _Each = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
 
 
@@ -301,9 +302,11 @@ class Look:
         while True:
             again = self.u.OpenDesktopW(self.record["desktop"], 0, False, DESKTOP_READ)
             error = 0 if again else ctypes.get_last_error()
-            if again and not self.u.CloseDesktop(again):
-                self.probes.append(again)   # held, and no further probe opens another
-                break
+            if again:
+                self.probes.append(again)   # counted as held until its close is seen to succeed
+                if not self.u.CloseDesktop(again):
+                    break   # held, and no further probe opens another
+                self.probes.remove(again)
             if error == NOT_FOUND or time.monotonic() >= probe_until:
                 break
             time.sleep(0.1)
@@ -325,8 +328,11 @@ class Look:
             interrupted = self.result[1]
         else:   # a retry keeps the teardown it already ran and only releases what is still held
             interrupted = self._release()
-        reasons = list(self.result[0])
         left = self._outstanding()
+        stuck = "a handle of the look could not be released at once"
+        if left and stuck not in self.result[0]:
+            self.result[0].append(stuck)   # kept after a later release: the look could not show it gone then
+        reasons = list(self.result[0])
         if left:
             reasons.append(f"{left} handle(s) of the look are still held; close() retries them")
         # Recovery may settle the record without its server's exit only once this server holds nothing of the
@@ -444,6 +450,11 @@ def look(root: Path, name: str):
         raise
     finally:
         proof = session_.close()
+        for _ in range(RELEASE_RETRIES):   # the caller keeps no look to retry a held handle with: retry here
+            if session_.closed:
+                break
+            time.sleep(0.5)
+            proof = session_.close()
         if not proof["clean"]:
             message = "the desktop look is held: " + "; ".join(proof["reasons"])
             if failure is None:

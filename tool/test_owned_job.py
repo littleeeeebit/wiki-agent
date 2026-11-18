@@ -150,7 +150,7 @@ def test_a_root_whose_rollback_windows_refused_stays_held_until_the_job_ends_it(
             started(job, tmp_path, SLEEP, before_resume=failing)
 
     assert len(job.stray) == 1 and job.k.WaitForSingleObject(job.stray[0], 0) != 0   # still suspended, held
-    proof = job.end(5)
+    proof = job.end()   # the production bound: five seconds once fell short on a loaded reviewer run
 
     assert proof["clean"], proof["reasons"]   # the job's end killed it, and its own handle shows that
 

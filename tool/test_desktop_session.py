@@ -337,6 +337,81 @@ def test_an_interrupted_job_close_keeps_the_owner_while_a_handle_remains(tmp_pat
     assert job.port is None and job.job is None and desktop_session.load(look.folder)["owner"] is None
 
 
+def test_an_interrupted_probe_close_is_counted_and_retried(tmp_path, monkeypatch):
+    class Probe(Desktops):
+        interrupt = True
+
+        def OpenDesktopW(self, *args):
+            return 124
+
+        def CloseDesktop(self, handle):
+            self.released.append(handle)
+            if handle == 124 and self.interrupt:
+                raise KeyboardInterrupt
+            return True
+
+    look = desktop_session.Look(tmp_path, "probe-interrupted")
+    look.u, look.desktop = Probe(), 123
+    monkeypatch.setattr(native_process, "_sockets", lambda _: [])
+
+    with pytest.raises(KeyboardInterrupt):
+        look.close()
+    assert desktop_session.load(look.folder)["owner"] is not None
+
+    look.u.interrupt = False
+    look.close()
+
+    assert look.u.released == [123, 124, 124] and desktop_session.load(look.folder)["owner"] is None
+
+
+def test_a_job_handle_released_only_on_retry_leaves_the_proof_held(tmp_path, monkeypatch):
+    class Kernel:
+        closes = False
+
+        def CloseHandle(self, handle):
+            return self.closes
+
+    look = desktop_session.Look(tmp_path, "job-release-retry")
+    job = object.__new__(desktop_session.owned_job.Job)
+    job.k, job.job = Kernel(), 456
+    look.jobs["app"] = job
+    look.record["jobs"]["app"] = {"members": []}
+    monkeypatch.setattr(job, "end", lambda _: {"clean": True, "reasons": []})
+    monkeypatch.setattr(look, "observe", lambda: None)
+    monkeypatch.setattr(native_process, "_sockets", lambda _: [])
+
+    assert not look.close()["clean"] and desktop_session.load(look.folder)["state"] == "held"
+
+    job.k.closes = True
+    proof = look.close()
+
+    record = desktop_session.load(look.folder)
+    assert job.outstanding() == 0 and record["owner"] is None
+    assert not proof["clean"] and record["state"] == "held"
+
+
+def test_leaving_a_look_retries_a_handle_that_did_not_release_at_once(tmp_path, monkeypatch):
+    class Flaky(Desktops):
+        def CloseDesktop(self, handle):
+            self.released.append(handle)
+            return len(self.released) > 1
+
+    desktop = Flaky()
+
+    def opened(look):
+        look.u, look.desktop = desktop, 123
+
+    monkeypatch.setattr(desktop_session.Look, "open", opened)
+    monkeypatch.setattr(native_process, "_sockets", lambda _: [])
+    monkeypatch.setattr(desktop_session.time, "sleep", lambda _: None)
+    with pytest.raises(desktop_session.Refused, match="held"):
+        with desktop_session.look(tmp_path, "managed"):
+            pass
+
+    record = desktop_session.load(tmp_path / "managed")
+    assert desktop.released == [123, 123] and record["state"] == "held" and record["owner"] is None
+
+
 def test_nothing_joins_a_look_whose_proof_is_still_unsaved(tmp_path, monkeypatch):
     look = desktop_session.Look(tmp_path, "pending-proof")
     save = desktop_session.save
