@@ -429,10 +429,12 @@ def test_a_stop_ends_a_running_command_at_once_and_without_it_nothing_changes(tm
         release.ran(sleeper, 600)
     assert time.monotonic() - began < 10
     with release.stoppable(threading.Event()):
-        assert release.ran([sys.executable, "-c", "print('하나')"], 60).stdout.strip() == "하나"
+        utf8 = "import sys; sys.stdout.buffer.write('하나'.encode())"   # a piped child's own encoding is the locale's
+        assert release.ran([sys.executable, "-c", utf8], 60).stdout.strip() == "하나"
     with pytest.raises(subprocess.TimeoutExpired), release.stoppable(threading.Event()):
         release.ran(sleeper, 0.5)
-    assert release.run([sys.executable, "-c", "print('둘')"]).strip() == "둘"   # outside `stoppable`: as before
+    two = "import sys; sys.stdout.buffer.write('둘'.encode())"
+    assert release.run([sys.executable, "-c", two]).strip() == "둘"   # outside `stoppable`: as before
 
 
 def test_a_stopped_scope_starts_nothing_and_a_tree_it_cannot_own_never_runs(tmp_path, monkeypatch):

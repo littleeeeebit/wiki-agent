@@ -35,8 +35,13 @@ const getRehearsal = (name: string) => get(`${at(name)}/rehearsal`, undefined, A
 const startRehearsal = (name: string, sha?: string) => post(`${at(name)}/rehearse${sha ? `?sha=${sha}` : ''}`)
   .then((r) => json<{ rehearsal: Rehearsal }>(r, '시험 빌드'))
 // The build the person saw goes with the stop: a stop that arrives after it ended never stops the next one.
+// A refused stop carries the server's own build state (`rehearsal`), which the card takes like any answer.
 const stopRehearsal = (name: string, id: string) => post(`${at(name)}/stop?run_id=${encodeURIComponent(id)}`)
-  .then((r) => json<{ rehearsal: Rehearsal }>(r, '시험 빌드 멈춤'))
+  .then(async (r) => {
+    const body = r.status === 409 ? await r.clone().json().catch(() => null) : null
+    if (body?.rehearsal) throw Object.assign(new Error(body.detail || '시험 빌드 멈춤'), { rehearsal: body.rehearsal as Rehearsal })
+    return json<{ rehearsal: Rehearsal }>(r, '시험 빌드 멈춤')
+  })
 /** `promise`, or a rejection after `ms`. The promise goes on; what it brings later is still applied by `rev`. */
 const within = <T,>(promise: Promise<T>, ms: number) => Promise.race([promise, new Promise<never>((_, reject) =>
   setTimeout(() => reject(new Error('서버가 답하지 않는다 — 상태는 계속 읽는다')), ms))])
@@ -184,14 +189,18 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
         if (!adopt(r, t) && r.state === 'running' && r.boot !== e.boot && !e.ended.has(r.boot)) setHeld({ run: r, at: seq.current })
       }), ACTION_MS)
     } catch (err) {
+      const live = (err as { rehearsal?: Rehearsal }).rehearsal
+      if (live) adopt(live, t)   // sent after any hold, so it settles which build Stop names
       if (t.n === era.current.n) setFault(String(err instanceof Error ? err.message : err))
     } finally {
       setBusy((b) => (b === t.n ? null : b))   // an ended era's action never holds the new era's buttons
     }
   }
 
-  // A held build and the run from the same server are ordered by `rev`, like any two answers of one server.
-  const shown = !held ? run : run?.boot === held.run.boot ? newer(run, held.run) : held.run
+  // A held build and the run from the same server are ordered by `rev`, like any two answers of one server. From
+  // two servers the card cannot order them, so a build running on the followed server is the one shown; either
+  // way a Stop the live server refuses brings its own state back.
+  const shown = !held ? run : run?.boot === held.run.boot ? newer(run, held.run) : run?.state === 'running' ? run : held.run
   const first = card?.versions?.first
   const bump = picked ?? BUMPS.find((b) => card?.versions?.[b.bump])?.bump ?? 'patch'
   const next = first ?? card?.versions?.[bump]

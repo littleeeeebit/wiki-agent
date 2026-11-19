@@ -300,6 +300,7 @@ def test_a_stop_meant_for_an_ended_build_never_stops_the_next(project, monkeypat
     assert entered.wait(5) and second["id"] != first["id"]
     late = client.post("/api/release/app/stop", params={"run_id": first["id"]})   # the first build's, delayed
     assert late.status_code == 409 and not release_api._runs["app"]["halt"].is_set()
+    assert late.json()["rehearsal"]["id"] == second["id"]   # the refusal names the build this server has
     unnamed = client.post("/api/release/app/stop")   # an old card's, naming no build
     assert unnamed.status_code == 409 and not release_api._runs["app"]["halt"].is_set()
     client.post("/api/release/app/stop", params={"run_id": second["id"]})
