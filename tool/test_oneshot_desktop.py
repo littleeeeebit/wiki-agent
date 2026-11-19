@@ -6,13 +6,19 @@ See `docs/plans/oneshot/9-kinds.md` ("How 9e builds `desktop`"). Model turns (`o
 runs in a temporary worktree.
 """
 
+import os
+import re
+import subprocess
 import sys
+from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
 
-from main import oneshot, oneshot_build, oneshot_front, oneshot_profile, oneshot_sheet as sheet, oneshot_spec, specs
+from main import oneshot, oneshot_build, oneshot_front, oneshot_profile, oneshot_review, oneshot_sheet as sheet, \
+    oneshot_spec, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_core import DESIGN, GLOSSARY, REQS, answer as designed
 from test_oneshot_spec import fenced, o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
@@ -25,6 +31,11 @@ STACK = [{"part": p, "choice": c, "why": "주인이 골랐다", "status": "confi
 STACK[-1]["tools"] = TOOLS
 START = oneshot_spec.start   # the real one: the `world` fixture replaces it with a stand-in
 BEGIN = oneshot_build.begin   # likewise
+SEND = oneshot_build.send
+
+
+def git_head(tree) -> str:
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=tree, capture_output=True, text=True).stdout.strip()
 
 
 @pytest.fixture
@@ -144,27 +155,232 @@ def test_a_pc_app_the_last_version_stopped_before_its_design_is_taken_on(desktop
 
 
 @pytest.mark.parametrize("kinds", [["desktop"], ["android", "desktop"]])
-def test_an_approved_pc_app_core_is_written_and_waits_before_s4(desktop, kinds):
+def test_an_approved_pc_app_core_is_written_and_goes_on_to_s4(desktop, kinds):
     oneshot_spec.saved("budget", requirements=REQS, oneshot={
         "intent": {**o()["intent"], "kind": kinds[0], "kinds": kinds}, "glossary": GLOSSARY, "stack": STACK,
         "stage": "r1", "design": sheet.parsed(DESIGN, kinds), "r1": {"round": 1, "decisions": {}, "marks": {}, "warnings": []}})
     items = sheet.decidable(o()["design"], REQS)
-    with patch.object(oneshot_build.work, "session", lambda *a, **k: pytest.fail("a held run sends no S4 turn")):
-        oneshot_spec.decide("budget", on_sheet(decisions={i: {"approve": True} for i in items}))
-        run = o()
-        assert (run["stage"], run["stopped"]["reason"], run["stopped"]["state"]) == ("tests", "kind", "tests")
-        assert run["design_head"] and not run.get("working")
-        assert (desktop / "docs/design/core.md").read_text(encoding="utf-8").startswith("# 핵심 설계")
+    oneshot_spec.decide("budget", on_sheet(decisions={i: {"approve": True} for i in items}))
+    assert (o()["stage"], o()["working"], o().get("stopped")) == ("tests", "tests", None) and o()["design_head"]
+    assert (desktop / "docs/design/core.md").read_text(encoding="utf-8").startswith("# 핵심 설계")
+
+
+@pytest.mark.parametrize("kinds", [["desktop"], ["android", "desktop"]])
+def test_a_built_pc_app_core_waits_before_its_review(desktop, kinds):
+    oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": kinds[0], "kinds": kinds},
+                                          "stage": "review", "working": "review", "built_head": "abc"})
+    with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts no review")):
+        oneshot_build.reviewed("budget")   # what follows the build's pass
+        assert (o()["stage"], o()["stopped"]["reason"], o()["stopped"]["state"]) == ("review", "kind", "review")
+        assert not o().get("working")
         with pytest.raises(HTTPException, match="다음 버전"):
             oneshot_spec.resume("budget")
-        oneshot_spec.recover()   # recovery keeps the stop: nothing starts S4
-        assert o()["stopped"]["reason"] == "kind"
-        # S4's own entries, called whatever led there (an older version's `working: tests` included), send nothing
-        # and never build the prompt a PC app does not have yet.
-        for entry in (BEGIN, oneshot_build.resume):
-            oneshot_spec.saved("budget", oneshot={"working": "tests", "stopped": None})
+        # A server that went down between the build's save and the review's start keeps the kind's stop, not a
+        # `restart` whose `[재개]` would only be refused.
+        oneshot_spec.saved("budget", oneshot={"working": "review", "stopped": None})
+        oneshot_spec.recover()
+        assert o()["stopped"]["reason"] == "kind" and not o().get("working")
+        for entry in (oneshot_review.begin, oneshot_review.resume, BEGIN, oneshot_build.resume):
+            oneshot_spec.saved("budget", oneshot={"working": "review", "stopped": None})
             entry("budget")
             assert o()["stopped"]["reason"] == "kind" and not o().get("working")
+
+
+# -- 9e2b: the declared tools, found once per stage, and nothing else run -----------------------
+
+@contextmanager
+def turns(found: dict[str, str | None]):
+    """A real `send` whose session is a stand-in: `which` finds each tool at `found`'s path, or not at all;
+    each turn that would go out is recorded with its text, and nothing installs anything."""
+
+    sent = []
+
+    def begin(path, chat, text, release, turn):
+        sent.append(text)
+        release()
+        turn.ended.set()
+
+    chat = lambda *a: SimpleNamespace(id="c", parent_id=None, repo="", settled=None)   # noqa: E731
+    with patch.object(oneshot_build.shutil, "which", lambda name: found.get(name)), \
+            patch.object(oneshot_build.work, "notice", lambda *a: None), \
+            patch.object(oneshot_build.work, "begin", begin), patch.object(oneshot_build.work, "session", chat), \
+            patch.object(oneshot, "role_config", lambda *a: {"model": "m", "effort": "e"}), \
+            patch.object(oneshot_build.specs, "gate", lambda *a, **k: pytest.fail("no command runs")):
+        yield sent
+
+
+def test_a_missing_tool_stops_the_first_stage_before_its_turn_and_installs_nothing(desktop):
+    oneshot_spec.saved("budget", oneshot={"stack": STACK, "stage": "tests", "working": "tests"})
+    with turns({"cargo": "C:/rust/cargo.exe"}) as sent:   # npm is not on PATH
+        SEND("budget", "tests", "x")
+    assert sent == [] and o()["stopped"]["reason"] == "toolchain" and "npm" in o()["stopped"]["detail"]
+    assert "cargo" not in o()["stopped"]["detail"] and not o().get("working")
+
+
+def test_a_tool_removed_between_two_stages_stops_the_second_before_it_runs(desktop):
+    oneshot_spec.saved("budget", oneshot={"stack": STACK, "stage": "tests", "working": "tests"})
+    both = {"cargo": "C:/rust/cargo.exe", "npm": "C:/node/npm.cmd"}
+    with turns(both) as sent:
+        SEND("budget", "tests", "x")
+    assert sent == ["x"] and o()["toolpaths"] == {"stage": "tests", "paths": {k: os.path.abspath(v) for k, v in both.items()}}
+    oneshot_spec.saved("budget", oneshot={"stage": "build", "working": "build"})
+    with turns({"npm": "C:/node/npm.cmd"}) as sent:   # cargo was uninstalled after the tests stage
+        SEND("budget", "build", "y")
+    assert sent == [] and o()["stopped"]["reason"] == "toolchain" and "cargo" in o()["stopped"]["detail"]
+
+
+def test_a_resume_after_a_tool_disappeared_looks_again_and_goes_on_once_it_is_back(desktop):
+    oneshot_spec.saved("budget", oneshot={"stack": STACK, "stage": "build", "tests_head": "abc", "gate": "cargo test",
+                                          "contract": ["tests/core.rs"], "stopped": {"reason": "toolchain", "detail": "npm"}})
+    with turns({"cargo": "C:/rust/cargo.exe"}) as sent, patch.object(oneshot_build, "send", SEND):
+        oneshot_spec.resume("budget")
+    assert sent == [] and o()["stopped"]["reason"] == "toolchain"
+    with turns({"cargo": "C:/rust/cargo.exe", "npm": "C:/node/npm.cmd"}) as sent, \
+            patch.object(oneshot_build, "send", SEND):
+        oneshot_spec.resume("budget")
+    assert len(sent) == 1 and "- `cargo`" in sent[0] and "- `npm`" in sent[0] and not o().get("stopped")
+
+
+def test_recovery_looks_for_the_tools_of_a_stage_the_server_went_down_in(desktop):
+    oneshot_spec.saved("budget", oneshot={"stack": STACK, "stage": "build", "working": "build"})
+    with turns({"cargo": "C:/rust/cargo.exe"}):   # npm went away while the server was down
+        oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "toolchain" and "npm" in o()["stopped"]["detail"]
+    oneshot_spec.saved("budget", oneshot={"working": "build", "stopped": None})
+    with turns({"cargo": "C:/rust/cargo.exe", "npm": "C:/node/npm.cmd"}):   # all there: a plain restart
+        oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "restart"
+
+
+def test_an_undeclared_command_goes_back_to_its_author_and_nothing_runs(desktop):
+    (desktop / "tests").mkdir()
+    (desktop / "tests/core.rs").write_text("fn test_a_box_already_translated_is_skipped() {}", encoding="utf-8")
+    (desktop / "scripts").mkdir()
+    (desktop / "scripts/junit.ps1").write_text("", encoding="utf-8")
+    runner = lambda command: fenced("oneshot-runner", {"command": command, "contract": ["tests/core.rs"]})  # noqa: E731
+    tools = oneshot_build.tools({"intent": o()["intent"], "stack": STACK})
+    for command in ("cargo test && scripts/junit.ps1 -to {report}", "NPM.cmd test --reporter {report}",
+                    "cargo.exe test {report}"):
+        assert oneshot_build.declared(desktop, runner(command), "desktop", tools)["command"] == command
+    for command, bad in (("winget install Rustlang.Rustup && cargo test {report}", "winget"),
+                         ("cargo test && python -m junit {report}", "python"),
+                         ("cargo test && ../outside.ps1 {report}", "../outside.ps1"),
+                         ("cargo test && scripts/missing.ps1 {report}", "scripts/missing.ps1")):
+        with pytest.raises(ValueError, match=f"도구도 작업트리 안의 파일도 아닌 프로그램을 부른다: {re.escape(bad)}"):
+            oneshot_build.declared(desktop, runner(command), "desktop", tools)
+    # In the stage: the refusal is the turn's, sent back to it, and no command of it ran.
+    oneshot_spec.saved("budget", oneshot={"stack": STACK, "stage": "tests", "design_head": git_head(desktop)})
+    with patch.object(oneshot_build.specs, "gate", lambda *a, **k: pytest.fail("no command runs")), \
+            pytest.raises(ValueError, match="winget"):   # `checked` sends this reason back as the turn's refusal
+        oneshot_build.tested(desktop, None, specs.load("budget", oneshot.BRANCH),
+                             runner("winget install x && cargo test {report}"))
+
+
+def launch(at: str) -> str:
+    return ("& " if os.name == "nt" else "") + oneshot_build.literal(at)
+
+
+def test_a_gate_starts_every_program_by_the_explicit_path_its_check_chose(desktop):
+    (desktop / "scripts dir").mkdir()
+    (desktop / "scripts dir/junit.ps1").write_text("", encoding="utf-8")
+    (desktop / "npm").write_text("", encoding="utf-8")   # a root file named like a declared tool
+    (desktop / "build.cmd").write_text("", encoding="utf-8")
+    cargo, npm = "C:/Program Files/rust/cargo.exe", "C:/node/npm.cmd"
+    o_ = {"intent": o()["intent"], "stack": STACK, "toolpaths": {"stage": "build", "paths": {"cargo": cargo, "npm": npm}}}
+    ran = oneshot_build.run_as("cargo\ttest --workspace && \"scripts dir/junit.ps1\" -to 'r.xml' && CARGO.EXE fmt"
+                               " && npm test && build.cmd --release", o_, desktop)
+    script, build = str((desktop / "scripts dir/junit.ps1").resolve()), str((desktop / "build.cmd").resolve())
+    assert ran == (f"{launch(cargo)}\ttest --workspace && {launch(script)} -to 'r.xml' && {launch(cargo)} fmt"
+                   f" && {launch(npm)} test && {launch(build)} --release")   # a bare declared name is the tool
+    # What the check accepted is what runs: the same words pass `declared` and nothing is left for the shell.
+    tools = oneshot_build.tools(o_)
+    assert oneshot_build.undeclared(desktop, "cargo\ttest && \"scripts dir/junit.ps1\" -to x && build.cmd", tools) == []
+    (desktop / "build.cmd").unlink()   # moved after S4 checked it: the saved runner is read again and refused
+    for gone in ("build.cmd --release", "cargo test && python -m x"):
+        with pytest.raises(ValueError, match="아무것도 실행하지 않았다"):
+            oneshot_build.run_as(gone, o_, desktop)
+    with pytest.raises(ValueError, match="찾은 경로가 없다"):   # a declared tool with no path found for the stage
+        oneshot_build.run_as("cargo test", {**o_, "toolpaths": None}, desktop)
+    assert oneshot_build.run_as("gradlew.bat test", {}, desktop) == "gradlew.bat test"   # no PC app: run as written
+
+
+def test_a_tool_declared_with_its_extension_is_found_and_run_by_that_name(desktop):
+    cmd_tools = [{"name": "npm.cmd", "setup": "preinstalled"}]
+    o_ = {"intent": o()["intent"], "stack": [{**STACK[-1], "tools": cmd_tools}]}
+    assert oneshot_build.undeclared(desktop, "npm.cmd test && NPM run x && npm.CMD y", cmd_tools) == []
+    oneshot_spec.saved("budget", oneshot={"stack": o_["stack"], "stage": "tests", "working": "tests"})
+    asked = []
+    with turns({}) as sent, patch.object(oneshot_build.shutil, "which", lambda n: asked.append(n) or "C:/node/npm.cmd"):
+        SEND("budget", "tests", "x")
+    npm = os.path.abspath("C:/node/npm.cmd")
+    assert asked == ["npm.cmd"] and sent == ["x"] and o()["toolpaths"]["paths"] == {"npm.cmd": npm}
+    assert oneshot_build.run_as("npm test", o(), desktop) == f"{launch(npm)} test"
+    with pytest.raises(ValueError, match="확장자만 다른"):   # S2: `npm` and `npm.cmd` are one program
+        oneshot_profile.tools_of([{"name": "npm"}, {"name": "npm.cmd"}], ci=False)
+
+
+def test_a_tool_found_through_a_relative_path_entry_is_saved_where_it_was_found(desktop, tmp_path, monkeypatch):
+    host = tmp_path / "host"
+    host.mkdir()
+    monkeypatch.chdir(host)   # the server's folder, where the lookup ran; the gate runs in `desktop`
+    oneshot_spec.saved("budget", oneshot={"stack": STACK, "stage": "tests"})
+    with patch.object(oneshot_build.shutil, "which", lambda n: os.path.join(".", f"{n}.exe")):
+        assert oneshot_build.resolve_tools("budget", "tests")
+    assert o()["toolpaths"]["paths"] == {t["name"]: str(host / f"{t['name']}.exe") for t in oneshot_build.tools(o())}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="PowerShell's quoting of a program path")
+def test_a_program_word_joined_to_a_quote_is_refused_and_a_checked_one_runs_as_itself(desktop):
+    (desktop / "scripts").mkdir()
+    (desktop / "scripts/checked.cmd").write_text("@echo CHECKED\r\n", encoding="utf-8")
+    (desktop / "scripts/checked.cmd'").mkdir()   # what PowerShell's `''` would walk through
+    (desktop.parent / "outside.cmd").write_text("@echo OUTSIDE\r\n", encoding="utf-8")
+    o_ = {"intent": o()["intent"], "stack": STACK, "toolpaths": {"stage": "build", "paths": {"cargo": "c", "npm": "n"}}}
+    tools = oneshot_build.tools(o_)
+    for joined in ("'scripts/checked.cmd''/../../outside.cmd' -x", "\"scripts/checked.cmd\"'x' -x",
+                   "scripts/checked.cmd'x' -x"):
+        assert oneshot_build.undeclared(desktop, joined, tools)
+        with pytest.raises(ValueError, match="아무것도 실행하지 않았다"):
+            oneshot_build.run_as(joined, o_, desktop)
+    ran = subprocess.run(["powershell", "-NoProfile", "-Command", oneshot_build.run_as("'scripts/checked.cmd' -x", o_, desktop)],
+                         cwd=desktop, capture_output=True, text=True, timeout=60)
+    assert ran.stdout.strip() == "CHECKED", ran
+
+
+def test_a_quote_inside_a_quoted_program_is_its_name_and_a_quoted_and_sign_does_not_cut_the_chain(desktop):
+    (desktop / "'lead.cmd").write_text("", encoding="utf-8")
+    (desktop / "lead.cmd").write_text("", encoding="utf-8")   # what stripping every quote would pick instead
+    assert oneshot_build.word_of("\"'lead.cmd\" -x") == ("'lead.cmd", " -x")
+    o_ = {"intent": o()["intent"], "stack": STACK, "toolpaths": {"stage": "build", "paths": {"cargo": "c", "npm": "n"}}}
+    lead = str((desktop / "'lead.cmd").resolve())
+    assert oneshot_build.run_as("\"'lead.cmd\" -x", o_, desktop) == f"{launch(lead)} -x"
+    chain = "cargo test --label \"R && D\" && npm test 'a&&b'"
+    assert oneshot_build.links(chain) == ["cargo test --label \"R && D\" ", " npm test 'a&&b'"]
+    assert oneshot_build.undeclared(desktop, chain, oneshot_build.tools(o_)) == []
+    assert oneshot_build.run_as(chain, o_, desktop) == f"{launch('c')} test --label \"R && D\" && {launch('n')} test 'a&&b'"
+
+
+def test_a_build_whose_gate_names_a_program_gone_from_the_worktree_is_refused_before_it_runs(desktop):
+    oneshot_spec.saved("budget", oneshot={"stack": STACK, "stage": "build", "gate": "scripts/gone.ps1 && cargo test",
+                                          "toolpaths": {"stage": "build", "paths": {"cargo": "c", "npm": "n"}}})
+    with patch.object(oneshot_build, "reported", lambda *a: ""), patch.object(oneshot_build, "pinned", lambda *a: ""), \
+            patch.object(oneshot_build.specs, "judge", lambda *a, **k: pytest.fail("no gate runs")):
+        why = oneshot_build.built(desktop, SimpleNamespace(halt=None), specs.load("budget", oneshot.BRANCH), "")
+    assert "scripts/gone.ps1" in why and "아무것도 실행하지 않았다" in why
+
+
+def test_the_pc_app_s4_prompts_name_its_tools_and_a_run_without_one_gets_none(desktop):
+    spec = {**specs.load("budget", oneshot.BRANCH)}
+    spec["oneshot"] = {**spec["oneshot"], "stack": STACK, "design": sheet.parsed(DESIGN, "desktop"),
+                       "tests_head": "abc", "gate": "cargo test", "contract": ["tests/core.rs"]}
+    for text in (oneshot_build.tests_text(spec), oneshot_build.build_text(spec)):
+        assert "Windows program" in text and "- `cargo`\n- `npm`" in text and "{tools}" not in text
+        assert "Android" not in text and "{toolchain}" not in text
+    several = {**spec, "oneshot": {**spec["oneshot"], "intent": {"kind": "webapp", "kinds": ["webapp", "android"]}}}
+    assert "{tools}" not in oneshot_build.tests_text(several) and "host programs" not in oneshot_build.tests_text(several)
+    mixed = {**spec, "oneshot": {**several["oneshot"], "intent": {"kind": "webapp", "kinds": ["webapp", "desktop"]},
+                                 "stack": [{**STACK[-1], "part": "desktop.build"}]}}
+    assert "- `cargo`" in oneshot_build.tests_text(mixed) and "- `npm`" in oneshot_build.build_text(mixed)
 
 
 def asked(question: str, answer: str) -> None:
@@ -272,17 +488,17 @@ def test_a_saved_pc_app_spec_takes_no_turn_on_another_host(desktop):
 
 
 def test_the_shared_start_refuses_a_move_into_the_held_stage(desktop):
-    oneshot_spec.saved("budget", oneshot={"stage": "r1"})   # the last stage a PC app has in this version
+    oneshot_spec.saved("budget", oneshot={"stage": "build"})   # the last stage a PC app has in this version
     with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             pytest.raises(HTTPException, match="다음 버전"):
-        START("budget", "design", stage="tests")
-    assert o()["stage"] == "r1"
+        START("budget", "design", stage="review")
+    assert o()["stage"] == "build"
 
 
-def test_a_resume_or_a_shutdown_between_the_save_and_the_stop_never_starts_s4(desktop):
-    # The stop was lost (a restart that replaced it): the run is still held, never resumable into S4.
-    oneshot_spec.saved("budget", oneshot={"stage": "tests", "working": None,
-                                          "stopped": {"reason": "restart", "detail": "서버가 다시 켜졌다", "state": "tests"}})
+def test_a_resume_or_a_shutdown_between_the_save_and_the_stop_never_starts_the_review(desktop):
+    # The stop was lost (a restart that replaced it): the run is still held, never resumable into the review.
+    oneshot_spec.saved("budget", oneshot={"stage": "review", "working": None,
+                                          "stopped": {"reason": "restart", "detail": "서버가 다시 켜졌다", "state": "review"}})
     with patch.object(oneshot_spec, "start", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             pytest.raises(HTTPException, match="다음 버전"):
         oneshot_spec.resume("budget")
@@ -293,14 +509,14 @@ def test_several_kinds_an_earlier_version_held_at_the_screens_stay_held(desktop)
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": "frontend", "stopped": {"reason": "kind", "detail": "다음 버전",
                                                                            "state": "frontend"}})
-    assert oneshot_profile.waits_at(o()) == "tests" and oneshot_profile.held(o())
+    assert oneshot_profile.waits_at(o()) == "review" and oneshot_profile.held(o())
     oneshot_spec.recover()
     assert o()["stopped"]["reason"] == "kind"
     with pytest.raises(HTTPException, match="다음 버전"):
         oneshot_spec.resume("budget")
 
 
-@pytest.mark.parametrize("stage", ["board", "frontend", "tests"])
+@pytest.mark.parametrize("stage", ["board", "frontend", "review"])
 def test_a_held_mixed_run_whose_stop_was_lost_starts_no_later_stage(desktop, stage):
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": stage, "working": None, "stopped": None, "features": []})
@@ -313,7 +529,7 @@ def test_a_held_mixed_run_whose_stop_was_lost_starts_no_later_stage(desktop, sta
     assert o()["stopped"]["reason"] == "kind" and o()["stage"] == stage
 
 
-def test_a_pc_app_has_its_own_s2_and_s3_prompts_and_no_web_fallback_for_later_stages():
+def test_a_pc_app_has_its_own_prompts_through_s4_and_no_web_fallback_for_later_stages():
     text = oneshot.prompt("spec", "desktop")
     assert "Windows program" in text and "`tools`" in text and "`window`" in text and "web app" not in text
     assert "`desktop.build` also carries `tools`" in oneshot.prompt("spec-kinds")
@@ -321,5 +537,7 @@ def test_a_pc_app_has_its_own_s2_and_s3_prompts_and_no_web_fallback_for_later_st
     design = oneshot.prompt("design", "desktop")
     assert "Windows program" in design and "oneshot-modules" in design and "Android" not in design
     assert "a Windows app" in (oneshot.ROOT / "tool/prompts/oneshot-brief.md").read_text("utf-8")
+    for stage in ("tests", "build"):
+        assert "Windows program" in oneshot.prompt(stage, "desktop") and "{tools}" in oneshot.prompt(stage, "desktop")
     with pytest.raises(FileNotFoundError):
-        oneshot.prompt("tests", "desktop")
+        oneshot.prompt("review", "desktop")

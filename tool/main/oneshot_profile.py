@@ -22,9 +22,10 @@ SUPPORTED_KINDS = ("webapp", "android", "desktop")
 HOST_ONLY = {"desktop": ("win32", "PC 앱은 Windows 에서만 만든다")}
 # The stage a kind waits at in this version, stopped with reason `kind` until its plan step lands. A kind not
 # here runs to the end: `android` does since its R3 sheet and S8 (`docs/plans/oneshot/7-android.md`, 7f2), and
-# several kinds without `desktop` since 9c4b. `desktop`, alone or among other kinds, runs its core design and R1
-# and waits before S4's tests until 9e2b (`docs/plans/oneshot/9-kinds.md`, "Steps and their stops").
-KIND_STOPS: dict[str, str] = {"desktop": "tests"}
+# several kinds without `desktop` since 9c4b. `desktop`, alone or among other kinds, runs its core design, R1,
+# S4's tests and the core build, and waits before the backend review until 9e2c (`docs/plans/oneshot/9-kinds.md`,
+# "Steps and their stops").
+KIND_STOPS: dict[str, str] = {"desktop": "review"}
 # A run's stages in order after the bootstrap (`web/src/lib/oneshot.ts` STAGES).
 STAGE_ORDER = ("spec", "design", "r1", "tests", "build", "review", "split", "board", "frontend", "r2", "build-front",
                "critique", "phone", "r3", "pr", "done")
@@ -199,6 +200,13 @@ def tooled(part: str, kind: str | list[str]) -> bool:
     return part == ("build" if kinds == ["desktop"] else "desktop.build" if "desktop" in kinds else None)
 
 
+def tool_key(name: str) -> str:
+    """The one name a declared tool and a command's program are compared by: lowercased, an executable's
+    extension set aside, so `npm`, `npm.cmd` and `NPM.CMD` are one program."""
+
+    return re.sub(r"\.(exe|cmd|bat|ps1|com)$", "", name.lower())
+
+
 def tools_of(value, ci: bool) -> list[dict]:
     """A PC app's `tools`, checked: `[{name, setup}]`, each `name` a program to find on `PATH` and each once.
     `setup` is how a clean CI runner gets it: `preinstalled` on the `windows-latest` image, a `run` command, or an
@@ -213,9 +221,9 @@ def tools_of(value, ci: bool) -> list[dict]:
         if not isinstance(name, str) or not TOOL.fullmatch(name.strip()):
             raise ValueError("`tools` 의 `name` 은 PATH 에서 찾을 프로그램 이름이다 — 경로가 아니다")
         name = name.strip()
-        if name.lower() in seen:
-            raise ValueError(f"`tools` 에 `{name}` 이 둘 이상이다")
-        seen.add(name.lower())
+        if tool_key(name) in seen:
+            raise ValueError(f"`tools` 에 `{name}` 이 둘 이상이다 — 확장자만 다른 이름도 같은 프로그램이다")
+        seen.add(tool_key(name))
         setup = tool.get("setup")
         if setup is None and not ci:
             out.append({"name": name})

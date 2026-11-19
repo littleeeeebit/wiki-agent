@@ -15,6 +15,7 @@ stack: the workspace or build files for the shared core and the test runner's
 configuration. Lay it out so each kind's own part can be added beside the
 core later, as the stack's `<kind>.<part>` choices say.
 
+{tools}
 ## What to write
 
 One test for each planned test below, named exactly its `test_name`, at the

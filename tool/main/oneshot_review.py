@@ -46,8 +46,11 @@ oneshot.ROLES["review"] = reviewer
 
 
 def begin(repo: str) -> None:
-    """After the build passed: one review worker; a start refused by a shutdown leaves it resumable."""
+    """After the build passed: one review worker; a start refused by a shutdown leaves it resumable. A run held
+    before the review (a PC app until 9e2c) starts none: its stop is put back."""
 
+    if oneshot_build.stopped_for_kind(repo):
+        return
     try:
         oneshot.start_worker(oneshot_spec.store(repo), "review", review, (repo,), {})
     except HTTPException:

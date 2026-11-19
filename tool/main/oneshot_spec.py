@@ -21,8 +21,7 @@ from pydantic import BaseModel
 from common import is_junction
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, specs, work
-from .oneshot_profile import (current, environment, held, kind_of, kinds_of, off_host, stacked, tooled, unsettled,
-                              waits_at)
+from .oneshot_profile import current, environment, held, kind_of, kinds_of, off_host, stacked, tooled, unsettled
 
 RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}   # a later stage's module adds its own
 SHEETS = {"r1"}   # a stage whose sheet stands when its edit turn stopped
@@ -371,10 +370,7 @@ def approved(repo: str) -> None:
         (docs / name).write_text(render(spec), encoding="utf-8", newline="\n")
     head = commit(repo, tree, files, f"Record the approved {'core' if cored else 'backend'} design "
                                      f"(R1 round {o['r1']['round']})")
-    if head and waits_at(o) == "tests":   # the kind waits here in this version: the design is kept, nothing starts
-        saved(repo, oneshot={"stage": "tests", "design_head": head, "working": None, "stopped": {
-            "reason": "kind", "state": "tests", "detail": "PC 앱의 테스트와 빌드는 다음 버전에서 이어진다 — 핵심 설계를 승인받았다"}})
-    elif head:
+    if head:
         saved(repo, oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
 
 
@@ -462,6 +458,13 @@ def recover() -> None:
         if o.get("working") or (o and o.get("stage") == "spec" and not o.get("talk") and not o.get("stopped")
                                 and handed(o)):
             oneshot.restarted(store(folder.name))
+            # A held run cut mid-turn (an older version's `working` at its kind's stop): its stop is the kind's,
+            # never a `restart` the owner's `[재개]` would only be refused on.
+            waiting(folder.name, specs.load(folder.name, oneshot.BRANCH)["oneshot"])
+        o = specs.load(folder.name, oneshot.BRANCH)["oneshot"] if o else o
+        if o and o.get("stage") in TURNS and (o.get("stopped") or {}).get("reason") == "restart" and not held(o):
+            from . import oneshot_build   # it imports this module
+            oneshot_build.resolve_tools(folder.name, o["stage"])   # a PC app's tool gone meanwhile: `toolchain`
 
 
 def waiting(repo: str, o: dict) -> dict:

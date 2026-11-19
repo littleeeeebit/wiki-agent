@@ -29,11 +29,11 @@ const HINT: Record<string, string> = {
   environment: 'OS, 로그인, 공개 범위 같은 환경을 정한다. 확정하면 GitHub 에 저장소가 생긴다.',
   bootstrap: '폴더, 첫 커밋, GitHub 저장소, 명세 작업 공간을 차례로 만든다. 혼자 돈다.',
   spec: '에이전트와 요구를 정한다. 질문에 답하고, 스택도 여기서 고른다.',
-  design: '정한 요구로 백엔드 설계를 쓴다. 혼자 돈다.',
-  r1: '백엔드 설계를 항목마다 승인하거나 고친다.',
+  design: '정한 요구로 설계를 쓴다. 혼자 돈다.',
+  r1: '설계를 항목마다 승인하거나 고친다.',
   tests: '설계로 계약 테스트를 쓴다. 혼자 돈다.',
-  build: '계약 테스트를 통과하는 백엔드를 만든다. 리뷰가 거절하면 그 지적을 고친다. 혼자 돈다.',
-  review: '독립 리뷰가 백엔드를 본다. 거절하면 빌드가 고치고 다시 본다. 리뷰 루프의 라운드 상한에 닿으면 멈춘다.',
+  build: '계약 테스트를 통과하는 코드를 만든다. 리뷰가 거절하면 그 지적을 고친다. 혼자 돈다.',
+  review: '독립 리뷰가 그 코드를 본다. 거절하면 빌드가 고치고 다시 본다. 리뷰 루프의 라운드 상한에 닿으면 멈춘다.',
   split: '기능을 화면에 놓을 단위로 나눈다. 혼자 돈다.',
   board: '기능을 얼마나 자주 쓰는지 칸으로 옮기고, 첫 화면에서 하는 일을 한 줄로 적는다.',
   frontend: '기능 보드로 화면을 설계한다. 혼자 돈다.',
@@ -45,7 +45,7 @@ const HINT: Record<string, string> = {
   pr: '풀 리퀘스트를 연다. 혼자 돈다.',
   done: '끝났다. 리뷰 루프는 유지보수 창의 작업 목록에서 이어진다.',
 }
-const label = (stage: string) => (ALL.find((s) => s.id === stage) ?? ALL[0]).label
+const label = (now: Now) => (steps(now).find((s) => s.id === now.stage) ?? ALL[0]).label
 
 /** Where a run is, read the same way from a run before S2, a spec past it, or the start form. */
 type Now = {
@@ -204,7 +204,7 @@ export function OneshotWindow() {
   const lead = picked !== 'new' && (
     <div className="flex flex-col gap-1">
       <h2 className="flex flex-wrap items-center gap-2.5 font-heading text-[20px] font-semibold">
-        {label(current.stage)} <Badge now={current} />
+        {label(current)} <Badge now={current} />
       </h2>
       {HINT[current.stage] && <p className="max-w-[44em] text-pretty text-muted-foreground">{HINT[current.stage]}</p>}
     </div>
