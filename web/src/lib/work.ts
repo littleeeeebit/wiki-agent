@@ -238,6 +238,10 @@ function apply(t: Turn, ev: WorkEv): Turn {
  *  picks up once after the last `seq` it saw. */
 export function useWork() {
   const [turns, setTurns] = useState<Record<string, Turn[]>>({})
+  const seen = useRef(turns)   // the latest turns, for a read to note which pending turns it was asked after
+  useEffect(() => {
+    seen.current = turns
+  }, [turns])
   const [rules, setRules] = useState<Record<string, Rules>>({})
   const loading = useRef(new Set<string>())
   // Paths this window is sending to. The record's running turn is then that
@@ -309,6 +313,20 @@ export function useWork() {
     })
   }, [])
 
+  // A newer accepted read names the path's running turn (or none): a turn that was already pending, with its id,
+  // when the read was asked and is not that one has ended on the server, whatever its stream still owes. A turn
+  // that began after the request is left alone: the server's answer may predate it.
+  const expire = useCallback((path: string, before: Set<string>, running: { turn?: string } | null | undefined) => {
+    const over = (t: Turn) => t.pending && !!t.turn && before.has(t.turn) && t.turn !== running?.turn
+    setTurns((all) => {
+      const list = all[path]
+      if (!list?.some(over)) return all
+      return { ...all, [path]: list.map((t) => (over(t) ? { ...t, pending: false } : t)) }
+    })
+  }, [])
+  const pendingNow = (path: string) =>
+    new Set((seen.current[path] ?? []).filter((t) => t.pending && t.turn).map((t) => t.turn!))
+
   const forget = useCallback((path: string) => {
     streams.current.get(path)?.abort()
     streams.current.delete(path)
@@ -339,6 +357,7 @@ export function useWork() {
   const readRules = useCallback((path: string) => {
     const life = lives.current.get(path) ?? 0
     const latest = asked(path)
+    const before = pendingNow(path)
     api.workLog(path)
       .then(({ session_id, rules: list, queued: waiting, running }) => {
         if ((lives.current.get(path) ?? 0) !== life || !latest()) return
@@ -346,9 +365,10 @@ export function useWork() {
         setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
         showQueued(path, waiting)
         named(path, running)
+        expire(path, before, running)
       })
       .catch(() => {})
-  }, [showQueued, named, asked])
+  }, [showQueued, named, asked, expire])
 
   /** Follow one turn's events into `key` until it ends. `first` is the
    *  stream that starts it — the instruction's own, or a reattach. */
