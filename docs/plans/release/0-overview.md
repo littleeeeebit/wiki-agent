@@ -85,7 +85,8 @@ These are proposals that each step's document settles:
   -> build: each declared kind, version injected; Android gives an unsigned release APK
   -> sign: Android only, the repository's release key, outside the build command
   -> verify: every check below on the final bytes
-  -> manifest: each asset's name, size and sha256 in the ledger; the exact files
+  -> manifest: each asset's name, size and the sha256 its checks read, in the ledger;
+               a file whose bytes changed since is refused; the exact files
                kept in the attempt's directory until it ends
   -> tag: push the tag at the SHA, then read it back from the remote
   -> publish: draft Release on that existing tag, its ID recorded; assets uploaded,
@@ -122,9 +123,9 @@ SemVer value without its `v`: tag `v0.1.1` means `0.1.1`.
 
 | Check | Android | Windows (step 6) |
 | --- | --- | --- |
-| Version | `versionName` equals the version (`aapt dump badging`) | EXE resource and installer `FileVersion` equal the version, with `0.1.1.0` normalized to `0.1.1` |
-| Monotonic | `versionCode` strictly greater than the previous production APK's and equal to the version's code: Tauri's mapping, major × 1000000 + minor × 1000 + patch (`0.1.1` is `1001`), with minor and patch at most 999 and major at most 2099, so the code stays under Google Play's 2100000000. The step injects it with the version. | Version greater than the previous production installer's |
-| Identity | Application ID and ABI equal the adapter's and the previous production APK's of this kind; a release build, not debuggable | Product name, in the installer and the app EXE, equals the adapter's and the previous production installer's: Tauri's NSIS script names the uninstall entry and the install folder after it. Publisher, the app EXE's `CompanyName`, equals the adapter's and, when this ledger published the previous installer, the publisher it recorded for those bytes. The installer itself does not carry it, since NSIS compresses the script that holds it. |
+| Version | `versionName` equals the version (`aapt dump badging`) | The installer's fixed version and `FileVersion`, and the installed app EXE's fixed version, equal the version, with `0.1.1.0` normalized to `0.1.1` |
+| Monotonic | `versionCode` strictly greater than the previous production APK's and equal to the version's code: Tauri's mapping, major × 1000000 + minor × 1000 + patch (`0.1.1` is `1001`), with minor and patch at most 999 and major at most 2099, so the code stays under Google Play's 2100000000. The step injects it with the version. | Version greater than the previous production installer's, both read as four integers; an unreadable previous version is refused |
+| Identity | Application ID and ABI equal the adapter's and the previous production APK's of this kind; a release build, not debuggable | The installed app EXE is read from inside the installer: Tauri packs it in one solid LZMA stream with the NSIS script, and marks it as the NSIS bundle's app. Another packing, or a file that is not an NSIS installer, is refused. That app must be the very EXE the build made, apart from the bytes of the marker. Product name, in the installer and that app, equals the adapter's and the previous production installer's: Tauri's NSIS script names the uninstall entry and the install folder after it. Publisher, that app's `CompanyName`, equals the adapter's and the previous production installer's, read the same way from its bytes. The script must name both. |
 | Signature | `apksigner verify --print-certs` matches the repository's expected certificate and the previous production APK's | none until code signing is planned, so Windows warns before running the installer; the card says so |
 | Digest | `sha256` of the final bytes, the same bytes uploaded | the same |
 
@@ -133,7 +134,12 @@ kind, not only against the adapter at the pinned commit. A merge that changes
 the Gradle application ID and the adapter together would otherwise pass, and
 Android would install the result as a separate app. The first production
 release of a kind has no previous artifact, so it is checked against the
-configured identity and expected certificate. Those become the baseline.
+configured identity and expected certificate. Those become the baseline. The
+previous artifact of a kind is the one in the last production Release that
+shipped that kind, whatever came since, and a previous APK is found whatever
+its ABI, so a changed ABI is refused rather than taken for a first release.
+The first production APK makes the release key, even when an earlier Release
+shipped only an installer; after it the key is opened, never made again.
 
 Android rejects an update with a lower `versionCode`, or one signed by a
 different certificate. A strictly increasing code and one durable certificate
@@ -204,8 +210,11 @@ What needs a source change is narrow:
   before signing, so a broken product is the build's failure.
 - The built APK's versionName, versionCode, application ID or ABI is wrong,
   or the APK is debuggable (`release.built_wrong`).
-- The installer or the app EXE is missing or has no version resource, or its
-  version, product name or publisher is wrong (`release_desktop.built_wrong`).
+- The installer or the app EXE is missing, or cannot be read: no version
+  resource, not Tauri's NSIS packing, or no app inside it that equals the
+  built EXE. Or its version, product name or publisher is wrong
+  (`release_desktop.built_wrong`). A previous installer that cannot be read
+  is not the source's to fix, and ends the press without a repair.
 
 A wrong certificate is the release key's problem (`release.signed_wrong`).
 So are a missing release tool, a key the server refuses, and a git or GitHub
@@ -269,8 +278,8 @@ Phones that installed the translator's debug APKs carry a debug certificate.
 The first production APK, signed with the release key under the same
 application ID, cannot update them: the user uninstalls once and installs the
 release, which loses the debug app's data. The application ID stays as it
-is. The first release's notes say this (`release.FIRST_RELEASE_NOTE`), and
-step 3 puts that note in the Release.
+is. The notes of the first Release that ships an APK say this
+(`release.FIRST_RELEASE_NOTE`), and step 3 puts that note in the Release.
 
 ## Steps
 
@@ -282,7 +291,7 @@ step 3 puts that note in the Release.
 | 4 | Failure to agent | Bounded retries and the agent turn whose fix goes through the ordinary review loop, exercised on the unpublished path | Done: `release_publish.WAITS` and `_tried`, `release.BuildFailed` with `built_wrong` and `signed_wrong`, and `tool/main/release_repair.py`. The live check committed an import of a missing module to `main` of `LittleBitAI/wiki-agent-release-rehearsal`. The rehearsal's build failed on it and made the task `release-fix-0-1-2`. Its agent turn removed the import, passed the repository's gate (165 Rust and 30 frontend tests), and the round check opened that repository's PR #1. The PR was closed unmerged. Two earlier runs found that a repository the server does not know never finishes its task, now refused, and that the translator tracks `.wiki/.sync`, which the wiki hook rewrites every turn. |
 | 5 | Button and card | The repository card and its button, the one entry point that publishes; the seed or the bump choice; `recover` at server start. The person chose, on 2026-11-19, to ship the card with the unpublished test build first and the publish button in 5b. | Done: `tool/main/release_api.py` and `web/src/components/ReleaseCard.tsx`. The test build is `release_rehearsal.rehearse` on origin's `main`, the commit the card shows, its source failures handed to `release_repair.start`. The start carries the commit the card showed, and a `main` that moved since is refused. Every command before the hand-off ends within a second of a stop (`release.stoppable`). A stop is refused once the hand-off has begun. Server shutdown admits no new test build, stops a running one, lets a begun repair finish starting, and waits for the cleanup. Whatever a test build could not remove is shown on the card, however it ended. |
 | 5b | Publish | The card's publish button calls `release_publish.publish` with the shown version and choice, from the one Windows account ("Signing (Android)"). | Done: `release_api.press` runs the press off the request, and the card follows its attempt in the ledger, read again every fifteen seconds while it runs. The second press sends exactly what the first confirmed, the version, the choice, the canonical remote and the commit, and only while the card still shows them; `release_publish.publish` refuses another origin or a moved `main` before reserving. The key is looked up under that checked remote. A stop is checked between phases and before each GitHub write, each asset delete and upload included, and no write launches once shutdown has signalled it (`github_release.stop`): before any remote write the attempt ends failed, after one it stays pending. The startup sweep belongs to its lifespan: shutdown halts and waits for it, and no press, resume or test build starts while it runs. A pending attempt with no press on it is carried on from the card (`release_api.resume`), naming the remote and attempt the card showed, which must be that project's; the ledger keeps it on the card when the preview fails. The card shows only redacted diagnostics (`release_api.public`) and a small view of the attempt, and follows the followed server's press only. Once the key is established, the card names the keystore and the credential to back up. No real repository has been published yet. |
-| 6 | Windows installer | The `desktop` kind's NSIS build and its checks | Done: `[release.desktop]` in `release.settings`, the kinds' shared `release.build`, and `tool/main/release_desktop.py`, which reads the version resources through Windows. A press builds every declared kind from the one checkout and ships them in one Release, `<repo>-<version>-x64-setup.exe` beside the APK, and a repository that ships no APK needs no key or Android tools. The rehearsal checks two consecutive installers, and a renamed product name and publisher on the second one's real bytes. The rehearsal on a disposable clone of the translator's `main`, with a committed `[release.desktop]` table, built 0.1.0 and 0.1.1 from one SHA through `cargo tauri build --bundles nsis`. Each installer and app EXE carried its version, the product name and the publisher Tauri derives from the identifier (`littlebit`). The renamed identity was refused on the second installer's real bytes. Nothing was published, and no key was made. |
+| 6 | Windows installer | The `desktop` kind's NSIS build and its checks | Done: `[release.desktop]` in `release.settings`, the kinds' shared `release.build`, and `tool/main/release_desktop.py`, which reads the version resources through Windows. A press builds every declared kind from the one checkout and ships them in one Release, `<repo>-<version>-x64-setup.exe` beside the APK, and a repository that ships no APK needs no key or Android tools. The rehearsal checks two consecutive installers, and a renamed product name and publisher on the second one's real bytes. The rehearsal on a disposable clone of the translator's `main`, with a committed `[release.desktop]` table, built 0.1.0 and 0.1.1 from one SHA through `cargo tauri build --bundles nsis`. Each installer carried its version and the product name, and held the very app EXE the build made, with its version and the publisher Tauri derives from the identifier (`littlebit`); the script named both. The renamed identity was refused on the second installer's real bytes. Nothing was published, and no key was made. |
 | 7 | Oneshot writes `[release]` | The oneshot fills the table for the kinds it builds, keeping every other adapter table | Not started |
 
 ## What this does not do

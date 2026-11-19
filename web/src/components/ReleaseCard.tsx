@@ -19,6 +19,7 @@ type Choice = Bump | 'first'
 type Card = {
   remote?: string; sha?: string; last?: string | null; ahead?: number | null; versions?: Partial<Record<Choice, string>>
   kinds?: ('android' | 'desktop')[]   // what every press ships, read from the pinned commit's `[release]`
+  first_apk?: boolean   // no production release has shipped an APK yet: the press makes the release key
   refused?: Partial<Record<Choice, string>>; attempt?: Attempt | null; error?: string
   read: number; rehearsal: Rehearsal   // `read`: the runs' `rev` when the card's reading began
   press: Press; key?: { keystore: string; credential: string } | null
@@ -434,7 +435,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
       {live && !blocked && (
         <p role="status" className="mb-3 rounded-md border border-wait/30 bg-wait/10 px-3 py-2 text-[12.5px]">
           v{next} 를 빌드·서명해 GitHub 릴리스로 올린다 — 올린 버전은 되돌리지 않는다. 한 번 더 누르면 시작한다
-          {card?.last === null && card.kinds?.includes('android') ? '. 첫 정식 릴리스라 정식 서명 키를 이 PC 에 새로 만든다' : ''}
+          {card?.first_apk ? '. 첫 정식 APK 라 정식 서명 키를 이 PC 에 새로 만든다' : ''}
         </p>
       )}
       {press?.state === 'running' && (

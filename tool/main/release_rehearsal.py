@@ -96,8 +96,12 @@ def _rounds(repo: Path, ref: str, halt: threading.Event, repair, expect: str | N
                         wrong += release.built_wrong(seen[kind], ver, android, previous.get(kind))
                     else:
                         shutil.copyfile(built, folder / f"{n}-{ver}{release_desktop.SUFFIX}")
-                        seen[kind] = release_desktop.facts(folder / f"{n}-{ver}{release_desktop.SUFFIX}",
-                                                           release.output(src, cfg[kind], ver, "exe"))
+                        try:   # an installer or app EXE the build made unreadable is the source's, as a press's
+                            seen[kind] = release_desktop.facts(folder / f"{n}-{ver}{release_desktop.SUFFIX}",
+                                                               release.output(src, cfg[kind], ver, "exe"))
+                        except ValueError as exc:
+                            failed = f"빌드가 만든 설치 파일이나 앱 EXE 를 읽지 못했다 — {exc}"
+                            break
                         got = release_desktop.built_wrong(seen[kind], ver, cfg[kind], previous.get(kind))
                         why += got   # each is the build's, so each is also what the repair needs
                         wrong += got

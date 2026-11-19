@@ -147,11 +147,16 @@ def _shape(r: dict) -> dict:   # the selector's view of a release, as `release.v
     return {"tagName": r.get("tag_name") or "", "isDraft": r.get("draft"), "isPrerelease": r.get("prerelease")}
 
 
-def latest(releases: list[dict]) -> dict | None:
-    """The last eligible production release: published, not a prerelease, tagged `v<major>.<minor>.<patch>`."""
+APK = ".apk"   # a release's Android asset, whatever its ABI: an ABI that changed is refused, not a first
+
+
+def latest(releases: list[dict], shipping: str | None = None) -> dict | None:
+    """The last eligible production release: published, not a prerelease, tagged `v<major>.<minor>.<patch>`.
+    With `shipping`, the last one with an asset named `*<shipping>`: that kind's baseline, whatever came since."""
 
     eligible = [(v, r) for r in releases if not r.get("draft") and not r.get("prerelease")
-                and (v := release.parsed(r.get("tag_name") or ""))]
+                and (v := release.parsed(r.get("tag_name") or ""))
+                and (shipping is None or any(a["name"].endswith(shipping) for a in r.get("assets") or []))]
     return max(eligible, key=lambda pair: pair[0])[1] if eligible else None
 
 
@@ -168,15 +173,14 @@ def notes(repo: Path, sha: str, since: str | None, first: bool) -> str:
     return "\n".join(([release.FIRST_RELEASE_NOTE, ""] if first else []) + titles)
 
 
-def _previous(repo: str, prior: dict | None, suffix: str, what: str, into: Path) -> Path | None:
-    """The previous production release's one asset named `*<suffix>`, downloaded and checked against GitHub's
-    digest. None before the first release, and before the first that ships this kind."""
+def _previous(repo: str, listed: list[dict], suffix: str, what: str, into: Path) -> Path | None:
+    """The one asset named `*<suffix>` of the last production release that shipped one, downloaded and checked
+    against GitHub's digest. None only before the first release of this kind."""
 
+    prior = latest(listed, suffix)
     if prior is None:
         return None
     found = [a for a in prior.get("assets") or [] if a["name"].endswith(suffix)]
-    if not found:
-        return None
     if len(found) > 1:
         raise Stopped(f"{prior['tag_name']} 에 {what} 가 {len(found)} 개다 — 이전 정식 {what} 를 하나로 정할 수 없다")
     file = gh.download(repo, prior["tag_name"], found[0]["name"], into)
@@ -185,23 +189,22 @@ def _previous(repo: str, prior: dict | None, suffix: str, what: str, into: Path)
     return file
 
 
-def previous_facts(repo: str, prior: dict | None, abi: str, into: Path, kit: dict) -> dict | None:
+def previous_facts(repo: str, listed: list[dict], into: Path, kit: dict) -> dict | None:
     """The previous production APK's facts, read from its real bytes on GitHub. None before the first."""
 
-    file = _previous(repo, prior, f"-{abi}.apk", f"{abi} APK", into)
+    file = _previous(repo, listed, APK, "APK", into)
     return file and release.facts(file, kit)
 
 
-def previous_installer(repo: str, name: str, prior: dict | None, into: Path) -> dict | None:
-    """The previous production installer's facts, read from its real bytes on GitHub. Its publisher is only in
-    its compressed script, so it comes from what this ledger recorded when it published those same bytes."""
+def previous_installer(repo: str, listed: list[dict], into: Path) -> dict | None:
+    """The previous production installer's facts, read from its real bytes on GitHub, the app it installs
+    included. None before the first."""
 
-    file = _previous(repo, prior, release_desktop.SUFFIX, "Windows 설치 파일", into / "desktop")
-    if file is None:
-        return None
-    seen = release_desktop.facts(file)
-    recorded = [a.get("facts", {}).get("desktop") or {} for a in ledger(name)["attempts"] if a["state"] == "published"]
-    return {**seen, "publisher": next((f.get("publisher") for f in recorded if f.get("sha256") == seen["sha256"]), None)}
+    file = _previous(repo, listed, release_desktop.SUFFIX, "Windows 설치 파일", into / "desktop")
+    try:
+        return file and release_desktop.facts(file)
+    except ValueError as exc:   # the baseline's, not this build's: nothing in the source fixes it
+        raise Stopped(f"이전 정식 설치 파일을 읽지 못했다 — {exc}") from exc
 
 
 def publish(repo: Path, shown: str, bump: str | None, halt: threading.Event | None = None,
@@ -266,25 +269,31 @@ def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, 
         work = release.owned(release.place(repo, attempt))
         work.mkdir(parents=True)
         _go(halt)
-        # The remote checked, not origin now. Only a repository's first release makes its key.
-        key = release.release_key(repo, kit, create=prior is None, name=name) if "android" in cfg else None
+        # The remote checked, not origin now. Only the first APK makes the key: one that a published APK was
+        # signed with is never replaced, and an established one is opened, never made again.
+        first_apk = "android" in cfg and latest(listed, APK) is None
+        key = release.release_key(repo, kit, create=first_apk, name=name) if "android" in cfg else None
         _go(halt)
         before = {"android": "android" in cfg and _tried(
-                      lambda: previous_facts(repo_slug, prior, cfg["android"]["abi"], work / "previous", kit), halt),
+                      lambda: previous_facts(repo_slug, listed, work / "previous", kit), halt),
                   "desktop": "desktop" in cfg and _tried(
-                      lambda: previous_installer(repo_slug, name, prior, work / "previous"), halt)}
+                      lambda: previous_installer(repo_slug, listed, work / "previous"), halt)}
         _go(halt)
         src = release.checkout(repo, sha, f"{attempt}/src")
         shipped, seen = [], {}
         for kind in [k for k in release.KINDS if k in cfg]:   # every declared kind, from the one checkout
-            shipped.append(_made(kind, src, cfg[kind], chosen, work, f"{repo_slug.split('/')[1]}-{chosen}",
-                                 key, kit, before[kind] or None, seen, halt))
+            shipped.append((kind, _made(kind, src, cfg[kind], chosen, work, f"{repo_slug.split('/')[1]}-{chosen}",
+                                        key, kit, before[kind] or None, seen, halt)))
         release.discard(repo, f"{attempt}/src")   # large; the signed APK and the installer beside it go up
         _go(halt)
         since = _tried(lambda: gh.tag(repo_slug, prior["tag_name"]), halt) if prior else None
-        record = update(name, attempt, facts=seen, title=f"v{chosen}", notes=notes(repo, sha, since, prior is None),
-                        manifest=[{"name": f.name, "size": f.stat().st_size, "sha256": android_owned.sha256(f),
-                                   "path": str(f)} for f in shipped])
+        # The digests the checks read, never the files hashed again: a file changed since is refused here.
+        manifest = [{"name": f.name, "size": f.stat().st_size, "sha256": seen[kind]["sha256"], "path": str(f)}
+                    for kind, f in shipped]
+        if moved := [m["name"] for m in manifest if android_owned.sha256(Path(m["path"])) != m["sha256"]]:
+            raise Stopped(f"검사한 뒤 바뀌었다: {', '.join(moved)} — 검사하지 않은 바이트는 올리지 않는다")
+        record = update(name, attempt, facts=seen, title=f"v{chosen}", notes=notes(repo, sha, since, first_apk),
+                        manifest=manifest)
         _go(halt)   # the last point at which nothing remote has been written
     except Repairable as exc:
         return _ended(record, "failed", reason=str(exc), repair={"needed": str(exc)})
@@ -315,7 +324,10 @@ def _made(kind: str, src: Path, cfg: dict, chosen: str, work: Path, stem: str, k
     else:
         file = work / f"{stem}{release_desktop.SUFFIX}"
         shutil.copyfile(built, file)
-        seen[kind] = release_desktop.facts(file, release.output(src, cfg, chosen, "exe"))
+        try:   # the build's installer and app EXE: one that cannot be read is the source's to fix
+            seen[kind] = release_desktop.facts(file, release.output(src, cfg, chosen, "exe"))
+        except ValueError as exc:
+            raise Repairable(f"빌드가 만든 설치 파일이나 앱 EXE 를 읽지 못했다 — {exc}") from exc
         why = release_desktop.built_wrong(seen[kind], chosen, cfg, before)
     if why:
         raise Repairable("; ".join(why))
