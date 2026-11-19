@@ -316,7 +316,8 @@ def test_an_avoided_word_another_entry_defines_is_not_a_hit():
     glossary = [{"term": "변환", "meaning": "바꾸는 일 전체", "avoid": ["더빙"]},
                 {"term": "번역", "meaning": "변환의 한 단계", "avoid": ["변환"]},
                 {"term": "화자", "meaning": "말하는 사람", "avoid": ["발화자"]}]
-    sheet.avoided([("M2", "목소리를 변환한다")], glossary)   # `변환` is a term, so using it is allowed
+    sheet.avoided([("M2", "목소리를 변환한다"), ("M2", "목소리변환기"), ("P2", "변환- 결과를 저장한다")],
+                  glossary)   # `변환` is a term, so using it is allowed, compounds and particles too
     with pytest.raises(ValueError, match="M3: 용어집의 `화자`"):
         sheet.avoided([("M3", "발화자를 나눈다")], glossary)   # a word holding a term is still caught
     with pytest.raises(ValueError, match="M4: 용어집의 `변환`"):
@@ -339,6 +340,9 @@ def test_an_avoided_word_another_entry_defines_is_not_a_hit():
     ([("M1", "LLM도구Backend")], True),
     ([("M1", "LLM도구를 쓴다")], False),
     ([("P1", "/llm_gateway/{id}")], False),
+    ([("M1", "préLLM Gateway")], True),   # a decomposed accent reads as the letter it makes
+    ([("M1", "LLM-Gateway- 결과를 저장한다")], False),   # a hyphen before a space joins nothing
+    ([("M1", "LLM도구관리자")], False),   # a Korean compound on an approved term, in a name as in prose
 ])
 def test_only_a_whole_term_in_one_field_covers_an_avoided_word(words, hit):
     glossary = [{"term": "버튜버", "meaning": "방송하는 사람", "avoid": ["VTuber"]},

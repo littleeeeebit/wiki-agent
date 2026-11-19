@@ -39,7 +39,8 @@ requirements list and glossary in an `oneshot-spec` block,
   flow names every endpoint its steps call.
 - No entity, field, path or `does` uses a word the glossary's `avoid` lists.
   A glossary term itself is fine even when another entry's `avoid` lists it,
-  as long as the whole term stands in one field and not inside a longer name.
+  as long as the whole term stands in one field and not inside a longer Latin
+  name; Korean particles and compounds on a term (`변환을`, `변환기`) are fine.
 - With `auth` `none`, no login, session or password endpoint; with `password`
   or `oauth`, at least one.
 - At most seven assumptions and twelve endpoints: merge or defer before you

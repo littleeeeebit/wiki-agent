@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 
 # A requirement: where it came from, whether it is decided, and its conditions.
 SOURCES = ("original", "policy", "repository", "decision")
@@ -54,7 +55,6 @@ def part_name(part: str) -> str:
     return f"{KIND_NAMES.get(kind, kind)} {PART_NAMES.get(own, own)}" if kind else PART_NAMES.get(part, part)
 PATH = re.compile(r"/[A-Za-z0-9_.{}/-]*")
 # A path segment that is a sign-in role, whole: `/authors` is not one.
-NAME_CHAR = re.compile(r"[\w-]")   # a character that carries a name on past a glossary term's edge
 HANGUL = re.compile(r"[가-힣]")
 AUTH_SEGMENT = re.compile(r"log-?(in|out)|sign-?(in|up|out)|auth|oauth2?|sessions?|tokens?|passwords?|register", re.I)
 
@@ -324,34 +324,50 @@ def core_checked(design: dict, reqs: list[dict], glossary: list[dict], profile: 
 def _spans(word: str, text: str, edged: bool) -> list[tuple[int, int]]:
     """Every place `word` stands in `text`, overlapping ones too. `edged`: the word stands whole, not inside a
     longer name (`AutoLLM`, `auto_llm_gateway`, `LLM도구Backend`, `préLLM`, `llm-gateway-legacy`). Hangul after it
-    is a particle (`LLM Gateway로`, `변환을`); Hangul before it is a compound only when the word starts in Hangul."""
+    is a particle or a compound (`LLM Gateway로`, `변환을`, `변환기`), in a name as in prose: a Korean name is a
+    compound, and refusing it would refuse the approved term itself. Hangul before it is a compound only when the
+    word starts in Hangul."""
+
+    def runs_on(i: int, step: int) -> bool:   # does `text[i]` carry a name on, looking away from the word
+        if not 0 <= i < len(text):
+            return False
+        if text[i] == "-":   # a hyphen joins only when a name character stands past it (`변환- 결과` is prose)
+            return 0 <= i + step < len(text) and _name_char(text[i + step])
+        return _name_char(text[i])
 
     out = []
     for m in re.finditer(f"(?=({re.escape(word)}))", text):
         s, e = m.start(), m.start() + len(word)
-        before, after = text[s - 1:s], text[e:e + 1]
-        if edged and (before and NAME_CHAR.match(before) and not (HANGUL.match(before) and HANGUL.match(word[0])) or
-                      after and NAME_CHAR.match(after) and not HANGUL.match(after)):
+        if edged and (runs_on(s - 1, -1) and not (HANGUL.match(text[s - 1]) and HANGUL.match(word[0])) or
+                      runs_on(e, 1) and not HANGUL.match(text[e])):
             continue
         out.append((s, e))
     return out
 
 
+def _name_char(c: str) -> bool:
+    return c.isalnum() or c == "_" or unicodedata.category(c).startswith("M")
+
+
 def avoided(words: list[tuple[str, str]], glossary: list[dict]) -> None:
     """Refuses the first glossary `avoid` word any `(id, text)` uses, each field checked on its own. An
     occurrence one whole glossary term covers is not a use: one entry may avoid a word another entry defines
-    (`번역` avoiding `변환`), and using that term is never using the avoided word."""
+    (`번역` avoiding `변환`), and using that term is never using the avoided word. Everything is compared in
+    NFC, so a decomposed accent reads as the letter it makes."""
 
-    terms = {g["term"].lower() for g in glossary}
+    def fold(s: str) -> str:
+        return unicodedata.normalize("NFC", s).lower()
+
+    terms = {fold(g["term"]) for g in glossary}
 
     def uses(text: str, avoid: str) -> bool:
-        text = text.lower()
+        text, avoid = fold(text), fold(avoid)
         cover = [span for t in terms if avoid in t for span in _spans(t, text, True)]
         return any(not any(ts <= s and e <= te for ts, te in cover) for s, e in _spans(avoid, text, False))
 
     for g in glossary:
         for avoid in g.get("avoid") or []:
-            if hits := list(dict.fromkeys(i for i, text in words if uses(text, avoid.lower()))):
+            if hits := list(dict.fromkeys(i for i, text in words if uses(text, avoid))):
                 raise ValueError(f"{', '.join(hits)}: 용어집의 `{g['term']}` 대신 쓰지 않기로 한 `{avoid}` 를 썼다")
 
 
