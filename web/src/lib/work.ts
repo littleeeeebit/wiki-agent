@@ -68,6 +68,8 @@ export type Turn = {
   sessionId?: string
   /** The server's id for this turn, once an event named it. */
   turn?: string
+  /** A record row's server turn: what a window's own copy of the same send is matched against. */
+  record?: string
   /** Until the server's run ends — not at the answer: the gate runs after it,
    *  still holding the worktree. */
   pending?: boolean
@@ -296,6 +298,17 @@ export function useWork() {
     })
   }, [])
 
+  // A send's turn just got its id: a record that already holds its instruction makes the local copy a duplicate.
+  const settle = useCallback((path: string, key: number, turn: string) => {
+    setTurns((all) => {
+      const list = all[path]
+      const i = list?.findIndex((t) => t.key === key) ?? -1
+      if (!list || i < 1 || list[i - 1].role !== 'user' || list[i - 1].record
+        || !list.some((t) => t.role === 'user' && t.record === turn)) return all
+      return { ...all, [path]: list.filter((_, j) => j !== i - 1) }
+    })
+  }, [])
+
   const forget = useCallback((path: string) => {
     streams.current.get(path)?.abort()
     streams.current.delete(path)
@@ -353,9 +366,11 @@ export function useWork() {
         if (ev.session_id !== owner) return
       }
       if (ev.turn) {
+        const first = !turn
         turn ||= ev.turn
         if (ev.turn !== turn) return
         own.current.add(turn)
+        if (first) settle(path, key, turn)
       }
       if (ev.seq !== undefined) {
         if (ev.seq <= last) return
@@ -394,7 +409,7 @@ export function useWork() {
     // waited was sent, kept for a turn the server started, or dropped by a stop.
     if (!gone) readRules(path)
     return gone
-  }, [patch, readRules])
+  }, [patch, readRules, settle])
 
   // Named, so the reload after a replaced turn calls itself, not the outer binding.
   // Resolves false when the record could not be read, for a screen that tells that from an empty one.
@@ -413,7 +428,7 @@ export function useWork() {
         const now = fresh ? running : runs.current.get(path) ?? null
         const past: Turn[] = rows.map((r) => ({
           key: ++seq, role: r.role, text: r.text, error: r.error, ms: r.ms, cost: r.cost_usd, model: r.model,
-          tokens: r.tokens, steps: (r.steps ?? []).map(restored), answered: r.answered,
+          tokens: r.tokens, steps: (r.steps ?? []).map(restored), answered: r.answered, record: r.turn,
         }))
         if (fresh) showQueued(path, waiting)
         if (fresh) named(path, running)
@@ -428,8 +443,9 @@ export function useWork() {
         const kept = new Set(rows.map((r) => r.turn && `${r.role}:${r.turn}`).filter(Boolean))
         setTurns((all) => {
           const mine = all[path] ?? []
+          // The stream reattached here replaces a local copy of the same turn: the last entry drives Stop.
           const shown = mine.filter((t, i) => t.role === 'assistant'
-            ? !(t.turn && kept.has(`assistant:${t.turn}`))
+            ? !(t.turn && (kept.has(`assistant:${t.turn}`) || t.turn === live?.turn))
             : !(mine[i + 1]?.role === 'assistant' && mine[i + 1].turn && kept.has(`user:${mine[i + 1].turn}`)))
           return { ...all, [path]: [...past, ...(live ? [live] : []), ...shown] }
         })
