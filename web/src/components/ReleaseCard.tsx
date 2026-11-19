@@ -201,6 +201,14 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
       setAgain((n) => n + 1)
       return false
     }
+    // Another server's running build, for a stop issued before that answer arrived: no proof either way, so it is
+    // held like a start's answer. It never takes the followed server's running build off the screen; a Stop
+    // issued now settles which one is live.
+    if (r.boot !== e.boot && t.sent <= e.at) {
+      setHeld({ run: r, at: seq.current })
+      setAgain((n) => n + 1)
+      return true
+    }
     setHeld((h) => (h && t.sent > h.at ? null : h))   // as any answer: only a stop sent after the hold arrived releases it
     if (r.boot === e.boot) {   // ordered by `rev`; an older snapshot is not taken, and its refusal is not shown
       const older = (top.current.get(r.boot) ?? -1) > r.rev
