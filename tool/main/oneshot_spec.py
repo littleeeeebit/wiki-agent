@@ -462,6 +462,9 @@ def recover() -> None:
         if o.get("working") or (o and o.get("stage") == "spec" and not o.get("talk") and not o.get("stopped")
                                 and handed(o)):
             oneshot.restarted(store(folder.name))
+            # A held run cut mid-turn (an older version's `working` at its kind's stop): its stop is the kind's,
+            # never a `restart` the owner's `[재개]` would only be refused on.
+            waiting(folder.name, specs.load(folder.name, oneshot.BRANCH)["oneshot"])
 
 
 def waiting(repo: str, o: dict) -> dict:

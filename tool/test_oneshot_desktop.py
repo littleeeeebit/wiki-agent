@@ -159,6 +159,11 @@ def test_an_approved_pc_app_core_is_written_and_waits_before_s4(desktop, kinds):
             oneshot_spec.resume("budget")
         oneshot_spec.recover()   # recovery keeps the stop: nothing starts S4
         assert o()["stopped"]["reason"] == "kind"
+        # A server that went down with an older version's `working: tests` keeps the kind's stop, not a `restart`
+        # whose `[재개]` would only be refused.
+        oneshot_spec.saved("budget", oneshot={"working": "tests", "stopped": None})
+        oneshot_spec.recover()
+        assert o()["stopped"]["reason"] == "kind" and not o().get("working")
         # S4's own entries, called whatever led there (an older version's `working: tests` included), send nothing
         # and never build the prompt a PC app does not have yet.
         for entry in (BEGIN, oneshot_build.resume):

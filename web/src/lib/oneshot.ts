@@ -130,10 +130,16 @@ export const STAGES: { id: string; label: string; kind: 'talk' | 'gate' | 'auto'
   { id: 'phone', label: '휴대폰 회차', kind: 'gate' }, { id: 'r3', label: 'R3 완성 화면', kind: 'gate' }, { id: 'pr', label: '풀 리퀘스트', kind: 'auto' },
   { id: 'done', label: '끝', kind: 'auto' },
 ]
-export const stageLabel = (id: string) => STAGES.find((s) => s.id === id)?.label ?? id
-/** The stages a run of these kinds passes through: the phone round is a run's with an Android app among them. */
-export const stagesOf = <T extends { id: string }>(stages: readonly T[], kinds: readonly string[] = []) =>
+// The stages a core runs through, as its sheet names it (`oneshot_sheet.core_sheet`): a web app alone has a backend.
+const CORE_LABELS: Record<string, string> = { design: '핵심 설계', r1: 'R1 핵심 설계', build: '핵심 빌드', review: '핵심 리뷰' }
+const cored = (kinds: readonly string[]) => kinds.length > 0 && !(kinds.length === 1 && kinds[0] === 'webapp')
+export const stageLabel = (id: string, kinds: readonly string[] = []) =>
+  (cored(kinds) && CORE_LABELS[id]) || (STAGES.find((s) => s.id === id)?.label ?? id)
+/** The stages a run of these kinds passes through, each under its name for them: the phone round is a run's with
+ *  an Android app among them, and a core's stages are named for the core. */
+export const stagesOf = <T extends { id: string; label: string }>(stages: readonly T[], kinds: readonly string[] = []) =>
   stages.filter((s) => s.id !== 'phone' || kinds.includes('android'))
+    .map((s) => ({ ...s, label: (cored(kinds) && CORE_LABELS[s.id]) || s.label }))
 export const STOP: Record<string, string> = {
   block: '모델 답을 쓸 수 없었다', restart: '서버가 다시 켜져 멈췄다', tests: '계약 테스트를 쓰지 못했다',
   gate: '빌드가 검사를 통과하지 못했다', review: '백엔드 리뷰가 라운드 상한까지 거절했다', critique: '화면 비평이 멈췄다',

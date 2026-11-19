@@ -13,8 +13,9 @@ import { cn } from '@/lib/utils'
  *  run shows the same, under its reason and `[재개]`, so why it stopped is read off what happened. */
 export function Track({ view, halt }: { view: SpecView; halt?: ReactNode }) {
   const o = view.oneshot
+  const kinds = o.intent?.kinds ?? (o.intent?.kind ? [o.intent.kind] : [])   // a record from before kinds has one
   return (
-    <Split label={`${stageLabel(view.stage)} 진행`} sideLabel="기록" side={<Record view={view} />}>
+    <Split label={`${stageLabel(view.stage, kinds)} 진행`} sideLabel="기록" side={<Record view={view} />}>
       <div className="flex flex-col gap-5 px-10 pt-5 pb-8 max-[1500px]:px-7 max-[560px]:px-4">
         {halt}
         {o.inflight && <Now inflight={o.inflight} />}
