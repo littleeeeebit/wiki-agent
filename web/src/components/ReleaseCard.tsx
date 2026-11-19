@@ -184,21 +184,22 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   // before it were ordered, the next Stop names the build that server has.
   const follow = useCallback((r: Rehearsal, t: { n: number; sent: number }) => {
     const e = era.current
-    if (e.ended.has(r.boot)) return   // a server known to have stopped: its buffered refusal says nothing now
+    if (e.ended.has(r.boot)) return false   // a server known to have stopped: its buffered refusal says nothing now
     // Another server with no build running, for a stop sent before this era opened: it may have come before or
     // after the followed one, and it has nothing to stop, so it changes nothing; the preview is read again.
     if (r.boot !== e.boot && r.state !== 'running' && t.sent <= e.at) {
       setAgain((n) => n + 1)
-      return
+      return false
     }
-    setHeld(null)
-    if (r.boot === e.boot) { setRun((cur) => newer(cur, r)); return }
+    setHeld((h) => (h && t.sent > h.at ? null : h))   // as any answer: only a stop sent after the hold arrived releases it
+    if (r.boot === e.boot) { setRun((cur) => newer(cur, r)); return true }
     era.current = { n: e.n + 1, boot: r.boot, at: seq.current, ended: e.ended }
     setRun(r)
     setCard(null)
     setGood(null)
     setBusy(null)
     setAgain((n) => n + 1)
+    return true
   }, [])
 
   async function act(fn: () => Promise<{ rehearsal: Rehearsal }>) {
@@ -211,8 +212,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     }, (err) => {
       const live = (err as { rehearsal?: Rehearsal }).rehearsal
       if (live) {   // taken however late it comes, past the action's deadline too
-        follow(live, t)
-        setFault(err.message)
+        if (follow(live, t)) setFault(err.message)   // a refusal the card did not take is not its error
       }
       throw err
     })
