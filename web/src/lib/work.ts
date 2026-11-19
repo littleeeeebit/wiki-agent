@@ -311,6 +311,8 @@ export function useWork() {
   // so an idle snapshot never unlocks a checkout a later read found running.
   const logsAsked = useRef(new Map<string, number>())
   const logsShown = useRef(new Map<string, number>())
+  // The running turn the newest applied read named, with its session: what a superseded `load` attaches to.
+  const runs = useRef(new Map<string, { turn: string; session_id: string } | null>())
   const asked = useCallback((path: string) => {
     const n = (logsAsked.current.get(path) ?? 0) + 1
     logsAsked.current.set(path, n)
@@ -327,6 +329,7 @@ export function useWork() {
     api.workLog(path)
       .then(({ session_id, rules: list, queued: waiting, running }) => {
         if ((lives.current.get(path) ?? 0) !== life || !latest()) return
+        runs.current.set(path, running ?? null)
         setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
         showQueued(path, waiting)
         named(path, running)
@@ -403,33 +406,32 @@ export function useWork() {
     return api.workLog(path)
       .then(({ rows, running, rules: list, session_id, queued: waiting }) => {
         if ((lives.current.get(path) ?? 0) !== life) return true
-        // Older than a recheck already applied: its running turn may have ended or changed, so the record is
-        // read again rather than attached from this snapshot.
-        if (!latest()) {
-          loading.current.delete(path)
-          return load(path)
-        }
+        // Older than a recheck already applied: its transcript still predates this window's sends, so it merges as
+        // ever, but the running turn to attach is the newest read's — the snapshot's may have ended or changed.
+        const fresh = latest()
+        if (fresh) runs.current.set(path, running ?? null)
+        const now = fresh ? running : runs.current.get(path) ?? null
         const past: Turn[] = rows.map((r) => ({
           key: ++seq, role: r.role, text: r.text, error: r.error, ms: r.ms, cost: r.cost_usd, model: r.model,
           tokens: r.tokens, steps: (r.steps ?? []).map(restored), answered: r.answered,
         }))
-        showQueued(path, waiting)
-        named(path, running)
+        if (fresh) showQueued(path, waiting)
+        if (fresh) named(path, running)
         // The turn still running: its reply is not on record yet. Its events
         // are, in the server's buffer, from the first.
-        const live = running && !sending.current.has(path)
+        const live = now && !sending.current.has(path) && (fresh || !own.current.has(now.turn))   // not followed twice
           ? { key: ++seq, role: 'assistant' as const, text: '', steps: [], pending: true,
-              sessionId: running.session_id, turn: running.turn }
+              sessionId: now.session_id, turn: now.turn }
           : null
         // A turn sent before the record came back stays after it.
         setTurns((all) => ({ ...all, [path]: [...past, ...(live ? [live] : []), ...(all[path] ?? [])] }))
-        setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
-        if (live && running) {
+        if (fresh) setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
+        if (live && now) {
           const control = new AbortController()
           streams.current.get(path)?.abort()
           streams.current.set(path, control)
-          follow(path, live.key, (on) => api.workEvents(path, running.turn, -1, on, control.signal),
-            { session: running.session_id, turn: running.turn, signal: control.signal })
+          follow(path, live.key, (on) => api.workEvents(path, now.turn, -1, on, control.signal),
+            { session: now.session_id, turn: now.turn, signal: control.signal })
             .then((gone) => {
               if (streams.current.get(path) === control) streams.current.delete(path)
               if (gone) {
