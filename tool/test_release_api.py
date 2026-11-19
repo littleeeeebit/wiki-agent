@@ -93,6 +93,9 @@ def test_a_repository_without_a_release_table_shows_why(project, monkeypatch):
     card = client.get("/api/release/app").json()
     assert "[release]" in card["error"] and "잠겨 있다" in card["locked"]
     assert client.get("/api/release/elsewhere").status_code == 404
+    release_api._runs["elsewhere"] = {"state": "failed", "rev": 1, "left": ["C:/kept"]}   # an unresolved project's
+    gone = client.post("/api/release/elsewhere/stop", params={"run_id": "x"})
+    assert gone.status_code == 404 and "C:/kept" not in gone.text
 
 
 def ended(client):

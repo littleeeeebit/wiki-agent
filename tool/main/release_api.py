@@ -198,6 +198,7 @@ def stop(name: str, run_id: str = "") -> dict | JSONResponse:
     ended, or names none, never stops another. A refusal carries this server's build state, so a card that
     named a build this server does not have follows the one it has."""
 
+    _repo(name)   # as the state route: a project this server no longer resolves shows nothing of its runs
     refused = ""
     with _lock:
         run = _runs.get(name)

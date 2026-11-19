@@ -179,19 +179,40 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   // With no good preview on screen, the person reads it again by hand: a missing table would fail every time.
   const unread = (!card && !!fault) || !!card?.error
 
+  // A refused stop's answer: the server that just answered the person's own stop has this build state, so the
+  // card follows it whatever it was following, in whichever era, and drops any hold. However the answers
+  // before it were ordered, the next Stop names the build that server has.
+  const follow = useCallback((r: Rehearsal) => {
+    const e = era.current
+    setHeld(null)
+    if (r.boot === e.boot) { setRun((cur) => newer(cur, r)); return }
+    era.current = { n: e.n + 1, boot: r.boot, at: seq.current, ended: e.ended }
+    setRun(r)
+    setCard(null)
+    setGood(null)
+    setBusy(null)
+    setAgain((n) => n + 1)
+  }, [])
+
   async function act(fn: () => Promise<{ rehearsal: Rehearsal }>) {
     setFault('')
     const t = ticket()
     setBusy(t.n)
-    try {
-      await within(fn().then(({ rehearsal: r }) => {
-        const e = era.current   // the followed server's own answers are ordered by `rev`, never held
-        if (!adopt(r, t) && r.state === 'running' && r.boot !== e.boot && !e.ended.has(r.boot)) setHeld({ run: r, at: seq.current })
-      }), ACTION_MS)
-    } catch (err) {
+    const answer = fn().then(({ rehearsal: r }) => {
+      const e = era.current   // the followed server's own answers are ordered by `rev`, never held
+      if (!adopt(r, t) && r.state === 'running' && r.boot !== e.boot && !e.ended.has(r.boot)) setHeld({ run: r, at: seq.current })
+    }, (err) => {
       const live = (err as { rehearsal?: Rehearsal }).rehearsal
-      if (live) adopt(live, t)   // sent after any hold, so it settles which build Stop names
-      if (t.n === era.current.n) setFault(String(err instanceof Error ? err.message : err))
+      if (live) {   // taken however late it comes, past the action's deadline too
+        follow(live)
+        setFault(err.message)
+      }
+      throw err
+    })
+    try {
+      await within(answer, ACTION_MS)
+    } catch (err) {
+      if (t.n === era.current.n && !(err as { rehearsal?: Rehearsal }).rehearsal) setFault(String(err instanceof Error ? err.message : err))
     } finally {
       setBusy((b) => (b === t.n ? null : b))   // an ended era's action never holds the new era's buttons
     }
@@ -210,7 +231,9 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
         <Btn onClick={onClose}>닫기</Btn>
         {unread && <Btn onClick={() => { setFault(''); read() }} title="origin 의 main 과 GitHub 릴리스를 다시 읽는다">다시 읽기</Btn>}
         {shown?.state === 'running'
-          ? <Btn tone="danger" disabled={busy !== null || shown.repairing || shown.stopping || !shown.id} onClick={() => void act(() => stopRehearsal(name, shown.id ?? ''))}
+          // Only a pending start or stop holds Stop back: a build this card shows as repairing or stopping may be
+          // another server's, and a stop the live server refuses brings back the build it has.
+          ? <Btn tone="danger" disabled={busy !== null || !shown.id} onClick={() => void act(() => stopRehearsal(name, shown.id ?? ''))}
               title={shown.repairing ?'수정 작업을 이미 만들기 시작해서 멈출 수 없다' : undefined}>시험 빌드 멈춤</Btn>
           : <Btn disabled={busy !== null || stale || !card?.sha || !!card.error} onClick={() => void act(() => startRehearsal(name, card?.sha))}
               title="main 을 두 번 빌드하고 일회용 시험 키로 서명해 검사한다. 아무것도 올리지 않는다">시험 빌드</Btn>}
