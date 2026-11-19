@@ -378,6 +378,8 @@ export function useWork() {
     setTurns(({ [path]: _gone, ...rest }) => rest)
     setRules(({ [path]: _gone, ...rest }) => rest)
     showQueued(path, null)
+    // The transcript's sends go with it: a send still draining no longer holds the path as if just added.
+    sending.current.delete(path)
     // `live` stays: the last known running turn holds a shared checkout's other panes until the next read.
   }, [showQueued])
 
@@ -559,9 +561,17 @@ export function useWork() {
       // Each send lets go of its own key only: an older send ending while a newer one runs leaves the path to the
       // newer one, and a reload it owed waits for the last live send rather than clearing that one's turn.
       const left = sending.current.get(path)
+      // Let go already — ended by a newer read (`expire`) or cleared with the transcript (`forget`): the path
+      // belongs to whatever has followed since, and this late end (a 410 among them) reloads nothing over it.
+      const stale = !left?.has(mine.key)
       left?.delete(mine.key)
       if (!left?.size) sending.current.delete(path)
-      if (sendingNow(path)) {
+      if (stale) {
+        if (!sendingNow(path) && !streams.current.has(path) && missed.current.delete(path)) {
+          forget(path)   // a notice deferred for this send, and nothing attached since: read once now
+          load(path)
+        }
+      } else if (sendingNow(path)) {
         if (gone) missed.current.add(path)
       } else {
         const owed = missed.current.delete(path)   // either reason reloads once, and settles the other
