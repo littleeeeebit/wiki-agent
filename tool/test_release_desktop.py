@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import json
 import lzma
 import os
 import struct
 import sys
+import zlib
 from ctypes import wintypes
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,19 +23,47 @@ from test_release import _rehearsable
 DESKTOP = {"build": "b", "artifact": "nsis/r_{version}_x64-setup.exe", "exe": "r.exe", "product_name": "r",
            "publisher": "o"}
 GOOD = {"version": "0.1.1", "file_version": "0.1.1", "product": "r", "exe_version": "0.1.1", "exe_product": "r",
-        "publisher": "o", "script_product": True, "script_publisher": True}
-APP = b"MZ app " + rd.MARKER + b"UNK tail"   # the app EXE as built; its packed copy says NSIS
+        "publisher": "o", "reg_product": "r", "reg_publisher": "o", "reg_version": "0.1.1", "install_key": True}
+# The app EXE as built: Tauri's runtime names the NSIS value, then holds the placeholder its bundler sets.
+APP = b"MZ app " + rd.MARKER + rd.NSIS + b" runtime " + rd.MARKER + b"UNK tail"
+PACKED = b"MZ app " + rd.MARKER + rd.NSIS + b" runtime " + rd.MARKER + rd.NSIS + b" tail"
+UNINSTALL = rd.UNINSTALL + "r"
+TAURI = [(UNINSTALL, "DisplayName", "r"), (UNINSTALL, "Publisher", "o"), (UNINSTALL, "DisplayVersion", "0.1.1"),
+         (UNINSTALL, "MainBinaryName", "r.exe"), ("Software\\o\\r", "", None)]
 
 
-def nsis(tmp_path: Path, script: bytes, *files: bytes) -> Path:
-    """A synthetic installer laid out as NSIS does: its first header, then one solid LZMA stream holding the
-    script's length and bytes, then each file's length and bytes."""
+def nsis(tmp_path: Path, writes=TAURI, files=(("helper.exe", b"MZ helper " + rd.MARKER + rd.NSIS), ("r.exe", PACKED)),
+         flags=0, dictionary=1 << 16) -> Path:
+    """A synthetic installer laid out as Unicode NSIS 3 lays one out: a stub, the first header on a 512-byte
+    boundary, one solid LZMA stream holding the script (its blocks, its entries, its strings) and each file, and
+    the CRC32 of everything from byte 512. A value of None is a variable, as `$INSTDIR` is."""
 
-    body = struct.pack("<I", len(script)) + script + b"".join(struct.pack("<I", len(f)) + f for f in files)
-    packed = lzma.compress(body, format=lzma.FORMAT_RAW, filters=[{"id": lzma.FILTER_LZMA1, "dict_size": 1 << 16}])
-    props = bytes([(2 * 5 + 0) * 9 + 3]) + struct.pack("<I", 1 << 16)   # pb=2, lp=0, lc=3, as the filter's default
-    head = struct.pack("<I", 0) + rd.MAGIC + struct.pack("<II", len(script), len(packed) + 5)
-    (file := tmp_path / "setup.exe").write_bytes(b"MZ stub" + head + props + packed)
+    table, at = bytearray(), {}
+
+    def ptr(text):
+        if text is None:
+            return ptr("\x03\u8055")   # a variable code and its index
+        if text not in at:
+            at[text] = len(table) // 2
+            table.extend(text.encode("utf-16-le") + b"\0\0")
+        return at[text]
+
+    ptr("")
+    data, entries = bytearray(), []
+    for name, body in files:
+        entries.append((rd.EW_EXTRACTFILE, [0, ptr(name), len(data), 0, 0, 0]))
+        data.extend(struct.pack("<I", len(body)) + body)
+    entries += [(rd.EW_WRITEREG, [0, ptr(k), ptr(n), ptr(v), 1, 1]) for k, n, v in writes]
+    blocks = 4 + 8 * 8
+    strings = blocks + 28 * len(entries)
+    script = (struct.pack("<I", 0) + struct.pack("<16I", 0, 0, 0, 0, blocks, len(entries), strings, 0, *[0] * 8)
+              + b"".join(struct.pack("<i6i", w, *a) for w, a in entries) + bytes(table))
+    packed = lzma.compress(struct.pack("<I", len(script)) + script + data, format=lzma.FORMAT_RAW,
+                           filters=[{"id": lzma.FILTER_LZMA1, "dict_size": 1 << 16}])
+    props = bytes([(2 * 5 + 0) * 9 + 3]) + struct.pack("<I", dictionary)   # pb=2, lp=0, lc=3: the filter's default
+    head = struct.pack("<I", flags) + rd.MAGIC + struct.pack("<II", len(script), 28 + 5 + len(packed) + 4)
+    body = b"MZ stub".ljust(1024, b"\0") + head + props + packed
+    (file := tmp_path / "setup.exe").write_bytes(body + struct.pack("<I", zlib.crc32(body[512:])))
     return file
 
 
@@ -83,34 +113,77 @@ def test_versions_compare_as_four_integers_and_an_unreadable_previous_one_is_nev
                for why in rd.built_wrong(GOOD, "0.1.1", DESKTOP, {"version": "0.1.2.7", "product": "r", "publisher": "o"}))
 
 
-def test_the_installed_app_is_read_from_inside_the_installer_and_must_be_the_one_built(tmp_path, resources):
-    script = "r".encode("utf-16-le") + b"|" + "o".encode("utf-16-le")
-    packed = APP.replace(b"UNK", rd.NSIS)
-    other = b"MZ helper " + rd.MARKER + b"UNK"   # a binary Tauri packs beside the app, as the real one does
-    installer = nsis(tmp_path, script, b"icon", other, packed)
+def test_the_installed_app_is_the_registered_main_binary_and_must_be_the_one_built(tmp_path, resources, monkeypatch):
+    installer = nsis(tmp_path)
     (exe := tmp_path / "r.exe").write_bytes(APP)
+    monkeypatch.setattr(android_owned, "sha256", lambda f: pytest.fail("the digest is of the one snapshot"))
     seen = rd.facts(installer, exe)
     assert {k: seen[k] for k in GOOD} == GOOD and rd.built_wrong(seen, "0.1.1", DESKTOP) == []
+    assert seen["sha256"] == hashlib.sha256(installer.read_bytes()).hexdigest()
     assert rd.facts(installer)["publisher"] == "o"   # a previous installer, without the build's EXE
     exe.write_bytes(APP + b" rebuilt")
-    with pytest.raises(ValueError, match="빌드가 만든 앱 EXE 가 0 개"):
+    with pytest.raises(ValueError, match="빌드가 만든 앱 EXE 와 다르다"):
         rd.facts(installer, exe)
 
 
-def test_an_installer_whose_script_names_neither_identity_is_refused(tmp_path, resources):
-    seen = rd.facts(nsis(tmp_path, b"elsewhere", APP.replace(b"UNK", rd.NSIS)))
-    why = rd.built_wrong(seen, "0.1.1", DESKTOP)
-    assert len(why) == 2 and all("설치 스크립트가" in w for w in why)
+@pytest.mark.parametrize("writes, said", [
+    ([(UNINSTALL, "DisplayName", "r Tools"), *TAURI[1:]], "제품 이름 'r Tools'"),   # only a longer label
+    ([*TAURI[:1], (UNINSTALL, "Publisher", "o Labs"), *TAURI[2:]], "게시자 'o Labs'"),
+    ([*TAURI, (UNINSTALL, "Publisher", "p")], "게시자 None"),   # two writes that disagree
+    ([*TAURI[:2], (UNINSTALL, "DisplayVersion", "0.1.0"), *TAURI[3:]], "버전 '0.1.0'"),
+    (TAURI[:4], "설치 위치를"),
+])
+def test_what_the_script_registers_must_be_the_identity(tmp_path, resources, writes, said):
+    why = rd.built_wrong(rd.facts(nsis(tmp_path, writes)), "0.1.1", DESKTOP)
+    assert any(said in w for w in why), why
 
 
-def test_an_app_exe_or_another_packing_is_not_an_installer(tmp_path):
+def test_a_main_binary_the_script_does_not_extract_once_is_refused(tmp_path, resources):
+    with pytest.raises(ValueError, match="주 실행 파일 'r.exe' 를 하나로"):
+        rd.facts(nsis(tmp_path, files=(("other.exe", PACKED),)))
+    with pytest.raises(ValueError, match="주 실행 파일 'r.exe' 를 하나로"):
+        rd.facts(nsis(tmp_path, files=(("r.exe", PACKED), ("r.exe", PACKED + b"2"))))
+
+
+def test_a_damaged_or_foreign_installer_is_a_read_error(tmp_path, resources):
     (exe := tmp_path / "r.exe").write_bytes(APP)
     with pytest.raises(ValueError, match="NSIS 설치 파일이 아니다"):
-        rd.payload(exe)
-    (zlib := tmp_path / "z.exe").write_bytes(b"MZ" + struct.pack("<I", 0) + rd.MAGIC + struct.pack("<II", 4, 9)
-                                             + b"\xff" * 40)
-    with pytest.raises(ValueError, match="solid LZMA"):
-        rd.payload(zlib)
+        rd.facts(exe)
+    good = nsis(tmp_path).read_bytes()
+    for name, data, said in (
+            ("crc", good[:1060] + bytes([good[1060] ^ 1]) + good[1061:], "CRC"),
+            ("short", good[:1024 + 20], "NSIS 설치 파일이 아니다"),
+            ("cut", good[:-40] + good[-4:], "머리말이 지원하지 않는"),
+    ):
+        (bad := tmp_path / f"{name}.exe").write_bytes(data)
+        with pytest.raises(ValueError, match=said):
+            rd.facts(bad)
+    for kwargs, said in (({"flags": 4}, "flags 0x4"), ({"flags": 1}, "flags 0x1"),
+                         ({"dictionary": 1 << 30}, "한도를 넘는다")):
+        with pytest.raises(ValueError, match=said):
+            rd.facts(nsis(tmp_path, **kwargs))
+
+
+def test_a_record_that_runs_past_the_stream_or_the_limit_is_refused(tmp_path, resources, monkeypatch):
+    installer = nsis(tmp_path)
+    monkeypatch.setitem(rd.LIMITS, "app", len(PACKED) - 1)
+    with pytest.raises(ValueError, match="한도를 넘는다"):
+        rd.facts(installer)
+    monkeypatch.setitem(rd.LIMITS, "app", 1 << 30)
+    monkeypatch.setitem(rd.LIMITS, "unpacked", 200)
+    with pytest.raises(ValueError, match="한도를 넘는다"):
+        rd.facts(installer)
+    monkeypatch.setitem(rd.LIMITS, "unpacked", 4 << 30)
+    data = installer.read_bytes()
+    body = data[:-4]
+    at = body.index(rd.MAGIC) - 4
+    short = body[:at + 33] + lzma.compress(lzma.decompress(body[at + 33:], format=lzma.FORMAT_RAW, filters=[
+        {"id": lzma.FILTER_LZMA1, "dict_size": 1 << 16}])[:-5], format=lzma.FORMAT_RAW,
+        filters=[{"id": lzma.FILTER_LZMA1, "dict_size": 1 << 16}])   # the main binary's record cut short
+    short = short[:at + 24] + struct.pack("<I", len(short) + 4 - at) + short[at + 28:]
+    (cut := tmp_path / "cut.exe").write_bytes(short + struct.pack("<I", zlib.crc32(short[512:])))
+    with pytest.raises(ValueError, match="기록이 끝나기 전에 끝난다"):
+        rd.facts(cut)
 
 
 @pytest.mark.parametrize("length, signature", [(4, rd.FIXED_SIGNATURE), (rd.FIXED_SIZE, 0)])
@@ -165,7 +238,7 @@ def test_a_desktop_only_rehearsal_builds_two_installers_and_catches_a_renamed_pr
 
     def facts(installer, exe=None):
         version = json.loads(Path(installer).read_text())["version"]
-        return {**GOOD, "version": version, "file_version": version, "exe_version": version,
+        return {**GOOD, "version": version, "file_version": version, "exe_version": version, "reg_version": version,
                 "sha256": android_owned.sha256(Path(installer))}
 
     monkeypatch.setattr(release, "build", build)

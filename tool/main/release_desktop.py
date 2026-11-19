@@ -3,24 +3,26 @@
 The adapter's `[release.desktop]` command builds Tauri's NSIS installer with the version injected, as the Android
 build is (`release.build`). The checks read what Windows and the installer itself will use. The installer's version
 resource carries its version and its product name, the name Tauri's NSIS script keys an upgrade on: the uninstall
-entry and the install folder are both named after it. Inside, Tauri's solid LZMA data holds the script and the
-files it installs (`payload`). The app EXE it installs is the one file whose Tauri bundle-type marker says NSIS; its
-version resource carries the version, the product name and the publisher (`CompanyName`), and the script must
-name the same product and publisher. A build's installer must hold the very EXE the build made. Nothing is signed:
-code signing is not planned yet, so Windows warns before running the installer.
+entry and the install folder are both named after it. Inside, under NSIS's CRC, one solid LZMA stream holds the
+script and the files it installs (`payload`). The script's literal registry writes say what Windows will list:
+the uninstall key named after the product, its display name, publisher, version and main binary, and the key
+`Software\\<publisher>\\<product>` the next update finds the install folder by. The main binary is read from the
+script's file entry of that name; its version resource carries the version, the product name and the publisher
+(`CompanyName`). A build's installer must hold the very EXE the build made. Nothing is signed: code signing is
+not planned yet, so Windows warns before running the installer.
 """
 
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import lzma
 import os
 import struct
 import tempfile
+import zlib
 from ctypes import wintypes
 from pathlib import Path
-
-import android_owned
 
 ARCH = "x64"   # the one Windows target the adapter's build makes
 SUFFIX = f"-{ARCH}-setup.exe"   # a release's installer asset: `<repo>-<version>-x64-setup.exe`
@@ -29,7 +31,11 @@ MAGIC = b"\xef\xbe\xad\xdeNullsoftInst"   # NSIS's first header: flags, this sig
 # and the app as built, keep `UNK`.
 MARKER, NSIS = b"__TAURI_BUNDLE_TYPE_VAR_", b"NSS"
 FIXED_SIGNATURE, FIXED_SIZE = 0xFEEF04BD, 52   # VS_FIXEDFILEINFO
-UNPACKED_LIMIT = 4 << 30   # what one installer may unpack to, at most
+FH_SILENT = 2   # the one first-header flag allowed: an uninstaller, CRC off or forced are not Tauri's installer
+EW_EXTRACTFILE, EW_WRITEREG = 20, 51   # NSIS 3's opcodes, as Tauri's bundled NSIS compiles them
+UNINSTALL = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"   # + the product name, as Tauri's script names it
+LIMITS = {"installer": 1 << 30, "dictionary": 64 << 20, "script": 16 << 20, "app": 1 << 30, "unpacked": 4 << 30}
+CHUNK = 1 << 20   # compressed input fed, and decoded output taken, at a time
 
 
 def version_info(file: Path) -> dict:
@@ -65,73 +71,154 @@ def version_info(file: Path) -> dict:
     return out
 
 
-def payload(installer: Path) -> tuple[bytes, list[bytes]]:
-    """The script and the files of an NSIS installer compressed as Tauri does by default, one solid LZMA stream.
-    Any other shape is refused: what it would install cannot be read, so it cannot be checked."""
+class _Stream:
+    """The solid LZMA stream, decoded only as far as asked and never kept beyond what is asked for."""
 
-    data = installer.read_bytes()
-    at = data.find(MAGIC) - 4
-    if at < 0:
-        raise ValueError(f"`{installer.name}` 는 NSIS 설치 파일이 아니다")
-    header = struct.unpack_from("<I", data, at + 20)[0]
+    def __init__(self, packed: memoryview, dec: lzma.LZMADecompressor):
+        self.packed, self.dec, self.fed, self.decoded = packed, dec, 0, 0
+
+    def read(self, n: int, keep: bool = True) -> bytes:
+        if self.decoded + n > LIMITS["unpacked"]:
+            raise ValueError("압축을 푼 크기가 한도를 넘는다")
+        parts, left = [], n
+        while left:
+            feed = b""
+            if self.dec.needs_input or self.dec.eof:
+                feed = self.packed[self.fed:self.fed + CHUNK]
+                self.fed += len(feed)
+                if not feed or self.dec.eof:
+                    raise ValueError("압축 데이터가 기록이 끝나기 전에 끝난다")
+            got = self.dec.decompress(feed, max_length=min(left, CHUNK))
+            left -= len(got)
+            if keep:
+                parts.append(got)
+        self.decoded += n
+        return b"".join(parts)
+
+
+def _header(data: bytes) -> tuple[int, int, int]:
+    """Where the NSIS first header is, the script's length and where the data it declares ends. NSIS looks for
+    it on a 512-byte boundary and checks a CRC32 of every byte from 512 up to the CRC that ends that data."""
+
+    at = data.find(MAGIC)
+    while at >= 0 and (at - 4) % 512:
+        at = data.find(MAGIC, at + 1)
+    if at < 4 or len(data) < at + 24:
+        raise ValueError("NSIS 설치 파일이 아니다")
+    flags, script, total = struct.unpack_from("<I", data, at - 4)[0], *struct.unpack_from("<II", data, at + 16)
+    at -= 4
+    if flags & ~FH_SILENT or not 33 + 4 <= total <= len(data) - at:
+        raise ValueError(f"NSIS 머리말이 지원하지 않는 형태다 (flags {flags:#x}) — 제거기이거나, CRC 검사가 꺼졌거나, 잘렸다")
+    if zlib.crc32(data[512:at + total - 4]) != struct.unpack_from("<I", data, at + total - 4)[0]:
+        raise ValueError("NSIS CRC 가 맞지 않는다 — NSIS 스스로 실행을 거부할 설치 파일이다")
+    return at, script, at + total - 4
+
+
+def _literal(script: bytes, strings: int, ptr: int) -> str | None:
+    """The NSIS string at `ptr` when it is plain text, None when it holds a variable or a language string."""
+
+    at = strings + 2 * ptr
+    if ptr < 0 or at >= len(script):
+        return None
+    end = at
+    while end + 1 < len(script) and script[end:end + 2] != b"\0\0":
+        end += 2
+    text = script[at:end].decode("utf-16-le", "replace")
+    return None if any(ord(c) < 5 for c in text) else text
+
+
+def payload(data: bytes) -> tuple[list[tuple[str | None, str | None, str | None]], dict[str, set[int]], _Stream]:
+    """An NSIS installer packed as Tauri's default is: Unicode NSIS 3, one solid LZMA stream, its CRC on. Gives
+    the script's registry writes as literal (key, name, value), each extracted file's data offsets by its literal
+    name, and the stream positioned at the first file. Any other shape is refused: what it would install could
+    not be read, so it could not be checked."""
+
+    if len(data) > LIMITS["installer"]:
+        raise ValueError("설치 파일이 크기 한도를 넘는다")
+    at, length, end = _header(data)
     props = data[at + 28:at + 33]
+    dictionary = struct.unpack("<I", props[1:])[0]
+    if props[0] >= 225 or dictionary > LIMITS["dictionary"] or length > LIMITS["script"]:
+        raise ValueError("Tauri 기본 압축(solid LZMA)이 아니거나 한도를 넘는다 — 담긴 앱을 읽을 수 없다")
+    lc, lp, pb = props[0] % 9, props[0] // 9 % 5, props[0] // 45
     try:
-        if len(props) < 5 or props[0] >= 225:
-            raise lzma.LZMAError("no LZMA properties")
-        lc, lp, pb = props[0] % 9, props[0] // 9 % 5, props[0] // 45
-        dec = lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[{"id": lzma.FILTER_LZMA1, "lc": lc, "lp": lp, "pb": pb,
-                                                               "dict_size": struct.unpack("<I", props[1:])[0]}])
-        out = dec.decompress(data[at + 33:], max_length=UNPACKED_LIMIT)
+        stream = _Stream(memoryview(data)[at + 33:end], lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[
+            {"id": lzma.FILTER_LZMA1, "lc": lc, "lp": lp, "pb": pb, "dict_size": dictionary}]))
+        if struct.unpack("<I", stream.read(4))[0] != length:
+            raise ValueError("스크립트 길이가 머리말과 다르다")
+        script = stream.read(length)
     except lzma.LZMAError as exc:
-        raise ValueError(f"`{installer.name}` 가 Tauri 기본 압축(solid LZMA)이 아니다 — 담긴 앱을 읽을 수 없다") from exc
-    if len(out) < 4 or struct.unpack_from("<I", out)[0] != header:
-        raise ValueError(f"`{installer.name}` 의 스크립트 길이가 머리말과 다르다")
-    files, pos = [], 4 + header
-    while pos + 4 <= len(out):
-        size = struct.unpack_from("<I", out, pos)[0] & 0x7FFFFFFF
-        files.append(out[pos + 4:pos + 4 + size])
-        pos += 4 + size
-    return out[4:4 + header], files
+        raise ValueError("Tauri 기본 압축(solid LZMA)이 아니다 — 담긴 앱을 읽을 수 없다") from exc
+    if length < 68:
+        raise ValueError("NSIS 스크립트가 너무 짧다")
+    entries, count = struct.unpack_from("<II", script, 4 + 8 * 2)
+    strings = struct.unpack_from("<I", script, 4 + 8 * 3)[0]
+    if entries + 28 * count > length:
+        raise ValueError("NSIS 명령 표가 스크립트 밖으로 나간다")
+    writes, files = [], {}
+    for k in range(count):
+        which, *arg = struct.unpack_from("<i6i", script, entries + 28 * k)
+        if which == EW_WRITEREG:
+            writes.append(tuple(_literal(script, strings, a) for a in arg[1:4]))
+        elif which == EW_EXTRACTFILE and (name := _literal(script, strings, arg[1])) is not None:
+            files.setdefault(name, set()).add(arg[2])
+    return writes, files, stream
 
 
-def unmarked(binary: bytes) -> bytes:
-    """`binary` with Tauri's bundle-type value blanked: the bundler sets it in the copy it packs."""
+def _main(writes: list, files: dict, stream: _Stream, product: str | None) -> tuple[dict, bytes | None]:
+    """What the script registers under the uninstall key named after `product`, each name's value only when
+    every write of it agrees, and the bytes of the main binary that registration names."""
 
-    at = binary.find(MARKER) + len(MARKER)
-    return binary[:at] + b"\0\0\0" + binary[at + 3:] if at >= len(MARKER) else binary
+    key = UNINSTALL + (product or "")
+    seen = {}
+    for k, name, value in writes:
+        if k == key and name is not None:
+            seen.setdefault(name, set()).add(value)
+    reg = {name: next(iter(values)) for name, values in seen.items() if len(values) == 1}
+    publisher, main = reg.get("Publisher"), reg.get("MainBinaryName")
+    reg["install_key"] = (f"Software\\{publisher}\\{product}", "") in {(k, n) for k, n, _ in writes}
+    offsets = files.get(main or "", set())
+    if len(offsets) != 1 or (offset := next(iter(offsets))) < 0:
+        return reg, None
+    stream.read(offset, keep=False)
+    size = struct.unpack("<I", stream.read(4))[0]
+    if size & 0x80000000 or size > LIMITS["app"]:
+        raise ValueError(f"`{main}` 의 기록이 지원하지 않는 형태이거나 한도를 넘는다")
+    return reg, stream.read(size)
 
 
 def readable(installer: Path) -> None:
-    """Raises `ValueError` unless `installer` has a version resource and an NSIS payload this module can read."""
+    """Raises `ValueError` unless `installer` is an NSIS installer this module can read."""
 
-    version_info(installer)
-    payload(installer)
+    payload(installer.read_bytes())
 
 
 def facts(installer: Path, exe: Path | None = None) -> dict:
-    """What the checks compare. The installer's version and product name, and the app it installs: the one
-    file carrying Tauri's marker, read from the installer itself. Given the build's `exe`, that app must be it."""
+    """What the checks compare, all from one read of `installer`: its version resource, what its script
+    registers, and the main binary that registration names, read from inside it. Given the build's `exe`, that
+    binary must be it, as Tauri packs it: the first bundle-type placeholder set to NSIS."""
 
-    shown = version_info(installer)
-    script, files = payload(installer)
-    apps = [f for f in files if f[:2] == b"MZ" and MARKER + NSIS in f]
-    if exe is not None:
-        built = unmarked(exe.read_bytes())
-        apps = [f for f in apps if unmarked(f) == built]
-    if len(apps) != 1:
-        raise ValueError(f"`{installer.name}` 에 {'빌드가 만든 앱 EXE' if exe else '설치할 앱 EXE'} 가 "
-                         f"{len(apps)} 개 들어 있다 — 하나여야 한다")
+    data = installer.read_bytes()   # one snapshot: the checks, the digest and the manifest all describe it
+    writes, files, stream = payload(data)
     with tempfile.TemporaryDirectory() as tmp:   # Windows reads a version resource from a file only
-        (copy := Path(tmp) / "app.exe").write_bytes(apps[0])
-        app = version_info(copy)
-
-    def named(text: str | None) -> bool:   # the script's strings are UTF-16, as Tauri's NSIS is Unicode
-        return bool(text) and text.encode("utf-16-le") in script
-
+        (copy := Path(tmp) / "setup.exe").write_bytes(data)
+        shown = version_info(copy)
+        try:
+            reg, app = _main(writes, files, stream, shown.get("ProductName"))
+        except lzma.LZMAError as exc:
+            raise ValueError(f"`{installer.name}` 의 압축 데이터가 깨졌다") from exc
+        if app is None:
+            raise ValueError(f"`{installer.name}` 의 스크립트가 등록하는 주 실행 파일 {reg.get('MainBinaryName')!r} 를 "
+                             "하나로 찾을 수 없다")
+        if exe is not None and app != exe.read_bytes().replace(MARKER + b"UNK", MARKER + NSIS, 1):
+            raise ValueError(f"`{installer.name}` 에 든 {reg['MainBinaryName']!r} 가 빌드가 만든 앱 EXE 와 다르다")
+        (copy := Path(tmp) / "app.exe").write_bytes(app)
+        shown_app = version_info(copy)
     return {"version": shown["version"], "file_version": shown.get("FileVersion"), "product": shown.get("ProductName"),
-            "exe_version": app["version"], "exe_product": app.get("ProductName"), "publisher": app.get("CompanyName"),
-            "script_product": named(shown.get("ProductName")), "script_publisher": named(app.get("CompanyName")),
-            "sha256": android_owned.sha256(installer)}
+            "exe_version": shown_app["version"], "exe_product": shown_app.get("ProductName"),
+            "publisher": shown_app.get("CompanyName"), "reg_product": reg.get("DisplayName"),
+            "reg_publisher": reg.get("Publisher"), "reg_version": reg.get("DisplayVersion"),
+            "install_key": reg["install_key"], "sha256": hashlib.sha256(data).hexdigest()}
 
 
 def plain(text: str | None) -> str | None:
@@ -151,10 +238,13 @@ def built_wrong(seen: dict, version: str, desktop: dict, previous: dict | None =
             out.append(f"{name} {got!r} 가 버전 {version!r} 와 다르다")
     if previous and not newer(version, previous["version"]):
         out.append(f"버전 {version} 이 이전 정식 설치 파일의 {previous['version']} 보다 크지 않다")
-    for what, key, want in (("제품 이름", "script_product", seen["product"]),
-                            ("게시자", "script_publisher", seen.get("publisher"))):
-        if not seen.get(key):
-            out.append(f"설치 스크립트가 {what} {want!r} 를 담지 않는다 — 설치 위치와 업데이트 대상이 확인되지 않는다")
+    for what, key, want in (("제품 이름", "reg_product", seen["product"]),
+                            ("게시자", "reg_publisher", seen.get("publisher")), ("버전", "reg_version", version)):
+        if seen.get(key) != want:
+            out.append(f"설치 스크립트가 등록하는 {what} {seen.get(key)!r} 가 {want!r} 와 다르다 — Windows 의 설치 목록이 어긋난다")
+    if not seen.get("install_key"):
+        out.append("설치 스크립트가 설치 위치를 Software\\<게시자>\\<제품 이름> 에 기록하지 않는다 — 다음 업데이트가 설치 위치를 "
+                   "찾지 못한다")
     wants = [("설정", desktop["product_name"]), *((("이전 정식 설치 파일", previous["product"]),) if previous else ())]
     for name, want in wants:
         for what, got in (("설치 파일", seen["product"]), ("설치될 앱 EXE", seen.get("exe_product"))):

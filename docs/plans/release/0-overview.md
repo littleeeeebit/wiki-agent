@@ -125,7 +125,7 @@ SemVer value without its `v`: tag `v0.1.1` means `0.1.1`.
 | --- | --- | --- |
 | Version | `versionName` equals the version (`aapt dump badging`) | The installer's fixed version and `FileVersion`, and the installed app EXE's fixed version, equal the version, with `0.1.1.0` normalized to `0.1.1` |
 | Monotonic | `versionCode` strictly greater than the previous production APK's and equal to the version's code: Tauri's mapping, major × 1000000 + minor × 1000 + patch (`0.1.1` is `1001`), with minor and patch at most 999 and major at most 2099, so the code stays under Google Play's 2100000000. The step injects it with the version. | Version greater than the previous production installer's, both read as four integers; an unreadable previous version is refused |
-| Identity | Application ID and ABI equal the adapter's and the previous production APK's of this kind; a release build, not debuggable | The installed app EXE is read from inside the installer: Tauri packs it in one solid LZMA stream with the NSIS script, and marks it as the NSIS bundle's app. Another packing, or a file that is not an NSIS installer, is refused. That app must be the very EXE the build made, apart from the bytes of the marker. Product name, in the installer and that app, equals the adapter's and the previous production installer's: Tauri's NSIS script names the uninstall entry and the install folder after it. Publisher, that app's `CompanyName`, equals the adapter's and the previous production installer's, read the same way from its bytes. The script must name both. |
+| Identity | Application ID and ABI equal the adapter's and the previous production APK's of this kind; a release build, not debuggable | The installer is read once, as Tauri's default packs it: Unicode NSIS 3, its CRC on and matching, one solid LZMA stream within fixed size limits. Anything else is refused. The script's literal registry writes must register, under `Software\Microsoft\Windows\CurrentVersion\Uninstall\<product>`, the product as `DisplayName`, the publisher as `Publisher` and the version as `DisplayVersion`, and must write the install folder under `Software\<publisher>\<product>`, where the next update looks for it. The main binary it registers (`MainBinaryName`) is read from the script's one file entry of that name, and must be the very EXE the build made, with the bundle-type placeholder Tauri sets. Product name, in the installer and that binary, equals the adapter's and the previous production installer's. Publisher, that binary's `CompanyName`, equals the adapter's and the previous production installer's, read the same way from its bytes. |
 | Signature | `apksigner verify --print-certs` matches the repository's expected certificate and the previous production APK's | none until code signing is planned, so Windows warns before running the installer; the card says so |
 | Digest | `sha256` of the final bytes, the same bytes uploaded | the same |
 
@@ -211,8 +211,8 @@ What needs a source change is narrow:
 - The built APK's versionName, versionCode, application ID or ABI is wrong,
   or the APK is debuggable (`release.built_wrong`).
 - The installer or the app EXE is missing, or cannot be read: no version
-  resource, not Tauri's NSIS packing, or no app inside it that equals the
-  built EXE. Or its version, product name or publisher is wrong
+  resource, not Tauri's default NSIS packing, a CRC that does not match, or
+  no registered main binary inside it that equals the built EXE. Or its version, product name or publisher is wrong
   (`release_desktop.built_wrong`). A previous installer that cannot be read
   is not the source's to fix, and ends the press without a repair.
 

@@ -119,7 +119,8 @@ def desktop(press, monkeypatch):
         seen = json.loads(Path(installer).read_text())
         return {"version": seen["version"], "file_version": seen["version"], "product": seen["product"],
                 "exe_version": seen["version"], "exe_product": seen["product"], "publisher": seen["publisher"],
-                "script_product": True, "script_publisher": True, "sha256": android_owned.sha256(Path(installer))}
+                "reg_product": seen["product"], "reg_publisher": seen["publisher"], "reg_version": seen["version"],
+                "install_key": True, "sha256": android_owned.sha256(Path(installer))}
 
     monkeypatch.setattr(release, "build", build)
     monkeypatch.setattr(rp.release_desktop, "facts", facts)
