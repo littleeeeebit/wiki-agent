@@ -497,6 +497,15 @@ export function useWork() {
         if ((lives.current.get(path) ?? 0) !== life) return true
         // Read after a deferral, and free to attach (no local send holds the path): this record accounts for its
         // notice. Under a live send the notice stays owed to that send's end.
+        // A send whose reply the record already holds has ended, and the merge below replaces its entry: it no
+        // longer holds the path (its key, gone from the transcript, would otherwise count as just added).
+        const kept = new Set(rows.map((r) => r.turn && `${r.role}:${r.turn}`).filter(Boolean))
+        const held = sending.current.get(path)
+        for (const t of seen.current[path] ?? []) {
+          const done = t.role === 'assistant' && (t.turn ?? t.record)
+          if (done && kept.has(`assistant:${done}`)) held?.delete(t.key)
+        }
+        if (held && !held.size) sending.current.delete(path)
         if ((missed.current.get(path) ?? Infinity) < latest.n && !sendingNow(path)) missed.current.delete(path)
         // Older than a recheck already applied: its transcript still predates this window's sends, so it merges as
         // ever, but the running turn to attach is the newest read's — the snapshot's may have ended or changed.
@@ -513,9 +522,8 @@ export function useWork() {
               sessionId: now.session_id, turn: now.turn,
               from: fresh ? latest.n : logsShown.current.get(path) }   // the read whose running turn this is
           : null
-        // A turn sent before the record came back stays after it, unless the record already holds it: the server
-        // can read its rows after this window's send was written, whatever order the requests went in.
-        const kept = new Set(rows.map((r) => r.turn && `${r.role}:${r.turn}`).filter(Boolean))
+        // A turn sent before the record came back stays after it, unless the record already holds it (`kept`): the
+        // server can read its rows after this window's send was written, whatever order the requests went in.
         setTurns((all) => {
           const mine = all[path] ?? []
           // The stream reattached here replaces a local copy of the same turn: the last entry drives Stop.
