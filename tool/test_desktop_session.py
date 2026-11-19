@@ -53,6 +53,72 @@ def test_a_look_runs_its_app_on_its_desktop_and_proves_everything_gone(tmp_path)
     assert all(desktop_session.exited(member) for entry in record["jobs"].values() for member in entry["members"])
 
 
+def test_a_command_run_on_the_look_returns_when_its_root_exits_and_what_it_left_ends_with_the_look(tmp_path):
+    import threading
+
+    left = "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); " \
+           "print('drawn', flush=True); sys.exit(3)"
+    with desktop_session.look(tmp_path, "ran") as look:
+        started = time.monotonic()
+        code, output, cut = look.run("preview", python(left), tmp_path, 30, threading.Event())
+        assert (code, output.strip(), cut) == (3, "drawn", "") and time.monotonic() - started < 20
+        never, _, cut = look.run("slow", python(SLEEP), tmp_path, 1, threading.Event())
+        assert never is None and cut
+
+    record = desktop_session.load(tmp_path / "ran")
+    assert record["state"] == "proven" and record["proof"]["clean"], record["proof"]
+    assert len(record["jobs"]["preview"]["members"]) >= 2   # the root and what it left running
+
+
+def test_a_run_counts_an_exit_read_by_its_deadline_and_starts_nothing_once_halted(tmp_path):
+    import threading
+    from types import SimpleNamespace
+
+    (tmp_path / "evidence").mkdir()
+    (tmp_path / "evidence" / "preview.log").write_bytes(b"")
+    reads = iter([None, 0])
+
+    def read(root):   # the exit is first seen by a read that ends past the deadline
+        value = next(reads)
+        if value is not None:
+            time.sleep(0.05)
+        return value
+
+    look = SimpleNamespace(folder=tmp_path, jobs={"preview": SimpleNamespace(code=read)},
+                           start=lambda *a: {"pid": 1}, observe=lambda: None)
+    code, _, cut = desktop_session.Look.run(look, "preview", ["x"], tmp_path, 0.05, threading.Event())
+    assert code is None and cut
+    halted = threading.Event()
+    halted.set()
+    look.start = lambda *a: pytest.fail("nothing starts once halted")
+    assert desktop_session.Look.run(look, "preview", ["x"], tmp_path, 30, halted) == (None, "", "멈춤")
+
+
+@pytest.mark.parametrize("lost", [False, True])
+def test_a_halt_while_the_root_is_recorded_ends_it_before_it_runs(tmp_path, monkeypatch, lost):
+    if lost:   # the port's exit messages are best effort: the rollback's own confirmed exit must still prove it
+        read = desktop_session.owned_job.Job._messages
+        monkeypatch.setattr(desktop_session.owned_job.Job, "_messages", lambda self, wait_ms, most=64: [
+            (m, pid) for m, pid in read(self, wait_ms, most)
+            if m not in (desktop_session.owned_job.EXIT, desktop_session.owned_job.ABNORMAL)])
+
+    class Late:   # not set when the run begins, set by the time the suspended root is recorded
+        reads = 0
+
+        def is_set(self):
+            self.reads += 1
+            return self.reads > 1
+
+    marker = tmp_path / "ran"
+    with desktop_session.look(tmp_path, "late") as look:
+        found = look.run("preview", python(f"open({str(marker)!r}, 'w').close()"), tmp_path, 30, Late())
+        assert found == (None, "", "멈춤") and look.record["jobs"]["preview"]["root"]
+
+    time.sleep(0.5)
+    record = desktop_session.load(tmp_path / "late")
+    assert not marker.exists() and record["state"] == "proven" and record["proof"]["clean"], record["proof"]
+
+
 def test_the_app_keeps_its_data_inside_the_looks_disposable_folder(tmp_path):
     with desktop_session.look(tmp_path, "data") as look:
         look.start("app", python(ENVIRONMENT), tmp_path, {"EXTRA": "kept", "temp": str(tmp_path), "TMP": "x"})

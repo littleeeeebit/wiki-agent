@@ -453,8 +453,9 @@ def recover() -> None:
         o = waiting(folder.name, o) if o else o
         stop = o.get("stopped") or {}
         if stop.get("reason") == "kind" and not held(o):
-            saved(folder.name, oneshot={"stopped": {**stop, "reason": "restart",
-                                                    "detail": "이 버전은 이 단계를 이어 간다 — [재개]를 누르면 시작한다"}})
+            # The owner's board needs no worker: released, it is theirs to submit again (a PC app's, from 9e2c).
+            saved(folder.name, oneshot={"stopped": None if o.get("stage") == "board" else {
+                **stop, "reason": "restart", "detail": "이 버전은 이 단계를 이어 간다 — [재개]를 누르면 시작한다"}})
         if o.get("working") or (o and o.get("stage") == "spec" and not o.get("talk") and not o.get("stopped")
                                 and handed(o)):
             oneshot.restarted(store(folder.name))
@@ -703,9 +704,10 @@ def resume(repo: str) -> dict:
             o = saved(repo, oneshot=settle)["oneshot"]
         if o.get("inflight"):   # its `Turn.finish` has not run: the next turn would lose that turn's charge
             raise HTTPException(409, "앞 턴의 비용을 아직 매기는 중이다 — 잠시 뒤 다시 하라")
-        if o["stage"] not in (*RUNNING, *TURNS, *SHEETS, "review"):
+        if o["stage"] not in (*RUNNING, *TURNS, *SHEETS, "review", "board"):
             raise HTTPException(409, f"`{o['stage']}` 단계는 다음 단계에서 이어진다")
-        if o["stage"] in SHEETS:   # an edit turn that stopped: the sheet stands, the owner decides again
+        # An edit turn that stopped: the sheet stands, the owner decides again. A board's stop likewise.
+        if o["stage"] in SHEETS or o["stage"] == "board":
             return view(saved(repo, oneshot={"stopped": None}))
         if o["stage"] in RUNNING:
             start(repo, RUNNING[o["stage"]])

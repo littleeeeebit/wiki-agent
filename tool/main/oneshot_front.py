@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import tarfile
+import uuid
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -22,7 +23,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from common import is_junction
+from common import is_junction, shell
 
 from . import oneshot, oneshot_android, oneshot_brief as brief, oneshot_build, oneshot_front_build, \
     oneshot_screens as screens, oneshot_sheet as sheet, oneshot_spec, runtime, specs
@@ -30,7 +31,8 @@ from .oneshot_profile import DEVICES, kinds_of, shape
 
 SHOT_SECONDS = 15_000   # Playwright's milliseconds per page
 PREVIEW_SECONDS = 1800   # an Android preview's first run downloads its Gradle dependencies
-SHOT_NAME = re.compile(r"S[1-9]\d*-(desktop|phone)\.png")
+SHOT_NAME = re.compile(r"S[1-9]\d*-(desktop|phone|window)\.png")
+WINDOW_FILL = 0.9   # a PC preview's picture spans at least this much of each side of the card's window
 
 router = APIRouter()
 
@@ -125,7 +127,7 @@ def split_turn(repo: str, store, spec: dict):
     first = o.get("first_screen") or o["intent"]["first_screen"]
     if kind == "kinds" and isinstance(first, str):   # one line for each kind, each the restatement's to start
         first = {k: first for k in kinds_of(o)}
-    # A kind held at the board (a PC app until 9e3) keeps its features and stops there with `kind`, in the same
+    # A kind held at the board (a PC app was, in 9e2c) keeps its features and stops there with `kind`, in the same
     # save, so no read between the two ever finds an idle board.
     held = oneshot_spec.held({**o, "stage": "board"})
     return lambda: oneshot_spec.saved(repo, oneshot={
@@ -221,23 +223,42 @@ def shared(preview: dict) -> dict:
             "command": preview["command"], "shots": preview["shots"]}
 
 
-def photographed(spec: dict, preview: dict, folder: Path) -> None:
-    """An Android app's mocks drawn by the stack's own preview tool, with no emulator: the reviewed HEAD unpacked
-    into the run's folder, the mock files added and the preview command run on the card's toolchain. Only the
-    pictures stay, `<folder>/<screen>-phone.png`, each at the reference phone's size.
+def frame(o: dict, kind: str) -> tuple[str, tuple[int, int], object, str, str]:
+    """What a native kind's pictures are checked against: (the shot's view, the largest picture taken, whether
+    a size fits, what the refusal calls the frame, and its size). An Android app's is its reference phone, within 3%; a PC
+    app's is the card's window, no larger and at least 90% of each side, since its frame is the stack's."""
+
+    if kind == "android":
+        device = DEVICES[o["profile"]["device"]]
+        return ("phone", screens.largest(device), lambda size: screens.sized(size, device),
+                "기준 폰", f"{device['width']}×{device['height']}px")
+    width, height = map(int, o["profile"]["window"].split("x"))
+    return ("window", (width, height), lambda size: size[0] >= width * WINDOW_FILL and size[1] >= height * WINDOW_FILL,
+            "창", f"{width}×{height}px")
+
+
+def photographed(spec: dict, kind: str, preview: dict, folder: Path) -> None:
+    """A native kind's mocks drawn by the stack's own preview tool: the reviewed HEAD unpacked into a folder of
+    that kind's own, so two kinds' sources never share a path, the mock files added and the preview command run
+    there. Only the pictures stay, `<folder>/<screen>-<view>.png`, each at its kind's size (`frame`). An Android
+    app's command runs on the card's toolchain with no emulator; a PC app's on a desktop the run owns, whatever
+    its command says of a window, so a preview that opens one never opens it on the owner's.
 
     The command is model-written code run with the server's rights, as S4's contract tests and gate are; the
     scratch folder is not a sandbox (`docs/plans/oneshot/7-android.md`, "How 7c builds it")."""
 
     if not oneshot_build.chained(preview["command"]):
         raise ValueError(f"`oneshot-mocks` 의 command 는 {oneshot_build.CHAIN}")
-    device = DEVICES[spec["oneshot"]["profile"]["device"]]
-    try:   # a missing toolchain refuses before anything is unpacked
-        env = oneshot_android.build_env()
-    except OSError as exc:
-        raise ValueError(f"Android 도구를 읽지 못했다 — {exc}") from exc
-    shutil.rmtree(folder, ignore_errors=True)
-    project = folder / "project"
+    o = spec["oneshot"]
+    view, largest, fits, named, size = frame(o, kind)
+    env = None
+    if kind == "android":
+        try:   # a missing toolchain refuses before anything is unpacked
+            env = oneshot_android.build_env()
+        except OSError as exc:
+            raise ValueError(f"Android 도구를 읽지 못했다 — {exc}") from exc
+    project = folder / f"project-{kind}"
+    shutil.rmtree(project, ignore_errors=True)
     project.mkdir(parents=True)
     try:
         unpacked(Path(spec["worktree"]), project)
@@ -248,26 +269,46 @@ def photographed(spec: dict, preview: dict, folder: Path) -> None:
                 raise ValueError(f"목업 파일 자리가 프로젝트 밖을 가리킨다: {name}")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding="utf-8", newline="\n")
-        # A first run can download quietly for long: only the deadline cuts it, never a silent spell.
-        code, out, cut = specs.gate(preview["command"], project, runtime.stopping, env=env, timeout=PREVIEW_SECONDS,
-                                    idle=PREVIEW_SECONDS)
+        if kind == "android":   # a first run can download quietly for long: only the deadline cuts it
+            code, out, cut = specs.gate(preview["command"], project, runtime.stopping, env=env,
+                                        timeout=PREVIEW_SECONDS, idle=PREVIEW_SECONDS)
+        else:
+            code, out, cut = on_desktop(spec, oneshot_build.run_as(preview["command"], o, project), project)
         if cut or code:
             raise ValueError(f"화면 사진 명령이 {f'끊겼다 ({cut})' if cut else f'{code} 로 끝났다'} — {out.strip()[-800:]}")
         problems = []
         for sid in preview["screens"]:
             picture = project / preview["shots"] / f"{sid}.png"
             data = picture.read_bytes() if picture.is_file() else b""
-            found = screens.picture(data, screens.largest(device))
-            if not found or not screens.sized(found[0], device):
+            found = screens.picture(data, largest)
+            if not found or not fits(found[0]):
                 problems.append(f"{sid}: `{preview['shots']}/{sid}.png` 가 " + (
-                    f"{found[0][0]}×{found[0][1]}px 다" if found else "기준 폰보다 크지 않은 온전한 PNG 로 없다"))
+                    f"{found[0][0]}×{found[0][1]}px 다" if found else f"{named}보다 크지 않은 온전한 PNG 로 없다"))
             else:   # the picture as checked: no chunk the checks did not read
-                (folder / f"{sid}-phone.png").write_bytes(found[1])
+                (folder / f"{sid}-{view}.png").write_bytes(found[1])
         if problems:
-            raise ValueError(f"화면 사진이 기준 폰 {device['width']}×{device['height']}px 로 찍히지 않았다 — " +
-                             " / ".join(problems) + f" — 명령 출력: {out.strip()[-400:]}")
+            raise ValueError(f"화면 사진이 {named} {size} 로 찍히지 않았다 — " + " / ".join(problems) +
+                             f" — 명령 출력: {out.strip()[-400:]}")
     finally:
         shutil.rmtree(project, ignore_errors=True)
+
+
+def on_desktop(spec: dict, command: str, project: Path) -> tuple[int | None, str, str]:
+    """A PC preview's command run in a look of its own: a job on a desktop the run owns, its data in the look's
+    disposable folders, and everything it started ended and proven gone when it returns. A look that refuses,
+    or whose cleanup is not proven, is no fault of the answer: it stops the stage instead of asking again, and
+    the next look refuses while the earlier one is held."""
+
+    import desktop_session   # Windows only, as a PC app is
+
+    argv, _ = shell.launch("gate", command=command)
+    looks = oneshot_spec.store(spec["repo"]).folder / "looks"
+    looks.mkdir(parents=True, exist_ok=True)
+    try:
+        with desktop_session.look(looks, f"preview-{uuid.uuid4().hex[:12]}") as look:
+            return look.run("preview", argv, project, PREVIEW_SECONDS, runtime.stopping)
+    except desktop_session.Refused as exc:
+        raise RuntimeError(f"PC 앱 미리보기를 띄운 데스크톱을 정리하지 못했다 — {exc}") from exc
 
 
 def front_turn(final: str, attempt: int, spec: dict, reach: set[str] | None = None) -> tuple[dict, list[str]]:
@@ -279,26 +320,30 @@ def front_turn(final: str, attempt: int, spec: dict, reach: set[str] | None = No
         front = screens.design_kinds(oneshot_spec.blocks(final), o["features"], o["frequency"], kinds, [
             f"{p['method'].upper()} {p['path']}" for p in o["design"].get("api", [])])
     else:
-        front = screens.design(oneshot_spec.blocks(final), o["features"], o["frequency"], shape(o) == "android")
-    android = "preview" in front
+        front = screens.design(oneshot_spec.blocks(final), o["features"], o["frequency"], shape(o))
+    natives = screens.previews(front, shape(o))
     if reach is not None:   # an approval outside the reach survives, so nothing outside it may move
         old, new = screens.every(o["front"]), screens.every(front)
         if moved := sorted(i for i in old if i not in reach and old[i] != new.get(i)):
             raise ValueError(f"고치라고 한 범위 밖 항목을 바꾸거나 지웠다: {', '.join(moved)} — 그대로 두어라")
         if front["tokens"] != o["front"]["tokens"]:   # no item holds them: the owner's palette stands as chosen
             raise ValueError("화면을 고치는 턴이 색 배합·글자 크기·간격(`tokens`)을 바꿨다 — 그대로 두어라")
-        if android and shared(front["preview"]) != shared(o["front"]["preview"]):
+        before = screens.previews(o["front"], shape(o))
+        if any(k not in before or shared(p) != shared(before[k]) for k, p in natives.items()):
             raise ValueError("화면을 고치는 턴이 화면 밖의 미리보기 파일·명령·사진 폴더를 바꿨다 — 그대로 두어라")
     warnings = screens.soft(front)
     if warnings and attempt == 0:
         raise ValueError("다음을 고쳐 다시 내라 — " + " / ".join(warnings[:12]))
     n = int(o.get("shots") or 0) + 1
-    if android:   # first: it empties the folder the web mocks are then shot into
-        photographed(spec, front["preview"], shots(spec["repo"], n))
+    if natives:   # first: the folder is emptied once, then each native kind and the web mocks shoot into it
+        shutil.rmtree(shots(spec["repo"], n), ignore_errors=True)
+        for k in kinds or [shape(o)]:   # in the owner's order
+            if k in natives:
+                photographed(spec, k, natives[k], shots(spec["repo"], n))
     web = {s["id"]: front["mocks"][s["id"]] for s in front["screens"] if s.get("kind", "webapp") == "webapp"} \
-        if not android or kinds else {}
+        if not natives or kinds else {}
     if web and (broken := shoot(web, shots(spec["repo"], n), views(o["profile"], "webapp" if kinds else ""),
-                                clear=not android)):
+                                clear=not natives)):
         raise ValueError("목업이 깨끗하게 열리지 않는다 (외부 자원 없이 한 파일로 써라) — " +
                          " / ".join(f"{sid}: {'; '.join(found[:3])}" for sid, found in broken.items()))
     return {**front, "shots": n}, warnings
@@ -310,14 +355,18 @@ def shots(repo: str, n: int) -> Path:
 
 def front_text(spec: dict) -> str:
     o = spec["oneshot"]
-    if shape(o) in ("android", "kinds"):
-        device = DEVICES[o["profile"]["device"]]
+    picked = kinds_of(o)
+    if shape(o) != "webapp":
         designed, parts = "core", "core parts" + (" and the kinds it applies to" if shape(o) == "kinds" else "")
-        shot = (f"The reference phone each screen is shot at: {device['label']}, {device['width']}×{device['height']} px "
-                f"at {device['dpi']} dpi.\n\nThe toolchain the preview command runs on:\n\n"
-                f"{oneshot_build.toolchain_text(spec)}\n")
-        if shape(o) == "kinds":
-            shot = f"The web viewports shot: {', '.join(views(o['profile'], 'webapp'))}\n\n" + shot
+        shot = f"The web viewports shot: {', '.join(views(o['profile'], 'webapp'))}\n\n" if "webapp" in picked else ""
+        if "android" in picked:
+            device = DEVICES[o["profile"]["device"]]
+            shot += (f"The reference phone each Android screen is shot at: {device['label']}, "
+                     f"{device['width']}×{device['height']} px at {device['dpi']} dpi.\n\nThe toolchain the Android "
+                     f"preview command runs on:\n\n{oneshot_build.toolchain_text(spec)}\n\n")
+        if "desktop" in picked:
+            shot += (f"The window each PC screen is shot at: {o['profile']['window']} physical pixels, its frame "
+                     f"included.\n\n{oneshot_build.tools_text(o)}\n")
     else:
         designed, parts, shot = "backend", "served endpoints", f"Viewports shot: {', '.join(views(o['profile']))}\n"
     return (oneshot_spec.design_text(spec) + f"\nThe {designed} design:\n\n{json.dumps(o['design'], ensure_ascii=False)}"
@@ -328,7 +377,11 @@ def front_text(spec: dict) -> str:
 
 
 def frontend(repo: str) -> None:
-    """One S6 turn in the worktree, read-only; the server checks the blocks, shoots the mocks and shows R2."""
+    """One S6 turn in the worktree, read-only; the server checks the blocks, shoots the mocks and shows R2. A
+    PC app's declared tools are found first, so its preview runs the program checked."""
+
+    if not oneshot_build.resolve_tools(repo, "frontend"):
+        return
 
     def body(store, spec, tree):
         found = oneshot.turned(store, "frontend", oneshot.prompt("frontend", shape(spec["oneshot"])), front_text(spec),
@@ -346,15 +399,17 @@ def frontend(repo: str) -> None:
 def refront(repo: str, comments: dict[str, str], reach: list[str]) -> None:
     """The owner's edits and what depends on them, regenerated in one turn and checked whole."""
 
+    if not oneshot_build.resolve_tools(repo, "refront"):
+        return
     review().holding(repo, "화면 수정", lambda store, spec, tree: refront_turn(repo, store, spec, tree, comments, reach))
 
 
 def refront_turn(repo: str, store, spec: dict, tree: Path, comments: dict[str, str], reach: list[str]):
     o = spec["oneshot"]
-    # An Android design's per-screen sources are its preview's files, so they are sent once; several kinds keep
+    # A native design's per-screen sources are its preview's files, so they are sent once; several kinds keep
     # the web screens' pages, which nothing else holds.
     current = {k: v for k, v in o["front"].items() if k != "shots"}
-    if "preview" in current:
+    if screens.previews(current, shape(o)):
         web = {s["id"]: current["mocks"][s["id"]] for s in current["screens"] if s.get("kind") == "webapp"}
         current = {**current, "mocks": {"webapp": web}} if web else {k: v for k, v in current.items() if k != "mocks"}
     text = (front_text(spec) + f"\nThe current frontend design:\n\n"
@@ -392,15 +447,16 @@ def approved(repo: str) -> None:
 def record(repo: str, store, spec: dict, tree: Path) -> bool:
     o = spec["oneshot"]
     front, source = o["front"], shots(repo, o["front"]["shots"])
-    # An Android app's mocks are its preview's source files, written as they were shot; a web screen's is its page.
-    # Several kinds keep each kind's under its own folder, so a preview file never lands on a web page's place.
+    # A native app's mocks are its preview's source files, written as they were shot; a web screen's is its page.
+    # Several kinds keep each kind's under its own folder, so two previews' files, or a preview's and a web
+    # page, never land on one place.
     several = any("kind" in s for s in front["screens"])
-    android, web = ("android/", "webapp/") if several else ("", "")
-    mocks = {f"docs/design/mock/{android}{p}": text for p, text in front["preview"]["files"].items()} \
-        if "preview" in front else {}
-    mocks |= {f"docs/design/mock/{web}{s['id']}.html": source / f"{s['id']}.html" for s in front["screens"]
-              if s.get("kind", "webapp") == "webapp" and "route" in s}
-    copies = {f"docs/design/{'screens' if 'preview' in front else 'frontend'}.md": None, **mocks,
+    natives = screens.previews(front, shape(o))
+    mocks = {f"docs/design/mock/{k + '/' if several else ''}{p}": text
+             for k, preview in natives.items() for p, text in preview["files"].items()}
+    mocks |= {f"docs/design/mock/{'webapp/' if several else ''}{s['id']}.html": source / f"{s['id']}.html"
+              for s in front["screens"] if s.get("kind", "webapp") == "webapp" and "route" in s}
+    copies = {f"docs/design/{'screens' if natives else 'frontend'}.md": None, **mocks,
               **{f"docs/design/shots/{s['id']}-{v}.png": source / f"{s['id']}-{v}.png"
                  for s in front["screens"] for v in views(o["profile"], s.get("kind", ""))}}
     root = tree.resolve()
@@ -421,10 +477,14 @@ def record(repo: str, store, spec: dict, tree: Path) -> bool:
     if not head:
         return False
     # `working` names the build before its turn is sent: a server that dies in between leaves it for `recover`,
-    # and the screens are already the spec's `done` that the resumed turn reports against.
+    # and the screens are already the spec's `done` that the resumed turn reports against. A run this version
+    # holds at the build is saved stopped in the same write, so no poll sees it resumable.
+    held = oneshot_spec.held({**o, "stage": "build-front"})
     oneshot_spec.saved(repo, done=[f"{s['id']} {screens.place(s)}: {s['purpose']}" for s in front["screens"]],
-                       oneshot={"stage": "build-front", "front_head": head, "working": "build-front", "attempts": 0})
-    return True
+                       oneshot={"stage": "build-front", "front_head": head, "attempts": 0,
+                                **({"working": None, "stopped": oneshot_spec.kind_stop("build-front")} if held
+                                   else {"working": "build-front"})})
+    return not held   # a held run sends no build, so the approval sends the worktree's queued instruction itself
 
 
 oneshot_spec.WORKERS.update(split=split, frontend=frontend, refront=refront)

@@ -28,8 +28,13 @@ MAX_MOCK = 200_000
 VIEWPORTS = {"desktop": (1280, 800), "phone": (390, 844)}
 # Where an Android screen shows: the app's own, drawn over another app, or in the notification shade.
 SURFACES = {"screen": "앱 화면", "overlay": "다른 앱 위", "notification": "알림"}
+# Where a PC app's screen shows: a window of its own, a dialog over it, a window kept over another program's, or
+# the notification area's menu.
+DESKTOP_SURFACES = {"window": "창", "dialog": "대화 상자", "floating": "다른 프로그램 위", "tray": "알림 영역"}
+NATIVE = {"android": SURFACES, "desktop": DESKTOP_SURFACES}   # the kinds whose screens a preview tool draws
 MAX_FILES = 40
 MOCK_PATH = re.compile(r"[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*")
+DEVICE_NAMES = {"CON", "PRN", "AUX", "NUL", *(f"{d}{n}" for d in ("COM", "LPT") for n in range(1, 10))}
 SIZE_SLACK = 0.03   # a preview tool rounds dp to px: a picture within 3% of the device is its size
 # A feature's key, then the words its refusals use: the served API on the web, the approved core on Android.
 INVENTORY = {"endpoints": ("엔드포인트", "`METHOD /path`", "서버에 없는"),
@@ -61,11 +66,13 @@ def operations(document) -> list[str]:
 
 
 def views(profile: dict, kind: str = "") -> list[str]:
-    """The viewports each mock is shot at: an Android app's reference phone, or a web app's. Several kinds' card
-    holds both fields, so there a screen's `kind` picks."""
+    """The viewports each mock is shot at: an Android app's reference phone, a PC app's window, or a web app's.
+    Several kinds' card holds every kind's field, so there a screen's `kind` picks."""
 
     if kind == "android" or not kind and "device" in profile:
         return ["phone"]
+    if kind == "desktop" or not kind and "window" in profile:
+        return ["window"]
     return list(VIEWPORTS) if profile.get("responsive") == "desktop-mobile" else ["desktop"]
 
 
@@ -123,22 +130,24 @@ def board(found: list[dict], frequency, first_screen, kinds: list[str] = ()) -> 
 
 # -- S6 ------------------------------------------------------------------------------------
 
-def _screens(value, known: set[str], android: bool = False) -> list[dict]:
-    """An Android screen names its `surface` where a web screen has its route."""
+def _screens(value, known: set[str], kind: str = "webapp") -> list[dict]:
+    """An Android or a PC app's screen names its `surface` where a web screen has its route."""
 
     if not isinstance(value, list) or not value:
         raise ValueError("`oneshot-screens` 는 비지 않은 목록이어야 한다")
     out, ids, routes = [], set(), set()
-    place = "surface" if android else "route"
+    surfaces = NATIVE.get(kind)
+    native = surfaces is not None
+    place = "surface" if native else "route"
     for n, s in enumerate(value, 1):
         if not isinstance(s, dict) or not isinstance(s.get("id"), str) or not SCREEN_ID.fullmatch(s["id"]):
             raise ValueError(f"{n}번째 화면의 `id` 는 S1, S2 … 여야 한다")
         where = f"화면 {s['id']}"
-        if s["id"] in ids or not android and s.get("route") in routes:
+        if s["id"] in ids or not native and s.get("route") in routes:
             raise ValueError(f"{where}: id 나 경로가 겹친다")
-        if android and s.get("surface") not in SURFACES:
-            raise ValueError(f"{where}: `surface` 는 {', '.join(SURFACES)} 중 하나다")
-        if not android and (not isinstance(s.get("route"), str) or not ROUTE.fullmatch(s["route"])):
+        if native and s.get("surface") not in surfaces:
+            raise ValueError(f"{where}: `surface` 는 {', '.join(surfaces)} 중 하나다")
+        if not native and (not isinstance(s.get("route"), str) or not ROUTE.fullmatch(s["route"])):
             raise ValueError(f"{where}: `route` 는 / 로 시작하고 소문자, 숫자, `-/` 만 쓴다")
         if not isinstance(s.get("primary"), bool) or s.get("reached") not in REACH:
             raise ValueError(f"{where}: `primary` 는 true 나 false, `reached` 는 {', '.join(REACH)} 중 하나다")
@@ -202,7 +211,7 @@ def _mocks(value, screens: list[dict]) -> dict[str, str]:
 
 
 def preview(value, screens: list[dict]) -> tuple[dict[str, str], dict]:
-    """An Android app's `oneshot-mocks`: the mock sources as files, the file drawing each screen, the preview
+    """A native app's `oneshot-mocks`: the mock sources as files, the file drawing each screen, the preview
     command and the folder it writes `<screen id>.png` to. `({screen: its source}, the preview as given)`;
     the command's own shape is the caller's check, as S4's are."""
 
@@ -213,6 +222,14 @@ def preview(value, screens: list[dict]) -> tuple[dict[str, str], dict]:
     if bad := [p for p in paths if not isinstance(p, str) or not MOCK_PATH.fullmatch(p)
                or {".", "..", ".git"} & {part.lower() for part in p.split("/")}]:
         raise ValueError(f"`oneshot-mocks` 의 경로는 작업트리 안의 상대 경로(`/` 로 나눔)다 — {', '.join(map(str, bad[:5]))}")
+    # Windows reads a path without case and drops a component's trailing dot, and a device name is no file: two
+    # names it reads as one place, or a file named as another's folder, would write one source over another.
+    if clash := sorted({p for p in files for q in files if p != q and (
+            p.casefold() == q.casefold() or q.casefold().startswith(p.casefold() + "/"))}
+            | {p for p in files if any(part.endswith(".") or part.split(".")[0].upper() in DEVICE_NAMES
+                                       for part in p.split("/"))}):
+        raise ValueError("`oneshot-mocks` 의 경로가 Windows 에서 다른 경로와 한 자리이거나 장치 이름이다 (대소문자만 다르거나, "
+                         f"한 경로가 다른 경로의 폴더이거나, 끝이 `.` 이다) — {', '.join(clash[:5])}")
     if len(files) > MAX_FILES or not all(isinstance(t, str) and t.strip() for t in files.values()) \
             or sum(map(len, files.values())) > 2 * MAX_MOCK:
         raise ValueError(f"`oneshot-mocks` 의 files 는 {MAX_FILES}개, 합쳐서 {2 * MAX_MOCK:,}자 이하의 비지 않은 소스다")
@@ -323,15 +340,17 @@ def sized(size: tuple[int, int] | None, device: dict) -> bool:
                                     for got, want in zip(size, (device["width"], device["height"])))
 
 
-def design(found: dict, feats: list[dict], frequency: dict[str, str], android: bool = False) -> dict:
-    """The four S6 blocks, shape-checked and checked against the owner's map."""
+def design(found: dict, feats: list[dict], frequency: dict[str, str], kind: str = "webapp") -> dict:
+    """The four S6 blocks, shape-checked and checked against the owner's map. A native kind's mocks are its
+    preview's sources, drawn by the stack's own preview tool."""
 
     if missing := [b for b in BLOCKS.split(",") if b not in found]:
         raise ValueError(f"블록이 빠졌다: {', '.join(missing)}")
-    screens = _screens(found["oneshot-screens"], {f["id"] for f in feats}, android)
+    screens = _screens(found["oneshot-screens"], {f["id"] for f in feats}, kind)
+    native = kind in NATIVE
     # A screen opens at its own route on the app's one port, so the API must not answer the same path.
     api = api_paths([e for f in feats for e in f.get("endpoints") or []])
-    if clash := [s["route"] for s in screens if not android and api.fullmatch(s["route"])]:
+    if clash := [s["route"] for s in screens if not native and api.fullmatch(s["route"])]:
         raise ValueError(f"화면 경로가 API 경로와 겹친다 — {', '.join(clash)}. 화면은 자기 경로에서 열린다")
     primary = [s for s in screens if s["primary"]]
     if len(primary) != 1 or primary[0]["reached"] != "start":
@@ -351,7 +370,7 @@ def design(found: dict, feats: list[dict], frequency: dict[str, str], android: b
     if leaked := [f for f in by_class["never"] if f in shown]:
         raise ValueError(f"화면에 없기로 한 기능이 화면에 있다: {', '.join(leaked)}")
     made = {"screens": screens, "states": _states(found["oneshot-states"], screens), "tokens": _tokens(found["oneshot-tokens"])}
-    if not android:
+    if not native:
         return {**made, "mocks": _mocks(found["oneshot-mocks"], screens)}
     mocks, shown = preview(found["oneshot-mocks"], screens)
     return {**made, "mocks": mocks, "preview": shown}
@@ -391,15 +410,15 @@ def design_kinds(found: dict, feats: list[dict], frequency: dict[str, str], kind
         try:
             made = design({"oneshot-screens": mine, "oneshot-states": [s for s in states if s["screen"] in own],
                            "oneshot-tokens": found["oneshot-tokens"], "oneshot-mocks": mocks[k]},
-                          kept, {f["id"]: frequency[f["id"]] for f in kept}, k == "android")
+                          kept, {f["id"]: frequency[f["id"]] for f in kept}, k)
         except ValueError as exc:
             raise ValueError(f"{k}: {exc}") from exc
         out["screens"] += [{**s, "kind": k} for s in made["screens"]]
         out["states"] |= made["states"]
         out["mocks"] |= made["mocks"]
         out["tokens"] = made["tokens"]
-        if "preview" in made:
-            out["preview"] = made["preview"]
+        if "preview" in made:   # each native kind's own, run in a folder of its own
+            out.setdefault("previews", {})[k] = made["preview"]
     order = {sid: n for n, sid in enumerate(ids)}   # the screens in the order the turn gave them
     return {**out, "screens": sorted(out["screens"], key=lambda s: order[s["id"]])}
 
@@ -420,11 +439,21 @@ def decidable(front: dict) -> list[str]:
     return [x for s in front["screens"] for x in (s["id"], f"{s['id']}.states")]
 
 
-def every(front: dict) -> dict[str, object]:
-    """Each R2 item's content, to tell what an edit changed: a screen with its mock, a screen's states. An
-    Android screen's mock includes the file it is drawn from, since the preview reads that path."""
+def previews(front: dict, kind: str) -> dict[str, dict]:
+    """Each native kind's preview, by kind. Several kinds keep them as `previews`; one kind's design holds its
+    own as `preview`, and so does a run of several kinds designed before a PC app could be one of them, whose
+    one preview was the Android app's."""
 
-    drawn = (front.get("preview") or {}).get("screens") or {}
+    if "previews" in front:
+        return front["previews"]
+    return {kind if kind in NATIVE else "android": front["preview"]} if "preview" in front else {}
+
+
+def every(front: dict) -> dict[str, object]:
+    """Each R2 item's content, to tell what an edit changed: a screen with its mock, a screen's states. A
+    native screen's mock includes the file it is drawn from, since the preview reads that path."""
+
+    drawn = {sid: path for p in previews(front, "").values() for sid, path in p["screens"].items()}
     return {**{s["id"]: [s, front["mocks"][s["id"]], drawn.get(s["id"])] for s in front["screens"]},
             **{f"{sid}.states": st for sid, st in front["states"].items()}}
 
@@ -442,9 +471,9 @@ def _cell(text: str) -> str:
 
 
 def place(s: dict) -> str:
-    """Where a screen opens, as the sheet names it: a web route, or an Android surface."""
+    """Where a screen opens, as the sheet names it: a web route, or a native surface."""
 
-    return f"`{s['route']}`" if "route" in s else SURFACES[s["surface"]]
+    return f"`{s['route']}`" if "route" in s else {**SURFACES, **DESKTOP_SURFACES}[s["surface"]]
 
 
 def placed(group: list[dict], feats: list[dict], frequency: dict, shown: list[str], first_line: str, mark, shot,
@@ -492,7 +521,7 @@ def sheet(spec: dict, shot) -> str:
     chosen = (o.get("r2") or {}).get("palette")
     lines += [f"| {p['id']}{' (고름)' if p['id'] == chosen else ''} | {_cell(p['name'])} | "
               + " | ".join(f"`{p['colors'][k]}`" for k in COLORS) + " |" for p in front["tokens"]["palettes"]]
-    reviewed = "핵심 리뷰" if "device" in o["profile"] else "백엔드 리뷰"
+    reviewed = "핵심 리뷰" if {"device", "window"} & set(o["profile"]) else "백엔드 리뷰"
     lines += ["", f"<details><summary>화면마다의 상태, {reviewed}</summary>", ""]
     for s in front["screens"]:
         st = front["states"][s["id"]]

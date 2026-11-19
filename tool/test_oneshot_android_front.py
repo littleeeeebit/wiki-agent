@@ -142,11 +142,16 @@ def test_a_feature_list_that_invents_drops_or_shares_a_core_part_is_refused(chan
     ({"oneshot-mocks": {**mocks(), "files": {**mocks()["files"], "../outside.kt": "x"}}}, "상대 경로"),
     ({"oneshot-mocks": {**mocks(), "files": {**mocks()["files"], "app/.GIT/config": "x"}}}, "상대 경로"),
     ({"oneshot-mocks": {**mocks(), "screens": {"S1": "mock/S1.kt"}}}, "화면 id 마다"),
+    # Two names Windows reads as one place: the second screen's source would overwrite the one checked for S1.
+    ({"oneshot-mocks": {**mocks(), "files": {**mocks()["files"], "MOCK/s1.kt": "Column { }"}}}, "한 자리"),
+    ({"oneshot-mocks": {**mocks(), "files": {**mocks()["files"], "Mock": "x"}}}, "한 자리"),
+    ({"oneshot-mocks": {**mocks(), "files": {**mocks()["files"], "app/con.kt": "x"}}}, "장치 이름"),
+    ({"oneshot-mocks": {**mocks(), "files": {**mocks()["files"], "mock/S3.kt.": "x"}}}, "끝이"),
     ({"oneshot-mocks": {**mocks(), "command": " "}}, "command"),
 ])
 def test_a_screen_or_a_mock_outside_the_rules_is_refused(change, said):
     with pytest.raises(ValueError, match=said):
-        screens.design(blocks(**change), FEATURES, FREQUENCY, android=True)
+        screens.design(blocks(**change), FEATURES, FREQUENCY, kind="android")
 
 
 def chunk(name: bytes, data: bytes) -> bytes:

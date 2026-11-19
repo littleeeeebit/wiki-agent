@@ -36,7 +36,8 @@ def as_kind(spec: dict, kind: str) -> dict:
     ids, feats = {s["id"] for s in mine}, [f for f in o["features"] if kind in f["kinds"]]
     one = {"screens": mine, "states": {i: st for i, st in front["states"].items() if i in ids},
            "mocks": {i: m for i, m in front["mocks"].items() if i in ids}, "tokens": front["tokens"],
-           "shots": front.get("shots"), **({"preview": front["preview"]} if kind == "android" and "preview" in front else {})}
+           "shots": front.get("shots"),
+           **({"preview": p} if (p := screens.previews(front, "").get(kind)) else {})}
     ops = [f"{p['method'].upper()} {p['path']}" for p in o["design"].get("api", [])]   # the web app's served API
     return {**spec, "requirements": [r for r in spec.get("requirements") or [] if kind in r.get("kinds", [kind])],
             "oneshot": {**o, "intent": {**o["intent"], "kind": kind, "kinds": [kind]}, "front": one, "features": feats,

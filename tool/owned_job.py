@@ -15,6 +15,7 @@ JOB_LIST, HANDLE_LIST = 0x0002000D, 0x00020002   # PROC_THREAD_ATTRIBUTE_JOB_LIS
 NEW, EXIT, ABNORMAL = 6, 7, 8   # JOB_OBJECT_MSG_NEW_PROCESS, _EXIT_PROCESS, _ABNORMAL_EXIT_PROCESS
 OPEN = 0x1000 | 0x00100000 | 0x0001   # PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE | PROCESS_TERMINATE
 ELEVATION_REQUIRED = 740
+DRAIN = 64   # batches of 64 messages one read handles before it returns to its caller
 
 
 class Refused(ValueError):
@@ -71,6 +72,7 @@ def _kernel():
     k.DuplicateHandle.argtypes = (w.HANDLE, w.HANDLE, w.HANDLE, ctypes.POINTER(w.HANDLE), w.DWORD, w.BOOL, w.DWORD)
     k.OpenProcess.argtypes, k.OpenProcess.restype = (w.DWORD, w.BOOL, w.DWORD), w.HANDLE
     k.WaitForSingleObject.argtypes = (w.HANDLE, w.DWORD)
+    k.GetExitCodeProcess.argtypes = (w.HANDLE, ctypes.POINTER(w.DWORD))
     k.CloseHandle.argtypes = (w.HANDLE,)
     k.GetTickCount64.restype = ctypes.c_uint64
     return k
@@ -98,6 +100,10 @@ class Job:
             raise Refused(f"cannot prepare the job: {error}")
         self.joined: list[dict] = []   # {"pid", "handle", "identity", "exited"}
         self.stray: list = []   # creation handles of roots whose rollback could not confirm their exit
+        # Each root's creation handle, held until `close`, with its pid and, once it ran, its identity: a started
+        # root's exit code stays readable however soon it exits, and a root rolled back keeps the exit its
+        # rollback confirmed, whatever the port says.
+        self.roots: list[dict] = []   # {"pid", "identity", "handle"}
         self.ended = False
 
     def _create(self, argv, cwd, env, desktop, handles):
@@ -152,7 +158,7 @@ class Job:
                     self.k.CloseHandle(copy)
         except BaseException:
             if isinstance(created, tuple):   # created, then the cleanup around it failed: owned and rolled back
-                self._rollback(created[0], created[1])
+                self._rollback(*created)
             raise
         if not isinstance(created, tuple):
             if created == ELEVATION_REQUIRED:
@@ -168,21 +174,22 @@ class Job:
             if self.k.ResumeThread(thread) == 0xFFFFFFFF:
                 raise Refused(f"cannot resume {argv[0]}: {ctypes.get_last_error()}")
         except BaseException:
-            self._rollback(process, thread)   # never left suspended, never run unrecorded
+            self._rollback(process, thread, pid)   # never left suspended, never run unrecorded
             raise
         self.k.CloseHandle(thread)
-        self.k.CloseHandle(process)
+        self.roots.append({"pid": pid, "identity": root, "handle": process})
         return root
 
-    def _rollback(self, process, thread) -> None:
+    def _rollback(self, process, thread, pid: int) -> None:
         """End a root that must not run, through its creation handle. A root whose exit is confirmed within five
-        seconds releases its handles; one that is not keeps its process handle in `stray`, which `end` waits on
-        and reports, so the failure is never lost."""
+        seconds keeps that handle among `roots`, its exit proof for `end` should the port's exit message be
+        lost; one that is not keeps it in `stray`, which `end` waits on and reports, so the failure is never
+        lost."""
 
         self.k.TerminateProcess(process, 1)
         self.k.CloseHandle(thread)
         if self.k.WaitForSingleObject(process, 5000) == 0:
-            self.k.CloseHandle(process)
+            self.roots.append({"pid": pid, "identity": None, "handle": process})
         else:
             self.stray.append(process)
 
@@ -225,27 +232,54 @@ class Job:
         the job's accounting agrees: every process it counted was followed and none is active. The port's
         messages are not guaranteed, so a quiet port alone never says the job finished."""
 
-        while self._pump() == 64:
-            pass
+        self._drain()
         count = self._count()
         return (bool(self.joined) and all(self._gone(entry) for entry in self.joined) and not self._strays()
                 and not isinstance(count, int) and count.total == len(self.joined) and count.active == 0)
 
-    def members(self) -> list[dict]:
-        """The identities of every member that joined and could be held, alive or not: every message ready
-        now is handled first, batch after batch."""
+    def code(self, root: dict) -> int | None:
+        """The exit code of the root `start` returned as `root`, read from its creation handle once that handle
+        is signalled, or `None` while it runs or for a root this job did not start. Each read also follows one
+        bounded batch of the members that joined meanwhile, so a child that starts and exits while its root runs
+        is held while it can be, and a caller polling it checks its own deadline between batches."""
 
-        while self._pump() == 64:
-            pass
+        self._pump()
+        held = next((r["handle"] for r in self.roots if r["identity"] and native_process.same(r["identity"], root)),
+                    None)
+        found = w.DWORD()
+        if held is None or self.k.WaitForSingleObject(held, 0) != 0 \
+                or not self.k.GetExitCodeProcess(held, ctypes.byref(found)):
+            return None
+        return found.value
+
+    def members(self) -> list[dict]:
+        """The identities of every member that joined and could be held, alive or not: the messages ready now
+        are handled first, batch after batch, up to `DRAIN` batches."""
+
+        self._drain()
         return [entry["identity"] for entry in self.joined if entry["identity"]]
+
+    def _drain(self) -> None:
+        """Handle the messages ready now, batch after batch, but no more than `DRAIN` batches: a job that keeps
+        starting processes cannot hold its caller, and `end` reads the rest after it terminates them."""
+
+        for _ in range(DRAIN):
+            if self._pump() < 64:
+                return
 
     def _gone(self, entry: dict) -> bool:
         """A member has exited. A held member only by its signalled handle, which is bound to that process; an
-        exit message names a pid, which a later member may carry. A member never held, by its exit message."""
+        exit message names a pid, which a later member may carry. A member never held, by its exit message, or,
+        when that message was lost, the first member with a root's pid by the root's own signalled handle: the
+        root joined first under its pid, so only a later member could carry it again."""
 
         if entry["handle"]:
             return self.k.WaitForSingleObject(entry["handle"], 0) == 0
-        return entry["exited"]
+        if entry["exited"]:
+            return True
+        first = next(e for e in self.joined if e["pid"] == entry["pid"])
+        held = next((r["handle"] for r in self.roots if r["pid"] == entry["pid"]), None)
+        return first is entry and held is not None and self.k.WaitForSingleObject(held, 0) == 0
 
     def _count(self):
         """The job's accounting, or the Windows error that kept it from being read."""
@@ -299,7 +333,8 @@ class Job:
     def outstanding(self) -> int:
         """How many handles the job still holds."""
 
-        return (len(getattr(self, "stray", [])) + sum(1 for entry in getattr(self, "joined", []) if entry["handle"])
+        return (len(getattr(self, "stray", [])) + len(getattr(self, "roots", []))
+                + sum(1 for entry in getattr(self, "joined", []) if entry["handle"])
                 + sum(1 for name in ("port", "job") if getattr(self, name, None)))
 
     def close(self) -> None:
@@ -309,6 +344,9 @@ class Job:
         for handle in list(getattr(self, "stray", [])):
             if self.k.CloseHandle(handle):
                 self.stray.remove(handle)
+        for held in list(getattr(self, "roots", [])):
+            if self.k.CloseHandle(held["handle"]):
+                self.roots.remove(held)
         for entry in getattr(self, "joined", []):
             if entry["handle"] and self.k.CloseHandle(entry["handle"]):
                 entry["handle"] = None
