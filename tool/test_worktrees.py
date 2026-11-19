@@ -45,6 +45,10 @@ def test_a_checkout_that_fails_leaves_no_branch_behind(repo):
     with pytest.raises(RuntimeError):
         create(repo, "fix-login")
     assert git(repo, "branch", "--list", "fix-login") == ""
+    git(repo, "branch", "fix-login")   # someone's own branch of that name: the refused add leaves it alone
+    with pytest.raises(RuntimeError):
+        create(repo, "fix-login")
+    assert git(repo, "branch", "--list", "fix-login").strip() == "fix-login"
 
 
 def test_create_puts_the_worktree_beside_the_repo(repo, monkeypatch):
