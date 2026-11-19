@@ -94,6 +94,24 @@ def test_a_run_counts_an_exit_read_by_its_deadline_and_starts_nothing_once_halte
     assert desktop_session.Look.run(look, "preview", ["x"], tmp_path, 30, halted) == (None, "", "멈춤")
 
 
+def test_a_halt_while_the_root_is_recorded_ends_it_before_it_runs(tmp_path):
+    class Late:   # not set when the run begins, set by the time the suspended root is recorded
+        reads = 0
+
+        def is_set(self):
+            self.reads += 1
+            return self.reads > 1
+
+    marker = tmp_path / "ran"
+    with desktop_session.look(tmp_path, "late") as look:
+        found = look.run("preview", python(f"open({str(marker)!r}, 'w').close()"), tmp_path, 30, Late())
+        assert found == (None, "", "멈춤") and look.record["jobs"]["preview"]["root"]
+
+    time.sleep(0.5)
+    record = desktop_session.load(tmp_path / "late")
+    assert not marker.exists() and record["state"] == "proven" and record["proof"]["clean"], record["proof"]
+
+
 def test_the_app_keeps_its_data_inside_the_looks_disposable_folder(tmp_path):
     with desktop_session.look(tmp_path, "data") as look:
         look.start("app", python(ENVIRONMENT), tmp_path, {"EXTRA": "kept", "temp": str(tmp_path), "TMP": "x"})

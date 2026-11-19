@@ -57,7 +57,7 @@ def test_the_root_is_in_its_job_before_it_runs_and_every_member_is_proven_gone(j
 
 
 def test_a_root_that_exits_before_any_message_is_read_keeps_its_exit_code_until_close(job, tmp_path, monkeypatch):
-    monkeypatch.setattr(job, "_pump", lambda wait_ms=0: pytest.fail("the code is read off the root's own handle"))
+    monkeypatch.setattr(job, "_pump", lambda wait_ms=0: 0)   # no message ever read: the code is the handle's
     root = started(job, tmp_path, "raise SystemExit(7)")
     deadline = time.monotonic() + 20
     while job.code(root) is None and time.monotonic() < deadline:
@@ -68,6 +68,18 @@ def test_a_root_that_exits_before_any_message_is_read_keeps_its_exit_code_until_
     assert job.end(5)["clean"]
     job.close()
     assert job.outstanding() == 0
+
+
+def test_waiting_on_the_roots_code_holds_a_child_that_starts_and_exits_while_the_root_runs(job, tmp_path):
+    brief = "import subprocess, sys, time; subprocess.run([sys.executable, '-c', 'import time; time.sleep(1)']); " \
+            "time.sleep(1.5)"
+    root = started(job, tmp_path, brief)
+    deadline = time.monotonic() + 30
+    while job.code(root) is None and time.monotonic() < deadline:
+        time.sleep(0.2)
+    # The child exited a second and a half before its root: only a read while it ran could hold it.
+    assert job.code(root) == 0 and len(job.joined) >= 2 and all(entry["handle"] for entry in job.joined)
+    assert job.end(5)["clean"]
 
 
 def test_a_job_whose_accounting_counts_a_member_never_followed_is_not_finished(job, tmp_path, monkeypatch):

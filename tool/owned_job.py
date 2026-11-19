@@ -237,8 +237,12 @@ class Job:
 
     def code(self, root: dict) -> int | None:
         """The exit code of the root `start` returned as `root`, read from its creation handle once that handle
-        is signalled, or `None` while it runs or for a root this job did not start."""
+        is signalled, or `None` while it runs or for a root this job did not start. Each read also follows the
+        members that joined meanwhile, as `members` does, so a child that starts and exits while its root runs
+        is held while it can be."""
 
+        while self._pump() == 64:
+            pass
         held = next((handle for known, handle in self.roots if native_process.same(known, root)), None)
         found = w.DWORD()
         if held is None or self.k.WaitForSingleObject(held, 0) != 0 \
