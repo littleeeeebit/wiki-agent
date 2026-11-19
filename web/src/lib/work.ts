@@ -403,14 +403,18 @@ export function useWork() {
     return api.workLog(path)
       .then(({ rows, running, rules: list, session_id, queued: waiting }) => {
         if ((lives.current.get(path) ?? 0) !== life) return true
+        // Older than a recheck already applied: its running turn may have ended or changed, so the record is
+        // read again rather than attached from this snapshot.
+        if (!latest()) {
+          loading.current.delete(path)
+          return load(path)
+        }
         const past: Turn[] = rows.map((r) => ({
           key: ++seq, role: r.role, text: r.text, error: r.error, ms: r.ms, cost: r.cost_usd, model: r.model,
           tokens: r.tokens, steps: (r.steps ?? []).map(restored), answered: r.answered,
         }))
-        // An older answer than a recheck already applied: the record still loads, the controls stay newer.
-        const newest = latest()
-        if (newest) showQueued(path, waiting)
-        if (newest) named(path, running)
+        showQueued(path, waiting)
+        named(path, running)
         // The turn still running: its reply is not on record yet. Its events
         // are, in the server's buffer, from the first.
         const live = running && !sending.current.has(path)
@@ -419,7 +423,7 @@ export function useWork() {
           : null
         // A turn sent before the record came back stays after it.
         setTurns((all) => ({ ...all, [path]: [...past, ...(live ? [live] : []), ...(all[path] ?? [])] }))
-        if (newest) setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
+        setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
         if (live && running) {
           const control = new AbortController()
           streams.current.get(path)?.abort()
