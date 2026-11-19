@@ -15,6 +15,7 @@ contracts with the platform behind them, and, for a web app, its server's
 endpoints. No kind's screens, packaging or installer belong to this turn; each
 kind's own build comes later.
 
+{tools}
 ## When this turn ends
 
 The server checks, in order:

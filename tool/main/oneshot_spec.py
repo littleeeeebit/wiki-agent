@@ -21,8 +21,7 @@ from pydantic import BaseModel
 from common import is_junction
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, specs, work
-from .oneshot_profile import (current, environment, held, kind_of, kinds_of, off_host, stacked, tooled, unsettled,
-                              waits_at)
+from .oneshot_profile import current, environment, held, kind_of, kinds_of, off_host, stacked, tooled, unsettled
 
 RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}   # a later stage's module adds its own
 SHEETS = {"r1"}   # a stage whose sheet stands when its edit turn stopped
@@ -371,10 +370,7 @@ def approved(repo: str) -> None:
         (docs / name).write_text(render(spec), encoding="utf-8", newline="\n")
     head = commit(repo, tree, files, f"Record the approved {'core' if cored else 'backend'} design "
                                      f"(R1 round {o['r1']['round']})")
-    if head and waits_at(o) == "tests":   # the kind waits here in this version: the design is kept, nothing starts
-        saved(repo, oneshot={"stage": "tests", "design_head": head, "working": None, "stopped": {
-            "reason": "kind", "state": "tests", "detail": "PC 앱의 테스트와 빌드는 다음 버전에서 이어진다 — 핵심 설계를 승인받았다"}})
-    elif head:
+    if head:
         saved(repo, oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
 
 

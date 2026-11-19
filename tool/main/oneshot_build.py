@@ -12,6 +12,7 @@ import json
 import os
 import posixpath
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -24,7 +25,7 @@ from xml.etree import ElementTree
 from fastapi import HTTPException
 
 from . import connect, oneshot, oneshot_android, oneshot_spec, refactor_run, runtime, specs, work
-from .oneshot_profile import charged, environment, held as kind_held, kinds_of, shape
+from .oneshot_profile import charged, environment, held as kind_held, kinds_of, shape, tooled
 from .query import _lock as work_lock, hold
 
 MAX_ATTEMPTS = 3
@@ -104,11 +105,75 @@ def stopped_for_kind(repo: str) -> bool:
     return kind_held(o)
 
 
+def tools(o: dict) -> list[dict] | None:
+    """A PC app's confirmed build tools, the only host programs its commands may start (plan 9e, "The
+    toolchain, declared once"), or `None` for a run without one."""
+
+    kinds = kinds_of(o)
+    if "desktop" not in kinds:
+        return None
+    return next((s.get("tools") or [] for s in o.get("stack") or [] if tooled(s["part"], kinds)), [])
+
+
+def program(word: str) -> str:
+    """A command's program as a declared tool is named: its quotes and an executable's extension set aside."""
+
+    name = word.strip("'\"").lower()
+    return re.sub(r"\.(exe|cmd|bat|ps1|com)$", "", name)
+
+
+def undeclared(path: Path, command: str, declared_tools: list[dict]) -> list[str]:
+    """The programs in `command`'s chain that are neither a declared tool nor a file inside the worktree."""
+
+    names, root, bad = {t["name"].lower() for t in declared_tools}, path.resolve(), []
+    for part in command.split("&&"):
+        word = part.split()[0].strip("'\"")
+        if re.search(r"[\\/]", word) or (path / word).is_file():   # a project file: the worktree's own, built there
+            if not ((path / word).resolve().is_relative_to(root) and (path / word).is_file()):
+                bad.append(word)
+        elif program(word) not in names:
+            bad.append(word)
+    return bad
+
+
+def resolve_tools(repo: str, stage: str) -> bool:
+    """A PC app's declared tools, each found on `PATH` once for `stage` before its first command runs: saved,
+    so the gates run the program checked. A tool not found stops the run with `toolchain`; nothing installs it."""
+
+    o = oneshot_spec.spec_of(repo)["oneshot"]
+    if (declared_tools := tools(o)) is None:
+        return True
+    found = {t["name"].lower(): shutil.which(t["name"]) for t in declared_tools}
+    if missing := [t["name"] for t in declared_tools if not found[t["name"].lower()]]:
+        oneshot_spec.store(repo).stop("toolchain", f"PC 앱을 만드는 데 쓰기로 한 도구를 이 PC 에서 찾지 못했다: "
+                                                   f"{', '.join(missing)} — 설치하고 [재개]를 누르면 다시 찾는다")
+        return False
+    oneshot_spec.saved(repo, oneshot={"toolpaths": {"stage": stage, "paths": found}})
+    return True
+
+
+def run_as(command: str, o: dict) -> str:
+    """`command` with each declared tool it starts replaced by the path found for this stage (`resolve_tools`),
+    so the program checked is the program run. A run without declared tools runs the command as it is."""
+
+    paths = (o.get("toolpaths") or {}).get("paths") or {}
+    if not paths:
+        return command
+    parts = []
+    for part in command.split("&&"):
+        lead, body = part[:len(part) - len(part.lstrip())], part.lstrip()
+        word, gap, rest = body.partition(" ")
+        if (found := paths.get(program(word))) is not None:   # PowerShell runs a quoted path only through `&`
+            word = ("& " if os.name == "nt" else "") + literal(found)
+        parts.append(lead + word + gap + rest)
+    return "&&".join(parts)
+
+
 def send(repo: str, stage: str, text: str) -> None:
     """One work turn for `stage` in the spec's worktree; a turn that cannot be sent stops the stage, and
     the instruction the person queued for the worktree goes then, as after a turn."""
 
-    if stopped_for_kind(repo):
+    if stopped_for_kind(repo) or not resolve_tools(repo, stage):
         return
     store = oneshot_spec.store(repo)
     spec = oneshot_spec.spec_of(repo)
@@ -183,10 +248,23 @@ def toolchain_text(spec: dict) -> str:
     return "\n".join(f"- `{k}={env[k]}`" for k in TOOLCHAIN)
 
 
+def tools_text(o: dict) -> str:
+    """The rule a PC app's commands follow, with its declared tools, or empty for a run without a PC app."""
+
+    if (declared_tools := tools(o)) is None:
+        return ""
+    names = "\n".join(f"- `{t['name']}`" for t in declared_tools)
+    return ("The PC app's build declared these host programs, and they are the only ones its commands may start. "
+            "Every command you give the server (`command`, and any after it) names its program first: one of "
+            "these, or a file inside this worktree that the project holds or builds, such as `gradlew.bat` or "
+            "`scripts/test.ps1`. A command starting any other program is refused and nothing runs. Install "
+            f"nothing; if a tool is missing, say so in your answer.\n\n{names}\n")
+
+
 def tests_text(spec: dict) -> str:
     kind = shape(spec["oneshot"])
     text = oneshot.prompt("tests", kind).replace("{tests}", json.dumps(planned(spec), ensure_ascii=False, indent=2)) \
-        .replace("{profile}", environment(spec["oneshot"]))
+        .replace("{profile}", environment(spec["oneshot"])).replace("{tools}", tools_text(spec["oneshot"]))
     return text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text
 
 
@@ -194,7 +272,7 @@ def build_text(spec: dict) -> str:
     o = spec["oneshot"]
     kind = shape(o)
     text = oneshot.prompt("build", kind).replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
-        .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"]))
+        .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"])).replace("{tools}", tools_text(o))
     return text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text
 
 
@@ -227,10 +305,11 @@ def changed(path: Path, since: str) -> list[str]:
     return sorted(names)
 
 
-def declared(path: Path, final: str, kind: str = "webapp") -> dict:
+def declared(path: Path, final: str, kind: str = "webapp", declared_tools: list[dict] | None = None) -> dict:
     """The tests turn's `oneshot-runner` block, checked: one command that runs every test and writes a JUnit
     report to `{report}`, the files holding the contract tests, and the files configuring the tool. An Android
-    app's block also names its lint and its debug APK build, which the gate runs after the tests."""
+    app's block also names its lint and its debug APK build, which the gate runs after the tests. With a PC app
+    among the kinds, every program the command starts is a declared tool or a file in the worktree."""
 
     value = oneshot.block(final, RUNNER)
     if not isinstance(value, dict):
@@ -247,6 +326,9 @@ def declared(path: Path, final: str, kind: str = "webapp") -> dict:
         if not isinstance(value.get(key), str) or "{report}" in value[key] or not chained(value[key]):
             raise ValueError(f"`{key}` 는 스택의 {'린트' if key == 'lint' else '디버그 APK 빌드'} 명령이고, {CHAIN}")
         after.append(value[key].strip())
+    if declared_tools is not None and (bad := undeclared(path, " && ".join([command, *after]), declared_tools)):
+        raise ValueError(f"S2 에서 확정한 도구도 작업트리 안의 파일도 아닌 프로그램을 부른다: {', '.join(bad)} — 확정한 도구는 "
+                         f"{', '.join(t['name'] for t in declared_tools) or '없음'} 이다. 다른 도구가 필요하면 그 도구로 바꿔 쓴다")
     if not (isinstance(contract, list) and contract and isinstance(config, list)
             and all(isinstance(f, str) and f for f in contract + config)):
         raise ValueError("`contract` 는 비지 않은 파일 목록, `config` 는 파일 목록이다")
@@ -268,7 +350,7 @@ def junit(path: Path, run, spec: dict, command: str) -> list[tuple[str, str, str
     folder = oneshot_spec.store(spec["repo"]).folder / "junit"
     folder.mkdir(parents=True, exist_ok=True)
     report = folder / f"run-{time.time_ns()}.xml"
-    _, text, cut = specs.gate(command.replace("{report}", literal(report.as_posix())), path, run.halt,
+    _, text, cut = specs.gate(run_as(command.replace("{report}", literal(report.as_posix())), spec["oneshot"]), path, run.halt,
                               env=toolchain(spec), timeout=RUN_SECONDS)
     if cut:
         raise ValueError(f"계약 테스트 실행이 끊겼다 ({cut}) — {text.strip()[-800:]}")
@@ -481,7 +563,7 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
     o = spec["oneshot"]
     if specs.sh(["git", "merge-base", "--is-ancestor", o["design_head"], "HEAD"], path).returncode:
         return f"HEAD 가 승인된 설계 커밋 {o['design_head'][:12]} 위에 있지 않다"
-    runner = declared(path, final, shape(o))   # several kinds: the core's tests alone, each kind's build is 9c's
+    runner = declared(path, final, shape(o), tools(o))   # several kinds: the core's tests alone, each kind's build is 9c's
     names = changed(path, o["design_head"])
     # A case is pinned by its class and name, its file only when named: a planned test outside the named files
     # could be weakened later with nothing to show for it.
@@ -537,7 +619,7 @@ def built(path: Path, run, spec: dict, final: str) -> str:
     o = spec["oneshot"]
     if why := reported(spec, final) or pinned(path, o):
         return why
-    verdict = specs.judge(path, [o["gate"]], run.halt, lambda text: specs.note(run, text), env=toolchain(spec))
+    verdict = specs.judge(path, [run_as(o["gate"], o)], run.halt, lambda text: specs.note(run, text), env=toolchain(spec))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := held(path, run, spec, verdict):
