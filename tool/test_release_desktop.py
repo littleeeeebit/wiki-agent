@@ -35,13 +35,13 @@ TAURI = [(UNINSTALL, "DisplayName", "r"), (UNINSTALL, "Publisher", "o"), (UNINST
 
 def nsis(tmp_path: Path, writes=TAURI, files=(("helper.exe", b"MZ helper " + rd.MARKER + rd.NSIS), ("r.exe", PACKED)),
          flags=0, dictionary=1 << 16, context=("0",), view=("256",),
-         uninstaller=(b"icon", b"MZ uninstaller"), out=None) -> Path:
+         uninstaller=(b"icon", b"MZ uninstaller"), out=None, extra=()) -> Path:
     """A synthetic installer laid out as Unicode NSIS 3 lays one out: a stub, the first header on a 512-byte
     boundary, one solid LZMA stream holding the script (its blocks, its entries, its strings), each file and the
     uninstaller's two records, and the CRC32 of everything from byte 512. A value of None is a variable, as
     `$INSTDIR` is; an uninstaller record of None is one the stream never holds. `context` and `view` are what
     `SetShellVarContext` and `SetRegView` set; `out` is what `SetOutPath` sets before the files, `$INSTDIR` by
-    default."""
+    default; `extra` holds more entries as (opcode, operands)."""
 
     table, at = bytearray(), {}
 
@@ -59,10 +59,11 @@ def nsis(tmp_path: Path, writes=TAURI, files=(("helper.exe", b"MZ helper " + rd.
         entries.append((rd.EW_EXTRACTFILE, [0, ptr(name), len(data) + (body is None) * 64, 0, 0, 0]))
         data.extend(b"" if body is None else struct.pack("<I", len(body)) + body)
     icon, program = uninstaller
-    entries.append((rd.EW_WRITEUNINSTALLER, [ptr("uninstall.exe"), len(data), len(icon), 0, 0, 0]))
+    entries.append((rd.EW_WRITEUNINSTALLER, [ptr(rd.INSTDIR + "\\uninstall.exe"), len(data), len(icon), 0, 0, 0]))
     data.extend(b"".join(struct.pack("<I", len(r)) + r for r in (icon, program) if r is not None))
     entries += [(rd.EW_SETFLAG, [flag, ptr(value), 0, 0, 0, 0])
                 for flag, values in ((rd.FLAG_CONTEXT, context), (rd.FLAG_VIEW, view)) for value in values]
+    entries += list(extra)
     entries += [(rd.EW_WRITEREG, [w[3] if len(w) > 3 else rd.SHCTX, ptr(w[0]), ptr(w[1]), ptr(w[2]), 1, 1])
                 for w in writes]   # a fourth item is another root
     blocks = 4 + 8 * 8
@@ -181,10 +182,26 @@ def test_an_uninstaller_whose_second_record_is_missing_is_refused(tmp_path, reso
 def test_the_main_binary_is_found_by_where_it_lands(tmp_path, resources):
     beside = (("r.exe", PACKED), ("tools\\r.exe", b"MZ tool"), ("\x03\u809a\\r.exe", b"MZ plugin"))
     assert rd.facts(nsis(tmp_path, files=beside))["exe_version"] == "0.1.1"   # three files, three places
-    for files, out in (((("tools\\r.exe", PACKED),), None),   # only under a resource folder
-                       ((("r.exe", PACKED),), "C:\\elsewhere")):   # SetOutPath somewhere else
-        with pytest.raises(ValueError, match="주 실행 파일 'r.exe' 를 하나로"):
-            rd.facts(nsis(tmp_path, files=files, out=out))
+    with pytest.raises(ValueError, match="주 실행 파일 'r.exe' 를 하나로"):   # only under a resource folder
+        rd.facts(nsis(tmp_path, files=(("tools\\r.exe", PACKED),)))
+    with pytest.raises(ValueError, match="출력 위치를"):
+        rd.facts(nsis(tmp_path, out="C:\\elsewhere"))
+    distinct = (("r.exe", PACKED), ("Straße.exe", b"MZ one"), ("STRASSE.exe", b"MZ two"))   # apart to Windows
+    assert rd.facts(nsis(tmp_path, files=distinct))["exe_version"] == "0.1.1"
+
+
+def test_an_output_directory_moved_by_any_code_path_is_refused(tmp_path, resources):
+    # `StrCpy $OUTDIR` and `Pop $OUTDIR`, wherever they sit: a call can run them before the main binary
+    for entry in ((rd.EW_ASSIGNVAR, [rd.OUTDIR, 0, 0, 0, 0, 0]), (rd.EW_PUSHPOP, [rd.OUTDIR, 1, 0, 0, 0, 0])):
+        with pytest.raises(ValueError, match="OUTDIR"):
+            rd.facts(nsis(tmp_path, extra=(entry,)))
+    assert rd.facts(nsis(tmp_path, extra=((rd.EW_PUSHPOP, [rd.OUTDIR, 0, 0, 0, 0, 0]),)))   # `Push $OUTDIR` reads it
+
+
+def test_a_main_binary_the_uninstaller_overwrites_is_refused(tmp_path, resources):
+    writes = [*TAURI[:3], (UNINSTALL, "MainBinaryName", "Uninstall.exe"), TAURI[4]]
+    with pytest.raises(ValueError, match="주 실행 파일 'Uninstall.exe' 를 하나로"):
+        rd.facts(nsis(tmp_path, writes=writes, files=(("Uninstall.exe", PACKED),)))
     assert rd.destination(None, "r.exe") is None and rd.destination(None, "") is None
 
 

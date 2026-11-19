@@ -33,7 +33,9 @@ MAGIC = b"\xef\xbe\xad\xdeNullsoftInst"   # NSIS's first header: flags, this sig
 MARKER, NSIS = b"__TAURI_BUNDLE_TYPE_VAR_", b"NSS"
 FIXED_SIGNATURE, FIXED_SIZE = 0xFEEF04BD, 52   # VS_FIXEDFILEINFO
 FH_SILENT = 2   # the one first-header flag allowed: an uninstaller, CRC off or forced are not Tauri's installer
-EW_CREATEDIR, EW_SETFLAG, EW_EXTRACTFILE, EW_WRITEREG, EW_WRITEUNINSTALLER = 11, 13, 20, 51, 62   # NSIS 3's
+EW_CREATEDIR, EW_SETFLAG, EW_EXTRACTFILE, EW_ASSIGNVAR, EW_PUSHPOP = 11, 13, 20, 25, 31   # NSIS 3's opcodes
+EW_WRITEREG, EW_WRITEUNINSTALLER = 51, 62
+OUTDIR = 22   # `$OUTDIR`'s variable index
 # The flags whose value decides where `SHCTX` resolves: `SetShellVarContext` (0 current user, 1 all users) and
 # `SetRegView` (256 the 64-bit view). Tauri's installMode sets the first once; "both" sets it at run time.
 FLAG_CONTEXT, FLAG_VIEW = 1, 12
@@ -170,35 +172,48 @@ def payload(data: bytes) -> tuple[list[tuple], dict[str, set[int]], dict[int, bo
     if entries + 28 * count > length or strings >= length:
         raise ValueError("NSIS 명령 표나 문자열 표가 스크립트 밖으로 나간다")
     writes, files, offsets, flags, out = [], {}, {}, {}, None
-    for k in range(count):   # in the order the script lays them out, so each file lands where the last
-        # `SetOutPath` before it points: Tauri sets `$INSTDIR` once, before the main binary and the resources
+    for k in range(count):   # in the order the script lays them out. Calls and jumps run code in another
+        # order, so the output directory is held to one value: every `SetOutPath`, and every write of
+        # `$OUTDIR`, must be `$INSTDIR`, as in Tauri's script, and a relative name before the first is refused
         which, *arg = struct.unpack_from("<i6i", script, entries + 28 * k)
         if which == EW_WRITEREG:
             writes.append((arg[0], *(_string(script, block, a) for a in arg[1:4]), (arg[4], arg[5])))
         elif which == EW_CREATEDIR and arg[1]:   # `SetOutPath`: the directory, made and made current
-            out = _string(script, block, arg[0])
+            if (out := _string(script, block, arg[0])) != INSTDIR:
+                raise ValueError("설치 스크립트가 출력 위치를 $INSTDIR 밖으로 옮긴다 — 주 실행 파일이 놓일 곳을 확인할 수 없다")
+        elif which in (EW_ASSIGNVAR, EW_PUSHPOP) and arg[0] == OUTDIR and (which == EW_ASSIGNVAR or arg[1]):
+            raise ValueError("설치 스크립트가 $OUTDIR 을 바꾼다 — 주 실행 파일이 놓일 곳을 확인할 수 없다")
         elif which == EW_EXTRACTFILE:
             offsets[arg[2]] = offsets.get(arg[2], False)
             if (where := destination(out, _string(script, block, arg[1]))) is None:
                 raise ValueError("설치 파일이 풀어 놓는 파일의 위치를 정할 수 없다")
             files.setdefault(where, set()).add(arg[2])
-        elif which == EW_WRITEUNINSTALLER:   # its icon record, then the record after it: the uninstaller
-            offsets[arg[1]] = True
+        elif which == EW_WRITEUNINSTALLER:   # its icon record, then the record after it: the uninstaller,
+            offsets[arg[1]] = True            # written where its name lands, over any file already there
+            files.setdefault(destination(out, _string(script, block, arg[0])), set()).add(None)
         elif which == EW_SETFLAG:   # a third operand restores a saved value, which no literal names
             flags.setdefault(arg[0], set()).add(None if arg[2] else _string(script, block, arg[1]))
     return writes, files, offsets, flags, stream
 
 
+def upper(text: str) -> str:
+    """`text` as Windows compares file names and registry keys: each letter upper-cased one to one, so `ß`
+    stays `ß` and is not `SS`."""
+
+    return "".join(c.upper() if len(c.upper()) == 1 else c for c in text)
+
+
 def destination(out: str | None, name: str | None) -> str | None:
     """Where an extracted file lands, as Windows compares paths: a relative name under the current output
-    directory, separators and `..` resolved, trailing dots and spaces dropped, case folded. A variable keeps its
+    directory, separators and `..` resolved, trailing dots and spaces dropped, each letter upper-cased one to one
+    as Windows compares file names. A variable keeps its
     code, so `$INSTDIR\\r.exe` stays apart from `$PLUGINSDIR\\r.exe`. None when it cannot be told."""
 
     absolute = bool(name) and (name[0] < " " or name.startswith("\\") or name[1:2] == ":")   # a variable, a root
     if not name or (not absolute and out is None):
         return None
     full = name if absolute else f"{out}\\{name}"
-    return "\\".join(part.rstrip(". ") for part in ntpath.normpath(full).split("\\")).casefold()
+    return upper("\\".join(part.rstrip(". ") for part in ntpath.normpath(full).split("\\")))
 
 
 def _registered(writes: list, product: str | None) -> dict:
@@ -209,10 +224,10 @@ def _registered(writes: list, product: str | None) -> dict:
     seen = {}
     for root, key, name, value, kind in writes:
         if key is not None and name is not None:
-            seen.setdefault((key.casefold(), name.casefold()), set()).add((root, kind, value))
+            seen.setdefault((upper(key), upper(name)), set()).add((root, kind, value))
 
     def value(key: str, name: str) -> str | None:
-        found = seen.get((key.casefold(), name.casefold()), set())
+        found = seen.get((upper(key), upper(name)), set())
         return next(v for r, k, v in found) if len(found) == 1 and next(iter(found))[:2] == (SHCTX, REG_SZ) else None
 
     uninstall = UNINSTALL + (product or "")
@@ -275,7 +290,8 @@ def facts(installer: Path, exe: Path | None = None) -> dict:
         reg = _registered(writes, shown.get("ProductName"))
         name = reg["MainBinaryName"]
         main = files.get(destination(INSTDIR, name), set()) if name and not any(c in name for c in "\\/:") else set()
-        if len(main) != 1:   # one record lands at `$INSTDIR\\<MainBinaryName>`, or a later one overwrites it
+        if len(main) != 1 or None in main:   # one record lands at `$INSTDIR\\<MainBinaryName>`, and nothing
+            # else, the uninstaller included, writes there after it
             raise ValueError(f"`{installer.name}` 의 스크립트가 등록하는 주 실행 파일 {reg['MainBinaryName']!r} 를 "
                              "하나로 찾을 수 없다")
         try:
