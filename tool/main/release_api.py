@@ -77,7 +77,7 @@ def card(repo: Path) -> dict:
     versions, refused = {}, {}
     for bump in release.BUMPS if prior else (None,):
         try:
-            versions[bump or "first"] = release.version(shapes, taken, bump, first)
+            versions[bump or "first"] = release.version(shapes, taken, bump, first, cfg)
         except ValueError as exc:
             refused[bump or "first"] = str(exc)
     if prior:
@@ -88,7 +88,8 @@ def card(repo: Path) -> dict:
     attempts = release_publish.ledger(name)["attempts"]
     return {"remote": name, "sha": sha, "last": prior and prior["tag_name"], "ahead": count, "versions": versions,
             "refused": refused, "attempt": attempts[-1] and public_attempt(attempts[-1]) if attempts else None,
-            "key": key(name)}
+            "key": key(name), "kinds": [k for k in release.KINDS if k in cfg],
+            "first_apk": "android" in cfg and release_publish.latest(listed, release_publish.APK) is None}
 
 
 def public(text: str | None) -> str | None:

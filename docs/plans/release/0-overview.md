@@ -64,13 +64,13 @@ These are proposals that each step's document settles:
 
 | Part | Place |
 | --- | --- |
-| The release step | New module `tool/main/release.py`, the only caller that publishes production Releases |
+| The release step | New module `tool/main/release.py`, the only caller that publishes production Releases. The Windows installer's checks are `tool/main/release_desktop.py`. |
 | GitHub transfer | `tool/main/github_release.py`, a low-level helper both callers share. It runs `gh api` against the REST API, and every call names its repository as `owner/name`, so nothing reads a working directory's remote. A failure carries its HTTP status and says whether it is transient: no answer, 429, 5xx, or a 403 rate limit. Each caller keeps its own policy. S8 keeps its head-named draft prerelease on the default branch, its digest reuse and its replacement of the asset of the same name. A production release never replaces a complete asset. |
-| Per-repository settings | An optional `[release]` table in `.wiki/adapter.toml`, read from the pinned commit through a typed reader. It names the one version-source file for the seed. Per kind (`android`, `desktop`) it holds the build command, the artifact path, the application ID and the expected ABI. The build command gets the version as `RELEASE_VERSION` and `RELEASE_VERSION_CODE`. A Tauri build passes `RELEASE_TAURI_CONFIG`, an overlay file beside the checkout, as one more `-c`. `TAURI_CONFIG` cannot carry the version, because the CLI replaces it with its own `-c` values. Step 1's rehearsal found this: it built the same bytes twice. The current writer (`connect.adapter_text`) emits only `agents` and `[slots]`. Its writers must keep tables they do not own. |
+| Per-repository settings | An optional `[release]` table in `.wiki/adapter.toml`, read from the pinned commit through a typed reader. It names the one version-source file for the seed. It declares one or both kinds, and every press builds and ships each declared kind in one Release. `[release.android]` holds the build command, the artifact path, the application ID and the expected ABI. `[release.desktop]` holds the build command, the installer's path, where `{version}` stands for the version since Tauri names the installer after it, the app EXE's path, the product name and the publisher. The build command gets the version as `RELEASE_VERSION` and `RELEASE_VERSION_CODE`. A Tauri build passes `RELEASE_TAURI_CONFIG`, an overlay file beside the checkout, as one more `-c`. `TAURI_CONFIG` cannot carry the version, because the CLI replaces it with its own `-c` values. Step 1's rehearsal found this: it built the same bytes twice. The current writer (`connect.adapter_text`) emits only `agents` and `[slots]`. Its writers must keep tables they do not own. |
 | The checkout | A fresh detached checkout per attempt, in a release-owned directory outside the task worktree allocator, removed only by its own cleanup. The detached survey checkout (`refactor_survey`) is the precedent. |
 | The ledger | Server state under `raw/releases/`, keyed by the canonical remote (`github.com/<owner>/<repo>`). Two windows or two checkouts of one repository share one reservation and one recovery record. `tool/main/release_publish.py` keeps it in `ledger.json` beside a lock. Each write replaces the whole file through a fresh staging file. A press records how many attempts the ledger held when it chose its version. If another attempt was added since, the reservation refuses the press. The live worker holds an OS lock on its attempt from before the reservation to its end, and a `finish` that finds the lock held leaves the attempt to that worker. A transient GitHub failure leaves the attempt pending, and so does a ledger write that fails after a remote write. `recover` carries every pending attempt on through the restart table, and the server calls it at start (`release_api.recover`), off the start path. |
 | Signing (Android) | A release keystore per repository at `%LOCALAPPDATA%\wiki-agent-data\release-keys\<canonical remote>\release.jks`, outside every checkout. That location holds even unpackaged, because there the data root is the checkout. The password is random and lives only in this Windows account's Credential Manager (`wiki-agent release key <remote>`). It is given only to the key tools, through their environment, and is never handed to the adapter's build command or the repair agent. Those run as the same Windows account, and that account can read its own vault and profile, so the real boundary is the account. The person chose, on 2026-11-19, to publish from that one account: every repository released is theirs, and they accepted that its build and repair code could read the key's password and the GitHub login. One lock per repository serializes key creation across processes. Every check is made again under it. `certificate.sha256` beside the keystore is written last, by an atomic rename, and marks the key as established. After that, a lost keystore, a lost password or a changed certificate is refused, never replaced. A creation that stopped is finished only when the stored password opens the key it left. A keystore that no password opens is left for a person, staged or final. So is a surviving password with no keystore. Nothing deletes or overwrites either. The person backs up the keystore and the credential together. |
-| Screen | A release card on the repository screen, opened by the project row's `배포` button (`web/src/components/ReleaseCard.tsx`, served by `tool/main/release_api.py`): last production version, commits ahead, the version each choice would publish, the last attempt, the test build, and where the established key is, for its backup. The publish button, pressed twice, publishes the version shown (`release_api.press`). One project runs one press or one test build at a time. |
+| Screen | A release card on the repository screen, opened by the project row's `배포` button (`web/src/components/ReleaseCard.tsx`, served by `tool/main/release_api.py`): last production version, commits ahead, the version each choice would publish, the last attempt, the test build, what a press ships, and where the established key is, for its backup. The publish button, pressed twice, publishes the version shown (`release_api.press`). One project runs one press or one test build at a time. |
 
 ## One attempt
 
@@ -85,7 +85,8 @@ These are proposals that each step's document settles:
   -> build: each declared kind, version injected; Android gives an unsigned release APK
   -> sign: Android only, the repository's release key, outside the build command
   -> verify: every check below on the final bytes
-  -> manifest: each asset's name, size and sha256 in the ledger; the exact files
+  -> manifest: each asset's name, size and the sha256 its checks read, in the ledger;
+               a file whose bytes changed since is refused; the exact files
                kept in the attempt's directory until it ends
   -> tag: push the tag at the SHA, then read it back from the remote
   -> publish: draft Release on that existing tag, its ID recorded; assets uploaded,
@@ -122,18 +123,32 @@ SemVer value without its `v`: tag `v0.1.1` means `0.1.1`.
 
 | Check | Android | Windows (step 6) |
 | --- | --- | --- |
-| Version | `versionName` equals the version (`aapt dump badging`) | EXE resource and installer `FileVersion` equal the version, with `0.1.1.0` normalized to `0.1.1` |
-| Monotonic | `versionCode` strictly greater than the previous production APK's and equal to the version's code: Tauri's mapping, major × 1000000 + minor × 1000 + patch (`0.1.1` is `1001`), with minor and patch at most 999 and major at most 2099, so the code stays under Google Play's 2100000000. The step injects it with the version. | Version greater than the previous production installer's |
-| Identity | Application ID and ABI equal the adapter's and the previous production APK's of this kind; a release build, not debuggable | Product name and publisher equal the adapter's and the previous production installer's |
-| Signature | `apksigner verify --print-certs` matches the repository's expected certificate and the previous production APK's | none until code signing is planned |
+| Version | `versionName` equals the version (`aapt dump badging`) | The installer's fixed version and `FileVersion`, and the installed app EXE's fixed version, equal the version, with `0.1.1.0` normalized to `0.1.1`. Each part of the version is at most 65535, as Windows' version resources hold it; Android's `versionCode` limits apply only when an APK ships too |
+| Monotonic | `versionCode` strictly greater than the previous production APK's and equal to the version's code: Tauri's mapping, major × 1000000 + minor × 1000 + patch (`0.1.1` is `1001`), with minor and patch at most 999 and major at most 2099, so the code stays under Google Play's 2100000000. The step injects it with the version. | Version greater than the previous production installer's, both read as four integers; an unreadable previous version is refused |
+| Identity | Application ID and ABI equal the adapter's and the previous production APK's of this kind; a release build, not debuggable | The installer is read once, as Tauri's default packs it: Unicode NSIS 3, its CRC on and matching, one solid LZMA stream within fixed size limits, checked before anything is read, and every record the script reads, the uninstaller's two included, lying whole in it. Anything else is refused. The script's registry writes must register, under `Software\Microsoft\Windows\CurrentVersion\Uninstall\<product>`, the product as `DisplayName`, the publisher as `Publisher` and the version as `DisplayVersion`, and must write `$INSTDIR` under `Software\<publisher>\<product>`, where the next update looks for the install folder. Each is a string written in `SHCTX`, and every write of that key and name, compared without case as Windows compares them, agrees. Where `SHCTX` resolves must be fixed by the script and equal the previous production installer's: the install scope `SetShellVarContext` sets once (Tauri's `installMode`, `currentUser` or `perMachine`; `both` is decided at run time, so it is refused) and the registry view `SetRegView` sets. The main binary it registers (`MainBinaryName`) is read from the script's one file entry that lands at `$INSTDIR\<MainBinaryName>`, resolved from its name and the `SetOutPath` before it as Windows resolves paths, where no other entry writes a file Windows would take for the same one, and must be the very EXE the build made, with the bundle-type placeholder Tauri sets, built for x64 (its PE `Machine` is AMD64), as the asset's name says. Product name, in the installer and that binary, equals the adapter's and the previous production installer's. Publisher, that binary's `CompanyName`, equals the adapter's and the previous production installer's, read the same way from its bytes. |
+| Signature | `apksigner verify --print-certs` matches the repository's expected certificate and the previous production APK's | none until code signing is planned, so Windows warns before running the installer; the card says so |
 | Digest | `sha256` of the final bytes, the same bytes uploaded | the same |
+
+The installer checks cover Tauri's default NSIS template, which is the one
+supported. They read what that template compiles to, and they catch the
+drift a merge brings by mistake: a renamed product or publisher, a moved
+scope or view, a main binary that is not the built one, a damaged or
+truncated file. They do not interpret NSIS control flow. A custom template
+or installer hook that the repository's owner writes to move files at run
+time is outside what they prove. Each repository's owner writes its own
+build, so the press guards against mistakes, not against that owner.
 
 Identity is checked against the previous production artifact of the same
 kind, not only against the adapter at the pinned commit. A merge that changes
 the Gradle application ID and the adapter together would otherwise pass, and
 Android would install the result as a separate app. The first production
 release of a kind has no previous artifact, so it is checked against the
-configured identity and expected certificate. Those become the baseline.
+configured identity and expected certificate. Those become the baseline. The
+previous artifact of a kind is the one in the last production Release that
+shipped that kind, whatever came since, and a previous APK is found whatever
+its ABI, so a changed ABI is refused rather than taken for a first release.
+The first production APK makes the release key, even when an earlier Release
+shipped only an installer; after it the key is opened, never made again.
 
 Android rejects an update with a lower `versionCode`, or one signed by a
 different certificate. A strictly increasing code and one durable certificate
@@ -204,6 +219,11 @@ What needs a source change is narrow:
   before signing, so a broken product is the build's failure.
 - The built APK's versionName, versionCode, application ID or ABI is wrong,
   or the APK is debuggable (`release.built_wrong`).
+- The installer or the app EXE is missing, or cannot be read: no version
+  resource, not Tauri's default NSIS packing, a CRC that does not match, or
+  no registered main binary inside it that equals the built EXE. Or its version, product name or publisher is wrong
+  (`release_desktop.built_wrong`). A previous installer that cannot be read
+  is not the source's to fix, and ends the press without a repair.
 
 A wrong certificate is the release key's problem (`release.signed_wrong`).
 So are a missing release tool, a key the server refuses, and a git or GitHub
@@ -267,8 +287,8 @@ Phones that installed the translator's debug APKs carry a debug certificate.
 The first production APK, signed with the release key under the same
 application ID, cannot update them: the user uninstalls once and installs the
 release, which loses the debug app's data. The application ID stays as it
-is. The first release's notes say this (`release.FIRST_RELEASE_NOTE`), and
-step 3 puts that note in the Release.
+is. The notes of the first Release that ships an APK say this
+(`release.FIRST_RELEASE_NOTE`), and step 3 puts that note in the Release.
 
 ## Steps
 
@@ -280,7 +300,7 @@ step 3 puts that note in the Release.
 | 4 | Failure to agent | Bounded retries and the agent turn whose fix goes through the ordinary review loop, exercised on the unpublished path | Done: `release_publish.WAITS` and `_tried`, `release.BuildFailed` with `built_wrong` and `signed_wrong`, and `tool/main/release_repair.py`. The live check committed an import of a missing module to `main` of `LittleBitAI/wiki-agent-release-rehearsal`. The rehearsal's build failed on it and made the task `release-fix-0-1-2`. Its agent turn removed the import, passed the repository's gate (165 Rust and 30 frontend tests), and the round check opened that repository's PR #1. The PR was closed unmerged. Two earlier runs found that a repository the server does not know never finishes its task, now refused, and that the translator tracks `.wiki/.sync`, which the wiki hook rewrites every turn. |
 | 5 | Button and card | The repository card and its button, the one entry point that publishes; the seed or the bump choice; `recover` at server start. The person chose, on 2026-11-19, to ship the card with the unpublished test build first and the publish button in 5b. | Done: `tool/main/release_api.py` and `web/src/components/ReleaseCard.tsx`. The test build is `release_rehearsal.rehearse` on origin's `main`, the commit the card shows, its source failures handed to `release_repair.start`. The start carries the commit the card showed, and a `main` that moved since is refused. Every command before the hand-off ends within a second of a stop (`release.stoppable`). A stop is refused once the hand-off has begun. Server shutdown admits no new test build, stops a running one, lets a begun repair finish starting, and waits for the cleanup. Whatever a test build could not remove is shown on the card, however it ended. |
 | 5b | Publish | The card's publish button calls `release_publish.publish` with the shown version and choice, from the one Windows account ("Signing (Android)"). | Done: `release_api.press` runs the press off the request, and the card follows its attempt in the ledger, read again every fifteen seconds while it runs. The second press sends exactly what the first confirmed, the version, the choice, the canonical remote and the commit, and only while the card still shows them; `release_publish.publish` refuses another origin or a moved `main` before reserving. The key is looked up under that checked remote. A stop is checked between phases and before each GitHub write, each asset delete and upload included, and no write launches once shutdown has signalled it (`github_release.stop`): before any remote write the attempt ends failed, after one it stays pending. The startup sweep belongs to its lifespan: shutdown halts and waits for it, and no press, resume or test build starts while it runs. A pending attempt with no press on it is carried on from the card (`release_api.resume`), naming the remote and attempt the card showed, which must be that project's; the ledger keeps it on the card when the preview fails. The card shows only redacted diagnostics (`release_api.public`) and a small view of the attempt, and follows the followed server's press only. Once the key is established, the card names the keystore and the credential to back up. No real repository has been published yet. |
-| 6 | Windows installer | The `desktop` kind's NSIS build and its checks | Not started |
+| 6 | Windows installer | The `desktop` kind's NSIS build and its checks | Done: `[release.desktop]` in `release.settings`, the kinds' shared `release.build`, and `tool/main/release_desktop.py`, which reads the version resources through Windows. A press builds every declared kind from the one checkout and ships them in one Release, `<repo>-<version>-x64-setup.exe` beside the APK, and a repository that ships no APK needs no key or Android tools. The rehearsal checks two consecutive installers, and a renamed product name and publisher on the second one's real bytes. The rehearsal on a disposable clone of the translator's `main`, with a committed `[release.desktop]` table, built 0.1.0 and 0.1.1 from one SHA through `cargo tauri build --bundles nsis`. Each installer carried its version and the product name, and held the very app EXE the build made, with its version and the publisher Tauri derives from the identifier (`littlebit`); the script named both. The renamed identity was refused on the second installer's real bytes. Nothing was published, and no key was made. |
 | 7 | Oneshot writes `[release]` | The oneshot fills the table for the kinds it builds, keeping every other adapter table | Not started |
 
 ## What this does not do
