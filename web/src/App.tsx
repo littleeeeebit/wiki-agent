@@ -73,6 +73,7 @@ export default function App() {
   const [specs, setSpecs] = useState<Spec[]>([])
   // A task's key: its worktree's path, or `spec:<id>` before it has one.
   const [selected, setSelected] = useState('')
+  const [otherName, setOtherName] = useState('')   // which of another project's rows on `selected` was pressed
   const [view, setView] = useState<View>('chat')
   // The map is drawn once it is first opened, and kept after.
   const [mapped, setMapped] = useState(false)
@@ -331,7 +332,7 @@ export default function App() {
       // Every record of a worktree reads it again (`useWork`): this window's, and the oneshot window's own.
       if (ev.kind === 'work-record' || ev.kind === 'turn') {
         window.dispatchEvent(new CustomEvent('work-turn', { detail: { path: ev.path, turn: ev.kind === 'turn' ? ev.turn : undefined } }))
-        if (ev.kind === 'work-record') soon()
+        soon()   // a turn's start too: the running turns (`/api/loops`) decide a stopped task's state
         return
       }
       if (ev.kind === 'work-state') {
@@ -440,9 +441,10 @@ export default function App() {
   // The server's `busy` is as old as the last listing; a turn this window is
   // streaming is known here first.
   const busy = (p: string) => Boolean(rows.find((r) => r.path === p)?.busy || work.turns[p]?.at(-1)?.pending)
-  // A turn running for this spec, as this window streams it or the server lists it (`/api/loops`, every project's).
-  const turning = (p: string, s: { repo: string; id: string }) => Boolean(work.turns[p]?.at(-1)?.pending ||
-    turnsElsewhere.some((t) => t.path === p && (!t.spec || (t.spec.repo === s.repo && t.spec.id === s.id))))
+  // A turn the server lists for this spec (`/api/loops`, every project's): a path alone, or a turn of no known
+  // owner, is a shared checkout's other task as often as this one's.
+  const turning = (p: string, s: { repo: string; id: string }) =>
+    turnsElsewhere.some((t) => t.path === p && t.spec?.repo === s.repo && t.spec?.id === s.id)
   const list = taskList(specs, rows, asks, busy, turning)
   const task = list.find((t) => t.key === selected)
   // A task picked by its spec before the worktree list arrived is keyed by
@@ -456,8 +458,9 @@ export default function App() {
   // A task's work model is keyed by its spec's repository and id, the same
   // from draft to worktree and under another project. Several tasks share a
   // checkout path, and spec ids repeat across repositories, so neither alone names one task.
-  // The pane is the worktree's: a turn's row before a stopped loop's on the same shared checkout.
-  const other = others.find((o) => o.path === selected && o.busy) ?? others.find((o) => o.path === selected)
+  // A shared checkout lists several tasks under one path: the row pressed, else its running one, is the task shown.
+  const other = others.find((o) => o.path === selected && o.name === otherName) ??
+    others.find((o) => o.path === selected && o.busy) ?? others.find((o) => o.path === selected)
   const owning = task?.spec ?? other?.spec
   // A pane with no worktree — nothing selected, a selection whose task is gone, a spec not started
   // or a PR not checked out — is the one empty agent pane: its pick is what [시작] sends, whichever card is pressed.
@@ -654,7 +657,8 @@ export default function App() {
           setView(v)
           setMobilePane('chat')
         }}
-        onSelect={(key) => { setSelected(key); setTaskOptionsOpen(false); setMobilePane('task'); setLandscapeView('workspace') }}
+        other={other && `${other.path}:${other.name}`}
+        onSelect={(key, name = '') => { setSelected(key); setOtherName(name); setTaskOptionsOpen(false); setMobilePane('task'); setLandscapeView('workspace') }}
         onRemove={(target) => void remove(target, true)}
         onSettings={() => void openPreferences('settings').catch((e) => setFault(String(e)))}
         onNew={() => {

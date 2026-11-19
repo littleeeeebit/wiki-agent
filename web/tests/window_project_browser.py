@@ -137,6 +137,10 @@ def main():
         parked = a.get_by_role("button", name="fixture-b/parked-task")
         expect(parked).to_contain_text("멈춤")
         expect(parked).to_contain_text("게이트")
+        # Pressed, it is the task shown, never the running one sharing its checkout.
+        parked.click()
+        expect(parked).to_have_attribute("aria-current", "true")
+        expect(other).to_have_attribute("aria-current", "false")
 
         shell = page_of(context, errors)
         shell.add_init_script(SHELL)

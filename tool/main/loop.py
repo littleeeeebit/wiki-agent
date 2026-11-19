@@ -510,15 +510,15 @@ def cell(spec: dict, path: Path) -> ChatSession:
     named = spec.get("reviewer") or {}
     own = settings()["review_models"].get(spec["repo"])
     own = own if isinstance(own, dict) and isinstance(own.get("model"), str) and isinstance(own.get("effort"), str) else {}
-    # Outside the lock: listing Codex's models starts Codex.
-    model = review_model(named["model"]) if named.get("model") else review_model(own["model"]) if own else review_model()
-    if own and not named.get("model") and own["effort"] not in channels.efforts_of(model):
-        # Its pair was valid when saved: an effort the model no longer takes stops the loop with this, never runs.
-        raise RuntimeError(f"`{spec['repo']}` 의 리뷰 모델 {model} 이 추론 강도 `{own['effort'] or '기본'}` 을 "
-                           "더 이상 받지 않는다 — 리뷰 탭에서 다시 골라라")
-    # A repository's own effort stands as saved, its default (``) included.
-    effort = named["effort"] if (spec.get("oneshot") or {}).get("models") \
-        else named.get("effort") or (own["effort"] if own else settings()["review_effort"])
+    # Model and effort from one place: the spec's pinned reviewer, else the repository's, else the default; a saved
+    # default effort (``) stands. Outside the lock: listing Codex's models starts Codex.
+    if named.get("model"):
+        model, effort = review_model(named["model"]), named.get("effort") or ""
+    else:
+        model = review_model(own["model"]) if own else review_model()
+        effort = named.get("effort") or (own["effort"] if own else settings()["review_effort"])
+        if own and not named.get("effort") and effort not in channels.efforts_of(model):
+            effort = ""   # the model no longer takes the saved effort: its default runs, and the review tab says so
     repo = channels.repo_for(spec["repo"]) if verify_dir is not None else None
     local = verification.local(repo) if repo is not None else {}
     env = {"WIKI_VERIFICATION_HEAD": spec["pr"]["head"],

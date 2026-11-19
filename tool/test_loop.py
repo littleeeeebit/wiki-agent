@@ -3058,15 +3058,21 @@ def test_each_repository_keeps_its_own_review_model(world, tmp_path):
             t.join()
         kept = loop.settings()
         assert set(kept["review_models"]) == {"proj", *(f"r{n}" for n in range(12))} and kept["rounds"] == 3
-        # The model's default effort stands as saved; one the model no longer takes stops the round with a reason.
+        # The model's default effort stands as saved; one the model no longer takes falls to its default, never sent.
         assert web.post("/api/loop/settings", json={**body, "review_model": "codex:a", "review_effort": "",
                                                     "repo": "proj"}).status_code == 200
         with patch.object(chat_channels, "efforts_of", return_value={"", "low"}):
             assert loop.cell(spec, Path(spec["worktree"])).effort == ""
         loop.close_cell("proj", 7)
-        with patch.object(chat_channels, "efforts_of", return_value={"high"}), \
-             pytest.raises(RuntimeError, match="더 이상 받지 않는다"):
-            loop.cell(spec, Path(spec["worktree"]))
+        loop.close_cell("proj", 7)
+        web.post("/api/loop/settings", json={**body, "review_model": "codex:a", "review_effort": "low", "repo": "proj"})
+        with patch.object(chat_channels, "efforts_of", return_value={"", "high"}):
+            assert loop.cell(spec, Path(spec["worktree"])).effort == ""
+        loop.close_cell("proj", 7)
+        # A pinned reviewer's default effort is its own, never the repository's.
+        pinned = {**spec, "reviewer": {"model": "codex:b", "effort": ""}}
+        assert (loop.cell(pinned, Path(spec["worktree"])).model, loop.cell(pinned, Path(spec["worktree"])).effort) \
+            == ("codex:b", "")
 
 
 def test_codex_review_migrates_old_tools_but_resumes_the_readonly_profile(world):
