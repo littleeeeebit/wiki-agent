@@ -2884,6 +2884,7 @@ def loops() -> dict:
         return {"repo": owned["repo"], "id": owned["id"]} if owned else None
     # `cell`: the model the turn runs on. Another project's task has no spec on this screen to read it from.
     turns = [{"path": p, "repo": s["repo"] if s else Path(checkout(Path(p))[1] or p).name, "spec": s,
+              "turn": getattr(r, "turn", None) or "",   # which task's pane may steer it: the owner's alone
               "cell": {"model": getattr(c, "model", None) or "", "effort": getattr(c, "effort", None) or "",
                        "fast": bool(getattr(c, "fast", False))}}
              for p, r in running for s, c in [(owning(p), getattr(r, "chat", None))]]

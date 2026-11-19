@@ -213,9 +213,15 @@ export default function App() {
       .then(({ project, rows }) => project === expected.current && setPrs({ project, rows }))
       .catch(() => {})
   }, [])
+  // By request order: a slow read from before a turn ended never puts that turn back.
+  const loopsAsked = useRef(0)
+  const loopsShown = useRef(0)
   const readLoops = useCallback(() => {
+    const mine = ++loopsAsked.current
     return api.getLoops()
       .then(({ loops, turns }) => {
+        if (mine < loopsShown.current) return
+        loopsShown.current = mine
         setLoopRows(loops)
         setTurnsElsewhere(turns)
       })
@@ -388,7 +394,16 @@ export default function App() {
     }
   }, [repo, feedEpoch, refresh, readSpecs, readLoops, readPrs, accept])
 
-  const path = selected.startsWith('spec:') ? '' : selected
+  // Open approvals by worktree, as this window's streams know them.
+  const asks = (p: string) => (work.turns[p] ?? []).filter((t) => t.pending)
+    .flatMap((t) => t.steps).filter((s) => s.kind === 'approval' && s.answer === undefined).length
+  // Another project's rows are keyed by task (`loop:` / `turn:`): several share one checkout path.
+  const others = elsewhere(loopRows, turnsElsewhere, repo, asks)
+  const other = others.find((o) => o.key === selected)
+  const path = other ? other.path : /^(spec|loop|turn):/.test(selected) ? '' : selected
+  // The checkout's running turn is another task's: the pane shows it and steers nothing.
+  const lastTurn = path ? work.turns[path]?.at(-1) : undefined
+  const foreign = !!other && !!lastTurn?.pending && (!lastTurn.turn || lastTurn.turn !== other.turn)
   useEffect(() => {
     if (path) work.load(path)
   }, [path, work])
@@ -434,9 +449,6 @@ export default function App() {
     }
   }, [channels, follow])
 
-  // Open approvals by worktree, as this window's streams know them.
-  const asks = (p: string) => (work.turns[p] ?? []).filter((t) => t.pending)
-    .flatMap((t) => t.steps).filter((s) => s.kind === 'approval' && s.answer === undefined).length
   // The server's `busy` is as old as the last listing; a turn this window is
   // streaming is known here first.
   const busy = (p: string) => Boolean(rows.find((r) => r.path === p)?.busy || work.turns[p]?.at(-1)?.pending)
@@ -453,11 +465,8 @@ export default function App() {
   if (moved) setSelected(moved)
   const pickedId = task?.spec?.id ?? null
   useEffect(() => { picked.current = pickedId }, [pickedId])
-  const others = elsewhere(loopRows, turnsElsewhere, repo, asks)
   // A task's work model is keyed by its spec's repository and id, the same
-  // from draft to worktree and under another project. Several tasks share a
-  // checkout path, and spec ids repeat across repositories, so neither alone names one task.
-  const other = others.find((o) => o.path === selected)
+  // from draft to worktree and under another project.
   const owning = task?.spec ?? other?.spec
   // A pane with no worktree — nothing selected, a selection whose task is gone, a spec not started
   // or a PR not checked out — is the one empty agent pane: its pick is what [시작] sends, whichever card is pressed.
@@ -567,14 +576,14 @@ export default function App() {
     setTab(next)
   }, [tab, refresh])
 
-  const otherPaths = new Set(others.map((o) => o.path))
+  const otherKeys = new Set(others.map((o) => o.key))
   useEffect(() => {
-    away.current = new Set(otherPaths)
+    away.current = new Set(otherKeys)
   })
   // A worktree of another project has no row in this project's list; the
   // pane still shows it, and a new instruction there is refused by the server.
   const row = task?.row ?? (other
-    ? { path: selected, name: other.name, branch: '', dirty: false, merged: false, live: true, busy: false }
+    ? { path: other.path, name: other.name, branch: '', dirty: false, merged: false, live: true, busy: false }
     : undefined)
   const spec = task?.spec ?? null
   const waiting = (task?.waiting || other?.waiting) ?? false
@@ -794,6 +803,7 @@ export default function App() {
                 options={options}
                 choice={other?.busy && other.cell ? other.cell : choice}   // what runs now; the next instruction keeps `choice`
                 pinned={!!pinned}
+                foreign={foreign}
                 optionsOpen={taskOptionsOpen}
                 on={on}
                 progressOn={full}

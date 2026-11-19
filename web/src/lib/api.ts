@@ -747,7 +747,7 @@ export const getLoops = () =>
   get('/api/loops').then((r) => json<{ loops: LoopRow[]; turns: TurnRow[]; answers: number }>(r, '루프'))
 /** A running turn in any project; `spec` is the task that owns its worktree, if one does. */
 /** `cell`: the model the turn runs on. */
-export type TurnRow = { path: string; repo: string; spec: { repo: string; id: string } | null; cell?: { model: string; effort: string; fast?: boolean } }
+export type TurnRow = { path: string; repo: string; spec: { repo: string; id: string } | null; turn?: string; cell?: { model: string; effort: string; fast?: boolean } }
 export const mergeSpec = (id: string, head: string, owner?: string) =>
   post(`/api/specs/${id}/merge`, { head }, 'POST', owner).then((r) => json<Spec>(r, '머지'))
 export const settleSpec = (id: string, choice: 'accept' | 'reopen', owner?: string) =>

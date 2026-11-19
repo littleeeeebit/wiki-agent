@@ -224,9 +224,9 @@ export function TaskRail(props: Props) {
           <div className="mb-2">
             <Label>다른 프로젝트</Label>
             {props.others.map((o) => (
-              <Row key={`${o.path}:${o.name}`} selected={o.path === selected} onSelect={props.onSelect}
+              <Row key={o.key} selected={o.key === selected} onSelect={props.onSelect}
                 title="프로젝트를 바꾸지 않고 그 작업트리를 연다"
-                task={{ key: o.path, name: `${o.repo}/${o.name}`, pr: o.pr, round: o.round, phase: o.phase,
+                task={{ key: o.key, name: `${o.repo}/${o.name}`, pr: o.pr, round: o.round, phase: o.phase,
                   waiting: o.waiting, busy: o.busy, line: o.line }} />
             ))}
           </div>

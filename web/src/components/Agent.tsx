@@ -24,6 +24,8 @@ type Props = {
   choice: Choice
   /** A refactoring card's model, fixed at its survey's start: shown, not changed here. */
   pinned?: boolean
+  /** The checkout's running turn is another task's (a shared checkout): shown, never stopped, answered or steered. */
+  foreign?: boolean
   optionsOpen: boolean
   on: boolean
   progressOn?: boolean
@@ -49,7 +51,7 @@ type Props = {
  *  ran and what it asks to write stay as they are, because a person approves
  *  those and a reworded command is not the command. */
 export function Agent({
-  row, turns, options, choice, pinned = false, optionsOpen, on, progressOn = on, onChoice, onSend, onAnswer, onStop, onSteer, queued, onQueue, onUnqueue, refused,
+  row, turns, options, choice, pinned = false, foreign = false, optionsOpen, on, progressOn = on, onChoice, onSend, onAnswer, onStop, onSteer, queued, onQueue, onUnqueue, refused,
   onDismiss, rules, onClearRules, onReset, onPeek,
 }: Props) {
   const end = useRef<HTMLDivElement>(null)
@@ -81,7 +83,7 @@ export function Agent({
               : (row && last?.model) || 'Claude 기본'}
           </span>
           <TokenUsage model={choice.model} path={row?.path} />
-          {row && busy && last?.turn && (
+          {row && busy && last?.turn && !foreign && (
             <Btn tone="danger" onClick={() => onStop(last)} title="도는 턴을 멈춘다. 대화는 남아 다음 지시가 이어진다">
               멈춤
             </Btn>
@@ -121,6 +123,8 @@ export function Agent({
         )}
       </header>
 
+      {foreign && <p role="status" className="shrink-0 border-b border-border px-5 py-2 text-[12.5px] text-muted-foreground">
+        이 작업트리에서 다른 작업의 턴이 돌고 있다 · 멈추거나 답하려면 그 작업을 연다</p>}
       {busy && compaction?.kind === 'compaction' && compaction.phase === 'started' &&
         <p role="status" className="shrink-0 border-b border-border px-5 py-2 text-[12.5px] text-primary">문맥 압축 중 · 대화 기록을 요약하고 있다</p>}
 
@@ -139,8 +143,8 @@ export function Agent({
                 </div>
               </div>
             ) : (
-              <Reply key={t.key} turn={t} on={on} progressOn={progressOn} onAnswer={onAnswer} onPeek={onPeek}
-                onSend={t === last && row ? onSend : undefined} />
+              <Reply key={t.key} turn={t} on={on} progressOn={progressOn} onAnswer={foreign ? undefined : onAnswer} onPeek={onPeek}
+                onSend={t === last && row && !foreign ? onSend : undefined} />
             ),
           )}
           {queued && (
@@ -178,7 +182,7 @@ export function Agent({
       {/* One waits at a time: a second would only be refused, so it stays in the box. */}
       <Composer
         busy={busy && (!last?.turn || (last.answered != null && !!queued))}
-        disabled={!row}
+        disabled={!row || foreign}
         max={320}
         seed={seed}
         placeholder={!busy ? '지시' : last?.answered != null ? queued ? '대기 중인 지시가 있다' : '마무리 뒤에 보낸다' : '도는 턴에 끼어들기'}
@@ -198,7 +202,8 @@ export function Reply({ turn, on, progressOn = on, onAnswer, onPeek, onSend }: {
   turn: Turn
   on: boolean
   progressOn?: boolean
-  onAnswer: Props['onAnswer']
+  /** None for another task's turn: its questions and approvals show, unanswerable here. */
+  onAnswer?: Props['onAnswer']
   onPeek: Props['onPeek']
   /** Only the latest turn's: a `choices` block answered sends the next instruction. */
   onSend?: (text: string) => void
@@ -323,7 +328,7 @@ function Question({ step, turn, korean, onAnswer }: {
   step: Extract<Step, { kind: 'approval' }>
   turn: Turn
   korean: boolean
-  onAnswer: Props['onAnswer']
+  onAnswer?: Props['onAnswer']
 }) {
   const asked = (Array.isArray(step.input.questions) ? step.input.questions : []) as Asked[]
   const open = step.answer === undefined
@@ -331,9 +336,9 @@ function Question({ step, turn, korean, onAnswer }: {
     <div data-question-pending={open && turn.pending ? 'true' : undefined}
       className={cn('rounded-lg border p-4', open ? 'border-wait bg-wait/10' : 'border-border bg-secondary/40')}>
       <p className="mb-4 text-[14px] font-semibold">{open ? '에이전트 질문' : step.answer ? '답함' : '답하지 않음'}</p>
-      {open ? <Questions questions={asked} korean={korean} disabled={!turn.pending || !!step.sending}
-        onSubmit={(answers) => onAnswer(turn, step.id, true, 'once', answers)}
-        onDecline={() => onAnswer(turn, step.id, false)} />
+      {open ? <Questions questions={asked} korean={korean} disabled={!turn.pending || !!step.sending || !onAnswer}
+        onSubmit={(answers) => onAnswer?.(turn, step.id, true, 'once', answers)}
+        onDecline={() => onAnswer?.(turn, step.id, false)} />
         : <div className="space-y-2 text-[14px] leading-relaxed">
           {asked.map((q, i) => <AnsweredQuestion key={i} question={q.question} answer={step.answers?.[i]} korean={korean} />)}
           {!asked.length && <p className="whitespace-pre-wrap">{step.text}</p>}
@@ -375,7 +380,7 @@ const ANSWERED: Record<string, [string, string]> = {
 function Ask({ step, turn, onAnswer }: {
   step: Extract<Step, { kind: 'approval' }>
   turn: Turn
-  onAnswer: Props['onAnswer']
+  onAnswer?: Props['onAnswer']
 }) {
   const detail = describe(step)
   const open = step.answer === undefined
@@ -390,8 +395,8 @@ function Ask({ step, turn, onAnswer }: {
           <span className="flex gap-1.5">
             <button
               type="button"
-              disabled={step.sending || !turn.pending}
-              onClick={() => onAnswer(turn, step.id, true)}
+              disabled={step.sending || !turn.pending || !onAnswer}
+              onClick={() => onAnswer?.(turn, step.id, true)}
               className="rounded-md bg-wait px-2.5 py-1 text-[12.5px] text-wait-foreground hover:opacity-90 disabled:opacity-40"
             >
               허용
@@ -399,8 +404,8 @@ function Ask({ step, turn, onAnswer }: {
             {step.session && (
               <button
                 type="button"
-                disabled={step.sending || !turn.pending}
-                onClick={() => onAnswer(turn, step.id, true, 'session')}
+                disabled={step.sending || !turn.pending || !onAnswer}
+                onClick={() => onAnswer?.(turn, step.id, true, 'session')}
                 className="rounded-md border border-wait px-2.5 py-1 text-[12.5px] hover:bg-wait/10 disabled:opacity-40"
                 title={command(step) ? '글자까지 같은 이 명령은 이 세션 동안 묻지 않는다'
                   : `${step.tool} 는 이 세션 동안 묻지 않는다. 작업트리 밖은 그래도 거절한다`}
@@ -410,8 +415,8 @@ function Ask({ step, turn, onAnswer }: {
             )}
             <button
               type="button"
-              disabled={step.sending || !turn.pending}
-              onClick={() => onAnswer(turn, step.id, false)}
+              disabled={step.sending || !turn.pending || !onAnswer}
+              onClick={() => onAnswer?.(turn, step.id, false)}
               className="rounded-md border border-border px-2.5 py-1 text-[12.5px] hover:bg-secondary disabled:opacity-40"
             >
               거절

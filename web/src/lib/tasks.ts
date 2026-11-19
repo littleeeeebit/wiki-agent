@@ -122,14 +122,15 @@ const owns = (l: LoopRow, t: TurnRow) => t.spec?.repo === l.repo && t.spec?.id =
  *  approvals `approvals` already knows for its path. */
 export function elsewhere(loops: LoopRow[], turns: TurnRow[], repo: string, approvals: (path: string) => number) {
   return [
-    // One row a checkout: the pane is the checkout's, so while another task's turn runs on a shared one, its
-    // stopped loops step aside for that turn's row; opened, they would show and steer the other task's turn.
-    ...loops.filter((l) => l.repo !== repo && l.worktree && !turns.some((t) => t.path === l.worktree && !owns(l, t))).map((l) => {
-      const asks = approvals(l.worktree!)
+    // Rows are keyed by task, not checkout: several tasks share a primary checkout. `turn` is the row's own
+    // running turn; the pane steers no other (`Agent`'s `foreign`).
+    ...loops.filter((l) => l.repo !== repo && l.worktree).map((l) => {
       // The loop's own turn, by its spec, is not listed apart: its model and its running show on this row.
-      const turn = turns.find((t) => t.path === l.worktree)
+      const turn = turns.find((t) => t.path === l.worktree && owns(l, t))
+      const asks = turn ? approvals(l.worktree!) : 0   // a shared checkout's approvals are the running task's
       const state = shownState(l.state, !!turn)
       return {
+        key: `loop:${l.repo}/${l.id}`, turn: turn?.turn,
         path: l.worktree!, repo: l.repo, spec: { repo: l.repo, id: l.id } as TurnRow['spec'],
         name: l.id, pr: l.pr, round: l.round, phase: phase(state), busy: !!turn,
         cell: turn?.cell ?? l.cell ?? undefined,
@@ -141,6 +142,7 @@ export function elsewhere(loops: LoopRow[], turns: TurnRow[], repo: string, appr
     ...turns.filter((t) => t.repo !== repo && !loops.some((l) => l.worktree === t.path && owns(l, t))).map((t) => {
       const asks = approvals(t.path)
       return {
+        key: `turn:${t.path}`, turn: t.turn,
         path: t.path, repo: t.repo, spec: t.spec, name: t.path.split(/[\\/]/).pop() ?? '', pr: null, round: 0,
         phase: 'work' as Phase, busy: true, cell: t.cell, waiting: asks > 0, line: asks ? `도는 중 · 승인 ${asks}` : '도는 중',
       }
