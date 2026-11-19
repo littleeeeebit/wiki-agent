@@ -13,7 +13,6 @@ would be.
 
 from __future__ import annotations
 
-import os
 import secrets
 import subprocess
 import threading
@@ -21,7 +20,6 @@ import time
 from pathlib import Path
 
 from common import errorlog
-from common.paths import RAW
 from fastapi import APIRouter, HTTPException
 
 from . import channels, release, release_publish, release_rehearsal, release_repair, runtime
@@ -37,35 +35,11 @@ SHUTDOWN_WAIT = 120   # seconds a closing server gives a stopped test build to r
 _runs: dict[str, dict] = {}   # project name -> its rehearsal: the running one, or the last one's summary
 _lock = threading.Lock()
 _deadline: list[float] = []   # when shutdown stops waiting: set by its first `close_all`, kept by any later one
-# Every snapshot of a run carries `(boot, rev)`: the server start's number and the run's change within it. The
-# pair orders all snapshots, across restarts, with no clock, so the card keeps the newest whatever arrives when.
-BOOTS = RAW / "release-boot"   # the number of the last server start, kept across starts
-_boot = [0]   # this server start's number (`started`), set when its lifespan takes ownership (`recover`)
+# Every snapshot of a run carries `boot`, a fresh random name for each server lifespan, and `rev`, the run's
+# change within it. Only `rev`s of one boot are compared; the card treats another boot as a new server and starts
+# over, so no order between servers, clocks or stored counters is ever needed.
+_boot = [secrets.token_hex(6)]   # renamed whenever a lifespan takes ownership (`recover`)
 _revs: dict[str, int] = {}   # project name -> the last `rev` its runs were given in this process
-
-
-def started(path: Path | None = None) -> int:
-    """This start's number: one more than the last start's, kept in the data folder, so the card orders the
-    snapshots of different starts by `(boot, rev)` whatever any clock says. Only one server binds a port, so starts
-    the card can see follow one another. A file that cannot be read restarts the count above any number it could
-    have reached, from the clock, and is recorded; one that cannot be written is recorded too."""
-
-    path = path or BOOTS
-    try:
-        last = int(path.read_text(encoding="utf-8").strip() or 0)
-    except FileNotFoundError:
-        last = 0
-    except (OSError, ValueError) as exc:
-        errorlog.record("release-boot", exc, at=str(path))
-        last = time.time_ns() // 1000   # microseconds: above any count, and exact as a JavaScript number
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        part = path.with_name(path.name + ".part")
-        part.write_text(str(last + 1), encoding="utf-8")
-        os.replace(part, path)
-    except OSError as exc:
-        errorlog.record("release-boot", exc, at=str(path))
-    return last + 1
 
 
 def _rev(name: str) -> int:
@@ -267,7 +241,7 @@ def recover() -> None:
 
     with _lock:
         _deadline.clear()
-        _boot[0] = started()
+        _boot[0] = secrets.token_hex(6)
 
     def sweep() -> None:
         try:

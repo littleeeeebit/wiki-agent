@@ -4,11 +4,11 @@ import { get, json, post } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 type Bump = 'patch' | 'minor' | 'major'
-/** A test build as the server last changed it. `boot` numbers the server start, one more each start, and `rev`
- *  the change within it, so `(boot, rev)` orders every snapshot, across restarts: the newest wins whatever order
- *  the answers arrive in. `idle` is a server that has run none; `id` names one build for its stop. */
+/** A test build as the server last changed it. `boot` names the server's lifespan and `rev` the change within
+ *  it; only `rev`s of one boot are compared. `idle` is a server that has run none; `id` names one build for its
+ *  stop. */
 type Rehearsal = {
-  state: 'idle' | 'running' | 'done' | 'failed'; rev: number; boot: number; id?: string; started?: number; ended?: number; stopped?: boolean
+  state: 'idle' | 'running' | 'done' | 'failed'; rev: number; boot: string; id?: string; started?: number; ended?: number; stopped?: boolean
   error?: string; ok?: boolean; sha?: string; rounds?: { version: string; failed?: string; refused: string[] }[]
   refusals?: Record<string, number>; repair?: { needed: string; task?: string; error?: string } | null
   repairing?: boolean; stopping?: boolean; left?: string[]
@@ -40,8 +40,7 @@ const stopRehearsal = (name: string, id: string) => post(`${at(name)}/stop?run_i
 /** `promise`, or a rejection after `ms`. The promise goes on; what it brings later is still applied by `rev`. */
 const within = <T,>(promise: Promise<T>, ms: number) => Promise.race([promise, new Promise<never>((_, reject) =>
   setTimeout(() => reject(new Error('서버가 답하지 않는다 — 상태는 계속 읽는다')), ms))])
-const newer = (cur: Rehearsal | null, next: Rehearsal) =>
-  (cur && (cur.boot > next.boot || (cur.boot === next.boot && cur.rev > next.rev)) ? cur : next)
+const newer = (cur: Rehearsal | null, next: Rehearsal) => (cur && cur.rev > next.rev ? cur : next)   // one boot's
 
 const BUMPS: { bump: Bump; label: string }[] = [
   { bump: 'patch', label: '고침' }, { bump: 'minor', label: '기능 추가' }, { bump: 'major', label: '큰 변경' },
@@ -67,31 +66,58 @@ export function ReleaseButton({ name, disabled }: { name: string; disabled: bool
 export function ReleaseCard({ name, onClose }: { name: string; onClose: () => void }) {
   const [card, setCard] = useState<Card | null>(null)
   // The test build's state, apart from the card. Every answer that carries it, a card read, a state read, a
-  // start's or a stop's, goes through `adopt`: the one with the larger `rev` is kept, whatever arrives when.
+  // start's or a stop's, goes through `adopt`: within one server the one with the larger `rev` is kept.
   const [run, setRun] = useState<Rehearsal | null>(null)
   const [fault, setFault] = useState('')
   const [busy, setBusy] = useState(false)
   const [picked, setPicked] = useState<Bump | null>(null)
-  const adopt = useCallback((r: Rehearsal) => setRun((cur) => newer(cur, r)), [])
+  // The last preview that read a commit, and the runs' `rev` when its reading began. A card that came back with
+  // an error never counts as one.
+  const [good, setGood] = useState<{ read: number } | null>(null)
+  const [again, setAgain] = useState(0)   // bumped to read the card once more
 
-  // One card read at a time, bounded; a state read never discards one.
+  // Which server this card is following, and the card's own count of servers seen (`era`), which only it moves,
+  // so it needs no order between servers. Every request notes the era it was sent in, and its answer counts only
+  // in that era. An answer naming another server than the era's starts a new era: the card forgets all it showed,
+  // every answer still on its way is ignored, and it reads everything again from whichever server answers now.
+  const era = useRef({ n: 0, boot: '' })
+  const adopt = useCallback((r: Rehearsal, asked: number) => {
+    const e = era.current
+    if (asked !== e.n) return false
+    if (e.boot && e.boot !== r.boot) {
+      era.current = { n: e.n + 1, boot: '' }
+      setRun(null)
+      setCard(null)
+      setGood(null)
+      setFault('')
+      setAgain((n) => n + 1)
+      return false
+    }
+    e.boot = r.boot
+    setRun((cur) => newer(cur, r))
+    return true
+  }, [])
+
+  // One card read at a time, bounded; a state read never discards one. A read sent in an era that has ended
+  // reads again once it settles.
   const reading = useRef(false)
-  // The last preview that read a commit: which server read it, and the runs' `rev` when its reading began.
-  // A card that came back with an error never counts as one.
-  const [good, setGood] = useState<{ boot: number; read: number } | null>(null)
   const read = useCallback(() => {
     if (reading.current) return
     reading.current = true
+    const asked = era.current.n
     getCard(name)
       .then((c) => {
+        if (!adopt(c.rehearsal, asked)) return
         setCard(c)
-        adopt(c.rehearsal)
-        if (c.sha && !c.error) setGood({ boot: c.rehearsal.boot, read: c.read })
+        if (c.sha && !c.error) setGood({ read: c.read })
       })
-      .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
-      .finally(() => { reading.current = false })
+      .catch((err) => { if (asked === era.current.n) setFault(String(err instanceof Error ? err.message : err)) })
+      .finally(() => {
+        reading.current = false
+        if (asked !== era.current.n) setAgain((n) => n + 1)
+      })
   }, [name, adopt])
-  useEffect(() => { read() }, [read])
+  useEffect(() => { read() }, [read, again])
 
   // While the card is open its state is read every five seconds, one bounded read at a time, so a start whose
   // answer was lost, or that the server admits late, is still found, and a failed read is tried again.
@@ -100,15 +126,16 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     const timer = setInterval(() => {
       if (out) return
       out = true
-      getRehearsal(name).then((r) => adopt(r.rehearsal)).catch(() => {}).finally(() => { out = false })
+      const asked = era.current.n
+      getRehearsal(name).then((r) => adopt(r.rehearsal, asked)).catch(() => {}).finally(() => { out = false })
     }, 5000)
     return () => clearInterval(timer)
   }, [name, adopt])
 
-  // A build that ended after the last good preview began reading, or a server other than the one that read it,
-  // leaves the card stale: what it saw of `main` may have moved. It is read again, every fifteen seconds until a
-  // good preview lands, and no start goes out with the old commit meanwhile.
-  const stale = !!good && !!run && run.state !== 'running' && (run.boot !== good.boot || run.rev > good.read)
+  // A build that ended after the last good preview began reading leaves the card stale: what it saw of `main`
+  // may have moved. It is read again, every fifteen seconds until a good preview lands, and no start goes out
+  // with the old commit meanwhile.
+  const stale = !!good && !!run && run.state !== 'running' && run.rev > good.read
   useEffect(() => {
     if (!stale) return
     read()
@@ -121,10 +148,11 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   async function act(fn: () => Promise<{ rehearsal: Rehearsal }>) {
     setFault('')
     setBusy(true)
+    const asked = era.current.n
     try {
-      await within(fn().then((r) => adopt(r.rehearsal)), ACTION_MS)
+      await within(fn().then((r) => adopt(r.rehearsal, asked)), ACTION_MS)
     } catch (err) {
-      setFault(String(err instanceof Error ? err.message : err))
+      if (asked === era.current.n) setFault(String(err instanceof Error ? err.message : err))
     } finally {
       setBusy(false)
     }

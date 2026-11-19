@@ -45,8 +45,7 @@ def project(monkeypatch, tmp_path):
     monkeypatch.setattr(release_api, "_runs", {})
     monkeypatch.setattr(release_api, "_deadline", [])
     monkeypatch.setattr(release_api, "_revs", {})
-    monkeypatch.setattr(release_api, "_boot", [1])
-    monkeypatch.setattr(release_api, "BOOTS", tmp_path / "release-boot")
+    monkeypatch.setattr(release_api, "_boot", ["one"])
     monkeypatch.setattr(release_api.runtime, "stopping", threading.Event())
     app = FastAPI()
     app.include_router(release_api.router)
@@ -276,22 +275,17 @@ def test_every_change_of_a_run_carries_a_later_rev_so_an_older_answer_never_wins
     done = ended(client)
     assert idle["state"] == "idle" and stopping["stopping"] and "stopping" not in done
     assert idle["rev"] < started["rev"] < stopping["rev"] < done["rev"]
-    assert {idle["boot"], started["boot"], done["boot"]} == {1}   # this start's, never a clock's
+    assert {idle["boot"], started["boot"], done["boot"]} == {"one"}   # one lifespan's
 
 
-def test_each_server_start_is_numbered_after_the_last_whatever_the_clock(project, monkeypatch, tmp_path):
+def test_every_server_lifespan_has_a_name_of_its_own(project, monkeypatch):
     client, *_ = project
-    before = client.get("/api/release/app/rehearsal").json()["rehearsal"]
     monkeypatch.setattr(release_api.release_publish, "recover", lambda: [])
-    monkeypatch.setattr(release_api.time, "time_ns", lambda: 0)   # a clock set back changes nothing
-    release_api.recover()   # the next start
-    release_api.recover()   # and the one after it
-    after = client.get("/api/release/app/rehearsal").json()["rehearsal"]
-    assert (before["boot"], after["boot"]) == (1, 2)
-    assert release_api.started() == 3
-    (tmp_path / "release-boot").write_text("garbled")   # unreadable: restarts above any count, from the clock
-    monkeypatch.setattr(release_api.time, "time_ns", lambda: 5_000_000_000)
-    assert release_api.started() == 5_000_001 and release_api.started() == 5_000_002
+    seen = set()
+    for _ in range(3):
+        release_api.recover()   # the next lifespan: its snapshots name another server, so the card starts over
+        seen.add(client.get("/api/release/app/rehearsal").json()["rehearsal"]["boot"])
+    assert len(seen) == 3 and "one" not in seen
 
 
 def test_a_stop_meant_for_an_ended_build_never_stops_the_next(project, monkeypatch):
