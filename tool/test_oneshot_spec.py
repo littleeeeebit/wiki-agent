@@ -342,6 +342,10 @@ def test_an_avoided_word_another_entry_defines_is_not_a_hit():
     ([("P1", "/llm_gateway/{id}")], False),
     ([("M1", "préLLM Gateway")], True),   # a decomposed accent reads as the letter it makes
     ([("M1", "LLM-Gateway- 결과를 저장한다")], False),   # a hyphen before a space joins nothing
+    ([("M1", "LLM-Gateway-- 결과를 저장한다")], False),
+    ([("P1", "/llm-gateway--legacy")], True),   # however many hyphens, a name past them runs on
+    ([("P1", "/legacy--llm-gateway")], True),
+    ([("P1", "/llm--gateway")], False),   # a term that holds two hyphens itself
     ([("M1", "LLM도구관리자")], False),   # a Korean compound on an approved term, in a name as in prose
 ])
 def test_only_a_whole_term_in_one_field_covers_an_avoided_word(words, hit):
@@ -353,6 +357,7 @@ def test_only_a_whole_term_in_one_field_covers_an_avoided_word(words, hit):
                 {"term": "API LLM 도구", "meaning": "도구", "avoid": []},
                 {"term": "LLM_Gateway", "meaning": "모델 중계 경로", "avoid": []},
                 {"term": "LLM-Gateway", "meaning": "모델 중계 경로", "avoid": []},
+                {"term": "LLM--Gateway", "meaning": "모델 중계 옛 경로", "avoid": []},
                 {"term": "LLM도구", "meaning": "모델 도구", "avoid": []}]
     if hit:
         with pytest.raises(ValueError, match="쓰지 않기로 한"):
@@ -362,11 +367,13 @@ def test_only_a_whole_term_in_one_field_covers_an_avoided_word(words, hit):
 
 
 def test_a_route_holding_an_approved_term_inside_a_longer_name_is_refused():
-    glossary = [*GLOSSARY, {"term": "expense_log", "meaning": "지출 기록", "avoid": []}]
-    sheet.checked(sheet.parsed(design_with({("oneshot-api", 0, "path"): "/expense_log"})), REQS, glossary, PROFILE)
-    with pytest.raises(ValueError, match="P1: 용어집의 `지출`"):
-        sheet.checked(sheet.parsed(design_with({("oneshot-api", 0, "path"): "/auto_expense_log"})),
-                      REQS, glossary, PROFILE)
+    glossary = [*GLOSSARY, {"term": "expense_log", "meaning": "지출 기록", "avoid": []},
+                {"term": "expense-log", "meaning": "지출 기록 경로", "avoid": []}]
+    for path in ("/expense_log", "/expense-log/{id}"):
+        sheet.checked(sheet.parsed(design_with({("oneshot-api", 0, "path"): path})), REQS, glossary, PROFILE)
+    for path in ("/auto_expense_log", "/expense-log--legacy", "/legacy--expense-log"):
+        with pytest.raises(ValueError, match="P1: 용어집의 `지출`"):
+            sheet.checked(sheet.parsed(design_with({("oneshot-api", 0, "path"): path})), REQS, glossary, PROFILE)
 
 
 @pytest.mark.parametrize("bad, named", [

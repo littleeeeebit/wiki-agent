@@ -329,11 +329,10 @@ def _spans(word: str, text: str, edged: bool) -> list[tuple[int, int]]:
     word starts in Hangul."""
 
     def runs_on(i: int, step: int) -> bool:   # does `text[i]` carry a name on, looking away from the word
-        if not 0 <= i < len(text):
-            return False
-        if text[i] == "-":   # a hyphen joins only when a name character stands past it (`변환- 결과` is prose)
-            return 0 <= i + step < len(text) and _name_char(text[i + step])
-        return _name_char(text[i])
+        j = i
+        while 0 <= j < len(text) and text[j] == "-":   # hyphens join only when a name character stands past
+            j += step                                    # them all (`변환- 결과` is prose, `a--b` one name)
+        return 0 <= j < len(text) and _name_char(text[j])
 
     out = []
     for m in re.finditer(f"(?=({re.escape(word)}))", text):
