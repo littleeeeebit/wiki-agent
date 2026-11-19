@@ -199,6 +199,8 @@ def stop(name: str, run_id: str = "") -> dict:
         run = _runs.get(name)
         if not run or run.get("state") != "running":
             raise HTTPException(409, f"{name} 에 돌고 있는 시험 빌드가 없다")
+        if not run_id:
+            raise HTTPException(409, "멈출 시험 빌드를 밝히지 않았다 — 카드를 다시 열고 멈춘다")
         if run_id != run["id"]:
             raise HTTPException(409, "멈추려던 시험 빌드는 이미 끝났다 — 지금 도는 것은 다른 시험 빌드다")
         if run.get("repairing"):
