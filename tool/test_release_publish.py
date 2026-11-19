@@ -48,7 +48,8 @@ def press(tmp_path, monkeypatch):
     monkeypatch.setattr(release, "pin", lambda repo, ref="origin/main": SHA)
     monkeypatch.setattr(release, "settings", lambda repo, sha: {"version_source": "v.json", "android": ANDROID})
     monkeypatch.setattr(release, "seed", lambda repo, sha, source: "0.1.0")
-    monkeypatch.setattr(release, "release_key", lambda repo, kit, create=False: keys.append(create) or {"cert": CERT})
+    monkeypatch.setattr(release, "release_key",
+                        lambda repo, kit, create=False, name=None: keys.append((create, name)) or {"cert": CERT})
     monkeypatch.setattr(release, "git", lambda repo, *args, **k: "feat: one (#1)\nfix: two (#2)\n")
 
     def checkout(repo, sha, attempt):
@@ -83,7 +84,7 @@ def test_the_first_press_publishes_the_seed_with_its_note_and_makes_the_key(pres
     done = rp.publish(repo, "0.1.0", None)
 
     rel = fake.release_named("v0.1.0")
-    assert done["state"] == "published" and keys == [True] and fake.refs["v0.1.0"] == SHA
+    assert done["state"] == "published" and keys == [(True, "github.com/o/r")] and fake.refs["v0.1.0"] == SHA
     assert not rel["draft"] and not rel["prerelease"] and rel["target_commitish"] == SHA
     assert release.FIRST_RELEASE_NOTE in rel["body"] and "- feat: one (#1)" in rel["body"]
     assert [a["name"] for a in rel["assets"]] == ["r-0.1.0-arm64-v8a.apk"]
@@ -113,7 +114,7 @@ def test_the_next_press_is_checked_against_the_previous_production_apk_on_github
     monkeypatch.setattr(release, "built_wrong", lambda *a: seen.append(a[3]) or real(*a))
     done = rp.publish(repo, "0.1.1", "patch")
 
-    assert done["state"] == "published" and keys == [True, False] and seen[0]["code"] == 1000
+    assert done["state"] == "published" and [c for c, _ in keys] == [True, False] and seen[0]["code"] == 1000
     assert "FIRST" not in fake.release_named("v0.1.1")["body"] and release.FIRST_RELEASE_NOTE not in done["notes"]
 
 

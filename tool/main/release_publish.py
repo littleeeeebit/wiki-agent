@@ -243,7 +243,7 @@ def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, 
         work = release.owned(release.place(repo, attempt))
         work.mkdir(parents=True)
         _go(halt)
-        key = release.release_key(repo, kit, create=prior is None)
+        key = release.release_key(repo, kit, create=prior is None, name=name)   # the remote checked, not origin now
         _go(halt)
         before = _tried(lambda: previous_facts(repo_slug, prior, cfg["android"]["abi"], work / "previous", kit), halt)
         _go(halt)
@@ -301,12 +301,13 @@ def _complete(held: dict, manifest: list[dict]) -> bool:
         assets[m["name"]].get("state") == "uploaded" and gh.digest(assets[m["name"]]) == m["sha256"] for m in manifest)
 
 
-def _uploaded(repo: str, held: dict, item: dict, tag: str) -> bool:
+def _uploaded(repo: str, held: dict, item: dict, tag: str, go=lambda: None) -> bool:
     """True once this draft holds `item` whole, with the manifest's digest. False when the release went public
     meanwhile: nothing more is written to it. Every write follows a fresh read showing a draft still named
     `tag`. A `starter` asset, an upload GitHub cut off, is the only one deleted. The read after the last
     permitted upload decides, so a last upload that landed counts. When none did and the last failure was
-    transient, that failure is raised, which leaves the attempt pending."""
+    transient, that failure is raised, which leaves the attempt pending. `go()` runs before each delete and each
+    upload, so a stop raises there and leaves the attempt pending."""
 
     failed = None
     for n in range(UPLOAD_TRIES + 1):
@@ -327,7 +328,9 @@ def _uploaded(repo: str, held: dict, item: dict, tag: str) -> bool:
             break
         _present(item)   # the local copy is needed only now, to upload
         if asset is not None:
+            go()
             gh.delete_asset(repo, asset["id"])
+        go()
         try:
             gh.upload(repo, held["id"], Path(item["path"]), item["name"])
         except gh.Failed as exc:
@@ -421,8 +424,7 @@ def _finish(name: str, attempt: str, halt: threading.Event | None = None) -> dic
                     raise
         record = update(name, attempt, release_id=held["id"], release_url=held.get("html_url"))
         for item in manifest:
-            go()
-            if not _uploaded(repo, held, item, record["tag"]):   # someone made it public meanwhile
+            if not _uploaded(repo, held, item, record["tag"], go):   # someone made it public meanwhile
                 return _settled(record, repo, gh.release(repo, held["id"]))
         # The last read before publishing. GitHub has no conditional publish, so a writer racing this read and
         # the PATCH can still change the draft or move the tag; `_settled` then records it failed and leaves it.
@@ -453,18 +455,23 @@ def _finish(name: str, attempt: str, halt: threading.Event | None = None) -> dic
         return _ended(record, "failed", reason=str(exc))
 
 
-def recover() -> list[dict]:
+def recover(halt: threading.Event | None = None) -> list[dict]:
     """Every remote's pending attempt carried on, as a restarted server does. An attempt a live worker holds
-    is left to it. One remote that fails never stops the sweep."""
+    is left to it. One remote that fails never stops the sweep. A `halt` ends it before the next remote, and
+    reaches `finish` before each GitHub write."""
 
     out = []
     for book in sorted(LEDGER.glob("*/*/*/ledger.json")) if LEDGER.is_dir() else []:
+        if halt is not None and halt.is_set():
+            break
         name = book.parent.relative_to(LEDGER).as_posix()
         try:
             if running := pending(name):
-                out.append(finish(name, running["id"]))
+                out.append(finish(name, running["id"], halt))
         except Busy as exc:
             out.append({"remote": name, "state": "pending", "busy": str(exc)})
+        except Halted as exc:
+            out.append({"remote": name, "state": "pending", "halted": str(exc)})
         except Exception as exc:   # noqa: BLE001 — recorded per remote; the next remote is still recovered
             out.append({"remote": name, "state": "pending", "last_error": f"{type(exc).__name__}: {exc}"})
     return out

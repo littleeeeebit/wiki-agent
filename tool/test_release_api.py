@@ -44,6 +44,7 @@ def project(monkeypatch, tmp_path):
     monkeypatch.setattr(release, "seed", lambda repo, sha, source: "0.1.0")
     monkeypatch.setattr(release_api, "_runs", {})
     monkeypatch.setattr(release_api, "_presses", {})
+    monkeypatch.setattr(release_api, "_sweep", [])
     monkeypatch.setattr(release, "KEYS", tmp_path / "keys")
     monkeypatch.setattr(release_api, "_deadline", [])
     monkeypatch.setattr(release_api, "_revs", {})
@@ -367,7 +368,7 @@ def test_the_start_carries_the_cards_commit_and_a_failure_carries_what_it_left(p
 def test_server_start_carries_pending_attempts_on_without_waiting_for_them(monkeypatch):
     swept, recorded = threading.Event(), []
 
-    def recover():
+    def recover(halt=None):
         swept.set()
         return [{"remote": "github.com/o/r", "state": "pending", "last_error": "Failed: HTTP 502"}]
 
@@ -484,7 +485,8 @@ def test_the_card_names_where_an_established_key_is_and_never_its_password(proje
 
 def test_a_press_left_pending_is_carried_on_from_the_card_and_never_builds_again(project, monkeypatch):
     client, *_ = project
-    assert client.post("/api/release/app/resume").status_code == 409   # nothing to carry on
+    shown = {"remote": "github.com/o/r", "attempt": "a1"}
+    assert client.post("/api/release/app/resume", params=shown).status_code == 409   # nothing to carry on
     record = rp.reserve("github.com/o/r", {"id": "a1", "remote": "github.com/o/r", "repo": "x", "sha": "a" * 40,
                                            "version": "0.1.0", "tag": "v0.1.0", "state": "pending"})
     asked = []
@@ -495,7 +497,12 @@ def test_a_press_left_pending_is_carried_on_from_the_card_and_never_builds_again
 
     monkeypatch.setattr(release_api.release_publish, "finish", finish)
     monkeypatch.setattr(release_api.release_publish, "publish", lambda *a, **k: pytest.fail("built again"))
-    assert client.post("/api/release/app/resume").json()["press"]["version"] == record["version"]
+    rp.reserve("github.com/o/other", {"id": "b1", "remote": "github.com/o/other", "repo": "x", "sha": "a" * 40,
+                                      "version": "0.2.0", "tag": "v0.2.0", "state": "pending"})
+    assert client.post("/api/release/app/resume", params={**shown, "attempt": "zz"}).status_code == 409
+    assert client.post("/api/release/app/resume", params={**shown, "remote": "github.com/o/other"}).status_code == 409
+    assert client.post("/api/release/app/resume", params={**shown, "attempt": ""}).status_code == 400
+    assert client.post("/api/release/app/resume", params=shown).json()["press"]["version"] == record["version"]
     press = pressed_end(client)
     assert press["outcome"] == "published" and asked == [("github.com/o/r", "a1", True)]
 
@@ -516,7 +523,7 @@ def test_the_card_shows_diagnostics_without_tokens_or_credentials(project, monke
                                   "release_url": "https://u:tok@github.com/x", "manifest": [{"path": "C:/k"}],
                                   "last_error": "token=abcdef123456 502"})
     attempt = client.get("/api/release/app").json()["attempt"]
-    assert set(attempt) == {"tag", "state", "reason", "last_error", "repair"} and "abcdef123456" not in attempt["last_error"]
+    assert set(attempt) == {"id", "tag", "state", "reason", "last_error", "repair"} and "abcdef123456" not in attempt["last_error"]
 
 
 def test_the_state_read_carries_the_press_so_an_open_card_sees_one_started_elsewhere(project, monkeypatch):
@@ -528,3 +535,44 @@ def test_the_state_read_carries_the_press_so_an_open_card_sees_one_started_elsew
     assert state["press"]["state"] == "running" and state["press"]["boot"] == "one" and state["press"]["rev"] > 0
     go.set()
     assert pressed_end(client)["rev"] > state["press"]["rev"]
+
+
+def test_a_press_without_what_the_card_showed_is_refused(project, monkeypatch):
+    client, *_ = project
+    monkeypatch.setattr(release_api.release_publish, "publish", lambda *a, **k: pytest.fail("published"))
+    for blank in ({"remote": ""}, {"sha": " "}, {"version": ""}):
+        assert client.post("/api/release/app/publish", params={"version": "0.1.0", **SEEN, **blank}).status_code == 400
+
+
+def test_the_startup_sweep_holds_presses_off_and_shutdown_halts_it(project, monkeypatch):
+    client, *_ = project
+    inside, halted = threading.Event(), []
+
+    def recover(halt=None):
+        inside.set()
+        halt.wait(10)
+        halted.append(halt.is_set())
+        return []
+
+    monkeypatch.setattr(rp, "recover", recover)
+    monkeypatch.setattr(release_api.release_publish, "publish", lambda *a, **k: pytest.fail("published"))
+    release_api.recover()
+    assert inside.wait(5)
+    assert client.post("/api/release/app/publish", params={"version": "0.1.0", **SEEN}).status_code == 409
+    assert client.post("/api/release/app/rehearse").status_code == 409
+    release_api.close_all()
+    assert halted == [True]
+
+
+def test_a_preview_that_fails_keeps_the_pending_attempt_and_shows_no_secret(project, monkeypatch):
+    client, *_ = project
+    rp.reserve("github.com/o/r", {"id": "a1", "remote": "github.com/o/r", "repo": "x", "sha": "a" * 40,
+                                  "version": "0.1.0", "tag": "v0.1.0", "state": "pending"})
+
+    def broken(repo, sha):
+        raise ValueError("fatal: https://u:hunter2secret@github.com/o/r Authorization: Basic dXNlcjpwYXNz")
+
+    monkeypatch.setattr(release, "settings", broken)
+    card = client.get("/api/release/app").json()
+    assert "hunter2secret" not in card["error"] and "dXNlcjpwYXNz" not in card["error"]
+    assert card["remote"] == "github.com/o/r" and card["attempt"]["state"] == "pending"
