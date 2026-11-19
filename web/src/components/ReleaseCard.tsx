@@ -73,8 +73,13 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   // The test build's state, apart from the card. Every answer that carries it, a card read, a state read, a
   // start's or a stop's, goes through `adopt`: within one server the one with the larger `rev` is kept.
   const [run, setRun] = useState<Rehearsal | null>(null)
-  const runNow = useRef(run)   // the run as last rendered, for `follow` to compare a refusal with
-  useEffect(() => { runNow.current = run }, [run])
+  // The largest `rev` taken from each server, kept as each answer is taken rather than when the card renders,
+  // so a refusal is compared with every answer before it.
+  const top = useRef(new Map<string, number>())
+  const take = useCallback((r: Rehearsal) => {
+    top.current.set(r.boot, Math.max(top.current.get(r.boot) ?? -1, r.rev))
+    setRun((cur) => newer(cur, r))
+  }, [])
   const [fault, setFault] = useState('')
   const [busy, setBusy] = useState<number | null>(null)   // the era of the start or stop awaiting its answer
   const [picked, setPicked] = useState<Bump | null>(null)
@@ -94,8 +99,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   // showed, every other answer still on its way counts no more, and the preview is read again. An answer to a
   // request sent before `at` may come from either server, so it changes nothing; the preview is read again, and
   // that request, sent after `at`, settles it.
-  // `from`: the card's count when the request whose answer named this era's server was sent.
-  const era = useRef({ n: 0, boot: '', at: 0, from: 0, ended: new Set<string>() })
+  const era = useRef({ n: 0, boot: '', at: 0, ended: new Set<string>() })
   const seq = useRef(0)
   const ticket = useCallback(() => ({ n: era.current.n, sent: ++seq.current }), [])
   // A running build that a start or stop of the person's own answered, while the card could not yet place
@@ -111,30 +115,30 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     if (t.n !== e.n) {
       // An ended era's request that the server this era follows answered: its build state is that server's, so
       // it still counts by `rev`. Its preview, its error and its busy flag stay with the era it was sent in.
-      if (r.boot === e.boot) { setRun((cur) => newer(cur, r)); settle() }
+      if (r.boot === e.boot) { take(r); settle() }
       return false
     }
     if (!e.boot) {   // the card's first answer
       e.boot = r.boot
       e.at = seq.current
-      e.from = t.sent
     } else if (e.boot !== r.boot) {
       setAgain((n) => n + 1)
       if (t.sent <= e.at) return false
       e.ended.add(e.boot)
-      era.current = { n: e.n + 1, boot: r.boot, at: seq.current, from: t.sent, ended: e.ended }
+      era.current = { n: e.n + 1, boot: r.boot, at: seq.current, ended: e.ended }
       settle()
-      setRun(r)
+      setRun(null)
+      take(r)
       setCard(null)
       setGood(null)
       setFault('')
       setBusy(null)
       return true
     }
-    setRun((cur) => newer(cur, r))
+    take(r)
     settle()
     return true
-  }, [])
+  }, [take])
 
   // One card read at a time, bounded; a state read never discards one. A read sent in an era that has ended
   // reads again once it settles.
@@ -189,28 +193,30 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   const follow = useCallback((r: Rehearsal, t: { n: number; sent: number }) => {
     const e = era.current
     if (e.ended.has(r.boot)) return false   // a server known to have stopped: its buffered refusal says nothing now
-    // Another server with no build running, for a stop sent before the request that named the followed one:
-    // the browser cannot order the two servers, so the later-sent request decides, and this one changes nothing;
-    // the preview is read again. A stop sent after it is followed.
-    if (r.boot !== e.boot && r.state !== 'running' && t.sent < e.from) {
+    // Another server with no build running, for a stop issued before the followed server's answer arrived: either
+    // server may be the later one (the order requests are issued in is not the order they reach a server), so it
+    // never takes a build off the screen; it changes nothing and the preview is read again. A stop issued after
+    // that answer arrived can reach only that server or a later one, so its refusal is followed.
+    if (r.boot !== e.boot && r.state !== 'running' && t.sent <= e.at) {
       setAgain((n) => n + 1)
       return false
     }
     setHeld((h) => (h && t.sent > h.at ? null : h))   // as any answer: only a stop sent after the hold arrived releases it
     if (r.boot === e.boot) {   // ordered by `rev`; an older snapshot is not taken, and its refusal is not shown
-      const cur = runNow.current
-      setRun((c) => newer(c, r))
-      return !(cur?.boot === r.boot && cur.rev > r.rev)
+      const older = (top.current.get(r.boot) ?? -1) > r.rev
+      take(r)
+      return !older
     }
     if (t.sent > e.at) e.ended.add(e.boot)   // a proven transition, as in `adopt`: the followed server has stopped
-    era.current = { n: e.n + 1, boot: r.boot, at: seq.current, from: t.sent, ended: e.ended }
-    setRun(r)
+    era.current = { n: e.n + 1, boot: r.boot, at: seq.current, ended: e.ended }
+    setRun(null)
+    take(r)
     setCard(null)
     setGood(null)
     setBusy(null)
     setAgain((n) => n + 1)
     return true
-  }, [])
+  }, [take])
 
   async function act(fn: () => Promise<{ rehearsal: Rehearsal }>) {
     setFault('')
