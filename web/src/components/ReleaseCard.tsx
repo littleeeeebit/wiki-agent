@@ -109,9 +109,20 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   // outlive. A server whose era has ended is known to have stopped, so its answer is never kept; the followed
   // server's answers already go through `newer`, so a late one never stands over a newer build of its own.
   const [held, setHeld] = useState<{ run: Rehearsal; at: number } | null>(null)
+  // The hold as each answer leaves it (the state above is what renders). A hold is never swapped without proof:
+  // another server's unproven build leaves it as it is, and one from the held server replaces it only with a
+  // larger `rev`. `hold` says whether the build was taken.
+  const holding = useRef<{ run: Rehearsal; at: number } | null>(null)
+  const keep = useCallback((h: { run: Rehearsal; at: number } | null) => { holding.current = h; setHeld(h) }, [])
+  const hold = useCallback((r: Rehearsal) => {
+    const h = holding.current
+    if (h && (h.run.boot !== r.boot || h.run.rev >= r.rev)) return false
+    keep({ run: r, at: seq.current })
+    return true
+  }, [keep])
   const adopt = useCallback((r: Rehearsal, t: { n: number; sent: number }) => {
     const e = era.current
-    const settle = () => setHeld((h) => (h && t.sent > h.at ? null : h))
+    const settle = () => { if (holding.current && t.sent > holding.current.at) keep(null) }
     if (t.n !== e.n) {
       // An ended era's request that the server this era follows answered: its build state is that server's, so
       // it still counts by `rev`. Its preview, its error and its busy flag stay with the era it was sent in.
@@ -138,7 +149,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     take(r)
     settle()
     return true
-  }, [take])
+  }, [take, keep])
 
   // One card read at a time, bounded; a state read never discards one. A read sent in an era that has ended
   // reads again once it settles.
@@ -205,11 +216,10 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     // held like a start's answer. It never takes the followed server's running build off the screen; a Stop
     // issued now settles which one is live.
     if (r.boot !== e.boot && t.sent <= e.at) {
-      setHeld({ run: r, at: seq.current })
       setAgain((n) => n + 1)
-      return true
+      return hold(r)
     }
-    setHeld((h) => (h && t.sent > h.at ? null : h))   // as any answer: only a stop sent after the hold arrived releases it
+    if (holding.current && t.sent > holding.current.at) keep(null)   // as any answer: only a stop sent after the hold arrived releases it
     if (r.boot === e.boot) {   // ordered by `rev`; an older snapshot is not taken, and its refusal is not shown
       const older = (top.current.get(r.boot) ?? -1) > r.rev
       take(r)
@@ -224,7 +234,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     setBusy(null)
     setAgain((n) => n + 1)
     return true
-  }, [take])
+  }, [take, keep, hold])
 
   async function act(fn: () => Promise<{ rehearsal: Rehearsal }>) {
     setFault('')
@@ -232,7 +242,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     setBusy(t.n)
     const answer = fn().then(({ rehearsal: r }) => {
       const e = era.current   // the followed server's own answers are ordered by `rev`, never held
-      if (!adopt(r, t) && r.state === 'running' && r.boot !== e.boot && !e.ended.has(r.boot)) setHeld({ run: r, at: seq.current })
+      if (!adopt(r, t) && r.state === 'running' && r.boot !== e.boot && !e.ended.has(r.boot)) hold(r)
     }, (err) => {
       const live = (err as { rehearsal?: Rehearsal }).rehearsal
       if (live) {   // taken however late it comes, past the action's deadline too
