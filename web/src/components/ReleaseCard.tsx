@@ -71,14 +71,13 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   const [fault, setFault] = useState('')
   const [busy, setBusy] = useState(false)
   const [picked, setPicked] = useState<Bump | null>(null)
-  // The server process this card follows, and the ones it has seen replaced. Once an answer from a new process
-  // arrives, every answer still on its way from an older one is dropped, its preview with it.
-  const boots = useRef({ now: '', retired: new Set<string>() })
-  const adopt = useCallback((r: Rehearsal) => {
-    const b = boots.current
-    if (b.retired.has(r.boot)) return false
-    if (b.now && b.now !== r.boot) b.retired.add(b.now)
-    b.now = r.boot
+  // The server process this card follows. Only the state poll moves it: one poll is in flight at a time and a
+  // timed-out one is aborted, so polls are answered in the order they were sent. Before the first answer, any
+  // answer names it; after that, a card read's, a start's or a stop's from another process is dropped.
+  const boot = useRef('')
+  const adopt = useCallback((r: Rehearsal, poll = false) => {
+    if (poll || !boot.current) boot.current = r.boot
+    else if (r.boot !== boot.current) return false
     setRun((cur) => newer(cur, r))
     return true
   }, [])
@@ -88,19 +87,23 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   // The last preview that read a commit: which server read it, and the runs' `rev` when its reading began.
   // A card that came back with an error never counts as one.
   const [good, setGood] = useState<{ boot: string; read: number } | null>(null)
+  const [again, setAgain] = useState(0)   // bumped to read once more, after a read from a replaced process
   const read = useCallback(() => {
     if (reading.current) return
     reading.current = true
     getCard(name)
       .then((c) => {
-        if (!adopt(c.rehearsal)) return
+        if (!adopt(c.rehearsal)) {
+          setTimeout(() => setAgain((n) => n + 1), 5000)
+          return
+        }
         setCard(c)
         if (c.sha && !c.error) setGood({ boot: c.rehearsal.boot, read: c.read })
       })
       .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
       .finally(() => { reading.current = false })
   }, [name, adopt])
-  useEffect(() => { read() }, [read])
+  useEffect(() => { read() }, [read, again])
 
   // While the card is open its state is read every five seconds, one bounded read at a time, so a start whose
   // answer was lost, or that the server admits late, is still found, and a failed read is tried again.
@@ -109,7 +112,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     const timer = setInterval(() => {
       if (out) return
       out = true
-      getRehearsal(name).then((r) => adopt(r.rehearsal)).catch(() => {}).finally(() => { out = false })
+      getRehearsal(name).then((r) => adopt(r.rehearsal, true)).catch(() => {}).finally(() => { out = false })
     }, 5000)
     return () => clearInterval(timer)
   }, [name, adopt])
