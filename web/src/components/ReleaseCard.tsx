@@ -18,9 +18,12 @@ type Choice = Bump | 'first'
 /** `tool/main/release_api.py`: what a press would publish, read from origin's main and GitHub. */
 type Card = {
   remote?: string; sha?: string; last?: string | null; ahead?: number | null; versions?: Partial<Record<Choice, string>>
-  refused?: Partial<Record<Choice, string>>; attempt?: Attempt | null; error?: string; locked: string
+  refused?: Partial<Record<Choice, string>>; attempt?: Attempt | null; error?: string
   read: number; rehearsal: Rehearsal   // `read`: the runs' `rev` when the card's reading began
+  press: Press | null; key?: { keystore: string; credential: string } | null
 }
+/** This server's last press: running, or how it ended — the attempt's tag and outcome, or why none was reserved. */
+type Press = { state: 'running' | 'ended'; version: string; started?: number; tag?: string; outcome?: Attempt['state']; error?: string }
 
 // Every request is bounded, so no answer that never comes can hold the card. A card read fetches `main` and
 // reads GitHub, so it gets longer.
@@ -42,6 +45,11 @@ const stopRehearsal = (name: string, id: string) => post(`${at(name)}/stop?run_i
     if (body?.rehearsal) throw Object.assign(new Error(body.detail || '시험 빌드 멈춤'), { rehearsal: body.rehearsal as Rehearsal })
     return json<{ rehearsal: Rehearsal }>(r, '시험 빌드 멈춤')
   })
+// The version the card showed goes with the press, and its choice (none before the first release): a version
+// that moved since is refused before anything is reserved.
+const pressPublish = (name: string, version: string, bump: Bump | null) =>
+  post(`${at(name)}/publish?version=${encodeURIComponent(version)}${bump ? `&bump=${bump}` : ''}`)
+    .then((r) => json<{ press: Press }>(r, '게시'))
 /** `promise`, or a rejection after `ms`. The promise goes on; what it brings later is still applied by `rev`. */
 const within = <T,>(promise: Promise<T>, ms: number) => Promise.race([promise, new Promise<never>((_, reject) =>
   setTimeout(() => reject(new Error('서버가 답하지 않는다 — 상태는 계속 읽는다')), ms))])
@@ -67,8 +75,8 @@ export function ReleaseButton({ name, disabled }: { name: string; disabled: bool
 }
 
 /** One project's release card: the last production version, how far `main` is ahead, the version each choice
- *  would publish, and the button. Publishing is locked until builds run under another Windows account than the
- *  key; the button runs the unpublished rehearsal, which builds twice with a disposable test key. */
+ *  would publish, and its two buttons: the publish button, pressed twice, publishes the version shown; the test
+ *  build runs the unpublished rehearsal, which builds twice with a disposable test key. */
 export function ReleaseCard({ name, onClose }: { name: string; onClose: () => void }) {
   const [card, setCard] = useState<Card | null>(null)
   // The test build's state, apart from the card. Every answer that carries it, a card read, a state read, a
@@ -84,6 +92,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   const [fault, setFault] = useState('')
   const [busy, setBusy] = useState<number | null>(null)   // the era of the start or stop awaiting its answer
   const [picked, setPicked] = useState<Bump | null>(null)
+  const [armed, setArmed] = useState(false)   // the publish button's first press; the second publishes
   // The last preview that read a commit, and the runs' `rev` when its reading began. A card that came back with
   // an error never counts as one.
   const [good, setGood] = useState<{ read: number } | null>(null)
@@ -290,9 +299,34 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   const own = mine ? newer(run, mine) : run
   const other = held.filter((h) => h.run.boot !== run?.boot).reduce<Hold | null>((a, h) => (a && a.at > h.at ? a : h), null)
   const shown = own?.state === 'running' || !other ? own : other.run
+  // A press that runs, or an attempt the ledger holds pending, is read again every fifteen seconds until it ends.
+  const publishing = card?.press?.state === 'running' || card?.attempt?.state === 'pending'
+  useEffect(() => {
+    if (!publishing) return
+    const timer = setInterval(read, 15000)
+    return () => clearInterval(timer)
+  }, [publishing, read])
   const first = card?.versions?.first
   const bump = picked ?? BUMPS.find((b) => card?.versions?.[b.bump])?.bump ?? 'patch'
   const next = first ?? card?.versions?.[bump]
+  // One project runs one press or one test build at a time, and a press never goes out with a stale preview.
+  const blocked = busy !== null || stale || !card?.sha || !!card.error || !next || publishing || shown?.state === 'running'
+  async function publishNow() {
+    if (!next) return
+    setArmed(false)
+    setFault('')
+    const n = era.current.n
+    setBusy(n)
+    try {
+      const { press } = await within(pressPublish(name, next, card?.last === null ? null : bump), ACTION_MS)
+      setCard((c) => c && { ...c, press })
+    } catch (err) {
+      setFault(String(err instanceof Error ? err.message : err))
+    } finally {
+      setBusy((b) => (b === n ? null : b))
+      setAgain((k) => k + 1)   // the attempt it reserved is read from the ledger
+    }
+  }
   return (
     <Modal wide title={`${name} 배포`} onClose={onClose} foot={(
       <>
@@ -303,9 +337,10 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
           // another server's, and a stop the live server refuses brings back the build it has.
           ? <Btn tone="danger" disabled={busy !== null || !shown.id} onClick={() => void act(() => stopRehearsal(name, shown.id ?? ''))}
               title={shown.repairing ?'수정 작업을 이미 만들기 시작해서 멈출 수 없다' : undefined}>시험 빌드 멈춤</Btn>
-          : <Btn disabled={busy !== null || stale || !card?.sha || !!card.error} onClick={() => void act(() => startRehearsal(name, card?.sha))}
+          : <Btn disabled={busy !== null || stale || !card?.sha || !!card.error || publishing} onClick={() => void act(() => startRehearsal(name, card?.sha))}
               title="main 을 두 번 빌드하고 일회용 시험 키로 서명해 검사한다. 아무것도 올리지 않는다">시험 빌드</Btn>}
-        <Btn tone="primary" disabled title={card?.locked}>{next ? `v${next} 게시` : '게시'}</Btn>
+        <Btn tone={armed ? 'danger' : 'primary'} disabled={blocked} onClick={() => (armed ? void publishNow() : setArmed(true))}
+          title="main 을 빌드하고 정식 키로 서명·검사한 뒤 GitHub 릴리스로 올린다">{armed ? `v${next} 정말 게시` : next ? `v${next} 게시` : '게시'}</Btn>
       </>
     )}>
       {!card && !fault && <p className="text-muted-foreground">origin 의 main 과 GitHub 릴리스를 읽는 중…</p>}
@@ -327,7 +362,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
               <span role="radiogroup" aria-label="올릴 버전" className="flex flex-wrap gap-1.5">
                 {BUMPS.map(({ bump: b, label }) => (
                   <button key={b} type="button" role="radio" aria-checked={bump === b} disabled={!card.versions?.[b]}
-                    onClick={() => setPicked(b)} title={card.refused?.[b]}
+                    onClick={() => { setPicked(b); setArmed(false) }} title={card.refused?.[b]}
                     className={cn('h-7 rounded-md border px-2.5 text-[12.5px] disabled:opacity-40',
                       bump === b ? 'border-primary bg-primary/10' : 'border-border hover:bg-secondary')}>
                     {label} <span className="font-mono">{card.versions?.[b] ? `v${card.versions[b]}` : '올릴 수 없음'}</span>
@@ -338,12 +373,27 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
           </dd>
         </dl>
       )}
-      <p role="status" className="mb-3 rounded-md border border-wait/30 bg-wait/10 px-3 py-2 text-[12.5px]">{card?.locked}</p>
+      {armed && !blocked && (
+        <p role="status" className="mb-3 rounded-md border border-wait/30 bg-wait/10 px-3 py-2 text-[12.5px]">
+          v{next} 를 빌드·서명해 GitHub 릴리스로 올린다 — 올린 버전은 되돌리지 않는다. 한 번 더 누르면 시작한다
+          {card?.last === null ? '. 첫 정식 릴리스라 정식 서명 키를 이 PC 에 새로 만든다' : ''}
+        </p>
+      )}
+      {card?.press?.state === 'running' && (
+        <p className="mb-2 animate-pulse text-[12.5px]">v{card.press.version} 게시 중… 빌드·서명·검사한 뒤 GitHub 에 올린다 · 수십 분 걸릴 수 있다</p>
+      )}
+      {card?.press?.error && <p className="mb-2 whitespace-pre-wrap text-[12.5px] text-destructive">v{card.press.version} 를 게시하지 못했다 — {card.press.error}</p>}
       {card?.attempt && (
         <p className="mb-2 text-[12.5px] text-muted-foreground">
           지난 배포 <span className="font-mono">{card.attempt.tag}</span> · {STATE[card.attempt.state]}
           {card.attempt.reason ? ` · ${card.attempt.reason}` : ''}
           {card.attempt.repair?.task ? ` · 수정 작업 ${card.attempt.repair.task}` : ''}
+        </p>
+      )}
+      {card?.key && (
+        <p className="mb-2 text-[12.5px] text-muted-foreground">
+          서명 키 백업: <span className="font-mono">{card.key.keystore}</span> 와 자격 증명 관리자의 '{card.key.credential}' 를 함께
+          백업한다. 둘 중 하나라도 잃으면 설치된 앱을 업데이트할 수 없다
         </p>
       )}
       {shown && <RehearsalLine run={shown} />}

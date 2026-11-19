@@ -4,11 +4,12 @@ The card reads what a press would do: the last production version, how many comm
 the version each choice would publish, from the one selector the attempt uses (`release.version`). Before the
 first production release it shows the seed and offers no choice.
 
-Publishing stays locked (`LOCKED`). The plan requires that build and repair code run under another Windows
-account than the release key before anything is published, and that is not in place. The button runs the
-unpublished rehearsal instead (`release_rehearsal.rehearse`): two builds of origin's `main`, the commit the card
-shows, signed with a disposable test key and checked, with a source failure handed to a repair task as a press's
-would be.
+The publish button is the one entry point that publishes (`press`): it publishes the version the card showed,
+through `release_publish.publish`, off the request, and the card follows the attempt in the ledger. Builds,
+repairs and the key share this Windows account; the person chose that on 2026-11-19, since every repository is
+theirs. The test build button runs the unpublished rehearsal (`release_rehearsal.rehearse`): two builds of
+origin's `main`, the commit the card shows, signed with a disposable test key and checked, with a source failure
+handed to a repair task as a press's would be. One project runs one of the two at a time.
 """
 
 from __future__ import annotations
@@ -28,12 +29,11 @@ from . import github_release as gh
 
 router = APIRouter()
 
-LOCKED = ("실제 게시는 잠겨 있다 — 빌드와 수정 작업이 서명 키와 같은 Windows 계정에서 돌아서, "
-          "다른 계정으로 분리한 뒤에 켠다. 지금은 시험 빌드만 한다(아무것도 올리지 않는다)")
 REF = "origin/main"   # what the card pins and what the test build builds
 SHUTDOWN_WAIT = 120   # seconds a closing server gives a stopped test build to remove its checkout and keys
 
 _runs: dict[str, dict] = {}   # project name -> its rehearsal: the running one, or the last one's summary
+_presses: dict[str, dict] = {}   # project name -> this server's last press: running, or how it ended
 _lock = threading.Lock()
 _deadline: list[float] = []   # when shutdown stops waiting: set by its first `close_all`, kept by any later one
 # Every snapshot of a run carries `boot`, a fresh random name for each server lifespan, and `rev`, the run's
@@ -83,7 +83,17 @@ def card(repo: Path) -> dict:
         count = ahead(repo, None, sha)
     attempts = release_publish.ledger(name)["attempts"]
     return {"remote": name, "sha": sha, "last": prior and prior["tag_name"], "ahead": count, "versions": versions,
-            "refused": refused, "attempt": attempts[-1] if attempts else None, "locked": LOCKED}
+            "refused": refused, "attempt": attempts[-1] if attempts else None, "key": key(name)}
+
+
+def key(name: str) -> dict | None:
+    """Where the repository's production key is, once it is established, so the person backs it up: the keystore
+    and its password in Credential Manager go together. Never the password itself."""
+
+    folder = release.KEYS / name
+    if not (folder / "certificate.sha256").is_file():
+        return None
+    return {"keystore": str(folder / "release.jks"), "credential": release.target(name)}
 
 
 def ahead(repo: Path, since: str | None, sha: str) -> int | None:
@@ -155,8 +165,8 @@ def get_card(name: str) -> dict:
     try:
         out = card(repo)
     except (ValueError, OSError, subprocess.SubprocessError, gh.Failed) as exc:
-        out = {"error": str(exc) or type(exc).__name__, "locked": LOCKED}
-    return {**out, "read": read, "rehearsal": shown(name)}
+        out = {"error": str(exc) or type(exc).__name__}
+    return {**out, "read": read, "rehearsal": shown(name), "press": pressed(name)}
 
 
 @router.get("/api/release/{name}/rehearsal")
@@ -178,6 +188,8 @@ def rehearse(name: str, sha: str | None = None) -> dict:
         prior = _runs.get(name)
         if (prior or {}).get("state") == "running":
             raise HTTPException(409, f"{name} 의 시험 빌드가 이미 돌고 있다")
+        if (_presses.get(name) or {}).get("state") == "running":
+            raise HTTPException(409, f"{name} 을 게시하는 중이다 — 끝난 뒤 시험 빌드를 돌린다")
         halt = threading.Event()
         worker = threading.Thread(target=_rehearsing, args=(name, repo, halt, sha), daemon=True)
         _runs[name] = {"state": "running", "id": secrets.token_hex(6), "started": time.time(), "halt": halt,
@@ -218,14 +230,66 @@ def stop(name: str, run_id: str = "") -> dict | JSONResponse:
     return {"rehearsal": shown(name)}
 
 
+def _pressing(name: str, repo: Path, version: str, bump: str | None, halt: threading.Event) -> None:
+    try:
+        done = release_publish.publish(repo, version, bump, halt, repair=release_repair.start)
+        ended = {"tag": done.get("tag"), "outcome": done.get("state")}
+    except Exception as exc:   # noqa: BLE001 — refused before the reservation, or broken; the card shows why
+        errorlog.record("release-publish", exc, repo=str(repo))
+        ended = {"error": str(exc) or type(exc).__name__}
+    with _lock:
+        _presses[name] = {"state": "ended", "version": version, "ended": time.time(), **ended}
+
+
+def pressed(name: str) -> dict | None:
+    """This server's last press of `name` as the card shows it, or None before one."""
+
+    with _lock:
+        press = _presses.get(name)
+        return press and {k: v for k, v in press.items() if k not in ("halt", "thread")}
+
+
+@router.post("/api/release/{name}/publish")
+def press(name: str, version: str, bump: str = "") -> dict:
+    """The person's press: publish `version`, the one the card showed for `bump` (none before the first release).
+    The attempt runs off the request (`release_publish.publish`) and is followed in the ledger. A version that
+    moved since the card was read, or an attempt still pending, is refused there before anything is reserved."""
+
+    repo = _repo(name)
+    if bump and bump not in release.BUMPS:
+        raise HTTPException(400, f"{bump} 는 고를 수 있는 버전 올림이 아니다")
+    with _lock:   # the same lock `close_all` snapshots under, so no press slips in after it
+        if runtime.stopping.is_set():
+            raise HTTPException(503, "서버가 꺼지는 중이라 게시를 시작하지 않는다")
+        if (_presses.get(name) or {}).get("state") == "running":
+            raise HTTPException(409, f"{name} 을 이미 게시하는 중이다")
+        if (_runs.get(name) or {}).get("state") == "running":
+            raise HTTPException(409, f"{name} 의 시험 빌드가 도는 중이다 — 끝난 뒤 게시한다")
+        halt = threading.Event()
+        worker = threading.Thread(target=_pressing, args=(name, repo, version, bump or None, halt), daemon=True)
+        prior = _presses.get(name)
+        _presses[name] = {"state": "running", "version": version, "started": time.time(), "halt": halt, "thread": worker}
+        try:
+            worker.start()
+        except RuntimeError as exc:   # the OS refused a thread: the project is not left looking busy
+            _presses.pop(name)
+            if prior:
+                _presses[name] = prior
+            raise HTTPException(503, f"게시를 시작하지 못했다 — {exc}") from exc
+    return {"press": pressed(name)}
+
+
 def close_all() -> None:
     """At server shutdown: every running test build stopped, and waited for while it removes its checkout and
     its test keys, so a restart leaves neither behind. Its commands end within a second of the stop
     (`release.stoppable`). A build whose repair has begun is not stopped: the repair is let finish starting.
-    One wait for every call, and a build still running when it ends is recorded."""
+    One wait for every call, and a build still running when it ends is recorded. A press is stopped the same
+    way: a build it has not finished ends its attempt failed, and one past its remote writes stays pending for
+    the next server's `recover`."""
 
     with _lock:   # after `runtime.stopping`, so no start is admitted past this snapshot
         running = [(name, run) for name, run in _runs.items() if run.get("state") == "running"]
+        running += [(name, press) for name, press in _presses.items() if press.get("state") == "running"]
         for _, run in running:
             if not run.get("repairing"):
                 run["halt"].set()
@@ -235,7 +299,7 @@ def close_all() -> None:
         run["thread"].join(max(0.0, _deadline[0] - time.monotonic()))
         if run["thread"].is_alive():
             errorlog.record("release-rehearse-shutdown", TimeoutError(
-                f"{name} 의 시험 빌드가 서버 종료 대기 {SHUTDOWN_WAIT}초 안에 끝나지 않았다 — "
+                f"{name} 의 시험 빌드나 게시가 서버 종료 대기 {SHUTDOWN_WAIT}초 안에 끝나지 않았다 — "
                 f"{release.WORK} 아래에 빌드 폴더나 시험 키가 남았을 수 있다"), project=name)
 
 
