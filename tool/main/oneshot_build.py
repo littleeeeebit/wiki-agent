@@ -22,6 +22,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from xml.etree import ElementTree
 
+from common.powershell_syntax import syntax
 from fastapi import HTTPException
 
 from . import connect, oneshot, oneshot_android, oneshot_spec, refactor_run, runtime, specs, work
@@ -124,8 +125,21 @@ def word_of(part: str) -> tuple[str, str]:
     """A chain part's program word, unquoted, and the rest after it exactly as written, starting at whitespace.
     The check and the launch both read the program through this, so they cannot read two different words."""
 
-    m = WORD.match(part)
-    return (m[1].strip("'\""), part[m.end():]) if m else ("", part)
+    if not (m := WORD.match(part)):
+        return "", part
+    word = m[1][1:-1] if m[1][0] in "'\"" else m[1]   # only the outer pair: a quote inside is the name's own
+    return word, part[m.end():]
+
+
+def links(command: str) -> list[str]:
+    """`command`'s chain parts, cut at each `&&` outside quoted text (a quoted label or the server's own report
+    path may hold one)."""
+
+    bare, cuts, start = syntax(command)[0], [], 0
+    for m in re.finditer("&&", bare):
+        cuts.append(command[start:m.start()])
+        start = m.end()
+    return [*cuts, command[start:]]
 
 
 def target(path: Path, word: str, declared_tools: list[dict]) -> tuple[str, str] | None:
@@ -145,7 +159,7 @@ def target(path: Path, word: str, declared_tools: list[dict]) -> tuple[str, str]
 def undeclared(path: Path, command: str, declared_tools: list[dict]) -> list[str]:
     """The programs in `command`'s chain that are neither a declared tool nor a file inside the worktree."""
 
-    words = [word_of(part)[0] or part.strip() for part in command.split("&&")]
+    words = [word_of(part)[0] or part.strip() for part in links(command)]
     return [w for w in words if target(path, w, declared_tools) is None]
 
 
@@ -176,7 +190,7 @@ def run_as(command: str, o: dict, path: Path) -> str:
     if (declared_tools := tools(o)) is None:
         return command
     paths, parts = (o.get("toolpaths") or {}).get("paths") or {}, []
-    for part in command.split("&&"):
+    for part in links(command):
         word, rest = word_of(part)
         kind, name = target(path, word, declared_tools) or ("", "")
         if not (program := paths.get(name) if kind == "tool" else name):

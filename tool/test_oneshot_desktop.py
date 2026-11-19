@@ -347,6 +347,19 @@ def test_a_program_word_joined_to_a_quote_is_refused_and_a_checked_one_runs_as_i
     assert ran.stdout.strip() == "CHECKED", ran
 
 
+def test_a_quote_inside_a_quoted_program_is_its_name_and_a_quoted_and_sign_does_not_cut_the_chain(desktop):
+    (desktop / "'lead.cmd").write_text("", encoding="utf-8")
+    (desktop / "lead.cmd").write_text("", encoding="utf-8")   # what stripping every quote would pick instead
+    assert oneshot_build.word_of("\"'lead.cmd\" -x") == ("'lead.cmd", " -x")
+    o_ = {"intent": o()["intent"], "stack": STACK, "toolpaths": {"stage": "build", "paths": {"cargo": "c", "npm": "n"}}}
+    lead = str((desktop / "'lead.cmd").resolve())
+    assert oneshot_build.run_as("\"'lead.cmd\" -x", o_, desktop) == f"{launch(lead)} -x"
+    chain = "cargo test --label \"R && D\" && npm test 'a&&b'"
+    assert oneshot_build.links(chain) == ["cargo test --label \"R && D\" ", " npm test 'a&&b'"]
+    assert oneshot_build.undeclared(desktop, chain, oneshot_build.tools(o_)) == []
+    assert oneshot_build.run_as(chain, o_, desktop) == f"{launch('c')} test --label \"R && D\" && {launch('n')} test 'a&&b'"
+
+
 def test_a_build_whose_gate_names_a_program_gone_from_the_worktree_is_refused_before_it_runs(desktop):
     oneshot_spec.saved("budget", oneshot={"stack": STACK, "stage": "build", "gate": "scripts/gone.ps1 && cargo test",
                                           "toolpaths": {"stage": "build", "paths": {"cargo": "c", "npm": "n"}}})
