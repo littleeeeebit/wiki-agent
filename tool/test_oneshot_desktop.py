@@ -213,9 +213,12 @@ def test_a_pc_apps_split_reads_its_modules_and_stops_at_the_board(desktop, kinds
     ops = oneshot_front.inventory(spec)
     assert {"M1", "R2"} <= set(ops)
     value = [{"id": f"f{n}", "name": "기능", "parts": [p], "class": "every", "why": "늘"} for n, p in enumerate(ops)]
-    asked = []   # each turn's instructions; the split's answer is `value`
-    with patch.object(oneshot, "turned", lambda store, role, system, *a: asked.append(system) or a[-2](value)):
+    asked, saves, save = [], [], oneshot_spec.saved   # each turn's instructions; the split's answer is `value`
+    with patch.object(oneshot, "turned", lambda store, role, system, *a: asked.append(system) or a[-2](value)), \
+            patch.object(oneshot_spec, "saved", lambda repo, **f: saves.append(f.get("oneshot")) or save(repo, **f)):
         oneshot_front.split_turn("budget", oneshot_spec.store("budget"), spec)()
+    # One save carries the board and its stop: a status read never finds an idle board in between.
+    assert len(saves) == 1 and saves[0]["stage"] == "board" and saves[0]["stopped"]["reason"] == "kind"
     assert asked == [oneshot.prompt("split", oneshot_profile.shape(o()))]
     assert (o()["stage"], o()["stopped"]["reason"], o()["stopped"]["state"]) == ("board", "kind", "board")
     assert [f["parts"] for f in o()["features"]] == [[p] for p in ops]
@@ -400,15 +403,24 @@ def test_a_quote_inside_a_quoted_program_is_its_name_and_a_quoted_and_sign_does_
     assert oneshot_build.links(chain) == ["cargo test --label \"R && D\" ", " npm test 'a&&b'"]
     assert oneshot_build.undeclared(desktop, chain, oneshot_build.tools(o_)) == []
     assert oneshot_build.run_as(chain, o_, desktop) == f"{launch('c')} test --label \"R && D\" && {launch('n')} test 'a&&b'"
-    # The chain check reads the same parts: a quoted `&& return` or `&& &&` is one argument, not a command.
     for quoted in ("cargo test --label \"Research && return to results\"", "cargo test --label 'R && && D'"):
-        assert oneshot_build.chained(quoted) and oneshot_build.undeclared(desktop, quoted, oneshot_build.tools(o_)) == []
-    assert not oneshot_build.chained("cargo test && return")
-    # A typographic quote is a quote to PowerShell and not to `links`, so the chain refuses it, unless it is a
-    # letter inside ASCII quotes.
-    for curly in ("cargo test --label ‘R && D’", "cargo test --label “R”"):
-        assert not oneshot_build.chained(curly)
-    assert oneshot_build.chained("npm test -- \"Editor’s preview\"")
+        assert oneshot_build.undeclared(desktop, quoted, oneshot_build.tools(o_)) == []
+
+
+def test_on_windows_the_chain_check_reads_powershell_quotes():
+    with patch.object(oneshot_build.os, "name", "nt"):
+        # The chain check reads the parts `links` cuts: a quoted `&& return` or `&& &&` is one argument.
+        for quoted in ("cargo test --label \"Research && return to results\"", "cargo test --label 'R && && D'"):
+            assert oneshot_build.chained(quoted)
+        assert not oneshot_build.chained("cargo test && return")
+        # A typographic quote PowerShell could read as a delimiter is refused: outside ASCII quotes, or inside a
+        # string of its own family, which it closes (`'a’ && b` is two commands to PowerShell).
+        for curly in ("cargo test --label ‘R && D’", "cargo test --label “R”", "echo 'a’ && echo b",
+                      "echo \"a” && return \"", "echo @'\nx’\n'@"):
+            assert not oneshot_build.chained(curly), curly
+        # Inside a string of the other family it is only a letter.
+        assert oneshot_build.chained("npm test -- \"Editor’s preview\"")
+        assert oneshot_build.chained("npm test -- 'say “hi”'")
 
 
 def test_on_a_posix_shell_the_chain_check_cuts_at_every_and_sign():

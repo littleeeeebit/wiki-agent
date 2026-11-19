@@ -415,6 +415,22 @@ LEAVE = {"exit", "exec", "return", "break", "continue", "eval", "source", ".", "
          "trap", "logout", "kill", "stop-process", "set", "command", "builtin", "time", "enable", "shopt",
          "sal", "set-alias", "nal", "new-alias", "exsn", "exit-pssession"}
 SMART_QUOTES = re.compile("[‘’‚‛“”„]")   # quotes to PowerShell, not to `links`
+# PowerShell's two quote families: a typographic quote closes a string its ASCII sibling opened.
+FAMILY = {"'": re.compile("[‘’‚‛]"), '"': re.compile("[“”„]")}
+
+
+def quote_safe(command: str) -> bool:
+    """No typographic quote can be a PowerShell delimiter the masker missed: none outside ASCII-quoted text, and
+    none inside a string of its own family, which it could close (`'a’ && b` is two commands to PowerShell)."""
+
+    bare, spans = syntax(command)
+    if SMART_QUOTES.search(bare):
+        return False
+    for start, end in spans:
+        opener = command[start + 1] if command[start] == "@" else command[start]   # a here-string's `@'` or `@"`
+        if (family := FAMILY.get(opener)) and family.search(command, start, end):
+            return False
+    return True
 CHAIN = ("평범한 명령을 ` && ` 로만 잇는다 — `;`, `|`, `#`, `` ` ``, `$(`, 괄호·중괄호, 홑 `&`, 둥근 따옴표, 줄바꿈 없이, "
          "어느 명령도 `exit`·`exec`·`eval`·`iex` 같은 셸 제어어로 시작하지 않는다")
 
@@ -433,16 +449,15 @@ def chained(command: str) -> bool:
     """`command` is plain commands joined by `&&` and nothing else: each runs only after the one before it
     passed, and none starts with a word that ends the shell early, so the chain's status is its first failure.
     On Windows, where the gate runs in PowerShell, the parts are those `links` cuts, at an unquoted `&&`, so a
-    quoted argument holding `&&` stays one command, and a typographic quote outside ASCII quotes, which PowerShell
-    reads as a quote and `links` does not, is refused, so the two readings cannot differ. Elsewhere the POSIX
+    quoted argument holding `&&` stays one command, and a typographic quote that PowerShell could read as a
+    delimiter and `links` does not (`quote_safe`) is refused, so the two readings cannot differ. Elsewhere the POSIX
     shell runs it, and the parts are cut at every `&&`.
     ponytail: by character and first word, not shell syntax: it stops a command that ends the chain by
     mistake, not one written to get past it; a quoted `;` or `(` is refused too, and a project script takes it."""
 
     windows = os.name == "nt"   # the masker reads PowerShell, not POSIX, which cuts at every `&&` as before
     parts = links(command) if windows else command.split("&&")
-    loose = syntax(command)[0] if windows else ""   # a typographic quote inside ASCII quotes is only a letter
-    return not CONTROL.search(command) and not SMART_QUOTES.search(loose) \
+    return not CONTROL.search(command) and (quote_safe(command) or not windows) \
         and all(p.split() and not leaves(p.split()[0]) for p in parts)
 
 

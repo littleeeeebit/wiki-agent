@@ -472,9 +472,14 @@ def waiting(repo: str, o: dict) -> dict:
     that stage's save and its hand-off replaced it, and must not make the stage resumable."""
 
     if held(o) and not o.get("working") and (o.get("stopped") or {}).get("reason") != "kind":
-        return saved(repo, oneshot={"stopped": {"reason": "kind", "state": o["stage"],
-                                                "detail": "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다"}})["oneshot"]
+        return saved(repo, oneshot={"stopped": kind_stop(o["stage"])})["oneshot"]
     return o
+
+
+def kind_stop(stage: str) -> dict:
+    """The `kind` stop at `stage`, where this version's run ends."""
+
+    return {"reason": "kind", "state": stage, "detail": "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다"}
 
 
 def handed(o: dict) -> bool:
