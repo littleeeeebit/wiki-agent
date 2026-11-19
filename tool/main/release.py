@@ -2,10 +2,9 @@
 APK with the version injected, signs it and checks it. Step 2 adds each repository's one release key. Nothing
 here publishes: `release_publish` does, with step 3's transfer and ledger. Steps 4 and 5 bring failure
 handling and the button.
-`rehearse` signs only with disposable test keys, and a test key never signs a production artifact.
-
-A rehearsal runs from `tool/` as this module's `rehearse` command, given a disposable clone and an optional
-`--ref`."""
+The rehearsal (`release_rehearsal.rehearse`) signs only with disposable test keys, and a test key never signs
+a production artifact. It runs from `tool/` as this module's `rehearse` command, given a disposable clone and an
+optional `--ref`."""
 
 from __future__ import annotations
 
@@ -21,13 +20,13 @@ import tempfile
 import threading
 import time
 import tomllib
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from ctypes import wintypes
 from pathlib import Path
 
 import android_owned
 import verify
-from common import errorlog, host, is_junction, paths
+from common import errorlog, host, is_junction, paths, process
 
 from . import oneshot_android, specs
 
@@ -38,9 +37,69 @@ BUILD_SECONDS, QUIET_SECONDS = 3600, 1800   # a Rust and Gradle build is long an
 ANDROID = ("build", "artifact", "application_id", "abi")
 
 
+class Stopped(RuntimeError):
+    """A command ended because the run it belongs to was stopped: by the person, or by the server's shutdown."""
+
+
+_stop = threading.local()   # the calling thread's halt while `stoppable` holds it
+
+
+@contextmanager
+def stoppable(halt: threading.Event | None):
+    """Every `git` and `run` on this thread, while this holds, killed with its whole process tree within a
+    second of `halt`, so a stop or a shutdown never waits out a command's own timeout. `None` lifts it for a
+    cleanup that must run even after the stop; the scope it was inside comes back after."""
+
+    outer = getattr(_stop, "halt", None)
+    _stop.halt = halt
+    try:
+        yield
+    finally:
+        _stop.halt = outer
+
+
+def ran(argv: list, timeout: float, cwd: Path | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
+    halt = getattr(_stop, "halt", None)
+    if halt is None:
+        return subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=timeout)
+    name = Path(str(argv[0])).name
+    if halt.is_set():   # stopped already: nothing new starts
+        raise Stopped(f"멈춤 — {name} 을 시작하지 않았다")
+    # Started suspended, so a child it starts is in its job before it can leave (`process.contained`).
+    proc = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            encoding="utf-8", errors="replace", creationflags=process.SUSPENDED,
+                            start_new_session=os.name != "nt")
+    job = None
+    try:
+        job = process.contained(proc)
+        if os.name == "nt" and not job:   # a tree it cannot own never runs (`runtime` refuses the same)
+            raise OSError(f"{name} 의 프로세스 트리를 맡지 못했다 — 실행하지 않았다")
+        process.resumed(proc)
+        deadline = time.monotonic() + timeout
+        while not halt.is_set() and time.monotonic() < deadline:
+            try:
+                out, err = proc.communicate(timeout=min(0.5, max(0.01, deadline - time.monotonic())))
+                return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+            except subprocess.TimeoutExpired:   # a retry after its timeout loses no output
+                pass
+        if halt.is_set():
+            raise Stopped(f"멈춤 — {name} 을 끝냈다")
+        raise subprocess.TimeoutExpired(argv, timeout)
+    finally:   # the whole tree ended and waited for, whatever ended the command, before the caller cleans up
+        try:
+            if proc.poll() is None:
+                process.killed(job)
+                proc.kill()
+                proc.communicate(timeout=10)   # bounded: a descendant holding the pipes cannot keep it
+        except (OSError, subprocess.SubprocessError) as exc:   # recorded, never over what ended the command
+            errorlog.record("release-command", exc, command=name)
+        finally:
+            process.terminated(job)
+
+
 def git(path: Path, *args: str, timeout: float = 120) -> str:
-    done = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=timeout)
+    done = ran(["git", *args], timeout, cwd=path)
     if done.returncode:
         raise ValueError(f"git {' '.join(args[:2])} 실패 — {(done.stderr or done.stdout).strip()[-300:]}")
     return done.stdout
@@ -156,8 +215,11 @@ def pin(repo: Path, ref: str = "origin/main") -> str:
         return git(repo, "rev-parse", "--verify", f"{own}^{{commit}}").strip()
     finally:
         try:
-            git(repo, "update-ref", "-d", own)
-        except (ValueError, subprocess.SubprocessError) as exc:
+            # A stop ended the fetch; the ref it may have written still goes, on a halt of its own that is never
+            # set, so the owned and bounded runner still holds it.
+            with stoppable(threading.Event()) if getattr(_stop, "halt", None) else nullcontext():
+                git(repo, "update-ref", "-d", own, timeout=30)
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:
             # Recorded, never raised: the fetch's own error, if any, is the one that matters, and the name is
             # never reused, so the leftover cannot change a later pin.
             errorlog.record("release-pin", exc, repo=str(repo), ref=own)
@@ -369,8 +431,7 @@ class BuildFailed(ValueError):
 
 
 def run(argv: list, env: dict | None = None, timeout: float = 300) -> str:
-    done = subprocess.run([str(a) for a in argv], capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          env=env, timeout=timeout)
+    done = ran([str(a) for a in argv], timeout, env=env)
     if done.returncode:
         said = (done.stderr or done.stdout).strip()
         if env and env.get(SECRET):   # a key tool's diagnostic never carries its password onward
@@ -392,8 +453,7 @@ def generated(store: Path, alias: str, days: int, name: str, kit: dict) -> dict:
     password = secrets.token_urlsafe(24)
     run([kit["keytool"], "-genkeypair", "-keystore", store, "-alias", alias, "-keyalg", "RSA",
          "-keysize", "2048", "-validity", str(days), "-dname", name,
-         "-storepass:env", SECRET, "-keypass:env", SECRET],
-        keyed(kit, password))
+         "-storepass:env", SECRET, "-keypass:env", SECRET], keyed(kit, password))
     return {"keystore": store, "alias": alias, "password": password}
 
 
@@ -404,8 +464,7 @@ def sign(apk: Path, out: Path, key: dict, kit: dict) -> Path:
     aligned = out.with_suffix(".aligned.apk")
     run([kit["zipalign"], "-p", "-f", "4", apk, aligned], environment(kit))
     run([kit["apksigner"], "sign", "--ks", key["keystore"], "--ks-key-alias", key["alias"],
-         "--ks-pass", f"env:{SECRET}", "--out", out, aligned],
-        keyed(kit, key["password"]))
+         "--ks-pass", f"env:{SECRET}", "--out", out, aligned], keyed(kit, key["password"]))
     aligned.unlink(missing_ok=True)
     return out
 
@@ -682,86 +741,6 @@ def replaced(target: Path, text: str) -> None:
         raise
 
 
-# -- The unpublished rehearsal --------------------------------------------------------------------
-
-def rehearse(repo: Path, ref: str = "main", halt: threading.Event | None = None, repair=None) -> dict:
-    """Two consecutive versions of `ref` built, signed with one test key and checked, the second against the
-    first as its previous production APK. Each build gets its own fresh checkout. Nothing is published. The
-    taken tags are the local ones, since a disposable target has no GitHub releases to read.
-
-    Then the two refusals that keep an installed app updatable, on the second APK's real bytes: re-signed with
-    a second test key, and checked against an application ID other than the one it was built with.
-
-    A build that fails, or builds something wrong, goes to `repair(repo, record)` as a press's would
-    (`release_publish.repaired`), so step 4's hand-off runs on this unpublished path."""
-
-    halt = halt or threading.Event()
-    # A repair's pull request goes to a branch GitHub has, never a commit, a tag or a branch only this clone has.
-    branch = ref.removeprefix("origin/")
-    if repair is not None and subprocess.run(["git", "-C", str(repo), "ls-remote", "--exit-code", "--heads", "origin",
-                                              f"refs/heads/{branch}"], capture_output=True, timeout=60).returncode:
-        raise ValueError(f"`{ref}` 는 origin 의 브랜치가 아니다 — 수정 작업의 PR 이 갈 곳이 없으니 리허설할 브랜치를 골라라")
-    kit, attempt = tools(), f"rehearsal-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"   # two in one second
-    sha = pin(repo, ref)
-    cfg = settings(repo, sha)
-    first = seed(repo, sha, cfg["version_source"])
-    taken = git(repo, "tag", "--list").split()
-    folder = owned(place(repo, attempt))
-    folder.mkdir(parents=True)
-    stores = (folder / "rehearsal.jks", folder / "other.jks")
-    published, previous, rounds, refusals, needed = [], None, [], {}, None
-    try:   # from before the first key exists: every test keystore goes, whatever fails
-        key = test_key(stores[0], kit)
-        cert = certificate(key["keystore"], key["alias"], key["password"], kit)
-        for n in (1, 2):
-            release = version(published, taken, None if not published else "patch", first)
-            src = checkout(repo, sha, f"{attempt}/{n}")
-            try:
-                apk = build(src, cfg["android"], release, kit, halt)
-            except BuildFailed as exc:
-                rounds.append({"version": release, "failed": str(exc)})
-                discard(repo, f"{attempt}/{n}")
-                needed = str(exc)
-                break
-            signed = sign(apk, folder / f"{n}-{release}.apk", key, kit)
-            seen = facts(signed, kit)
-            why = refused(seen, release, cfg["android"], cert, previous)
-            rounds.append({"version": release, "facts": seen, "refused": why})
-            discard(repo, f"{attempt}/{n}")   # the checkout and its build outputs are large; the signed APK stays
-            if why:
-                needed = "; ".join(built_wrong(seen, release, cfg["android"], previous)) or None
-                break
-            published.append({"tagName": f"v{release}"})
-            previous = seen
-        built = len(rounds) == 2 and not any(r["refused"] for r in rounds)
-        if built:
-            first_apk, release = rounds[0]["facts"], rounds[1]["version"]
-            second = folder / f"2-{release}.apk"
-            stranger = facts(sign(second, folder / "2-other-key.apk", test_key(stores[1], kit), kit), kit)
-            moved = {**cfg["android"], "application_id": cfg["android"]["application_id"] + ".moved"}
-            refusals = {"certificate": refused(stranger, release, cfg["android"], cert, first_apk),
-                        "application_id": refused(facts(second, kit), release, moved, cert,
-                                                  {**first_apk, "package": moved["application_id"]})}
-    finally:
-        left = []
-        for store in stores:   # a test key never outlives the rehearsal; one locked file never spares the other
-            try:
-                store.unlink(missing_ok=True)
-            except OSError as exc:
-                left.append(f"{store}: {exc}")
-        if left:
-            raise OSError(f"시험 키를 지우지 못했다 — 직접 지워라: {'; '.join(left)}")
-    caught = bool(refusals) and all(len([w for w in why if marker in w]) == want for why, marker, want in (
-        (refusals.get("certificate", []), "서명 인증서", 2), (refusals.get("application_id", []), "앱 ID", 2)))
-    out = {"sha": sha, "seed": first, "cert": cert, "folder": str(folder), "rounds": rounds,
-           "refusals": refusals, "ok": built and caught}
-    if needed:
-        record = {"id": attempt, "remote": None, "tag": f"v{rounds[-1]['version']}", "version": rounds[-1]["version"],
-                  "sha": sha, "base": branch, "repair": {"needed": needed}}
-        out["repair"] = handed(repo, record, repair, halt)
-    return out
-
-
 def handed(repo: Path, record: dict, repair, halt: threading.Event) -> dict:
     """`record["repair"]` with what `repair(repo, record)` did: the task it started, or why none runs. The
     attempt has ended either way, so a refusal is recorded, never raised. A task whose spec was saved but whose
@@ -791,6 +770,7 @@ def main(argv: list[str]) -> int:
                          ensure_ascii=False, indent=2))
         return 0
     ref = argv[argv.index("--ref") + 1] if "--ref" in argv else "main"
+    from .release_rehearsal import rehearse   # it builds on this module
     result = rehearse(Path(argv[1]).resolve(), ref)
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     return 0 if result["ok"] else 1

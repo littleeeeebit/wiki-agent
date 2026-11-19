@@ -4,6 +4,7 @@ import * as api from '@/lib/api'
 import type { ConnectPlan, Hub, PowerShellStatus, Project } from '@/lib/api'
 import { go } from '@/lib/mode'
 import { PowerShell } from '@/components/PowerShell'
+import { ReleaseButton } from '@/components/ReleaseCard'
 import { HubMove, Rewire } from '@/components/Rewire'
 import { remote } from '@/lib/mobile'
 import { cn } from '@/lib/utils'
@@ -61,11 +62,8 @@ export function Projects({ current }: { current: string }) {
 
   async function start(name: string) {
     const plan = await api.connectPlan(name)
-    if (!plan.hub.needed && !plan.survey) {
-      await api.connect(name, { hub: '', survey: false })
-    } else {
-      setAsking({ name, plan })
-    }
+    if (!plan.hub.needed && !plan.survey) await api.connect(name, { hub: '', survey: false })
+    else setAsking({ name, plan })
   }
   const begin = (name: string) => act(name, () => start(name))
   const find = () => act('folder', async () => {
@@ -135,6 +133,7 @@ export function Projects({ current }: { current: string }) {
                   title="이 프로젝트에 연결한 CLI 중 설치된 도구의 실제 세션을 한 턴씩 돌린다. 도구마다 모델 한 턴의 비용이 든다">
                   다시 시험
                 </Btn>
+                <ReleaseButton name={r.id} disabled={!!working} />
                 {r.state !== '연결 완료' && (
                   <Btn tone="primary" disabled={!!working || r.probing} onClick={() => void begin(r.id)}>
                     {working === r.id ? '연결하는 중…' : '연결'}

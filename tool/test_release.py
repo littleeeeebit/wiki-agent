@@ -1,5 +1,5 @@
 """Release steps 1 and 2: the `[release]` reader, the seed, the version selector, the APK checks and the release key
-(`docs/plans/release/0-overview.md`). The real build and signing run in `release.rehearse`."""
+(`docs/plans/release/0-overview.md`). The real build and signing run in `release_rehearsal.rehearse`."""
 
 import json
 import subprocess
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from main import release
+from main import release, release_rehearsal
 
 ANDROID = {"build": "build", "artifact": "app.apk", "application_id": "ai.x.app", "abi": "arm64-v8a"}
 TABLE = """agents = ["claude"]
@@ -282,7 +282,7 @@ def test_every_test_keystore_goes_even_when_a_step_after_its_creation_fails(tmp_
     monkeypatch.setattr(release, "certificate", broken)
 
     with pytest.raises(ValueError, match="keytool failed"):
-        release.rehearse(tmp_path / "repo")
+        release_rehearsal.rehearse(tmp_path / "repo")
     assert list((tmp_path / "work").rglob("*.jks")) == []
 
     tried, unlink = [], Path.unlink
@@ -299,12 +299,51 @@ def test_every_test_keystore_goes_even_when_a_step_after_its_creation_fails(tmp_
 
     monkeypatch.setattr(release, "test_key", both)
     monkeypatch.setattr(Path, "unlink", locked)
-    with pytest.raises(OSError, match="시험 키를 지우지 못했다"):
-        release.rehearse(tmp_path / "repo")
+    monkeypatch.setattr(release_rehearsal.errorlog, "record", lambda *a, **k: None)
+    with pytest.raises(ValueError, match="keytool failed") as failed:   # the error that ended it stays on top
+        release_rehearsal.rehearse(tmp_path / "repo")
     assert tried == ["rehearsal.jks", "other.jks"]   # the locked first key never spares the second
+    assert len(failed.value.left) == 1 and "rehearsal.jks: locked" in failed.value.left[0]   # and is reported
+
+    monkeypatch.setattr(release, "certificate", lambda *a: "c" * 64)
+    monkeypatch.setattr(release, "checkout", lambda *a: (_ for _ in ()).throw(release.Stopped("멈춤")))
+    with pytest.raises(release.Stopped) as stopped:   # a stop, too, carries what it could not remove
+        release_rehearsal.rehearse(tmp_path / "repo")
+    assert len(stopped.value.left) == 1 and "rehearsal.jks" in stopped.value.left[0]
+
+    # A source failure caught in its round keeps its outcome and its repair: the locked key is only reported.
+    monkeypatch.setattr(release, "checkout", lambda *a: tmp_path / "src")
+    monkeypatch.setattr(release, "build", lambda *a: (_ for _ in ()).throw(release.BuildFailed("error: boom")))
+    asked = []
+    monkeypatch.setattr(release_rehearsal.release, "ran", lambda *a, **k: subprocess.CompletedProcess(a, 0, "", ""))
+    done = release_rehearsal.rehearse(tmp_path / "repo", repair=lambda repo, record: asked.append(record) or "fix-1")
+    assert done["rounds"][0]["failed"] == "error: boom" and done["repair"]["task"] == "fix-1"
+    assert asked[0]["repair"]["needed"] == "error: boom" and "rehearsal.jks: locked" in done["left"][0]
 
 
-@pytest.mark.parametrize("failure", ["build", "debuggable"])
+def test_a_stopped_rehearsal_build_leaves_no_checkout_and_starts_no_repair(tmp_path, monkeypatch):
+    _rehearsable(tmp_path, monkeypatch)
+    monkeypatch.setattr(release, "test_key", lambda store, kit: {"keystore": store, "alias": "a", "password": "p"})
+    monkeypatch.setattr(release, "certificate", lambda *a: "c" * 64)
+    made = []
+
+    def checkout(repo, sha, at):
+        (src := release.place(repo, at)).mkdir(parents=True)
+        (src / "node_modules").mkdir()   # what a build had written by the time the person stopped it
+        return made.append(src) or src
+
+    def build(src, android, version, kit, halt):
+        halt.set()
+        raise ValueError("빌드 실패 — 사람이 멈춤")   # the machine's: not repairable
+
+    monkeypatch.setattr(release, "checkout", checkout)
+    monkeypatch.setattr(release, "build", build)
+    with pytest.raises(ValueError, match="사람이 멈춤"):   # raised, so no repair is handed anything
+        release_rehearsal.rehearse(tmp_path / "repo")
+    assert made and not made[0].exists()
+
+
+@pytest.mark.parametrize("failure", ["build", "debuggable", "second build"])
 def test_the_rehearsal_hands_a_failed_build_to_repair_and_nothing_else(tmp_path, monkeypatch, failure):
     _rehearsable(tmp_path, monkeypatch)
     monkeypatch.setattr(release, "test_key", lambda store, kit: {"keystore": store, "alias": "a", "password": "p"})
@@ -313,14 +352,18 @@ def test_the_rehearsal_hands_a_failed_build_to_repair_and_nothing_else(tmp_path,
                         or release.place(repo, at))
 
     def build(src, android, version, kit, halt):
-        if failure == "build":
+        if failure == "build" or (failure == "second build" and version == "0.1.1"):
             raise release.BuildFailed("빌드 실패 — 1 로 끝났다\nerror: boom")
         return src / "out.apk"
 
+    def facts(apk, kit):   # the version is the signed APK's name: `<round>-<version>.apk`
+        name = apk.stem.split("-", 1)[1]
+        return seen(name=name, code=release.code(name), debuggable=failure == "debuggable", certs=["c" * 64],
+                    package=ANDROID["application_id"])
+
     monkeypatch.setattr(release, "build", build)
     monkeypatch.setattr(release, "sign", lambda apk, out, key, kit: out)
-    monkeypatch.setattr(release, "facts", lambda apk, kit: seen(name="0.1.0", code=1000, debuggable=True, certs=["c" * 64],
-                                                                package=ANDROID["application_id"]))
+    monkeypatch.setattr(release, "facts", facts)
     repo, _ = committed(tmp_path, {"a.txt": "a"})
     subprocess.run(["git", "init", "-q", "--bare", str(tmp_path / "origin.git")], check=True)
     for args in (["branch", "-qM", "main"], ["remote", "add", "origin", str(tmp_path / "origin.git")],
@@ -334,11 +377,143 @@ def test_the_rehearsal_hands_a_failed_build_to_repair_and_nothing_else(tmp_path,
     # A repair's pull request needs a branch GitHub has: not a tag, a commit, or a branch only the clone has.
     for ref in ("v0.0.9", "0" * 40, "experiment"):
         with pytest.raises(ValueError, match="브랜치가 아니다"):
-            release.rehearse(repo, ref, repair=repair)
-    done = release.rehearse(repo, repair=repair)
+            release_rehearsal.rehearse(repo, ref, repair=repair)
+    done = release_rehearsal.rehearse(repo, repair=repair)
     assert done["repair"]["task"] == "release-fix-0-1-0" and not done["ok"] and len(asked) == 1
-    assert asked[0]["tag"] == "v0.1.0" and asked[0]["sha"] == "0" * 40 and asked[0]["base"] == "main"
-    assert ("boom" if failure == "build" else "디버그") in asked[0]["repair"]["needed"]
+    tag = "v0.1.1" if failure == "second build" else "v0.1.0"   # a later round's failure is the one handed on
+    assert asked[0]["tag"] == tag and asked[0]["sha"] == "0" * 40 and asked[0]["base"] == "main"
+    assert ("디버그" if failure == "debuggable" else "boom") in asked[0]["repair"]["needed"]
+    assert [p for p in Path(done["folder"]).iterdir() if p.is_dir()] == []   # every round's checkout went
+
+
+def test_a_round_that_fails_after_its_build_still_removes_its_checkout_and_keeps_its_own_error(tmp_path, monkeypatch):
+    _rehearsable(tmp_path, monkeypatch)
+    monkeypatch.setattr(release, "test_key", lambda store, kit: {"keystore": store, "alias": "a", "password": "p"})
+    monkeypatch.setattr(release, "certificate", lambda *a: "c" * 64)
+    made, logged = [], []
+
+    def checkout(repo, sha, at):
+        (src := release.place(repo, at)).mkdir(parents=True)
+        return made.append(src) or src
+
+    def broken(*_):
+        raise RuntimeError("apksigner failed")
+
+    monkeypatch.setattr(release, "checkout", checkout)
+    monkeypatch.setattr(release, "build", lambda src, *a: src / "out.apk")
+    monkeypatch.setattr(release, "sign", broken)
+    with pytest.raises(RuntimeError, match="apksigner failed"):
+        release_rehearsal.rehearse(tmp_path / "repo")
+    assert made and not made[0].exists()
+
+    def stuck(repo, at):
+        raise OSError("in use")
+
+    monkeypatch.setattr(release, "discard", stuck)
+    monkeypatch.setattr(release_rehearsal.errorlog, "record", lambda *a, **k: logged.append(a[0]))
+    with pytest.raises(RuntimeError, match="apksigner failed"):   # a failed cleanup never hides why the round ended
+        release_rehearsal.rehearse(tmp_path / "repo")
+    assert logged == ["release-rehearsal-cleanup"]
+
+
+def test_a_stop_ends_a_running_command_at_once_and_without_it_nothing_changes(tmp_path):
+    import sys
+    import threading
+    import time
+
+    sleeper = [sys.executable, "-c", "import time; time.sleep(60)"]
+    halt = threading.Event()
+    threading.Timer(0.3, halt.set).start()
+    began = time.monotonic()
+    with release.stoppable(halt), pytest.raises(release.Stopped):   # never its own 60 seconds, nor `ran`'s 600
+        release.ran(sleeper, 600)
+    assert time.monotonic() - began < 10
+    with release.stoppable(threading.Event()):
+        utf8 = "import sys; sys.stdout.buffer.write('하나'.encode())"   # a piped child's own encoding is the locale's
+        assert release.ran([sys.executable, "-c", utf8], 60).stdout.strip() == "하나"
+    with pytest.raises(subprocess.TimeoutExpired), release.stoppable(threading.Event()):
+        release.ran(sleeper, 0.5)
+    two = "import sys; sys.stdout.buffer.write('둘'.encode())"
+    assert release.run([sys.executable, "-c", two]).strip() == "둘"   # outside `stoppable`: as before
+
+
+def test_a_stopped_scope_starts_nothing_and_a_tree_it_cannot_own_never_runs(tmp_path, monkeypatch):
+    import sys
+    import threading
+
+    marker = tmp_path / "ran"
+    writes = [sys.executable, "-c", f"open(r'{marker}', 'w').close()"]
+    stopped = threading.Event()
+    stopped.set()
+    with release.stoppable(stopped), pytest.raises(release.Stopped, match="시작하지 않았다"):
+        release.ran(writes, 60)
+    assert not marker.exists()
+    if release.os.name == "nt":   # Windows: no job, no run; the suspended child is ended and waited for
+        made = []
+        popen = release.subprocess.Popen
+        monkeypatch.setattr(release.process, "contained", lambda proc: None)
+        monkeypatch.setattr(release.subprocess, "Popen", lambda *a, **k: made.append(popen(*a, **k)) or made[-1])
+        with release.stoppable(threading.Event()), pytest.raises(OSError, match="맡지 못했다"):
+            release.ran(writes, 60)
+        assert not marker.exists() and made[0].poll() is not None
+
+
+def test_a_stopped_fetch_still_removes_its_own_ref(monkeypatch):
+    import threading
+
+    calls, halt = [], threading.Event()
+
+    def ran(argv, timeout, cwd=None, env=None):
+        calls.append((argv[1], release._stop.halt))
+        if argv[1] == "fetch":
+            halt.set()   # the person stopped it after it wrote the ref
+            raise release.Stopped("멈춤")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(release, "ran", ran)
+    with release.stoppable(halt), pytest.raises(release.Stopped):
+        release.pin(Path("repo"), "origin/main")
+    # Outside the stopped scope, yet still on the owned, bounded runner: a halt of its own that is never set.
+    assert [c[0] for c in calls] == ["fetch", "update-ref"] and calls[1][1] is not halt and not calls[1][1].is_set()
+    assert release._stop.halt is None   # and the scope is gone with the rehearsal
+
+
+def test_a_command_is_torn_down_whatever_fails_on_the_way(monkeypatch):
+    import sys
+    import threading
+
+    made, popen = [], release.subprocess.Popen
+    monkeypatch.setattr(release.subprocess, "Popen", lambda *a, **k: made.append(popen(*a, **k)) or made[-1])
+    monkeypatch.setattr(release.process, "contained", lambda proc: (_ for _ in ()).throw(RuntimeError("assign")))
+    with release.stoppable(threading.Event()), pytest.raises(RuntimeError, match="assign"):
+        release.ran([sys.executable, "-c", "import time; time.sleep(60)"], 60)
+    assert made[0].poll() is not None   # the suspended child, ended and waited for
+
+    closed, logged = [], []
+
+    class Stuck:   # a child that will not die when asked
+        def poll(self):
+            return None
+
+        def kill(self):
+            raise PermissionError("denied")
+
+    monkeypatch.setattr(release.subprocess, "Popen", lambda *a, **k: Stuck())
+    monkeypatch.setattr(release.process, "contained", lambda proc: "job")
+    monkeypatch.setattr(release.process, "resumed", lambda proc: (_ for _ in ()).throw(OSError("resume")))
+    monkeypatch.setattr(release.process, "killed", lambda job: None)
+    monkeypatch.setattr(release.process, "terminated", closed.append)
+    monkeypatch.setattr(release.errorlog, "record", lambda source, exc, **k: logged.append(str(exc)))
+    with release.stoppable(threading.Event()), pytest.raises(OSError, match="resume"):   # never "denied"
+        release.ran(["anything"], 60)
+    assert closed == ["job"] and logged == ["denied"]
+
+
+def test_a_branch_that_moved_after_the_card_was_read_is_never_built(tmp_path, monkeypatch):
+    _rehearsable(tmp_path, monkeypatch)
+    monkeypatch.setattr(release, "settings", lambda *a: pytest.fail("built"))
+    with pytest.raises(ValueError, match="움직였다"):
+        release_rehearsal.rehearse(tmp_path / "repo", expect="1" * 40)
 
 
 def test_a_fetch_that_times_out_after_writing_its_ref_leaves_no_ref(monkeypatch):
