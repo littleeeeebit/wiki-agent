@@ -275,6 +275,25 @@ class Look:
         with (self.folder / "evidence" / f"{key}.log").open("ab") as log:
             return job.start(argv, cwd, env, self.record["desktop"], log, before_resume=recorded)
 
+    def run(self, key: str, argv: list[str], cwd, seconds: float, halt, extra: dict | None = None) \
+            -> tuple[int | None, str, str]:
+        """`argv` started as `start` starts it and waited for until its root exits: (its exit code, its output,
+        why the wait was cut). A build server or a window the root left running ends with the look."""
+
+        root = self.start(key, argv, cwd, extra)
+        job, deadline, cut = self.jobs[key], time.monotonic() + seconds, ""
+        while (code := job.code(root)) is None:
+            if halt.is_set():
+                cut = "멈춤"
+            elif time.monotonic() >= deadline:
+                cut = f"{int(seconds)}초 안에 끝나지 않았다"
+            if cut:
+                break
+            time.sleep(0.2)
+        self.observe()
+        output = (self.folder / "evidence" / f"{key}.log").read_bytes().decode("utf-8", "replace")
+        return (None if cut else code), output, cut
+
     def observe(self) -> None:
         """Record every member each job has seen, so recovery can still name them after a crash."""
 

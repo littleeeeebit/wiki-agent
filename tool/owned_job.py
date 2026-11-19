@@ -71,6 +71,7 @@ def _kernel():
     k.DuplicateHandle.argtypes = (w.HANDLE, w.HANDLE, w.HANDLE, ctypes.POINTER(w.HANDLE), w.DWORD, w.BOOL, w.DWORD)
     k.OpenProcess.argtypes, k.OpenProcess.restype = (w.DWORD, w.BOOL, w.DWORD), w.HANDLE
     k.WaitForSingleObject.argtypes = (w.HANDLE, w.DWORD)
+    k.GetExitCodeProcess.argtypes = (w.HANDLE, ctypes.POINTER(w.DWORD))
     k.CloseHandle.argtypes = (w.HANDLE,)
     k.GetTickCount64.restype = ctypes.c_uint64
     return k
@@ -230,6 +231,19 @@ class Job:
         count = self._count()
         return (bool(self.joined) and all(self._gone(entry) for entry in self.joined) and not self._strays()
                 and not isinstance(count, int) and count.total == len(self.joined) and count.active == 0)
+
+    def code(self, root: dict) -> int | None:
+        """The exit code of the member `root` names, read from the handle bound to it once it has exited, or
+        `None` while it runs, before it joined, or when it was never held."""
+
+        while self._pump() == 64:
+            pass
+        entry = next((e for e in self.joined if e["identity"] and native_process.same(e["identity"], root)), None)
+        found = w.DWORD()
+        if entry is None or not entry["handle"] or not self._gone(entry) \
+                or not self.k.GetExitCodeProcess(entry["handle"], ctypes.byref(found)):
+            return None
+        return found.value
 
     def members(self) -> list[dict]:
         """The identities of every member that joined and could be held, alive or not: every message ready

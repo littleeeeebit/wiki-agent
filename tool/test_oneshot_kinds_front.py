@@ -64,7 +64,7 @@ def checked(found: dict) -> dict:
 def test_each_kind_is_checked_on_its_own_features():
     made = checked(blocks())
     assert [(s["id"], s["kind"]) for s in made["screens"]] == [("S1", "android"), ("S2", "android"), ("S3", "webapp")]
-    assert made["preview"]["screens"] == {"S1": "mock/S1.kt", "S2": "mock/S2.kt"} and made["mocks"]["S3"] == PAGE
+    assert made["previews"]["android"]["screens"] == {"S1": "mock/S1.kt", "S2": "mock/S2.kt"} and made["mocks"]["S3"] == PAGE
     assert set(made["states"]) == {"S1", "S2", "S3"}
 
 
