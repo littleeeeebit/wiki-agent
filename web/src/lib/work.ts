@@ -447,7 +447,10 @@ export function useWork() {
           const shown = mine.filter((t, i) => t.role === 'assistant'
             ? !(t.turn && (kept.has(`assistant:${t.turn}`) || t.turn === live?.turn))
             : !(mine[i + 1]?.role === 'assistant' && mine[i + 1].turn && kept.has(`user:${mine[i + 1].turn}`)))
-          return { ...all, [path]: [...past, ...(live ? [live] : []), ...shown] }
+          // A replacement takes its local copy's place, after the instruction that copy answered.
+          const at = live ? mine.findIndex((t) => t.role === 'assistant' && t.turn === live.turn) : -1
+          const before = at < 0 ? 0 : shown.filter((t) => mine.indexOf(t) < at).length
+          return { ...all, [path]: [...past, ...shown.slice(0, before), ...(live ? [live] : []), ...shown.slice(before)] }
         })
         if (fresh) setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
         if (live && now) {
