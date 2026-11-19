@@ -483,7 +483,7 @@ export function useWork() {
 
   // Named, so the reload after a replaced turn calls itself, not the outer binding.
   // Resolves false when the record could not be read, for a screen that tells that from an empty one.
-  const load = useCallback(function load(path: string): Promise<boolean> {
+  const load = useCallback(function load(path: string, again = false): Promise<boolean> {
     if (!path || loading.current.has(path)) return Promise.resolve(true)
     loading.current.add(path)
     const life = lives.current.get(path) ?? 0
@@ -545,7 +545,7 @@ export function useWork() {
               if (gone && !control.signal.aborted && !expired && sendingNow(path)) defer(path)
               else if (gone && !control.signal.aborted && !expired) {
                 forget(path)
-                load(path)
+                load(path, true)
               }
             })
         }
@@ -554,9 +554,9 @@ export function useWork() {
       .catch(() => {
         if ((lives.current.get(path) ?? 0) !== life) return false
         loading.current.delete(path)
-        // This read carried a deferred refresh and no send is left to owe it: try once more.
-        // ponytail: one retry per deferral; a second failure waits for the next notice or sync.
-        if (missed.current.has(path) && !sendingNow(path)) {
+        // A reload that replaced what the pane showed (`again`), or a read that carried a deferred refresh no send
+        // is left to owe: try once more. ponytail: one retry; a second failure waits for the next notice or sync.
+        if (again || (missed.current.has(path) && !sendingNow(path))) {
           missed.current.delete(path)
           setTimeout(() => {
             if ((lives.current.get(path) ?? 0) === life) load(path)
@@ -596,14 +596,14 @@ export function useWork() {
         if (!sendingNow(path) && !streams.current.has(path) && owed && !reading) {
           missed.current.delete(path)
           forget(path)   // a notice deferred for this send, and nothing attached since: read once now
-          load(path)
+          load(path, true)
         }
       } else if (sendingNow(path)) {
         if (gone) defer(path)
       } else if (gone || (owed && !reading)) {
         missed.current.delete(path)   // either reason reloads once, and settles the other
         forget(path)
-        load(path)
+        load(path, true)
       }
     },
     [follow, forget, load, patch],
@@ -690,7 +690,7 @@ export function useWork() {
     const now = streams.current.get(path)
     if (loading.current.has(path) || (now && now !== before)) {
       forget(path)
-      load(path)
+      load(path, true)
       return kept
     }
     // A record read before the clear and landing after it would bring the
@@ -714,7 +714,7 @@ export function useWork() {
       return
     }
     forget(path)
-    load(path)
+    load(path, true)
   }, [forget, load])
 
   useEffect(() => {
