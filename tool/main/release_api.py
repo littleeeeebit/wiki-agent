@@ -14,6 +14,7 @@ handed to a repair task as a press's would be. One project runs one of the two a
 
 from __future__ import annotations
 
+import os
 import re
 import secrets
 import subprocess
@@ -36,6 +37,7 @@ SHUTDOWN_WAIT = 120   # seconds a closing server gives a stopped test build to r
 _runs: dict[str, dict] = {}   # project name -> its rehearsal: the running one, or the last one's summary
 _presses: dict[str, dict] = {}   # project name -> this server's last press: running, or how it ended
 _sweep: list[dict] = []   # this lifespan's startup sweep (`recover`): its halt and its thread
+_settled = [0]   # how many presses and sweeps have ended in this process: a card read across one is read again
 _lock = threading.Lock()
 _deadline: list[float] = []   # when shutdown stops waiting: set by its first `close_all`, kept by any later one
 # Every snapshot of a run carries `boot`, a fresh random name for each server lifespan, and `rev`, the run's
@@ -147,11 +149,13 @@ def summary(result: dict) -> dict:
     """The rehearsal's outcome as the card shows it: each build's version and what was refused, the two
     refusals, the repair task a source failure went to, and any checkout left behind. The facts stay out."""
 
-    rounds = [{"version": r["version"], **({"failed": r["failed"]} if "failed" in r else {}),
-               "refused": r.get("refused") or []} for r in result["rounds"]]
+    rounds = [{"version": r["version"], **({"failed": public(r["failed"])} if "failed" in r else {}),
+               "refused": [public(x) for x in r.get("refused") or []]} for r in result["rounds"]]
     refusals = {k: len(v) for k, v in result["refusals"].items()}
+    repair = result.get("repair")
+    repair = repair and {k: public(v) if isinstance(v, str) else v for k, v in repair.items()}
     return {"ok": result["ok"], "sha": result.get("sha"), "rounds": rounds, "refusals": refusals,
-            "repair": result.get("repair"), "left": result.get("left") or []}
+            "repair": repair, "left": result.get("left") or []}
 
 
 def _repairing(name: str, halt: threading.Event):
@@ -197,13 +201,13 @@ def get_card(name: str) -> dict:
 
     repo = _repo(name)
     with _lock:
-        read = _revs.get(name, 0)
+        read, settled = _revs.get(name, 0), _settled[0]
     try:
         out = card(repo)
     except (ValueError, OSError, subprocess.SubprocessError, gh.Failed) as exc:
         # The ledger needs no preview: a pending attempt stays on the card, to be carried on.
         out = {"error": public(str(exc) or type(exc).__name__), **booked(repo)}
-    return {**out, "read": read, "rehearsal": shown(name), "press": pressed(name)}
+    return {**out, "read": read, "settled": settled, "rehearsal": shown(name), "press": pressed(name)}
 
 
 @router.get("/api/release/{name}/rehearsal")
@@ -211,7 +215,9 @@ def get_rehearsal(name: str) -> dict:
     """The test build's state and the last press, for the card to follow, without reading GitHub again."""
 
     _repo(name)
-    return {"rehearsal": shown(name), "press": pressed(name)}
+    with _lock:
+        settled = _settled[0]
+    return {"rehearsal": shown(name), "press": pressed(name), "settled": settled}
 
 
 @router.post("/api/release/{name}/rehearse")
@@ -278,14 +284,16 @@ def _pressing(name: str, repo: Path, version: str, work, halt: threading.Event) 
         ended = {"error": public(str(exc) or type(exc).__name__)}
     with _lock:
         _presses[name] = {"state": "ended", "version": version, "ended": time.time(), **ended, "rev": _rev(name)}
+        _settled[0] += 1
 
 
-def pressed(name: str) -> dict | None:
-    """This server's last press of `name` as the card shows it, with its `rev` and `boot` as a run's, or None."""
+def pressed(name: str) -> dict:
+    """This server's last press of `name` as the card shows it, with its `rev` and `boot` as a run's. Before one,
+    `none` at the project's current `rev`, so an empty answer is ordered like any other."""
 
     with _lock:
-        press = _presses.get(name)
-        return press and {**{k: v for k, v in press.items() if k not in ("halt", "thread")}, "boot": _boot[0]}
+        press = _presses.get(name) or {"state": "none", "rev": _revs.get(name, 0)}
+        return {**{k: v for k, v in press.items() if k not in ("halt", "thread")}, "boot": _boot[0]}
 
 
 SWEEPING = "서버가 켜지며 멈춘 게시를 이어 가는 중이다 — 끝난 뒤 다시 누른다"
@@ -350,6 +358,8 @@ def resume(name: str, remote: str, attempt: str) -> dict:
     held = release_publish.pending(remote)
     if not held or held["id"] != attempt:
         raise HTTPException(409, "카드가 보여 준 게시는 이미 끝났다 — 카드를 다시 읽는다")
+    if os.path.normcase(os.path.realpath(held.get("repo") or "")) != os.path.normcase(os.path.realpath(repo)):
+        raise HTTPException(409, f"그 게시는 {name} 의 것이 아니다 — 그 프로젝트의 카드에서 이어 간다")
     return _begin(name, repo, held["version"], lambda halt: release_publish.finish(remote, attempt, halt))
 
 
@@ -365,11 +375,11 @@ def close_all() -> None:
         running = [(name, run) for name, run in _runs.items() if run.get("state") == "running"]
         running += [(name, press) for name, press in _presses.items() if press.get("state") == "running"]
         for sweep in _sweep:   # one that has not started yet stops before its first remote
-            sweep["halt"].set()
+            gh.stop(sweep["halt"])
         running += [("recover", sweep) for sweep in _sweep if sweep["thread"].is_alive()]
         for _, run in running:
             if not run.get("repairing"):
-                run["halt"].set()
+                gh.stop(run["halt"])   # after this no GitHub write of theirs launches
         if not _deadline:
             _deadline.append(time.monotonic() + SHUTDOWN_WAIT)
     for name, run in running:
@@ -394,6 +404,9 @@ def recover() -> None:
                     errorlog.record("release-recover", RuntimeError(row["last_error"]), remote=row["remote"])
         except Exception as exc:   # noqa: BLE001 — a failed sweep is recorded; the server goes on
             errorlog.record("release-recover", exc)
+        finally:
+            with _lock:   # what it settled changes the ledger every card reads
+                _settled[0] += 1
 
     # Owned by this lifespan: its shutdown halts and waits for it, and while it runs no press, resume or test
     # build starts, since it may be carrying any project's attempt on.

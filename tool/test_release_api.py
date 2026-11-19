@@ -61,7 +61,7 @@ def test_before_a_first_release_the_card_shows_the_seed_and_offers_no_choice(pro
     card = client.get("/api/release/app").json()
 
     assert card["last"] is None and card["versions"] == {"first": "0.1.0"}
-    assert card["ahead"] == 3 and card["press"] is None and card["key"] is None and card["rehearsal"]["state"] == "idle"
+    assert card["ahead"] == 3 and card["press"]["state"] == "none" and card["key"] is None and card["rehearsal"]["state"] == "idle"
 
 
 def test_the_card_shows_each_choice_from_the_last_production_release_and_the_commits_since(project):
@@ -94,7 +94,7 @@ def test_a_repository_without_a_release_table_shows_why(project, monkeypatch):
 
     monkeypatch.setattr(release, "settings", missing)
     card = client.get("/api/release/app").json()
-    assert "[release]" in card["error"] and card["press"] is None
+    assert "[release]" in card["error"] and card["press"]["state"] == "none"
     assert client.get("/api/release/elsewhere").status_code == 404
     release_api._runs["elsewhere"] = {"state": "failed", "rev": 1, "left": ["C:/kept"]}   # an unresolved project's
     gone = client.post("/api/release/elsewhere/stop", params={"run_id": "x"})
@@ -389,7 +389,7 @@ SEEN = {"remote": "github.com/o/r", "sha": "a" * 40}   # what the card read
 def pressed_end(client):
     for _ in range(200):
         press = client.get("/api/release/app").json()["press"]
-        if press and press["state"] != "running":
+        if press["state"] == "ended":
             return press
         threading.Event().wait(0.05)
     raise AssertionError("the press never ended")
@@ -487,7 +487,8 @@ def test_a_press_left_pending_is_carried_on_from_the_card_and_never_builds_again
     client, *_ = project
     shown = {"remote": "github.com/o/r", "attempt": "a1"}
     assert client.post("/api/release/app/resume", params=shown).status_code == 409   # nothing to carry on
-    record = rp.reserve("github.com/o/r", {"id": "a1", "remote": "github.com/o/r", "repo": "x", "sha": "a" * 40,
+    record = rp.reserve("github.com/o/r", {"id": "a1", "remote": "github.com/o/r", "sha": "a" * 40,
+                                           "repo": str(release_api.channels.repo_for("app")),
                                            "version": "0.1.0", "tag": "v0.1.0", "state": "pending"})
     asked = []
 
@@ -576,3 +577,46 @@ def test_a_preview_that_fails_keeps_the_pending_attempt_and_shows_no_secret(proj
     card = client.get("/api/release/app").json()
     assert "hunter2secret" not in card["error"] and "dXNlcjpwYXNz" not in card["error"]
     assert card["remote"] == "github.com/o/r" and card["attempt"]["state"] == "pending"
+
+
+def test_no_github_write_launches_once_a_stop_is_signalled(monkeypatch):
+    ran = []
+    monkeypatch.setattr(release_api.gh.specs, "sh", lambda args, cwd, timeout: ran.append(args[5]) or
+                        subprocess.CompletedProcess(args, 0, "{}", ""))
+    halt = threading.Event()
+    with release_api.gh.stopping(halt):
+        release_api.gh.api("GET", "repos/o/r/releases/1")
+        release_api.gh.stop(halt)
+        with pytest.raises(release_api.gh.Halted):
+            release_api.gh.api("PATCH", "repos/o/r/releases/1", {"draft": False})
+        release_api.gh.api("GET", "repos/o/r/releases/1")   # reading back is still allowed
+    release_api.gh.api("PATCH", "repos/o/r/releases/1", {"draft": False})   # outside the block, no stop applies
+    assert ran == ["GET", "GET", "PATCH"]
+
+
+def test_resume_refuses_an_attempt_of_another_project(project, monkeypatch):
+    client, *_ = project
+    rp.reserve("github.com/o/r", {"id": "a9", "remote": "github.com/o/r", "repo": "C:/elsewhere", "sha": "a" * 40,
+                                  "version": "0.1.0", "tag": "v0.1.0", "state": "pending"})
+    monkeypatch.setattr(release_api.release_publish, "finish", lambda *a, **k: pytest.fail("carried on"))
+    answer = client.post("/api/release/app/resume", params={"remote": "github.com/o/r", "attempt": "a9"})
+    assert answer.status_code == 409 and "것이 아니다" in answer.json()["detail"]
+
+
+def test_a_test_builds_result_reaches_the_card_redacted():
+    out = release_api.summary({"ok": False, "refusals": {}, "repair": {"needed": "clone https://u:pw12345678@h/r"},
+                               "rounds": [{"version": "0.1.0", "failed": "fetch https://u:pw12345678@h/r failed",
+                                           "refused": ["token=abcdef123456"]}]})
+    assert "pw12345678" not in str(out) and "abcdef123456" not in str(out) and "h/r failed" in str(out)
+
+
+def test_every_ended_press_or_sweep_is_counted_for_the_card_to_read_again(project, monkeypatch):
+    client, *_ = project
+    before = client.get("/api/release/app/rehearsal").json()["settled"]
+    monkeypatch.setattr(release_api.release_publish, "publish", lambda *a, **k: {"state": "published"})
+    client.post("/api/release/app/publish", params={"version": "0.1.0", **SEEN})
+    pressed_end(client)
+    monkeypatch.setattr(rp, "recover", lambda halt=None: [])
+    release_api.recover()
+    release_api._sweep[0]["thread"].join(5)
+    assert client.get("/api/release/app/rehearsal").json()["settled"] == before + 2

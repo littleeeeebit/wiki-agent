@@ -52,8 +52,7 @@ class Busy(Exception):
     """Another live worker owns this attempt."""
 
 
-class Halted(Exception):
-    """A stop that reached `_finish` before its next GitHub write. The attempt stays pending for `finish`."""
+Halted = gh.Halted   # a stop that reached `_finish` before its next GitHub write: the attempt stays pending
 
 
 def _go(halt: threading.Event | None) -> None:
@@ -273,7 +272,8 @@ def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, 
         # Nothing remote was written yet and the version is not taken, so ending here is safe even for a
         # transient failure that outlasted its tries: the next press builds the same version again.
         return _ended(record, "failed", reason=str(exc) or type(exc).__name__)
-    return _tried(lambda: _finish(name, attempt, halt), halt)
+    with gh.stopping(halt):   # no GitHub write launches once a stop is signalled (`gh.stop`)
+        return _tried(lambda: _finish(name, attempt, halt), halt)
 
 
 # -- The restart table ----------------------------------------------------------------------------
@@ -379,7 +379,7 @@ def finish(name: str, attempt: str, halt: threading.Event | None = None) -> dict
     holds it. A transient GitHub failure, a ledger that cannot be written, or a `halt` before the next GitHub
     write (`Halted`) leaves it pending, so the next `finish` takes it up again. Anything else ends it as failed."""
 
-    with working(name, attempt):
+    with working(name, attempt), gh.stopping(halt):
         return _finish(name, attempt, halt)
 
 

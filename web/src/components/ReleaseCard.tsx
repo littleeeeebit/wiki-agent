@@ -20,11 +20,12 @@ type Card = {
   remote?: string; sha?: string; last?: string | null; ahead?: number | null; versions?: Partial<Record<Choice, string>>
   refused?: Partial<Record<Choice, string>>; attempt?: Attempt | null; error?: string
   read: number; rehearsal: Rehearsal   // `read`: the runs' `rev` when the card's reading began
-  press: Press | null; key?: { keystore: string; credential: string } | null
+  press: Press; key?: { keystore: string; credential: string } | null
+  settled: number   // how many presses and sweeps had ended when the card's reading began
 }
 /** This server's last press: running, or how it ended — the attempt's tag and outcome, or why none was reserved. */
 type Press = {
-  state: 'running' | 'ended'; version: string; rev: number; boot: string; started?: number; tag?: string
+  state: 'none' | 'running' | 'ended'; version?: string; rev: number; boot: string; started?: number; tag?: string
   outcome?: Attempt['state']; error?: string
 }
 /** What the publish button's first press confirmed: the second press sends exactly this, and only while the card still shows it. */
@@ -38,7 +39,7 @@ const ACTION_MS = 15_000
 const at = (name: string) => `/api/release/${encodeURIComponent(name)}`
 const getCard = (name: string) => get(at(name), undefined, AbortSignal.timeout(CARD_MS)).then((r) => json<Card>(r, '배포 카드'))
 const getRehearsal = (name: string) => get(`${at(name)}/rehearsal`, undefined, AbortSignal.timeout(STATE_MS))
-  .then((r) => json<{ rehearsal: Rehearsal; press: Press | null }>(r, '시험 빌드'))
+  .then((r) => json<{ rehearsal: Rehearsal; press: Press; settled: number }>(r, '시험 빌드'))
 // The commit the card showed goes with the start: a main that moved since is refused, never built unseen.
 const startRehearsal = (name: string, sha?: string) => post(`${at(name)}/rehearse${sha ? `?sha=${sha}` : ''}`)
   .then((r) => json<{ rehearsal: Rehearsal }>(r, '시험 빌드'))
@@ -121,26 +122,20 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   const era = useRef({ n: 0, boot: '', at: 0, ended: new Set<string>() })
   const seq = useRef(0)
   const ticket = useCallback(() => ({ n: era.current.n, sent: ++seq.current }), [])
-  // The followed server's last press: only that server's answers count, ordered by `rev`, and its empty answer
-  // clears it. A new era starts with none (`dropPress`). A press seen ending reads the card again, so its attempt
-  // comes from the ledger.
+  // The followed server's last press: only that server's answers count, ordered by `rev` like its runs, its
+  // `none` before any press included. A new era starts with none (`dropPress`). A press seen ending reads the
+  // card again, so its attempt comes from the ledger.
   const [press, setPress] = useState<Press | null>(null)
   const pressNow = useRef<Press | null>(null)
-  const takePress = useCallback((p: Press | null | undefined, boot: string) => {
-    if (boot !== era.current.boot) return
+  const takePress = useCallback((p: Press | undefined, boot: string) => {
+    if (!p || boot !== era.current.boot) return
     const cur = pressNow.current
-    if (!p) {
-      if (cur) {
-        pressNow.current = null
-        setPress(null)
-      }
-      return
-    }
     if (cur && cur.rev > p.rev) return
     if (p.state === 'ended' && (cur?.state !== 'ended' || cur.rev !== p.rev)) setAgain((n) => n + 1)
     pressNow.current = p
     setPress(p)
   }, [])
+  const settledRead = useRef<number | null>(null)
   const dropPress = useCallback(() => {
     pressNow.current = null
     setPress(null)
@@ -229,6 +224,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
         const taken = adopt(c.rehearsal, t)
         takePress(c.press, c.rehearsal.boot)
         if (!taken) return
+        settledRead.current = c.settled
         setCard(c)
         if (c.sha && !c.error) setGood({ read: c.read })
       })
@@ -248,7 +244,15 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
       if (out) return
       out = true
       const t = ticket()
-      getRehearsal(name).then((r) => { adopt(r.rehearsal, t); takePress(r.press, r.rehearsal.boot) }).catch(() => {}).finally(() => { out = false })
+      getRehearsal(name).then((r) => {
+        adopt(r.rehearsal, t)
+        takePress(r.press, r.rehearsal.boot)
+        // A press or a sweep that ended after the card began reading changed the ledger and maybe GitHub.
+        if (r.rehearsal.boot === era.current.boot && settledRead.current !== null && r.settled > settledRead.current) {
+          settledRead.current = r.settled
+          setAgain((n) => n + 1)
+        }
+      }).catch(() => {}).finally(() => { out = false })
     }, 5000)
     return () => clearInterval(timer)
   }, [name, adopt, ticket, takePress])
