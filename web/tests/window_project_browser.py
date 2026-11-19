@@ -78,7 +78,8 @@ def main():
             question = {**stop, "repo": "fixture-b", "id": "asked-task", "worktree": ASKED,
                         "stopped": {"reason": "작업 에이전트의 질문", "detail": ""}}
             # Another task's stop on the shared checkout: the turn running there is not its.
-            parked = {**stop, "repo": "fixture-b", "id": "parked-task", "worktree": SHARED,
+            # `waiting` as the server gives it: the checkout's approval, which is the running turn's.
+            parked = {**stop, "repo": "fixture-b", "id": "parked-task", "worktree": SHARED, "waiting": True,
                       "stopped": {"reason": "게이트", "detail": ""}}
             # Another stop on the same checkout: each row opens its own task.
             idle = {**parked, "id": "idle-task", "stopped": {"reason": "검증", "detail": ""}}
@@ -88,7 +89,7 @@ def main():
                  "cell": RUNNING}], **live}
         if path == "work/log" and request.query_params["path"] == SHARED:
             return {"rows": [], "session_id": "b", "busy": True, "running": {"turn": "turn-b", "session_id": "b", "seq": 0},
-                    "rules": [], "queued": None}
+                    "rules": [{"kind": "tool", "tool": "Bash"}], "queued": "Then run the linter"}
         if path == "work/events" and request.query_params["path"] == SHARED:
             async def waiting():
                 ev = {"kind": "approval", "text": "Run the checks", "meta": {"id": "ask-b", "tool": "Bash"},
@@ -137,8 +138,10 @@ def main():
         answering = a.get_by_role("button", name="fixture-b/asked-task")
         expect(answering).to_contain_text("작업 중")
         expect(answering).not_to_contain_text("멈춤")
-        # The running row's pane steers its own turn.
+        # The running row's pane steers its own turn, its queue and its session's permissions.
         expect(a.get_by_role("button", name="멈춤", exact=True)).to_be_visible()
+        for control in ("취소", "해제"):
+            expect(a.get_by_role("button", name=control, exact=True)).to_be_visible()
         # Two other tasks stopped on the same checkout: each is its own row, with its own reason, and opens alone.
         parked, idle = (a.get_by_role("button", name=f"fixture-b/{n}") for n in ("parked-task", "idle-task"))
         expect(parked).to_contain_text("게이트")
@@ -150,7 +153,9 @@ def main():
             expect(a.locator("nav [aria-current=true]")).to_have_count(1)
             # The checkout's running turn is not this task's: shown, never stopped, answered or steered here.
             expect(a.get_by_text("다른 작업의 턴이 돌고 있다")).to_be_visible()
-            expect(a.get_by_role("button", name="멈춤", exact=True)).to_have_count(0)
+            for control in ("멈춤", "취소", "해제"):
+                expect(a.get_by_role("button", name=control, exact=True)).to_have_count(0)
+            expect(a.get_by_role("tab", name="에이전트").locator('[title="승인을 기다린다"]')).to_have_count(0)   # nor its dot
             expect(a.get_by_role("button", name="허용", exact=True)).to_be_disabled()
 
         shell = page_of(context, errors)
