@@ -519,8 +519,8 @@ def cell(spec: dict, path: Path) -> ChatSession:
         effort = named.get("effort") or (own["effort"] if own else settings()["review_effort"])
         try:   # a plan's effort-only reviewer too: checked against the repository's model it runs on
             offered = channels.efforts_of(model) if own else None
-        except Exception:   # an unanswered model list never stops a round or a final gate: the pair runs as saved
-            offered = None
+        except Exception:   # an unanswered list never stops a round: the pair checked when saved runs, a plan's effort not
+            offered, effort = None, own["effort"]
         if offered is not None and effort not in offered:
             effort = ""   # the model does not take that effort: its default runs, and the review tab says so
     repo = channels.repo_for(spec["repo"]) if verify_dir is not None else None
@@ -1206,7 +1206,7 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
     return None if loop.halt.is_set() else {**record, "tail": verdict["tail"]}
 
 
-def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n: int, head: str, base: str) -> bool:
+def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession | None, n: int, head: str, base: str) -> bool:
     """A round allowed `head`: the final gate runs, and only its pass makes
     the spec mergeable. A failure goes to the work cell as a repair; its new
     commit gets its round checks and a new review. No new commit stops. A
@@ -1547,16 +1547,18 @@ def step(loop: Loop) -> bool:
         # Allowed already, with no final gate that stands: one from before
         # `validation`, one a restart cut, or one that failed and was resumed.
         # The review is not asked again; only the final gate runs.
+        # The reviewer only picks deferred P2s here: with none, nothing resolves its model before the gate (`pick`).
         spec = change(loop, f"리뷰 R{last['n']}")
-        return spec is not None and allowed(loop, spec, repo, path, cell(spec, path), last["n"], head, base)
+        return spec is not None and allowed(loop, spec, repo, path, cell(spec, path) if spec.get("deferred") else None,
+                                            last["n"], head, base)
     if n > cap(spec):
         return stop(loop, loop.repo, loop.sid, Why.CAP, f"{cap(spec)} 라운드를 다 돌았다")
+    chat = cell(spec, path)   # before `review_again` goes: a reviewer that cannot be built leaves the request standing
     spec = change(loop, f"리뷰 R{n}", review_again=False)
     if spec is None:
         return False
     if (contract := review_contract.store(repo, path, spec, contract)) is None:
         return True
-    chat = cell(spec, path)
     kept = folder(spec["repo"], pr)
     kept.mkdir(parents=True, exist_ok=True)
     order = kept / f"round-{n}.md"
@@ -1805,7 +1807,7 @@ def corrected(loop: Loop, spec: dict, repo: Path, path: Path) -> bool:
     return shipped(loop, spec, repo, path, head, base)
 
 
-def pick(loop: Loop, chat: ChatSession, deferred: list[str]) -> tuple[list[str], list[str]]:
+def pick(loop: Loop, chat: ChatSession | None, deferred: list[str]) -> tuple[list[str], list[str]]:
     """The deferred P2 worth a follow-up as the review cell picks them, and its own Korean for the PR comment."""
 
     with _lock:

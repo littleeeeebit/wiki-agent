@@ -3076,6 +3076,8 @@ def test_each_repository_keeps_its_own_review_model(world, tmp_path):
         # A model list that does not answer leaves the saved pair: it never stops the round.
         with patch.object(chat_channels, "efforts_of", side_effect=TimeoutError("model/list")):
             assert loop.cell(spec, Path(spec["worktree"])).effort == "low"
+            loop.close_cell("proj", 7)   # and a plan's unchecked effort gives way to it
+            assert loop.cell({**spec, "reviewer": {"model": "", "effort": "high"}}, Path(spec["worktree"])).effort == "low"
         loop.close_cell("proj", 7)
         # A pinned reviewer's default effort is its own, never the repository's.
         pinned = {**spec, "reviewer": {"model": "codex:b", "effort": ""}}
