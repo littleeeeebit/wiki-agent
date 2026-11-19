@@ -320,11 +320,22 @@ def core_checked(design: dict, reqs: list[dict], glossary: list[dict], profile: 
 
 
 def avoided(words: list[tuple[str, str]], glossary: list[dict]) -> None:
-    """Refuses the first glossary `avoid` word any `(id, text)` uses."""
+    """Refuses the first glossary `avoid` word any `(id, text)` uses. A glossary term that holds the word is
+    taken out first: one entry may avoid a word another entry defines (`번역` avoiding `변환`), and using that
+    term is never using the avoided word."""
+
+    terms = sorted({g["term"].lower() for g in glossary}, key=len, reverse=True)
+
+    def uses(text: str, avoid: str) -> bool:
+        text = text.lower()
+        for t in terms:
+            if avoid in t:
+                text = text.replace(t, " ")
+        return avoid in text
 
     for g in glossary:
         for avoid in g.get("avoid") or []:
-            if hits := [i for i, text in words if avoid.lower() in text.lower()]:
+            if hits := [i for i, text in words if uses(text, avoid.lower())]:
                 raise ValueError(f"{', '.join(hits)}: 용어집의 `{g['term']}` 대신 쓰지 않기로 한 `{avoid}` 를 썼다")
 
 

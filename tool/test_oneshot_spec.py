@@ -312,6 +312,17 @@ def test_a_cycle_through_the_requirements_and_a_malformed_avoid_list_are_refused
         sheet.requirement_block({"requirements": REQS, "glossary": [{**GLOSSARY[0], "avoid": 3}]})
 
 
+def test_an_avoided_word_another_entry_defines_is_not_a_hit():
+    glossary = [{"term": "변환", "meaning": "바꾸는 일 전체", "avoid": ["더빙"]},
+                {"term": "번역", "meaning": "변환의 한 단계", "avoid": ["변환"]},
+                {"term": "화자", "meaning": "말하는 사람", "avoid": ["발화자"]}]
+    sheet.avoided([("M2", "목소리를 변환한다")], glossary)   # `변환` is a term, so using it is allowed
+    with pytest.raises(ValueError, match="M3: 용어집의 `화자`"):
+        sheet.avoided([("M3", "발화자를 나눈다")], glossary)   # a word holding a term is still caught
+    with pytest.raises(ValueError, match="M4: 용어집의 `변환`"):
+        sheet.avoided([("M4", "더빙한다")], glossary)
+
+
 @pytest.mark.parametrize("bad, named", [
     ([{**REQS[0], "owner": "x"}], "R1: 모르는 키 — owner"),
     ([REQS[0], REQS[0]], "R1: id 가 겹친다"),
