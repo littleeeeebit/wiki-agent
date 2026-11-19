@@ -90,7 +90,12 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   const ticket = useCallback(() => ({ n: era.current.n, sent: ++seq.current }), [])
   const adopt = useCallback((r: Rehearsal, t: { n: number; sent: number }) => {
     const e = era.current
-    if (t.n !== e.n) return false
+    if (t.n !== e.n) {
+      // An ended era's request that the server this era follows answered: its build state is that server's, so
+      // it still counts by `rev`. Its preview, its error and its busy flag stay with the era it was sent in.
+      if (e.boot && r.boot === e.boot) setRun((cur) => newer(cur, r))
+      return false
+    }
     if (!e.boot) {
       e.boot = r.boot
       e.at = seq.current
