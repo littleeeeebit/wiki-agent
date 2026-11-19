@@ -34,7 +34,7 @@ from common.paths import DATA, RAW, RESOURCES
 from workspace import TASK, create
 
 from . import channels, connect, oneshot_android, prerequisite_review, runtime, specs
-from .oneshot_files import as_planned, git, planned, tracked  # noqa: F401 — `tracked` is read by tests
+from .oneshot_files import as_planned, cargo_quiet, git, planned, tracked  # noqa: F401 — `tracked` is read by tests
 from .oneshot_profile import (DEVICES, SUPPORTED_KINDS, charged, cut, kinds_of, ledger, problems, proposal,
                               schema, current, off_host, unavailable)
 from .query import ROOT
@@ -628,6 +628,7 @@ def s_spec(run: dict) -> None:
             tree = create(path, BRANCH, linked=True)
         except (ValueError, RuntimeError) as exc:
             raise Stop("folder", str(exc)) from exc
+    cargo_quiet(tree.parent)
     if spec is None:
         now = time.time()
         specs.save({"id": BRANCH, "repo": name, "rev": 1, "goal": run["intent"]["restated"], "out": [],

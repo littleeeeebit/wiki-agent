@@ -16,6 +16,10 @@ IGNORE = [".env", "artifacts/", ".venv/", "venv/", "__pycache__/", "*.pyc", ".py
           ".gradle/", "vendor/", ".DS_Store"]
 # An Android project's machine-local files: `local.properties` names this PC's SDK folder.
 ANDROID_IGNORE = ["local.properties", ".idea/", "*.iml", ".cxx/", ".externalNativeBuild/", "captures/"]
+# Agent turns rebuild with ever-changing flags, and Cargo never collects the incremental cache each leaves:
+# one worktree's `target` reached 24 GiB. Build paths stay Cargo's defaults, since scripts name `target/debug`.
+CARGO = ("# Written by wiki-agent's oneshot: no Cargo run in these worktrees keeps an incremental cache.\n"
+         "[build]\nincremental = false\n")
 
 
 def planned(run: dict) -> dict[str, str]:
@@ -33,6 +37,17 @@ def planned(run: dict) -> dict[str, str]:
     if p["visibility"] == "public" and run.get("license_text"):
         files["LICENSE"] = run["license_text"]
     return files
+
+
+def cargo_quiet(home: Path) -> None:
+    """Every Cargo run under the worktrees folder `home` keeps no incremental cache. Cargo reads a
+    `.cargo/config.toml` in any directory above where it runs, so this one file outside the repository reaches
+    the work turns and the gates alike. One already there is the owner's and stays as it is."""
+
+    config = home / ".cargo" / "config.toml"
+    if not config.exists():
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(CARGO, encoding="utf-8")
 
 
 def git(path: Path, *args: str, timeout: float = 60):
