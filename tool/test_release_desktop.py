@@ -23,7 +23,8 @@ from test_release import _rehearsable
 DESKTOP = {"build": "b", "artifact": "nsis/r_{version}_x64-setup.exe", "exe": "r.exe", "product_name": "r",
            "publisher": "o"}
 GOOD = {"version": "0.1.1", "file_version": "0.1.1", "product": "r", "exe_version": "0.1.1", "exe_product": "r",
-        "publisher": "o", "reg_product": "r", "reg_publisher": "o", "reg_version": "0.1.1", "install_key": True}
+        "publisher": "o", "reg_product": "r", "reg_publisher": "o", "reg_version": "0.1.1", "install_key": True,
+        "scope": "currentUser", "view": "256"}
 # The app EXE as built: Tauri's runtime names the NSIS value, then holds the placeholder its bundler sets.
 APP = b"MZ app " + rd.MARKER + rd.NSIS + b" runtime " + rd.MARKER + b"UNK tail"
 PACKED = b"MZ app " + rd.MARKER + rd.NSIS + b" runtime " + rd.MARKER + rd.NSIS + b" tail"
@@ -33,10 +34,13 @@ TAURI = [(UNINSTALL, "DisplayName", "r"), (UNINSTALL, "Publisher", "o"), (UNINST
 
 
 def nsis(tmp_path: Path, writes=TAURI, files=(("helper.exe", b"MZ helper " + rd.MARKER + rd.NSIS), ("r.exe", PACKED)),
-         flags=0, dictionary=1 << 16) -> Path:
+         flags=0, dictionary=1 << 16, context=("0",), view=("256",),
+         uninstaller=(b"icon", b"MZ uninstaller")) -> Path:
     """A synthetic installer laid out as Unicode NSIS 3 lays one out: a stub, the first header on a 512-byte
-    boundary, one solid LZMA stream holding the script (its blocks, its entries, its strings) and each file, and
-    the CRC32 of everything from byte 512. A value of None is a variable, as `$INSTDIR` is."""
+    boundary, one solid LZMA stream holding the script (its blocks, its entries, its strings), each file and the
+    uninstaller's two records, and the CRC32 of everything from byte 512. A value of None is a variable, as
+    `$INSTDIR` is; an uninstaller record of None is one the stream never holds. `context` and `view` are what
+    `SetShellVarContext` and `SetRegView` set."""
 
     table, at = bytearray(), {}
 
@@ -53,6 +57,11 @@ def nsis(tmp_path: Path, writes=TAURI, files=(("helper.exe", b"MZ helper " + rd.
     for name, body in files:   # a body of None is an entry whose record the stream never holds
         entries.append((rd.EW_EXTRACTFILE, [0, ptr(name), len(data) + (body is None) * 64, 0, 0, 0]))
         data.extend(b"" if body is None else struct.pack("<I", len(body)) + body)
+    icon, program = uninstaller
+    entries.append((rd.EW_WRITEUNINSTALLER, [ptr("uninstall.exe"), len(data), len(icon), 0, 0, 0]))
+    data.extend(b"".join(struct.pack("<I", len(r)) + r for r in (icon, program) if r is not None))
+    entries += [(rd.EW_SETFLAG, [flag, ptr(value), 0, 0, 0, 0])
+                for flag, values in ((rd.FLAG_CONTEXT, context), (rd.FLAG_VIEW, view)) for value in values]
     entries += [(rd.EW_WRITEREG, [w[3] if len(w) > 3 else rd.SHCTX, ptr(w[0]), ptr(w[1]), ptr(w[2]), 1, 1])
                 for w in writes]   # a fourth item is another root
     blocks = 4 + 8 * 8
@@ -89,7 +98,7 @@ def test_the_version_resource_is_read_from_a_real_windows_executable():
 
 
 def test_a_good_installer_passes_and_a_four_part_version_reads_as_semver():
-    assert rd.built_wrong(GOOD, "0.1.1", DESKTOP, {"version": "0.1.0", "product": "r", "publisher": "o"}) == []
+    assert rd.built_wrong(GOOD, "0.1.1", DESKTOP, {**GOOD, "version": "0.1.0"}) == []
     assert rd.built_wrong({**GOOD, "file_version": "0.1.1.0"}, "0.1.1", DESKTOP) == []
     assert rd.plain("0.1.1.0") == "0.1.1" and rd.plain("0.1.1.2") == "0.1.1.2"
 
@@ -143,11 +152,37 @@ def test_what_the_script_registers_must_be_the_identity(tmp_path, resources, wri
     assert any(said in w for w in why), why
 
 
+@pytest.mark.parametrize("context, view, said", [
+    (("0", "1"), ("256",), "설치 범위(사용자별 또는 컴퓨터 전체)를 하나로"),   # installMode "both"
+    ((), ("256",), "설치 범위(사용자별 또는 컴퓨터 전체)를 하나로"),
+    (("0",), ("256", "0"), "레지스트리 보기를 하나로"),
+])
+def test_an_install_scope_the_script_leaves_open_is_refused(tmp_path, resources, context, view, said):
+    why = rd.built_wrong(rd.facts(nsis(tmp_path, context=context, view=view)), "0.1.1", DESKTOP)
+    assert any(said in w for w in why), why
+
+
+def test_a_scope_that_moved_since_the_previous_installer_is_refused(tmp_path, resources):
+    previous = {**GOOD, "version": "0.1.0"}
+    seen = rd.facts(nsis(tmp_path, context=("1",)))
+    assert seen["scope"] == "perMachine" and rd.built_wrong(seen, "0.1.1", DESKTOP) == []
+    assert any("'perMachine' 가 이전 정식 설치 파일의 'currentUser'" in w
+               for w in rd.built_wrong(seen, "0.1.1", DESKTOP, previous))
+    assert any("레지스트리 보기 '0'" in w for w in rd.built_wrong(rd.facts(nsis(tmp_path, view=())), "0.1.1", DESKTOP,
+                                                                     previous))
+
+
+def test_an_uninstaller_whose_second_record_is_missing_is_refused(tmp_path, resources):
+    with pytest.raises(ValueError, match="기록이 끝나기 전에 끝난다"):
+        rd.facts(nsis(tmp_path, uninstaller=(b"icon", None)))
+
+
 def test_a_main_binary_the_script_does_not_extract_once_is_refused(tmp_path, resources):
     with pytest.raises(ValueError, match="주 실행 파일 'r.exe' 를 하나로"):
         rd.facts(nsis(tmp_path, files=(("other.exe", PACKED),)))
-    with pytest.raises(ValueError, match="주 실행 파일 'r.exe' 를 하나로"):
-        rd.facts(nsis(tmp_path, files=(("r.exe", PACKED), ("r.exe", PACKED + b"2"))))
+    for second in ("r.exe", "R.EXE", "\x03\u8095\\r.exe"):   # the same file to Windows, a later one overwriting it
+        with pytest.raises(ValueError, match="주 실행 파일 'r.exe' 를 하나로"):
+            rd.facts(nsis(tmp_path, files=(("r.exe", PACKED), (second, PACKED + b"2"))))
 
 
 def test_a_file_entry_whose_record_is_not_in_the_stream_is_refused_after_the_main_binary_too(tmp_path, resources):

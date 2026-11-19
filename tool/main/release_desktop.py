@@ -32,7 +32,11 @@ MAGIC = b"\xef\xbe\xad\xdeNullsoftInst"   # NSIS's first header: flags, this sig
 MARKER, NSIS = b"__TAURI_BUNDLE_TYPE_VAR_", b"NSS"
 FIXED_SIGNATURE, FIXED_SIZE = 0xFEEF04BD, 52   # VS_FIXEDFILEINFO
 FH_SILENT = 2   # the one first-header flag allowed: an uninstaller, CRC off or forced are not Tauri's installer
-EW_EXTRACTFILE, EW_WRITEREG = 20, 51   # NSIS 3's opcodes, as Tauri's bundled NSIS compiles them
+EW_SETFLAG, EW_EXTRACTFILE, EW_WRITEREG, EW_WRITEUNINSTALLER = 13, 20, 51, 62   # NSIS 3's, as Tauri's NSIS has them
+# The flags whose value decides where `SHCTX` resolves: `SetShellVarContext` (0 current user, 1 all users) and
+# `SetRegView` (256 the 64-bit view). Tauri's installMode sets the first once; "both" sets it at run time.
+FLAG_CONTEXT, FLAG_VIEW = 1, 12
+SCOPES = {"0": "currentUser", "1": "perMachine"}
 SHCTX, REG_SZ = 0, (1, 1)   # a registry write's root and type as `WriteRegStr SHCTX` compiles them
 INSTDIR = "\x03\u8095"   # `$INSTDIR`, variable 21, as Unicode NSIS 3 codes it: NS_VAR_CODE, CODE_SHORT(21)
 UNINSTALL = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"   # + the product name, as Tauri's script names it
@@ -135,11 +139,13 @@ def _string(script: bytes, block: tuple[int, int], ptr: int) -> str | None:
         return None
 
 
-def payload(data: bytes) -> tuple[list[tuple], dict[str, set[int]], set[int], _Stream]:
+def payload(data: bytes) -> tuple[list[tuple], dict[str, set[int]], dict[int, bool], dict[int, set], _Stream]:
     """An NSIS installer packed as Tauri's default is: Unicode NSIS 3, one solid LZMA stream, its CRC on. Gives
-    the script's registry writes as (root, key, name, value, type), each extracted file's data offsets by its
-    literal name, every offset a file entry reads, and the stream positioned at the first file. Any other shape
-    is refused: what it would install could not be read, so it could not be checked."""
+    the script's registry writes as (root, key, name, value, type); each extracted file's data offsets by its
+    destination name as Windows compares it, the last path part casefolded; every offset a file or uninstaller
+    entry reads, true where the record after it is read too; the values each flag is set to; and the stream
+    positioned at the first file. Any other shape is refused: what it would install could not be read, so it
+    could not be checked."""
 
     at, length, end = _header(data)
     props = data[at + 28:at + 33]
@@ -162,16 +168,20 @@ def payload(data: bytes) -> tuple[list[tuple], dict[str, set[int]], set[int], _S
     block = (strings, languages if strings < languages <= length else length)
     if entries + 28 * count > length or strings >= length:
         raise ValueError("NSIS 명령 표나 문자열 표가 스크립트 밖으로 나간다")
-    writes, files, offsets = [], {}, set()
+    writes, files, offsets, flags = [], {}, {}, {}
     for k in range(count):
         which, *arg = struct.unpack_from("<i6i", script, entries + 28 * k)
         if which == EW_WRITEREG:
             writes.append((arg[0], *(_string(script, block, a) for a in arg[1:4]), (arg[4], arg[5])))
         elif which == EW_EXTRACTFILE:
-            offsets.add(arg[2])
-            if (name := _string(script, block, arg[1])) is not None and not any(ord(c) < 5 for c in name):
-                files.setdefault(name, set()).add(arg[2])
-    return writes, files, offsets, stream
+            offsets[arg[2]] = offsets.get(arg[2], False)
+            name = _string(script, block, arg[1]) or ""
+            files.setdefault(name.rsplit("\\", 1)[-1].casefold(), set()).add(arg[2])
+        elif which == EW_WRITEUNINSTALLER:   # its icon record, then the record after it: the uninstaller
+            offsets[arg[1]] = True
+        elif which == EW_SETFLAG:   # a third operand restores a saved value, which no literal names
+            flags.setdefault(arg[0], set()).add(None if arg[2] else _string(script, block, arg[1]))
+    return writes, files, offsets, flags, stream
 
 
 def _registered(writes: list, product: str | None) -> dict:
@@ -194,23 +204,28 @@ def _registered(writes: list, product: str | None) -> dict:
     return reg
 
 
-def _records(stream: _Stream, offsets: set[int], main: int) -> bytes:
-    """Every file record the script reads, each checked to lie whole in the stream; only the main binary's kept.
-    A record that starts inside another, or is not solid, is refused."""
+def _records(stream: _Stream, offsets: dict[int, bool], main: int) -> bytes:
+    """Every record the script reads, each checked to lie whole in the stream, the uninstaller's two included;
+    only the main binary's kept. A record that starts inside another, or is not solid, is refused."""
 
     if not offsets or min(offsets) < 0:
         raise ValueError("파일 기록 위치가 잘못됐다")
-    at, kept = 0, b""
-    for offset in sorted(offsets):
-        if offset < at:
-            raise ValueError("파일 기록이 다른 기록 안에서 시작한다")
-        stream.read(offset - at, keep=False)
+    base, kept = stream.decoded, b""   # offsets count from the first record, after the script
+
+    def record(keep: bool) -> bytes:
         size = struct.unpack("<I", stream.read(4))[0]
         if size & 0x80000000 or size > LIMITS["app"]:
             raise ValueError("파일 기록이 지원하지 않는 형태이거나 한도를 넘는다")
-        body = stream.read(size, keep=offset == main)
+        return stream.read(size, keep=keep)
+
+    for offset in sorted(offsets):
+        if offset < stream.decoded - base:
+            raise ValueError("파일 기록이 다른 기록 안에서 시작한다")
+        stream.read(offset - (stream.decoded - base), keep=False)
+        body = record(offset == main)
         kept = body if offset == main else kept
-        at = offset + 4 + size
+        if offsets[offset]:
+            record(False)
     return kept
 
 
@@ -236,13 +251,13 @@ def facts(installer: Path, exe: Path | None = None) -> dict:
     binary must be it, as Tauri packs it: the first bundle-type placeholder set to NSIS."""
 
     data = _bounded(installer, LIMITS["installer"])   # one snapshot: the checks, the digest and the manifest
-    writes, files, offsets, stream = payload(data)
+    writes, files, offsets, flags, stream = payload(data)
     with tempfile.TemporaryDirectory() as tmp:   # Windows reads a version resource from a file only
         (copy := Path(tmp) / "setup.exe").write_bytes(data)
         shown = version_info(copy)
         reg = _registered(writes, shown.get("ProductName"))
-        main = files.get(reg["MainBinaryName"] or "", set())
-        if len(main) != 1:
+        main = files.get(reg["MainBinaryName"].casefold(), set()) if reg["MainBinaryName"] else set()
+        if len(main) != 1:   # one record for that name as Windows compares names, or one may overwrite it
             raise ValueError(f"`{installer.name}` 의 스크립트가 등록하는 주 실행 파일 {reg['MainBinaryName']!r} 를 "
                              "하나로 찾을 수 없다")
         try:
@@ -257,7 +272,17 @@ def facts(installer: Path, exe: Path | None = None) -> dict:
             "exe_version": shown_app["version"], "exe_product": shown_app.get("ProductName"),
             "publisher": shown_app.get("CompanyName"), "reg_product": reg["DisplayName"],
             "reg_publisher": reg["Publisher"], "reg_version": reg["DisplayVersion"],
-            "install_key": reg["install_key"], "sha256": hashlib.sha256(data).hexdigest()}
+            "install_key": reg["install_key"], "scope": _one(flags.get(FLAG_CONTEXT), SCOPES),
+            "view": _one(flags.get(FLAG_VIEW, {"0"}), None), "sha256": hashlib.sha256(data).hexdigest()}
+
+
+def _one(values: set | None, names: dict | None) -> str | None:
+    """The value a flag is always set to, by its name when `names` has one; None when the script leaves it
+    open: never set, set to more than one value, or to a value no literal names."""
+
+    if not values or len(values) != 1 or (value := next(iter(values))) is None:
+        return None
+    return value if names is None else names.get(value)
 
 
 def plain(text: str | None) -> str | None:
@@ -281,6 +306,12 @@ def built_wrong(seen: dict, version: str, desktop: dict, previous: dict | None =
                             ("게시자", "reg_publisher", seen.get("publisher")), ("버전", "reg_version", version)):
         if seen.get(key) != want:
             out.append(f"설치 스크립트가 등록하는 {what} {seen.get(key)!r} 가 {want!r} 와 다르다 — Windows 의 설치 목록이 어긋난다")
+    for what, key in (("설치 범위(사용자별 또는 컴퓨터 전체)", "scope"), ("레지스트리 보기", "view")):
+        if seen.get(key) is None:
+            out.append(f"설치 스크립트의 {what}를 하나로 정할 수 없다 — 업데이트가 이전 설치를 찾을 곳이 정해지지 않는다")
+        elif previous and seen[key] != previous.get(key):
+            out.append(f"{what} {seen[key]!r} 가 이전 정식 설치 파일의 {previous.get(key)!r} 와 다르다 — "
+                       "업데이트가 이전 설치를 찾지 못하고 따로 설치된다")
     if not seen.get("install_key"):
         out.append("설치 스크립트가 설치 위치를 Software\\<게시자>\\<제품 이름> 에 기록하지 않는다 — 다음 업데이트가 설치 위치를 "
                    "찾지 못한다")
