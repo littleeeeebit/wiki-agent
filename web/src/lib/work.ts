@@ -72,8 +72,6 @@ export type Turn = {
   record?: string
   /** A replay's log read, by request number: a newer accepted read that names no such turn ends it. */
   from?: number
-  /** Ended by such a read (`expire`), not by its own stream: that stream is let go. */
-  expired?: boolean
   /** Until the server's run ends — not at the answer: the gate runs after it,
    *  still holding the worktree. */
   pending?: boolean
@@ -338,22 +336,26 @@ export function useWork() {
       if (!list?.some(over)) return all
       return { ...all, [path]: list.map((t) => {
         if (!over(t)) return t
-        ended.current.add(t.key)   // idempotent: read by the replay's own end before the effect below lets it go
+        // A replay's stream is let go below; idempotent, and read by that replay's own end if it comes first.
+        if (replays.current.has(t.key)) ended.current.add(t.key)
         const saved = rows.find((r) => r.role === 'assistant' && r.turn === t.turn)
-        return saved ? { ...fromRow(saved), key: t.key, expired: true } : { ...t, pending: false, expired: true }
+        // The saved row under a key of its own: a stream still owing events to `t.key` no longer reaches it.
+        return saved ? fromRow(saved) : { ...t, pending: false }
       }) }
     })
   }, [])
-  // Each replay's own stream, by its turn's key: let go once `expire` ended that turn, after the state that says so
-  // is committed. Its late end (a 410) would otherwise reload the path under a newer send; and only its own
+  // Each live replay's own stream, by its turn's key, and the keys `expire` ended: such a stream is let go once
+  // that state is committed. Its late end (a 410) would otherwise reload the path under a newer send; only its own
   // controller is touched, never a replacement's. A replay that ends by itself keeps its stream to its end.
   const replays = useRef(new Map<number, AbortController>())
   const ended = useRef(new Set<number>())
   useEffect(() => {
-    for (const [key, control] of replays.current) {
-      if (!Object.values(turns).some((list) => list.some((t) => t.key === key && t.expired))) continue
-      control.abort()
+    for (const key of ended.current) {
+      const control = replays.current.get(key)
+      ended.current.delete(key)
       replays.current.delete(key)
+      if (!control) continue
+      control.abort()
       for (const [path, c] of streams.current) if (c === control) streams.current.delete(path)
     }
   }, [turns])
@@ -514,7 +516,8 @@ export function useWork() {
             .then((gone) => {
               if (streams.current.get(path) === control) streams.current.delete(path)
               replays.current.delete(live.key)
-              if (gone && !control.signal.aborted && !ended.current.delete(live.key)) {
+              const expired = ended.current.delete(live.key)   // every end clears its bookkeeping
+              if (gone && !control.signal.aborted && !expired) {
                 forget(path)
                 load(path)
               }
