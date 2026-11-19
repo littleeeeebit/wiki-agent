@@ -14,6 +14,7 @@ handed to a repair task as a press's would be. One project runs one of the two a
 
 from __future__ import annotations
 
+import re
 import secrets
 import subprocess
 import threading
@@ -83,7 +84,28 @@ def card(repo: Path) -> dict:
         count = ahead(repo, None, sha)
     attempts = release_publish.ledger(name)["attempts"]
     return {"remote": name, "sha": sha, "last": prior and prior["tag_name"], "ahead": count, "versions": versions,
-            "refused": refused, "attempt": attempts[-1] if attempts else None, "key": key(name)}
+            "refused": refused, "attempt": attempts[-1] and public_attempt(attempts[-1]) if attempts else None,
+            "key": key(name)}
+
+
+def public(text: str | None) -> str | None:
+    """A diagnostic as the card may show it: tokens, credentials in a URL and signed query values removed."""
+
+    if not text:
+        return text
+    text = re.sub(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/\s@]+@", r"\1", errorlog.redact(text))
+    return re.sub(r"(?i)((?:^|[?&\s])[\w.-]*(?:token|sig|signature|secret|password|key|credential|auth)[\w.-]*=)[^&\s]+",
+                  r"\1[redacted]", text)
+
+
+def public_attempt(record: dict) -> dict:
+    """The ledger's attempt as the card shows it: its tag and state, why it failed, and its repair, redacted.
+    Never its paths, URLs, facts or manifest."""
+
+    repair = record.get("repair") or {}
+    return {"tag": record.get("tag"), "state": record.get("state"), "reason": public(record.get("reason")),
+            "last_error": public(record.get("last_error")),
+            "repair": repair and {k: public(repair.get(k)) for k in ("needed", "task", "error") if repair.get(k)}}
 
 
 def key(name: str) -> dict | None:
@@ -138,7 +160,7 @@ def _rehearsing(name: str, repo: Path, halt: threading.Event, sha: str | None = 
         done = {"state": "done", **summary(result)}
     except Exception as exc:   # noqa: BLE001 — the card shows why; the server goes on
         errorlog.record("release-rehearse", exc, repo=str(repo))
-        done = {"state": "failed", "error": f"{type(exc).__name__}: {exc}", "left": getattr(exc, "left", [])}
+        done = {"state": "failed", "error": public(f"{type(exc).__name__}: {exc}"), "left": getattr(exc, "left", [])}
     with _lock:
         _runs[name] = {**_runs[name], **done, "ended": time.time(), "stopped": halt.is_set(), "rev": _rev(name)}
         for key in ("halt", "thread", "repairing", "stopping"):
@@ -171,10 +193,10 @@ def get_card(name: str) -> dict:
 
 @router.get("/api/release/{name}/rehearsal")
 def get_rehearsal(name: str) -> dict:
-    """The test build's state alone, for the card to follow while it runs, without reading GitHub again."""
+    """The test build's state and the last press, for the card to follow, without reading GitHub again."""
 
     _repo(name)
-    return {"rehearsal": shown(name)}
+    return {"rehearsal": shown(name), "press": pressed(name)}
 
 
 @router.post("/api/release/{name}/rehearse")
@@ -230,34 +252,28 @@ def stop(name: str, run_id: str = "") -> dict | JSONResponse:
     return {"rehearsal": shown(name)}
 
 
-def _pressing(name: str, repo: Path, version: str, bump: str | None, halt: threading.Event) -> None:
+def _pressing(name: str, repo: Path, version: str, work, halt: threading.Event) -> None:
     try:
-        done = release_publish.publish(repo, version, bump, halt, repair=release_repair.start)
+        done = work(halt)
         ended = {"tag": done.get("tag"), "outcome": done.get("state")}
-    except Exception as exc:   # noqa: BLE001 — refused before the reservation, or broken; the card shows why
+    except Exception as exc:   # noqa: BLE001 — refused before the reservation, stopped, or broken; the card shows why
         errorlog.record("release-publish", exc, repo=str(repo))
-        ended = {"error": str(exc) or type(exc).__name__}
+        ended = {"error": public(str(exc) or type(exc).__name__)}
     with _lock:
-        _presses[name] = {"state": "ended", "version": version, "ended": time.time(), **ended}
+        _presses[name] = {"state": "ended", "version": version, "ended": time.time(), **ended, "rev": _rev(name)}
 
 
 def pressed(name: str) -> dict | None:
-    """This server's last press of `name` as the card shows it, or None before one."""
+    """This server's last press of `name` as the card shows it, with its `rev` and `boot` as a run's, or None."""
 
     with _lock:
         press = _presses.get(name)
-        return press and {k: v for k, v in press.items() if k not in ("halt", "thread")}
+        return press and {**{k: v for k, v in press.items() if k not in ("halt", "thread")}, "boot": _boot[0]}
 
 
-@router.post("/api/release/{name}/publish")
-def press(name: str, version: str, bump: str = "") -> dict:
-    """The person's press: publish `version`, the one the card showed for `bump` (none before the first release).
-    The attempt runs off the request (`release_publish.publish`) and is followed in the ledger. A version that
-    moved since the card was read, or an attempt still pending, is refused there before anything is reserved."""
+def _begin(name: str, repo: Path, version: str, work) -> dict:
+    """`work(halt)` on its own thread as this project's press. One press or one test build runs at a time."""
 
-    repo = _repo(name)
-    if bump and bump not in release.BUMPS:
-        raise HTTPException(400, f"{bump} 는 고를 수 있는 버전 올림이 아니다")
     with _lock:   # the same lock `close_all` snapshots under, so no press slips in after it
         if runtime.stopping.is_set():
             raise HTTPException(503, "서버가 꺼지는 중이라 게시를 시작하지 않는다")
@@ -266,9 +282,10 @@ def press(name: str, version: str, bump: str = "") -> dict:
         if (_runs.get(name) or {}).get("state") == "running":
             raise HTTPException(409, f"{name} 의 시험 빌드가 도는 중이다 — 끝난 뒤 게시한다")
         halt = threading.Event()
-        worker = threading.Thread(target=_pressing, args=(name, repo, version, bump or None, halt), daemon=True)
+        worker = threading.Thread(target=_pressing, args=(name, repo, version, work, halt), daemon=True)
         prior = _presses.get(name)
-        _presses[name] = {"state": "running", "version": version, "started": time.time(), "halt": halt, "thread": worker}
+        _presses[name] = {"state": "running", "version": version, "started": time.time(), "halt": halt,
+                          "thread": worker, "rev": _rev(name)}
         try:
             worker.start()
         except RuntimeError as exc:   # the OS refused a thread: the project is not left looking busy
@@ -277,6 +294,33 @@ def press(name: str, version: str, bump: str = "") -> dict:
                 _presses[name] = prior
             raise HTTPException(503, f"게시를 시작하지 못했다 — {exc}") from exc
     return {"press": pressed(name)}
+
+
+@router.post("/api/release/{name}/publish")
+def press(name: str, version: str, remote: str, sha: str, bump: str = "") -> dict:
+    """The person's press: publish `version`, the one the card showed for `bump` (none before the first release),
+    of `remote` at `sha`, the repository and commit the card read. The attempt runs off the request
+    (`release_publish.publish`) and is followed in the ledger. Another origin, a moved `main`, a version that
+    moved, or an attempt still pending is refused there before anything is reserved."""
+
+    repo = _repo(name)
+    if bump and bump not in release.BUMPS:
+        raise HTTPException(400, f"{bump} 는 고를 수 있는 버전 올림이 아니다")
+    return _begin(name, repo, version, lambda halt: release_publish.publish(
+        repo, version, bump or None, halt, repair=release_repair.start, remote=remote, expect=sha))
+
+
+@router.post("/api/release/{name}/resume")
+def resume(name: str) -> dict:
+    """The pending attempt carried on (`release_publish.finish`), as a restarted server does: a press already
+    authorized it, and nothing new is built. For an attempt whose press ended while GitHub would not answer."""
+
+    repo = _repo(name)
+    held = release_publish.pending(release.remote(repo))
+    if not held:
+        raise HTTPException(409, f"{name} 에 이어 갈 게시가 없다")
+    return _begin(name, repo, held["version"],
+                  lambda halt: release_publish.finish(held["remote"], held["id"], halt))
 
 
 def close_all() -> None:

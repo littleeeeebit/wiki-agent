@@ -395,11 +395,46 @@ def test_a_transient_failure_is_tried_again_within_the_press(press, monkeypatch,
 def test_a_stop_during_a_wait_ends_the_tries(press, monkeypatch):
     fake, repo, _ = press
     halt = release.threading.Event()
-    halt.set()
+    create = gh.create
+
+    def stopped(*args, **kwargs):   # the stop arrives while the draft's creation is under way
+        halt.set()
+        return create(*args, **kwargs)
+
+    monkeypatch.setattr(gh, "create", stopped)
     fake.fail["POST releases"] = [502]
     with pytest.raises(gh.Failed):
         rp.publish(repo, "0.1.0", None, halt)
     assert rp.pending("github.com/o/r") and fake.fail["POST releases"] == []
+
+
+@pytest.mark.parametrize("where", ["build", "tag", "upload"])
+def test_a_stop_writes_nothing_more_to_github(press, monkeypatch, where):
+    fake, repo, _ = press
+    halt = release.threading.Event()
+    if where == "build":   # before any remote write: the attempt ends, and the next press builds again
+        build = release.build
+        monkeypatch.setattr(release, "build", lambda *a, **k: (halt.set(), build(*a, **k))[1])
+        assert rp.publish(repo, "0.1.0", None, halt)["state"] == "failed"
+        assert not fake.refs and not fake.rels
+        return
+    hook, call = ("push_tag", gh.push_tag) if where == "tag" else ("create", gh.create)
+    monkeypatch.setattr(gh, hook, lambda *a, **k: (halt.set(), call(*a, **k))[1])
+    with pytest.raises(rp.Halted):
+        rp.publish(repo, "0.1.0", None, halt)
+    record = rp.pending("github.com/o/r")
+    assert record and "멈춤" in record["last_error"]
+    assert not any(r.get("assets") for r in fake.rels) and all(r["draft"] for r in fake.rels)
+    assert rp.finish("github.com/o/r", record["id"])["state"] == "published"   # carried on from where it stopped
+
+
+def test_a_press_for_another_origin_or_a_moved_main_reserves_nothing(press, monkeypatch):
+    fake, repo, _ = press
+    with pytest.raises(ValueError, match="origin"):
+        rp.publish(repo, "0.1.0", None, remote="github.com/o/other")
+    with pytest.raises(ValueError, match="움직였다"):
+        rp.publish(repo, "0.1.0", None, remote="github.com/o/r", expect="f" * 40)
+    assert not rp.ledger("github.com/o/r")["attempts"]
 
 
 def test_a_tag_at_another_commit_ends_the_attempt_and_is_left_as_it_is(press, monkeypatch):
@@ -578,7 +613,7 @@ def test_one_remote_that_fails_never_stops_the_sweep(press, monkeypatch):
         rp.reserve(name, {"id": name[-1], "remote": name, "repo": str(repo), "tag": "v1.0.0", "sha": SHA,
                           "state": "pending"})
     real = rp._finish
-    monkeypatch.setattr(rp, "_finish", lambda name, attempt: (_ for _ in ()).throw(RuntimeError("boom"))
+    monkeypatch.setattr(rp, "_finish", lambda name, attempt, halt=None: (_ for _ in ()).throw(RuntimeError("boom"))
                         if name.endswith("/a") else real(name, attempt))
     done = {d["remote"]: d for d in rp.recover()}
     assert "boom" in done["github.com/o/a"]["last_error"] and done["github.com/o/b"]["state"] == "failed"
@@ -640,7 +675,7 @@ def test_a_recorded_draft_retagged_before_recovery_is_never_written(press, monke
 def test_a_manifest_whose_bytes_are_gone_writes_nothing_to_github(press, monkeypatch):
     fake, repo, _ = press
     real = rp._finish
-    monkeypatch.setattr(rp, "_finish", lambda name, attempt: (_ for _ in ()).throw(SystemExit()))
+    monkeypatch.setattr(rp, "_finish", lambda name, attempt, halt=None: (_ for _ in ()).throw(SystemExit()))
     with pytest.raises(SystemExit):   # stopped right after the manifest, before any remote write
         rp.publish(repo, "0.1.0", None)
     monkeypatch.setattr(rp, "_finish", real)

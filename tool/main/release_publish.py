@@ -52,6 +52,17 @@ class Busy(Exception):
     """Another live worker owns this attempt."""
 
 
+class Halted(Exception):
+    """A stop that reached `_finish` before its next GitHub write. The attempt stays pending for `finish`."""
+
+
+def _go(halt: threading.Event | None) -> None:
+    """Raises `Stopped` once `halt` is set, between two phases of a press that has written nothing remote."""
+
+    if halt is not None and halt.is_set():
+        raise Stopped("멈춤 — 서버가 꺼지거나 사람이 멈춰서 게시하지 않았다. 다시 누르면 새로 빌드한다")
+
+
 # -- The ledger -----------------------------------------------------------------------------------
 
 def _folder(name: str) -> Path:
@@ -172,19 +183,24 @@ def previous_facts(repo: str, prior: dict | None, abi: str, into: Path, kit: dic
 
 
 def publish(repo: Path, shown: str, bump: str | None, halt: threading.Event | None = None,
-            repair=None) -> dict:
+            repair=None, remote: str | None = None, expect: str | None = None) -> dict:
     """One press: pin, check the shown version, reserve, build, sign, verify, record the manifest, then
     `finish`. A refusal before the reservation writes nothing. `repair(repo, record)` starts the repair task of
-    an attempt that ended `Repairable` and returns its ID. Without it, the attempt records only that it needs one."""
+    an attempt that ended `Repairable` and returns its ID. Without it, the attempt records only that it needs one.
+    `remote` and `expect`, when given, are the canonical remote and the commit the person saw: an origin that
+    names another repository, or a `main` that moved since, is refused before anything is reserved. A `halt`
+    is checked between phases, and before each GitHub write."""
 
     halt, kit = halt or threading.Event(), release.tools()
     name = release.remote(repo)
+    if remote and name != remote:
+        raise ValueError(f"origin 이 카드를 읽은 뒤 {remote} 에서 {name} 로 바뀌었다 — 카드를 다시 읽고 눌러라")
     book = ledger(name)
     if running := next((a for a in book["attempts"] if a["state"] == "pending"), None):
         raise ValueError(f"{name} 의 배포 {running['tag']} 가 아직 진행 중이다 — 끝난 뒤 다시 누른다")
     attempt = f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
     with working(name, attempt):   # from before the reservation, so no `recover` can take it from this worker
-        done = _pressed(repo, name, attempt, shown, bump, len(book["attempts"]), kit, halt)
+        done = _pressed(repo, name, attempt, shown, bump, len(book["attempts"]), kit, halt, expect)
     return repaired(done, repair, halt) if done.get("repair") else done
 
 
@@ -209,9 +225,12 @@ def repaired(record: dict, repair, halt: threading.Event) -> dict:
 
 
 def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, seen: int, kit: dict,
-             halt: threading.Event) -> dict:
+             halt: threading.Event, expect: str | None = None) -> dict:
     repo_slug = gh.slug(name)
     sha = release.pin(repo)
+    if expect and sha != expect:
+        raise ValueError(f"`main` 이 카드를 읽은 뒤 {expect[:7]} 에서 {sha[:7]} 로 움직였다 — 카드를 다시 읽고 눌러라")
+    _go(halt)
     cfg = release.settings(repo, sha)
     first = release.seed(repo, sha, cfg["version_source"])
     listed = _tried(lambda: gh.releases(repo_slug), halt)
@@ -223,14 +242,18 @@ def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, 
     try:
         work = release.owned(release.place(repo, attempt))
         work.mkdir(parents=True)
+        _go(halt)
         key = release.release_key(repo, kit, create=prior is None)
+        _go(halt)
         before = _tried(lambda: previous_facts(repo_slug, prior, cfg["android"]["abi"], work / "previous", kit), halt)
+        _go(halt)
         src = release.checkout(repo, sha, f"{attempt}/src")
         asset = f"{repo_slug.split('/')[1]}-{chosen}-{cfg['android']['abi']}.apk"
         try:
             built = release.build(src, cfg["android"], chosen, kit, halt)
         except release.BuildFailed as exc:
             raise Repairable(str(exc)) from exc
+        _go(halt)
         signed = release.sign(built, work / asset, key, kit)
         seen = release.facts(signed, kit)
         if why := release.signed_wrong(seen, key["cert"], before):
@@ -238,17 +261,19 @@ def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, 
         if why := release.built_wrong(seen, chosen, cfg["android"], before):
             raise Repairable("; ".join(why))
         release.discard(repo, f"{attempt}/src")   # large; the signed APK beside it is what goes up
+        _go(halt)
         since = _tried(lambda: gh.tag(repo_slug, prior["tag_name"]), halt) if prior else None
         record = update(name, attempt, facts=seen, title=f"v{chosen}", notes=notes(repo, sha, since, prior is None),
                         manifest=[{"name": asset, "size": signed.stat().st_size,
                                    "sha256": android_owned.sha256(signed), "path": str(signed)}])
+        _go(halt)   # the last point at which nothing remote has been written
     except Repairable as exc:
         return _ended(record, "failed", reason=str(exc), repair={"needed": str(exc)})
     except (Stopped, ValueError, OSError, gh.Failed) as exc:
         # Nothing remote was written yet and the version is not taken, so ending here is safe even for a
         # transient failure that outlasted its tries: the next press builds the same version again.
         return _ended(record, "failed", reason=str(exc) or type(exc).__name__)
-    return _tried(lambda: _finish(name, attempt), halt)
+    return _tried(lambda: _finish(name, attempt, halt), halt)
 
 
 # -- The restart table ----------------------------------------------------------------------------
@@ -346,16 +371,20 @@ def _settled(record: dict, repo: str, held: dict) -> dict:
     return _ended(record, "published", release_url=held.get("html_url"), assets=assets)
 
 
-def finish(name: str, attempt: str) -> dict:
+def finish(name: str, attempt: str, halt: threading.Event | None = None) -> dict:
     """The attempt carried on from wherever it stopped, by the restart table. `Busy` when a live worker
-    holds it. A transient GitHub failure, or a ledger that cannot be written, leaves it pending, so the next
-    `finish` takes it up again. Anything else ends it as failed."""
+    holds it. A transient GitHub failure, a ledger that cannot be written, or a `halt` before the next GitHub
+    write (`Halted`) leaves it pending, so the next `finish` takes it up again. Anything else ends it as failed."""
 
     with working(name, attempt):
-        return _finish(name, attempt)
+        return _finish(name, attempt, halt)
 
 
-def _finish(name: str, attempt: str) -> dict:
+def _finish(name: str, attempt: str, halt: threading.Event | None = None) -> dict:
+    def go() -> None:
+        if halt is not None and halt.is_set():
+            raise Halted("멈춤 — GitHub 에 다 올리기 전에 멈췄다. 이어 가면 남은 것부터 올린다")
+
     record = next(a for a in ledger(name)["attempts"] if a["id"] == attempt)
     if record["state"] != "pending":
         return record
@@ -376,12 +405,14 @@ def _finish(name: str, attempt: str) -> dict:
             for item in manifest:
                 _present(item)
         if (at := gh.tag(repo, record["tag"])) is None:
+            go()
             gh.push_tag(repo, record["tag"], record["sha"])
             at = gh.tag(repo, record["tag"])
         if at != record["sha"]:
             raise Stopped(f"태그 {record['tag']} 가 {str(at)[:12]} 를 가리킨다 — 고정한 {record['sha'][:12]} 가 아니다")
         record = update(name, attempt, tagged=True)
         if held is None:
+            go()
             try:
                 held = gh.create(repo, record["tag"], record["sha"], record["title"],
                                  f"{record['notes']}\n\n<!-- {MARK} {record['id']} -->", draft=True, prerelease=False)
@@ -390,6 +421,7 @@ def _finish(name: str, attempt: str) -> dict:
                     raise
         record = update(name, attempt, release_id=held["id"], release_url=held.get("html_url"))
         for item in manifest:
+            go()
             if not _uploaded(repo, held, item, record["tag"]):   # someone made it public meanwhile
                 return _settled(record, repo, gh.release(repo, held["id"]))
         # The last read before publishing. GitHub has no conditional publish, so a writer racing this read and
@@ -399,6 +431,7 @@ def _finish(name: str, attempt: str) -> dict:
             return _settled(record, repo, held)
         if why := _mismatch(repo, record, held):
             raise Stopped(f"공개하지 않는다: {why}")
+        go()
         try:
             held = gh.publish(repo, held["id"])
         except gh.Failed as exc:
@@ -413,6 +446,9 @@ def _finish(name: str, attempt: str) -> dict:
             update(name, attempt, last_error=str(exc))
             raise
         return _ended(record, "failed", reason=str(exc))
+    except Halted as exc:
+        update(name, attempt, last_error=str(exc))
+        raise
     except Stopped as exc:
         return _ended(record, "failed", reason=str(exc))
 

@@ -13,7 +13,7 @@ type Rehearsal = {
   refusals?: Record<string, number>; repair?: { needed: string; task?: string; error?: string } | null
   repairing?: boolean; stopping?: boolean; left?: string[]
 }
-type Attempt = { tag: string; state: 'pending' | 'published' | 'failed'; reason?: string; repair?: { task?: string; error?: string } }
+type Attempt = { tag: string; state: 'pending' | 'published' | 'failed'; reason?: string; last_error?: string; repair?: { task?: string; error?: string } }
 type Choice = Bump | 'first'
 /** `tool/main/release_api.py`: what a press would publish, read from origin's main and GitHub. */
 type Card = {
@@ -23,7 +23,12 @@ type Card = {
   press: Press | null; key?: { keystore: string; credential: string } | null
 }
 /** This server's last press: running, or how it ended — the attempt's tag and outcome, or why none was reserved. */
-type Press = { state: 'running' | 'ended'; version: string; started?: number; tag?: string; outcome?: Attempt['state']; error?: string }
+type Press = {
+  state: 'running' | 'ended'; version: string; rev: number; boot: string; started?: number; tag?: string
+  outcome?: Attempt['state']; error?: string
+}
+/** What the publish button's first press confirmed: the second press sends exactly this, and only while the card still shows it. */
+type Armed = { version: string; bump: Bump | null; remote: string; sha: string }
 
 // Every request is bounded, so no answer that never comes can hold the card. A card read fetches `main` and
 // reads GitHub, so it gets longer.
@@ -33,7 +38,7 @@ const ACTION_MS = 15_000
 const at = (name: string) => `/api/release/${encodeURIComponent(name)}`
 const getCard = (name: string) => get(at(name), undefined, AbortSignal.timeout(CARD_MS)).then((r) => json<Card>(r, '배포 카드'))
 const getRehearsal = (name: string) => get(`${at(name)}/rehearsal`, undefined, AbortSignal.timeout(STATE_MS))
-  .then((r) => json<{ rehearsal: Rehearsal }>(r, '시험 빌드'))
+  .then((r) => json<{ rehearsal: Rehearsal; press: Press | null }>(r, '시험 빌드'))
 // The commit the card showed goes with the start: a main that moved since is refused, never built unseen.
 const startRehearsal = (name: string, sha?: string) => post(`${at(name)}/rehearse${sha ? `?sha=${sha}` : ''}`)
   .then((r) => json<{ rehearsal: Rehearsal }>(r, '시험 빌드'))
@@ -45,11 +50,13 @@ const stopRehearsal = (name: string, id: string) => post(`${at(name)}/stop?run_i
     if (body?.rehearsal) throw Object.assign(new Error(body.detail || '시험 빌드 멈춤'), { rehearsal: body.rehearsal as Rehearsal })
     return json<{ rehearsal: Rehearsal }>(r, '시험 빌드 멈춤')
   })
-// The version the card showed goes with the press, and its choice (none before the first release): a version
-// that moved since is refused before anything is reserved.
-const pressPublish = (name: string, version: string, bump: Bump | null) =>
-  post(`${at(name)}/publish?version=${encodeURIComponent(version)}${bump ? `&bump=${bump}` : ''}`)
-    .then((r) => json<{ press: Press }>(r, '게시'))
+// What the person confirmed goes with the press: the version, its choice (none before the first release), and
+// the repository and commit the card read. Any of them that moved since is refused before anything is reserved.
+const pressPublish = (name: string, a: Armed) => post(`${at(name)}/publish?${new URLSearchParams({
+  version: a.version, remote: a.remote, sha: a.sha, ...(a.bump ? { bump: a.bump } : {}) })}`)
+  .then((r) => json<{ press: Press }>(r, '게시'))
+// A pending attempt carried on, as a restarted server would: nothing new is built.
+const resumePublish = (name: string) => post(`${at(name)}/resume`).then((r) => json<{ press: Press }>(r, '게시 이어 가기'))
 /** `promise`, or a rejection after `ms`. The promise goes on; what it brings later is still applied by `rev`. */
 const within = <T,>(promise: Promise<T>, ms: number) => Promise.race([promise, new Promise<never>((_, reject) =>
   setTimeout(() => reject(new Error('서버가 답하지 않는다 — 상태는 계속 읽는다')), ms))])
@@ -92,11 +99,23 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   const [fault, setFault] = useState('')
   const [busy, setBusy] = useState<number | null>(null)   // the era of the start or stop awaiting its answer
   const [picked, setPicked] = useState<Bump | null>(null)
-  const [armed, setArmed] = useState(false)   // the publish button's first press; the second publishes
+  const [armed, setArmed] = useState<Armed | null>(null)   // the publish button's first press; the second publishes
   // The last preview that read a commit, and the runs' `rev` when its reading began. A card that came back with
   // an error never counts as one.
   const [good, setGood] = useState<{ read: number } | null>(null)
   const [again, setAgain] = useState(0)   // bumped to read the card once more
+  // This server's last press. Within one server the one with the larger `rev` is kept, as runs are; another
+  // server's is taken as it comes, since a new server has run none of this one's.
+  const [press, setPress] = useState<Press | null>(null)
+  // A press seen ending reads the card again, so its attempt comes from the ledger.
+  const pressNow = useRef<Press | null>(null)
+  const takePress = useCallback((p: Press | null | undefined) => {
+    const cur = pressNow.current
+    if (!p || (cur && cur.boot === p.boot && cur.rev > p.rev)) return
+    if (p.state === 'ended' && (cur?.state !== 'ended' || cur.boot !== p.boot || cur.rev !== p.rev)) setAgain((n) => n + 1)
+    pressNow.current = p
+    setPress(p)
+  }, [])
 
   // Which server this card is following, and the card's own count of servers seen (`era`), which only it moves,
   // so it needs no order between servers. Every request takes a ticket: the era it was sent in, and its place in
@@ -192,6 +211,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     const t = ticket()
     getCard(name)
       .then((c) => {
+        takePress(c.press)
         if (!adopt(c.rehearsal, t)) return
         setCard(c)
         if (c.sha && !c.error) setGood({ read: c.read })
@@ -201,7 +221,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
         reading.current = false
         if (t.n !== era.current.n) setAgain((n) => n + 1)
       })
-  }, [name, adopt, ticket])
+  }, [name, adopt, ticket, takePress])
   useEffect(() => { read() }, [read, again])
 
   // While the card is open its state is read every five seconds, one bounded read at a time, so a start whose
@@ -212,10 +232,10 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
       if (out) return
       out = true
       const t = ticket()
-      getRehearsal(name).then((r) => adopt(r.rehearsal, t)).catch(() => {}).finally(() => { out = false })
+      getRehearsal(name).then((r) => { takePress(r.press); adopt(r.rehearsal, t) }).catch(() => {}).finally(() => { out = false })
     }, 5000)
     return () => clearInterval(timer)
-  }, [name, adopt, ticket])
+  }, [name, adopt, ticket, takePress])
 
   // A build that ended after the last good preview began reading leaves the card stale: what it saw of `main`
   // may have moved. It is read again, every fifteen seconds until a good preview lands, and no start goes out
@@ -300,7 +320,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   const other = held.filter((h) => h.run.boot !== run?.boot).reduce<Hold | null>((a, h) => (a && a.at > h.at ? a : h), null)
   const shown = own?.state === 'running' || !other ? own : other.run
   // A press that runs, or an attempt the ledger holds pending, is read again every fifteen seconds until it ends.
-  const publishing = card?.press?.state === 'running' || card?.attempt?.state === 'pending'
+  const publishing = press?.state === 'running' || card?.attempt?.state === 'pending'
   useEffect(() => {
     if (!publishing) return
     const timer = setInterval(read, 15000)
@@ -310,16 +330,22 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   const bump = picked ?? BUMPS.find((b) => card?.versions?.[b.bump])?.bump ?? 'patch'
   const next = first ?? card?.versions?.[bump]
   // One project runs one press or one test build at a time, and a press never goes out with a stale preview.
-  const blocked = busy !== null || stale || !card?.sha || !!card.error || !next || publishing || shown?.state === 'running'
-  async function publishNow() {
-    if (!next) return
-    setArmed(false)
+  const blocked = busy !== null || stale || !card?.sha || !card.remote || !!card.error || !next || publishing
+    || shown?.state === 'running'
+  const choice = card?.last === null ? null : bump
+  // The confirmation holds only while the card still shows what it confirmed; any change asks for a new first press.
+  const live = !!armed && !!card && armed.version === next && armed.bump === choice && armed.sha === card.sha
+    && armed.remote === card.remote
+  // An attempt the ledger holds pending with no press of this server on it: GitHub stopped answering, or the
+  // server stopped it. The person carries it on.
+  const stuck = card?.attempt?.state === 'pending' && press?.state !== 'running'
+  async function send(call: () => Promise<{ press: Press }>) {
+    setArmed(null)
     setFault('')
     const n = era.current.n
     setBusy(n)
     try {
-      const { press } = await within(pressPublish(name, next, card?.last === null ? null : bump), ACTION_MS)
-      setCard((c) => c && { ...c, press })
+      takePress((await within(call(), ACTION_MS)).press)
     } catch (err) {
       setFault(String(err instanceof Error ? err.message : err))
     } finally {
@@ -339,8 +365,13 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
               title={shown.repairing ?'수정 작업을 이미 만들기 시작해서 멈출 수 없다' : undefined}>시험 빌드 멈춤</Btn>
           : <Btn disabled={busy !== null || stale || !card?.sha || !!card.error || publishing} onClick={() => void act(() => startRehearsal(name, card?.sha))}
               title="main 을 두 번 빌드하고 일회용 시험 키로 서명해 검사한다. 아무것도 올리지 않는다">시험 빌드</Btn>}
-        <Btn tone={armed ? 'danger' : 'primary'} disabled={blocked} onClick={() => (armed ? void publishNow() : setArmed(true))}
-          title="main 을 빌드하고 정식 키로 서명·검사한 뒤 GitHub 릴리스로 올린다">{armed ? `v${next} 정말 게시` : next ? `v${next} 게시` : '게시'}</Btn>
+        {stuck
+          ? <Btn tone="primary" disabled={busy !== null || shown?.state === 'running'} onClick={() => void send(() => resumePublish(name))}
+              title="멈춘 게시를 남은 것부터 이어 간다. 새로 빌드하지 않는다">게시 이어 가기</Btn>
+          : <Btn tone={live ? 'danger' : 'primary'} disabled={blocked}
+              onClick={() => (live && armed ? void send(() => pressPublish(name, armed))
+                : next && card?.sha && card.remote && setArmed({ version: next, bump: choice, sha: card.sha, remote: card.remote }))}
+              title="main 을 빌드하고 정식 키로 서명·검사한 뒤 GitHub 릴리스로 올린다">{live ? `v${next} 정말 게시` : next ? `v${next} 게시` : '게시'}</Btn>}
       </>
     )}>
       {!card && !fault && <p className="text-muted-foreground">origin 의 main 과 GitHub 릴리스를 읽는 중…</p>}
@@ -362,7 +393,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
               <span role="radiogroup" aria-label="올릴 버전" className="flex flex-wrap gap-1.5">
                 {BUMPS.map(({ bump: b, label }) => (
                   <button key={b} type="button" role="radio" aria-checked={bump === b} disabled={!card.versions?.[b]}
-                    onClick={() => { setPicked(b); setArmed(false) }} title={card.refused?.[b]}
+                    onClick={() => { setPicked(b); setArmed(null) }} title={card.refused?.[b]}
                     className={cn('h-7 rounded-md border px-2.5 text-[12.5px] disabled:opacity-40',
                       bump === b ? 'border-primary bg-primary/10' : 'border-border hover:bg-secondary')}>
                     {label} <span className="font-mono">{card.versions?.[b] ? `v${card.versions[b]}` : '올릴 수 없음'}</span>
@@ -373,21 +404,28 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
           </dd>
         </dl>
       )}
-      {armed && !blocked && (
+      {live && !blocked && (
         <p role="status" className="mb-3 rounded-md border border-wait/30 bg-wait/10 px-3 py-2 text-[12.5px]">
           v{next} 를 빌드·서명해 GitHub 릴리스로 올린다 — 올린 버전은 되돌리지 않는다. 한 번 더 누르면 시작한다
           {card?.last === null ? '. 첫 정식 릴리스라 정식 서명 키를 이 PC 에 새로 만든다' : ''}
         </p>
       )}
-      {card?.press?.state === 'running' && (
-        <p className="mb-2 animate-pulse text-[12.5px]">v{card.press.version} 게시 중… 빌드·서명·검사한 뒤 GitHub 에 올린다 · 수십 분 걸릴 수 있다</p>
+      {press?.state === 'running' && (
+        <p className="mb-2 animate-pulse text-[12.5px]">v{press.version} 게시 중… 빌드·서명·검사한 뒤 GitHub 에 올린다 · 수십 분 걸릴 수 있다</p>
       )}
-      {card?.press?.error && <p className="mb-2 whitespace-pre-wrap text-[12.5px] text-destructive">v{card.press.version} 를 게시하지 못했다 — {card.press.error}</p>}
+      {press?.error && !stuck && <p className="mb-2 whitespace-pre-wrap text-[12.5px] text-destructive">v{press.version} 를 게시하지 못했다 — {press.error}</p>}
+      {stuck && (
+        <p className="mb-2 whitespace-pre-wrap text-[12.5px] text-wait">
+          {card?.attempt?.tag} 게시가 GitHub 에 다 올라가지 못하고 멈췄다{card?.attempt?.last_error ? ` — ${card.attempt.last_error}` : ''}.
+          이어 가면 남은 것부터 올린다
+        </p>
+      )}
       {card?.attempt && (
         <p className="mb-2 text-[12.5px] text-muted-foreground">
           지난 배포 <span className="font-mono">{card.attempt.tag}</span> · {STATE[card.attempt.state]}
           {card.attempt.reason ? ` · ${card.attempt.reason}` : ''}
-          {card.attempt.repair?.task ? ` · 수정 작업 ${card.attempt.repair.task}` : ''}
+          {card.attempt.repair?.task ? ` · 수정 작업 ${card.attempt.repair.task} — 작업 목록에서 그 PR 을 본다` : ''}
+          {card.attempt.repair?.error ? ` · 수정 작업을 시작하지 않았다: ${card.attempt.repair.error}` : ''}
         </p>
       )}
       {card?.key && (
