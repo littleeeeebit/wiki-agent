@@ -420,6 +420,8 @@ def test_on_windows_the_chain_check_reads_powershell_quotes():
             assert not oneshot_build.chained(curly), curly
         # After `--%` PowerShell reads an apostrophe as text, so the masker's string would hide `&& return`.
         assert not oneshot_build.chained("git log --% --grep=it's && return '")
+        # Nesting deeper than the masker reads is a refusal, never an error that stops the run.
+        assert not oneshot_build.chained("echo " + "[" * 3000 + "]" * 3000)
         # Inside a string of the other family it is only a letter.
         assert oneshot_build.chained("npm test -- \"Editor’s preview\"")
         assert oneshot_build.chained("npm test -- 'say “hi”'")

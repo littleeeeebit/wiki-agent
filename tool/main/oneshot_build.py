@@ -458,10 +458,15 @@ def chained(command: str) -> bool:
     ponytail: by character and first word, not shell syntax: it stops a command that ends the chain by
     mistake, not one written to get past it; a quoted `;` or `(` is refused too, and a project script takes it."""
 
+    if CONTROL.search(command):   # the cheap refusal first: the masker below never reads what it refuses
+        return False
     windows = os.name == "nt"   # the masker reads PowerShell, not POSIX, which cuts at every `&&` as before
-    parts = links(command) if windows else command.split("&&")
-    return not CONTROL.search(command) and (not windows or quote_safe(command)) \
-        and all(p.split() and not leaves(p.split()[0]) for p in parts)
+    try:
+        parts = links(command) if windows else command.split("&&")
+        safe = not windows or quote_safe(command)
+    except RecursionError:   # nesting deeper than the masker reads is refused like any other unreadable chain
+        return False
+    return safe and all(p.split() and not leaves(p.split()[0]) for p in parts)
 
 
 def published(gate: str, backend: str) -> str:
