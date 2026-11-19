@@ -419,7 +419,7 @@ export function useWork() {
         if (fresh) named(path, running)
         // The turn still running: its reply is not on record yet. Its events
         // are, in the server's buffer, from the first.
-        const live = now && !sending.current.has(path) && (fresh || !own.current.has(now.turn))   // not followed twice
+        const live = now && !sending.current.has(path) && (fresh || !streams.current.has(path))   // not while a stream follows it
           ? { key: ++seq, role: 'assistant' as const, text: '', steps: [], pending: true,
               sessionId: now.session_id, turn: now.turn }
           : null
