@@ -94,7 +94,8 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   // that answer's server: Stop stays on it, since the server refuses a stop for any build but its current one.
   // The first build state the card takes from a request sent after it arrived (`at`) replaces it: whichever
   // server answers that request is the one that admitted the build, or a later one, which the build did not
-  // outlive. A server whose era has ended is known to have stopped, so its answer is never kept.
+  // outlive. A server whose era has ended is known to have stopped, so its answer is never kept; the followed
+  // server's answers already go through `newer`, so a late one never stands over a newer build of its own.
   const [held, setHeld] = useState<{ run: Rehearsal; at: number } | null>(null)
   const adopt = useCallback((r: Rehearsal, t: { n: number; sent: number }) => {
     const e = era.current
@@ -179,7 +180,8 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     setBusy(t.n)
     try {
       await within(fn().then(({ rehearsal: r }) => {
-        if (!adopt(r, t) && r.state === 'running' && !era.current.ended.has(r.boot)) setHeld({ run: r, at: seq.current })
+        const e = era.current   // the followed server's own answers are ordered by `rev`, never held
+        if (!adopt(r, t) && r.state === 'running' && r.boot !== e.boot && !e.ended.has(r.boot)) setHeld({ run: r, at: seq.current })
       }), ACTION_MS)
     } catch (err) {
       if (t.n === era.current.n) setFault(String(err instanceof Error ? err.message : err))
@@ -188,7 +190,8 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     }
   }
 
-  const shown = held?.run ?? run
+  // A held build and the run from the same server are ordered by `rev`, like any two answers of one server.
+  const shown = !held ? run : run?.boot === held.run.boot ? newer(run, held.run) : held.run
   const first = card?.versions?.first
   const bump = picked ?? BUMPS.find((b) => card?.versions?.[b.bump])?.bump ?? 'patch'
   const next = first ?? card?.versions?.[bump]
