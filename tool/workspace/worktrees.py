@@ -64,6 +64,10 @@ def create(repo: Path, task: str, *, linked: bool = False, base: str = "") -> Pa
     path = worktree_home(repo) / task
     done = _git(repo, "worktree", "add", "-b", task, str(path), *([base] if base else []))
     if done.returncode:
+        # Git makes the branch before its checkout, and keeps it when the checkout fails (a file name too long,
+        # say). Nothing else has it yet, so it goes too; a branch some checkout already stands on stays.
+        if holder(repo, task) is None:
+            _git(repo, "branch", "-D", task)
         raise RuntimeError(done.stderr.strip() or f"git worktree add 실패: {task}")
     return path
 

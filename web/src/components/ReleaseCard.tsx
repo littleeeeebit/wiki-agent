@@ -4,10 +4,11 @@ import { get, json, post } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 type Bump = 'patch' | 'minor' | 'major'
-/** A test build as the server last changed it. `rev` grows with every change, so the newest wins whatever
- *  order the answers arrive in; `idle` is a server that has run none. */
+/** A test build as the server last changed it. Within one server process (`boot`), `rev` grows with every
+ *  change, so the newest wins whatever order the answers arrive in; a snapshot from another process, a restarted
+ *  server's, always replaces it. `idle` is a server that has run none; `id` names one build for its stop. */
 type Rehearsal = {
-  state: 'idle' | 'running' | 'done' | 'failed'; rev: number; started?: number; ended?: number; stopped?: boolean
+  state: 'idle' | 'running' | 'done' | 'failed'; rev: number; boot: string; id?: string; started?: number; ended?: number; stopped?: boolean
   error?: string; ok?: boolean; sha?: string; rounds?: { version: string; failed?: string; refused: string[] }[]
   refusals?: Record<string, number>; repair?: { needed: string; task?: string; error?: string } | null
   repairing?: boolean; stopping?: boolean; left?: string[]
@@ -17,7 +18,8 @@ type Choice = Bump | 'first'
 /** `tool/main/release_api.py`: what a press would publish, read from origin's main and GitHub. */
 type Card = {
   remote?: string; sha?: string; last?: string | null; ahead?: number | null; versions?: Partial<Record<Choice, string>>
-  refused?: Partial<Record<Choice, string>>; attempt?: Attempt | null; error?: string; locked: string; rehearsal: Rehearsal
+  refused?: Partial<Record<Choice, string>>; attempt?: Attempt | null; error?: string; locked: string
+  read: number; rehearsal: Rehearsal   // `read`: the runs' `rev` when the card's reading began
 }
 
 // Every request is bounded, so no answer that never comes can hold the card. A card read fetches `main` and
@@ -32,11 +34,13 @@ const getRehearsal = (name: string) => get(`${at(name)}/rehearsal`, undefined, A
 // The commit the card showed goes with the start: a main that moved since is refused, never built unseen.
 const startRehearsal = (name: string, sha?: string) => post(`${at(name)}/rehearse${sha ? `?sha=${sha}` : ''}`)
   .then((r) => json<{ rehearsal: Rehearsal }>(r, '시험 빌드'))
-const stopRehearsal = (name: string) => post(`${at(name)}/stop`).then((r) => json<{ rehearsal: Rehearsal }>(r, '시험 빌드 멈춤'))
+// The build the person saw goes with the stop: a stop that arrives after it ended never stops the next one.
+const stopRehearsal = (name: string, id?: string) => post(`${at(name)}/stop${id ? `?run_id=${id}` : ''}`)
+  .then((r) => json<{ rehearsal: Rehearsal }>(r, '시험 빌드 멈춤'))
 /** `promise`, or a rejection after `ms`. The promise goes on; what it brings later is still applied by `rev`. */
 const within = <T,>(promise: Promise<T>, ms: number) => Promise.race([promise, new Promise<never>((_, reject) =>
   setTimeout(() => reject(new Error('서버가 답하지 않는다 — 상태는 계속 읽는다')), ms))])
-const newer = (cur: Rehearsal | null, next: Rehearsal) => (cur && cur.rev > next.rev ? cur : next)
+const newer = (cur: Rehearsal | null, next: Rehearsal) => (cur && cur.boot === next.boot && cur.rev > next.rev ? cur : next)
 
 const BUMPS: { bump: Bump; label: string }[] = [
   { bump: 'patch', label: '고침' }, { bump: 'minor', label: '기능 추가' }, { bump: 'major', label: '큰 변경' },
@@ -71,11 +75,18 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
 
   // One card read at a time, bounded; a state read never discards one.
   const reading = useRef(false)
+  // The last preview that read a commit: which server read it, and the runs' `rev` when its reading began.
+  // A card that came back with an error never counts as one.
+  const [good, setGood] = useState<{ boot: string; read: number } | null>(null)
   const read = useCallback(() => {
     if (reading.current) return
     reading.current = true
     getCard(name)
-      .then((c) => { setCard(c); adopt(c.rehearsal) })
+      .then((c) => {
+        setCard(c)
+        adopt(c.rehearsal)
+        if (c.sha && !c.error) setGood({ boot: c.rehearsal.boot, read: c.read })
+      })
       .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
       .finally(() => { reading.current = false })
   }, [name, adopt])
@@ -93,15 +104,18 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     return () => clearInterval(timer)
   }, [name, adopt])
 
-  // A build that ended after the card was read leaves the card stale: what it saw of `main` may have moved.
-  // It is read again, every five seconds until it lands, and no start goes out with the old commit meanwhile.
-  const stale = !!card && !!run && run.state !== 'running' && run.rev > card.rehearsal.rev
+  // A build that ended after the last good preview began reading, or a server other than the one that read it,
+  // leaves the card stale: what it saw of `main` may have moved. It is read again, every fifteen seconds until a
+  // good preview lands, and no start goes out with the old commit meanwhile.
+  const stale = !!good && !!run && run.state !== 'running' && (run.boot !== good.boot || run.rev > good.read)
   useEffect(() => {
     if (!stale) return
     read()
-    const timer = setInterval(read, 5000)
+    const timer = setInterval(read, 15000)
     return () => clearInterval(timer)
   }, [stale, read])
+  // With no good preview on screen, the person reads it again by hand: a missing table would fail every time.
+  const unread = (!card && !!fault) || !!card?.error
 
   async function act(fn: () => Promise<{ rehearsal: Rehearsal }>) {
     setFault('')
@@ -122,10 +136,11 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     <Modal wide title={`${name} 배포`} onClose={onClose} foot={(
       <>
         <Btn onClick={onClose}>닫기</Btn>
+        {unread && <Btn onClick={() => { setFault(''); read() }} title="origin 의 main 과 GitHub 릴리스를 다시 읽는다">다시 읽기</Btn>}
         {run?.state === 'running'
-          ? <Btn tone="danger" disabled={busy || run.repairing || run.stopping} onClick={() => void act(() => stopRehearsal(name))}
+          ? <Btn tone="danger" disabled={busy || run.repairing || run.stopping} onClick={() => void act(() => stopRehearsal(name, run.id))}
               title={run?.repairing ? '수정 작업을 이미 만들기 시작해서 멈출 수 없다' : undefined}>시험 빌드 멈춤</Btn>
-          : <Btn disabled={busy || stale || !card || !!card.error} onClick={() => void act(() => startRehearsal(name, card?.sha))}
+          : <Btn disabled={busy || stale || !card?.sha || !!card.error} onClick={() => void act(() => startRehearsal(name, card?.sha))}
               title="main 을 두 번 빌드하고 일회용 시험 키로 서명해 검사한다. 아무것도 올리지 않는다">시험 빌드</Btn>}
         <Btn tone="primary" disabled title={card?.locked}>{next ? `v${next} 게시` : '게시'}</Btn>
       </>

@@ -44,6 +44,7 @@ def project(monkeypatch, tmp_path):
     monkeypatch.setattr(release, "seed", lambda repo, sha, source: "0.1.0")
     monkeypatch.setattr(release_api, "_runs", {})
     monkeypatch.setattr(release_api, "_deadline", [])
+    monkeypatch.setattr(release_api, "_revs", {})
     monkeypatch.setattr(release_api.runtime, "stopping", threading.Event())
     app = FastAPI()
     app.include_router(release_api.router)
@@ -242,8 +243,9 @@ def test_shutdown_lets_a_started_repair_finish_and_records_a_build_it_could_not_
     assert run["repair"]["task"] == "release-fix-0-1-0" and not run["stopped"]
 
 
-def test_every_change_of_a_run_carries_a_later_rev_so_an_older_answer_never_wins(project, monkeypatch):
-    client, *_ = project
+def runs_until_stopped(monkeypatch) -> threading.Event:
+    """A test build that runs until it is stopped; the event is set once it runs."""
+
     entered = threading.Event()
 
     def rehearse(repo, ref, halt, repair=None, expect=None):
@@ -252,13 +254,51 @@ def test_every_change_of_a_run_carries_a_later_rev_so_an_older_answer_never_wins
         raise release.Stopped("멈춤")
 
     monkeypatch.setattr(release_api.release_rehearsal, "rehearse", rehearse)
+    return entered
+
+
+def test_every_change_of_a_run_carries_a_later_rev_so_an_older_answer_never_wins(project, monkeypatch):
+    client, *_ = project
+    entered = runs_until_stopped(monkeypatch)
     idle = client.get("/api/release/app/rehearsal").json()["rehearsal"]
     started = client.post("/api/release/app/rehearse").json()["rehearsal"]
     assert entered.wait(5)
     stopping = client.post("/api/release/app/stop").json()["rehearsal"]
     done = ended(client)
     assert idle["state"] == "idle" and stopping["stopping"] and "stopping" not in done
-    assert idle["rev"] < started["rev"] < stopping["rev"] < done["rev"] < 2**53   # exact as a JavaScript number
+    assert idle["rev"] < started["rev"] < stopping["rev"] < done["rev"]
+    assert {idle["boot"], started["boot"], done["boot"]} == {release_api.BOOT}   # one process's, never a clock's
+
+
+def test_a_stop_meant_for_an_ended_build_never_stops_the_next(project, monkeypatch):
+    client, *_ = project
+    entered = runs_until_stopped(monkeypatch)
+    first = client.post("/api/release/app/rehearse").json()["rehearsal"]
+    assert entered.wait(5)
+    client.post("/api/release/app/stop", params={"run_id": first["id"]})
+    ended(client)
+    entered.clear()
+    second = client.post("/api/release/app/rehearse").json()["rehearsal"]
+    assert entered.wait(5) and second["id"] != first["id"]
+    late = client.post("/api/release/app/stop", params={"run_id": first["id"]})   # the first build's, delayed
+    assert late.status_code == 409 and not release_api._runs["app"]["halt"].is_set()
+    client.post("/api/release/app/stop", params={"run_id": second["id"]})
+    ended(client)
+
+
+def test_the_card_says_when_its_reading_began_apart_from_the_run_it_carries(project, monkeypatch):
+    client, *_ = project
+    began = []
+
+    def card(repo):   # a build ends while the card is still reading GitHub
+        with release_api._lock:
+            began.append(release_api._revs.get("app", 0))
+            release_api._rev("app")
+        return {"sha": "b" * 40, "locked": release_api.LOCKED}
+
+    monkeypatch.setattr(release_api, "card", card)
+    got = client.get("/api/release/app").json()
+    assert got["read"] == began[0] < got["rehearsal"]["rev"]   # so the card knows to read itself again
 
 
 def test_a_new_server_lifespan_gets_its_own_whole_shutdown_wait(project, monkeypatch):

@@ -13,6 +13,7 @@ would be.
 
 from __future__ import annotations
 
+import secrets
 import subprocess
 import threading
 import time
@@ -34,22 +35,18 @@ SHUTDOWN_WAIT = 120   # seconds a closing server gives a stopped test build to r
 _runs: dict[str, dict] = {}   # project name -> its rehearsal: the running one, or the last one's summary
 _lock = threading.Lock()
 _deadline: list[float] = []   # when shutdown stops waiting: set by its first `close_all`, kept by any later one
-def _now() -> int:
-    """Microseconds since the epoch: later after a restart than any `rev` before it, and under 2**53, so the
-    card's JavaScript numbers hold it exactly."""
-
-    return time.time_ns() // 1000
-
-
-_revs = [_now()]   # the last `rev` handed out
+# This server process. A card compares `rev`s only between snapshots of one process; one from another, such as
+# a restarted server, always replaces what it shows. No clock is involved, so a corrected clock changes nothing.
+BOOT = secrets.token_hex(6)
+_revs: dict[str, int] = {}   # project name -> the last `rev` its runs were given in this process
 
 
-def _rev() -> int:
-    """A number larger than any earlier one, stamped on every change of a run, so the card keeps the newest
-    state whatever order answers arrive in. Called under `_lock`."""
+def _rev(name: str) -> int:
+    """The next `rev` of `name`'s runs, stamped on every change of one, so the card keeps the newest state
+    whatever order answers arrive in. Called under `_lock`."""
 
-    _revs[0] = max(_revs[0] + 1, _now())
-    return _revs[0]
+    _revs[name] = _revs.get(name, 0) + 1
+    return _revs[name]
 
 
 def _repo(name: str) -> Path:
@@ -117,7 +114,7 @@ def _repairing(name: str, halt: threading.Event):
         with _lock:
             if halt.is_set():
                 raise RuntimeError("멈춤 — 사람이 시험 빌드를 멈춰서 수정 작업을 시작하지 않았다")
-            _runs[name].update(repairing=True, rev=_rev())
+            _runs[name].update(repairing=True, rev=_rev(name))
         return release_repair.start(repo, record)
 
     return start
@@ -131,27 +128,33 @@ def _rehearsing(name: str, repo: Path, halt: threading.Event, sha: str | None = 
         errorlog.record("release-rehearse", exc, repo=str(repo))
         done = {"state": "failed", "error": f"{type(exc).__name__}: {exc}", "left": getattr(exc, "left", [])}
     with _lock:
-        _runs[name] = {**_runs[name], **done, "ended": time.time(), "stopped": halt.is_set(), "rev": _rev()}
+        _runs[name] = {**_runs[name], **done, "ended": time.time(), "stopped": halt.is_set(), "rev": _rev(name)}
         for key in ("halt", "thread", "repairing", "stopping"):
             _runs[name].pop(key, None)
 
 
 def shown(name: str) -> dict:
-    """The run as the card sees it, or `idle` before this server ran one, always with its `rev`."""
+    """The run as the card sees it, or `idle` before this server ran one, always with its `rev` and `BOOT`."""
 
     with _lock:
-        run = _runs.get(name) or {"state": "idle", "rev": _revs[0]}
-        return {k: v for k, v in run.items() if k not in ("halt", "thread")}
+        run = _runs.get(name) or {"state": "idle", "rev": _revs.get(name, 0)}
+        return {**{k: v for k, v in run.items() if k not in ("halt", "thread")}, "boot": BOOT}
 
 
 @router.get("/api/release/{name}")
 def get_card(name: str) -> dict:
+    """The card, with `read`: the `rev` of `name`'s runs when its reading began. A run that ended after it may
+    have seen another `main`, so the card is read again; the run snapshot attached at the end says nothing about
+    when the preview's own inputs were read."""
+
     repo = _repo(name)
+    with _lock:
+        read = _revs.get(name, 0)
     try:
         out = card(repo)
     except (ValueError, OSError, subprocess.SubprocessError, gh.Failed) as exc:
         out = {"error": str(exc) or type(exc).__name__, "locked": LOCKED}
-    return {**out, "rehearsal": shown(name)}
+    return {**out, "read": read, "rehearsal": shown(name)}
 
 
 @router.get("/api/release/{name}/rehearsal")
@@ -175,7 +178,8 @@ def rehearse(name: str, sha: str | None = None) -> dict:
             raise HTTPException(409, f"{name} 의 시험 빌드가 이미 돌고 있다")
         halt = threading.Event()
         worker = threading.Thread(target=_rehearsing, args=(name, repo, halt, sha), daemon=True)
-        _runs[name] = {"state": "running", "started": time.time(), "halt": halt, "thread": worker, "rev": _rev()}
+        _runs[name] = {"state": "running", "id": secrets.token_hex(6), "started": time.time(), "halt": halt,
+                       "thread": worker, "rev": _rev(name)}
         try:
             worker.start()
         except RuntimeError as exc:   # the OS refused a thread: the project is not left looking busy
@@ -187,15 +191,20 @@ def rehearse(name: str, sha: str | None = None) -> dict:
 
 
 @router.post("/api/release/{name}/stop")
-def stop(name: str) -> dict:
+def stop(name: str, run_id: str | None = None) -> dict:
+    """Stop the running test build. `run_id`, which the card always sends, names the one the person saw: a stop
+    that arrives after that build ended never stops the next one."""
+
     with _lock:
         run = _runs.get(name)
         if not run or run.get("state") != "running":
             raise HTTPException(409, f"{name} 에 돌고 있는 시험 빌드가 없다")
+        if run_id is not None and run_id != run["id"]:
+            raise HTTPException(409, "멈추려던 시험 빌드는 이미 끝났다 — 지금 도는 것은 다른 시험 빌드다")
         if run.get("repairing"):
             raise HTTPException(409, "수정 작업을 이미 만들기 시작해서 시험 빌드를 멈출 수 없다 — 작업 목록에서 본다")
         run["halt"].set()
-        run.update(stopping=True, rev=_rev())
+        run.update(stopping=True, rev=_rev(name))
     return {"rehearsal": shown(name)}
 
 

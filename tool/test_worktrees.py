@@ -35,6 +35,18 @@ def repo(tmp_path, monkeypatch):
     return path
 
 
+def test_a_checkout_that_fails_leaves_no_branch_behind(repo):
+    (repo / ".gitattributes").write_text("x filter=boom\n")
+    (repo / "x").write_text("hi\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "filtered")
+    git(repo, "config", "filter.boom.smudge", "false")   # the checkout fails after Git made the branch
+    git(repo, "config", "filter.boom.required", "true")
+    with pytest.raises(RuntimeError):
+        create(repo, "fix-login")
+    assert git(repo, "branch", "--list", "fix-login") == ""
+
+
 def test_create_puts_the_worktree_beside_the_repo(repo, monkeypatch):
     path = create(repo, "fix-login")
     assert path == (repo.parent / "demo-worktrees" / "fix-login").resolve()
