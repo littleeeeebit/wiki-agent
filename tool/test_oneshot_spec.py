@@ -323,6 +323,29 @@ def test_an_avoided_word_another_entry_defines_is_not_a_hit():
         sheet.avoided([("M4", "더빙한다")], glossary)
 
 
+@pytest.mark.parametrize("words, hit", [
+    ([("P1", "/VTuber"), ("P1", "Studio 항목을 연다")], True),   # two fields never make one term
+    ([("P1", "vTuBeR sTuDiO 를 연다")], False),
+    ([("P1", "VTuber Studi")], True),
+    ([("M1", "AutoLLM Gateway로 연결한다")], True),   # a Latin term inside a longer word covers nothing
+    ([("M1", "LLM Gateway로 연결한다")], False),
+    ([("M1", "LLM API LLM 도구를 쓴다")], False),   # overlapping terms each cover their own `LLM`
+    ([("M1", "LLM 을 쓴다")], True),
+])
+def test_only_a_whole_term_in_one_field_covers_an_avoided_word(words, hit):
+    glossary = [{"term": "버튜버", "meaning": "방송하는 사람", "avoid": ["VTuber"]},
+                {"term": "VTuber Studio", "meaning": "방송 프로그램", "avoid": []},
+                {"term": "번역 모델", "meaning": "번역에 쓰는 모델", "avoid": ["LLM"]},
+                {"term": "LLM Gateway", "meaning": "모델 중계", "avoid": []},
+                {"term": "LLM API", "meaning": "모델 API", "avoid": []},
+                {"term": "API LLM 도구", "meaning": "도구", "avoid": []}]
+    if hit:
+        with pytest.raises(ValueError, match="쓰지 않기로 한"):
+            sheet.avoided(words, glossary)
+    else:
+        sheet.avoided(words, glossary)
+
+
 @pytest.mark.parametrize("bad, named", [
     ([{**REQS[0], "owner": "x"}], "R1: 모르는 키 — owner"),
     ([REQS[0], REQS[0]], "R1: id 가 겹친다"),

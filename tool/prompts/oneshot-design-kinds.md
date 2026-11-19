@@ -83,6 +83,7 @@ A requirement's `kinds` is the person's: keep it as you received it.
   module whose contract it checks.
 - No module name, contract, outside target, endpoint path or `does` uses a
   word the glossary's `avoid` lists.
+  A glossary term itself is fine even when another entry's `avoid` lists it.
 - At most seven assumptions, twelve modules and twelve endpoints: merge or
   defer before you add more.
 - On an edit, replace every item in the given set and keep every other item

@@ -54,6 +54,7 @@ def part_name(part: str) -> str:
     return f"{KIND_NAMES.get(kind, kind)} {PART_NAMES.get(own, own)}" if kind else PART_NAMES.get(part, part)
 PATH = re.compile(r"/[A-Za-z0-9_.{}/-]*")
 # A path segment that is a sign-in role, whole: `/authors` is not one.
+LATIN = re.compile(r"[a-z0-9]")   # a lowered Latin letter or digit: where a glossary term's Latin edge may not run on
 AUTH_SEGMENT = re.compile(r"log-?(in|out)|sign-?(in|up|out)|auth|oauth2?|sessions?|tokens?|passwords?|register", re.I)
 
 # The translationese check: counts and names, never rewrites. The patterns and the threshold are the knobs.
@@ -261,7 +262,7 @@ def checked(design: dict, reqs: list[dict], glossary: list[dict], profile: dict,
             raise ValueError(f"{r['id']}: 이 시나리오를 확인할 테스트가 없다")
     words = [(e["id"], e["name"]) for e in design["entities"]] + \
             [(e["id"], f["name"]) for e in design["entities"] for f in e["fields"]] + \
-            [(p["id"], f"{p['path']} {p['does']}") for p in design["api"]]
+            [(p["id"], t) for p in design["api"] for t in (p["path"], p["does"])]
     avoided(words, glossary)
 
 
@@ -314,28 +315,40 @@ def core_checked(design: dict, reqs: list[dict], glossary: list[dict], profile: 
             raise ValueError(f"{r['id']}: 이 시나리오를 맡은 모듈이 없다")
         if not any(r["id"] in t["depends_on"] for t in design["tests"]):
             raise ValueError(f"{r['id']}: 이 시나리오를 확인할 테스트가 없다")
-    avoided([(m["id"], f"{m['name']} {m['contract']}") for m in modules.values()] +
-            [(x["id"], f"{x['target']} {x['does']}") for x in design["outside"]] +
-            [(p["id"], f"{p['path']} {p['does']}") for p in design.get("api", [])], glossary)
+    avoided([(m["id"], t) for m in modules.values() for t in (m["name"], m["contract"])] +
+            [(x["id"], t) for x in design["outside"] for t in (x["target"], x["does"])] +
+            [(p["id"], t) for p in design.get("api", []) for t in (p["path"], p["does"])], glossary)
+
+
+def _spans(word: str, text: str, edged: bool) -> list[tuple[int, int]]:
+    """Every place `word` stands in `text`, overlapping ones too. `edged`: a Latin edge may not run into a
+    longer Latin word (`AutoLLM Gateway` holds no `LLM Gateway`); a Korean suffix after it (`를`) is fine."""
+
+    out = []
+    for m in re.finditer(f"(?=({re.escape(word)}))", text):
+        s, e = m.start(), m.start() + len(word)
+        if edged and (LATIN.match(word[0]) and s and LATIN.match(text[s - 1]) or
+                      LATIN.match(word[-1]) and e < len(text) and LATIN.match(text[e])):
+            continue
+        out.append((s, e))
+    return out
 
 
 def avoided(words: list[tuple[str, str]], glossary: list[dict]) -> None:
-    """Refuses the first glossary `avoid` word any `(id, text)` uses. A glossary term that holds the word is
-    taken out first: one entry may avoid a word another entry defines (`번역` avoiding `변환`), and using that
-    term is never using the avoided word."""
+    """Refuses the first glossary `avoid` word any `(id, text)` uses, each field checked on its own. An
+    occurrence one whole glossary term covers is not a use: one entry may avoid a word another entry defines
+    (`번역` avoiding `변환`), and using that term is never using the avoided word."""
 
-    terms = sorted({g["term"].lower() for g in glossary}, key=len, reverse=True)
+    terms = {g["term"].lower() for g in glossary}
 
     def uses(text: str, avoid: str) -> bool:
         text = text.lower()
-        for t in terms:
-            if avoid in t:
-                text = text.replace(t, " ")
-        return avoid in text
+        cover = [span for t in terms if avoid in t for span in _spans(t, text, True)]
+        return any(not any(ts <= s and e <= te for ts, te in cover) for s, e in _spans(avoid, text, False))
 
     for g in glossary:
         for avoid in g.get("avoid") or []:
-            if hits := [i for i, text in words if uses(text, avoid.lower())]:
+            if hits := list(dict.fromkeys(i for i, text in words if uses(text, avoid.lower()))):
                 raise ValueError(f"{', '.join(hits)}: 용어집의 `{g['term']}` 대신 쓰지 않기로 한 `{avoid}` 를 썼다")
 
 
