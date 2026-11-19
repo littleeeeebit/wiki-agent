@@ -77,6 +77,14 @@ def pc_blocks(**changes) -> dict:
     return found
 
 
+@pytest.fixture(autouse=True)
+def bounded(monkeypatch):
+    """A stand-in preview ends in seconds: one that does not fails its test in a minute, its reason in the stop,
+    instead of holding the suite for the half hour a first Gradle run is given."""
+
+    monkeypatch.setattr(front, "PREVIEW_SECONDS", 60)
+
+
 def looks() -> list:
     folder = oneshot_spec.store("budget").folder / "looks"
     return sorted(folder.iterdir()) if folder.is_dir() else []
