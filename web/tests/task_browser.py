@@ -216,6 +216,8 @@ def main():
             reply += "[Relative source](src/app.ts:3) [PR](https://example.com/pull/7)"
             reply += "\n\n![Synthetic before](C:/fixture/shots/before.png) ![Synthetic after](C:/fixture/shots/after.png)"
             reply += " ![Synthetic outside](https://example.com/x.png)"
+            # Agents link a result picture more often than they embed it (ai-generation's panorama reports).
+            reply += "\n\n[Synthetic linked result](C:/fixture/shots/result.webp)"
             return {"rows": [{"role": "assistant", "text": reply,
                     "steps": [{"kind": "progress", "text": f"Synthetic translation progress {translation_mode}"},
                               {"kind": "tool", "text": f"Synthetic translation tool {translation_mode}"},
@@ -700,11 +702,12 @@ def main():
                 page.locator(".file-peek").filter(has_text="Synthetic cited source line").wait_for()
                 assert citations[-1]["path"] == [path] and citations[-1]["line"] == [line], citations
                 page.locator(".file-peek").get_by_role("button", name="닫기", exact=True).click()
-            for name in ("Synthetic before", "Synthetic after"):
+            for name in ("Synthetic before", "Synthetic after", "Synthetic linked result"):
                 shot = page.get_by_role("img", name=name, exact=True)
                 shot.scroll_into_view_if_needed()
                 page.wait_for_function("e => e.complete && e.naturalWidth === 2", arg=shot.element_handle())
-            assert {q["path"][0] for q in pictures} == {"C:/fixture/shots/before.png", "C:/fixture/shots/after.png"}
+            assert {q["path"][0] for q in pictures} == {
+                "C:/fixture/shots/before.png", "C:/fixture/shots/after.png", "C:/fixture/shots/result.webp"}
             assert all(q["repo"][0] for q in pictures), pictures
             boxes = [page.get_by_role("img", name=n, exact=True).bounding_box() for n in ("Synthetic before", "Synthetic after")]
             assert boxes[0]["y"] == boxes[1]["y"] and boxes[0]["x"] < boxes[1]["x"], boxes   # side by side at 1440px

@@ -3,7 +3,7 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Candidates } from '@/components/Candidates'
 import { Picture } from '@/components/Picture'
-import { keepSources } from '@/lib/picture'
+import { IMAGE, keepSources } from '@/lib/picture'
 import { fileLink } from '@/lib/links'
 
 // Inline code that looks like a citation: `tool/main/app.py:118`, `docs/x.md`, a
@@ -65,9 +65,13 @@ export const Answer = memo(function Answer({ text, korean, remote, onPeek, onDec
           img: ({ src, alt }) => <Picture src={typeof src === 'string' ? src : undefined} alt={alt} />,
           a: ({ href, children }) => {
             const file = fileLink(href ?? '')
-            return file ? <button type="button" className="cite" onClick={() => onPeek(file.path, file.line)}>
+            const cite = file && <button type="button" className="cite" onClick={() => onPeek(file.path, file.line)}>
               {children}
-            </button> : <a href={href} target="_blank" rel="noreferrer">{children}</a>
+            </button>
+            // Agents link a result picture more often than they embed it: drawn, with the link where it cannot be.
+            if (file && IMAGE.test(file.path)) return <Picture src={file.path} fallback={cite}
+              alt={typeof children === 'string' ? children : file.path.split('/').pop()} />
+            return cite || <a href={href} target="_blank" rel="noreferrer">{children}</a>
           },
           table: ({ children }) => (
             <div className="overflow-x-auto">

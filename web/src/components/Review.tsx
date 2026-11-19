@@ -18,10 +18,12 @@ import { GateOr } from '@/components/TaskRail'
 type Props = { spec: Spec | null; onChanged: () => void; on: boolean; progressOn?: boolean; options: Options | null;
   settings: LoopSettings | null; onSettings: (s: LoopSettings) => Promise<void>; onPeek: (path: string, line: number) => void
   /** The work model the agent pane has chosen: [계속] fills a spec that names none. */
-  choice?: Choice }
+  choice?: Choice
+  /** The selected task's repository, another project's included: the reviewer is picked for it alone. */
+  repo: string }
 
 export function Review(props: Props) {
-  const { spec, options, settings, onSettings } = props
+  const { spec, options, settings, onSettings, repo } = props
   const [saving, setSaving] = useState(false)
   const [fault, setFault] = useState('')
   const defaultModel = options?.models.find((m) => m.id.startsWith('codex:') && m.is_default)
@@ -30,23 +32,29 @@ export function Review(props: Props) {
     ...options.models.filter((m) => m.id),
   ] } : null
   const named = spec?.reviewer
-  const model = named?.model ?? settings?.review_model ?? ''
-  const effort = named?.effort ?? settings?.review_effort ?? ''
+  // The task's repository keeps its own reviewer: a pick here never changes another repository's.
+  const own = repo ? settings?.review_models?.[repo] : undefined
+  const model = named?.model ?? own?.model ?? settings?.review_model ?? ''
+  const effort = named?.effort ?? own?.effort ?? settings?.review_effort ?? ''
   const missing = model.startsWith('codex:') && options && !options.codex_error && !options.codex_pending &&
     !options.models.some((m) => m.id === model)
+  // The round refuses a saved effort its model no longer takes (`cell`); said here before it does.
+  const offered = reviewOptions?.models.find((m) => m.id === model)?.efforts
+  const stale = !missing && !named && !!offered?.length && !offered.some((e) => e.id === effort)
   return <section aria-label="리뷰 세션" className="flex h-full min-h-0 flex-col">
     <header className="flex min-h-11 flex-wrap items-center justify-end gap-1.5 border-b border-border px-5 py-1">
       <span className="mr-auto font-heading text-[11px] font-semibold text-faint">리뷰 모델{named && (spec?.refactor?.roles ? ' · 리팩터링에서 지정' : spec?.oneshot?.models ? ' · 원샷에서 지정' : ' · 계획에서 지정')}</span>
-      <Toolbar options={reviewOptions} value={{ model, effort }} busy={saving || !settings || !!named}
+      <Toolbar options={reviewOptions} value={{ model, effort }} busy={saving || !settings || !!named || !repo}
         onChange={async (choice) => {
-          if (!settings) return
+          if (!settings || !repo) return
           setSaving(true)
           setFault('')
-          try { await onSettings({ ...settings, review_model: choice.model, review_effort: choice.effort }) }
+          try { await onSettings({ ...settings, review_model: choice.model, review_effort: choice.effort, repo }) }
           catch (err) { setFault(String(err instanceof Error ? err.message : err)) }
           finally { setSaving(false) }
         }} />
       {missing && <p role="alert" className="w-full text-[12.5px] text-destructive">저장된 모델을 사용할 수 없다. 사용 가능한 리뷰 모델을 다시 골라라.</p>}
+      {stale && <p role="alert" className="w-full text-[12.5px] text-destructive">저장된 추론 강도를 이 모델이 더 이상 받지 않는다. 다시 골라라.</p>}
       {fault && <p role="alert" className="w-full text-[12.5px] text-destructive">{fault}</p>}
     </header>
     <div className="min-h-0 flex-1"><ReviewBody {...props} /></div>

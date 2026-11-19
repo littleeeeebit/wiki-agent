@@ -1509,6 +1509,37 @@ def test_a_refused_review_goes_once_more_in_a_new_review_conversation_from_its_h
     assert (fresh.model, fresh.effort) == (first.model, first.effort)
 
 
+def test_a_reviewer_lost_on_retry_keeps_the_requested_re_review(world, monkeypatch):
+    spec = pr_spec(world, "review-again-lost", 7)
+    specs.update("proj", spec["id"], review_again=True)
+    built, real = [], loop.cell
+
+    def cell(s, p, *a, **k):   # the retry's fresh cell finds its model gone
+        built.append(s["id"])
+        if len(built) > 1:
+            raise RuntimeError("저장소 리뷰 모델 codex:gone 이 모델 목록에 없다")
+        return real(s, p, *a, **k)
+
+    def refused(c, text, halt=None):
+        c.heard.append(text)
+        yield Event("error", REFUSAL, {})
+
+    monkeypatch.setattr(loop, "cell", cell)
+    monkeypatch.setattr(Reviewer, "say", refused)
+    after = looped(spec["id"])
+    assert len(built) == 2 and after["state"] == "멈춤" and after.get("review_again") is True
+
+
+def test_a_review_turn_never_goes_to_a_task_another_request_stopped(world):
+    spec = pr_spec(world, "review-stopped-meanwhile", 7)
+    loop.stop(None, "proj", spec["id"], loop.Why.WRONG_BASE, "fixture", source=re.compile(".*"))
+    assert specs.load("proj", spec["id"])["state"] == "멈춤"
+    lp, chat = loop.Loop("proj", spec["id"]), Reviewer("fixture")
+    with pytest.raises(RuntimeError, match="리뷰 중이 아니다"):
+        loop.ask(lp, chat, "Review.")
+    assert chat.heard == [] and not loop.work._busy   # nothing sent, the checkout let go
+
+
 def test_a_restatement_carries_the_server_instruction_never_a_path_from_the_text(tmp_path, monkeypatch):
     monkeypatch.setattr(specs, "brief", lambda spec: "SPEC\n")
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)   # the diff file lives in `.git`
@@ -3028,6 +3059,63 @@ def test_a_claude_review_cell_has_no_shell(world):
     allowed = commands[0][commands[0].index("--allowedTools") + 1]
     assert tools == allowed == "Read,Glob,Grep" and "Bash" not in tools
     assert commands[0][commands[0].index("--effort") + 1] == "high"
+
+
+def test_each_repository_keeps_its_own_review_model(world, tmp_path):
+    """The settings held one reviewer: picking one in a repository's review tab changed every repository's."""
+
+    spec = pr_spec(world, "own-reviewer", 7)
+    codex = [{"id": "codex:a", "is_default": True, "efforts": [{"id": ""}, {"id": "high"}, {"id": "low"}]},
+             {"id": "codex:b", "efforts": [{"id": "high"}]}]
+    body = {"rounds": 3, "concurrent": 1, "review_model": "codex:b", "review_effort": "high"}
+    web = client()
+    with patch.object(loop, "_file", return_value=tmp_path / "loop.json"), \
+         patch.object(chat_channels, "codex_models", return_value=codex), \
+         patch.object(loop, "review_model", lambda chosen=None: chosen or loop.settings()["review_model"] or "codex:a"):
+        assert web.post("/api/loop/settings", json=body).status_code == 200
+        saved = web.post("/api/loop/settings", json={**body, "review_model": "codex:a", "review_effort": "low",
+                                                    "repo": "proj"}).json()
+        # The default every other repository takes is left as it was.
+        assert saved["review_model"] == "codex:b" and saved["review_models"] == {"proj": {"model": "codex:a", "effort": "low"}}
+        cell = loop.cell(spec, Path(spec["worktree"]))
+        assert (cell.model, cell.effort) == ("codex:a", "low")
+        loop.close_cell("proj", 7)
+        # Saves for other repositories at once each keep theirs, and leave the round limits as they were.
+        saves = [threading.Thread(target=loop.set_settings, args=(loop.Settings(
+            **{**body, "rounds": 9, "repo": f"r{n}"}),)) for n in range(12)]
+        for t in saves:
+            t.start()
+        for t in saves:
+            t.join()
+        kept = loop.settings()
+        assert set(kept["review_models"]) == {"proj", *(f"r{n}" for n in range(12))} and kept["rounds"] == 3
+        # The model's default effort stands as saved; one the model no longer takes falls to its default, never sent.
+        assert web.post("/api/loop/settings", json={**body, "review_model": "codex:a", "review_effort": "",
+                                                    "repo": "proj"}).status_code == 200
+        with patch.object(chat_channels, "efforts_of", return_value={"", "low"}):
+            assert loop.cell(spec, Path(spec["worktree"])).effort == ""
+        loop.close_cell("proj", 7)
+        loop.close_cell("proj", 7)
+        web.post("/api/loop/settings", json={**body, "review_model": "codex:a", "review_effort": "low", "repo": "proj"})
+        with patch.object(chat_channels, "efforts_of", return_value={"", "high"}):
+            assert loop.cell(spec, Path(spec["worktree"])).effort == ""
+        loop.close_cell("proj", 7)
+        # A plan naming only an effort runs on the repository's model, checked against it.
+        with patch.object(chat_channels, "efforts_of", return_value={"", "low"}):
+            assert loop.cell({**spec, "reviewer": {"model": "", "effort": "high"}}, Path(spec["worktree"])).effort == ""
+        loop.close_cell("proj", 7)
+        with patch.object(chat_channels, "efforts_of", return_value=set()), pytest.raises(RuntimeError, match="모델 목록에 없다"):
+            loop.cell(spec, Path(spec["worktree"]))   # a listed catalogue without the model: no review runs on it
+        # A model list that does not answer leaves the saved pair: it never stops the round.
+        with patch.object(chat_channels, "efforts_of", side_effect=TimeoutError("model/list")):
+            assert loop.cell(spec, Path(spec["worktree"])).effort == "low"
+            loop.close_cell("proj", 7)   # and a plan's unchecked effort gives way to it
+            assert loop.cell({**spec, "reviewer": {"model": "", "effort": "high"}}, Path(spec["worktree"])).effort == "low"
+        loop.close_cell("proj", 7)
+        # A pinned reviewer's default effort is its own, never the repository's.
+        pinned = {**spec, "reviewer": {"model": "codex:b", "effort": ""}}
+        assert (loop.cell(pinned, Path(spec["worktree"])).model, loop.cell(pinned, Path(spec["worktree"])).effort) \
+            == ("codex:b", "")
 
 
 def test_codex_review_migrates_old_tools_but_resumes_the_readonly_profile(world):

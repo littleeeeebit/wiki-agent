@@ -19,7 +19,7 @@ import type { View } from '@/components/TaskRail'
 import { Terminal, closed } from '@/components/Terminal'
 import * as api from '@/lib/api'
 import type { Channel, LoopRow, LoopSettings, Options, Peek as PeekData, Pr, RunSummary, Spec, Switch, Worktree } from '@/lib/api'
-import { LOOPING, elsewhere, phase, tasks as taskList } from '@/lib/tasks'
+import { LOOPING, elsewhere, shownState, tasks as taskList } from '@/lib/tasks'
 import { leave } from '@/lib/leave'
 import { cn } from '@/lib/utils'
 import { useWork } from '@/lib/work'
@@ -331,7 +331,7 @@ export default function App() {
       // Every record of a worktree reads it again (`useWork`): this window's, and the oneshot window's own.
       if (ev.kind === 'work-record' || ev.kind === 'turn') {
         window.dispatchEvent(new CustomEvent('work-turn', { detail: { path: ev.path, turn: ev.kind === 'turn' ? ev.turn : undefined } }))
-        if (ev.kind === 'work-record') soon()
+        soon()   // a turn's start too: the running turns (`/api/loops`) decide a stopped task's state
         return
       }
       if (ev.kind === 'work-state') {
@@ -440,7 +440,11 @@ export default function App() {
   // The server's `busy` is as old as the last listing; a turn this window is
   // streaming is known here first.
   const busy = (p: string) => Boolean(rows.find((r) => r.path === p)?.busy || work.turns[p]?.at(-1)?.pending)
-  const list = taskList(specs, rows, asks, busy)
+  // A turn the server lists for this spec (`/api/loops`, every project's): a path alone, or a turn of no known
+  // owner, is a shared checkout's other task as often as this one's.
+  const turning = (p: string, s: { repo: string; id: string }) =>
+    turnsElsewhere.some((t) => t.path === p && t.spec?.repo === s.repo && t.spec?.id === s.id)
+  const list = taskList(specs, rows, asks, busy, turning)
   const task = list.find((t) => t.key === selected)
   // A task picked by its spec before the worktree list arrived is keyed by
   // the worktree once it does; the selection follows instead of going blank.
@@ -461,7 +465,7 @@ export default function App() {
   const empty = !other && !task?.row
   const choiceKey = empty ? blank : owning ? choiceOf(owning) : selected
   const pinned = task?.spec?.refactor?.roles || task?.spec?.oneshot?.models ? task.spec.cell : undefined   // fixed at its survey's (a oneshot's run's) start, held by the server
-  const choice = pinned ?? choices[choiceKey] ?? (empty ? undefined : task?.spec?.cell) ?? NO_CHOICE
+  const choice = pinned ?? choices[choiceKey] ?? (empty ? undefined : task?.spec?.cell ?? other?.cell) ?? NO_CHOICE
   const setChoice = (c: Choice) => setChoices((all) => ({ ...all, [choiceKey]: c }))
 
   const order = useCallback(async (text: string) => {
@@ -752,7 +756,7 @@ export default function App() {
             <span className="flex shrink-0 gap-1.5 font-mono text-[10.5px]">
               {(task?.pr ?? other?.pr) && <span className="text-muted-foreground">#{task?.pr ?? other?.pr}</span>}
               {(task?.round || other?.round) ? <span className="text-muted-foreground">R{task?.round || other?.round}</span> : null}
-              <GateOr gate={task?.gate} className={TONE[spec ? phase(spec.state) : 'none']}>{spec?.state ?? (other ? other.line : '명세 없음')}</GateOr>
+              <GateOr gate={task?.gate} className={TONE[task?.spec ? task.phase : 'none']}>{spec ? shownState(spec.state, !!row && turning(row.path, spec)) : other ? other.line : '명세 없음'}</GateOr>
             </span>
           )}
           {!task && !other && <span className="truncate text-[12.5px] text-faint">작업 목록에서 선택하세요</span>}
@@ -788,7 +792,7 @@ export default function App() {
                 row={row}
                 turns={(path && work.turns[path]) || []}
                 options={options}
-                choice={choice}
+                choice={other?.busy && other.cell ? other.cell : choice}   // what runs now; the next instruction keeps `choice`
                 pinned={!!pinned}
                 optionsOpen={taskOptionsOpen}
                 on={on}
@@ -810,7 +814,7 @@ export default function App() {
               />
             )}
             {tab === 'review' && (
-              <Review key={spec ? `${spec.repo}/${spec.id}` : ''} spec={spec} on={on} progressOn={full} options={options} choice={choice}
+              <Review key={spec ? `${spec.repo}/${spec.id}` : ''} spec={spec} repo={owning?.repo ?? ''} on={on} progressOn={full} options={options} choice={choice}
                 settings={loopSettings} onSettings={async (s) => setLoopSettings(await api.setLoopSettings(s))}
                 onPeek={showPeek} onChanged={() => {
                 readSpecs()
