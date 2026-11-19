@@ -191,15 +191,15 @@ def rehearse(name: str, sha: str | None = None) -> dict:
 
 
 @router.post("/api/release/{name}/stop")
-def stop(name: str, run_id: str | None = None) -> dict:
-    """Stop the running test build. `run_id`, which the card always sends, names the one the person saw: a stop
-    that arrives after that build ended never stops the next one."""
+def stop(name: str, run_id: str = "") -> dict:
+    """Stop the running test build named by `run_id`, the one the person saw: a stop that arrives after that build
+    ended, or names none, never stops another."""
 
     with _lock:
         run = _runs.get(name)
         if not run or run.get("state") != "running":
             raise HTTPException(409, f"{name} 에 돌고 있는 시험 빌드가 없다")
-        if run_id is not None and run_id != run["id"]:
+        if run_id != run["id"]:
             raise HTTPException(409, "멈추려던 시험 빌드는 이미 끝났다 — 지금 도는 것은 다른 시험 빌드다")
         if run.get("repairing"):
             raise HTTPException(409, "수정 작업을 이미 만들기 시작해서 시험 빌드를 멈출 수 없다 — 작업 목록에서 본다")

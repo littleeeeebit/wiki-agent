@@ -62,13 +62,21 @@ def create(repo: Path, task: str, *, linked: bool = False, base: str = "") -> Pa
         return repo
     repo = _main(repo)
     path = worktree_home(repo) / task
-    had = not _git(repo, "show-ref", "--verify", "--quiet", f"refs/heads/{task}").returncode
-    done = _git(repo, "worktree", "add", "-b", task, str(path), *([base] if base else []))
+    head = _git(repo, "rev-parse", "--verify", "--quiet", f"{base or 'HEAD'}^{{commit}}")
+    if head.returncode:
+        raise RuntimeError(head.stderr.strip() or f"시작할 커밋을 찾지 못했다: {base or 'HEAD'}")
+    sha, ref = head.stdout.strip(), f"refs/heads/{task}"
+    # The branch is made here, and only where no branch of that name exists (an empty old value), so Git refuses
+    # it atomically against any other client; the rollback below is then always of this call's own branch.
+    made = _git(repo, "update-ref", ref, sha, "")
+    if made.returncode:
+        raise RuntimeError(made.stderr.strip() or f"브랜치 {task} 를 만들지 못했다 — 이미 있을 수 있다")
+    done = _git(repo, "worktree", "add", str(path), task)
     if done.returncode:
-        # Git makes the branch before its checkout, and keeps it when the checkout fails (a file name too long,
-        # say). A branch this call made, that no checkout stands on, goes too; one that was there before stays.
-        if not had and holder(repo, task) is None:
-            _git(repo, "branch", "-D", task)
+        # A checkout that failed (a file name too long, say) leaves the branch. It goes while no checkout stands
+        # on it and it still points where this call put it; one someone has moved or checked out since stays.
+        if holder(repo, task) is None:
+            _git(repo, "update-ref", "-d", ref, sha)
         raise RuntimeError(done.stderr.strip() or f"git worktree add 실패: {task}")
     return path
 

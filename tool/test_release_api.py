@@ -103,6 +103,13 @@ def ended(client):
     raise AssertionError("the test build never ended")
 
 
+def stop(client):
+    """A stop of the build the card shows, as the card sends it: by that build's ID."""
+
+    run = client.get("/api/release/app/rehearsal").json()["rehearsal"]
+    return client.post("/api/release/app/stop", params={"run_id": run.get("id", "")})
+
+
 def test_the_button_runs_one_unpublished_rehearsal_of_the_cards_commit_that_a_stop_ends(project, monkeypatch):
     client, fake, _ = project
     entered, asked = threading.Event(), []
@@ -118,14 +125,14 @@ def test_the_button_runs_one_unpublished_rehearsal_of_the_cards_commit_that_a_st
     assert client.post("/api/release/app/rehearse").json()["rehearsal"]["state"] == "running"
     assert entered.wait(5)
     assert client.post("/api/release/app/rehearse").status_code == 409   # one at a time
-    assert client.post("/api/release/app/stop").status_code == 200
+    assert stop(client).status_code == 200
     run = ended(client)
 
     assert run["state"] == "done" and run["stopped"] and "halt" not in run and "thread" not in run
     assert run["rounds"] == [{"version": "0.1.0", "failed": "cannot find symbol", "refused": []}]   # no facts
     assert asked == ["origin/main"]   # the commit the card pinned, never a stale local `main`
     assert not fake.rels and not [c for c in fake.calls if c[0] != "GET"]   # nothing written to GitHub
-    assert client.post("/api/release/app/stop").status_code == 409
+    assert stop(client).status_code == 409
 
 
 @pytest.mark.parametrize("first", ["stop", "repair"])
@@ -152,7 +159,7 @@ def test_a_stop_and_the_start_of_a_repair_never_both_happen(project, monkeypatch
     client.post("/api/release/app/rehearse")
     assert building.wait(5)
     if first == "stop":
-        assert client.post("/api/release/app/stop").status_code == 200
+        assert stop(client).status_code == 200
         go.set()
         run = ended(client)
         assert not started.is_set() and "멈춤" in run["repair"]["error"] and run["stopped"]
@@ -160,7 +167,7 @@ def test_a_stop_and_the_start_of_a_repair_never_both_happen(project, monkeypatch
         go.set()
         assert starting.wait(5)
         assert client.get("/api/release/app/rehearsal").json()["rehearsal"]["repairing"]
-        assert client.post("/api/release/app/stop").status_code == 409   # too late to stop
+        assert stop(client).status_code == 409   # too late to stop
         release_it.set()
         run = ended(client)
         assert run["repair"]["task"] == "release-fix-0-1-0" and not run["stopped"] and "repairing" not in run
@@ -263,7 +270,7 @@ def test_every_change_of_a_run_carries_a_later_rev_so_an_older_answer_never_wins
     idle = client.get("/api/release/app/rehearsal").json()["rehearsal"]
     started = client.post("/api/release/app/rehearse").json()["rehearsal"]
     assert entered.wait(5)
-    stopping = client.post("/api/release/app/stop").json()["rehearsal"]
+    stopping = stop(client).json()["rehearsal"]
     done = ended(client)
     assert idle["state"] == "idle" and stopping["stopping"] and "stopping" not in done
     assert idle["rev"] < started["rev"] < stopping["rev"] < done["rev"]
@@ -282,6 +289,8 @@ def test_a_stop_meant_for_an_ended_build_never_stops_the_next(project, monkeypat
     assert entered.wait(5) and second["id"] != first["id"]
     late = client.post("/api/release/app/stop", params={"run_id": first["id"]})   # the first build's, delayed
     assert late.status_code == 409 and not release_api._runs["app"]["halt"].is_set()
+    unnamed = client.post("/api/release/app/stop")   # an old card's, naming no build
+    assert unnamed.status_code == 409 and not release_api._runs["app"]["halt"].is_set()
     client.post("/api/release/app/stop", params={"run_id": second["id"]})
     ended(client)
 

@@ -35,7 +35,7 @@ const getRehearsal = (name: string) => get(`${at(name)}/rehearsal`, undefined, A
 const startRehearsal = (name: string, sha?: string) => post(`${at(name)}/rehearse${sha ? `?sha=${sha}` : ''}`)
   .then((r) => json<{ rehearsal: Rehearsal }>(r, '시험 빌드'))
 // The build the person saw goes with the stop: a stop that arrives after it ended never stops the next one.
-const stopRehearsal = (name: string, id?: string) => post(`${at(name)}/stop${id ? `?run_id=${id}` : ''}`)
+const stopRehearsal = (name: string, id: string) => post(`${at(name)}/stop?run_id=${encodeURIComponent(id)}`)
   .then((r) => json<{ rehearsal: Rehearsal }>(r, '시험 빌드 멈춤'))
 /** `promise`, or a rejection after `ms`. The promise goes on; what it brings later is still applied by `rev`. */
 const within = <T,>(promise: Promise<T>, ms: number) => Promise.race([promise, new Promise<never>((_, reject) =>
@@ -71,7 +71,17 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   const [fault, setFault] = useState('')
   const [busy, setBusy] = useState(false)
   const [picked, setPicked] = useState<Bump | null>(null)
-  const adopt = useCallback((r: Rehearsal) => setRun((cur) => newer(cur, r)), [])
+  // The server process this card follows, and the ones it has seen replaced. Once an answer from a new process
+  // arrives, every answer still on its way from an older one is dropped, its preview with it.
+  const boots = useRef({ now: '', retired: new Set<string>() })
+  const adopt = useCallback((r: Rehearsal) => {
+    const b = boots.current
+    if (b.retired.has(r.boot)) return false
+    if (b.now && b.now !== r.boot) b.retired.add(b.now)
+    b.now = r.boot
+    setRun((cur) => newer(cur, r))
+    return true
+  }, [])
 
   // One card read at a time, bounded; a state read never discards one.
   const reading = useRef(false)
@@ -83,8 +93,8 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     reading.current = true
     getCard(name)
       .then((c) => {
+        if (!adopt(c.rehearsal)) return
         setCard(c)
-        adopt(c.rehearsal)
         if (c.sha && !c.error) setGood({ boot: c.rehearsal.boot, read: c.read })
       })
       .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
@@ -138,7 +148,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
         <Btn onClick={onClose}>닫기</Btn>
         {unread && <Btn onClick={() => { setFault(''); read() }} title="origin 의 main 과 GitHub 릴리스를 다시 읽는다">다시 읽기</Btn>}
         {run?.state === 'running'
-          ? <Btn tone="danger" disabled={busy || run.repairing || run.stopping} onClick={() => void act(() => stopRehearsal(name, run.id))}
+          ? <Btn tone="danger" disabled={busy || run.repairing || run.stopping || !run.id} onClick={() => void act(() => stopRehearsal(name, run.id ?? ''))}
               title={run?.repairing ? '수정 작업을 이미 만들기 시작해서 멈출 수 없다' : undefined}>시험 빌드 멈춤</Btn>
           : <Btn disabled={busy || stale || !card?.sha || !!card.error} onClick={() => void act(() => startRehearsal(name, card?.sha))}
               title="main 을 두 번 빌드하고 일회용 시험 키로 서명해 검사한다. 아무것도 올리지 않는다">시험 빌드</Btn>}

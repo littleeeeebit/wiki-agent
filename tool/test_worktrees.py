@@ -35,7 +35,7 @@ def repo(tmp_path, monkeypatch):
     return path
 
 
-def test_a_checkout_that_fails_leaves_no_branch_behind(repo):
+def test_a_checkout_that_fails_leaves_no_branch_behind(repo, monkeypatch):
     (repo / ".gitattributes").write_text("x filter=boom\n")
     (repo / "x").write_text("hi\n")
     git(repo, "add", ".")
@@ -49,6 +49,20 @@ def test_a_checkout_that_fails_leaves_no_branch_behind(repo):
     with pytest.raises(RuntimeError):
         create(repo, "fix-login")
     assert git(repo, "branch", "--list", "fix-login").strip() == "fix-login"
+
+    module = importlib.import_module("workspace.worktrees")
+    real = module._git
+    first = git(repo, "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "theirs").strip()   # fails its checkout too
+
+    def racing(where, *args):   # another client moves the new branch before the checkout fails
+        if args[:2] == ("worktree", "add"):
+            git(where, "update-ref", "refs/heads/fix-race", first)
+        return real(where, *args)
+
+    monkeypatch.setattr(module, "_git", racing)
+    with pytest.raises(RuntimeError):
+        create(repo, "fix-race")
+    assert git(repo, "rev-parse", "refs/heads/fix-race").strip() == first   # theirs now, so it stays
 
 
 def test_create_puts_the_worktree_beside_the_repo(repo, monkeypatch):
