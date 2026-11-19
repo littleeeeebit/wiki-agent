@@ -261,7 +261,11 @@ export function useWork() {
   // so another task's pane on a shared checkout stays read-only until a read says the turn ended.
   const [live, setLive] = useState<Record<string, string>>({})
   const named = useCallback((path: string, running: { turn?: string } | null | undefined) => {
-    setLive(({ [path]: _gone, ...rest }) => (running?.turn ? { ...rest, [path]: running.turn } : rest))
+    setLive((all) => {
+      if ((all[path] ?? '') === (running?.turn ?? '')) return all   // unchanged: no render
+      const { [path]: _gone, ...rest } = all
+      return running?.turn ? { ...rest, [path]: running.turn } : rest
+    })
   }, [])
   /** One refused instruction by its place, or all of the path's. */
   const dismiss = useCallback((path: string, at?: number) => {
@@ -300,8 +304,8 @@ export function useWork() {
     setTurns(({ [path]: _gone, ...rest }) => rest)
     setRules(({ [path]: _gone, ...rest }) => rest)
     showQueued(path, null)
-    named(path, null)
-  }, [showQueued, named])
+    // `live` stays: the last known running turn holds a shared checkout's other panes until the next read.
+  }, [showQueued])
 
   const readRules = useCallback((path: string) => {
     const life = lives.current.get(path) ?? 0
@@ -565,6 +569,6 @@ export function useWork() {
     }
   }, [attach, readRules])
 
-  return { turns, live, rules, queued, refused, load, send, queue, unqueue, dismiss, answer, stop, steer, clearRules, reset,
+  return { turns, live, recheck: readRules, rules, queued, refused, load, send, queue, unqueue, dismiss, answer, stop, steer, clearRules, reset,
     forget, attach }
 }

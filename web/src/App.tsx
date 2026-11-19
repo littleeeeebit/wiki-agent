@@ -401,7 +401,7 @@ export default function App() {
   // Another project's rows are keyed by task (`loop:` / `turn:`): several share one checkout path.
   const others = elsewhere(loopRows, turnsElsewhere, repo, asks, (p) => {
     const last = work.turns[p]?.at(-1)
-    return (last?.pending && last.turn) || undefined
+    return (last?.pending && last.turn) || work.live[p] || undefined   // the log's turn once the stream dropped
   })
   const other = others.find((o) => o.key === selected)
   const path = other ? other.path : /^(spec|loop|turn):/.test(selected) ? '' : selected
@@ -414,6 +414,13 @@ export default function App() {
   useEffect(() => {
     if (path) work.load(path)
   }, [path, work])
+  // Held by the log's turn alone (the stream is gone): read it again on each pick and each listing, so a
+  // read that failed as the turn ended never keeps the checkout locked.
+  const heldByLog = !!other && !lastTurn?.pending && !!work.live[path]
+  const recheck = work.recheck
+  useEffect(() => {
+    if (heldByLog) recheck(path)
+  }, [heldByLog, selected, loopRows, path, recheck])
 
   const running = Object.values(work.turns).filter((turns) => turns.at(-1)?.pending).length
   const runningNow = useRef(running)
@@ -475,6 +482,7 @@ export default function App() {
   // A task's work model is keyed by its spec's repository and id, the same
   // from draft to worktree and under another project.
   const owning = task?.spec ?? other?.spec
+  const sender = owning ? `${owning.repo}/${owning.id}` : selected   // a task's own, in either project's rail
   // A pane with no worktree — nothing selected, a selection whose task is gone, a spec not started
   // or a PR not checked out — is the one empty agent pane: its pick is what [시작] sends, whichever card is pressed.
   const blank = `new:${repo}`
@@ -820,9 +828,10 @@ export default function App() {
                 onStop={(turn) => work.stop(path, turn).catch((err) => setFault(String(err)))}
                 onSteer={(turn, text) => void work.steer(path, turn, text)}
                 queued={work.queued[path]}
-                onQueue={(turn, text) => void work.queue(path, turn, text, choice, selected)}
-                // A shared checkout's refusals are each its sender's: `at` keeps the place in the path's list.
-                refused={(work.refused[path] ?? []).map((r, at) => ({ ...r, at })).filter((r) => !r.from || r.from === selected)}
+                onQueue={(turn, text) => void work.queue(path, turn, text, choice, sender)}
+                // A shared checkout's refusals are each its sender's, by spec in either project's rail; `at` keeps
+                // the place in the path's list.
+                refused={(work.refused[path] ?? []).map((r, at) => ({ ...r, at })).filter((r) => !r.from || r.from === sender)}
                 onDismiss={(at) => work.dismiss(path, at)}
                 onUnqueue={() => work.unqueue(path).catch((err) => setFault(String(err)))}
                 rules={(path && work.rules[path]?.list) || []}
