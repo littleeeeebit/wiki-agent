@@ -148,4 +148,4 @@ minutes. The bootstrap worker already handles a wait, a retry and a shutdown.
 
 | # | Step | Status |
 | --- | --- | --- |
-| 10a | The card shows the move, its confirm records the digest, Register writes it | In progress |
+| 10a | The card shows the move, its confirm records the digest, Register writes it | Done — #392 |
