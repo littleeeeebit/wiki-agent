@@ -129,6 +129,15 @@ SemVer value without its `v`: tag `v0.1.1` means `0.1.1`.
 | Signature | `apksigner verify --print-certs` matches the repository's expected certificate and the previous production APK's | none until code signing is planned, so Windows warns before running the installer; the card says so |
 | Digest | `sha256` of the final bytes, the same bytes uploaded | the same |
 
+The installer checks cover Tauri's default NSIS template, which is the one
+supported. They read what that template compiles to, and they catch the
+drift a merge brings by mistake: a renamed product or publisher, a moved
+scope or view, a main binary that is not the built one, a damaged or
+truncated file. They do not interpret NSIS control flow. A custom template
+or installer hook that the repository's owner writes to move files at run
+time is outside what they prove. Each repository's owner writes its own
+build, so the press guards against mistakes, not against that owner.
+
 Identity is checked against the previous production artifact of the same
 kind, not only against the adapter at the pinned commit. A merge that changes
 the Gradle application ID and the adapter together would otherwise pass, and
