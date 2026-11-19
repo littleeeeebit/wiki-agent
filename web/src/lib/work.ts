@@ -254,7 +254,14 @@ export function useWork() {
   const loading = useRef(new Set<string>())
   // Paths this window is sending to. The record's running turn is then that
   // send's own, already on screen.
-  const sending = useRef(new Map<string, number>())
+  // By each send's turn key; one counts only while its turn still pends, so a send a newer read already ended
+  // (`expire`) no longer holds the path while its stream drains.
+  const sending = useRef(new Map<string, Set<number>>())
+  // A key the mirror does not show yet (a send just added, before its render) counts as live.
+  const sendingNow = (path: string) => [...(sending.current.get(path) ?? [])].some((key) => {
+    const t = (seen.current[path] ?? []).find((x) => x.key === key)
+    return !t || !!t.pending
+  })
   // Which worktree a path names. Removing a worktree and making one with the
   // same task name gives the same path, so a record fetched for the old one
   // and landing after `forget` would otherwise fill the new one's pane.
@@ -338,6 +345,7 @@ export function useWork() {
         if (!over(t)) return t
         // A replay's stream is let go below; idempotent, and read by that replay's own end if it comes first.
         if (replays.current.has(t.key)) ended.current.add(t.key)
+        sending.current.get(path)?.delete(t.key)   // an ended send no longer holds the path while its stream drains
         const saved = rows.find((r) => r.role === 'assistant' && r.turn === t.turn)
         // The saved row under a key of its own: a stream still owing events to `t.key` no longer reaches it.
         return saved ? fromRow(saved) : { ...t, pending: false }
@@ -486,7 +494,7 @@ export function useWork() {
         if (fresh) named(path, running)
         // The turn still running: its reply is not on record yet. Its events
         // are, in the server's buffer, from the first.
-        const live = now && !sending.current.get(path) && (fresh || !streams.current.has(path))   // not while a stream follows it
+        const live = now && !sendingNow(path) && (fresh || !streams.current.has(path))   // not while a stream follows it
           ? { key: ++seq, role: 'assistant' as const, text: '', steps: [], pending: true,
               sessionId: now.session_id, turn: now.turn,
               from: fresh ? latest.n : logsShown.current.get(path) }   // the read whose running turn this is
@@ -541,23 +549,26 @@ export function useWork() {
         ...all,
         [path]: [...(all[path] ?? []), { key: ++seq, role: 'user', text, steps: [] }, mine],
       }))
-      sending.current.set(path, (sending.current.get(path) ?? 0) + 1)
+      sending.current.set(path, new Set([...(sending.current.get(path) ?? []), mine.key]))
       let gone = false
       try {
         gone = await follow(path, mine.key, (on) => api.workSay({ path, text, ...choice }, on))
       } catch (err) {
         patch(path, mine.key, (t) => ({ ...t, error: String(err), pending: false }))
       }
-      // Counted, not flagged: an older send ending while a newer one runs leaves the path to the newer one, and
-      // a reload it owed waits for the last send to end rather than clearing the newer one's turn.
-      const left = (sending.current.get(path) ?? 1) - 1
-      if (left > 0) sending.current.set(path, left)
-      else sending.current.delete(path)
-      if (left > 0) {
+      // Each send lets go of its own key only: an older send ending while a newer one runs leaves the path to the
+      // newer one, and a reload it owed waits for the last live send rather than clearing that one's turn.
+      const left = sending.current.get(path)
+      left?.delete(mine.key)
+      if (!left?.size) sending.current.delete(path)
+      if (sendingNow(path)) {
         if (gone) missed.current.add(path)
-      } else if (gone || missed.current.delete(path)) {
-        forget(path)
-        load(path)
+      } else {
+        const owed = missed.current.delete(path)   // either reason reloads once, and settles the other
+        if (gone || owed) {
+          forget(path)
+          load(path)
+        }
       }
     },
     [follow, forget, load, patch],
@@ -653,7 +664,7 @@ export function useWork() {
     if (!loading.current.has(path) || (turn && own.current.has(turn))) return
     // Announced while this window's send still follows its own turn — the
     // instruction that waited, the plan row's: read once that send lets go.
-    if (sending.current.get(path)) {
+    if (sendingNow(path)) {
       missed.current.add(path)
       return
     }
