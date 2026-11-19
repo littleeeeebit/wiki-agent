@@ -13,7 +13,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -521,6 +521,8 @@ def cell(spec: dict, path: Path) -> ChatSession:
             offered = channels.efforts_of(model) if own else None
         except Exception:   # an unanswered list never stops a round: the pair checked when saved runs, a plan's effort not
             offered, effort = None, own["effort"]
+        if offered == set():   # a listed catalogue without it: the model is gone, and no review runs on it
+            raise RuntimeError(f"저장소 리뷰 모델 {model} 이 모델 목록에 없다 — 리뷰 탭에서 다시 골라라")
         if offered is not None and effort not in offered:
             effort = ""   # the model does not take that effort: its default runs, and the review tab says so
     repo = channels.repo_for(spec["repo"]) if verify_dir is not None else None
@@ -1206,7 +1208,8 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
     return None if loop.halt.is_set() else {**record, "tail": verdict["tail"]}
 
 
-def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession | None, n: int, head: str, base: str) -> bool:
+def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession | Callable[[], ChatSession | None],
+            n: int, head: str, base: str) -> bool:
     """A round allowed `head`: the final gate runs, and only its pass makes
     the spec mergeable. A failure goes to the work cell as a repair; its new
     commit gets its round checks and a new review. No new commit stops. A
@@ -1229,7 +1232,7 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession | 
         if not preview["ok"]:
             return resolve_merge(loop, spec, repo, path, preview, base)
         deferred = spec.get("deferred") or []
-        kept_p2, shown = pick(loop, chat, deferred)
+        kept_p2, shown = pick(loop, chat() if callable(chat) else chat, deferred)
         if not verification.cloud(spec) and (spec.get("review_contract") or {}).get("flows"):
             fresh = specs.load(loop.repo, loop.sid)
             problem = review_contract.merge_problem(repo, path, fresh, head, specs.current_merge_base(path, base, head))
@@ -1550,11 +1553,12 @@ def step(loop: Loop) -> bool:
         spec = change(loop, f"리뷰 R{last['n']}")
         if spec is None:
             return False
-        try:   # the reviewer only picks deferred P2s here; one that cannot be built keeps them all, never cuts the gate
-            chat = cell(spec, path) if spec.get("deferred") else None
-        except Exception:
-            chat = None
-        return allowed(loop, spec, repo, path, chat, last["n"], head, base)
+        def triage() -> ChatSession | None:   # built after the gate, only for deferred P2s; unbuilt, they all stay
+            try:
+                return cell(spec, path) if spec.get("deferred") else None
+            except Exception:
+                return None
+        return allowed(loop, spec, repo, path, triage, last["n"], head, base)
     if n > cap(spec):
         return stop(loop, loop.repo, loop.sid, Why.CAP, f"{cap(spec)} 라운드를 다 돌았다")
     spec = change(loop, f"리뷰 R{n}")
