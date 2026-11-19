@@ -470,11 +470,26 @@ def recover() -> None:
 
 def waiting(repo: str, o: dict) -> dict:
     """A run at the stage this version waits at keeps its `kind` stop: a stop or a shutdown that landed between
-    that stage's save and its hand-off replaced it, and must not make the stage resumable."""
+    that stage's save and its hand-off replaced it, and must not make the stage resumable. A PC app's frozen build
+    whose copy is gone, or whose HEAD the worktree has left, holds nothing: it is dropped, and `[재개]` builds again."""
 
+    if (build := o.get("desktop_build")) and not o.get("working") and not standing(repo, build):
+        o = saved(repo, oneshot={"desktop_build": None, "stopped": {
+            "reason": "restart", "state": o.get("stage"),
+            "detail": "얼린 PC 앱 빌드가 없거나 작업트리의 HEAD 가 바뀌었다 — [재개]를 누르면 다시 빌드한다"}})["oneshot"]
     if held(o) and not o.get("working") and (o.get("stopped") or {}).get("reason") != "kind":
         return saved(repo, oneshot={"stopped": kind_stop(o["stage"])})["oneshot"]
     return o
+
+
+def standing(repo: str, build: dict) -> bool:
+    """A frozen build still stands: its copy is there, and the worktree is at the HEAD its gate passed."""
+
+    try:
+        tree = Path(spec_of(repo)["worktree"])
+        return Path(build["folder"]).is_dir() and specs.sh(["git", "rev-parse", "HEAD"], tree).stdout.strip() == build["head"]
+    except (KeyError, OSError, TypeError):
+        return False
 
 
 def kind_stop(stage: str) -> dict:

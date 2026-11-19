@@ -471,10 +471,12 @@ class Look:
     def _ended(self, key: str, job, seconds: float) -> list[str]:
         try:
             proof = job.end(seconds)
+            # Members first heard of while the job ended: recorded before any handle closes, so recovery names
+            # them however the close goes.
+            self._learn(key, proof["members"])
+            self.record["jobs"][key]["proof"] = proof
         finally:
             job.close()
-        self._learn(key, proof["members"])   # members first heard of while the job ended: recovery names them too
-        self.record["jobs"][key]["proof"] = proof
         return [f"{key}: {reason}" for reason in proof["reasons"]]
 
     @staticmethod

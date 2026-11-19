@@ -2,7 +2,8 @@
 program frozen into staging the run owns, with the identity every look launches.
 
 `docs/plans/oneshot/9-kinds.md` ("The runnable program") is the design. `declared` reads the block's shape before
-the gate; `built` checks what the gate left; `frozen` copies the build folder out of the worktree, records each
+the gate; `built` checks the paths the gate left; `frozen` copies the build folder out of the worktree in one walk,
+checks the copy (a Windows program, no packaged layout, no manifest asking for elevation), records each copied
 file's digest and the launch settings, and names the build by one digest over both. Any change to a file, an
 argument, the working directory or a data setting is a new identity, so a look's pass counts only for the build
 it launched.
@@ -10,33 +11,65 @@ it launched.
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
+import ntpath
+import os
 import re
-import shutil
+from ctypes import wintypes as w
 from pathlib import Path
+from xml.etree import ElementTree
 
 from common import is_junction
 
 from . import oneshot
-from .oneshot_screens import MOCK_PATH
+from .oneshot_screens import DEVICE_NAMES, MOCK_PATH
 
 BLOCK = "oneshot-desktop"
 DATA = "{data}"   # where a look puts the app's data: a fresh folder it owns, per attempt
-PACKAGED = (".msix", ".msixbundle", ".appx", ".appxbundle", ".msi")
 INSTALLERS = (".exe", ".msi", ".msix", ".msixbundle")
-# An application manifest asking for more than the caller's rights, embedded as a resource or beside the program.
-ELEVATION = re.compile(rb"requestedExecutionLevel[^>]*?level\s*=\s*[\"'](?:requireAdministrator|highestAvailable)",
-                       re.IGNORECASE)
+ELEVATED = ("requireAdministrator", "highestAvailable")   # a manifest's levels above the caller's own rights
 MAX_FILES, MAX_BYTES = 5000, 1 << 30   # a folder of what the launch loads, never a whole build tree
+MANIFEST_BYTES = 1 << 20
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+# A setting's pieces that may each be a path: a value, or what follows `=`, `;` or `,` in it.
+PIECES = re.compile(r"[;=,\"']+")
 
 
 def _relative(value, where: str) -> str:
+    """A path written with `/`, below its base and naming no Windows device or a component Windows trims."""
+
     if not isinstance(value, str) or not MOCK_PATH.fullmatch(value) \
-            or {".", "..", ".git"} & {part.lower() for part in value.split("/")}:
-        raise ValueError(f"`{BLOCK}` 의 {where} 는 상대 경로(`/` 로 나눔, `.`·`..` 없음)로 적는다 — {value!r}")
+            or {".", "..", ".git"} & {part.lower() for part in value.split("/")} \
+            or any(part.endswith(".") or part.split(".")[0].upper() in DEVICE_NAMES for part in value.split("/")):
+        raise ValueError(f"`{BLOCK}` 의 {where} 는 상대 경로(`/` 로 나눔, `.`·`..`·장치 이름·끝의 `.` 없음)로 적는다 "
+                         f"— {value!r}")
     return value
+
+
+def _names_tree(tree: Path, value: str) -> bool:
+    """Whether a setting names a path in the live worktree as Windows reads it: by its normalized text, or, for a
+    path that exists, by the file it is (a short name, a link, another spelling of the drive)."""
+
+    root = Path(os.path.realpath(tree))
+    key = ntpath.normcase(ntpath.normpath(str(root)))
+    for piece in {value, *PIECES.split(value)}:
+        piece = piece.strip()
+        for prefix in ("\\\\?\\", "\\\\.\\", "//?/", "//./"):
+            piece = piece[len(prefix):] if piece.startswith(prefix) else piece
+        if not ntpath.isabs(piece):
+            continue
+        normal = ntpath.normcase(ntpath.normpath(piece))
+        if normal == key or normal.startswith(key.rstrip("\\") + "\\"):
+            return True
+        for at in [Path(piece), *Path(piece).parents]:
+            try:
+                if os.path.samefile(at, root):
+                    return True
+            except (OSError, ValueError):
+                continue
+    return False
 
 
 def declared(tree: Path, final: str) -> dict:
@@ -53,7 +86,7 @@ def declared(tree: Path, final: str) -> dict:
            "args": run.get("args", []), "cwd": run.get("cwd", "."), "env": run.get("env", {})}
     if out["cwd"] != ".":
         _relative(out["cwd"], "run.cwd")
-    if Path(out["program"]).suffix.lower() in PACKAGED or Path(out["program"]).suffix.lower() != ".exe":
+    if Path(out["program"]).suffix.lower() != ".exe":
         raise ValueError(f"`{BLOCK}` 의 run.program 은 패키지하지 않은 디버그 빌드의 `.exe` 다 — MSIX 나 설치 파일은 "
                          "띄우지 않는다")
     if not isinstance(out["args"], list) or not all(isinstance(a, str) for a in out["args"]):
@@ -64,13 +97,12 @@ def declared(tree: Path, final: str) -> dict:
     settings = [*out["args"], *out["env"].values()]
     if not any(DATA in s for s in settings):
         raise ValueError(f"`{BLOCK}` 의 run 은 앱의 데이터를 `{DATA}` 에 두는 인자나 환경 변수를 하나 이상 적는다")
-    live = str(tree.resolve()).replace("\\", "/").lower()
-    if any(live in s.replace("\\", "/").lower() for s in settings):
+    if any(_names_tree(tree, s) for s in settings):
         raise ValueError(f"`{BLOCK}` 의 run 설정이 작업트리를 가리킨다 — 실행은 얼린 사본과 `{DATA}` 만 읽는다")
     installer = _relative(value.get("installer"), "installer")
     if Path(installer).suffix.lower() not in INSTALLERS:
         raise ValueError(f"`{BLOCK}` 의 installer 는 S8 이 붙일 설치 파일(.exe, .msi, .msix)이다 — {installer}")
-    if installer == f"{out['folder']}/{out['program']}":
+    if installer.casefold() == f"{out['folder']}/{out['program']}".casefold():   # one file to Windows
         raise ValueError(f"`{BLOCK}` 의 installer 와 run.program 이 같은 파일이다 — run 은 설치하지 않고 띄우는 빌드다")
     return {"run": out, "installer": installer}
 
@@ -87,9 +119,9 @@ def _inside(tree: Path, relative: str) -> Path | None:
 
 
 def built(tree: Path, desktop: dict) -> str:
-    """Why the program `run` names is not one the look may start, or empty: its folder and program are plain
-    files inside the worktree after the gate, the folder holds no link and is not a packaged layout, the
-    working directory is inside it, and no manifest asks for elevation."""
+    """Why the paths `run` names are not what the gate left, or empty: its folder and program are plain files
+    inside the worktree, reached through no link, and the installer, once built, is not the program. The copy
+    `frozen` makes is checked again, and is what the look starts."""
 
     run = desktop["run"]
     folder = _inside(tree, run["folder"])
@@ -98,40 +130,126 @@ def built(tree: Path, desktop: dict) -> str:
     program = _inside(folder, run["program"])
     if program is None or not program.is_file():
         return f"게이트 뒤에 `{run['folder']}/{run['program']}` 가 그 폴더 안의 파일로 없다"
-    if (folder / "AppxManifest.xml").exists():
-        return f"`{run['folder']}` 는 MSIX 로 패키지한 배치다 — run 은 패키지하지 않은 디버그 빌드다"
-    if run["cwd"] != "." and ((cwd := _inside(folder, run["cwd"])) is None or not cwd.is_dir()):
-        return f"run.cwd `{run['cwd']}` 가 `{run['folder']}` 안의 폴더로 없다"
+    installer = tree / desktop["installer"]
+    try:
+        if installer.exists() and os.path.samefile(installer, program):
+            return "installer 와 run.program 이 같은 파일이다 — run 은 설치하지 않고 띄우는 빌드다"
+    except OSError:
+        pass
+    return ""
+
+
+def _copied(source: Path, app: Path, label: str) -> list[str]:
+    """Every regular file under `source` copied into `app` in one walk, the bounds counted as the bytes are
+    copied: each entry is checked before it is entered or read, so a link is never followed, and a file that
+    appears after its folder was walked is neither copied nor named. The copied files' paths."""
+
+    names, size, folders = [], 0, [(source, app)]
+    app.mkdir(parents=True)
+    while folders:
+        here, there = folders.pop()
+        for path in sorted(here.iterdir()):
+            name = path.relative_to(source).as_posix()
+            if path.is_symlink() or is_junction(path):
+                raise ValueError(f"`{label}` 에 링크가 있다 — `{name}`")
+            if path.is_dir():
+                (there / path.name).mkdir()
+                folders.append((path, there / path.name))
+                continue
+            if not path.is_file():
+                raise ValueError(f"`{label}` 에 보통 파일이 아닌 것이 있다 — `{name}`")
+            names.append(name)
+            if len(names) > MAX_FILES:
+                raise ValueError(_too_big(label))
+            with open(path, "rb") as read, open(there / path.name, "xb") as written:
+                while chunk := read.read(1 << 20):
+                    size += len(chunk)
+                    if size > MAX_BYTES:
+                        raise ValueError(_too_big(label))
+                    written.write(chunk)
+    return sorted(names)
+
+
+def _too_big(label: str) -> str:
+    return (f"`{label}` 가 실행이 읽는 것보다 크다 (파일 {MAX_FILES}개, {MAX_BYTES >> 20} MB 까지) — 실행에 필요한 "
+            "파일만 모은 폴더를 `gate_cmd` 가 만든다")
+
+
+def _manifests(program: Path) -> list[bytes]:
+    """The application manifests embedded in `program` (`RT_MANIFEST`, ids 1 to 16), read as Windows maps the
+    file for its resources. A file Windows cannot map so is not a Windows program."""
+
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.LoadLibraryExW.argtypes, k.LoadLibraryExW.restype = [w.LPCWSTR, w.HANDLE, w.DWORD], w.HMODULE
+    k.FindResourceW.argtypes, k.FindResourceW.restype = [w.HMODULE, ctypes.c_void_p, ctypes.c_void_p], w.HANDLE
+    k.SizeofResource.argtypes, k.SizeofResource.restype = [w.HMODULE, w.HANDLE], w.DWORD
+    k.LoadResource.argtypes, k.LoadResource.restype = [w.HMODULE, w.HANDLE], w.HANDLE
+    k.LockResource.argtypes, k.LockResource.restype = [w.HANDLE], ctypes.c_void_p
+    k.FreeLibrary.argtypes = [w.HMODULE]
+    module = k.LoadLibraryExW(str(program), None, 0x2 | 0x20)   # as a data file, as an image resource
+    if not module:
+        raise ValueError(f"`{program.name}` 는 Windows 프로그램이 아니다 — Windows error {ctypes.get_last_error()}")
+    try:
+        found = []
+        for number in range(1, 17):
+            if not (resource := k.FindResourceW(module, number, 24)):
+                continue
+            size = k.SizeofResource(module, resource)
+            if size > MANIFEST_BYTES or not (data := k.LockResource(k.LoadResource(module, resource))):
+                raise ValueError(f"`{program.name}` 의 매니페스트를 읽지 못했다")
+            found.append(ctypes.string_at(data, size))
+        return found
+    finally:
+        k.FreeLibrary(module)
+
+
+def _levels(manifest: bytes, name: str) -> list[str]:
+    """Every `requestedExecutionLevel` a manifest declares, read as XML in whatever encoding it declares."""
+
+    if b"<!DOCTYPE" in manifest.upper() or "<!DOCTYPE".encode("utf-16-le") in manifest:
+        raise ValueError(f"`{name}` 의 매니페스트에 DOCTYPE 이 있다")
+    try:
+        root = ElementTree.fromstring(manifest)
+    except ElementTree.ParseError as exc:
+        raise ValueError(f"`{name}` 의 매니페스트를 XML 로 읽지 못했다 — {exc}") from exc
+    return [e.get("level", "") for e in root.iter() if e.tag.rsplit("}", 1)[-1] == "requestedExecutionLevel"]
+
+
+def checked(app: Path, run: dict, label: str) -> str:
+    """Why the copy the look would start is not an unpackaged, non-elevated Windows program, or empty."""
+
+    program = app / run["program"]
+    if not program.is_file():
+        return f"`{label}/{run['program']}` 가 그 폴더 안의 파일로 없다"
+    if (app / "AppxManifest.xml").exists():
+        return f"`{label}` 는 MSIX 로 패키지한 배치다 — run 은 패키지하지 않은 디버그 빌드다"
+    if run["cwd"] != "." and not (app / run["cwd"]).is_dir():
+        return f"run.cwd `{run['cwd']}` 가 `{label}` 안의 폴더로 없다"
     sidecar = program.with_name(program.name + ".manifest")
-    if ELEVATION.search(program.read_bytes()) or sidecar.is_file() and ELEVATION.search(sidecar.read_bytes()):
+    manifests = _manifests(program)
+    if sidecar.is_file():
+        if sidecar.stat().st_size > MANIFEST_BYTES:
+            return f"`{sidecar.name}` 가 매니페스트로 읽기엔 크다"
+        manifests.append(sidecar.read_bytes())
+    if any(level in ELEVATED for m in manifests for level in _levels(m, program.name)):
         return f"`{run['program']}` 의 매니페스트가 관리자 권한을 요구한다 — run 은 권한 상승 없이 뜨는 빌드다"
     return ""
 
 
 def frozen(tree: Path, desktop: dict, into: Path) -> dict:
     """`run`'s build folder copied into `into`, a folder the run owns, with `manifest.json` beside the copy: each
-    file's digest and the launch settings, the program and working directory as paths inside the copy. The
-    build's identity is one digest over both. A folder holding a link, or more than a launch loads, is refused."""
+    copied file's digest and the launch settings, the program and working directory as paths inside the copy.
+    The build's identity is one digest over both. A folder holding a link, or more than a launch loads, is
+    refused, and so is a copy that is not a program the look may start (`checked`)."""
 
-    run, source = desktop["run"], tree / desktop["run"]["folder"]
-    files, size, folders = {}, 0, [source]
-    while folders:   # each entry checked before it is entered: a link is never followed, even to count it
-        for path in sorted(folders.pop().iterdir()):
-            if path.is_symlink() or is_junction(path):
-                raise ValueError(f"`{run['folder']}` 에 링크가 있다 — `{path.relative_to(source).as_posix()}`")
-            if path.is_dir():
-                folders.append(path)
-                continue
-            size += path.stat().st_size
-            files[path.relative_to(source).as_posix()] = None
-            if len(files) > MAX_FILES or size > MAX_BYTES:
-                raise ValueError(f"`{run['folder']}` 가 실행이 읽는 것보다 크다 (파일 {MAX_FILES}개, {MAX_BYTES >> 20} MB "
-                                 "까지) — 실행에 필요한 파일만 모은 폴더를 `gate_cmd` 가 만든다")
-    files = dict(sorted(files.items()))
+    run = desktop["run"]
     app = into / "app"
-    shutil.copytree(source, app)
-    for name in files:   # the copy's digests: what the look launches, whatever the worktree holds by then
-        files[name] = hashlib.sha256((app / name).read_bytes()).hexdigest()
+    names = _copied(tree / run["folder"], app, run["folder"])
+    if sorted(p.relative_to(app).as_posix() for p in app.rglob("*") if p.is_file()) != names:
+        raise ValueError(f"`{run['folder']}` 의 사본이 복사한 파일과 다르다")
+    if why := checked(app, run, run["folder"]):
+        raise ValueError(why)
+    files = {name: hashlib.sha256((app / name).read_bytes()).hexdigest() for name in names}
     launch = {"program": run["program"], "args": run["args"], "cwd": run["cwd"], "env": run["env"]}
     identity = hashlib.sha256(json.dumps({"files": files, "launch": launch}, sort_keys=True).encode()).hexdigest()
     (into / "manifest.json").write_text(json.dumps({"identity": identity, "files": files, "launch": launch},

@@ -566,11 +566,12 @@ def test_the_shared_start_refuses_a_move_into_the_held_stage(desktop):
     assert o()["stage"] == "r2"
 
 
-def test_a_resume_or_a_shutdown_between_the_freeze_and_the_stop_never_starts_the_look(desktop):
+def test_a_resume_or_a_shutdown_between_the_freeze_and_the_stop_never_starts_the_look(desktop, tmp_path):
     # The build passed its gate and was frozen, then the stop was lost (a restart that replaced it): the run is
     # held at its look, never resumable into a second build or past it.
+    frozen = {"identity": "f" * 64, "folder": str(tmp_path), "head": git_head(desktop)}
     oneshot_spec.saved("budget", oneshot={"stage": "build-front", "working": None, "features": [],
-                                          "desktop_build": {"identity": "f" * 64},
+                                          "desktop_build": frozen,
                                           "stopped": {"reason": "restart", "detail": "서버가 다시 켜졌다",
                                                       "state": "build-front"}})
     assert oneshot_profile.held(o())

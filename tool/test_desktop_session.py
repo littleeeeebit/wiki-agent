@@ -233,6 +233,27 @@ def test_a_job_that_fails_to_end_does_not_skip_the_rest_of_cleanup(tmp_path, mon
     assert desktop_session.load(look.folder)["jobs"]["second"]["members"] == [late]   # recovery names it too
 
 
+def test_a_member_learnt_while_its_job_ended_is_recorded_even_when_the_close_fails(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    look = desktop_session.Look(tmp_path, "late")
+    late = {"pid": 7, "created": 1, "exe": "late.exe"}
+
+    def closing():
+        raise OSError("close failed")
+
+    look.jobs = {"app": SimpleNamespace(end=lambda _s: {"clean": True, "reasons": [], "members": [late]},
+                                        close=closing, outstanding=lambda: 0)}
+    look.record["jobs"] = {"app": {"members": []}}
+    monkeypatch.setattr(look, "observe", lambda: None)
+    monkeypatch.setattr(native_process, "_sockets", lambda _kind: [])
+    monkeypatch.setattr(look, "_desktop_closed", lambda: [])
+
+    proof = look.close(0)
+
+    assert not proof["clean"] and desktop_session.load(look.folder)["jobs"]["app"]["members"] == [late]
+
+
 def test_an_interrupted_cleanup_is_never_proven(tmp_path, monkeypatch):
     look = desktop_session.Look(tmp_path, "interrupted")
 

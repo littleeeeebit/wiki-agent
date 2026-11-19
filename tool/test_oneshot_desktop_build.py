@@ -25,15 +25,20 @@ pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="a PC app is bui
 
 RUNNER = "python -m pytest -p no:cacheprovider -q --junitxml={report}"   # the declared tool, by its name
 GATE = RUNNER.replace("{report}", oneshot_build.REPORT)
-MAKE = ("import pathlib, sys\n"
+PROGRAM = "sys.executable"   # a real Windows program whose manifest asks for no more than its caller's rights
+MAKE = ("import pathlib, shutil, sys\n"
         "out = pathlib.Path('dist-pc')\n"
         "(out / 'res').mkdir(parents=True, exist_ok=True)\n"
-        "(out / 'app.exe').write_bytes(b'MZ' + pathlib.Path('manifest.txt').read_bytes())\n"
+        "shutil.copyfile({program}, out / 'app.exe')\n"
         "(out / 'res' / 'strings.txt').write_bytes(pathlib.Path('strings.txt').read_bytes())\n")
 BLOCK = {"run": {"folder": "dist-pc", "program": "app.exe", "args": ["--data", "{data}"], "cwd": ".",
                  "env": {"WEBVIEW2_USER_DATA_FOLDER": "{data}/webview"}},
          "installer": "dist-pc-release/app-setup.exe"}
-AS_INVOKER = b'<requestedExecutionLevel level="asInvoker" uiAccess="false"/>'
+ELEVATED = r"C:\Windows\regedit.exe"   # its manifest asks for `highestAvailable`
+SIDECAR = '<?xml version="1.0" encoding="UTF-16"?><assembly xmlns="urn:schemas-microsoft-com:asm.v1" ' \
+          'manifestVersion="1.0"><trustInfo xmlns="urn:schemas-microsoft-com:asm.v3"><security><requestedPrivileges>' \
+          '<requestedExecutionLevel level="requireAdministrator" uiAccess="false"/></requestedPrivileges></security>' \
+          '</trustInfo></assembly>'
 
 
 @pytest.fixture
@@ -48,8 +53,7 @@ def pc_build(staged):  # noqa: F811 — the imported fixture, requested by name
         "profile": {k: v for k, v in o()["profile"].items() if k != "responsive"} | {"window": "1280x800"},
         "toolpaths": {"stage": "build-front", "paths": {"python": os.path.abspath(shutil.which("python"))}}})
     write(staged, ".gitignore", "__pycache__/\nartifacts/\ndist-pc/\n")
-    write(staged, "make_pc.py", MAKE)
-    write(staged, "manifest.txt", AS_INVOKER.decode())
+    write(staged, "make_pc.py", MAKE.format(program=PROGRAM))
     write(staged, "strings.txt", "번역 켜기")
     write(staged, ".wiki/adapter.toml", adapter(gate=f"{GATE} && python make_pc.py", live=""))
     git(staged, "add", "-A")
@@ -123,32 +127,80 @@ def test_a_second_build_replaces_the_frozen_one(pc_build):
     ({"cwd": "../.."}, "run.cwd"),
     ({"args": [], "env": {"APP_DATA": "C:/ProgramData/app"}}, "{data}"),
     ({"env": {"APP_DATA": "{data}", "ASSETS": "<tree>/web"}}, "작업트리를 가리킨다"),
+    ({"args": ["--data", "{data}", "--config=<tree>/./app/../config.json"]}, "작업트리를 가리킨다"),
+    ({"env": {"APP_DATA": "{data}", "PATHS": "C:/Windows;<TREE>\\bin"}}, "작업트리를 가리킨다"),
+    ({"program": "NUL.exe"}, "장치 이름"),
+    ({"program": "app.exe."}, "끝의 `.`"),
 ])
 def test_a_run_that_is_packaged_or_reaches_outside_its_copy_goes_back_to_the_build(pc_build, change, said):
-    run = {**BLOCK["run"], **json.loads(json.dumps(change).replace("<tree>", str(pc_build).replace("\\", "/")))}
+    tree = str(pc_build).replace("\\", "/")
+    run = {**BLOCK["run"], **json.loads(json.dumps(change).replace("<tree>", tree).replace(
+        "<TREE>", tree.upper().replace("/", "\\\\")))}
     sent = checked(pc_build, {**BLOCK, "run": run})
     assert sent and said in sent[0][2] and not o().get("desktop_build") and not staging()
 
 
+@pytest.mark.parametrize("installer", ["dist-pc/app.exe", "DIST-PC/APP.EXE", "release/CON.msi"])
+def test_an_installer_that_is_the_program_or_a_device_goes_back_to_the_build(pc_build, installer):
+    sent = checked(pc_build, {**BLOCK, "installer": installer})
+    assert sent and ("같은 파일" in sent[0][2] or "장치 이름" in sent[0][2]) and not staging()
+
+
 @pytest.mark.parametrize("trouble, said", [
-    ("elevated", "관리자 권한"), ("msix", "MSIX"), ("link", "링크"), ("installer", "같은 파일")])
-def test_a_built_program_the_look_may_not_start_goes_back_to_the_build(pc_build, trouble, said, tmp_path):
-    block = BLOCK
+    ("elevated", "관리자 권한"), ("sidecar", "관리자 권한"), ("zip", "Windows 프로그램이 아니다"), ("msix", "MSIX"),
+    ("link", "링크"), ("big", "실행이 읽는 것보다 크다")])
+def test_a_built_program_the_look_may_not_start_goes_back_to_the_build(pc_build, trouble, said, tmp_path,
+                                                                       monkeypatch):
+    make = MAKE.format(program=PROGRAM)
     if trouble == "elevated":
-        write(pc_build, "manifest.txt", '<requestedExecutionLevel level="requireAdministrator" uiAccess="false"/>')
-        git(pc_build, "commit", "-am", "elevated")
+        if not os.path.exists(ELEVATED):
+            pytest.skip("this Windows has no regedit.exe")
+        make = MAKE.format(program=repr(ELEVATED))
+    elif trouble == "sidecar":   # UTF-16, as Windows reads one beside a program with none embedded
+        make += f"(out / 'app.exe.manifest').write_text({SIDECAR!r}, encoding='utf-16')\n"
+    elif trouble == "zip":   # a package's layout under a program's name
+        make += ("import zipfile\nwith zipfile.ZipFile(out / 'app.exe', 'w') as z:\n"
+                 "    z.writestr('AppxManifest.xml', '<Package/>')\n")
     elif trouble == "msix":
-        write(pc_build, "make_pc.py", MAKE + "(out / 'AppxManifest.xml').write_text('<Package/>')\n")
-        git(pc_build, "commit", "-am", "packaged")
+        make += "(out / 'AppxManifest.xml').write_text('<Package/>')\n"
     elif trouble == "link":
         (tmp_path / "outside").mkdir()
-        write(pc_build, "make_pc.py", MAKE + f"import subprocess\nsubprocess.run(['cmd', '/c', 'mklink', '/J', "
-                                             f"r'dist-pc\\linked', r'{tmp_path / 'outside'}'], check=True)\n")
-        git(pc_build, "commit", "-am", "linked")
+        make += (f"import subprocess\nsubprocess.run(['cmd', '/c', 'mklink', '/J', r'dist-pc\\linked', "
+                 f"r'{tmp_path / 'outside'}'], check=True)\n")
     else:
-        block = {**BLOCK, "installer": "dist-pc/app.exe"}
-    sent = checked(pc_build, block)
+        monkeypatch.setattr(pc, "MAX_FILES", 1)   # two files: refused while copying
+    write(pc_build, "make_pc.py", make)
+    git(pc_build, "commit", "--allow-empty", "-am", trouble)
+    sent = checked(pc_build)
     assert sent and said in sent[0][2] and not o().get("desktop_build") and not staging()
+
+
+def test_a_frozen_build_that_cannot_be_saved_leaves_no_copy(pc_build):
+    real = oneshot_spec.saved
+
+    def failing(repo, **fields):
+        if "desktop_build" in fields.get("oneshot", {}):
+            raise OSError("the disk is full")
+        return real(repo, **fields)
+
+    subprocess.run([sys.executable, "make_pc.py"], cwd=pc_build, check=True)   # what the gate builds
+    with patch.object(oneshot_spec, "saved", failing), pytest.raises(OSError, match="disk is full"):
+        front_build.froze(pc_build, spec(), pc.declared(pc_build, fenced(pc.BLOCK, BLOCK)), git(pc_build, "rev-parse",
+                                                                                                 "HEAD"), Run())
+    assert not staging() or not any(staging()[0].iterdir())
+
+
+@pytest.mark.parametrize("gone", ["copy", "head"])
+def test_a_frozen_build_whose_copy_is_gone_or_whose_head_moved_is_built_again(pc_build, gone):
+    checked(pc_build)
+    if gone == "copy":
+        shutil.rmtree(o()["desktop_build"]["folder"])
+    else:
+        write(pc_build, "strings.txt", "번역 끄기")
+        git(pc_build, "commit", "-am", "moved on")
+    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "state": "build-front", "detail": "x"}})
+    oneshot_spec.recover()
+    assert not o()["desktop_build"] and o()["stopped"]["reason"] == "restart" and not oneshot_profile.held(o())
 
 
 def test_the_build_text_names_the_window_and_the_declared_tools(pc_build):

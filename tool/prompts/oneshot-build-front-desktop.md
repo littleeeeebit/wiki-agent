@@ -75,16 +75,19 @@ End the turn with exactly one fenced block whose info string is
   program loads from the build, its libraries and its resources, and nothing
   else: at most 5000 files and 1 GB, with no link inside it. Gather a
   stack's debug output there when its own build folder holds more.
-- `run.program` is the debug `.exe` inside that folder; `run.cwd` is its
-  working directory, `.` or a folder inside it; `run.args` and `run.env` are
-  its arguments and the environment it adds.
+- `run.program` is the debug `.exe` inside that folder, a real Windows
+  program; `run.cwd` is its working directory, `.` or a folder inside it;
+  `run.args` and `run.env` are its arguments and the environment it adds.
 - `{data}` is the data folder the look gives each start. At least one
   argument or variable names it, and none names this worktree.
 - `installer` is the file a release build packages for S8 to attach. The
-  final gate builds it; this turn only names it.
+  final gate builds it, not this turn's `gate_cmd`; this turn only names it,
+  and it is never the program `run` starts.
 
-Paths are relative to the repository root, with `/`, and are what
-`gate_cmd` builds.
+`run.folder` and `installer` are relative to the repository root;
+`run.program` and `run.cwd` are relative to `run.folder`. Every path uses
+`/`, with no `.` or `..` part, no part ending in `.`, and no Windows device
+name such as `NUL` or `COM1`.
 
 ## When this turn ends
 
@@ -98,11 +101,13 @@ The server checks, in order:
    `oneshot-desktop` block has the shape above.
 4. The adapter's gate passes on a clean, committed HEAD, every pinned core
    test passes by its class and name, and `run.folder` and `run.program` are
-   there. A packaged layout, such as an MSIX folder, or a program whose
-   manifest asks for elevation is refused.
-5. The server copies `run.folder` into a folder the run owns, records every
-   file's digest with the launch settings, and names the build by them. A
-   change to any file or setting is a new build.
+   there.
+5. The server copies `run.folder` into a folder the run owns and checks the
+   copy: a program that is not a Windows program, a packaged layout such as
+   an MSIX folder, or a manifest, embedded or beside the program, that asks
+   for elevation is refused. It then records every copied file's digest with
+   the launch settings and names the build by them. A change to any file or
+   setting is a new build.
 
 A refusal comes back with the reason, at most three times in all.
 

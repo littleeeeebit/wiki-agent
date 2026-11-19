@@ -192,8 +192,17 @@ def froze(path: Path, spec: dict, desktop: dict, head: str, run) -> str:
     if oneshot_build.head(path) != head or specs.dirty(path):
         shutil.rmtree(into, ignore_errors=True)
         return f"PC 앱 빌드를 얼리는 동안 작업트리가 바뀌었다 — 게이트는 `{head[:12]}` 를 통과했다"
-    oneshot_spec.saved(spec["repo"], oneshot={"desktop_build": build, "attempts": 0, "working": None,
-                                              "stopped": oneshot_spec.kind_stop(STAGE)})
+    try:
+        oneshot_spec.saved(spec["repo"], oneshot={"desktop_build": build, "attempts": 0, "working": None,
+                                                  "stopped": oneshot_spec.kind_stop(STAGE)})
+    except BaseException:   # a save may fail after it wrote: the record, read back, says whether the copy is kept
+        try:
+            kept = (oneshot_spec.spec_of(spec["repo"])["oneshot"].get("desktop_build") or {}).get("folder")
+        except Exception:
+            kept = build["folder"]   # unread: kept, for the next frozen build to remove
+        if kept != build["folder"]:
+            shutil.rmtree(into, ignore_errors=True)
+        raise
     for old in staging.iterdir():
         if old != into:
             shutil.rmtree(old, ignore_errors=True)
