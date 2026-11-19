@@ -72,6 +72,8 @@ export type Turn = {
   record?: string
   /** A replay's log read, by request number: a newer accepted read that names no such turn ends it. */
   from?: number
+  /** Ended by such a read (`expire`), not by its own stream: that stream is let go. */
+  expired?: boolean
   /** Until the server's run ends — not at the answer: the gate runs after it,
    *  still holding the worktree. */
   pending?: boolean
@@ -170,6 +172,12 @@ function restored(s: WorkStep): Step {
   return { kind: 'approval', text: s.text, id: '', tool: s.tool, input: s.input ?? {}, by: s.by, answers: s.answers,
     answer: s.answer === 'none' ? undefined : s.answer === 'allow' }
 }
+
+/** One record row as a turn on screen. */
+const fromRow = (r: api.WorkTurn): Turn => ({
+  key: ++seq, role: r.role, text: r.text, error: r.error, ms: r.ms, cost: r.cost_usd, model: r.model,
+  tokens: r.tokens, steps: (r.steps ?? []).map(restored), answered: r.answered, record: r.turn,
+})
 
 /** One event folded into its turn. */
 function apply(t: Turn, ev: WorkEv): Turn {
@@ -319,22 +327,36 @@ export function useWork() {
   // when the read was asked and is not that one has ended on the server, whatever its stream still owes. A turn
   // that began after the request is left alone: the server's answer may predate it.
   // A replay a log read installed (`from`, that read's number) is as old as that read, whenever it appeared.
+  // An ended turn's reply already on record (`rows`, the same read) takes its place; a turn not yet on record just
+  // stops pending.
   const expire = useCallback((path: string, n: number, before: Set<string>,
-    running: { turn?: string } | null | undefined) => {
+    running: { turn?: string } | null | undefined, rows: api.WorkTurn[]) => {
     const over = (t: Turn) => t.pending && !!t.turn && t.turn !== running?.turn
       && (before.has(t.turn) || (t.from !== undefined && t.from < n))
-    // An expired replay's stream is let go with it: its late end (a 410) would otherwise reload the path under a
-    // newer send. A replay is the only turn `streams` follows.
-    if ((seen.current[path] ?? []).some((t) => over(t) && t.from !== undefined)) {
-      streams.current.get(path)?.abort()
-      streams.current.delete(path)
-    }
     setTurns((all) => {
       const list = all[path]
       if (!list?.some(over)) return all
-      return { ...all, [path]: list.map((t) => (over(t) ? { ...t, pending: false } : t)) }
+      return { ...all, [path]: list.map((t) => {
+        if (!over(t)) return t
+        ended.current.add(t.key)   // idempotent: read by the replay's own end before the effect below lets it go
+        const saved = rows.find((r) => r.role === 'assistant' && r.turn === t.turn)
+        return saved ? { ...fromRow(saved), key: t.key, expired: true } : { ...t, pending: false, expired: true }
+      }) }
     })
   }, [])
+  // Each replay's own stream, by its turn's key: let go once `expire` ended that turn, after the state that says so
+  // is committed. Its late end (a 410) would otherwise reload the path under a newer send; and only its own
+  // controller is touched, never a replacement's. A replay that ends by itself keeps its stream to its end.
+  const replays = useRef(new Map<number, AbortController>())
+  const ended = useRef(new Set<number>())
+  useEffect(() => {
+    for (const [key, control] of replays.current) {
+      if (!Object.values(turns).some((list) => list.some((t) => t.key === key && t.expired))) continue
+      control.abort()
+      replays.current.delete(key)
+      for (const [path, c] of streams.current) if (c === control) streams.current.delete(path)
+    }
+  }, [turns])
   const pendingNow = (path: string) =>
     new Set((seen.current[path] ?? []).filter((t) => t.pending && t.turn).map((t) => t.turn!))
 
@@ -370,13 +392,13 @@ export function useWork() {
     const latest = asked(path)
     const before = pendingNow(path)
     api.workLog(path)
-      .then(({ session_id, rules: list, queued: waiting, running }) => {
+      .then(({ session_id, rules: list, queued: waiting, running, rows }) => {
         if ((lives.current.get(path) ?? 0) !== life || !latest()) return
         runs.current.set(path, running ?? null)
         setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
         showQueued(path, waiting)
         named(path, running)
-        expire(path, latest.n, before, running)
+        expire(path, latest.n, before, running, rows)
       })
       .catch(() => {})
   }, [showQueued, named, asked, expire])
@@ -457,10 +479,7 @@ export function useWork() {
         const fresh = latest()
         if (fresh) runs.current.set(path, running ?? null)
         const now = fresh ? running : runs.current.get(path) ?? null
-        const past: Turn[] = rows.map((r) => ({
-          key: ++seq, role: r.role, text: r.text, error: r.error, ms: r.ms, cost: r.cost_usd, model: r.model,
-          tokens: r.tokens, steps: (r.steps ?? []).map(restored), answered: r.answered, record: r.turn,
-        }))
+        const past: Turn[] = rows.map(fromRow)
         if (fresh) showQueued(path, waiting)
         if (fresh) named(path, running)
         // The turn still running: its reply is not on record yet. Its events
@@ -489,11 +508,13 @@ export function useWork() {
           const control = new AbortController()
           streams.current.get(path)?.abort()
           streams.current.set(path, control)
+          replays.current.set(live.key, control)
           follow(path, live.key, (on) => api.workEvents(path, now.turn, -1, on, control.signal),
             { session: now.session_id, turn: now.turn, signal: control.signal })
             .then((gone) => {
               if (streams.current.get(path) === control) streams.current.delete(path)
-              if (gone) {
+              replays.current.delete(live.key)
+              if (gone && !control.signal.aborted && !ended.current.delete(live.key)) {
                 forget(path)
                 load(path)
               }
