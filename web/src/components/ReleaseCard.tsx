@@ -118,10 +118,18 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   const sync = useCallback(() => setHeld([...holding.current.values()]), [])
   const hold = useCallback((r: Rehearsal) => {
     const h = holding.current.get(r.boot)
-    if (h && h.run.rev >= r.rev) return false
+    if ((h && h.run.rev >= r.rev) || (top.current.get(r.boot) ?? -1) >= r.rev) return false
     holding.current.set(r.boot, { run: r, at: seq.current })
     sync()
     return true
+  }, [sync])
+  // Another server's finished build that cannot change the followed server still orders that server's own
+  // builds: its held build with a smaller `rev` has ended, and none older is held after it.
+  const mark = useCallback((r: Rehearsal) => {
+    if (r.state === 'running') return
+    top.current.set(r.boot, Math.max(top.current.get(r.boot) ?? -1, r.rev))
+    const h = holding.current.get(r.boot)
+    if (h && h.run.rev < r.rev && holding.current.delete(r.boot)) sync()
   }, [sync])
   const release = useCallback((sent: number) => {   // an answer releases the holds that arrived before its request was sent
     let gone = false
@@ -146,7 +154,10 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
       e.at = seq.current
     } else if (e.boot !== r.boot) {
       setAgain((n) => n + 1)
-      if (t.sent <= e.at) return false
+      if (t.sent <= e.at) {
+        mark(r)
+        return false
+      }
       end(e.boot)
       era.current = { n: e.n + 1, boot: r.boot, at: seq.current, ended: e.ended }
       settle()
@@ -161,7 +172,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     take(r)
     settle()
     return true
-  }, [take, release, end])
+  }, [take, release, end, mark])
 
   // One card read at a time, bounded; a state read never discards one. A read sent in an era that has ended
   // reads again once it settles.
@@ -221,6 +232,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     // never takes a build off the screen; it changes nothing and the preview is read again. A stop issued after
     // that answer arrived can reach only that server or a later one, so its refusal is followed.
     if (r.boot !== e.boot && r.state !== 'running' && t.sent <= e.at) {
+      mark(r)
       setAgain((n) => n + 1)
       return false
     }
@@ -246,7 +258,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     setBusy(null)
     setAgain((n) => n + 1)
     return true
-  }, [take, release, end, hold])
+  }, [take, release, end, hold, mark])
 
   async function act(fn: () => Promise<{ rehearsal: Rehearsal }>) {
     setFault('')
