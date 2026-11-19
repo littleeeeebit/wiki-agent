@@ -254,7 +254,7 @@ export function useWork() {
   const loading = useRef(new Set<string>())
   // Paths this window is sending to. The record's running turn is then that
   // send's own, already on screen.
-  const sending = useRef(new Set<string>())
+  const sending = useRef(new Map<string, number>())
   // Which worktree a path names. Removing a worktree and making one with the
   // same task name gives the same path, so a record fetched for the old one
   // and landing after `forget` would otherwise fill the new one's pane.
@@ -486,7 +486,7 @@ export function useWork() {
         if (fresh) named(path, running)
         // The turn still running: its reply is not on record yet. Its events
         // are, in the server's buffer, from the first.
-        const live = now && !sending.current.has(path) && (fresh || !streams.current.has(path))   // not while a stream follows it
+        const live = now && !sending.current.get(path) && (fresh || !streams.current.has(path))   // not while a stream follows it
           ? { key: ++seq, role: 'assistant' as const, text: '', steps: [], pending: true,
               sessionId: now.session_id, turn: now.turn,
               from: fresh ? latest.n : logsShown.current.get(path) }   // the read whose running turn this is
@@ -497,9 +497,12 @@ export function useWork() {
         setTurns((all) => {
           const mine = all[path] ?? []
           // The stream reattached here replaces a local copy of the same turn: the last entry drives Stop.
+          // Matched by the server turn, streamed (`turn`) or restored from a record row (`record`).
+          const id = (t?: Turn) => t?.turn ?? t?.record
           const shown = mine.filter((t, i) => t.role === 'assistant'
-            ? !(t.turn && (kept.has(`assistant:${t.turn}`) || t.turn === live?.turn))
-            : !(mine[i + 1]?.role === 'assistant' && mine[i + 1].turn && kept.has(`user:${mine[i + 1].turn}`)))
+            ? !(id(t) && (kept.has(`assistant:${id(t)}`) || id(t) === live?.turn))
+            : !(t.record ? kept.has(`user:${t.record}`)
+              : mine[i + 1]?.role === 'assistant' && id(mine[i + 1]) && kept.has(`user:${id(mine[i + 1])}`)))
           // A replacement takes its local copy's place, after the instruction that copy answered.
           const at = live ? mine.findIndex((t) => t.role === 'assistant' && t.turn === live.turn) : -1
           const before = at < 0 ? 0 : shown.filter((t) => mine.indexOf(t) < at).length
@@ -538,16 +541,21 @@ export function useWork() {
         ...all,
         [path]: [...(all[path] ?? []), { key: ++seq, role: 'user', text, steps: [] }, mine],
       }))
-      sending.current.add(path)
+      sending.current.set(path, (sending.current.get(path) ?? 0) + 1)
       let gone = false
       try {
         gone = await follow(path, mine.key, (on) => api.workSay({ path, text, ...choice }, on))
       } catch (err) {
         patch(path, mine.key, (t) => ({ ...t, error: String(err), pending: false }))
-      } finally {
-        sending.current.delete(path)
       }
-      if (gone || missed.current.delete(path)) {
+      // Counted, not flagged: an older send ending while a newer one runs leaves the path to the newer one, and
+      // a reload it owed waits for the last send to end rather than clearing the newer one's turn.
+      const left = (sending.current.get(path) ?? 1) - 1
+      if (left > 0) sending.current.set(path, left)
+      else sending.current.delete(path)
+      if (left > 0) {
+        if (gone) missed.current.add(path)
+      } else if (gone || missed.current.delete(path)) {
         forget(path)
         load(path)
       }
@@ -645,7 +653,7 @@ export function useWork() {
     if (!loading.current.has(path) || (turn && own.current.has(turn))) return
     // Announced while this window's send still follows its own turn — the
     // instruction that waited, the plan row's: read once that send lets go.
-    if (sending.current.has(path)) {
+    if (sending.current.get(path)) {
       missed.current.add(path)
       return
     }
