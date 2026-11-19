@@ -420,9 +420,12 @@ FAMILY = {"'": re.compile("[‘’‚‛]"), '"': re.compile("[“”„]")}
 
 
 def quote_safe(command: str) -> bool:
-    """No typographic quote can be a PowerShell delimiter the masker missed: none outside ASCII-quoted text, and
-    none inside a string of its own family, which it could close (`'a’ && b` is two commands to PowerShell)."""
+    """PowerShell and the masker read the same strings: no stop-parsing `--%`, after which PowerShell reads quotes
+    as text; no typographic quote outside ASCII-quoted text; and none inside a string of its own family, which it
+    could close (`'a’ && b` is two commands to PowerShell)."""
 
+    if "--%" in command:   # after it PowerShell reads quotes as text, which the masker would take as strings
+        return False
     bare, spans = syntax(command)
     if SMART_QUOTES.search(bare):
         return False
@@ -457,7 +460,7 @@ def chained(command: str) -> bool:
 
     windows = os.name == "nt"   # the masker reads PowerShell, not POSIX, which cuts at every `&&` as before
     parts = links(command) if windows else command.split("&&")
-    return not CONTROL.search(command) and (quote_safe(command) or not windows) \
+    return not CONTROL.search(command) and (not windows or quote_safe(command)) \
         and all(p.split() and not leaves(p.split()[0]) for p in parts)
 
 

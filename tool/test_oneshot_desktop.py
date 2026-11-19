@@ -418,6 +418,8 @@ def test_on_windows_the_chain_check_reads_powershell_quotes():
         for curly in ("cargo test --label ‘R && D’", "cargo test --label “R”", "echo 'a’ && echo b",
                       "echo \"a” && return \"", "echo @'\nx’\n'@"):
             assert not oneshot_build.chained(curly), curly
+        # After `--%` PowerShell reads an apostrophe as text, so the masker's string would hide `&& return`.
+        assert not oneshot_build.chained("git log --% --grep=it's && return '")
         # Inside a string of the other family it is only a letter.
         assert oneshot_build.chained("npm test -- \"Editor’s preview\"")
         assert oneshot_build.chained("npm test -- 'say “hi”'")
@@ -428,6 +430,8 @@ def test_on_a_posix_shell_the_chain_check_cuts_at_every_and_sign():
         # Bash reads `'it'\''s'` as one word; PowerShell's masker would hide the second `&&` and its `return`.
         assert not oneshot_build.chained("echo 'it'\\''s' && echo \"a\" && return")
         assert oneshot_build.chained("npm test --label ‘R’")   # a letter to bash, not a quote
+        with patch.object(oneshot_build, "syntax", lambda *a: pytest.fail("POSIX never reads PowerShell")):
+            assert oneshot_build.chained("npm test --label x")
 
 
 def test_a_build_whose_gate_names_a_program_gone_from_the_worktree_is_refused_before_it_runs(desktop):
