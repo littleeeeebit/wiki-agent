@@ -552,7 +552,16 @@ export function useWork() {
         return true
       })
       .catch(() => {
-        if ((lives.current.get(path) ?? 0) === life) loading.current.delete(path)
+        if ((lives.current.get(path) ?? 0) !== life) return false
+        loading.current.delete(path)
+        // This read carried a deferred refresh and no send is left to owe it: try once more.
+        // ponytail: one retry per deferral; a second failure waits for the next notice or sync.
+        if (missed.current.has(path) && !sendingNow(path)) {
+          missed.current.delete(path)
+          setTimeout(() => {
+            if ((lives.current.get(path) ?? 0) === life) load(path)
+          }, 1000)
+        }
         return false
       })
   }, [follow, forget, showQueued, named, asked])
@@ -676,21 +685,22 @@ export function useWork() {
   const reset = useCallback(async (path: string, keep: api.Keep) => {
     const before = streams.current.get(path)
     const kept = await api.workReset(path, keep)
-    // The server cleared the record and announced it before answering: a turn attached since is newer than
-    // this clear, and stays. A read that attached nothing may predate the clear, so it does not count.
+    // The server cleared the record and announced it before answering, so a read or an attachment begun
+    // meanwhile may predate the clear or follow it: read once more now, after it, and keep only what that shows.
     const now = streams.current.get(path)
-    if (now && now !== before) return kept
+    if (loading.current.has(path) || (now && now !== before)) {
+      forget(path)
+      load(path)
+      return kept
+    }
     // A record read before the clear and landing after it would bring the
-    // cleared conversation back; a read still in flight is asked again, after the clear.
-    const reread = loading.current.has(path)
+    // cleared conversation back.
     lives.current.set(path, (lives.current.get(path) ?? 0) + 1)
-    loading.current.delete(path)
     sending.current.delete(path)   // as in `forget`: the cleared transcript's sends hold the path no longer
     setTurns((all) => ({ ...all, [path]: [] }))
     setRules((all) => ({ ...all, [path]: { session: '', list: [] } }))
-    if (reread) load(path)
     return kept
-  }, [load])
+  }, [forget, load])
 
   /** A turn the server started in `path` — the plan row's, a loop's. A
    *  window that already shows that worktree reads it again, which attaches
