@@ -258,7 +258,8 @@ export function useWork() {
   // (`expire`) no longer holds the path while its stream drains.
   const sending = useRef(new Map<string, Set<number>>())
   // A full log read in flight for a path: a deferred refresh it already satisfies does not start another.
-  const inflight = useRef(new Map<string, object>())
+  // Held by request number, so a log asked before a deferral cannot settle it.
+  const inflight = useRef(new Map<string, number>())
   // A key the mirror does not show yet (a send just added, before its render) counts as live.
   const sendingNow = (path: string) => [...(sending.current.get(path) ?? [])].some((key) => {
     const t = (seen.current[path] ?? []).find((x) => x.key === key)
@@ -299,7 +300,9 @@ export function useWork() {
   }, [])
   // Paths a server-started turn was announced for while this window's own
   // send still followed its turn: read again once that send lets go.
-  const missed = useRef(new Set<string>())
+  // Each holds the log request number at deferral: only a full log asked after it accounts for the notice.
+  const missed = useRef(new Map<string, number>())
+  const defer = (path: string) => missed.current.set(path, logsAsked.current.get(path) ?? 0)
   // The server's turns this window already follows.
   const own = useRef(new Set<string>())
   // The reattached stream of each path's running turn. A browser keeps six
@@ -485,14 +488,15 @@ export function useWork() {
     loading.current.add(path)
     const life = lives.current.get(path) ?? 0
     const latest = asked(path)
-    const flight = {}
-    inflight.current.set(path, flight)
+    inflight.current.set(path, latest.n)
     return api.workLog(path)
       .finally(() => {
-        if (inflight.current.get(path) === flight) inflight.current.delete(path)
+        if (inflight.current.get(path) === latest.n) inflight.current.delete(path)
       })
       .then(({ rows, running, rules: list, session_id, queued: waiting }) => {
         if ((lives.current.get(path) ?? 0) !== life) return true
+        // Read after a deferral: this record accounts for its notice.
+        if ((missed.current.get(path) ?? Infinity) < latest.n) missed.current.delete(path)
         // Older than a recheck already applied: its transcript still predates this window's sends, so it merges as
         // ever, but the running turn to attach is the newest read's — the snapshot's may have ended or changed.
         const fresh = latest()
@@ -538,7 +542,7 @@ export function useWork() {
               replays.current.delete(live.key)
               const expired = ended.current.delete(live.key)   // every end clears its bookkeeping
               // A live local send owns the path now: its own end reads the record once (`missed`).
-              if (gone && !control.signal.aborted && !expired && sendingNow(path)) missed.current.add(path)
+              if (gone && !control.signal.aborted && !expired && sendingNow(path)) defer(path)
               else if (gone && !control.signal.aborted && !expired) {
                 forget(path)
                 load(path)
@@ -575,22 +579,22 @@ export function useWork() {
       const stale = !left?.has(mine.key)
       left?.delete(mine.key)
       if (!left?.size) sending.current.delete(path)
-      // A full log already in flight reads the record anyway: it settles a deferred refresh without a second one
-      // that would supersede it.
-      const reading = inflight.current.has(path)
+      // A full log asked after the deferral reads the record anyway: it settles the refresh (on success, in `load`)
+      // without a second read that would supersede it. An older one, or a 410 now, still reloads.
+      const owed = missed.current.has(path)
+      const reading = owed && (inflight.current.get(path) ?? 0) > missed.current.get(path)!
       if (stale) {
-        if (!sendingNow(path) && !streams.current.has(path) && missed.current.delete(path) && !reading) {
+        if (!sendingNow(path) && !streams.current.has(path) && owed && !reading) {
+          missed.current.delete(path)
           forget(path)   // a notice deferred for this send, and nothing attached since: read once now
           load(path)
         }
       } else if (sendingNow(path)) {
-        if (gone) missed.current.add(path)
-      } else {
-        const owed = missed.current.delete(path)   // either reason reloads once, and settles the other
-        if ((gone || owed) && !reading) {
-          forget(path)
-          load(path)
-        }
+        if (gone) defer(path)
+      } else if (gone || (owed && !reading)) {
+        missed.current.delete(path)   // either reason reloads once, and settles the other
+        forget(path)
+        load(path)
       }
     },
     [follow, forget, load, patch],
@@ -670,19 +674,23 @@ export function useWork() {
   }, [rules])
 
   const reset = useCallback(async (path: string, keep: api.Keep) => {
-    const life = lives.current.get(path) ?? 0
+    const before = streams.current.get(path)
     const kept = await api.workReset(path, keep)
-    // The server cleared the record and announced it before answering: a turn attached since (forget + load,
-    // which already read the cleared record) is newer than this clear, and stays.
-    if ((lives.current.get(path) ?? 0) !== life) return kept
+    // The server cleared the record and announced it before answering: a turn attached since is newer than
+    // this clear, and stays. A read that attached nothing may predate the clear, so it does not count.
+    const now = streams.current.get(path)
+    if (now && now !== before) return kept
     // A record read before the clear and landing after it would bring the
-    // cleared conversation back.
+    // cleared conversation back; a read still in flight is asked again, after the clear.
+    const reread = loading.current.has(path)
     lives.current.set(path, (lives.current.get(path) ?? 0) + 1)
+    loading.current.delete(path)
     sending.current.delete(path)   // as in `forget`: the cleared transcript's sends hold the path no longer
     setTurns((all) => ({ ...all, [path]: [] }))
     setRules((all) => ({ ...all, [path]: { session: '', list: [] } }))
+    if (reread) load(path)
     return kept
-  }, [])
+  }, [load])
 
   /** A turn the server started in `path` — the plan row's, a loop's. A
    *  window that already shows that worktree reads it again, which attaches
@@ -692,7 +700,7 @@ export function useWork() {
     // Announced while this window's send still follows its own turn — the
     // instruction that waited, the plan row's: read once that send lets go.
     if (sendingNow(path)) {
-      missed.current.add(path)
+      defer(path)
       return
     }
     forget(path)
