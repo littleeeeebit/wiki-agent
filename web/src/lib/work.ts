@@ -256,7 +256,13 @@ export function useWork() {
   // it back or lets it go. Here, not in the pane or the box: it outlives a
   // reattach, a switch to another pane, and whatever is typed meanwhile.
   // Every one of them: each was cleared from the box when it was sent.
-  const [refused, setRefused] = useState<Record<string, { text: string; reason: string }[]>>({})
+  const [refused, setRefused] = useState<Record<string, { text: string; reason: string; from?: string }[]>>({})
+  // The server's running turn of each path, as its last log read named it: kept through a dropped stream,
+  // so another task's pane on a shared checkout stays read-only until a read says the turn ended.
+  const [live, setLive] = useState<Record<string, string>>({})
+  const named = useCallback((path: string, running: { turn?: string } | null | undefined) => {
+    setLive(({ [path]: _gone, ...rest }) => (running?.turn ? { ...rest, [path]: running.turn } : rest))
+  }, [])
   /** One refused instruction by its place, or all of the path's. */
   const dismiss = useCallback((path: string, at?: number) => {
     setRefused(({ [path]: list = [], ...rest }) => {
@@ -294,18 +300,20 @@ export function useWork() {
     setTurns(({ [path]: _gone, ...rest }) => rest)
     setRules(({ [path]: _gone, ...rest }) => rest)
     showQueued(path, null)
-  }, [showQueued])
+    named(path, null)
+  }, [showQueued, named])
 
   const readRules = useCallback((path: string) => {
     const life = lives.current.get(path) ?? 0
     api.workLog(path)
-      .then(({ session_id, rules: list, queued: waiting }) => {
+      .then(({ session_id, rules: list, queued: waiting, running }) => {
         if ((lives.current.get(path) ?? 0) !== life) return
         setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
         showQueued(path, waiting)
+        named(path, running)
       })
       .catch(() => {})
-  }, [showQueued])
+  }, [showQueued, named])
 
   /** Follow one turn's events into `key` until it ends. `first` is the
    *  stream that starts it — the instruction's own, or a reattach. */
@@ -380,6 +388,7 @@ export function useWork() {
           tokens: r.tokens, steps: (r.steps ?? []).map(restored), answered: r.answered,
         }))
         showQueued(path, waiting)
+        named(path, running)
         // The turn still running: its reply is not on record yet. Its events
         // are, in the server's buffer, from the first.
         const live = running && !sending.current.has(path)
@@ -409,7 +418,7 @@ export function useWork() {
         if ((lives.current.get(path) ?? 0) === life) loading.current.delete(path)
         return false
       })
-  }, [follow, forget, showQueued])
+  }, [follow, forget, showQueued, named])
 
   const send = useCallback(
     async (path: string, text: string, choice: { model: string; effort: string }) => {
@@ -441,14 +450,15 @@ export function useWork() {
    *  sent it. What the server holds is read again, and the text is kept as
    *  refused for the person to act on. */
   const queue = useCallback(async (path: string, turn: Turn, text: string,
-    choice: { model: string; effort: string }) => {
+    choice: { model: string; effort: string }, from?: string) => {
     try {
       await api.workQueue({ path, turn: turn.turn ?? '', text, ...choice })
       showQueued(path, text)
     } catch (err) {
       readRules(path)
+      // `from`: the task that sent it, on a checkout several share; only its pane shows the card.
       setRefused((all) => ({ ...all, [path]: [...(all[path] ?? []),
-        { text, reason: err instanceof Error ? err.message : String(err) }] }))
+        { text, reason: err instanceof Error ? err.message : String(err), from }] }))
     }
   }, [readRules, showQueued])
 
@@ -555,6 +565,6 @@ export function useWork() {
     }
   }, [attach, readRules])
 
-  return { turns, rules, queued, refused, load, send, queue, unqueue, dismiss, answer, stop, steer, clearRules, reset,
+  return { turns, live, rules, queued, refused, load, send, queue, unqueue, dismiss, answer, stop, steer, clearRules, reset,
     forget, attach }
 }

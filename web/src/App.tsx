@@ -399,14 +399,18 @@ export default function App() {
   const asks = (p: string, turn?: string) => (work.turns[p] ?? []).filter((t) => t.pending && (!turn || t.turn === turn))
     .flatMap((t) => t.steps).filter((s) => s.kind === 'approval' && s.answer === undefined).length
   // Another project's rows are keyed by task (`loop:` / `turn:`): several share one checkout path.
-  const others = elsewhere(loopRows, turnsElsewhere, repo, asks)
+  const others = elsewhere(loopRows, turnsElsewhere, repo, asks, (p) => {
+    const last = work.turns[p]?.at(-1)
+    return (last?.pending && last.turn) || undefined
+  })
   const other = others.find((o) => o.key === selected)
   const path = other ? other.path : /^(spec|loop|turn):/.test(selected) ? '' : selected
-  // The checkout's running turn is another task's: the pane shows it and steers nothing. By either source:
-  // the stream knows a turn first, the listing still names it when the stream has dropped.
+  // The checkout's running turn is another task's: the pane shows it and steers nothing. By any source: the
+  // stream knows a turn first; the work log and the listing still name it when the stream has dropped.
   const lastTurn = path ? work.turns[path]?.at(-1) : undefined
-  const foreign = !!other && ((!!lastTurn?.pending && (!lastTurn.turn || lastTurn.turn !== other.turn))
-    || turnsElsewhere.some((t) => t.path === other.path && (!other.turn || t.turn !== other.turn)))
+  const notMine = (turn?: string) => !turn || !other || turn !== other.turn
+  const foreign = !!other && ((!!lastTurn?.pending && notMine(lastTurn.turn)) || (!!work.live[path] && notMine(work.live[path]))
+    || turnsElsewhere.some((t) => t.path === other.path && notMine(t.turn)))
   useEffect(() => {
     if (path) work.load(path)
   }, [path, work])
@@ -816,8 +820,9 @@ export default function App() {
                 onStop={(turn) => work.stop(path, turn).catch((err) => setFault(String(err)))}
                 onSteer={(turn, text) => void work.steer(path, turn, text)}
                 queued={work.queued[path]}
-                onQueue={(turn, text) => void work.queue(path, turn, text, choice)}
-                refused={work.refused[path]}
+                onQueue={(turn, text) => void work.queue(path, turn, text, choice, selected)}
+                // A shared checkout's refusals are each its sender's: `at` keeps the place in the path's list.
+                refused={(work.refused[path] ?? []).map((r, at) => ({ ...r, at })).filter((r) => !r.from || r.from === selected)}
                 onDismiss={(at) => work.dismiss(path, at)}
                 onUnqueue={() => work.unqueue(path).catch((err) => setFault(String(err)))}
                 rules={(path && work.rules[path]?.list) || []}

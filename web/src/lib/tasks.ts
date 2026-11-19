@@ -121,7 +121,7 @@ const owns = (l: LoopRow, t: TurnRow) => t.spec?.repo === l.repo && t.spec?.id =
 /** A task of another project that the rail still shows: its loop or its turn, with the
  *  approvals `approvals` already knows for its path. */
 export function elsewhere(loops: LoopRow[], turns: TurnRow[], repo: string,
-  approvals: (path: string, turn?: string) => number) {
+  approvals: (path: string, turn?: string) => number, current: (path: string) => string | undefined = () => undefined) {
   return [
     // Rows are keyed by task, not checkout: several tasks share a primary checkout. `turn` is the row's own
     // running turn; the pane steers no other (`Agent`'s `foreign`).
@@ -129,14 +129,17 @@ export function elsewhere(loops: LoopRow[], turns: TurnRow[], repo: string,
       // The loop's own turn, by its spec, is not listed apart: its model and its running show on this row.
       const turn = turns.find((t) => t.path === l.worktree && owns(l, t))
       const asks = turn ? approvals(l.worktree!, turn.turn) : 0   // a shared checkout's approvals are the running turn's
+      // The server's `waiting` is the checkout's: this row's only while its turn is the one the stream still runs.
+      const now = current(l.worktree!)
+      const held = !!turn && (!now || now === turn.turn)
       const state = shownState(l.state, !!turn)
       return {
         key: `loop:${l.repo}/${l.id}`, turn: turn?.turn,
         path: l.worktree!, repo: l.repo, spec: { repo: l.repo, id: l.id } as TurnRow['spec'],
         name: l.id, pr: l.pr, round: l.round, phase: phase(state), busy: !!turn,
         cell: turn?.cell ?? l.cell ?? undefined,
-        waiting: (!!turn && l.waiting) || asks > 0,   // the server's flag is the checkout's: the running task's
-        line: [word(state), asks ? `승인 ${asks}` : turn && l.waiting && '승인 대기', state === '멈춤' && l.stopped?.reason,
+        waiting: (held && l.waiting) || asks > 0,
+        line: [word(state), asks ? `승인 ${asks}` : held && l.waiting && '승인 대기', state === '멈춤' && l.stopped?.reason,
           l.state === '머지 대기' && (l.queued || '대기열')].filter(Boolean).join(' · '),
       }
     }),

@@ -38,7 +38,7 @@ type Props = {
   queued?: string
   onQueue: (turn: Turn, text: string) => void
   /** Instructions the server would not keep waiting, each with why. */
-  refused?: { text: string; reason: string }[]
+  refused?: { text: string; reason: string; at?: number }[]
   onDismiss: (at: number) => void
   onUnqueue: () => void
   rules: Rule[]
@@ -173,9 +173,9 @@ export function Agent({
           <div className="mt-1 flex gap-1">
             <Btn tone="ghost" onClick={() => {
               setSeed({ text: r.text })
-              onDismiss(i)
+              onDismiss(r.at ?? i)
             }}>입력칸에 넣기</Btn>
-            <Btn tone="ghost" onClick={() => onDismiss(i)}>버리기</Btn>
+            <Btn tone="ghost" onClick={() => onDismiss(r.at ?? i)}>버리기</Btn>
           </div>
         </div>
       ))}

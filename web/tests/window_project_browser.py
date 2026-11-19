@@ -83,16 +83,18 @@ def main():
                       "stopped": {"reason": "게이트", "detail": ""}}
             # Another stop on the same checkout: each row opens its own task.
             idle = {**parked, "id": "idle-task", "stopped": {"reason": "검증", "detail": ""}}
-            return {"loops": [question, parked, idle], "turns": [
-                {"path": SHARED, "repo": "fixture-b", "spec": None, "turn": "turn-b", "cell": RUNNING},
+            # `quiet`: the listing has not caught up with the shared checkout's turn either.
+            shared = [] if faults["quiet"] else [{"path": SHARED, "repo": "fixture-b", "spec": None, "turn": "turn-b",
+                                                  "cell": RUNNING}]
+            return {"loops": [question, parked, idle], "turns": [*shared,
                 {"path": ASKED, "repo": "fixture-b", "spec": {"repo": "fixture-b", "id": "asked-task"}, "turn": "turn-a",
                  "cell": RUNNING}], **live}
         if path == "work/log" and request.query_params["path"] == SHARED:
-            # `quiet`: this window's stream lost the turn the listing still names.
-            running = None if faults["quiet"] else {"turn": "turn-b", "session_id": "b", "seq": 0}
-            return {"rows": [], "session_id": "b", "busy": True, "running": running,
+            return {"rows": [], "session_id": "b", "busy": True, "running": {"turn": "turn-b", "session_id": "b", "seq": 0},
                     "rules": [{"kind": "tool", "tool": "Bash"}], "queued": "Then run the linter"}
-        if path == "work/events" and request.query_params["path"] == SHARED and not faults["quiet"]:
+        if path == "work/events" and request.query_params["path"] == SHARED and faults["quiet"]:
+            return JSONResponse({"detail": "fixture stream down"}, status_code=503)
+        if path == "work/events" and request.query_params["path"] == SHARED:
             async def waiting():
                 ev = {"kind": "approval", "text": "Run the checks", "meta": {"id": "ask-b", "tool": "Bash"},
                       "seq": 0, "turn": "turn-b", "session_id": "b"}
@@ -227,11 +229,12 @@ def main():
         expect(picker(broken)).to_contain_text("fixture-a")
         broken.get_by_text("fixture-a-task").first.wait_for()
 
-        # Last, since a reload moves the fixture's default: the stream lost the turn the server still
-        # runs, and the listing keeps the parked pane read-only.
+        # Last, since a reload moves the fixture's default. The stream fails and the listing has not caught up,
+        # yet the work log still names the running turn: the parked pane stays read-only on that alone.
         faults["quiet"] = True
         a.reload()
         a.get_by_role("button", name="fixture-b/parked-task").click()
+        expect(a.get_by_text("fixture stream down")).to_be_visible()   # the stream's own turn no longer pends
         expect(a.get_by_text("다른 작업의 턴이 돌고 있다")).to_be_visible()
         for control in ("취소", "해제"):
             expect(a.get_by_role("button", name=control, exact=True)).to_have_count(0)
