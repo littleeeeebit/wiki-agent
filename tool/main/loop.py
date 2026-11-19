@@ -892,6 +892,10 @@ def ask(loop: Loop, chat: ChatSession, text: str, instruction: str = "") -> str:
     release = wait_hold(loop, path)
     if release is None:
         raise RuntimeError("사람이 멈춤")
+    now = specs.load(loop.repo, loop.sid)   # a stop another request recorded while the reviewer was set up stands
+    if now is None or not LOOPING.fullmatch(now["state"]):
+        release()
+        raise RuntimeError("작업이 리뷰 중이 아니다")
     run = work.Run(chat)
     run.halt = loop.halt
     with _lock:

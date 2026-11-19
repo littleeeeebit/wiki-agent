@@ -1530,6 +1530,16 @@ def test_a_reviewer_lost_on_retry_keeps_the_requested_re_review(world, monkeypat
     assert len(built) == 2 and after["state"] == "멈춤" and after.get("review_again") is True
 
 
+def test_a_review_turn_never_goes_to_a_task_another_request_stopped(world):
+    spec = pr_spec(world, "review-stopped-meanwhile", 7)
+    loop.stop(None, "proj", spec["id"], loop.Why.WRONG_BASE, "fixture", source=re.compile(".*"))
+    assert specs.load("proj", spec["id"])["state"] == "멈춤"
+    lp, chat = loop.Loop("proj", spec["id"]), Reviewer("fixture")
+    with pytest.raises(RuntimeError, match="리뷰 중이 아니다"):
+        loop.ask(lp, chat, "Review.")
+    assert chat.heard == [] and not loop.work._busy   # nothing sent, the checkout let go
+
+
 def test_a_restatement_carries_the_server_instruction_never_a_path_from_the_text(tmp_path, monkeypatch):
     monkeypatch.setattr(specs, "brief", lambda spec: "SPEC\n")
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)   # the diff file lives in `.git`
