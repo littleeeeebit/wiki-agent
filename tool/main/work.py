@@ -981,7 +981,7 @@ def begin(path: Path, chat: ChatSession, text: str, release, run: Run | None = N
     except (OSError, RuntimeError, subprocess.TimeoutExpired):
         pass  # The diff endpoint reports its failure; the agent still runs.
     if not decide and replay is None:
-        remember(path, "user", text, **({"person": True} if run.person else {}))
+        remember(path, "user", text, turn=run.turn, **({"person": True} if run.person else {}))   # a window's send vs its record
 
     def execute():
         try:

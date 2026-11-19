@@ -1007,6 +1007,7 @@ export type WorkStep =
 export type WorkTurn = {
   role: 'user' | 'assistant'
   text: string
+  turn?: string   // the server turn this row belongs to; older rows have none
   error?: string
   steps?: WorkStep[]
   /** How many steps came before the answer. */

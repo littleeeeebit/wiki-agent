@@ -423,8 +423,16 @@ export function useWork() {
           ? { key: ++seq, role: 'assistant' as const, text: '', steps: [], pending: true,
               sessionId: now.session_id, turn: now.turn }
           : null
-        // A turn sent before the record came back stays after it.
-        setTurns((all) => ({ ...all, [path]: [...past, ...(live ? [live] : []), ...(all[path] ?? [])] }))
+        // A turn sent before the record came back stays after it, unless the record already holds it: the server
+        // can read its rows after this window's send was written, whatever order the requests went in.
+        const kept = new Set(rows.map((r) => r.turn && `${r.role}:${r.turn}`).filter(Boolean))
+        setTurns((all) => {
+          const mine = all[path] ?? []
+          const shown = mine.filter((t, i) => t.role === 'assistant'
+            ? !(t.turn && kept.has(`assistant:${t.turn}`))
+            : !(mine[i + 1]?.role === 'assistant' && mine[i + 1].turn && kept.has(`user:${mine[i + 1].turn}`)))
+          return { ...all, [path]: [...past, ...(live ? [live] : []), ...shown] }
+        })
         if (fresh) setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
         if (live && now) {
           const control = new AbortController()
