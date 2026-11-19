@@ -276,12 +276,55 @@ def test_an_undeclared_command_goes_back_to_its_author_and_nothing_runs(desktop)
                              runner("winget install x && cargo test {report}"))
 
 
-def test_a_gate_runs_each_declared_tool_from_the_path_found_for_its_stage():
-    o_ = {"toolpaths": {"stage": "build", "paths": {"cargo": "C:/Program Files/rust/cargo.exe"}}}
-    ran = oneshot_build.run_as("cargo test --workspace && scripts/junit.ps1 -to 'r.xml' && CARGO.EXE fmt --check", o_)
-    quoted = ("& " if os.name == "nt" else "") + oneshot_build.literal("C:/Program Files/rust/cargo.exe")
-    assert ran == f"{quoted} test --workspace && scripts/junit.ps1 -to 'r.xml' && {quoted} fmt --check"
-    assert oneshot_build.run_as("gradlew.bat test", {}) == "gradlew.bat test"   # no PC app: run as written
+def launch(at: str) -> str:
+    return ("& " if os.name == "nt" else "") + oneshot_build.literal(at)
+
+
+def test_a_gate_starts_every_program_by_the_explicit_path_its_check_chose(desktop):
+    (desktop / "scripts dir").mkdir()
+    (desktop / "scripts dir/junit.ps1").write_text("", encoding="utf-8")
+    (desktop / "npm").write_text("", encoding="utf-8")   # a root file named like a declared tool
+    (desktop / "build.cmd").write_text("", encoding="utf-8")
+    cargo, npm = "C:/Program Files/rust/cargo.exe", "C:/node/npm.cmd"
+    o_ = {"intent": o()["intent"], "stack": STACK, "toolpaths": {"stage": "build", "paths": {"cargo": cargo, "npm": npm}}}
+    ran = oneshot_build.run_as("cargo\ttest --workspace && \"scripts dir/junit.ps1\" -to 'r.xml' && CARGO.EXE fmt"
+                               " && npm test && build.cmd --release", o_, desktop)
+    script, build = str((desktop / "scripts dir/junit.ps1").resolve()), str((desktop / "build.cmd").resolve())
+    assert ran == (f"{launch(cargo)}\ttest --workspace && {launch(script)} -to 'r.xml' && {launch(cargo)} fmt"
+                   f" && {launch(npm)} test && {launch(build)} --release")   # a bare declared name is the tool
+    # What the check accepted is what runs: the same words pass `declared` and nothing is left for the shell.
+    tools = oneshot_build.tools(o_)
+    assert oneshot_build.undeclared(desktop, "cargo\ttest && \"scripts dir/junit.ps1\" -to x && build.cmd", tools) == []
+    (desktop / "build.cmd").unlink()   # moved after S4 checked it: the saved runner is read again and refused
+    for gone in ("build.cmd --release", "cargo test && python -m x"):
+        with pytest.raises(ValueError, match="아무것도 실행하지 않았다"):
+            oneshot_build.run_as(gone, o_, desktop)
+    with pytest.raises(ValueError, match="찾은 경로가 없다"):   # a declared tool with no path found for the stage
+        oneshot_build.run_as("cargo test", {**o_, "toolpaths": None}, desktop)
+    assert oneshot_build.run_as("gradlew.bat test", {}, desktop) == "gradlew.bat test"   # no PC app: run as written
+
+
+def test_a_tool_declared_with_its_extension_is_found_and_run_by_that_name(desktop):
+    cmd_tools = [{"name": "npm.cmd", "setup": "preinstalled"}]
+    o_ = {"intent": o()["intent"], "stack": [{**STACK[-1], "tools": cmd_tools}]}
+    assert oneshot_build.undeclared(desktop, "npm.cmd test && NPM run x && npm.CMD y", cmd_tools) == []
+    oneshot_spec.saved("budget", oneshot={"stack": o_["stack"], "stage": "tests", "working": "tests"})
+    asked = []
+    with turns({}) as sent, patch.object(oneshot_build.shutil, "which", lambda n: asked.append(n) or "C:/node/npm.cmd"):
+        SEND("budget", "tests", "x")
+    assert asked == ["npm.cmd"] and sent == ["x"] and o()["toolpaths"]["paths"] == {"npm.cmd": "C:/node/npm.cmd"}
+    assert oneshot_build.run_as("npm test", o(), desktop) == f"{launch('C:/node/npm.cmd')} test"
+    with pytest.raises(ValueError, match="확장자만 다른"):   # S2: `npm` and `npm.cmd` are one program
+        oneshot_profile.tools_of([{"name": "npm"}, {"name": "npm.cmd"}], ci=False)
+
+
+def test_a_build_whose_gate_names_a_program_gone_from_the_worktree_is_refused_before_it_runs(desktop):
+    oneshot_spec.saved("budget", oneshot={"stack": STACK, "stage": "build", "gate": "scripts/gone.ps1 && cargo test",
+                                          "toolpaths": {"stage": "build", "paths": {"cargo": "c", "npm": "n"}}})
+    with patch.object(oneshot_build, "reported", lambda *a: ""), patch.object(oneshot_build, "pinned", lambda *a: ""), \
+            patch.object(oneshot_build.specs, "judge", lambda *a, **k: pytest.fail("no gate runs")):
+        why = oneshot_build.built(desktop, SimpleNamespace(halt=None), specs.load("budget", oneshot.BRANCH), "")
+    assert "scripts/gone.ps1" in why and "아무것도 실행하지 않았다" in why
 
 
 def test_the_pc_app_s4_prompts_name_its_tools_and_a_run_without_one_gets_none(desktop):

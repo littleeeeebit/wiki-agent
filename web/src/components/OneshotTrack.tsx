@@ -18,7 +18,7 @@ export function Track({ view, halt }: { view: SpecView; halt?: ReactNode }) {
     <Split label={`${stageLabel(view.stage, kinds)} 진행`} sideLabel="기록" side={<Record view={view} />}>
       <div className="flex flex-col gap-5 px-10 pt-5 pb-8 max-[1500px]:px-7 max-[560px]:px-4">
         {halt}
-        {o.inflight && <Now inflight={o.inflight} />}
+        {o.inflight && <Now inflight={o.inflight} kinds={kinds} />}
         <Log path={view.worktree ?? ''} />
       </div>
     </Split>
@@ -27,7 +27,7 @@ export function Track({ view, halt }: { view: SpecView; halt?: ReactNode }) {
 
 // The roles `inflight` names that are not a stage of their own.
 const ROLE_LABEL: Record<string, string> = { critic: '화면 비평', talk: '요구 대화', intake: '하고 싶은 것', profile: '환경 카드' }
-const roleLabel = (role: string) => ROLE_LABEL[role] ?? stageLabel(role)
+const roleLabel = (role: string, kinds: readonly string[]) => ROLE_LABEL[role] ?? stageLabel(role, kinds)
 
 function clock(s: number) {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = Math.floor(s % 60)
@@ -45,14 +45,14 @@ function useSince(from: number) {
 }
 
 /** What runs now. A work turn streams below; a model call answers once, into the record beside. */
-function Now({ inflight }: { inflight: Inflight }) {
+function Now({ inflight, kinds }: { inflight: Inflight; kinds: readonly string[] }) {
   const s = useSince(inflight.sent * 1000)
   const work = !!inflight.turn
   return (
     <section aria-label="지금" className="flex flex-col gap-1 rounded-lg border border-border bg-card px-4 py-3">
       <p className="flex flex-wrap items-center gap-x-2 font-heading text-[15px] font-semibold">
         <span aria-hidden className="size-2 shrink-0 rounded-full bg-progress motion-safe:animate-pulse" />
-        {roleLabel(inflight.role)} {work ? '작업 턴' : '모델 호출'}
+        {roleLabel(inflight.role, kinds)} {work ? '작업 턴' : '모델 호출'}
         <span role="timer" className="font-mono text-[13px] font-normal tabular-nums text-muted-foreground">{clock(s)}째</span>
         <span className="text-[12px] font-normal text-faint">{inflight.codex ? 'Codex' : 'Claude'}</span>
       </p>

@@ -25,7 +25,7 @@ from xml.etree import ElementTree
 from fastapi import HTTPException
 
 from . import connect, oneshot, oneshot_android, oneshot_spec, refactor_run, runtime, specs, work
-from .oneshot_profile import charged, environment, held as kind_held, kinds_of, shape, tooled
+from .oneshot_profile import charged, environment, held as kind_held, kinds_of, shape, tool_key, tooled
 from .query import _lock as work_lock, hold
 
 MAX_ATTEMPTS = 3
@@ -115,25 +115,36 @@ def tools(o: dict) -> list[dict] | None:
     return next((s.get("tools") or [] for s in o.get("stack") or [] if tooled(s["part"], kinds)), [])
 
 
-def program(word: str) -> str:
-    """A command's program as a declared tool is named: its quotes and an executable's extension set aside."""
+WORD = re.compile(r"\s*(\"[^\"]*\"|'[^']*'|[^\s\"']+)")
 
-    name = word.strip("'\"").lower()
-    return re.sub(r"\.(exe|cmd|bat|ps1|com)$", "", name)
+
+def word_of(part: str) -> tuple[str, str]:
+    """A chain part's program word, unquoted, and the rest after it exactly as written. The check and the
+    launch both read the program through this, so they cannot read two different words."""
+
+    m = WORD.match(part)
+    return (m[1].strip("'\""), part[m.end():]) if m else ("", part)
+
+
+def target(path: Path, word: str, declared_tools: list[dict]) -> tuple[str, str] | None:
+    """What `word` starts, or `None` for anything else.
+    A declared tool named bare gives `("tool", its declared name)`.
+    An existing file inside the worktree gives `("file", its absolute path)`."""
+
+    names = {tool_key(t["name"]): t["name"] for t in declared_tools}
+    if word and not re.search(r"[\\/]", word) and tool_key(word) in names:
+        return "tool", names[tool_key(word)]
+    file = (path / word).resolve()
+    if word and file.is_relative_to(path.resolve()) and file.is_file():
+        return "file", str(file)
+    return None
 
 
 def undeclared(path: Path, command: str, declared_tools: list[dict]) -> list[str]:
     """The programs in `command`'s chain that are neither a declared tool nor a file inside the worktree."""
 
-    names, root, bad = {t["name"].lower() for t in declared_tools}, path.resolve(), []
-    for part in command.split("&&"):
-        word = part.split()[0].strip("'\"")
-        if re.search(r"[\\/]", word) or (path / word).is_file():   # a project file: the worktree's own, built there
-            if not ((path / word).resolve().is_relative_to(root) and (path / word).is_file()):
-                bad.append(word)
-        elif program(word) not in names:
-            bad.append(word)
-    return bad
+    words = [word_of(part)[0] or part.strip() for part in command.split("&&")]
+    return [w for w in words if target(path, w, declared_tools) is None]
 
 
 def resolve_tools(repo: str, stage: str) -> bool:
@@ -143,8 +154,8 @@ def resolve_tools(repo: str, stage: str) -> bool:
     o = oneshot_spec.spec_of(repo)["oneshot"]
     if (declared_tools := tools(o)) is None:
         return True
-    found = {t["name"].lower(): shutil.which(t["name"]) for t in declared_tools}
-    if missing := [t["name"] for t in declared_tools if not found[t["name"].lower()]]:
+    found = {t["name"]: shutil.which(t["name"]) for t in declared_tools}   # the name as S2 declared it
+    if missing := [name for name, at in found.items() if not at]:
         oneshot_spec.store(repo).stop("toolchain", f"PC 앱을 만드는 데 쓰기로 한 도구를 이 PC 에서 찾지 못했다: "
                                                    f"{', '.join(missing)} — 설치하고 [재개]를 누르면 다시 찾는다")
         return False
@@ -152,20 +163,23 @@ def resolve_tools(repo: str, stage: str) -> bool:
     return True
 
 
-def run_as(command: str, o: dict) -> str:
-    """`command` with each declared tool it starts replaced by the path found for this stage (`resolve_tools`),
-    so the program checked is the program run. A run without declared tools runs the command as it is."""
+def run_as(command: str, o: dict, path: Path) -> str:
+    """`command` with every program it starts given as an explicit path: a declared tool's, found for this
+    stage (`resolve_tools`), or a worktree file's, read again now, so the shell looks nothing up and the program
+    checked is the program run. A program with neither is refused before anything runs. A run without a PC app
+    runs the command as it is."""
 
-    paths = (o.get("toolpaths") or {}).get("paths") or {}
-    if not paths:
+    if (declared_tools := tools(o)) is None:
         return command
-    parts = []
+    paths, parts = (o.get("toolpaths") or {}).get("paths") or {}, []
     for part in command.split("&&"):
-        lead, body = part[:len(part) - len(part.lstrip())], part.lstrip()
-        word, gap, rest = body.partition(" ")
-        if (found := paths.get(program(word))) is not None:   # PowerShell runs a quoted path only through `&`
-            word = ("& " if os.name == "nt" else "") + literal(found)
-        parts.append(lead + word + gap + rest)
+        word, rest = word_of(part)
+        kind, name = target(path, word, declared_tools) or ("", "")
+        if not (program := paths.get(name) if kind == "tool" else name):
+            raise ValueError(f"`{word or part.strip()}` 는 확정한 도구도 작업트리 안의 파일도 아니거나, 이 단계에서 "
+                             "찾은 경로가 없다 — 아무것도 실행하지 않았다")
+        lead = part[:len(part) - len(part.lstrip())]   # PowerShell runs a quoted path only through `&`
+        parts.append(lead + ("& " if os.name == "nt" else "") + literal(program) + rest)
     return "&&".join(parts)
 
 
@@ -350,7 +364,7 @@ def junit(path: Path, run, spec: dict, command: str) -> list[tuple[str, str, str
     folder = oneshot_spec.store(spec["repo"]).folder / "junit"
     folder.mkdir(parents=True, exist_ok=True)
     report = folder / f"run-{time.time_ns()}.xml"
-    _, text, cut = specs.gate(run_as(command.replace("{report}", literal(report.as_posix())), spec["oneshot"]), path, run.halt,
+    _, text, cut = specs.gate(run_as(command.replace("{report}", literal(report.as_posix())), spec["oneshot"], path), path, run.halt,
                               env=toolchain(spec), timeout=RUN_SECONDS)
     if cut:
         raise ValueError(f"계약 테스트 실행이 끊겼다 ({cut}) — {text.strip()[-800:]}")
@@ -619,7 +633,11 @@ def built(path: Path, run, spec: dict, final: str) -> str:
     o = spec["oneshot"]
     if why := reported(spec, final) or pinned(path, o):
         return why
-    verdict = specs.judge(path, [run_as(o["gate"], o)], run.halt, lambda text: specs.note(run, text), env=toolchain(spec))
+    try:
+        gate = run_as(o["gate"], o, path)   # the worktree as it is now: a file the build moved out is refused
+    except ValueError as e:
+        return str(e)
+    verdict = specs.judge(path, [gate], run.halt, lambda text: specs.note(run, text), env=toolchain(spec))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := held(path, run, spec, verdict):
