@@ -581,8 +581,15 @@ def test_a_preview_that_fails_keeps_the_pending_attempt_and_shows_no_secret(proj
 
 def test_no_github_write_launches_once_a_stop_is_signalled(monkeypatch):
     ran = []
-    monkeypatch.setattr(release_api.gh.specs, "sh", lambda args, cwd, timeout: ran.append(args[5]) or
-                        subprocess.CompletedProcess(args, 0, "{}", ""))
+    real = subprocess.Popen
+
+    def popen(args, **k):
+        ran.append(args[5])
+        return real(["cmd", "/c", "exit 0"] if release_api.os.name == "nt" else ["true"], **k)
+
+    monkeypatch.setattr(release_api.gh.specs, "sh", lambda args, cwd, timeout, run=None: run(args, timeout=timeout)
+                        if run else ran.append(args[5]) or subprocess.CompletedProcess(args, 0, "{}", ""))
+    monkeypatch.setattr(release_api.gh.subprocess, "Popen", popen)
     halt = threading.Event()
     with release_api.gh.stopping(halt):
         release_api.gh.api("GET", "repos/o/r/releases/1")
@@ -592,6 +599,38 @@ def test_no_github_write_launches_once_a_stop_is_signalled(monkeypatch):
         release_api.gh.api("GET", "repos/o/r/releases/1")   # reading back is still allowed
     release_api.gh.api("PATCH", "repos/o/r/releases/1", {"draft": False})   # outside the block, no stop applies
     assert ran == ["GET", "GET", "PATCH"]
+
+
+def test_a_stop_waits_for_a_write_being_launched_by_the_real_runner(monkeypatch):
+    creating, go, order = threading.Event(), threading.Event(), []
+    real = subprocess.Popen
+
+    def popen(args, **k):   # the runner's own process creation, held open until the stop has tried
+        creating.set()
+        go.wait(5)
+        order.append("created")
+        return real(["cmd", "/c", "exit 0"] if release_api.os.name == "nt" else ["true"], **k)
+
+    monkeypatch.setattr(release_api.gh.subprocess, "Popen", popen)
+    halt = threading.Event()
+
+    def write():
+        with release_api.gh.stopping(halt):
+            release_api.gh.api("PATCH", "repos/o/r/releases/1", {"draft": False})
+
+    writer = threading.Thread(target=write)
+    writer.start()
+    assert creating.wait(5)
+    stopper = threading.Thread(target=lambda: (release_api.gh.stop(halt), order.append("stopped")))
+    stopper.start()
+    stopper.join(0.3)
+    assert stopper.is_alive()   # the stop waits for the creation under way
+    go.set()
+    writer.join(5)
+    stopper.join(5)
+    assert order == ["created", "stopped"]
+    with release_api.gh.stopping(halt), pytest.raises(release_api.gh.Halted):
+        release_api.gh.api("PATCH", "repos/o/r/releases/1", {"draft": False})
 
 
 def test_resume_refuses_an_attempt_of_another_project(project, monkeypatch):
@@ -605,6 +644,7 @@ def test_resume_refuses_an_attempt_of_another_project(project, monkeypatch):
 
 def test_a_test_builds_result_reaches_the_card_redacted():
     out = release_api.summary({"ok": False, "refusals": {}, "repair": {"needed": "clone https://u:pw12345678@h/r"},
+                               "left": ["C:/w/token=abcdef123456: in use"],
                                "rounds": [{"version": "0.1.0", "failed": "fetch https://u:pw12345678@h/r failed",
                                            "refused": ["token=abcdef123456"]}]})
     assert "pw12345678" not in str(out) and "abcdef123456" not in str(out) and "h/r failed" in str(out)

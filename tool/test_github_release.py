@@ -156,7 +156,7 @@ def test_api_names_the_repository_parses_the_answer_and_carries_the_status(monke
             return subprocess.CompletedProcess(args, 0, '[[{"id": 1}], [{"id": 2}]]', "")
         return subprocess.CompletedProcess(args, 1, "", "gh: Not Found (HTTP 404)")
 
-    monkeypatch.setattr(gh.specs, "sh", sh)
+    monkeypatch.setattr(gh.specs, "sh", lambda args, cwd, timeout=60, run=None: sh(args, cwd, timeout))
     assert gh.publish("o/r", 7) == {"id": 7}
     assert not Path(seen[0][seen[0].index("--input") + 1]).exists()   # the staged body is gone
     assert [r["id"] for r in gh.releases("o/r")] == [1, 2]

@@ -247,9 +247,9 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
       getRehearsal(name).then((r) => {
         adopt(r.rehearsal, t)
         takePress(r.press, r.rehearsal.boot)
-        // A press or a sweep that ended after the card began reading changed the ledger and maybe GitHub.
+        // A press or a sweep that ended after the shown card began reading changed the ledger and maybe GitHub.
+        // Only a card read that lands moves `settledRead`, so a failed read is asked for again on the next poll.
         if (r.rehearsal.boot === era.current.boot && settledRead.current !== null && r.settled > settledRead.current) {
-          settledRead.current = r.settled
           setAgain((n) => n + 1)
         }
       }).catch(() => {}).finally(() => { out = false })

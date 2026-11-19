@@ -99,7 +99,7 @@ def public(text: str | None) -> str | None:
     text = re.sub(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/\s@]+@", r"\1", errorlog.redact(text))
     text = re.sub(r"(?i)\b(authorization\s*[:=]\s*)(?:(?:basic|bearer|token)\s+)?[^\s,;]+", r"\1[redacted]", text)
     text = re.sub(r"(?i)\b(basic|bearer|token)\s+[A-Za-z0-9+/=._-]{6,}", r"\1 [redacted]", text)
-    return re.sub(r"(?i)((?:^|[?&\s])[\w.-]*(?:token|jwt|sig|signature|secret|password|key|credential|auth)[\w.-]*=)[^&\s]+",
+    return re.sub(r"(?i)((?:^|[^\w.-])[\w.-]*(?:token|jwt|sig|signature|secret|password|key|credential|auth)[\w.-]*=)[^&\s]+",
                   r"\1[redacted]", text)
 
 
@@ -155,7 +155,7 @@ def summary(result: dict) -> dict:
     repair = result.get("repair")
     repair = repair and {k: public(v) if isinstance(v, str) else v for k, v in repair.items()}
     return {"ok": result["ok"], "sha": result.get("sha"), "rounds": rounds, "refusals": refusals,
-            "repair": repair, "left": result.get("left") or []}
+            "repair": repair, "left": [public(x) for x in result.get("left") or []]}
 
 
 def _repairing(name: str, halt: threading.Event):
@@ -178,7 +178,8 @@ def _rehearsing(name: str, repo: Path, halt: threading.Event, sha: str | None = 
         done = {"state": "done", **summary(result)}
     except Exception as exc:   # noqa: BLE001 — the card shows why; the server goes on
         errorlog.record("release-rehearse", exc, repo=str(repo))
-        done = {"state": "failed", "error": public(f"{type(exc).__name__}: {exc}"), "left": getattr(exc, "left", [])}
+        done = {"state": "failed", "error": public(f"{type(exc).__name__}: {exc}"),
+                "left": [public(x) for x in getattr(exc, "left", [])]}
     with _lock:
         _runs[name] = {**_runs[name], **done, "ended": time.time(), "stopped": halt.is_set(), "rev": _rev(name)}
         for key in ("halt", "thread", "repairing", "stopping"):

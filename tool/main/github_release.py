@@ -56,6 +56,25 @@ def stopping(halt: threading.Event | None):
         _stopping.halt = prior
 
 
+def _admitted(args: list[str], *, timeout: float, **options) -> subprocess.CompletedProcess:
+    """`subprocess.run` for a write, its process created under the lock `stop` signals under: a stop signalled
+    before refuses the write, and `stop` waits for a creation already under way. Nothing after the launch waits."""
+
+    with _launch:
+        halt = getattr(_stopping, "halt", None)
+        if halt is not None and halt.is_set():
+            raise Halted("멈춤 — GitHub 에 보내기 전에 멈췄다. 이어 가면 남은 것부터 올린다")
+        proc = subprocess.Popen(args, **options)
+    with proc:
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except BaseException:
+            proc.kill()
+            proc.wait()
+            raise
+    return subprocess.CompletedProcess(args, proc.returncode, out, err)
+
+
 def stop(halt: threading.Event) -> None:
     """Sets `halt` so that no write launches after this returns: a write already past its check was launched
     before the stop, and what it did is read back by whoever carries the attempt on."""
@@ -87,12 +106,8 @@ def api(method: str, endpoint: str, body: dict | None = None, upload: Path | Non
             args += ["--input", staged.name]
         elif upload is not None:
             args += ["--input", str(upload), "-H", "Content-Type: application/octet-stream"]
-        if method != "GET":   # the last moment before a write leaves: checked under the lock `stop` sets under
-            with _launch:
-                halt = getattr(_stopping, "halt", None)
-                if halt is not None and halt.is_set():
-                    raise Halted(f"멈춤 — GitHub {method} 을 보내기 전에 멈췄다. 이어 가면 남은 것부터 올린다")
-        done = specs.sh(args, paths.RESOURCES, timeout)
+        # A write's process is created under the lock `stop` signals under (`_admitted`); a read is never held.
+        done = specs.sh(args, paths.RESOURCES, timeout, **({} if method == "GET" else {"run": _admitted}))
     except subprocess.TimeoutExpired as exc:   # no answer in time: it may still have landed, so read back
         raise Failed(f"GitHub {method} {endpoint.split('?')[0]} 이 {exc.timeout}초 안에 답하지 않았다", None) from exc
     finally:
