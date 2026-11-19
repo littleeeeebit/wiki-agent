@@ -69,7 +69,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   // start's or a stop's, goes through `adopt`: within one server the one with the larger `rev` is kept.
   const [run, setRun] = useState<Rehearsal | null>(null)
   const [fault, setFault] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState<number | null>(null)   // the era of the start or stop awaiting its answer
   const [picked, setPicked] = useState<Bump | null>(null)
   // The last preview that read a commit, and the runs' `rev` when its reading began. A card that came back with
   // an error never counts as one.
@@ -77,23 +77,34 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   const [again, setAgain] = useState(0)   // bumped to read the card once more
 
   // Which server this card is following, and the card's own count of servers seen (`era`), which only it moves,
-  // so it needs no order between servers. Every request notes the era it was sent in, and its answer counts only
-  // in that era. An answer naming another server than the era's starts a new era: the card forgets all it showed,
-  // every answer still on its way is ignored, and it reads everything again from whichever server answers now.
-  const era = useRef({ n: 0, boot: '' })
-  const adopt = useCallback((r: Rehearsal, asked: number) => {
+  // so it needs no order between servers. Every request takes a ticket: the era it was sent in, and its place in
+  // the card's own count of requests sent (`seq`). Its answer counts only in that era.
+  //
+  // An answer naming another server than the era's starts a new era: the card forgets what it showed, every
+  // answer still on its way is ignored, and it reads the preview again. When the request was sent after the
+  // era's server had answered (`at`), the server it reached took over from that one, so its answer is the new
+  // era's first state and is kept: a start that reached a new server still shows its build and its stop. An
+  // answer to a request sent before that may come from either server, so it is dropped.
+  const era = useRef({ n: 0, boot: '', at: 0 })
+  const seq = useRef(0)
+  const ticket = useCallback(() => ({ n: era.current.n, sent: ++seq.current }), [])
+  const adopt = useCallback((r: Rehearsal, t: { n: number; sent: number }) => {
     const e = era.current
-    if (asked !== e.n) return false
-    if (e.boot && e.boot !== r.boot) {
-      era.current = { n: e.n + 1, boot: '' }
-      setRun(null)
+    if (t.n !== e.n) return false
+    if (!e.boot) {
+      e.boot = r.boot
+      e.at = seq.current
+    } else if (e.boot !== r.boot) {
+      const taken = t.sent > e.at
+      era.current = { n: e.n + 1, boot: taken ? r.boot : '', at: seq.current }
+      setRun(taken ? r : null)
       setCard(null)
       setGood(null)
       setFault('')
+      setBusy(null)
       setAgain((n) => n + 1)
-      return false
+      return taken
     }
-    e.boot = r.boot
     setRun((cur) => newer(cur, r))
     return true
   }, [])
@@ -104,19 +115,19 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   const read = useCallback(() => {
     if (reading.current) return
     reading.current = true
-    const asked = era.current.n
+    const t = ticket()
     getCard(name)
       .then((c) => {
-        if (!adopt(c.rehearsal, asked)) return
+        if (!adopt(c.rehearsal, t)) return
         setCard(c)
         if (c.sha && !c.error) setGood({ read: c.read })
       })
-      .catch((err) => { if (asked === era.current.n) setFault(String(err instanceof Error ? err.message : err)) })
+      .catch((err) => { if (t.n === era.current.n) setFault(String(err instanceof Error ? err.message : err)) })
       .finally(() => {
         reading.current = false
-        if (asked !== era.current.n) setAgain((n) => n + 1)
+        if (t.n !== era.current.n) setAgain((n) => n + 1)
       })
-  }, [name, adopt])
+  }, [name, adopt, ticket])
   useEffect(() => { read() }, [read, again])
 
   // While the card is open its state is read every five seconds, one bounded read at a time, so a start whose
@@ -126,11 +137,11 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     const timer = setInterval(() => {
       if (out) return
       out = true
-      const asked = era.current.n
-      getRehearsal(name).then((r) => adopt(r.rehearsal, asked)).catch(() => {}).finally(() => { out = false })
+      const t = ticket()
+      getRehearsal(name).then((r) => adopt(r.rehearsal, t)).catch(() => {}).finally(() => { out = false })
     }, 5000)
     return () => clearInterval(timer)
-  }, [name, adopt])
+  }, [name, adopt, ticket])
 
   // A build that ended after the last good preview began reading leaves the card stale: what it saw of `main`
   // may have moved. It is read again, every fifteen seconds until a good preview lands, and no start goes out
@@ -147,14 +158,14 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
 
   async function act(fn: () => Promise<{ rehearsal: Rehearsal }>) {
     setFault('')
-    setBusy(true)
-    const asked = era.current.n
+    const t = ticket()
+    setBusy(t.n)
     try {
-      await within(fn().then((r) => adopt(r.rehearsal, asked)), ACTION_MS)
+      await within(fn().then((r) => adopt(r.rehearsal, t)), ACTION_MS)
     } catch (err) {
-      if (asked === era.current.n) setFault(String(err instanceof Error ? err.message : err))
+      if (t.n === era.current.n) setFault(String(err instanceof Error ? err.message : err))
     } finally {
-      setBusy(false)
+      setBusy((b) => (b === t.n ? null : b))   // an ended era's action never holds the new era's buttons
     }
   }
 
@@ -167,9 +178,9 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
         <Btn onClick={onClose}>닫기</Btn>
         {unread && <Btn onClick={() => { setFault(''); read() }} title="origin 의 main 과 GitHub 릴리스를 다시 읽는다">다시 읽기</Btn>}
         {run?.state === 'running'
-          ? <Btn tone="danger" disabled={busy || run.repairing || run.stopping || !run.id} onClick={() => void act(() => stopRehearsal(name, run.id ?? ''))}
+          ? <Btn tone="danger" disabled={busy !== null || run.repairing || run.stopping || !run.id} onClick={() => void act(() => stopRehearsal(name, run.id ?? ''))}
               title={run?.repairing ? '수정 작업을 이미 만들기 시작해서 멈출 수 없다' : undefined}>시험 빌드 멈춤</Btn>
-          : <Btn disabled={busy || stale || !card?.sha || !!card.error} onClick={() => void act(() => startRehearsal(name, card?.sha))}
+          : <Btn disabled={busy !== null || stale || !card?.sha || !!card.error} onClick={() => void act(() => startRehearsal(name, card?.sha))}
               title="main 을 두 번 빌드하고 일회용 시험 키로 서명해 검사한다. 아무것도 올리지 않는다">시험 빌드</Btn>}
         <Btn tone="primary" disabled title={card?.locked}>{next ? `v${next} 게시` : '게시'}</Btn>
       </>
