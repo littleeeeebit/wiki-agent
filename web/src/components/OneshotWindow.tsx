@@ -366,15 +366,23 @@ function Start({ onStarted }: { onStarted: () => void }) {
 
 /** A run before S2, read until its stage settles. Once the bootstrap hands it to its spec, the spec opens. */
 function RunPane({ id, onRun }: { id: string; onRun: (run: OneshotRun) => void }) {
-  const [run, setRun] = useState<OneshotRun | null>(null)
+  const [run, setRunState] = useState<OneshotRun | null>(null)
+  // Every answer that lands moves `landed`. A read applies only when none landed since it was asked, so a poll
+  // asked before the card's confirm never puts the confirmed card back on screen.
+  const landed = useRef(0)
+  const setRun = useCallback((next: OneshotRun) => { landed.current += 1; setRunState(next) }, [])
+  const read = useCallback(() => {
+    const asked = landed.current
+    return api.oneshotRun(id).then((next) => { if (asked === landed.current) setRun(next) })
+  }, [id, setRun])
   const { fault, setFault, busy, act } = useAct(setRun)
-  useEffect(() => { api.oneshotRun(id).then(setRun).catch((err) => setFault(String(err instanceof Error ? err.message : err))) }, [id, setFault])
-  const working = !!run?.working
+  useEffect(() => { read().catch((err) => setFault(String(err instanceof Error ? err.message : err))) }, [read, setFault])
+  const working = !!run?.working || !!run?.hub?.checking   // the card's hub move, read in the background
   useEffect(() => {
     if (!working) return
-    const timer = window.setInterval(() => { api.oneshotRun(id).then(setRun).catch(() => {}) }, 1500)
+    const timer = window.setInterval(() => { read().catch(() => {}) }, 1500)
     return () => window.clearInterval(timer)
-  }, [id, working])
+  }, [read, working])
   useEffect(() => {
     if (!run) return
     if (run.state === 'spec' && run.spec) follow(`spec:${run.spec.repo}`)

@@ -508,8 +508,29 @@ def s_register(run: dict) -> None:
         raise Stop("connect", f"이 기계의 배선을 확인하지 못했다 — {shown['refused']} — 잠시 뒤 [재개]")
     if runtime.stopping.is_set():   # it went down during the check: no tests start after it
         raise Stop("restart", "서버가 꺼지는 중이라 멈췄다")
-    if shown["needed"]:   # the machine's wiring moves only on `[연결]`'s confirmation
-        raise Stop("connect", "이 기계의 hook 배선이나 Codex 신뢰를 바꿔야 한다 — 프로젝트 목록에서 이 저장소의 [연결]로 확인한 뒤 [재개]")
+    if shown["needed"]:   # the machine's wiring moves only on a confirmation: the card's, of exactly this list
+        if not run.get("wiring") or run["wiring"] != shown.get("digest"):
+            raise Stop("connect", "이 기계의 hook 배선이나 Codex 신뢰를 바꿔야 한다"
+                       + (" — 확정 때 본 변경과 지금 필요한 변경이 다르다" if run.get("wiring") else "")
+                       + " — 프로젝트 목록에서 이 저장소의 [연결]로 확인한 뒤 [재개]")
+        done: list[str] = []
+        # The card's approval is single use, and spent on disk before anything may be written: a move cut by a
+        # failure, a shutdown or the process dying can then never be resumed under it. What a cut move wrote is
+        # not knowable in every case (Codex may take a trust write and die before answering), so `[재개]` alone
+        # never writes what is left; `[연결]` shows it.
+        changed(run["id"], wiring="")
+        try:
+            connect.move(shown["digest"], connect.adapter_of(path)[0], done)
+        except HTTPException as exc:   # refused before its first write: the machine is as the card saw it
+            changed(run["id"], wiring=shown["digest"])   # so the approval stands
+            if runtime.stopping.is_set():   # `[재개]` after the restart checks and moves again
+                raise Stop("restart", "서버가 꺼지는 중이라 멈췄다") from exc
+            raise Stop("connect", f"이 기계의 배선을 바꾸지 못했다 — {exc.detail} — [연결]로 확인한 뒤 [재개]") from exc
+        except Exception as exc:  # noqa: BLE001 — a move cut once it may have written, whatever cut it
+            reason = " — ".join([f"{type(exc).__name__}: {exc}", *getattr(exc, "__notes__", [])])
+            wrote = f" — 확인된 것: {', '.join(done)}" if done else ""
+            raise Stop("connect", f"이 기계의 배선을 바꾸다 멈췄다{wrote} — {reason}"
+                                  " — 남은 변경을 [연결]로 확인한 뒤 [재개]") from exc
     if not connect.examine(path, wait=True):   # `[연결]`'s tests, in the step: a cut before their results are kept runs them again
         raise Stop("connect", "이 저장소의 시험이 아직 돌고 있다 — 끝난 뒤 [재개]")
     if runtime.stopping.is_set():   # shutdown cut the tests (it kills their Codex): Register is not done, `[재개]` runs them again
@@ -739,8 +760,14 @@ def card_errors(run: dict, profile: dict) -> tuple[list[str], list[str]]:
 def view(run: dict) -> dict:
     kinds = kinds_of(run)
     errors, warnings = card_errors(run, run["profile"]) if run.get("profile") else ([], [])
+    # The card shows the hub move confirming it approves. A oneshot's adapter names both hosts, so the move is the
+    # routine read's (`hub_seen`), which never waits on Codex.
+    hub = {}
+    if run.get("state") == "environment" and not run.get("confirmed"):
+        from . import wiring   # it imports `connect` and `channels`, which import this module's neighbours
+        hub = {"hub": wiring.hub_seen()}
     return {**{k: v for k, v in run.items() if k != "license_text"}, "profile": current(run.get("profile")),
-            "errors": errors, "warnings": warnings, "schema": schema(kinds), "steps_order": list(STEPS),
+            "errors": errors, "warnings": warnings, "schema": schema(kinds), "steps_order": list(STEPS), **hub,
             **({"devices": DEVICES, "toolchain": oneshot_android.status()} if "android" in kinds else {})}
 
 
@@ -773,6 +800,7 @@ class Intent(BaseModel):
 class Profile(BaseModel):
     values: dict
     confirm: bool = False
+    wiring: str = ""   # the digest of the hub move the card showed, which confirming approves; Register writes it
 
 
 class Resume(BaseModel):
@@ -902,7 +930,8 @@ def profile(rid: str, body: Profile) -> dict:
                 if found := conflicts(rid, Path(ident["path"]), ident["name"], values["github_owner"]):
                     raise HTTPException(409, "; ".join(found))
                 ident = {**ident, "owner": values["github_owner"]}
-            launch(rid, "bootstrap", profile=values, identity=ident, confirmed=True, state="bootstrap")
+            launch(rid, "bootstrap", profile=values, identity=ident, confirmed=True, state="bootstrap",
+                   wiring=body.wiring)
         else:
             return view(changed(rid, profile=values))
     return view(load(rid))

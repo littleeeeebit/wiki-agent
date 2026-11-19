@@ -1,6 +1,7 @@
 """The machine's wiring watched live, redone for every repository at once, and the map's lists behind its counts."""
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -92,7 +93,7 @@ def test_rewire_writes_exactly_the_confirmed_plan_or_nothing(tmp_path):
     settings(a, "{}"), settings(b, "{}")
     rows = [{"path": str(a), "state": "일부"}]
     web = client()
-    calm = {"needed": False, "refused": "", "lines": [], "links": [], "trust": False, "digest": ""}
+    calm = {"needed": False, "refused": "", "lines": [], "links": [], "trust": False, "homes": [], "python": "py", "digest": ""}
 
     def confirm() -> tuple[dict, object]:
         plan = web.get("/api/rewire/plan").json()
@@ -164,23 +165,24 @@ def test_rewire_writes_exactly_the_confirmed_plan_or_nothing(tmp_path):
         file.write_text("{}", encoding="utf-8")
     moving = {**calm, "needed": True, "lines": [{"file": str(f), "change": "c"} for f in home], "digest": "d"}
     rows.clear()
-    real = Path.write_text
+    real = os.replace
 
-    def second(self: Path, *args, **kwargs):
-        if self == home[1]:
+    def second(src, dst, *args, **kwargs):   # the second file's whole content is staged, then fails to land
+        if Path(dst) == home[1].resolve():
             raise OSError("디스크가 가득 찼다")
-        return real(self, *args, **kwargs)
+        return real(src, dst, *args, **kwargs)
 
     with patch.object(wiring, "hub_branch", return_value="main"), \
          patch.object(chat_channels, "projects", side_effect=lambda: list(rows)), \
          patch.object(connect, "_snapshot", return_value=(moving, [(f, {"moved": True}, ["c"]) for f in home], [], "py")), \
          patch.object(connect, "RECORDS", tmp_path / "records"):
         plan = web.get("/api/rewire/plan").json()
-        with patch.object(Path, "write_text", second):
+        with patch.object(os, "replace", second):
             done = web.post("/api/rewire", json={"plan": plan["digest"]}).json()
     assert done == {"ok": False, "written": [str(home[0])], "failed": ["허브 이전: OSError: 디스크가 가득 찼다"]}
     assert json.loads(home[0].read_text(encoding="utf-8")) == {"moved": True}
     assert json.loads(home[1].read_text(encoding="utf-8")) == {}
+    assert not list(home[1].parent.glob("*.part")), "실패한 시도의 임시 파일은 남지 않는다"
 
 
 def test_the_listing_names_the_hub_branch(tmp_path):

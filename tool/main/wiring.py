@@ -166,7 +166,8 @@ def rewire(body: Rewire) -> dict:
             except HTTPException:
                 raise
             except Exception as exc:   # whatever a user file, link or Codex's writer raised, said with how far it got
-                return {"ok": False, "written": written, "failed": [f"허브 이전: {type(exc).__name__}: {exc}"]}
+                why = " — ".join([f"{type(exc).__name__}: {exc}", *getattr(exc, "__notes__", [])])   # a kept link, named
+                return {"ok": False, "written": written, "failed": [f"허브 이전: {why}"]}
         for file, settings in files:
             try:
                 file.parent.mkdir(parents=True, exist_ok=True)

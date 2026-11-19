@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { Btn } from '@/components/Modal'
 import { Fault, GO, Halt, Split, Title, Top } from '@/components/OneshotSpec'
 import { Toolbar } from '@/components/Toolbar'
-import { browseFolder, get, getLoopSettings, json, post, watchOptions, type Options } from '@/lib/api'
+import { HubMove } from '@/components/Rewire'
+import { browseFolder, get, getLoopSettings, json, post, watchOptions, type HubPlan, type Options } from '@/lib/api'
 import { remote } from '@/lib/mobile'
 import { KINDS, kindLabel, ROLE, type Models } from '@/lib/oneshot'
 import { cn } from '@/lib/utils'
@@ -31,6 +32,8 @@ export type OneshotRun = {
   steps_order: string[]
   devices?: Record<string, { label: string; width: number; height: number; dpi: number }>
   toolchain?: Toolchain
+  /** On the card only: the machine's hub move confirming it approves, `checking` while the server reads it. */
+  hub?: HubPlan & { checking?: boolean }
 }
 type Toolchain = {
   sdk: string
@@ -48,8 +51,8 @@ export const api = {
     post('/api/oneshot', { sentence, path, models, kinds }).then(answer),
   answerIntent: (id: string, body: { confirm: boolean; edit?: string; name?: string }) =>
     post(`/api/oneshot/${id}/intent`, body).then(answer),
-  saveProfile: (id: string, values: Record<string, string | number>, confirm: boolean) =>
-    post(`/api/oneshot/${id}/profile`, { values, confirm }).then(answer),
+  saveProfile: (id: string, values: Record<string, string | number>, confirm: boolean, wiring = '') =>
+    post(`/api/oneshot/${id}/profile`, { values, confirm, wiring }).then(answer),
   resumeOneshot: (id: string, adopt = false) => post(`/api/oneshot/${id}/resume`, { adopt }).then(answer),
   toolchain: () => get('/api/oneshot-android/toolchain').then((r) => json<Toolchain>(r, 'Android 도구')),
   installToolchain: () => post('/api/oneshot-android/toolchain/install', {}).then((r) => json<Toolchain>(r, 'Android 도구 설치')),
@@ -314,6 +317,23 @@ function Restated({ run, busy, act, fault }: { run: OneshotRun; busy: boolean; a
   )
 }
 
+/** The machine's wiring the card's confirm also approves: the hub move `[연결]` would ask for, written at Register. */
+function Wiring({ hub }: { hub?: OneshotRun['hub'] }) {
+  if (!hub) return null
+  if (hub.refused) {
+    return <p className="whitespace-pre-wrap text-wait">이 PC의 배선을 아직 확인하지 못했다 — {hub.refused}. 확정해도 된다: 만드는 중에 다시 확인하고, 바꿔야 하면 [연결]에서 확인을 받는다</p>
+  }
+  if (!hub.needed) {
+    return <p className="text-muted-foreground">{hub.checking ? '이 PC의 hook 배선을 확인하는 중…' : '이 PC의 hook 배선은 이미 맞다'}</p>
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-wait">확정하면 이 PC의 배선도 아래처럼 바꾼다 — 사용자 단위 설정이라 다른 저장소에도 그대로 적용된다</p>
+      <HubMove hub={hub} />
+    </div>
+  )
+}
+
 /** The environment card beside what confirming it makes outside: a repository, a folder, a push. */
 function Card({ run, busy, act, fault }: { run: OneshotRun; busy: boolean; act: Act; fault: string }) {
   const [draft, setDraft] = useState<Record<string, string | number>>(run.profile!)
@@ -358,10 +378,13 @@ function Card({ run, busy, act, fault }: { run: OneshotRun; busy: boolean; act: 
           {run.warnings.map((w) => <li key={w} className="text-wait">{w}</li>)}
         </ul>
       )}
+      <Wiring hub={run.hub} />
       <div className="flex justify-end gap-2">
         <Btn className={GO} disabled={busy} onClick={() => void act(() => api.saveProfile(run.id, draft, false))}
           title="저장하고 문제를 다시 확인한다">저장</Btn>
-        <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.saveProfile(run.id, draft, true))}>{run.toolchain ? '확정' : '확정하고 만들기'}</Btn>
+        <Btn tone="wait" className={GO} disabled={busy}
+          onClick={() => void act(() => api.saveProfile(run.id, draft, true, run.hub?.needed && !run.hub.refused ? run.hub.digest : ''))}>
+          {run.toolchain ? '확정' : '확정하고 만들기'}</Btn>
       </div>
       </section>
       {run.toolchain ? <Tools initial={run.toolchain} busy={busy} /> : (

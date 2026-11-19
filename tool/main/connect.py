@@ -336,8 +336,7 @@ def trusted(python: str) -> bool:
 
     try:
         for file in apply.user_files("codex"):
-            hooks = setup_agents.codex_hooks(file.parent, False, python)
-            if not hooks or any(h["trustStatus"] != "trusted" for h in hooks):
+            if not setup_agents.codex_trusted(setup_agents.codex_hooks(file.parent, False, python), python):
                 return False
         return True
     except Exception as exc:  # noqa: BLE001 — whatever stopped Codex from answering is the reason shown
@@ -440,12 +439,18 @@ def _snapshot(data: dict | None = None) -> tuple[dict, list, list, str]:
         trust = "codex" in agents and (codex or not trusted(python))
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         return ({"needed": True, "refused": str(exc), "agents": agents,
-                 "lines": [], "links": [], "trust": False, "digest": ""},
+                 "lines": [], "links": [], "trust": False, "homes": [], "python": python, "digest": ""},
                 [], [], python)
     links = [{"link": str(link), "from": str(old), "to": str(new) if new else None} for link, old, new in found]
-    shown = {"agents": agents, "lines": lines, "links": links, "trust": trust}
+    # The Codex homes the trust is recorded in, read once: `move` writes to this list, never to a second read.
+    homes = [str(file.parent) for file in apply.user_files("codex")] if trust else []
+    shown = {"agents": agents, "lines": lines, "links": links, "trust": trust, "homes": homes, "python": python}
+    # The digest binds what is written, not only its labels: a line names a hook, never its command, and the same
+    # labels under another interpreter write other commands. So it also covers each file's whole new content.
+    files = [[str(path), settings] for path, settings, changes in plan if changes]
+    sealed = json.dumps({**shown, "files": files}, sort_keys=True, ensure_ascii=False, default=str).encode()
     return ({"needed": bool(lines or any(link["to"] for link in links) or trust), "refused": "", **shown,
-             "digest": digest(json.dumps(shown, sort_keys=True, ensure_ascii=False).encode())}, plan, found, python)
+             "digest": digest(sealed)}, plan, found, python)
 
 
 def hub(data: dict | None = None) -> dict:
@@ -467,20 +472,54 @@ def move(confirmed: str, data: dict | None = None, done: list[str] | None = None
             raise HTTPException(409, f"허브를 옮길 수 없다 — {now['refused']}")
         if now["digest"] != confirmed:
             raise HTTPException(409, "확인한 뒤에 바뀔 줄이 달라졌다. 다시 확인한다")
-        for step in plan:
-            setup_agents.write_plan([step])
-            done += [str(step[0])] if step[2] else []
-        for link, _old, new in (found_link for found_link in found if found_link[2]):
-            setup_agents.relink(link, new)
-            done.append(f"{link} → {new}")
-        for file in apply.user_files("codex") if now["trust"] else []:
-            setup_agents.codex_hooks(file.parent, True, python)
-            done.append(f"{file.parent}: Codex 신뢰 기록")
-        for file in RECORDS.glob("*.json"):
-            keep(file.stem, probe={}, trust=None)
-        from . import wiring   # the routine reads' last check was of the wiring before this move
-        wiring.forget_hub()
+        if runtime.stopping.is_set():   # the snapshot may have taken minutes: a server going down writes nothing
+            raise HTTPException(409, "서버가 꺼지는 중이라 배선을 쓰지 않는다")
+        stopped = runtime.stopping.is_set
+
+        def halt():   # a server going down starts no further write
+            if stopped():
+                raise RuntimeError("서버가 꺼지는 중이라 남은 배선 쓰기를 멈췄다")
+
+        try:
+            for step in plan:
+                halt()
+                setup_agents.write_plan([step], stopped)
+                done += [str(step[0])] if step[2] else []
+            for link, old, new in (found_link for found_link in found if found_link[2]):
+                halt()
+                setup_agents.relink(link, new, old)   # only the link the owner saw: one pointing elsewhere is refused
+                done.append(f"{link} → {new}")
+            for home in now["homes"]:
+                halt()
+                hooks = setup_agents.codex_hooks(Path(home), True, python, stopped)
+                # Trust is confirmed only by Codex listing every wiki hook trusted. Anything less (hooks switched
+                # off, a home Codex does not read) is a refusal, never a move that is done.
+                if not setup_agents.codex_trusted(hooks, python):
+                    raise ValueError(f"{home}: Codex 가 이 허브의 위키 훅을 모두 신뢰로 보여 주지 않았다 "
+                                     f"(신뢰 {sum(h['trustStatus'] == 'trusted' for h in hooks)}개 / "
+                                     f"필요 {len(setup_agents.codex_mine(python))}개)")
+                done.append(f"{home}: Codex 신뢰 확인")
+        except BaseException as exc:   # a move cut partway changed the wiring too: its error stays the one raised
+            for note in _forget_old_wiring():
+                exc.add_note(note)
+            raise
+        _forget_old_wiring()   # ponytail: a record that will not clear after a whole move is skipped, not reported
         return now
+
+
+def _forget_old_wiring() -> list[str]:
+    """Drop the routine read's last check and every repository's test of the wiring. Each record is tried on its
+    own, so one that cannot be cleared stops none of the others; it comes back named instead of raising."""
+
+    from . import wiring
+    wiring.forget_hub()
+    kept = []
+    for file in RECORDS.glob("*.json"):
+        try:
+            keep(file.stem, probe={}, trust=None)
+        except (OSError, ValueError) as exc:   # a locked or broken record
+            kept.append(f"{file.stem} 의 옛 배선 시험 결과를 지우지 못했다 — {exc}")
+    return kept
 
 
 # -- Connecting ----------------------------------------------------------------------

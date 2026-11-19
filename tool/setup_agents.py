@@ -6,13 +6,16 @@ whoever is running the install, so those strings are Korean.
 """
 
 import argparse
+import errno
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 
 from common import is_junction  # tests and callers read it from here too
 from common import shell
@@ -182,7 +185,7 @@ def install(project, choice, check, allow_dirty=False):
           "이 명령은 실제 자동 이벤트·선택형 질문 UI를 검증하지 않습니다. 새 세션에서 별도로 확인하세요.")
 
 
-def codex_hooks(home, trust, python=None):
+def codex_hooks(home, trust, python=None, stopped=None):
     """This wiki's hooks as one Codex home sees them, trusted first if asked.
 
     Codex runs a hook only while `hooks.state` holds the hash of exactly that
@@ -191,24 +194,38 @@ def codex_hooks(home, trust, python=None):
     it, only for commands that run this checkout's `hook.py`, and through
     Codex's own config writer rather than by editing its file.
     """
-    from apply import installed
     from agent import CodexServer
 
-    # Exactly what this install wrote, event and command both. Anything that
-    # merely names or resembles the dispatcher is somebody else's code, and
-    # trusting it would vouch for that code.
-    mine = {(event[0].lower() + event[1:], command)
-            for event, command in installed("codex", python or sys.executable)}
+    mine = codex_mine(python)
     with CodexServer(env={"CODEX_HOME": str(home)}, cwd=WIKI) as server:
         listed = lambda: [h for d in server.request("hooks/list", {"cwds": [str(WIKI)]})["data"]  # noqa: E731
                           for h in d["hooks"] if (h["eventName"], h["command"]) in mine]
         hooks = listed()
         pending = {h["key"]: {"trusted_hash": h["currentHash"]} for h in hooks if h["trustStatus"] != "trusted"}
         if trust and pending:
+            if stopped and stopped():   # the server went down while Codex answered the read: write nothing
+                raise RuntimeError("서버가 꺼지는 중이라 Codex 신뢰를 쓰지 않았다")
             server.request("config/batchWrite", {"edits": [
                 {"keyPath": "hooks.state", "value": pending, "mergeStrategy": "upsert"}]})
             hooks = listed()
     return hooks
+
+
+def codex_mine(python=None):
+    """Exactly what this install wrote for Codex, event and command both, as `hooks/list` names them. Anything
+    that merely names or resembles the dispatcher is somebody else's code, and trusting it would vouch for it."""
+    from apply import installed
+
+    return {(event[0].lower() + event[1:], command) for event, command in installed("codex", python or sys.executable)}
+
+
+def codex_trusted(hooks, python=None):
+    """Codex lists every hook this install wrote, each one trusted. A subset, say `SessionStart` loaded and
+    `PreToolUse` not, is not: the wiring it was confirmed for is not all running."""
+
+    # Every listed entry trusted, and together they cover the set: a trusted duplicate never hides an untrusted one.
+    return (all(h["trustStatus"] == "trusted" for h in hooks)
+            and {(h["eventName"], h["command"]) for h in hooks} >= codex_mine(python))
 
 
 def probe(project):
@@ -290,12 +307,27 @@ def plan_global(choice, projects, python=None):
     return plan
 
 
-def write_plan(plan):
+def write_plan(plan, stopped=None):
+    """Write each changed settings file. `stopped`, the server's own check, is read right before each file
+    replaces the owner's: a server going down installs nothing more. The CLI passes none."""
     for path, settings, changes in plan:
         if changes:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
-                            encoding="utf-8", newline="\n")
+            # The owner's own settings live in this file: a write cut partway (a full disk, a server going down)
+            # must leave it as it was, so the whole content lands beside it first and replaces it in one step.
+            # The staging file is this attempt's own, created exclusively: another writer (the CLI beside the
+            # server) never installs these bytes, nor these its.
+            target = path.resolve()
+            fd, partial = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".", suffix=".part")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out:
+                    out.write(json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+                if stopped and stopped():
+                    raise RuntimeError(f"서버가 꺼지는 중이라 {path} 를 바꾸지 않았다")
+                os.replace(partial, target)
+            except BaseException:
+                Path(partial).unlink(missing_ok=True)
+                raise
             print(f"썼다: {path} ({len(changes)}건)")
         else:
             print(f"그대로: {path}")
@@ -308,15 +340,29 @@ def skill_links(home=None):
 
     Another hub is a folder holding `tool/hook.py` beside its `skills/`: a
     link into anybody else's skill collection is not ours to move.
+
+    A link a cut `relink` kept in its own recovery folder, with nothing at
+    its place, is listed too, and never as `None`: it moves here when this
+    hub has the skill, and goes back where it pointed otherwise.
     """
     from apply import _HOME
 
     folder = Path(home or _HOME or Path.home()) / ".claude/skills"
-    found = []
-    for link in sorted(folder.iterdir()) if folder.is_dir() else []:
-        if not (link.is_symlink() or is_junction(link)):
+    for _ in range(3):
+        try:
+            return _skill_links(folder)
+        except FileNotFoundError:   # a move or its rollback changed the folder while it was read: read it again
             continue
-        target = Path(os.readlink(link).removeprefix("\\\\?\\"))
+    return _skill_links(folder)   # still changing: the error makes the plan a refusal, and Register checks again
+
+
+def _skill_links(folder):
+    found = []
+    entries = sorted(folder.iterdir()) if folder.is_dir() else []
+    for link in entries:
+        if link.name == ".wiki-relink" or not _is_link(link):
+            continue
+        target = _pointed(link)
         hub = target.parent.parent
         if target.parent.name != "skills" or not (hub / "tool/hook.py").is_file():
             continue
@@ -324,22 +370,148 @@ def skill_links(home=None):
             continue
         mine = WIKI / "skills" / target.name
         found.append((link, target, mine if mine.is_dir() else None))
+    for link, keeps in sorted(kept_links(folder).items()):
+        if os.path.lexists(link):
+            if link not in entries:   # put back after the scan above: read again, so it is judged as live
+                raise FileNotFoundError(link)
+            continue
+        target = _pointed(keeps[-1])   # gone meanwhile: the caller reads the folder again
+        hub = target.parent.parent
+        ours = target.parent.name == "skills" and (hub / "tool/hook.py").is_file() \
+            and os.path.normcase(hub.resolve()) != os.path.normcase(WIKI.resolve())
+        mine = WIKI / "skills" / target.name
+        found.append((link, target, mine if ours and mine.is_dir() else target))
+    if (sorted(folder.iterdir()) if folder.is_dir() else []) != entries:   # put back before the recovery scan
+        raise FileNotFoundError(folder)
     return found
 
 
-def relink(link, target):
+def _pointed(link):
+    """Where a directory link points, as `os.readlink` names it without the long-path prefix a junction carries."""
+    return Path(os.readlink(link).removeprefix("\\\\?\\"))
+
+
+def _is_link(path):
+    """A symlink or a junction, from one `lstat`. A path gone meanwhile raises `FileNotFoundError` rather than
+    reading as no link, so a scan it was taken from is read again."""
+    st = os.lstat(path)
+    return stat.S_ISLNK(st.st_mode) or getattr(st, "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)
+
+
+def kept_links(folder):
+    """The links a cut `relink` left in its own recovery folder (`.wiki-relink` inside the skills folder, one
+    private folder per attempt), by the place each belongs: `{place: [kept, oldest first]}`. Nothing else
+    there is ours, so nothing else is read, and a link standing in for the folder or an attempt is never
+    followed: what it points into is somebody else's."""
+    base = _recovery(folder)
+    kept = {}
+    try:
+        if _is_link(base) or not base.is_dir():   # a link is never followed, not even to ask what it is
+            return kept
+    except OSError as exc:
+        # Missing, or a skills path that holds no entries (a file, a looping link): nothing kept. Denied access or
+        # an I/O error is not known to be empty, so it refuses the plan instead.
+        if exc.errno not in (errno.ENOENT, errno.ENOTDIR, errno.ELOOP):
+            raise
+        return kept
+    stamped = []
+    for attempt in base.iterdir():
+        try:
+            if not _is_link(attempt) and attempt.is_dir():
+                stamped.append((attempt.stat().st_mtime, attempt, [e for e in attempt.iterdir() if _is_link(e)]))
+        except FileNotFoundError:   # an attempt a finished move just cleared: nothing kept there
+            continue
+    for _, _, links in sorted(stamped):
+        for link in links:
+            kept.setdefault(Path(folder) / link.name, []).append(link)
+    return kept
+
+
+def _recovery(folder):
+    """`relink`'s recovery folder: inside the skills folder itself, so it is on the same drive as the links it
+    keeps, and every skills folder has its own even when `~/.claude/skills` is a link to one of several. It holds
+    no `SKILL.md`, so no host loads it as a skill."""
+    return Path(folder) / ".wiki-relink"
+
+
+def _place(src, dst):
+    """Move a link to `dst` only while nothing is there: never over a file or link that appeared meanwhile.
+    Windows `rename` refuses an existing name; elsewhere a hard link of the link itself does, then the
+    old name goes."""
+    if os.name == "nt":
+        os.rename(src, dst)
+    elif Path(src).is_dir() and not Path(src).is_symlink():
+        # A real directory cannot be hard-linked. `rename` refuses a file, a link and a directory with anything
+        # in it; an empty directory it replaces holds nothing to lose.
+        os.rename(src, dst)
+    else:
+        os.link(src, dst, follow_symlinks=False)
+        os.unlink(src)
+
+
+def relink(link, target, source=None):
     """Point `link` at `target`, as the same kind of link it was: a junction
-    stays a junction — it needs no developer mode — and a symlink a symlink."""
-    junction = is_junction(link)
+    stays a junction — it needs no developer mode — and a symlink a symlink.
+
+    `source` is where the confirmed plan saw it point: a link pointing
+    elsewhere by now is not the one the owner approved, and is left alone.
+
+    The working link is never removed before the new one stands. It moves
+    into a fresh private folder of this attempt (nothing there to clobber,
+    and no `SKILL.md` beside it, so no host loads it), and moves back when
+    the new one cannot be made. A link a cut attempt kept, with nothing at
+    its place, is taken from there instead."""
+    link = Path(link)
+    same = lambda kept: source is None or os.path.normcase(str(_pointed(kept))) == os.path.normcase(str(source))  # noqa: E731
+    keeps = kept_links(link.parent).get(link, [])
+    current = link if os.path.lexists(link) else (keeps[-1] if keeps else None)
+    if current is None:   # neither the link nor a kept one: nothing to point anew
+        raise FileNotFoundError(str(link))
+    if not same(current):
+        raise ValueError(f"{link} 이 확인한 뒤 다른 곳을 가리킨다 ({_pointed(current)}) — 다시 확인한다")
+    if current == link:
+        base = _recovery(link.parent)
+        base.mkdir(parents=True, exist_ok=True)
+        if _is_link(base):   # parked through it, the link would land where recovery never looks
+            raise OSError(f"{base} 가 다른 곳을 가리키는 링크다 — 치운 뒤 다시 확인한다")
+        aside = Path(tempfile.mkdtemp(dir=base, prefix=link.name + ".")) / link.name
+        os.rename(link, aside)   # into this attempt's own empty folder: nothing there to clobber
+        try:
+            moved = same(aside)
+        except OSError as exc:   # no link any more (a file of the owner's, say): it goes back as it is
+            _restore(aside, link, exc)
+        if not moved:   # retargeted between the check and the move: not the approved link, so it goes back
+            _restore(aside, link, ValueError(f"{link} 이 옮기는 사이 다른 곳을 가리키게 됐다 — 다시 확인한다"))
+    else:
+        aside = current
+    junction = is_junction(aside)
+    try:
+        link.parent.mkdir(parents=True, exist_ok=True)   # a skills folder that is gone comes back with the link
+        if junction:
+            import _winapi
+
+            _winapi.CreateJunction(str(target), str(link))
+        else:
+            os.symlink(target, link, target_is_directory=True)
+    except BaseException as exc:
+        _restore(aside, link, exc)
     # On Windows both kinds of directory link go with `rmdir`, which removes
     # the link and never what it points at.
-    (os.rmdir if os.name == "nt" else os.unlink)(link)
-    if junction:
-        import _winapi
+    (os.rmdir if os.name == "nt" else os.unlink)(aside)
+    try:
+        aside.parent.rmdir()   # this attempt's own folder, empty now
+    except OSError:
+        pass
 
-        _winapi.CreateJunction(str(target), str(link))
-    else:
-        os.symlink(target, link, target_is_directory=True)
+
+def _restore(aside, link, exc):
+    """Put the kept link back at its place, never over what appeared there, and raise `exc`. A link that cannot
+    go back stays kept, whole, and `exc` names where: `skill_links` lists it again."""
+    try:
+        _place(aside, link)
+    except OSError as back:
+        exc.add_note(f"{link} 의 원래 링크를 되돌리지 못해 {aside} 에 남겼다 — {back}")
+    raise exc
 
 
 def install_global(choice, check, projects, trust):

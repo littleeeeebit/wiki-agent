@@ -490,6 +490,106 @@ def test_a_cut_after_each_effect_resumes_without_repeating_it(world, cut):
     assert len(list((specs.SPECS / "budget-tracker").glob("*.json"))) == 1
 
 
+def test_the_card_shows_the_hub_move_and_its_confirm_carries_the_list_it_showed(world):
+    """The machine's wiring is confirmed with the card, not on a later `[연결]` stop (owner, 2026-11-18)."""
+
+    from main import wiring
+
+    rid = made(world, state="environment", working=None, confirmed=False)
+    move = {"needed": True, "refused": "", "lines": [{"file": "~/.codex/hooks.json", "change": "위키 훅을 이 허브로"}],
+            "links": [], "trust": True, "digest": "shown", "checking": False}
+    with patch.object(wiring, "hub_seen", lambda: dict(move)):
+        assert oneshot.view(oneshot.load(rid))["hub"] == move, "카드에 바뀔 배선이 보인다"
+        shown = oneshot.profile(rid, oneshot.Profile(values={}, confirm=True, wiring="shown"))
+    assert shown["state"] == "bootstrap" and shown["wiring"] == "shown" and "hub" not in shown
+
+
+def test_register_moves_exactly_the_wiring_the_card_confirmed(world):
+    moved = []
+    world["wiring"].update(needed=True, refused="", digest="shown")
+
+    def move(confirmed, data=None, done=None):
+        # Spent on disk before anything may be written: a process dying here resumes under no approval.
+        assert oneshot.load(rid)["wiring"] == "", "승인은 쓰기 전에 이미 쓴 것으로 남는다"
+        moved.append(confirmed)
+        world["wiring"]["needed"] = False
+        return {}
+
+    rid = made(world, wiring="seen-before")   # the card showed another list: the machine changed since
+    with patch.object(connect, "move", move):
+        oneshot.bootstrap(rid)
+        run = oneshot.load(rid)
+        assert "다르다" in run["stopped"]["detail"] and "register" not in run["steps"] and moved == []
+        oneshot.changed(rid, stopped=None, wiring="shown")
+        oneshot.bootstrap(rid)
+    assert moved == ["shown"] and "register" in oneshot.load(rid)["steps"]
+    assert world["examined"] == [(world["workspace"] / "budget-tracker", True)], "옮긴 배선으로 시험한다"
+
+
+def test_a_confirmed_move_that_cannot_be_written_stops_with_its_reason(world):
+    world["wiring"].update(needed=True, refused="", digest="shown")
+    rid = made(world, wiring="shown")
+    with patch.object(connect, "move", side_effect=HTTPException(409, "확인한 뒤에 바뀔 줄이 달라졌다. 다시 확인한다")):
+        oneshot.bootstrap(rid)
+    run = oneshot.load(rid)
+    assert run["stopped"]["reason"] == "connect" and "달라졌다" in run["stopped"]["detail"]
+    assert "register" not in run["steps"] and world["examined"] == []
+    # A write that failed partway names it, and the records its cleanup could not clear.
+    failed = OSError("디스크가 가득 찼다")
+    failed.add_note("other-project 의 옛 배선 시험 결과를 지우지 못했다 — locked")
+    oneshot.changed(rid, stopped=None)
+    with patch.object(connect, "move", side_effect=failed):
+        oneshot.bootstrap(rid)
+    detail = oneshot.load(rid)["stopped"]["detail"]
+    assert "가득 찼다" in detail and "other-project" in detail, "지우지 못한 기록도 멈춘 이유에 보인다"
+
+
+def test_a_move_shutdown_refused_before_writing_stops_as_a_restart(world):
+    """`[재개]` after the restart checks and moves again: the owner has nothing to confirm on `[연결]`."""
+
+    world["wiring"].update(needed=True, refused="", digest="shown")
+    rid = made(world, wiring="shown")
+    stopping = threading.Event()
+
+    def refused(confirmed, data=None, done=None):
+        stopping.set()
+        raise HTTPException(409, "서버가 꺼지는 중이라 배선을 쓰지 않는다")
+
+    with patch.object(runtime, "stopping", stopping), patch.object(connect, "move", refused):
+        oneshot.bootstrap(rid)
+    run = oneshot.load(rid)
+    assert run["stopped"]["reason"] == "restart" and run["wiring"] == "shown", "승인은 그대로 남는다"
+    assert "register" not in run["steps"] and world["examined"] == []
+
+
+def test_a_move_cut_once_it_may_have_written_asks_the_owner_to_confirm_the_rest(world):
+    """What landed is not knowable in every case (Codex may take a trust write and die before answering), so a cut
+    move spends the card's approval whatever cut it: `[재개]` alone never writes what is left."""
+
+    world["wiring"].update(needed=True, refused="", digest="shown")
+    rid = made(world, wiring="shown")
+    stopping = threading.Event()
+
+    def cut(confirmed, data=None, done=None):
+        done.append("~/.codex/hooks.json")
+        stopping.set()
+        raise RuntimeError("Codex 연결 종료: config/batchWrite")
+
+    with patch.object(runtime, "stopping", stopping), patch.object(connect, "move", cut):
+        oneshot.bootstrap(rid)
+    run = oneshot.load(rid)
+    assert run["stopped"]["reason"] == "connect" and run["wiring"] == ""
+    assert "멈췄다" in run["stopped"]["detail"] and "~/.codex/hooks.json" in run["stopped"]["detail"]
+    moved = []
+    oneshot.changed(rid, stopped=None)
+    with patch.object(connect, "move", lambda *a, **k: moved.append(a)):
+        oneshot.bootstrap(rid)
+    assert oneshot.load(rid)["stopped"]["reason"] == "connect" and moved == []
+    world["wiring"]["needed"] = False   # the owner confirmed the rest on `[연결]`
+    oneshot.changed(rid, stopped=None)
+    assert finished(world, rid)["committed"]
+
+
 def test_wiring_to_confirm_stops_the_register_and_tests_cut_before_their_results_run_again(world):
     rid = made(world)
     world["wiring"]["needed"] = True

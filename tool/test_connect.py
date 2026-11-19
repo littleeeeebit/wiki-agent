@@ -392,6 +392,13 @@ def test_the_hook_writes_nothing_without_the_variable_and_passes_when_it_cannot_
 # -- the hub move ------------------------------------------------------------------------
 
 
+def trusted_hooks(python=None, keep=None):
+    """What Codex lists back once the trust landed: every hook this install wrote, trusted (or only `keep` of them)."""
+    hooks = [{"key": f"wiki-{i}", "eventName": event, "command": command, "currentHash": "h", "trustStatus": "trusted"}
+             for i, (event, command) in enumerate(sorted(setup_agents.codex_mine(python)))]
+    return hooks if keep is None else hooks[:keep]
+
+
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     """The user level, empty, and an old hub whose skill links point into it.
@@ -420,7 +427,7 @@ def home(tmp_path, monkeypatch):
     with patch.object(setup_agents, "run", return_value=""), patch.object(apply, "unusable", return_value=[]), \
          patch.object(setup_agents, "hook_shell", return_value=["sh"]), \
          patch.object(setup_agents.shutil, "which", side_effect=lambda name: name), \
-         patch.object(setup_agents, "codex_hooks", side_effect=lambda home, trust, python=None: trusted.append(trust)), \
+         patch.object(setup_agents, "codex_hooks", side_effect=lambda home, trust, python=None, stopped=None: trusted.append(trust) or trusted_hooks(python)), \
          patch.object(connect, "trusted", return_value=False), \
          patch.object(connect, "examine", return_value=True):
         yield home, old, trusted
@@ -440,6 +447,146 @@ def test_the_move_writes_the_plan_it_checked_not_one_read_again(tmp_path, home):
     assert not (tmp_path / "unshown.json").exists(), "확인한 뒤에 다시 읽은 계획은 쓰지 않는다"
 
 
+def test_the_digest_binds_the_commands_written_not_only_their_labels(tmp_path, home):
+    """The same lines under another interpreter write other hook commands: a confirmed digest must not cover them."""
+
+    with patch.object(connect, "interpreter", return_value="C:/first/python.exe"):
+        first = connect.hub()
+    with patch.object(connect, "interpreter", return_value="C:/second/python.exe"):
+        second = connect.hub()
+        assert first["lines"] == second["lines"] and first["digest"] != second["digest"]
+        with pytest.raises(HTTPException, match="달라졌다"):
+            connect.move(first["digest"])
+    assert second["python"] == "C:/second/python.exe", "화면에 훅을 실행할 Python 이 보인다"
+
+
+def test_a_move_the_server_going_down_overtook_writes_nothing(tmp_path, home, monkeypatch):
+    from main import runtime
+
+    stopping = threading.Event()
+    stopping.set()
+    monkeypatch.setattr(runtime, "stopping", stopping)
+    shown, written = connect.hub(), []
+    with patch.object(setup_agents, "write_plan", side_effect=lambda plan, stopped=None: written.append(plan)), \
+         pytest.raises(HTTPException, match="꺼지는 중"):
+        connect.move(shown["digest"])
+    assert written == []
+
+
+def test_a_server_going_down_mid_move_writes_no_further_file(tmp_path, home, monkeypatch):
+    from main import runtime
+
+    stopping, written = threading.Event(), []
+    monkeypatch.setattr(runtime, "stopping", stopping)
+    shown = connect.hub()
+    assert len([line for line in shown["lines"]]) > 1 or shown["links"], "쓸 것이 둘 이상이어야 시험이 된다"
+
+    def first_then_down(plan, stopped=None):
+        written.append(plan[0][0])
+        stopping.set()   # shutdown begins once the first file landed
+
+    with patch.object(setup_agents, "write_plan", side_effect=first_then_down), \
+         patch.object(setup_agents, "relink", side_effect=lambda *a: written.append(a[0])), \
+         pytest.raises(RuntimeError, match="꺼지는 중"):
+        connect.move(shown["digest"])
+    assert len(written) == 1, "꺼지기 시작한 뒤에는 다음 파일도 링크도 쓰지 않는다"
+
+
+def test_a_move_cut_partway_drops_every_test_of_the_old_wiring(tmp_path, home, monkeypatch):
+    """Some files changed: no repository's probe of the wiring before them, nor the routine read's last check, stands."""
+
+    from main import wiring
+
+    monkeypatch.setattr(connect, "RECORDS", tmp_path / "records")
+    connect.keep("other-project", probe={"claude": {"ok": True}}, trust=True)
+    forgot = []
+    monkeypatch.setattr(wiring, "forget_hub", lambda: forgot.append(1))
+    shown = connect.hub()
+    with patch.object(setup_agents, "write_plan", side_effect=OSError("disk full")), pytest.raises(OSError):
+        connect.move(shown["digest"])
+    assert connect.record("other-project")["probe"] == {} and connect.record("other-project")["trust"] is None
+    assert forgot == [1]
+    # A record that cannot be cleared hides neither the write's own error nor the other records' clearing.
+    connect.keep("locked-project", probe={"claude": {"ok": True}})
+    connect.keep("other-project", probe={"claude": {"ok": True}})
+    real_keep = connect.keep
+
+    def keep(name, **fields):
+        if name == "locked-project":
+            raise PermissionError("locked")
+        return real_keep(name, **fields)
+
+    with patch.object(connect, "keep", keep), \
+         patch.object(setup_agents, "write_plan", side_effect=OSError("disk full")), \
+         pytest.raises(OSError, match="disk full"):
+        connect.move(connect.hub()["digest"])
+    assert connect.record("other-project")["probe"] == {} and forgot == [1, 1]
+
+
+def test_trust_goes_only_to_the_codex_homes_the_confirmation_listed(tmp_path, home):
+    """A Codex home that appears after the check is not in the confirmed list, so it gets no trust."""
+
+    real_files, real_write = apply.user_files, setup_agents.write_plan
+    codex = list(real_files("codex"))
+    shown, recorded = connect.hub(), []
+    assert shown["trust"] and shown["homes"] == [str(file.parent) for file in codex]
+
+    def write_plan(plan, stopped=None):   # a `CODEX_HOME` that comes to exist while the files are written, after the check
+        codex.append(tmp_path / "later-codex" / "hooks.json")
+        return real_write(plan, stopped)
+
+    with patch.object(apply, "user_files", lambda agent: list(codex) if agent == "codex" else real_files(agent)), \
+         patch.object(setup_agents, "write_plan", write_plan), \
+         patch.object(setup_agents, "codex_hooks", side_effect=lambda h, trust, python=None, stopped=None: recorded.append(str(h)) or trusted_hooks(python)):
+        connect.move(shown["digest"])
+    assert recorded == shown["homes"], "확인한 목록의 홈에만 신뢰를 쓴다"
+
+
+def test_a_trust_codex_never_confirmed_is_a_refusal_not_a_finished_move(tmp_path, home):
+    """Codex listing no wiki hook (hooks switched off), one untrusted, or only some, leaves the trust missing."""
+
+    python = connect.interpreter(None)
+    hooks = trusted_hooks(python)
+    untrusted = [{**hook, "trustStatus": "untrusted"} for hook in hooks]
+    duplicate = [*hooks, {**hooks[0], "key": "other", "trustStatus": "untrusted"}]   # a trusted twin hides nothing
+    for listed in ([], untrusted, trusted_hooks(python, keep=1), duplicate):
+        shown, done = connect.hub(), []
+        with patch.object(setup_agents, "codex_hooks", return_value=listed), pytest.raises(ValueError, match="Codex"):
+            connect.move(shown["digest"], None, done)
+        assert not any("Codex" in line for line in done), "확인되지 않은 신뢰는 확인된 것에 들지 않는다"
+        with patch.object(setup_agents, "codex_hooks", return_value=listed):
+            assert connect.trusted(python) is False, "평소 확인도 같은 기준이다"
+    assert len(setup_agents.codex_mine(python)) > 1, "부분 집합을 시험하려면 위키 훅이 둘 이상이어야 한다"
+
+
+def test_a_server_going_down_sends_no_trust_write(monkeypatch):
+    """Shutdown sets its flag, then waits for the providers: a read answered in between must not write trust."""
+
+    sent = []
+
+    class Server:
+        def __init__(self, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def request(self, method, params):
+            sent.append(method)
+            hooks = [{"eventName": event, "command": command, "key": "k", "currentHash": "h", "trustStatus": "untrusted"}
+                     for event, command in setup_agents.codex_mine(sys.executable)]
+            return {"data": [{"hooks": hooks}]}
+
+    import agent
+
+    monkeypatch.setattr(agent, "CodexServer", Server)
+    with pytest.raises(RuntimeError, match="꺼지는 중"):
+        setup_agents.codex_hooks(Path("home"), True, sys.executable, lambda: True)
+    assert sent == ["hooks/list"], "읽기만 하고 쓰지 않는다"
+    assert setup_agents.codex_hooks(Path("home"), False, sys.executable) and "config/batchWrite" not in sent
 def test_a_codex_home_that_does_not_answer_is_a_refusal_not_a_move(tmp_path, monkeypatch):
     """vtuber-ko-tts: the wiring already pointed here and trust was in place, a slow `app-server` read as
     untrusted, and the oneshot stopped asking the owner to move what needed nothing."""
@@ -457,7 +604,7 @@ def test_a_codex_home_that_does_not_answer_is_a_refusal_not_a_move(tmp_path, mon
     assert not shown["lines"] and not shown["trust"], "확인 못 한 것은 옮길 줄이 아니다"
     with pytest.raises(HTTPException):
         connect.move(shown["digest"])
-    monkeypatch.setattr(setup_agents, "codex_hooks", lambda *args, **kw: [{"trustStatus": "trusted"}])
+    monkeypatch.setattr(setup_agents, "codex_hooks", lambda home, trust, python=None, stopped=None: trusted_hooks(python))
     assert connect.hub() == {**shown, "needed": False, "refused": "", "digest": connect.hub()["digest"]}
 
 
