@@ -166,7 +166,7 @@ export function Agent({
           it between steps. Until the server names the turn there is nothing to
           send it to. Once it has answered, the agent reads nothing more — the
           gate is running — so it waits and goes as the next instruction. */}
-      {refused?.map((r, i) => (
+      {!foreign && refused?.map((r, i) => (
         <div key={i} role="alert" className="mx-4 mb-1 rounded-md border border-destructive/40 px-3 py-2 text-[12.5px]">
           <p className="text-destructive">대기 실패 · {r.reason}</p>
           <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{r.text}</p>

@@ -395,15 +395,18 @@ export default function App() {
   }, [repo, feedEpoch, refresh, readSpecs, readLoops, readPrs, accept])
 
   // Open approvals by worktree, as this window's streams know them.
-  const asks = (p: string) => (work.turns[p] ?? []).filter((t) => t.pending)
+  // With `turn`, that turn's alone: a shared checkout's streamed turn may not be the listed owner's yet.
+  const asks = (p: string, turn?: string) => (work.turns[p] ?? []).filter((t) => t.pending && (!turn || t.turn === turn))
     .flatMap((t) => t.steps).filter((s) => s.kind === 'approval' && s.answer === undefined).length
   // Another project's rows are keyed by task (`loop:` / `turn:`): several share one checkout path.
   const others = elsewhere(loopRows, turnsElsewhere, repo, asks)
   const other = others.find((o) => o.key === selected)
   const path = other ? other.path : /^(spec|loop|turn):/.test(selected) ? '' : selected
-  // The checkout's running turn is another task's: the pane shows it and steers nothing.
+  // The checkout's running turn is another task's: the pane shows it and steers nothing. By either source:
+  // the stream knows a turn first, the listing still names it when the stream has dropped.
   const lastTurn = path ? work.turns[path]?.at(-1) : undefined
-  const foreign = !!other && !!lastTurn?.pending && (!lastTurn.turn || lastTurn.turn !== other.turn)
+  const foreign = !!other && ((!!lastTurn?.pending && (!lastTurn.turn || lastTurn.turn !== other.turn))
+    || turnsElsewhere.some((t) => t.path === other.path && (!other.turn || t.turn !== other.turn)))
   useEffect(() => {
     if (path) work.load(path)
   }, [path, work])
@@ -835,7 +838,7 @@ export default function App() {
             )}
             {/* Kept mounted: leaving the tab must not end the shell. */}
             <div className={cn('h-full', tab !== 'terminal' && 'hidden')}>
-              <Terminal cwd={path} theme={theme} on={full} />
+              <Terminal cwd={path} theme={theme} on={full} locked={foreign} />
             </div>
           </div>
           {peek && <Peek data={peek.data} error={peek.error} onClose={() => setPeek(null)} />}

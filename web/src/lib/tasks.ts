@@ -120,14 +120,15 @@ const owns = (l: LoopRow, t: TurnRow) => t.spec?.repo === l.repo && t.spec?.id =
 
 /** A task of another project that the rail still shows: its loop or its turn, with the
  *  approvals `approvals` already knows for its path. */
-export function elsewhere(loops: LoopRow[], turns: TurnRow[], repo: string, approvals: (path: string) => number) {
+export function elsewhere(loops: LoopRow[], turns: TurnRow[], repo: string,
+  approvals: (path: string, turn?: string) => number) {
   return [
     // Rows are keyed by task, not checkout: several tasks share a primary checkout. `turn` is the row's own
     // running turn; the pane steers no other (`Agent`'s `foreign`).
     ...loops.filter((l) => l.repo !== repo && l.worktree).map((l) => {
       // The loop's own turn, by its spec, is not listed apart: its model and its running show on this row.
       const turn = turns.find((t) => t.path === l.worktree && owns(l, t))
-      const asks = turn ? approvals(l.worktree!) : 0   // a shared checkout's approvals are the running task's
+      const asks = turn ? approvals(l.worktree!, turn.turn) : 0   // a shared checkout's approvals are the running turn's
       const state = shownState(l.state, !!turn)
       return {
         key: `loop:${l.repo}/${l.id}`, turn: turn?.turn,
@@ -140,7 +141,7 @@ export function elsewhere(loops: LoopRow[], turns: TurnRow[], repo: string, appr
       }
     }),
     ...turns.filter((t) => t.repo !== repo && !loops.some((l) => l.worktree === t.path && owns(l, t))).map((t) => {
-      const asks = approvals(t.path)
+      const asks = approvals(t.path, t.turn)
       return {
         key: `turn:${t.path}`, turn: t.turn,
         path: t.path, repo: t.repo, spec: t.spec, name: t.path.split(/[\\/]/).pop() ?? '', pr: null, round: 0,

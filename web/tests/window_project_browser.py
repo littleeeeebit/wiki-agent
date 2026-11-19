@@ -49,7 +49,7 @@ window.__TAURI_INTERNALS__ = {
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     fake, default, asked = FastAPI(), ["fixture-a"], []
-    live, faults = {"answers": 0}, {"stall": False, "channels": False}
+    live, faults = {"answers": 0}, {"stall": False, "channels": False, "quiet": False}
 
     @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
     async def api(path: str, request: Request):
@@ -88,9 +88,11 @@ def main():
                 {"path": ASKED, "repo": "fixture-b", "spec": {"repo": "fixture-b", "id": "asked-task"}, "turn": "turn-a",
                  "cell": RUNNING}], **live}
         if path == "work/log" and request.query_params["path"] == SHARED:
-            return {"rows": [], "session_id": "b", "busy": True, "running": {"turn": "turn-b", "session_id": "b", "seq": 0},
+            # `quiet`: this window's stream lost the turn the listing still names.
+            running = None if faults["quiet"] else {"turn": "turn-b", "session_id": "b", "seq": 0}
+            return {"rows": [], "session_id": "b", "busy": True, "running": running,
                     "rules": [{"kind": "tool", "tool": "Bash"}], "queued": "Then run the linter"}
-        if path == "work/events" and request.query_params["path"] == SHARED:
+        if path == "work/events" and request.query_params["path"] == SHARED and not faults["quiet"]:
             async def waiting():
                 ev = {"kind": "approval", "text": "Run the checks", "meta": {"id": "ask-b", "tool": "Bash"},
                       "seq": 0, "turn": "turn-b", "session_id": "b"}
@@ -224,6 +226,15 @@ def main():
         broken.get_by_role("option", name="fixture-a", exact=True).click()
         expect(picker(broken)).to_contain_text("fixture-a")
         broken.get_by_text("fixture-a-task").first.wait_for()
+
+        # Last, since a reload moves the fixture's default: the stream lost the turn the server still
+        # runs, and the listing keeps the parked pane read-only.
+        faults["quiet"] = True
+        a.reload()
+        a.get_by_role("button", name="fixture-b/parked-task").click()
+        expect(a.get_by_text("다른 작업의 턴이 돌고 있다")).to_be_visible()
+        for control in ("취소", "해제"):
+            expect(a.get_by_role("button", name=control, exact=True)).to_have_count(0)
         browser.close()
     assert not errors, errors
     print("PASS: two windows keep their own projects; the rail and the close question cover every window")
