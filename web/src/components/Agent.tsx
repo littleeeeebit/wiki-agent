@@ -101,7 +101,7 @@ export function Agent({
             )}
           </div>
         </div>
-        {row && rules.length > 0 && (
+        {row && rules.length > 0 && !foreign && (
           <div className="-mt-1 flex items-center gap-2 pb-2 text-[12.5px] text-muted-foreground">
             <span className="min-w-0 break-words">
               세션 허용:{' '}
@@ -147,7 +147,7 @@ export function Agent({
                 onSend={t === last && row && !foreign ? onSend : undefined} />
             ),
           )}
-          {queued && (
+          {queued && !foreign && (
             <div className="flex flex-col items-end gap-1">
               <div className="max-w-[90%] rounded-lg rounded-br-sm border border-dashed border-border px-3 py-2 text-[13.5px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
                 {queued}

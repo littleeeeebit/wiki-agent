@@ -134,8 +134,8 @@ export function elsewhere(loops: LoopRow[], turns: TurnRow[], repo: string, appr
         path: l.worktree!, repo: l.repo, spec: { repo: l.repo, id: l.id } as TurnRow['spec'],
         name: l.id, pr: l.pr, round: l.round, phase: phase(state), busy: !!turn,
         cell: turn?.cell ?? l.cell ?? undefined,
-        waiting: l.waiting || asks > 0,
-        line: [word(state), asks ? `승인 ${asks}` : l.waiting && '승인 대기', state === '멈춤' && l.stopped?.reason,
+        waiting: (!!turn && l.waiting) || asks > 0,   // the server's flag is the checkout's: the running task's
+        line: [word(state), asks ? `승인 ${asks}` : turn && l.waiting && '승인 대기', state === '멈춤' && l.stopped?.reason,
           l.state === '머지 대기' && (l.queued || '대기열')].filter(Boolean).join(' · '),
       }
     }),
