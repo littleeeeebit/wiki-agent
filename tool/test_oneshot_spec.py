@@ -331,6 +331,14 @@ def test_an_avoided_word_another_entry_defines_is_not_a_hit():
     ([("M1", "LLM Gateway로 연결한다")], False),
     ([("M1", "LLM API LLM 도구를 쓴다")], False),   # overlapping terms each cover their own `LLM`
     ([("M1", "LLM 을 쓴다")], True),
+    ([("M1", "LLM Gateway.")], False),
+    ([("P1", "/auto_llm_gateway")], True),   # an underscore, `é`, a hyphen or Latin after Hangul runs a name on
+    ([("P1", "/llm_gateway_legacy")], True),
+    ([("M1", "préLLM Gateway")], True),
+    ([("P1", "/llm-gateway-legacy")], True),
+    ([("M1", "LLM도구Backend")], True),
+    ([("M1", "LLM도구를 쓴다")], False),
+    ([("P1", "/llm_gateway/{id}")], False),
 ])
 def test_only_a_whole_term_in_one_field_covers_an_avoided_word(words, hit):
     glossary = [{"term": "버튜버", "meaning": "방송하는 사람", "avoid": ["VTuber"]},
@@ -338,12 +346,23 @@ def test_only_a_whole_term_in_one_field_covers_an_avoided_word(words, hit):
                 {"term": "번역 모델", "meaning": "번역에 쓰는 모델", "avoid": ["LLM"]},
                 {"term": "LLM Gateway", "meaning": "모델 중계", "avoid": []},
                 {"term": "LLM API", "meaning": "모델 API", "avoid": []},
-                {"term": "API LLM 도구", "meaning": "도구", "avoid": []}]
+                {"term": "API LLM 도구", "meaning": "도구", "avoid": []},
+                {"term": "LLM_Gateway", "meaning": "모델 중계 경로", "avoid": []},
+                {"term": "LLM-Gateway", "meaning": "모델 중계 경로", "avoid": []},
+                {"term": "LLM도구", "meaning": "모델 도구", "avoid": []}]
     if hit:
         with pytest.raises(ValueError, match="쓰지 않기로 한"):
             sheet.avoided(words, glossary)
     else:
         sheet.avoided(words, glossary)
+
+
+def test_a_route_holding_an_approved_term_inside_a_longer_name_is_refused():
+    glossary = [*GLOSSARY, {"term": "expense_log", "meaning": "지출 기록", "avoid": []}]
+    sheet.checked(sheet.parsed(design_with({("oneshot-api", 0, "path"): "/expense_log"})), REQS, glossary, PROFILE)
+    with pytest.raises(ValueError, match="P1: 용어집의 `지출`"):
+        sheet.checked(sheet.parsed(design_with({("oneshot-api", 0, "path"): "/auto_expense_log"})),
+                      REQS, glossary, PROFILE)
 
 
 @pytest.mark.parametrize("bad, named", [

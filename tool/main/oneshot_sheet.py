@@ -54,7 +54,8 @@ def part_name(part: str) -> str:
     return f"{KIND_NAMES.get(kind, kind)} {PART_NAMES.get(own, own)}" if kind else PART_NAMES.get(part, part)
 PATH = re.compile(r"/[A-Za-z0-9_.{}/-]*")
 # A path segment that is a sign-in role, whole: `/authors` is not one.
-LATIN = re.compile(r"[a-z0-9]")   # a lowered Latin letter or digit: where a glossary term's Latin edge may not run on
+NAME_CHAR = re.compile(r"[\w-]")   # a character that carries a name on past a glossary term's edge
+HANGUL = re.compile(r"[가-힣]")
 AUTH_SEGMENT = re.compile(r"log-?(in|out)|sign-?(in|up|out)|auth|oauth2?|sessions?|tokens?|passwords?|register", re.I)
 
 # The translationese check: counts and names, never rewrites. The patterns and the threshold are the knobs.
@@ -321,14 +322,16 @@ def core_checked(design: dict, reqs: list[dict], glossary: list[dict], profile: 
 
 
 def _spans(word: str, text: str, edged: bool) -> list[tuple[int, int]]:
-    """Every place `word` stands in `text`, overlapping ones too. `edged`: a Latin edge may not run into a
-    longer Latin word (`AutoLLM Gateway` holds no `LLM Gateway`); a Korean suffix after it (`를`) is fine."""
+    """Every place `word` stands in `text`, overlapping ones too. `edged`: the word stands whole, not inside a
+    longer name (`AutoLLM`, `auto_llm_gateway`, `LLM도구Backend`, `préLLM`, `llm-gateway-legacy`). Hangul after it
+    is a particle (`LLM Gateway로`, `변환을`); Hangul before it is a compound only when the word starts in Hangul."""
 
     out = []
     for m in re.finditer(f"(?=({re.escape(word)}))", text):
         s, e = m.start(), m.start() + len(word)
-        if edged and (LATIN.match(word[0]) and s and LATIN.match(text[s - 1]) or
-                      LATIN.match(word[-1]) and e < len(text) and LATIN.match(text[e])):
+        before, after = text[s - 1:s], text[e:e + 1]
+        if edged and (before and NAME_CHAR.match(before) and not (HANGUL.match(before) and HANGUL.match(word[0])) or
+                      after and NAME_CHAR.match(after) and not HANGUL.match(after)):
             continue
         out.append((s, e))
     return out

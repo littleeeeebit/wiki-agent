@@ -107,6 +107,15 @@ def test_each_core_check_refuses(change, said):
     assert said in str(refused.value)
 
 
+def test_a_module_name_holding_an_approved_term_inside_a_longer_name_is_refused():
+    glossary = [*GLOSSARY, {"term": "bubble_finder", "meaning": "말풍선을 찾는 모듈", "avoid": []}]
+    named = {("oneshot-modules", 0, "name"): "bubble_finder"}
+    sheet.checked(sheet.parsed(core_with(named), "android"), REQS, glossary, {}, "android")
+    with pytest.raises(ValueError, match="용어집의 `말풍선`"):
+        sheet.checked(sheet.parsed(core_with({("oneshot-modules", 0, "name"): "Auto_bubble_finder"}), "android"),
+                      REQS, glossary, {}, "android")
+
+
 def test_a_valid_core_passes_and_a_web_block_is_not_one():
     sheet.checked(sheet.parsed(DESIGN, "android"), REQS, GLOSSARY, {}, "android")
     with pytest.raises(ValueError, match="oneshot-modules"):
