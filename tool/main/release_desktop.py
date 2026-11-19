@@ -33,6 +33,8 @@ MARKER, NSIS = b"__TAURI_BUNDLE_TYPE_VAR_", b"NSS"
 FIXED_SIGNATURE, FIXED_SIZE = 0xFEEF04BD, 52   # VS_FIXEDFILEINFO
 FH_SILENT = 2   # the one first-header flag allowed: an uninstaller, CRC off or forced are not Tauri's installer
 EW_EXTRACTFILE, EW_WRITEREG = 20, 51   # NSIS 3's opcodes, as Tauri's bundled NSIS compiles them
+SHCTX, REG_SZ = 0, (1, 1)   # a registry write's root and type as `WriteRegStr SHCTX` compiles them
+INSTDIR = "\x03\u8095"   # `$INSTDIR`, variable 21, as Unicode NSIS 3 codes it: NS_VAR_CODE, CODE_SHORT(21)
 UNINSTALL = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"   # + the product name, as Tauri's script names it
 LIMITS = {"installer": 1 << 30, "dictionary": 64 << 20, "script": 16 << 20, "app": 1 << 30, "unpacked": 4 << 30}
 CHUNK = 1 << 20   # compressed input fed, and decoded output taken, at a time
@@ -109,32 +111,36 @@ def _header(data: bytes) -> tuple[int, int, int]:
     at -= 4
     if flags & ~FH_SILENT or not 33 + 4 <= total <= len(data) - at:
         raise ValueError(f"NSIS 머리말이 지원하지 않는 형태다 (flags {flags:#x}) — 제거기이거나, CRC 검사가 꺼졌거나, 잘렸다")
-    if zlib.crc32(data[512:at + total - 4]) != struct.unpack_from("<I", data, at + total - 4)[0]:
+    if zlib.crc32(memoryview(data)[512:at + total - 4]) != struct.unpack_from("<I", data, at + total - 4)[0]:
         raise ValueError("NSIS CRC 가 맞지 않는다 — NSIS 스스로 실행을 거부할 설치 파일이다")
     return at, script, at + total - 4
 
 
-def _literal(script: bytes, strings: int, ptr: int) -> str | None:
-    """The NSIS string at `ptr` when it is plain text, None when it holds a variable or a language string."""
+def _string(script: bytes, block: tuple[int, int], ptr: int) -> str | None:
+    """The NSIS string at `ptr`, as Unicode NSIS 3 stores it: UTF-16 inside the string block, ending at a NUL,
+    variables kept as their codes (`INSTDIR`). None for a language string or anything malformed."""
 
-    at = strings + 2 * ptr
-    if ptr < 0 or at >= len(script):
+    start, end = block
+    at = start + 2 * ptr
+    if ptr < 0 or at >= end:
         return None
-    end = at
-    while end + 1 < len(script) and script[end:end + 2] != b"\0\0":
-        end += 2
-    text = script[at:end].decode("utf-16-le", "replace")
-    return None if any(ord(c) < 5 for c in text) else text
+    stop = at
+    while stop + 2 <= end and script[stop:stop + 2] != b"\0\0":
+        stop += 2
+    if stop + 2 > end:
+        return None
+    try:
+        return script[at:stop].decode("utf-16-le")
+    except UnicodeDecodeError:
+        return None
 
 
-def payload(data: bytes) -> tuple[list[tuple[str | None, str | None, str | None]], dict[str, set[int]], _Stream]:
+def payload(data: bytes) -> tuple[list[tuple], dict[str, set[int]], set[int], _Stream]:
     """An NSIS installer packed as Tauri's default is: Unicode NSIS 3, one solid LZMA stream, its CRC on. Gives
-    the script's registry writes as literal (key, name, value), each extracted file's data offsets by its literal
-    name, and the stream positioned at the first file. Any other shape is refused: what it would install could
-    not be read, so it could not be checked."""
+    the script's registry writes as (root, key, name, value, type), each extracted file's data offsets by its
+    literal name, every offset a file entry reads, and the stream positioned at the first file. Any other shape
+    is refused: what it would install could not be read, so it could not be checked."""
 
-    if len(data) > LIMITS["installer"]:
-        raise ValueError("설치 파일이 크기 한도를 넘는다")
     at, length, end = _header(data)
     props = data[at + 28:at + 33]
     dictionary = struct.unpack("<I", props[1:])[0]
@@ -152,45 +158,76 @@ def payload(data: bytes) -> tuple[list[tuple[str | None, str | None, str | None]
     if length < 68:
         raise ValueError("NSIS 스크립트가 너무 짧다")
     entries, count = struct.unpack_from("<II", script, 4 + 8 * 2)
-    strings = struct.unpack_from("<I", script, 4 + 8 * 3)[0]
-    if entries + 28 * count > length:
-        raise ValueError("NSIS 명령 표가 스크립트 밖으로 나간다")
-    writes, files = [], {}
+    strings, languages = struct.unpack_from("<I", script, 4 + 8 * 3)[0], struct.unpack_from("<I", script, 4 + 8 * 4)[0]
+    block = (strings, languages if strings < languages <= length else length)
+    if entries + 28 * count > length or strings >= length:
+        raise ValueError("NSIS 명령 표나 문자열 표가 스크립트 밖으로 나간다")
+    writes, files, offsets = [], {}, set()
     for k in range(count):
         which, *arg = struct.unpack_from("<i6i", script, entries + 28 * k)
         if which == EW_WRITEREG:
-            writes.append(tuple(_literal(script, strings, a) for a in arg[1:4]))
-        elif which == EW_EXTRACTFILE and (name := _literal(script, strings, arg[1])) is not None:
-            files.setdefault(name, set()).add(arg[2])
-    return writes, files, stream
+            writes.append((arg[0], *(_string(script, block, a) for a in arg[1:4]), (arg[4], arg[5])))
+        elif which == EW_EXTRACTFILE:
+            offsets.add(arg[2])
+            if (name := _string(script, block, arg[1])) is not None and not any(ord(c) < 5 for c in name):
+                files.setdefault(name, set()).add(arg[2])
+    return writes, files, offsets, stream
 
 
-def _main(writes: list, files: dict, stream: _Stream, product: str | None) -> tuple[dict, bytes | None]:
-    """What the script registers under the uninstall key named after `product`, each name's value only when
-    every write of it agrees, and the bytes of the main binary that registration names."""
+def _registered(writes: list, product: str | None) -> dict:
+    """What the script registers under the uninstall key named after `product`. Windows reads registry keys and
+    value names without case, so neither does this. A value counts only when every write of that name agrees
+    and is a string in `SHCTX`, where Tauri's next update reads it."""
 
-    key = UNINSTALL + (product or "")
     seen = {}
-    for k, name, value in writes:
-        if k == key and name is not None:
-            seen.setdefault(name, set()).add(value)
-    reg = {name: next(iter(values)) for name, values in seen.items() if len(values) == 1}
-    publisher, main = reg.get("Publisher"), reg.get("MainBinaryName")
-    reg["install_key"] = (f"Software\\{publisher}\\{product}", "") in {(k, n) for k, n, _ in writes}
-    offsets = files.get(main or "", set())
-    if len(offsets) != 1 or (offset := next(iter(offsets))) < 0:
-        return reg, None
-    stream.read(offset, keep=False)
-    size = struct.unpack("<I", stream.read(4))[0]
-    if size & 0x80000000 or size > LIMITS["app"]:
-        raise ValueError(f"`{main}` 의 기록이 지원하지 않는 형태이거나 한도를 넘는다")
-    return reg, stream.read(size)
+    for root, key, name, value, kind in writes:
+        if key is not None and name is not None:
+            seen.setdefault((key.casefold(), name.casefold()), set()).add((root, kind, value))
+
+    def value(key: str, name: str) -> str | None:
+        found = seen.get((key.casefold(), name.casefold()), set())
+        return next(v for r, k, v in found) if len(found) == 1 and next(iter(found))[:2] == (SHCTX, REG_SZ) else None
+
+    uninstall = UNINSTALL + (product or "")
+    reg = {name: value(uninstall, name) for name in ("DisplayName", "Publisher", "DisplayVersion", "MainBinaryName")}
+    reg["install_key"] = value(f"Software\\{reg['Publisher']}\\{product}", "") == INSTDIR
+    return reg
+
+
+def _records(stream: _Stream, offsets: set[int], main: int) -> bytes:
+    """Every file record the script reads, each checked to lie whole in the stream; only the main binary's kept.
+    A record that starts inside another, or is not solid, is refused."""
+
+    if not offsets or min(offsets) < 0:
+        raise ValueError("파일 기록 위치가 잘못됐다")
+    at, kept = 0, b""
+    for offset in sorted(offsets):
+        if offset < at:
+            raise ValueError("파일 기록이 다른 기록 안에서 시작한다")
+        stream.read(offset - at, keep=False)
+        size = struct.unpack("<I", stream.read(4))[0]
+        if size & 0x80000000 or size > LIMITS["app"]:
+            raise ValueError("파일 기록이 지원하지 않는 형태이거나 한도를 넘는다")
+        body = stream.read(size, keep=offset == main)
+        kept = body if offset == main else kept
+        at = offset + 4 + size
+    return kept
+
+
+def _bounded(file: Path, limit: int) -> bytes:
+    """`file`'s bytes, refused before they are read when there are more than `limit` of them."""
+
+    with file.open("rb") as handle:
+        size = os.fstat(handle.fileno()).st_size
+        if size > limit or len(data := handle.read(size)) != size or handle.read(1):
+            raise ValueError(f"`{file.name}` 가 크기 한도({limit >> 20} MiB)를 넘는다")
+    return data
 
 
 def readable(installer: Path) -> None:
     """Raises `ValueError` unless `installer` is an NSIS installer this module can read."""
 
-    payload(installer.read_bytes())
+    payload(_bounded(installer, LIMITS["installer"]))
 
 
 def facts(installer: Path, exe: Path | None = None) -> dict:
@@ -198,26 +235,28 @@ def facts(installer: Path, exe: Path | None = None) -> dict:
     registers, and the main binary that registration names, read from inside it. Given the build's `exe`, that
     binary must be it, as Tauri packs it: the first bundle-type placeholder set to NSIS."""
 
-    data = installer.read_bytes()   # one snapshot: the checks, the digest and the manifest all describe it
-    writes, files, stream = payload(data)
+    data = _bounded(installer, LIMITS["installer"])   # one snapshot: the checks, the digest and the manifest
+    writes, files, offsets, stream = payload(data)
     with tempfile.TemporaryDirectory() as tmp:   # Windows reads a version resource from a file only
         (copy := Path(tmp) / "setup.exe").write_bytes(data)
         shown = version_info(copy)
+        reg = _registered(writes, shown.get("ProductName"))
+        main = files.get(reg["MainBinaryName"] or "", set())
+        if len(main) != 1:
+            raise ValueError(f"`{installer.name}` 의 스크립트가 등록하는 주 실행 파일 {reg['MainBinaryName']!r} 를 "
+                             "하나로 찾을 수 없다")
         try:
-            reg, app = _main(writes, files, stream, shown.get("ProductName"))
+            app = _records(stream, offsets, next(iter(main)))
         except lzma.LZMAError as exc:
             raise ValueError(f"`{installer.name}` 의 압축 데이터가 깨졌다") from exc
-        if app is None:
-            raise ValueError(f"`{installer.name}` 의 스크립트가 등록하는 주 실행 파일 {reg.get('MainBinaryName')!r} 를 "
-                             "하나로 찾을 수 없다")
-        if exe is not None and app != exe.read_bytes().replace(MARKER + b"UNK", MARKER + NSIS, 1):
+        if exe is not None and app != _bounded(exe, LIMITS["app"]).replace(MARKER + b"UNK", MARKER + NSIS, 1):
             raise ValueError(f"`{installer.name}` 에 든 {reg['MainBinaryName']!r} 가 빌드가 만든 앱 EXE 와 다르다")
         (copy := Path(tmp) / "app.exe").write_bytes(app)
         shown_app = version_info(copy)
     return {"version": shown["version"], "file_version": shown.get("FileVersion"), "product": shown.get("ProductName"),
             "exe_version": shown_app["version"], "exe_product": shown_app.get("ProductName"),
-            "publisher": shown_app.get("CompanyName"), "reg_product": reg.get("DisplayName"),
-            "reg_publisher": reg.get("Publisher"), "reg_version": reg.get("DisplayVersion"),
+            "publisher": shown_app.get("CompanyName"), "reg_product": reg["DisplayName"],
+            "reg_publisher": reg["Publisher"], "reg_version": reg["DisplayVersion"],
             "install_key": reg["install_key"], "sha256": hashlib.sha256(data).hexdigest()}
 
 

@@ -42,7 +42,7 @@ def nsis(tmp_path: Path, writes=TAURI, files=(("helper.exe", b"MZ helper " + rd.
 
     def ptr(text):
         if text is None:
-            return ptr("\x03\u8055")   # a variable code and its index
+            return ptr(rd.INSTDIR)
         if text not in at:
             at[text] = len(table) // 2
             table.extend(text.encode("utf-16-le") + b"\0\0")
@@ -50,10 +50,11 @@ def nsis(tmp_path: Path, writes=TAURI, files=(("helper.exe", b"MZ helper " + rd.
 
     ptr("")
     data, entries = bytearray(), []
-    for name, body in files:
-        entries.append((rd.EW_EXTRACTFILE, [0, ptr(name), len(data), 0, 0, 0]))
-        data.extend(struct.pack("<I", len(body)) + body)
-    entries += [(rd.EW_WRITEREG, [0, ptr(k), ptr(n), ptr(v), 1, 1]) for k, n, v in writes]
+    for name, body in files:   # a body of None is an entry whose record the stream never holds
+        entries.append((rd.EW_EXTRACTFILE, [0, ptr(name), len(data) + (body is None) * 64, 0, 0, 0]))
+        data.extend(b"" if body is None else struct.pack("<I", len(body)) + body)
+    entries += [(rd.EW_WRITEREG, [w[3] if len(w) > 3 else rd.SHCTX, ptr(w[0]), ptr(w[1]), ptr(w[2]), 1, 1])
+                for w in writes]   # a fourth item is another root
     blocks = 4 + 8 * 8
     strings = blocks + 28 * len(entries)
     script = (struct.pack("<I", 0) + struct.pack("<16I", 0, 0, 0, 0, blocks, len(entries), strings, 0, *[0] * 8)
@@ -132,6 +133,10 @@ def test_the_installed_app_is_the_registered_main_binary_and_must_be_the_one_bui
     ([*TAURI, (UNINSTALL, "Publisher", "p")], "게시자 None"),   # two writes that disagree
     ([*TAURI[:2], (UNINSTALL, "DisplayVersion", "0.1.0"), *TAURI[3:]], "버전 '0.1.0'"),
     (TAURI[:4], "설치 위치를"),
+    ([*TAURI[:4], ("Software" + chr(92) + "o" + chr(92) + "r", "", "C:" + chr(92) + "elsewhere")], "설치 위치를"),
+    ([*TAURI[:4], ("Software" + chr(92) + "o" + chr(92) + "r", "", None, -2147483647)], "설치 위치를"),   # HKCU, not SHCTX
+    ([*TAURI, (UNINSTALL.upper(), "publisher", "p")], "게시자 None"),   # the same key and name to Windows
+    ([*TAURI[:1], (UNINSTALL, "Publisher", "o", -2147483646), *TAURI[2:]], "게시자 None"),   # HKLM
 ])
 def test_what_the_script_registers_must_be_the_identity(tmp_path, resources, writes, said):
     why = rd.built_wrong(rd.facts(nsis(tmp_path, writes)), "0.1.1", DESKTOP)
@@ -143,6 +148,42 @@ def test_a_main_binary_the_script_does_not_extract_once_is_refused(tmp_path, res
         rd.facts(nsis(tmp_path, files=(("other.exe", PACKED),)))
     with pytest.raises(ValueError, match="주 실행 파일 'r.exe' 를 하나로"):
         rd.facts(nsis(tmp_path, files=(("r.exe", PACKED), ("r.exe", PACKED + b"2"))))
+
+
+def test_a_file_entry_whose_record_is_not_in_the_stream_is_refused_after_the_main_binary_too(tmp_path, resources):
+    files = (("r.exe", PACKED), ("later.dll", None))
+    with pytest.raises(ValueError, match="기록이 끝나기 전에 끝난다"):
+        rd.facts(nsis(tmp_path, files=files))
+
+
+def test_a_string_is_read_only_terminated_inside_its_block_and_as_valid_utf16():
+    table = "ab".encode("utf-16-le") + b"\0\0" + "cd".encode("utf-16-le")
+    block = (0, len(table))
+    assert rd._string(table, block, 0) == "ab" and rd._string(table, block, -1) is None
+    assert rd._string(table, block, 3) is None   # "cd" runs to the end of the block with no NUL
+    assert rd._string(table + b"\0\0", (0, len(table)), 3) is None   # its NUL lies past the block
+    assert rd._string(b"\x00\xd8\0\0", (0, 4), 0) is None   # a lone surrogate
+
+
+def test_an_installer_or_app_over_its_limit_is_refused_before_it_is_read(tmp_path, resources, monkeypatch):
+    installer = nsis(tmp_path)
+    (exe := tmp_path / "r.exe").write_bytes(APP)
+    whole = Path.read_bytes   # the fixture's version resources read the temporary copies
+
+    def read_bytes(self):
+        assert self not in (installer, exe), f"an unbounded read of {self.name}"
+        return whole(self)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    monkeypatch.setitem(rd.LIMITS, "installer", installer.stat().st_size - 1)
+    for call in (lambda: rd.facts(installer), lambda: rd.readable(installer)):
+        with pytest.raises(ValueError, match="크기 한도"):
+            call()
+    monkeypatch.setitem(rd.LIMITS, "installer", 1 << 30)
+    monkeypatch.setitem(rd.LIMITS, "app", len(APP) - 1)
+    monkeypatch.setattr(rd, "_records", lambda stream, offsets, main: PACKED)   # only the loose EXE is over
+    with pytest.raises(ValueError, match="`r.exe` 가 크기 한도"):
+        rd.facts(installer, exe)
 
 
 def test_a_damaged_or_foreign_installer_is_a_read_error(tmp_path, resources):
