@@ -70,6 +70,8 @@ export type Turn = {
   turn?: string
   /** A record row's server turn: what a window's own copy of the same send is matched against. */
   record?: string
+  /** A replay's log read, by request number: a newer accepted read that names no such turn ends it. */
+  from?: number
   /** Until the server's run ends — not at the answer: the gate runs after it,
    *  still holding the worktree. */
   pending?: boolean
@@ -316,8 +318,11 @@ export function useWork() {
   // A newer accepted read names the path's running turn (or none): a turn that was already pending, with its id,
   // when the read was asked and is not that one has ended on the server, whatever its stream still owes. A turn
   // that began after the request is left alone: the server's answer may predate it.
-  const expire = useCallback((path: string, before: Set<string>, running: { turn?: string } | null | undefined) => {
-    const over = (t: Turn) => t.pending && !!t.turn && before.has(t.turn) && t.turn !== running?.turn
+  // A replay a log read installed (`from`, that read's number) is as old as that read, whenever it appeared.
+  const expire = useCallback((path: string, n: number, before: Set<string>,
+    running: { turn?: string } | null | undefined) => {
+    const over = (t: Turn) => t.pending && !!t.turn && t.turn !== running?.turn
+      && (before.has(t.turn) || (t.from !== undefined && t.from < n))
     setTurns((all) => {
       const list = all[path]
       if (!list?.some(over)) return all
@@ -347,11 +352,11 @@ export function useWork() {
   const asked = useCallback((path: string) => {
     const n = (logsAsked.current.get(path) ?? 0) + 1
     logsAsked.current.set(path, n)
-    return () => {
+    return Object.assign(() => {
       if (n < (logsShown.current.get(path) ?? 0)) return false
       logsShown.current.set(path, n)
       return true
-    }
+    }, { n })
   }, [])
 
   const readRules = useCallback((path: string) => {
@@ -365,7 +370,7 @@ export function useWork() {
         setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
         showQueued(path, waiting)
         named(path, running)
-        expire(path, before, running)
+        expire(path, latest.n, before, running)
       })
       .catch(() => {})
   }, [showQueued, named, asked, expire])
@@ -456,7 +461,8 @@ export function useWork() {
         // are, in the server's buffer, from the first.
         const live = now && !sending.current.has(path) && (fresh || !streams.current.has(path))   // not while a stream follows it
           ? { key: ++seq, role: 'assistant' as const, text: '', steps: [], pending: true,
-              sessionId: now.session_id, turn: now.turn }
+              sessionId: now.session_id, turn: now.turn,
+              from: fresh ? latest.n : logsShown.current.get(path) }   // the read whose running turn this is
           : null
         // A turn sent before the record came back stays after it, unless the record already holds it: the server
         // can read its rows after this window's send was written, whatever order the requests went in.
