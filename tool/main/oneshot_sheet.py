@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 
 # A requirement: where it came from, whether it is decided, and its conditions.
 SOURCES = ("original", "policy", "repository", "decision")
@@ -54,6 +55,7 @@ def part_name(part: str) -> str:
     return f"{KIND_NAMES.get(kind, kind)} {PART_NAMES.get(own, own)}" if kind else PART_NAMES.get(part, part)
 PATH = re.compile(r"/[A-Za-z0-9_.{}/-]*")
 # A path segment that is a sign-in role, whole: `/authors` is not one.
+HANGUL = re.compile(r"[가-힣]")
 AUTH_SEGMENT = re.compile(r"log-?(in|out)|sign-?(in|up|out)|auth|oauth2?|sessions?|tokens?|passwords?|register", re.I)
 
 # The translationese check: counts and names, never rewrites. The patterns and the threshold are the knobs.
@@ -261,7 +263,7 @@ def checked(design: dict, reqs: list[dict], glossary: list[dict], profile: dict,
             raise ValueError(f"{r['id']}: 이 시나리오를 확인할 테스트가 없다")
     words = [(e["id"], e["name"]) for e in design["entities"]] + \
             [(e["id"], f["name"]) for e in design["entities"] for f in e["fields"]] + \
-            [(p["id"], f"{p['path']} {p['does']}") for p in design["api"]]
+            [(p["id"], t) for p in design["api"] for t in (p["path"], p["does"])]
     avoided(words, glossary)
 
 
@@ -314,17 +316,57 @@ def core_checked(design: dict, reqs: list[dict], glossary: list[dict], profile: 
             raise ValueError(f"{r['id']}: 이 시나리오를 맡은 모듈이 없다")
         if not any(r["id"] in t["depends_on"] for t in design["tests"]):
             raise ValueError(f"{r['id']}: 이 시나리오를 확인할 테스트가 없다")
-    avoided([(m["id"], f"{m['name']} {m['contract']}") for m in modules.values()] +
-            [(x["id"], f"{x['target']} {x['does']}") for x in design["outside"]] +
-            [(p["id"], f"{p['path']} {p['does']}") for p in design.get("api", [])], glossary)
+    avoided([(m["id"], t) for m in modules.values() for t in (m["name"], m["contract"])] +
+            [(x["id"], t) for x in design["outside"] for t in (x["target"], x["does"])] +
+            [(p["id"], t) for p in design.get("api", []) for t in (p["path"], p["does"])], glossary)
+
+
+def _spans(word: str, text: str, edged: bool) -> list[tuple[int, int]]:
+    """Every place `word` stands in `text`, overlapping ones too. `edged`: the word stands whole, not inside a
+    longer name (`AutoLLM`, `auto_llm_gateway`, `LLM도구Backend`, `préLLM`, `llm-gateway-legacy`). Hangul after it
+    is a particle or a compound (`LLM Gateway로`, `변환을`, `변환기`), in a name as in prose: a Korean name is a
+    compound, and refusing it would refuse the approved term itself. Hangul before it is a compound only when the
+    word starts in Hangul."""
+
+    def runs_on(i: int, step: int) -> bool:   # does `text[i]` carry a name on, looking away from the word
+        j = i
+        while 0 <= j < len(text) and text[j] == "-":   # hyphens join only when a name character stands past
+            j += step                                    # them all (`변환- 결과` is prose, `a--b` one name)
+        return 0 <= j < len(text) and _name_char(text[j])
+
+    out = []
+    for m in re.finditer(f"(?=({re.escape(word)}))", text):
+        s, e = m.start(), m.start() + len(word)
+        if edged and (runs_on(s - 1, -1) and not (HANGUL.match(text[s - 1]) and HANGUL.match(word[0])) or
+                      runs_on(e, 1) and not HANGUL.match(text[e])):
+            continue
+        out.append((s, e))
+    return out
+
+
+def _name_char(c: str) -> bool:
+    return c.isalnum() or c == "_" or unicodedata.category(c).startswith("M")
 
 
 def avoided(words: list[tuple[str, str]], glossary: list[dict]) -> None:
-    """Refuses the first glossary `avoid` word any `(id, text)` uses."""
+    """Refuses the first glossary `avoid` word any `(id, text)` uses, each field checked on its own. An
+    occurrence one whole glossary term covers is not a use: one entry may avoid a word another entry defines
+    (`번역` avoiding `변환`), and using that term is never using the avoided word. Everything is compared in
+    NFC, so a decomposed accent reads as the letter it makes."""
+
+    def fold(s: str) -> str:
+        return unicodedata.normalize("NFC", s).lower()
+
+    terms = {fold(g["term"]) for g in glossary}
+
+    def uses(text: str, avoid: str) -> bool:
+        text, avoid = fold(text), fold(avoid)
+        cover = [span for t in terms if avoid in t for span in _spans(t, text, True)]
+        return any(not any(ts <= s and e <= te for ts, te in cover) for s, e in _spans(avoid, text, False))
 
     for g in glossary:
         for avoid in g.get("avoid") or []:
-            if hits := [i for i, text in words if avoid.lower() in text.lower()]:
+            if hits := list(dict.fromkeys(i for i, text in words if uses(text, avoid))):
                 raise ValueError(f"{', '.join(hits)}: 용어집의 `{g['term']}` 대신 쓰지 않기로 한 `{avoid}` 를 썼다")
 
 

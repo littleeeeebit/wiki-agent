@@ -312,6 +312,70 @@ def test_a_cycle_through_the_requirements_and_a_malformed_avoid_list_are_refused
         sheet.requirement_block({"requirements": REQS, "glossary": [{**GLOSSARY[0], "avoid": 3}]})
 
 
+def test_an_avoided_word_another_entry_defines_is_not_a_hit():
+    glossary = [{"term": "변환", "meaning": "바꾸는 일 전체", "avoid": ["더빙"]},
+                {"term": "번역", "meaning": "변환의 한 단계", "avoid": ["변환"]},
+                {"term": "화자", "meaning": "말하는 사람", "avoid": ["발화자"]}]
+    sheet.avoided([("M2", "목소리를 변환한다"), ("M2", "목소리변환기"), ("P2", "변환- 결과를 저장한다")],
+                  glossary)   # `변환` is a term, so using it is allowed, compounds and particles too
+    with pytest.raises(ValueError, match="M3: 용어집의 `화자`"):
+        sheet.avoided([("M3", "발화자를 나눈다")], glossary)   # a word holding a term is still caught
+    with pytest.raises(ValueError, match="M4: 용어집의 `변환`"):
+        sheet.avoided([("M4", "더빙한다")], glossary)
+
+
+@pytest.mark.parametrize("words, hit", [
+    ([("P1", "/VTuber"), ("P1", "Studio 항목을 연다")], True),   # two fields never make one term
+    ([("P1", "vTuBeR sTuDiO 를 연다")], False),
+    ([("P1", "VTuber Studi")], True),
+    ([("M1", "AutoLLM Gateway로 연결한다")], True),   # a Latin term inside a longer word covers nothing
+    ([("M1", "LLM Gateway로 연결한다")], False),
+    ([("M1", "LLM API LLM 도구를 쓴다")], False),   # overlapping terms each cover their own `LLM`
+    ([("M1", "LLM 을 쓴다")], True),
+    ([("M1", "LLM Gateway.")], False),
+    ([("P1", "/auto_llm_gateway")], True),   # an underscore, `é`, a hyphen or Latin after Hangul runs a name on
+    ([("P1", "/llm_gateway_legacy")], True),
+    ([("M1", "préLLM Gateway")], True),
+    ([("P1", "/llm-gateway-legacy")], True),
+    ([("M1", "LLM도구Backend")], True),
+    ([("M1", "LLM도구를 쓴다")], False),
+    ([("P1", "/llm_gateway/{id}")], False),
+    ([("M1", "préLLM Gateway")], True),   # a decomposed accent reads as the letter it makes
+    ([("M1", "LLM-Gateway- 결과를 저장한다")], False),   # a hyphen before a space joins nothing
+    ([("M1", "LLM-Gateway-- 결과를 저장한다")], False),
+    ([("P1", "/llm-gateway--legacy")], True),   # however many hyphens, a name past them runs on
+    ([("P1", "/legacy--llm-gateway")], True),
+    ([("P1", "/llm--gateway")], False),   # a term that holds two hyphens itself
+    ([("M1", "LLM도구관리자")], False),   # a Korean compound on an approved term, in a name as in prose
+])
+def test_only_a_whole_term_in_one_field_covers_an_avoided_word(words, hit):
+    glossary = [{"term": "버튜버", "meaning": "방송하는 사람", "avoid": ["VTuber"]},
+                {"term": "VTuber Studio", "meaning": "방송 프로그램", "avoid": []},
+                {"term": "번역 모델", "meaning": "번역에 쓰는 모델", "avoid": ["LLM"]},
+                {"term": "LLM Gateway", "meaning": "모델 중계", "avoid": []},
+                {"term": "LLM API", "meaning": "모델 API", "avoid": []},
+                {"term": "API LLM 도구", "meaning": "도구", "avoid": []},
+                {"term": "LLM_Gateway", "meaning": "모델 중계 경로", "avoid": []},
+                {"term": "LLM-Gateway", "meaning": "모델 중계 경로", "avoid": []},
+                {"term": "LLM--Gateway", "meaning": "모델 중계 옛 경로", "avoid": []},
+                {"term": "LLM도구", "meaning": "모델 도구", "avoid": []}]
+    if hit:
+        with pytest.raises(ValueError, match="쓰지 않기로 한"):
+            sheet.avoided(words, glossary)
+    else:
+        sheet.avoided(words, glossary)
+
+
+def test_a_route_holding_an_approved_term_inside_a_longer_name_is_refused():
+    glossary = [*GLOSSARY, {"term": "expense_log", "meaning": "지출 기록", "avoid": []},
+                {"term": "expense-log", "meaning": "지출 기록 경로", "avoid": []}]
+    for path in ("/expense_log", "/expense-log/{id}"):
+        sheet.checked(sheet.parsed(design_with({("oneshot-api", 0, "path"): path})), REQS, glossary, PROFILE)
+    for path in ("/auto_expense_log", "/expense-log--legacy", "/legacy--expense-log"):
+        with pytest.raises(ValueError, match="P1: 용어집의 `지출`"):
+            sheet.checked(sheet.parsed(design_with({("oneshot-api", 0, "path"): path})), REQS, glossary, PROFILE)
+
+
 @pytest.mark.parametrize("bad, named", [
     ([{**REQS[0], "owner": "x"}], "R1: 모르는 키 — owner"),
     ([REQS[0], REQS[0]], "R1: id 가 겹친다"),
