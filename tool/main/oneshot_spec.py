@@ -461,6 +461,10 @@ def recover() -> None:
             # A held run cut mid-turn (an older version's `working` at its kind's stop): its stop is the kind's,
             # never a `restart` the owner's `[재개]` would only be refused on.
             waiting(folder.name, specs.load(folder.name, oneshot.BRANCH)["oneshot"])
+        o = specs.load(folder.name, oneshot.BRANCH)["oneshot"] if o else o
+        if o and o.get("stage") in TURNS and (o.get("stopped") or {}).get("reason") == "restart" and not held(o):
+            from . import oneshot_build   # it imports this module
+            oneshot_build.resolve_tools(folder.name, o["stage"])   # a PC app's tool gone meanwhile: `toolchain`
 
 
 def waiting(repo: str, o: dict) -> dict:

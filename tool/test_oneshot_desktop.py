@@ -241,6 +241,17 @@ def test_a_resume_after_a_tool_disappeared_looks_again_and_goes_on_once_it_is_ba
     assert len(sent) == 1 and "- `cargo`" in sent[0] and "- `npm`" in sent[0] and not o().get("stopped")
 
 
+def test_recovery_looks_for_the_tools_of_a_stage_the_server_went_down_in(desktop):
+    oneshot_spec.saved("budget", oneshot={"stack": STACK, "stage": "build", "working": "build"})
+    with turns({"cargo": "C:/rust/cargo.exe"}):   # npm went away while the server was down
+        oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "toolchain" and "npm" in o()["stopped"]["detail"]
+    oneshot_spec.saved("budget", oneshot={"working": "build", "stopped": None})
+    with turns({"cargo": "C:/rust/cargo.exe", "npm": "C:/node/npm.cmd"}):   # all there: a plain restart
+        oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "restart"
+
+
 def test_an_undeclared_command_goes_back_to_its_author_and_nothing_runs(desktop):
     (desktop / "tests").mkdir()
     (desktop / "tests/core.rs").write_text("fn test_a_box_already_translated_is_skipped() {}", encoding="utf-8")
