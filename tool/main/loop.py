@@ -1547,18 +1547,24 @@ def step(loop: Loop) -> bool:
         # Allowed already, with no final gate that stands: one from before
         # `validation`, one a restart cut, or one that failed and was resumed.
         # The review is not asked again; only the final gate runs.
-        # The reviewer only picks deferred P2s here: with none, nothing resolves its model before the gate (`pick`).
         spec = change(loop, f"리뷰 R{last['n']}")
-        return spec is not None and allowed(loop, spec, repo, path, cell(spec, path) if spec.get("deferred") else None,
-                                            last["n"], head, base)
+        if spec is None:
+            return False
+        try:   # the reviewer only picks deferred P2s here; one that cannot be built keeps them all, never cuts the gate
+            chat = cell(spec, path) if spec.get("deferred") else None
+        except Exception:
+            chat = None
+        return allowed(loop, spec, repo, path, chat, last["n"], head, base)
     if n > cap(spec):
         return stop(loop, loop.repo, loop.sid, Why.CAP, f"{cap(spec)} 라운드를 다 돌았다")
-    chat = cell(spec, path)   # before `review_again` goes: a reviewer that cannot be built leaves the request standing
-    spec = change(loop, f"리뷰 R{n}", review_again=False)
+    spec = change(loop, f"리뷰 R{n}")
     if spec is None:
         return False
     if (contract := review_contract.store(repo, path, spec, contract)) is None:
         return True
+    chat = cell(spec, path)   # before `review_again` goes: a reviewer that cannot be built leaves the request standing
+    if (spec := change(loop, f"리뷰 R{n}", review_again=False)) is None:
+        return False
     kept = folder(spec["repo"], pr)
     kept.mkdir(parents=True, exist_ok=True)
     order = kept / f"round-{n}.md"
