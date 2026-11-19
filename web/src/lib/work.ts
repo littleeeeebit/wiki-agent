@@ -323,6 +323,12 @@ export function useWork() {
     running: { turn?: string } | null | undefined) => {
     const over = (t: Turn) => t.pending && !!t.turn && t.turn !== running?.turn
       && (before.has(t.turn) || (t.from !== undefined && t.from < n))
+    // An expired replay's stream is let go with it: its late end (a 410) would otherwise reload the path under a
+    // newer send. A replay is the only turn `streams` follows.
+    if ((seen.current[path] ?? []).some((t) => over(t) && t.from !== undefined)) {
+      streams.current.get(path)?.abort()
+      streams.current.delete(path)
+    }
     setTurns((all) => {
       const list = all[path]
       if (!list?.some(over)) return all
