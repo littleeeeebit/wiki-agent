@@ -103,9 +103,11 @@ The server checks, in order:
    test passes by its class and name, and `run.folder` and `run.program` are
    there.
 5. The server copies `run.folder` into a folder the run owns and checks the
-   copy: a program that is not a Windows program, a packaged layout such as
-   an MSIX folder, or a manifest, embedded or beside the program, that asks
-   for elevation is refused. It then records every copied file's digest with
+   copy: a program Windows does not start as a 32- or 64-bit process (a
+   library is not one), a packaged layout such as an MSIX folder around the
+   program, or a manifest, embedded or beside the program, that asks for
+   elevation is refused. A setting naming this worktree, as a path, a file
+   URI or a share of this PC, is refused before the gate runs. It then records every copied file's digest with
    the launch settings and names the build by them. A change to any file or
    setting is a new build.
 

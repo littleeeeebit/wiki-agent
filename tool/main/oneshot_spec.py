@@ -483,13 +483,21 @@ def waiting(repo: str, o: dict) -> dict:
 
 
 def standing(repo: str, build: dict) -> bool:
-    """A frozen build still stands: its copy is there, and the worktree is at the HEAD its gate passed."""
+    """A frozen build still stands unless it is shown not to: its copy, program or manifest is gone, or the worktree
+    is read at another HEAD than the one its gate passed. A HEAD that cannot be read keeps it, never a startup."""
 
     try:
-        tree = Path(spec_of(repo)["worktree"])
-        return Path(build["folder"]).is_dir() and specs.sh(["git", "rev-parse", "HEAD"], tree).stdout.strip() == build["head"]
+        app = Path(build["folder"])
+        kept = (app / build["launch"]["program"]).is_file() and (app.parent / "manifest.json").is_file()
     except (KeyError, OSError, TypeError):
         return False
+    if not kept:
+        return False
+    try:
+        done = specs.sh(["git", "rev-parse", "HEAD"], Path(spec_of(repo)["worktree"]))
+    except Exception:   # a timeout, a missing Git or worktree: unread, so not shown changed
+        return True
+    return done.returncode != 0 or done.stdout.strip() == build["head"]
 
 
 def kind_stop(stage: str) -> dict:

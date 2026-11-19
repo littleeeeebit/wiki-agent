@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -129,13 +130,17 @@ def test_a_second_build_replaces_the_frozen_one(pc_build):
     ({"env": {"APP_DATA": "{data}", "ASSETS": "<tree>/web"}}, "작업트리를 가리킨다"),
     ({"args": ["--data", "{data}", "--config=<tree>/./app/../config.json"]}, "작업트리를 가리킨다"),
     ({"env": {"APP_DATA": "{data}", "PATHS": "C:/Windows;<TREE>\\bin"}}, "작업트리를 가리킨다"),
+    ({"args": ["--data", "{data}", "--page=file:///<tree>/web/index%20page.html"]}, "작업트리를 가리킨다"),
+    ({"args": ["--data", "{data}", "--flags --root <tree>/web"]}, "작업트리를 가리킨다"),
+    ({"args": ["--data", "{data}", "--root=\\\\localhost\\<DRIVE>$\\<REST>"]}, "작업트리를 가리킨다"),
     ({"program": "NUL.exe"}, "장치 이름"),
     ({"program": "app.exe."}, "끝의 `.`"),
 ])
 def test_a_run_that_is_packaged_or_reaches_outside_its_copy_goes_back_to_the_build(pc_build, change, said):
     tree = str(pc_build).replace("\\", "/")
     run = {**BLOCK["run"], **json.loads(json.dumps(change).replace("<tree>", tree).replace(
-        "<TREE>", tree.upper().replace("/", "\\\\")))}
+        "<TREE>", tree.upper().replace("/", "\\\\")).replace("<DRIVE>", tree[0]).replace(
+        "<REST>", tree[3:].replace("/", "\\\\")))}
     sent = checked(pc_build, {**BLOCK, "run": run})
     assert sent and said in sent[0][2] and not o().get("desktop_build") and not staging()
 
@@ -147,12 +152,21 @@ def test_an_installer_that_is_the_program_or_a_device_goes_back_to_the_build(pc_
 
 
 @pytest.mark.parametrize("trouble, said", [
-    ("elevated", "관리자 권한"), ("sidecar", "관리자 권한"), ("zip", "Windows 프로그램이 아니다"), ("msix", "MSIX"),
-    ("link", "링크"), ("big", "실행이 읽는 것보다 크다")])
+    ("elevated", "관리자 권한"), ("sidecar", "관리자 권한"), ("zip", "프로그램이 아니다"), ("msix", "MSIX"),
+    ("link", "링크"), ("big", "실행이 읽는 것보다 크다"), ("dll", "프로세스로 띄우는 32·64비트 프로그램이 아니다"),
+    ("nested", "MSIX"), ("encoding", "XML 로 읽지 못했다")])
 def test_a_built_program_the_look_may_not_start_goes_back_to_the_build(pc_build, trouble, said, tmp_path,
                                                                        monkeypatch):
-    make = MAKE.format(program=PROGRAM)
-    if trouble == "elevated":
+    make, block = MAKE.format(program=PROGRAM), BLOCK
+    if trouble == "dll":   # Windows maps a library for its resources, but never starts it as a process
+        make = MAKE.format(program=repr(r"C:\Windows\System32\winmm.dll"))
+    elif trouble == "nested":   # a packaged layout one folder down, the program inside it
+        make += ("(out / 'package').mkdir()\nshutil.copyfile(out / 'app.exe', out / 'package' / 'app.exe')\n"
+                 "(out / 'package' / 'AppxManifest.xml').write_text('<Package/>')\n")
+        block = {**BLOCK, "run": {**BLOCK["run"], "program": "package/app.exe"}}
+    elif trouble == "encoding":
+        make += "(out / 'app.exe.manifest').write_bytes(b'<?xml version=\"1.0\" encoding=\"x-unknown\"?><a/>')\n"
+    elif trouble == "elevated":
         if not os.path.exists(ELEVATED):
             pytest.skip("this Windows has no regedit.exe")
         make = MAKE.format(program=repr(ELEVATED))
@@ -171,8 +185,37 @@ def test_a_built_program_the_look_may_not_start_goes_back_to_the_build(pc_build,
         monkeypatch.setattr(pc, "MAX_FILES", 1)   # two files: refused while copying
     write(pc_build, "make_pc.py", make)
     git(pc_build, "commit", "--allow-empty", "-am", trouble)
-    sent = checked(pc_build)
+    sent = checked(pc_build, block)
     assert sent and said in sent[0][2] and not o().get("desktop_build") and not staging()
+
+
+def test_a_folder_turned_into_a_junction_after_its_check_is_never_read(pc_build, tmp_path, monkeypatch):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("not the build's")
+    subprocess.run([sys.executable, "make_pc.py"], cwd=pc_build, check=True)   # what the gate builds
+    real = pc.is_junction
+
+    def swapped(path):   # the check sees the folder the gate built; the walk then meets a junction outside
+        seen = real(path)
+        if path.name == "res" and not seen:
+            shutil.rmtree(path)
+            subprocess.run(["cmd", "/c", "mklink", "/J", str(path), str(outside)], check=True, capture_output=True)
+        return seen
+
+    monkeypatch.setattr(pc, "is_junction", swapped)
+    into = tmp_path / "into"
+    with pytest.raises(ValueError, match="밖 파일로 열렸다"):
+        pc.frozen(pc_build, pc.declared(pc_build, fenced(pc.BLOCK, BLOCK)), into)
+    assert not (into / "app" / "res" / "secret.txt").exists()
+
+
+def test_a_setting_on_a_share_elsewhere_is_compared_without_reaching_it(pc_build, monkeypatch):
+    probed = []
+    monkeypatch.setattr(pc.os.path, "samefile", lambda a, b: probed.append(str(a)) or False)
+    run = {**BLOCK["run"], "args": ["--data", "{data}", "--assets=\\\\fileserver\\share\\assets"]}
+    pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "run": run}))
+    assert not any("fileserver" in p for p in probed)
 
 
 def test_a_frozen_build_that_cannot_be_saved_leaves_no_copy(pc_build):
@@ -190,17 +233,37 @@ def test_a_frozen_build_that_cannot_be_saved_leaves_no_copy(pc_build):
     assert not staging() or not any(staging()[0].iterdir())
 
 
-@pytest.mark.parametrize("gone", ["copy", "head"])
+@pytest.mark.parametrize("gone", ["copy", "program", "manifest", "head"])
 def test_a_frozen_build_whose_copy_is_gone_or_whose_head_moved_is_built_again(pc_build, gone):
     checked(pc_build)
+    app = Path(o()["desktop_build"]["folder"])
     if gone == "copy":
-        shutil.rmtree(o()["desktop_build"]["folder"])
+        shutil.rmtree(app)
+    elif gone == "program":
+        (app / "app.exe").unlink()
+    elif gone == "manifest":
+        (app.parent / "manifest.json").unlink()
     else:
         write(pc_build, "strings.txt", "번역 끄기")
         git(pc_build, "commit", "-am", "moved on")
     oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "state": "build-front", "detail": "x"}})
     oneshot_spec.recover()
     assert not o()["desktop_build"] and o()["stopped"]["reason"] == "restart" and not oneshot_profile.held(o())
+
+
+@pytest.mark.parametrize("git_fails", [subprocess.TimeoutExpired("git", 60), "nonzero"])
+def test_a_head_that_cannot_be_read_keeps_the_frozen_build_and_the_startup(pc_build, git_fails):
+    checked(pc_build)
+    before = o()["desktop_build"]
+
+    def reading(args, cwd, **_kw):
+        if git_fails == "nonzero":
+            return subprocess.CompletedProcess(args, 128, "", "fatal: not a git repository")
+        raise git_fails
+
+    with patch.object(oneshot_spec.specs, "sh", reading):
+        oneshot_spec.recover()
+    assert o()["desktop_build"] == before and oneshot_profile.held(o())
 
 
 def test_the_build_text_names_the_window_and_the_declared_tools(pc_build):

@@ -17,11 +17,14 @@ import json
 import ntpath
 import os
 import re
-from ctypes import wintypes as w
 from pathlib import Path
 from xml.etree import ElementTree
 
 from common import is_junction
+
+if os.name == "nt":   # a PC app is built and checked on Windows; the server imports this module everywhere
+    import msvcrt
+    from ctypes import wintypes as w
 
 from . import oneshot
 from .oneshot_screens import DEVICE_NAMES, MOCK_PATH
@@ -33,8 +36,11 @@ ELEVATED = ("requireAdministrator", "highestAvailable")   # a manifest's levels 
 MAX_FILES, MAX_BYTES = 5000, 1 << 30   # a folder of what the launch loads, never a whole build tree
 MANIFEST_BYTES = 1 << 20
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
-# A setting's pieces that may each be a path: a value, or what follows `=`, `;` or `,` in it.
-PIECES = re.compile(r"[;=,\"']+")
+# Where a path may start inside a setting: a file URI, a drive, or a UNC or device prefix. The rest of the setting
+# from there is compared as a prefix, so whatever follows the path, a space or another flag, changes nothing.
+STARTS = re.compile(r"(?i)file:|[a-z]:[\\/]|[\\/]{2}")
+URI_END = re.compile(r"[\s\"';,]")
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", os.environ.get("COMPUTERNAME", "").lower()} - {""}
 
 
 def _relative(value, where: str) -> str:
@@ -48,22 +54,56 @@ def _relative(value, where: str) -> str:
     return value
 
 
+def _local(path: str) -> str:
+    """`path` as the local path it names: a device prefix dropped, and an admin share of this PC read as its drive."""
+
+    p = path.replace("/", "\\")
+    for prefix in ("\\\\?\\UNC\\", "\\\\.\\UNC\\"):
+        if p[:len(prefix)].upper() == prefix:
+            p = "\\\\" + p[len(prefix):]
+    for prefix in ("\\\\?\\", "\\\\.\\"):
+        if p.startswith(prefix):
+            p = p[len(prefix):]
+    if p.startswith("\\\\"):
+        host, _, rest = p[2:].partition("\\")
+        share, _, tail = rest.partition("\\")
+        if host.lower() in LOCAL_HOSTS and re.fullmatch(r"[A-Za-z]\$", share):
+            p = f"{share[0]}:\\{tail}"
+    return p
+
+
+def _paths(value: str) -> list[str]:
+    """Each path a setting may name, from every place one can start in it: the rest of the setting from a drive
+    or a UNC start, or a file URI up to its end, read as Windows would read it."""
+
+    found = []
+    for start in STARTS.finditer(value):
+        rest = value[start.start():]
+        if rest[:5].lower() == "file:":
+            try:
+                rest = str(Path.from_uri("file:" + URI_END.split(rest, 1)[0][5:]))
+            except ValueError:
+                continue
+        found.append(_local(rest))
+    return found
+
+
 def _names_tree(tree: Path, value: str) -> bool:
     """Whether a setting names a path in the live worktree as Windows reads it: by its normalized text, or, for a
-    path that exists, by the file it is (a short name, a link, another spelling of the drive)."""
+    path on a drive, by the file an existing ancestor of it is (a short name, a link, another drive's letter).
+    A share elsewhere is compared by its text alone, so checking a setting reaches no other machine."""
 
     root = Path(os.path.realpath(tree))
     key = ntpath.normcase(ntpath.normpath(str(root)))
-    for piece in {value, *PIECES.split(value)}:
-        piece = piece.strip()
-        for prefix in ("\\\\?\\", "\\\\.\\", "//?/", "//./"):
-            piece = piece[len(prefix):] if piece.startswith(prefix) else piece
-        if not ntpath.isabs(piece):
-            continue
-        normal = ntpath.normcase(ntpath.normpath(piece))
+    for path in _paths(value):
+        normal = ntpath.normcase(ntpath.normpath(path))
         if normal == key or normal.startswith(key.rstrip("\\") + "\\"):
             return True
-        for at in [Path(piece), *Path(piece).parents]:
+        drive = ntpath.splitdrive(normal)[0]
+        # Removable, fixed or RAM drives only: a mapped network drive is a share too.
+        if not drive.endswith(":") or ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") not in (2, 3, 6):
+            continue
+        for at in [Path(path), *Path(path).parents]:
             try:
                 if os.path.samefile(at, root):
                     return True
@@ -139,11 +179,27 @@ def built(tree: Path, desktop: dict) -> str:
     return ""
 
 
-def _copied(source: Path, app: Path, label: str) -> list[str]:
-    """Every regular file under `source` copied into `app` in one walk, the bounds counted as the bytes are
-    copied: each entry is checked before it is entered or read, so a link is never followed, and a file that
-    appears after its folder was walked is neither copied nor named. The copied files' paths."""
+def _final(handle: int) -> str:
+    """The path Windows resolved an open handle to, every link and junction on the way followed."""
 
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.GetFinalPathNameByHandleW.argtypes = [w.HANDLE, w.LPWSTR, w.DWORD, w.DWORD]
+    buffer = ctypes.create_unicode_buffer(32768)
+    n = k.GetFinalPathNameByHandleW(handle, buffer, len(buffer), 0)
+    if not n or n >= len(buffer):
+        raise OSError(ctypes.get_last_error(), "GetFinalPathNameByHandleW")
+    return _local(buffer.value)
+
+
+def _copied(tree: Path, label: str, app: Path) -> list[str]:
+    """Every regular file under `tree/label` copied into `app` in one walk, the bounds counted as the bytes are
+    copied. Each entry is checked before it is entered or read, and each file is read only after its open
+    handle resolves inside that folder of the worktree: a folder renamed or turned into a junction meanwhile can
+    change which names are walked, never where the bytes come from. A file that appears after its folder was
+    walked is neither copied nor named. The copied files' paths."""
+
+    source = tree / label
+    inside = ntpath.normcase(ntpath.normpath(os.path.join(os.path.realpath(tree), *label.split("/")))) + "\\"
     names, size, folders = [], 0, [(source, app)]
     app.mkdir(parents=True)
     while folders:
@@ -161,12 +217,15 @@ def _copied(source: Path, app: Path, label: str) -> list[str]:
             names.append(name)
             if len(names) > MAX_FILES:
                 raise ValueError(_too_big(label))
-            with open(path, "rb") as read, open(there / path.name, "xb") as written:
-                while chunk := read.read(1 << 20):
-                    size += len(chunk)
-                    if size > MAX_BYTES:
-                        raise ValueError(_too_big(label))
-                    written.write(chunk)
+            with open(path, "rb") as read:
+                if not ntpath.normcase(_final(msvcrt.get_osfhandle(read.fileno()))).startswith(inside):
+                    raise ValueError(f"`{label}` 의 `{name}` 이 작업트리의 그 폴더 밖 파일로 열렸다")
+                with open(there / path.name, "xb") as written:
+                    while chunk := read.read(1 << 20):
+                        size += len(chunk)
+                        if size > MAX_BYTES:
+                            raise ValueError(_too_big(label))
+                        written.write(chunk)
     return sorted(names)
 
 
@@ -210,7 +269,7 @@ def _levels(manifest: bytes, name: str) -> list[str]:
         raise ValueError(f"`{name}` 의 매니페스트에 DOCTYPE 이 있다")
     try:
         root = ElementTree.fromstring(manifest)
-    except ElementTree.ParseError as exc:
+    except (ElementTree.ParseError, LookupError, UnicodeError) as exc:   # malformed, or an encoding unknown here
         raise ValueError(f"`{name}` 의 매니페스트를 XML 로 읽지 못했다 — {exc}") from exc
     return [e.get("level", "") for e in root.iter() if e.tag.rsplit("}", 1)[-1] == "requestedExecutionLevel"]
 
@@ -221,8 +280,12 @@ def checked(app: Path, run: dict, label: str) -> str:
     program = app / run["program"]
     if not program.is_file():
         return f"`{label}/{run['program']}` 가 그 폴더 안의 파일로 없다"
-    if (app / "AppxManifest.xml").exists():
+    if any((app / folder / "AppxManifest.xml").exists() for folder in program.relative_to(app).parents):
         return f"`{label}` 는 MSIX 로 패키지한 배치다 — run 은 패키지하지 않은 디버그 빌드다"
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.GetBinaryTypeW.argtypes, kind = [w.LPCWSTR, ctypes.POINTER(w.DWORD)], w.DWORD()
+    if not k.GetBinaryTypeW(str(program), ctypes.byref(kind)) or kind.value not in (0, 6):   # 32- or 64-bit
+        return f"`{run['program']}` 는 Windows 가 프로세스로 띄우는 32·64비트 프로그램이 아니다"
     if run["cwd"] != "." and not (app / run["cwd"]).is_dir():
         return f"run.cwd `{run['cwd']}` 가 `{label}` 안의 폴더로 없다"
     sidecar = program.with_name(program.name + ".manifest")
@@ -244,7 +307,7 @@ def frozen(tree: Path, desktop: dict, into: Path) -> dict:
 
     run = desktop["run"]
     app = into / "app"
-    names = _copied(tree / run["folder"], app, run["folder"])
+    names = _copied(tree, run["folder"], app)
     if sorted(p.relative_to(app).as_posix() for p in app.rglob("*") if p.is_file()) != names:
         raise ValueError(f"`{run['folder']}` 의 사본이 복사한 파일과 다르다")
     if why := checked(app, run, run["folder"]):
