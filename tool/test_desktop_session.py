@@ -94,7 +94,14 @@ def test_a_run_counts_an_exit_read_by_its_deadline_and_starts_nothing_once_halte
     assert desktop_session.Look.run(look, "preview", ["x"], tmp_path, 30, halted) == (None, "", "멈춤")
 
 
-def test_a_halt_while_the_root_is_recorded_ends_it_before_it_runs(tmp_path):
+@pytest.mark.parametrize("lost", [False, True])
+def test_a_halt_while_the_root_is_recorded_ends_it_before_it_runs(tmp_path, monkeypatch, lost):
+    if lost:   # the port's exit messages are best effort: the rollback's own confirmed exit must still prove it
+        read = desktop_session.owned_job.Job._messages
+        monkeypatch.setattr(desktop_session.owned_job.Job, "_messages", lambda self, wait_ms, most=64: [
+            (m, pid) for m, pid in read(self, wait_ms, most)
+            if m not in (desktop_session.owned_job.EXIT, desktop_session.owned_job.ABNORMAL)])
+
     class Late:   # not set when the run begins, set by the time the suspended root is recorded
         reads = 0
 

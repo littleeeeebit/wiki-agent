@@ -82,6 +82,15 @@ def test_waiting_on_the_roots_code_holds_a_child_that_starts_and_exits_while_the
     assert job.end(5)["clean"]
 
 
+def test_a_read_handles_a_bounded_number_of_batches_so_its_caller_checks_its_deadline(job, monkeypatch):
+    batches = []
+    monkeypatch.setattr(job, "_pump", lambda wait_ms=0: batches.append(1) or 64)   # a job that never runs dry
+    job.members()
+    assert len(batches) == owned_job.DRAIN
+    batches.clear()
+    assert job.code({"pid": 1}) is None and len(batches) == 1
+
+
 def test_a_job_whose_accounting_counts_a_member_never_followed_is_not_finished(job, tmp_path, monkeypatch):
     started(job, tmp_path, "pass")
     deadline = time.monotonic() + 20
@@ -264,7 +273,7 @@ def test_a_failure_closing_the_input_after_creation_rolls_the_root_back(job, tmp
     with real(tmp_path / "caller.log", "wb") as log, pytest.raises(OSError, match="input close failed"):
         job.start([sys.executable], tmp_path, dict(os.environ), None, log)
 
-    assert rolled_back == [(101, 102)]
+    assert rolled_back == [(101, 102, 103)]   # the process, its thread and its pid
 
 
 def test_the_root_inherits_only_its_own_input_and_log(job, tmp_path):
