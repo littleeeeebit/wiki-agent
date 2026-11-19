@@ -400,14 +400,14 @@ export default function App() {
     .flatMap((t) => t.steps).filter((s) => s.kind === 'approval' && s.answer === undefined).length
   // Another project's rows are keyed by task (`loop:` / `turn:`): several share one checkout path.
   const others = elsewhere(loopRows, turnsElsewhere, repo, asks, (p) => {
-    const last = work.turns[p]?.at(-1)
-    return (last?.pending && last.turn) || work.live[p] || undefined   // the log's turn once the stream dropped
+    const last = work.turns[p]?.findLast((t) => t.pending)
+    return last?.turn || work.live[p] || undefined   // the log's turn once the stream dropped
   })
   const other = others.find((o) => o.key === selected)
   const path = other ? other.path : /^(spec|loop|turn):/.test(selected) ? '' : selected
   // The checkout's running turn is another task's: the pane shows it and steers nothing. By any source: the
   // stream knows a turn first; the work log and the listing still name it when the stream has dropped.
-  const lastTurn = path ? work.turns[path]?.at(-1) : undefined
+  const lastTurn = path ? work.turns[path]?.findLast((t) => t.pending) : undefined   // the running one, wherever it stands
   const notMine = (turn?: string) => !turn || !other || turn !== other.turn
   const foreign = !!other && ((!!lastTurn?.pending && notMine(lastTurn.turn)) || (!!work.live[path] && notMine(work.live[path]))
     || turnsElsewhere.some((t) => t.path === other.path && notMine(t.turn)))
@@ -422,7 +422,7 @@ export default function App() {
     if (heldByLog) recheck(path)
   }, [heldByLog, selected, loopRows, path, recheck])
 
-  const running = Object.values(work.turns).filter((turns) => turns.at(-1)?.pending).length
+  const running = Object.values(work.turns).filter((turns) => turns.some((t) => t.pending)).length
   const runningNow = useRef(running)
   useEffect(() => {
     if (running < runningNow.current) readSpecs()
@@ -465,7 +465,7 @@ export default function App() {
 
   // The server's `busy` is as old as the last listing; a turn this window is
   // streaming is known here first.
-  const busy = (p: string) => Boolean(rows.find((r) => r.path === p)?.busy || work.turns[p]?.at(-1)?.pending)
+  const busy = (p: string) => Boolean(rows.find((r) => r.path === p)?.busy || work.turns[p]?.some((t) => t.pending))
   // A turn the server lists for this spec (`/api/loops`, every project's): a path alone, or a turn of no known
   // owner, is a shared checkout's other task as often as this one's.
   const turning = (p: string, s: { repo: string; id: string }) =>

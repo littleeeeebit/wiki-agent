@@ -59,8 +59,9 @@ export function Agent({
   const [note, setNote] = useState('')
   // Put back in the box only when the person asks: what they type meanwhile is theirs.
   const [seed, setSeed] = useState<{ text: string } | null>(null)
-  const busy = turns.at(-1)?.pending ?? false
-  const last = turns.at(-1)
+  // The running turn drives the controls even when a later row (a refused send) stands after it.
+  const last = turns.findLast((t) => t.pending) ?? turns.at(-1)
+  const busy = last?.pending ?? false
   const compaction = last?.steps.findLast((s) => s.kind === 'compaction')
   const grown = turns.length + (last?.text.length ?? 0) + (last?.steps.length ?? 0)
   useEffect(() => {
