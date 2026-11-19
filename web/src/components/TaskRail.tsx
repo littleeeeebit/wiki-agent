@@ -23,12 +23,10 @@ type Props = {
   tasks: Task[]
   others: Elsewhere[]
   selected: string
-  /** The other-projects row shown, `path:name`: several share one path on a shared checkout. */
-  other?: string
   prs: Pr[]
   onProject: (repo: string) => void
   onView: (view: View) => void
-  onSelect: (key: string, name?: string) => void
+  onSelect: (key: string) => void
   onLoop: (prs: number[], environment: 'local' | 'claude-cloud' | 'external', repo: string) => Promise<void>
   onSettings: () => void
   onNew: () => void
@@ -226,8 +224,7 @@ export function TaskRail(props: Props) {
           <div className="mb-2">
             <Label>다른 프로젝트</Label>
             {props.others.map((o) => (
-              <Row key={`${o.path}:${o.name}`} selected={`${o.path}:${o.name}` === props.other}
-                onSelect={(key) => props.onSelect(key, o.name)}
+              <Row key={`${o.path}:${o.name}`} selected={o.path === selected} onSelect={props.onSelect}
                 title="프로젝트를 바꾸지 않고 그 작업트리를 연다"
                 task={{ key: o.path, name: `${o.repo}/${o.name}`, pr: o.pr, round: o.round, phase: o.phase,
                   waiting: o.waiting, busy: o.busy, line: o.line }} />

@@ -122,11 +122,12 @@ const owns = (l: LoopRow, t: TurnRow) => t.spec?.repo === l.repo && t.spec?.id =
  *  approvals `approvals` already knows for its path. */
 export function elsewhere(loops: LoopRow[], turns: TurnRow[], repo: string, approvals: (path: string) => number) {
   return [
-    ...loops.filter((l) => l.repo !== repo && l.worktree).map((l) => {
+    // One row a checkout: the pane is the checkout's, so while another task's turn runs on a shared one, its
+    // stopped loops step aside for that turn's row; opened, they would show and steer the other task's turn.
+    ...loops.filter((l) => l.repo !== repo && l.worktree && !turns.some((t) => t.path === l.worktree && !owns(l, t))).map((l) => {
       const asks = approvals(l.worktree!)
-      // The loop's own turn is not listed apart: its model and its running show on this row. A shared
-      // checkout runs other tasks' turns too, so a turn is the loop's by its spec, never by its path.
-      const turn = turns.find((t) => t.path === l.worktree && owns(l, t))
+      // The loop's own turn, by its spec, is not listed apart: its model and its running show on this row.
+      const turn = turns.find((t) => t.path === l.worktree)
       const state = shownState(l.state, !!turn)
       return {
         path: l.worktree!, repo: l.repo, spec: { repo: l.repo, id: l.id } as TurnRow['spec'],

@@ -134,13 +134,10 @@ def main():
         answering = a.get_by_role("button", name="fixture-b/asked-task")
         expect(answering).to_contain_text("작업 중")
         expect(answering).not_to_contain_text("멈춤")
-        parked = a.get_by_role("button", name="fixture-b/parked-task")
-        expect(parked).to_contain_text("멈춤")
-        expect(parked).to_contain_text("게이트")
-        # Pressed, it is the task shown, never the running one sharing its checkout.
-        parked.click()
-        expect(parked).to_have_attribute("aria-current", "true")
-        expect(other).to_have_attribute("aria-current", "false")
+        # Another task's stop on a checkout running a turn that is not its own steps aside: its pane would show
+        # and steer that turn. The checkout keeps one row, the running one.
+        expect(a.get_by_role("button", name="fixture-b/parked-task")).to_have_count(0)
+        expect(a.locator("nav [aria-current=true]")).to_have_count(1)
 
         shell = page_of(context, errors)
         shell.add_init_script(SHELL)

@@ -73,7 +73,6 @@ export default function App() {
   const [specs, setSpecs] = useState<Spec[]>([])
   // A task's key: its worktree's path, or `spec:<id>` before it has one.
   const [selected, setSelected] = useState('')
-  const [otherName, setOtherName] = useState('')   // which of another project's rows on `selected` was pressed
   const [view, setView] = useState<View>('chat')
   // The map is drawn once it is first opened, and kept after.
   const [mapped, setMapped] = useState(false)
@@ -458,9 +457,7 @@ export default function App() {
   // A task's work model is keyed by its spec's repository and id, the same
   // from draft to worktree and under another project. Several tasks share a
   // checkout path, and spec ids repeat across repositories, so neither alone names one task.
-  // A shared checkout lists several tasks under one path: the row pressed, else its running one, is the task shown.
-  const other = others.find((o) => o.path === selected && o.name === otherName) ??
-    others.find((o) => o.path === selected && o.busy) ?? others.find((o) => o.path === selected)
+  const other = others.find((o) => o.path === selected)
   const owning = task?.spec ?? other?.spec
   // A pane with no worktree — nothing selected, a selection whose task is gone, a spec not started
   // or a PR not checked out — is the one empty agent pane: its pick is what [시작] sends, whichever card is pressed.
@@ -657,8 +654,7 @@ export default function App() {
           setView(v)
           setMobilePane('chat')
         }}
-        other={other && `${other.path}:${other.name}`}
-        onSelect={(key, name = '') => { setSelected(key); setOtherName(name); setTaskOptionsOpen(false); setMobilePane('task'); setLandscapeView('workspace') }}
+        onSelect={(key) => { setSelected(key); setTaskOptionsOpen(false); setMobilePane('task'); setLandscapeView('workspace') }}
         onRemove={(target) => void remove(target, true)}
         onSettings={() => void openPreferences('settings').catch((e) => setFault(String(e)))}
         onNew={() => {

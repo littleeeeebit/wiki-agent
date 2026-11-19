@@ -517,8 +517,12 @@ def cell(spec: dict, path: Path) -> ChatSession:
     else:
         model = review_model(own["model"]) if own else review_model()
         effort = named.get("effort") or (own["effort"] if own else settings()["review_effort"])
-        if own and not named.get("effort") and effort not in channels.efforts_of(model):
-            effort = ""   # the model no longer takes the saved effort: its default runs, and the review tab says so
+        try:   # a plan's effort-only reviewer too: checked against the repository's model it runs on
+            offered = channels.efforts_of(model) if own else None
+        except Exception:   # an unanswered model list never stops a round or a final gate: the pair runs as saved
+            offered = None
+        if offered is not None and effort not in offered:
+            effort = ""   # the model does not take that effort: its default runs, and the review tab says so
     repo = channels.repo_for(spec["repo"]) if verify_dir is not None else None
     local = verification.local(repo) if repo is not None else {}
     env = {"WIKI_VERIFICATION_HEAD": spec["pr"]["head"],
