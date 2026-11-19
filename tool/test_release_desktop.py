@@ -190,6 +190,13 @@ def test_the_main_binary_is_found_by_where_it_lands(tmp_path, resources):
     assert rd.facts(nsis(tmp_path, files=distinct))["exe_version"] == "0.1.1"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="the uppercase table is Windows' own")
+def test_names_compare_through_the_windows_uppercase_table(tmp_path, resources):
+    assert rd.upper("Index.exe") != rd.upper("ındex.exe") and rd.upper("ſ") == "ſ" and rd.upper("é") == "É"
+    distinct = (("r.exe", PACKED), ("Index.exe", b"MZ one"), ("ındex.exe", b"MZ two"))   # dotless i, apart to Windows
+    assert rd.facts(nsis(tmp_path, files=distinct))["exe_version"] == "0.1.1"
+
+
 def test_an_output_directory_moved_by_any_code_path_is_refused(tmp_path, resources):
     # `StrCpy $OUTDIR` and `Pop $OUTDIR`, wherever they sit: a call can run them before the main binary
     for entry in ((rd.EW_ASSIGNVAR, [rd.OUTDIR, 0, 0, 0, 0, 0]), (rd.EW_PUSHPOP, [rd.OUTDIR, 1, 0, 0, 0, 0])):
@@ -324,6 +331,23 @@ def test_a_build_command_that_writes_no_app_exe_is_the_builds_failure(tmp_path, 
     monkeypatch.setattr(release.specs, "gate", gate)
     with pytest.raises(release.BuildFailed, match="r.exe"):
         release.build(src, DESKTOP, "0.1.0", {}, release.threading.Event(), read=lambda f: None)
+
+
+def test_a_desktop_build_gets_its_version_and_no_android_code(tmp_path, monkeypatch):
+    (src := tmp_path / "src").mkdir()
+    seen = {}
+
+    def gate(cmd, path, halt, env, timeout, idle):
+        seen.update(env)
+        for key in ("artifact", "exe"):
+            (made := release.output(path, DESKTOP, "1.1000.0", key)).parent.mkdir(parents=True, exist_ok=True)
+            made.write_text("x")
+        return 0, "", ""
+
+    monkeypatch.setattr(release.specs, "gate", gate)
+    release.build(src, DESKTOP, "1.1000.0", {}, release.threading.Event(), read=lambda f: None)
+    assert seen["RELEASE_VERSION"] == "1.1000.0" and "RELEASE_VERSION_CODE" not in seen
+    assert json.loads(Path(seen["RELEASE_TAURI_CONFIG"]).read_text()) == {"version": "1.1000.0", "bundle": {}}
 
 
 def test_a_desktop_only_rehearsal_builds_two_installers_and_catches_a_renamed_product(tmp_path, monkeypatch):

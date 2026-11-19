@@ -260,7 +260,8 @@ def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, 
     kit = release.tools(cfg)
     first = release.seed(repo, sha, cfg["version_source"])
     listed = _tried(lambda: gh.releases(repo_slug), halt)
-    chosen = release.accepted(shown, [_shape(r) for r in listed], _tried(lambda: gh.tags(repo_slug), halt), bump, first)
+    chosen = release.accepted(shown, [_shape(r) for r in listed], _tried(lambda: gh.tags(repo_slug), halt), bump, first,
+                              cfg)
     prior = latest(listed)
     record = reserve(name, {"id": attempt, "remote": name, "repo": str(repo), "sha": sha, "base": "main", "version": chosen,
                             "tag": f"v{chosen}", "state": "pending", "started": time.time(),

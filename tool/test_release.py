@@ -107,6 +107,11 @@ def test_the_version_code_is_tauris_mapping_within_its_bounds():
 def test_the_selector_never_offers_a_version_android_cannot_carry_nor_reads_a_non_semver_tag():
     with pytest.raises(ValueError, match="versionCode"):
         release.accepted("0.0.0", [], [], None, "0.0.0")
+    assert release.version([], [], None, "1.1000.0", {"desktop": {}}) == "1.1000.0"   # no versionCode to carry
+    with pytest.raises(ValueError, match="65535"):
+        release.version([], [], None, "1.65536.0", {"desktop": {}})
+    with pytest.raises(ValueError, match="versionCode"):
+        release.version([], [], None, "1.1000.0", {"android": {}, "desktop": {}})
     with pytest.raises(ValueError, match="versionCode"):   # the taken seed pushes the patch past 999
         release.version([], ["v0.1.999"], None, "0.1.999")
     assert release.parsed("v01.0.0") is None

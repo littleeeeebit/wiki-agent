@@ -77,7 +77,7 @@ def card(repo: Path) -> dict:
     versions, refused = {}, {}
     for bump in release.BUMPS if prior else (None,):
         try:
-            versions[bump or "first"] = release.version(shapes, taken, bump, first)
+            versions[bump or "first"] = release.version(shapes, taken, bump, first, cfg)
         except ValueError as exc:
             refused[bump or "first"] = str(exc)
     if prior:

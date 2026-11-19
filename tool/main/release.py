@@ -1,10 +1,9 @@
 """Release steps 1, 2 and 6 (`docs/plans/release/0-overview.md`). Step 1 builds one pinned commit into an Android
-APK with the version injected, signs it and checks it. Step 6's Windows installer is `release_desktop`'s. Step 2 adds each repository's one release key. Nothing
-here publishes: `release_publish` does, with step 3's transfer and ledger. Steps 4 and 5 bring failure
-handling and the button.
-The rehearsal (`release_rehearsal.rehearse`) signs only with disposable test keys, and a test key never signs
-a production artifact. It runs from `tool/` as this module's `rehearse` command, given a disposable clone and an
-optional `--ref`."""
+APK with the version injected, signs it and checks it; step 6's Windows installer is `release_desktop`'s. Step 2
+adds each repository's one release key. Nothing here publishes: `release_publish` does, with step 3's transfer
+and ledger. The rehearsal (`release_rehearsal.rehearse`) signs only with disposable test keys, and a test key
+never signs a production artifact. It runs from `tool/` as this module's `rehearse` command, given a disposable
+clone and an optional `--ref`."""
 
 from __future__ import annotations
 
@@ -28,7 +27,7 @@ import android_owned
 import verify
 from common import errorlog, host, is_junction, paths, process
 
-from . import oneshot_android, specs
+from . import oneshot_android, release_desktop, specs
 
 WORK = paths.RAW / "release-work"   # release-owned checkouts: server state, outside every task worktree home
 SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", re.ASCII)   # SemVer's core: ASCII, no leading zeros
@@ -161,7 +160,7 @@ def parsed(tag: str) -> tuple[int, int, int] | None:
     return tuple(map(int, found.groups())) if found else None
 
 
-def version(releases: list[dict], taken: list[str], bump: str | None, first: str) -> str:
+def version(releases: list[dict], taken: list[str], bump: str | None, first: str, kinds=("android",)) -> str:
     """The one selector the card and the attempt share. The last eligible production release, bumped. Before
     the first one, the seed, with no choice. Then the next free patch past any tag already on the remote."""
 
@@ -180,15 +179,18 @@ def version(releases: list[dict], taken: list[str], bump: str | None, first: str
     while chosen in used:
         chosen = (chosen[0], chosen[1], chosen[2] + 1)
     release = "%d.%d.%d" % chosen
-    code(release)   # a version Android cannot carry is refused here, before the card shows it
+    if "android" in kinds:   # a version a declared kind cannot carry is refused here, before the card shows it
+        code(release)
+    if "desktop" in kinds:
+        release_desktop.carries(release)
     return release
 
 
-def accepted(shown: str, releases: list[dict], taken: list[str], bump: str | None, first: str) -> str:
+def accepted(shown: str, releases: list[dict], taken: list[str], bump: str | None, first: str, kinds=("android",)):
     """The version a press publishes, recomputed at pin time. A tag that appeared since the card was drawn
     changes it, and then the press is refused before anything is reserved or written."""
 
-    now = version(releases, taken, bump, first)
+    now = version(releases, taken, bump, first, kinds)
     if now != shown:
         raise ValueError(f"카드의 버전 {shown} 이 지금은 {now} 이다 — 다시 누르면 {now} 로 나간다")
     return now
@@ -409,22 +411,20 @@ def output(path: Path, kind: dict, release: str, key: str = "artifact") -> Path:
 
 def build(path: Path, android: dict, release: str, kit: dict, halt: threading.Event, read=None) -> Path:
     """The adapter's build command of one kind (`android`, or `desktop` with `read`) in the attempt's checkout,
-    given the version as `RELEASE_VERSION` and `RELEASE_VERSION_CODE`. A Tauri build passes
-    `RELEASE_TAURI_CONFIG`, an overlay file beside the checkout, as one more `-c`. Tauri then writes
-    `tauri.properties` for Gradle and the version resources on Windows. `TAURI_CONFIG` cannot carry it, because
-    the CLI replaces that variable with its own `-c` values. No source file is edited. The checks read what the
-    build produced. `read(file)` refuses an artifact its kind does not make; without it, it is read as an APK."""
+    given `RELEASE_VERSION`, Android's `RELEASE_VERSION_CODE` and `RELEASE_TAURI_CONFIG`, an overlay beside the
+    checkout a Tauri build passes as one more `-c` (`TAURI_CONFIG` cannot: the CLI replaces it with its own `-c`
+    values). No source file is edited. `read(file)` refuses an artifact its kind does not make; else it is an APK."""
 
     made = [k for k in ("artifact", "exe") if k in android]
     for k in made:   # a file the commit carries is not this build's output
         if output(path, android, release, k).exists():
             raise ValueError(f"`{android[k]}` 가 빌드 전부터 체크아웃에 있다 — 빌드가 만든 파일만 검사한다")
     overlay = path.parent / "tauri.release.json"
-    # Off, or a target's `autoIncrementVersionCode` would replace the code the version maps to.
-    android_overlay = {"versionCode": code(release), "autoIncrementVersionCode": False}
-    overlay.write_text(json.dumps({"version": release, "bundle": {"android": android_overlay}}), encoding="utf-8")
-    env = {**environment(kit), "RELEASE_VERSION": release, "RELEASE_VERSION_CODE": str(code(release)),
-           "RELEASE_TAURI_CONFIG": str(overlay)}
+    # Android's only. Off, or a target's `autoIncrementVersionCode` would replace the code the version maps to.
+    codes = {} if "exe" in android else {"versionCode": code(release), "autoIncrementVersionCode": False}
+    overlay.write_text(json.dumps({"version": release, "bundle": {"android": codes} if codes else {}}), encoding="utf-8")
+    env = {**environment(kit), "RELEASE_VERSION": release, "RELEASE_TAURI_CONFIG": str(overlay),
+           **({"RELEASE_VERSION_CODE": str(codes["versionCode"])} if codes else {})}
     exited, out, cut = specs.gate(android["build"], path, halt, env=env, timeout=BUILD_SECONDS, idle=QUIET_SECONDS)
     if exited != 0:
         tail = errorlog.redact("\n".join(out.splitlines()[-40:]))

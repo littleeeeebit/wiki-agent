@@ -197,10 +197,21 @@ def payload(data: bytes) -> tuple[list[tuple], dict[str, set[int]], dict[int, bo
 
 
 def upper(text: str) -> str:
-    """`text` as Windows compares file names and registry keys: each letter upper-cased one to one, so `ß`
-    stays `ß` and is not `SS`."""
+    """`text` as Windows compares file names and registry keys: each UTF-16 unit through the system's own
+    uppercase table (`RtlUpcaseUnicodeChar`, what `CompareStringOrdinal` ignores case with), so `ß`, `ı` and `ſ`
+    stay as they are. Off Windows, Python's one-to-one uppercase stands in."""
 
-    return "".join(c.upper() if len(c.upper()) == 1 else c for c in text)
+    if os.name != "nt":
+        return "".join(c.upper() if len(c.upper()) == 1 else c for c in text)
+    if not _UPCASE:
+        call = ctypes.WinDLL("ntdll").RtlUpcaseUnicodeChar
+        call.argtypes, call.restype = [ctypes.c_ushort], ctypes.c_ushort
+        _UPCASE.append(call)
+    units = struct.iter_unpack("<H", text.encode("utf-16-le", "surrogatepass"))
+    return b"".join(struct.pack("<H", _UPCASE[0](u)) for (u,) in units).decode("utf-16-le", "surrogatepass")
+
+
+_UPCASE: list = []   # `RtlUpcaseUnicodeChar`, loaded on first use
 
 
 def destination(out: str | None, name: str | None) -> str | None:
@@ -359,6 +370,13 @@ def built_wrong(seen: dict, version: str, desktop: dict, previous: dict | None =
         if seen.get("publisher") != want:
             out.append(f"게시자 {seen.get('publisher')!r} 가 {name}의 {want!r} 와 다르다 — 설치된 앱의 설정 위치가 바뀐다")
     return out
+
+
+def carries(release: str) -> None:
+    """Refuses a version Windows' version resources cannot hold: each of their parts is 16 bits."""
+
+    if max(map(int, release.split("."))) > 0xFFFF:
+        raise ValueError(f"버전 {release} 는 Windows 버전 리소스로 옮길 수 없다 — 각 자리는 65535 까지다")
 
 
 def newer(version: str, than: str) -> bool:

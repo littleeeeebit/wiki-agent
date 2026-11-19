@@ -79,7 +79,7 @@ def _rounds(repo: Path, ref: str, halt: threading.Event, repair, expect: str | N
             key = release.test_key(stores[0], kit)
             cert = release.certificate(key["keystore"], key["alias"], key["password"], kit)
         for n in (1, 2):
-            ver = release.version(published, taken, None if not published else "patch", first)
+            ver = release.version(published, taken, None if not published else "patch", first, cfg)
             at, why, wrong, seen, failed = f"{attempt}/{n}", [], [], {}, None
             try:   # one scope for the round: a partial checkout, a stop, a failed signing or inspection
                 src = release.checkout(repo, sha, at)
