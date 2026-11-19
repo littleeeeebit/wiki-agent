@@ -502,7 +502,7 @@ export default function App() {
   // A started or reopened task branch: reload its own conversation even though the path did not change.
   const opened = useCallback((path: string) => {
     work.forget(path)
-    work.load(path)
+    work.load(path, true)
     readSpecs()
     refresh()
     setSelected(path)
@@ -529,7 +529,7 @@ export default function App() {
     refresh()
     if (spec.worktree) {
       work.forget(spec.worktree)
-      work.load(spec.worktree)
+      work.load(spec.worktree, true)
       setSelected(spec.worktree)
     }
     setTab('agent')

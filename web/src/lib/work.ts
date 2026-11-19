@@ -495,8 +495,9 @@ export function useWork() {
       })
       .then(({ rows, running, rules: list, session_id, queued: waiting }) => {
         if ((lives.current.get(path) ?? 0) !== life) return true
-        // Read after a deferral: this record accounts for its notice.
-        if ((missed.current.get(path) ?? Infinity) < latest.n) missed.current.delete(path)
+        // Read after a deferral, and free to attach (no local send holds the path): this record accounts for its
+        // notice. Under a live send the notice stays owed to that send's end.
+        if ((missed.current.get(path) ?? Infinity) < latest.n && !sendingNow(path)) missed.current.delete(path)
         // Older than a recheck already applied: its transcript still predates this window's sends, so it merges as
         // ever, but the running turn to attach is the newest read's — the snapshot's may have ended or changed.
         const fresh = latest()
@@ -557,7 +558,7 @@ export function useWork() {
         // A reload that replaced what the pane showed (`again`), or a read that carried a deferred refresh no send
         // is left to owe: try once more. ponytail: one retry; a second failure waits for the next notice or sync.
         if (again || (missed.current.has(path) && !sendingNow(path))) {
-          missed.current.delete(path)
+          if (!sendingNow(path)) missed.current.delete(path)   // a live send still owes a notice deferred for it
           setTimeout(() => {
             if ((lives.current.get(path) ?? 0) === life) load(path)
           }, 1000)
