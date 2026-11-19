@@ -257,6 +257,8 @@ export function useWork() {
   // By each send's turn key; one counts only while its turn still pends, so a send a newer read already ended
   // (`expire`) no longer holds the path while its stream drains.
   const sending = useRef(new Map<string, Set<number>>())
+  // A full log read in flight for a path: a deferred refresh it already satisfies does not start another.
+  const inflight = useRef(new Map<string, object>())
   // A key the mirror does not show yet (a send just added, before its render) counts as live.
   const sendingNow = (path: string) => [...(sending.current.get(path) ?? [])].some((key) => {
     const t = (seen.current[path] ?? []).find((x) => x.key === key)
@@ -483,7 +485,12 @@ export function useWork() {
     loading.current.add(path)
     const life = lives.current.get(path) ?? 0
     const latest = asked(path)
+    const flight = {}
+    inflight.current.set(path, flight)
     return api.workLog(path)
+      .finally(() => {
+        if (inflight.current.get(path) === flight) inflight.current.delete(path)
+      })
       .then(({ rows, running, rules: list, session_id, queued: waiting }) => {
         if ((lives.current.get(path) ?? 0) !== life) return true
         // Older than a recheck already applied: its transcript still predates this window's sends, so it merges as
@@ -568,8 +575,11 @@ export function useWork() {
       const stale = !left?.has(mine.key)
       left?.delete(mine.key)
       if (!left?.size) sending.current.delete(path)
+      // A full log already in flight reads the record anyway: it settles a deferred refresh without a second one
+      // that would supersede it.
+      const reading = inflight.current.has(path)
       if (stale) {
-        if (!sendingNow(path) && !streams.current.has(path) && missed.current.delete(path)) {
+        if (!sendingNow(path) && !streams.current.has(path) && missed.current.delete(path) && !reading) {
           forget(path)   // a notice deferred for this send, and nothing attached since: read once now
           load(path)
         }
@@ -577,7 +587,7 @@ export function useWork() {
         if (gone) missed.current.add(path)
       } else {
         const owed = missed.current.delete(path)   // either reason reloads once, and settles the other
-        if (gone || owed) {
+        if ((gone || owed) && !reading) {
           forget(path)
           load(path)
         }
@@ -660,7 +670,11 @@ export function useWork() {
   }, [rules])
 
   const reset = useCallback(async (path: string, keep: api.Keep) => {
+    const life = lives.current.get(path) ?? 0
     const kept = await api.workReset(path, keep)
+    // The server cleared the record and announced it before answering: a turn attached since (forget + load,
+    // which already read the cleared record) is newer than this clear, and stays.
+    if ((lives.current.get(path) ?? 0) !== life) return kept
     // A record read before the clear and landing after it would bring the
     // cleared conversation back.
     lives.current.set(path, (lives.current.get(path) ?? 0) + 1)
