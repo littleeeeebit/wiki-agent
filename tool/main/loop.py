@@ -38,7 +38,9 @@ PROMPT = (ROOT / "tool/prompts/review-round.md").read_text(encoding="utf-8")
 # The criteria a round is judged by, per profile; a mixed change gets both, once each.
 RUBRIC = review_contract.RUBRIC
 
-DEFAULTS = {"rounds": 12, "concurrent": 3, "review_model": "", "review_effort": "high", "auto_merge": False}
+# `review_models`: a repository's own reviewer `{model, effort}`, by its name; one without its own takes `review_model`.
+DEFAULTS = {"rounds": 12, "concurrent": 3, "review_model": "", "review_effort": "high", "auto_merge": False,
+            "review_models": {}}
 MORE = 4        # rounds a `[계속]` past the cap adds, to that spec only
 POLL = 60.0     # seconds between reads of a pull request waiting to merge
 # Never `READ_TOOLS`: its `Bash` is on `--allowedTools`, runs unasked, and one
@@ -506,9 +508,12 @@ def cell(spec: dict, path: Path) -> ChatSession:
     verify_dir = folder(*key) / "verification" / spec["pr"]["head"] if verification.cloud(spec) else None
     tools_profile = CLOUD_PROFILE if verify_dir is not None else READ_PROFILE
     named = spec.get("reviewer") or {}
+    own = settings()["review_models"].get(spec["repo"])
+    own = own if isinstance(own, dict) and isinstance(own.get("model"), str) else {}
     # Outside the lock: listing Codex's models starts Codex.
-    model = review_model(named["model"]) if named.get("model") else review_model()
-    effort = named["effort"] if (spec.get("oneshot") or {}).get("models") else named.get("effort") or settings()["review_effort"]
+    model = review_model(named["model"]) if named.get("model") else review_model(own["model"]) if own else review_model()
+    effort = named["effort"] if (spec.get("oneshot") or {}).get("models") \
+        else named.get("effort") or own.get("effort") or settings()["review_effort"]
     repo = channels.repo_for(spec["repo"]) if verify_dir is not None else None
     local = verification.local(repo) if repo is not None else {}
     env = {"WIKI_VERIFICATION_HEAD": spec["pr"]["head"],
@@ -2825,7 +2830,8 @@ def looping() -> list[dict]:
                     if seen_row and seen_row[1]:
                         found.append(seen_row)
                     continue
-                row = {k: v for k, v in specs.summary(spec).items() if k != "waiting"} if spec and (
+                # `cell`: the task's work model, for the rail's other-projects group (`/api/loops`).
+                row = {**{k: v for k, v in specs.summary(spec).items() if k != "waiting"}, "cell": spec.get("cell")} if spec and (
                     LOOPING.fullmatch(spec["state"]) or spec["state"] in ("머지 가능", "머지 대기", "멈춤")) else None
                 seen_row = _rows[file] = (key, row, spec["history"][0]["ts"] if spec else 0.0)
             if seen_row[1]:
@@ -2842,7 +2848,7 @@ def loops() -> dict:
 
     found = looping()
     with _lock:
-        running = [path for path, run in work._runs.items() if not run.done]
+        running = [(path, run) for path, run in work._runs.items() if not run.done]
     # The owning spec names the task as its own project does; the screen keys the work model by it. Without one, the
     # turn's project is the main clone git reports: its parent folder named a shared checkout `C:/repos/a` `repos`.
     def owning(path: str) -> dict | None:
@@ -2851,8 +2857,11 @@ def loops() -> dict:
         except (OSError, subprocess.SubprocessError):   # optional: one failed lookup never empties the list
             return None
         return {"repo": owned["repo"], "id": owned["id"]} if owned else None
-    turns = [{"path": p, "repo": s["repo"] if s else Path(checkout(Path(p))[1] or p).name, "spec": s}
-             for p in running for s in [owning(p)]]
+    # `cell`: the model the turn runs on. Another project's task has no spec on this screen to read it from.
+    turns = [{"path": p, "repo": s["repo"] if s else Path(checkout(Path(p))[1] or p).name, "spec": s,
+              "cell": {"model": getattr(c, "model", None) or "", "effort": getattr(c, "effort", None) or "",
+                       "fast": bool(getattr(c, "fast", False))}}
+             for p, r in running for s, c in [(owning(p), getattr(r, "chat", None))]]
     with knowledge._LIVE:   # `answers`: what a restart would cut in every window's conversations
         return {"loops": found, "turns": turns, "answers": sum(not r.done for r in knowledge.LIVE.values())}
 
@@ -2942,6 +2951,8 @@ class Settings(BaseModel):
     review_model: str = ""
     review_effort: str = "high"
     auto_merge: bool = False
+    # Named: the model and effort are that repository's own, and the default for every other stays as it was.
+    repo: str = ""
 
 
 @router.get("/api/loop/settings")
@@ -2964,8 +2975,12 @@ def set_settings(body: Settings) -> dict:
         raise HTTPException(503, f"Codex 모델 목록 확인 실패: {exc}") from exc
     if body.review_effort not in allowed:
         raise HTTPException(400, "이 모델이 지원하지 않는 추론 강도")
-    store(rounds=body.rounds, concurrent=body.concurrent, review_model=model, review_effort=body.review_effort,
-          auto_merge=False)
+    if repo := body.repo.strip():
+        store(rounds=body.rounds, concurrent=body.concurrent, auto_merge=False, review_models={
+            **settings()["review_models"], repo: {"model": model, "effort": body.review_effort}})
+    else:
+        store(rounds=body.rounds, concurrent=body.concurrent, review_model=model, review_effort=body.review_effort,
+              auto_merge=False)
     with _seats:
         _seats.notify_all()   # more seats may be free now
     return settings()

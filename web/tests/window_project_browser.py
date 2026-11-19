@@ -24,6 +24,8 @@ from mobile_browser import ROOT, fixture
 from browser_fixture import page_of, served
 
 SHARED = "C:/repos/fixture-b"   # a primary checkout whose parent folder is not its project
+ASKED = "C:/repos/fixture-b-asked"   # a loop stopped on the agent's question, whose answer turn runs
+RUNNING = {"model": "codex:fixture-running", "effort": "", "fast": False}
 
 # The desktop shell as the page sees it: `invoke` answers from `window.__shell`, and the close
 # listener the page registers is kept so the test can fire it.
@@ -72,7 +74,10 @@ def main():
         if path == "loops":
             if faults["stall"]:
                 await asyncio.sleep(30)
-            return {"loops": [], "turns": [{"path": SHARED, "repo": "fixture-b", "spec": None}], **live}
+            stopped = {"repo": "fixture-b", "id": "asked-task", "state": "멈춤", "pr": 3, "round": 1, "worktree": ASKED,
+                       "stopped": {"reason": "작업 에이전트의 질문", "detail": ""}, "waiting": False, "cell": None}
+            return {"loops": [stopped], "turns": [{"path": SHARED, "repo": "fixture-b", "spec": None, "cell": RUNNING},
+                                                 {"path": ASKED, "repo": "fixture-b", "spec": None, "cell": RUNNING}], **live}
         if path == "work/log" and request.query_params["path"] == SHARED:
             return {"rows": [], "session_id": "b", "busy": True, "running": {"turn": "turn-b", "session_id": "b", "seq": 0},
                     "rules": [], "queued": None}
@@ -118,6 +123,12 @@ def main():
         assert "repos" not in a.get_by_role("navigation").first.inner_text()
         other.click()
         expect(a.get_by_role("button", name="fixture-b/fixture-b")).to_contain_text("승인 1")
+        # Another project's running task shows the model it runs on, not the default.
+        expect(a.get_by_label("선택한 작업 모델", exact=True)).to_have_text("codex:fixture-running")
+        # A stopped loop whose answer turn runs reads as being worked on.
+        answering = a.get_by_role("button", name="fixture-b/asked-task")
+        expect(answering).to_contain_text("작업 중")
+        expect(answering).not_to_contain_text("멈춤")
 
         shell = page_of(context, errors)
         shell.add_init_script(SHELL)
@@ -155,7 +166,7 @@ def main():
 
         live["answers"] = 1
         asked_now = last_close(shell, dialogs)
-        assert "도는 작업 1개" in asked_now and "만드는 답 1개" in asked_now, asked_now
+        assert "도는 작업 2개" in asked_now and "만드는 답 1개" in asked_now, asked_now   # SHARED's turn and ASKED's
         # Review R1-2: a status read that never answers held the close for good.
         faults["stall"] = True
         assert "읽지 못했다" in last_close(shell, dialogs)

@@ -3030,6 +3030,26 @@ def test_a_claude_review_cell_has_no_shell(world):
     assert commands[0][commands[0].index("--effort") + 1] == "high"
 
 
+def test_each_repository_keeps_its_own_review_model(world, tmp_path):
+    """The settings held one reviewer: picking one in a repository's review tab changed every repository's."""
+
+    spec = pr_spec(world, "own-reviewer", 7)
+    codex = [{"id": "codex:a", "is_default": True, "efforts": [{"id": "high"}, {"id": "low"}]},
+             {"id": "codex:b", "efforts": [{"id": "high"}]}]
+    body = {"rounds": 3, "concurrent": 1, "review_model": "codex:b", "review_effort": "high"}
+    web = client()
+    with patch.object(loop, "_file", return_value=tmp_path / "loop.json"), \
+         patch.object(chat_channels, "codex_models", return_value=codex), \
+         patch.object(loop, "review_model", lambda chosen=None: chosen or loop.settings()["review_model"] or "codex:a"):
+        assert web.post("/api/loop/settings", json=body).status_code == 200
+        saved = web.post("/api/loop/settings", json={**body, "review_model": "codex:a", "review_effort": "low",
+                                                    "repo": "proj"}).json()
+        # The default every other repository takes is left as it was.
+        assert saved["review_model"] == "codex:b" and saved["review_models"] == {"proj": {"model": "codex:a", "effort": "low"}}
+        cell = loop.cell(spec, Path(spec["worktree"]))
+        assert (cell.model, cell.effort) == ("codex:a", "low")
+
+
 def test_codex_review_migrates_old_tools_but_resumes_the_readonly_profile(world):
     spec = pr_spec(world, "read-profile", 7)
     kept = loop.folder("proj", 7) / "session.json"

@@ -730,9 +730,12 @@ export type LoopRow = {
   worktree: string | null
   waiting: boolean
   queued?: string | null
+  cell?: { model: string; effort: string; fast?: boolean } | null
 }
 
-export type LoopSettings = { rounds: number; concurrent: number; review_model: string; review_effort: string; auto_merge?: boolean }
+/** `review_models`: a repository's own reviewer, by its name. `repo`, sent only: the repository a pick is saved for. */
+export type LoopSettings = { rounds: number; concurrent: number; review_model: string; review_effort: string; auto_merge?: boolean
+  review_models?: Record<string, { model: string; effort: string }>; repo?: string }
 
 export const getPrs = () =>
   get('/api/prs').then((r) => json<{ project: string; rows: Pr[]; error?: string }>(r, 'PR 목록'))
@@ -743,7 +746,8 @@ export const startLoops = (prs: number[], implementation_environment: 'local' | 
 export const getLoops = () =>
   get('/api/loops').then((r) => json<{ loops: LoopRow[]; turns: TurnRow[]; answers: number }>(r, '루프'))
 /** A running turn in any project; `spec` is the task that owns its worktree, if one does. */
-export type TurnRow = { path: string; repo: string; spec: { repo: string; id: string } | null }
+/** `cell`: the model the turn runs on. */
+export type TurnRow = { path: string; repo: string; spec: { repo: string; id: string } | null; cell?: { model: string; effort: string; fast?: boolean } }
 export const mergeSpec = (id: string, head: string, owner?: string) =>
   post(`/api/specs/${id}/merge`, { head }, 'POST', owner).then((r) => json<Spec>(r, '머지'))
 export const settleSpec = (id: string, choice: 'accept' | 'reopen', owner?: string) =>

@@ -1,15 +1,15 @@
-import { useContext, useState } from 'react'
+import { useContext, useState, type ReactNode } from 'react'
 import { PictureRoot } from '@/lib/picture'
 
 /** A Markdown image in an agent's answer or question, such as the before and
  *  after of a design it asks to approve. A local path is drawn through
  *  `/api/image`; a web address, or a path with no checkout to read it from,
  *  stays its alt text, so an answer never fetches from outside. */
-export function Picture({ src, alt }: { src?: string; alt?: string }) {
+export function Picture({ src, alt, fallback }: { src?: string; alt?: string; fallback?: ReactNode }) {
   const repo = useContext(PictureRoot)
   const [broken, setBroken] = useState(false)
   const local = !!src && !/^(https?|data|blob):/i.test(src) && !src.startsWith('//')
-  if (!repo || !local || broken) return <span>{alt}</span>
+  if (!repo || !local || broken) return fallback ?? <span>{alt}</span>
   const url = `/api/image?${new URLSearchParams({ repo, path: src })}`
   return (
     // Half the width less the space Markdown leaves between two images, so a before and an after compare side by

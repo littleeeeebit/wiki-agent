@@ -19,7 +19,7 @@ import type { View } from '@/components/TaskRail'
 import { Terminal, closed } from '@/components/Terminal'
 import * as api from '@/lib/api'
 import type { Channel, LoopRow, LoopSettings, Options, Peek as PeekData, Pr, RunSummary, Spec, Switch, Worktree } from '@/lib/api'
-import { LOOPING, elsewhere, phase, tasks as taskList } from '@/lib/tasks'
+import { LOOPING, elsewhere, shownState, tasks as taskList } from '@/lib/tasks'
 import { leave } from '@/lib/leave'
 import { cn } from '@/lib/utils'
 import { useWork } from '@/lib/work'
@@ -461,7 +461,7 @@ export default function App() {
   const empty = !other && !task?.row
   const choiceKey = empty ? blank : owning ? choiceOf(owning) : selected
   const pinned = task?.spec?.refactor?.roles || task?.spec?.oneshot?.models ? task.spec.cell : undefined   // fixed at its survey's (a oneshot's run's) start, held by the server
-  const choice = pinned ?? choices[choiceKey] ?? (empty ? undefined : task?.spec?.cell) ?? NO_CHOICE
+  const choice = pinned ?? choices[choiceKey] ?? (empty ? undefined : task?.spec?.cell ?? other?.cell) ?? NO_CHOICE
   const setChoice = (c: Choice) => setChoices((all) => ({ ...all, [choiceKey]: c }))
 
   const order = useCallback(async (text: string) => {
@@ -752,7 +752,7 @@ export default function App() {
             <span className="flex shrink-0 gap-1.5 font-mono text-[10.5px]">
               {(task?.pr ?? other?.pr) && <span className="text-muted-foreground">#{task?.pr ?? other?.pr}</span>}
               {(task?.round || other?.round) ? <span className="text-muted-foreground">R{task?.round || other?.round}</span> : null}
-              <GateOr gate={task?.gate} className={TONE[spec ? phase(spec.state) : 'none']}>{spec?.state ?? (other ? other.line : '명세 없음')}</GateOr>
+              <GateOr gate={task?.gate} className={TONE[task?.spec ? task.phase : 'none']}>{spec ? shownState(spec.state, !!row && busy(row.path)) : other ? other.line : '명세 없음'}</GateOr>
             </span>
           )}
           {!task && !other && <span className="truncate text-[12.5px] text-faint">작업 목록에서 선택하세요</span>}

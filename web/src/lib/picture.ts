@@ -1,6 +1,9 @@
 import { createContext } from 'react'
 import { defaultUrlTransform } from 'react-markdown'
 
+/** The extensions `/api/image` serves (`IMAGES` in `tool/main/app.py`). */
+export const IMAGE = /\.(?:png|jpe?g|gif|webp)$/i
+
 /** The checkout whose agent is speaking: its pictures are read through it. */
 export const PictureRoot = createContext('')
 

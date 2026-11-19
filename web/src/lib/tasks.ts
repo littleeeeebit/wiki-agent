@@ -18,6 +18,10 @@ export function phase(state: string | undefined): Phase {
   return 'review'   // PR #n, 리뷰 대기, 리뷰 Rn, 고치는 중 Rn
 }
 
+/** The state a person reads. A stopped spec whose worktree runs a turn — an answer to the agent's question, an
+ *  instruction to go on — is being worked on: its stop still stands on the server until that turn ends. */
+export const shownState = (state: string, running: boolean) => state === '멈춤' && running ? '작업 중' : state
+
 /** The rail's order: what a person has to do, what runs, what waits to be
  *  started. Finished work has no place on it. */
 export type Group = 'act' | 'run' | 'idle'
@@ -67,18 +71,19 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
     const found = s.worktree ? byPath.get(s.worktree) ?? null : null
     const row = found && (s.workspace_mode !== 'branch' || found.branch === (s.branch ?? s.id)) ? found : null
     if (row) owned.add(row.path)
-    const p = phase(s.state)
+    const running = row ? busy(row.path) : false
+    const state = shownState(s.state, running)
+    const p = phase(state)
     if (p === 'done' || (p === 'work' && !row && !s.pr)) continue
     const asks = row ? approvals(row.path) : 0
     const waiting = asks > 0 || Boolean(row && s.waiting)
-    const running = row ? busy(row.path) : false
     const merging = !!s.merge_progress && ['running', 'waiting_review', 'queued'].includes(s.merge_progress.state)
     // A plan still being drafted says its phase; its questions and its stop wait on the person.
     const plan = s.state === '작업 중' ? s.planning : null
     const planAct = plan?.phase === 'clarify' || plan?.phase === 'stopped'
     const gate = merging ? null : s.gating ?? null
     // A running gate takes the state word's place; the row shows it with its elapsed time.
-    const parts = gate ? [] : [merging ? s.merge_progress!.stage : plan ? `계획 · ${PLAN_PHASE[plan.phase]}` : word(s.state)]
+    const parts = gate ? [] : [merging ? s.merge_progress!.stage : plan ? `계획 · ${PLAN_PHASE[plan.phase]}` : word(state)]
     if (plan?.stopped) parts.push(PLAN_STOP[plan.stopped.reason] ?? plan.stopped.reason)
     if (waiting) parts.push(asks ? `승인 ${asks}` : '승인 대기')
     if (p === 'ready' && !merging) parts.push('머지를 누른다')
@@ -116,11 +121,15 @@ export function elsewhere(loops: LoopRow[], turns: TurnRow[], repo: string, appr
   return [
     ...loops.filter((l) => l.repo !== repo && l.worktree).map((l) => {
       const asks = approvals(l.worktree!)
+      // A turn on the loop's worktree is not listed apart: its model and its running show on this row.
+      const turn = turns.find((t) => t.path === l.worktree)
+      const state = shownState(l.state, !!turn)
       return {
         path: l.worktree!, repo: l.repo, spec: { repo: l.repo, id: l.id } as TurnRow['spec'],
-        name: l.id, pr: l.pr, round: l.round, phase: phase(l.state),
+        name: l.id, pr: l.pr, round: l.round, phase: phase(state), busy: !!turn,
+        cell: turn?.cell ?? l.cell ?? undefined,
         waiting: l.waiting || asks > 0,
-        line: [word(l.state), asks ? `승인 ${asks}` : l.waiting && '승인 대기', l.stopped?.reason,
+        line: [word(state), asks ? `승인 ${asks}` : l.waiting && '승인 대기', state === '멈춤' && l.stopped?.reason,
           l.state === '머지 대기' && (l.queued || '대기열')].filter(Boolean).join(' · '),
       }
     }),
@@ -128,7 +137,7 @@ export function elsewhere(loops: LoopRow[], turns: TurnRow[], repo: string, appr
       const asks = approvals(t.path)
       return {
         path: t.path, repo: t.repo, spec: t.spec, name: t.path.split(/[\\/]/).pop() ?? '', pr: null, round: 0,
-        phase: 'work' as Phase, waiting: asks > 0, line: asks ? `도는 중 · 승인 ${asks}` : '도는 중',
+        phase: 'work' as Phase, busy: true, cell: t.cell, waiting: asks > 0, line: asks ? `도는 중 · 승인 ${asks}` : '도는 중',
       }
     }),
   ]

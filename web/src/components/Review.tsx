@@ -30,8 +30,10 @@ export function Review(props: Props) {
     ...options.models.filter((m) => m.id),
   ] } : null
   const named = spec?.reviewer
-  const model = named?.model ?? settings?.review_model ?? ''
-  const effort = named?.effort ?? settings?.review_effort ?? ''
+  // The task's repository keeps its own reviewer: a pick here never changes another repository's.
+  const own = spec ? settings?.review_models?.[spec.repo] : undefined
+  const model = named?.model ?? own?.model ?? settings?.review_model ?? ''
+  const effort = named?.effort ?? own?.effort ?? settings?.review_effort ?? ''
   const missing = model.startsWith('codex:') && options && !options.codex_error && !options.codex_pending &&
     !options.models.some((m) => m.id === model)
   return <section aria-label="리뷰 세션" className="flex h-full min-h-0 flex-col">
@@ -42,7 +44,7 @@ export function Review(props: Props) {
           if (!settings) return
           setSaving(true)
           setFault('')
-          try { await onSettings({ ...settings, review_model: choice.model, review_effort: choice.effort }) }
+          try { await onSettings({ ...settings, review_model: choice.model, review_effort: choice.effort, repo: spec?.repo ?? '' }) }
           catch (err) { setFault(String(err instanceof Error ? err.message : err)) }
           finally { setSaving(false) }
         }} />
