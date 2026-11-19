@@ -35,12 +35,13 @@ TAURI = [(UNINSTALL, "DisplayName", "r"), (UNINSTALL, "Publisher", "o"), (UNINST
 
 def nsis(tmp_path: Path, writes=TAURI, files=(("helper.exe", b"MZ helper " + rd.MARKER + rd.NSIS), ("r.exe", PACKED)),
          flags=0, dictionary=1 << 16, context=("0",), view=("256",),
-         uninstaller=(b"icon", b"MZ uninstaller")) -> Path:
+         uninstaller=(b"icon", b"MZ uninstaller"), out=None) -> Path:
     """A synthetic installer laid out as Unicode NSIS 3 lays one out: a stub, the first header on a 512-byte
     boundary, one solid LZMA stream holding the script (its blocks, its entries, its strings), each file and the
     uninstaller's two records, and the CRC32 of everything from byte 512. A value of None is a variable, as
     `$INSTDIR` is; an uninstaller record of None is one the stream never holds. `context` and `view` are what
-    `SetShellVarContext` and `SetRegView` set."""
+    `SetShellVarContext` and `SetRegView` set; `out` is what `SetOutPath` sets before the files, `$INSTDIR` by
+    default."""
 
     table, at = bytearray(), {}
 
@@ -53,7 +54,7 @@ def nsis(tmp_path: Path, writes=TAURI, files=(("helper.exe", b"MZ helper " + rd.
         return at[text]
 
     ptr("")
-    data, entries = bytearray(), []
+    data, entries = bytearray(), [(rd.EW_CREATEDIR, [ptr(out), 1, 0, 0, 0, 0])]
     for name, body in files:   # a body of None is an entry whose record the stream never holds
         entries.append((rd.EW_EXTRACTFILE, [0, ptr(name), len(data) + (body is None) * 64, 0, 0, 0]))
         data.extend(b"" if body is None else struct.pack("<I", len(body)) + body)
@@ -177,10 +178,21 @@ def test_an_uninstaller_whose_second_record_is_missing_is_refused(tmp_path, reso
         rd.facts(nsis(tmp_path, uninstaller=(b"icon", None)))
 
 
+def test_the_main_binary_is_found_by_where_it_lands(tmp_path, resources):
+    beside = (("r.exe", PACKED), ("tools\\r.exe", b"MZ tool"), ("\x03\u809a\\r.exe", b"MZ plugin"))
+    assert rd.facts(nsis(tmp_path, files=beside))["exe_version"] == "0.1.1"   # three files, three places
+    for files, out in (((("tools\\r.exe", PACKED),), None),   # only under a resource folder
+                       ((("r.exe", PACKED),), "C:\\elsewhere")):   # SetOutPath somewhere else
+        with pytest.raises(ValueError, match="주 실행 파일 'r.exe' 를 하나로"):
+            rd.facts(nsis(tmp_path, files=files, out=out))
+    assert rd.destination(None, "r.exe") is None and rd.destination(None, "") is None
+
+
 def test_a_main_binary_the_script_does_not_extract_once_is_refused(tmp_path, resources):
     with pytest.raises(ValueError, match="주 실행 파일 'r.exe' 를 하나로"):
         rd.facts(nsis(tmp_path, files=(("other.exe", PACKED),)))
-    for second in ("r.exe", "R.EXE", "\x03\u8095\\r.exe"):   # the same file to Windows, a later one overwriting it
+    for second in ("r.exe", "R.EXE", "\x03\u8095\\r.exe", "r.exe. ", "tools\\..\\r.exe", "tools/../R.exe"):
+        # the same file to Windows, so a later entry overwrites the main binary
         with pytest.raises(ValueError, match="주 실행 파일 'r.exe' 를 하나로"):
             rd.facts(nsis(tmp_path, files=(("r.exe", PACKED), (second, PACKED + b"2"))))
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import lzma
+import ntpath
 import os
 import struct
 import tempfile
@@ -32,7 +33,7 @@ MAGIC = b"\xef\xbe\xad\xdeNullsoftInst"   # NSIS's first header: flags, this sig
 MARKER, NSIS = b"__TAURI_BUNDLE_TYPE_VAR_", b"NSS"
 FIXED_SIGNATURE, FIXED_SIZE = 0xFEEF04BD, 52   # VS_FIXEDFILEINFO
 FH_SILENT = 2   # the one first-header flag allowed: an uninstaller, CRC off or forced are not Tauri's installer
-EW_SETFLAG, EW_EXTRACTFILE, EW_WRITEREG, EW_WRITEUNINSTALLER = 13, 20, 51, 62   # NSIS 3's, as Tauri's NSIS has them
+EW_CREATEDIR, EW_SETFLAG, EW_EXTRACTFILE, EW_WRITEREG, EW_WRITEUNINSTALLER = 11, 13, 20, 51, 62   # NSIS 3's
 # The flags whose value decides where `SHCTX` resolves: `SetShellVarContext` (0 current user, 1 all users) and
 # `SetRegView` (256 the 64-bit view). Tauri's installMode sets the first once; "both" sets it at run time.
 FLAG_CONTEXT, FLAG_VIEW = 1, 12
@@ -142,7 +143,7 @@ def _string(script: bytes, block: tuple[int, int], ptr: int) -> str | None:
 def payload(data: bytes) -> tuple[list[tuple], dict[str, set[int]], dict[int, bool], dict[int, set], _Stream]:
     """An NSIS installer packed as Tauri's default is: Unicode NSIS 3, one solid LZMA stream, its CRC on. Gives
     the script's registry writes as (root, key, name, value, type); each extracted file's data offsets by its
-    destination name as Windows compares it, the last path part casefolded; every offset a file or uninstaller
+    destination as Windows compares it (`destination`); every offset a file or uninstaller
     entry reads, true where the record after it is read too; the values each flag is set to; and the stream
     positioned at the first file. Any other shape is refused: what it would install could not be read, so it
     could not be checked."""
@@ -168,20 +169,36 @@ def payload(data: bytes) -> tuple[list[tuple], dict[str, set[int]], dict[int, bo
     block = (strings, languages if strings < languages <= length else length)
     if entries + 28 * count > length or strings >= length:
         raise ValueError("NSIS 명령 표나 문자열 표가 스크립트 밖으로 나간다")
-    writes, files, offsets, flags = [], {}, {}, {}
-    for k in range(count):
+    writes, files, offsets, flags, out = [], {}, {}, {}, None
+    for k in range(count):   # in the order the script lays them out, so each file lands where the last
+        # `SetOutPath` before it points: Tauri sets `$INSTDIR` once, before the main binary and the resources
         which, *arg = struct.unpack_from("<i6i", script, entries + 28 * k)
         if which == EW_WRITEREG:
             writes.append((arg[0], *(_string(script, block, a) for a in arg[1:4]), (arg[4], arg[5])))
+        elif which == EW_CREATEDIR and arg[1]:   # `SetOutPath`: the directory, made and made current
+            out = _string(script, block, arg[0])
         elif which == EW_EXTRACTFILE:
             offsets[arg[2]] = offsets.get(arg[2], False)
-            name = _string(script, block, arg[1]) or ""
-            files.setdefault(name.rsplit("\\", 1)[-1].casefold(), set()).add(arg[2])
+            if (where := destination(out, _string(script, block, arg[1]))) is None:
+                raise ValueError("설치 파일이 풀어 놓는 파일의 위치를 정할 수 없다")
+            files.setdefault(where, set()).add(arg[2])
         elif which == EW_WRITEUNINSTALLER:   # its icon record, then the record after it: the uninstaller
             offsets[arg[1]] = True
         elif which == EW_SETFLAG:   # a third operand restores a saved value, which no literal names
             flags.setdefault(arg[0], set()).add(None if arg[2] else _string(script, block, arg[1]))
     return writes, files, offsets, flags, stream
+
+
+def destination(out: str | None, name: str | None) -> str | None:
+    """Where an extracted file lands, as Windows compares paths: a relative name under the current output
+    directory, separators and `..` resolved, trailing dots and spaces dropped, case folded. A variable keeps its
+    code, so `$INSTDIR\\r.exe` stays apart from `$PLUGINSDIR\\r.exe`. None when it cannot be told."""
+
+    absolute = bool(name) and (name[0] < " " or name.startswith("\\") or name[1:2] == ":")   # a variable, a root
+    if not name or (not absolute and out is None):
+        return None
+    full = name if absolute else f"{out}\\{name}"
+    return "\\".join(part.rstrip(". ") for part in ntpath.normpath(full).split("\\")).casefold()
 
 
 def _registered(writes: list, product: str | None) -> dict:
@@ -256,8 +273,9 @@ def facts(installer: Path, exe: Path | None = None) -> dict:
         (copy := Path(tmp) / "setup.exe").write_bytes(data)
         shown = version_info(copy)
         reg = _registered(writes, shown.get("ProductName"))
-        main = files.get(reg["MainBinaryName"].casefold(), set()) if reg["MainBinaryName"] else set()
-        if len(main) != 1:   # one record for that name as Windows compares names, or one may overwrite it
+        name = reg["MainBinaryName"]
+        main = files.get(destination(INSTDIR, name), set()) if name and not any(c in name for c in "\\/:") else set()
+        if len(main) != 1:   # one record lands at `$INSTDIR\\<MainBinaryName>`, or a later one overwrites it
             raise ValueError(f"`{installer.name}` 의 스크립트가 등록하는 주 실행 파일 {reg['MainBinaryName']!r} 를 "
                              "하나로 찾을 수 없다")
         try:
