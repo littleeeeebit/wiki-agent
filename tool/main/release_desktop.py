@@ -25,7 +25,7 @@ import zlib
 from ctypes import wintypes
 from pathlib import Path
 
-ARCH = "x64"   # the one Windows target the adapter's build makes
+ARCH, AMD64 = "x64", 0x8664   # the one Windows target the asset is named for, and its PE `Machine`
 SUFFIX = f"-{ARCH}-setup.exe"   # a release's installer asset: `<repo>-<version>-x64-setup.exe`
 MAGIC = b"\xef\xbe\xad\xdeNullsoftInst"   # NSIS's first header: flags, this signature, the header's length
 # Tauri sets the three bytes after it to `NSS` in the one app an NSIS installer installs; its other binaries,
@@ -282,6 +282,15 @@ def _bounded(file: Path, limit: int) -> bytes:
     return data
 
 
+def machine(binary: bytes) -> int | None:
+    """A PE file's `Machine`, the processor it runs on; None when `binary` is not a PE file."""
+
+    at = struct.unpack_from("<I", binary, 0x3C)[0] if binary[:2] == b"MZ" and len(binary) >= 0x40 else -1
+    if not 0 <= at <= len(binary) - 6 or binary[at:at + 4] != b"PE\0\0":
+        return None
+    return struct.unpack_from("<H", binary, at + 4)[0]
+
+
 def readable(installer: Path) -> None:
     """Raises `ValueError` unless `installer` is an NSIS installer this module can read."""
 
@@ -317,7 +326,7 @@ def facts(installer: Path, exe: Path | None = None) -> dict:
             "exe_version": shown_app["version"], "exe_product": shown_app.get("ProductName"),
             "publisher": shown_app.get("CompanyName"), "reg_product": reg["DisplayName"],
             "reg_publisher": reg["Publisher"], "reg_version": reg["DisplayVersion"],
-            "install_key": reg["install_key"], "scope": _one(flags.get(FLAG_CONTEXT), SCOPES),
+            "install_key": reg["install_key"], "machine": machine(app), "scope": _one(flags.get(FLAG_CONTEXT), SCOPES),
             "view": _one(flags.get(FLAG_VIEW, {"0"}), None), "sha256": hashlib.sha256(data).hexdigest()}
 
 
@@ -357,6 +366,9 @@ def built_wrong(seen: dict, version: str, desktop: dict, previous: dict | None =
         elif previous and seen[key] != previous.get(key):
             out.append(f"{what} {seen[key]!r} 가 이전 정식 설치 파일의 {previous.get(key)!r} 와 다르다 — "
                        "업데이트가 이전 설치를 찾지 못하고 따로 설치된다")
+    if seen.get("machine") != AMD64:
+        out.append(f"설치될 앱 EXE 의 Machine {seen.get('machine')!r} 가 x64(0x8664) 가 아니다 — "
+                   f"`*{SUFFIX}` 로 올릴 수 없다")
     if not seen.get("install_key"):
         out.append("설치 스크립트가 설치 위치를 Software\\<게시자>\\<제품 이름> 에 기록하지 않는다 — 다음 업데이트가 설치 위치를 "
                    "찾지 못한다")

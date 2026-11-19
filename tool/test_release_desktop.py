@@ -24,10 +24,14 @@ DESKTOP = {"build": "b", "artifact": "nsis/r_{version}_x64-setup.exe", "exe": "r
            "publisher": "o"}
 GOOD = {"version": "0.1.1", "file_version": "0.1.1", "product": "r", "exe_version": "0.1.1", "exe_product": "r",
         "publisher": "o", "reg_product": "r", "reg_publisher": "o", "reg_version": "0.1.1", "install_key": True,
-        "scope": "currentUser", "view": "256"}
+        "scope": "currentUser", "view": "256", "machine": rd.AMD64}
 # The app EXE as built: Tauri's runtime names the NSIS value, then holds the placeholder its bundler sets.
-APP = b"MZ app " + rd.MARKER + rd.NSIS + b" runtime " + rd.MARKER + b"UNK tail"
-PACKED = b"MZ app " + rd.MARKER + rd.NSIS + b" runtime " + rd.MARKER + rd.NSIS + b" tail"
+def pe(machine=rd.AMD64) -> bytes:   # a PE header: `MZ`, `e_lfanew` at 0x3C, then `PE\0\0` and `Machine`
+    return b"MZ app ".ljust(0x3C, b"\0") + struct.pack("<I", 0x40) + b"PE\0\0" + struct.pack("<H", machine)
+
+
+APP = pe() + b" " + rd.MARKER + rd.NSIS + b" runtime " + rd.MARKER + b"UNK tail"
+PACKED = pe() + b" " + rd.MARKER + rd.NSIS + b" runtime " + rd.MARKER + rd.NSIS + b" tail"
 UNINSTALL = rd.UNINSTALL + "r"
 TAURI = [(UNINSTALL, "DisplayName", "r"), (UNINSTALL, "Publisher", "o"), (UNINSTALL, "DisplayVersion", "0.1.1"),
          (UNINSTALL, "MainBinaryName", "r.exe"), ("Software\\o\\r", "", None)]
@@ -203,6 +207,13 @@ def test_an_output_directory_moved_by_any_code_path_is_refused(tmp_path, resourc
         with pytest.raises(ValueError, match="OUTDIR"):
             rd.facts(nsis(tmp_path, extra=(entry,)))
     assert rd.facts(nsis(tmp_path, extra=((rd.EW_PUSHPOP, [rd.OUTDIR, 0, 0, 0, 0, 0]),)))   # `Push $OUTDIR` reads it
+
+
+def test_an_app_built_for_another_processor_is_not_shipped_as_x64(tmp_path, resources):
+    arm = pe(0xAA64) + b" " + rd.MARKER + rd.NSIS
+    why = rd.built_wrong(rd.facts(nsis(tmp_path, files=(("r.exe", arm),))), "0.1.1", DESKTOP)
+    assert any("Machine 43620 가 x64(0x8664) 가 아니다" in w for w in why), why
+    assert rd.machine(b"MZ") is None and rd.machine(b"MZ".ljust(0x40, b"\0")) is None
 
 
 def test_a_main_binary_the_uninstaller_overwrites_is_refused(tmp_path, resources):
