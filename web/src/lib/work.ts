@@ -530,7 +530,9 @@ export function useWork() {
               if (streams.current.get(path) === control) streams.current.delete(path)
               replays.current.delete(live.key)
               const expired = ended.current.delete(live.key)   // every end clears its bookkeeping
-              if (gone && !control.signal.aborted && !expired) {
+              // A live local send owns the path now: its own end reads the record once (`missed`).
+              if (gone && !control.signal.aborted && !expired && sendingNow(path)) missed.current.add(path)
+              else if (gone && !control.signal.aborted && !expired) {
                 forget(path)
                 load(path)
               }
@@ -662,6 +664,7 @@ export function useWork() {
     // A record read before the clear and landing after it would bring the
     // cleared conversation back.
     lives.current.set(path, (lives.current.get(path) ?? 0) + 1)
+    sending.current.delete(path)   // as in `forget`: the cleared transcript's sends hold the path no longer
     setTurns((all) => ({ ...all, [path]: [] }))
     setRules((all) => ({ ...all, [path]: { session: '', list: [] } }))
     return kept
