@@ -70,6 +70,30 @@ def test_a_command_run_on_the_look_returns_when_its_root_exits_and_what_it_left_
     assert len(record["jobs"]["preview"]["members"]) >= 2   # the root and what it left running
 
 
+def test_a_run_counts_an_exit_read_by_its_deadline_and_starts_nothing_once_halted(tmp_path):
+    import threading
+    from types import SimpleNamespace
+
+    (tmp_path / "evidence").mkdir()
+    (tmp_path / "evidence" / "preview.log").write_bytes(b"")
+    reads = iter([None, 0])
+
+    def read(root):   # the exit is first seen by a read that ends past the deadline
+        value = next(reads)
+        if value is not None:
+            time.sleep(0.05)
+        return value
+
+    look = SimpleNamespace(folder=tmp_path, jobs={"preview": SimpleNamespace(code=read)},
+                           start=lambda *a: {"pid": 1}, observe=lambda: None)
+    code, _, cut = desktop_session.Look.run(look, "preview", ["x"], tmp_path, 0.05, threading.Event())
+    assert code is None and cut
+    halted = threading.Event()
+    halted.set()
+    look.start = lambda *a: pytest.fail("nothing starts once halted")
+    assert desktop_session.Look.run(look, "preview", ["x"], tmp_path, 30, halted) == (None, "", "멈춤")
+
+
 def test_the_app_keeps_its_data_inside_the_looks_disposable_folder(tmp_path):
     with desktop_session.look(tmp_path, "data") as look:
         look.start("app", python(ENVIRONMENT), tmp_path, {"EXTRA": "kept", "temp": str(tmp_path), "TMP": "x"})

@@ -484,7 +484,7 @@ def record(repo: str, store, spec: dict, tree: Path) -> bool:
                        oneshot={"stage": "build-front", "front_head": head, "attempts": 0,
                                 **({"working": None, "stopped": oneshot_spec.kind_stop("build-front")} if held
                                    else {"working": "build-front"})})
-    return True
+    return not held   # a held run sends no build, so the approval sends the worktree's queued instruction itself
 
 
 oneshot_spec.WORKERS.update(split=split, frontend=frontend, refront=refront)

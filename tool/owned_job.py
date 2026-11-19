@@ -99,6 +99,9 @@ class Job:
             raise Refused(f"cannot prepare the job: {error}")
         self.joined: list[dict] = []   # {"pid", "handle", "identity", "exited"}
         self.stray: list = []   # creation handles of roots whose rollback could not confirm their exit
+        # Each started root's identity and creation handle, held until `close`: its exit code stays readable
+        # however soon it exits, before or without the port's join message.
+        self.roots: list[tuple[dict, object]] = []
         self.ended = False
 
     def _create(self, argv, cwd, env, desktop, handles):
@@ -172,7 +175,7 @@ class Job:
             self._rollback(process, thread)   # never left suspended, never run unrecorded
             raise
         self.k.CloseHandle(thread)
-        self.k.CloseHandle(process)
+        self.roots.append((root, process))
         return root
 
     def _rollback(self, process, thread) -> None:
@@ -233,15 +236,13 @@ class Job:
                 and not isinstance(count, int) and count.total == len(self.joined) and count.active == 0)
 
     def code(self, root: dict) -> int | None:
-        """The exit code of the member `root` names, read from the handle bound to it once it has exited, or
-        `None` while it runs, before it joined, or when it was never held."""
+        """The exit code of the root `start` returned as `root`, read from its creation handle once that handle
+        is signalled, or `None` while it runs or for a root this job did not start."""
 
-        while self._pump() == 64:
-            pass
-        entry = next((e for e in self.joined if e["identity"] and native_process.same(e["identity"], root)), None)
+        held = next((handle for known, handle in self.roots if native_process.same(known, root)), None)
         found = w.DWORD()
-        if entry is None or not entry["handle"] or not self._gone(entry) \
-                or not self.k.GetExitCodeProcess(entry["handle"], ctypes.byref(found)):
+        if held is None or self.k.WaitForSingleObject(held, 0) != 0 \
+                or not self.k.GetExitCodeProcess(held, ctypes.byref(found)):
             return None
         return found.value
 
@@ -313,7 +314,8 @@ class Job:
     def outstanding(self) -> int:
         """How many handles the job still holds."""
 
-        return (len(getattr(self, "stray", [])) + sum(1 for entry in getattr(self, "joined", []) if entry["handle"])
+        return (len(getattr(self, "stray", [])) + len(getattr(self, "roots", []))
+                + sum(1 for entry in getattr(self, "joined", []) if entry["handle"])
                 + sum(1 for name in ("port", "job") if getattr(self, name, None)))
 
     def close(self) -> None:
@@ -323,6 +325,9 @@ class Job:
         for handle in list(getattr(self, "stray", [])):
             if self.k.CloseHandle(handle):
                 self.stray.remove(handle)
+        for held in list(getattr(self, "roots", [])):
+            if self.k.CloseHandle(held[1]):
+                self.roots.remove(held)
         for entry in getattr(self, "joined", []):
             if entry["handle"] and self.k.CloseHandle(entry["handle"]):
                 entry["handle"] = None

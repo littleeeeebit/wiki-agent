@@ -156,6 +156,26 @@ def test_a_look_that_cannot_prove_its_cleanup_stops_the_stage_instead_of_asking_
     assert len(heard) == 1 and o()["stage"] == "frontend"
 
 
+@pytest.mark.parametrize("kinds", [["desktop"], ["android", "desktop"]])
+def test_a_board_an_earlier_version_held_is_the_owners_to_submit_after_a_restart(pc, kinds):
+    features = [{**f, "kinds": kinds} for f in o()["features"]]
+    oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": kinds[0], "kinds": kinds},
+                                          "stage": "board", "features": features, "frequency": None,
+                                          "stopped": oneshot_spec.kind_stop("board")})
+    oneshot_spec.recover()
+    assert o()["stage"] == "board" and not o().get("stopped") and not o().get("working")
+    first = {k: "번역을 켠다" for k in kinds} if len(kinds) > 1 else "번역을 켠다"
+    started = []
+    with patch.object(oneshot_spec, "start", lambda repo, worker, **k: started.append((worker, k["stage"]))):
+        front.submit_board("budget", front.Board(frequency={f["id"]: f["class"] for f in features},
+                                                 first_screen=first))
+    assert started == [("frontend", "frontend")]
+    # A board stopped some other way is resumed the way a sheet is: it stands, and the stop goes.
+    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "detail": "다시 켜졌다", "state": "board"}})
+    oneshot_spec.resume("budget")
+    assert o()["stage"] == "board" and not o().get("stopped")
+
+
 # -- several kinds: two native previews and the web, through one R2 -------------------------
 
 @pytest.fixture
@@ -198,12 +218,14 @@ def test_two_native_previews_sharing_paths_and_a_web_page_pass_one_r2_and_the_ru
     assert set(o()["front"]["previews"]) == {"android", "desktop"}
     text = oneshot_spec.view(specs.load("budget", oneshot.BRANCH))["front_sheet"]
     assert text.index("## 웹앱") < text.index("## Android 앱") < text.index("## PC 앱") < text.index("S4 다른 프로그램 위")
-    begun = []
-    with patch.object(front.oneshot_front_build, "begin", begun.append):
+    begun, sent = [], []
+    with patch.object(front.oneshot_front_build, "begin", begun.append), \
+            patch.object(front.review().work, "dispatch", lambda tree, run: sent.append(tree)):
         front.decide("budget", front.R2(decisions={i: {"approve": True} for i in screens.decidable(o()["front"])},
                                         palette="C1", source=brief.source(brief.snapshot(oneshot_spec.spec_of("budget"), "r2"))))
     # The approval committed every kind's mocks, each native kind's in its own folder, and the run waits there.
-    assert not begun and o()["stage"] == "build-front" and o()["stopped"]["reason"] == "kind" and not o()["working"]
+    # No build follows, so the approval itself sends what the owner queued for the worktree.
+    assert not begun and len(sent) == 1 and o()["stage"] == "build-front" and o()["stopped"]["reason"] == "kind" and not o()["working"]
     mock = three / "docs/design/mock"
     assert (mock / "android/shoot.py").read_text(encoding="utf-8") == mocks()["files"]["shoot.py"]
     assert (mock / "desktop/shoot.py").read_text(encoding="utf-8") == three_blocks()["oneshot-mocks"]["desktop"][

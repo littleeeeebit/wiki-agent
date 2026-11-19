@@ -56,6 +56,20 @@ def test_the_root_is_in_its_job_before_it_runs_and_every_member_is_proven_gone(j
                or not native_process.same(member, native_process.identity(member["pid"])) for member in members)
 
 
+def test_a_root_that_exits_before_any_message_is_read_keeps_its_exit_code_until_close(job, tmp_path, monkeypatch):
+    monkeypatch.setattr(job, "_pump", lambda wait_ms=0: pytest.fail("the code is read off the root's own handle"))
+    root = started(job, tmp_path, "raise SystemExit(7)")
+    deadline = time.monotonic() + 20
+    while job.code(root) is None and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert job.code(root) == 7 and job.code({**root, "created": 1}) is None   # only the root it started
+    assert job.outstanding() == 3   # the root's handle, the port and the job
+    monkeypatch.undo()
+    assert job.end(5)["clean"]
+    job.close()
+    assert job.outstanding() == 0
+
+
 def test_a_job_whose_accounting_counts_a_member_never_followed_is_not_finished(job, tmp_path, monkeypatch):
     started(job, tmp_path, "pass")
     deadline = time.monotonic() + 20

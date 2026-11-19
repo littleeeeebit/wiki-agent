@@ -34,6 +34,7 @@ DESKTOP_SURFACES = {"window": "창", "dialog": "대화 상자", "floating": "다
 NATIVE = {"android": SURFACES, "desktop": DESKTOP_SURFACES}   # the kinds whose screens a preview tool draws
 MAX_FILES = 40
 MOCK_PATH = re.compile(r"[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*")
+DEVICE_NAMES = {"CON", "PRN", "AUX", "NUL", *(f"{d}{n}" for d in ("COM", "LPT") for n in range(1, 10))}
 SIZE_SLACK = 0.03   # a preview tool rounds dp to px: a picture within 3% of the device is its size
 # A feature's key, then the words its refusals use: the served API on the web, the approved core on Android.
 INVENTORY = {"endpoints": ("엔드포인트", "`METHOD /path`", "서버에 없는"),
@@ -221,6 +222,14 @@ def preview(value, screens: list[dict]) -> tuple[dict[str, str], dict]:
     if bad := [p for p in paths if not isinstance(p, str) or not MOCK_PATH.fullmatch(p)
                or {".", "..", ".git"} & {part.lower() for part in p.split("/")}]:
         raise ValueError(f"`oneshot-mocks` 의 경로는 작업트리 안의 상대 경로(`/` 로 나눔)다 — {', '.join(map(str, bad[:5]))}")
+    # Windows reads a path without case and drops a component's trailing dot, and a device name is no file: two
+    # names it reads as one place, or a file named as another's folder, would write one source over another.
+    if clash := sorted({p for p in files for q in files if p != q and (
+            p.casefold() == q.casefold() or q.casefold().startswith(p.casefold() + "/"))}
+            | {p for p in files if any(part.endswith(".") or part.split(".")[0].upper() in DEVICE_NAMES
+                                       for part in p.split("/"))}):
+        raise ValueError("`oneshot-mocks` 의 경로가 Windows 에서 다른 경로와 한 자리이거나 장치 이름이다 (대소문자만 다르거나, "
+                         f"한 경로가 다른 경로의 폴더이거나, 끝이 `.` 이다) — {', '.join(clash[:5])}")
     if len(files) > MAX_FILES or not all(isinstance(t, str) and t.strip() for t in files.values()) \
             or sum(map(len, files.values())) > 2 * MAX_MOCK:
         raise ValueError(f"`oneshot-mocks` 의 files 는 {MAX_FILES}개, 합쳐서 {2 * MAX_MOCK:,}자 이하의 비지 않은 소스다")

@@ -278,18 +278,23 @@ class Look:
     def run(self, key: str, argv: list[str], cwd, seconds: float, halt, extra: dict | None = None) \
             -> tuple[int | None, str, str]:
         """`argv` started as `start` starts it and waited for until its root exits: (its exit code, its output,
-        why the wait was cut). A build server or a window the root left running ends with the look."""
+        why the wait was cut). Nothing starts once `halt` is set. An exit counts only when it was read by the
+        deadline, so a root seen finished after it is cut as one still running would be. A build server or a
+        window the root left running ends with the look."""
 
+        if halt.is_set():
+            return None, "", "멈춤"
         root = self.start(key, argv, cwd, extra)
         job, deadline, cut = self.jobs[key], time.monotonic() + seconds, ""
-        while (code := job.code(root)) is None:
+        while True:
+            code = job.code(root)
             if halt.is_set():
                 cut = "멈춤"
-            elif time.monotonic() >= deadline:
+            elif time.monotonic() > deadline:   # read after the code: an exit it shows happened by now
                 cut = f"{int(seconds)}초 안에 끝나지 않았다"
-            if cut:
+            if cut or code is not None:
                 break
-            time.sleep(0.2)
+            time.sleep(max(0.0, min(0.2, deadline - time.monotonic())))
         self.observe()
         output = (self.folder / "evidence" / f"{key}.log").read_bytes().decode("utf-8", "replace")
         return (None if cut else code), output, cut
