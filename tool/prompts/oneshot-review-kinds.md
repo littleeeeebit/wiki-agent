@@ -44,8 +44,16 @@ insets, a permission prompt. Give it a `device` field naming the kind
 (`android` or `desktop`, one the person picked), a requirement that applies
 to that kind, and the check that would show it: a scenario run on that kind's
 device whose postcondition is the finding's, written so a test there can
-assert it. The run keeps each one and must pass its check on the device
-before the person's last review. A web app has no device: its findings are
+assert it. A `desktop` deferral also names its check's `source`: `look` when
+the postcondition is a UI Automation state a driver reads (an element with a
+stable `AutomationId` and its name, value or toggle state), `owner` when it
+needs what a session with no owner's screen cannot show (a capture of
+another program's window or of the screen, or how an overlay composes over
+it), checked against a fixture window whose content is known and passed only
+on what is observed. A `desktop` finding that fits neither is never deferred,
+and an `android` deferral names no `source`. The run keeps each one and must
+pass its check on the device before the person's last review. A web app has
+no device: its findings are
 never deferred. Anything the code or the host tests can show wrong is never
 deferred either: wrong logic, a missing or wrong contract test, a contract
 the code breaks. Repeat every deferred finding that still holds in each

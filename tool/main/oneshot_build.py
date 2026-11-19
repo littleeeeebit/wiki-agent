@@ -414,7 +414,8 @@ CONTROL = re.compile(r"[\r\n;|#`(){}]|\$\(|&&&|(?<!&)&(?!&)")
 LEAVE = {"exit", "exec", "return", "break", "continue", "eval", "source", ".", "iex", "invoke-expression",
          "trap", "logout", "kill", "stop-process", "set", "command", "builtin", "time", "enable", "shopt",
          "sal", "set-alias", "nal", "new-alias", "exsn", "exit-pssession"}
-CHAIN = ("평범한 명령을 ` && ` 로만 잇는다 — `;`, `|`, `#`, `` ` ``, `$(`, 괄호·중괄호, 홑 `&`, 줄바꿈 없이, "
+SMART_QUOTES = re.compile("[‘’‚‛“”„]")   # quotes to PowerShell, not to `links`
+CHAIN = ("평범한 명령을 ` && ` 로만 잇는다 — `;`, `|`, `#`, `` ` ``, `$(`, 괄호·중괄호, 홑 `&`, 둥근 따옴표, 줄바꿈 없이, "
          "어느 명령도 `exit`·`exec`·`eval`·`iex` 같은 셸 제어어로 시작하지 않는다")
 
 
@@ -431,11 +432,15 @@ def leaves(word: str) -> bool:
 def chained(command: str) -> bool:
     """`command` is plain commands joined by `&&` and nothing else: each runs only after the one before it
     passed, and none starts with a word that ends the shell early, so the chain's status is its first failure.
+    The parts are those `links` cuts, at an unquoted `&&`, so a quoted argument holding `&&` stays one command.
+    A typographic quote, which PowerShell reads as a quote and `links` does not, is refused, so the two readings
+    cannot differ.
     ponytail: by character and first word, not shell syntax: it stops a command that ends the chain by
     mistake, not one written to get past it; a quoted `;` or `(` is refused too, and a project script takes it."""
 
-    parts = command.split("&&")
-    return not CONTROL.search(command) and all(p.split() and not leaves(p.split()[0]) for p in parts)
+    parts = links(command)
+    return not CONTROL.search(command) and not SMART_QUOTES.search(command) \
+        and all(p.split() and not leaves(p.split()[0]) for p in parts)
 
 
 def published(gate: str, backend: str) -> str:
