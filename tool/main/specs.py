@@ -691,10 +691,10 @@ def answered(repo: Path, found: list[dict], source: dict, accepted: dict | None 
 
 # -- What the candidates are made of ----------------------------------------
 
-def sh(args: list[str], cwd: Path, timeout: float = 60, run=subprocess.run) -> subprocess.CompletedProcess:
-    """Shared Git/GitHub seam; Windows files keep timeouts off pipe EOF. `run` is `subprocess.run`'s stand-in."""
+def sh(args: list[str], cwd: Path, timeout: float = 60, run=None) -> subprocess.CompletedProcess:
+    """Shared Git/GitHub seam; Windows files keep timeouts off pipe EOF. `run` replaces `subprocess.run`."""
 
-    budget = runtime.verification_budget.get()
+    run, budget = run or subprocess.run, runtime.verification_budget.get()   # `run` looked up at the call
     if budget:
         budget.check()
         timeout = min(timeout, budget.left())
