@@ -57,7 +57,8 @@ requirements list and glossary in an `oneshot-spec` block,
   module whose contract it checks.
 - No module name, contract, outside target or `does` uses a word the
   glossary's `avoid` lists.
-  A glossary term itself is fine even when another entry's `avoid` lists it.
+  A glossary term itself is fine even when another entry's `avoid` lists it,
+  as long as the whole term stands in one field and not inside a longer name.
 - At most seven assumptions and twelve modules: merge or defer before you add
   more.
 - On an edit, replace every item in the given set and keep every other item

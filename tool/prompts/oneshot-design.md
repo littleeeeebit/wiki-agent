@@ -38,7 +38,8 @@ requirements list and glossary in an `oneshot-spec` block,
   test naming it. A test names its requirement and every endpoint it calls; a
   flow names every endpoint its steps call.
 - No entity, field, path or `does` uses a word the glossary's `avoid` lists.
-  A glossary term itself is fine even when another entry's `avoid` lists it.
+  A glossary term itself is fine even when another entry's `avoid` lists it,
+  as long as the whole term stands in one field and not inside a longer name.
 - With `auth` `none`, no login, session or password endpoint; with `password`
   or `oauth`, at least one.
 - At most seven assumptions and twelve endpoints: merge or defer before you
