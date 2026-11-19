@@ -60,7 +60,7 @@ function word(state: string): string {
  *  branch is no longer checked out anywhere: nothing can run it, and those
  *  are work that landed through another branch. The spec files stay. */
 export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string) => number,
-  busy: (path: string) => boolean): Task[] {
+  busy: (path: string) => boolean, turning: (path: string, spec: Spec) => boolean): Task[] {
   const byPath = new Map(rows.map((r) => [r.path, r]))
   const owned = new Set<string>()
   const out: Task[] = []
@@ -72,7 +72,8 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
     const row = found && (s.workspace_mode !== 'branch' || found.branch === (s.branch ?? s.id)) ? found : null
     if (row) owned.add(row.path)
     const running = row ? busy(row.path) : false
-    const state = shownState(s.state, running)
+    // A turn, not `busy`: a worktree hold (a context reset) runs nothing and leaves the stop to the person.
+    const state = shownState(s.state, !!row && turning(row.path, s))
     const p = phase(state)
     if (p === 'done' || (p === 'work' && !row && !s.pr)) continue
     const asks = row ? approvals(row.path) : 0
@@ -115,14 +116,17 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
   return out
 }
 
+const owns = (l: LoopRow, t: TurnRow) => t.spec?.repo === l.repo && t.spec?.id === l.id
+
 /** A task of another project that the rail still shows: its loop or its turn, with the
  *  approvals `approvals` already knows for its path. */
 export function elsewhere(loops: LoopRow[], turns: TurnRow[], repo: string, approvals: (path: string) => number) {
   return [
     ...loops.filter((l) => l.repo !== repo && l.worktree).map((l) => {
       const asks = approvals(l.worktree!)
-      // A turn on the loop's worktree is not listed apart: its model and its running show on this row.
-      const turn = turns.find((t) => t.path === l.worktree)
+      // The loop's own turn is not listed apart: its model and its running show on this row. A shared
+      // checkout runs other tasks' turns too, so a turn is the loop's by its spec, never by its path.
+      const turn = turns.find((t) => t.path === l.worktree && owns(l, t))
       const state = shownState(l.state, !!turn)
       return {
         path: l.worktree!, repo: l.repo, spec: { repo: l.repo, id: l.id } as TurnRow['spec'],
@@ -133,7 +137,7 @@ export function elsewhere(loops: LoopRow[], turns: TurnRow[], repo: string, appr
           l.state === '머지 대기' && (l.queued || '대기열')].filter(Boolean).join(' · '),
       }
     }),
-    ...turns.filter((t) => t.repo !== repo && !loops.some((l) => l.worktree === t.path)).map((t) => {
+    ...turns.filter((t) => t.repo !== repo && !loops.some((l) => l.worktree === t.path && owns(l, t))).map((t) => {
       const asks = approvals(t.path)
       return {
         path: t.path, repo: t.repo, spec: t.spec, name: t.path.split(/[\\/]/).pop() ?? '', pr: null, round: 0,

@@ -3034,7 +3034,7 @@ def test_each_repository_keeps_its_own_review_model(world, tmp_path):
     """The settings held one reviewer: picking one in a repository's review tab changed every repository's."""
 
     spec = pr_spec(world, "own-reviewer", 7)
-    codex = [{"id": "codex:a", "is_default": True, "efforts": [{"id": "high"}, {"id": "low"}]},
+    codex = [{"id": "codex:a", "is_default": True, "efforts": [{"id": ""}, {"id": "high"}, {"id": "low"}]},
              {"id": "codex:b", "efforts": [{"id": "high"}]}]
     body = {"rounds": 3, "concurrent": 1, "review_model": "codex:b", "review_effort": "high"}
     web = client()
@@ -3048,6 +3048,25 @@ def test_each_repository_keeps_its_own_review_model(world, tmp_path):
         assert saved["review_model"] == "codex:b" and saved["review_models"] == {"proj": {"model": "codex:a", "effort": "low"}}
         cell = loop.cell(spec, Path(spec["worktree"]))
         assert (cell.model, cell.effort) == ("codex:a", "low")
+        loop.close_cell("proj", 7)
+        # Saves for other repositories at once each keep theirs, and leave the round limits as they were.
+        saves = [threading.Thread(target=loop.set_settings, args=(loop.Settings(
+            **{**body, "rounds": 9, "repo": f"r{n}"}),)) for n in range(12)]
+        for t in saves:
+            t.start()
+        for t in saves:
+            t.join()
+        kept = loop.settings()
+        assert set(kept["review_models"]) == {"proj", *(f"r{n}" for n in range(12))} and kept["rounds"] == 3
+        # The model's default effort stands as saved; one the model no longer takes stops the round with a reason.
+        assert web.post("/api/loop/settings", json={**body, "review_model": "codex:a", "review_effort": "",
+                                                    "repo": "proj"}).status_code == 200
+        with patch.object(chat_channels, "efforts_of", return_value={"", "low"}):
+            assert loop.cell(spec, Path(spec["worktree"])).effort == ""
+        loop.close_cell("proj", 7)
+        with patch.object(chat_channels, "efforts_of", return_value={"high"}), \
+             pytest.raises(RuntimeError, match="더 이상 받지 않는다"):
+            loop.cell(spec, Path(spec["worktree"]))
 
 
 def test_codex_review_migrates_old_tools_but_resumes_the_readonly_profile(world):

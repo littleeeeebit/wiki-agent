@@ -440,7 +440,10 @@ export default function App() {
   // The server's `busy` is as old as the last listing; a turn this window is
   // streaming is known here first.
   const busy = (p: string) => Boolean(rows.find((r) => r.path === p)?.busy || work.turns[p]?.at(-1)?.pending)
-  const list = taskList(specs, rows, asks, busy)
+  // A turn running for this spec, as this window streams it or the server lists it (`/api/loops`, every project's).
+  const turning = (p: string, s: { repo: string; id: string }) => Boolean(work.turns[p]?.at(-1)?.pending ||
+    turnsElsewhere.some((t) => t.path === p && (!t.spec || (t.spec.repo === s.repo && t.spec.id === s.id))))
+  const list = taskList(specs, rows, asks, busy, turning)
   const task = list.find((t) => t.key === selected)
   // A task picked by its spec before the worktree list arrived is keyed by
   // the worktree once it does; the selection follows instead of going blank.
@@ -453,7 +456,8 @@ export default function App() {
   // A task's work model is keyed by its spec's repository and id, the same
   // from draft to worktree and under another project. Several tasks share a
   // checkout path, and spec ids repeat across repositories, so neither alone names one task.
-  const other = others.find((o) => o.path === selected)
+  // The pane is the worktree's: a turn's row before a stopped loop's on the same shared checkout.
+  const other = others.find((o) => o.path === selected && o.busy) ?? others.find((o) => o.path === selected)
   const owning = task?.spec ?? other?.spec
   // A pane with no worktree — nothing selected, a selection whose task is gone, a spec not started
   // or a PR not checked out — is the one empty agent pane: its pick is what [시작] sends, whichever card is pressed.
@@ -752,7 +756,7 @@ export default function App() {
             <span className="flex shrink-0 gap-1.5 font-mono text-[10.5px]">
               {(task?.pr ?? other?.pr) && <span className="text-muted-foreground">#{task?.pr ?? other?.pr}</span>}
               {(task?.round || other?.round) ? <span className="text-muted-foreground">R{task?.round || other?.round}</span> : null}
-              <GateOr gate={task?.gate} className={TONE[task?.spec ? task.phase : 'none']}>{spec ? shownState(spec.state, !!row && busy(row.path)) : other ? other.line : '명세 없음'}</GateOr>
+              <GateOr gate={task?.gate} className={TONE[task?.spec ? task.phase : 'none']}>{spec ? shownState(spec.state, !!row && turning(row.path, spec)) : other ? other.line : '명세 없음'}</GateOr>
             </span>
           )}
           {!task && !other && <span className="truncate text-[12.5px] text-faint">작업 목록에서 선택하세요</span>}
@@ -788,7 +792,7 @@ export default function App() {
                 row={row}
                 turns={(path && work.turns[path]) || []}
                 options={options}
-                choice={choice}
+                choice={other?.busy && other.cell ? other.cell : choice}   // what runs now; the next instruction keeps `choice`
                 pinned={!!pinned}
                 optionsOpen={taskOptionsOpen}
                 on={on}
@@ -810,7 +814,7 @@ export default function App() {
               />
             )}
             {tab === 'review' && (
-              <Review key={spec ? `${spec.repo}/${spec.id}` : ''} spec={spec} on={on} progressOn={full} options={options} choice={choice}
+              <Review key={spec ? `${spec.repo}/${spec.id}` : ''} spec={spec} repo={owning?.repo ?? ''} on={on} progressOn={full} options={options} choice={choice}
                 settings={loopSettings} onSettings={async (s) => setLoopSettings(await api.setLoopSettings(s))}
                 onPeek={showPeek} onChanged={() => {
                 readSpecs()

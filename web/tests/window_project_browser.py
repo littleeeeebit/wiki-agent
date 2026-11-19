@@ -74,10 +74,15 @@ def main():
         if path == "loops":
             if faults["stall"]:
                 await asyncio.sleep(30)
-            stopped = {"repo": "fixture-b", "id": "asked-task", "state": "멈춤", "pr": 3, "round": 1, "worktree": ASKED,
-                       "stopped": {"reason": "작업 에이전트의 질문", "detail": ""}, "waiting": False, "cell": None}
-            return {"loops": [stopped], "turns": [{"path": SHARED, "repo": "fixture-b", "spec": None, "cell": RUNNING},
-                                                 {"path": ASKED, "repo": "fixture-b", "spec": None, "cell": RUNNING}], **live}
+            stop = {"state": "멈춤", "pr": 3, "round": 1, "waiting": False, "cell": None}
+            question = {**stop, "repo": "fixture-b", "id": "asked-task", "worktree": ASKED,
+                        "stopped": {"reason": "작업 에이전트의 질문", "detail": ""}}
+            # Another task's stop on the shared checkout: the turn running there is not its.
+            parked = {**stop, "repo": "fixture-b", "id": "parked-task", "worktree": SHARED,
+                      "stopped": {"reason": "게이트", "detail": ""}}
+            return {"loops": [question, parked], "turns": [
+                {"path": SHARED, "repo": "fixture-b", "spec": None, "cell": RUNNING},
+                {"path": ASKED, "repo": "fixture-b", "spec": {"repo": "fixture-b", "id": "asked-task"}, "cell": RUNNING}], **live}
         if path == "work/log" and request.query_params["path"] == SHARED:
             return {"rows": [], "session_id": "b", "busy": True, "running": {"turn": "turn-b", "session_id": "b", "seq": 0},
                     "rules": [], "queued": None}
@@ -129,6 +134,9 @@ def main():
         answering = a.get_by_role("button", name="fixture-b/asked-task")
         expect(answering).to_contain_text("작업 중")
         expect(answering).not_to_contain_text("멈춤")
+        parked = a.get_by_role("button", name="fixture-b/parked-task")
+        expect(parked).to_contain_text("멈춤")
+        expect(parked).to_contain_text("게이트")
 
         shell = page_of(context, errors)
         shell.add_init_script(SHELL)

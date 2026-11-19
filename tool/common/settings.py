@@ -64,21 +64,26 @@ def entries(path: Path) -> dict[str, str]:
 _saving = threading.Lock()
 
 
-def saved(path: Path, changes: dict) -> None:
+def saved(path: Path, changes: dict, deep: dict | None = None) -> None:
     """`changes` merged into the JSON settings file at `path`, read to replace
     under one lock. The loop's settings and the translation switch share
     `raw/chat/main.json`, and a desktop and a phone can write it at once:
-    unlocked, one writer's value was lost or its replace found no temp file."""
+    unlocked, one writer's value was lost or its replace found no temp file.
+    `deep`: maps merged into the stored map of the same key under that lock, so
+    two writers of different entries both keep theirs."""
 
     with _saving:
         try:
             old = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             old = {}
+        old = old if isinstance(old, dict) else {}
+        merged = {**old, **changes}
+        for key, entries in (deep or {}).items():
+            merged[key] = {**(old[key] if isinstance(old.get(key), dict) else {}), **entries}
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         temporary = Path(path).with_suffix(".tmp")
-        temporary.write_text(json.dumps({**(old if isinstance(old, dict) else {}), **changes}, ensure_ascii=False)
-                             + "\n", encoding="utf-8")
+        temporary.write_text(json.dumps(merged, ensure_ascii=False) + "\n", encoding="utf-8")
         swap(temporary, path)
 
 
