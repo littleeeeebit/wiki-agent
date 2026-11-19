@@ -16,7 +16,7 @@ from pathlib import Path
 
 from wiki import slots_for
 
-from . import oneshot, oneshot_build, oneshot_device, oneshot_look, oneshot_screens as screens, \
+from . import oneshot, oneshot_build, oneshot_desktop, oneshot_device, oneshot_look, oneshot_screens as screens, \
     oneshot_spec, runtime, specs
 from .oneshot_profile import DEVICES, environment, kinds_of, schema, shape
 from .oneshot_sheet import KIND_NAMES
@@ -66,7 +66,8 @@ def build_front_text(spec: dict) -> str:
         .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"])) \
         .replace("{design}", json.dumps(designed(o, palette), ensure_ascii=False, indent=2)) \
         .replace("{viewports}", ", ".join(views(o["profile"], "webapp" if shape(o) == "kinds" else "")))
-    text = text.replace("{profile}", environment(o))
+    text = text.replace("{profile}", environment(o)).replace("{tools}", oneshot_build.tools_text(o)) \
+        .replace("{window}", o["profile"].get("window", ""))
     if "android" not in kinds_of(o):
         return text
     if shape(o) == "kinds":   # the Android parts read only what applies to the Android app
@@ -108,12 +109,18 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     if android:   # an app on a phone has no `live_cmd`: its block names the APKs the emulator installs
         phone = as_kind(spec, "android") if several else spec
         device = oneshot_device.declared(path, final, oneshot_device.reads_screen(phone), oneshot_device.suffix(o))
+    # A PC app's block names the program its look starts, apart from the installer S8 attaches.
+    desktop = oneshot_desktop.declared(path, final) if "desktop" in kinds else None
     if "webapp" in kinds and not live:
         return "어댑터의 `live_cmd` 가 비었다 — 백엔드와 화면을 함께 띄우는 명령을 적는다"
     # The backend's own gate runs as the server knows it: the adapter's naming it proves nothing it runs. Several
-    # kinds' gate builds the Android app on the core, so it runs on the Android toolchain.
-    verdict = specs.judge(path, [backend, gate] if gate != backend else [gate], run.halt,
-                          lambda text: specs.note(run, text), env=oneshot_build.built_env(spec))
+    # kinds' gate builds the Android app on the core, so it runs on the Android toolchain. A PC app's gate starts
+    # each program by the path its check chose.
+    try:
+        commands = [oneshot_build.run_as(c, o, path) for c in ([backend, gate] if gate != backend else [gate])]
+    except ValueError as exc:
+        return str(exc)
+    verdict = specs.judge(path, commands, run.halt, lambda text: specs.note(run, text), env=oneshot_build.built_env(spec))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := oneshot_build.held(path, run, spec, verdict):
@@ -121,6 +128,8 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     if android and (why := oneshot_device.built(path, device)):
         return why
     store = oneshot_spec.store(spec["repo"])
+    if desktop is not None:
+        return froze(path, spec, desktop, verdict["head"], run)
     n = len(o.get("looks") or []) + 1
     stopped = lambda: run.halt.is_set() or runtime.stopping.is_set()   # noqa: E731
     shots = store.folder / "build" / f"r{n}"
@@ -163,6 +172,32 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
                                               "attempts": 0, "working": "critique", "fix": None,
                                               **({"device": device, "apks": apks} if android else {})})
     specs.note(run, f"화면 빌드 통과 · {verdict['head'][:12]}")
+    return ""
+
+
+def froze(path: Path, spec: dict, desktop: dict, head: str, run) -> str:
+    """The PC app's program, checked as the gate left it and frozen into staging the run owns: its identity is
+    what every look launches. The look is 9e4's, so this version holds the run here (`LOOK`), its build saved
+    with the stop in one write. An earlier frozen build is removed once this one is saved."""
+
+    if why := oneshot_desktop.built(path, desktop):
+        return why
+    staging = oneshot_spec.store(spec["repo"]).folder / "desktop"
+    into = staging / f"build-{time.time_ns()}"
+    try:
+        build = {**oneshot_desktop.frozen(path, desktop, into), "head": head}
+    except BaseException:
+        shutil.rmtree(into, ignore_errors=True)
+        raise
+    if oneshot_build.head(path) != head or specs.dirty(path):
+        shutil.rmtree(into, ignore_errors=True)
+        return f"PC 앱 빌드를 얼리는 동안 작업트리가 바뀌었다 — 게이트는 `{head[:12]}` 를 통과했다"
+    oneshot_spec.saved(spec["repo"], oneshot={"desktop_build": build, "attempts": 0, "working": None,
+                                              "stopped": oneshot_spec.kind_stop(STAGE)})
+    for old in staging.iterdir():
+        if old != into:
+            shutil.rmtree(old, ignore_errors=True)
+    specs.note(run, f"PC 앱 빌드 통과 · {head[:12]} · 빌드 {build['identity'][:12]} · 파일 {build['files']}개")
     return ""
 
 

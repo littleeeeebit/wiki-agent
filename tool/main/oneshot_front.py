@@ -479,9 +479,9 @@ def record(repo: str, store, spec: dict, tree: Path) -> bool:
     # `working` names the build before its turn is sent: a server that dies in between leaves it for `recover`,
     # and the screens are already the spec's `done` that the resumed turn reports against. A run this version
     # holds at the build is saved stopped in the same write, so no poll sees it resumable.
-    held = oneshot_spec.held({**o, "stage": "build-front"})
+    held = oneshot_spec.held({**o, "stage": "build-front", "desktop_build": None})   # a new build, nothing frozen
     oneshot_spec.saved(repo, done=[f"{s['id']} {screens.place(s)}: {s['purpose']}" for s in front["screens"]],
-                       oneshot={"stage": "build-front", "front_head": head, "attempts": 0,
+                       oneshot={"stage": "build-front", "front_head": head, "attempts": 0, "desktop_build": None,
                                 **({"working": None, "stopped": oneshot_spec.kind_stop("build-front")} if held
                                    else {"working": "build-front"})})
     return not held   # a held run sends no build, so the approval sends the worktree's queued instruction itself
