@@ -1566,9 +1566,7 @@ def step(loop: Loop) -> bool:
         return False
     if (contract := review_contract.store(repo, path, spec, contract)) is None:
         return True
-    chat = cell(spec, path)   # before `review_again` goes: a reviewer that cannot be built leaves the request standing
-    if (spec := change(loop, f"리뷰 R{n}", review_again=False)) is None:
-        return False
+    chat = cell(spec, path)   # `review_again` stands until this round's verdict is recorded, whatever stops it first
     kept = folder(spec["repo"], pr)
     kept.mkdir(parents=True, exist_ok=True)
     order = kept / f"round-{n}.md"
@@ -1690,7 +1688,7 @@ def step(loop: Loop) -> bool:
         from . import recovery
 
         outcomes = recovery.observed(spec, record)   # a researched fix's result is the next counted round
-        spec = change(loop, rounds=[*kept_rounds(spec), record], deferred=deferred,
+        spec = change(loop, rounds=[*kept_rounds(spec), record], deferred=deferred, review_again=False,
                       **({"recovery": outcomes} if outcomes else {}))
     if spec is None:
         return False

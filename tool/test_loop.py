@@ -1509,6 +1509,27 @@ def test_a_refused_review_goes_once_more_in_a_new_review_conversation_from_its_h
     assert (fresh.model, fresh.effort) == (first.model, first.effort)
 
 
+def test_a_reviewer_lost_on_retry_keeps_the_requested_re_review(world, monkeypatch):
+    spec = pr_spec(world, "review-again-lost", 7)
+    specs.update("proj", spec["id"], review_again=True)
+    built, real = [], loop.cell
+
+    def cell(s, p, *a, **k):   # the retry's fresh cell finds its model gone
+        built.append(s["id"])
+        if len(built) > 1:
+            raise RuntimeError("저장소 리뷰 모델 codex:gone 이 모델 목록에 없다")
+        return real(s, p, *a, **k)
+
+    def refused(c, text, halt=None):
+        c.heard.append(text)
+        yield Event("error", REFUSAL, {})
+
+    monkeypatch.setattr(loop, "cell", cell)
+    monkeypatch.setattr(Reviewer, "say", refused)
+    after = looped(spec["id"])
+    assert len(built) == 2 and after["state"] == "멈춤" and after.get("review_again") is True
+
+
 def test_a_restatement_carries_the_server_instruction_never_a_path_from_the_text(tmp_path, monkeypatch):
     monkeypatch.setattr(specs, "brief", lambda spec: "SPEC\n")
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)   # the diff file lives in `.git`
