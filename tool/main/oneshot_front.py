@@ -125,10 +125,13 @@ def split_turn(repo: str, store, spec: dict):
     first = o.get("first_screen") or o["intent"]["first_screen"]
     if kind == "kinds" and isinstance(first, str):   # one line for each kind, each the restatement's to start
         first = {k: first for k in kinds_of(o)}
+    # A kind held at the board (a PC app until 9e3) keeps its features and stops there with `kind`, in the same
+    # save, so no read between the two ever finds an idle board.
+    held = oneshot_spec.held({**o, "stage": "board"})
     return lambda: oneshot_spec.saved(repo, oneshot={
         # a design and R2 decisions left from an earlier split were placed on features that are gone
         "stage": "board", "working": None, "inventory": ops, "features": found, "frequency": None,
-        "front": None, "r2": None, "first_screen": first})
+        "front": None, "r2": None, "first_screen": first, **({"stopped": oneshot_spec.kind_stop("board")} if held else {})})
 
 
 def review():

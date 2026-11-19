@@ -414,7 +414,27 @@ CONTROL = re.compile(r"[\r\n;|#`(){}]|\$\(|&&&|(?<!&)&(?!&)")
 LEAVE = {"exit", "exec", "return", "break", "continue", "eval", "source", ".", "iex", "invoke-expression",
          "trap", "logout", "kill", "stop-process", "set", "command", "builtin", "time", "enable", "shopt",
          "sal", "set-alias", "nal", "new-alias", "exsn", "exit-pssession"}
-CHAIN = ("평범한 명령을 ` && ` 로만 잇는다 — `;`, `|`, `#`, `` ` ``, `$(`, 괄호·중괄호, 홑 `&`, 줄바꿈 없이, "
+SMART_QUOTES = re.compile("[‘’‚‛“”„]")   # quotes to PowerShell, not to `links`
+# PowerShell's two quote families: a typographic quote closes a string its ASCII sibling opened.
+FAMILY = {"'": re.compile("[‘’‚‛]"), '"': re.compile("[“”„]")}
+
+
+def quote_safe(command: str) -> bool:
+    """PowerShell and the masker read the same strings: no stop-parsing `--%`, after which PowerShell reads quotes
+    as text; no typographic quote outside ASCII-quoted text; and none inside a string of its own family, which it
+    could close (`'a’ && b` is two commands to PowerShell)."""
+
+    if "--%" in command:   # after it PowerShell reads quotes as text, which the masker would take as strings
+        return False
+    bare, spans = syntax(command)
+    if SMART_QUOTES.search(bare):
+        return False
+    for start, end in spans:
+        opener = command[start + 1] if command[start] == "@" else command[start]   # a here-string's `@'` or `@"`
+        if (family := FAMILY.get(opener)) and family.search(command, start, end):
+            return False
+    return True
+CHAIN = ("평범한 명령을 ` && ` 로만 잇는다 — `;`, `|`, `#`, `` ` ``, `$(`, 괄호·중괄호, 홑 `&`, 둥근 따옴표, 줄바꿈 없이, "
          "어느 명령도 `exit`·`exec`·`eval`·`iex` 같은 셸 제어어로 시작하지 않는다")
 
 
@@ -431,11 +451,17 @@ def leaves(word: str) -> bool:
 def chained(command: str) -> bool:
     """`command` is plain commands joined by `&&` and nothing else: each runs only after the one before it
     passed, and none starts with a word that ends the shell early, so the chain's status is its first failure.
+    On Windows, where the gate runs in PowerShell, the parts are those `links` cuts, at an unquoted `&&`, so a
+    quoted argument holding `&&` stays one command, and a typographic quote that PowerShell could read as a
+    delimiter and `links` does not (`quote_safe`) is refused, so the two readings cannot differ. Elsewhere the POSIX
+    shell runs it, and the parts are cut at every `&&`.
     ponytail: by character and first word, not shell syntax: it stops a command that ends the chain by
     mistake, not one written to get past it; a quoted `;` or `(` is refused too, and a project script takes it."""
 
-    parts = command.split("&&")
-    return not CONTROL.search(command) and all(p.split() and not leaves(p.split()[0]) for p in parts)
+    windows = os.name == "nt"   # the masker reads PowerShell, not POSIX, which cuts at every `&&` as before
+    parts = links(command) if windows else command.split("&&")
+    return not CONTROL.search(command) and (not windows or quote_safe(command)) \
+        and all(p.split() and not leaves(p.split()[0]) for p in parts)
 
 
 def published(gate: str, backend: str) -> str:

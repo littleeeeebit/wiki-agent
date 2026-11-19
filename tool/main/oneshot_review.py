@@ -24,6 +24,9 @@ from .query import _lock as work_lock, hold
 
 SEVERITIES = ("P0", "P1", "P2")
 DEVICE_KINDS = ("android", "desktop")   # the kinds whose S7 runs the app on a device the host's tests cannot
+# Where a kind's deferred check reads its evidence (`docs/plans/oneshot/9-kinds.md`, "Owed checks for
+# `desktop`"): a PC app's `look` reads UI Automation in the owned session, its `owner` needs the owner's screen.
+SOURCES = {"desktop": ("look", "owner")}
 
 
 def cap() -> int:
@@ -47,7 +50,7 @@ oneshot.ROLES["review"] = reviewer
 
 def begin(repo: str) -> None:
     """After the build passed: one review worker; a start refused by a shutdown leaves it resumable. A run held
-    before the review (a PC app until 9e2c) starts none: its stop is put back."""
+    at or before the review by its kind's stop starts none: its stop is put back."""
 
     if oneshot_build.stopped_for_kind(repo):
         return
@@ -122,11 +125,13 @@ def deferrable(spec: dict) -> dict[str, set[str]]:
 
 
 def deferred(f: dict, devices: dict[str, set[str]]) -> bool:
-    """`f`'s `device` names a P0 or P1 finding's kind with a device, a requirement of that kind, and a check."""
+    """`f`'s `device` names a P0 or P1 finding's kind with a device, a requirement of that kind, a check, and,
+    for a kind with `SOURCES`, where that check reads its evidence; a kind without them names none."""
 
     d = f["device"]
     return f["severity"] != "P2" and isinstance(d, dict) and d.get("kind") in devices \
-        and d.get("requirement") in devices[d["kind"]] and isinstance(d.get("check"), str) and bool(d["check"].strip())
+        and d.get("requirement") in devices[d["kind"]] and isinstance(d.get("check"), str) and bool(d["check"].strip()) \
+        and (d.get("source") in SOURCES[d["kind"]] if d["kind"] in SOURCES else "source" not in d)
 
 
 def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None) -> dict:
@@ -145,7 +150,9 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None) -> 
         raise ValueError("`findings` 마다 `location`, `severity`(P0·P1·P2), `reason`, `evidence` 가 있어야 한다")
     if any("device" in f and not deferred(f, devices or {}) for f in findings):
         raise ValueError("`device` 는 P0·P1 발견에만 붙고, 기기가 있는 종류(" + (", ".join(devices or {}) or "이 실행엔 없다")
-                         + "), 그 종류에 걸린 요구, 기기에서 볼 `check` 를 적는다")
+                         + "), 그 종류에 걸린 요구, 기기에서 볼 `check` 를 적는다 — PC 앱(`desktop`)은 `source` 로 "
+                         "`look`(UI Automation 상태) 이나 `owner`(주인 화면에서만 보이는 캡처·합성) 를 적고, 둘 다 "
+                         "아니면 미루지 못한다. 안드로이드는 `source` 를 적지 않는다")
     serious = [f for f in findings if f["severity"] != "P2" and "device" not in f]
     if not all(area_of(f) for f in serious):
         raise ValueError("P0·P1 발견마다 그것이 걸린 동작 방식의 이름 `area` 를 적는다")
@@ -156,7 +163,8 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None) -> 
     return {"verdict": value["verdict"], "head": head,
             "findings": [{**{k: f[k] for k in ("location", "severity", "reason", "evidence")},
                           **({"area": " ".join(str(f["area"]).split())} if area_of(f) else {}),
-                          **({"device": {k: f["device"][k] for k in ("kind", "requirement", "check")}}
+                          **({"device": {k: f["device"][k] for k in ("kind", "requirement", "check", "source")
+                                         if k in f["device"]}}
                              if "device" in f else {})} for f in findings]}
 
 

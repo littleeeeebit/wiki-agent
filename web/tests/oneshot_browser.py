@@ -355,6 +355,19 @@ def main():
         assert posted[-1] == ("board-demo", "board", {"frequency": {f["id"]: "every" for f in FEATURES}, "first_screen": {
             "android": "오늘 쓴 돈", "webapp": "기록을 본다"}}), posted[-1]
 
+        # A kind held at the board (a PC app before its screens ship): the features stay in view under the stop,
+        # with no submission and no `[재개]`.
+        views["board-demo"]["stopped"] = {"reason": "kind", "state": "board",
+                                          "detail": "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다"}
+        page.get_by_role("navigation", name="원샷 실행").get_by_role("button").filter(has_text="stopped-demo").click()
+        page.get_by_role("navigation", name="원샷 실행").get_by_role("button").filter(has_text="board-demo").click()
+        expect(page.get_by_role("alert").filter(has_text="다음 버전에서")).to_be_visible()
+        board = page.get_by_role("region", name="기능 보드")
+        expect(board.get_by_role("button", name="지출 적기 — 늘 쓴다")).to_be_visible()
+        expect(board.get_by_role("button", name="보드 제출")).to_be_disabled()
+        expect(page.get_by_role("button", name="재개")).to_have_count(0)
+        views["board-demo"]["stopped"] = None
+
         # A stopped run: its reason and `[재개]` over what happened — the record beside, the worktree's turns below.
         page.get_by_role("navigation", name="원샷 실행").get_by_role("button").filter(has_text="stopped-demo").click()
         expect(page.get_by_role("alert").filter(has_text="화면 비평이 멈췄다")).to_contain_text("6회차에도")
@@ -567,7 +580,7 @@ def main():
           "picture closes alone; the re-shown sheet opens what needs a decision again; R1 on the brief decides each "
           "confirmation line and sends only the sheet items touched beside them; R2 on its brief shows each screen's "
           "pictures with its line and still needs a palette; R3 on its brief shows the first screen before and "
-          "after and each finding's shot by its line; the board moves by drag and by "
+          "after and each finding's shot by its line; a kind held at the board shows it without submission; the board moves by drag and by "
           "keys; a stopped run resumes, and a stopped or running stage shows its record and its worktree's turns as they "
           "come; S2 shows its choices and keeps a refused answer; the list follows a saved spec; "
           "the switch keeps the run shown and its draft; [새 프로젝트] opens the start form, which fixes three models "

@@ -1,6 +1,7 @@
-"""oneshot steps 9e1 and 9e2a: a PC app (`desktop`) through S2 — its six stack parts, the `build` part's declared
-`tools` confirmed with it — then its core design and R1, and the stop before S4, held at every hand-off, on
-`[재개]` and in recovery.
+"""oneshot steps 9e1 and 9e2: a PC app (`desktop`) through S2 — its six stack parts, the `build` part's declared
+`tools` confirmed with it — then its core design and R1, S4 with only its declared tools, the backend review with
+its `look` and `owner` deferrals, the split, and the stop at the board, held at every hand-off, on `[재개]` and in
+recovery.
 
 See `docs/plans/oneshot/9-kinds.md` ("How 9e builds `desktop`"). Model turns (`oneshot.ask`) are stand-ins; Git
 runs in a temporary worktree.
@@ -166,24 +167,68 @@ def test_an_approved_pc_app_core_is_written_and_goes_on_to_s4(desktop, kinds):
 
 
 @pytest.mark.parametrize("kinds", [["desktop"], ["android", "desktop"]])
-def test_a_built_pc_app_core_waits_before_its_review(desktop, kinds):
+def test_a_built_pc_app_core_is_reviewed(desktop, kinds):
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": kinds[0], "kinds": kinds},
                                           "stage": "review", "working": "review", "built_head": "abc"})
-    with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts no review")):
+    started = []
+    with patch.object(oneshot, "start_worker", lambda store, work, *a, **k: started.append(work)):
         oneshot_build.reviewed("budget")   # what follows the build's pass
-        assert (o()["stage"], o()["stopped"]["reason"], o()["stopped"]["state"]) == ("review", "kind", "review")
-        assert not o().get("working")
+    assert started == ["review"] and not o().get("stopped")
+
+
+# -- 9e2c: the backend review's `desktop` deferral, and the split ------------------------------
+
+LOOK = {"location": "core/src/capture.rs:18", "severity": "P1", "reason": "번역 켜기가 꺼진 채 남는다", "evidence": "x",
+        "area": "toggle", "device": {"kind": "desktop", "requirement": "R1", "check": "`translate` 토글이 켜진다",
+                                     "source": "look"}}
+OWNER = {**LOOK, "device": {**LOOK["device"], "check": "고정 창을 캡처한 결과가 `{data}/seen.txt` 에 그 글을 담는다",
+                            "source": "owner"}}
+
+
+def test_a_pc_apps_deferral_names_where_its_check_reads_the_evidence(desktop):
+    devices = oneshot_review.deferrable({"oneshot": o(), "requirements": REQS})
+    assert devices == {"desktop": {"R1", "R2"}}
+    approve = lambda *f: {"verdict": "approve", "head": "h", "findings": list(f)}   # noqa: E731
+    found = oneshot_review.verdict_of(approve(LOOK, OWNER), "h", devices)
+    assert [f["device"]["source"] for f in found["findings"]] == ["look", "owner"]
+    assert [x["source"] for x in oneshot_review.owing(found)] == ["look", "owner"]
+    for bad in ({"source": None}, {"source": "screen"}, {"source": "Look"}):   # neither source: no deferral
+        with pytest.raises(ValueError, match="`source`"):
+            oneshot_review.verdict_of(approve({**LOOK, "device": {**LOOK["device"], **bad}}), "h", devices)
+    gone = {**LOOK, "device": {k: v for k, v in LOOK["device"].items() if k != "source"}}
+    with pytest.raises(ValueError, match="`source`"):
+        oneshot_review.verdict_of(approve(gone), "h", devices)
+    phone = {"android": {"R1"}}   # an Android deferral names none
+    with pytest.raises(ValueError, match="`source`"):
+        oneshot_review.verdict_of(approve({**LOOK, "device": {**LOOK["device"], "kind": "android"}}), "h", phone)
+    assert oneshot_review.verdict_of(approve({**gone, "device": {**gone["device"], "kind": "android"}}), "h", phone)
+
+
+@pytest.mark.parametrize("kinds", [["desktop"], ["android", "desktop"]])
+def test_a_pc_apps_split_reads_its_modules_and_stops_at_the_board(desktop, kinds):
+    oneshot_spec.saved("budget", requirements=REQS, oneshot={
+        "intent": {**o()["intent"], "kind": kinds[0], "kinds": kinds, "first_screen": "번역을 켠다"},
+        "stage": "split", "working": "split", "design": sheet.parsed(DESIGN, kinds)})
+    spec = specs.load("budget", oneshot.BRANCH)
+    ops = oneshot_front.inventory(spec)
+    assert {"M1", "R2"} <= set(ops)
+    value = [{"id": f"f{n}", "name": "기능", "parts": [p], "class": "every", "why": "늘"} for n, p in enumerate(ops)]
+    asked, saves, save = [], [], oneshot_spec.saved   # each turn's instructions; the split's answer is `value`
+    with patch.object(oneshot, "turned", lambda store, role, system, *a: asked.append(system) or a[-2](value)), \
+            patch.object(oneshot_spec, "saved", lambda repo, **f: saves.append(f.get("oneshot")) or save(repo, **f)):
+        oneshot_front.split_turn("budget", oneshot_spec.store("budget"), spec)()
+    # One save carries the board and its stop: a status read never finds an idle board in between.
+    assert len(saves) == 1 and saves[0]["stage"] == "board" and saves[0]["stopped"]["reason"] == "kind"
+    assert asked == [oneshot.prompt("split", oneshot_profile.shape(o()))]
+    assert (o()["stage"], o()["stopped"]["reason"], o()["stopped"]["state"]) == ("board", "kind", "board")
+    assert [f["parts"] for f in o()["features"]] == [[p] for p in ops]
+    with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts no screens")):
+        with pytest.raises(HTTPException, match="다음 버전"):
+            oneshot_front.submit_board("budget", oneshot_front.Board(frequency={}, first_screen="한 줄"))
         with pytest.raises(HTTPException, match="다음 버전"):
             oneshot_spec.resume("budget")
-        # A server that went down between the build's save and the review's start keeps the kind's stop, not a
-        # `restart` whose `[재개]` would only be refused.
-        oneshot_spec.saved("budget", oneshot={"working": "review", "stopped": None})
         oneshot_spec.recover()
-        assert o()["stopped"]["reason"] == "kind" and not o().get("working")
-        for entry in (oneshot_review.begin, oneshot_review.resume, BEGIN, oneshot_build.resume):
-            oneshot_spec.saved("budget", oneshot={"working": "review", "stopped": None})
-            entry("budget")
-            assert o()["stopped"]["reason"] == "kind" and not o().get("working")
+    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "board"
 
 
 # -- 9e2b: the declared tools, found once per stage, and nothing else run -----------------------
@@ -358,6 +403,35 @@ def test_a_quote_inside_a_quoted_program_is_its_name_and_a_quoted_and_sign_does_
     assert oneshot_build.links(chain) == ["cargo test --label \"R && D\" ", " npm test 'a&&b'"]
     assert oneshot_build.undeclared(desktop, chain, oneshot_build.tools(o_)) == []
     assert oneshot_build.run_as(chain, o_, desktop) == f"{launch('c')} test --label \"R && D\" && {launch('n')} test 'a&&b'"
+    for quoted in ("cargo test --label \"Research && return to results\"", "cargo test --label 'R && && D'"):
+        assert oneshot_build.undeclared(desktop, quoted, oneshot_build.tools(o_)) == []
+
+
+def test_on_windows_the_chain_check_reads_powershell_quotes():
+    with patch.object(oneshot_build.os, "name", "nt"):
+        # The chain check reads the parts `links` cuts: a quoted `&& return` or `&& &&` is one argument.
+        for quoted in ("cargo test --label \"Research && return to results\"", "cargo test --label 'R && && D'"):
+            assert oneshot_build.chained(quoted)
+        assert not oneshot_build.chained("cargo test && return")
+        # A typographic quote PowerShell could read as a delimiter is refused: outside ASCII quotes, or inside a
+        # string of its own family, which it closes (`'a’ && b` is two commands to PowerShell).
+        for curly in ("cargo test --label ‘R && D’", "cargo test --label “R”", "echo 'a’ && echo b",
+                      "echo \"a” && return \"", "echo @'\nx’\n'@"):
+            assert not oneshot_build.chained(curly), curly
+        # After `--%` PowerShell reads an apostrophe as text, so the masker's string would hide `&& return`.
+        assert not oneshot_build.chained("git log --% --grep=it's && return '")
+        # Inside a string of the other family it is only a letter.
+        assert oneshot_build.chained("npm test -- \"Editor’s preview\"")
+        assert oneshot_build.chained("npm test -- 'say “hi”'")
+
+
+def test_on_a_posix_shell_the_chain_check_cuts_at_every_and_sign():
+    with patch.object(oneshot_build.os, "name", "posix"):
+        # Bash reads `'it'\''s'` as one word; PowerShell's masker would hide the second `&&` and its `return`.
+        assert not oneshot_build.chained("echo 'it'\\''s' && echo \"a\" && return")
+        assert oneshot_build.chained("npm test --label ‘R’")   # a letter to bash, not a quote
+        with patch.object(oneshot_build, "syntax", lambda *a: pytest.fail("POSIX never reads PowerShell")):
+            assert oneshot_build.chained("npm test --label x")
 
 
 def test_a_build_whose_gate_names_a_program_gone_from_the_worktree_is_refused_before_it_runs(desktop):
@@ -488,17 +562,17 @@ def test_a_saved_pc_app_spec_takes_no_turn_on_another_host(desktop):
 
 
 def test_the_shared_start_refuses_a_move_into_the_held_stage(desktop):
-    oneshot_spec.saved("budget", oneshot={"stage": "build"})   # the last stage a PC app has in this version
+    oneshot_spec.saved("budget", oneshot={"stage": "split"})   # the last stage a PC app runs in this version
     with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             pytest.raises(HTTPException, match="다음 버전"):
-        START("budget", "design", stage="review")
-    assert o()["stage"] == "build"
+        START("budget", "design", stage="board")
+    assert o()["stage"] == "split"
 
 
-def test_a_resume_or_a_shutdown_between_the_save_and_the_stop_never_starts_the_review(desktop):
-    # The stop was lost (a restart that replaced it): the run is still held, never resumable into the review.
-    oneshot_spec.saved("budget", oneshot={"stage": "review", "working": None,
-                                          "stopped": {"reason": "restart", "detail": "서버가 다시 켜졌다", "state": "review"}})
+def test_a_resume_or_a_shutdown_between_the_save_and_the_stop_never_starts_the_screens(desktop):
+    # The stop was lost (a restart that replaced it): the run is still held, never resumable past the board.
+    oneshot_spec.saved("budget", oneshot={"stage": "board", "working": None, "features": [],
+                                          "stopped": {"reason": "restart", "detail": "서버가 다시 켜졌다", "state": "board"}})
     with patch.object(oneshot_spec, "start", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             pytest.raises(HTTPException, match="다음 버전"):
         oneshot_spec.resume("budget")
@@ -509,14 +583,14 @@ def test_several_kinds_an_earlier_version_held_at_the_screens_stay_held(desktop)
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": "frontend", "stopped": {"reason": "kind", "detail": "다음 버전",
                                                                            "state": "frontend"}})
-    assert oneshot_profile.waits_at(o()) == "review" and oneshot_profile.held(o())
+    assert oneshot_profile.waits_at(o()) == "board" and oneshot_profile.held(o())
     oneshot_spec.recover()
     assert o()["stopped"]["reason"] == "kind"
     with pytest.raises(HTTPException, match="다음 버전"):
         oneshot_spec.resume("budget")
 
 
-@pytest.mark.parametrize("stage", ["board", "frontend", "review"])
+@pytest.mark.parametrize("stage", ["board", "frontend"])
 def test_a_held_mixed_run_whose_stop_was_lost_starts_no_later_stage(desktop, stage):
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": stage, "working": None, "stopped": None, "features": []})
@@ -539,5 +613,11 @@ def test_a_pc_app_has_its_own_prompts_through_s4_and_no_web_fallback_for_later_s
     assert "a Windows app" in (oneshot.ROOT / "tool/prompts/oneshot-brief.md").read_text("utf-8")
     for stage in ("tests", "build"):
         assert "Windows program" in oneshot.prompt(stage, "desktop") and "{tools}" in oneshot.prompt(stage, "desktop")
-    with pytest.raises(FileNotFoundError):
-        oneshot.prompt("review", "desktop")
+    review, split = oneshot.prompt("review", "desktop"), oneshot.prompt("split", "desktop")
+    assert "Windows program" in review and "`source`" in review and "`look`" in review and "`owner`" in review
+    assert "Windows program" in split and "oneshot-features" in split and "Android" not in review + split
+    mixed = " ".join(oneshot.prompt("review", "kinds").split())
+    for said in ("`source`", "where the program reports what it captured", "reads the fixture's region of the screen"):
+        assert said in mixed and said in " ".join(review.split())   # a mixed run's `owner` check is as runnable
+    with pytest.raises(FileNotFoundError):   # the screens are the next version's
+        oneshot.prompt("frontend", "desktop")
