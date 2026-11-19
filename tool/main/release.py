@@ -1,5 +1,5 @@
-"""Release steps 1 and 2 (`docs/plans/release/0-overview.md`). Step 1 builds one pinned commit into an Android
-APK with the version injected, signs it and checks it. Step 2 adds each repository's one release key. Nothing
+"""Release steps 1, 2 and 6 (`docs/plans/release/0-overview.md`). Step 1 builds one pinned commit into an Android
+APK with the version injected, signs it and checks it. Step 6's Windows installer is `release_desktop`'s. Step 2 adds each repository's one release key. Nothing
 here publishes: `release_publish` does, with step 3's transfer and ledger. Steps 4 and 5 bring failure
 handling and the button.
 The rehearsal (`release_rehearsal.rehearse`) signs only with disposable test keys, and a test key never signs
@@ -35,6 +35,8 @@ SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", re.ASCII)   # S
 BUMPS = ("patch", "minor", "major")
 BUILD_SECONDS, QUIET_SECONDS = 3600, 1800   # a Rust and Gradle build is long and can be silent for minutes
 ANDROID = ("build", "artifact", "application_id", "abi")
+DESKTOP = ("build", "artifact", "exe", "product_name", "publisher")   # `artifact` may name `{version}`
+KINDS = {"android": ANDROID, "desktop": DESKTOP}
 
 
 class Stopped(RuntimeError):
@@ -116,14 +118,17 @@ def settings(repo: Path, sha: str) -> dict:
         raise ValueError(f"`.wiki/adapter.toml` 을 읽지 못했다 — {exc}") from exc
     if not isinstance(table, dict):
         raise ValueError(f"{sha[:12]} 의 `.wiki/adapter.toml` 에 `[release]` 표가 없다")
-    android = table.get("android")
-    if not isinstance(android, dict):
-        raise ValueError("`[release.android]` 표가 없다")
+    kinds = {kind: table[kind] for kind in KINDS if kind in table}   # each declared kind ships in every release
+    if not kinds:
+        raise ValueError("`[release.android]` 도 `[release.desktop]` 도 없다 — 무엇을 빌드할지 정하지 않았다")
     wrong = [k for k in ("version_source",) if not _text(table.get(k))] + \
-            [f"android.{k}" for k in ANDROID if not _text(android.get(k))]
+            [kind for kind, cfg in kinds.items() if not isinstance(cfg, dict)]
+    wrong += [f"{kind}.{k}" for kind, cfg in kinds.items() if isinstance(cfg, dict)
+              for k in KINDS[kind] if not _text(cfg.get(k))]
     if wrong:
         raise ValueError(f"`[release]` 의 글줄 칸이 비었거나 글줄이 아니다: {', '.join(wrong)}")
-    return {"version_source": table["version_source"], "android": {k: android[k] for k in ANDROID}}
+    return {"version_source": table["version_source"], **{kind: {k: cfg[k] for k in KINDS[kind]}
+                                                          for kind, cfg in kinds.items()}}
 
 
 def _text(value) -> bool:
@@ -277,8 +282,12 @@ def _writable(func, path, exc) -> None:
 
 # -- Build, sign, inspect -------------------------------------------------------------------------
 
-def tools() -> dict:
-    """The JDK, the SDK with the build tools, and the newest NDK, as the build and the checks use them."""
+def tools(cfg: dict | None = None) -> dict:
+    """The JDK, the SDK with the build tools, and the newest NDK, as the build and the checks use them. None for
+    settings that declare no Android kind: a Windows installer needs none of them."""
+
+    if cfg is not None and "android" not in cfg:
+        return {}
 
     homes = [os.environ.get("JAVA_HOME"), str(oneshot_android.ROOT / "jdk-17")]
     java = next((Path(h) for h in homes if h and oneshot_android.java(Path(h))), None)
@@ -365,9 +374,10 @@ def environment(kit: dict) -> dict:
     """The tools' environment, without any key password or GitHub token the server itself was started with: the
     adapter's build runs here, and what it prints can reach the repair agent."""
 
-    return {**{k: v for k, v in os.environ.items() if k.upper() not in UNSHARED}, "JAVA_HOME": str(kit["java"]),
-            "ANDROID_HOME": str(kit["sdk"]), "NDK_HOME": str(kit["ndk"]),
-            "PATH": os.pathsep.join([str(kit["java"] / "bin"), os.environ.get("PATH", "")])}
+    shared = {k: v for k, v in os.environ.items() if k.upper() not in UNSHARED}
+    return shared if not kit else {**shared, "JAVA_HOME": str(kit["java"]), "ANDROID_HOME": str(kit["sdk"]),
+                                   "NDK_HOME": str(kit["ndk"]),
+                                   "PATH": os.pathsep.join([str(kit["java"] / "bin"), os.environ.get("PATH", "")])}
 
 
 def lacks_tool(out: str, env: dict, halt: threading.Event) -> bool:
@@ -387,21 +397,28 @@ def keyed(kit: dict, password: str) -> dict:
     return {**environment(kit), SECRET: password}
 
 
-def build(path: Path, android: dict, release: str, kit: dict, halt: threading.Event) -> Path:
-    """The adapter's build command in the attempt's checkout, given the version as `RELEASE_VERSION` and
-    `RELEASE_VERSION_CODE`. A Tauri build passes `RELEASE_TAURI_CONFIG`, an overlay file beside the checkout, as
-    one more `-c`. Tauri then writes `tauri.properties` for Gradle. `TAURI_CONFIG` cannot carry it, because the
-    CLI replaces that variable with its own `-c` values. No source file is edited. The checks read what the
-    build produced, so a command that drops the version is refused there."""
+def output(path: Path, kind: dict, release: str, key: str = "artifact") -> Path:
+    """`kind[key]` in the checkout `path`, its `{version}` filled in; one outside the checkout is refused."""
 
-    def output() -> Path:
-        apk = (path / android["artifact"]).resolve()
-        if not apk.is_relative_to(path.resolve()):
-            raise ValueError(f"`{android['artifact']}` 가 시도의 체크아웃 밖을 가리킨다")
-        return apk
+    named = kind[key].replace("{version}", release)
+    file = (path / named).resolve()
+    if not file.is_relative_to(path.resolve()):
+        raise ValueError(f"`{named}` 가 시도의 체크아웃 밖을 가리킨다")
+    return file
 
-    if output().exists():   # a file the commit carries is not this build's output
-        raise ValueError(f"`{android['artifact']}` 가 빌드 전부터 체크아웃에 있다 — 빌드가 만든 파일만 검사한다")
+
+def build(path: Path, android: dict, release: str, kit: dict, halt: threading.Event, read=None) -> Path:
+    """The adapter's build command of one kind (`android`, or `desktop` with `read`) in the attempt's checkout,
+    given the version as `RELEASE_VERSION` and `RELEASE_VERSION_CODE`. A Tauri build passes
+    `RELEASE_TAURI_CONFIG`, an overlay file beside the checkout, as one more `-c`. Tauri then writes
+    `tauri.properties` for Gradle and the version resources on Windows. `TAURI_CONFIG` cannot carry it, because
+    the CLI replaces that variable with its own `-c` values. No source file is edited. The checks read what the
+    build produced. `read(file)` refuses an artifact its kind does not make; without it, it is read as an APK."""
+
+    made = [k for k in ("artifact", "exe") if k in android]
+    for k in made:   # a file the commit carries is not this build's output
+        if output(path, android, release, k).exists():
+            raise ValueError(f"`{android[k]}` 가 빌드 전부터 체크아웃에 있다 — 빌드가 만든 파일만 검사한다")
     overlay = path.parent / "tauri.release.json"
     # Off, or a target's `autoIncrementVersionCode` would replace the code the version maps to.
     android_overlay = {"versionCode": code(release), "autoIncrementVersionCode": False}
@@ -416,13 +433,15 @@ def build(path: Path, android: dict, release: str, kit: dict, halt: threading.Ev
         # The halt again after the shells were asked: a stop while they answered is still a stop.
         machine = halt.is_set() or cut or lacks_tool(out, env, halt) or halt.is_set()
         raise ValueError(said) if machine else BuildFailed(said)
-    apk = output()
-    if not apk.is_file():
-        raise BuildFailed(f"빌드가 `{android['artifact']}` 를 만들지 않았다")
+    for k in made:
+        if not output(path, android, release, k).is_file():
+            raise BuildFailed(f"빌드가 `{android[k]}` 를 만들지 않았다")
+    apk = output(path, android, release)
     try:   # read before signing, so a broken product is the build's failure and not the signing's
-        badging(run([kit["aapt2"], "dump", "badging", apk], environment(kit)))
+        read(apk) if read else badging(run([kit["aapt2"], "dump", "badging", apk], environment(kit)))
     except ValueError as exc:
-        raise BuildFailed(f"빌드가 만든 `{android['artifact']}` 를 APK 로 읽지 못했다 — {exc}") from exc
+        raise BuildFailed(f"빌드가 만든 `{android['artifact']}` 를 {'설치 파일' if read else 'APK'} 로 읽지 못했다 "
+                          f"— {exc}") from exc
     return apk
 
 

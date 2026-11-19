@@ -62,6 +62,7 @@ def test_before_a_first_release_the_card_shows_the_seed_and_offers_no_choice(pro
 
     assert card["last"] is None and card["versions"] == {"first": "0.1.0"}
     assert card["ahead"] == 3 and card["press"]["state"] == "none" and card["key"] is None and card["rehearsal"]["state"] == "idle"
+    assert card["kinds"] == ["android"]   # what a press ships, read from the pinned commit
 
 
 def test_the_card_shows_each_choice_from_the_last_production_release_and_the_commits_since(project):

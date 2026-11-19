@@ -88,7 +88,7 @@ def card(repo: Path) -> dict:
     attempts = release_publish.ledger(name)["attempts"]
     return {"remote": name, "sha": sha, "last": prior and prior["tag_name"], "ahead": count, "versions": versions,
             "refused": refused, "attempt": attempts[-1] and public_attempt(attempts[-1]) if attempts else None,
-            "key": key(name)}
+            "key": key(name), "kinds": [k for k in release.KINDS if k in cfg]}
 
 
 def public(text: str | None) -> str | None:

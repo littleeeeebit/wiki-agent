@@ -43,7 +43,7 @@ def press(tmp_path, monkeypatch):
     monkeypatch.setattr(rp, "LEDGER", tmp_path / "ledger")
     monkeypatch.setattr(rp, "WAITS", (0, 0))   # transient tries without the waits
     monkeypatch.setattr(release, "WORK", tmp_path / "work")
-    monkeypatch.setattr(release, "tools", lambda: {})
+    monkeypatch.setattr(release, "tools", lambda cfg=None: {})
     monkeypatch.setattr(release, "remote", lambda repo: "github.com/o/r")
     monkeypatch.setattr(release, "pin", lambda repo, ref="origin/main": SHA)
     monkeypatch.setattr(release, "settings", lambda repo, sha: {"version_source": "v.json", "android": ANDROID})
@@ -91,6 +91,68 @@ def test_the_first_press_publishes_the_seed_with_its_note_and_makes_the_key(pres
     assert done["assets"] == [{"name": "r-0.1.0-arm64-v8a.apk", "sha256": done["manifest"][0]["sha256"],
                                "url": rel["assets"][0]["browser_download_url"]}]
     assert done["release_id"] == rel["id"] and not release.place(repo, done["id"]).exists()
+
+
+DESKTOP = {"build": "build-win", "artifact": "nsis/r_{version}_x64-setup.exe", "exe": "r.exe",
+           "product_name": "r", "publisher": "o"}
+
+
+@pytest.fixture
+def desktop(press, monkeypatch):
+    """The press with a `[release.desktop]` kind: a fake installer and app EXE are the JSON of their version
+    resources, as `release_desktop.facts` would read them."""
+
+    android_build, made = release.build, {"product": "r", "publisher": "o"}
+
+    def build(src, kind, version, kit, halt, read=None):
+        if read is None:
+            return android_build(src, kind, version, kit, halt)
+        installer = release.output(src, kind, version)
+        installer.parent.mkdir(parents=True, exist_ok=True)
+        installer.write_text(json.dumps({"version": version, "product": made["product"]}))
+        release.output(src, kind, version, "exe").write_text(json.dumps({"publisher": made["publisher"]}))
+        return installer
+
+    def facts(installer, exe=None):
+        seen = {**json.loads(Path(installer).read_text()), "sha256": android_owned.sha256(Path(installer))}
+        seen["file_version"] = seen["version"]
+        return {**seen, **({"exe_version": seen["version"], "exe_product": seen["product"],
+                            **json.loads(Path(exe).read_text())} if exe else {})}
+
+    monkeypatch.setattr(release, "build", build)
+    monkeypatch.setattr(rp.release_desktop, "facts", facts)
+    return (*press, made)
+
+
+def test_a_press_ships_every_declared_kind_in_one_release(desktop, monkeypatch):
+    fake, repo, keys, _ = desktop
+    monkeypatch.setattr(release, "settings", lambda repo, sha: {"version_source": "v.json", "android": ANDROID,
+                                                                "desktop": DESKTOP})
+    done = rp.publish(repo, "0.1.0", None)
+    assert done["state"] == "published" and keys == [(True, "github.com/o/r")]
+    assert [a["name"] for a in fake.release_named("v0.1.0")["assets"]] == ["r-0.1.0-arm64-v8a.apk",
+                                                                          "r-0.1.0-x64-setup.exe"]
+    assert set(done["facts"]) == {"android", "desktop"} and done["facts"]["desktop"]["publisher"] == "o"
+
+
+def test_an_installer_is_checked_against_the_previous_one_and_needs_no_key(desktop, monkeypatch):
+    fake, repo, keys, made = desktop
+    monkeypatch.setattr(release, "settings", lambda repo, sha: {"version_source": "v.json", "desktop": DESKTOP})
+    assert rp.publish(repo, "0.1.0", None)["state"] == "published" and keys == []
+    made["publisher"] = "someone"   # a merge that renames the publisher in the build and the adapter together
+    monkeypatch.setattr(release, "settings", lambda repo, sha: {"version_source": "v.json",
+                                                                "desktop": {**DESKTOP, "publisher": "someone"}})
+    done = rp.publish(repo, "0.1.1", "patch")
+    assert done["state"] == "failed" and "게시자 'someone' 가 이전 정식 설치 파일의 'o'" in done["reason"]
+    assert done["repair"] == {"needed": done["reason"]} and "v0.1.1" not in [r["tag_name"] for r in fake.rels]
+    made.update(publisher="o", product="renamed")
+    monkeypatch.setattr(release, "settings", lambda repo, sha: {"version_source": "v.json",
+                                                                "desktop": {**DESKTOP, "product_name": "renamed"}})
+    done = rp.publish(repo, "0.1.1", "patch")
+    assert done["state"] == "failed" and "제품 이름 'renamed' 가 이전 정식 설치 파일의 'r'" in done["reason"]
+    made["product"] = "r"
+    monkeypatch.setattr(release, "settings", lambda repo, sha: {"version_source": "v.json", "desktop": DESKTOP})
+    assert rp.publish(repo, "0.1.1", "patch")["state"] == "published"
 
 
 def test_the_notes_tell_no_changes_apart_from_a_list_that_could_not_be_read(monkeypatch):

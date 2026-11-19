@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import shutil
 import sys
 import threading
 import time
@@ -26,7 +27,7 @@ import verify
 from common import paths
 
 from . import github_release as gh
-from . import release
+from . import release, release_desktop
 
 LEDGER = paths.RAW / "releases"   # keyed by the canonical remote: every checkout of one repository shares it
 UPLOAD_TRIES = 3
@@ -167,18 +168,40 @@ def notes(repo: Path, sha: str, since: str | None, first: bool) -> str:
     return "\n".join(([release.FIRST_RELEASE_NOTE, ""] if first else []) + titles)
 
 
-def previous_facts(repo: str, prior: dict | None, abi: str, into: Path, kit: dict) -> dict | None:
-    """The previous production APK's facts, read from its real bytes on GitHub. None before the first."""
+def _previous(repo: str, prior: dict | None, suffix: str, what: str, into: Path) -> Path | None:
+    """The previous production release's one asset named `*<suffix>`, downloaded and checked against GitHub's
+    digest. None before the first release, and before the first that ships this kind."""
 
     if prior is None:
         return None
-    apks = [a for a in prior.get("assets") or [] if a["name"].endswith(f"-{abi}.apk")]
-    if len(apks) != 1:
-        raise Stopped(f"{prior['tag_name']} 에 {abi} APK 가 {len(apks)} 개다 — 이전 정식 APK 를 하나로 정할 수 없다")
-    file = gh.download(repo, prior["tag_name"], apks[0]["name"], into)
-    if gh.digest(apks[0]) not in (None, android_owned.sha256(file)):
-        raise Stopped(f"{prior['tag_name']} 의 APK 가 GitHub 이 기록한 digest 와 다르다")
-    return release.facts(file, kit)
+    found = [a for a in prior.get("assets") or [] if a["name"].endswith(suffix)]
+    if not found:
+        return None
+    if len(found) > 1:
+        raise Stopped(f"{prior['tag_name']} 에 {what} 가 {len(found)} 개다 — 이전 정식 {what} 를 하나로 정할 수 없다")
+    file = gh.download(repo, prior["tag_name"], found[0]["name"], into)
+    if gh.digest(found[0]) not in (None, android_owned.sha256(file)):
+        raise Stopped(f"{prior['tag_name']} 의 {what} 가 GitHub 이 기록한 digest 와 다르다")
+    return file
+
+
+def previous_facts(repo: str, prior: dict | None, abi: str, into: Path, kit: dict) -> dict | None:
+    """The previous production APK's facts, read from its real bytes on GitHub. None before the first."""
+
+    file = _previous(repo, prior, f"-{abi}.apk", f"{abi} APK", into)
+    return file and release.facts(file, kit)
+
+
+def previous_installer(repo: str, name: str, prior: dict | None, into: Path) -> dict | None:
+    """The previous production installer's facts, read from its real bytes on GitHub. Its publisher is only in
+    its compressed script, so it comes from what this ledger recorded when it published those same bytes."""
+
+    file = _previous(repo, prior, release_desktop.SUFFIX, "Windows 설치 파일", into / "desktop")
+    if file is None:
+        return None
+    seen = release_desktop.facts(file)
+    recorded = [a.get("facts", {}).get("desktop") or {} for a in ledger(name)["attempts"] if a["state"] == "published"]
+    return {**seen, "publisher": next((f.get("publisher") for f in recorded if f.get("sha256") == seen["sha256"]), None)}
 
 
 def publish(repo: Path, shown: str, bump: str | None, halt: threading.Event | None = None,
@@ -190,7 +213,7 @@ def publish(repo: Path, shown: str, bump: str | None, halt: threading.Event | No
     names another repository, or a `main` that moved since, is refused before anything is reserved. A `halt`
     is checked between phases, and before each GitHub write."""
 
-    halt, kit = halt or threading.Event(), release.tools()
+    halt = halt or threading.Event()
     name = release.remote(repo)
     if remote and name != remote:
         raise ValueError(f"origin 이 카드를 읽은 뒤 {remote} 에서 {name} 로 바뀌었다 — 카드를 다시 읽고 눌러라")
@@ -199,7 +222,7 @@ def publish(repo: Path, shown: str, bump: str | None, halt: threading.Event | No
         raise ValueError(f"{name} 의 배포 {running['tag']} 가 아직 진행 중이다 — 끝난 뒤 다시 누른다")
     attempt = f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
     with working(name, attempt):   # from before the reservation, so no `recover` can take it from this worker
-        done = _pressed(repo, name, attempt, shown, bump, len(book["attempts"]), kit, halt, expect)
+        done = _pressed(repo, name, attempt, shown, bump, len(book["attempts"]), halt, expect)
     return repaired(done, repair, halt) if done.get("repair") else done
 
 
@@ -223,7 +246,7 @@ def repaired(record: dict, repair, halt: threading.Event) -> dict:
     return update(record["remote"], record["id"], repair=release.handed(Path(record["repo"]), record, repair, halt))
 
 
-def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, seen: int, kit: dict,
+def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, seen: int,
              halt: threading.Event, expect: str | None = None) -> dict:
     repo_slug = gh.slug(name)
     sha = release.pin(repo)
@@ -231,6 +254,7 @@ def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, 
         raise ValueError(f"`main` 이 카드를 읽은 뒤 {expect[:7]} 에서 {sha[:7]} 로 움직였다 — 카드를 다시 읽고 눌러라")
     _go(halt)
     cfg = release.settings(repo, sha)
+    kit = release.tools(cfg)
     first = release.seed(repo, sha, cfg["version_source"])
     listed = _tried(lambda: gh.releases(repo_slug), halt)
     chosen = release.accepted(shown, [_shape(r) for r in listed], _tried(lambda: gh.tags(repo_slug), halt), bump, first)
@@ -242,29 +266,25 @@ def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, 
         work = release.owned(release.place(repo, attempt))
         work.mkdir(parents=True)
         _go(halt)
-        key = release.release_key(repo, kit, create=prior is None, name=name)   # the remote checked, not origin now
+        # The remote checked, not origin now. Only a repository's first release makes its key.
+        key = release.release_key(repo, kit, create=prior is None, name=name) if "android" in cfg else None
         _go(halt)
-        before = _tried(lambda: previous_facts(repo_slug, prior, cfg["android"]["abi"], work / "previous", kit), halt)
+        before = {"android": "android" in cfg and _tried(
+                      lambda: previous_facts(repo_slug, prior, cfg["android"]["abi"], work / "previous", kit), halt),
+                  "desktop": "desktop" in cfg and _tried(
+                      lambda: previous_installer(repo_slug, name, prior, work / "previous"), halt)}
         _go(halt)
         src = release.checkout(repo, sha, f"{attempt}/src")
-        asset = f"{repo_slug.split('/')[1]}-{chosen}-{cfg['android']['abi']}.apk"
-        try:
-            built = release.build(src, cfg["android"], chosen, kit, halt)
-        except release.BuildFailed as exc:
-            raise Repairable(str(exc)) from exc
-        _go(halt)
-        signed = release.sign(built, work / asset, key, kit)
-        seen = release.facts(signed, kit)
-        if why := release.signed_wrong(seen, key["cert"], before):
-            raise Stopped("; ".join(why))
-        if why := release.built_wrong(seen, chosen, cfg["android"], before):
-            raise Repairable("; ".join(why))
-        release.discard(repo, f"{attempt}/src")   # large; the signed APK beside it is what goes up
+        shipped, seen = [], {}
+        for kind in [k for k in release.KINDS if k in cfg]:   # every declared kind, from the one checkout
+            shipped.append(_made(kind, src, cfg[kind], chosen, work, f"{repo_slug.split('/')[1]}-{chosen}",
+                                 key, kit, before[kind] or None, seen, halt))
+        release.discard(repo, f"{attempt}/src")   # large; the signed APK and the installer beside it go up
         _go(halt)
         since = _tried(lambda: gh.tag(repo_slug, prior["tag_name"]), halt) if prior else None
         record = update(name, attempt, facts=seen, title=f"v{chosen}", notes=notes(repo, sha, since, prior is None),
-                        manifest=[{"name": asset, "size": signed.stat().st_size,
-                                   "sha256": android_owned.sha256(signed), "path": str(signed)}])
+                        manifest=[{"name": f.name, "size": f.stat().st_size, "sha256": android_owned.sha256(f),
+                                   "path": str(f)} for f in shipped])
         _go(halt)   # the last point at which nothing remote has been written
     except Repairable as exc:
         return _ended(record, "failed", reason=str(exc), repair={"needed": str(exc)})
@@ -274,6 +294,32 @@ def _pressed(repo: Path, name: str, attempt: str, shown: str, bump: str | None, 
         return _ended(record, "failed", reason=str(exc) or type(exc).__name__)
     with gh.stopping(halt):   # no GitHub write launches once a stop is signalled (`gh.stop`)
         return _tried(lambda: _finish(name, attempt, halt), halt)
+
+
+def _made(kind: str, src: Path, cfg: dict, chosen: str, work: Path, stem: str, key: dict | None, kit: dict,
+          before: dict | None, seen: dict, halt: threading.Event) -> Path:
+    """One kind built in `src`, checked and put in `work` under its asset name, its facts added to `seen`. The
+    source's failures are `Repairable`; a certificate other than the key's is the key's, never the source's."""
+
+    try:
+        built = release.build(src, cfg, chosen, kit, halt, **({"read": release_desktop.readable} if kind == "desktop" else {}))
+    except release.BuildFailed as exc:
+        raise Repairable(str(exc)) from exc
+    _go(halt)
+    if kind == "android":
+        file = release.sign(built, work / f"{stem}-{cfg['abi']}.apk", key, kit)
+        seen[kind] = release.facts(file, kit)
+        if why := release.signed_wrong(seen[kind], key["cert"], before):
+            raise Stopped("; ".join(why))
+        why = release.built_wrong(seen[kind], chosen, cfg, before)
+    else:
+        file = work / f"{stem}{release_desktop.SUFFIX}"
+        shutil.copyfile(built, file)
+        seen[kind] = release_desktop.facts(file, release.output(src, cfg, chosen, "exe"))
+        why = release_desktop.built_wrong(seen[kind], chosen, cfg, before)
+    if why:
+        raise Repairable("; ".join(why))
+    return file
 
 
 # -- The restart table ----------------------------------------------------------------------------

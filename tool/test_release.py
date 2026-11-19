@@ -49,7 +49,8 @@ def test_the_release_table_and_the_seed_are_read_from_the_pinned_commit_not_the_
 
 @pytest.mark.parametrize("table, refusal", [
     ("[slots]\n", "`[release]` 표가 없다"),
-    ("[release]\nversion_source = 'a.json'\n", "`[release.android]` 표가 없다"),
+    ("[release]\nversion_source = 'a.json'\n", "무엇을 빌드할지 정하지 않았다"),
+    ("[release]\nversion_source = 'a.json'\ndesktop = 'x'\n", "desktop"),
     ("[release]\nversion_source = ''\n[release.android]\nbuild = 'b'\nartifact = 'a'\napplication_id = 1\nabi = 'x'\n",
      "version_source, android.application_id"),
 ])
@@ -261,7 +262,7 @@ def _rehearsable(tmp_path, monkeypatch):
     """A rehearsal of one pinned commit with its tools, settings and seed faked."""
 
     monkeypatch.setattr(release, "WORK", tmp_path / "work")
-    monkeypatch.setattr(release, "tools", lambda: {})
+    monkeypatch.setattr(release, "tools", lambda cfg=None: {})
     monkeypatch.setattr(release, "pin", lambda repo, ref: "0" * 40)
     monkeypatch.setattr(release, "settings", lambda repo, sha: {"version_source": "v", "android": ANDROID})
     monkeypatch.setattr(release, "seed", lambda repo, sha, source: "0.1.0")

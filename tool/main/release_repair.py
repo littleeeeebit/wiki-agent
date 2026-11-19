@@ -36,9 +36,11 @@ def spec_for(repo: Path, record: dict, gate: str) -> dict:
         "grounds": {"pages": [], "files": [".wiki/adapter.toml"], "rules": []},
         "decisions": [{"what": f"The release attempt {record['id']} for {record['tag']} at {record['sha'][:12]} "
                                f"failed: {failure}",
-                       "why": "The release step builds the adapter's `[release.android]` command with "
-                              "RELEASE_VERSION, RELEASE_VERSION_CODE and RELEASE_TAURI_CONFIG set, then checks the "
-                              "APK's versionName, versionCode, application ID, ABI and that it is not debuggable",
+                       "why": "The release step builds each of the adapter's `[release.android]` and "
+                              "`[release.desktop]` commands with RELEASE_VERSION, RELEASE_VERSION_CODE and "
+                              "RELEASE_TAURI_CONFIG set, then checks the APK's versionName, versionCode, application "
+                              "ID, ABI and that it is not debuggable, and the Windows installer's and app EXE's "
+                              "version, product name and publisher",
                        "rejected": "Retrying the same commit: a press publishes only the commit it pinned"}],
     }
     return specs.fields(repo, block, gate)

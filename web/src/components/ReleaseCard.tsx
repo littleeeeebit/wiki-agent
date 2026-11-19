@@ -18,6 +18,7 @@ type Choice = Bump | 'first'
 /** `tool/main/release_api.py`: what a press would publish, read from origin's main and GitHub. */
 type Card = {
   remote?: string; sha?: string; last?: string | null; ahead?: number | null; versions?: Partial<Record<Choice, string>>
+  kinds?: ('android' | 'desktop')[]   // what every press ships, read from the pinned commit's `[release]`
   refused?: Partial<Record<Choice, string>>; attempt?: Attempt | null; error?: string
   read: number; rehearsal: Rehearsal   // `read`: the runs' `rev` when the card's reading began
   press: Press; key?: { keystore: string; credential: string } | null
@@ -70,6 +71,8 @@ const BUMPS: { bump: Bump; label: string }[] = [
   { bump: 'patch', label: '고침' }, { bump: 'minor', label: '기능 추가' }, { bump: 'major', label: '큰 변경' },
 ]
 const STATE: Record<Attempt['state'], string> = { pending: '진행 중', published: '게시됨', failed: '실패' }
+// The Windows installer is not code-signed yet, so Windows warns before running it.
+const SHIPS = { android: 'Android APK', desktop: 'Windows 설치 파일 (코드 서명 없음)' }
 const minutes = (from: number, to: number) => `${Math.max(1, Math.round((to - from) / 60))}분`
 
 /** The project row's `배포` button and the card it opens. */
@@ -405,6 +408,8 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
           <dd className="font-mono">{card.last ?? '아직 없음'}</dd>
           <dt className="text-faint">그 뒤 main 의 커밋</dt>
           <dd className="font-mono">{card.ahead ?? '모름'}</dd>
+          <dt className="text-faint">올리는 것</dt>
+          <dd>{(card.kinds ?? []).map((k) => SHIPS[k]).join(' · ') || '모름'}</dd>
           <dt className="text-faint">다음 버전</dt>
           <dd>
             {card.last === null ? (
@@ -429,7 +434,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
       {live && !blocked && (
         <p role="status" className="mb-3 rounded-md border border-wait/30 bg-wait/10 px-3 py-2 text-[12.5px]">
           v{next} 를 빌드·서명해 GitHub 릴리스로 올린다 — 올린 버전은 되돌리지 않는다. 한 번 더 누르면 시작한다
-          {card?.last === null ? '. 첫 정식 릴리스라 정식 서명 키를 이 PC 에 새로 만든다' : ''}
+          {card?.last === null && card.kinds?.includes('android') ? '. 첫 정식 릴리스라 정식 서명 키를 이 PC 에 새로 만든다' : ''}
         </p>
       )}
       {press?.state === 'running' && (
