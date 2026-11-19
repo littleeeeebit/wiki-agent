@@ -80,11 +80,13 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   // so it needs no order between servers. Every request takes a ticket: the era it was sent in, and its place in
   // the card's own count of requests sent (`seq`). Its answer counts only in that era.
   //
-  // An answer naming another server than the era's starts a new era: the card forgets what it showed, every
-  // answer still on its way is ignored, and it reads the preview again. When the request was sent after the
-  // era's server had answered (`at`), the server it reached took over from that one, so its answer is the new
-  // era's first state and is kept: a start that reached a new server still shows its build and its stop. An
-  // answer to a request sent before that may come from either server, so it is dropped.
+  // An era changes only on proof. An answer naming another server than the era's, to a request sent after the
+  // era's server had answered (`at`), proves the server it reached took over from that one: only one server
+  // binds the port, and each lifespan has a name of its own. That answer opens the next era as its first state
+  // (a start that reached the new server shows its build and its stop), the card forgets the rest of what it
+  // showed, every other answer still on its way counts no more, and the preview is read again. An answer to a
+  // request sent before `at` may come from either server, so it changes nothing; the preview is read again, and
+  // that request, sent after `at`, settles it.
   const era = useRef({ n: 0, boot: '', at: 0 })
   const seq = useRef(0)
   const ticket = useCallback(() => ({ n: era.current.n, sent: ++seq.current }), [])
@@ -93,22 +95,22 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     if (t.n !== e.n) {
       // An ended era's request that the server this era follows answered: its build state is that server's, so
       // it still counts by `rev`. Its preview, its error and its busy flag stay with the era it was sent in.
-      if (e.boot && r.boot === e.boot) setRun((cur) => newer(cur, r))
+      if (r.boot === e.boot) setRun((cur) => newer(cur, r))
       return false
     }
-    if (!e.boot) {
+    if (!e.boot) {   // the card's first answer
       e.boot = r.boot
       e.at = seq.current
     } else if (e.boot !== r.boot) {
-      const taken = t.sent > e.at
-      era.current = { n: e.n + 1, boot: taken ? r.boot : '', at: seq.current }
-      setRun(taken ? r : null)
+      setAgain((n) => n + 1)
+      if (t.sent <= e.at) return false
+      era.current = { n: e.n + 1, boot: r.boot, at: seq.current }
+      setRun(r)
       setCard(null)
       setGood(null)
       setFault('')
       setBusy(null)
-      setAgain((n) => n + 1)
-      return taken
+      return true
     }
     setRun((cur) => newer(cur, r))
     return true
