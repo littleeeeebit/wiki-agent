@@ -27,6 +27,7 @@ NO_SUCH_LOGON_SESSION = 0xC000005F
 DESKTOP_ALL, DESKTOP_READ = 0x01FF, 0x0001
 NOT_FOUND, INVALID_PARAMETER = 2, 87
 FINAL = ("proven", "recovered")
+LOG_TAIL = 64 * 1024   # the bytes of a run's log it returns, its end: a writer still running cannot extend the read
 RELEASE_RETRIES = 10   # half a second apart: a handle still held after that keeps its server the owner
 _Each = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
 
@@ -308,18 +309,23 @@ class Look:
                 break
             time.sleep(max(0.0, min(0.2, deadline - time.monotonic())))
         self.observe()
-        output = (self.folder / "evidence" / f"{key}.log").read_bytes().decode("utf-8", "replace")
+        with open(self.folder / "evidence" / f"{key}.log", "rb") as log:   # a member may still be writing it
+            log.seek(max(0, log.seek(0, os.SEEK_END) - LOG_TAIL))
+            output = log.read(LOG_TAIL).decode("utf-8", "replace")
         return (None if cut else code), output, cut
 
     def observe(self) -> None:
         """Record every member each job has seen, so recovery can still name them after a crash."""
 
         for key, job in self.jobs.items():
-            known = self.record["jobs"][key]["members"]
-            for member in job.members():
-                if not any(native_process.same(member, seen) for seen in known):
-                    known.append(member)
+            self._learn(key, job.members())
         save(self.folder, self.record)
+
+    def _learn(self, key: str, members: list[dict]) -> None:
+        known = self.record["jobs"][key]["members"]
+        for member in members:
+            if not any(native_process.same(member, seen) for seen in known):
+                known.append(member)
 
     def _recorded(self) -> list[dict]:
         return [member for entry in self.record["jobs"].values() for member in entry["members"]]
@@ -467,6 +473,7 @@ class Look:
             proof = job.end(seconds)
         finally:
             job.close()
+        self._learn(key, proof["members"])   # members first heard of while the job ended: recovery names them too
         self.record["jobs"][key]["proof"] = proof
         return [f"{key}: {reason}" for reason in proof["reasons"]]
 

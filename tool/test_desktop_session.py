@@ -64,6 +64,9 @@ def test_a_command_run_on_the_look_returns_when_its_root_exits_and_what_it_left_
         assert (code, output.strip(), cut) == (3, "drawn", "") and time.monotonic() - started < 20
         never, _, cut = look.run("slow", python(SLEEP), tmp_path, 1, threading.Event())
         assert never is None and cut
+        _, long, _ = look.run("long", python("print('x' * 200000 + 'end', flush=True)"), tmp_path, 30,
+                              threading.Event())
+        assert long.strip().endswith("end") and len(long) <= desktop_session.LOG_TAIL   # its end, bounded
 
     record = desktop_session.load(tmp_path / "ran")
     assert record["state"] == "proven" and record["proof"]["clean"], record["proof"]
@@ -208,9 +211,11 @@ def test_a_job_that_fails_to_end_does_not_skip_the_rest_of_cleanup(tmp_path, mon
     def failing(_seconds):
         raise OSError("first job failed")
 
+    late = {"pid": 7, "created": 1, "exe": "late.exe"}   # first heard of while its job ended
+
     def ending(_seconds):
         calls.append("second.end")
-        return {"clean": True, "reasons": []}
+        return {"clean": True, "reasons": [], "members": [late]}
 
     look.jobs = {"first": SimpleNamespace(end=failing, close=lambda: calls.append("first.close"), outstanding=lambda: 0),
                  "second": SimpleNamespace(end=ending, close=lambda: calls.append("second.close"),
@@ -225,6 +230,7 @@ def test_a_job_that_fails_to_end_does_not_skip_the_rest_of_cleanup(tmp_path, mon
     assert calls == ["first.close", "second.end", "second.close", "desktop"]
     assert not proof["clean"] and any("first job failed" in reason for reason in proof["reasons"])
     assert desktop_session.load(look.folder)["state"] == "held" and look.close() == proof
+    assert desktop_session.load(look.folder)["jobs"]["second"]["members"] == [late]   # recovery names it too
 
 
 def test_an_interrupted_cleanup_is_never_proven(tmp_path, monkeypatch):

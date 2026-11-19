@@ -99,7 +99,9 @@ class Job:
             self.close()
             raise Refused(f"cannot prepare the job: {error}")
         self.joined: list[dict] = []   # {"pid", "handle", "identity", "exited"}
-        self.stray: list = []   # creation handles of roots whose rollback could not confirm their exit
+        # Roots whose rollback could not confirm their exit, as {"pid", "handle"}: `end` waits on each handle, and
+        # once it signals it proves that root's join as a rolled-back root's does.
+        self.stray: list[dict] = []
         # Each root's creation handle, held until `close`, with its pid and, once it ran, its identity: a started
         # root's exit code stays readable however soon it exits, and a root rolled back keeps the exit its
         # rollback confirmed, whatever the port says.
@@ -183,15 +185,15 @@ class Job:
     def _rollback(self, process, thread, pid: int) -> None:
         """End a root that must not run, through its creation handle. A root whose exit is confirmed within five
         seconds keeps that handle among `roots`, its exit proof for `end` should the port's exit message be
-        lost; one that is not keeps it in `stray`, which `end` waits on and reports, so the failure is never
-        lost."""
+        lost; one that is not keeps it, with its pid, in `stray`, which `end` waits on and reports, so the
+        failure is never lost."""
 
         self.k.TerminateProcess(process, 1)
         self.k.CloseHandle(thread)
         if self.k.WaitForSingleObject(process, 5000) == 0:
             self.roots.append({"pid": pid, "identity": None, "handle": process})
         else:
-            self.stray.append(process)
+            self.stray.append({"pid": pid, "handle": process})
 
     def _messages(self, wait_ms: int, most: int = 64):
         """Up to `most` messages the port holds now, waiting up to `wait_ms` for the first: (message, pid).
@@ -278,7 +280,7 @@ class Job:
         if entry["exited"]:
             return True
         first = next(e for e in self.joined if e["pid"] == entry["pid"])
-        held = next((r["handle"] for r in self.roots if r["pid"] == entry["pid"]), None)
+        held = next((r["handle"] for r in self.roots + self.stray if r["pid"] == entry["pid"]), None)
         return first is entry and held is not None and self.k.WaitForSingleObject(held, 0) == 0
 
     def _count(self):
@@ -328,7 +330,7 @@ class Job:
     def _strays(self) -> int:
         """How many roots refused at start are still not proven ended."""
 
-        return sum(1 for handle in self.stray if self.k.WaitForSingleObject(handle, 0) != 0)
+        return sum(1 for held in self.stray if self.k.WaitForSingleObject(held["handle"], 0) != 0)
 
     def outstanding(self) -> int:
         """How many handles the job still holds."""
@@ -341,12 +343,10 @@ class Job:
         """Close every handle the job holds. A handle Windows will not close stays held, so a later call retries
         it and `outstanding()` counts it. Closing the job's last handle kills what is still in it."""
 
-        for handle in list(getattr(self, "stray", [])):
-            if self.k.CloseHandle(handle):
-                self.stray.remove(handle)
-        for held in list(getattr(self, "roots", [])):
-            if self.k.CloseHandle(held["handle"]):
-                self.roots.remove(held)
+        for kept in ("stray", "roots"):
+            for held in list(getattr(self, kept, [])):
+                if self.k.CloseHandle(held["handle"]):
+                    getattr(self, kept).remove(held)
         for entry in getattr(self, "joined", []):
             if entry["handle"] and self.k.CloseHandle(entry["handle"]):
                 entry["handle"] = None

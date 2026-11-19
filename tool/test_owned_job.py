@@ -202,14 +202,34 @@ def test_a_root_whose_rollback_windows_refused_stays_held_until_the_job_ends_it(
         with pytest.raises(OSError):
             started(job, tmp_path, SLEEP, before_resume=failing)
 
-    assert len(job.stray) == 1 and job.k.WaitForSingleObject(job.stray[0], 0) != 0   # still suspended, held
+    assert len(job.stray) == 1 and job.k.WaitForSingleObject(job.stray[0]["handle"], 0) != 0   # suspended, held
     proof = job.end()   # the production bound: five seconds once fell short on a loaded reviewer run
 
     assert proof["clean"], proof["reasons"]   # the job's end killed it, and its own handle shows that
 
 
+def test_a_root_whose_rollback_wait_ran_out_proves_its_join_by_its_own_handle_once_it_ends(job, tmp_path,
+                                                                                            monkeypatch):
+    def failing(identity):
+        raise OSError("the record could not be written")
+
+    read, wait = job._messages, job.k.WaitForSingleObject
+    monkeypatch.setattr(job, "_messages", lambda wait_ms, most=64: [   # its exit message is lost
+        (m, pid) for m, pid in read(wait_ms, most) if m not in (owned_job.EXIT, owned_job.ABNORMAL)])
+    monkeypatch.setattr(job.k, "OpenProcess", lambda *_: 0)   # and its join is never held
+    with monkeypatch.context() as patch:
+        patch.setattr(job.k, "WaitForSingleObject", lambda handle, ms: 258 if ms == 5000 else wait(handle, ms))
+        with pytest.raises(OSError):
+            started(job, tmp_path, SLEEP, before_resume=failing)
+
+    assert len(job.stray) == 1 and job.stray[0]["pid"]
+    proof = job.end(5)
+
+    assert proof["clean"], proof["reasons"]
+
+
 def test_a_root_still_alive_after_the_proof_wait_is_named(job, monkeypatch):
-    job.stray.append(owned_job.w.HANDLE(1))
+    job.stray.append({"pid": 0, "handle": owned_job.w.HANDLE(1)})
     monkeypatch.setattr(job.k, "WaitForSingleObject", lambda *_: 258)   # WAIT_TIMEOUT
 
     proof = job.end(0.1)
