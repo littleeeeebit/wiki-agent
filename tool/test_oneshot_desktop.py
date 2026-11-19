@@ -222,7 +222,7 @@ def test_a_tool_removed_between_two_stages_stops_the_second_before_it_runs(deskt
     both = {"cargo": "C:/rust/cargo.exe", "npm": "C:/node/npm.cmd"}
     with turns(both) as sent:
         SEND("budget", "tests", "x")
-    assert sent == ["x"] and o()["toolpaths"] == {"stage": "tests", "paths": both}
+    assert sent == ["x"] and o()["toolpaths"] == {"stage": "tests", "paths": {k: os.path.abspath(v) for k, v in both.items()}}
     oneshot_spec.saved("budget", oneshot={"stage": "build", "working": "build"})
     with turns({"npm": "C:/node/npm.cmd"}) as sent:   # cargo was uninstalled after the tests stage
         SEND("budget", "build", "y")
@@ -312,10 +312,39 @@ def test_a_tool_declared_with_its_extension_is_found_and_run_by_that_name(deskto
     asked = []
     with turns({}) as sent, patch.object(oneshot_build.shutil, "which", lambda n: asked.append(n) or "C:/node/npm.cmd"):
         SEND("budget", "tests", "x")
-    assert asked == ["npm.cmd"] and sent == ["x"] and o()["toolpaths"]["paths"] == {"npm.cmd": "C:/node/npm.cmd"}
-    assert oneshot_build.run_as("npm test", o(), desktop) == f"{launch('C:/node/npm.cmd')} test"
+    npm = os.path.abspath("C:/node/npm.cmd")
+    assert asked == ["npm.cmd"] and sent == ["x"] and o()["toolpaths"]["paths"] == {"npm.cmd": npm}
+    assert oneshot_build.run_as("npm test", o(), desktop) == f"{launch(npm)} test"
     with pytest.raises(ValueError, match="확장자만 다른"):   # S2: `npm` and `npm.cmd` are one program
         oneshot_profile.tools_of([{"name": "npm"}, {"name": "npm.cmd"}], ci=False)
+
+
+def test_a_tool_found_through_a_relative_path_entry_is_saved_where_it_was_found(desktop, tmp_path, monkeypatch):
+    host = tmp_path / "host"
+    host.mkdir()
+    monkeypatch.chdir(host)   # the server's folder, where the lookup ran; the gate runs in `desktop`
+    oneshot_spec.saved("budget", oneshot={"stack": STACK, "stage": "tests"})
+    with patch.object(oneshot_build.shutil, "which", lambda n: os.path.join(".", f"{n}.exe")):
+        assert oneshot_build.resolve_tools("budget", "tests")
+    assert o()["toolpaths"]["paths"] == {t["name"]: str(host / f"{t['name']}.exe") for t in oneshot_build.tools(o())}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="PowerShell's quoting of a program path")
+def test_a_program_word_joined_to_a_quote_is_refused_and_a_checked_one_runs_as_itself(desktop):
+    (desktop / "scripts").mkdir()
+    (desktop / "scripts/checked.cmd").write_text("@echo CHECKED\r\n", encoding="utf-8")
+    (desktop / "scripts/checked.cmd'").mkdir()   # what PowerShell's `''` would walk through
+    (desktop.parent / "outside.cmd").write_text("@echo OUTSIDE\r\n", encoding="utf-8")
+    o_ = {"intent": o()["intent"], "stack": STACK, "toolpaths": {"stage": "build", "paths": {"cargo": "c", "npm": "n"}}}
+    tools = oneshot_build.tools(o_)
+    for joined in ("'scripts/checked.cmd''/../../outside.cmd' -x", "\"scripts/checked.cmd\"'x' -x",
+                   "scripts/checked.cmd'x' -x"):
+        assert oneshot_build.undeclared(desktop, joined, tools)
+        with pytest.raises(ValueError, match="아무것도 실행하지 않았다"):
+            oneshot_build.run_as(joined, o_, desktop)
+    ran = subprocess.run(["powershell", "-NoProfile", "-Command", oneshot_build.run_as("'scripts/checked.cmd' -x", o_, desktop)],
+                         cwd=desktop, capture_output=True, text=True, timeout=60)
+    assert ran.stdout.strip() == "CHECKED", ran
 
 
 def test_a_build_whose_gate_names_a_program_gone_from_the_worktree_is_refused_before_it_runs(desktop):

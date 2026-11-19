@@ -115,12 +115,14 @@ def tools(o: dict) -> list[dict] | None:
     return next((s.get("tools") or [] for s in o.get("stack") or [] if tooled(s["part"], kinds)), [])
 
 
-WORD = re.compile(r"\s*(\"[^\"]*\"|'[^']*'|[^\s\"']+)")
+# A word ends at whitespace or the end: a quote right after it (`'a.cmd''/x'`, an escaped apostrophe to
+# PowerShell) would join the emitted path to an unchecked suffix, so it reads as no word and is refused.
+WORD = re.compile(r"\s*(\"[^\"]*\"|'[^']*'|[^\s\"']+)(?=\s|$)")
 
 
 def word_of(part: str) -> tuple[str, str]:
-    """A chain part's program word, unquoted, and the rest after it exactly as written. The check and the
-    launch both read the program through this, so they cannot read two different words."""
+    """A chain part's program word, unquoted, and the rest after it exactly as written, starting at whitespace.
+    The check and the launch both read the program through this, so they cannot read two different words."""
 
     m = WORD.match(part)
     return (m[1].strip("'\""), part[m.end():]) if m else ("", part)
@@ -154,7 +156,9 @@ def resolve_tools(repo: str, stage: str) -> bool:
     o = oneshot_spec.spec_of(repo)["oneshot"]
     if (declared_tools := tools(o)) is None:
         return True
-    found = {t["name"]: shutil.which(t["name"]) for t in declared_tools}   # the name as S2 declared it
+    # The name as S2 declared it, found from the server's folder and saved absolute: a relative `PATH` entry
+    # would otherwise point at another file once the gate runs in the worktree.
+    found = {t["name"]: (at := shutil.which(t["name"])) and os.path.abspath(at) for t in declared_tools}
     if missing := [name for name, at in found.items() if not at]:
         oneshot_spec.store(repo).stop("toolchain", f"PC 앱을 만드는 데 쓰기로 한 도구를 이 PC 에서 찾지 못했다: "
                                                    f"{', '.join(missing)} — 설치하고 [재개]를 누르면 다시 찾는다")
