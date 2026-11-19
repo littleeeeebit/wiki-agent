@@ -482,7 +482,8 @@ export default function App() {
   // A task's work model is keyed by its spec's repository and id, the same
   // from draft to worktree and under another project.
   const owning = task?.spec ?? other?.spec
-  const sender = owning ? `${owning.repo}/${owning.id}` : selected   // a task's own, in either project's rail
+  // A task's own, in either project's rail: its spec, or else its checkout (a standalone turn).
+  const sender = owning ? `${owning.repo}/${owning.id}` : `path:${path}`
   // A pane with no worktree — nothing selected, a selection whose task is gone, a spec not started
   // or a PR not checked out — is the one empty agent pane: its pick is what [시작] sends, whichever card is pressed.
   const blank = `new:${repo}`

@@ -307,17 +307,32 @@ export function useWork() {
     // `live` stays: the last known running turn holds a shared checkout's other panes until the next read.
   }, [showQueued])
 
+  // Work-log reads of each path, in request order: an older answer that arrives after a newer one is not applied,
+  // so an idle snapshot never unlocks a checkout a later read found running.
+  const logsAsked = useRef(new Map<string, number>())
+  const logsShown = useRef(new Map<string, number>())
+  const asked = useCallback((path: string) => {
+    const n = (logsAsked.current.get(path) ?? 0) + 1
+    logsAsked.current.set(path, n)
+    return () => {
+      if (n < (logsShown.current.get(path) ?? 0)) return false
+      logsShown.current.set(path, n)
+      return true
+    }
+  }, [])
+
   const readRules = useCallback((path: string) => {
     const life = lives.current.get(path) ?? 0
+    const latest = asked(path)
     api.workLog(path)
       .then(({ session_id, rules: list, queued: waiting, running }) => {
-        if ((lives.current.get(path) ?? 0) !== life) return
+        if ((lives.current.get(path) ?? 0) !== life || !latest()) return
         setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
         showQueued(path, waiting)
         named(path, running)
       })
       .catch(() => {})
-  }, [showQueued, named])
+  }, [showQueued, named, asked])
 
   /** Follow one turn's events into `key` until it ends. `first` is the
    *  stream that starts it — the instruction's own, or a reattach. */
@@ -384,6 +399,7 @@ export function useWork() {
     if (!path || loading.current.has(path)) return Promise.resolve(true)
     loading.current.add(path)
     const life = lives.current.get(path) ?? 0
+    const latest = asked(path)
     return api.workLog(path)
       .then(({ rows, running, rules: list, session_id, queued: waiting }) => {
         if ((lives.current.get(path) ?? 0) !== life) return true
@@ -391,8 +407,10 @@ export function useWork() {
           key: ++seq, role: r.role, text: r.text, error: r.error, ms: r.ms, cost: r.cost_usd, model: r.model,
           tokens: r.tokens, steps: (r.steps ?? []).map(restored), answered: r.answered,
         }))
-        showQueued(path, waiting)
-        named(path, running)
+        // An older answer than a recheck already applied: the record still loads, the controls stay newer.
+        const newest = latest()
+        if (newest) showQueued(path, waiting)
+        if (newest) named(path, running)
         // The turn still running: its reply is not on record yet. Its events
         // are, in the server's buffer, from the first.
         const live = running && !sending.current.has(path)
@@ -401,7 +419,7 @@ export function useWork() {
           : null
         // A turn sent before the record came back stays after it.
         setTurns((all) => ({ ...all, [path]: [...past, ...(live ? [live] : []), ...(all[path] ?? [])] }))
-        setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
+        if (newest) setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
         if (live && running) {
           const control = new AbortController()
           streams.current.get(path)?.abort()
@@ -422,7 +440,7 @@ export function useWork() {
         if ((lives.current.get(path) ?? 0) === life) loading.current.delete(path)
         return false
       })
-  }, [follow, forget, showQueued, named])
+  }, [follow, forget, showQueued, named, asked])
 
   const send = useCallback(
     async (path: string, text: string, choice: { model: string; effort: string }) => {
