@@ -691,10 +691,10 @@ def answered(repo: Path, found: list[dict], source: dict, accepted: dict | None 
 
 # -- What the candidates are made of ----------------------------------------
 
-def sh(args: list[str], cwd: Path, timeout: float = 60) -> subprocess.CompletedProcess:
-    """Shared Git/GitHub seam; Windows files keep timeouts off pipe EOF."""
+def sh(args: list[str], cwd: Path, timeout: float = 60, run=None) -> subprocess.CompletedProcess:
+    """Shared Git/GitHub seam; Windows files keep timeouts off pipe EOF. `run` replaces `subprocess.run`."""
 
-    budget = runtime.verification_budget.get()
+    run, budget = run or subprocess.run, runtime.verification_budget.get()   # `run` looked up at the call
     if budget:
         budget.check()
         timeout = min(timeout, budget.left())
@@ -703,8 +703,8 @@ def sh(args: list[str], cwd: Path, timeout: float = 60) -> subprocess.CompletedP
         with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace", dir=scratch) as out, \
                 tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace", dir=scratch) as err:
             try:
-                done = subprocess.run(args, cwd=cwd, stdout=out, stderr=err, timeout=timeout,
-                                      stdin=subprocess.DEVNULL, **process.background_options())
+                done = run(args, cwd=cwd, stdout=out, stderr=err, timeout=timeout,
+                           stdin=subprocess.DEVNULL, **process.background_options())
             except subprocess.TimeoutExpired as exc:
                 out.seek(0)
                 err.seek(0)
@@ -716,8 +716,8 @@ def sh(args: list[str], cwd: Path, timeout: float = 60) -> subprocess.CompletedP
             err.seek(0)
             done.stdout, done.stderr = out.read(), err.read()
             return done
-    return subprocess.run(args, cwd=cwd, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
+    return run(args, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+               errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
 
 
 def status(path: Path, *flags: str) -> subprocess.CompletedProcess:

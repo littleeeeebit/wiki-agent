@@ -663,13 +663,14 @@ def opens(store: Path, password: str | None, kit: dict) -> str | None:
         return None
 
 
-def release_key(repo: Path, kit: dict, create: bool = False) -> dict:
+def release_key(repo: Path, kit: dict, create: bool = False, name: str | None = None) -> dict:
     """The repository's one production key with its certificate's SHA-256. `create` makes it when it was never
     established, or finishes a creation that stopped. Nothing here deletes or overwrites a keystore or a password
     that might be the repository's: an established key that lost a half or changed, a keystore no password opens,
-    and a surviving password with no keystore are each refused for a person to settle."""
+    and a surviving password with no keystore are each refused for a person to settle. `name`, when given, is
+    the canonical remote a caller already checked, so an origin that changes meanwhile never picks the key."""
 
-    name = remote(repo)
+    name = name or remote(repo)
     keys = Path(os.path.realpath(KEYS))   # the target's checkout, or wiki-agent's own (unpackaged, that is the data)
     if any(keys.is_relative_to(Path(os.path.realpath(root))) for root in (repo, paths.RESOURCES)):
         raise ValueError(f"{KEYS} 가 체크아웃 안이다 — 서명 키는 모든 체크아웃 밖에만 둔다")

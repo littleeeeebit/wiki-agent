@@ -4,15 +4,18 @@ The card reads what a press would do: the last production version, how many comm
 the version each choice would publish, from the one selector the attempt uses (`release.version`). Before the
 first production release it shows the seed and offers no choice.
 
-Publishing stays locked (`LOCKED`). The plan requires that build and repair code run under another Windows
-account than the release key before anything is published, and that is not in place. The button runs the
-unpublished rehearsal instead (`release_rehearsal.rehearse`): two builds of origin's `main`, the commit the card
-shows, signed with a disposable test key and checked, with a source failure handed to a repair task as a press's
-would be.
+The publish button is the one entry point that publishes (`press`): it publishes the version the card showed,
+through `release_publish.publish`, off the request, and the card follows the attempt in the ledger. Builds,
+repairs and the key share this Windows account; the person chose that on 2026-11-19, since every repository is
+theirs. The test build button runs the unpublished rehearsal (`release_rehearsal.rehearse`): two builds of
+origin's `main`, the commit the card shows, signed with a disposable test key and checked, with a source failure
+handed to a repair task as a press's would be. One project runs one of the two at a time.
 """
 
 from __future__ import annotations
 
+import os
+import re
 import secrets
 import subprocess
 import threading
@@ -28,12 +31,13 @@ from . import github_release as gh
 
 router = APIRouter()
 
-LOCKED = ("실제 게시는 잠겨 있다 — 빌드와 수정 작업이 서명 키와 같은 Windows 계정에서 돌아서, "
-          "다른 계정으로 분리한 뒤에 켠다. 지금은 시험 빌드만 한다(아무것도 올리지 않는다)")
 REF = "origin/main"   # what the card pins and what the test build builds
 SHUTDOWN_WAIT = 120   # seconds a closing server gives a stopped test build to remove its checkout and keys
 
 _runs: dict[str, dict] = {}   # project name -> its rehearsal: the running one, or the last one's summary
+_presses: dict[str, dict] = {}   # project name -> this server's last press: running, or how it ended
+_sweep: list[dict] = []   # this lifespan's startup sweep (`recover`): its halt and its thread
+_settled = [0]   # how many presses and sweeps have ended in this process: a card read across one is read again
 _lock = threading.Lock()
 _deadline: list[float] = []   # when shutdown stops waiting: set by its first `close_all`, kept by any later one
 # Every snapshot of a run carries `boot`, a fresh random name for each server lifespan, and `rev`, the run's
@@ -83,7 +87,51 @@ def card(repo: Path) -> dict:
         count = ahead(repo, None, sha)
     attempts = release_publish.ledger(name)["attempts"]
     return {"remote": name, "sha": sha, "last": prior and prior["tag_name"], "ahead": count, "versions": versions,
-            "refused": refused, "attempt": attempts[-1] if attempts else None, "locked": LOCKED}
+            "refused": refused, "attempt": attempts[-1] and public_attempt(attempts[-1]) if attempts else None,
+            "key": key(name)}
+
+
+def public(text: str | None) -> str | None:
+    """A diagnostic as the card may show it: tokens, credentials in a URL and signed query values removed."""
+
+    if not text:
+        return text
+    text = re.sub(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/\s@]+@", r"\1", errorlog.redact(text))
+    text = re.sub(r"(?i)\b(authorization\s*[:=]\s*)(?:(?:basic|bearer|token)\s+)?[^\s,;]+", r"\1[redacted]", text)
+    text = re.sub(r"(?i)\b(basic|bearer|token)\s+[A-Za-z0-9+/=._-]{6,}", r"\1 [redacted]", text)
+    return re.sub(r"(?i)((?:^|[^\w.-])[\w.-]*(?:token|jwt|sig|signature|secret|password|key|credential|auth)[\w.-]*=)[^&\s]+",
+                  r"\1[redacted]", text)
+
+
+def public_attempt(record: dict) -> dict:
+    """The ledger's attempt as the card shows it: its ID, tag and state, why it failed, and its repair, redacted.
+    Never its paths, URLs, facts or manifest."""
+
+    repair = record.get("repair") or {}
+    return {"id": record.get("id"), "tag": record.get("tag"), "state": record.get("state"), "reason": public(record.get("reason")),
+            "last_error": public(record.get("last_error")),
+            "repair": repair and {k: public(repair.get(k)) for k in ("needed", "task", "error") if repair.get(k)}}
+
+
+def booked(repo: Path) -> dict:
+    """The canonical remote and its last attempt from the ledger alone, or nothing when the remote is unknown."""
+
+    try:
+        name = release.remote(repo)
+        attempts = release_publish.ledger(name)["attempts"]
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return {}
+    return {"remote": name, "attempt": public_attempt(attempts[-1]) if attempts else None}
+
+
+def key(name: str) -> dict | None:
+    """Where the repository's production key is, once it is established, so the person backs it up: the keystore
+    and its password in Credential Manager go together. Never the password itself."""
+
+    folder = release.KEYS / name
+    if not (folder / "certificate.sha256").is_file():
+        return None
+    return {"keystore": str(folder / "release.jks"), "credential": release.target(name)}
 
 
 def ahead(repo: Path, since: str | None, sha: str) -> int | None:
@@ -101,11 +149,13 @@ def summary(result: dict) -> dict:
     """The rehearsal's outcome as the card shows it: each build's version and what was refused, the two
     refusals, the repair task a source failure went to, and any checkout left behind. The facts stay out."""
 
-    rounds = [{"version": r["version"], **({"failed": r["failed"]} if "failed" in r else {}),
-               "refused": r.get("refused") or []} for r in result["rounds"]]
+    rounds = [{"version": r["version"], **({"failed": public(r["failed"])} if "failed" in r else {}),
+               "refused": [public(x) for x in r.get("refused") or []]} for r in result["rounds"]]
     refusals = {k: len(v) for k, v in result["refusals"].items()}
+    repair = result.get("repair")
+    repair = repair and {k: public(v) if isinstance(v, str) else v for k, v in repair.items()}
     return {"ok": result["ok"], "sha": result.get("sha"), "rounds": rounds, "refusals": refusals,
-            "repair": result.get("repair"), "left": result.get("left") or []}
+            "repair": repair, "left": [public(x) for x in result.get("left") or []]}
 
 
 def _repairing(name: str, halt: threading.Event):
@@ -128,7 +178,8 @@ def _rehearsing(name: str, repo: Path, halt: threading.Event, sha: str | None = 
         done = {"state": "done", **summary(result)}
     except Exception as exc:   # noqa: BLE001 — the card shows why; the server goes on
         errorlog.record("release-rehearse", exc, repo=str(repo))
-        done = {"state": "failed", "error": f"{type(exc).__name__}: {exc}", "left": getattr(exc, "left", [])}
+        done = {"state": "failed", "error": public(f"{type(exc).__name__}: {exc}"),
+                "left": [public(x) for x in getattr(exc, "left", [])]}
     with _lock:
         _runs[name] = {**_runs[name], **done, "ended": time.time(), "stopped": halt.is_set(), "rev": _rev(name)}
         for key in ("halt", "thread", "repairing", "stopping"):
@@ -151,20 +202,23 @@ def get_card(name: str) -> dict:
 
     repo = _repo(name)
     with _lock:
-        read = _revs.get(name, 0)
+        read, settled = _revs.get(name, 0), _settled[0]
     try:
         out = card(repo)
     except (ValueError, OSError, subprocess.SubprocessError, gh.Failed) as exc:
-        out = {"error": str(exc) or type(exc).__name__, "locked": LOCKED}
-    return {**out, "read": read, "rehearsal": shown(name)}
+        # The ledger needs no preview: a pending attempt stays on the card, to be carried on.
+        out = {"error": public(str(exc) or type(exc).__name__), **booked(repo)}
+    return {**out, "read": read, "settled": settled, "rehearsal": shown(name), "press": pressed(name)}
 
 
 @router.get("/api/release/{name}/rehearsal")
 def get_rehearsal(name: str) -> dict:
-    """The test build's state alone, for the card to follow while it runs, without reading GitHub again."""
+    """The test build's state and the last press, for the card to follow, without reading GitHub again."""
 
     _repo(name)
-    return {"rehearsal": shown(name)}
+    with _lock:
+        settled = _settled[0]
+    return {"rehearsal": shown(name), "press": pressed(name), "settled": settled}
 
 
 @router.post("/api/release/{name}/rehearse")
@@ -178,6 +232,10 @@ def rehearse(name: str, sha: str | None = None) -> dict:
         prior = _runs.get(name)
         if (prior or {}).get("state") == "running":
             raise HTTPException(409, f"{name} 의 시험 빌드가 이미 돌고 있다")
+        if _sweeping():
+            raise HTTPException(409, SWEEPING)
+        if (_presses.get(name) or {}).get("state") == "running":
+            raise HTTPException(409, f"{name} 을 게시하는 중이다 — 끝난 뒤 시험 빌드를 돌린다")
         halt = threading.Event()
         worker = threading.Thread(target=_rehearsing, args=(name, repo, halt, sha), daemon=True)
         _runs[name] = {"state": "running", "id": secrets.token_hex(6), "started": time.time(), "halt": halt,
@@ -218,24 +276,118 @@ def stop(name: str, run_id: str = "") -> dict | JSONResponse:
     return {"rehearsal": shown(name)}
 
 
+def _pressing(name: str, repo: Path, version: str, work, halt: threading.Event) -> None:
+    try:
+        done = work(halt)
+        ended = {"tag": done.get("tag"), "outcome": done.get("state")}
+    except Exception as exc:   # noqa: BLE001 — refused before the reservation, stopped, or broken; the card shows why
+        errorlog.record("release-publish", exc, repo=str(repo))
+        ended = {"error": public(str(exc) or type(exc).__name__)}
+    with _lock:
+        _presses[name] = {"state": "ended", "version": version, "ended": time.time(), **ended, "rev": _rev(name)}
+        _settled[0] += 1
+
+
+def pressed(name: str) -> dict:
+    """This server's last press of `name` as the card shows it, with its `rev` and `boot` as a run's. Before one,
+    `none` at the project's current `rev`, so an empty answer is ordered like any other."""
+
+    with _lock:
+        press = _presses.get(name) or {"state": "none", "rev": _revs.get(name, 0)}
+        return {**{k: v for k, v in press.items() if k not in ("halt", "thread")}, "boot": _boot[0]}
+
+
+SWEEPING = "서버가 켜지며 멈춘 게시를 이어 가는 중이다 — 끝난 뒤 다시 누른다"
+
+
+def _sweeping() -> bool:   # under `_lock`
+    return any(s["thread"].is_alive() for s in _sweep)
+
+
+def _begin(name: str, repo: Path, version: str, work) -> dict:
+    """`work(halt)` on its own thread as this project's press. One press or one test build runs at a time."""
+
+    with _lock:   # the same lock `close_all` snapshots under, so no press slips in after it
+        if runtime.stopping.is_set():
+            raise HTTPException(503, "서버가 꺼지는 중이라 게시를 시작하지 않는다")
+        if (_presses.get(name) or {}).get("state") == "running":
+            raise HTTPException(409, f"{name} 을 이미 게시하는 중이다")
+        if (_runs.get(name) or {}).get("state") == "running":
+            raise HTTPException(409, f"{name} 의 시험 빌드가 도는 중이다 — 끝난 뒤 게시한다")
+        if _sweeping():
+            raise HTTPException(409, SWEEPING)
+        halt = threading.Event()
+        worker = threading.Thread(target=_pressing, args=(name, repo, version, work, halt), daemon=True)
+        prior = _presses.get(name)
+        _presses[name] = {"state": "running", "version": version, "started": time.time(), "halt": halt,
+                          "thread": worker, "rev": _rev(name)}
+        try:
+            worker.start()
+        except RuntimeError as exc:   # the OS refused a thread: the project is not left looking busy
+            _presses.pop(name)
+            if prior:
+                _presses[name] = prior
+            raise HTTPException(503, f"게시를 시작하지 못했다 — {exc}") from exc
+    return {"press": pressed(name)}
+
+
+@router.post("/api/release/{name}/publish")
+def press(name: str, version: str, remote: str, sha: str, bump: str = "") -> dict:
+    """The person's press: publish `version`, the one the card showed for `bump` (none before the first release),
+    of `remote` at `sha`, the repository and commit the card read. The attempt runs off the request
+    (`release_publish.publish`) and is followed in the ledger. Another origin, a moved `main`, a version that
+    moved, or an attempt still pending is refused there before anything is reserved."""
+
+    repo = _repo(name)
+    if bump and bump not in release.BUMPS:
+        raise HTTPException(400, f"{bump} 는 고를 수 있는 버전 올림이 아니다")
+    if not version.strip() or not remote.strip() or not sha.strip():
+        raise HTTPException(400, "카드가 보여 준 버전·저장소·커밋 없이는 게시하지 않는다")
+    return _begin(name, repo, version, lambda halt: release_publish.publish(
+        repo, version, bump or None, halt, repair=release_repair.start, remote=remote, expect=sha))
+
+
+@router.post("/api/release/{name}/resume")
+def resume(name: str, remote: str, attempt: str) -> dict:
+    """The pending attempt the card showed, `attempt` of `remote`, carried on (`release_publish.finish`), as a
+    restarted server does: a press already authorized it, and nothing new is built. Another attempt, one that
+    ended meanwhile, or another remote is refused. The ledger names the remote, so origin is not read again."""
+
+    repo = _repo(name)
+    if not remote.strip() or not attempt.strip():
+        raise HTTPException(400, "카드가 보여 준 저장소와 시도 없이는 이어 가지 않는다")
+    held = release_publish.pending(remote)
+    if not held or held["id"] != attempt:
+        raise HTTPException(409, "카드가 보여 준 게시는 이미 끝났다 — 카드를 다시 읽는다")
+    if os.path.normcase(os.path.realpath(held.get("repo") or "")) != os.path.normcase(os.path.realpath(repo)):
+        raise HTTPException(409, f"그 게시는 {name} 의 것이 아니다 — 그 프로젝트의 카드에서 이어 간다")
+    return _begin(name, repo, held["version"], lambda halt: release_publish.finish(remote, attempt, halt))
+
+
 def close_all() -> None:
     """At server shutdown: every running test build stopped, and waited for while it removes its checkout and
     its test keys, so a restart leaves neither behind. Its commands end within a second of the stop
     (`release.stoppable`). A build whose repair has begun is not stopped: the repair is let finish starting.
-    One wait for every call, and a build still running when it ends is recorded."""
+    One wait for every call, and a build still running when it ends is recorded. A press is stopped the same
+    way: a build it has not finished ends its attempt failed, and one past its remote writes stays pending for
+    the next server's `recover`."""
 
     with _lock:   # after `runtime.stopping`, so no start is admitted past this snapshot
         running = [(name, run) for name, run in _runs.items() if run.get("state") == "running"]
+        running += [(name, press) for name, press in _presses.items() if press.get("state") == "running"]
+        for sweep in _sweep:   # one that has not started yet stops before its first remote
+            gh.stop(sweep["halt"])
+        running += [("recover", sweep) for sweep in _sweep if sweep["thread"].is_alive()]
         for _, run in running:
             if not run.get("repairing"):
-                run["halt"].set()
+                gh.stop(run["halt"])   # after this no GitHub write of theirs launches
         if not _deadline:
             _deadline.append(time.monotonic() + SHUTDOWN_WAIT)
     for name, run in running:
         run["thread"].join(max(0.0, _deadline[0] - time.monotonic()))
         if run["thread"].is_alive():
             errorlog.record("release-rehearse-shutdown", TimeoutError(
-                f"{name} 의 시험 빌드가 서버 종료 대기 {SHUTDOWN_WAIT}초 안에 끝나지 않았다 — "
+                f"{name} 의 시험 빌드나 게시가 서버 종료 대기 {SHUTDOWN_WAIT}초 안에 끝나지 않았다 — "
                 f"{release.WORK} 아래에 빌드 폴더나 시험 키가 남았을 수 있다"), project=name)
 
 
@@ -246,16 +398,23 @@ def recover() -> None:
     Called once each time a server lifespan takes ownership, so that lifespan's shutdown gets its own whole
     wait (`close_all`), never one an earlier lifespan in this process spent."""
 
-    with _lock:
-        _deadline.clear()
-        _boot[0] = secrets.token_hex(6)
-
-    def sweep() -> None:
+    def sweep(halt: threading.Event) -> None:
         try:
-            for row in release_publish.recover():
+            for row in release_publish.recover(halt):
                 if row.get("last_error"):
                     errorlog.record("release-recover", RuntimeError(row["last_error"]), remote=row["remote"])
         except Exception as exc:   # noqa: BLE001 — a failed sweep is recorded; the server goes on
             errorlog.record("release-recover", exc)
+        finally:
+            with _lock:   # what it settled changes the ledger every card reads
+                _settled[0] += 1
 
-    threading.Thread(target=sweep, daemon=True).start()
+    # Owned by this lifespan: its shutdown halts and waits for it, and while it runs no press, resume or test
+    # build starts, since it may be carrying any project's attempt on.
+    halt = threading.Event()
+    worker = threading.Thread(target=sweep, args=(halt,), daemon=True)
+    with _lock:
+        _deadline.clear()
+        _boot[0] = secrets.token_hex(6)
+        _sweep[:] = [{"halt": halt, "thread": worker}]
+    worker.start()
