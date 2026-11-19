@@ -4,11 +4,11 @@ import { get, json, post } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 type Bump = 'patch' | 'minor' | 'major'
-/** A test build as the server last changed it. Within one server process (`boot`), `rev` grows with every
- *  change, so the newest wins whatever order the answers arrive in; a snapshot from another process, a restarted
- *  server's, always replaces it. `idle` is a server that has run none; `id` names one build for its stop. */
+/** A test build as the server last changed it. `boot` numbers the server start, one more each start, and `rev`
+ *  the change within it, so `(boot, rev)` orders every snapshot, across restarts: the newest wins whatever order
+ *  the answers arrive in. `idle` is a server that has run none; `id` names one build for its stop. */
 type Rehearsal = {
-  state: 'idle' | 'running' | 'done' | 'failed'; rev: number; boot: string; id?: string; started?: number; ended?: number; stopped?: boolean
+  state: 'idle' | 'running' | 'done' | 'failed'; rev: number; boot: number; id?: string; started?: number; ended?: number; stopped?: boolean
   error?: string; ok?: boolean; sha?: string; rounds?: { version: string; failed?: string; refused: string[] }[]
   refusals?: Record<string, number>; repair?: { needed: string; task?: string; error?: string } | null
   repairing?: boolean; stopping?: boolean; left?: string[]
@@ -40,7 +40,8 @@ const stopRehearsal = (name: string, id: string) => post(`${at(name)}/stop?run_i
 /** `promise`, or a rejection after `ms`. The promise goes on; what it brings later is still applied by `rev`. */
 const within = <T,>(promise: Promise<T>, ms: number) => Promise.race([promise, new Promise<never>((_, reject) =>
   setTimeout(() => reject(new Error('서버가 답하지 않는다 — 상태는 계속 읽는다')), ms))])
-const newer = (cur: Rehearsal | null, next: Rehearsal) => (cur && cur.boot === next.boot && cur.rev > next.rev ? cur : next)
+const newer = (cur: Rehearsal | null, next: Rehearsal) =>
+  (cur && (cur.boot > next.boot || (cur.boot === next.boot && cur.rev > next.rev)) ? cur : next)
 
 const BUMPS: { bump: Bump; label: string }[] = [
   { bump: 'patch', label: '고침' }, { bump: 'minor', label: '기능 추가' }, { bump: 'major', label: '큰 변경' },
@@ -71,39 +72,26 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   const [fault, setFault] = useState('')
   const [busy, setBusy] = useState(false)
   const [picked, setPicked] = useState<Bump | null>(null)
-  // The server process this card follows. Only the state poll moves it: one poll is in flight at a time and a
-  // timed-out one is aborted, so polls are answered in the order they were sent. Before the first answer, any
-  // answer names it; after that, a card read's, a start's or a stop's from another process is dropped.
-  const boot = useRef('')
-  const adopt = useCallback((r: Rehearsal, poll = false) => {
-    if (poll || !boot.current) boot.current = r.boot
-    else if (r.boot !== boot.current) return false
-    setRun((cur) => newer(cur, r))
-    return true
-  }, [])
+  const adopt = useCallback((r: Rehearsal) => setRun((cur) => newer(cur, r)), [])
 
   // One card read at a time, bounded; a state read never discards one.
   const reading = useRef(false)
   // The last preview that read a commit: which server read it, and the runs' `rev` when its reading began.
   // A card that came back with an error never counts as one.
-  const [good, setGood] = useState<{ boot: string; read: number } | null>(null)
-  const [again, setAgain] = useState(0)   // bumped to read once more, after a read from a replaced process
+  const [good, setGood] = useState<{ boot: number; read: number } | null>(null)
   const read = useCallback(() => {
     if (reading.current) return
     reading.current = true
     getCard(name)
       .then((c) => {
-        if (!adopt(c.rehearsal)) {
-          setTimeout(() => setAgain((n) => n + 1), 5000)
-          return
-        }
         setCard(c)
+        adopt(c.rehearsal)
         if (c.sha && !c.error) setGood({ boot: c.rehearsal.boot, read: c.read })
       })
       .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
       .finally(() => { reading.current = false })
   }, [name, adopt])
-  useEffect(() => { read() }, [read, again])
+  useEffect(() => { read() }, [read])
 
   // While the card is open its state is read every five seconds, one bounded read at a time, so a start whose
   // answer was lost, or that the server admits late, is still found, and a failed read is tried again.
@@ -112,7 +100,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     const timer = setInterval(() => {
       if (out) return
       out = true
-      getRehearsal(name).then((r) => adopt(r.rehearsal, true)).catch(() => {}).finally(() => { out = false })
+      getRehearsal(name).then((r) => adopt(r.rehearsal)).catch(() => {}).finally(() => { out = false })
     }, 5000)
     return () => clearInterval(timer)
   }, [name, adopt])
