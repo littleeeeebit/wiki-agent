@@ -87,15 +87,22 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   // showed, every other answer still on its way counts no more, and the preview is read again. An answer to a
   // request sent before `at` may come from either server, so it changes nothing; the preview is read again, and
   // that request, sent after `at`, settles it.
-  const era = useRef({ n: 0, boot: '', at: 0 })
+  const era = useRef({ n: 0, boot: '', at: 0, ended: new Set<string>() })
   const seq = useRef(0)
   const ticket = useCallback(() => ({ n: era.current.n, sent: ++seq.current }), [])
+  // A running build that a start or stop of the person's own answered, while the card could not yet place
+  // that answer's server: Stop stays on it, since the server refuses a stop for any build but its current one.
+  // The first build state the card takes from a request sent after it arrived (`at`) replaces it: whichever
+  // server answers that request is the one that admitted the build, or a later one, which the build did not
+  // outlive. A server whose era has ended is known to have stopped, so its answer is never kept.
+  const [held, setHeld] = useState<{ run: Rehearsal; at: number } | null>(null)
   const adopt = useCallback((r: Rehearsal, t: { n: number; sent: number }) => {
     const e = era.current
+    const settle = () => setHeld((h) => (h && t.sent > h.at ? null : h))
     if (t.n !== e.n) {
       // An ended era's request that the server this era follows answered: its build state is that server's, so
       // it still counts by `rev`. Its preview, its error and its busy flag stay with the era it was sent in.
-      if (r.boot === e.boot) setRun((cur) => newer(cur, r))
+      if (r.boot === e.boot) { setRun((cur) => newer(cur, r)); settle() }
       return false
     }
     if (!e.boot) {   // the card's first answer
@@ -104,7 +111,9 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     } else if (e.boot !== r.boot) {
       setAgain((n) => n + 1)
       if (t.sent <= e.at) return false
-      era.current = { n: e.n + 1, boot: r.boot, at: seq.current }
+      e.ended.add(e.boot)
+      era.current = { n: e.n + 1, boot: r.boot, at: seq.current, ended: e.ended }
+      settle()
       setRun(r)
       setCard(null)
       setGood(null)
@@ -113,6 +122,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
       return true
     }
     setRun((cur) => newer(cur, r))
+    settle()
     return true
   }, [])
 
@@ -168,7 +178,9 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     const t = ticket()
     setBusy(t.n)
     try {
-      await within(fn().then((r) => adopt(r.rehearsal, t)), ACTION_MS)
+      await within(fn().then(({ rehearsal: r }) => {
+        if (!adopt(r, t) && r.state === 'running' && !era.current.ended.has(r.boot)) setHeld({ run: r, at: seq.current })
+      }), ACTION_MS)
     } catch (err) {
       if (t.n === era.current.n) setFault(String(err instanceof Error ? err.message : err))
     } finally {
@@ -176,6 +188,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     }
   }
 
+  const shown = held?.run ?? run
   const first = card?.versions?.first
   const bump = picked ?? BUMPS.find((b) => card?.versions?.[b.bump])?.bump ?? 'patch'
   const next = first ?? card?.versions?.[bump]
@@ -184,9 +197,9 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
       <>
         <Btn onClick={onClose}>닫기</Btn>
         {unread && <Btn onClick={() => { setFault(''); read() }} title="origin 의 main 과 GitHub 릴리스를 다시 읽는다">다시 읽기</Btn>}
-        {run?.state === 'running'
-          ? <Btn tone="danger" disabled={busy !== null || run.repairing || run.stopping || !run.id} onClick={() => void act(() => stopRehearsal(name, run.id ?? ''))}
-              title={run?.repairing ? '수정 작업을 이미 만들기 시작해서 멈출 수 없다' : undefined}>시험 빌드 멈춤</Btn>
+        {shown?.state === 'running'
+          ? <Btn tone="danger" disabled={busy !== null || shown.repairing || shown.stopping || !shown.id} onClick={() => void act(() => stopRehearsal(name, shown.id ?? ''))}
+              title={shown.repairing ?'수정 작업을 이미 만들기 시작해서 멈출 수 없다' : undefined}>시험 빌드 멈춤</Btn>
           : <Btn disabled={busy !== null || stale || !card?.sha || !!card.error} onClick={() => void act(() => startRehearsal(name, card?.sha))}
               title="main 을 두 번 빌드하고 일회용 시험 키로 서명해 검사한다. 아무것도 올리지 않는다">시험 빌드</Btn>}
         <Btn tone="primary" disabled title={card?.locked}>{next ? `v${next} 게시` : '게시'}</Btn>
@@ -230,7 +243,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
           {card.attempt.repair?.task ? ` · 수정 작업 ${card.attempt.repair.task}` : ''}
         </p>
       )}
-      {run && <RehearsalLine run={run} />}
+      {shown && <RehearsalLine run={shown} />}
     </Modal>
   )
 }
