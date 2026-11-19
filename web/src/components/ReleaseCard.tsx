@@ -182,8 +182,15 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
   // A refused stop's answer: the server that just answered the person's own stop has this build state, so the
   // card follows it whatever it was following, in whichever era, and drops any hold. However the answers
   // before it were ordered, the next Stop names the build that server has.
-  const follow = useCallback((r: Rehearsal) => {
+  const follow = useCallback((r: Rehearsal, t: { n: number; sent: number }) => {
     const e = era.current
+    if (e.ended.has(r.boot)) return   // a server known to have stopped: its buffered refusal says nothing now
+    // Another server with no build running, for a stop sent before this era opened: it may have come before or
+    // after the followed one, and it has nothing to stop, so it changes nothing; the preview is read again.
+    if (r.boot !== e.boot && r.state !== 'running' && t.sent <= e.at) {
+      setAgain((n) => n + 1)
+      return
+    }
     setHeld(null)
     if (r.boot === e.boot) { setRun((cur) => newer(cur, r)); return }
     era.current = { n: e.n + 1, boot: r.boot, at: seq.current, ended: e.ended }
@@ -204,7 +211,7 @@ export function ReleaseCard({ name, onClose }: { name: string; onClose: () => vo
     }, (err) => {
       const live = (err as { rehearsal?: Rehearsal }).rehearsal
       if (live) {   // taken however late it comes, past the action's deadline too
-        follow(live)
+        follow(live, t)
         setFault(err.message)
       }
       throw err
