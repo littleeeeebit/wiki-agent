@@ -404,9 +404,18 @@ def test_a_quote_inside_a_quoted_program_is_its_name_and_a_quoted_and_sign_does_
     for quoted in ("cargo test --label \"Research && return to results\"", "cargo test --label 'R && && D'"):
         assert oneshot_build.chained(quoted) and oneshot_build.undeclared(desktop, quoted, oneshot_build.tools(o_)) == []
     assert not oneshot_build.chained("cargo test && return")
-    # A typographic quote is a quote to PowerShell and not to `links`, so the chain refuses it.
+    # A typographic quote is a quote to PowerShell and not to `links`, so the chain refuses it, unless it is a
+    # letter inside ASCII quotes.
     for curly in ("cargo test --label ‘R && D’", "cargo test --label “R”"):
         assert not oneshot_build.chained(curly)
+    assert oneshot_build.chained("npm test -- \"Editor’s preview\"")
+
+
+def test_on_a_posix_shell_the_chain_check_cuts_at_every_and_sign():
+    with patch.object(oneshot_build.os, "name", "posix"):
+        # Bash reads `'it'\''s'` as one word; PowerShell's masker would hide the second `&&` and its `return`.
+        assert not oneshot_build.chained("echo 'it'\\''s' && echo \"a\" && return")
+        assert oneshot_build.chained("npm test --label ‘R’")   # a letter to bash, not a quote
 
 
 def test_a_build_whose_gate_names_a_program_gone_from_the_worktree_is_refused_before_it_runs(desktop):
@@ -591,6 +600,8 @@ def test_a_pc_app_has_its_own_prompts_through_s4_and_no_web_fallback_for_later_s
     review, split = oneshot.prompt("review", "desktop"), oneshot.prompt("split", "desktop")
     assert "Windows program" in review and "`source`" in review and "`look`" in review and "`owner`" in review
     assert "Windows program" in split and "oneshot-features" in split and "Android" not in review + split
-    assert "`source`" in oneshot.prompt("review", "kinds")
+    mixed = " ".join(oneshot.prompt("review", "kinds").split())
+    for said in ("`source`", "where the program reports what it captured", "reads the fixture's region of the screen"):
+        assert said in mixed and said in " ".join(review.split())   # a mixed run's `owner` check is as runnable
     with pytest.raises(FileNotFoundError):   # the screens are the next version's
         oneshot.prompt("frontend", "desktop")

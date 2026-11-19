@@ -432,14 +432,17 @@ def leaves(word: str) -> bool:
 def chained(command: str) -> bool:
     """`command` is plain commands joined by `&&` and nothing else: each runs only after the one before it
     passed, and none starts with a word that ends the shell early, so the chain's status is its first failure.
-    The parts are those `links` cuts, at an unquoted `&&`, so a quoted argument holding `&&` stays one command.
-    A typographic quote, which PowerShell reads as a quote and `links` does not, is refused, so the two readings
-    cannot differ.
+    On Windows, where the gate runs in PowerShell, the parts are those `links` cuts, at an unquoted `&&`, so a
+    quoted argument holding `&&` stays one command, and a typographic quote outside ASCII quotes, which PowerShell
+    reads as a quote and `links` does not, is refused, so the two readings cannot differ. Elsewhere the POSIX
+    shell runs it, and the parts are cut at every `&&`.
     ponytail: by character and first word, not shell syntax: it stops a command that ends the chain by
     mistake, not one written to get past it; a quoted `;` or `(` is refused too, and a project script takes it."""
 
-    parts = links(command)
-    return not CONTROL.search(command) and not SMART_QUOTES.search(command) \
+    windows = os.name == "nt"   # the masker reads PowerShell, not POSIX, which cuts at every `&&` as before
+    parts = links(command) if windows else command.split("&&")
+    loose = syntax(command)[0] if windows else ""   # a typographic quote inside ASCII quotes is only a letter
+    return not CONTROL.search(command) and not SMART_QUOTES.search(loose) \
         and all(p.split() and not leaves(p.split()[0]) for p in parts)
 
 

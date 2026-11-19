@@ -50,7 +50,11 @@ stable `AutomationId` and its name, value or toggle state), `owner` when it
 needs what a session with no owner's screen cannot show (a capture of
 another program's window or of the screen, or how an overlay composes over
 it), checked against a fixture window whose content is known and passed only
-on what is observed. A `desktop` finding that fits neither is never deferred,
+on what is observed. A `look` check names the element and its state. A
+capture check names where the program reports what it captured: an element's
+value, or a file in its data folder. A composition check reads the fixture's
+region of the screen. A "capturing" label or the program's own drawn window is
+never the evidence. A `desktop` finding that fits neither is never deferred,
 and an `android` deferral names no `source`. The run keeps each one and must
 pass its check on the device before the person's last review. A web app has
 no device: its findings are

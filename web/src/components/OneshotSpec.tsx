@@ -151,6 +151,19 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
       busy={busy || !idle} send={(text) => act(() => api.say(repo, text))}
       confirm={(part, choice, tools) => act(() => api.confirmBuild(repo, part, choice, tools))} /></>
   }
+  // A kind held at the board (a PC app until its screens ship) shows the features it split, with the stop
+  // above and the submission off: the server refuses it as well.
+  if (view.stopped?.reason === 'kind' && view.stage === 'board' && view.board) {
+    return (
+      <>
+        {faulted}
+        <div className="px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
+          <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>{null}</Halt>
+        </div>
+        <Board name={view.repo} board={view.board} busy submit={async () => undefined} />
+      </>
+    )
+  }
   if (view.stopped) {
     return (
       <Track view={view} halt={<>
