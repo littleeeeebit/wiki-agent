@@ -1567,6 +1567,8 @@ def step(loop: Loop) -> bool:
     if (contract := review_contract.store(repo, path, spec, contract)) is None:
         return True
     chat = cell(spec, path)   # `review_again` stands until this round's verdict is recorded, whatever stops it first
+    if (spec := change(loop, f"리뷰 R{n}")) is None:   # a stop that landed while the reviewer was set up stands
+        return False
     kept = folder(spec["repo"], pr)
     kept.mkdir(parents=True, exist_ok=True)
     order = kept / f"round-{n}.md"
