@@ -23,7 +23,7 @@ to read the diff from the base commit to the HEAD under review.
   computer with what the design does not send.
 - A Windows capability the code uses that no capability requirement names,
   such as capturing another program's window, a global hook or a startup
-  entry.
+  entry. Its `breaks` names `CAP`, the approved capability list.
 - A build or test step that runs a program other than the stack's declared
   tools or a file in the repository.
 - A contract test made weaker by something outside its file (a fake, a

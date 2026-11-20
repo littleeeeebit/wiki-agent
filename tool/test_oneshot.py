@@ -71,7 +71,7 @@ def world(tmp_path):
     github = GitHub(tmp_path / "remote.git")
     identity = {f"GIT_{who}_{what}": value for who in ("AUTHOR", "COMMITTER")
                 for what, value in (("NAME", "Oneshot test"), ("EMAIL", "oneshot@example.test"))}
-    examined, wiring = [], {"needed": False}   # never this machine's CLIs, hooks or Codex trust
+    examined, wiring = [], {"needed": False, "refused": ""}   # never this machine's CLIs, hooks or Codex trust
     with patch.dict(os.environ, identity), patch.object(oneshot, "RUNS", tmp_path / "oneshot"), \
          patch.object(oneshot, "PROFILES", tmp_path / "oneshot" / "profiles"), \
          patch.object(connect, "RECORDS", tmp_path / "connect"), \
@@ -87,6 +87,8 @@ def world(tmp_path):
          patch.object(oneshot, "launch",
                       lambda rid, work, *a, **f: oneshot.changed(rid, **f, working=work, stopped=None)):
         yield {"workspace": workspace, "github": github, "hub": hub, "tmp": tmp_path, "examined": examined, "wiring": wiring}
+    from main import wiring as routine
+    routine.forget_hub()   # a hub check that ended on the fake above is no later test's answer
 
 
 def made(world, **extra) -> str:
@@ -616,7 +618,7 @@ def test_wiring_to_confirm_stops_the_register_and_tests_cut_before_their_results
 def test_wiring_that_cannot_be_checked_is_asked_again_and_never_read_as_a_move(world):
     rid = made(world)
     looks = []
-    answers = iter([{"needed": True, "refused": "Codex 신뢰를 확인하지 못했다 — 시간 초과"}, {"needed": False}])
+    answers = iter([{"needed": True, "refused": "Codex 신뢰를 확인하지 못했다 — 시간 초과"}, {"needed": False, "refused": ""}])
     with patch.object(oneshot, "RECHECK", (0, 0, 0)), \
          patch.object(connect, "hub", lambda data=None: looks.append(1) or next(answers)):
         oneshot.bootstrap(rid)
