@@ -127,16 +127,15 @@ def test_a_second_build_replaces_the_frozen_one(pc_build):
     ({"cwd": "C:/elsewhere"}, "run.cwd"),
     ({"cwd": "../.."}, "run.cwd"),
     ({"args": [], "env": {"APP_DATA": "C:/ProgramData/app"}}, "{data}"),
-    ({"env": {"APP_DATA": "{data}", "ASSETS": "<tree>/web"}}, "작업트리를 가리킨다"),
-    ({"args": ["--data", "{data}", "--config=<tree>/./app/../config.json"]}, "작업트리를 가리킨다"),
-    ({"env": {"APP_DATA": "{data}", "PATHS": "C:/Windows;<TREE>\\bin"}}, "작업트리를 가리킨다"),
-    ({"args": ["--data", "{data}", "--page=file:///<tree>/web/index%20page.html"]}, "작업트리를 가리킨다"),
-    ({"args": ["--data", "{data}", "--flags --root <tree>/web"]}, "작업트리를 가리킨다"),
-    ({"args": ["--data", "{data}", "--root=\\\\localhost\\<DRIVE>$\\<REST>"]}, "작업트리를 가리킨다"),
-    ({"args": ["--data", "{data}", "--root=\"<tree>\" --verbose"]}, "작업트리를 가리킨다"),
-    ({"args": ["--data", "{data}", "--root <tree> --verbose"]}, "작업트리를 가리킨다"),
-    ({"env": {"APP_DATA": "{data}", "PATHS": "<tree>;C:/Windows"}}, "작업트리를 가리킨다"),
-    ({"args": ["--data", "{data}", "--page=file:<tree>"]}, "작업트리를 가리킨다"),
+    *[({"args": ["--data", "{data}", setting]}, "사본 밖을 가리킬 수 있다") for setting in [
+        "--assets=<tree>/web", "--config=<tree>/./app/../config.json", "--paths=C:/Windows;<TREE>\\bin",
+        "--page=file:///<tree>/web/index%20page.html", "--page=file://<DRIVE>:/<REST>/web/index%20page.html",
+        "--flags --root <tree>/web", "--root=\\\\localhost\\<DRIVE>$\\<REST>", "--root=\"<tree>\" --verbose",
+        "--root <tree> --verbose", "--page=file:<tree>", "--sources=https://cdn.example/a.js;<tree>",
+        "--home=\\\\fileserver\\share", "--home=//fileserver/share", "--root=/Users/someone/tree",
+        "--root=web/../../..", "{data}/../escape", "--root=%USERPROFILE%\\tree", "--root=C:relative"]],
+    ({"env": {"APP_DATA": "{data}", "ASSETS": "<tree>/web"}}, "사본 밖을 가리킬 수 있다"),
+    ({"env": {"APP_DATA": "{data}", "PATHS": "<tree>;C:/Windows"}}, "사본 밖을 가리킬 수 있다"),
     ({"program": "NUL.exe"}, "장치 이름"),
     ({"program": "app.exe."}, "끝의 `.`"),
 ])
@@ -215,11 +214,10 @@ def test_a_folder_turned_into_a_junction_after_its_check_is_never_read(pc_build,
 
 
 @pytest.mark.parametrize("setting", [
-    "--cdn=https://cdn.example/<tree>/web", "--page=file:///C:/Windows/web/index.html", "--root=<tree>2/web",
-    "--home=\\\\fileserver\\<DRIVE>$\\<REST>"])
-def test_a_setting_naming_somewhere_else_is_kept(pc_build, setting):
-    tree = str(pc_build).replace("\\", "/")
-    setting = setting.replace("<tree>", tree).replace("<DRIVE>", tree[0]).replace("<REST>", tree[3:])
+    "--cdn=https://cdn.example/web/app.js", "--socket=ws://127.0.0.1:5173/live", "--assets=res/strings.txt",
+    "--assets=res\\strings.txt", "--cache={data}/cache", "--size=1280x800", "--langs=ko,en;fallback=en",
+    "--name=file-viewer", "--title=Translator: on"])
+def test_a_setting_naming_the_copy_data_or_a_remote_url_is_kept(pc_build, setting):
     run = {**BLOCK["run"], "args": ["--data", "{data}", setting]}
     assert pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "run": run}))["run"]["args"][-1] == setting
 
@@ -234,13 +232,19 @@ def test_a_file_resolved_under_another_case_of_its_folder_is_never_read(pc_build
         pc.frozen(pc_build, pc.declared(pc_build, fenced(pc.BLOCK, BLOCK)), tmp_path / "into")
 
 
-@pytest.mark.parametrize("record, kept", [("unreadable", True), ("no-head", False)])
-def test_an_unreadable_snapshot_is_kept_and_a_malformed_one_is_built_again(pc_build, record, kept, monkeypatch):
+@pytest.mark.parametrize("record, kept", [
+    ("unreadable", True), ("no-head", False), ("nul", False), ("unreadable-and-missing", False)])
+def test_an_unreadable_snapshot_is_kept_and_one_shown_gone_or_malformed_is_built_again(pc_build, record, kept,
+                                                                                        monkeypatch):
     checked(pc_build)
+    build = o()["desktop_build"]
     if record == "no-head":
-        oneshot_spec.saved("budget", oneshot={"desktop_build": {k: v for k, v in o()["desktop_build"].items()
-                                                                if k != "head"}})
-    else:
+        oneshot_spec.saved("budget", oneshot={"desktop_build": {k: v for k, v in build.items() if k != "head"}})
+    elif record == "nul":
+        oneshot_spec.saved("budget", oneshot={"desktop_build": {**build, "folder": build["folder"] + "\0x"}})
+    else:   # the program unreadable; with the manifest also gone, gone wins
+        if record == "unreadable-and-missing":
+            (Path(build["folder"]).parent / "manifest.json").unlink()
         real = Path.stat
 
         def denied(path, *a, **kw):
@@ -254,12 +258,14 @@ def test_an_unreadable_snapshot_is_kept_and_a_malformed_one_is_built_again(pc_bu
     assert bool(o()["desktop_build"]) is kept and oneshot_profile.held(o()) is kept
 
 
-def test_a_setting_on_a_share_elsewhere_is_compared_without_reaching_it(pc_build, monkeypatch):
-    probed = []
-    monkeypatch.setattr(pc.os.path, "samefile", lambda a, b: probed.append(str(a)) or False)
-    run = {**BLOCK["run"], "args": ["--data", "{data}", "--assets=\\\\fileserver\\share\\assets"]}
-    pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "run": run}))
-    assert not any("fileserver" in p for p in probed)
+def test_a_build_folder_stored_under_another_case_is_never_copied(pc_build, tmp_path, monkeypatch):
+    # The folder opened must be the one declared, spelled as stored: a case-sensitive sibling never stands in.
+    subprocess.run([sys.executable, "make_pc.py"], cwd=pc_build, check=True)
+    real = pc._folder
+    monkeypatch.setattr(pc, "_folder", lambda path: real(path).replace("\\dist-pc", "\\DIST-PC"))
+    with pytest.raises(ValueError, match="그 이름 그대로의 폴더"):
+        pc.frozen(pc_build, pc.declared(pc_build, fenced(pc.BLOCK, BLOCK)), tmp_path / "into")
+
 
 
 def test_a_frozen_build_that_cannot_be_saved_leaves_no_copy(pc_build):

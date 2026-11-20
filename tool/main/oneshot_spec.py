@@ -492,14 +492,17 @@ def standing(repo: str, build: dict) -> bool:
         needed = (app / build["launch"]["program"], app.parent / "manifest.json")
     except (KeyError, TypeError):
         return False
-    for path in needed:
+    unread = False
+    for path in needed:   # each read, so one unreadable file never hides another shown missing
         try:
             if not stat.S_ISREG(path.stat().st_mode):
                 return False
-        except (FileNotFoundError, NotADirectoryError):
+        except (FileNotFoundError, NotADirectoryError, ValueError):   # gone, or a path no file can have
             return False
         except OSError:   # there, but unreadable now: not shown gone
-            return True
+            unread = True
+    if unread:
+        return True
     try:
         done = specs.sh(["git", "rev-parse", "HEAD"], Path(spec_of(repo)["worktree"]))
     except Exception:   # a timeout, a missing Git or worktree: unread, so not shown changed

@@ -79,7 +79,12 @@ End the turn with exactly one fenced block whose info string is
   program; `run.cwd` is its working directory, `.` or a folder inside it;
   `run.args` and `run.env` are its arguments and the environment it adds.
 - `{data}` is the data folder the look gives each start. At least one
-  argument or variable names it, and none names this worktree.
+  argument or variable names it.
+- An argument or variable names only the copy, by a path relative to
+  `run.cwd`, `{data}`, or a remote URL such as `https://` or `ws://`. It holds
+  no drive (`C:`), UNC or device path (`\\`), file URI, path from a drive's
+  root (`/Users/...`), `..` step, or `%VAR%`; the server refuses one that
+  does, before the gate runs.
 - `installer` is the file a release build packages for S8 to attach. The
   final gate builds it, not this turn's `gate_cmd`; this turn only names it,
   and it is never the program `run` starts.
@@ -106,10 +111,10 @@ The server checks, in order:
    copy: a program Windows does not start as a 32- or 64-bit process (a
    library is not one), a packaged layout such as an MSIX folder around the
    program, or a manifest, embedded or beside the program, that asks for
-   elevation is refused. A setting naming this worktree, as a path, a file
-   URI or a share of this PC, is refused before the gate runs. It then records every copied file's digest with
-   the launch settings and names the build by them. A change to any file or
-   setting is a new build.
+   elevation is refused. `run.folder` is copied only under the name it is
+   declared by, its case as stored on disk. The server then records every
+   copied file's digest with the launch settings and names the build by
+   them. A change to any file or setting is a new build.
 
 A refusal comes back with the reason, at most three times in all.
 

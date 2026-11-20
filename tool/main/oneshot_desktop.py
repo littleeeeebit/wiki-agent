@@ -14,11 +14,8 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import json
-import ntpath
 import os
 import re
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -38,15 +35,14 @@ ELEVATED = ("requireAdministrator", "highestAvailable")   # a manifest's levels 
 MAX_FILES, MAX_BYTES = 5000, 1 << 30   # a folder of what the launch loads, never a whole build tree
 MANIFEST_BYTES = 1 << 20
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
-# Where a path may start inside a setting: a file URI, a drive, or a UNC or device prefix. The rest of the setting
-# from there is a candidate, and so is that rest cut at the setting's delimiters, so a path is found whether a
-# space, a quote, a list separator or another flag follows it.
-STARTS = re.compile(r"(?i)file:|[a-z]:[\\/]|[\\/]{2}")
-URI_END = re.compile(r"[\s\"';,|]")
-CUTS = (re.compile(r"[\"';,|]"), URI_END)
-URL = re.compile(r"(?i)\b([a-z][a-z0-9+.-]+)://\S*")   # a URL of another scheme names something remote
-AFTER_ROOT = set("\\ \t\r\n\"';,|=")   # what may follow the worktree's own path in a candidate
-LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", os.environ.get("COMPUTERNAME", "").lower()} - {""}
+# A setting the look passes names the copy by a path relative to `run.cwd`, `{data}`, or a remote URL, and never
+# another place on this PC: a drive, a file URI, a path from a drive's root, a `..` step or a `%VAR%` the program
+# could expand. A path into the live worktree then has no spelling left to take, however Windows or a web view would
+# read it. A `//` or `\\` is a UNC or device path unless it is the `//` after a URL's scheme.
+OUTSIDE = re.compile(r"(?i)file:|(?<![a-z0-9])[a-z]:|(?:^|[\s\"';,|=])[\\/]"
+                     r"|(?:^|[\\/\s\"';,|=])\.\.(?:[\\/\s\"';,|]|$)|%[a-z_][a-z0-9_]*%")
+DOUBLE = re.compile(r"[\\/]{2}")
+SCHEME = re.compile(r"(?i)[a-z][a-z0-9+.-]+:$")
 
 
 def _relative(value, where: str) -> str:
@@ -60,74 +56,18 @@ def _relative(value, where: str) -> str:
     return value
 
 
-def _local(path: str) -> str:
-    """`path` as the local path it names: a device prefix dropped, and an admin share of this PC read as its drive."""
+def _reaches_out(setting: str) -> bool:
+    """Whether a setting may name a place on this PC other than the copy and `{data}` (`OUTSIDE`)."""
 
-    p = path.replace("/", "\\")
-    for prefix in ("\\\\?\\UNC\\", "\\\\.\\UNC\\"):
-        if p[:len(prefix)].upper() == prefix:
-            p = "\\\\" + p[len(prefix):]
-    for prefix in ("\\\\?\\", "\\\\.\\"):
-        if p.startswith(prefix):
-            p = p[len(prefix):]
-    if p.startswith("\\\\"):
-        host, _, rest = p[2:].partition("\\")
-        share, _, tail = rest.partition("\\")
-        if host.lower() in LOCAL_HOSTS and re.fullmatch(r"[A-Za-z]\$", share):
-            p = f"{share[0]}:\\{tail}"
-    return p
-
-
-def _paths(value: str) -> list[str]:
-    """Each path a setting may name, from every place one can start in it outside a URL of another scheme: from
-    a drive or a UNC start, the rest of the setting and that rest cut at each kind of delimiter; a file URI up to
-    its end, decoded. Each read as Windows would read it."""
-
-    remote = [m.span() for m in URL.finditer(value) if m.group(1).lower() != "file"]
-    found = []
-    for start in STARTS.finditer(value):
-        if any(a <= start.start() < b for a, b in remote):
-            continue
-        rest = value[start.start():]
-        if rest[:5].lower() == "file:":
-            uri = urllib.parse.urlsplit(URI_END.split(rest, 1)[0])
-            path = urllib.request.url2pathname(uri.path)
-            if uri.netloc and uri.netloc.lower() not in LOCAL_HOSTS:
-                path = "\\\\" + uri.netloc + path
-            found.append(_local(path))
-            continue
-        found += [_local(rest), *(_local(cut.split(rest, 1)[0]) for cut in CUTS)]
-    return found
-
-
-def _names_tree(tree: Path, value: str) -> bool:
-    """Whether a setting names a path in the live worktree as Windows reads it: by its normalized text, or, for a
-    path on a drive, by the file an existing ancestor of it is (a short name, a link, another drive's letter).
-    A share elsewhere is compared by its text alone, so checking a setting reaches no other machine."""
-
-    root = Path(os.path.realpath(tree))
-    key = ntpath.normcase(ntpath.normpath(str(root))).rstrip("\\")
-    for path in _paths(value):
-        normal = ntpath.normcase(ntpath.normpath(path))
-        if normal.startswith(key) and (len(normal) == len(key) or normal[len(key)] in AFTER_ROOT):
-            return True
-        drive = ntpath.splitdrive(normal)[0]
-        # Removable, fixed or RAM drives only: a mapped network drive is a share too.
-        if not drive.endswith(":") or ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") not in (2, 3, 6):
-            continue
-        for at in [Path(path), *Path(path).parents]:
-            try:
-                if os.path.samefile(at, root):
-                    return True
-            except (OSError, ValueError):
-                continue
-    return False
+    s = setting.replace(DATA, "data")
+    return bool(OUTSIDE.search(s)) or any(m.group() != "//" or not SCHEME.search(s[:m.start()])
+                                          for m in DOUBLE.finditer(s))
 
 
 def declared(tree: Path, final: str) -> dict:
     """The build turn's `oneshot-desktop` block, checked for shape: `run`'s build folder, its program inside it,
     the arguments, the working directory inside that folder, the environment, with `{data}` named at least once
-    and nothing naming the live worktree; and the installer S8 attaches. Whether the files exist is `built`'s,
+    and no setting that could name a place outside the copy (`OUTSIDE`); and the installer S8 attaches. Whether the files exist is `built`'s,
     after the gate."""
 
     value = oneshot.block(final, BLOCK)
@@ -149,8 +89,10 @@ def declared(tree: Path, final: str) -> dict:
     settings = [*out["args"], *out["env"].values()]
     if not any(DATA in s for s in settings):
         raise ValueError(f"`{BLOCK}` 의 run 은 앱의 데이터를 `{DATA}` 에 두는 인자나 환경 변수를 하나 이상 적는다")
-    if any(_names_tree(tree, s) for s in settings):
-        raise ValueError(f"`{BLOCK}` 의 run 설정이 작업트리를 가리킨다 — 실행은 얼린 사본과 `{DATA}` 만 읽는다")
+    if outside := [s for s in settings if _reaches_out(s)]:
+        raise ValueError(f"`{BLOCK}` 의 run 설정 `{outside[0]}` 은 사본 밖을 가리킬 수 있다 — 실행은 얼린 사본과 "
+                         f"`{DATA}` 만 읽는다. 드라이브·UNC·파일 URI·루트부터의 경로·`..`·`%변수%` 없이, run.cwd 기준 "
+                         f"상대 경로나 `{DATA}` 나 원격 URL 로 적는다")
     installer = _relative(value.get("installer"), "installer")
     if Path(installer).suffix.lower() not in INSTALLERS:
         raise ValueError(f"`{BLOCK}` 의 installer 는 S8 이 붙일 설치 파일(.exe, .msi, .msix)이다 — {installer}")
@@ -200,7 +142,8 @@ def _final(handle: int) -> str:
     n = k.GetFinalPathNameByHandleW(handle, buffer, len(buffer), 0)
     if not n or n >= len(buffer):
         raise OSError(ctypes.get_last_error(), "GetFinalPathNameByHandleW")
-    return _local(buffer.value)
+    path = buffer.value
+    return "\\\\" + path[8:] if path.startswith("\\\\?\\UNC\\") else path.removeprefix("\\\\?\\")
 
 
 def _folder(path: Path) -> str:
@@ -230,9 +173,12 @@ def _copied(tree: Path, label: str, app: Path) -> list[str]:
     source = tree / label
     # The folder's own path as Windows resolves its handle, the case of each name as stored: a file's resolved
     # path must sit under it exactly, so a case-sensitive folder's `DIST` is never taken for its `dist`.
+    # The worktree's resolved path, then `run.folder` exactly as declared: a folder whose stored name differs even
+    # in case is not the one declared, so no case-sensitive sibling can stand in for it.
     root = _folder(source)
-    if ntpath.normcase(root) != ntpath.normcase(os.path.join(os.path.realpath(tree), *label.split("/"))):
-        raise ValueError(f"`{label}` 가 작업트리 안의 그 폴더로 열리지 않는다 — `{root}`")
+    if root != os.path.join(os.path.realpath(tree), *label.split("/")):
+        raise ValueError(f"`{label}` 가 작업트리 안의 그 이름 그대로의 폴더로 열리지 않는다 — `{root}` (run.folder 는 "
+                         "디스크에 있는 대소문자 그대로 적는다)")
     inside = root.rstrip("\\") + "\\"
     names, size, folders = [], 0, [(source, app)]
     app.mkdir(parents=True)
