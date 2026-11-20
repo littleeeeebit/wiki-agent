@@ -260,6 +260,8 @@ export function useWork() {
   // A full log read in flight for a path: a deferred refresh it already satisfies does not start another.
   // Held by request number, so a log asked before a deferral cannot settle it.
   const inflight = useRef(new Map<string, number>())
+  // Each followed entry's server turn, set when its first event names it.
+  const turnOf = useRef(new Map<number, string>())
   // A key the mirror does not show yet (a send just added, before its render) counts as live.
   const sendingNow = (path: string) => [...(sending.current.get(path) ?? [])].some((key) => {
     const t = (seen.current[path] ?? []).find((x) => x.key === key)
@@ -440,7 +442,10 @@ export function useWork() {
         turn ||= ev.turn
         if (ev.turn !== turn) return
         own.current.add(turn)
-        if (first) settle(path, key, turn)
+        if (first) {
+          turnOf.current.set(key, turn)   // read synchronously by `load`, ahead of the render that shows it
+          settle(path, key, turn)
+        }
       }
       if (ev.seq !== undefined) {
         if (ev.seq <= last) return
@@ -497,21 +502,23 @@ export function useWork() {
         if ((lives.current.get(path) ?? 0) !== life) return true
         // Read after a deferral, and free to attach (no local send holds the path): this record accounts for its
         // notice. Under a live send the notice stays owed to that send's end.
-        // A send whose reply the record already holds has ended, and the merge below replaces its entry: it no
-        // longer holds the path (its key, gone from the transcript, would otherwise count as just added).
-        const kept = new Set(rows.map((r) => r.turn && `${r.role}:${r.turn}`).filter(Boolean))
-        const held = sending.current.get(path)
-        for (const t of seen.current[path] ?? []) {
-          const done = t.role === 'assistant' && (t.turn ?? t.record)
-          if (done && kept.has(`assistant:${done}`)) held?.delete(t.key)
-        }
-        if (held && !held.size) sending.current.delete(path)
-        if ((missed.current.get(path) ?? Infinity) < latest.n && !sendingNow(path)) missed.current.delete(path)
         // Older than a recheck already applied: its transcript still predates this window's sends, so it merges as
         // ever, but the running turn to attach is the newest read's — the snapshot's may have ended or changed.
         const fresh = latest()
         if (fresh) runs.current.set(path, running ?? null)
         const now = fresh ? running : runs.current.get(path) ?? null
+        // A send whose reply the record already holds has ended, and the merge below replaces its entry: it no
+        // longer holds the path (its key, gone from the transcript, would otherwise count as just added). Its turn
+        // comes from the event that named it, not the render. Still named running, the run is finishing: its own
+        // stream keeps it.
+        const kept = new Set(rows.map((r) => r.turn && `${r.role}:${r.turn}`).filter(Boolean))
+        const held = sending.current.get(path)
+        for (const key of [...(held ?? [])]) {
+          const done = turnOf.current.get(key)
+          if (done && done !== now?.turn && kept.has(`assistant:${done}`)) held?.delete(key)
+        }
+        if (held && !held.size) sending.current.delete(path)
+        if ((missed.current.get(path) ?? Infinity) < latest.n && !sendingNow(path)) missed.current.delete(path)
         const past: Turn[] = rows.map(fromRow)
         if (fresh) showQueued(path, waiting)
         if (fresh) named(path, running)
@@ -596,6 +603,7 @@ export function useWork() {
       // belongs to whatever has followed since, and this late end (a 410 among them) reloads nothing over it.
       const stale = !left?.has(mine.key)
       left?.delete(mine.key)
+      turnOf.current.delete(mine.key)
       if (!left?.size) sending.current.delete(path)
       // A full log asked after the deferral reads the record anyway: it settles the refresh (on success, in `load`)
       // without a second read that would supersede it. An older one, or a 410 now, still reloads.
