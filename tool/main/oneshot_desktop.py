@@ -35,14 +35,18 @@ ELEVATED = ("requireAdministrator", "highestAvailable")   # a manifest's levels 
 MAX_FILES, MAX_BYTES = 5000, 1 << 30   # a folder of what the launch loads, never a whole build tree
 MANIFEST_BYTES = 1 << 20
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
-# A setting the look passes names the copy by a path relative to `run.cwd`, `{data}`, or a remote URL, and never
-# another place on this PC: a drive, a file URI, a path from a drive's root, a `..` step or a `%VAR%` the program
-# could expand. A path into the live worktree then has no spelling left to take, however Windows or a web view would
-# read it. A `//` or `\\` is a UNC or device path unless it is the `//` after a URL's scheme.
-OUTSIDE = re.compile(r"(?i)file:|(?<![a-z0-9])[a-z]:|(?:^|[\s\"';,|=])[\\/]"
-                     r"|(?:^|[\\/\s\"';,|=])\.\.(?:[\\/\s\"';,|]|$)|%[a-z_][a-z0-9_]*%")
-DOUBLE = re.compile(r"[\\/]{2}")
-SCHEME = re.compile(r"(?i)[a-z][a-z0-9+.-]+:$")
+# A setting the look passes is one of two things, so a path to another place on this PC has no spelling left to
+# take, however Windows, a C runtime, a web view or the app's own expansion would read it:
+# - a whole remote URL, an optional `name=` before it, in printable ASCII but `,` and `;`, so no list hides a
+#   second field after it;
+# - a value of letters, digits, spaces and `_-.,;=:+/@#` alone (no `%`, `\`, `$`, `~`, quote, brace or control
+#   character: nothing expands, escapes, decodes or ends a string), naming the copy by a path relative to
+#   `run.cwd`, or `{data}`: no file URI, no drive, no path from a root, no `//`, no `..` step and no Windows device
+#   name.
+REMOTE = re.compile(r"(?i)(?:[a-z0-9_.-]+=)?(?:https?|wss?)://[!-+\--:<-~]+")
+PLAIN = set(" _-.,;=:+/@#")
+OUTSIDE = re.compile(r"(?i)file:|(?<![a-z0-9])[a-z]:|(?:^|[\s;,=:])/|//|(?:^|[/\s;,=:])\.\.(?:[/\s;,=:]|$)")
+PARTS = re.compile(r"[/\s;,=:]+")
 
 
 def _relative(value, where: str) -> str:
@@ -59,9 +63,11 @@ def _relative(value, where: str) -> str:
 def _reaches_out(setting: str) -> bool:
     """Whether a setting may name a place on this PC other than the copy and `{data}` (`OUTSIDE`)."""
 
+    if REMOTE.fullmatch(setting):
+        return False
     s = setting.replace(DATA, "data")
-    return bool(OUTSIDE.search(s)) or any(m.group() != "//" or not SCHEME.search(s[:m.start()])
-                                          for m in DOUBLE.finditer(s))
+    return not all(c.isalnum() or c in PLAIN for c in s) or bool(OUTSIDE.search(s)) \
+        or any(part.split(".")[0].upper() in DEVICE_NAMES for part in PARTS.split(s))
 
 
 def declared(tree: Path, final: str) -> dict:
@@ -142,7 +148,12 @@ def _final(handle: int) -> str:
     n = k.GetFinalPathNameByHandleW(handle, buffer, len(buffer), 0)
     if not n or n >= len(buffer):
         raise OSError(ctypes.get_last_error(), "GetFinalPathNameByHandleW")
-    path = buffer.value
+    return _plain(buffer.value)
+
+
+def _plain(path: str) -> str:
+    """`path` without Windows' extended-length prefix, `\\\\?\\UNC\\` read back as `\\\\`."""
+
     return "\\\\" + path[8:] if path.startswith("\\\\?\\UNC\\") else path.removeprefix("\\\\?\\")
 
 
@@ -176,7 +187,7 @@ def _copied(tree: Path, label: str, app: Path) -> list[str]:
     # The worktree's resolved path, then `run.folder` exactly as declared: a folder whose stored name differs even
     # in case is not the one declared, so no case-sensitive sibling can stand in for it.
     root = _folder(source)
-    if root != os.path.join(os.path.realpath(tree), *label.split("/")):
+    if root != _plain(os.path.join(os.path.realpath(tree), *label.split("/"))):
         raise ValueError(f"`{label}` 가 작업트리 안의 그 이름 그대로의 폴더로 열리지 않는다 — `{root}` (run.folder 는 "
                          "디스크에 있는 대소문자 그대로 적는다)")
     inside = root.rstrip("\\") + "\\"

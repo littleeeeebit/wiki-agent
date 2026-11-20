@@ -133,7 +133,10 @@ def test_a_second_build_replaces_the_frozen_one(pc_build):
         "--flags --root <tree>/web", "--root=\\\\localhost\\<DRIVE>$\\<REST>", "--root=\"<tree>\" --verbose",
         "--root <tree> --verbose", "--page=file:<tree>", "--sources=https://cdn.example/a.js;<tree>",
         "--home=\\\\fileserver\\share", "--home=//fileserver/share", "--root=/Users/someone/tree",
-        "--root=web/../../..", "{data}/../escape", "--root=%USERPROFILE%\\tree", "--root=C:relative"]],
+        "--root=web/../../..", "{data}/../escape", "--root=%USERPROFILE%\\tree", "--root=C:relative",
+        "--root=%ProgramFiles(x86)%", "--page=res/%2e%2e/%2e%2e/escape", "--first\u0000second", "NUL",
+        "--out=nul.txt", "--assets=res\\strings.txt", "$HOME/x", "~/x", "--title=\"quoted\"", "{other}/x",
+        "--page=file:x", "--sources=https://cdn.example/a.js;C:/elsewhere"]],
     ({"env": {"APP_DATA": "{data}", "ASSETS": "<tree>/web"}}, "사본 밖을 가리킬 수 있다"),
     ({"env": {"APP_DATA": "{data}", "PATHS": "<tree>;C:/Windows"}}, "사본 밖을 가리킬 수 있다"),
     ({"program": "NUL.exe"}, "장치 이름"),
@@ -215,8 +218,9 @@ def test_a_folder_turned_into_a_junction_after_its_check_is_never_read(pc_build,
 
 @pytest.mark.parametrize("setting", [
     "--cdn=https://cdn.example/web/app.js", "--socket=ws://127.0.0.1:5173/live", "--assets=res/strings.txt",
-    "--assets=res\\strings.txt", "--cache={data}/cache", "--size=1280x800", "--langs=ko,en;fallback=en",
-    "--name=file-viewer", "--title=Translator: on"])
+    "--cache={data}/cache", "--size=1280x800", "--langs=ko,en;fallback=en", "--name=file-viewer",
+    "--title=Translator: on", "--title=번역 켜기", "https://x.example/?return=/home",
+    "https://x.example/search?q=%ED%95%9C"])
 def test_a_setting_naming_the_copy_data_or_a_remote_url_is_kept(pc_build, setting):
     run = {**BLOCK["run"], "args": ["--data", "{data}", setting]}
     assert pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "run": run}))["run"]["args"][-1] == setting
@@ -256,6 +260,12 @@ def test_an_unreadable_snapshot_is_kept_and_one_shown_gone_or_malformed_is_built
     oneshot_spec.recover()
     monkeypatch.undo()
     assert bool(o()["desktop_build"]) is kept and oneshot_profile.held(o()) is kept
+
+
+def test_a_worktree_named_by_its_extended_length_path_is_copied(pc_build, tmp_path):
+    subprocess.run([sys.executable, "make_pc.py"], cwd=pc_build, check=True)
+    tree = Path("\\\\?\\" + str(pc_build))
+    assert pc.frozen(tree, pc.declared(tree, fenced(pc.BLOCK, BLOCK)), tmp_path / "into")["files"] == 2
 
 
 def test_a_build_folder_stored_under_another_case_is_never_copied(pc_build, tmp_path, monkeypatch):

@@ -80,11 +80,15 @@ End the turn with exactly one fenced block whose info string is
   `run.args` and `run.env` are its arguments and the environment it adds.
 - `{data}` is the data folder the look gives each start. At least one
   argument or variable names it.
-- An argument or variable names only the copy, by a path relative to
-  `run.cwd`, `{data}`, or a remote URL such as `https://` or `ws://`. It holds
-  no drive (`C:`), UNC or device path (`\\`), file URI, path from a drive's
-  root (`/Users/...`), `..` step, or `%VAR%`; the server refuses one that
-  does, before the gate runs.
+- Each argument or variable is one of two things, and the server refuses any
+  other before the gate runs:
+  - a whole remote URL (`http`, `https`, `ws`, `wss`), with an optional
+    `name=` before it and no `,` or `;` in it;
+  - a value made only of letters, digits, spaces and `_-.,;=:+/@#`, naming
+    the copy by a path relative to `run.cwd` written with `/`, or `{data}`.
+    It holds no drive (`C:`), file URI, path from a root (`/Users/...`),
+    `//`, `..` step, or Windows device name such as `NUL`. With no `%`, `\`,
+    `$`, `~`, quote or brace, nothing in it expands, escapes or decodes.
 - `installer` is the file a release build packages for S8 to attach. The
   final gate builds it, not this turn's `gate_cmd`; this turn only names it,
   and it is never the program `run` starts.
