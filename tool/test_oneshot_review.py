@@ -428,6 +428,18 @@ def test_a_requirement_reached_through_another_is_one_a_p1_may_name():
     assert oneshot_review.anchors(spec) == {"M1", "R1", "R2", "R3"}   # R9: nothing of the design reaches it
 
 
+@pytest.mark.parametrize("kinds, cap", [(["android"], True), (["web", "desktop"], True), (["web"], False)])
+def test_a_device_kind_anchors_an_unapproved_permission_at_its_capability_list(kinds, cap):
+    spec = {"oneshot": {"intent": {"kinds": kinds}, "design": {"modules": []}}, "requirements": []}
+    assert ("CAP" in oneshot_review.anchors(spec)) is cap   # an empty capability list is still citable
+
+
+def test_a_changed_lines_diff_that_times_out_reads_the_whole_patch(tmp_path):
+    def slow(*a, **k):
+        raise subprocess.TimeoutExpired(["git", "diff"], 120)
+
+    with patch.object(specs, "sh", slow):
+        assert oneshot_review.changed_lines(tmp_path, "a", "b") is None
 
 
 def test_a_line_count_git_cannot_make_is_left_unknown(reviewed):

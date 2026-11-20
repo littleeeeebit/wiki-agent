@@ -387,7 +387,7 @@ any turn (`work.dispatch`); after a refusal it waits behind the build turn:
 
    | Rule | Applies | Holds |
    | --- | --- | --- |
-   | `breaks` names the design items or requirements a finding breaks | every P1; a P0 may | ids of the design's items and the requirements they reach, through requirements' own `depends_on` (`anchors`); a P1 that breaks none is P2 |
+   | `breaks` names the design items or requirements a finding breaks | every P1; a P0 may | ids of the design's items and the requirements they reach, through requirements' own `depends_on` (`anchors`), and for an Android or Windows run `CAP`, the approved capability list a permission no capability names breaks; a P1 that breaks none is P2 |
    | `repro` gives the ordinary inputs, in order, and the wrong result | P0 and P1 in an area refused in two rounds or more | the bar rises where repairs keep meeting new cases |
    | a P1 in an area no earlier refusal names points at a line changed since the last review, or carries `breaks` and a `repro` that shows it on this HEAD | rounds after two refusals whose later one had no fewer blocking findings (`narrowing`) | Git's `-U0` diff since the last reviewed HEAD; a P0 is never held back |
 
