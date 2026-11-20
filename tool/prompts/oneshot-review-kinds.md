@@ -27,13 +27,25 @@ diff from the base commit to the HEAD under review.
 - Data loss or corruption, a crash on ordinary input, work that can freeze an
   app, secrets in the repository, or a call that leaves the app with what the
   design does not send.
-- A platform permission no capability requirement names, or a capability the
+- A platform permission no capability requirement names (its `breaks` names
+  `CAP`, the approved capability list), or a capability the
   code uses without asking for it.
 - A contract test made weaker by something outside its file (a fake, a
   configuration, a mock that hides the behaviour).
 
 Grade each finding: P0 is a crash, corruption or lost flow; P1 changes the
 requested behaviour; P2 is a nonblocking suggestion. Style alone is P2.
+
+A finding blocks only when the person would meet it. P0 and P1 are for what
+an ordinary input, or a sequence of ordinary actions the design's flows
+allow, does wrong. A case that needs unusual timing, a resource running out,
+or a failure the design names no handling for is P2, unless it loses or
+corrupts the person's data; a missing handling the design does name stays
+P0 or P1. A P1 changes requested behaviour, so it names that request: its
+`breaks` lists the ids of the design items or requirements it breaks
+(`["R8", "M1"]`), from the list the input gives. A finding that breaks none of
+them is P2. A P0 may carry `breaks` too. A credential, key or token
+committed to the repository is P0, whatever the design says.
 
 ## What only a device can show
 

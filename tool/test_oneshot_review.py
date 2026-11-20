@@ -47,7 +47,7 @@ def verdict(head, kind="approve", *findings):
 
 
 P1 = {"location": "budget_app.py:2", "severity": "P1", "reason": "음수 금액을 받는다", "evidence": "add(-1) 이 -1",
-      "area": "amount validation"}
+      "area": "amount validation", "breaks": ["R1"], "repro": "add(-1) 을 부르면 -1 이 합계에 들어간다"}
 P2 = {"location": "budget_app.py:1", "severity": "P2", "reason": "이름이 짧다", "evidence": "1행"}
 
 
@@ -308,3 +308,155 @@ def test_the_review_role_reads_the_review_loops_model():
          patch.object(loop, "settings", lambda: {"review_effort": "high"}):
         assert oneshot.role_config("review") == {"model": "codex:gpt-6.1-sol", "effort": "high"}
         assert oneshot.codex_role("review") is True
+
+
+def test_a_p1_names_what_it_breaks_and_a_p0_may_stand_without(reviewed):
+    _, head, _ = reviewed
+    rules = {"anchors": {"R1", "E1"}}
+    bare = {k: v for k, v in P1.items() if k not in ("breaks", "repro")}
+    with pytest.raises(ValueError, match="breaks"):   # breaking no approved request: a P2
+        oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [bare]}, head, rules=rules)
+    with pytest.raises(ValueError, match="R9"):   # an id the design does not hold
+        oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [{**bare, "breaks": ["R9"]}]}, head,
+                                  rules=rules)
+    crash = {**bare, "severity": "P0"}
+    assert oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [crash]}, head, rules=rules)[
+        "findings"] == [crash]
+
+
+def test_an_area_refused_twice_needs_a_repro_for_its_next_finding(reviewed):
+    _, head, _ = reviewed
+    rules = {"anchors": {"R1"}, "repeated": {"amount validation"}}
+    plain = {k: v for k, v in P1.items() if k != "repro"}
+    for f in (plain, {**plain, "severity": "P0"}):   # the bar rises for a P0 too
+        with pytest.raises(ValueError, match="repro"):
+            oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [f]}, head, rules=rules)
+    assert oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [P1]}, head, rules=rules)
+
+
+def test_while_repairs_do_not_converge_a_new_areas_p1_points_at_a_changed_line(reviewed):
+    _, head, _ = reviewed
+    rules = {"anchors": {"R1"}, "known": {"amount validation"}, "changed": {"budget_app.py": [(5, 9)]}, "since": "a" * 40}
+    new = {**P1, "area": "total sum"}
+
+    def judged(*findings):
+        return oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": list(findings)}, head, rules=rules)
+
+    bare = {k: v for k, v in new.items() if k != "repro"}
+    with pytest.raises(ValueError, match="바뀐 줄"):
+        judged(bare)   # line 2, read last round and unchanged since, and nothing shows it on this HEAD
+    assert judged(new)   # anchored and reproduced on this HEAD: a contract break is never held back
+    assert judged({**bare, "location": "`budget_app.py:7`"})   # on a changed line
+    assert judged({**new, "severity": "P0"})   # a P0 is never held back
+    assert judged(P1)   # an earlier area is checked wherever the fix moved it
+
+
+def test_a_round_after_two_that_did_not_converge_reads_the_changed_lines_and_records_it(reviewed):
+    tree, head, sent = reviewed
+    other = {**P1, "location": "budget_app.py:1", "area": "total sum"}
+    oneshot_spec.saved("budget", oneshot={"reviews": [{"verdict": "refuse", "head": head, "findings": [P1]},
+                                                      {"verdict": "refuse", "head": head, "findings": [P1, other]}]})
+    (tree / "budget_app.py").write_text("def add(amount):\n    if amount < 0:\n        raise ValueError\n"
+                                        "    return amount\n", encoding="utf-8")
+    git(tree, "commit", "-am", "fix")
+    later = git(tree, "rev-parse", "HEAD")
+    oneshot_spec.saved("budget", oneshot={"built_head": later})
+    said, asking = answers(verdict(later, "refuse", {**P1, "location": "budget_app.py:3"}))
+    with asking, patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
+        oneshot_review.review("budget")
+    text = said[0][1]
+    assert "not converging" in text and f"since `{head}`" in text and "budget_app.py: 2-3" in text
+    assert "two rounds or more: `amount validation`." in text and "carries `repro`" in text   # `total sum` once
+    assert "may name: A1, E1, F1, P1, P2, R1, R2, T1, T2." in text
+    last = o()["reviews"][-1]
+    assert last["focus"] == "narrow" and last["added"] == 4 and last["findings"][0]["breaks"] == ["R1"]
+
+
+def test_a_round_that_converges_reads_the_whole_build_as_before(reviewed):
+    tree, head, _ = reviewed
+    oneshot_spec.saved("budget", oneshot={"reviews": [{"verdict": "refuse", "head": head, "findings": [P1, P1]},
+                                                      {"verdict": "refuse", "head": head, "findings": [P1]}]})
+    said, asking = answers(verdict(head, "refuse", P1))
+    with asking, patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
+        oneshot_review.review("budget")
+    assert "not converging" not in said[0][1] and o()["reviews"][-1]["focus"] == "full"
+
+
+def test_a_repro_is_a_sentence_never_an_empty_shape(reviewed):
+    _, head, _ = reviewed
+    for repro in ({"notes": ""}, "  ", ["a"]):
+        with pytest.raises(ValueError, match="repro"):
+            oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [{**P1, "repro": repro}]}, head,
+                                      rules={"anchors": {"R1"}})
+
+
+def test_the_changed_lines_read_every_path_git_writes_and_every_kind_of_hunk(world):  # noqa: F811
+    for name in ("a b.py", "한글.py", "plain.py"):
+        (world / name).write_text("one\ntwo\nthree\n", encoding="utf-8")
+    git(world, "add", "-A")
+    git(world, "commit", "-m", "base")
+    since = git(world, "rev-parse", "HEAD")
+    (world / "a b.py").write_text("one\nTWO\nthree\n", encoding="utf-8")
+    (world / "한글.py").write_text("one\ntwo\nthree\n++counter;\n", encoding="utf-8")
+    (world / "plain.py").write_text("two\nthree\n", encoding="utf-8")   # its first line deleted
+    git(world, "commit", "-am", "repair")
+    changed = oneshot_review.changed_lines(world, since, git(world, "rev-parse", "HEAD"))
+    assert changed["a b.py"] == [(2, 2)] and changed["한글.py"] == [(4, 4)] and changed["plain.py"] == [(1, 1)]
+    assert oneshot_review.touched("a b.py:2", changed) and oneshot_review.touched("`plain.py:1`", changed)
+    assert not oneshot_review.touched("plain.py:2", changed)
+    assert oneshot_review.touched("./a b.py:2", changed) and oneshot_review.canonical(r"a\b/../c.py") == "a/c.py"
+
+
+def test_the_added_lines_count_a_line_that_starts_with_two_plus_signs(reviewed):
+    tree, _, _ = reviewed
+    (tree / "count.js").write_text("++counter;\n", encoding="utf-8")
+    git(tree, "add", "count.js")
+    git(tree, "commit", "-m", "count")
+    oneshot_spec.saved("budget", oneshot={"built_head": git(tree, "rev-parse", "HEAD")})
+    assert oneshot_review.frozen(specs.load("budget", oneshot.BRANCH))[2] == 3   # budget_app.py's two lines and this
+
+
+def test_a_quoted_path_keeps_its_escapes_and_its_literal_hangul():
+    assert oneshot_review.unquoted(r"a\t한글.py") == "a\t한글.py"
+    assert oneshot_review.unquoted(r"\355\225\234.py") == "한.py" and oneshot_review.unquoted(r'q\"\\.py') == 'q"\\.py'
+
+
+def test_a_requirement_reached_through_another_is_one_a_p1_may_name():
+    spec = {"oneshot": {"design": {"modules": [{"id": "M1", "depends_on": ["R1"]}]}},
+            "requirements": [{"id": "R1", "depends_on": ["R2"]}, {"id": "R2", "depends_on": ["R3"]}, {"id": "R3"},
+                             {"id": "R9"}]}
+    assert oneshot_review.anchors(spec) == {"M1", "R1", "R2", "R3"}   # R9: nothing of the design reaches it
+
+
+@pytest.mark.parametrize("kinds, cap", [(["android"], True), (["web", "desktop"], True), (["web"], False)])
+def test_a_device_kind_anchors_an_unapproved_permission_at_its_capability_list(kinds, cap):
+    spec = {"oneshot": {"intent": {"kinds": kinds}, "design": {"modules": []}}, "requirements": []}
+    assert ("CAP" in oneshot_review.anchors(spec)) is cap   # an empty capability list is still citable
+
+
+def test_a_changed_lines_diff_that_times_out_reads_the_whole_patch(tmp_path):
+    def slow(*a, **k):
+        raise subprocess.TimeoutExpired(["git", "diff"], 120)
+
+    with patch.object(specs, "sh", slow):
+        assert oneshot_review.changed_lines(tmp_path, "a", "b") is None
+
+
+def test_a_line_count_git_cannot_make_is_left_unknown(reviewed):
+    _, head, _ = reviewed
+    real = specs.sh
+
+    for failed in (SimpleNamespace(returncode=1, stdout="", stderr="no"), subprocess.TimeoutExpired(["git"], 120)):
+        def numstat(argv, *a, failed=failed, **k):
+            if "--numstat" not in argv:
+                return real(argv, *a, **k)
+            if isinstance(failed, Exception):
+                raise failed
+            return failed
+
+        oneshot_spec.saved("budget", oneshot={"stage": "review", "working": "review", "stopped": None})
+        _, asking = answers(verdict(head, "refuse", P1))
+        with asking, patch.object(specs, "sh", numstat), \
+             patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
+            oneshot_review.review("budget")
+        assert "added" not in o()["reviews"][-1] and o()["stage"] == "build"   # read, refused, never stopped

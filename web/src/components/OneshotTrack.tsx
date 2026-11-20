@@ -194,17 +194,43 @@ const tally = (list: { severity: string }[]) =>
   Object.entries(list.reduce<Record<string, number>>((n, f) => ({ ...n, [f.severity]: (n[f.severity] ?? 0) + 1 }), {}))
     .map(([s, n]) => `${s} ${n}`).join(' · ')
 
-/** Every review, the latest first and open: its verdict, the HEAD it read and each finding. */
+const blocking = (r: Review) => r.findings.filter(f => f.severity !== 'P2' && !f.device)
+const area = (f: { area?: string }) => (f.area ?? '').split(/\s+/).filter(Boolean).join(' ').toLowerCase()
+
+/** Per round, in order: the blocking findings, the areas no earlier round named, and the diff's size. A count
+ * that does not fall while the diff grows is the loop failing to converge. */
+function trend(reviews: Review[]) {
+  const seen = new Set<string>()
+  return reviews.map(r => {
+    const areas = new Set(blocking(r).map(area).filter(Boolean))
+    const fresh = [...areas].filter(a => !seen.has(a)).length
+    areas.forEach(a => seen.add(a))
+    return { blocking: blocking(r).length, fresh, added: r.added, narrow: r.focus === 'narrow' }
+  })
+}
+
+/** Every review, the latest first and open: its verdict, the HEAD it read and each finding, under the trend. */
 function Reviews({ reviews }: { reviews: Review[] }) {
+  const rounds = trend(reviews)
   return (
     <section aria-label="백엔드 리뷰" className="flex flex-col gap-2">
       <Title><span>백엔드 리뷰</span><span className="font-mono">{reviews.length}회</span></Title>
+      {reviews.length > 1 && (
+        <p aria-label="리뷰 추이" className="text-[12px] text-faint">
+          막는 발견 <span className="font-mono">{rounds.map(t => t.blocking).join(' → ')}</span>
+          {' '}· 새 영역 <span className="font-mono">{rounds.map(t => t.fresh).join(' → ')}</span>
+          {rounds.some(t => t.added !== undefined) && <>
+            {' '}· 추가 줄 <span className="font-mono">{rounds.map(t => t.added ?? '?').join(' → ')}</span></>}
+        </p>
+      )}
       {[...reviews].reverse().map((r, i) => (
         <details key={reviews.length - i} open={i === 0} className="rounded-md border border-border bg-background px-3 py-2">
           <summary className="cursor-pointer">
             <span className="font-medium">{reviews.length - i}회차</span>{' '}
             <span className={r.verdict === 'approve' ? 'text-muted-foreground' : 'text-destructive'}>{r.verdict === 'approve' ? '승인' : '거절'}</span>
-            <span className="text-[12px] text-faint"> · <code>{r.head.slice(0, 8)}</code>{r.findings.length > 0 && ` · ${tally(r.findings)}`}</span>
+            <span className="text-[12px] text-faint"> · <code>{r.head.slice(0, 8)}</code>{r.findings.length > 0 && ` · ${tally(r.findings)}`}
+              {rounds[reviews.length - 1 - i].fresh > 0 && ` · 새 영역 ${rounds[reviews.length - 1 - i].fresh}`}
+              {r.focus === 'narrow' && ' · 바뀐 줄 위주로 읽음'}</span>
           </summary>
           <ul className="mt-2 flex flex-col gap-2">
             {r.findings.map((f, j) => (
