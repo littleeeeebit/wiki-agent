@@ -10,6 +10,7 @@ refusal that reaches it stops the run with `review`. Nothing here pushes.
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -60,8 +61,9 @@ def begin(repo: str) -> None:
         oneshot_spec.store(repo).stop("restart", "서버가 꺼지는 중이라 백엔드 리뷰를 시작하지 못했다")
 
 
-def frozen(spec: dict) -> tuple[str, str]:
-    """`(head, how to read the diff)`, the diff from the base commit written for `pr_diff` and kept as the record."""
+def frozen(spec: dict) -> tuple[str, str, int]:
+    """`(head, how to read the diff, lines it adds)`, the diff from the base commit written for `pr_diff` and kept
+    as the record."""
 
     tree, store = Path(spec["worktree"]), oneshot_spec.store(spec["repo"])
     head = specs.sh(["git", "rev-parse", "HEAD"], tree).stdout.strip()
@@ -73,10 +75,10 @@ def frozen(spec: dict) -> tuple[str, str]:
     read_tools.save_diff(tree, done.stdout)
     how = ("read it with the `pr_diff` tool" if oneshot.codex_role("review", store) else
            f"read it from `{read_tools.diff_file(tree).resolve()}`; a line starting with ~ continues the line before it")
-    return head, how
+    return head, how, sum(1 for line in done.stdout.splitlines() if line.startswith("+") and not line.startswith("+++"))
 
 
-def review_text(spec: dict, head: str, how: str) -> str:
+def review_text(spec: dict, head: str, how: str, rules: dict | None = None) -> str:
     o = spec["oneshot"]
     built = "core" if "modules" in o["design"] else "backend"
     return (f"Review HEAD `{head}` of this repository's {built} build.\n\nThe approved design:\n\n"
@@ -84,7 +86,81 @@ def review_text(spec: dict, head: str, how: str) -> str:
             f"{json.dumps(spec.get('requirements') or [], ensure_ascii=False)}\n\nThe environment profile and the stack:\n\n"
             f"{environment(o)}\n\nThe pinned contract tests, unchanged since "
             f"`{o['tests_head']}`: {', '.join(o['contract'])}.\n\nThe whole diff from the base commit "
-            f"`{spec['start_head']}` to HEAD: {how}.\n" + earlier_text(o.get("reviews") or []))
+            f"`{spec['start_head']}` to HEAD: {how}.\n" + earlier_text(o.get("reviews") or []) + rules_text(rules or {}))
+
+
+def anchors(spec: dict) -> set[str]:
+    """The ids a P1 may say it breaks: the design's items and the requirements they depend on. A requirement no
+    item depends on is not this build's to meet."""
+
+    items = [it for v in spec["oneshot"]["design"].values() if isinstance(v, list) for it in v if isinstance(it, dict)]
+    return {str(it["id"]) for it in items if it.get("id")} | \
+        {str(d) for it in items for d in it.get("depends_on") or [] if str(d).startswith("R")}
+
+
+def blocking(found: dict) -> list[dict]:
+    return [f for f in found["findings"] if f["severity"] != "P2" and "device" not in f]
+
+
+def narrowing(reviews: list[dict]) -> bool:
+    """The last two reviews refused, the later with no fewer blocking findings: the repairs are not converging,
+    so the next round reads what changed since rather than finding new cases in code it already read."""
+
+    last = reviews[-2:]
+    return len(last) == 2 and all(r["verdict"] == "refuse" for r in last) and len(blocking(last[1])) >= len(blocking(last[0]))
+
+
+def changed_lines(tree: Path, since: str, head: str) -> dict[str, list[tuple[int, int]]] | None:
+    """Each file's lines `since..head` changed, as inclusive ranges on HEAD's side; `None` when Git cannot say."""
+
+    done = specs.sh(["git", "diff", "--no-color", "-U0", since, head], tree, 120)
+    if done.returncode:
+        return None
+    ranges, path = {}, None
+    for line in done.stdout.splitlines():
+        if line.startswith("+++ "):
+            path = line[6:] if line.startswith("+++ b/") else None
+        elif path and (m := re.match(r"@@ -\S+ \+(\d+)(?:,(\d+))? @@", line)):
+            start, count = int(m[1]), int(m[2] or 1)
+            ranges.setdefault(path, []).append((start, start + max(count, 1) - 1))   # a deletion: the line after
+    return ranges
+
+
+def touched(location: str, changed: dict[str, list[tuple[int, int]]]) -> bool:
+    m = re.match(r"\s*`?([^:`\s]+):(\d+)", location)
+    return bool(m) and any(a <= int(m[2]) <= b for a, b in changed.get(m[1].replace("\\", "/"), []))
+
+
+def ruled(spec: dict, tree: Path, head: str) -> dict:
+    """What this round's verdict must meet, adapted to the rounds before it (`verdict_of`): the ids a P1 names,
+    the areas refused twice that now need `repro`, and, while the repairs do not converge, the lines changed
+    since the last review that a new area's P1 must point at. A P0 is never held back."""
+
+    reviews = spec["oneshot"].get("reviews") or []
+    rounds: dict[str, set[int]] = {}
+    for f in refusals(reviews):
+        rounds.setdefault(area_of(f), set()).add(f["round"])
+    rounds.pop("", None)
+    changed = changed_lines(tree, reviews[-1]["head"], head) if narrowing(reviews) else None
+    return {"anchors": anchors(spec), "known": set(rounds), "repeated": {a for a, n in rounds.items() if len(n) >= 2},
+            "changed": changed, "since": reviews[-1]["head"] if changed is not None else None}
+
+
+def rules_text(rules: dict) -> str:
+    said = ""
+    if rules.get("anchors"):
+        said += f"\nThe ids a P1's `breaks` may name: {', '.join(sorted(rules['anchors']))}.\n"
+    if rules.get("repeated"):
+        said += ("\nThese areas were refused in two rounds or more: " + ", ".join(f"`{a}`" for a in sorted(rules["repeated"]))
+                 + ". A P0 or P1 finding in one of them carries `repro`: the ordinary inputs or actions, in order, and "
+                 "the wrong result they give, so the builder can turn it into a failing test.\n")
+    if rules.get("changed") is not None:
+        spans = "; ".join(f"{p}: " + ", ".join(f"{a}-{b}" for a, b in r) for p, r in sorted(rules["changed"].items()))
+        said += (f"\nThe repairs are not converging: the last review found no fewer blocking findings than the one "
+                 f"before. This round reads what changed since `{rules['since']}` first. A P1 in an area no earlier "
+                 "refusal names must point at a line changed since then; one elsewhere is P2, unless it is a P0. "
+                 f"The changed lines: {spans or 'none'}.\n")
+    return said
 
 
 STUCK = 3   # refusals of one area after which the build replaces its mechanism instead of patching the next case
@@ -134,9 +210,10 @@ def deferred(f: dict, devices: dict[str, set[str]]) -> bool:
         and (d.get("source") in SOURCES[d["kind"]] if d["kind"] in SOURCES else "source" not in d)
 
 
-def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None) -> dict:
-    """An `oneshot-review` block, checked: a verdict on the HEAD read, findings that justify it. A P0 or P1
-    finding marked `device` waits for that kind's device (`devices`, from `deferrable`) and blocks nothing."""
+def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rules: dict | None = None) -> dict:
+    """An `oneshot-review` block, checked: a verdict on the HEAD read, findings that justify it, and `rules`
+    (`ruled`) met. A P0 or P1 finding marked `device` waits for that kind's device (`devices`, from
+    `deferrable`) and blocks nothing."""
 
     if not isinstance(value, dict) or value.get("verdict") not in ("approve", "refuse"):
         raise ValueError("`oneshot-review` 는 `verdict` 가 approve 나 refuse 인 객체다")
@@ -156,6 +233,8 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None) -> 
     serious = [f for f in findings if f["severity"] != "P2" and "device" not in f]
     if not all(area_of(f) for f in serious):
         raise ValueError("P0·P1 발견마다 그것이 걸린 동작 방식의 이름 `area` 를 적는다")
+    for f in serious if rules else ():
+        held(f, rules)
     if value["verdict"] == "approve" and serious:
         raise ValueError("P0·P1 발견이 있는데 승인했다")
     if value["verdict"] == "refuse" and not serious:
@@ -163,9 +242,27 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None) -> 
     return {"verdict": value["verdict"], "head": head,
             "findings": [{**{k: f[k] for k in ("location", "severity", "reason", "evidence")},
                           **({"area": " ".join(str(f["area"]).split())} if area_of(f) else {}),
+                          **({k: f[k] for k in ("breaks", "repro") if f.get(k)}),
                           **({"device": {k: f["device"][k] for k in ("kind", "requirement", "check", "source")
                                          if k in f["device"]}}
                              if "device" in f else {})} for f in findings]}
+
+
+def held(f: dict, rules: dict) -> None:
+    """`ValueError` when a blocking finding `f` does not meet this round's `rules`; the reviewer is asked again."""
+
+    allowed, breaks = rules.get("anchors") or set(), f.get("breaks")
+    if breaks is not None and not (isinstance(breaks, list) and all(isinstance(b, str) and b in allowed for b in breaks)):
+        raise ValueError(f"`breaks` 는 입력에 적힌 설계 항목·요구 번호의 목록이다 — 받은 값 {breaks}")
+    if allowed and f["severity"] == "P1" and not breaks:
+        raise ValueError("P1 발견마다 그것이 깨뜨리는 설계 항목·요구 번호를 `breaks` 에 적는다 — 아무것도 "
+                         "깨뜨리지 않으면 P2 다")
+    if area_of(f) in rules.get("repeated", ()) and not str(f.get("repro") or "").strip():
+        raise ValueError(f"두 회차 넘게 거부된 영역 `{f['area']}` 의 발견은 `repro` 에 평범한 입력과 순서, 그 결과를 적는다")
+    if rules.get("changed") is not None and f["severity"] == "P1" and area_of(f) not in rules.get("known", ()) \
+            and not touched(f["location"], rules["changed"]):
+        raise ValueError(f"수렴하지 않는 중이라, 처음 나온 영역의 P1 은 `{str(rules['since'])[:12]}` 뒤 바뀐 줄을 "
+                         f"가리켜야 한다 — {f['location']} 는 아니다. P0 이 아니면 P2 로 적는다")
 
 
 def owing(found: dict) -> list[dict]:
@@ -290,13 +387,15 @@ def verdict(store, spec: dict, tree: Path) -> dict | None:
     """The checked verdict on the frozen HEAD, or `None` after stopping."""
 
     try:
-        head, how = frozen(spec)
+        head, how, added = frozen(spec)
+        rules = ruled(spec, tree, head)
     except (ValueError, OSError, RuntimeError) as exc:
         store.stop("review", str(exc))
         return None
-    return oneshot.turned(store, "review", oneshot.prompt("review", shape(spec["oneshot"])), review_text(spec, head, how),
-                          "oneshot-review",
-                          lambda value: verdict_of(value, head, deferrable(spec)), tree)
+    found = oneshot.turned(store, "review", oneshot.prompt("review", shape(spec["oneshot"])),
+                           review_text(spec, head, how, rules), "oneshot-review",
+                           lambda value: verdict_of(value, head, deferrable(spec), rules), tree)
+    return None if found is None else {**found, "added": added, "focus": "narrow" if rules["changed"] is not None else "full"}
 
 
 def rebuild(repo: str, store, why: str, build: str = "build") -> None:

@@ -47,7 +47,7 @@ def verdict(head, kind="approve", *findings):
 
 
 P1 = {"location": "budget_app.py:2", "severity": "P1", "reason": "음수 금액을 받는다", "evidence": "add(-1) 이 -1",
-      "area": "amount validation"}
+      "area": "amount validation", "breaks": ["R1"], "repro": "add(-1) 을 부르면 -1 이 합계에 들어간다"}
 P2 = {"location": "budget_app.py:1", "severity": "P2", "reason": "이름이 짧다", "evidence": "1행"}
 
 
@@ -308,3 +308,73 @@ def test_the_review_role_reads_the_review_loops_model():
          patch.object(loop, "settings", lambda: {"review_effort": "high"}):
         assert oneshot.role_config("review") == {"model": "codex:gpt-6.1-sol", "effort": "high"}
         assert oneshot.codex_role("review") is True
+
+
+def test_a_p1_names_what_it_breaks_and_a_p0_may_stand_without(reviewed):
+    _, head, _ = reviewed
+    rules = {"anchors": {"R1", "E1"}}
+    bare = {k: v for k, v in P1.items() if k not in ("breaks", "repro")}
+    with pytest.raises(ValueError, match="breaks"):   # breaking no approved request: a P2
+        oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [bare]}, head, rules=rules)
+    with pytest.raises(ValueError, match="R9"):   # an id the design does not hold
+        oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [{**bare, "breaks": ["R9"]}]}, head,
+                                  rules=rules)
+    crash = {**bare, "severity": "P0"}
+    assert oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [crash]}, head, rules=rules)[
+        "findings"] == [crash]
+
+
+def test_an_area_refused_twice_needs_a_repro_for_its_next_finding(reviewed):
+    _, head, _ = reviewed
+    rules = {"anchors": {"R1"}, "repeated": {"amount validation"}}
+    plain = {k: v for k, v in P1.items() if k != "repro"}
+    for f in (plain, {**plain, "severity": "P0"}):   # the bar rises for a P0 too
+        with pytest.raises(ValueError, match="repro"):
+            oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [f]}, head, rules=rules)
+    assert oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [P1]}, head, rules=rules)
+
+
+def test_while_repairs_do_not_converge_a_new_areas_p1_points_at_a_changed_line(reviewed):
+    _, head, _ = reviewed
+    rules = {"anchors": {"R1"}, "known": {"amount validation"}, "changed": {"budget_app.py": [(5, 9)]}, "since": "a" * 40}
+    new = {**P1, "area": "total sum"}
+
+    def judged(*findings):
+        return oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": list(findings)}, head, rules=rules)
+
+    with pytest.raises(ValueError, match="바뀐 줄"):
+        judged(new)   # line 2, read last round and unchanged since
+    assert judged({**new, "location": "`budget_app.py:7`"})   # on a changed line
+    assert judged({**new, "severity": "P0"})   # a P0 is never held back
+    assert judged(P1)   # an earlier area is checked wherever the fix moved it
+
+
+def test_a_round_after_two_that_did_not_converge_reads_the_changed_lines_and_records_it(reviewed):
+    tree, head, sent = reviewed
+    other = {**P1, "location": "budget_app.py:1", "area": "total sum"}
+    oneshot_spec.saved("budget", oneshot={"reviews": [{"verdict": "refuse", "head": head, "findings": [P1]},
+                                                      {"verdict": "refuse", "head": head, "findings": [P1, other]}]})
+    (tree / "budget_app.py").write_text("def add(amount):\n    if amount < 0:\n        raise ValueError\n"
+                                        "    return amount\n", encoding="utf-8")
+    git(tree, "commit", "-am", "fix")
+    later = git(tree, "rev-parse", "HEAD")
+    oneshot_spec.saved("budget", oneshot={"built_head": later})
+    said, asking = answers(verdict(later, "refuse", {**P1, "location": "budget_app.py:3"}))
+    with asking, patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
+        oneshot_review.review("budget")
+    text = said[0][1]
+    assert "not converging" in text and f"since `{head}`" in text and "budget_app.py: 2-3" in text
+    assert "two rounds or more: `amount validation`." in text and "carries `repro`" in text   # `total sum` once
+    assert "may name: A1, E1, F1, P1, P2, R1, R2, T1, T2." in text
+    last = o()["reviews"][-1]
+    assert last["focus"] == "narrow" and last["added"] == 4 and last["findings"][0]["breaks"] == ["R1"]
+
+
+def test_a_round_that_converges_reads_the_whole_build_as_before(reviewed):
+    tree, head, _ = reviewed
+    oneshot_spec.saved("budget", oneshot={"reviews": [{"verdict": "refuse", "head": head, "findings": [P1, P1]},
+                                                      {"verdict": "refuse", "head": head, "findings": [P1]}]})
+    said, asking = answers(verdict(head, "refuse", P1))
+    with asking, patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
+        oneshot_review.review("budget")
+    assert "not converging" not in said[0][1] and o()["reviews"][-1]["focus"] == "full"

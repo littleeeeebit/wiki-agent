@@ -25,6 +25,16 @@ and where to read the diff from the base commit to the HEAD under review.
 Grade each finding: P0 is a crash, corruption or lost flow; P1 changes the
 requested behaviour; P2 is a nonblocking suggestion. Style alone is P2.
 
+A finding blocks only when the person would meet it. P0 and P1 are for what
+an ordinary input, or a sequence of ordinary actions the design's flows
+allow, does wrong. A case that needs unusual timing, a resource running out,
+or a failure the design names no handling for is P2, unless it loses or
+corrupts the person's data; a missing handling the design does name stays
+P0 or P1. A P1 changes requested behaviour, so it names that request: its
+`breaks` lists the ids of the design items or requirements it breaks
+(`["R8", "M1"]`), from the list the input gives. A finding that breaks none of
+them is P2. A P0 may carry `breaks` too.
+
 ## Earlier rounds
 
 Give every P0 or P1 finding an `area`: a few English words naming the
@@ -43,7 +53,7 @@ A short answer, then exactly one fenced block whose info string is
 `oneshot-review`, holding one JSON object:
 
 ```oneshot-review
-{"verdict": "refuse", "head": "<the HEAD you were given, in full>", "findings": [{"location": "app/main.py:42", "severity": "P2", "reason": "…", "evidence": "…"}, {"location": "app/main.py:57", "severity": "P1", "reason": "…", "evidence": "…", "area": "…"}]}
+{"verdict": "refuse", "head": "<the HEAD you were given, in full>", "findings": [{"location": "app/main.py:42", "severity": "P2", "reason": "…", "evidence": "…"}, {"location": "app/main.py:57", "severity": "P1", "reason": "…", "evidence": "…", "area": "…", "breaks": ["R2"]}]}
 ```
 
 `verdict` is `refuse` exactly when a P0 or P1 finding exists, and `approve`

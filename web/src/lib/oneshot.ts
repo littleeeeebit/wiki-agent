@@ -47,9 +47,11 @@ export type RunSummary = {
   apk?: { url?: string; name?: string; error?: string } | null
 }
 /** One backend review verdict on a HEAD (`oneshot_review.decided`). */
+/** One backend review; `added` is the reviewed diff's added lines, `focus` `narrow` when the round read what
+ * changed since the last one because the repairs did not converge (`oneshot_review.ruled`). */
 export type Review = {
-  verdict: 'approve' | 'refuse'; head: string; ts?: number
-  findings: { location: string; severity: string; reason: string; evidence?: string }[]
+  verdict: 'approve' | 'refuse'; head: string; ts?: number; added?: number; focus?: 'full' | 'narrow'
+  findings: { location: string; severity: string; reason: string; evidence?: string; area?: string; device?: unknown }[]
 }
 /** One look at the built screens (`oneshot_critique.judged`); `clean` has no high finding. */
 export type Critique = {

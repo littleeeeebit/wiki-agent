@@ -373,6 +373,26 @@ any turn (`work.dispatch`); after a refusal it waits behind the build turn:
    before areas is listed without one, and the reviewer gives it a new one;
    such records never count towards `STUCK`. The turn is metered as
    the role `review`.
+
+   A finding blocks only when the person would meet it: P0 and P1 are what an
+   ordinary input, or a sequence of ordinary actions the design's flows allow,
+   does wrong, and a case that needs unusual timing, a resource running out
+   or a failure the design names no handling for is P2 unless it loses or
+   corrupts data. The rules adapt to the rounds before, and the server
+   checks each blocking finding against them (`oneshot_review.ruled`,
+   `held`), asking again once like any other shape it refuses:
+
+   | Rule | Applies | Holds |
+   | --- | --- | --- |
+   | `breaks` names the design items or requirements a finding breaks | every P1; a P0 may | ids of the design's items and the requirements they depend on (`anchors`); a P1 that breaks none is P2 |
+   | `repro` gives the ordinary inputs, in order, and the wrong result | P0 and P1 in an area refused in two rounds or more | the bar rises where repairs keep meeting new cases |
+   | a P1 in an area no earlier refusal names points at a line changed since the last review | rounds after two refusals whose later one had no fewer blocking findings (`narrowing`) | Git's `-U0` diff since the last reviewed HEAD; a P0 is never held back |
+
+   The second rule and the third replace no stop: the loop keeps running and
+   only the next round's reading changes. Each verdict records the added
+   lines of the diff it read (`added`) and whether it read narrowly
+   (`focus`), and the card shows the blocking findings, the areas no earlier
+   round named and the added lines per round side by side.
 4. On a refusal, the P0 and P1 findings go to the work session as one build
    turn with fresh attempts, saved with `working: "build"` and the worktree
    released before that turn is sent; a resumed build sends the same
