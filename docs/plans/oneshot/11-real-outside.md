@@ -38,6 +38,8 @@ On 2026-11-20 they decided the four questions below.
 | When the owner cannot give it yet | The run waits at the sheet with the list shown; `[재개]` after it is given. No fake fills the gap |
 | Where real calls run | The owner's local gate only. Secrets live in Windows Credential Manager and reach only the gate's environment. CI skips those tests and says so |
 | How far fakes go | None at all. A check that needs a device or a screen is not a contract test; it waits for that kind's device stage |
+| Whether the build agent gets the secrets | Yes, in its own gate runs' environment; its prompt forbids printing them, and the server refuses a commit or a turn answer that contains a secret's value |
+| What real calls cost | The card shows, per run, how many times each outside call was made; no limit until the owner has seen the numbers |
 
 ## Design
 
@@ -94,14 +96,19 @@ outside its file (a fake, a configuration, a mock that hides the
 behaviour)". They gain a fake inside a test file too: a P1 whose `breaks`
 names the test.
 
-## Open questions
+### What the agent holds, and what it costs
 
-- The build agent runs the gate itself while it works. Giving it the secrets
-  lets it run the real tests; it also puts the values in its environment.
-  The proposal is to give them, forbid printing them in the prompt, and have
-  the server refuse a commit or a turn answer that contains one of the values.
-- Real calls cost money on every gate run. A per-run count of calls to each
-  outside target, shown on the card, is proposed before any limit.
+The build agent runs the gate itself while it works, so its turns get the
+secrets in the same environment the server's gate has. The build prompt
+forbids printing them. Before a turn's commit is accepted, and before its
+answer is saved, the server looks for each secret's value in the commit's
+diff and in the answer; one found refuses the turn with the need's id,
+never the value. A transcript the agent's own tools write may still hold a
+value; that is the cost of the agent running real tests.
+
+The card counts, per run, the gate runs that reached each outside call (the
+tests that name a need), shown beside the run's spending. Nothing is limited
+until the owner has seen those numbers.
 
 ## Steps
 
