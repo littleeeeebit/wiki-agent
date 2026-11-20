@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import stat
 import time
 from pathlib import Path
 
@@ -486,18 +487,24 @@ def standing(repo: str, build: dict) -> bool:
     """A frozen build still stands unless it is shown not to: its copy, program or manifest is gone, or the worktree
     is read at another HEAD than the one its gate passed. A HEAD that cannot be read keeps it, never a startup."""
 
-    try:
-        app = Path(build["folder"])
-        kept = (app / build["launch"]["program"]).is_file() and (app.parent / "manifest.json").is_file()
-    except (KeyError, OSError, TypeError):
+    try:   # a record missing what a frozen build always carries holds nothing to start
+        app, head = Path(build["folder"]), str(build["head"])
+        needed = (app / build["launch"]["program"], app.parent / "manifest.json")
+    except (KeyError, TypeError):
         return False
-    if not kept:
-        return False
+    for path in needed:
+        try:
+            if not stat.S_ISREG(path.stat().st_mode):
+                return False
+        except (FileNotFoundError, NotADirectoryError):
+            return False
+        except OSError:   # there, but unreadable now: not shown gone
+            return True
     try:
         done = specs.sh(["git", "rev-parse", "HEAD"], Path(spec_of(repo)["worktree"]))
     except Exception:   # a timeout, a missing Git or worktree: unread, so not shown changed
         return True
-    return done.returncode != 0 or done.stdout.strip() == build["head"]
+    return done.returncode != 0 or done.stdout.strip() == head
 
 
 def kind_stop(stage: str) -> dict:

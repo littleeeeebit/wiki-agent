@@ -17,6 +17,8 @@ import json
 import ntpath
 import os
 import re
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -37,9 +39,13 @@ MAX_FILES, MAX_BYTES = 5000, 1 << 30   # a folder of what the launch loads, neve
 MANIFEST_BYTES = 1 << 20
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 # Where a path may start inside a setting: a file URI, a drive, or a UNC or device prefix. The rest of the setting
-# from there is compared as a prefix, so whatever follows the path, a space or another flag, changes nothing.
+# from there is a candidate, and so is that rest cut at the setting's delimiters, so a path is found whether a
+# space, a quote, a list separator or another flag follows it.
 STARTS = re.compile(r"(?i)file:|[a-z]:[\\/]|[\\/]{2}")
-URI_END = re.compile(r"[\s\"';,]")
+URI_END = re.compile(r"[\s\"';,|]")
+CUTS = (re.compile(r"[\"';,|]"), URI_END)
+URL = re.compile(r"(?i)\b([a-z][a-z0-9+.-]+)://\S*")   # a URL of another scheme names something remote
+AFTER_ROOT = set("\\ \t\r\n\"';,|=")   # what may follow the worktree's own path in a candidate
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", os.environ.get("COMPUTERNAME", "").lower()} - {""}
 
 
@@ -73,18 +79,24 @@ def _local(path: str) -> str:
 
 
 def _paths(value: str) -> list[str]:
-    """Each path a setting may name, from every place one can start in it: the rest of the setting from a drive
-    or a UNC start, or a file URI up to its end, read as Windows would read it."""
+    """Each path a setting may name, from every place one can start in it outside a URL of another scheme: from
+    a drive or a UNC start, the rest of the setting and that rest cut at each kind of delimiter; a file URI up to
+    its end, decoded. Each read as Windows would read it."""
 
+    remote = [m.span() for m in URL.finditer(value) if m.group(1).lower() != "file"]
     found = []
     for start in STARTS.finditer(value):
+        if any(a <= start.start() < b for a, b in remote):
+            continue
         rest = value[start.start():]
         if rest[:5].lower() == "file:":
-            try:
-                rest = str(Path.from_uri("file:" + URI_END.split(rest, 1)[0][5:]))
-            except ValueError:
-                continue
-        found.append(_local(rest))
+            uri = urllib.parse.urlsplit(URI_END.split(rest, 1)[0])
+            path = urllib.request.url2pathname(uri.path)
+            if uri.netloc and uri.netloc.lower() not in LOCAL_HOSTS:
+                path = "\\\\" + uri.netloc + path
+            found.append(_local(path))
+            continue
+        found += [_local(rest), *(_local(cut.split(rest, 1)[0]) for cut in CUTS)]
     return found
 
 
@@ -94,10 +106,10 @@ def _names_tree(tree: Path, value: str) -> bool:
     A share elsewhere is compared by its text alone, so checking a setting reaches no other machine."""
 
     root = Path(os.path.realpath(tree))
-    key = ntpath.normcase(ntpath.normpath(str(root)))
+    key = ntpath.normcase(ntpath.normpath(str(root))).rstrip("\\")
     for path in _paths(value):
         normal = ntpath.normcase(ntpath.normpath(path))
-        if normal == key or normal.startswith(key.rstrip("\\") + "\\"):
+        if normal.startswith(key) and (len(normal) == len(key) or normal[len(key)] in AFTER_ROOT):
             return True
         drive = ntpath.splitdrive(normal)[0]
         # Removable, fixed or RAM drives only: a mapped network drive is a share too.
@@ -191,6 +203,23 @@ def _final(handle: int) -> str:
     return _local(buffer.value)
 
 
+def _folder(path: Path) -> str:
+    """A folder's resolved path, read off a handle opened on the folder itself."""
+
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p, w.DWORD, w.DWORD, w.HANDLE]
+    k.CreateFileW.restype = w.HANDLE
+    k.CloseHandle.argtypes = [w.HANDLE]
+    # No access asked, every share allowed, an existing folder (FILE_FLAG_BACKUP_SEMANTICS opens one).
+    handle = k.CreateFileW(str(path), 0, 0x7, None, 3, 0x02000000, None)
+    if handle in (None, w.HANDLE(-1).value):
+        raise OSError(ctypes.get_last_error(), "CreateFileW", str(path))
+    try:
+        return _final(handle)
+    finally:
+        k.CloseHandle(handle)
+
+
 def _copied(tree: Path, label: str, app: Path) -> list[str]:
     """Every regular file under `tree/label` copied into `app` in one walk, the bounds counted as the bytes are
     copied. Each entry is checked before it is entered or read, and each file is read only after its open
@@ -199,7 +228,12 @@ def _copied(tree: Path, label: str, app: Path) -> list[str]:
     walked is neither copied nor named. The copied files' paths."""
 
     source = tree / label
-    inside = ntpath.normcase(ntpath.normpath(os.path.join(os.path.realpath(tree), *label.split("/")))) + "\\"
+    # The folder's own path as Windows resolves its handle, the case of each name as stored: a file's resolved
+    # path must sit under it exactly, so a case-sensitive folder's `DIST` is never taken for its `dist`.
+    root = _folder(source)
+    if ntpath.normcase(root) != ntpath.normcase(os.path.join(os.path.realpath(tree), *label.split("/"))):
+        raise ValueError(f"`{label}` 가 작업트리 안의 그 폴더로 열리지 않는다 — `{root}`")
+    inside = root.rstrip("\\") + "\\"
     names, size, folders = [], 0, [(source, app)]
     app.mkdir(parents=True)
     while folders:
@@ -218,7 +252,7 @@ def _copied(tree: Path, label: str, app: Path) -> list[str]:
             if len(names) > MAX_FILES:
                 raise ValueError(_too_big(label))
             with open(path, "rb") as read:
-                if not ntpath.normcase(_final(msvcrt.get_osfhandle(read.fileno()))).startswith(inside):
+                if not _final(msvcrt.get_osfhandle(read.fileno())).startswith(inside):
                     raise ValueError(f"`{label}` 의 `{name}` 이 작업트리의 그 폴더 밖 파일로 열렸다")
                 with open(there / path.name, "xb") as written:
                     while chunk := read.read(1 << 20):

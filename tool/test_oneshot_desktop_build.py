@@ -133,6 +133,10 @@ def test_a_second_build_replaces_the_frozen_one(pc_build):
     ({"args": ["--data", "{data}", "--page=file:///<tree>/web/index%20page.html"]}, "작업트리를 가리킨다"),
     ({"args": ["--data", "{data}", "--flags --root <tree>/web"]}, "작업트리를 가리킨다"),
     ({"args": ["--data", "{data}", "--root=\\\\localhost\\<DRIVE>$\\<REST>"]}, "작업트리를 가리킨다"),
+    ({"args": ["--data", "{data}", "--root=\"<tree>\" --verbose"]}, "작업트리를 가리킨다"),
+    ({"args": ["--data", "{data}", "--root <tree> --verbose"]}, "작업트리를 가리킨다"),
+    ({"env": {"APP_DATA": "{data}", "PATHS": "<tree>;C:/Windows"}}, "작업트리를 가리킨다"),
+    ({"args": ["--data", "{data}", "--page=file:<tree>"]}, "작업트리를 가리킨다"),
     ({"program": "NUL.exe"}, "장치 이름"),
     ({"program": "app.exe."}, "끝의 `.`"),
 ])
@@ -208,6 +212,46 @@ def test_a_folder_turned_into_a_junction_after_its_check_is_never_read(pc_build,
     with pytest.raises(ValueError, match="밖 파일로 열렸다"):
         pc.frozen(pc_build, pc.declared(pc_build, fenced(pc.BLOCK, BLOCK)), into)
     assert not (into / "app" / "res" / "secret.txt").exists()
+
+
+@pytest.mark.parametrize("setting", [
+    "--cdn=https://cdn.example/<tree>/web", "--page=file:///C:/Windows/web/index.html", "--root=<tree>2/web",
+    "--home=\\\\fileserver\\<DRIVE>$\\<REST>"])
+def test_a_setting_naming_somewhere_else_is_kept(pc_build, setting):
+    tree = str(pc_build).replace("\\", "/")
+    setting = setting.replace("<tree>", tree).replace("<DRIVE>", tree[0]).replace("<REST>", tree[3:])
+    run = {**BLOCK["run"], "args": ["--data", "{data}", setting]}
+    assert pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "run": run}))["run"]["args"][-1] == setting
+
+
+def test_a_file_resolved_under_another_case_of_its_folder_is_never_read(pc_build, tmp_path, monkeypatch):
+    # A case-sensitive folder may hold `dist-pc` and `DIST-PC` apart: only the folder the check opened counts.
+    subprocess.run([sys.executable, "make_pc.py"], cwd=pc_build, check=True)
+    root, real = pc._folder(pc_build / "dist-pc"), pc._final
+    monkeypatch.setattr(pc, "_folder", lambda _path: root)
+    monkeypatch.setattr(pc, "_final", lambda handle: real(handle).replace("\\dist-pc\\", "\\DIST-PC\\"))
+    with pytest.raises(ValueError, match="밖 파일로 열렸다"):
+        pc.frozen(pc_build, pc.declared(pc_build, fenced(pc.BLOCK, BLOCK)), tmp_path / "into")
+
+
+@pytest.mark.parametrize("record, kept", [("unreadable", True), ("no-head", False)])
+def test_an_unreadable_snapshot_is_kept_and_a_malformed_one_is_built_again(pc_build, record, kept, monkeypatch):
+    checked(pc_build)
+    if record == "no-head":
+        oneshot_spec.saved("budget", oneshot={"desktop_build": {k: v for k, v in o()["desktop_build"].items()
+                                                                if k != "head"}})
+    else:
+        real = Path.stat
+
+        def denied(path, *a, **kw):
+            if path.name == "app.exe":
+                raise PermissionError(13, "denied", str(path))
+            return real(path, *a, **kw)
+
+        monkeypatch.setattr(Path, "stat", denied)
+    oneshot_spec.recover()
+    monkeypatch.undo()
+    assert bool(o()["desktop_build"]) is kept and oneshot_profile.held(o()) is kept
 
 
 def test_a_setting_on_a_share_elsewhere_is_compared_without_reaching_it(pc_build, monkeypatch):
