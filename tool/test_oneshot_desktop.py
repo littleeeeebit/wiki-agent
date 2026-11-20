@@ -557,23 +557,31 @@ def test_a_saved_pc_app_spec_takes_no_turn_on_another_host(desktop):
 
 
 def test_the_shared_start_refuses_a_move_into_the_held_stage(desktop):
-    # A PC app alone runs its frontend build; among other kinds it is held before it until 9e3b2.
+    # A PC app runs its frontend build, alone or among other kinds (9e3b2), and is held at its look.
     assert oneshot_profile.waits_at(o()) == "look" and not oneshot_profile.held({**o(), "stage": "build-front"})
-    oneshot_spec.saved("budget", oneshot={"stage": "r2", "intent": {**o()["intent"], "kinds": ["webapp", "desktop"]}})
+    oneshot_spec.saved("budget", oneshot={"stage": "build-front",
+                                          "intent": {**o()["intent"], "kinds": ["webapp", "desktop"]}})
+    assert oneshot_profile.waits_at(o()) == "look" and not oneshot_profile.held(o())
     with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             pytest.raises(HTTPException, match="다음 버전"):
-        START("budget", "design", stage="build-front")
-    assert o()["stage"] == "r2"
+        START("budget", "design", stage="critique")
+    assert o()["stage"] == "build-front"
+
+
+def frozen_in(tree, tmp_path) -> dict:
+    """A frozen build's record whose copy is still there, at the worktree's HEAD."""
+
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "app.exe").write_bytes(b"MZ")
+    (tmp_path / "manifest.json").write_text("{}")
+    return {"identity": "f" * 64, "folder": str(tmp_path / "app"), "head": git_head(tree),
+            "launch": {"program": "app.exe"}}
 
 
 def test_a_resume_or_a_shutdown_between_the_freeze_and_the_stop_never_starts_the_look(desktop, tmp_path):
     # The build passed its gate and was frozen, then the stop was lost (a restart that replaced it): the run is
     # held at its look, never resumable into a second build or past it.
-    (tmp_path / "app").mkdir()
-    (tmp_path / "app" / "app.exe").write_bytes(b"MZ")
-    (tmp_path / "manifest.json").write_text("{}")
-    frozen = {"identity": "f" * 64, "folder": str(tmp_path / "app"), "head": git_head(desktop),
-              "launch": {"program": "app.exe"}}
+    frozen = frozen_in(desktop, tmp_path)
     oneshot_spec.saved("budget", oneshot={"stage": "build-front", "working": None, "features": [],
                                           "desktop_build": frozen,
                                           "stopped": {"reason": "restart", "detail": "서버가 다시 켜졌다",
@@ -592,7 +600,7 @@ def test_several_kinds_an_earlier_version_held_past_the_build_stay_held(desktop)
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": "critique", "stopped": {"reason": "kind", "detail": "다음 버전",
                                                                            "state": "critique"}})
-    assert oneshot_profile.waits_at(o()) == "build-front" and oneshot_profile.held(o())
+    assert oneshot_profile.waits_at(o()) == "look" and oneshot_profile.held(o())
     oneshot_spec.recover()
     assert o()["stopped"]["reason"] == "kind"
     with pytest.raises(HTTPException, match="다음 버전"):
@@ -600,9 +608,11 @@ def test_several_kinds_an_earlier_version_held_past_the_build_stay_held(desktop)
 
 
 @pytest.mark.parametrize("stage", ["build-front", "critique"])
-def test_a_held_mixed_run_whose_stop_was_lost_starts_no_later_stage(desktop, stage):
+def test_a_held_mixed_run_whose_stop_was_lost_starts_no_later_stage(desktop, stage, tmp_path):
+    # At the build, a mixed run is held once its PC app is frozen (9e3b2); past it, always.
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
-                                          "stage": stage, "working": None, "stopped": None, "features": []})
+                                          "stage": stage, "working": None, "stopped": None, "features": [],
+                                          "desktop_build": frozen_in(desktop, tmp_path)})
     with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             patch.object(oneshot_spec, "start", START):
         SEND("budget", "build-front", "the build")   # the hand-off after R2: the stop is put back, nothing sent

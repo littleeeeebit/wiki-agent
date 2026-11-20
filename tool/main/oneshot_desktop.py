@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -52,16 +53,29 @@ OWNED_ENV = {"APPDATA", "LOCALAPPDATA", "TEMP", "TMP"}   # the look sets these t
 
 
 def _remote(setting: str) -> bool:
-    """Whether a setting is a whole remote URL a URL parser accepts: a host, and a port in range."""
+    """Whether a setting is a whole remote URL a browser's parser accepts: a host, and a port in range. A host
+    whose last label is a number is an IP address to that parser, so it must be one (`999.999.999.999` is not),
+    and a bracketed host must be an IPv6 address."""
 
     if not (match := REMOTE.fullmatch(setting)):
         return False
     try:
         url = urllib.parse.urlsplit(match.group(1))
-        return bool(url.hostname) and (url.port is None or 0 < url.port)
-    except ValueError:   # a port out of range, a bracket left open
+        host = url.hostname or ""
+        if url.port is not None and url.port == 0:
+            return False
+        if ":" in host:
+            ipaddress.IPv6Address(host)
+        elif re.fullmatch(r"(?i)\d+|0x[0-9a-f]*", host.rstrip(".").rsplit(".", 1)[-1]):
+            ipaddress.IPv4Address(host)   # dotted decimal only: the hex, octal and short forms are refused
+        return bool(host)
+    except ValueError:   # a port out of range, a bracket left open, a number that is no address
         return False
+
+
 PARTS = re.compile(r"[/\s;,=:]+")
+# `myapp::ipc=trace`: a module in Rust's log filter, read only from `RUST_LOG` and never as a path.
+LOG_FILTER, RUST_PATH = "RUST_LOG", re.compile(r"(?<=[A-Za-z0-9_])::(?=[A-Za-z_])")
 
 
 def _relative(value, where: str) -> str:
@@ -75,12 +89,14 @@ def _relative(value, where: str) -> str:
     return value
 
 
-def _reaches_out(setting: str) -> bool:
-    """Whether a setting may name a place on this PC other than the copy and `{data}` (`OUTSIDE`)."""
+def _reaches_out(setting: str, name: str = "") -> bool:
+    """Whether a setting may name a place on this PC other than the copy and `{data}` (`OUTSIDE`). `name` is the
+    variable a value is for, if any: `RUST_LOG`'s may name modules with `::`."""
 
     if _remote(setting):
         return False
     s = setting.replace(DATA, "data")
+    s = RUST_PATH.sub("__", s) if name.upper() == LOG_FILTER else s
     return not all(c.isalnum() or c in PLAIN for c in s) or bool(OUTSIDE.search(s)) \
         or any(part.split(".")[0].upper() in DEVICE_NAMES for part in PARTS.split(s))
 
@@ -115,7 +131,8 @@ def declared(tree: Path, final: str) -> dict:
                          f"자기 폴더로 둔다. 앱 데이터는 `{DATA}` 를 받는 다른 인자나 변수로 넘긴다")
     if not any(DATA in s and not _remote(s) for s in settings):   # a local setting, never a URL's text
         raise ValueError(f"`{BLOCK}` 의 run 은 앱의 데이터를 `{DATA}` 에 두는 인자나 환경 변수를 하나 이상 적는다")
-    if outside := [s for s in settings if _reaches_out(s)]:
+    named = [*(("", a) for a in out["args"]), *out["env"].items()]
+    if outside := [s for name, s in named if _reaches_out(s, name)]:
         raise ValueError(f"`{BLOCK}` 의 run 설정 `{outside[0]}` 은 사본 밖을 가리킬 수 있다 — 실행은 얼린 사본과 "
                          f"`{DATA}` 만 읽는다. 드라이브·UNC·파일 URI·루트부터의 경로·`..`·`%변수%` 없이, run.cwd 기준 "
                          f"상대 경로나 `{DATA}` 나 원격 URL 로 적는다")

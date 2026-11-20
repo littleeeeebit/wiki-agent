@@ -22,6 +22,7 @@ with the test runner's configuration; these files may not change at all:
 
 ## Conventions the server relies on
 
+<!-- shared:conventions -->
 The server copies the program the gate builds out of this worktree and starts
 the copy unpackaged, without elevation, on a desktop of its own, out of the
 owner's sight. It reads the program's controls through UI Automation and
@@ -50,6 +51,7 @@ acts only through automation patterns, never synthetic input.
   look also points `APPDATA`, `LOCALAPPDATA`, `TEMP` and `TMP` there; a web
   view stack reads its own setting as well, such as
   `WEBVIEW2_USER_DATA_FOLDER` for WebView2 or `--user-data-dir` for Electron.
+<!-- /shared -->
 
 ## The adapter and the desktop block
 
@@ -65,6 +67,7 @@ script. Commit the adapter with the rest.
 End the turn with exactly one fenced block whose info string is
 `oneshot-desktop`, holding JSON:
 
+<!-- shared:block -->
 ```oneshot-desktop
 {"run": {"folder": "dist-pc", "program": "app.exe", "args": [], "cwd": ".",
          "env": {"WEBVIEW2_USER_DATA_FOLDER": "{data}/webview", "APP_DATA_DIR": "{data}"}},
@@ -90,7 +93,8 @@ End the turn with exactly one fenced block whose info string is
     `shell:`), path from a root (`/Users/...`), `//`, `..`, or Windows
     device name such as `NUL`. With no `%`, `\`,
     `$`, `~`, `@`, `#`, `?`, quote or brace, nothing in it expands,
-    escapes, decodes or names a response file.
+    escapes, decodes or names a response file. `RUST_LOG` alone may name a
+    module with `::`, such as `tauri=debug,myapp::ipc=trace`.
 - `{data}` counts only in such a local value, never inside a URL. A variable
   that holds several switches, such as
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, is one value: a URL switch cannot
@@ -106,6 +110,7 @@ End the turn with exactly one fenced block whose info string is
 `run.program` and `run.cwd` are relative to `run.folder`. Every path uses
 `/`, with no `.` or `..` part, no part ending in `.`, and no Windows device
 name such as `NUL` or `COM1`.
+<!-- /shared -->
 
 ## When this turn ends
 
@@ -120,14 +125,14 @@ The server checks, in order:
 4. The adapter's gate passes on a clean, committed HEAD, every pinned core
    test passes by its class and name, and `run.folder` and `run.program` are
    there.
-5. The server copies `run.folder` into a folder the run owns and checks the
+5. <!-- shared:freeze -->The server copies `run.folder` into a folder the run owns and checks the
    copy: a program Windows does not start as a 32- or 64-bit process (a
    library is not one), a packaged layout such as an MSIX folder around the
    program, or a manifest, embedded or beside the program, that asks for
    elevation is refused. `run.folder` is copied only under the name it is
    declared by, its case as stored on disk. The server then records every
    copied file's digest with the launch settings and names the build by
-   them. A change to any file or setting is a new build.
+   them. A change to any file or setting is a new build.<!-- /shared -->
 
 A refusal comes back with the reason, at most three times in all.
 

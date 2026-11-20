@@ -266,7 +266,7 @@ def test_several_kinds_board_takes_a_first_screen_for_each_kind_then_designs_the
 
 def test_several_kinds_with_desktop_wait_where_desktop_does(several):
     assert oneshot_profile.waits_at({"intent": {"kinds": ["webapp", "android"]}}) is None   # runs to its PR
-    assert oneshot_profile.waits_at({"intent": {"kinds": ["android", "desktop"]}}) == "build-front"   # plan 9e3a
+    assert oneshot_profile.waits_at({"intent": {"kinds": ["android", "desktop"]}}) == "look"   # plan 9e3b2
 
 
 @pytest.mark.parametrize("stage", ["design", "tests", "split", "build-front"])

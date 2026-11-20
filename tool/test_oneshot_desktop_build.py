@@ -97,6 +97,16 @@ def test_a_pc_apps_build_is_frozen_with_its_identity_and_the_run_waits_before_it
     assert o()["stopped"]["reason"] == "kind" and o()["desktop_build"] == build
 
 
+def test_among_several_kinds_the_pc_app_is_frozen_and_every_kinds_look_waits_for_it(pc_build):
+    stack = [{**o()["stack"][0], "part": "desktop.build"}]   # several kinds declare the PC app's tools on its part
+    oneshot_spec.saved("budget", oneshot={"intent": {"kind": "webapp", "kinds": ["webapp", "desktop"]}, "stack": stack})
+    write(pc_build, ".wiki/adapter.toml", adapter(gate=f"{GATE} && python make_pc.py && python --version"))
+    git(pc_build, "commit", "-am", "the web app's build")
+    assert not (sent := checked(pc_build)), sent   # `checked` fails on any look
+    assert o()["desktop_build"]["files"] == 2 and o()["stopped"]["reason"] == "kind" and oneshot_profile.held(o())
+    assert "device" not in o() and o()["stage"] == "build-front"
+
+
 def test_a_companion_file_or_a_launch_flag_changed_under_the_same_head_is_a_new_build(pc_build, tmp_path):
     subprocess.run([sys.executable, "make_pc.py"], cwd=pc_build, check=True)   # what the gate builds
     first = pc.frozen(pc_build, pc.declared(pc_build, fenced(pc.BLOCK, BLOCK)), tmp_path / "a")
@@ -138,7 +148,10 @@ def test_a_second_build_replaces_the_frozen_one(pc_build):
         "--out=nul.txt", "--assets=res\\strings.txt", "$HOME/x", "~/x", "--title=\"quoted\"", "{other}/x",
         "--page=file:x", "--sources=https://cdn.example/a.js;C:/elsewhere", "--base=../#top", "--base=web/..",
         "@../args.txt", "@args.txt", "--port=COM¹", "--title=what?", "https:///", "https://", "shell:Profile",
-        "--start=shell:Downloads", "https://cdn.example:99999/a.js"]],
+        "--start=shell:Downloads", "https://cdn.example:99999/a.js", "https://999.999.999.999/v1",
+        "https://0x7f.1/", "https://example.123/", "https://[zz]/", "https://cdn.example:0/",
+        "--log=myapp::ipc=trace"]],
+    ({"env": {"APP_DATA": "{data}", "SHELL_PATH": "shell::Profile"}}, "사본 밖을 가리킬 수 있다"),
     ({"env": {"APPDATA": "{data}/named"}}, "look 이"),
     ({"args": ["--remote=https://cdn.example/{data}"], "env": {}}, "{data}"),
     ({"env": {"webview2_user_data_folder": "{data}/webview", "WEBVIEW2_USER_DATA_FOLDER": "{data}/w"}}, "대소문자만"),
@@ -225,10 +238,16 @@ def test_a_folder_turned_into_a_junction_after_its_check_is_never_read(pc_build,
     "--cdn=https://cdn.example/web/app.js", "--socket=ws://127.0.0.1:5173/live", "--assets=res/strings.txt",
     "--cache={data}/cache", "--size=1280x800", "--langs=ko,en;fallback=en", "--name=file-viewer",
     "--title=Translator: on", "--title=번역 켜기", "https://x.example/?return=/home",
-    "https://x.example/search?q=%ED%95%9C", "--api=https://[::1]:8443/v1"])
+    "https://x.example/search?q=%ED%95%9C", "--api=https://[::1]:8443/v1", "--api=https://127.0.0.1:8080/v1"])
 def test_a_setting_naming_the_copy_data_or_a_remote_url_is_kept(pc_build, setting):
     run = {**BLOCK["run"], "args": ["--data", "{data}", setting]}
     assert pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "run": run}))["run"]["args"][-1] == setting
+
+
+@pytest.mark.parametrize("name", ["RUST_LOG", "rust_log"])
+def test_rusts_log_filter_may_name_modules(pc_build, name):
+    run = {**BLOCK["run"], "env": {**BLOCK["run"]["env"], name: "tauri=debug,myapp::ipc=trace"}}
+    assert pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "run": run}))["run"]["env"][name] == run["env"][name]
 
 
 def test_a_file_resolved_under_another_case_of_its_folder_is_never_read(pc_build, tmp_path, monkeypatch):
@@ -294,7 +313,7 @@ def test_a_frozen_build_that_cannot_be_saved_leaves_no_copy(pc_build):
     subprocess.run([sys.executable, "make_pc.py"], cwd=pc_build, check=True)   # what the gate builds
     with patch.object(oneshot_spec, "saved", failing), pytest.raises(OSError, match="disk is full"):
         front_build.froze(pc_build, spec(), pc.declared(pc_build, fenced(pc.BLOCK, BLOCK)), git(pc_build, "rev-parse",
-                                                                                                 "HEAD"), Run())
+                                                                                                 "HEAD"), Run(), {})
     assert not staging() or not any(staging()[0].iterdir())
 
 
@@ -334,4 +353,4 @@ def test_a_head_that_cannot_be_read_keeps_the_frozen_build_and_the_startup(pc_bu
 def test_the_build_text_names_the_window_and_the_declared_tools(pc_build):
     text = front_build.build_front_text(spec())
     assert "1280x800 physical pixels" in text and "- `python`" in text and "oneshot-desktop" in text
-    assert "{" not in text.replace("{data}", "").split("```json")[0] and "Android" not in text
+    assert "{" not in text.replace("{data}", "").split("```json")[0] and "Android" not in text and "<!--" not in text

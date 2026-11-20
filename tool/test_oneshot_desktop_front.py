@@ -213,7 +213,7 @@ def three_blocks() -> dict:
                               "desktop": pc_mocks(("S4", "S5"), 1024, 740)}}
 
 
-def test_two_native_previews_sharing_paths_and_a_web_page_pass_one_r2_and_the_run_waits_at_the_build(three):
+def test_two_native_previews_sharing_paths_and_a_web_page_pass_one_r2_and_the_build_of_every_kind_follows(three):
     playwright_or_skip()
     heard, asking = replies(answer(three_blocks()))
     with asking:
@@ -231,9 +231,10 @@ def test_two_native_previews_sharing_paths_and_a_web_page_pass_one_r2_and_the_ru
             patch.object(front.review().work, "dispatch", lambda tree, run: sent.append(tree)):
         front.decide("budget", front.R2(decisions={i: {"approve": True} for i in screens.decidable(o()["front"])},
                                         palette="C1", source=brief.source(brief.snapshot(oneshot_spec.spec_of("budget"), "r2"))))
-    # The approval committed every kind's mocks, each native kind's in its own folder, and the run waits there.
-    # No build follows, so the approval itself sends what the owner queued for the worktree.
-    assert not begun and len(sent) == 1 and o()["stage"] == "build-front" and o()["stopped"]["reason"] == "kind" and not o()["working"]
+    # The approval committed every kind's mocks, each native kind's in its own folder, and the one build of every
+    # kind follows (9e3b2): it waits at the PC app's look once its gate passes and the program is frozen.
+    assert begun == ["budget"] and not sent and o()["stage"] == "build-front" and o()["working"] == "build-front"
+    assert not o().get("stopped")
     mock = three / "docs/design/mock"
     assert (mock / "android/shoot.py").read_text(encoding="utf-8") == mocks()["files"]["shoot.py"]
     assert (mock / "desktop/shoot.py").read_text(encoding="utf-8") == three_blocks()["oneshot-mocks"]["desktop"][
@@ -241,9 +242,7 @@ def test_two_native_previews_sharing_paths_and_a_web_page_pass_one_r2_and_the_ru
     assert (mock / "desktop/mock/S4.tsx").is_file() and (mock / "webapp/S3.html").read_text(encoding="utf-8") == PAGE
     for name in ("S1-phone", "S3-desktop", "S4-window"):
         assert (three / f"docs/design/shots/{name}.png").is_file(), name
-    assert o()["front_head"] == head(three) and oneshot_profile.held(o())
-    with pytest.raises(Exception, match="다음 버전"):
-        oneshot_spec.resume("budget")
+    assert o()["front_head"] == head(three) and not oneshot_profile.held(o())
 
 
 def test_an_edit_keeps_each_native_previews_shared_files(three):

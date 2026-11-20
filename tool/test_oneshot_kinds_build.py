@@ -89,7 +89,8 @@ def test_the_build_text_names_every_kind_and_only_the_android_apps_scenarios(kin
     design = json.loads(text.split("```json\n")[1].split("\n```")[0])
     assert [s["id"] for s in design["android"]["screens"]] == ["S1"] and design["webapp"]["features"][0]["id"] == "history"
     assert "- `R1`" in text and "- `R3`" not in text   # R3 is the web app's: no instrumented test is asked for it
-    assert "The web screens are shot at\ndesktop" in text
+    assert "The web screens are shot at desktop." in text and "<!--" not in text
+    assert "an Android app and a web app" in text and "PC app" not in text and "oneshot-desktop" not in text
 
 
 def test_each_kind_is_looked_at_in_the_owners_order_with_only_its_own_and_the_critique_follows(kinds_build):
