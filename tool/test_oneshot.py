@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -461,6 +462,8 @@ def test_bootstrap_makes_the_repository_the_spec_and_the_linked_worktree(world):
     spec = specs.load("budget-tracker", oneshot.BRANCH)
     assert spec["oneshot"]["run"] == rid and spec["workspace_mode"] == "worktree"
     assert Path(spec["worktree"]).is_dir() and spec["done"] == []
+    cargo = Path(spec["worktree"]).parent / ".cargo/config.toml"
+    assert tomllib.loads(cargo.read_text(encoding="utf-8")) == {"build": {"incremental": False}}
     assert json.loads((connect.RECORDS / "budget-tracker.json").read_text(encoding="utf-8"))["hash"]
     assert world["examined"] == [(repo, True)]   # connected as `[연결]` would, its tests run within the step
     assert json.loads((oneshot.PROFILES / "webapp.json").read_text(encoding="utf-8"))["github_owner"] == "someone"
