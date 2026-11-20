@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import ipaddress
 import json
 import os
 import re
+import unicodedata
 import urllib.parse
 from pathlib import Path
 from xml.etree import ElementTree
@@ -44,7 +46,8 @@ ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 #   control character: nothing expands, escapes, decodes, names a response file or ends a string), naming the
 #   copy by a path relative to `run.cwd`, or `{data}`: no file URI, no drive, no path from a root, no `//`, no `..`
 #   anywhere and no Windows device name.
-REMOTE = re.compile(r"(?i)(?:[a-z0-9_.-]+=)?((?:https?|wss?)://[!-+\--:<-~]+)")
+# A URL holds no `,`, `;` or `\`: a browser reads `\` as `/`, so the host it sees may not be the one checked.
+REMOTE = re.compile(r"(?i)(?:[a-z0-9_.-]+=)?((?:https?|wss?)://[!-+\--:<-\[\]-~]+)")
 PLAIN = set(" _-.,;=:+/")
 # A `:` before anything but a space opens a namespace (`file:`, `shell:`, a drive), and a drive alone is one too.
 OUTSIDE = re.compile(r"(?i):(?=\S)|(?<![a-z0-9])[a-z]:|(?:^|[\s;,=:])/|//|\.\.")
@@ -52,16 +55,31 @@ OWNED_ENV = {"APPDATA", "LOCALAPPDATA", "TEMP", "TMP"}   # the look sets these t
 
 
 def _remote(setting: str) -> bool:
-    """Whether a setting is a whole remote URL a URL parser accepts: a host, and a port in range."""
+    """Whether a setting is a whole remote URL a browser's parser accepts: a host, and a port in range. A host
+    whose last label is a number is an IP address to that parser, so it must be one (`999.999.999.999` is not),
+    and a bracketed host must be an IPv6 address. A host holding `%` is refused: the parser decodes it before it
+    classifies the host, and an IPv6 zone is no host it accepts."""
 
     if not (match := REMOTE.fullmatch(setting)):
         return False
     try:
         url = urllib.parse.urlsplit(match.group(1))
-        return bool(url.hostname) and (url.port is None or 0 < url.port)
-    except ValueError:   # a port out of range, a bracket left open
+        host = url.hostname or ""
+        if "%" in host or (url.port is not None and url.port == 0):
+            return False
+        bare = host[:-1] if host.endswith(".") else host   # the parser drops one empty last label
+        if ":" in host:
+            ipaddress.IPv6Address(host)
+        elif re.fullmatch(r"(?i)\d+|0x[0-9a-f]*", bare.rsplit(".", 1)[-1]):
+            ipaddress.IPv4Address(bare)   # dotted decimal only: the hex, octal and short forms are refused
+        return bool(host)
+    except ValueError:   # a port out of range, a bracket left open, a number that is no address
         return False
+
+
 PARTS = re.compile(r"[/\s;,=:]+")
+# `myapp::ipc=trace`: a module in Rust's log filter, read only from `RUST_LOG` and never as a path.
+LOG_FILTER, RUST_PATH = "RUST_LOG", re.compile(r"(?<=\w)::(?=[^\W\d])")   # Rust identifiers may be Unicode
 
 
 def _relative(value, where: str) -> str:
@@ -75,12 +93,15 @@ def _relative(value, where: str) -> str:
     return value
 
 
-def _reaches_out(setting: str) -> bool:
-    """Whether a setting may name a place on this PC other than the copy and `{data}` (`OUTSIDE`)."""
+def _reaches_out(setting: str, name: str = "") -> bool:
+    """Whether a setting may name a place on this PC other than the copy and `{data}` (`OUTSIDE`). `name` is the
+    variable a value is for, if any: `RUST_LOG`'s may name modules with `::`."""
 
     if _remote(setting):
         return False
     s = setting.replace(DATA, "data")
+    if name.upper() == LOG_FILTER:   # a combining mark continues a Rust identifier and names no path
+        s = RUST_PATH.sub("__", "".join(c for c in s if not unicodedata.category(c).startswith("M")))
     return not all(c.isalnum() or c in PLAIN for c in s) or bool(OUTSIDE.search(s)) \
         or any(part.split(".")[0].upper() in DEVICE_NAMES for part in PARTS.split(s))
 
@@ -115,7 +136,8 @@ def declared(tree: Path, final: str) -> dict:
                          f"자기 폴더로 둔다. 앱 데이터는 `{DATA}` 를 받는 다른 인자나 변수로 넘긴다")
     if not any(DATA in s and not _remote(s) for s in settings):   # a local setting, never a URL's text
         raise ValueError(f"`{BLOCK}` 의 run 은 앱의 데이터를 `{DATA}` 에 두는 인자나 환경 변수를 하나 이상 적는다")
-    if outside := [s for s in settings if _reaches_out(s)]:
+    named = [*(("", a) for a in out["args"]), *out["env"].items()]
+    if outside := [s for name, s in named if _reaches_out(s, name)]:
         raise ValueError(f"`{BLOCK}` 의 run 설정 `{outside[0]}` 은 사본 밖을 가리킬 수 있다 — 실행은 얼린 사본과 "
                          f"`{DATA}` 만 읽는다. 드라이브·UNC·파일 URI·루트부터의 경로·`..`·`%변수%` 없이, run.cwd 기준 "
                          f"상대 경로나 `{DATA}` 나 원격 URL 로 적는다")

@@ -10,6 +10,7 @@ goes back to the turn. A pass leaves the run at `critique`, where the critic tak
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import time
 from pathlib import Path
@@ -22,6 +23,33 @@ from .oneshot_profile import DEVICES, environment, kinds_of, schema, shape
 from .oneshot_sheet import KIND_NAMES
 
 STAGE = "build-front"
+# The several-kinds prompt keeps a kind's parts only when the owner picked it, and takes the PC app's conventions,
+# block and freeze from the PC app's own prompt, so the two never drift apart.
+# `webapp,!desktop`: a section kept only when every condition holds, the web app picked and the PC app not.
+SECTION = re.compile(r"<!-- kind:([!\w,]+) -->\n(.*?)<!-- /kind -->\n", re.S)
+SHARED = re.compile(r"<!-- shared:(\w+) -->\n?(.*?)\n?<!-- /shared -->", re.S)
+WHO = {"webapp": "a web app", "android": "an Android app", "desktop": "a PC app (a Windows program)"}
+BLOCKS = {"webapp": ("`live_cmd` is filled", None),
+          "android": ("the `oneshot-device` block names each APK", "the `oneshot-device` block"),
+          "desktop": ("the `oneshot-desktop` block has the shape above", "the `oneshot-desktop` block")}
+
+
+def listed(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def for_kinds(text: str, kinds: list[str]) -> str:
+    """The several-kinds prompt for the owner's kinds: each kind's parts, the PC app's from its own prompt."""
+
+    text = SECTION.sub(lambda m: m.group(2) if all((c.lstrip("!") in kinds) != c.startswith("!")
+                                                   for c in m.group(1).split(",")) else "", text)
+    pc = {name: part for name, part in SHARED.findall(oneshot.prompt(STAGE, "desktop"))}
+    ends = [end for k in kinds if (end := BLOCKS[k][1])]
+    return text.replace("{kinds}", listed([WHO[k] for k in kinds])) \
+        .replace("{checked_blocks}", listed([BLOCKS[k][0] for k in kinds])) \
+        .replace("{end_blocks}", f" and {listed(ends)}" if ends else "") \
+        .replace("{desktop_conventions}", pc["conventions"]).replace("{desktop_block}", pc["block"]) \
+        .replace("{desktop_freeze}", pc["freeze"])
 
 
 views = screens.views
@@ -62,10 +90,14 @@ def designed(o: dict, palette: dict) -> dict:
 def build_front_text(spec: dict) -> str:
     o = spec["oneshot"]
     palette = next(p for p in o["front"]["tokens"]["palettes"] if p["id"] == o["r2"]["palette"])
-    text = oneshot.prompt(STAGE, shape(o)).replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
+    text = SHARED.sub(lambda m: m.group(2), oneshot.prompt(STAGE, shape(o)))
+    if shape(o) == "kinds":
+        text = for_kinds(text, kinds_of(o))
+    text = text.replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
         .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"])) \
-        .replace("{design}", json.dumps(designed(o, palette), ensure_ascii=False, indent=2)) \
-        .replace("{viewports}", ", ".join(views(o["profile"], "webapp" if shape(o) == "kinds" else "")))
+        .replace("{design}", json.dumps(designed(o, palette), ensure_ascii=False, indent=2))
+    if "{viewports}" in text:   # a web app's, alone or among the kinds
+        text = text.replace("{viewports}", ", ".join(views(o["profile"], "webapp" if shape(o) == "kinds" else "")))
     text = text.replace("{profile}", environment(o)).replace("{tools}", oneshot_build.tools_text(o)) \
         .replace("{window}", o["profile"].get("window", ""))
     if "android" not in kinds_of(o):
@@ -103,7 +135,9 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     kinds = kinds_of(o)
     android, several = "android" in kinds, shape(o) == "kinds"
     # Several kinds' gate adds each kind's tests and build to the core's: at least one command for each kind.
-    if several and len([c for c in gate[len(backend):].split("&&") if c.strip()]) < len(kinds):
+    # Counted where the gate's check cuts it (`chained`): on Windows a `&&` inside a quoted argument is no command.
+    added = len(oneshot_build.commands(gate)) - len(oneshot_build.commands(backend))
+    if several and added < len(kinds):
         return (f"여러 종류의 `gate_cmd` 는 핵심 테스트 `{backend}` 뒤에 종류마다의 테스트와 빌드 명령을 ` && ` 로 "
                 f"더한다 ({', '.join(KIND_NAMES[k] for k in kinds)}) — `{gate}`")
     if android:   # an app on a phone has no `live_cmd`: its block names the APKs the emulator installs
@@ -128,8 +162,8 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     if android and (why := oneshot_device.built(path, device)):
         return why
     store = oneshot_spec.store(spec["repo"])
-    if desktop is not None:
-        return froze(path, spec, desktop, verdict["head"], run)
+    if desktop is not None:   # every kind's look waits for the PC app's (9e4), in the owner's order
+        return froze(path, spec, desktop, verdict["head"], run, {"device": device} if android else {})
     n = len(o.get("looks") or []) + 1
     stopped = lambda: run.halt.is_set() or runtime.stopping.is_set()   # noqa: E731
     shots = store.folder / "build" / f"r{n}"
@@ -175,10 +209,11 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     return ""
 
 
-def froze(path: Path, spec: dict, desktop: dict, head: str, run) -> str:
+def froze(path: Path, spec: dict, desktop: dict, head: str, run, kept: dict) -> str:
     """The PC app's program, checked as the gate left it and frozen into staging the run owns: its identity is
-    what every look launches. The look is 9e4's, so this version holds the run here (`LOOK`), its build saved
-    with the stop in one write. An earlier frozen build is removed once this one is saved."""
+    what every look launches. The looks are 9e4's, so this version holds the run here (`LOOK`), its build saved
+    with the stop and `kept` (another kind's block, the Android app's `device`) in one write. An earlier frozen
+    build is removed once this one is saved."""
 
     if why := oneshot_desktop.built(path, desktop):
         return why
@@ -194,7 +229,7 @@ def froze(path: Path, spec: dict, desktop: dict, head: str, run) -> str:
         return f"PC 앱 빌드를 얼리는 동안 작업트리가 바뀌었다 — 게이트는 `{head[:12]}` 를 통과했다"
     try:
         oneshot_spec.saved(spec["repo"], oneshot={"desktop_build": build, "attempts": 0, "working": None,
-                                                  "stopped": oneshot_spec.kind_stop(STAGE)})
+                                                  "stopped": oneshot_spec.kind_stop(STAGE), **kept})
     except BaseException:   # a save may fail after it wrote: the record, read back, says whether the copy is kept
         try:
             kept = (oneshot_spec.spec_of(spec["repo"])["oneshot"].get("desktop_build") or {}).get("folder")

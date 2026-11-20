@@ -23,11 +23,10 @@ HOST_ONLY = {"desktop": ("win32", "PC 앱은 Windows 에서만 만든다")}
 # The stage a kind waits at in this version, stopped with reason `kind` until its plan step lands. A kind not
 # here runs to the end: `android` does since its R3 sheet and S8 (`docs/plans/oneshot/7-android.md`, 7f2), and
 # several kinds without `desktop` since 9c4b. `desktop` alone runs its core path, S6, R2 and the frontend build,
-# and waits at `look`, once its build gate passed and froze the program, until the look lands in 9e4; among other
-# kinds it waits at the frontend build until that build's turn for several kinds lands in 9e3b2
-# (`docs/plans/oneshot/9-kinds.md`, "Steps and their stops").
+# and waits at `look`, once its build gate passed and froze the program, until the look lands in 9e4; so do
+# several kinds with `desktop`, whose one build turn builds every kind (9e3b2): every kind's look waits for the PC
+# app's (`docs/plans/oneshot/9-kinds.md`, "Steps and their stops").
 KIND_STOPS: dict[str, str] = {"desktop": "look"}
-SEVERAL_STOPS: dict[str, str] = {"desktop": "build-front"}
 # A run's stages in order after the bootstrap (`web/src/lib/oneshot.ts` STAGES).
 STAGE_ORDER = ("spec", "design", "r1", "tests", "build", "review", "split", "board", "frontend", "r2", "build-front",
                "critique", "phone", "r3", "pr", "done")
@@ -85,8 +84,7 @@ def waits_at(o: dict) -> str | None:
     """The stage the run waits at in this version, stopped with reason `kind`: the earliest any of its kinds
     waits at, so several kinds wait where `desktop` does."""
 
-    table = SEVERAL_STOPS if len(kinds_of(o)) > 1 else KIND_STOPS
-    stops = [table[k] for k in kinds_of(o) if k in table]
+    stops = [KIND_STOPS[k] for k in kinds_of(o) if k in KIND_STOPS]
     return stops[0] if stops else None
 
 
