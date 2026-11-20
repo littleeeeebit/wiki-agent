@@ -101,6 +101,12 @@ def test_with_a_pc_app_the_build_text_has_its_section_and_stops_before_every_loo
     assert "shoots every web screen" not in text and "<!--" not in text
 
 
+def test_a_posix_gate_is_counted_where_its_check_cuts_it(monkeypatch):
+    gate = "pytest && echo it\\'s && echo two"   # an escaped apostrophe, which PowerShell would read as a quote
+    monkeypatch.setattr(oneshot_build.os, "name", "posix")
+    assert len(oneshot_build.commands(gate)) == 3 and oneshot_build.chained(gate)
+
+
 def test_each_kind_is_looked_at_in_the_owners_order_with_only_its_own_and_the_critique_follows(kinds_build):
     seen, looking = looks({})
     sent, started = [], []

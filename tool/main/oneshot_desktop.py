@@ -17,6 +17,7 @@ import ipaddress
 import json
 import os
 import re
+import unicodedata
 import urllib.parse
 from pathlib import Path
 from xml.etree import ElementTree
@@ -45,7 +46,8 @@ ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 #   control character: nothing expands, escapes, decodes, names a response file or ends a string), naming the
 #   copy by a path relative to `run.cwd`, or `{data}`: no file URI, no drive, no path from a root, no `//`, no `..`
 #   anywhere and no Windows device name.
-REMOTE = re.compile(r"(?i)(?:[a-z0-9_.-]+=)?((?:https?|wss?)://[!-+\--:<-~]+)")
+# A URL holds no `,`, `;` or `\`: a browser reads `\` as `/`, so the host it sees may not be the one checked.
+REMOTE = re.compile(r"(?i)(?:[a-z0-9_.-]+=)?((?:https?|wss?)://[!-+\--:<-\[\]-~]+)")
 PLAIN = set(" _-.,;=:+/")
 # A `:` before anything but a space opens a namespace (`file:`, `shell:`, a drive), and a drive alone is one too.
 OUTSIDE = re.compile(r"(?i):(?=\S)|(?<![a-z0-9])[a-z]:|(?:^|[\s;,=:])/|//|\.\.")
@@ -98,7 +100,8 @@ def _reaches_out(setting: str, name: str = "") -> bool:
     if _remote(setting):
         return False
     s = setting.replace(DATA, "data")
-    s = RUST_PATH.sub("__", s) if name.upper() == LOG_FILTER else s
+    if name.upper() == LOG_FILTER:   # a combining mark continues a Rust identifier and names no path
+        s = RUST_PATH.sub("__", "".join(c for c in s if not unicodedata.category(c).startswith("M")))
     return not all(c.isalnum() or c in PLAIN for c in s) or bool(OUTSIDE.search(s)) \
         or any(part.split(".")[0].upper() in DEVICE_NAMES for part in PARTS.split(s))
 

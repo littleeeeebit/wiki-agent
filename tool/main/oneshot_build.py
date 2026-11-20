@@ -448,6 +448,13 @@ def leaves(word: str) -> bool:
     return name in LEAVE
 
 
+def commands(command: str) -> list[str]:
+    """`command`'s chain parts as the shell that runs the gate cuts them: on Windows `links`, at an unquoted `&&`
+    (the masker reads PowerShell); elsewhere at every `&&`, as `chained` checks them."""
+
+    return links(command) if os.name == "nt" else command.split("&&")
+
+
 def chained(command: str) -> bool:
     """`command` is plain commands joined by `&&` and nothing else: each runs only after the one before it
     passed, and none starts with a word that ends the shell early, so the chain's status is its first failure.
@@ -460,9 +467,9 @@ def chained(command: str) -> bool:
 
     if CONTROL.search(command):   # the cheap refusal first: the masker below never reads what it refuses
         return False
-    windows = os.name == "nt"   # the masker reads PowerShell, not POSIX, which cuts at every `&&` as before
+    windows = os.name == "nt"
     try:
-        parts = links(command) if windows else command.split("&&")
+        parts = commands(command)
         safe = not windows or quote_safe(command)
     except RecursionError:   # nesting deeper than the masker reads is refused like any other unreadable chain
         return False

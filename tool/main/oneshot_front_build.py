@@ -135,8 +135,8 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     kinds = kinds_of(o)
     android, several = "android" in kinds, shape(o) == "kinds"
     # Several kinds' gate adds each kind's tests and build to the core's: at least one command for each kind.
-    # Counted at the boundaries the gate runs at: a `&&` inside a quoted argument is no command.
-    added = len(oneshot_build.links(gate)) - len(oneshot_build.links(backend))
+    # Counted where the gate's check cuts it (`chained`): on Windows a `&&` inside a quoted argument is no command.
+    added = len(oneshot_build.commands(gate)) - len(oneshot_build.commands(backend))
     if several and added < len(kinds):
         return (f"여러 종류의 `gate_cmd` 는 핵심 테스트 `{backend}` 뒤에 종류마다의 테스트와 빌드 명령을 ` && ` 로 "
                 f"더한다 ({', '.join(KIND_NAMES[k] for k in kinds)}) — `{gate}`")

@@ -86,7 +86,7 @@ End the turn with exactly one fenced block whose info string is
 - Each argument or variable is one of two things, and the server refuses any
   other before the gate runs:
   - a whole remote URL (`http`, `https`, `ws`, `wss`) with a host, an
-    optional `name=` before it and no `,` or `;` in it;
+    optional `name=` before it and no `,`, `;` or `\` in it;
   - a value made only of letters, digits, spaces and `_-.,;=:+/`, naming
     the copy by a path relative to `run.cwd` written with `/`, or `{data}`.
     It holds no drive (`C:`), `:` followed by anything but a space (`file:`,

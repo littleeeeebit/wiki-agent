@@ -150,7 +150,7 @@ def test_a_second_build_replaces_the_frozen_one(pc_build):
         "@../args.txt", "@args.txt", "--port=COM¹", "--title=what?", "https:///", "https://", "shell:Profile",
         "--start=shell:Downloads", "https://cdn.example:99999/a.js", "https://999.999.999.999/v1",
         "https://0x7f.1/", "https://example.123/", "https://[zz]/", "https://cdn.example:0/",
-        "https://1.2.3%2e4/", "https://[fe80::1%25eth0]/",
+        "https://1.2.3%2e4/", "https://[fe80::1%25eth0]/", "https://999.999.999.999\\@cdn.example/",
         "--log=myapp::ipc=trace"]],
     ({"env": {"APP_DATA": "{data}", "SHELL_PATH": "shell::Profile"}}, "사본 밖을 가리킬 수 있다"),
     ({"env": {"APPDATA": "{data}/named"}}, "look 이"),
@@ -247,7 +247,8 @@ def test_a_setting_naming_the_copy_data_or_a_remote_url_is_kept(pc_build, settin
 
 
 @pytest.mark.parametrize("name, value", [("RUST_LOG", "tauri=debug,myapp::ipc=trace"),
-                                         ("rust_log", "tauri=debug,myapp::ipc=trace"), ("RUST_LOG", "번역기::화면=trace")])
+                                         ("rust_log", "tauri=debug,myapp::ipc=trace"), ("RUST_LOG", "번역기::화면=trace"),
+                                         ("RUST_LOG", "ऐप::हिंदी=trace")])   # combining marks continue an identifier
 def test_rusts_log_filter_may_name_modules(pc_build, name, value):
     run = {**BLOCK["run"], "env": {**BLOCK["run"]["env"], name: value}}
     assert pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "run": run}))["run"]["env"][name] == run["env"][name]
