@@ -72,11 +72,13 @@ def world(tmp_path):
     identity = {f"GIT_{who}_{what}": value for who in ("AUTHOR", "COMMITTER")
                 for what, value in (("NAME", "Oneshot test"), ("EMAIL", "oneshot@example.test"))}
     examined, wiring = [], {"needed": False, "refused": ""}   # never this machine's CLIs, hooks or Codex trust
+    from main import wiring as routine   # the card's read, faked whole: no hub check of the shared cache outlives a test
     with patch.dict(os.environ, identity), patch.object(oneshot, "RUNS", tmp_path / "oneshot"), \
          patch.object(oneshot, "PROFILES", tmp_path / "oneshot" / "profiles"), \
          patch.object(connect, "RECORDS", tmp_path / "connect"), \
          patch.object(connect, "examine", lambda path, then=None, wait=False: examined.append((path, wait)) or True), \
          patch.object(connect, "hub", lambda data=None: dict(wiring)), \
+         patch.object(routine, "hub_seen", lambda: {**wiring, "checking": False}), \
          patch.object(channels, "WORKSPACE", workspace), \
          patch.object(oneshot, "gh", github.gh), patch.object(oneshot, "remote_id", github.remote_id), \
          patch.object(oneshot, "gh_user", lambda: "someone"), \
@@ -87,8 +89,6 @@ def world(tmp_path):
          patch.object(oneshot, "launch",
                       lambda rid, work, *a, **f: oneshot.changed(rid, **f, working=work, stopped=None)):
         yield {"workspace": workspace, "github": github, "hub": hub, "tmp": tmp_path, "examined": examined, "wiring": wiring}
-    from main import wiring as routine
-    routine.forget_hub()   # a hub check that ended on the fake above is no later test's answer
 
 
 def made(world, **extra) -> str:
