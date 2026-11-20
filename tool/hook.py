@@ -29,6 +29,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import hook_deadline  # noqa: E402
+
 from common import layout  # noqa: E402
 from common.paths import RAW  # noqa: E402
 
@@ -95,6 +97,17 @@ def legacy(top: Path, host: str, script: str) -> bool:
 def main(argv: list[str]) -> int:
     # Whatever the script it runs prints goes out through this stream.
     sys.stdout.reconfigure(encoding="utf-8")
+    # First, before the script check, reading stdin and resolving the project:
+    # all of it counts against the host's limit. Its fallback stays empty until
+    # the project is known to be attached, and an empty one never exits — the
+    # host decides then. Only as the host's process: a test calling `main`
+    # would be ended by the timer.
+    timed = len(argv) > 1 and argv[1] in hook_deadline.LIMITS and Path(sys.argv[0]).name == "hook.py"
+    if timed:
+        try:
+            hook_deadline.arm(hook_deadline.LIMITS[argv[1]][0], None)
+        except Exception:  # noqa: BLE001 — without a deadline the hook still runs, as it did before one
+            timed = False
     if len(argv) < 2 or argv[0] not in LEGACY or not (HERE / argv[1]).is_file():
         print("hook skipped: usage hook.py <claude|codex> <script> [args]", file=sys.stderr)
         return 0
@@ -132,7 +145,11 @@ def main(argv: list[str]) -> int:
     sys.argv = [str(HERE / script), *extra]
     sys.stdin = io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8")
     nonce = os.environ.get("WIKI_PROBE", "")
+    # The fallback goes live only now, the project known to be attached, and
+    # in probe mode only once the buffer that forwards it is in place.
+    fallback = hook_deadline.stalled(script) if timed else None
     if not nonce:
+        hook_deadline.best = fallback
         runpy.run_path(str(HERE / script), run_name="__main__")
         return 0
     # A connection test (`main/connect.probe`) started the host that started
@@ -140,15 +157,37 @@ def main(argv: list[str]) -> int:
     # A text stream over bytes, not `StringIO`: every script calls
     # `sys.stdout.reconfigure`, which `StringIO` does not have.
     held = io.BytesIO()
-    out, sys.stdout = sys.stdout, io.TextIOWrapper(held, encoding="utf-8", write_through=True)
+    done: list[bool] = []
+
+    def forward() -> None:
+        # Once, from the `finally` or from the deadline's hard exit, which
+        # skips the `finally`; the second caller waits for the first. Under the
+        # lock the deadline writes its answer under, so the buffer is never
+        # read halfway through an answer.
+        with hook_deadline.lock:
+            if done:
+                return
+            done.append(True)
+            sys.stdout.flush()
+            printed = held.getvalue().decode("utf-8", "replace")
+            sys.stdout = out
+            out.write(printed)
+            out.flush()
+            # Final: what the probe recorded is what went out, so no answer
+            # may follow it.
+            hook_deadline.close()
+            probed(nonce, host, script, raw, printed)
+
+    # The buffer, its forwarding and the fallback go in together: an answer
+    # written in between would miss the buffer or the record.
+    with hook_deadline.lock:
+        out, sys.stdout = sys.stdout, io.TextIOWrapper(held, encoding="utf-8", write_through=True)
+        hook_deadline.before_exit = forward
+        hook_deadline.best = fallback
     try:
         runpy.run_path(str(HERE / script), run_name="__main__")
     finally:
-        sys.stdout.flush()
-        printed, sys.stdout = held.getvalue().decode("utf-8", "replace"), out
-        out.write(printed)
-        out.flush()
-        probed(nonce, host, script, raw, printed)
+        forward()
     return 0
 
 
