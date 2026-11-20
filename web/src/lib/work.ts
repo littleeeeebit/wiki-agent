@@ -262,6 +262,10 @@ export function useWork() {
   const inflight = useRef(new Map<string, number>())
   // Each followed entry's server turn, set when its first event names it.
   const turnOf = useRef(new Map<number, string>())
+  // Sends whose saved reply a full log left out for their own still-running entry.
+  const shadowed = useRef(new Set<number>())
+  // forget + load(…, true), for callbacks defined before `load`; set once both exist.
+  const reload = useRef<(path: string) => void>(() => {})
   // A key the mirror does not show yet (a send just added, before its render) counts as live.
   const sendingNow = (path: string) => [...(sending.current.get(path) ?? [])].some((key) => {
     const t = (seen.current[path] ?? []).find((x) => x.key === key)
@@ -345,6 +349,13 @@ export function useWork() {
     running: { turn?: string } | null | undefined, rows: api.WorkTurn[]) => {
     const over = (t: Turn) => t.pending && !!t.turn && t.turn !== running?.turn
       && (before.has(t.turn) || (t.from !== undefined && t.from < n))
+    // Sends let go now, not in the render below: the caller reconciles a deferred notice right after.
+    const held = sending.current.get(path)
+    for (const key of [...(held ?? [])]) {
+      const turn = turnOf.current.get(key)
+      if (turn && turn !== running?.turn && before.has(turn)) held?.delete(key)
+    }
+    if (held && !held.size) sending.current.delete(path)
     setTurns((all) => {
       const list = all[path]
       if (!list?.some(over)) return all
@@ -418,6 +429,14 @@ export function useWork() {
         showQueued(path, waiting)
         named(path, running)
         expire(path, latest.n, before, running, rows)
+        // This read let go of the last local send: a notice deferred for it is read now, unless a stream has
+        // attached since or a full log asked after the deferral is already reading it.
+        const owed = missed.current.get(path)
+        if (owed !== undefined && !sendingNow(path) && !streams.current.has(path)
+          && !((inflight.current.get(path) ?? 0) > owed)) {
+          missed.current.delete(path)
+          reload.current(path)
+        }
       })
       .catch(() => {})
   }, [showQueued, named, asked, expire])
@@ -514,6 +533,8 @@ export function useWork() {
         const held = sending.current.get(path)
         const finishing = now && [...(held ?? [])].some((key) => turnOf.current.get(key) === now.turn)
           ? now.turn : undefined
+        // Its end reads the record once more, in case the stream fails before the reply it stands in for.
+        for (const key of held ?? []) if (finishing && turnOf.current.get(key) === finishing) shadowed.current.add(key)
         const saved = rows.filter((r) => !(finishing && r.role === 'assistant' && r.turn === finishing))
         const kept = new Set(saved.map((r) => r.turn && `${r.role}:${r.turn}`).filter(Boolean))
         for (const key of [...(held ?? [])]) {
@@ -607,6 +628,7 @@ export function useWork() {
       const stale = !left?.has(mine.key)
       left?.delete(mine.key)
       turnOf.current.delete(mine.key)
+      const hid = shadowed.current.delete(mine.key)   // its saved reply was left out for it: read the record again
       if (!left?.size) sending.current.delete(path)
       // A full log asked after the deferral reads the record anyway: it settles the refresh (on success, in `load`)
       // without a second read that would supersede it. An older one, or a 410 now, still reloads.
@@ -619,8 +641,8 @@ export function useWork() {
           load(path, true)
         }
       } else if (sendingNow(path)) {
-        if (gone) defer(path)
-      } else if (gone || (owed && !reading)) {
+        if (gone || hid) defer(path)
+      } else if (gone || hid || (owed && !reading)) {
         missed.current.delete(path)   // either reason reloads once, and settles the other
         forget(path)
         load(path, true)
@@ -720,6 +742,13 @@ export function useWork() {
     setTurns((all) => ({ ...all, [path]: [] }))
     setRules((all) => ({ ...all, [path]: { session: '', list: [] } }))
     return kept
+  }, [forget, load])
+
+  useEffect(() => {
+    reload.current = (path) => {
+      forget(path)
+      load(path, true)
+    }
   }, [forget, load])
 
   /** A turn the server started in `path` — the plan row's, a loop's. A
