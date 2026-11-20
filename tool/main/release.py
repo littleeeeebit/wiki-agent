@@ -139,13 +139,12 @@ def seed(repo: Path, sha: str, source: str) -> str:
 
     text = git(repo, "show", f"{sha}:{source}")
     try:
-        if source.endswith(".json"):
-            found = json.loads(text).get("version")
-        elif source.endswith(".toml"):
-            data = tomllib.loads(text)
-            found = (data.get("package") or {}).get("version") or data.get("version")
-        else:
+        if not source.endswith((".json", ".toml")):
             raise ValueError(f"`{source}` 는 .json 도 .toml 도 아니다")
+        data = json.loads(text) if source.endswith(".json") else tomllib.loads(text)
+        table = data.get("package") if isinstance(data, dict) and source.endswith(".toml") else None
+        found = table["version"] if isinstance(table, dict) and "version" in table else \
+            data.get("version") if isinstance(data, dict) else None
     except (ValueError, tomllib.TOMLDecodeError) as exc:
         raise ValueError(f"`{source}` 에서 버전을 읽지 못했다 — {exc}") from exc
     if not isinstance(found, str) or not SEMVER.fullmatch(found):
@@ -376,7 +375,7 @@ def environment(kit: dict) -> dict:
     """The tools' environment, without any key password or GitHub token the server itself was started with: the
     adapter's build runs here, and what it prints can reach the repair agent."""
 
-    shared = {k: v for k, v in os.environ.items() if k.upper() not in UNSHARED}
+    shared = {k: v for k, v in os.environ.items() if k.upper() not in UNSHARED | ({"NDK_HOME"} if kit else set())}
     return shared if not kit else {**shared, "JAVA_HOME": str(kit["java"]), "ANDROID_HOME": str(kit["sdk"]),
                                    **({"NDK_HOME": str(kit["ndk"])} if kit.get("ndk") else {}),
                                    "PATH": os.pathsep.join([str(kit["java"] / "bin"), os.environ.get("PATH", "")])}

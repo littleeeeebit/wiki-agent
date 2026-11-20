@@ -463,9 +463,10 @@ def releasing(android, tmp_path, monkeypatch):
     write(tree, "version.json", '{"version": "0.1.0"}')
     git(tree, "add", "-A")
     git(tree, "commit", "-m", "release table")
-    seen, built = {"package": DEVICE["package"], "code": 1000, "name": "0.1.0", "abis": [], "debuggable": False}, []
+    seen, built = {"package": DEVICE["package"], "code": 1001, "name": "0.1.1", "abis": [], "debuggable": False}, []
 
     def build(src, android, version, kit, halt):
+        assert release._stop.halt is halt   # under the stop's scope, the checkout's clone before it included
         built.append((git(src, "rev-parse", "HEAD"), git(src, "status", "--porcelain"), version, android["artifact"]))
         return src / android["artifact"]
 
@@ -482,11 +483,42 @@ def test_s8_builds_the_release_table_once_from_a_clean_checkout_and_checks_it_as
     tree, seen, built = releasing
     head = git(tree, "rev-parse", "HEAD")
     assert RELEASE_CHECKED(tree, spec(), head, threading.Event()) == ""
-    assert built == [(head, "", "0.1.0", "app/release.apk")]   # the seed, on the committed HEAD, nothing else
+    # The patch after the seed, on the committed HEAD: a build that kept the source's 0.1.0 would fail.
+    assert built == [(head, "", "0.1.1", "app/release.apk")]
     assert list((release.WORK / tree.name).iterdir()) == []   # the checkout went with the check
     seen.update(debuggable=True, abis=["arm64-v8a"])
     why = RELEASE_CHECKED(tree, spec(), head, threading.Event())
     assert "디버그 빌드다" in why and "ABI ['arm64-v8a']" in why
+    seen.update(debuggable=False, abis=[], name="0.1.0", code=1000)   # the seed's, whatever it was given
+    assert "versionName '0.1.0'" in RELEASE_CHECKED(tree, spec(), head, threading.Event())
+
+
+def test_s8_refuses_an_installer_table_until_the_oneshot_ships_its_installer(releasing):
+    tree = releasing[0]
+    write(tree, ".wiki/adapter.toml", (tree / ".wiki/adapter.toml").read_text(encoding="utf-8") +
+          '\n[release.desktop]\nbuild = "b"\nartifact = "../outside.exe"\nexe = "a.exe"\nproduct_name = "p"\n'
+          'publisher = "q"\n')
+    git(tree, "commit", "-qam", "an installer too")
+    assert "`[release.desktop]`" in RELEASE_CHECKED(tree, spec(), git(tree, "rev-parse", "HEAD"), threading.Event())
+    assert releasing[2] == []
+
+
+def test_a_stop_during_the_release_build_ends_the_check_and_still_removes_its_checkout(releasing, monkeypatch):
+    tree = releasing[0]
+
+    def stopped(src, android, version, kit, halt):
+        raise release.Stopped("멈췄다")
+
+    monkeypatch.setattr(release, "build", stopped)
+    assert RELEASE_CHECKED(tree, spec(), git(tree, "rev-parse", "HEAD"), threading.Event()).endswith("멈췄다")
+    assert list((release.WORK / tree.name).iterdir()) == []
+
+
+def test_only_an_android_apps_readme_turn_may_write_the_adapter(android):
+    grant = oneshot_build.GRANTS[oneshot_pr.STAGE]
+    assert grant(spec()) and not grant({**spec(), "writing": {"head": "h", "asked": 1}})
+    oneshot_spec.saved("budget", oneshot={"intent": {"kind": "webapp"}})
+    assert not grant(spec())
 
 
 def test_s8_sends_back_a_missing_or_wrong_release_table_and_a_failed_release_build(releasing, monkeypatch):

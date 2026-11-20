@@ -14,17 +14,27 @@ application_id = "{package}"
 abi = "the one ABI of the APK's native code, or none when it has none"
 ```
 
-- `version_source` holds `0.1.0` now: a `.json` file with a top-level
-  `version`, or a `.toml` file with `version` or `[package] version`.
+- `version_source` holds the app's version, `0.1.0` until the first release:
+  a `.json` file with a top-level `version`, or a `.toml` file with
+  `version` or `[package] version`. When the stack keeps its version
+  elsewhere, as Gradle or `pubspec.yaml` do, add one such file, such as
+  `version.json`, and have the build read its version from there.
 - The release build is given the version in two environment variables:
   `RELEASE_VERSION` (such as `0.1.1`) and `RELEASE_VERSION_CODE` (such as
   `1001`). When they are set, the build uses them as the APK's versionName
   and versionCode. When they are not, it falls back to the version source.
-  Wiring that into the build file is the one code change this turn may make.
+- A Tauri app also gets `RELEASE_TAURI_CONFIG`, the path of a config file
+  holding that version and versionCode. Tauri ignores the variables above,
+  so `build` passes that file as one more `--config`, such as
+  `npx tauri android build --apk --config $env:RELEASE_TAURI_CONFIG`.
+- That version wiring, and the version file when one is needed, are the only
+  code changes this turn may make.
 - The release APK is not signed, and not debuggable. The button signs it
   itself.
 - `build` follows the gate's rules for a command.
 
-After the gate, the server makes this build once from a clean checkout and
-checks the APK's application ID, versionName, versionCode, ABI and that it is
-not debuggable, as a release does.
+After the gate, the server makes this build once from a clean checkout, with
+the version after the first one (`0.1.1`, versionCode `1001` after `0.1.0`).
+It checks the APK's application ID, versionName, versionCode and ABI, and
+that it is not debuggable, as a release does. A build that keeps the
+source's version instead of the one it is given fails there.

@@ -174,30 +174,37 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
 
 def release_checked(path: Path, spec: dict, head: str, halt: threading.Event) -> str:
     """The `[release]` table the README turn committed, read as a press reads it at `head`, and its Android
-    build made once from a clean checkout of `head` with the seed version, then checked as a release checks
-    what a build made (`release.built_wrong`). Unsigned: no key exists before the first press, and none is made."""
+    build made once from a clean checkout of `head` with the patch after the seed, so the build is shown to take
+    the version it is given, then checked as a release checks what a build made (`release.built_wrong`).
+    Unsigned: no key exists before the first press, and none is made. Only Android's table, until step 7b."""
 
     try:
         cfg = release.settings(path, head)
         if "android" not in cfg:
             return "`.wiki/adapter.toml` 에 `[release.android]` 가 없다 — 정식 빌드 명령, APK 경로, 앱 ID, ABI 를 적는다"
+        if "desktop" in cfg:   # an installer's table comes with the oneshot's own installer (step 7b), checked then
+            return "`[release.desktop]` 는 아직 쓰지 않는다 — 원샷은 Android 앱의 표만 쓴다"
         android, first = cfg["android"], release.seed(path, head, cfg["version_source"])
         if android["application_id"] != (want := spec["oneshot"]["device"]["package"]):
             return f"`[release.android]` 의 `application_id` {android['application_id']!r} 가 앱의 {want!r} 와 다르다"
         release.version([], [], None, first, cfg)   # a seed a declared kind cannot carry, refused as the card would
+        # The patch after the seed: a build that keeps the source's version instead of the injected one fails here.
+        later = release.version([{"tagName": f"v{first}"}], [], "patch", first, cfg)
         kit = release.tools(cfg)
     except ValueError as exc:
         return f"`[release]` 표 — {exc}"
     attempt = f"oneshot-{time.time_ns()}"
     try:
-        apk = release.build(release.checkout(path, head, attempt), android, first, kit, halt)
-        seen = release.badging(release.run([kit["aapt2"], "dump", "badging", apk], release.environment(kit)))
-    except ValueError as exc:   # `BuildFailed` among them
+        with release.stoppable(halt):   # every command ends within a second of a stop, the checkout's own included
+            apk = release.build(release.checkout(path, head, attempt), android, later, kit, halt)
+            seen = release.badging(release.run([kit["aapt2"], "dump", "badging", apk], release.environment(kit)))
+    except (ValueError, release.Stopped) as exc:   # `BuildFailed` among them
         return f"`[release.android]` 의 정식 빌드 — {exc}"
     finally:
-        if release.place(path, attempt).exists():
-            release.discard(path, attempt)
-    wrong = release.built_wrong(seen, first, android)
+        with release.stoppable(None):   # the cleanup runs even after the stop
+            if release.place(path, attempt).exists():
+                release.discard(path, attempt)
+    wrong = release.built_wrong(seen, later, android)
     return f"`[release.android]` 의 정식 빌드가 배포 검사에 걸린다 — {'; '.join(wrong)}" if wrong else ""
 
 
@@ -333,6 +340,8 @@ def handed(path: Path, run, spec: dict, final: str):
 
 
 oneshot_build.STAGES[STAGE] = (readied, STAGE, restart, asked)
+# An Android app's README turn writes `[release]`; the pull request's text turn (`writing`) writes nothing there.
+oneshot_build.GRANTS[STAGE] = lambda spec: "android" in kinds_of(spec["oneshot"]) and not spec.get("writing")
 oneshot_build.HANDOVERS[STAGE] = lambda spec: bool(spec.get("writing")), handed
 oneshot_spec.TURNS.add(STAGE)
 

@@ -185,5 +185,5 @@ def looked(path: Path, kind: str, spec: dict, live: str, device: dict | None, sh
 
 
 oneshot_build.STAGES[STAGE] = (built_front, "gate", build_front_text, lambda repo: None)   # the critic follows (4c)
-oneshot_build.GRANTS.add(STAGE)
+oneshot_build.GRANTS[STAGE] = lambda spec: True
 oneshot_spec.TURNS.add(STAGE)
