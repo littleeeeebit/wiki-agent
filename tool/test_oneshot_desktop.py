@@ -557,22 +557,35 @@ def test_a_saved_pc_app_spec_takes_no_turn_on_another_host(desktop):
 
 
 def test_the_shared_start_refuses_a_move_into_the_held_stage(desktop):
-    oneshot_spec.saved("budget", oneshot={"stage": "r2"})   # the last stage a PC app runs in this version
+    # A PC app alone runs its frontend build; among other kinds it is held before it until 9e3b2.
+    assert oneshot_profile.waits_at(o()) == "look" and not oneshot_profile.held({**o(), "stage": "build-front"})
+    oneshot_spec.saved("budget", oneshot={"stage": "r2", "intent": {**o()["intent"], "kinds": ["webapp", "desktop"]}})
     with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             pytest.raises(HTTPException, match="다음 버전"):
         START("budget", "design", stage="build-front")
     assert o()["stage"] == "r2"
 
 
-def test_a_resume_or_a_shutdown_between_the_save_and_the_stop_never_starts_the_build(desktop):
-    # The stop was lost (a restart that replaced it): the run is still held, never resumable into the build.
+def test_a_resume_or_a_shutdown_between_the_freeze_and_the_stop_never_starts_the_look(desktop, tmp_path):
+    # The build passed its gate and was frozen, then the stop was lost (a restart that replaced it): the run is
+    # held at its look, never resumable into a second build or past it.
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "app.exe").write_bytes(b"MZ")
+    (tmp_path / "manifest.json").write_text("{}")
+    frozen = {"identity": "f" * 64, "folder": str(tmp_path / "app"), "head": git_head(desktop),
+              "launch": {"program": "app.exe"}}
     oneshot_spec.saved("budget", oneshot={"stage": "build-front", "working": None, "features": [],
+                                          "desktop_build": frozen,
                                           "stopped": {"reason": "restart", "detail": "서버가 다시 켜졌다",
                                                       "state": "build-front"}})
+    assert oneshot_profile.held(o())
     with patch.object(oneshot_spec, "start", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             pytest.raises(HTTPException, match="다음 버전"):
         oneshot_spec.resume("budget")
     assert o()["stopped"]["reason"] == "kind"
+    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "state": "build-front", "detail": "x"}})
+    oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "build-front"
 
 
 def test_several_kinds_an_earlier_version_held_past_the_build_stay_held(desktop):
@@ -619,5 +632,5 @@ def test_a_pc_app_has_its_own_prompts_through_s4_and_no_web_fallback_for_later_s
     screens = oneshot.prompt("frontend", "desktop")
     assert "Windows program" in screens and "`window`" in screens and "AutomationId" in screens
     assert "a PC app" in oneshot.prompt("frontend", "kinds")
-    with pytest.raises(FileNotFoundError):   # the frontend build is the next version's
-        oneshot.prompt("build-front", "desktop")
+    build = oneshot.prompt("build-front", "desktop")
+    assert "Windows program" in build and "oneshot-desktop" in build and "{tools}" in build and "Android" not in build

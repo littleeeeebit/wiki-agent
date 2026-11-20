@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import stat
 import time
 from pathlib import Path
 
@@ -470,11 +471,43 @@ def recover() -> None:
 
 def waiting(repo: str, o: dict) -> dict:
     """A run at the stage this version waits at keeps its `kind` stop: a stop or a shutdown that landed between
-    that stage's save and its hand-off replaced it, and must not make the stage resumable."""
+    that stage's save and its hand-off replaced it, and must not make the stage resumable. A PC app's frozen build
+    whose copy is gone, or whose HEAD the worktree has left, holds nothing: it is dropped, and `[재개]` builds again."""
 
+    if (build := o.get("desktop_build")) and not o.get("working") and not standing(repo, build):
+        o = saved(repo, oneshot={"desktop_build": None, "stopped": {
+            "reason": "restart", "state": o.get("stage"),
+            "detail": "얼린 PC 앱 빌드가 없거나 작업트리의 HEAD 가 바뀌었다 — [재개]를 누르면 다시 빌드한다"}})["oneshot"]
     if held(o) and not o.get("working") and (o.get("stopped") or {}).get("reason") != "kind":
         return saved(repo, oneshot={"stopped": kind_stop(o["stage"])})["oneshot"]
     return o
+
+
+def standing(repo: str, build: dict) -> bool:
+    """A frozen build still stands unless it is shown not to: its copy, program or manifest is gone, or the worktree
+    is read at another HEAD than the one its gate passed. A HEAD that cannot be read keeps it, never a startup."""
+
+    try:   # a record missing what a frozen build always carries holds nothing to start
+        app, head = Path(build["folder"]), str(build["head"])
+        needed = (app / build["launch"]["program"], app.parent / "manifest.json")
+    except (KeyError, TypeError):
+        return False
+    unread = False
+    for path in needed:   # each read, so one unreadable file never hides another shown missing
+        try:
+            if not stat.S_ISREG(path.stat().st_mode):
+                return False
+        except (FileNotFoundError, NotADirectoryError, ValueError):   # gone, or a path no file can have
+            return False
+        except OSError:   # there, but unreadable now: not shown gone
+            unread = True
+    if unread:
+        return True
+    try:
+        done = specs.sh(["git", "rev-parse", "HEAD"], Path(spec_of(repo)["worktree"]))
+    except Exception:   # a timeout, a missing Git or worktree: unread, so not shown changed
+        return True
+    return done.returncode != 0 or done.stdout.strip() == head
 
 
 def kind_stop(stage: str) -> dict:

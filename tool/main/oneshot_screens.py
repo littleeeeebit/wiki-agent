@@ -34,7 +34,8 @@ DESKTOP_SURFACES = {"window": "창", "dialog": "대화 상자", "floating": "다
 NATIVE = {"android": SURFACES, "desktop": DESKTOP_SURFACES}   # the kinds whose screens a preview tool draws
 MAX_FILES = 40
 MOCK_PATH = re.compile(r"[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*")
-DEVICE_NAMES = {"CON", "PRN", "AUX", "NUL", *(f"{d}{n}" for d in ("COM", "LPT") for n in range(1, 10))}
+DEVICE_NAMES = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",   # Windows also reserves the superscript digits
+                *(f"{d}{n}" for d in ("COM", "LPT") for n in [*range(1, 10), "¹", "²", "³"])}
 SIZE_SLACK = 0.03   # a preview tool rounds dp to px: a picture within 3% of the device is its size
 # A feature's key, then the words its refusals use: the served API on the web, the approved core on Android.
 INVENTORY = {"endpoints": ("엔드포인트", "`METHOD /path`", "서버에 없는"),

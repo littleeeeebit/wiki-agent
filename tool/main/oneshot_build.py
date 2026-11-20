@@ -590,6 +590,8 @@ def checked(path: Path, run, spec: dict, final: str):
         oneshot_spec.store(repo).stop("block", f"{type(exc).__name__}: {exc}")
         raise
     if not why:
+        if kind_held(oneshot_spec.spec_of(repo)["oneshot"]):   # the pass left the run at its kind's stop: no next
+            return None
         return unless_stopped(run, repo, lambda: after(repo))
     specs.note(run, why)
     attempts = int(spec["oneshot"].get("attempts") or 0) + 1

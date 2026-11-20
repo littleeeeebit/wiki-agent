@@ -22,13 +22,18 @@ SUPPORTED_KINDS = ("webapp", "android", "desktop")
 HOST_ONLY = {"desktop": ("win32", "PC 앱은 Windows 에서만 만든다")}
 # The stage a kind waits at in this version, stopped with reason `kind` until its plan step lands. A kind not
 # here runs to the end: `android` does since its R3 sheet and S8 (`docs/plans/oneshot/7-android.md`, 7f2), and
-# several kinds without `desktop` since 9c4b. `desktop`, alone or among other kinds, runs its core path through
-# the backend review, the split, S6 and R2, and waits at the frontend build until the build lands in 9e3
+# several kinds without `desktop` since 9c4b. `desktop` alone runs its core path, S6, R2 and the frontend build,
+# and waits at `look`, once its build gate passed and froze the program, until the look lands in 9e4; among other
+# kinds it waits at the frontend build until that build's turn for several kinds lands in 9e3b2
 # (`docs/plans/oneshot/9-kinds.md`, "Steps and their stops").
-KIND_STOPS: dict[str, str] = {"desktop": "build-front"}
+KIND_STOPS: dict[str, str] = {"desktop": "look"}
+SEVERAL_STOPS: dict[str, str] = {"desktop": "build-front"}
 # A run's stages in order after the bootstrap (`web/src/lib/oneshot.ts` STAGES).
 STAGE_ORDER = ("spec", "design", "r1", "tests", "build", "review", "split", "board", "frontend", "r2", "build-front",
                "critique", "phone", "r3", "pr", "done")
+# A stop inside the frontend build, never a stage of its own: its gate passed and froze a PC app's program
+# (`desktop_build`), and its look has not started. A run there stays at `build-front`.
+LOOK = "look"
 # The sizes S7 sets a PC app's main window to: its frame in physical pixels, as the driver reads it back.
 WINDOWS = ("1280x800", "1024x768", "1440x900", "1920x1080")
 # The reference phone S7 shoots (`device` replaces `responsive` for `android`): emulator hardware profiles.
@@ -80,16 +85,23 @@ def waits_at(o: dict) -> str | None:
     """The stage the run waits at in this version, stopped with reason `kind`: the earliest any of its kinds
     waits at, so several kinds wait where `desktop` does."""
 
-    stops = [KIND_STOPS[k] for k in kinds_of(o) if k in KIND_STOPS]
+    table = SEVERAL_STOPS if len(kinds_of(o)) > 1 else KIND_STOPS
+    stops = [table[k] for k in kinds_of(o) if k in table]
     return stops[0] if stops else None
 
 
 def held(o: dict) -> bool:
     """Whether the run stands at or past the stage it waits at in this version, so nothing may start it: a run an
-    earlier version carried past today's stop (several kinds with `desktop` at `frontend`) stays held as well."""
+    earlier version carried past today's stop (several kinds with `desktop` at `frontend`) stays held as well.
+    `LOOK` lies inside the frontend build: a run is past it there once its PC app's build is frozen."""
+
+    def at(stage: str, frozen: bool = False) -> float:
+        if stage == LOOK:
+            return STAGE_ORDER.index("build-front") + 0.5
+        return STAGE_ORDER.index(stage) + (0.5 if stage == "build-front" and frozen else 0)
 
     stop = waits_at(o)
-    return stop is not None and o.get("stage") in STAGE_ORDER and STAGE_ORDER.index(o["stage"]) >= STAGE_ORDER.index(stop)
+    return stop is not None and o.get("stage") in STAGE_ORDER and at(o["stage"], bool(o.get("desktop_build"))) >= at(stop)
 
 
 def unavailable() -> dict[str, str]:

@@ -27,6 +27,7 @@ NO_SUCH_LOGON_SESSION = 0xC000005F
 DESKTOP_ALL, DESKTOP_READ = 0x01FF, 0x0001
 NOT_FOUND, INVALID_PARAMETER = 2, 87
 FINAL = ("proven", "recovered")
+LOG_TAIL = 64 * 1024   # the bytes of a run's log it returns, its end: a writer still running cannot extend the read
 RELEASE_RETRIES = 10   # half a second apart: a handle still held after that keeps its server the owner
 _Each = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
 
@@ -271,8 +272,12 @@ class Look:
         save(self.folder, self.record)
         owned = {"APPDATA": str(folders["Roaming"]), "LOCALAPPDATA": str(folders["Local"]),
                  "TEMP": str(folders["Temp"]), "TMP": str(folders["Temp"])}
-        # Windows reads names without case: no spelling of an owned name from the server or `extra` survives.
-        env = {name: value for name, value in {**os.environ, **(extra or {})}.items()
+        # Windows reads names without case: a name `extra` sets drops every inherited spelling of it, and no
+        # spelling of an owned name from the server or `extra` survives.
+        extra = extra or {}
+        given = {name.upper() for name in extra}
+        env = {name: value for name, value in [*((n, v) for n, v in os.environ.items() if n.upper() not in given),
+                                               *extra.items()]
                if name.upper() not in owned} | owned
 
         def recorded(root: dict) -> None:
@@ -308,18 +313,23 @@ class Look:
                 break
             time.sleep(max(0.0, min(0.2, deadline - time.monotonic())))
         self.observe()
-        output = (self.folder / "evidence" / f"{key}.log").read_bytes().decode("utf-8", "replace")
+        with open(self.folder / "evidence" / f"{key}.log", "rb") as log:   # a member may still be writing it
+            log.seek(max(0, log.seek(0, os.SEEK_END) - LOG_TAIL))
+            output = log.read(LOG_TAIL).decode("utf-8", "replace")
         return (None if cut else code), output, cut
 
     def observe(self) -> None:
         """Record every member each job has seen, so recovery can still name them after a crash."""
 
         for key, job in self.jobs.items():
-            known = self.record["jobs"][key]["members"]
-            for member in job.members():
-                if not any(native_process.same(member, seen) for seen in known):
-                    known.append(member)
+            self._learn(key, job.members())
         save(self.folder, self.record)
+
+    def _learn(self, key: str, members: list[dict]) -> None:
+        known = self.record["jobs"][key]["members"]
+        for member in members:
+            if not any(native_process.same(member, seen) for seen in known):
+                known.append(member)
 
     def _recorded(self) -> list[dict]:
         return [member for entry in self.record["jobs"].values() for member in entry["members"]]
@@ -465,9 +475,12 @@ class Look:
     def _ended(self, key: str, job, seconds: float) -> list[str]:
         try:
             proof = job.end(seconds)
+            # Members first heard of while the job ended: recorded before any handle closes, so recovery names
+            # them however the close goes.
+            self._learn(key, proof["members"])
+            self.record["jobs"][key]["proof"] = proof
         finally:
             job.close()
-        self.record["jobs"][key]["proof"] = proof
         return [f"{key}: {reason}" for reason in proof["reasons"]]
 
     @staticmethod

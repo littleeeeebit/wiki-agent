@@ -64,6 +64,9 @@ def test_a_command_run_on_the_look_returns_when_its_root_exits_and_what_it_left_
         assert (code, output.strip(), cut) == (3, "drawn", "") and time.monotonic() - started < 20
         never, _, cut = look.run("slow", python(SLEEP), tmp_path, 1, threading.Event())
         assert never is None and cut
+        _, long, _ = look.run("long", python("print('x' * 200000 + 'end', flush=True)"), tmp_path, 30,
+                              threading.Event())
+        assert long.strip().endswith("end") and len(long) <= desktop_session.LOG_TAIL   # its end, bounded
 
     record = desktop_session.load(tmp_path / "ran")
     assert record["state"] == "proven" and record["proof"]["clean"], record["proof"]
@@ -119,9 +122,10 @@ def test_a_halt_while_the_root_is_recorded_ends_it_before_it_runs(tmp_path, monk
     assert not marker.exists() and record["state"] == "proven" and record["proof"]["clean"], record["proof"]
 
 
-def test_the_app_keeps_its_data_inside_the_looks_disposable_folder(tmp_path):
+def test_the_app_keeps_its_data_inside_the_looks_disposable_folder(tmp_path, monkeypatch):
+    monkeypatch.setenv("EXTRA", "inherited")   # a setting spelt in another case still replaces it
     with desktop_session.look(tmp_path, "data") as look:
-        look.start("app", python(ENVIRONMENT), tmp_path, {"EXTRA": "kept", "temp": str(tmp_path), "TMP": "x"})
+        look.start("app", python(ENVIRONMENT), tmp_path, {"extra": "kept", "temp": str(tmp_path), "TMP": "x"})
         log = tmp_path / "data" / "evidence" / "app.log"
         assert waited(lambda: log.stat().st_size > 0)
         seen = json.loads(log.read_text(encoding="utf-8"))
@@ -208,9 +212,11 @@ def test_a_job_that_fails_to_end_does_not_skip_the_rest_of_cleanup(tmp_path, mon
     def failing(_seconds):
         raise OSError("first job failed")
 
+    late = {"pid": 7, "created": 1, "exe": "late.exe"}   # first heard of while its job ended
+
     def ending(_seconds):
         calls.append("second.end")
-        return {"clean": True, "reasons": []}
+        return {"clean": True, "reasons": [], "members": [late]}
 
     look.jobs = {"first": SimpleNamespace(end=failing, close=lambda: calls.append("first.close"), outstanding=lambda: 0),
                  "second": SimpleNamespace(end=ending, close=lambda: calls.append("second.close"),
@@ -225,6 +231,28 @@ def test_a_job_that_fails_to_end_does_not_skip_the_rest_of_cleanup(tmp_path, mon
     assert calls == ["first.close", "second.end", "second.close", "desktop"]
     assert not proof["clean"] and any("first job failed" in reason for reason in proof["reasons"])
     assert desktop_session.load(look.folder)["state"] == "held" and look.close() == proof
+    assert desktop_session.load(look.folder)["jobs"]["second"]["members"] == [late]   # recovery names it too
+
+
+def test_a_member_learnt_while_its_job_ended_is_recorded_even_when_the_close_fails(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    look = desktop_session.Look(tmp_path, "late")
+    late = {"pid": 7, "created": 1, "exe": "late.exe"}
+
+    def closing():
+        raise OSError("close failed")
+
+    look.jobs = {"app": SimpleNamespace(end=lambda _s: {"clean": True, "reasons": [], "members": [late]},
+                                        close=closing, outstanding=lambda: 0)}
+    look.record["jobs"] = {"app": {"members": []}}
+    monkeypatch.setattr(look, "observe", lambda: None)
+    monkeypatch.setattr(native_process, "_sockets", lambda _kind: [])
+    monkeypatch.setattr(look, "_desktop_closed", lambda: [])
+
+    proof = look.close(0)
+
+    assert not proof["clean"] and desktop_session.load(look.folder)["jobs"]["app"]["members"] == [late]
 
 
 def test_an_interrupted_cleanup_is_never_proven(tmp_path, monkeypatch):
