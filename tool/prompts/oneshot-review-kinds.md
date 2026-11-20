@@ -43,7 +43,8 @@ corrupts the person's data; a missing handling the design does name stays
 P0 or P1. A P1 changes requested behaviour, so it names that request: its
 `breaks` lists the ids of the design items or requirements it breaks
 (`["R8", "M1"]`), from the list the input gives. A finding that breaks none of
-them is P2. A P0 may carry `breaks` too.
+them is P2. A P0 may carry `breaks` too. A credential, key or token
+committed to the repository is P0, whatever the design says.
 
 ## What only a device can show
 

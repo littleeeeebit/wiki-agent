@@ -75,7 +75,9 @@ def frozen(spec: dict) -> tuple[str, str, int]:
     read_tools.save_diff(tree, done.stdout)
     how = ("read it with the `pr_diff` tool" if oneshot.codex_role("review", store) else
            f"read it from `{read_tools.diff_file(tree).resolve()}`; a line starting with ~ continues the line before it")
-    return head, how, sum(1 for line in done.stdout.splitlines() if line.startswith("+") and not line.startswith("+++"))
+    counted = specs.sh(["git", "diff", "--numstat", spec["start_head"], head], tree, 120)
+    added = sum(int(n) for n, *_ in (line.split("\t") for line in counted.stdout.splitlines()) if n.isdigit())
+    return head, how, added
 
 
 def review_text(spec: dict, head: str, how: str, rules: dict | None = None) -> str:
@@ -113,22 +115,31 @@ def narrowing(reviews: list[dict]) -> bool:
 def changed_lines(tree: Path, since: str, head: str) -> dict[str, list[tuple[int, int]]] | None:
     """Each file's lines `since..head` changed, as inclusive ranges on HEAD's side; `None` when Git cannot say."""
 
-    done = specs.sh(["git", "diff", "--no-color", "-U0", since, head], tree, 120)
+    done = specs.sh(["git", "-c", "core.quotePath=false", "diff", "--no-color", "--no-ext-diff", "-U0",
+                     "--src-prefix=a/", "--dst-prefix=b/", since, head], tree, 120)
     if done.returncode:
         return None
-    ranges, path = {}, None
+    ranges, path, header = {}, None, False
     for line in done.stdout.splitlines():
-        if line.startswith("+++ "):
-            path = line[6:] if line.startswith("+++ b/") else None
-        elif path and (m := re.match(r"@@ -\S+ \+(\d+)(?:,(\d+))? @@", line)):
-            start, count = int(m[1]), int(m[2] or 1)
-            ranges.setdefault(path, []).append((start, start + max(count, 1) - 1))   # a deletion: the line after
+        if line.startswith("diff --git "):   # a file's headers until its first hunk: never a content line
+            path, header = None, True
+        elif header and line.startswith("+++ "):
+            name = line[4:].rstrip("\t")   # Git ends a path holding a space with a tab
+            if name.startswith('"') and name.endswith('"'):   # a quoted path: `\"`, `\\` and `\t` inside
+                name = name[1:-1].encode("latin-1", "backslashreplace").decode("unicode_escape").encode(
+                    "latin-1").decode("utf-8", "replace")
+            path = name[2:] if name.startswith("b/") else None   # `/dev/null`: the file is gone
+        elif line.startswith("@@") and (m := re.match(r"@@ -\S+ \+(\d+)(?:,(\d+))? @@", line)):
+            header, start, count = False, int(m[1]), int(m[2] or 1)
+            if path:   # a deletion (`count` 0) after line `start` touches it and the line that follows
+                ranges.setdefault(path, []).append((max(start, 1), start + count - 1) if count else
+                                                    (max(start, 1), start + 1))
     return ranges
 
 
 def touched(location: str, changed: dict[str, list[tuple[int, int]]]) -> bool:
-    m = re.match(r"\s*`?([^:`\s]+):(\d+)", location)
-    return bool(m) and any(a <= int(m[2]) <= b for a, b in changed.get(m[1].replace("\\", "/"), []))
+    m = re.match(r"\s*`?(.+?):(\d+)", location)
+    return bool(m) and any(a <= int(m[2]) <= b for a, b in changed.get(m[1].strip().replace("\\", "/"), []))
 
 
 def ruled(spec: dict, tree: Path, head: str) -> dict:
@@ -158,7 +169,8 @@ def rules_text(rules: dict) -> str:
         spans = "; ".join(f"{p}: " + ", ".join(f"{a}-{b}" for a, b in r) for p, r in sorted(rules["changed"].items()))
         said += (f"\nThe repairs are not converging: the last review found no fewer blocking findings than the one "
                  f"before. This round reads what changed since `{rules['since']}` first. A P1 in an area no earlier "
-                 "refusal names must point at a line changed since then; one elsewhere is P2, unless it is a P0. "
+                 "refusal names must point at a line changed since then, or carry a `repro` that shows it on this "
+                 "HEAD; one with neither is P2, unless it is a P0. "
                  f"The changed lines: {spans or 'none'}.\n")
     return said
 
@@ -257,12 +269,15 @@ def held(f: dict, rules: dict) -> None:
     if allowed and f["severity"] == "P1" and not breaks:
         raise ValueError("P1 발견마다 그것이 깨뜨리는 설계 항목·요구 번호를 `breaks` 에 적는다 — 아무것도 "
                          "깨뜨리지 않으면 P2 다")
-    if area_of(f) in rules.get("repeated", ()) and not str(f.get("repro") or "").strip():
+    repro = f.get("repro")
+    if repro is not None and not (isinstance(repro, str) and repro.strip()):
+        raise ValueError("`repro` 는 평범한 입력과 순서, 그 결과를 적은 비어 있지 않은 글이다")
+    if area_of(f) in rules.get("repeated", ()) and not repro:
         raise ValueError(f"두 회차 넘게 거부된 영역 `{f['area']}` 의 발견은 `repro` 에 평범한 입력과 순서, 그 결과를 적는다")
     if rules.get("changed") is not None and f["severity"] == "P1" and area_of(f) not in rules.get("known", ()) \
-            and not touched(f["location"], rules["changed"]):
+            and not touched(f["location"], rules["changed"]) and not (breaks and repro):
         raise ValueError(f"수렴하지 않는 중이라, 처음 나온 영역의 P1 은 `{str(rules['since'])[:12]}` 뒤 바뀐 줄을 "
-                         f"가리켜야 한다 — {f['location']} 는 아니다. P0 이 아니면 P2 로 적는다")
+                         f"가리키거나, 이 HEAD 에서 재현하는 `repro` 를 적는다 — {f['location']} 는 바뀐 줄이 아니다")
 
 
 def owing(found: dict) -> list[dict]:

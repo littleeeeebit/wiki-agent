@@ -342,9 +342,11 @@ def test_while_repairs_do_not_converge_a_new_areas_p1_points_at_a_changed_line(r
     def judged(*findings):
         return oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": list(findings)}, head, rules=rules)
 
+    bare = {k: v for k, v in new.items() if k != "repro"}
     with pytest.raises(ValueError, match="바뀐 줄"):
-        judged(new)   # line 2, read last round and unchanged since
-    assert judged({**new, "location": "`budget_app.py:7`"})   # on a changed line
+        judged(bare)   # line 2, read last round and unchanged since, and nothing shows it on this HEAD
+    assert judged(new)   # anchored and reproduced on this HEAD: a contract break is never held back
+    assert judged({**bare, "location": "`budget_app.py:7`"})   # on a changed line
     assert judged({**new, "severity": "P0"})   # a P0 is never held back
     assert judged(P1)   # an earlier area is checked wherever the fix moved it
 
@@ -378,3 +380,36 @@ def test_a_round_that_converges_reads_the_whole_build_as_before(reviewed):
     with asking, patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
         oneshot_review.review("budget")
     assert "not converging" not in said[0][1] and o()["reviews"][-1]["focus"] == "full"
+
+
+def test_a_repro_is_a_sentence_never_an_empty_shape(reviewed):
+    _, head, _ = reviewed
+    for repro in ({"notes": ""}, "  ", ["a"]):
+        with pytest.raises(ValueError, match="repro"):
+            oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [{**P1, "repro": repro}]}, head,
+                                      rules={"anchors": {"R1"}})
+
+
+def test_the_changed_lines_read_every_path_git_writes_and_every_kind_of_hunk(world):  # noqa: F811
+    for name in ("a b.py", "한글.py", "plain.py"):
+        (world / name).write_text("one\ntwo\nthree\n", encoding="utf-8")
+    git(world, "add", "-A")
+    git(world, "commit", "-m", "base")
+    since = git(world, "rev-parse", "HEAD")
+    (world / "a b.py").write_text("one\nTWO\nthree\n", encoding="utf-8")
+    (world / "한글.py").write_text("one\ntwo\nthree\n++counter;\n", encoding="utf-8")
+    (world / "plain.py").write_text("two\nthree\n", encoding="utf-8")   # its first line deleted
+    git(world, "commit", "-am", "repair")
+    changed = oneshot_review.changed_lines(world, since, git(world, "rev-parse", "HEAD"))
+    assert changed["a b.py"] == [(2, 2)] and changed["한글.py"] == [(4, 4)] and changed["plain.py"] == [(1, 1)]
+    assert oneshot_review.touched("a b.py:2", changed) and oneshot_review.touched("`plain.py:1`", changed)
+    assert not oneshot_review.touched("plain.py:2", changed)
+
+
+def test_the_added_lines_count_a_line_that_starts_with_two_plus_signs(reviewed):
+    tree, _, _ = reviewed
+    (tree / "count.js").write_text("++counter;\n", encoding="utf-8")
+    git(tree, "add", "count.js")
+    git(tree, "commit", "-m", "count")
+    oneshot_spec.saved("budget", oneshot={"built_head": git(tree, "rev-parse", "HEAD")})
+    assert oneshot_review.frozen(specs.load("budget", oneshot.BRANCH))[2] == 3   # budget_app.py's two lines and this
