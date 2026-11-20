@@ -18,6 +18,7 @@ import threading
 import time
 import tomllib
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from xml.etree import ElementTree
@@ -30,7 +31,8 @@ from .oneshot_profile import charged, environment, held as kind_held, kinds_of, 
 from .query import _lock as work_lock, hold
 
 MAX_ATTEMPTS = 3
-GRANTS: set[str] = set()   # a stage whose turn may write the worktree's adapter, only while it runs
+# A stage whose turn may write the worktree's adapter, only while it runs, by whether its spec's turn may.
+GRANTS: dict[str, Callable[[dict], bool]] = {}
 # A stage's turn another module checks while its condition on the spec holds: `(applies, check)`.
 HANDOVERS: dict[str, tuple] = {}
 RUN_SECONDS = 900
@@ -231,7 +233,7 @@ def send(repo: str, stage: str, text: str) -> None:
         turn = Turn(chat, repo, stage, codex)
         store.put(working=stage, stopped=None,
                   inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token})
-        if stage in GRANTS:   # set as the turn starts, a resumed one included; the turn's end clears it
+        if stage in GRANTS and GRANTS[stage](spec):   # set as the turn starts, a resumed one included; its end clears it
             oneshot_spec.saved(repo, adapter=True)
         work.begin(path, chat, text, release, turn)
     except BaseException as exc:
@@ -650,12 +652,13 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
         return "계획 테스트를 돌리는 동안 작업트리가 바뀌었다"
     gate = " && ".join([runner["command"].replace("{report}", REPORT), *runner["after"]])
     adapter = path / ".wiki" / "adapter.toml"
-    try:
-        slots = tomllib.loads(adapter.read_text(encoding="utf-8")).get("slots", {})
-    except (OSError, ValueError):
-        slots = {}
+    try:   # every table but `[slots]` is kept as written; one that is there but unreadable is never replaced
+        old = adapter.read_bytes().decode("utf-8") if adapter.exists() else ""   # its line endings as they are
+        slots = tomllib.loads(old).get("slots", {})
+    except (OSError, ValueError) as exc:
+        return f"`.wiki/adapter.toml` 를 읽지 못했다 — 고쳐 두면 게이트를 그 `[slots]` 에 적는다 — {exc}"
     adapter.parent.mkdir(parents=True, exist_ok=True)
-    adapter.write_text(connect.adapter_text({**slots, "gate_cmd": gate}), encoding="utf-8", newline="\n")
+    adapter.write_text(connect.adapter_text({**slots, "gate_cmd": gate}, old), encoding="utf-8", newline="\n")
     names = sorted({*names, ".wiki/adapter.toml"})
     for args in (["add", "-A", "--", *names], ["commit", "-m", "Write the contract tests before the backend", "--", *names]):
         done = specs.sh(["git", *args], path)

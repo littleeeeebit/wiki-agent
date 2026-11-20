@@ -1,4 +1,5 @@
-This turn writes the README of a finished project, and nothing else of substance.
+This turn writes the README of a finished project and, for an Android app,
+the release table its section below asks for. Nothing else of substance.
 
 The person approved the backend, the screens and the finished frontend. The
 code is committed in this worktree; the design is in `docs/design/`. What is
@@ -29,11 +30,14 @@ The server checks, in order:
    asked for above.
 3. The contract tests and the test tool's configuration are unchanged.
 4. The whole gate `{gate}` passes on a clean, committed HEAD.
+5. For an Android app, the release table reads as the release button reads
+   it, and one release build from it passes the release checks.
 
 Then the server asks you for the pull request's text, and opens it itself.
 
 ## In this turn
 
-- Change no application code and no test. Commit everything and leave
+- Change no application code and no test, apart from the release version
+  wiring and version file an Android app's section allows. Commit everything and leave
   nothing uncommitted, then end with the `done-report`.
 - Do not push, open a pull request, or ask the person anything.

@@ -882,6 +882,18 @@ def test_a_gate_that_changes_what_it_checked_fails_whatever_it_exits_with(repo, 
     assert specs.judge(repo, [PASS, FAIL, PASS], threading.Event())["commands"] == [PASS, FAIL, PASS]
 
 
+def test_a_gate_whose_head_is_not_the_expected_commit_runs_nothing(repo):
+    import threading
+
+    (repo / ".git/info/exclude").write_text(".wiki/\n", encoding="utf-8")
+    ran = 'python -c "open(\'ran.txt\', \'w\')"'
+    verdict = specs.judge(repo, [ran], threading.Event(), expect="0" * 40)
+    assert not verdict["ok"] and "확인한 커밋 000000000000 가 아니다" in verdict["reason"] and verdict["code"] is None
+    assert not (repo / "ran.txt").exists()
+    head = specs.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+    assert specs.judge(repo, [PASS], threading.Event(), expect=head)["ok"]
+
+
 def test_a_harvested_decision_record_is_not_uncommitted_work_but_anything_else_is(repo):
     # The start hook (`tool/sync.py`) left a record that waits for a person's batch commit.
     (repo / ".git/info/exclude").write_text(".wiki/*\n!.wiki/decisions/\n", encoding="utf-8")

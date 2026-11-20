@@ -3,7 +3,9 @@
 `docs/plans/oneshot/5-screen-pr.md` ("S8 — the first pull request") is the design. After R3's approval
 one work turn writes the README (and, for a public repository, the CI workflow); the server checks it
 and runs the adapter's whole gate; then the ordinary pull request path takes over: the worker's
-`pr-summary` (`pr_text`), push and `gh pr create` as the person (`specs.written`, `specs.opened`).
+`pr-summary` (`pr_text`), push and `gh pr create` as the person (`specs.written`, `specs.opened`). An
+Android app's turn also writes the `[release]` table, and one unsigned release build checks it
+(`release_checked`, `docs/plans/release/0-overview.md` step 7).
 From `PR #n` on the spec follows the ordinary cycle, and the run keeps its summary.
 """
 
@@ -14,6 +16,7 @@ import shutil
 import subprocess
 import threading
 import time
+import tomllib
 from pathlib import Path
 
 import yaml
@@ -26,6 +29,8 @@ from .oneshot_profile import kinds_of
 from .query import ROOT
 
 README_PROMPT = (ROOT / "tool/prompts/oneshot-readme.md").read_text(encoding="utf-8")
+ADAPTER = ".wiki/adapter.toml"
+RELEASE_PROMPT = (ROOT / "tool/prompts/oneshot-readme-release.md").read_text(encoding="utf-8")
 STAGE = "pr"
 TRIES = 3   # the debug APK's create and upload, each, as `gh release` retried them
 OS_NAMES = {"windows": "Windows", "macos": "macOS"}
@@ -61,7 +66,7 @@ it and where it is then served.
 needs. Run is instead the command that builds the debug APK,
 `{spec['oneshot']['device']['apk']}`, and the one that installs it on a phone
 connected with USB debugging on: adb's install command with that APK's path.
-""" if android else ""))
+""" + RELEASE_PROMPT.replace("{package}", spec["oneshot"]["device"]["package"]) if android else ""))
             .replace("{workflow}", f"Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and {job}."
                      if public else "Write no CI workflow: this repository gets none, and the server refuses one."))
 
@@ -127,7 +132,15 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     names = oneshot_build.changed(path, o.get("front_built_head") or o["tests_head"])
     if "README.md" not in names or not (path / "README.md").is_file():
         return "`README.md` 를 쓰지 않았다 — 설치, 실행, 테스트 명령을 적는다"
-    gate, backend = slots_for(None, path).get("gate_cmd", "").strip(), o["gate"]
+    # Before its gate is read, let alone run: the turn may have added `[release]` and nothing else. The gate is
+    # read from that very commit's adapter, and the gate runs only on that commit (`judge`'s `expect`).
+    try:
+        with release.stoppable(run.halt):
+            checked = release.git(path, "rev-parse", "HEAD").strip()
+            adapter = kept_adapter(path, o, checked, tree=True)
+    except (ValueError, release.Stopped) as exc:
+        return str(exc)
+    gate, backend = str((adapter.get("slots") or {}).get("gate_cmd", "")).strip(), o["gate"]
     if not gate:
         return "어댑터의 `gate_cmd` 가 비었다"
     if why := oneshot_build.published(gate, backend):
@@ -145,14 +158,15 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
         return why
     # As at S7: the contract's command as the server stored it, then the adapter's gate, then each pinned case.
     ran = [backend, gate] if gate != backend else [gate]
-    verdict = specs.judge(path, ran, run.halt, lambda text: specs.note(run, text), env=oneshot_build.built_env(spec))
+    verdict = specs.judge(path, ran, run.halt, lambda text: specs.note(run, text), env=oneshot_build.built_env(spec),
+                          expect=checked)
     if not verdict["ok"]:
         return f"최종 게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := oneshot_build.held(path, run, spec, verdict):
         return why
     frozen = None
     if "android" in kinds_of(o):   # the APK S8 attaches, frozen while the check still holds the tree
-        if why := oneshot_device.built(path, o["device"]):
+        if why := oneshot_device.built(path, o["device"]) or release_checked(path, spec, verdict["head"], run.halt):
             return why
         try:
             frozen = froze(spec, verdict["head"])
@@ -167,6 +181,75 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
                                               **({"apk_frozen": frozen} if frozen else {})})
     specs.note(run, f"최종 게이트 통과 · {verdict['head'][:12]}")
     return ""
+
+
+def release_checked(path: Path, spec: dict, head: str, halt: threading.Event) -> str:
+    """The `[release]` table the README turn committed, read as a press reads it at `head`, and its Android
+    build made once from a clean checkout of `head` with the version a press would publish after the seed, so
+    the build is shown to take the version it is given, then checked as a release checks what a build made
+    (`release.built_wrong`). Unsigned: no key exists before the first press, and none is made. Only Android's
+    table, until step 7b. Every command ends within a second of a stop, the checkout's own included."""
+
+    attempt = f"oneshot-{time.time_ns()}"
+    try:
+        with release.stoppable(halt):
+            try:
+                android, later, kit = _declared(path, spec, head)
+            except ValueError as exc:
+                return f"`[release]` 표 — {exc}"
+            apk = release.build(release.checkout(path, head, attempt), android, later, kit, halt)
+            seen = release.badging(release.run([kit["aapt2"], "dump", "badging", apk], release.environment(kit)))
+    except (ValueError, release.Stopped) as exc:   # `BuildFailed` among them
+        return f"`[release.android]` 의 정식 빌드 — {exc}"
+    finally:
+        with release.stoppable(None):   # the cleanup runs even after the stop
+            if release.place(path, attempt).exists():
+                release.discard(path, attempt)
+    wrong = release.built_wrong(seen, later, android)
+    return f"`[release.android]` 의 정식 빌드가 배포 검사에 걸린다 — {'; '.join(wrong)}" if wrong else ""
+
+
+def kept_adapter(path: Path, o: dict, head: str, tree: bool = False) -> dict:
+    """The adapter at `head`, parsed, refused (`ValueError`) unless it, and the worktree's with `tree`, is the
+    approved frontend's with at most `[release]` added: the README turn may write that table alone."""
+
+    def rest(text: str) -> dict:
+        return {k: v for k, v in tomllib.loads(text).items() if k != "release"}
+
+    try:
+        was = rest(release.git(path, "show", f"{o.get('front_built_head') or o['tests_head']}:{ADAPTER}"))
+        at = tomllib.loads(release.git(path, "show", f"{head}:{ADAPTER}"))
+        now = [{k: v for k, v in at.items() if k != "release"},
+               *([rest((path / ADAPTER).read_bytes().decode("utf-8"))] if tree else [])]
+    except (ValueError, OSError) as exc:   # a TOML error is a `ValueError`
+        raise ValueError(f"`{ADAPTER}` 를 읽지 못했다 — {exc}") from exc
+    if any(n != was for n in now):
+        raise ValueError(f"`{ADAPTER}` 의 `[release]` 밖이 바뀌었다 — 그 표만 더하고 나머지는 그대로 둔다")
+    return at
+
+
+def _declared(path: Path, spec: dict, head: str) -> tuple[dict, str, dict]:
+    """The Android table at `head`, the version its build is made with, and the tools; a `ValueError` says why
+    not. The adapter around it is the approved frontend's (`kept_adapter`)."""
+
+    o = spec["oneshot"]
+    kept_adapter(path, o, head)
+    cfg = release.settings(path, head)
+    if "android" not in cfg:
+        raise ValueError(f"`{ADAPTER}` 에 `[release.android]` 가 없다 — 정식 빌드 명령, APK 경로, 앱 ID, ABI 를 적는다")
+    if "desktop" in cfg:   # an installer's table comes with the oneshot's own installer (step 7b), checked then
+        raise ValueError("`[release.desktop]` 는 아직 쓰지 않는다 — 원샷은 Android 앱의 표만 쓴다")
+    android, first = cfg["android"], release.seed(path, head, cfg["version_source"])
+    if android["application_id"] != (want := o["device"]["package"]):
+        raise ValueError(f"`[release.android]` 의 `application_id` {android['application_id']!r} 가 앱의 {want!r} 와 다르다")
+    release.version([], [], None, first, cfg)   # a seed a declared kind cannot carry, refused as the card would
+    # A version a press could publish next: a build that keeps the source's version instead fails on it.
+    for bump in release.BUMPS:   # a patch past what Android carries moves on to the minor, as a person would
+        try:
+            return android, release.version([{"tagName": f"v{first}"}], [], bump, first, cfg), release.tools(cfg)
+        except ValueError:
+            if bump == release.BUMPS[-1]:
+                raise
 
 
 def decisions(o: dict) -> list[str]:
@@ -301,6 +384,8 @@ def handed(path: Path, run, spec: dict, final: str):
 
 
 oneshot_build.STAGES[STAGE] = (readied, STAGE, restart, asked)
+# An Android app's README turn writes `[release]`; the pull request's text turn (`writing`) writes nothing there.
+oneshot_build.GRANTS[STAGE] = lambda spec: "android" in kinds_of(spec["oneshot"]) and not spec.get("writing")
 oneshot_build.HANDOVERS[STAGE] = lambda spec: bool(spec.get("writing")), handed
 oneshot_spec.TURNS.add(STAGE)
 

@@ -68,6 +68,17 @@ def test_a_seed_that_is_not_major_minor_patch_is_refused(tmp_path):
         release.seed(repo, sha, "Cargo.toml")
 
 
+def test_a_seed_is_read_from_any_shape_its_kind_allows_and_another_is_refused_plainly(tmp_path):
+    repo, sha = committed(tmp_path, {"a.toml": 'package = "demo"\nversion = "0.1.0"\n', "b.json": "[1]",
+                                     "c.toml": '[package]\nname = "x"\n', "d.toml": '[package]\nversion = "0.2.0"\n',
+                                     "e.toml": 'version = "0.3.0"\n[package]\nversion = ""\n'})
+    assert release.seed(repo, sha, "a.toml") == "0.1.0" and release.seed(repo, sha, "d.toml") == "0.2.0"
+    assert release.seed(repo, sha, "e.toml") == "0.3.0"   # an empty `[package] version` falls back to the root's
+    for name in ("b.json", "c.toml"):
+        with pytest.raises(ValueError, match="major.minor.patch"):
+            release.seed(repo, sha, name)
+
+
 def test_the_selector_bumps_the_last_eligible_production_release():
     releases = [{"tagName": "v0.1.0"}, {"tagName": "v0.1.3"}, {"tagName": "v0.9.0", "isPrerelease": True},
                 {"tagName": "v1.0.0", "isDraft": True}, {"tagName": "android-test-1721b04"},
@@ -170,6 +181,25 @@ def test_an_abi_that_moves_with_the_adapter_is_still_refused_against_the_previou
     why = release.refused(seen(abis=["x86_64"]), "0.1.1", {**ANDROID, "abi": "x86_64"}, "c1", seen(code=1000))
 
     assert len(why) == 1 and "이전 정식 APK의 ['arm64-v8a']" in why[0]
+
+
+def test_an_app_with_no_native_code_declares_abi_none_and_needs_no_ndk(tmp_path, monkeypatch):
+    none = {**ANDROID, "abi": "none"}
+    assert release.refused(seen(abis=[]), "0.1.1", none, "c1") == []
+    assert "ABI ['arm64-v8a']" in release.refused(seen(), "0.1.1", none, "c1")[0]
+    tools = tmp_path / "build-tools" / release.oneshot_android.BUILD_TOOLS
+    tools.mkdir(parents=True)
+    for name in ("aapt2", "zipalign", "apksigner"):
+        ext = release.oneshot_android.BAT if name == "apksigner" else release.oneshot_android.EXE
+        (tools / f"{name}{ext}").write_text("")
+    monkeypatch.setattr(release.oneshot_android, "roots", lambda: [tmp_path])
+    monkeypatch.setattr(release.oneshot_android, "java", lambda home: True)
+    monkeypatch.setenv("JAVA_HOME", str(tmp_path))
+    monkeypatch.setenv("NDK_HOME", str(tmp_path / "an-old-ndk"))   # the server's own, never the kit's
+    kit = release.tools({"android": none})
+    assert kit["ndk"] is None and "NDK_HOME" not in release.environment(kit)
+    with pytest.raises(ValueError, match="NDK"):
+        release.tools({"android": ANDROID})
 
 
 def test_an_attempt_checkout_is_a_fresh_clean_detached_copy_and_never_a_second_one(tmp_path, monkeypatch):

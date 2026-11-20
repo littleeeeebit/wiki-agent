@@ -113,6 +113,27 @@ def to_build(tree, sent):
 
 # -- Tests first --------------------------------------------------------------------
 
+def test_the_tests_turns_gate_write_keeps_every_other_adapter_table(built_world):
+    tree, sent = built_world
+    adapter = tree / ".wiki/adapter.toml"
+    table = '# what the release button reads\r\n[release]\r\nversion_source = "version.json"\r\n'
+    (tree / ".wiki").mkdir(exist_ok=True)
+    adapter.write_bytes(table.encode("utf-8"))   # a Windows editor's line endings, kept as they are
+    git(tree, "add", ".wiki/adapter.toml")
+    git(tree, "commit", "-qm", "release table")
+    to_build(tree, sent)
+    assert adapter.read_bytes().decode("utf-8") == f"{table}\r\n[slots]\r\ngate_cmd = {json.dumps(GATE)}\r\n"
+
+
+def test_the_tests_turn_never_replaces_an_adapter_it_cannot_read(built_world):
+    tree, sent = built_world
+    broken = '[slots]\ngate_cmd =\n\n[release]\nversion_source = "version.json"\n'
+    write(tree, ".wiki/adapter.toml", broken)
+    write(tree, "test_budget.py", TESTS)
+    check(tree)()
+    assert sent[-1][1] == "tests" and "`.wiki/adapter.toml` 를 읽지 못했다" in sent[-1][2] and o()["stage"] == "tests"
+    assert (tree / ".wiki/adapter.toml").read_text(encoding="utf-8") == broken   # left as it was, for the turn
+
 def test_failing_planned_tests_are_committed_pinned_and_followed_by_the_build_turn(built_world):
     tree, sent = built_world
     to_build(tree, sent)

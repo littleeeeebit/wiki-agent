@@ -139,13 +139,12 @@ def seed(repo: Path, sha: str, source: str) -> str:
 
     text = git(repo, "show", f"{sha}:{source}")
     try:
-        if source.endswith(".json"):
-            found = json.loads(text).get("version")
-        elif source.endswith(".toml"):
-            data = tomllib.loads(text)
-            found = (data.get("package") or {}).get("version") or data.get("version")
-        else:
+        if not source.endswith((".json", ".toml")):
             raise ValueError(f"`{source}` 는 .json 도 .toml 도 아니다")
+        data = json.loads(text) if source.endswith(".json") else tomllib.loads(text)
+        table = data.get("package") if isinstance(data, dict) and source.endswith(".toml") else None
+        found = table["version"] if isinstance(table, dict) and table.get("version") else \
+            data.get("version") if isinstance(data, dict) else None
     except (ValueError, tomllib.TOMLDecodeError) as exc:
         raise ValueError(f"`{source}` 에서 버전을 읽지 못했다 — {exc}") from exc
     if not isinstance(found, str) or not SEMVER.fullmatch(found):
@@ -285,8 +284,8 @@ def _writable(func, path, exc) -> None:
 # -- Build, sign, inspect -------------------------------------------------------------------------
 
 def tools(cfg: dict | None = None) -> dict:
-    """The JDK, the SDK with the build tools, and the newest NDK, as the build and the checks use them. None for
-    settings that declare no Android kind: a Windows installer needs none of them."""
+    """The JDK, the SDK with the build tools, and the newest NDK, which an app with no native code (`abi = "none"`)
+    does without, as the build and the checks use them. Nothing for settings that declare no Android kind."""
 
     if cfg is not None and "android" not in cfg:
         return {}
@@ -298,11 +297,11 @@ def tools(cfg: dict | None = None) -> dict:
                 if all((r / "build-tools" / oneshot_android.BUILD_TOOLS / n).is_file() for n in names)), None)
     ndks = sorted((sdk / "ndk").iterdir()) if sdk and (sdk / "ndk").is_dir() else []
     gone = [what for what, have in (("JDK 17 (JAVA_HOME)", java), (f"build-tools {oneshot_android.BUILD_TOOLS}", sdk),
-                                    ("NDK", ndks)) if not have]
+                                    ("NDK", ndks or cfg is not None and cfg["android"]["abi"] == "none")) if not have]
     if gone:
         raise ValueError(f"Android 배포 도구가 없다: {', '.join(gone)}")
     bin_ = sdk / "build-tools" / oneshot_android.BUILD_TOOLS
-    return {"java": java, "sdk": sdk, "ndk": ndks[-1], "aapt2": bin_ / names[0], "zipalign": bin_ / names[1],
+    return {"java": java, "sdk": sdk, "ndk": ndks[-1] if ndks else None, "aapt2": bin_ / names[0], "zipalign": bin_ / names[1],
             "apksigner": bin_ / names[2], "keytool": java / "bin" / f"keytool{oneshot_android.EXE}"}
 
 
@@ -376,9 +375,9 @@ def environment(kit: dict) -> dict:
     """The tools' environment, without any key password or GitHub token the server itself was started with: the
     adapter's build runs here, and what it prints can reach the repair agent."""
 
-    shared = {k: v for k, v in os.environ.items() if k.upper() not in UNSHARED}
+    shared = {k: v for k, v in os.environ.items() if k.upper() not in UNSHARED | ({"NDK_HOME"} if kit else set())}
     return shared if not kit else {**shared, "JAVA_HOME": str(kit["java"]), "ANDROID_HOME": str(kit["sdk"]),
-                                   "NDK_HOME": str(kit["ndk"]),
+                                   **({"NDK_HOME": str(kit["ndk"])} if kit.get("ndk") else {}),
                                    "PATH": os.pathsep.join([str(kit["java"] / "bin"), os.environ.get("PATH", "")])}
 
 
@@ -544,7 +543,8 @@ def built_wrong(seen: dict, release: str, android: dict, previous: dict | None =
     for name, want in (("설정", android["application_id"]), *((("이전 정식 APK", previous["package"]),) if previous else ())):
         if seen["package"] != want:
             out.append(f"앱 ID {seen['package']!r} 가 {name}의 {want!r} 와 다르다 — Android 는 다른 앱으로 설치한다")
-    for name, want in (("설정", [android["abi"]]), *((("이전 정식 APK", previous["abis"]),) if previous else ())):
+    native = [] if android["abi"] == "none" else [android["abi"]]   # `none`: an app with no native code at all
+    for name, want in (("설정", native), *((("이전 정식 APK", previous["abis"]),) if previous else ())):
         if seen["abis"] != want:
             out.append(f"ABI {seen['abis']} 가 {name}의 {want} 와 다르다 — 기존 기기가 업데이트를 받지 못한다")
     if seen["debuggable"]:
@@ -738,8 +738,7 @@ def release_key(repo: Path, kit: dict, create: bool = False, name: str | None = 
 def replaced(target: Path, text: str) -> None:
     """`target` replaced whole by `text`, through a fresh staging file beside it. The exclusive open never writes
     through an existing name or its links. A failure removes only the staging file this call made, and only
-    while that name still holds the same file. The original error is the one raised. A cleanup that fails is
-    recorded."""
+    while that name still holds the same file. The original error is raised; a failed cleanup is recorded."""
 
     staged = target.with_name(f"{target.name}.{secrets.token_hex(4)}.new")
     made = None

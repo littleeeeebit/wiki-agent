@@ -8,6 +8,7 @@ is pushed and no pull request is made.
 import json
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
@@ -93,6 +94,22 @@ def test_r3s_approval_sends_the_readme_turn_for_both_systems_and_no_workflow_for
     stage, text = sent[-1][1:]
     assert stage == "pr" and "Windows and macOS" in text and GATE in text and "Write no CI workflow" in text
     assert o()["reading"]["r3"][0]["edited"] == []
+
+
+def test_s8_refuses_an_adapter_changed_outside_release_before_its_gate_runs(finished):
+    tree, sent = finished
+    readme(tree, (".wiki/adapter.toml", adapter(gate=GATE + " && python -c \"open('ran.txt', 'w')\"")))
+    check(tree, answer(report()))()
+    assert sent[-1][1] == "pr" and "`[release]` 밖이 바뀌었다" in sent[-1][2] and "final_head" not in o()
+    assert not (tree / "ran.txt").exists()   # the changed gate never ran
+
+
+def test_a_stopped_s8_reads_no_adapter_and_runs_no_gate(finished):
+    tree, _ = finished
+    readme(tree)
+    run = Run()
+    run.halt.set()
+    assert oneshot_pr.readied(tree, run, spec(), answer(report())) == "멈춤 — git 을 시작하지 않았다"
 
 
 @pytest.mark.parametrize("change, said", [
@@ -190,10 +207,11 @@ def test_the_gate_green_asks_for_the_text_then_opens_the_pull_request_attached_b
 
 
 @pytest.mark.parametrize("change, said", [
-    # an adapter gate that dropped the contract's command
-    (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass"')), "로 시작하고"),
+    # an adapter gate that dropped the contract's command: refused as any change outside `[release]`, unrun
+    (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass"')), "`[release]` 밖이"),
     # the contract's command in a comment: the published gate would run only the rest
-    (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass" # {GATE}')), "로 시작하고"),
+    (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass" # {GATE}')),
+     "`[release]` 밖이"),
     # a configuration the tests turn never listed, skipping every pinned case: the gate still exits 0
     (lambda tree: write(tree, "conftest.py", "import pytest\n\n\ndef pytest_collection_modifyitems(items):\n"
                                              "    for item in items:\n        item.add_marker(pytest.mark.skip)\n"),
@@ -270,6 +288,7 @@ def android(finished, monkeypatch):
     oneshot_spec.saved("budget", oneshot={"intent": {"kind": "android"}, "device": DEVICE})
     monkeypatch.setattr(oneshot_build, "toolchain", lambda spec: None)   # the gate runs as the test's own Python
     monkeypatch.setattr(oneshot_build, "built_env", lambda spec: None)
+    monkeypatch.setattr(oneshot_pr, "release_checked", lambda *a: "")   # its own tests below build it
     for apk in (DEVICE["apk"], DEVICE["tests"]["apk"]):
         write(tree, apk, "apk")
     git(tree, "add", "-A")
@@ -305,6 +324,7 @@ def test_an_android_apps_readme_turn_names_the_apk_and_its_install_and_a_public_
     critique.decide("budget", on_r3(decisions={s["id"]: {"approve": True} for s in FRONT["screens"]}))
     text = sent[-1][2]
     assert f"`{DEVICE['apk']}`" in text and "adb's install command" in text and "Write no CI workflow" in text
+    assert f'application_id = "{DEVICE["package"]}"' in text and "RELEASE_VERSION_CODE" in text
     oneshot_spec.saved("budget", oneshot={"profile": {**o()["profile"], "visibility": "public", "ci": "github-actions"}})
     assert "`android-actions/setup-android`" in oneshot_pr.readme_text(spec())
     oneshot_spec.saved("budget", oneshot={"intent": {"kind": "webapp"}})
@@ -444,6 +464,134 @@ def test_an_android_app_without_its_apk_after_the_final_gate_is_sent_back(androi
     readme(tree)
     check(tree, answer(report()))()
     assert sent[-1][1] == "pr" and f"`{DEVICE['apk']}`" in sent[-1][2] and "final_head" not in o()
+
+
+RELEASE_CHECKED = oneshot_pr.release_checked
+RELEASE_TABLE = ('\n[release]\nversion_source = "version.json"\n\n[release.android]\nbuild = "gradlew.bat assembleRelease"\n'
+                 f'artifact = "app/release.apk"\napplication_id = "{DEVICE["package"]}"\nabi = "none"\n')
+
+
+@pytest.fixture
+def releasing(android, tmp_path, monkeypatch):
+    """The README turn's `[release]` table committed, and a release build whose APK reads as `seen`."""
+
+    tree, _ = android
+    write(tree, ".wiki/adapter.toml", (tree / ".wiki/adapter.toml").read_text(encoding="utf-8") + RELEASE_TABLE)
+    write(tree, "version.json", '{"version": "0.1.0"}')
+    git(tree, "add", "-A")
+    git(tree, "commit", "-m", "release table")
+    seen, built = {"package": DEVICE["package"], "code": 1001, "name": "0.1.1", "abis": [], "debuggable": False}, []
+
+    def build(src, android, version, kit, halt):
+        assert release._stop.halt is halt   # under the stop's scope, the checkout's clone before it included
+        built.append((git(src, "rev-parse", "HEAD"), git(src, "status", "--porcelain"), version, android["artifact"]))
+        return src / android["artifact"]
+
+    monkeypatch.setattr(release, "WORK", tmp_path / "release-work")
+    monkeypatch.setattr(release, "tools", lambda cfg: {"aapt2": "aapt2"} if cfg["android"]["abi"] == "none" else {})
+    monkeypatch.setattr(release, "build", build)
+    monkeypatch.setattr(release, "environment", lambda kit: {})
+    monkeypatch.setattr(release, "run", lambda argv, env=None, timeout=300: "badging")
+    monkeypatch.setattr(release, "badging", lambda text: seen)
+    return tree, seen, built
+
+
+def test_s8_builds_the_release_table_once_from_a_clean_checkout_and_checks_it_as_a_release_does(releasing):
+    tree, seen, built = releasing
+    head = git(tree, "rev-parse", "HEAD")
+    assert RELEASE_CHECKED(tree, spec(), head, threading.Event()) == ""
+    # The patch after the seed, on the committed HEAD: a build that kept the source's 0.1.0 would fail.
+    assert built == [(head, "", "0.1.1", "app/release.apk")]
+    assert list((release.WORK / tree.name).iterdir()) == []   # the checkout went with the check
+    seen.update(debuggable=True, abis=["arm64-v8a"])
+    why = RELEASE_CHECKED(tree, spec(), head, threading.Event())
+    assert "디버그 빌드다" in why and "ABI ['arm64-v8a']" in why
+    seen.update(debuggable=False, abis=[], name="0.1.0", code=1000)   # the seed's, whatever it was given
+    assert "versionName '0.1.0'" in RELEASE_CHECKED(tree, spec(), head, threading.Event())
+
+
+def test_s8_refuses_any_adapter_change_outside_the_release_table(releasing):
+    tree = releasing[0]
+    adapter = tree / ".wiki/adapter.toml"
+    write(tree, ".wiki/adapter.toml", "agents = []\n" + adapter.read_text(encoding="utf-8"))
+    git(tree, "commit", "-qam", "no hosts")
+    assert "`[release]` 밖이 바뀌었다" in RELEASE_CHECKED(tree, spec(), git(tree, "rev-parse", "HEAD"), threading.Event())
+    assert releasing[2] == []
+
+
+def test_a_seed_at_androids_patch_limit_is_built_as_the_next_minor(releasing):
+    tree, seen, built = releasing
+    write(tree, "version.json", '{"version": "0.1.999"}')
+    git(tree, "commit", "-qam", "the last patch")
+    seen.update(name="0.2.0", code=2000)
+    assert RELEASE_CHECKED(tree, spec(), git(tree, "rev-parse", "HEAD"), threading.Event()) == ""
+    assert built[-1][2] == "0.2.0"
+
+
+def test_a_stop_before_the_check_reads_the_commit_runs_nothing(releasing, monkeypatch):
+    tree, _, built = releasing
+    head, launched, the_spec = git(tree, "rev-parse", "HEAD"), [], spec()
+    monkeypatch.setattr(release.subprocess, "Popen", lambda *a, **k: launched.append(a) or (_ for _ in ()).throw(OSError))
+    halt = threading.Event()
+    halt.set()
+    assert "`[release.android]` 의 정식 빌드 —" in RELEASE_CHECKED(tree, the_spec, head, halt)
+    assert launched == [] and built == []
+
+
+def test_s8_refuses_an_installer_table_until_the_oneshot_ships_its_installer(releasing):
+    tree = releasing[0]
+    write(tree, ".wiki/adapter.toml", (tree / ".wiki/adapter.toml").read_text(encoding="utf-8") +
+          '\n[release.desktop]\nbuild = "b"\nartifact = "../outside.exe"\nexe = "a.exe"\nproduct_name = "p"\n'
+          'publisher = "q"\n')
+    git(tree, "commit", "-qam", "an installer too")
+    assert "`[release.desktop]`" in RELEASE_CHECKED(tree, spec(), git(tree, "rev-parse", "HEAD"), threading.Event())
+    assert releasing[2] == []
+
+
+def test_a_stop_during_the_release_build_ends_the_check_and_still_removes_its_checkout(releasing, monkeypatch):
+    tree = releasing[0]
+
+    def stopped(src, android, version, kit, halt):
+        raise release.Stopped("멈췄다")
+
+    monkeypatch.setattr(release, "build", stopped)
+    assert RELEASE_CHECKED(tree, spec(), git(tree, "rev-parse", "HEAD"), threading.Event()).endswith("멈췄다")
+    assert list((release.WORK / tree.name).iterdir()) == []
+
+
+def test_only_an_android_apps_readme_turn_may_write_the_adapter(android):
+    grant = oneshot_build.GRANTS[oneshot_pr.STAGE]
+    assert grant(spec()) and not grant({**spec(), "writing": {"head": "h", "asked": 1}})
+    oneshot_spec.saved("budget", oneshot={"intent": {"kind": "webapp"}})
+    assert not grant(spec())
+
+
+def test_s8_sends_back_a_missing_or_wrong_release_table_and_a_failed_release_build(releasing, monkeypatch):
+    tree = releasing[0]
+    first = git(tree, "rev-parse", "HEAD~1")
+    assert "`[release]` 표 —" in RELEASE_CHECKED(tree, spec(), first, threading.Event())   # before the table
+    write(tree, ".wiki/adapter.toml", (tree / ".wiki/adapter.toml").read_text(encoding="utf-8")
+          .replace(DEVICE["package"], "com.example.other"))
+    git(tree, "commit", "-qam", "another app")
+    assert "`application_id` 'com.example.other'" in RELEASE_CHECKED(tree, spec(), git(tree, "rev-parse", "HEAD"),
+                                                                       threading.Event())
+    git(tree, "revert", "--no-edit", "HEAD")
+
+    def failed(src, *a):
+        raise release.BuildFailed("빌드 실패 — 1 로 끝났다")
+
+    monkeypatch.setattr(release, "build", failed)
+    why = RELEASE_CHECKED(tree, spec(), git(tree, "rev-parse", "HEAD"), threading.Event())
+    assert why == "`[release.android]` 의 정식 빌드 — 빌드 실패 — 1 로 끝났다"
+    assert list((release.WORK / tree.name).iterdir()) == []
+
+
+def test_an_android_app_whose_release_table_fails_is_sent_back_before_its_apk_is_frozen(android, monkeypatch):
+    tree, sent = android
+    monkeypatch.setattr(oneshot_pr, "release_checked", RELEASE_CHECKED)
+    readme(tree)
+    check(tree, answer(report()))()
+    assert sent[-1][1] == "pr" and "`[release]` 표" in sent[-1][2] and "final_head" not in o() and "apk_frozen" not in o()
 
 
 def test_a_resumed_s8_starts_again_from_its_readme_turn(finished):

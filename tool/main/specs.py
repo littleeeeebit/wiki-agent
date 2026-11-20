@@ -1203,10 +1203,9 @@ def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None, *,
 
 
 def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text: None, env: dict | None = None,
-          *, timeout: float | None = None, argv: list[str] | None = None) -> dict:
-    """Check a clean HEAD with one shared command deadline, stopping on failure.
-    Read HEAD and status before and after: commands that change either fail.
-    The server verifies reports and review rounds through this same boundary."""
+          *, timeout: float | None = None, argv: list[str] | None = None, expect: str | None = None) -> dict:
+    """Check a clean HEAD, `expect`'s commit when named, with one shared command deadline, stopping on failure.
+    HEAD and status are read before and after: commands that change either fail. Reports and rounds pass here."""
 
     started = time.monotonic()
     if argv is not None and (len(cmds) != 1 or cmds[0] != shell.command_line(argv)):
@@ -1215,8 +1214,9 @@ def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text:
     cmd = " && ".join(cmds)
     before = status(path)
     head = sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
-    if before.stdout.strip():
-        reason = "커밋 안 된 변경" if not before.returncode else before.stdout.strip()[3:]
+    if before.stdout.strip() or (expect and head != expect):
+        reason = f"HEAD {head[:12]} 가 확인한 커밋 {expect[:12]} 가 아니다" if expect and head != expect else \
+            "커밋 안 된 변경" if not before.returncode else before.stdout.strip()[3:]
         return {"ok": False, "reason": reason, "cmd": cmd, "commands": cmds, "code": None, "tail": before.stdout.strip(),
                 "head": head, "ts": time.time()}
     code, out, cut = None, "", ""
