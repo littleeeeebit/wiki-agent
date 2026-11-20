@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import threading
 import time
+import tomllib
 from pathlib import Path
 
 import yaml
@@ -28,6 +29,7 @@ from .oneshot_profile import kinds_of
 from .query import ROOT
 
 README_PROMPT = (ROOT / "tool/prompts/oneshot-readme.md").read_text(encoding="utf-8")
+ADAPTER = ".wiki/adapter.toml"
 RELEASE_PROMPT = (ROOT / "tool/prompts/oneshot-readme-release.md").read_text(encoding="utf-8")
 STAGE = "pr"
 TRIES = 3   # the debug APK's create and upload, each, as `gh release` retried them
@@ -174,28 +176,18 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
 
 def release_checked(path: Path, spec: dict, head: str, halt: threading.Event) -> str:
     """The `[release]` table the README turn committed, read as a press reads it at `head`, and its Android
-    build made once from a clean checkout of `head` with the patch after the seed, so the build is shown to take
-    the version it is given, then checked as a release checks what a build made (`release.built_wrong`).
-    Unsigned: no key exists before the first press, and none is made. Only Android's table, until step 7b."""
+    build made once from a clean checkout of `head` with the version a press would publish after the seed, so
+    the build is shown to take the version it is given, then checked as a release checks what a build made
+    (`release.built_wrong`). Unsigned: no key exists before the first press, and none is made. Only Android's
+    table, until step 7b. Every command ends within a second of a stop, the checkout's own included."""
 
-    try:
-        cfg = release.settings(path, head)
-        if "android" not in cfg:
-            return "`.wiki/adapter.toml` 에 `[release.android]` 가 없다 — 정식 빌드 명령, APK 경로, 앱 ID, ABI 를 적는다"
-        if "desktop" in cfg:   # an installer's table comes with the oneshot's own installer (step 7b), checked then
-            return "`[release.desktop]` 는 아직 쓰지 않는다 — 원샷은 Android 앱의 표만 쓴다"
-        android, first = cfg["android"], release.seed(path, head, cfg["version_source"])
-        if android["application_id"] != (want := spec["oneshot"]["device"]["package"]):
-            return f"`[release.android]` 의 `application_id` {android['application_id']!r} 가 앱의 {want!r} 와 다르다"
-        release.version([], [], None, first, cfg)   # a seed a declared kind cannot carry, refused as the card would
-        # The patch after the seed: a build that keeps the source's version instead of the injected one fails here.
-        later = release.version([{"tagName": f"v{first}"}], [], "patch", first, cfg)
-        kit = release.tools(cfg)
-    except ValueError as exc:
-        return f"`[release]` 표 — {exc}"
     attempt = f"oneshot-{time.time_ns()}"
     try:
-        with release.stoppable(halt):   # every command ends within a second of a stop, the checkout's own included
+        with release.stoppable(halt):
+            try:
+                android, later, kit = _declared(path, spec, head)
+            except ValueError as exc:
+                return f"`[release]` 표 — {exc}"
             apk = release.build(release.checkout(path, head, attempt), android, later, kit, halt)
             seen = release.badging(release.run([kit["aapt2"], "dump", "badging", apk], release.environment(kit)))
     except (ValueError, release.Stopped) as exc:   # `BuildFailed` among them
@@ -206,6 +198,33 @@ def release_checked(path: Path, spec: dict, head: str, halt: threading.Event) ->
                 release.discard(path, attempt)
     wrong = release.built_wrong(seen, later, android)
     return f"`[release.android]` 의 정식 빌드가 배포 검사에 걸린다 — {'; '.join(wrong)}" if wrong else ""
+
+
+def _declared(path: Path, spec: dict, head: str) -> tuple[dict, str, dict]:
+    """The Android table at `head`, the version its build is made with, and the tools; a `ValueError` says why
+    not. The turn may add `[release]` and nothing else: the rest of the adapter is the approved frontend's."""
+
+    o = spec["oneshot"]
+    was, now = (tomllib.loads(release.git(path, "show", f"{commit}:{ADAPTER}"))
+                for commit in (o.get("front_built_head") or o["tests_head"], head))
+    if {k: v for k, v in now.items() if k != "release"} != {k: v for k, v in was.items() if k != "release"}:
+        raise ValueError(f"`{ADAPTER}` 의 `[release]` 밖이 바뀌었다 — 그 표만 더하고 나머지는 그대로 둔다")
+    cfg = release.settings(path, head)
+    if "android" not in cfg:
+        raise ValueError(f"`{ADAPTER}` 에 `[release.android]` 가 없다 — 정식 빌드 명령, APK 경로, 앱 ID, ABI 를 적는다")
+    if "desktop" in cfg:   # an installer's table comes with the oneshot's own installer (step 7b), checked then
+        raise ValueError("`[release.desktop]` 는 아직 쓰지 않는다 — 원샷은 Android 앱의 표만 쓴다")
+    android, first = cfg["android"], release.seed(path, head, cfg["version_source"])
+    if android["application_id"] != (want := o["device"]["package"]):
+        raise ValueError(f"`[release.android]` 의 `application_id` {android['application_id']!r} 가 앱의 {want!r} 와 다르다")
+    release.version([], [], None, first, cfg)   # a seed a declared kind cannot carry, refused as the card would
+    # A version a press could publish next: a build that keeps the source's version instead fails on it.
+    for bump in release.BUMPS:   # a patch past what Android carries moves on to the minor, as a person would
+        try:
+            return android, release.version([{"tagName": f"v{first}"}], [], bump, first, cfg), release.tools(cfg)
+        except ValueError:
+            if bump == release.BUMPS[-1]:
+                raise
 
 
 def decisions(o: dict) -> list[str]:

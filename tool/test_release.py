@@ -70,8 +70,10 @@ def test_a_seed_that_is_not_major_minor_patch_is_refused(tmp_path):
 
 def test_a_seed_is_read_from_any_shape_its_kind_allows_and_another_is_refused_plainly(tmp_path):
     repo, sha = committed(tmp_path, {"a.toml": 'package = "demo"\nversion = "0.1.0"\n', "b.json": "[1]",
-                                     "c.toml": '[package]\nname = "x"\n', "d.toml": '[package]\nversion = "0.2.0"\n'})
+                                     "c.toml": '[package]\nname = "x"\n', "d.toml": '[package]\nversion = "0.2.0"\n',
+                                     "e.toml": 'version = "0.3.0"\n[package]\nversion = ""\n'})
     assert release.seed(repo, sha, "a.toml") == "0.1.0" and release.seed(repo, sha, "d.toml") == "0.2.0"
+    assert release.seed(repo, sha, "e.toml") == "0.3.0"   # an empty `[package] version` falls back to the root's
     for name in ("b.json", "c.toml"):
         with pytest.raises(ValueError, match="major.minor.patch"):
             release.seed(repo, sha, name)

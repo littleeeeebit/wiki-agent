@@ -25,8 +25,8 @@ abi = "the one ABI of the APK's native code, or none when it has none"
   and versionCode. When they are not, it falls back to the version source.
 - A Tauri app also gets `RELEASE_TAURI_CONFIG`, the path of a config file
   holding that version and versionCode. Tauri ignores the variables above,
-  so `build` passes that file as one more `--config`, such as
-  `npx tauri android build --apk --config $env:RELEASE_TAURI_CONFIG`.
+  so `build` hands the Tauri CLI that path as one more `--config` argument,
+  read from the variable as the gate's shell reads one.
 - That version wiring, and the version file when one is needed, are the only
   code changes this turn may make.
 - The release APK is not signed, and not debuggable. The button signs it
@@ -34,7 +34,8 @@ abi = "the one ABI of the APK's native code, or none when it has none"
 - `build` follows the gate's rules for a command.
 
 After the gate, the server makes this build once from a clean checkout, with
-the version after the first one (`0.1.1`, versionCode `1001` after `0.1.0`).
+the version a press would publish after the first one (`0.1.1`, versionCode
+`1001`, after `0.1.0`).
 It checks the APK's application ID, versionName, versionCode and ABI, and
 that it is not debuggable, as a release does. A build that keeps the
 source's version instead of the one it is given fails there.

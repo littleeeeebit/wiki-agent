@@ -1420,5 +1420,7 @@ def test_rewriting_the_slots_keeps_every_other_table_as_written():
         '[release]\nversion_source = "a.json"\n\n[slots]\ngate_cmd = "x"\n'
     headed = '[slots]\r\ngate_cmd = ""\r\n\r\n# what the button reads\r\n[release]\r\nversion_source = "a.json"'
     assert connect.adapter_text({"gate_cmd": "x"}, headed) == headed.replace('gate_cmd = ""', 'gate_cmd = "x"')
+    mixed = '[slots]\ngate_cmd = ""\n[release]\r\nversion_source = "a.json"\r\n'   # each line keeps its own ending
+    assert connect.adapter_text({"gate_cmd": "x"}, mixed) == mixed.replace('gate_cmd = ""', 'gate_cmd = "x"')
     with pytest.raises(ValueError, match="slots"):   # a second `[slots]` further down would change too
         connect.adapter_text({"gate_cmd": "x"}, '[slots]\ngate_cmd = ""\n[slots.extra]\nk = "v"\n')

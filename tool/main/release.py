@@ -143,7 +143,7 @@ def seed(repo: Path, sha: str, source: str) -> str:
             raise ValueError(f"`{source}` 는 .json 도 .toml 도 아니다")
         data = json.loads(text) if source.endswith(".json") else tomllib.loads(text)
         table = data.get("package") if isinstance(data, dict) and source.endswith(".toml") else None
-        found = table["version"] if isinstance(table, dict) and "version" in table else \
+        found = table["version"] if isinstance(table, dict) and table.get("version") else \
             data.get("version") if isinstance(data, dict) else None
     except (ValueError, tomllib.TOMLDecodeError) as exc:
         raise ValueError(f"`{source}` 에서 버전을 읽지 못했다 — {exc}") from exc

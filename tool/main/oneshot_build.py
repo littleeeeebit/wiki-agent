@@ -651,7 +651,7 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
     gate = " && ".join([runner["command"].replace("{report}", REPORT), *runner["after"]])
     adapter = path / ".wiki" / "adapter.toml"
     try:   # every table but `[slots]` is kept as written; one that is there but unreadable is never replaced
-        old = adapter.read_text(encoding="utf-8") if adapter.exists() else ""
+        old = adapter.read_bytes().decode("utf-8") if adapter.exists() else ""   # its line endings as they are
         slots = tomllib.loads(old).get("slots", {})
     except (OSError, ValueError) as exc:
         return f"`.wiki/adapter.toml` 를 읽지 못했다 — 고쳐 두면 게이트를 그 `[slots]` 에 적는다 — {exc}"

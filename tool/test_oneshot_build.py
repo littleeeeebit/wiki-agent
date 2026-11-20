@@ -116,12 +116,13 @@ def to_build(tree, sent):
 def test_the_tests_turns_gate_write_keeps_every_other_adapter_table(built_world):
     tree, sent = built_world
     adapter = tree / ".wiki/adapter.toml"
-    table = '# what the release button reads\n[release]\nversion_source = "version.json"\n'
-    write(tree, ".wiki/adapter.toml", table)
+    table = '# what the release button reads\r\n[release]\r\nversion_source = "version.json"\r\n'
+    (tree / ".wiki").mkdir(exist_ok=True)
+    adapter.write_bytes(table.encode("utf-8"))   # a Windows editor's line endings, kept as they are
     git(tree, "add", ".wiki/adapter.toml")
     git(tree, "commit", "-qm", "release table")
     to_build(tree, sent)
-    assert adapter.read_text(encoding="utf-8") == f"{table}\n[slots]\ngate_cmd = {json.dumps(GATE)}\n"
+    assert adapter.read_bytes().decode("utf-8") == f"{table}\r\n[slots]\r\ngate_cmd = {json.dumps(GATE)}\r\n"
 
 
 def test_the_tests_turn_never_replaces_an_adapter_it_cannot_read(built_world):

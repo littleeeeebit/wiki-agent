@@ -493,6 +493,34 @@ def test_s8_builds_the_release_table_once_from_a_clean_checkout_and_checks_it_as
     assert "versionName '0.1.0'" in RELEASE_CHECKED(tree, spec(), head, threading.Event())
 
 
+def test_s8_refuses_any_adapter_change_outside_the_release_table(releasing):
+    tree = releasing[0]
+    adapter = tree / ".wiki/adapter.toml"
+    write(tree, ".wiki/adapter.toml", "agents = []\n" + adapter.read_text(encoding="utf-8"))
+    git(tree, "commit", "-qam", "no hosts")
+    assert "`[release]` 밖이 바뀌었다" in RELEASE_CHECKED(tree, spec(), git(tree, "rev-parse", "HEAD"), threading.Event())
+    assert releasing[2] == []
+
+
+def test_a_seed_at_androids_patch_limit_is_built_as_the_next_minor(releasing):
+    tree, seen, built = releasing
+    write(tree, "version.json", '{"version": "0.1.999"}')
+    git(tree, "commit", "-qam", "the last patch")
+    seen.update(name="0.2.0", code=2000)
+    assert RELEASE_CHECKED(tree, spec(), git(tree, "rev-parse", "HEAD"), threading.Event()) == ""
+    assert built[-1][2] == "0.2.0"
+
+
+def test_a_stop_before_the_check_reads_the_commit_runs_nothing(releasing, monkeypatch):
+    tree, _, built = releasing
+    head, launched, the_spec = git(tree, "rev-parse", "HEAD"), [], spec()
+    monkeypatch.setattr(release.subprocess, "Popen", lambda *a, **k: launched.append(a) or (_ for _ in ()).throw(OSError))
+    halt = threading.Event()
+    halt.set()
+    assert "`[release.android]` 의 정식 빌드 —" in RELEASE_CHECKED(tree, the_spec, head, halt)
+    assert launched == [] and built == []
+
+
 def test_s8_refuses_an_installer_table_until_the_oneshot_ships_its_installer(releasing):
     tree = releasing[0]
     write(tree, ".wiki/adapter.toml", (tree / ".wiki/adapter.toml").read_text(encoding="utf-8") +
