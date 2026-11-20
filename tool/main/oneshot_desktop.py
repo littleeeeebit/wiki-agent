@@ -55,19 +55,21 @@ OWNED_ENV = {"APPDATA", "LOCALAPPDATA", "TEMP", "TMP"}   # the look sets these t
 def _remote(setting: str) -> bool:
     """Whether a setting is a whole remote URL a browser's parser accepts: a host, and a port in range. A host
     whose last label is a number is an IP address to that parser, so it must be one (`999.999.999.999` is not),
-    and a bracketed host must be an IPv6 address."""
+    and a bracketed host must be an IPv6 address. A host holding `%` is refused: the parser decodes it before it
+    classifies the host, and an IPv6 zone is no host it accepts."""
 
     if not (match := REMOTE.fullmatch(setting)):
         return False
     try:
         url = urllib.parse.urlsplit(match.group(1))
         host = url.hostname or ""
-        if url.port is not None and url.port == 0:
+        if "%" in host or (url.port is not None and url.port == 0):
             return False
+        bare = host[:-1] if host.endswith(".") else host   # the parser drops one empty last label
         if ":" in host:
             ipaddress.IPv6Address(host)
-        elif re.fullmatch(r"(?i)\d+|0x[0-9a-f]*", host.rstrip(".").rsplit(".", 1)[-1]):
-            ipaddress.IPv4Address(host)   # dotted decimal only: the hex, octal and short forms are refused
+        elif re.fullmatch(r"(?i)\d+|0x[0-9a-f]*", bare.rsplit(".", 1)[-1]):
+            ipaddress.IPv4Address(bare)   # dotted decimal only: the hex, octal and short forms are refused
         return bool(host)
     except ValueError:   # a port out of range, a bracket left open, a number that is no address
         return False
@@ -75,7 +77,7 @@ def _remote(setting: str) -> bool:
 
 PARTS = re.compile(r"[/\s;,=:]+")
 # `myapp::ipc=trace`: a module in Rust's log filter, read only from `RUST_LOG` and never as a path.
-LOG_FILTER, RUST_PATH = "RUST_LOG", re.compile(r"(?<=[A-Za-z0-9_])::(?=[A-Za-z_])")
+LOG_FILTER, RUST_PATH = "RUST_LOG", re.compile(r"(?<=\w)::(?=[^\W\d])")   # Rust identifiers may be Unicode
 
 
 def _relative(value, where: str) -> str:

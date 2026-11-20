@@ -150,6 +150,7 @@ def test_a_second_build_replaces_the_frozen_one(pc_build):
         "@../args.txt", "@args.txt", "--port=COM¹", "--title=what?", "https:///", "https://", "shell:Profile",
         "--start=shell:Downloads", "https://cdn.example:99999/a.js", "https://999.999.999.999/v1",
         "https://0x7f.1/", "https://example.123/", "https://[zz]/", "https://cdn.example:0/",
+        "https://1.2.3%2e4/", "https://[fe80::1%25eth0]/",
         "--log=myapp::ipc=trace"]],
     ({"env": {"APP_DATA": "{data}", "SHELL_PATH": "shell::Profile"}}, "사본 밖을 가리킬 수 있다"),
     ({"env": {"APPDATA": "{data}/named"}}, "look 이"),
@@ -238,15 +239,17 @@ def test_a_folder_turned_into_a_junction_after_its_check_is_never_read(pc_build,
     "--cdn=https://cdn.example/web/app.js", "--socket=ws://127.0.0.1:5173/live", "--assets=res/strings.txt",
     "--cache={data}/cache", "--size=1280x800", "--langs=ko,en;fallback=en", "--name=file-viewer",
     "--title=Translator: on", "--title=번역 켜기", "https://x.example/?return=/home",
-    "https://x.example/search?q=%ED%95%9C", "--api=https://[::1]:8443/v1", "--api=https://127.0.0.1:8080/v1"])
+    "https://x.example/search?q=%ED%95%9C", "--api=https://[::1]:8443/v1", "--api=https://127.0.0.1:8080/v1",
+    "--api=https://127.0.0.1./v1"])
 def test_a_setting_naming_the_copy_data_or_a_remote_url_is_kept(pc_build, setting):
     run = {**BLOCK["run"], "args": ["--data", "{data}", setting]}
     assert pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "run": run}))["run"]["args"][-1] == setting
 
 
-@pytest.mark.parametrize("name", ["RUST_LOG", "rust_log"])
-def test_rusts_log_filter_may_name_modules(pc_build, name):
-    run = {**BLOCK["run"], "env": {**BLOCK["run"]["env"], name: "tauri=debug,myapp::ipc=trace"}}
+@pytest.mark.parametrize("name, value", [("RUST_LOG", "tauri=debug,myapp::ipc=trace"),
+                                         ("rust_log", "tauri=debug,myapp::ipc=trace"), ("RUST_LOG", "번역기::화면=trace")])
+def test_rusts_log_filter_may_name_modules(pc_build, name, value):
+    run = {**BLOCK["run"], "env": {**BLOCK["run"]["env"], name: value}}
     assert pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "run": run}))["run"]["env"][name] == run["env"][name]
 
 

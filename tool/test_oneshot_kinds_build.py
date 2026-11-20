@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from main import oneshot_build, oneshot_device as device, oneshot_front_build as front_build, oneshot_spec
+from main import oneshot, oneshot_build, oneshot_device as device, oneshot_front_build as front_build, oneshot_spec
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_front_build import GATE, Run, adapter, git, o, report, spec, staged, write  # noqa: F401 — `staged`
 from test_oneshot_device import SUFFIX
@@ -93,6 +93,14 @@ def test_the_build_text_names_every_kind_and_only_the_android_apps_scenarios(kin
     assert "an Android app and a web app" in text and "PC app" not in text and "oneshot-desktop" not in text
 
 
+@pytest.mark.parametrize("kinds", [["webapp", "desktop"], ["android", "desktop"], ["webapp", "android", "desktop"]])
+def test_with_a_pc_app_the_build_text_has_its_section_and_stops_before_every_look(kinds):
+    text = front_build.for_kinds(oneshot.prompt(front_build.STAGE, "kinds"), kinds)
+    assert "## The PC app" in text and "oneshot-desktop" in text and "every command of\n`gate_cmd`" in text
+    assert "The run then waits here" in text and "the server boots its own emulator" not in text
+    assert "shoots every web screen" not in text and "<!--" not in text
+
+
 def test_each_kind_is_looked_at_in_the_owners_order_with_only_its_own_and_the_critique_follows(kinds_build):
     seen, looking = looks({})
     sent, started = [], []
@@ -140,7 +148,7 @@ def test_several_kinds_without_live_cmd_are_sent_back(kinds_build):
     assert not seen and "`live_cmd` 가 비었다" in sent[-1][2]
 
 
-@pytest.mark.parametrize("gate", [GATE, f"{GATE} && {BUILD}"])
+@pytest.mark.parametrize("gate", [GATE, f"{GATE} && {BUILD}", f'{GATE} && {BUILD} "a && b"'])   # quoted: one command
 def test_a_gate_without_a_command_for_each_kind_is_sent_back(kinds_build, gate):
     write(kinds_build, ".wiki/adapter.toml", adapter(gate=gate))
     git(kinds_build, "add", "-A")

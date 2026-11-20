@@ -25,7 +25,8 @@ from .oneshot_sheet import KIND_NAMES
 STAGE = "build-front"
 # The several-kinds prompt keeps a kind's parts only when the owner picked it, and takes the PC app's conventions,
 # block and freeze from the PC app's own prompt, so the two never drift apart.
-SECTION = re.compile(r"<!-- kind:(\w+) -->\n(.*?)<!-- /kind -->\n", re.S)
+# `webapp,!desktop`: a section kept only when every condition holds, the web app picked and the PC app not.
+SECTION = re.compile(r"<!-- kind:([!\w,]+) -->\n(.*?)<!-- /kind -->\n", re.S)
 SHARED = re.compile(r"<!-- shared:(\w+) -->\n?(.*?)\n?<!-- /shared -->", re.S)
 WHO = {"webapp": "a web app", "android": "an Android app", "desktop": "a PC app (a Windows program)"}
 BLOCKS = {"webapp": ("`live_cmd` is filled", None),
@@ -40,7 +41,8 @@ def listed(items: list[str]) -> str:
 def for_kinds(text: str, kinds: list[str]) -> str:
     """The several-kinds prompt for the owner's kinds: each kind's parts, the PC app's from its own prompt."""
 
-    text = SECTION.sub(lambda m: m.group(2) if m.group(1) in kinds else "", text)
+    text = SECTION.sub(lambda m: m.group(2) if all((c.lstrip("!") in kinds) != c.startswith("!")
+                                                   for c in m.group(1).split(",")) else "", text)
     pc = {name: part for name, part in SHARED.findall(oneshot.prompt(STAGE, "desktop"))}
     ends = [end for k in kinds if (end := BLOCKS[k][1])]
     return text.replace("{kinds}", listed([WHO[k] for k in kinds])) \
@@ -133,7 +135,9 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     kinds = kinds_of(o)
     android, several = "android" in kinds, shape(o) == "kinds"
     # Several kinds' gate adds each kind's tests and build to the core's: at least one command for each kind.
-    if several and len([c for c in gate[len(backend):].split("&&") if c.strip()]) < len(kinds):
+    # Counted at the boundaries the gate runs at: a `&&` inside a quoted argument is no command.
+    added = len(oneshot_build.links(gate)) - len(oneshot_build.links(backend))
+    if several and added < len(kinds):
         return (f"여러 종류의 `gate_cmd` 는 핵심 테스트 `{backend}` 뒤에 종류마다의 테스트와 빌드 명령을 ` && ` 로 "
                 f"더한다 ({', '.join(KIND_NAMES[k] for k in kinds)}) — `{gate}`")
     if android:   # an app on a phone has no `live_cmd`: its block names the APKs the emulator installs
